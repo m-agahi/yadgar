@@ -1,0 +1,1590 @@
+"""Yadgar MCP server — supports SSE and Streamable HTTP transports."""
+
+import hashlib
+import json
+import logging
+import os
+import re
+import signal
+import sys
+import time
+from pathlib import Path
+
+from yadgar import __version__
+
+from mcp.server.fastmcp import FastMCP
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+
+from yadgar.astrocyte_pool import AstrocytePool
+from yadgar.cls_store import DualStoreCLS
+from yadgar.cognitive_map import CognitiveMap
+from yadgar.compression import MemoryCompressor
+from yadgar.config import Settings, get_settings
+from yadgar.consolidation import AstrocyteEngine
+from yadgar.crdt_sync import CRDTMemorySync
+from yadgar.engram import EngramAllocator
+from yadgar.causal_discovery import CausalDiscovery
+from yadgar.curation import MemoryCurator
+from yadgar.embeddings import EmbeddingEngine
+from yadgar.fractal import FractalMemoryTree
+from yadgar.hdc_encoder import HDCEncoder
+from yadgar.hopfield import HopfieldMemory
+from yadgar.knowledge_graph import KnowledgeGraph
+from yadgar.metacognition import MetaCognition
+from yadgar.narrative import NarrativeEngine
+from yadgar.predictive_coding import PredictiveCodingGate
+from yadgar.prospective import ProspectiveMemoryEngine
+from yadgar.reconsolidation import ReconsolidationEngine
+from yadgar.retrieval import HippoRetriever
+from yadgar.rules_engine import RulesEngine
+from yadgar.sensory_buffer import SensoryBuffer
+from yadgar.sleep_compute import SleepComputeEngine
+from yadgar.staleness import StalenessDetector
+from yadgar.storage import StorageEngine
+# SurrealDB is the sole storage backend (StorageEngine in storage.py)
+from yadgar.restoration import HippocampalReplay
+from yadgar.thermodynamics import MemoryThermodynamics
+
+logger = logging.getLogger(__name__)
+
+# Strong decision patterns for auto-protection
+_DECISION_STRONG_RE = re.compile(
+    r"\b(chose .+ over|decided to use|switched from .+ to|migrated from|"
+    r"will use .+ instead|going with|opted for|selected .+ because|"
+    r"choosing .+ approach|picking .+ strategy)\b",
+    re.IGNORECASE,
+)
+
+# Global instances — initialized in main()
+_storage: StorageEngine | None = None
+_embeddings: EmbeddingEngine | None = None
+_buffer: SensoryBuffer | None = None
+_consolidation: AstrocyteEngine | None = None
+_staleness: StalenessDetector | None = None
+_thermo: MemoryThermodynamics | None = None
+_retriever: HippoRetriever | None = None
+_curator: MemoryCurator | None = None
+_prospective: ProspectiveMemoryEngine | None = None
+_narrative: NarrativeEngine | None = None
+_sleep: SleepComputeEngine | None = None
+_fractal: FractalMemoryTree | None = None
+_pool: AstrocytePool | None = None
+_kg: KnowledgeGraph | None = None
+_reconsolidation: ReconsolidationEngine | None = None
+_write_gate: PredictiveCodingGate | None = None
+_engram: EngramAllocator | None = None
+_rules_engine: RulesEngine | None = None
+_hopfield: HopfieldMemory | None = None
+_cls: DualStoreCLS | None = None
+_compressor: MemoryCompressor | None = None
+_hdc: HDCEncoder | None = None
+_cognitive_map: CognitiveMap | None = None
+_causal: CausalDiscovery | None = None
+_metacognition: MetaCognition | None = None
+_crdt: CRDTMemorySync | None = None
+_replay: HippocampalReplay | None = None
+
+# Session state for transition tracking
+_last_recalled_ids: dict[str, int] = {}  # session_id → last recalled memory_id
+
+# Transport type used by the running server
+_active_transport: str = "sse"
+
+# Server start timestamp for uptime tracking
+_start_time: float = 0.0
+
+settings = get_settings()
+
+mcp_server = FastMCP(
+    name="yadgar",
+    instructions="Biologically-inspired persistent memory engine for Claude Code.",
+    host="127.0.0.1",
+    port=settings.PORT,
+)
+
+
+# ── Custom HTTP Endpoints ─────────────────────────────────────────────
+
+
+@mcp_server.custom_route("/health", methods=["GET"])
+async def health_check(request: Request) -> JSONResponse:
+    """Health check endpoint."""
+    session_count = 0
+    if mcp_server._session_manager is not None:
+        session_count = len(mcp_server._session_manager._server_instances)
+
+    return JSONResponse({
+        "status": "ok",
+        "version": __version__,
+        "transport": _active_transport,
+        "uptime_seconds": round(time.time() - _start_time, 1) if _start_time else 0,
+        "active_sessions": session_count,
+    })
+
+
+@mcp_server.custom_route("/hooks/pre-compact", methods=["POST"])
+async def hook_pre_compact(request: Request) -> JSONResponse:
+    """Called by PreCompact hook before context compaction."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    directory = body.get("cwd", os.getcwd())
+    replay = _replay
+    if replay is None:
+        return JSONResponse({"status": "error", "message": "Replay engine not initialized"}, status_code=503)
+
+    result = replay.pre_compact_drain(directory)
+
+    # Also trigger consolidation
+    if _consolidation is not None:
+        try:
+            _consolidation.force_consolidate()
+        except Exception:
+            logger.debug("Emergency consolidation failed during pre-compact")
+
+    return JSONResponse(result)
+
+
+@mcp_server.custom_route("/hooks/post-compact", methods=["GET"])
+async def hook_post_compact(request: Request) -> JSONResponse:
+    """Called by SessionStart hook after compaction. Returns restoration context."""
+    directory = request.query_params.get("directory", os.getcwd())
+    replay = _replay
+    if replay is None:
+        return JSONResponse({"status": "error", "message": "Replay engine not initialized"}, status_code=503)
+
+    result = replay.restore(directory)
+    return JSONResponse(result)
+
+
+@mcp_server.custom_route("/hooks/auto-capture", methods=["POST"])
+async def hook_auto_capture(request: Request) -> JSONResponse:
+    """Capture a tool action from PostToolUse hook (HTTP transport).
+
+    Accepts JSON: {tool_name, summary, directory, session_id}
+    Writes directly to action_log table — no write gate, no embeddings.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"status": "error", "message": "Invalid JSON"}, status_code=400)
+
+    storage = _storage
+    if storage is None:
+        return JSONResponse({"status": "error", "message": "Storage not initialized"}, status_code=503)
+
+    from datetime import datetime, timezone
+    tool_name = body.get("tool_name", "unknown")
+
+    # Skip Yadgar's own tools
+    if tool_name.startswith("mcp__yadgar__"):
+        return JSONResponse({"status": "skipped", "reason": "yadgar_tool"})
+
+    storage.insert_action_log(
+        tool_name=tool_name,
+        tool_input_summary=body.get("summary", "")[:200],
+        directory=body.get("directory", ""),
+        session_id=body.get("session_id", ""),
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    )
+    return JSONResponse({"status": "captured"})
+
+
+def _get_storage() -> StorageEngine:
+    assert _storage is not None, "StorageEngine not initialized"
+    return _storage
+
+
+def _get_embeddings() -> EmbeddingEngine:
+    assert _embeddings is not None, "EmbeddingEngine not initialized"
+    return _embeddings
+
+
+def _get_buffer() -> SensoryBuffer:
+    assert _buffer is not None, "SensoryBuffer not initialized"
+    return _buffer
+
+
+def _get_consolidation() -> AstrocyteEngine:
+    assert _consolidation is not None, "AstrocyteEngine not initialized"
+    return _consolidation
+
+
+def _get_staleness() -> StalenessDetector:
+    assert _staleness is not None, "StalenessDetector not initialized"
+    return _staleness
+
+
+def _get_thermo() -> MemoryThermodynamics:
+    assert _thermo is not None, "MemoryThermodynamics not initialized"
+    return _thermo
+
+
+def _get_retriever() -> HippoRetriever:
+    assert _retriever is not None, "HippoRetriever not initialized"
+    return _retriever
+
+
+def _get_reconsolidation() -> ReconsolidationEngine:
+    assert _reconsolidation is not None, "ReconsolidationEngine not initialized"
+    return _reconsolidation
+
+
+def _get_write_gate() -> PredictiveCodingGate:
+    assert _write_gate is not None, "PredictiveCodingGate not initialized"
+    return _write_gate
+
+
+def _get_engram() -> EngramAllocator:
+    assert _engram is not None, "EngramAllocator not initialized"
+    return _engram
+
+
+def _get_crdt() -> CRDTMemorySync:
+    assert _crdt is not None, "CRDTMemorySync not initialized"
+    return _crdt
+
+
+def _get_cognitive_map() -> CognitiveMap:
+    assert _cognitive_map is not None, "CognitiveMap not initialized"
+    return _cognitive_map
+
+
+def _get_replay() -> HippocampalReplay:
+    assert _replay is not None, "HippocampalReplay not initialized"
+    return _replay
+
+
+def _file_hash(filepath: str) -> str | None:
+    """Compute SHA-256 hash of a file if it exists."""
+    p = Path(filepath).expanduser()
+    if not p.is_file():
+        return None
+    return hashlib.sha256(p.read_bytes()).hexdigest()
+
+
+# ── MCP Tools ──────────────────────────────────────────────────────────
+
+
+@mcp_server.tool()
+def remember(content: str, context: str, tags: list[str]) -> dict:
+    """Store a new memory with embedding and optional file hash.
+
+    context MUST be the actual working directory path (e.g., '/home/user/projects/myapp'),
+    NOT a description. get_project_context() filters by directory path match —
+    descriptive strings will make memories unfindable by project.
+    """
+    storage = _get_storage()
+    embeddings = _get_embeddings()
+    buffer = _get_buffer()
+
+    # Predictive coding write gate — FIRST check before any storage
+    gate_result = None
+    if _write_gate is not None:
+        should_store, surprisal, reason = _write_gate.should_store(
+            content, context, tags
+        )
+        gate_result = {
+            "surprisal": round(surprisal, 4),
+            "gate_reason": reason,
+        }
+        if not should_store:
+            return {
+                "stored": False,
+                "surprisal": round(surprisal, 4),
+                "reason": reason,
+                "message": "Memory below surprisal threshold, skipped",
+            }
+
+    # Generate contextual prefix for richer embedding semantics
+    contextual_prefix = None
+    retriever = _retriever
+    if retriever is not None and settings.CONTEXTUAL_PREFIX_ENABLED:
+        from datetime import datetime, timezone
+        contextual_prefix = retriever.generate_contextual_prefix(
+            content, context, tags, datetime.now(timezone.utc)
+        )
+
+    # Embed with contextual prefix prepended if available
+    embed_text = f"{contextual_prefix}{content}" if contextual_prefix else content
+    embedding = embeddings.encode(embed_text)
+    fhash = _file_hash(context)
+
+    # Compute thermodynamic scores
+    thermo = _thermo
+    if thermo is not None:
+        surprise = thermo.compute_surprise(content, context)
+        importance = thermo.compute_importance(content, tags)
+        valence = thermo.compute_valence(content)
+        initial_heat = thermo.apply_surprise_boost(1.0, surprise)
+    else:
+        surprise = 0.0
+        importance = 0.5
+        valence = 0.0
+        initial_heat = 1.0
+
+    # CRDT provenance tagging — stamp agent ID and vector clock
+    crdt = _crdt
+    crdt_provenance = {}
+    if crdt is not None:
+        crdt_provenance = {
+            "provenance_agent": crdt.get_agent_id(),
+            "vector_clock": json.dumps(crdt.increment_clock()),
+        }
+
+    # Use curator for intelligent ingestion (merge/link/create)
+    curator = _curator
+    if curator is not None and embedding is not None:
+        curation_result = curator.curate_on_remember(
+            content, context, tags, embedding,
+            initial_heat=initial_heat,
+            surprise=surprise,
+            importance=importance,
+            valence=valence,
+            file_hash=fhash,
+            embedding_model=embeddings.get_model_name(),
+            contextual_prefix=contextual_prefix,
+        )
+        memory_id = curation_result["memory_id"]
+        curation_action = curation_result["action"]
+    else:
+        # Fallback: direct insert (no curator or no embedding)
+        memory_id = storage.insert_memory(
+            {
+                "content": content,
+                "embedding": embedding,
+                "tags": tags,
+                "directory_context": context,
+                "heat": initial_heat,
+                "is_stale": False,
+                "file_hash": fhash,
+                "embedding_model": embeddings.get_model_name(),
+            }
+        )
+
+        if contextual_prefix:
+            storage.update_memory_fields(memory_id, contextual_prefix=contextual_prefix)
+
+        storage.update_memory_scores(
+            memory_id,
+            surprise_score=surprise,
+            importance=importance,
+            emotional_valence=valence,
+        )
+        curation_action = "created"
+
+    # Apply CRDT provenance to the stored memory
+    if crdt_provenance:
+        storage.update_memory_fields(
+            memory_id,
+            provenance_agent=crdt_provenance["provenance_agent"],
+            vector_clock=crdt_provenance["vector_clock"],
+        )
+
+    # CLS dual-store: classify memory as episodic or semantic
+    if _consolidation is not None and _consolidation.cls is not None:
+        store_type = _consolidation.cls.classify_memory(content, tags, context)
+        storage.update_memory_fields(memory_id, store_type=store_type)
+
+    # Register file hash so staleness detector can find the filepath later
+    if fhash is not None:
+        storage.upsert_file_hash(context, fhash)
+
+    # Capture in sensory buffer
+    buffer.capture(content, context)
+
+    # Record activity on consolidation engine
+    if _consolidation is not None:
+        _consolidation.record_activity()
+
+    # Assign to astrocyte processes for domain-aware consolidation
+    if _pool is not None:
+        mem_data = storage.get_memory(memory_id)
+        if mem_data:
+            _pool.assign_memory(mem_data)
+
+    # Synaptic boost for high-importance memories
+    if thermo is not None and importance > 0.7:
+        thermo.synaptic_boost(memory_id, initial_heat)
+
+    # Prospective memory: auto-create triggers from content & check existing triggers
+    triggered_memories = []
+    if _prospective is not None:
+        _prospective.auto_create_from_content(content, context)
+
+        from datetime import datetime as _dt, timezone as _tz
+        trigger_context = {
+            "directory": context,
+            "content": content,
+            "entities": tags,
+            "current_time": _dt.now(_tz.utc),
+        }
+        triggered_memories = _prospective.check_triggers(trigger_context)
+
+    # Engram allocation — competitive slot assignment with temporal linking
+    engram_result = None
+    if _engram is not None:
+        try:
+            engram_result = _engram.allocate(memory_id)
+        except Exception:
+            logger.debug("Engram allocation failed for memory %s", memory_id)
+
+    # HDC encoding — compute compositional hyperdimensional vector
+    if _hdc is not None:
+        try:
+            from yadgar.retrieval import _extract_query_entities
+            hdc_entities = _extract_query_entities(content)
+            hdc_vec = _hdc.encode_memory(
+                directory=context,
+                tags=tags,
+                entities=hdc_entities,
+                store_type="episodic",
+            )
+            storage.update_memory_fields(memory_id, hdc_vector=_hdc.to_bytes(hdc_vec))
+        except Exception:
+            logger.debug("HDC encoding failed for memory %s", memory_id)
+
+    # ── Zero-Gap Enhancements ────────────────────────────────────────────
+
+    # 1. Record store in write gate for task continuity tracking
+    if _write_gate is not None:
+        _write_gate.record_stored(content, context, embedding)
+
+    # 2. Decision auto-protection: detect decisions and shield from decay
+    auto_protected = False
+    if settings.DECISION_AUTO_PROTECT and _DECISION_STRONG_RE.search(content):
+        storage.update_memory_fields(memory_id, is_protected=1, importance=1.0)
+        auto_protected = True
+        logger.debug("Decision auto-protected: memory %s", memory_id)
+
+    # 3. Session coherence: boost heat for current-session memories
+    if thermo is not None:
+        mem_data = storage.get_memory(memory_id)
+        if mem_data and mem_data.get("created_at"):
+            coherent_heat = thermo.apply_session_coherence(
+                mem_data["heat"], mem_data["created_at"]
+            )
+            if coherent_heat != mem_data["heat"]:
+                storage.update_memory_heat(memory_id, coherent_heat)
+
+    # 4. Micro-checkpoint: auto-checkpoint on significant events
+    if _replay is not None and settings.MICRO_CHECKPOINT_ENABLED:
+        gate_surprisal = gate_result["surprisal"] if gate_result else 0.0
+        should_micro, micro_reason = _replay.should_micro_checkpoint(
+            content, tags, gate_surprisal
+        )
+        if should_micro:
+            try:
+                _replay.create_micro_checkpoint(context, content, micro_reason)
+                logger.debug("Micro-checkpoint created: %s", micro_reason)
+            except Exception:
+                logger.debug("Micro-checkpoint failed")
+
+    # 5. Action stream: log this remember operation
+    if buffer is not None:
+        summary = content[:150].replace("\n", " ")
+        buffer.capture_action("remember", context, summary, curation_action)
+
+    # 6. Related context reinjection: surface what you already know
+    related_context = []
+    if settings.REINJECTION_ENABLED and _retriever is not None:
+        try:
+            related = _retriever.recall(
+                content[:300], max_results=settings.REINJECTION_MAX_RESULTS + 1,
+                min_heat=0.0,
+            )
+            for r in related:
+                if r["id"] != memory_id:
+                    r_content = r.get("content", "")
+                    if len(r_content) > 300:
+                        r_content = r_content[:300] + "..."
+                    related_context.append({
+                        "id": r["id"],
+                        "content": r_content,
+                        "heat": r.get("heat", 0),
+                    })
+                if len(related_context) >= settings.REINJECTION_MAX_RESULTS:
+                    break
+        except Exception:
+            logger.debug("Reinjection recall failed")
+
+    # Track tool call for auto-checkpoint interval
+    if _replay is not None:
+        _replay.record_tool_call()
+
+    # ── Build Response ─────────────────────────────────────────────────
+
+    memory = storage.get_memory(memory_id)
+    # Strip binary fields from response (not JSON-serializable)
+    memory.pop("embedding", None)
+    memory.pop("hdc_vector", None)
+    memory["curation_action"] = curation_action
+    if gate_result is not None:
+        memory["surprisal"] = gate_result["surprisal"]
+        memory["gate_reason"] = gate_result["gate_reason"]
+    if triggered_memories:
+        memory["triggered_prospective_memories"] = [
+            {"id": pm["id"], "content": pm["content"]}
+            for pm in triggered_memories
+        ]
+    if engram_result is not None:
+        memory["engram_slot"] = engram_result["slot_index"]
+        memory["temporal_links"] = engram_result["temporally_linked"]
+        memory["temporal_link_count"] = engram_result["link_count"]
+    if auto_protected:
+        memory["auto_protected"] = True
+        memory["protection_reason"] = "decision_detected"
+    if related_context:
+        memory["related_context"] = related_context
+    return memory
+
+
+@mcp_server.tool()
+def recall(query: str, max_results: int = 5, min_heat: float = 0.0) -> list[dict]:
+    """Semantic + keyword search filtered by heat. Boosts accessed memories."""
+    storage = _get_storage()
+
+    # Record activity on consolidation engine
+    if _consolidation is not None:
+        _consolidation.record_activity()
+
+    # Use HippoRetriever for unified 4-signal recall
+    retriever = _retriever
+    if retriever is not None:
+        merged = retriever.recall(query, max_results=max_results, min_heat=min_heat)
+    else:
+        # Fallback to basic FTS + vector if retriever not initialized
+        embeddings = _get_embeddings()
+        try:
+            fts_results = storage.search_memories_fts(
+                query, min_heat=min_heat, limit=max_results * 2
+            )
+        except Exception:
+            fts_results = []
+
+        semantic_results = []
+        query_embedding = embeddings.encode(query)
+        if query_embedding is not None:
+            vec_hits = storage.search_vectors(
+                query_embedding, top_k=max_results * 2, min_heat=min_heat
+            )
+            for mid, _distance in vec_hits:
+                mem = storage.get_memory(mid)
+                if mem:
+                    semantic_results.append(mem)
+
+        seen = set()
+        merged = []
+        for m in fts_results + semantic_results:
+            if m["id"] not in seen:
+                seen.add(m["id"])
+                merged.append(m)
+
+        merged.sort(
+            key=lambda m: m["heat"] * m.get("confidence", 1.0),
+            reverse=True,
+        )
+        merged = merged[:max_results]
+        for m in merged:
+            m.pop("embedding", None)
+            m.pop("hdc_vector", None)
+
+    # Boost heat, update last_accessed, and record metamemory access
+    now = storage._now_iso()
+    thermo = _thermo
+    for m in merged:
+        new_heat = min(m["heat"] + 0.1, 1.0)
+        storage.update_memory_heat(m["id"], new_heat)
+        storage.update_memory_last_accessed(m["id"], now)
+        m["heat"] = new_heat
+        m["last_accessed"] = now
+        if thermo is not None:
+            thermo.record_access(m["id"], was_useful=True)
+
+    # Record SR transitions: link previous recall → current recall
+    if _cognitive_map is not None and merged:
+        session_key = "default"
+        top_id = merged[0]["id"]
+        prev_id = _last_recalled_ids.get(session_key)
+        if prev_id is not None and prev_id != top_id:
+            try:
+                _cognitive_map.record_transition(prev_id, top_id, session_key)
+                _cognitive_map.incremental_update(prev_id, top_id)
+            except Exception:
+                logger.debug("SR transition recording failed")
+        _last_recalled_ids[session_key] = top_id
+
+    # Reconsolidate: retrieved memories become labile and may be updated
+    # This happens AFTER scoring, so it doesn't affect the current recall
+    if _reconsolidation is not None:
+        for m in merged:
+            try:
+                _reconsolidation.reconsolidate(m["id"], query, "")
+            except Exception:
+                logger.debug("Reconsolidation failed for memory %s", m.get("id"))
+
+    # Action stream: log this recall operation
+    buffer = _buffer
+    if buffer is not None:
+        result_count = len(merged)
+        buffer.capture_action("recall", "", f"query='{query[:80]}' results={result_count}", f"found_{result_count}")
+
+    # Track tool call for auto-checkpoint interval
+    if _replay is not None:
+        _replay.record_tool_call()
+
+    # Strip binary fields from response (not JSON-serializable)
+    for m in merged:
+        m.pop("embedding", None)
+        m.pop("hdc_vector", None)
+
+    return merged
+
+
+@mcp_server.tool()
+def forget(memory_id: int) -> dict:
+    """Mark a memory for deletion by setting heat to 0, then delete it."""
+    storage = _get_storage()
+    memory = storage.get_memory(memory_id)
+    if memory is None:
+        return {"memory_id": memory_id, "status": "not_found"}
+    storage.delete_memory(memory_id)
+    return {"memory_id": memory_id, "status": "deleted"}
+
+
+@mcp_server.tool()
+def validate_memory(memory_id: int) -> dict:
+    """Check memory validity against current file state."""
+    if _staleness is not None:
+        result = _staleness.validate_memory(memory_id)
+        # Normalize response format for the MCP tool
+        return {
+            "memory_id": memory_id,
+            "is_valid": result["valid"],
+            "reason": result["reason"],
+        }
+
+    # Fallback if staleness detector not initialized
+    storage = _get_storage()
+    memory = storage.get_memory(memory_id)
+    if memory is None:
+        return {"memory_id": memory_id, "is_valid": False, "reason": "memory not found"}
+
+    if not memory.get("file_hash"):
+        return {"memory_id": memory_id, "is_valid": True, "reason": "no file hash to validate"}
+
+    current_hash = _file_hash(memory["directory_context"])
+    if current_hash is None:
+        storage.update_memory_staleness(memory_id, True)
+        return {"memory_id": memory_id, "is_valid": False, "reason": "file no longer exists"}
+
+    if current_hash != memory["file_hash"]:
+        storage.update_memory_staleness(memory_id, True)
+        return {"memory_id": memory_id, "is_valid": False, "reason": "file has changed"}
+
+    return {"memory_id": memory_id, "is_valid": True, "reason": "file hash matches"}
+
+
+@mcp_server.tool()
+def get_project_context(directory: str) -> dict:
+    """Return all hot memories for a directory, sorted by heat descending.
+
+    Also checks if Hippocampal Replay hooks are installed for this project
+    and includes a suggestion if they're missing.
+    """
+    storage = _get_storage()
+    memories = storage.get_memories_for_directory(directory, min_heat=settings.PROJECT_CONTEXT_MIN_HEAT)
+    for m in memories:
+        m.pop("embedding", None)
+        m.pop("hdc_vector", None)
+
+    # Check if hooks are installed for this project
+    hooks_installed = False
+    project_dir = Path(directory)
+    # Walk up to find .claude/settings.json
+    for parent in [project_dir] + list(project_dir.parents):
+        hooks_settings = parent / ".claude" / "settings.json"
+        if hooks_settings.exists():
+            try:
+                data = json.loads(hooks_settings.read_text())
+                hooks = data.get("hooks", {})
+                has_pre = "PreCompact" in hooks
+                has_post = any(
+                    h.get("matcher") == "compact"
+                    for h in hooks.get("SessionStart", [])
+                )
+                hooks_installed = has_pre and has_post
+            except Exception:
+                pass
+            break
+
+    result = {"memories": memories}
+    if not hooks_installed:
+        result["_hint"] = (
+            "Hippocampal Replay hooks are not installed for this project. "
+            "Run `install_hooks` with this project directory to enable automatic "
+            "context drain/restore on compaction. This is a one-time setup."
+        )
+    return result
+
+
+@mcp_server.tool()
+def consolidate_now() -> dict:
+    """Trigger an immediate consolidation cycle."""
+    if _consolidation is not None:
+        stats = _consolidation.force_consolidate()
+        # Also run memify cycle (already included in force_consolidate via _consolidation_cycle)
+        # Run sleep-time compute if available
+        if _sleep is not None:
+            try:
+                sleep_stats = _sleep.run_sleep_cycle()
+                stats["sleep_cycle"] = sleep_stats
+            except Exception:
+                logger.exception("Sleep cycle failed during consolidate_now")
+        return {"status": "completed", **stats}
+    return {"status": "error", "message": "Consolidation engine not initialized"}
+
+
+@mcp_server.tool()
+def reembed_all() -> dict:
+    """Generate embeddings for all memories that are missing them.
+
+    Bulk-imported memories often lack embeddings. This tool generates them
+    using the current embedding model, enabling similarity search and
+    semantic relationship discovery during consolidation.
+    """
+    storage = _get_storage()
+    embeddings = _get_embeddings()
+
+    rows = storage.get_memories_without_embeddings()
+
+    if not rows:
+        return {"status": "ok", "message": "All memories already have embeddings", "reembedded": 0}
+
+    batch_size = 64
+    total = 0
+    for i in range(0, len(rows), batch_size):
+        batch = rows[i : i + batch_size]
+        texts = [r["content"] for r in batch]
+        ids = [r["id"] for r in batch]
+        encoded = embeddings.encode_batch(texts)
+        for mid, emb in zip(ids, encoded):
+            if emb is not None:
+                storage.update_memory_embedding(mid, emb, embeddings.model_name)
+                total += 1
+
+    return {
+        "status": "ok",
+        "reembedded": total,
+        "total_missing": len(rows),
+        "model": embeddings.model_name,
+    }
+
+
+@mcp_server.tool()
+def memory_stats() -> dict:
+    """Return system memory statistics."""
+    storage = _get_storage()
+    stats = storage.get_memory_stats()
+
+    # Frontier metrics
+    if _hopfield is not None:
+        stats["hopfield_patterns"] = _hopfield.get_pattern_count()
+
+    if _reconsolidation is not None:
+        stats["reconsolidation_count"] = storage.get_total_reconsolidation_count()
+
+    if _write_gate is not None:
+        # Track rejections via memories with surprisal below threshold
+        stats["write_gate_rejections"] = getattr(_write_gate, "_rejection_count", 0)
+
+    if _engram is not None:
+        try:
+            slot_stats = _engram.get_slot_statistics()
+            total = slot_stats.get("total_slots", 1)
+            occupied = slot_stats.get("occupied_slots", 0)
+            stats["engram_slot_utilization"] = round(occupied / max(total, 1), 4)
+        except Exception:
+            stats["engram_slot_utilization"] = 0.0
+
+    if _rules_engine is not None:
+        active_rules = _rules_engine.get_all_rules()
+        stats["active_rules"] = len(active_rules)
+
+    if _cls is not None:
+        stats["episodic_count"] = storage.count_memories_by_store_type("episodic")
+        stats["semantic_count"] = storage.count_memories_by_store_type("semantic")
+
+    if _compressor is not None:
+        for level in (0, 1, 2):
+            stats[f"compressed_level_{level}"] = storage.count_memories_by_compression_level(level)
+
+    if _cognitive_map is not None:
+        stats["sr_dimensions"] = "active" if _cognitive_map.has_sufficient_data() else "insufficient_data"
+
+    if _causal is not None:
+        causal_edges = storage.get_all_causal_edges()
+        stats["causal_edges"] = len(causal_edges)
+
+    if _metacognition is not None:
+        # Average coverage across recent queries isn't tracked globally,
+        # but we can report the chunk limit setting
+        stats["cognitive_load_limit"] = _metacognition._chunk_limit
+
+    if _crdt is not None:
+        crdt_stats = _crdt.get_agent_stats()
+        stats["agent_id"] = crdt_stats["agent_id"]
+        stats["conflict_count"] = crdt_stats["conflicts_pending"]
+        stats["crdt"] = crdt_stats
+
+    return stats
+
+
+@mcp_server.tool()
+def rate_memory(memory_id: int, was_useful: bool) -> dict:
+    """Rate a memory's usefulness for metamemory tracking."""
+    storage = _get_storage()
+    thermo = _get_thermo()
+
+    mem = storage.get_memory(memory_id)
+    if mem is None:
+        return {"memory_id": memory_id, "status": "not_found"}
+
+    thermo.record_access(memory_id, was_useful)
+
+    # Update reconsolidation stability based on usefulness
+    if _reconsolidation is not None:
+        _reconsolidation.update_stability(memory_id, was_useful)
+
+    updated = storage.get_memory(memory_id)
+    return {
+        "memory_id": memory_id,
+        "status": "rated",
+        "was_useful": was_useful,
+        "access_count": updated.get("access_count", 0),
+        "useful_count": updated.get("useful_count", 0),
+        "confidence": updated.get("confidence", 1.0),
+        "stability": updated.get("stability", 0.0),
+    }
+
+
+@mcp_server.tool()
+def recall_hierarchical(
+    query: str, level: int = None, max_results: int = 10
+) -> list[dict]:
+    """Retrieve memories from the fractal hierarchy at a specific level or adaptively."""
+    retriever = _get_retriever()
+    return retriever.recall_hierarchical(query, level=level, max_results=max_results)
+
+
+@mcp_server.tool()
+def drill_down(cluster_id: int) -> list[dict]:
+    """Drill into a cluster to see its members."""
+    retriever = _get_retriever()
+    return retriever._fractal.drill_down(cluster_id)
+
+
+@mcp_server.tool()
+def create_trigger(
+    content: str,
+    trigger_condition: str,
+    trigger_type: str,
+    target_directory: str | None = None,
+) -> dict:
+    """Create a prospective memory trigger that fires on matching context."""
+    if _prospective is None:
+        return {"status": "error", "message": "ProspectiveMemoryEngine not initialized"}
+    pm_id = _prospective.create_trigger(
+        content, trigger_condition, trigger_type, target_directory,
+    )
+    return {"status": "created", "prospective_memory_id": pm_id}
+
+
+@mcp_server.tool()
+def get_project_story(directory: str) -> str:
+    """Get the autobiographical narrative for a project directory."""
+    if _narrative is None:
+        return "NarrativeEngine not initialized"
+    return _narrative.get_project_story(directory)
+
+
+@mcp_server.tool()
+def add_rule(
+    rule_type: str,
+    scope: str,
+    condition: str,
+    action: str,
+    priority: int = 0,
+    scope_value: str = "",
+) -> dict:
+    """Add a neuro-symbolic rule for filtering/re-ranking memories.
+
+    rule_type: "hard" (must satisfy) or "soft" (preference).
+    scope: "global", "directory", or "file".
+    condition: e.g. "importance > 0.7", "tag contains architecture".
+    action: "filter" for hard rules, "boost:0.3" or "penalty:0.2" for soft rules.
+    priority: Higher = applied first (default 0).
+    scope_value: Directory path or file pattern for scoped rules.
+    """
+    if _rules_engine is None:
+        return {"status": "error", "message": "RulesEngine not initialized"}
+    try:
+        rule_id = _rules_engine.add_rule(
+            rule_type=rule_type,
+            scope=scope,
+            condition=condition,
+            action=action,
+            priority=priority,
+            scope_value=scope_value or None,
+        )
+        return {"status": "created", "rule_id": rule_id}
+    except ValueError as e:
+        return {"status": "error", "message": str(e)}
+
+
+@mcp_server.tool()
+def get_rules(directory: str = "") -> list[dict]:
+    """Get active rules. If directory is provided, returns only applicable rules."""
+    if _rules_engine is None:
+        return []
+    if directory:
+        return _rules_engine.get_applicable_rules(directory)
+    return _rules_engine.get_all_rules()
+
+
+@mcp_server.tool()
+def navigate_memory(query: str, top_k: int = 5) -> list[dict]:
+    """Navigate concept space using Successor Representation cognitive maps.
+
+    Instead of nearest-neighbor search, this navigates to the query's projected
+    location in SR space — memories accessed in similar CONTEXTS cluster together,
+    even if their CONTENT differs.
+    """
+    if _cognitive_map is None:
+        return [{"error": "CognitiveMap not initialized"}]
+
+    if not _cognitive_map.has_sufficient_data():
+        return [{"info": "Insufficient transition data for SR navigation (need >= 20)"}]
+
+    embeddings = _get_embeddings()
+    query_embedding = embeddings.encode(query)
+    if query_embedding is None:
+        return [{"error": "Failed to encode query"}]
+
+    results = _cognitive_map.navigate_to(query_embedding, embeddings, top_k=top_k)
+    if not results:
+        return []
+
+    storage = _get_storage()
+    output = []
+    for mid, proximity in results:
+        mem = storage.get_memory(mid)
+        if mem:
+            mem.pop("embedding", None)
+            mem.pop("hdc_vector", None)
+            mem["sr_proximity"] = round(proximity, 4)
+            output.append(mem)
+
+    return output
+
+
+@mcp_server.tool()
+def get_causal_chain(entity: str) -> dict:
+    """Get causal causes and effects for an entity from the PC algorithm DAG."""
+    if _causal is None:
+        return {"error": "CausalDiscovery not initialized"}
+    return _causal.get_causal_chain(entity)
+
+
+@mcp_server.tool()
+def assess_coverage(query: str, directory: str = "") -> dict:
+    """Assess how well Yadgar knows about a topic.
+
+    Returns coverage score (0-1), confidence, suggestion
+    (sufficient/partial/insufficient), identified gaps, and signal breakdowns.
+    """
+    if _metacognition is None:
+        return {"error": "MetaCognition not initialized"}
+    return _metacognition.assess_coverage(query, directory)
+
+
+@mcp_server.tool()
+def detect_gaps(directory: str) -> list[dict]:
+    """Detect knowledge gaps for a project directory.
+
+    Returns list of gaps with type (isolated_entity, stale_region,
+    low_confidence, missing_connection, one_sided_knowledge),
+    description, severity, affected entities, and suggestions.
+    """
+    if _metacognition is None:
+        return [{"error": "MetaCognition not initialized"}]
+    return _metacognition.detect_gaps(directory)
+
+
+@mcp_server.tool()
+def checkpoint(
+    directory: str,
+    current_task: str = "",
+    files_being_edited: list[str] = None,
+    key_decisions: list[str] = None,
+    open_questions: list[str] = None,
+    next_steps: list[str] = None,
+    active_errors: list[str] = None,
+    custom_context: str = "",
+) -> dict:
+    """Snapshot your current working state for post-compaction recovery.
+
+    Call this periodically during long sessions. After context compaction,
+    the restore tool uses this checkpoint to reconstruct what you were doing.
+    Checkpoints auto-supersede — only the latest one matters.
+    """
+    replay = _get_replay()
+
+    # Enrich checkpoint with action stream summary if available
+    enriched_context = custom_context
+    buffer = _buffer
+    if buffer is not None:
+        action_summary = buffer.get_action_summary()
+        if action_summary:
+            enriched_context = f"{custom_context}\n\n{action_summary}" if custom_context else action_summary
+
+    return replay.create_checkpoint(
+        directory=directory,
+        current_task=current_task,
+        files_being_edited=files_being_edited,
+        key_decisions=key_decisions,
+        open_questions=open_questions,
+        next_steps=next_steps,
+        active_errors=active_errors,
+        custom_context=enriched_context,
+    )
+
+
+@mcp_server.tool()
+def restore(directory: str = "") -> dict:
+    """Restore context after compaction using Hippocampal Replay.
+
+    Reconstructs your working context from:
+    - Latest checkpoint (what you were doing)
+    - Anchored memories (critical facts)
+    - Hot project memories (thermodynamic ranking)
+    - Predicted context (SR cognitive map navigation)
+    - Detected knowledge gaps
+
+    Call this after context compaction, or it will be called
+    automatically via the post-compact hook.
+    """
+    replay = _get_replay()
+    return replay.restore(directory=directory)
+
+
+@mcp_server.tool()
+def anchor(content: str, context: str, reason: str = "") -> dict:
+    """Mark critical context as compaction-resistant.
+
+    Anchored memories get max heat, max importance, and is_protected=True.
+    They are ALWAYS included in post-compaction restoration regardless
+    of other scoring. Use for decisions, constraints, and critical facts
+    that must survive compaction.
+    """
+    replay = _get_replay()
+    tags = ["_anchor"]
+    if reason:
+        tags.append(f"anchor:{reason}")
+    memory_id = replay.anchor_memory(content, context, tags, reason)
+    return {
+        "memory_id": memory_id,
+        "status": "anchored",
+        "is_protected": True,
+        "reason": reason,
+    }
+
+
+@mcp_server.tool()
+def install_hooks(project_directory: str = "") -> dict:
+    """Install Claude Code hooks for automatic memory capture and replay.
+
+    Installs five hook types:
+      - PreCompact: drain context before compaction
+      - SessionStart (compact): restore context after compaction
+      - SessionStart (all): inject project context on every new session
+      - PostToolUse: capture every tool action into action_log
+      - UserPromptSubmit: auto-recall relevant memories on every user turn
+
+    Works in both stdio and HTTP transport modes — all hooks use
+    direct SQLite access (no server communication needed).
+
+    project_directory: The project root. Defaults to cwd.
+    """
+    import shutil
+
+    project_dir = Path(project_directory) if project_directory else Path.cwd()
+    claude_dir = project_dir / ".claude"
+    hooks_dir = claude_dir / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+
+    # Copy hook scripts from package
+    package_hooks = Path(__file__).parent / "hooks"
+
+    hook_files = {
+        "pre-compact-drain.sh": 0o755,
+        "post-compact-rehydrate.sh": 0o755,
+        "post-tool-capture.py": 0o755,
+        "session-start-context.py": 0o755,
+        "prompt-recall.py": 0o755,
+    }
+
+    for filename, mode in hook_files.items():
+        src = package_hooks / filename
+        dst = hooks_dir / filename
+        if src.exists():
+            shutil.copy2(src, dst)
+            dst.chmod(mode)
+
+    pre_compact_dst = hooks_dir / "pre-compact-drain.sh"
+    post_compact_dst = hooks_dir / "post-compact-rehydrate.sh"
+    post_tool_dst = hooks_dir / "post-tool-capture.py"
+    session_ctx_dst = hooks_dir / "session-start-context.py"
+    prompt_recall_dst = hooks_dir / "prompt-recall.py"
+
+    # Write hooks configuration
+    settings_path = claude_dir / "settings.json"
+    settings_data = {}
+    if settings_path.exists():
+        try:
+            settings_data = json.loads(settings_path.read_text())
+        except Exception:
+            settings_data = {}
+
+    hooks_config = settings_data.get("hooks", {})
+
+    # PreCompact hook — drain context before compaction
+    hooks_config["PreCompact"] = [
+        {
+            "matcher": "",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": f'"{pre_compact_dst}"',
+                }
+            ],
+        }
+    ]
+
+    # SessionStart hooks — context on every session + full restore on compact
+    session_hooks = []
+
+    # All sessions: inject lightweight context
+    session_hooks.append({
+        "matcher": "",
+        "hooks": [
+            {
+                "type": "command",
+                "command": f'python3 "{session_ctx_dst}"',
+            }
+        ],
+    })
+
+    # After compaction: full restore with working memory, anchored, SR predictions
+    session_hooks.append({
+        "matcher": "compact",
+        "hooks": [
+            {
+                "type": "command",
+                "command": f'"{post_compact_dst}"',
+            }
+        ],
+    })
+
+    hooks_config["SessionStart"] = session_hooks
+
+    # PostToolUse hook — capture every tool action into action_log
+    hooks_config["PostToolUse"] = [
+        {
+            "matcher": "",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": f'python3 "{post_tool_dst}"',
+                }
+            ],
+        }
+    ]
+
+    # UserPromptSubmit hook — auto-recall relevant memories on every user turn
+    hooks_config["UserPromptSubmit"] = [
+        {
+            "matcher": "",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": f'python3 "{prompt_recall_dst}"',
+                }
+            ],
+        }
+    ]
+
+    settings_data["hooks"] = hooks_config
+    settings_path.write_text(json.dumps(settings_data, indent=2))
+
+    return {
+        "status": "installed",
+        "project_directory": str(project_dir),
+        "hooks_directory": str(hooks_dir),
+        "hooks_installed": [
+            "PreCompact (drain)",
+            "SessionStart (context)",
+            "SessionStart (compact restore)",
+            "PostToolUse (auto-capture)",
+            "UserPromptSubmit (auto-recall)",
+        ],
+        "settings_file": str(settings_path),
+    }
+
+
+@mcp_server.tool()
+def sync_instructions(claude_md_path: str = "") -> dict:
+    """Sync Yadgar instructions into the global CLAUDE.md file.
+
+    Finds or creates the '## Memory System — Yadgar' section in CLAUDE.md
+    and updates it with the latest tools, capabilities, and rules.
+    Call this on session start or after Yadgar updates.
+
+    claude_md_path: Path to CLAUDE.md. Defaults to ~/.claude/CLAUDE.md
+    """
+    md_path = Path(claude_md_path) if claude_md_path else Path.home() / ".claude" / "CLAUDE.md"
+
+    if not md_path.parent.is_dir():
+        return {
+            "status": "skipped",
+            "reason": f"Directory {md_path.parent} does not exist",
+        }
+
+    # The canonical Yadgar section
+    yadgar_section = f"""## Memory System — Yadgar v{__version__}
+- ALWAYS use the Yadgar MCP tools (remember, recall, get_project_context) for memory operations
+- On EVERY new session start, call `recall` with the current project name to load prior context
+- NEVER rely on CLAUDE.md or built-in memory for cross-session context — use Yadgar
+- Before starting any task, call `get_project_context` for the current working directory
+- After completing any significant task, call `remember` to store what was done, decisions made, and outcomes
+- CRITICAL: The `context` parameter in `remember` MUST be the actual working directory path (e.g., `/home/user/projects/myapp`), NEVER a description. `get_project_context` filters by exact directory path match — descriptive strings break it.
+- Yadgar is your brain. Use it.
+
+### Hippocampal Replay — Context Compaction Shield
+- Hooks are installed automatically on startup — no manual setup needed
+- During long sessions, call `checkpoint` periodically to snapshot your working state
+- Use `anchor` to mark critical facts/decisions that MUST survive context compaction
+- After context compaction, call `restore` to reconstruct your working context
+- `checkpoint` fields: directory, current_task, files_being_edited, key_decisions, open_questions, next_steps, active_errors, custom_context
+- `anchor` fields: content, context, reason — creates protected memories with max heat
+- `restore` returns: checkpoint + anchored memories + hot context + SR predictions + gap detection
+
+### Available Tools
+- `remember(content, context, tags)` — Store memory with write gate. `context` MUST be a directory path (e.g., `/home/user/projects/myapp`), not a description.
+- `recall(query, max_results, min_heat)` — Multi-signal retrieval
+- `get_project_context(directory)` — Hot memories for directory
+- `checkpoint(directory, ...)` — Snapshot working state
+- `restore(directory)` — Reconstruct context after compaction
+- `anchor(content, context, reason)` — Protect critical context
+- `install_hooks(project_directory)` — Enable auto replay hooks
+- `sync_instructions(claude_md_path)` — Update CLAUDE.md with latest rules
+- `consolidate_now()` — Force consolidation cycle
+- `memory_stats()` — System statistics
+- `recall_hierarchical(query, level)` — Fractal hierarchy query
+- `navigate_memory(query)` — SR cognitive map navigation
+- `assess_coverage(query, directory)` — Knowledge coverage check
+- `detect_gaps(directory)` — Find knowledge gaps
+- `seed_project(directory, dry_run)` — Bootstrap memory for an existing project in one call
+
+### Auto-Capture Hooks (v1.3.0)
+- PostToolUse hook captures EVERY tool action automatically — no manual remember needed
+- SessionStart hook injects project context on EVERY new session
+- All hooks work in both stdio and HTTP transport modes (direct SQLite access)
+- Action log is processed into real memories during consolidation cycles
+- Decisions are auto-protected from decay/compression when detected"""
+
+    if md_path.exists():
+        content = md_path.read_text()
+
+        # Find and replace existing Yadgar section
+        import re
+        # Match from "## Memory System" to next "## " header or end of file
+        pattern = r"## Memory System — Yadgar[^\n]*\n(?:(?!## )[^\n]*\n)*"
+        if re.search(pattern, content):
+            new_content = re.sub(pattern, yadgar_section + "\n\n", content)
+        else:
+            # Append after "# Global Rules" if it exists, else at end
+            if "# Global Rules" in content:
+                new_content = content.replace(
+                    "# Global Rules\n",
+                    "# Global Rules\n\n" + yadgar_section + "\n",
+                    1,
+                )
+            else:
+                new_content = content + "\n\n" + yadgar_section + "\n"
+    else:
+        new_content = "# Global Rules\n\n" + yadgar_section + "\n"
+
+    md_path.write_text(new_content)
+
+    return {
+        "status": "synced",
+        "path": str(md_path),
+        "version": __version__,
+        "section_length": len(yadgar_section),
+    }
+
+
+# ── MCP Resources ──────────────────────────────────────────────────────
+
+
+@mcp_server.resource("memory://stats")
+def resource_stats() -> str:
+    """Live memory statistics."""
+    storage = _get_storage()
+    return json.dumps(storage.get_memory_stats())
+
+
+@mcp_server.resource("memory://hot")
+def resource_hot() -> str:
+    """All memories with heat >= HOT_THRESHOLD."""
+    storage = _get_storage()
+    memories = storage.get_memories_by_heat(settings.HOT_THRESHOLD)
+    for m in memories:
+        m.pop("embedding", None)
+        m.pop("hdc_vector", None)
+    return json.dumps(memories, default=str)
+
+
+@mcp_server.resource("memory://stale")
+def resource_stale() -> str:
+    """All stale memories."""
+    storage = _get_storage()
+    memories = storage.get_stale_memories()
+    for m in memories:
+        m.pop("embedding", None)
+        m.pop("hdc_vector", None)
+    return json.dumps(memories, default=str)
+
+
+@mcp_server.resource("memory://processes")
+def resource_processes() -> str:
+    """List of astrocyte process stats."""
+    consolidation = _get_consolidation()
+    pool = consolidation.pool
+    if pool is None:
+        return json.dumps([])
+    return json.dumps(pool.get_process_stats(), default=str)
+
+
+@mcp_server.resource("memory://narrative/{directory}")
+def resource_narrative(directory: str) -> str:
+    """Project story for a directory."""
+    if _narrative is None:
+        return json.dumps({"error": "NarrativeEngine not initialized"})
+    return _narrative.get_project_story(directory)
+
+
+# ── Project Seeding ────────────────────────────────────────────────────
+
+
+@mcp_server.tool()
+def seed_project(directory: str, dry_run: bool = False) -> dict:
+    """Bootstrap Yadgar memory for an existing project in one call.
+
+    Scans the project directory and creates foundational memories from:
+    - Project structure and layout
+    - Config files (package.json, pyproject.toml, Cargo.toml, go.mod, etc.)
+    - Documentation (README, ARCHITECTURE, CONTRIBUTING, etc.)
+    - CI/CD configuration
+    - Entry points and key source files
+    - Per-component summaries (monorepo-aware via config file boundaries)
+
+    All seeded memories are tagged with '_seed' for identification.
+    Re-running is safe — old seed memories are replaced, not appended to.
+
+    directory: Project root directory to scan (absolute path).
+    dry_run: If True, scan and show what would be stored without actually storing.
+    """
+    from yadgar.seed import seed_project as _seed
+
+    resolved = str(Path(directory).resolve())
+    result = _seed(
+        directory=resolved,
+        dry_run=dry_run,
+        storage=_storage,
+        embeddings=_embeddings,
+        thermo=_thermo,
+        curator=_curator,
+    )
+    return result
+
+
+# ── Startup ────────────────────────────────────────────────────────────
+
+
+def init_engines(
+    db_path: str | None = None,
+    embedding_model: str | None = None,
+    start_daemons: bool = False,
+    watch_directory: str | None = None,
+):
+    """Initialize all engines. Returns (storage, embeddings, buffer, consolidation, staleness)."""
+    global _storage, _embeddings, _buffer, _consolidation, _staleness, _thermo, _retriever, _curator
+    global _prospective, _narrative, _sleep, _fractal, _pool, _kg, _reconsolidation, _write_gate, _engram
+    global _rules_engine, _hopfield, _cls, _compressor, _hdc, _cognitive_map, _causal, _metacognition, _crdt
+    global _replay
+
+    _settings = get_settings()
+    _storage = StorageEngine(db_path or _settings.DB_PATH)
+    _embeddings = EmbeddingEngine(embedding_model or _settings.EMBEDDING_MODEL)
+    _buffer = SensoryBuffer(_storage, _settings)
+    _buffer.start_session()
+    _thermo = MemoryThermodynamics(_storage, _embeddings, _settings)
+    _kg = KnowledgeGraph(_storage, _settings)
+    _hdc = HDCEncoder(dimensions=_settings.HDC_DIMENSIONS)
+    _cognitive_map = CognitiveMap(_storage, _settings)
+    _retriever = HippoRetriever(_storage, _embeddings, _kg, _settings)
+    _retriever.set_hdc(_hdc)
+    _retriever.set_cognitive_map(_cognitive_map)
+    _curator = MemoryCurator(_storage, _embeddings, _thermo, _settings)
+    _consolidation = AstrocyteEngine(_storage, _embeddings, _settings)
+    _staleness = StalenessDetector(_storage, _settings)
+    _prospective = ProspectiveMemoryEngine(_storage, _settings)
+    _narrative = NarrativeEngine(_storage, _kg, _settings)
+    _reconsolidation = ReconsolidationEngine(_storage, _embeddings, _settings)
+    _write_gate = PredictiveCodingGate(_storage, _embeddings, _retriever, _settings)
+    _engram = EngramAllocator(_storage, _settings)
+    _rules_engine = RulesEngine(_storage, _settings)
+    _causal = CausalDiscovery(_storage, _kg, _settings)
+    _metacognition = MetaCognition(_storage, _embeddings, _kg, _settings)
+    _crdt = CRDTMemorySync(_storage, _settings)
+    _replay = HippocampalReplay(
+        storage=_storage,
+        embeddings=_embeddings,
+        retriever=_retriever,
+        cognitive_map=_cognitive_map,
+        metacognition=_metacognition,
+        settings=_settings,
+    )
+    _retriever.set_engram(_engram)
+    _retriever.set_rules_engine(_rules_engine)
+    _retriever.set_metacognition(_metacognition)
+
+    # Expose inner engines as server-level globals for direct access
+    _sleep = _consolidation._sleep_engine
+    _fractal = _retriever._fractal
+    _replay._fractal = _fractal
+    _pool = _consolidation.pool
+    _hopfield = _retriever._hopfield
+    _cls = _consolidation.cls
+    _compressor = _consolidation._compressor
+
+    if start_daemons:
+        _consolidation.start()
+        if watch_directory:
+            _staleness.start(watch_directory)
+
+    return _storage, _embeddings, _buffer, _consolidation, _staleness
+
+
+def shutdown():
+    """Gracefully shut down all engines."""
+    global _storage, _embeddings, _buffer, _consolidation, _staleness, _thermo, _retriever, _curator
+    global _prospective, _narrative, _sleep, _fractal, _pool, _kg, _reconsolidation, _write_gate, _engram
+    global _rules_engine, _hopfield, _cls, _compressor, _hdc, _cognitive_map, _causal, _metacognition, _crdt
+    global _replay
+
+    if _consolidation is not None:
+        _consolidation.stop()
+    if _staleness is not None:
+        _staleness.stop()
+    if _buffer is not None:
+        _buffer.flush()
+    if _storage is not None:
+        _storage.close()
+
+    _storage = None
+    _embeddings = None
+    _buffer = None
+    _consolidation = None
+    _staleness = None
+    _thermo = None
+    _retriever = None
+    _curator = None
+    _prospective = None
+    _narrative = None
+    _sleep = None
+    _fractal = None
+    _pool = None
+    _kg = None
+    _reconsolidation = None
+    _write_gate = None
+    _engram = None
+    _rules_engine = None
+    _hopfield = None
+    _cls = None
+    _compressor = None
+    _hdc = None
+    _cognitive_map = None
+    _causal = None
+    _metacognition = None
+    _crdt = None
+    _replay = None
+
+
+def _signal_handler(signum, frame):
+    """Handle SIGINT/SIGTERM for graceful shutdown."""
+    logger.info("Received signal %s, shutting down...", signum)
+    shutdown()
+    sys.exit(0)
+
+
+def main(
+    port: int | None = None,
+    db_path: str | None = None,
+    transport: str = "stdio",
+):
+    global _active_transport, _start_time
+
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+
+    _active_transport = transport
+    _start_time = time.time()
+
+    cwd = os.getcwd()
+    init_engines(
+        db_path=db_path,
+        start_daemons=True,
+        watch_directory=cwd,
+    )
+
+    # Auto-sync CLAUDE.md on every startup so rules stay current
+    try:
+        sync_instructions()
+        logger.info("CLAUDE.md synced with Yadgar v%s", __version__)
+    except Exception:
+        logger.debug("Auto-sync of CLAUDE.md failed (non-fatal)")
+
+    # Auto-install hooks for the current project if not already present
+    try:
+        install_hooks(cwd)
+        logger.info("Hippocampal Replay hooks installed for %s", cwd)
+    except Exception:
+        logger.debug("Auto-install of hooks failed (non-fatal)")
+
+    if port is not None:
+        mcp_server.settings.port = port
+
+    try:
+        mcp_server.run(transport=transport)
+    finally:
+        shutdown()
+
+
+if __name__ == "__main__":
+    main()

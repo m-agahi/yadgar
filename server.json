@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "org.codeberg.maxagahi/yadgar",
+  "title": "Yadgar",
+  "description": "Biologically-inspired persistent memory engine for Claude Code",
+  "repository": {
+    "url": "https://codeberg.org/maxagahi/yadgar",
+    "source": "codeberg"
+  },
+  "version": "1.4.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "yadgar",
+      "version": "1.4.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

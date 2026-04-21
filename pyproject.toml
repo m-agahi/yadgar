@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "yadgar"
+version = "1.6.0"
+description = "Biologically-inspired persistent memory engine for Claude Code"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    { name = "maxagahi" },
+]
+keywords = [
+    "mcp",
+    "claude",
+    "memory",
+    "persistent-memory",
+    "cognitive-architecture",
+    "hopfield-networks",
+    "knowledge-graph",
+    "neuroscience",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "fastapi>=0.109.1",
+    "sse-starlette>=1.6.0",
+    "uvicorn>=0.24.0",
+    "mcp>=1.23.0",
+    "sentence-transformers>=2.2.0",
+    "watchdog>=3.0.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.0.0",
+    "numpy>=1.24.0",
+    "surrealdb>=1.0.0",
+    "networkx>=3.0",
+]
+
+[project.scripts]
+yadgar = "yadgar.__main__:cli"
+
+[project.urls]
+Homepage = "https://codeberg.org/maxagahi/yadgar"
+Repository = "https://codeberg.org/maxagahi/yadgar"
+Issues = "https://codeberg.org/maxagahi/yadgar/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["yadgar"]
+
+[tool.pytest.ini_options]
+testpaths = ["yadgar/tests"]
