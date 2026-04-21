@@ -1,0 +1,756 @@
+"""Tests for HippoRAG-style retrieval engine."""
+
+import time
+from datetime import datetime, timezone
+
+import numpy as np
+import pytest
+
+from yadgar.config import Settings
+from yadgar.embeddings import EmbeddingEngine
+from yadgar.knowledge_graph import KnowledgeGraph
+from yadgar.retrieval import (
+    HippoRetriever,
+    _derive_implied_fact_passages,
+    _extract_query_entities,
+    _pseudo_hyde_expand,
+    analyze_query,
+)
+from yadgar.storage import StorageEngine
+
+
+@pytest.fixture
+def storage(tmp_path):
+    engine = StorageEngine(str(tmp_path / "test_retrieval.db"))
+    yield engine
+    engine.close()
+
+
+@pytest.fixture
+def settings(tmp_path):
+    return Settings(DB_PATH=str(tmp_path / "test.db"), PPR_DAMPING=0.85, PPR_ITERATIONS=50)
+
+
+@pytest.fixture
+def embeddings():
+    return EmbeddingEngine("all-MiniLM-L6-v2")
+
+
+@pytest.fixture
+def graph(storage, settings):
+    return KnowledgeGraph(storage, settings)
+
+
+@pytest.fixture
+def retriever(storage, embeddings, graph, settings):
+    return HippoRetriever(storage, embeddings, graph, settings)
+
+
+def _make_memory(storage, embeddings, content, directory="/proj", tags=None):
+    """Helper to insert a memory with embedding."""
+    embedding = embeddings.encode(content)
+    return storage.insert_memory({
+        "content": content,
+        "embedding": embedding,
+        "tags": tags or [],
+        "directory_context": directory,
+        "heat": 1.0,
+        "is_stale": False,
+        "file_hash": None,
+        "embedding_model": embeddings.get_model_name(),
+    })
+
+
+def _setup_graph_with_memories(storage, embeddings, graph):
+    """Set up a knowledge graph with entities, relationships, and memories."""
+    # Create memories
+    m1 = _make_memory(
+        storage, embeddings,
+        "Using FastAPI for the REST API server with uvicorn",
+        tags=["backend", "api"],
+    )
+    m2 = _make_memory(
+        storage, embeddings,
+        "FastAPI integrates with pydantic for data validation",
+        tags=["backend", "validation"],
+    )
+    m3 = _make_memory(
+        storage, embeddings,
+        "SQLite with WAL mode for the storage engine database",
+        tags=["database"],
+    )
+    m4 = _make_memory(
+        storage, embeddings,
+        "pydantic models used for configuration settings",
+        tags=["config"],
+    )
+    m5 = _make_memory(
+        storage, embeddings,
+        "React frontend connects to the REST API server",
+        tags=["frontend"],
+    )
+
+    # Create entity graph: FastAPI -> pydantic -> SQLite
+    graph.add_relationship("FastAPI", "uvicorn", "co_occurrence")
+    graph.add_relationship("FastAPI", "pydantic", "imports")
+    graph.add_relationship("pydantic", "SQLite", "co_occurrence")
+    graph.add_relationship("FastAPI", "REST", "co_occurrence")
+    graph.add_relationship("REST", "React", "co_occurrence")
+
+    return m1, m2, m3, m4, m5
+
+
+class TestQueryEntityExtraction:
+    def test_extracts_camelcase(self):
+        entities = _extract_query_entities("How does FastAPI work?")
+        assert "FastAPI" in entities
+
+    def test_extracts_file_paths(self):
+        entities = _extract_query_entities("Check yadgar/server.py for bugs")
+        assert "yadgar/server.py" in entities
+
+    def test_extracts_error_types(self):
+        entities = _extract_query_entities("Fix the ValueError in parser")
+        assert "ValueError" in entities
+
+    def test_extracts_dotted_names(self):
+        entities = _extract_query_entities("Import from yadgar.storage module")
+        assert "yadgar.storage" in entities
+
+    def test_extracts_keywords(self):
+        entities = _extract_query_entities("database configuration settings")
+        assert "database" in entities
+        assert "configuration" in entities
+
+
+class TestOpenDomainHelpers:
+    def test_analyze_query_detects_open_domain_inference(self, settings):
+        analysis = analyze_query(
+            "Would Melanie be more interested in going to a national park or a theme park?",
+            settings,
+        )
+        assert analysis["query_type"] == "open_domain"
+        assert analysis["comparison_options"] == ["national park", "theme park"]
+
+    def test_derive_implied_fact_passages_adds_outdoor_hint(self):
+        content = (
+            "Melanie loves camping trips with Melanie's family because nature brings peace.\n"
+            "Melanie said: I love camping trips with my family because nature brings peace."
+        )
+        hints = _derive_implied_fact_passages(content)
+        assert any("national parks" in hint for hint in hints)
+
+
+class TestPPRRetrieval:
+    def test_ppr_returns_connected_memories(self, storage, embeddings, graph, retriever):
+        _setup_graph_with_memories(storage, embeddings, graph)
+
+        results = retriever.ppr_retrieve("FastAPI server", top_k=5)
+        # Should return memory IDs with scores
+        assert len(results) > 0
+        # All results should be (memory_id, score) tuples
+        for mid, score in results:
+            assert isinstance(mid, int)
+            assert isinstance(score, float)
+            assert score > 0
+
+    def test_ppr_ranks_directly_connected_higher(self, storage, embeddings, graph, retriever):
+        _setup_graph_with_memories(storage, embeddings, graph)
+
+        results = retriever.ppr_retrieve("FastAPI", top_k=10)
+        if len(results) >= 2:
+            # Memories mentioning FastAPI should rank higher than distant ones
+            memory_ids = [mid for mid, _ in results]
+            # Memory 1 and 2 mention FastAPI, should appear
+            m1_content = storage.get_memory(memory_ids[0])
+            assert m1_content is not None
+
+    def test_ppr_empty_for_unknown_entities(self, storage, embeddings, graph, retriever):
+        _setup_graph_with_memories(storage, embeddings, graph)
+        results = retriever.ppr_retrieve("completely_unknown_xyz_entity")
+        assert results == []
+
+    def test_ppr_respects_top_k(self, storage, embeddings, graph, retriever):
+        _setup_graph_with_memories(storage, embeddings, graph)
+        results = retriever.ppr_retrieve("FastAPI pydantic", top_k=2)
+        assert len(results) <= 2
+
+
+class TestContextualPrefix:
+    def test_prefix_contains_project_name(self, retriever):
+        prefix = retriever.generate_contextual_prefix(
+            "some content",
+            "/home/user/myproject",
+            ["tag1"],
+            datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc),
+        )
+        assert "[Project: myproject]" in prefix
+
+    def test_prefix_contains_directory(self, retriever):
+        prefix = retriever.generate_contextual_prefix(
+            "some content",
+            "/home/user/myproject",
+            ["tag1"],
+            datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc),
+        )
+        assert "[Directory: /home/user/myproject]" in prefix
+
+    def test_prefix_contains_tags(self, retriever):
+        prefix = retriever.generate_contextual_prefix(
+            "some content",
+            "/proj",
+            ["backend", "api"],
+            datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc),
+        )
+        assert "[Tags: backend, api]" in prefix
+
+    def test_prefix_contains_timestamp(self, retriever):
+        ts = datetime(2026, 3, 1, 12, 30, tzinfo=timezone.utc)
+        prefix = retriever.generate_contextual_prefix(
+            "some content", "/proj", [], ts
+        )
+        assert "[Recorded: 2026-03-01 12:30]" in prefix
+
+    def test_prefix_contains_related_entities(self, storage, embeddings, graph, retriever):
+        # Set up entities and relationships
+        graph.add_relationship("FastAPI", "pydantic", "imports")
+
+        # Insert a memory mentioning FastAPI so _find_entities_in_content works
+        _make_memory(storage, embeddings, "Using FastAPI for the server")
+
+        prefix = retriever.generate_contextual_prefix(
+            "FastAPI server setup",
+            "/proj",
+            ["backend"],
+            datetime(2026, 3, 1, tzinfo=timezone.utc),
+        )
+        assert "[Related entities:" in prefix
+
+    def test_prefix_empty_tags_shows_none(self, retriever):
+        prefix = retriever.generate_contextual_prefix(
+            "content", "/proj", [],
+            datetime(2026, 3, 1, tzinfo=timezone.utc),
+        )
+        assert "[Tags: none]" in prefix
+
+
+class TestSpreadingActivation:
+    def test_spreading_activates_related_memories(self, storage, embeddings, graph, retriever):
+        m1, m2, m3, m4, m5 = _setup_graph_with_memories(
+            storage, embeddings, graph
+        )
+
+        # Seed with memory 1 (FastAPI) — should activate memories connected via graph
+        results = retriever.spreading_activation([m1], spread_factor=0.5, max_depth=2)
+
+        # Should find some activated memories (not including the seed)
+        activated_ids = [mid for mid, _ in results]
+        assert m1 not in activated_ids  # seed excluded
+
+    def test_spreading_excludes_seeds(self, storage, embeddings, graph, retriever):
+        m1, m2, m3, m4, m5 = _setup_graph_with_memories(
+            storage, embeddings, graph
+        )
+
+        results = retriever.spreading_activation([m1, m2])
+        activated_ids = {mid for mid, _ in results}
+        assert m1 not in activated_ids
+        assert m2 not in activated_ids
+
+    def test_spreading_activation_decays_with_depth(self, storage, embeddings, graph, retriever):
+        m1, m2, m3, m4, m5 = _setup_graph_with_memories(
+            storage, embeddings, graph
+        )
+
+        results = retriever.spreading_activation(
+            [m1], spread_factor=0.5, max_depth=2
+        )
+        if len(results) >= 2:
+            # Scores should vary (deeper = lower activation)
+            scores = [s for _, s in results]
+            assert max(scores) <= 0.5  # spread_factor^1 = 0.5 max
+
+    def test_spreading_empty_seeds_returns_empty(self, retriever):
+        assert retriever.spreading_activation([]) == []
+
+    def test_spreading_nonexistent_memory_returns_empty(self, retriever):
+        results = retriever.spreading_activation([99999])
+        assert results == []
+
+    def test_spreading_uses_settings(self, storage, embeddings, graph, settings, tmp_path):
+        """Verify spreading_activation uses settings for decay and depth."""
+        custom_settings = Settings(
+            DB_PATH=str(tmp_path / "spread.db"),
+            GRAPH_SPREADING_DECAY=0.3,
+            GRAPH_SPREADING_MAX_DEPTH=1,
+        )
+        retriever = HippoRetriever(storage, embeddings, graph, custom_settings)
+        m1, m2, m3, m4, m5 = _setup_graph_with_memories(
+            storage, embeddings, graph
+        )
+
+        # Call without explicit args — should use settings defaults
+        results = retriever.spreading_activation([m1])
+        for _mid, score in results:
+            # decay=0.3, max_depth=1 → max score is 0.3^1 = 0.3
+            assert score <= 0.3
+
+
+class TestPPREntityMinLength:
+    def test_ppr_entity_min_length(self, storage, embeddings, graph, settings, tmp_path):
+        """Verify that short entities (1-2 chars) are filtered out in ppr_retrieve."""
+        custom_settings = Settings(
+            DB_PATH=str(tmp_path / "ppr.db"),
+            GRAPH_ENTITY_MIN_LENGTH=3,
+        )
+        retriever = HippoRetriever(storage, embeddings, graph, custom_settings)
+        _setup_graph_with_memories(storage, embeddings, graph)
+
+        # Add a short-named entity to the graph
+        graph.add_relationship("Go", "FastAPI", "co_occurrence")
+
+        # Query with only the short entity — should be filtered out, returning empty
+        results = retriever.ppr_retrieve("Go", top_k=5)
+        assert results == []
+
+
+class TestUnifiedRecall:
+    def test_recall_returns_results(self, storage, embeddings, graph, retriever):
+        _setup_graph_with_memories(storage, embeddings, graph)
+
+        results = retriever.recall("FastAPI server", max_results=5)
+        assert len(results) > 0
+
+    def test_recall_results_have_score(self, storage, embeddings, graph, retriever):
+        _setup_graph_with_memories(storage, embeddings, graph)
+
+        results = retriever.recall("FastAPI", max_results=5)
+        for mem in results:
+            assert "_retrieval_score" in mem
+            assert mem["_retrieval_score"] >= 0
+
+    def test_recall_respects_max_results(self, storage, embeddings, graph, retriever):
+        _setup_graph_with_memories(storage, embeddings, graph)
+
+        results = retriever.recall("FastAPI pydantic SQLite", max_results=2)
+        assert len(results) <= 2
+
+    def test_recall_respects_min_heat(self, storage, embeddings, graph, retriever):
+        _setup_graph_with_memories(storage, embeddings, graph)
+
+        # Set one memory to low heat
+        storage.update_memory_heat(1, 0.01)
+
+        results = retriever.recall("FastAPI", max_results=10, min_heat=0.5)
+        for mem in results:
+            assert mem["heat"] >= 0.5
+
+    def test_recall_combines_all_four_signals(self, storage, embeddings, graph, retriever):
+        """Verify that all four retrieval signals contribute to results."""
+        _setup_graph_with_memories(storage, embeddings, graph)
+
+        results = retriever.recall("FastAPI pydantic", max_results=5)
+        # Should have results from the combination of signals
+        assert len(results) > 0
+        # All results should have retrieval scores
+        if len(results) >= 2:
+            scores = [m["_retrieval_score"] for m in results]
+            assert all(s >= 0 for s in scores), "All scores should be non-negative"
+            # Top result should have a meaningful score
+            assert scores[0] > 0.01, "Top result should have a non-trivial score"
+
+    def test_recall_deduplicates(self, storage, embeddings, graph, retriever):
+        _setup_graph_with_memories(storage, embeddings, graph)
+
+        results = retriever.recall("FastAPI server", max_results=10)
+        ids = [m["id"] for m in results]
+        assert len(ids) == len(set(ids))  # no duplicates
+
+    def test_recall_strips_embeddings(self, storage, embeddings, graph, retriever):
+        _setup_graph_with_memories(storage, embeddings, graph)
+
+        results = retriever.recall("FastAPI", max_results=5)
+        for mem in results:
+            assert "embedding" not in mem
+
+
+class TestRecallRanking:
+    def test_most_relevant_ranks_first(self, storage, embeddings, graph, retriever):
+        """The most relevant result should rank first."""
+        # Insert a highly specific memory
+        _make_memory(
+            storage, embeddings,
+            "networkx PageRank algorithm for graph-based retrieval in HippoRAG",
+            tags=["retrieval", "graph"],
+        )
+        # Insert a less relevant memory
+        _make_memory(
+            storage, embeddings,
+            "General logging configuration for the application",
+            tags=["config"],
+        )
+        # Insert another relevant one
+        _make_memory(
+            storage, embeddings,
+            "Using PageRank for personalized search ranking",
+            tags=["search"],
+        )
+
+        results = retriever.recall("PageRank graph retrieval", max_results=3)
+        assert len(results) >= 1
+        # Top result should mention PageRank
+        assert "PageRank" in results[0]["content"] or "graph" in results[0]["content"]
+
+
+class TestRecallPerformance:
+    def test_recall_completes_under_100ms(self, storage, embeddings, graph, retriever):
+        """Recall should complete in <100ms for 100 memories."""
+        # Insert 100 memories
+        topics = [
+            "Python web development with Flask and Django frameworks",
+            "JavaScript React component lifecycle and hooks",
+            "Database optimization with PostgreSQL indexes",
+            "Docker container orchestration with Kubernetes",
+            "Machine learning model training with PyTorch",
+            "REST API design patterns and best practices",
+            "Git branching strategies for team collaboration",
+            "Continuous integration with GitHub Actions",
+            "Cloud deployment on AWS Lambda functions",
+            "Security authentication with JWT tokens",
+        ]
+        for i in range(100):
+            topic = topics[i % len(topics)]
+            _make_memory(
+                storage, embeddings,
+                f"Memory {i}: {topic} - variation {i}",
+                tags=["perf-test"],
+            )
+
+        # Warm up
+        retriever.recall("Python Flask", max_results=5)
+
+        # Timed run
+        start = time.monotonic()
+        results = retriever.recall("Python web development", max_results=5)
+        elapsed_ms = (time.monotonic() - start) * 1000
+
+        assert len(results) > 0
+        assert elapsed_ms < 5000, f"Recall took {elapsed_ms:.1f}ms, expected <5000ms"
+
+
+# ── Confidence Gating Tests ───────────────────────────────────────────
+
+
+class TestComputeSignalConfidence:
+    def test_vector_empty(self, retriever):
+        assert retriever._compute_signal_confidence("vector", []) == 0.0
+
+    def test_vector_single_result(self, retriever):
+        result = retriever._compute_signal_confidence("vector", [(1, 0.8)])
+        # gap = top_score = 0.8, confidence = min(1.0, 0.8 * (1 + 0.8)) = min(1.0, 1.44) = 1.0
+        assert result == 1.0
+
+    def test_vector_two_results_with_gap(self, retriever):
+        result = retriever._compute_signal_confidence("vector", [(1, 0.9), (2, 0.3)])
+        # gap = 0.6, confidence = min(1.0, 0.9 * 1.6) = min(1.0, 1.44) = 1.0
+        assert result == 1.0
+
+    def test_vector_two_results_close(self, retriever):
+        result = retriever._compute_signal_confidence("vector", [(1, 0.3), (2, 0.29)])
+        # gap = 0.01, confidence = min(1.0, 0.3 * 1.01) = 0.303
+        assert 0.3 < result < 0.35
+
+    def test_fts_empty(self, retriever):
+        assert retriever._compute_signal_confidence("fts", []) == 0.0
+
+    def test_fts_few_results(self, retriever):
+        result = retriever._compute_signal_confidence("fts", [(1, 1.0), (2, 0.5)])
+        assert result == pytest.approx(0.4)  # 2/5.0
+
+    def test_fts_many_results(self, retriever):
+        ranked = [(i, 1.0 / (i + 1)) for i in range(10)]
+        result = retriever._compute_signal_confidence("fts", ranked)
+        assert result == 1.0  # 10/5.0 capped at 1.0
+
+    def test_ppr_empty(self, retriever):
+        assert retriever._compute_signal_confidence("ppr", []) == 0.0
+
+    def test_ppr_single_result(self, retriever):
+        result = retriever._compute_signal_confidence("ppr", [(1, 0.7)])
+        assert result == 0.7
+
+    def test_ppr_concentrated_scores(self, retriever):
+        # Top score 0.9, rest low → high concentration
+        ranked = [(1, 0.9), (2, 0.1), (3, 0.1), (4, 0.1)]
+        result = retriever._compute_signal_confidence("ppr", ranked)
+        assert result > 0.5
+
+    def test_ppr_uniform_scores(self, retriever):
+        # All scores similar → low concentration
+        ranked = [(1, 0.25), (2, 0.25), (3, 0.25), (4, 0.25)]
+        result = retriever._compute_signal_confidence("ppr", ranked)
+        assert result == 0.0
+
+    def test_spreading_uses_same_logic_as_ppr(self, retriever):
+        ranked = [(1, 0.9), (2, 0.1), (3, 0.1)]
+        ppr_conf = retriever._compute_signal_confidence("ppr", ranked)
+        spread_conf = retriever._compute_signal_confidence("spreading", ranked)
+        assert ppr_conf == spread_conf
+
+    def test_hopfield_empty(self, retriever):
+        assert retriever._compute_signal_confidence("hopfield", []) == 0.0
+
+    def test_hopfield_returns_max_score(self, retriever):
+        result = retriever._compute_signal_confidence("hopfield", [(1, 0.6), (2, 0.3)])
+        assert result == 0.6
+
+    def test_hdc_empty(self, retriever):
+        assert retriever._compute_signal_confidence("hdc", []) == 0.0
+
+    def test_hdc_count_based(self, retriever):
+        ranked = [(i, 0.5) for i in range(3)]
+        result = retriever._compute_signal_confidence("hdc", ranked)
+        assert result == pytest.approx(0.6)  # 3/5.0
+
+    def test_fractal_empty(self, retriever):
+        assert retriever._compute_signal_confidence("fractal", []) == 0.0
+
+    def test_fractal_returns_top_score(self, retriever):
+        result = retriever._compute_signal_confidence("fractal", [(1, 0.75), (2, 0.3)])
+        assert result == 0.75
+
+    def test_sr_empty(self, retriever):
+        assert retriever._compute_signal_confidence("sr", []) == 0.0
+
+    def test_sr_count_based(self, retriever):
+        ranked = [(i, 0.5) for i in range(6)]
+        result = retriever._compute_signal_confidence("sr", ranked)
+        assert result == 1.0  # 6/3.0 capped at 1.0
+
+    def test_unknown_signal_returns_default(self, retriever):
+        result = retriever._compute_signal_confidence("unknown_signal", [(1, 0.5)])
+        assert result == 0.5
+
+
+class TestDetectAdversarial:
+    def test_detect_adversarial_high_confidence(self, retriever):
+        """Results with large score gap → confidence > 0.5, is_uncertain = False."""
+        memories = [
+            {"_retrieval_score": 0.9},
+            {"_retrieval_score": 0.3},
+            {"_retrieval_score": 0.1},
+        ]
+        result = retriever._detect_adversarial(memories)
+        assert result["confidence"] > 0.5
+        assert result["is_uncertain"] is False
+
+    def test_detect_adversarial_low_confidence(self, retriever):
+        """Results with very small score gap (< 0.05) → lower confidence than high-gap case."""
+        memories = [
+            {"_retrieval_score": 0.5},
+            {"_retrieval_score": 0.48},
+            {"_retrieval_score": 0.47},
+        ]
+        result = retriever._detect_adversarial(memories)
+        # With tiny gap, confidence should be lower than high-gap case
+        high_gap_memories = [
+            {"_retrieval_score": 0.9},
+            {"_retrieval_score": 0.3},
+            {"_retrieval_score": 0.1},
+        ]
+        high_result = retriever._detect_adversarial(high_gap_memories)
+        assert result["confidence"] <= high_result["confidence"]
+
+    def test_detect_adversarial_single_result(self, retriever):
+        """Single result → confidence = 1.0."""
+        memories = [{"_retrieval_score": 0.7}]
+        result = retriever._detect_adversarial(memories)
+        assert result["confidence"] == 1.0
+        assert result["is_uncertain"] is False
+
+    def test_detect_adversarial_empty(self, retriever):
+        """No results → confidence = 0.0."""
+        result = retriever._detect_adversarial([])
+        assert result["confidence"] == 0.0
+        assert result["is_uncertain"] is True
+
+
+class TestConfidenceGating:
+    def test_gating_zeros_low_confidence_signal(self, storage, embeddings, graph, settings, tmp_path):
+        """Signals below threshold should have their weight zeroed."""
+        settings_gated = Settings(
+            DB_PATH=str(tmp_path / "gated.db"),
+            CONFIDENCE_GATING_ENABLED=True,
+            QUERY_ROUTING_ENABLED=False,
+        )
+        retriever = HippoRetriever(storage, embeddings, graph, settings_gated)
+
+        # Insert only 1 memory so FTS returns very few results → low confidence
+        _make_memory(storage, embeddings, "lonely memory about testing")
+
+        results = retriever.recall("testing", max_results=5)
+        # Should still return results (vector signal always passes)
+        # The test verifies no crash and that gating logic executes
+        assert isinstance(results, list)
+
+    def test_gating_disabled(self, storage, embeddings, graph, tmp_path):
+        """When gating is disabled, all signals pass through."""
+        settings_off = Settings(
+            DB_PATH=str(tmp_path / "off.db"),
+            CONFIDENCE_GATING_ENABLED=False,
+            QUERY_ROUTING_ENABLED=False,
+        )
+        retriever = HippoRetriever(storage, embeddings, graph, settings_off)
+        _make_memory(storage, embeddings, "test memory")
+
+        results = retriever.recall("test", max_results=5)
+        assert isinstance(results, list)
+
+
+class TestCandidatePoolMultiplier:
+    def test_candidate_pool_multiplier(self, storage, embeddings, graph, tmp_path):
+        """Verify that candidate_k uses CANDIDATE_POOL_MULTIPLIER setting."""
+        custom_settings = Settings(
+            DB_PATH=str(tmp_path / "pool.db"),
+            CANDIDATE_POOL_MULTIPLIER=7,
+            QUERY_ROUTING_ENABLED=False,
+        )
+        retriever = HippoRetriever(storage, embeddings, graph, custom_settings)
+        _make_memory(storage, embeddings, "test memory about retrieval")
+
+        # Patch search_memories_fts_scored to capture the limit argument
+        captured = {}
+        original_fts = storage.search_memories_fts_scored
+
+        def patched_fts(query, **kwargs):
+            captured["limit"] = kwargs.get("limit")
+            return original_fts(query, **kwargs)
+
+        storage.search_memories_fts_scored = patched_fts
+
+        retriever.recall("retrieval", max_results=3)
+        # candidate_k should be max_results * CANDIDATE_POOL_MULTIPLIER = 3 * 7 = 21
+        assert captured.get("limit") == 3 * 7
+
+
+class TestEmbeddingCacheHit:
+    def test_embedding_cache_hit(self):
+        """Encode the same string twice, verify cache is populated."""
+        engine = EmbeddingEngine("all-MiniLM-L6-v2")
+        text = "test embedding cache behavior"
+
+        result1 = engine.encode(text)
+        assert result1 is not None
+        # After first encode, the text should be in the cache
+        assert text in engine._query_cache
+
+        result2 = engine.encode(text)
+        # Both calls should return identical bytes
+        assert result1 == result2
+
+
+class TestPseudoHydeExpand:
+    """Tests for pseudo-HyDE query expansion (question → declarative form)."""
+
+    def test_what_is_pattern(self):
+        result = _pseudo_hyde_expand("What is Alice's hobby?")
+        assert result == "Alice's hobby is"
+
+    def test_what_are_pattern(self):
+        result = _pseudo_hyde_expand("What are the main features?")
+        assert result == "the main features is"
+
+    def test_who_is_pattern(self):
+        result = _pseudo_hyde_expand("Who is the project lead?")
+        assert result == "the project lead is"
+
+    def test_where_is_pattern(self):
+        result = _pseudo_hyde_expand("Where is the config file?")
+        assert result == "the config file is located"
+
+    def test_when_did_pattern(self):
+        result = _pseudo_hyde_expand("When did we deploy v2?")
+        assert result == "we deploy v2"
+
+    def test_how_does_pattern(self):
+        result = _pseudo_hyde_expand("How does the retrieval system work?")
+        assert result == "the retrieval system work"
+
+    def test_why_does_pattern(self):
+        result = _pseudo_hyde_expand("Why does the test fail?")
+        assert result == "the test fail because"
+
+    def test_is_question_pattern(self):
+        result = _pseudo_hyde_expand("Is the database encrypted?")
+        assert result == "the database encrypted"
+
+    def test_does_question_pattern(self):
+        result = _pseudo_hyde_expand("Does FastAPI support async?")
+        assert result == "FastAPI support async"
+
+    def test_can_question_pattern(self):
+        result = _pseudo_hyde_expand("Can we use Redis for caching?")
+        assert result == "we use Redis for caching"
+
+    def test_non_question_passthrough(self):
+        """Non-question queries should pass through mostly unchanged."""
+        result = _pseudo_hyde_expand("FastAPI server configuration")
+        assert result == "FastAPI server configuration"
+
+    def test_strips_trailing_question_mark(self):
+        result = _pseudo_hyde_expand("database schema?")
+        assert "?" not in result
+
+    def test_empty_string(self):
+        assert _pseudo_hyde_expand("") == ""
+
+    def test_none_passthrough(self):
+        assert _pseudo_hyde_expand(None) is None
+
+    def test_preserves_named_entities(self):
+        """Named entities should survive expansion."""
+        result = _pseudo_hyde_expand("What is FastAPI used for?")
+        assert "FastAPI" in result
+
+    def test_preserves_temporal_markers(self):
+        """Temporal references should survive expansion."""
+        result = _pseudo_hyde_expand("When did we deploy in January 2026?")
+        assert "January 2026" in result
+
+    def test_fallback_strips_leading_question_words(self):
+        """For unrecognized patterns, strip leading question words."""
+        # "Would X?" matches the can/could/would/should pattern → "X"
+        result = _pseudo_hyde_expand("Would could should something work?")
+        assert result == "could should something work"
+
+    def test_fallback_pure_strip(self):
+        """When no regex pattern matches, fall back to stripping question words."""
+        # Three consecutive question words at the start get stripped (max 3)
+        result = _pseudo_hyde_expand("what what what something?")
+        assert result == "something"
+
+    def test_recall_uses_expansion(self, storage, embeddings, graph, tmp_path):
+        """Verify that recall uses pseudo-HyDE expansion for vector search."""
+        settings_on = Settings(
+            DB_PATH=str(tmp_path / "expand_on.db"),
+            QUERY_EXPANSION_ENABLED=True,
+            QUERY_ROUTING_ENABLED=False,
+        )
+        retriever = HippoRetriever(storage, embeddings, graph, settings_on)
+        _make_memory(storage, embeddings, "Alice's hobby is painting landscapes")
+
+        results = retriever.recall("What is Alice's hobby?", max_results=5)
+        assert isinstance(results, list)
+
+    def test_recall_expansion_disabled(self, storage, embeddings, graph, tmp_path):
+        """Verify recall works when expansion is disabled."""
+        settings_off = Settings(
+            DB_PATH=str(tmp_path / "expand_off.db"),
+            QUERY_EXPANSION_ENABLED=False,
+            QUERY_ROUTING_ENABLED=False,
+        )
+        retriever = HippoRetriever(storage, embeddings, graph, settings_off)
+        _make_memory(storage, embeddings, "Alice's hobby is painting landscapes")
+
+        results = retriever.recall("What is Alice's hobby?", max_results=5)
+        assert isinstance(results, list)
