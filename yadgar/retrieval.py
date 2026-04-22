@@ -1012,9 +1012,12 @@ class HippoRetriever:
                     )
                     if not fts_scored:
                         continue
-                    max_bm25 = max(s for _, s in fts_scored) if fts_scored else 1.0
+                    # SurrealDB returns negative BM25 scores — use min-max normalization
+                    bm25_vals = [s for _, s in fts_scored]
+                    bm25_min, bm25_max = min(bm25_vals), max(bm25_vals)
+                    bm25_range = bm25_max - bm25_min
                     for mid, bm25_score in fts_scored:
-                        normalized = bm25_score / max_bm25 if max_bm25 > 0 else 0.0
+                        normalized = (bm25_score - bm25_min) / bm25_range if bm25_range > 1e-9 else 0.5
                         scores[mid]["fts"] = max(
                             scores[mid].get("fts", 0.0),
                             normalized * strength,
@@ -1041,9 +1044,12 @@ class HippoRetriever:
                         entity_query, min_heat=min_heat, limit=candidate_k
                     )
                     if entity_hits:
-                        max_ent = max(s for _, s in entity_hits) if entity_hits else 1.0
+                        # SurrealDB returns negative BM25 scores — use min-max normalization
+                        ent_vals = [s for _, s in entity_hits]
+                        ent_min, ent_max = min(ent_vals), max(ent_vals)
+                        ent_range = ent_max - ent_min
                         for mid, ent_score in entity_hits:
-                            normalized = ent_score / max_ent if max_ent > 0 else 0.0
+                            normalized = (ent_score - ent_min) / ent_range if ent_range > 1e-9 else 0.5
                             # Use max to not overwrite a better FTS score
                             scores[mid]["fts"] = max(
                                 scores[mid].get("fts", 0.0),
@@ -1064,9 +1070,12 @@ class HippoRetriever:
                         comet_query, min_heat=min_heat, limit=candidate_k,
                     )
                     if comet_hits:
-                        max_comet = max(s for _, s in comet_hits) if comet_hits else 1.0
+                        # SurrealDB returns negative BM25 scores — use min-max normalization
+                        comet_vals = [s for _, s in comet_hits]
+                        comet_min, comet_max = min(comet_vals), max(comet_vals)
+                        comet_range = comet_max - comet_min
                         for mid, comet_score in comet_hits:
-                            normalized = comet_score / max_comet if max_comet > 0 else 0.0
+                            normalized = (comet_score - comet_min) / comet_range if comet_range > 1e-9 else 0.5
                             scores[mid]["fts"] = max(
                                 scores[mid].get("fts", 0.0),
                                 normalized * 0.6,  # Lower weight than direct FTS match

@@ -9,11 +9,30 @@ Works in both stdio and HTTP transport modes because it writes
 directly to the shared SurrealDB database.
 """
 
+import fcntl
 import json
 import sys
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+def _db_locked(db_path: Path) -> bool:
+    """Check if the MCP server holds the surrealkv DB lock.
+    surrealkv doesn't support concurrent access — hooks must skip
+    direct DB operations when the MCP server owns the connection.
+    """
+    lock_path = db_path.parent / "yadgar.lock"
+    if not lock_path.exists():
+        return False
+    try:
+        lf = open(lock_path, "r")
+        fcntl.flock(lf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(lf, fcntl.LOCK_UN)
+        lf.close()
+        return False  # Lock was free — no server running
+    except OSError:
+        return True  # Lock held by MCP server
 
 
 # Tools to skip (Yadgar's own tools — prevents infinite loops)
@@ -57,6 +76,9 @@ def main():
         summary = str(tool_input)[:200]
 
     db_path = Path(os.environ.get("YADGAR_DB_PATH", "~/.yadgar/surreal_db")).expanduser()
+
+    if _db_locked(db_path):
+        return  # MCP server owns the DB — skip direct access
 
     try:
         from surrealdb import Surreal

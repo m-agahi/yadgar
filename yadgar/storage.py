@@ -1,8 +1,14 @@
+import atexit
+import fcntl
 import json
+import logging
 import re
+import shutil
 import struct
 from datetime import datetime, timezone
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 _FTS_STOP_WORDS = frozenset({
     # Standard English stop words
@@ -44,9 +50,89 @@ class StorageEngine:
         resolved.parent.mkdir(parents=True, exist_ok=True)
         self._embedding_dim = embedding_dim
         self._conn = None  # some callers access storage._conn.execute() directly
+        self._resolved_path = resolved
+
+        # surrealkv embedded mode does not support concurrent connections.
+        # Use an exclusive file lock to ensure only one process owns the DB.
+        self._lock_path = resolved.parent / "yadgar.lock"
+        self._lock_file = open(self._lock_path, "w")
+        try:
+            fcntl.flock(self._lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self._lock_file.write(str(__import__("os").getpid()))
+            self._lock_file.flush()
+        except OSError:
+            self._lock_file.close()
+            raise RuntimeError(
+                f"Another yadgar process holds the DB lock ({self._lock_path}). "
+                "surrealkv does not support concurrent access. "
+                "Close other Claude sessions or kill stale yadgar processes."
+            )
+
+        # Backup DB before opening — defense against crash corruption.
+        # Keeps one rolling backup so we can restore if the clog is damaged.
+        self._backup_path = resolved.parent / "surreal_db.bak"
+        if resolved.exists():
+            try:
+                if self._backup_path.exists():
+                    shutil.rmtree(self._backup_path)
+                shutil.copytree(resolved, self._backup_path)
+                _log.debug("DB backup created at %s", self._backup_path)
+            except Exception as e:
+                _log.warning("DB backup failed (non-fatal): %s", e)
+
         self._db = Surreal(f"surrealkv://{resolved}")
         self._db.use("yadgar", "main")
         self._init_schema()
+
+        # Health check: verify we can read field data, not just count records.
+        # Detects corruption from prior crashes (records exist but fields are null).
+        self._verify_health()
+
+        # Register atexit handler for clean shutdown even if close() isn't called
+        atexit.register(self.close)
+
+    def _verify_health(self):
+        """Post-startup health check — detect corrupted DB state."""
+        try:
+            count_rows = self._q("SELECT count() AS c FROM memory GROUP ALL")
+            total = int(count_rows[0]["c"]) if count_rows else 0
+            if total == 0:
+                return  # Empty DB, nothing to check
+
+            heat_rows = self._q("SELECT math::mean(heat) AS avg FROM memory GROUP ALL")
+            avg_heat = float(heat_rows[0]["avg"]) if heat_rows and heat_rows[0].get("avg") is not None else 0.0
+
+            if total > 0 and avg_heat == 0.0:
+                _log.warning(
+                    "DB health check: %d memories but avg_heat=0.0 — possible corruption. "
+                    "Attempting restore from backup.", total
+                )
+                if self._backup_path.exists():
+                    self._restore_from_backup()
+                else:
+                    _log.error("No backup available to restore from.")
+        except Exception as e:
+            _log.warning("DB health check failed: %s", e)
+
+    def _restore_from_backup(self):
+        """Restore DB from the rolling backup after detecting corruption."""
+        try:
+            self._db.close()
+        except Exception:
+            pass
+
+        from surrealdb import Surreal
+        resolved = self._resolved_path
+        _log.warning("Restoring DB from backup %s", self._backup_path)
+        try:
+            shutil.rmtree(resolved)
+            shutil.copytree(self._backup_path, resolved)
+            self._db = Surreal(f"surrealkv://{resolved}")
+            self._db.use("yadgar", "main")
+            self._init_schema()
+            _log.warning("DB restored from backup successfully.")
+        except Exception as e:
+            _log.error("DB restore failed: %s", e)
 
     # ------------------------------------------------------------------ helpers
 
@@ -412,10 +498,9 @@ class StorageEngine:
         return mid
 
     def get_memory(self, memory_id: int) -> dict | None:
-        rows = self._q(
-            "SELECT * FROM type::thing('memory', $id)",
-            {"id": memory_id},
-        )
+        # Use direct record ID syntax — more reliable than type::thing() in surrealkv
+        mid = int(memory_id)  # sanitize
+        rows = self._q(f"SELECT * FROM memory:{mid}")
         return self._row_to_dict(rows[0]) if rows else None
 
     def get_memories_by_heat(self, min_heat: float, limit: int = 100) -> list[dict]:
@@ -897,14 +982,10 @@ class StorageEngine:
         results = self._rows_to_dicts(rows)
         # Enrich with entity names via lookup
         for d in results:
-            src_rows = self._q(
-                "SELECT name FROM type::thing('entity', $id)",
-                {"id": d.get("source_entity_id")},
-            )
-            tgt_rows = self._q(
-                "SELECT name FROM type::thing('entity', $id)",
-                {"id": d.get("target_entity_id")},
-            )
+            src_id = int(d.get("source_entity_id", 0))
+            tgt_id = int(d.get("target_entity_id", 0))
+            src_rows = self._q(f"SELECT name FROM entity:{src_id}") if src_id else []
+            tgt_rows = self._q(f"SELECT name FROM entity:{tgt_id}") if tgt_id else []
             d["source_name"] = src_rows[0]["name"] if src_rows else None
             d["target_name"] = tgt_rows[0]["name"] if tgt_rows else None
         return results
@@ -1103,10 +1184,8 @@ class StorageEngine:
         return cid
 
     def get_cluster(self, cluster_id: int) -> dict | None:
-        rows = self._q(
-            "SELECT * FROM type::thing('memory_cluster', $id)",
-            {"id": cluster_id},
-        )
+        cid = int(cluster_id)
+        rows = self._q(f"SELECT * FROM memory_cluster:{cid}")
         return self._row_to_dict(rows[0]) if rows else None
 
     def get_clusters_by_level(self, level: int) -> list[dict]:
@@ -1919,10 +1998,8 @@ class StorageEngine:
 
     def get_entity_by_id(self, entity_id: int) -> dict | None:
         """Fetch a single entity row by its integer ID."""
-        rows = self._q(
-            "SELECT * FROM type::thing('entity', $id)",
-            {"id": entity_id},
-        )
+        eid = int(entity_id)
+        rows = self._q(f"SELECT * FROM entity:{eid}")
         return self._row_to_dict(rows[0]) if rows else None
 
     def find_memory_ids_by_entity_name(self, entity_name: str) -> list[int]:
@@ -1961,10 +2038,8 @@ class StorageEngine:
 
     def get_rule(self, rule_id: int) -> dict | None:
         """Fetch a single rule by ID."""
-        rows = self._q(
-            "SELECT * FROM type::thing('memory_rule', $id)",
-            {"id": rule_id},
-        )
+        rid = int(rule_id)
+        rows = self._q(f"SELECT * FROM memory_rule:{rid}")
         return self._row_to_dict(rows[0]) if rows else None
 
     def get_all_active_rules(self) -> list[dict]:
@@ -2047,10 +2122,26 @@ class StorageEngine:
     # ------------------------------------------------------------------ Context manager
 
     def close(self):
+        # Unregister atexit to avoid double-close
+        try:
+            atexit.unregister(self.close)
+        except Exception:
+            pass
         try:
             self._db.close()
         except Exception:
             pass
+        # Release the file lock
+        if hasattr(self, "_lock_file") and self._lock_file and not self._lock_file.closed:
+            try:
+                fcntl.flock(self._lock_file, fcntl.LOCK_UN)
+                self._lock_file.close()
+            except Exception:
+                pass
+            try:
+                self._lock_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     def __enter__(self):
         return self

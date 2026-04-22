@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     IDLE_THRESHOLD_SECONDS: int = 300
     DECAY_FACTOR: float = 0.95
     COLD_THRESHOLD: float = 0.0  # All memories accessible
-    HOT_THRESHOLD: float = 0.7
+    HOT_THRESHOLD: float = 0.0  # All memories accessible (zero threshold policy)
     PROJECT_CONTEXT_MIN_HEAT: float = 0.0  # All memories accessible
     MAX_EPISODE_TOKENS: int = 50000
     OVERLAP_TOKENS: int = 2000

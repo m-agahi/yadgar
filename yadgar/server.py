@@ -350,6 +350,21 @@ def remember(content: str, context: str, tags: list[str]) -> dict:
         )
         memory_id = curation_result["memory_id"]
         curation_action = curation_result["action"]
+        # Race: candidate was deleted between search and merge — fall back to direct insert
+        if memory_id is None:
+            memory_id = storage.insert_memory(
+                {
+                    "content": content,
+                    "embedding": embedding,
+                    "tags": tags,
+                    "directory_context": context,
+                    "heat": initial_heat,
+                    "is_stale": False,
+                    "file_hash": fhash,
+                    "embedding_model": embeddings.get_model_name(),
+                }
+            )
+            curation_action = "created"
     else:
         # Fallback: direct insert (no curator or no embedding)
         memory_id = storage.insert_memory(
@@ -518,6 +533,8 @@ def remember(content: str, context: str, tags: list[str]) -> dict:
     # ── Build Response ─────────────────────────────────────────────────
 
     memory = storage.get_memory(memory_id)
+    if memory is None:
+        return {"stored": True, "id": memory_id, "curation_action": curation_action, "warning": "memory written but not found on readback"}
     # Strip binary fields from response (not JSON-serializable)
     memory.pop("embedding", None)
     memory.pop("hdc_vector", None)
