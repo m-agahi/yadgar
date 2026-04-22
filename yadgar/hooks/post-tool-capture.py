@@ -77,6 +77,26 @@ def main():
 
     db_path = Path(os.environ.get("YADGAR_DB_PATH", "~/.yadgar/surreal_db")).expanduser()
 
+    # Try HTTP endpoint first — works in daemon mode where DB lock is always held
+    _port = os.environ.get("YADGAR_PORT", "8765")
+    try:
+        import urllib.request as _req
+        _payload = json.dumps({
+            "tool_name": tool_name,
+            "summary": summary,
+            "directory": cwd,
+            "session_id": session_id,
+        }).encode()
+        _r = _req.Request(
+            f"http://127.0.0.1:{_port}/hooks/auto-capture",
+            data=_payload,
+            headers={"Content-Type": "application/json"},
+        )
+        _req.urlopen(_r, timeout=1)
+        return
+    except Exception:
+        pass
+
     if _db_locked(db_path):
         return  # MCP server owns the DB — skip direct access
 

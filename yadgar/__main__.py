@@ -661,6 +661,74 @@ def cmd_seed(args):
     print(json.dumps(result))
 
 
+def cmd_daemon(args):
+    """Manage the Yadgar background daemon."""
+    import os as _os
+    from yadgar.daemon import YadgarDaemon
+
+    port = int(getattr(args, "port", None) or _os.environ.get("YADGAR_PORT", "8765"))
+    daemon = YadgarDaemon(port=port, db_path=getattr(args, "db_path", None))
+
+    sub = args.daemon_command
+    if sub is None:
+        print("Usage: yadgar daemon <start|stop|restart|status|configure-mcp|install-service>")
+        return
+
+    if sub == "start":
+        result = daemon.start()
+        if result["status"] == "started":
+            print(f"Yadgar daemon started (PID: {result['pid']}, port: {result['port']})")
+            print(f"  Switch MCP to HTTP:  yadgar daemon configure-mcp")
+            print(f"  Auto-start on login: yadgar daemon install-service")
+        elif result["status"] == "already_running":
+            print(f"Yadgar daemon already running (PID: {result['pid']}, port: {result['port']})")
+        elif result["status"] == "failed":
+            print(f"Cannot start daemon: {result['reason']}", file=sys.stderr)
+            sys.exit(1)
+        else:
+            print(f"Unexpected result: {result}", file=sys.stderr)
+            sys.exit(1)
+
+    elif sub == "stop":
+        result = daemon.stop()
+        if result["status"] == "stopped":
+            print(f"Yadgar daemon stopped (was PID: {result['pid']})")
+        else:
+            print("Yadgar daemon is not running.")
+
+    elif sub == "restart":
+        result = daemon.restart()
+        start = result["started"]
+        if start.get("status") in ("started", "already_running"):
+            print(f"Yadgar daemon restarted (PID: {start.get('pid')}, port: {start.get('port')})")
+        else:
+            print(f"Restart result: {result}", file=sys.stderr)
+
+    elif sub == "status":
+        result = daemon.status()
+        if result.get("running"):
+            print("Yadgar daemon: running")
+            print(f"  PID:     {result.get('pid')}")
+            print(f"  Port:    {result.get('port')}")
+            print(f"  Version: {result.get('version', '?')}")
+            print(f"  Uptime:  {result.get('uptime_seconds', '?')}s")
+        else:
+            print("Yadgar daemon: not running")
+            print("  Start with: yadgar daemon start")
+
+    elif sub == "configure-mcp":
+        result = daemon.configure_mcp()
+        print(f"MCP config updated: {result['updated']}")
+        print(f"  Sessions connect to: http://127.0.0.1:{port}/sse")
+
+    elif sub == "install-service":
+        result = daemon.install_systemd_service()
+        print(f"Systemd service written: {result['service_file']}")
+        print(f"  Enable:  {result['enable']}")
+        print(f"  Start:   {result['start']}")
+        print(f"  Status:  {result['status']}")
+
+
 def cli():
     parser = argparse.ArgumentParser(description="Yadgar memory engine MCP server")
     subparsers = parser.add_subparsers(dest="command")
@@ -716,6 +784,18 @@ def cli():
     seed_parser.add_argument("--db-path", type=str, default=None, help="Database path")
     seed_parser.add_argument("--dry-run", action="store_true", help="Scan and show what would be stored without storing")
 
+    # daemon subcommand
+    daemon_parser = subparsers.add_parser("daemon", help="Manage the Yadgar background daemon")
+    daemon_parser.add_argument("--port", type=int, default=None, help="Daemon port (default: 8765)")
+    daemon_parser.add_argument("--db-path", type=str, default=None, help="Database path")
+    daemon_sub = daemon_parser.add_subparsers(dest="daemon_command")
+    daemon_sub.add_parser("start", help="Start the daemon in the background")
+    daemon_sub.add_parser("stop", help="Stop the running daemon")
+    daemon_sub.add_parser("restart", help="Restart the daemon")
+    daemon_sub.add_parser("status", help="Show daemon status")
+    daemon_sub.add_parser("configure-mcp", help="Switch ~/.claude.json MCP config to HTTP transport")
+    daemon_sub.add_parser("install-service", help="Install systemd user service for auto-start on login")
+
     args = parser.parse_args()
 
     if args.command == "drain":
@@ -730,6 +810,8 @@ def cli():
         cmd_seed(args)
     elif args.command == "stats":
         cmd_stats(args)
+    elif args.command == "daemon":
+        cmd_daemon(args)
     else:
         # Default: run MCP server
         if not args.quiet and args.transport != "stdio":
