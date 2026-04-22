@@ -11,11 +11,27 @@ Each invocation is a fresh process; kept fast for per-prompt use.
 Target latency: <500ms.
 """
 
+import fcntl
 import json
 import os
 import sys
 import time
 from pathlib import Path
+
+
+def _db_locked(db_path: Path) -> bool:
+    """Check if the MCP server holds the surrealkv DB lock."""
+    lock_path = db_path.parent / "yadgar.lock"
+    if not lock_path.exists():
+        return False
+    try:
+        lf = open(lock_path, "r")
+        fcntl.flock(lf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(lf, fcntl.LOCK_UN)
+        lf.close()
+        return False
+    except OSError:
+        return True
 
 # Maximum memories to inject per turn
 MAX_RESULTS = 5
@@ -170,6 +186,9 @@ def main():
     directory = data.get("cwd", "") or os.getcwd()
 
     db_path = Path(os.environ.get("YADGAR_DB_PATH", "~/.yadgar/surreal_db")).expanduser()
+
+    if _db_locked(db_path):
+        return  # MCP server owns the DB — skip direct access
 
     try:
         from surrealdb import Surreal

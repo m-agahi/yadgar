@@ -8,10 +8,26 @@ Output goes to stdout and is injected into Claude's context window.
 Works in both stdio and HTTP transport modes (reads SurrealDB directly).
 """
 
+import fcntl
 import json
 import os
 import sys
 from pathlib import Path
+
+
+def _db_locked(db_path: Path) -> bool:
+    """Check if the MCP server holds the surrealkv DB lock."""
+    lock_path = db_path.parent / "yadgar.lock"
+    if not lock_path.exists():
+        return False
+    try:
+        lf = open(lock_path, "r")
+        fcntl.flock(lf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(lf, fcntl.LOCK_UN)
+        lf.close()
+        return False
+    except OSError:
+        return True
 
 
 def main():
@@ -23,6 +39,9 @@ def main():
         cwd = data.get("cwd", os.getcwd())
     except Exception:
         cwd = os.getcwd()
+
+    if _db_locked(db_path):
+        return  # MCP server owns the DB — skip direct access
 
     try:
         from surrealdb import Surreal

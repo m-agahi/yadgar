@@ -155,8 +155,8 @@ class MemoryCurator:
         """Merge new content into an existing memory."""
         existing = self._storage.get_memory(existing_id)
         if existing is None:
-            # Shouldn't happen, but fall through to create
-            return {"action": "created", "memory_id": existing_id}
+            # Race: candidate was deleted between search and merge — signal caller to handle gracefully
+            return {"action": "created", "memory_id": None}
 
         # Combine content
         merged_content = existing["content"] + "\n" + new_content
