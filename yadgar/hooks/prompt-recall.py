@@ -187,6 +187,23 @@ def main():
 
     db_path = Path(os.environ.get("YADGAR_DB_PATH", "~/.yadgar/surreal_db")).expanduser()
 
+    # Try HTTP endpoint first — works in daemon mode where DB lock is always held
+    _port = os.environ.get("YADGAR_PORT", "8765")
+    try:
+        import urllib.request as _req
+        import urllib.parse as _parse
+        _params = _parse.urlencode({"query": query, "directory": directory})
+        _resp = _req.urlopen(
+            f"http://127.0.0.1:{_port}/hooks/prompt-recall?{_params}",
+            timeout=TIME_BUDGET,
+        )
+        _text = json.loads(_resp.read().decode()).get("text", "")
+        if _text:
+            print(_text)
+        return
+    except Exception:
+        pass
+
     if _db_locked(db_path):
         return  # MCP server owns the DB — skip direct access
 

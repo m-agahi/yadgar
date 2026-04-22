@@ -190,7 +190,120 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
         session_id=body.get("session_id", ""),
         timestamp=datetime.now(timezone.utc).isoformat(),
     )
+
+    if _consolidation is not None:
+        _consolidation.record_activity()
+
     return JSONResponse({"status": "captured"})
+
+
+@mcp_server.custom_route("/hooks/session-context", methods=["GET"])
+async def hook_session_context(request: Request) -> JSONResponse:
+    """Return session context markdown for session-start hook (daemon mode).
+
+    Query params: directory (optional, defaults to cwd)
+    Returns: {"text": "...markdown..."}
+    """
+    directory = request.query_params.get("directory", os.getcwd())
+    storage = _storage
+    if storage is None:
+        return JSONResponse({"text": ""})
+
+    try:
+        cp_res = storage._q(
+            "SELECT current_task, key_decisions FROM checkpoint "
+            "WHERE is_active = true ORDER BY created_at DESC LIMIT 1"
+        )
+        checkpoint = cp_res[0] if cp_res else None
+
+        hot = storage._q(
+            "SELECT content, heat FROM memory "
+            "WHERE directory_context = $dir AND heat >= 0 "
+            "ORDER BY heat DESC LIMIT 6",
+            {"dir": directory},
+        )
+
+        anchored = storage._q(
+            "SELECT content FROM memory "
+            "WHERE is_protected = true AND heat > 0 "
+            "AND tags CONTAINSANY ['_anchor'] "
+            "ORDER BY created_at DESC LIMIT 4"
+        )
+    except Exception as e:
+        logger.debug("session-context hook error: %s", e)
+        return JSONResponse({"text": ""})
+
+    if not hot and not anchored:
+        return JSONResponse({"text": ""})
+
+    lines = ["# Yadgar — Session Context\n"]
+    if checkpoint and checkpoint.get("current_task"):
+        task = checkpoint["current_task"]
+        if not str(task).startswith("[auto-captured"):
+            lines.append(f"**Last task:** {task}\n")
+    if anchored:
+        lines.append("## Critical Facts")
+        for row in anchored:
+            lines.append(f"- {row['content'][:200]}")
+        lines.append("")
+    if hot:
+        lines.append("## Project Context")
+        for row in hot:
+            content = row["content"]
+            if len(content) > 200:
+                content = content[:200] + "..."
+            lines.append(f"- [{row['heat']:.1f}] {content}")
+        lines.append("")
+    lines.append(f"*Context for: {directory}*")
+
+    return JSONResponse({"text": "\n".join(lines)})
+
+
+@mcp_server.custom_route("/hooks/prompt-recall", methods=["GET"])
+async def hook_prompt_recall(request: Request) -> JSONResponse:
+    """Return auto-recall markdown for UserPromptSubmit hook (daemon mode).
+
+    Query params: query, directory (optional)
+    Returns: {"text": "...markdown..."}
+    """
+    query = request.query_params.get("query", "")
+    directory = request.query_params.get("directory", os.getcwd())
+
+    if not query or len(query) < 2:
+        return JSONResponse({"text": ""})
+
+    retriever = _retriever
+    if retriever is None:
+        return JSONResponse({"text": ""})
+
+    try:
+        import asyncio
+        results = await asyncio.to_thread(retriever.recall, query, max_results=5, min_heat=0.0)
+    except Exception as e:
+        logger.debug("prompt-recall hook error: %s", e)
+        return JSONResponse({"text": ""})
+
+    if not results:
+        return JSONResponse({"text": ""})
+
+    max_chars = 3000
+    lines = ["# Yadgar — Auto-Recall\n"]
+    total_chars = 0
+    for m in results:
+        content = m.get("content", "")
+        if total_chars + len(content) > max_chars:
+            remaining = max_chars - total_chars
+            if remaining > 50:
+                content = content[:remaining] + "..."
+            else:
+                break
+        mem_dir = m.get("directory_context", "")
+        proj = f" [{Path(mem_dir).name}]" if mem_dir and mem_dir != directory else ""
+        lines.append(f"- {content}{proj}")
+        total_chars += len(content)
+    lines.append(f"\n*{len(results)} memories surfaced for: {directory}*")
+
+    return JSONResponse({"text": "\n".join(lines)})
 
 
 def _get_storage() -> StorageEngine:
@@ -1161,6 +1274,16 @@ def install_hooks(project_directory: str = "") -> dict:
             shutil.copy2(src, dst)
             dst.chmod(mode)
 
+    # Stop hook — installed globally so it fires in every session
+    global_claude_dir = Path.home() / ".claude"
+    global_hooks_dir = global_claude_dir / "hooks"
+    global_hooks_dir.mkdir(parents=True, exist_ok=True)
+    stop_hook_src = package_hooks / "stop-memory-checkpoint.py"
+    stop_hook_dst = global_hooks_dir / "yadgar-stop-memory-checkpoint.py"
+    if stop_hook_src.exists():
+        shutil.copy2(stop_hook_src, stop_hook_dst)
+        stop_hook_dst.chmod(0o755)
+
     pre_compact_dst = hooks_dir / "pre-compact-drain.sh"
     post_compact_dst = hooks_dir / "post-compact-rehydrate.sh"
     post_tool_dst = hooks_dir / "post-tool-capture.py"
@@ -1247,6 +1370,30 @@ def install_hooks(project_directory: str = "") -> dict:
     settings_data["hooks"] = hooks_config
     settings_path.write_text(json.dumps(settings_data, indent=2))
 
+    # Register Stop hook in global ~/.claude/settings.json
+    global_settings_path = global_claude_dir / "settings.json"
+    global_settings: dict = {}
+    if global_settings_path.exists():
+        try:
+            global_settings = json.loads(global_settings_path.read_text())
+        except Exception:
+            global_settings = {}
+
+    global_hooks = global_settings.get("hooks", {})
+    global_hooks["Stop"] = [
+        {
+            "matcher": "",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": f'python3 "{stop_hook_dst}"',
+                }
+            ],
+        }
+    ]
+    global_settings["hooks"] = global_hooks
+    global_settings_path.write_text(json.dumps(global_settings, indent=2))
+
     return {
         "status": "installed",
         "project_directory": str(project_dir),
@@ -1257,8 +1404,10 @@ def install_hooks(project_directory: str = "") -> dict:
             "SessionStart (compact restore)",
             "PostToolUse (auto-capture)",
             "UserPromptSubmit (auto-recall)",
+            "Stop (memory checkpoint — global)",
         ],
         "settings_file": str(settings_path),
+        "global_settings_file": str(global_settings_path),
     }
 
 
@@ -1505,6 +1654,9 @@ def init_engines(
         if watch_directory:
             _staleness.start(watch_directory)
 
+    # Eagerly warm up the embedding model so the first recall isn't slow.
+    _embeddings._ensure_model()
+
     return _storage, _embeddings, _buffer, _consolidation, _staleness
 
 
@@ -1573,11 +1725,13 @@ def main(
     _active_transport = transport
     _start_time = time.time()
 
-    cwd = os.getcwd()
+    # Don't auto-watch cwd — in daemon/systemd mode cwd is $HOME, which would
+    # recursively watch everything including the DB files, causing a watchdog storm.
+    # Staleness watching is triggered per-project via MCP tools instead.
     init_engines(
         db_path=db_path,
         start_daemons=True,
-        watch_directory=cwd,
+        watch_directory=None,
     )
 
     # Auto-sync CLAUDE.md on every startup so rules stay current

@@ -40,6 +40,20 @@ def main():
     except Exception:
         cwd = os.getcwd()
 
+    # Try HTTP endpoint first — works in daemon mode where DB lock is always held
+    _port = os.environ.get("YADGAR_PORT", "8765")
+    try:
+        import urllib.request as _req
+        import urllib.parse as _parse
+        _url = f"http://127.0.0.1:{_port}/hooks/session-context?directory={_parse.quote(cwd)}"
+        _resp = _req.urlopen(_url, timeout=2)
+        _text = json.loads(_resp.read().decode()).get("text", "")
+        if _text:
+            print(_text)
+        return
+    except Exception:
+        pass
+
     if _db_locked(db_path):
         return  # MCP server owns the DB — skip direct access
 
