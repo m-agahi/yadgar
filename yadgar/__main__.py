@@ -655,6 +655,134 @@ def cmd_stats(args):
         print()
 
 
+def cmd_vacuum(args):
+    """Compact the SurrealKV commit log by export → drop clog → reimport.
+
+    Must be run while the daemon is stopped (it holds an exclusive DB lock).
+    """
+    import pickle
+    import shutil
+
+    from yadgar.config import Settings
+    from yadgar.storage import StorageEngine
+
+    settings = Settings()
+    db_path_str = str(Path(args.db_path or settings.DB_PATH).expanduser())
+    db_path = Path(db_path_str)
+    clog_path = db_path / "clog"
+
+    if not clog_path.exists():
+        print("No clog directory found — nothing to vacuum.")
+        return
+
+    old_size = sum(f.stat().st_size for f in clog_path.rglob("*") if f.is_file())
+    print(f"Clog size before: {old_size / 1024 / 1024:.0f} MB")
+
+    # Preserve live data; skip ephemeral tables that get rebuilt automatically
+    KEEP_TABLES = [
+        "memory",
+        "memory_archive",
+        "memory_transition",
+        "entity",
+        "relationship",
+        "causal_dag_edge",
+        "user_profile",
+        "derived_belief",
+        "checkpoint",
+        "memory_rule",
+        "engram_slot",
+        "narrative_entry",
+        "prospective_memory",
+        "counter",
+        "episode",
+    ]
+
+    print("Opening database (will fail if daemon is running)...")
+    try:
+        storage = StorageEngine(db_path_str)
+    except RuntimeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        print(
+            "Stop the daemon first:  systemctl --user stop yadgar.service",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # ── Phase 1: Export ──────────────────────────────────────────────────────
+    print("Exporting tables...")
+    dump: dict = {}
+    total = 0
+    for table in KEEP_TABLES:
+        try:
+            rows = storage._db.query(f"SELECT * FROM {table}")
+            records = rows[0] if rows else []
+            if not isinstance(records, list):
+                records = []
+            dump[table] = records
+            total += len(records)
+            print(f"  {table}: {len(records)}")
+        except Exception as e:
+            print(f"  {table}: skipped — {e}")
+            dump[table] = []
+
+    dump_path = db_path.parent / "vacuum_dump.pkl"
+    with open(dump_path, "wb") as f:
+        pickle.dump(dump, f, protocol=pickle.HIGHEST_PROTOCOL)
+    print(f"\n{total} records saved to {dump_path}")
+    storage.close()
+
+    # ── Phase 2: Drop clog ───────────────────────────────────────────────────
+    backup_clog = db_path.parent / "surreal_db_clog.bak"
+    if backup_clog.exists():
+        shutil.rmtree(backup_clog)
+    print("Backing up and clearing clog...")
+    shutil.copytree(clog_path, backup_clog)
+    shutil.rmtree(clog_path)
+    clog_path.mkdir()
+
+    # ── Phase 3: Reimport ────────────────────────────────────────────────────
+    print("Reimporting into fresh database...")
+    storage = StorageEngine(db_path_str)
+
+    for table in KEEP_TABLES:
+        records = dump.get(table, [])
+        ok = errors = 0
+        for rec in records:
+            try:
+                rid = rec.get("id")
+                if rid is None:
+                    continue
+                if hasattr(rid, "id"):
+                    raw_id = rid.id
+                else:
+                    s = str(rid)
+                    raw_id = s.split(":")[-1] if ":" in s else s
+                content = {k: v for k, v in rec.items() if k != "id"}
+                storage._db.query(
+                    f"UPSERT {table}:{raw_id} CONTENT $data",
+                    {"data": content},
+                )
+                ok += 1
+            except Exception:
+                errors += 1
+        msg = f"  {table}: {ok} restored"
+        if errors:
+            msg += f", {errors} errors"
+        print(msg)
+
+    storage.close()
+
+    new_size = sum(f.stat().st_size for f in clog_path.rglob("*") if f.is_file())
+    saved = old_size - new_size
+    pct = int(100 * saved // old_size) if old_size else 0
+    print("\nVacuum complete.")
+    print(f"  Before: {old_size / 1024 / 1024:.0f} MB")
+    print(f"  After:  {new_size / 1024 / 1024:.0f} MB")
+    print(f"  Saved:  {saved / 1024 / 1024:.0f} MB ({pct}%)")
+    print(f"\nBackup clog: {backup_clog}")
+    print(f"Pickle dump: {dump_path}")
+
+
 def cmd_seed(args):
     """Bootstrap memory for an existing project by scanning its structure."""
     import json
@@ -815,6 +943,12 @@ def cli():
         help="Output format (default: table)",
     )
 
+    # vacuum subcommand
+    vacuum_parser = subparsers.add_parser(
+        "vacuum", help="Compact the SurrealKV commit log (daemon must be stopped)"
+    )
+    vacuum_parser.add_argument("--db-path", type=str, default=None, help="Database path")
+
     # seed subcommand
     seed_parser = subparsers.add_parser("seed", help="Bootstrap memory for an existing project")
     seed_parser.add_argument("directory", help="Project directory to scan and seed")
@@ -891,6 +1025,8 @@ def cli():
         cmd_capture(args)
     elif args.command == "context":
         cmd_context(args)
+    elif args.command == "vacuum":
+        cmd_vacuum(args)
     elif args.command == "seed":
         cmd_seed(args)
     elif args.command == "stats":
