@@ -4,7 +4,7 @@ import logging
 import re
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from itertools import combinations
 
 from yadgar.cls_store import DualStoreCLS
@@ -90,6 +90,7 @@ class AstrocyteEngine:
         self._cls = DualStoreCLS(storage, embeddings, settings)
         self._compressor = MemoryCompressor(storage, embeddings, settings)
         self._last_sleep_cycle: datetime | None = None
+        self._last_consolidation_date: date | None = None
 
         self.last_activity: datetime = datetime.now(timezone.utc)
         self.is_running: bool = False
@@ -153,15 +154,16 @@ class AstrocyteEngine:
             self._stop_event.wait(timeout=self._settings.DAEMON_CHECK_INTERVAL)
             if self._stop_event.is_set():
                 break
-            elapsed = (datetime.now(timezone.utc) - self.last_activity).total_seconds()
-            if elapsed > self._settings.IDLE_THRESHOLD_SECONDS:
+            now = datetime.now(timezone.utc)
+            today = now.date()
+            # Run once per day at midnight UTC (00:00–00:01 window)
+            if now.hour == 0 and now.minute == 0 and self._last_consolidation_date != today:
                 try:
                     self._consolidation_cycle()
+                    self._last_consolidation_date = today
                 except Exception:
                     logger.exception("Consolidation cycle failed")
-                # Extended idle: trigger sleep cycle (less frequent than consolidation)
-                if elapsed > 2 * self._settings.IDLE_THRESHOLD_SECONDS:
-                    self._maybe_sleep_cycle()
+                self._maybe_sleep_cycle()
 
     def _maybe_sleep_cycle(self) -> None:
         """Run a full sleep cycle if at least 6 hours since the last one."""
