@@ -8,8 +8,8 @@ import pytest
 
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
-from yadgar.storage import StorageEngine
 from yadgar.restoration import HippocampalReplay
+from yadgar.storage import StorageEngine
 
 
 @pytest.fixture
@@ -56,9 +56,7 @@ class TestCheckpoints:
         assert active["current_task"] == "Task 2"
 
         # Only one active checkpoint
-        rows = storage._db.query(
-            "SELECT * FROM checkpoint WHERE is_active = true"
-        )
+        rows = storage._db.query("SELECT * FROM checkpoint WHERE is_active = true")
         assert len(rows) == 1
 
     def test_epoch_tracking(self, engines):
@@ -185,9 +183,12 @@ class TestCLISubcommands:
 
     def test_cli_drain(self, temp_db):
         import subprocess
+
         result = subprocess.run(
             ["python", "-m", "yadgar", "drain", "/test/project", "--db-path", temp_db],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         assert result.returncode == 0
         data = json.loads(result.stdout)
@@ -196,24 +197,32 @@ class TestCLISubcommands:
 
     def test_cli_restore(self, temp_db):
         import subprocess
+
         # First drain to create a checkpoint
         subprocess.run(
             ["python", "-m", "yadgar", "drain", "/test/project", "--db-path", temp_db],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         # Then restore
         result = subprocess.run(
             ["python", "-m", "yadgar", "restore", "/test/project", "--db-path", temp_db],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         assert result.returncode == 0
         assert "Yadgar Context Restoration" in result.stdout
 
     def test_cli_restore_empty_db(self, temp_db):
         import subprocess
+
         result = subprocess.run(
             ["python", "-m", "yadgar", "restore", "/test/project", "--db-path", temp_db],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         assert result.returncode == 0
         # Should still output restoration header even with empty DB

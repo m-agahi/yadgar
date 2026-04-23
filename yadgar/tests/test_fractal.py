@@ -70,14 +70,16 @@ def _insert_memories(storage, directory, count, seed=1.0):
     ids = []
     for i in range(count):
         emb = _make_similar_embedding(seed, noise=0.01 * (i + 1))
-        mid = storage.insert_memory({
-            "content": f"Memory {i} about topic-{seed} in {directory}",
-            "embedding": emb,
-            "tags": [f"tag-{int(seed)}", "test"],
-            "directory_context": directory,
-            "heat": 0.8,
-            "embedding_model": "all-MiniLM-L6-v2",
-        })
+        mid = storage.insert_memory(
+            {
+                "content": f"Memory {i} about topic-{seed} in {directory}",
+                "embedding": emb,
+                "tags": [f"tag-{int(seed)}", "test"],
+                "directory_context": directory,
+                "heat": 0.8,
+                "embedding_model": "all-MiniLM-L6-v2",
+            }
+        )
         ids.append(mid)
     return ids
 
@@ -119,7 +121,7 @@ class TestBuildTree:
 class TestLevel0Retrieval:
     def test_specific_query_returns_memories(self, fractal, storage, mock_embeddings):
         """Retrieving at level 0 should return individual memories."""
-        ids = _insert_memories(storage, "/proj", 5, seed=1.0)
+        _insert_memories(storage, "/proj", 5, seed=1.0)
 
         # Mock encode to return a matching embedding
         mock_embeddings.encode.return_value = _make_embedding(1.0)
@@ -168,7 +170,7 @@ class TestAdaptiveLevel:
 
     def test_long_query_prefers_lower_levels(self, fractal, storage, mock_embeddings):
         """Long queries should weight lower levels more."""
-        ids = _insert_memories(storage, "/proj", 4, seed=1.0)
+        _insert_memories(storage, "/proj", 4, seed=1.0)
         fractal.build_tree()
 
         mock_embeddings.encode.return_value = _make_embedding(1.0)
@@ -188,28 +190,34 @@ class TestDrillDown:
     def test_drill_from_level2_to_level1(self, fractal, storage):
         """Drilling from level 2 should return level 1 sub-clusters."""
         # Create a level 2 root cluster
-        root_id = storage.insert_cluster({
-            "name": "root_project",
-            "level": 2,
-            "summary": "Root cluster",
-            "member_count": 10,
-        })
+        root_id = storage.insert_cluster(
+            {
+                "name": "root_project",
+                "level": 2,
+                "summary": "Root cluster",
+                "member_count": 10,
+            }
+        )
 
         # Create level 1 child clusters
-        child_1 = storage.insert_cluster({
-            "name": "child_a",
-            "level": 1,
-            "parent_cluster_id": root_id,
-            "summary": "Sub-cluster A",
-            "member_count": 5,
-        })
-        child_2 = storage.insert_cluster({
-            "name": "child_b",
-            "level": 1,
-            "parent_cluster_id": root_id,
-            "summary": "Sub-cluster B",
-            "member_count": 5,
-        })
+        child_1 = storage.insert_cluster(
+            {
+                "name": "child_a",
+                "level": 1,
+                "parent_cluster_id": root_id,
+                "summary": "Sub-cluster A",
+                "member_count": 5,
+            }
+        )
+        child_2 = storage.insert_cluster(
+            {
+                "name": "child_b",
+                "level": 1,
+                "parent_cluster_id": root_id,
+                "summary": "Sub-cluster B",
+                "member_count": 5,
+            }
+        )
 
         results = fractal.drill_down(root_id)
 
@@ -223,21 +231,25 @@ class TestDrillDown:
 
     def test_drill_from_level1_to_memories(self, fractal, storage):
         """Drilling from level 1 should return individual memories."""
-        cluster_id = storage.insert_cluster({
-            "name": "test_cluster",
-            "level": 1,
-            "summary": "Test cluster",
-            "member_count": 3,
-        })
+        cluster_id = storage.insert_cluster(
+            {
+                "name": "test_cluster",
+                "level": 1,
+                "summary": "Test cluster",
+                "member_count": 3,
+            }
+        )
 
         mem_ids = []
         for i in range(3):
-            mid = storage.insert_memory({
-                "content": f"Memory {i} in cluster",
-                "embedding": _make_embedding(float(i)),
-                "directory_context": "/proj",
-                "heat": 0.8,
-            })
+            mid = storage.insert_memory(
+                {
+                    "content": f"Memory {i} in cluster",
+                    "embedding": _make_embedding(float(i)),
+                    "directory_context": "/proj",
+                    "heat": 0.8,
+                }
+            )
             storage._db.query(
                 "UPDATE type::thing('memory', $mid) SET cluster_id = $cid",
                 {"mid": mid, "cid": cluster_id},
@@ -264,25 +276,31 @@ class TestRollUp:
     def test_roll_up_full_hierarchy(self, fractal, storage):
         """Roll up from memory should return level 1 and level 2 clusters."""
         # Create hierarchy: root -> child -> memory
-        root_id = storage.insert_cluster({
-            "name": "root",
-            "level": 2,
-            "summary": "Root",
-            "member_count": 5,
-        })
-        child_id = storage.insert_cluster({
-            "name": "child",
-            "level": 1,
-            "parent_cluster_id": root_id,
-            "summary": "Child cluster",
-            "member_count": 3,
-        })
-        mid = storage.insert_memory({
-            "content": "Test memory for roll up",
-            "embedding": _make_embedding(1.0),
-            "directory_context": "/proj",
-            "heat": 0.9,
-        })
+        root_id = storage.insert_cluster(
+            {
+                "name": "root",
+                "level": 2,
+                "summary": "Root",
+                "member_count": 5,
+            }
+        )
+        child_id = storage.insert_cluster(
+            {
+                "name": "child",
+                "level": 1,
+                "parent_cluster_id": root_id,
+                "summary": "Child cluster",
+                "member_count": 3,
+            }
+        )
+        mid = storage.insert_memory(
+            {
+                "content": "Test memory for roll up",
+                "embedding": _make_embedding(1.0),
+                "directory_context": "/proj",
+                "heat": 0.9,
+            }
+        )
         storage._db.query(
             "UPDATE type::thing('memory', $mid) SET cluster_id = $cid",
             {"mid": mid, "cid": child_id},
@@ -299,12 +317,14 @@ class TestRollUp:
 
     def test_roll_up_no_cluster(self, fractal, storage):
         """Memory without a cluster should return None for clusters."""
-        mid = storage.insert_memory({
-            "content": "Orphan memory",
-            "embedding": _make_embedding(1.0),
-            "directory_context": "/proj",
-            "heat": 0.9,
-        })
+        mid = storage.insert_memory(
+            {
+                "content": "Orphan memory",
+                "embedding": _make_embedding(1.0),
+                "directory_context": "/proj",
+                "heat": 0.9,
+            }
+        )
 
         result = fractal.roll_up(mid)
 
@@ -324,7 +344,7 @@ class TestRollUp:
 class TestFractalScore:
     def test_fractal_score_returns_memory_ids(self, fractal, storage, mock_embeddings):
         """fractal_score should return (memory_id, score) tuples."""
-        ids = _insert_memories(storage, "/proj", 5, seed=1.0)
+        _insert_memories(storage, "/proj", 5, seed=1.0)
         fractal.build_tree()
 
         # Mock encode for the query

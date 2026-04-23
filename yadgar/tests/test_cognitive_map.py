@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from yadgar.cognitive_map import CognitiveMap, _MIN_TRANSITIONS
+from yadgar.cognitive_map import _MIN_TRANSITIONS, CognitiveMap
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.knowledge_graph import KnowledgeGraph
@@ -47,30 +47,42 @@ def retriever(storage, embeddings, graph, settings):
 def _make_memory(storage, embeddings, content, directory="/proj", tags=None, heat=1.0):
     """Insert a memory with embedding and return its ID."""
     embedding = embeddings.encode(content)
-    mid = storage.insert_memory({
-        "content": content,
-        "embedding": embedding,
-        "tags": tags or [],
-        "directory_context": directory,
-        "heat": heat,
-        "is_stale": False,
-        "file_hash": None,
-        "embedding_model": embeddings.get_model_name(),
-    })
+    mid = storage.insert_memory(
+        {
+            "content": content,
+            "embedding": embedding,
+            "tags": tags or [],
+            "directory_context": directory,
+            "heat": heat,
+            "is_stale": False,
+            "file_hash": None,
+            "embedding_model": embeddings.get_model_name(),
+        }
+    )
     return mid
 
 
 class TestRecordTransition:
     def test_record_transition(self, storage, cmap):
         """Transition is stored correctly."""
-        m1 = storage.insert_memory({
-            "content": "mem1", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
-        m2 = storage.insert_memory({
-            "content": "mem2", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
+        m1 = storage.insert_memory(
+            {
+                "content": "mem1",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m2 = storage.insert_memory(
+            {
+                "content": "mem2",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
 
         cmap.record_transition(m1, m2, "sess1")
 
@@ -82,14 +94,24 @@ class TestRecordTransition:
 
     def test_record_transition_increments(self, storage, cmap):
         """Recording the same transition increments the count."""
-        m1 = storage.insert_memory({
-            "content": "mem1", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
-        m2 = storage.insert_memory({
-            "content": "mem2", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
+        m1 = storage.insert_memory(
+            {
+                "content": "mem1",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m2 = storage.insert_memory(
+            {
+                "content": "mem2",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
 
         cmap.record_transition(m1, m2, "sess1")
         cmap.record_transition(m1, m2, "sess1")
@@ -100,14 +122,24 @@ class TestRecordTransition:
 
     def test_record_transition_marks_dirty(self, storage, cmap):
         """Recording a transition marks the map as dirty."""
-        m1 = storage.insert_memory({
-            "content": "a", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
-        m2 = storage.insert_memory({
-            "content": "b", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
+        m1 = storage.insert_memory(
+            {
+                "content": "a",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m2 = storage.insert_memory(
+            {
+                "content": "b",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
 
         # Compute SR first to set dirty=False
         cmap.record_transition(m1, m2)
@@ -122,18 +154,33 @@ class TestRecordTransition:
 class TestTransitionMatrix:
     def test_transition_matrix_normalized(self, storage, cmap):
         """Rows of the transition matrix sum to 1.0."""
-        m1 = storage.insert_memory({
-            "content": "a", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
-        m2 = storage.insert_memory({
-            "content": "b", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
-        m3 = storage.insert_memory({
-            "content": "c", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
+        m1 = storage.insert_memory(
+            {
+                "content": "a",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m2 = storage.insert_memory(
+            {
+                "content": "b",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m3 = storage.insert_memory(
+            {
+                "content": "c",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
 
         cmap.record_transition(m1, m2)
         cmap.record_transition(m1, m3)
@@ -154,14 +201,24 @@ class TestTransitionMatrix:
 
     def test_transition_matrix_values(self, storage, cmap):
         """Transition probabilities reflect counts."""
-        m1 = storage.insert_memory({
-            "content": "a", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
-        m2 = storage.insert_memory({
-            "content": "b", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
+        m1 = storage.insert_memory(
+            {
+                "content": "a",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m2 = storage.insert_memory(
+            {
+                "content": "b",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
 
         # m1→m2 three times, m1→m1 once (4 total from m1)
         for _ in range(3):
@@ -179,18 +236,33 @@ class TestTransitionMatrix:
 class TestSRMatrix:
     def test_sr_matrix_shape(self, storage, cmap):
         """SR matrix is square N×N."""
-        m1 = storage.insert_memory({
-            "content": "a", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
-        m2 = storage.insert_memory({
-            "content": "b", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
-        m3 = storage.insert_memory({
-            "content": "c", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
+        m1 = storage.insert_memory(
+            {
+                "content": "a",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m2 = storage.insert_memory(
+            {
+                "content": "b",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m3 = storage.insert_memory(
+            {
+                "content": "c",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
 
         cmap.record_transition(m1, m2)
         cmap.record_transition(m2, m3)
@@ -201,18 +273,33 @@ class TestSRMatrix:
 
     def test_sr_diagonal_dominant(self, storage, cmap):
         """M[i,i] >= M[i,j] for all j — you visit yourself most often."""
-        m1 = storage.insert_memory({
-            "content": "a", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
-        m2 = storage.insert_memory({
-            "content": "b", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
-        m3 = storage.insert_memory({
-            "content": "c", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
+        m1 = storage.insert_memory(
+            {
+                "content": "a",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m2 = storage.insert_memory(
+            {
+                "content": "b",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m3 = storage.insert_memory(
+            {
+                "content": "c",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
 
         cmap.record_transition(m1, m2)
         cmap.record_transition(m2, m3)
@@ -222,9 +309,7 @@ class TestSRMatrix:
 
         for i in range(M.shape[0]):
             for j in range(M.shape[1]):
-                assert M[i, i] >= M[i, j] - 1e-10, (
-                    f"M[{i},{i}]={M[i,i]} < M[{i},{j}]={M[i,j]}"
-                )
+                assert M[i, i] >= M[i, j] - 1e-10, f"M[{i},{i}]={M[i, i]} < M[{i},{j}]={M[i, j]}"
 
     def test_sr_matrix_empty(self, cmap):
         """SR matrix for no data is empty."""
@@ -234,14 +319,24 @@ class TestSRMatrix:
 
     def test_sr_matrix_clears_dirty(self, storage, cmap):
         """Computing SR matrix clears the dirty flag."""
-        m1 = storage.insert_memory({
-            "content": "a", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
-        m2 = storage.insert_memory({
-            "content": "b", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
+        m1 = storage.insert_memory(
+            {
+                "content": "a",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m2 = storage.insert_memory(
+            {
+                "content": "b",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
 
         cmap.record_transition(m1, m2)
         assert cmap.is_dirty
@@ -255,10 +350,15 @@ class TestCoordinates:
         """Returns 2D coordinates for each memory in the transition graph."""
         mids = []
         for i in range(4):
-            mid = storage.insert_memory({
-                "content": f"mem{i}", "tags": [], "directory_context": "/p",
-                "heat": 1.0, "is_stale": False,
-            })
+            mid = storage.insert_memory(
+                {
+                    "content": f"mem{i}",
+                    "tags": [],
+                    "directory_context": "/p",
+                    "heat": 1.0,
+                    "is_stale": False,
+                }
+            )
             mids.append(mid)
 
         # Create a cycle: 0→1→2→3→0
@@ -275,14 +375,24 @@ class TestCoordinates:
 
     def test_extract_coordinates_recomputes_when_dirty(self, storage, cmap):
         """Extracting coords recomputes SR if dirty."""
-        m1 = storage.insert_memory({
-            "content": "a", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
-        m2 = storage.insert_memory({
-            "content": "b", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
+        m1 = storage.insert_memory(
+            {
+                "content": "a",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m2 = storage.insert_memory(
+            {
+                "content": "b",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
 
         cmap.record_transition(m1, m2)
         coords = cmap.extract_coordinates()
@@ -291,14 +401,24 @@ class TestCoordinates:
 
     def test_update_memory_coordinates(self, storage, cmap):
         """update_memory_coordinates writes sr_x, sr_y to storage."""
-        m1 = storage.insert_memory({
-            "content": "a", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
-        m2 = storage.insert_memory({
-            "content": "b", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
+        m1 = storage.insert_memory(
+            {
+                "content": "a",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m2 = storage.insert_memory(
+            {
+                "content": "b",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
 
         cmap.record_transition(m1, m2)
         count = cmap.update_memory_coordinates()
@@ -343,10 +463,15 @@ class TestNeighborhood:
         """Returns memories within radius in SR space."""
         mids = []
         for i in range(5):
-            mid = storage.insert_memory({
-                "content": f"memory content {i}", "tags": [],
-                "directory_context": "/p", "heat": 1.0, "is_stale": False,
-            })
+            mid = storage.insert_memory(
+                {
+                    "content": f"memory content {i}",
+                    "tags": [],
+                    "directory_context": "/p",
+                    "heat": 1.0,
+                    "is_stale": False,
+                }
+            )
             mids.append(mid)
 
         # Dense connections between first 3
@@ -377,18 +502,33 @@ class TestNeighborhood:
 class TestIncrementalUpdate:
     def test_incremental_update(self, storage, cmap):
         """TD update modifies the correct row of SR matrix."""
-        m1 = storage.insert_memory({
-            "content": "a", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
-        m2 = storage.insert_memory({
-            "content": "b", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
-        m3 = storage.insert_memory({
-            "content": "c", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
+        m1 = storage.insert_memory(
+            {
+                "content": "a",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m2 = storage.insert_memory(
+            {
+                "content": "b",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m3 = storage.insert_memory(
+            {
+                "content": "c",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
 
         cmap.record_transition(m1, m2)
         cmap.record_transition(m2, m3)
@@ -428,28 +568,53 @@ class TestFrequentlyCoaccessed:
     def test_frequently_coaccessed_cluster(self, storage, cmap):
         """Memories accessed together cluster in SR space."""
         # Group A: frequently co-accessed
-        a1 = storage.insert_memory({
-            "content": "group A mem 1", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
-        a2 = storage.insert_memory({
-            "content": "group A mem 2", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
-        a3 = storage.insert_memory({
-            "content": "group A mem 3", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
+        a1 = storage.insert_memory(
+            {
+                "content": "group A mem 1",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        a2 = storage.insert_memory(
+            {
+                "content": "group A mem 2",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        a3 = storage.insert_memory(
+            {
+                "content": "group A mem 3",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
 
         # Group B: frequently co-accessed among themselves
-        b1 = storage.insert_memory({
-            "content": "group B mem 1", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
-        b2 = storage.insert_memory({
-            "content": "group B mem 2", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
+        b1 = storage.insert_memory(
+            {
+                "content": "group B mem 1",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        b2 = storage.insert_memory(
+            {
+                "content": "group B mem 2",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
 
         # Heavy transitions within group A
         for _ in range(10):
@@ -490,14 +655,24 @@ class TestHasSufficientData:
 
     def test_sufficient_data(self, storage, cmap):
         """Returns True when enough transitions exist."""
-        m1 = storage.insert_memory({
-            "content": "a", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
-        m2 = storage.insert_memory({
-            "content": "b", "tags": [], "directory_context": "/p",
-            "heat": 1.0, "is_stale": False,
-        })
+        m1 = storage.insert_memory(
+            {
+                "content": "a",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m2 = storage.insert_memory(
+            {
+                "content": "b",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
 
         # Record many transitions to exceed _MIN_TRANSITIONS
         for _ in range(_MIN_TRANSITIONS):
@@ -588,5 +763,5 @@ class TestIntegration:
         sr_scores = cmap.get_sr_scores(query_emb, embeddings, [m1, m2, m3])
 
         assert len(sr_scores) > 0
-        for mid, score in sr_scores.items():
+        for _mid, score in sr_scores.items():
             assert 0.0 <= score <= 1.0

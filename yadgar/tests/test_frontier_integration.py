@@ -10,13 +10,10 @@ import json
 import pytest
 
 from yadgar import server
-from yadgar.cls_store import DualStoreCLS
 from yadgar.cognitive_map import CognitiveMap
 from yadgar.compression import MemoryCompressor
-from yadgar.crdt_sync import CRDTMemorySync
 from yadgar.hopfield import HopfieldMemory
 from yadgar.metacognition import MetaCognition
-
 
 # ── Fixtures ───────────────────────────────────────────────────────────
 
@@ -25,9 +22,7 @@ from yadgar.metacognition import MetaCognition
 def _engines(tmp_path):
     """Initialize global engines with a temp database for each test."""
     db_path = str(tmp_path / "frontier_test.db")
-    server.init_engines(
-        db_path=db_path, embedding_model="all-MiniLM-L6-v2"
-    )
+    server.init_engines(db_path=db_path, embedding_model="all-MiniLM-L6-v2")
     yield
     server.shutdown()
 
@@ -122,10 +117,7 @@ class TestRememberFullPipeline:
         assert r1.get("id") is not None
         assert r2.get("id") is not None
         # Engram slot info should be present on at least one
-        has_engram = (
-            r1.get("engram_slot") is not None
-            or r2.get("engram_slot") is not None
-        )
+        has_engram = r1.get("engram_slot") is not None or r2.get("engram_slot") is not None
         assert has_engram
 
 
@@ -257,7 +249,7 @@ class TestReconsolidationOnRecall:
         mid = result["id"]
 
         # Recall with a very different context — triggers reconsolidation
-        results = server.recall("completely unrelated quantum physics topic")
+        server.recall("completely unrelated quantum physics topic")
         # Reconsolidation should have run (updating plasticity at minimum)
         storage = server._get_storage()
         mem = storage.get_memory(mid)
@@ -274,12 +266,12 @@ class TestCognitiveMapUpdates:
         assert isinstance(server._cognitive_map, CognitiveMap)
 
         # Store two memories
-        r1 = _store_novel_memory(
+        _store_novel_memory(
             "First memory for cognitive map transition test",
             "/test/cogmap",
             ["first"],
         )
-        r2 = _store_novel_memory(
+        _store_novel_memory(
             "Second memory for cognitive map transition test",
             "/test/cogmap",
             ["second"],
@@ -456,15 +448,17 @@ class TestBackwardCompatibility:
 
         # Insert directly without frontier fields
         embedding = embeddings.encode("old format memory content")
-        mid = storage.insert_memory({
-            "content": "old format memory content",
-            "embedding": embedding,
-            "tags": ["legacy"],
-            "directory_context": "/old/project",
-            "heat": 0.8,
-            "is_stale": False,
-            "embedding_model": embeddings.get_model_name(),
-        })
+        mid = storage.insert_memory(
+            {
+                "content": "old format memory content",
+                "embedding": embedding,
+                "tags": ["legacy"],
+                "directory_context": "/old/project",
+                "heat": 0.8,
+                "is_stale": False,
+                "embedding_model": embeddings.get_model_name(),
+            }
+        )
 
         # Verify recall still works
         results = server.recall("old format memory")

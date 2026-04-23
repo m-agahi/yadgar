@@ -59,5 +59,18 @@ Issues = "https://codeberg.org/maxagahi/yadgar/issues"
 [tool.hatch.build.targets.wheel]
 packages = ["yadgar"]
 
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+exclude = ["benchmarks/"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B"]
+ignore = [
+    "E501",   # line too long — handled by formatter
+    "B008",   # do not perform function calls in default arguments
+    "UP007",  # use X | Y for unions — already done where possible
+]
+
 [tool.pytest.ini_options]
 testpaths = ["yadgar/tests"]

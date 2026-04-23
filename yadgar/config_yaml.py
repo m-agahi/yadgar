@@ -13,168 +13,536 @@ from typing import Any
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
 
-
 FIELD_META: dict[str, dict[str, str]] = {
     # core
     "db_path": {"desc": "SurrealDB storage path", "section": "core"},
     "port": {"desc": "HTTP server port (daemon mode, default 8742)", "section": "core"},
-    "embedding_model": {"desc": "Sentence-transformer model (e.g. all-MiniLM-L6-v2, all-mpnet-base-v2)", "section": "core"},
+    "embedding_model": {
+        "desc": "Sentence-transformer model (e.g. all-MiniLM-L6-v2, all-mpnet-base-v2)",
+        "section": "core",
+    },
     "max_episode_tokens": {"desc": "Maximum tokens per episode chunk", "section": "core"},
     "overlap_tokens": {"desc": "Token overlap between episode chunks", "section": "core"},
     # daemon
-    "daemon_check_interval": {"desc": "Seconds between astrocyte background loop wakeups (lower = more responsive, higher = less CPU)", "section": "daemon"},
-    "idle_threshold_seconds": {"desc": "Idle seconds before triggering consolidation (e.g. 3600 to only consolidate after 1h of no Claude sessions)", "section": "daemon"},
-    "num_astrocyte_processes": {"desc": "Number of domain-aware background worker processes", "section": "daemon"},
-    "narrative_interval_hours": {"desc": "Hours between autobiographical narrative updates", "section": "daemon"},
+    "daemon_check_interval": {
+        "desc": "Seconds between astrocyte background loop wakeups (lower = more responsive, higher = less CPU)",
+        "section": "daemon",
+    },
+    "idle_threshold_seconds": {
+        "desc": "Idle seconds before triggering consolidation (e.g. 3600 to only consolidate after 1h of no Claude sessions)",
+        "section": "daemon",
+    },
+    "num_astrocyte_processes": {
+        "desc": "Number of domain-aware background worker processes",
+        "section": "daemon",
+    },
+    "narrative_interval_hours": {
+        "desc": "Hours between autobiographical narrative updates",
+        "section": "daemon",
+    },
     # memory_lifecycle
-    "write_gate_threshold": {"desc": "Minimum score to store a memory (0.0 = store everything)", "section": "memory_lifecycle"},
-    "write_gate_continuity_discount": {"desc": "Threshold reduction for task-continuous content", "section": "memory_lifecycle"},
-    "write_gate_continuity_window": {"desc": "Number of recent stores to track for continuity detection", "section": "memory_lifecycle"},
-    "compression_gist_age_hours": {"desc": "Hours before gist-compressing old memories (default 168 = 7 days)", "section": "memory_lifecycle"},
-    "compression_tag_age_hours": {"desc": "Hours before tag-compressing very old memories (default 720 = 30 days)", "section": "memory_lifecycle"},
-    "decision_auto_protect": {"desc": "Automatically protect detected decisions from decay", "section": "memory_lifecycle"},
-    "action_stream_enabled": {"desc": "Capture tool actions in sensory buffer for later consolidation", "section": "memory_lifecycle"},
-    "micro_checkpoint_enabled": {"desc": "Auto-checkpoint on significant events", "section": "memory_lifecycle"},
-    "micro_checkpoint_cooldown": {"desc": "Minimum tool calls between micro-checkpoints", "section": "memory_lifecycle"},
-    "session_coherence_bonus": {"desc": "Heat bonus applied to memories from the current session", "section": "memory_lifecycle"},
-    "session_coherence_window_hours": {"desc": "How long the session coherence bonus lasts", "section": "memory_lifecycle"},
-    "reinjection_enabled": {"desc": "Auto-surface related context when storing a new memory", "section": "memory_lifecycle"},
-    "reinjection_max_results": {"desc": "Max related memories to reinject on store", "section": "memory_lifecycle"},
+    "write_gate_threshold": {
+        "desc": "Minimum score to store a memory (0.0 = store everything)",
+        "section": "memory_lifecycle",
+    },
+    "write_gate_continuity_discount": {
+        "desc": "Threshold reduction for task-continuous content",
+        "section": "memory_lifecycle",
+    },
+    "write_gate_continuity_window": {
+        "desc": "Number of recent stores to track for continuity detection",
+        "section": "memory_lifecycle",
+    },
+    "compression_gist_age_hours": {
+        "desc": "Hours before gist-compressing old memories (default 168 = 7 days)",
+        "section": "memory_lifecycle",
+    },
+    "compression_tag_age_hours": {
+        "desc": "Hours before tag-compressing very old memories (default 720 = 30 days)",
+        "section": "memory_lifecycle",
+    },
+    "decision_auto_protect": {
+        "desc": "Automatically protect detected decisions from decay",
+        "section": "memory_lifecycle",
+    },
+    "action_stream_enabled": {
+        "desc": "Capture tool actions in sensory buffer for later consolidation",
+        "section": "memory_lifecycle",
+    },
+    "micro_checkpoint_enabled": {
+        "desc": "Auto-checkpoint on significant events",
+        "section": "memory_lifecycle",
+    },
+    "micro_checkpoint_cooldown": {
+        "desc": "Minimum tool calls between micro-checkpoints",
+        "section": "memory_lifecycle",
+    },
+    "session_coherence_bonus": {
+        "desc": "Heat bonus applied to memories from the current session",
+        "section": "memory_lifecycle",
+    },
+    "session_coherence_window_hours": {
+        "desc": "How long the session coherence bonus lasts",
+        "section": "memory_lifecycle",
+    },
+    "reinjection_enabled": {
+        "desc": "Auto-surface related context when storing a new memory",
+        "section": "memory_lifecycle",
+    },
+    "reinjection_max_results": {
+        "desc": "Max related memories to reinject on store",
+        "section": "memory_lifecycle",
+    },
     # thermodynamics
-    "decay_factor": {"desc": "Per-hour heat decay multiplier for memories (0.95 = 5% decay/hour)", "section": "thermodynamics"},
-    "importance_decay_factor": {"desc": "Per-cycle importance decay (0.998 = very slow decay)", "section": "thermodynamics"},
-    "cold_threshold": {"desc": "Heat below which a memory is archived (0.0 = never archive)", "section": "thermodynamics"},
-    "hot_threshold": {"desc": "Minimum heat for hot-memory retrieval (0.0 = include all)", "section": "thermodynamics"},
-    "project_context_min_heat": {"desc": "Minimum heat for project context injection (0.0 = include all)", "section": "thermodynamics"},
-    "surprise_boost": {"desc": "Heat boost applied to surprising/novel memories", "section": "thermodynamics"},
-    "emotional_decay_resistance": {"desc": "How much emotional salience slows decay (0-1)", "section": "thermodynamics"},
-    "synaptic_window_minutes": {"desc": "Time window for synaptic boost propagation", "section": "thermodynamics"},
-    "synaptic_boost": {"desc": "Heat boost propagated from high-importance nearby memories", "section": "thermodynamics"},
+    "decay_factor": {
+        "desc": "Per-hour heat decay multiplier for memories (0.95 = 5% decay/hour)",
+        "section": "thermodynamics",
+    },
+    "importance_decay_factor": {
+        "desc": "Per-cycle importance decay (0.998 = very slow decay)",
+        "section": "thermodynamics",
+    },
+    "cold_threshold": {
+        "desc": "Heat below which a memory is archived (0.0 = never archive)",
+        "section": "thermodynamics",
+    },
+    "hot_threshold": {
+        "desc": "Minimum heat for hot-memory retrieval (0.0 = include all)",
+        "section": "thermodynamics",
+    },
+    "project_context_min_heat": {
+        "desc": "Minimum heat for project context injection (0.0 = include all)",
+        "section": "thermodynamics",
+    },
+    "surprise_boost": {
+        "desc": "Heat boost applied to surprising/novel memories",
+        "section": "thermodynamics",
+    },
+    "emotional_decay_resistance": {
+        "desc": "How much emotional salience slows decay (0-1)",
+        "section": "thermodynamics",
+    },
+    "synaptic_window_minutes": {
+        "desc": "Time window for synaptic boost propagation",
+        "section": "thermodynamics",
+    },
+    "synaptic_boost": {
+        "desc": "Heat boost propagated from high-importance nearby memories",
+        "section": "thermodynamics",
+    },
     # retrieval_fusion
-    "wrrf_k": {"desc": "RRF constant k (higher = smoother rank blending)", "section": "retrieval_fusion"},
-    "wrrf_candidate_multiplier": {"desc": "Candidate pool size = max_results * this", "section": "retrieval_fusion"},
-    "wrrf_vector_weight": {"desc": "Weight of vector similarity signal in WRRF fusion", "section": "retrieval_fusion"},
-    "wrrf_fts_weight": {"desc": "Weight of full-text search signal in WRRF fusion", "section": "retrieval_fusion"},
-    "wrrf_ppr_weight": {"desc": "Weight of personalized PageRank signal", "section": "retrieval_fusion"},
-    "wrrf_spreading_weight": {"desc": "Weight of spreading activation signal", "section": "retrieval_fusion"},
-    "wrrf_hopfield_weight": {"desc": "Weight of Hopfield network signal", "section": "retrieval_fusion"},
-    "wrrf_hdc_weight": {"desc": "Weight of hyperdimensional computing signal", "section": "retrieval_fusion"},
-    "wrrf_fractal_weight": {"desc": "Weight of fractal hierarchy signal", "section": "retrieval_fusion"},
-    "wrrf_sr_weight": {"desc": "Weight of successor representation signal", "section": "retrieval_fusion"},
+    "wrrf_k": {
+        "desc": "RRF constant k (higher = smoother rank blending)",
+        "section": "retrieval_fusion",
+    },
+    "wrrf_candidate_multiplier": {
+        "desc": "Candidate pool size = max_results * this",
+        "section": "retrieval_fusion",
+    },
+    "wrrf_vector_weight": {
+        "desc": "Weight of vector similarity signal in WRRF fusion",
+        "section": "retrieval_fusion",
+    },
+    "wrrf_fts_weight": {
+        "desc": "Weight of full-text search signal in WRRF fusion",
+        "section": "retrieval_fusion",
+    },
+    "wrrf_ppr_weight": {
+        "desc": "Weight of personalized PageRank signal",
+        "section": "retrieval_fusion",
+    },
+    "wrrf_spreading_weight": {
+        "desc": "Weight of spreading activation signal",
+        "section": "retrieval_fusion",
+    },
+    "wrrf_hopfield_weight": {
+        "desc": "Weight of Hopfield network signal",
+        "section": "retrieval_fusion",
+    },
+    "wrrf_hdc_weight": {
+        "desc": "Weight of hyperdimensional computing signal",
+        "section": "retrieval_fusion",
+    },
+    "wrrf_fractal_weight": {
+        "desc": "Weight of fractal hierarchy signal",
+        "section": "retrieval_fusion",
+    },
+    "wrrf_sr_weight": {
+        "desc": "Weight of successor representation signal",
+        "section": "retrieval_fusion",
+    },
     "fusion_method": {"desc": "Fusion method: convex or other", "section": "retrieval_fusion"},
-    "fusion_norm": {"desc": "Score normalization before fusion: zscore, minmax, or raw", "section": "retrieval_fusion"},
-    "combmnz_enabled": {"desc": "Multiply fused score by the number of signals that contributed", "section": "retrieval_fusion"},
+    "fusion_norm": {
+        "desc": "Score normalization before fusion: zscore, minmax, or raw",
+        "section": "retrieval_fusion",
+    },
+    "combmnz_enabled": {
+        "desc": "Multiply fused score by the number of signals that contributed",
+        "section": "retrieval_fusion",
+    },
     # reranking
     "reranker_enabled": {"desc": "Enable cross-encoder reranking stage", "section": "reranking"},
     "reranker_top_k": {"desc": "Number of candidates passed to reranker", "section": "reranking"},
-    "cross_encoder_enabled": {"desc": "Enable FlashRank ONNX cross-encoder reranking", "section": "reranking"},
+    "cross_encoder_enabled": {
+        "desc": "Enable FlashRank ONNX cross-encoder reranking",
+        "section": "reranking",
+    },
     "cross_encoder_model": {"desc": "Cross-encoder model name", "section": "reranking"},
     "cross_encoder_top_k": {"desc": "Top-k passed to cross-encoder", "section": "reranking"},
-    "cross_encoder_weight": {"desc": "Cross-encoder score weight in blend (retrieval gets 1-this)", "section": "reranking"},
-    "gte_reranker_enabled": {"desc": "Enable GTE-Reranker (ModernBERT-based)", "section": "reranking"},
+    "cross_encoder_weight": {
+        "desc": "Cross-encoder score weight in blend (retrieval gets 1-this)",
+        "section": "reranking",
+    },
+    "gte_reranker_enabled": {
+        "desc": "Enable GTE-Reranker (ModernBERT-based)",
+        "section": "reranking",
+    },
     "gte_reranker_model": {"desc": "GTE reranker model name", "section": "reranking"},
-    "gte_reranker_max_length": {"desc": "Max token length for GTE reranker", "section": "reranking"},
-    "gte_reranker_fallback_to_flashrank": {"desc": "Fall back to FlashRank if GTE reranker fails", "section": "reranking"},
-    "nli_reranking_enabled": {"desc": "Enable NLI entailment scoring stage", "section": "reranking"},
+    "gte_reranker_max_length": {
+        "desc": "Max token length for GTE reranker",
+        "section": "reranking",
+    },
+    "gte_reranker_fallback_to_flashrank": {
+        "desc": "Fall back to FlashRank if GTE reranker fails",
+        "section": "reranking",
+    },
+    "nli_reranking_enabled": {
+        "desc": "Enable NLI entailment scoring stage",
+        "section": "reranking",
+    },
     "nli_model": {"desc": "NLI model name", "section": "reranking"},
     "nli_weight": {"desc": "NLI signal weight in final blend", "section": "reranking"},
-    "nli_only_for_open_domain": {"desc": "Only apply NLI reranking for open-domain queries", "section": "reranking"},
-    "multi_passage_reranking_enabled": {"desc": "Enable multi-passage evidence aggregation", "section": "reranking"},
-    "multi_passage_cluster_overlap_threshold": {"desc": "Overlap threshold for passage clustering", "section": "reranking"},
-    "multi_passage_max_cluster_size": {"desc": "Maximum passages per evidence cluster", "section": "reranking"},
+    "nli_only_for_open_domain": {
+        "desc": "Only apply NLI reranking for open-domain queries",
+        "section": "reranking",
+    },
+    "multi_passage_reranking_enabled": {
+        "desc": "Enable multi-passage evidence aggregation",
+        "section": "reranking",
+    },
+    "multi_passage_cluster_overlap_threshold": {
+        "desc": "Overlap threshold for passage clustering",
+        "section": "reranking",
+    },
+    "multi_passage_max_cluster_size": {
+        "desc": "Maximum passages per evidence cluster",
+        "section": "reranking",
+    },
     # query_routing
-    "query_routing_enabled": {"desc": "Enable automatic query routing to specialized retrievers", "section": "query_routing"},
-    "query_expansion_enabled": {"desc": "Enable query expansion (pseudo-HyDE)", "section": "query_routing"},
-    "comparison_dual_search_enabled": {"desc": "Run dual search for comparison queries", "section": "query_routing"},
-    "comparison_top_k_per_option": {"desc": "Top-k results per option in comparison search", "section": "query_routing"},
-    "temporal_keywords": {"desc": "Comma-separated keywords that trigger temporal routing", "section": "query_routing"},
-    "code_keywords": {"desc": "Comma-separated keywords that trigger code-aware routing", "section": "query_routing"},
-    "relational_keywords": {"desc": "Comma-separated keywords that trigger relational routing", "section": "query_routing"},
+    "query_routing_enabled": {
+        "desc": "Enable automatic query routing to specialized retrievers",
+        "section": "query_routing",
+    },
+    "query_expansion_enabled": {
+        "desc": "Enable query expansion (pseudo-HyDE)",
+        "section": "query_routing",
+    },
+    "comparison_dual_search_enabled": {
+        "desc": "Run dual search for comparison queries",
+        "section": "query_routing",
+    },
+    "comparison_top_k_per_option": {
+        "desc": "Top-k results per option in comparison search",
+        "section": "query_routing",
+    },
+    "temporal_keywords": {
+        "desc": "Comma-separated keywords that trigger temporal routing",
+        "section": "query_routing",
+    },
+    "code_keywords": {
+        "desc": "Comma-separated keywords that trigger code-aware routing",
+        "section": "query_routing",
+    },
+    "relational_keywords": {
+        "desc": "Comma-separated keywords that trigger relational routing",
+        "section": "query_routing",
+    },
     # confidence_gating
-    "confidence_gating_enabled": {"desc": "Reject low-confidence result sets and trigger fallback", "section": "confidence_gating"},
-    "confidence_min_results": {"desc": "Minimum results required before gating is applied", "section": "confidence_gating"},
-    "confidence_score_spread_threshold": {"desc": "Minimum spread between top scores to be confident", "section": "confidence_gating"},
-    "confidence_top_score_threshold": {"desc": "Minimum top score to pass confidence gate", "section": "confidence_gating"},
-    "confidence_fallback_strategy": {"desc": "Strategy when gate fails: expand or relax", "section": "confidence_gating"},
+    "confidence_gating_enabled": {
+        "desc": "Reject low-confidence result sets and trigger fallback",
+        "section": "confidence_gating",
+    },
+    "confidence_min_results": {
+        "desc": "Minimum results required before gating is applied",
+        "section": "confidence_gating",
+    },
+    "confidence_score_spread_threshold": {
+        "desc": "Minimum spread between top scores to be confident",
+        "section": "confidence_gating",
+    },
+    "confidence_top_score_threshold": {
+        "desc": "Minimum top score to pass confidence gate",
+        "section": "confidence_gating",
+    },
+    "confidence_fallback_strategy": {
+        "desc": "Strategy when gate fails: expand or relax",
+        "section": "confidence_gating",
+    },
     # temporal_retrieval
-    "temporal_retrieval_enabled": {"desc": "Boost memories that match temporal expressions in query", "section": "temporal_retrieval"},
-    "temporal_boost_weight": {"desc": "Weight of temporal boost signal", "section": "temporal_retrieval"},
-    "temporal_decay_days": {"desc": "Days over which temporal relevance decays", "section": "temporal_retrieval"},
-    "temporal_exact_match_boost": {"desc": "Extra boost multiplier for exact date matches", "section": "temporal_retrieval"},
+    "temporal_retrieval_enabled": {
+        "desc": "Boost memories that match temporal expressions in query",
+        "section": "temporal_retrieval",
+    },
+    "temporal_boost_weight": {
+        "desc": "Weight of temporal boost signal",
+        "section": "temporal_retrieval",
+    },
+    "temporal_decay_days": {
+        "desc": "Days over which temporal relevance decays",
+        "section": "temporal_retrieval",
+    },
+    "temporal_exact_match_boost": {
+        "desc": "Extra boost multiplier for exact date matches",
+        "section": "temporal_retrieval",
+    },
     # embedding_enhancement
-    "candidate_pool_multiplier": {"desc": "Total candidate pool = max_results * this before reranking", "section": "embedding_enhancement"},
-    "embedding_cache_size": {"desc": "LRU cache size for embedding results", "section": "embedding_enhancement"},
-    "query_prefix": {"desc": "Optional prefix prepended to all queries before embedding", "section": "embedding_enhancement"},
-    "dual_vectors_enabled": {"desc": "Enable dual-vector architecture (explicit + implicit)", "section": "embedding_enhancement"},
-    "implicit_embedding_model": {"desc": "Model for implicit/latent embedding channel", "section": "embedding_enhancement"},
-    "implicit_vector_weight": {"desc": "Weight of implicit vector in dual-vector blend", "section": "embedding_enhancement"},
+    "candidate_pool_multiplier": {
+        "desc": "Total candidate pool = max_results * this before reranking",
+        "section": "embedding_enhancement",
+    },
+    "embedding_cache_size": {
+        "desc": "LRU cache size for embedding results",
+        "section": "embedding_enhancement",
+    },
+    "query_prefix": {
+        "desc": "Optional prefix prepended to all queries before embedding",
+        "section": "embedding_enhancement",
+    },
+    "dual_vectors_enabled": {
+        "desc": "Enable dual-vector architecture (explicit + implicit)",
+        "section": "embedding_enhancement",
+    },
+    "implicit_embedding_model": {
+        "desc": "Model for implicit/latent embedding channel",
+        "section": "embedding_enhancement",
+    },
+    "implicit_vector_weight": {
+        "desc": "Weight of implicit vector in dual-vector blend",
+        "section": "embedding_enhancement",
+    },
     # graph_knowledge
-    "graph_max_hops": {"desc": "Maximum graph traversal hops for spreading activation", "section": "graph_knowledge"},
-    "graph_min_edge_weight": {"desc": "Minimum edge weight to traverse in graph signals", "section": "graph_knowledge"},
-    "graph_spreading_decay": {"desc": "Activation decay factor per hop", "section": "graph_knowledge"},
-    "graph_spreading_max_depth": {"desc": "Maximum depth for spreading activation", "section": "graph_knowledge"},
-    "graph_entity_min_length": {"desc": "Minimum character length for extracted entities", "section": "graph_knowledge"},
-    "causal_threshold": {"desc": "Minimum co-occurrence count before inferring causality", "section": "graph_knowledge"},
+    "graph_max_hops": {
+        "desc": "Maximum graph traversal hops for spreading activation",
+        "section": "graph_knowledge",
+    },
+    "graph_min_edge_weight": {
+        "desc": "Minimum edge weight to traverse in graph signals",
+        "section": "graph_knowledge",
+    },
+    "graph_spreading_decay": {
+        "desc": "Activation decay factor per hop",
+        "section": "graph_knowledge",
+    },
+    "graph_spreading_max_depth": {
+        "desc": "Maximum depth for spreading activation",
+        "section": "graph_knowledge",
+    },
+    "graph_entity_min_length": {
+        "desc": "Minimum character length for extracted entities",
+        "section": "graph_knowledge",
+    },
+    "causal_threshold": {
+        "desc": "Minimum co-occurrence count before inferring causality",
+        "section": "graph_knowledge",
+    },
     "ppr_damping": {"desc": "Personalized PageRank damping factor", "section": "graph_knowledge"},
     "ppr_iterations": {"desc": "Number of PageRank iterations", "section": "graph_knowledge"},
-    "cluster_similarity_threshold": {"desc": "Minimum similarity to assign a memory to a cluster", "section": "graph_knowledge"},
-    "fractal_levels": {"desc": "Number of fractal hierarchy levels for multi-scale retrieval", "section": "graph_knowledge"},
+    "cluster_similarity_threshold": {
+        "desc": "Minimum similarity to assign a memory to a cluster",
+        "section": "graph_knowledge",
+    },
+    "fractal_levels": {
+        "desc": "Number of fractal hierarchy levels for multi-scale retrieval",
+        "section": "graph_knowledge",
+    },
     # neuromorphic
-    "hopfield_beta": {"desc": "Hopfield network sharpness (low=blended recall, high=precise recall)", "section": "neuromorphic"},
-    "hopfield_max_patterns": {"desc": "Maximum patterns stored in Hopfield energy store", "section": "neuromorphic"},
+    "hopfield_beta": {
+        "desc": "Hopfield network sharpness (low=blended recall, high=precise recall)",
+        "section": "neuromorphic",
+    },
+    "hopfield_max_patterns": {
+        "desc": "Maximum patterns stored in Hopfield energy store",
+        "section": "neuromorphic",
+    },
     "hdc_dimensions": {"desc": "Hyperdimensional vector dimensionality", "section": "neuromorphic"},
-    "sr_discount": {"desc": "Successor representation discount factor γ", "section": "neuromorphic"},
+    "sr_discount": {
+        "desc": "Successor representation discount factor γ",
+        "section": "neuromorphic",
+    },
     "sr_update_rate": {"desc": "Incremental SR update learning rate", "section": "neuromorphic"},
-    "cognitive_load_limit": {"desc": "Max chunks in active context (Cowan's 4±1 rule)", "section": "neuromorphic"},
-    "reconsolidation_low_threshold": {"desc": "Below this heat: no modification on recall", "section": "neuromorphic"},
-    "reconsolidation_high_threshold": {"desc": "Above this heat: archive old version and create updated memory", "section": "neuromorphic"},
-    "plasticity_spike": {"desc": "How much plasticity increases on each memory access", "section": "neuromorphic"},
-    "plasticity_half_life_hours": {"desc": "Plasticity decay half-life in hours", "section": "neuromorphic"},
-    "stability_increment": {"desc": "Stability increase per successful retrieval", "section": "neuromorphic"},
-    "excitability_half_life_hours": {"desc": "Engram excitability decay half-life in hours", "section": "neuromorphic"},
-    "excitability_boost": {"desc": "Excitability increase on engram slot activation", "section": "neuromorphic"},
-    "dream_replay_pairs": {"desc": "Random memory pairs examined per dream replay cycle", "section": "neuromorphic"},
+    "cognitive_load_limit": {
+        "desc": "Max chunks in active context (Cowan's 4±1 rule)",
+        "section": "neuromorphic",
+    },
+    "reconsolidation_low_threshold": {
+        "desc": "Below this heat: no modification on recall",
+        "section": "neuromorphic",
+    },
+    "reconsolidation_high_threshold": {
+        "desc": "Above this heat: archive old version and create updated memory",
+        "section": "neuromorphic",
+    },
+    "plasticity_spike": {
+        "desc": "How much plasticity increases on each memory access",
+        "section": "neuromorphic",
+    },
+    "plasticity_half_life_hours": {
+        "desc": "Plasticity decay half-life in hours",
+        "section": "neuromorphic",
+    },
+    "stability_increment": {
+        "desc": "Stability increase per successful retrieval",
+        "section": "neuromorphic",
+    },
+    "excitability_half_life_hours": {
+        "desc": "Engram excitability decay half-life in hours",
+        "section": "neuromorphic",
+    },
+    "excitability_boost": {
+        "desc": "Excitability increase on engram slot activation",
+        "section": "neuromorphic",
+    },
+    "dream_replay_pairs": {
+        "desc": "Random memory pairs examined per dream replay cycle",
+        "section": "neuromorphic",
+    },
     # enrichment
-    "index_enrichment_enabled": {"desc": "Enable index-time memory enrichment pipeline", "section": "enrichment"},
-    "enrichment_min_content_length": {"desc": "Minimum content length to run enrichment", "section": "enrichment"},
-    "conceptnet_enrichment_enabled": {"desc": "Expand memories with ConceptNet relations", "section": "enrichment"},
-    "conceptnet_min_edge_weight": {"desc": "Minimum ConceptNet edge weight to include", "section": "enrichment"},
-    "conceptnet_max_terms": {"desc": "Maximum ConceptNet terms to add per memory", "section": "enrichment"},
-    "conceptnet_relations": {"desc": "Comma-separated ConceptNet relations to use", "section": "enrichment"},
-    "comet_enrichment_enabled": {"desc": "Expand memories with COMET commonsense inference", "section": "enrichment"},
+    "index_enrichment_enabled": {
+        "desc": "Enable index-time memory enrichment pipeline",
+        "section": "enrichment",
+    },
+    "enrichment_min_content_length": {
+        "desc": "Minimum content length to run enrichment",
+        "section": "enrichment",
+    },
+    "conceptnet_enrichment_enabled": {
+        "desc": "Expand memories with ConceptNet relations",
+        "section": "enrichment",
+    },
+    "conceptnet_min_edge_weight": {
+        "desc": "Minimum ConceptNet edge weight to include",
+        "section": "enrichment",
+    },
+    "conceptnet_max_terms": {
+        "desc": "Maximum ConceptNet terms to add per memory",
+        "section": "enrichment",
+    },
+    "conceptnet_relations": {
+        "desc": "Comma-separated ConceptNet relations to use",
+        "section": "enrichment",
+    },
+    "comet_enrichment_enabled": {
+        "desc": "Expand memories with COMET commonsense inference",
+        "section": "enrichment",
+    },
     "comet_model": {"desc": "COMET model name", "section": "enrichment"},
     "comet_num_beams": {"desc": "Beam search width for COMET generation", "section": "enrichment"},
-    "comet_top_k_per_relation": {"desc": "Top-k inferences per COMET relation", "section": "enrichment"},
-    "comet_min_confidence": {"desc": "Minimum COMET inference confidence to include", "section": "enrichment"},
+    "comet_top_k_per_relation": {
+        "desc": "Top-k inferences per COMET relation",
+        "section": "enrichment",
+    },
+    "comet_min_confidence": {
+        "desc": "Minimum COMET inference confidence to include",
+        "section": "enrichment",
+    },
     "comet_relations": {"desc": "Comma-separated COMET relations to use", "section": "enrichment"},
-    "comet_query_expansion_enabled": {"desc": "Apply COMET expansion at query time too", "section": "enrichment"},
-    "doc2query_enrichment_enabled": {"desc": "Generate synthetic queries for each memory (doc2query)", "section": "enrichment"},
+    "comet_query_expansion_enabled": {
+        "desc": "Apply COMET expansion at query time too",
+        "section": "enrichment",
+    },
+    "doc2query_enrichment_enabled": {
+        "desc": "Generate synthetic queries for each memory (doc2query)",
+        "section": "enrichment",
+    },
     "doc2query_model": {"desc": "Doc2query model name", "section": "enrichment"},
-    "doc2query_num_queries": {"desc": "Number of synthetic queries to generate per memory", "section": "enrichment"},
-    "logic_enrichment_enabled": {"desc": "Enable formal logic pattern enrichment", "section": "enrichment"},
-    "fpa_similarity_threshold": {"desc": "Similarity threshold for first-principles analysis", "section": "enrichment"},
+    "doc2query_num_queries": {
+        "desc": "Number of synthetic queries to generate per memory",
+        "section": "enrichment",
+    },
+    "logic_enrichment_enabled": {
+        "desc": "Enable formal logic pattern enrichment",
+        "section": "enrichment",
+    },
+    "fpa_similarity_threshold": {
+        "desc": "Similarity threshold for first-principles analysis",
+        "section": "enrichment",
+    },
     # profiles_beliefs
-    "profile_extraction_enabled": {"desc": "Extract and maintain structured user profiles", "section": "profiles_beliefs"},
-    "profile_confidence_direct": {"desc": "Confidence for directly stated profile attributes", "section": "profiles_beliefs"},
-    "profile_confidence_inferred": {"desc": "Confidence for inferred profile attributes", "section": "profiles_beliefs"},
-    "profile_search_weight": {"desc": "Profile signal weight in retrieval blend", "section": "profiles_beliefs"},
-    "profile_summary_enabled": {"desc": "Generate profile summaries", "section": "profiles_beliefs"},
-    "derived_beliefs_enabled": {"desc": "Derive and store higher-order beliefs from episodic memories", "section": "profiles_beliefs"},
-    "belief_min_confidence": {"desc": "Minimum confidence to store a derived belief", "section": "profiles_beliefs"},
-    "belief_high_confidence_boost": {"desc": "Score multiplier for high-confidence beliefs", "section": "profiles_beliefs"},
-    "belief_search_priority_for_open_domain": {"desc": "Prioritize beliefs for open-domain queries", "section": "profiles_beliefs"},
+    "profile_extraction_enabled": {
+        "desc": "Extract and maintain structured user profiles",
+        "section": "profiles_beliefs",
+    },
+    "profile_confidence_direct": {
+        "desc": "Confidence for directly stated profile attributes",
+        "section": "profiles_beliefs",
+    },
+    "profile_confidence_inferred": {
+        "desc": "Confidence for inferred profile attributes",
+        "section": "profiles_beliefs",
+    },
+    "profile_search_weight": {
+        "desc": "Profile signal weight in retrieval blend",
+        "section": "profiles_beliefs",
+    },
+    "profile_summary_enabled": {
+        "desc": "Generate profile summaries",
+        "section": "profiles_beliefs",
+    },
+    "derived_beliefs_enabled": {
+        "desc": "Derive and store higher-order beliefs from episodic memories",
+        "section": "profiles_beliefs",
+    },
+    "belief_min_confidence": {
+        "desc": "Minimum confidence to store a derived belief",
+        "section": "profiles_beliefs",
+    },
+    "belief_high_confidence_boost": {
+        "desc": "Score multiplier for high-confidence beliefs",
+        "section": "profiles_beliefs",
+    },
+    "belief_search_priority_for_open_domain": {
+        "desc": "Prioritize beliefs for open-domain queries",
+        "section": "profiles_beliefs",
+    },
     # adversarial
-    "adversarial_detection_enabled": {"desc": "Detect and suppress adversarially-crafted memory injection", "section": "adversarial"},
-    "adversarial_score_gap_threshold": {"desc": "Maximum acceptable score gap between top results", "section": "adversarial"},
-    "adversarial_diversity_enforcement": {"desc": "Enforce result diversity to prevent manipulation", "section": "adversarial"},
-    "adversarial_min_confidence": {"desc": "Minimum confidence required to surface a memory", "section": "adversarial"},
+    "adversarial_detection_enabled": {
+        "desc": "Detect and suppress adversarially-crafted memory injection",
+        "section": "adversarial",
+    },
+    "adversarial_score_gap_threshold": {
+        "desc": "Maximum acceptable score gap between top results",
+        "section": "adversarial",
+    },
+    "adversarial_diversity_enforcement": {
+        "desc": "Enforce result diversity to prevent manipulation",
+        "section": "adversarial",
+    },
+    "adversarial_min_confidence": {
+        "desc": "Minimum confidence required to surface a memory",
+        "section": "adversarial",
+    },
     # misc
-    "contextual_prefix_enabled": {"desc": "Prepend contextual prefix to improve embedding quality", "section": "misc"},
-    "curation_similarity_threshold": {"desc": "Minimum similarity to trigger memory curation/merging", "section": "misc"},
+    "contextual_prefix_enabled": {
+        "desc": "Prepend contextual prefix to improve embedding quality",
+        "section": "misc",
+    },
+    "curation_similarity_threshold": {
+        "desc": "Minimum similarity to trigger memory curation/merging",
+        "section": "misc",
+    },
     "crdt_agent_id": {"desc": "Agent identifier for multi-agent CRDT sync", "section": "misc"},
-    "replay_max_restore_memories": {"desc": "Maximum memories included in context restoration", "section": "misc"},
-    "replay_anchor_heat": {"desc": "Heat assigned to anchored (protected) memories", "section": "misc"},
-    "replay_checkpoint_auto_interval": {"desc": "Auto-checkpoint every N tool calls", "section": "misc"},
+    "replay_max_restore_memories": {
+        "desc": "Maximum memories included in context restoration",
+        "section": "misc",
+    },
+    "replay_anchor_heat": {
+        "desc": "Heat assigned to anchored (protected) memories",
+        "section": "misc",
+    },
+    "replay_checkpoint_auto_interval": {
+        "desc": "Auto-checkpoint every N tool calls",
+        "section": "misc",
+    },
 }
 
 
@@ -250,6 +618,7 @@ def coerce_value(field_name: str, raw: str) -> Any:
 
     # Unwrap Optional[X] → X
     import typing
+
     origin = getattr(annotation, "__origin__", None)
     if origin is typing.Union:
         args = [a for a in annotation.__args__ if a is not type(None)]
@@ -297,7 +666,7 @@ def cmd_config_init(args) -> None:
     section_fields: dict[str, list[tuple[str, Any]]] = {s: [] for s in _SECTION_ORDER}
     section_fields["misc"] = section_fields.get("misc", [])
 
-    for field_upper, field_info in Settings.model_fields.items():
+    for field_upper, _field_info in Settings.model_fields.items():
         field_lower = field_upper.lower()
         value = getattr(settings, field_upper)
         section = get_field_section(field_lower)
@@ -353,13 +722,7 @@ def cmd_config_init(args) -> None:
                 else:
                     cm.yaml_set_comment_before_after_key(
                         field_lower,
-                        before=(
-                            f"\n"
-                            f" {separator}\n"
-                            f" {title}\n"
-                            f" {separator}\n"
-                            f" {desc}"
-                        ),
+                        before=(f"\n {separator}\n {title}\n {separator}\n {desc}"),
                     )
             else:
                 cm.yaml_set_comment_before_after_key(
@@ -514,6 +877,7 @@ def cmd_config_edit(args) -> None:
         # Create with init first
         class _FakeArgs:
             force = False
+
         cmd_config_init(_FakeArgs())
 
     editor = os.environ.get("EDITOR") or os.environ.get("VISUAL")

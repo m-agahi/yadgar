@@ -25,13 +25,14 @@ def _db_locked(db_path: Path) -> bool:
     if not lock_path.exists():
         return False
     try:
-        lf = open(lock_path, "r")
+        lf = open(lock_path)
         fcntl.flock(lf, fcntl.LOCK_EX | fcntl.LOCK_NB)
         fcntl.flock(lf, fcntl.LOCK_UN)
         lf.close()
         return False
     except OSError:
         return True
+
 
 # Maximum memories to inject per turn
 MAX_RESULTS = 5
@@ -91,7 +92,12 @@ def _fts_search(db, query: str, directory: str) -> list:
                 "WHERE content @1@ $query AND heat >= $min_heat AND is_stale = false "
                 "AND directory_context != $dir "
                 "ORDER BY score DESC LIMIT $lim",
-                {"query": fts_query, "min_heat": MIN_HEAT, "dir": directory, "lim": MAX_RESULTS * 2},
+                {
+                    "query": fts_query,
+                    "min_heat": MIN_HEAT,
+                    "dir": directory,
+                    "lim": MAX_RESULTS * 2,
+                },
             )
             global_rows = global_res[0] if global_res and global_res[0] else []
             rows = list(rows) + list(global_rows)
@@ -103,14 +109,16 @@ def _fts_search(db, query: str, directory: str) -> list:
             if hasattr(raw_id, "__str__"):
                 raw_id = str(raw_id)
             mem_id = raw_id.split(":")[-1] if ":" in raw_id else raw_id
-            results.append({
-                "id": mem_id,
-                "content": r.get("content", ""),
-                "heat": r.get("heat", 0.0),
-                "directory": r.get("directory_context", ""),
-                "score": r.get("score", 0.0),
-                "source": "fts",
-            })
+            results.append(
+                {
+                    "id": mem_id,
+                    "content": r.get("content", ""),
+                    "heat": r.get("heat", 0.0),
+                    "directory": r.get("directory_context", ""),
+                    "score": r.get("score", 0.0),
+                    "source": "fts",
+                }
+            )
         return results
     except Exception:
         return []
@@ -139,7 +147,7 @@ def _merge_and_rank(fts_results: list, directory: str) -> list:
         if not content.startswith("Session activity"):
             r["combined"] *= 2.0
         # Boost by heat (hotter = more relevant)
-        r["combined"] *= (1.0 + r.get("heat", 0))
+        r["combined"] *= 1.0 + r.get("heat", 0)
 
     results.sort(key=lambda x: -x["combined"])
     return results[:MAX_RESULTS]
@@ -190,8 +198,9 @@ def main():
     # Try HTTP endpoint first — works in daemon mode where DB lock is always held
     _port = os.environ.get("YADGAR_PORT", "8765")
     try:
-        import urllib.request as _req
         import urllib.parse as _parse
+        import urllib.request as _req
+
         _params = _parse.urlencode({"query": query, "directory": directory})
         _resp = _req.urlopen(
             f"http://127.0.0.1:{_port}/hooks/prompt-recall?{_params}",
@@ -209,6 +218,7 @@ def main():
 
     try:
         from surrealdb import Surreal
+
         db = Surreal(f"surrealkv://{db_path}")
         db.use("yadgar", "main")
     except Exception:

@@ -3,7 +3,7 @@
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
@@ -89,16 +89,20 @@ class AstrocytePool:
             if domain_name in existing_by_name:
                 proc = existing_by_name[domain_name]
             else:
-                proc_id = self._storage.insert_astrocyte_process({
-                    "name": domain_name,
-                    "domain": domain_name,
-                    "specialization": json.dumps({
-                        "entity_types": sorted(domain_def["entity_types"]),
-                        "decay_multiplier": domain_def["decay_multiplier"],
-                    }),
-                    "memory_ids": [],
-                    "entity_ids": [],
-                })
+                proc_id = self._storage.insert_astrocyte_process(
+                    {
+                        "name": domain_name,
+                        "domain": domain_name,
+                        "specialization": json.dumps(
+                            {
+                                "entity_types": sorted(domain_def["entity_types"]),
+                                "decay_multiplier": domain_def["decay_multiplier"],
+                            }
+                        ),
+                        "memory_ids": [],
+                        "entity_ids": [],
+                    }
+                )
                 all_procs = self._storage.get_astrocyte_processes()
                 proc = next((p for p in all_procs if p["id"] == proc_id), None)
 
@@ -152,9 +156,7 @@ class AstrocytePool:
                 current_ids = proc.get("memory_ids", [])
                 if memory_id not in current_ids:
                     current_ids.append(memory_id)
-                    self._storage.update_astrocyte_process(
-                        proc["id"], {"memory_ids": current_ids}
-                    )
+                    self._storage.update_astrocyte_process(proc["id"], {"memory_ids": current_ids})
                     proc["memory_ids"] = current_ids
 
         return assigned
@@ -181,7 +183,7 @@ class AstrocytePool:
             "entities_extracted": 0,
         }
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         decay_multiplier = domain_def["decay_multiplier"]
         memory_ids = proc.get("memory_ids", [])
 
@@ -229,18 +231,19 @@ class AstrocytePool:
                         eid = existing["id"]
                         self._storage.reinforce_entity(eid)
                     else:
-                        eid = self._storage.insert_entity(
-                            {"name": name, "type": etype}
-                        )
+                        eid = self._storage.insert_entity({"name": name, "type": etype})
                     if eid not in entity_ids:
                         entity_ids.append(eid)
                         stats["entities_extracted"] += 1
 
         # Update process record
-        self._storage.update_astrocyte_process(proc["id"], {
-            "memory_ids": memory_ids,
-            "entity_ids": entity_ids,
-        })
+        self._storage.update_astrocyte_process(
+            proc["id"],
+            {
+                "memory_ids": memory_ids,
+                "entity_ids": entity_ids,
+            },
+        )
         proc["memory_ids"] = memory_ids
         proc["entity_ids"] = entity_ids
 
@@ -248,9 +251,7 @@ class AstrocytePool:
 
     # -- d. Consensus Retrieval --
 
-    def consensus_retrieve(
-        self, query: str, top_k: int = 5
-    ) -> list[dict]:
+    def consensus_retrieve(self, query: str, top_k: int = 5) -> list[dict]:
         """Each process scores the query against its domain memories, then merge with voting.
 
         Memories returned by multiple processes get score boosts.
@@ -283,9 +284,7 @@ class AstrocytePool:
 
                 # Semantic similarity if embeddings available
                 if query_embedding is not None and mem.get("embedding"):
-                    sim = self._embeddings.similarity(
-                        query_embedding, mem["embedding"]
-                    )
+                    sim = self._embeddings.similarity(query_embedding, mem["embedding"])
                     score = sim * 0.6 + mem["heat"] * 0.4
 
                 # Weight by domain relevance
@@ -314,9 +313,7 @@ class AstrocytePool:
                 continue
             mem.pop("embedding", None)
             mem["consensus_score"] = round(score, 4)
-            mem["voting_domains"] = [
-                d for _, d in votes.get(mid, [])
-            ]
+            mem["voting_domains"] = [d for _, d in votes.get(mid, [])]
             output.append(mem)
 
         return output
@@ -338,16 +335,18 @@ class AstrocytePool:
 
             avg_heat = sum(heats) / len(heats) if heats else 0.0
 
-            stats.append({
-                "name": domain_name,
-                "domain": proc.get("domain", domain_name),
-                "memory_count": len(memory_ids),
-                "entity_count": len(proc.get("entity_ids", [])),
-                "avg_heat": round(avg_heat, 4),
-                "last_active": proc.get("last_active", ""),
-                "decay_multiplier": DOMAIN_DEFINITIONS.get(
-                    domain_name, {}
-                ).get("decay_multiplier", 1.0),
-            })
+            stats.append(
+                {
+                    "name": domain_name,
+                    "domain": proc.get("domain", domain_name),
+                    "memory_count": len(memory_ids),
+                    "entity_count": len(proc.get("entity_ids", [])),
+                    "avg_heat": round(avg_heat, 4),
+                    "last_active": proc.get("last_active", ""),
+                    "decay_multiplier": DOMAIN_DEFINITIONS.get(domain_name, {}).get(
+                        "decay_multiplier", 1.0
+                    ),
+                }
+            )
 
         return stats

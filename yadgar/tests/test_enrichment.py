@@ -1,13 +1,12 @@
 import numpy as np
-import pytest
 
 from yadgar.config import Settings
 from yadgar.enrichment import (
+    HARDCODED_EXPANSIONS,
     ConceptNetExpander,
     EnrichmentPipeline,
     EnrichmentResult,
     FPAFilter,
-    HARDCODED_EXPANSIONS,
     LogicExpander,
 )
 
@@ -36,16 +35,16 @@ class TestLogicExpander:
     def test_logic_expander_hypernym(self):
         expander = LogicExpander()
         result = expander.expand("went camping at Yellowstone")
-        assert any(
-            term in result for term in ("national_park", "outdoor")
-        ), f"Expected hypernym in {result}"
+        assert any(term in result for term in ("national_park", "outdoor")), (
+            f"Expected hypernym in {result}"
+        )
 
     def test_logic_expander_verb_nominalization(self):
         expander = LogicExpander()
         result = expander.expand("enjoys reading")
-        assert any(
-            "reading" in term for term in result
-        ), f"Expected reading nominalization in {result}"
+        assert any("reading" in term for term in result), (
+            f"Expected reading nominalization in {result}"
+        )
 
 
 class TestConceptNetExpander:
@@ -86,6 +85,7 @@ class TestFPAFilter:
 
         class DistantEmbeddingEngine:
             """Returns orthogonal embeddings for different texts."""
+
             def __init__(self):
                 self._call_count = 0
 

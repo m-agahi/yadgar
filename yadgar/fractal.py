@@ -54,9 +54,7 @@ class FractalMemoryTree:
         for directory, memories in dir_groups.items():
             clusters = self._cluster_by_similarity(memories)
             for cluster_mems in clusters:
-                cluster_info = self._create_level_1_cluster(
-                    directory, cluster_mems
-                )
+                cluster_info = self._create_level_1_cluster(directory, cluster_mems)
                 if cluster_info:
                     level_1_clusters.append(cluster_info)
                     stats["level_1_clusters"] += 1
@@ -67,9 +65,7 @@ class FractalMemoryTree:
 
         return stats
 
-    def _cluster_by_similarity(
-        self, memories: list[dict]
-    ) -> list[list[dict]]:
+    def _cluster_by_similarity(self, memories: list[dict]) -> list[list[dict]]:
         """Agglomerative clustering of memories by embedding similarity.
 
         Uses a simple single-linkage approach with CLUSTER_SIMILARITY_THRESHOLD.
@@ -135,9 +131,7 @@ class FractalMemoryTree:
             return 0.0
         return float(dot / norm)
 
-    def _create_level_1_cluster(
-        self, directory: str, memories: list[dict]
-    ) -> dict | None:
+    def _create_level_1_cluster(self, directory: str, memories: list[dict]) -> dict | None:
         """Create or update a level 1 cluster from a group of memories."""
         if not memories:
             return None
@@ -153,6 +147,7 @@ class FractalMemoryTree:
 
         # Extract entity-like names (CamelCase, paths, etc.)
         import re
+
         entity_re = re.compile(r"\b[A-Z][\w]*(?:[A-Z][\w]*)*\b")
         entities = entity_re.findall(all_content)
         entity_counts = Counter(entities)
@@ -185,13 +180,15 @@ class FractalMemoryTree:
 
         cluster_name = f"cluster_{directory.replace('/', '_').strip('_')}_{len(memories)}mem"
 
-        cluster_id = self._storage.insert_cluster({
-            "name": cluster_name,
-            "level": 1,
-            "summary": summary,
-            "centroid_embedding": centroid,
-            "member_count": len(memories),
-        })
+        cluster_id = self._storage.insert_cluster(
+            {
+                "name": cluster_name,
+                "level": 1,
+                "summary": summary,
+                "centroid_embedding": centroid,
+                "member_count": len(memories),
+            }
+        )
 
         # Assign memories to this cluster
         for m in memories:
@@ -205,9 +202,7 @@ class FractalMemoryTree:
             "centroid": centroid,
         }
 
-    def _create_level_2_clusters(
-        self, level_1_clusters: list[dict]
-    ) -> int:
+    def _create_level_2_clusters(self, level_1_clusters: list[dict]) -> int:
         """Group level 1 clusters by directory prefix into level 2 root clusters."""
         if not level_1_clusters:
             return 0
@@ -222,27 +217,29 @@ class FractalMemoryTree:
             total_members = sum(c["member_count"] for c in clusters)
 
             # Collect top entities from sub-clusters for the summary
-            all_summaries = " ".join(c["summary"] for c in clusters)
+            " ".join(c["summary"] for c in clusters)
 
-            summary = (
-                f"{directory}: {len(clusters)} sub-clusters, "
-                f"{total_members} memories"
-            )
+            summary = f"{directory}: {len(clusters)} sub-clusters, {total_members} memories"
 
             root_name = f"root_{directory.replace('/', '_').strip('_')}"
 
-            root_id = self._storage.insert_cluster({
-                "name": root_name,
-                "level": 2,
-                "summary": summary,
-                "member_count": total_members,
-            })
+            root_id = self._storage.insert_cluster(
+                {
+                    "name": root_name,
+                    "level": 2,
+                    "summary": summary,
+                    "member_count": total_members,
+                }
+            )
 
             # Link level 1 clusters to this root
             for cl in clusters:
-                self._storage.update_cluster(cl["cluster_id"], {
-                    "parent_cluster_id": root_id,
-                })
+                self._storage.update_cluster(
+                    cl["cluster_id"],
+                    {
+                        "parent_cluster_id": root_id,
+                    },
+                )
 
             count += 1
 
@@ -250,9 +247,7 @@ class FractalMemoryTree:
 
     # -- b. Tree Retrieval --
 
-    def retrieve_tree(
-        self, query: str, target_level: int | None = None
-    ) -> list[dict]:
+    def retrieve_tree(self, query: str, target_level: int | None = None) -> list[dict]:
         """Multi-scale retrieval across the fractal hierarchy.
 
         If target_level is specified, search only that level.
@@ -315,9 +310,7 @@ class FractalMemoryTree:
     ) -> list[dict]:
         """Retrieve individual memories (level 0) by vector similarity."""
         query_bytes = query_arr.astype(np.float32).tobytes()
-        vec_hits = self._storage.search_vectors(
-            query_bytes, top_k=limit, min_heat=0.0
-        )
+        vec_hits = self._storage.search_vectors(query_bytes, top_k=limit, min_heat=0.0)
 
         results = []
         for mid, distance in vec_hits:
@@ -326,17 +319,19 @@ class FractalMemoryTree:
                 continue
             similarity = 1.0 / (1.0 + distance)
             mem.pop("embedding", None)
-            results.append({
-                "level": 0,
-                "type": "memory",
-                "id": mem["id"],
-                "content": mem["content"],
-                "score": similarity * weight,
-                "directory": mem["directory_context"],
-                "tags": mem.get("tags", []),
-                "heat": mem["heat"],
-                "cluster_id": mem.get("cluster_id"),
-            })
+            results.append(
+                {
+                    "level": 0,
+                    "type": "memory",
+                    "id": mem["id"],
+                    "content": mem["content"],
+                    "score": similarity * weight,
+                    "directory": mem["directory_context"],
+                    "tags": mem.get("tags", []),
+                    "heat": mem["heat"],
+                    "cluster_id": mem.get("cluster_id"),
+                }
+            )
 
         return results
 
@@ -356,23 +351,25 @@ class FractalMemoryTree:
         for cl in clusters:
             if cl.get("centroid_embedding") is None:
                 # For clusters without centroids, do keyword matching on summary
-                query_lower = " ".join(query_arr.tobytes().decode("latin-1", errors="ignore").split())
+                " ".join(query_arr.tobytes().decode("latin-1", errors="ignore").split())
                 # Skip clusters without centroid - they can't be similarity-searched
                 continue
 
             cl_arr = np.frombuffer(cl["centroid_embedding"], dtype=np.float32).copy()
             sim = self._cosine_similarity(query_arr, cl_arr)
 
-            scored.append({
-                "level": level,
-                "type": "cluster",
-                "id": cl["id"],
-                "name": cl["name"],
-                "summary": cl["summary"],
-                "score": sim * weight,
-                "member_count": cl["member_count"],
-                "parent_cluster_id": cl.get("parent_cluster_id"),
-            })
+            scored.append(
+                {
+                    "level": level,
+                    "type": "cluster",
+                    "id": cl["id"],
+                    "name": cl["name"],
+                    "summary": cl["summary"],
+                    "score": sim * weight,
+                    "member_count": cl["member_count"],
+                    "parent_cluster_id": cl.get("parent_cluster_id"),
+                }
+            )
 
         scored.sort(key=lambda x: x["score"], reverse=True)
         return scored[:limit]
@@ -415,15 +412,17 @@ class FractalMemoryTree:
             for mem in all_memories:
                 if mem.get("cluster_id") == cluster_id and mem["heat"] > 0:
                     mem.pop("embedding", None)
-                    results.append({
-                        "level": 0,
-                        "type": "memory",
-                        "id": mem["id"],
-                        "content": mem["content"],
-                        "directory": mem["directory_context"],
-                        "tags": mem.get("tags", []),
-                        "heat": mem["heat"],
-                    })
+                    results.append(
+                        {
+                            "level": 0,
+                            "type": "memory",
+                            "id": mem["id"],
+                            "content": mem["content"],
+                            "directory": mem["directory_context"],
+                            "tags": mem.get("tags", []),
+                            "heat": mem["heat"],
+                        }
+                    )
             results.sort(key=lambda r: r["heat"], reverse=True)
             return results
 
@@ -489,9 +488,7 @@ class FractalMemoryTree:
 
     # -- Fractal signal for retrieval integration --
 
-    def fractal_score(
-        self, query: str, max_results: int = 10
-    ) -> list[tuple[int, float]]:
+    def fractal_score(self, query: str, max_results: int = 10) -> list[tuple[int, float]]:
         """Return (memory_id, score) pairs from fractal cluster matching.
 
         Used as a signal in unified recall. For broad queries, includes

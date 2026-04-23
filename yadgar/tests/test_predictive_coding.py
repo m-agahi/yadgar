@@ -1,7 +1,5 @@
 """Tests for predictive coding write gate — surprisal-based memory gating."""
 
-from datetime import datetime, timedelta, timezone
-
 import pytest
 
 from yadgar.config import Settings
@@ -70,12 +68,14 @@ class TestHighSurprisalNovelContent:
         """Completely novel content in an existing directory should pass the gate."""
         # Seed with some Python-related memories
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Using Flask for the web API with SQLAlchemy ORM",
             directory="/tmp/project",
         )
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Configured pytest with coverage reporting",
             directory="/tmp/project",
         )
@@ -95,7 +95,8 @@ class TestLowSurprisalDuplicate:
     def test_near_duplicate_is_blocked(self, gate, storage, embeddings):
         """Near-duplicate content should be blocked by the gate."""
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Using Flask for the web API with SQLAlchemy ORM for database access",
             directory="/tmp/project",
         )
@@ -116,7 +117,8 @@ class TestAlwaysStoreErrors:
         """Content with error keywords should always be stored."""
         # Seed with similar content
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Database connection configuration for PostgreSQL",
             directory="/tmp/project",
         )
@@ -133,7 +135,8 @@ class TestAlwaysStoreErrors:
     def test_exception_keyword_bypasses(self, gate, storage, embeddings):
         """Content mentioning exceptions should bypass the gate."""
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Python function for data processing",
             directory="/tmp/project",
         )
@@ -190,7 +193,8 @@ class TestAlwaysStoreDecisions:
     def test_decision_keywords_bypass_gate(self, gate, storage, embeddings):
         """Content with decision keywords should always be stored."""
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Working with the project configuration system",
             directory="/tmp/project",
         )
@@ -248,7 +252,8 @@ class TestImportantTagBypass:
     def test_important_tag_bypasses(self, gate, storage, embeddings):
         """Content tagged 'important' should always be stored."""
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Standard project setup with Python and pip",
             directory="/tmp/project",
         )
@@ -298,7 +303,8 @@ class TestEntityNoveltyNewEntities:
         """Content with new entities not in the graph should increase surprisal."""
         # Seed with known entities
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "def process_data(): pass\ndef validate_input(): pass",
             directory="/tmp/project",
         )
@@ -333,7 +339,8 @@ class TestTemporalNoveltyRecent:
         # Insert a memory about Flask with a very recent timestamp
         storage.insert_entity({"name": "Flask", "type": "dependency"})
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Setting up Flask web server with routes",
             directory="/tmp/project",
         )
@@ -384,13 +391,15 @@ class TestDirectoryModelBuilds:
     def test_directory_model_returns_correct_stats(self, gate, storage, embeddings):
         """Directory model should return accurate statistics."""
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Flask web server configuration",
             directory="/tmp/myproject",
             tags=["flask", "web"],
         )
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "SQLAlchemy database models and migrations",
             directory="/tmp/myproject",
             tags=["database", "flask"],
@@ -521,7 +530,8 @@ class TestSurprisalComputation:
     def test_surprisal_range(self, gate, storage, embeddings):
         """Surprisal should always be in [0.0, 1.0]."""
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Python web development with Django",
             directory="/tmp/project",
         )
@@ -543,7 +553,8 @@ class TestSurprisalComputation:
     def test_novel_content_high_surprisal(self, gate, storage, embeddings):
         """Completely novel content should have high surprisal."""
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Python web application with Flask",
             directory="/tmp/project",
         )
@@ -580,15 +591,14 @@ class TestStructuralNovelty:
 class TestEmbeddingNovelty:
     def test_no_vectors_high_novelty(self, gate):
         """No existing vectors should yield high embedding novelty."""
-        novelty = gate._compute_embedding_novelty(
-            "Brand new content with no prior context"
-        )
+        novelty = gate._compute_embedding_novelty("Brand new content with no prior context")
         assert novelty >= 0.7
 
     def test_similar_content_low_novelty(self, gate, storage, embeddings):
         """Similar content should yield low embedding novelty."""
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Setting up Flask with SQLAlchemy for database access",
             directory="/tmp/project",
         )

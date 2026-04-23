@@ -6,17 +6,14 @@ import sys
 import pytest
 from starlette.testclient import TestClient
 
-from yadgar import __version__
-from yadgar import server
+from yadgar import __version__, server
 
 
 @pytest.fixture(autouse=True)
 def _engines(tmp_path):
     """Initialize global engines with a temp database for each test."""
     db_path = str(tmp_path / "test_transport.db")
-    server.init_engines(
-        db_path=db_path, embedding_model="all-MiniLM-L6-v2"
-    )
+    server.init_engines(db_path=db_path, embedding_model="all-MiniLM-L6-v2")
     yield
     server.shutdown()
 
@@ -74,12 +71,12 @@ class TestHealthEndpoint:
 class TestSessionManagement:
     def test_streamable_http_app_has_session_manager(self):
         """Streamable HTTP transport creates a session manager."""
-        app = server.mcp_server.streamable_http_app()
+        server.mcp_server.streamable_http_app()
         assert server.mcp_server._session_manager is not None
 
     def test_session_manager_tracks_instances(self):
         """Session manager has _server_instances dict for tracking."""
-        app = server.mcp_server.streamable_http_app()
+        server.mcp_server.streamable_http_app()
         mgr = server.mcp_server._session_manager
         assert hasattr(mgr, "_server_instances")
         assert isinstance(mgr._server_instances, dict)
@@ -112,7 +109,8 @@ class TestTransportSelection:
         """CLI advertises both sse and streamable-http transports."""
         result = subprocess.run(
             [sys.executable, "-m", "yadgar", "--help"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert "sse" in result.stdout
         assert "streamable-http" in result.stdout
@@ -120,6 +118,7 @@ class TestTransportSelection:
     def test_main_accepts_transport_param(self):
         """server.main() accepts a transport keyword argument."""
         import inspect
+
         sig = inspect.signature(server.main)
         assert "transport" in sig.parameters
         assert sig.parameters["transport"].default == "stdio"
@@ -128,7 +127,8 @@ class TestTransportSelection:
         """CLI defaults to stdio transport."""
         result = subprocess.run(
             [sys.executable, "-m", "yadgar", "--help"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert "--transport" in result.stdout
         assert "stdio" in result.stdout
@@ -138,7 +138,8 @@ class TestTransportSelection:
         """CLI rejects unknown transport values."""
         result = subprocess.run(
             [sys.executable, "-m", "yadgar", "--transport", "websocket"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert result.returncode != 0
         assert "invalid choice" in result.stderr
@@ -157,11 +158,13 @@ class TestTransportSelection:
 class TestStreamableHttpApp:
     def test_streamable_http_app_is_starlette(self):
         from starlette.applications import Starlette
+
         app = server.mcp_server.streamable_http_app()
         assert isinstance(app, Starlette)
 
     def test_sse_app_is_starlette(self):
         from starlette.applications import Starlette
+
         app = server.mcp_server.sse_app()
         assert isinstance(app, Starlette)
 

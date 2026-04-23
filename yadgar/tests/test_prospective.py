@@ -1,6 +1,6 @@
 """Tests for the prospective memory system."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -66,7 +66,7 @@ class TestDirectoryTrigger:
             "directory": "/home/proj/db/migrations",
             "content": "something unrelated",
             "entities": [],
-            "current_time": datetime.now(timezone.utc),
+            "current_time": datetime.now(UTC),
         }
         triggered = prospective.check_triggers(context)
         assert len(triggered) == 1
@@ -85,7 +85,7 @@ class TestDirectoryTrigger:
             "directory": "/home/other/frontend",
             "content": "",
             "entities": [],
-            "current_time": datetime.now(timezone.utc),
+            "current_time": datetime.now(UTC),
         }
         triggered = prospective.check_triggers(context)
         assert len(triggered) == 0
@@ -104,7 +104,7 @@ class TestKeywordTrigger:
             "directory": "/proj",
             "content": "Working on the API endpoint and updating docs",
             "entities": [],
-            "current_time": datetime.now(timezone.utc),
+            "current_time": datetime.now(UTC),
         }
         triggered = prospective.check_triggers(context)
         assert len(triggered) == 1
@@ -121,7 +121,7 @@ class TestKeywordTrigger:
             "directory": "/proj",
             "content": "Working on frontend styling",
             "entities": [],
-            "current_time": datetime.now(timezone.utc),
+            "current_time": datetime.now(UTC),
         }
         triggered = prospective.check_triggers(context)
         assert len(triggered) == 0
@@ -140,7 +140,7 @@ class TestEntityTrigger:
             "directory": "/proj",
             "content": "",
             "entities": ["StorageEngine", "EmbeddingEngine"],
-            "current_time": datetime.now(timezone.utc),
+            "current_time": datetime.now(UTC),
         }
         triggered = prospective.check_triggers(context)
         assert len(triggered) == 1
@@ -159,7 +159,7 @@ class TestTimeTrigger:
             "directory": "/proj",
             "content": "",
             "entities": [],
-            "current_time": datetime(2026, 3, 2, 14, 30, tzinfo=timezone.utc),
+            "current_time": datetime(2026, 3, 2, 14, 30, tzinfo=UTC),
         }
         triggered = prospective.check_triggers(context)
         assert len(triggered) == 1
@@ -176,7 +176,7 @@ class TestTimeTrigger:
             "directory": "/proj",
             "content": "",
             "entities": [],
-            "current_time": datetime(2026, 3, 2, 10, 0, tzinfo=timezone.utc),
+            "current_time": datetime(2026, 3, 2, 10, 0, tzinfo=UTC),
         }
         triggered = prospective.check_triggers(context)
         assert len(triggered) == 0
@@ -195,11 +195,11 @@ class TestTriggerDeactivation:
             "directory": "/proj",
             "content": "this is a test of the system",
             "entities": [],
-            "current_time": datetime.now(timezone.utc),
+            "current_time": datetime.now(UTC),
         }
 
         # Fire 6 times
-        for i in range(6):
+        for _i in range(6):
             prospective.check_triggers(context)
 
         # 7th time: trigger should be deactivated
@@ -265,7 +265,7 @@ class TestNoFalseTriggers:
             "directory": "/frontend/components",
             "content": "Updated the CSS styles for the button component",
             "entities": ["ButtonComponent", "StyleSheet"],
-            "current_time": datetime.now(timezone.utc),
+            "current_time": datetime.now(UTC),
         }
         triggered = prospective.check_triggers(context)
         assert len(triggered) == 0

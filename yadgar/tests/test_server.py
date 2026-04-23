@@ -7,8 +7,6 @@ from pathlib import Path
 import pytest
 
 from yadgar import server
-from yadgar.embeddings import EmbeddingEngine
-from yadgar.storage import StorageEngine
 
 
 @pytest.fixture(autouse=True)
@@ -286,8 +284,15 @@ def test_mcp_server_has_tools():
     """Verify tools are registered on the FastMCP instance."""
     tools = mcp_server_tools()
     tool_names = {t.name for t in tools}
-    expected = {"remember", "recall", "forget", "validate_memory",
-                "get_project_context", "consolidate_now", "memory_stats"}
+    expected = {
+        "remember",
+        "recall",
+        "forget",
+        "validate_memory",
+        "get_project_context",
+        "consolidate_now",
+        "memory_stats",
+    }
     assert expected.issubset(tool_names)
 
 
@@ -301,7 +306,8 @@ def test_mcp_server_has_resources():
 
 
 # Helpers that call the async list methods on FastMCP
-import asyncio
+import asyncio  # noqa: E402
+
 
 def mcp_server_tools():
     loop = asyncio.new_event_loop()
@@ -309,6 +315,7 @@ def mcp_server_tools():
         return loop.run_until_complete(server.mcp_server.list_tools())
     finally:
         loop.close()
+
 
 def mcp_server_resources():
     loop = asyncio.new_event_loop()

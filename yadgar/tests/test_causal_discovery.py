@@ -1,6 +1,6 @@
 """Tests for the PC algorithm causal discovery module."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 import pytest
@@ -35,7 +35,7 @@ def cd(storage, kg, settings):
 
 def _populate_entities_and_episodes(storage, n_entities=6, n_hours=24):
     """Create entities and episodes for testing."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     entity_names = [f"entity_{i}" for i in range(n_entities)]
     entity_ids = []
 
@@ -52,19 +52,21 @@ def _populate_entities_and_episodes(storage, n_entities=6, n_hours=24):
         else:
             content = f"Working on {entity_names[3]} and {entity_names[4]} and {entity_names[5]}"
 
-        storage.insert_episode({
-            "session_id": f"sess_{h}",
-            "directory": "/project",
-            "raw_content": content,
-            "timestamp": ts,
-        })
+        storage.insert_episode(
+            {
+                "session_id": f"sess_{h}",
+                "directory": "/project",
+                "raw_content": content,
+                "timestamp": ts,
+            }
+        )
 
     return entity_names, entity_ids
 
 
 class TestBuildEventMatrix:
     def test_correct_shape_and_values(self, cd, storage):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # Create 3 entities
         storage.insert_entity({"name": "fileA", "type": "file"})
         storage.insert_entity({"name": "fileB", "type": "file"})
@@ -73,12 +75,14 @@ class TestBuildEventMatrix:
         # Create episodes mentioning them
         for i in range(5):
             ts = (now - timedelta(hours=5 - i)).isoformat()
-            storage.insert_episode({
-                "session_id": f"s{i}",
-                "directory": "/proj",
-                "raw_content": f"Changed fileA and got errorX at step {i}",
-                "timestamp": ts,
-            })
+            storage.insert_episode(
+                {
+                    "session_id": f"s{i}",
+                    "directory": "/proj",
+                    "raw_content": f"Changed fileA and got errorX at step {i}",
+                    "timestamp": ts,
+                }
+            )
 
         data, names, timestamps = cd.build_event_matrix(hours=24)
 
@@ -99,23 +103,27 @@ class TestBuildEventMatrix:
         assert timestamps == []
 
     def test_directory_filter(self, cd, storage):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         storage.insert_entity({"name": "modA", "type": "file"})
 
         # Episode in /proj1
-        storage.insert_episode({
-            "session_id": "s1",
-            "directory": "/proj1",
-            "raw_content": "modA changed",
-            "timestamp": (now - timedelta(hours=1)).isoformat(),
-        })
+        storage.insert_episode(
+            {
+                "session_id": "s1",
+                "directory": "/proj1",
+                "raw_content": "modA changed",
+                "timestamp": (now - timedelta(hours=1)).isoformat(),
+            }
+        )
         # Episode in /proj2
-        storage.insert_episode({
-            "session_id": "s2",
-            "directory": "/proj2",
-            "raw_content": "modA changed",
-            "timestamp": (now - timedelta(hours=2)).isoformat(),
-        })
+        storage.insert_episode(
+            {
+                "session_id": "s2",
+                "directory": "/proj2",
+                "raw_content": "modA changed",
+                "timestamp": (now - timedelta(hours=2)).isoformat(),
+            }
+        )
 
         data1, names1, _ = cd.build_event_matrix(directory="/proj1", hours=24)
         data2, names2, _ = cd.build_event_matrix(directory="/proj2", hours=24)
@@ -156,9 +164,7 @@ class TestConditionalIndependenceTest:
         assert result_unconditional is False
 
         # Conditioning on z: x and y should be (nearly) independent
-        result_conditional = cd.conditional_independence_test(
-            x, y, z=z.reshape(-1, 1), alpha=0.05
-        )
+        result_conditional = cd.conditional_independence_test(x, y, z=z.reshape(-1, 1), alpha=0.05)
         assert result_conditional is True
 
     def test_insufficient_data(self, cd):
@@ -197,17 +203,11 @@ class TestPCAlgorithm:
 
         # Z should not be connected to X or Y
         all_edges = result["directed_edges"] + result["undirected_edges"]
-        z_edges = [
-            e for e in all_edges
-            if "Z" in (e[0], e[1])
-        ]
+        z_edges = [e for e in all_edges if "Z" in (e[0], e[1])]
         assert len(z_edges) == 0
 
         # X and Y should be connected
-        xy_edges = [
-            e for e in all_edges
-            if {"X", "Y"} == {e[0], e[1]}
-        ]
+        xy_edges = [e for e in all_edges if {"X", "Y"} == {e[0], e[1]}]
         assert len(xy_edges) >= 1
 
     def test_orients_v_structure(self, cd):
@@ -225,7 +225,7 @@ class TestPCAlgorithm:
 
         # Should find directed edges X -> Z and Y -> Z
         directed = result["directed_edges"]
-        directed_pairs = {(e[0], e[1]) for e in directed}
+        {(e[0], e[1]) for e in directed}
 
         # At minimum, Z should receive edges (v-structure)
         z_targets = [e for e in directed if e[1] == "Z"]
@@ -254,17 +254,19 @@ class TestPCAlgorithm:
 class TestDiscoverDAG:
     def test_minimum_data_returns_empty(self, cd, storage):
         """With < 5 variables or < 10 time windows, return empty DAG."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # Only create 2 entities
         storage.insert_entity({"name": "alpha", "type": "file"})
         storage.insert_entity({"name": "beta", "type": "file"})
 
-        storage.insert_episode({
-            "session_id": "s1",
-            "directory": "/proj",
-            "raw_content": "alpha and beta",
-            "timestamp": (now - timedelta(hours=1)).isoformat(),
-        })
+        storage.insert_episode(
+            {
+                "session_id": "s1",
+                "directory": "/proj",
+                "raw_content": "alpha and beta",
+                "timestamp": (now - timedelta(hours=1)).isoformat(),
+            }
+        )
 
         result = cd.discover_dag(hours=24)
         assert result["directed_edges"] == []
@@ -272,7 +274,7 @@ class TestDiscoverDAG:
 
     def test_sufficient_data_returns_dag(self, cd, storage):
         """With enough data, should return a DAG with edges."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         np.random.seed(42)
 
         # Create 8 entities
@@ -285,20 +287,22 @@ class TestDiscoverDAG:
             ts = (now - timedelta(hours=20 - h)).isoformat()
             # First group always co-occurs
             if h % 2 == 0:
-                content = f"Working on mod_0 and mod_1 and mod_2"
+                content = "Working on mod_0 and mod_1 and mod_2"
             else:
-                content = f"Working on mod_3 and mod_4 and mod_5"
+                content = "Working on mod_3 and mod_4 and mod_5"
 
             # mod_6 and mod_7 appear with first group sometimes
             if h % 3 == 0:
-                content += f" also mod_6 and mod_7"
+                content += " also mod_6 and mod_7"
 
-            storage.insert_episode({
-                "session_id": f"sess_{h}",
-                "directory": "/project",
-                "raw_content": content,
-                "timestamp": ts,
-            })
+            storage.insert_episode(
+                {
+                    "session_id": f"sess_{h}",
+                    "directory": "/project",
+                    "raw_content": content,
+                    "timestamp": ts,
+                }
+            )
 
         result = cd.discover_dag(hours=48)
         assert result["metadata"]["status"] == "completed"
@@ -314,12 +318,14 @@ class TestQueryCauses:
         eid_b = storage.insert_entity({"name": "test_failure", "type": "error"})
 
         # Insert a causal edge: config_change -> test_failure
-        storage.insert_causal_edge({
-            "source_entity_id": eid_a,
-            "target_entity_id": eid_b,
-            "algorithm": "pc",
-            "confidence": 0.85,
-        })
+        storage.insert_causal_edge(
+            {
+                "source_entity_id": eid_a,
+                "target_entity_id": eid_b,
+                "algorithm": "pc",
+                "confidence": 0.85,
+            }
+        )
 
         causes = cd.query_causes("test_failure")
         assert len(causes) >= 1
@@ -334,18 +340,22 @@ class TestQueryCauses:
         eid_b = storage.insert_entity({"name": "intermediate", "type": "file"})
         eid_c = storage.insert_entity({"name": "final_effect", "type": "error"})
 
-        storage.insert_causal_edge({
-            "source_entity_id": eid_a,
-            "target_entity_id": eid_b,
-            "algorithm": "pc",
-            "confidence": 0.9,
-        })
-        storage.insert_causal_edge({
-            "source_entity_id": eid_b,
-            "target_entity_id": eid_c,
-            "algorithm": "pc",
-            "confidence": 0.8,
-        })
+        storage.insert_causal_edge(
+            {
+                "source_entity_id": eid_a,
+                "target_entity_id": eid_b,
+                "algorithm": "pc",
+                "confidence": 0.9,
+            }
+        )
+        storage.insert_causal_edge(
+            {
+                "source_entity_id": eid_b,
+                "target_entity_id": eid_c,
+                "algorithm": "pc",
+                "confidence": 0.8,
+            }
+        )
 
         causes = cd.query_causes("final_effect", max_depth=3)
         entity_names = [c["entity"] for c in causes]
@@ -370,12 +380,14 @@ class TestQueryCauses:
             ids.append(storage.insert_entity({"name": name, "type": "file"}))
 
         for i in range(3):
-            storage.insert_causal_edge({
-                "source_entity_id": ids[i],
-                "target_entity_id": ids[i + 1],
-                "algorithm": "pc",
-                "confidence": 0.9,
-            })
+            storage.insert_causal_edge(
+                {
+                    "source_entity_id": ids[i],
+                    "target_entity_id": ids[i + 1],
+                    "algorithm": "pc",
+                    "confidence": 0.9,
+                }
+            )
 
         causes = cd.query_causes("nodeD", max_depth=1)
         entity_names = [c["entity"] for c in causes]
@@ -390,18 +402,22 @@ class TestQueryEffects:
         eid_b = storage.insert_entity({"name": "break_frontend", "type": "error"})
         eid_c = storage.insert_entity({"name": "user_complaint", "type": "error"})
 
-        storage.insert_causal_edge({
-            "source_entity_id": eid_a,
-            "target_entity_id": eid_b,
-            "algorithm": "pc",
-            "confidence": 0.9,
-        })
-        storage.insert_causal_edge({
-            "source_entity_id": eid_b,
-            "target_entity_id": eid_c,
-            "algorithm": "pc",
-            "confidence": 0.7,
-        })
+        storage.insert_causal_edge(
+            {
+                "source_entity_id": eid_a,
+                "target_entity_id": eid_b,
+                "algorithm": "pc",
+                "confidence": 0.9,
+            }
+        )
+        storage.insert_causal_edge(
+            {
+                "source_entity_id": eid_b,
+                "target_entity_id": eid_c,
+                "algorithm": "pc",
+                "confidence": 0.7,
+            }
+        )
 
         effects = cd.query_effects("change_api", max_depth=3)
         entity_names = [e["entity"] for e in effects]
@@ -427,18 +443,22 @@ class TestCausalChain:
         eid_b = storage.insert_entity({"name": "middleB", "type": "file"})
         eid_c = storage.insert_entity({"name": "effectC", "type": "error"})
 
-        storage.insert_causal_edge({
-            "source_entity_id": eid_a,
-            "target_entity_id": eid_b,
-            "algorithm": "pc",
-            "confidence": 0.9,
-        })
-        storage.insert_causal_edge({
-            "source_entity_id": eid_b,
-            "target_entity_id": eid_c,
-            "algorithm": "pc",
-            "confidence": 0.8,
-        })
+        storage.insert_causal_edge(
+            {
+                "source_entity_id": eid_a,
+                "target_entity_id": eid_b,
+                "algorithm": "pc",
+                "confidence": 0.9,
+            }
+        )
+        storage.insert_causal_edge(
+            {
+                "source_entity_id": eid_b,
+                "target_entity_id": eid_c,
+                "algorithm": "pc",
+                "confidence": 0.8,
+            }
+        )
 
         chain = cd.get_causal_chain("middleB")
         assert chain["entity"] == "middleB"
@@ -455,7 +475,7 @@ class TestCausalChain:
 class TestDAGStoredInTable:
     def test_edges_persisted(self, cd, storage):
         """Directed edges from discover_dag are stored in causal_dag_edges."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         np.random.seed(42)
 
         # Create enough entities
@@ -474,12 +494,14 @@ class TestDAGStoredInTable:
             if h % 3 == 0:
                 content += " var_6 var_7"
 
-            storage.insert_episode({
-                "session_id": f"s{h}",
-                "directory": "/proj",
-                "raw_content": content,
-                "timestamp": ts,
-            })
+            storage.insert_episode(
+                {
+                    "session_id": f"s{h}",
+                    "directory": "/proj",
+                    "raw_content": content,
+                    "timestamp": ts,
+                }
+            )
 
         dag = cd.discover_dag(hours=48)
 
@@ -515,12 +537,14 @@ class TestMCPCausalChainTool:
             eid_a = storage.insert_entity({"name": "src_file", "type": "file"})
             eid_b = storage.insert_entity({"name": "test_error", "type": "error"})
 
-            storage.insert_causal_edge({
-                "source_entity_id": eid_a,
-                "target_entity_id": eid_b,
-                "algorithm": "pc",
-                "confidence": 0.92,
-            })
+            storage.insert_causal_edge(
+                {
+                    "source_entity_id": eid_a,
+                    "target_entity_id": eid_b,
+                    "algorithm": "pc",
+                    "confidence": 0.92,
+                }
+            )
 
             result = server.get_causal_chain("test_error")
 

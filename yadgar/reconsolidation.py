@@ -13,9 +13,7 @@ Three outcomes based on mismatch between stored memory and current context:
 
 import logging
 import os
-from datetime import datetime, timezone
-
-import numpy as np
+from datetime import UTC, datetime
 
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
@@ -37,9 +35,7 @@ class ReconsolidationEngine:
         self._embeddings = embeddings
         self._settings = settings
 
-    def compute_mismatch(
-        self, memory: dict, current_context: str, current_directory: str
-    ) -> float:
+    def compute_mismatch(self, memory: dict, current_context: str, current_directory: str) -> float:
         """Compute multi-signal mismatch between stored memory and current retrieval context.
 
         Signals:
@@ -69,19 +65,19 @@ class ReconsolidationEngine:
 
         # Signal 3: Temporal distance
         last_accessed_str = memory.get("last_accessed")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if last_accessed_str:
             if isinstance(last_accessed_str, str):
                 try:
                     last_accessed = datetime.fromisoformat(last_accessed_str)
                     if last_accessed.tzinfo is None:
-                        last_accessed = last_accessed.replace(tzinfo=timezone.utc)
+                        last_accessed = last_accessed.replace(tzinfo=UTC)
                 except (ValueError, TypeError):
                     last_accessed = now
             else:
                 last_accessed = last_accessed_str
                 if last_accessed.tzinfo is None:
-                    last_accessed = last_accessed.replace(tzinfo=timezone.utc)
+                    last_accessed = last_accessed.replace(tzinfo=UTC)
         else:
             last_accessed = now
 
@@ -140,9 +136,7 @@ class ReconsolidationEngine:
             return "update"
         return "archive"
 
-    def reconsolidate(
-        self, memory_id: int, current_context: str, current_directory: str
-    ) -> dict:
+    def reconsolidate(self, memory_id: int, current_context: str, current_directory: str) -> dict:
         """Run reconsolidation on a single memory given current retrieval context.
 
         Returns dict with action taken and details.
@@ -171,7 +165,9 @@ class ReconsolidationEngine:
         if action == "update":
             new_content = self._update_memory_content(memory_id, current_context)
             self._storage.update_memory_fields(
-                memory_id, reconsolidation_count=recon_count, last_reconsolidated=now_iso,
+                memory_id,
+                reconsolidation_count=recon_count,
+                last_reconsolidated=now_iso,
             )
             return {
                 "action": "update",
@@ -184,19 +180,23 @@ class ReconsolidationEngine:
         archive_id = self._archive_memory(memory_id, mismatch, "extinction")
 
         # Create new memory with current context in the same directory
-        new_mem_id = self._storage.insert_memory({
-            "content": current_context,
-            "embedding": self._embeddings.encode(current_context),
-            "tags": memory.get("tags", []),
-            "directory_context": current_directory,
-            "heat": 1.0,
-            "is_stale": False,
-            "embedding_model": self._embeddings.get_model_name(),
-        })
+        new_mem_id = self._storage.insert_memory(
+            {
+                "content": current_context,
+                "embedding": self._embeddings.encode(current_context),
+                "tags": memory.get("tags", []),
+                "directory_context": current_directory,
+                "heat": 1.0,
+                "is_stale": False,
+                "embedding_model": self._embeddings.get_model_name(),
+            }
+        )
 
         # Update reconsolidation tracking on the NEW memory
         self._storage.update_memory_fields(
-            new_mem_id, reconsolidation_count=recon_count, last_reconsolidated=now_iso,
+            new_mem_id,
+            reconsolidation_count=recon_count,
+            last_reconsolidated=now_iso,
         )
 
         return {
@@ -218,7 +218,7 @@ class ReconsolidationEngine:
         if memory is None:
             return 0.0
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         last_update_str = memory.get("last_excitability_update")
         created_str = memory.get("created_at")
 
@@ -230,14 +230,14 @@ class ReconsolidationEngine:
                     try:
                         ref_time = datetime.fromisoformat(ts_str)
                         if ref_time.tzinfo is None:
-                            ref_time = ref_time.replace(tzinfo=timezone.utc)
+                            ref_time = ref_time.replace(tzinfo=UTC)
                         break
                     except (ValueError, TypeError):
                         continue
                 else:
                     ref_time = ts_str
                     if ref_time.tzinfo is None:
-                        ref_time = ref_time.replace(tzinfo=timezone.utc)
+                        ref_time = ref_time.replace(tzinfo=UTC)
                     break
 
         elapsed_hours = max(0.0, (now - ref_time).total_seconds() / 3600.0)
@@ -254,7 +254,9 @@ class ReconsolidationEngine:
         # Persist
         now_iso = now.isoformat()
         self._storage.update_memory_fields(
-            memory_id, plasticity=new_plasticity, last_excitability_update=now_iso,
+            memory_id,
+            plasticity=new_plasticity,
+            last_excitability_update=now_iso,
         )
 
         return new_plasticity
@@ -286,13 +288,15 @@ class ReconsolidationEngine:
         if memory is None:
             return -1
 
-        archive_id = self._storage.insert_archive({
-            "original_memory_id": memory_id,
-            "content": memory["content"],
-            "embedding": memory.get("embedding"),
-            "mismatch_score": mismatch,
-            "archive_reason": reason,
-        })
+        archive_id = self._storage.insert_archive(
+            {
+                "original_memory_id": memory_id,
+                "content": memory["content"],
+                "embedding": memory.get("embedding"),
+                "mismatch_score": mismatch,
+                "archive_reason": reason,
+            }
+        )
         return archive_id
 
     def _update_memory_content(self, memory_id: int, new_context: str) -> str:

@@ -11,14 +11,11 @@ Uses three CRDT types:
 Each memory carries immutable provenance (which agent created/modified it).
 """
 
-import copy
 import json
 import re
-from datetime import datetime, timezone
 
 from yadgar.config import Settings
 from yadgar.storage import StorageEngine
-
 
 # Marker pattern used to detect multi-value content conflicts
 _CONFLICT_MARKER = "--- [Agent: {}] ---"
@@ -38,9 +35,7 @@ class CRDTMemorySync:
         return self._agent_id
 
     def increment_clock(self) -> dict[str, int]:
-        self._vector_clock[self._agent_id] = (
-            self._vector_clock.get(self._agent_id, 0) + 1
-        )
+        self._vector_clock[self._agent_id] = self._vector_clock.get(self._agent_id, 0) + 1
         return dict(self._vector_clock)
 
     def tag_provenance(self, memory_dict: dict) -> dict:
@@ -128,9 +123,16 @@ class CRDTMemorySync:
         local_ts = local.get("last_accessed", "")
         remote_ts = remote.get("last_accessed", "")
         lww_fields = [
-            "heat", "surprise_score", "importance", "emotional_valence",
-            "confidence", "access_count", "useful_count", "plasticity",
-            "stability", "excitability",
+            "heat",
+            "surprise_score",
+            "importance",
+            "emotional_valence",
+            "confidence",
+            "access_count",
+            "useful_count",
+            "plasticity",
+            "stability",
+            "excitability",
         ]
         if remote_ts > local_ts:
             for field in lww_fields:
@@ -175,11 +177,13 @@ class CRDTMemorySync:
                     if a not in seen:
                         seen.add(a)
                         unique_agents.append(a)
-                conflicts.append({
-                    "memory_id": mem["id"],
-                    "agents": unique_agents,
-                    "versions": len(unique_agents),
-                })
+                conflicts.append(
+                    {
+                        "memory_id": mem["id"],
+                        "agents": unique_agents,
+                        "versions": len(unique_agents),
+                    }
+                )
         return conflicts
 
     def resolve_conflict(self, memory_id: int, strategy: str = "latest") -> dict:
@@ -228,9 +232,7 @@ class CRDTMemorySync:
                     resolved_content = text
                     break
         elif strategy == "longest":
-            resolved_content = max(
-                (text for _, text in versions), key=len, default=content
-            )
+            resolved_content = max((text for _, text in versions), key=len, default=content)
 
         # Update the memory in storage
         self._storage.update_memory_fields(
@@ -321,10 +323,7 @@ class CRDTMemorySync:
     def get_agent_stats(self) -> dict:
         """Return agent-specific statistics."""
         all_memories = self._storage.get_all_memories_for_decay()
-        authored = sum(
-            1 for m in all_memories
-            if m.get("provenance_agent") == self._agent_id
-        )
+        authored = sum(1 for m in all_memories if m.get("provenance_agent") == self._agent_id)
         conflicts = self.detect_conflicts()
         return {
             "agent_id": self._agent_id,

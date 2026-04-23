@@ -8,7 +8,6 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Optional
 
 import numpy as np
 
@@ -16,20 +15,110 @@ from yadgar.config import Settings
 
 logger = logging.getLogger(__name__)
 
-_STOP_WORDS = frozenset({
-    "a", "an", "the", "is", "it", "in", "on", "at", "to", "of",
-    "for", "and", "or", "but", "not", "with", "by", "from", "as",
-    "be", "was", "were", "been", "are", "am", "do", "did", "does",
-    "has", "had", "have", "will", "would", "could", "should", "may",
-    "can", "this", "that", "these", "those", "what", "which", "who",
-    "how", "when", "where", "why", "if", "then", "so", "no", "yes",
-    "all", "any", "some", "my", "your", "its", "our", "their", "we",
-    "he", "she", "they", "me", "him", "her", "us", "them", "i",
-    "use", "using", "used", "like", "just", "get", "got", "set",
-    "make", "made", "let", "try", "need", "want", "know", "think",
-    "really", "very", "also", "about", "into", "over", "such",
-    "been", "being", "going", "went", "come", "came", "said",
-})
+_STOP_WORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "is",
+        "it",
+        "in",
+        "on",
+        "at",
+        "to",
+        "of",
+        "for",
+        "and",
+        "or",
+        "but",
+        "not",
+        "with",
+        "by",
+        "from",
+        "as",
+        "be",
+        "was",
+        "were",
+        "been",
+        "are",
+        "am",
+        "do",
+        "did",
+        "does",
+        "has",
+        "had",
+        "have",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "can",
+        "this",
+        "that",
+        "these",
+        "those",
+        "what",
+        "which",
+        "who",
+        "how",
+        "when",
+        "where",
+        "why",
+        "if",
+        "then",
+        "so",
+        "no",
+        "yes",
+        "all",
+        "any",
+        "some",
+        "my",
+        "your",
+        "its",
+        "our",
+        "their",
+        "we",
+        "he",
+        "she",
+        "they",
+        "me",
+        "him",
+        "her",
+        "us",
+        "them",
+        "i",
+        "use",
+        "using",
+        "used",
+        "like",
+        "just",
+        "get",
+        "got",
+        "set",
+        "make",
+        "made",
+        "let",
+        "try",
+        "need",
+        "want",
+        "know",
+        "think",
+        "really",
+        "very",
+        "also",
+        "about",
+        "into",
+        "over",
+        "such",
+        "being",
+        "going",
+        "went",
+        "come",
+        "came",
+        "said",
+    }
+)
 
 HARDCODED_EXPANSIONS = {
     "camping": ["outdoor_activity", "nature", "tent", "hiking", "national_park", "wilderness"],
@@ -125,8 +214,8 @@ _VERB_NOMINALIZATIONS = {
 
 # Patterns: ("verb/trigger word", "nominalization")
 _VERB_PATTERN = re.compile(
-    r'\b(?:went|goes|go|enjoys?|loves?|likes?|started|began|tries?|tried)\s+'
-    r'(\w+ing)\b',
+    r"\b(?:went|goes|go|enjoys?|loves?|likes?|started|began|tries?|tried)\s+"
+    r"(\w+ing)\b",
     re.IGNORECASE,
 )
 
@@ -170,15 +259,19 @@ class FPAFilter:
 
         rejected = len(enrichment_texts) - len(kept)
         if rejected > 0:
-            logger.info("FPA filter rejected %d/%d enrichment terms (threshold=%.2f)",
-                        rejected, len(enrichment_texts), threshold)
+            logger.info(
+                "FPA filter rejected %d/%d enrichment terms (threshold=%.2f)",
+                rejected,
+                len(enrichment_texts),
+                threshold,
+            )
 
         return kept
 
 
 def _extract_terms(content: str) -> list[str]:
     """Extract content-bearing nouns/verbs via simple tokenization."""
-    tokens = re.findall(r'[a-zA-Z]+', content.lower())
+    tokens = re.findall(r"[a-zA-Z]+", content.lower())
     return [t for t in tokens if t not in _STOP_WORDS and len(t) > 2]
 
 
@@ -187,8 +280,8 @@ class ConceptNetExpander:
 
     def __init__(self) -> None:
         self._conceptnet_lite = None
-        self._lite_available: Optional[bool] = None
-        self._http_available: Optional[bool] = None
+        self._lite_available: bool | None = None
+        self._http_available: bool | None = None
 
     def _try_lite(self, term: str, relations: list[str], min_weight: float) -> list[str]:
         """Try conceptnet_lite local SQLite database."""
@@ -197,18 +290,17 @@ class ConceptNetExpander:
         try:
             if self._conceptnet_lite is None:
                 import conceptnet_lite
+
                 self._conceptnet_lite = conceptnet_lite
             self._lite_available = True
 
             results = []
             for rel in relations:
-                edges = self._conceptnet_lite.query(
-                    node=f"/c/en/{term}", rel=f"/r/{rel}", limit=10
-                )
+                edges = self._conceptnet_lite.query(node=f"/c/en/{term}", rel=f"/r/{rel}", limit=10)
                 for edge in edges:
                     if edge.weight >= min_weight:
                         # Extract the end node label
-                        end = edge.end.label if hasattr(edge.end, 'label') else str(edge.end)
+                        end = edge.end.label if hasattr(edge.end, "label") else str(edge.end)
                         results.append(end.replace(" ", "_"))
             return results
         except (ImportError, Exception):
@@ -222,8 +314,8 @@ class ConceptNetExpander:
         if self._http_available is not True:
             return []
         try:
-            import urllib.request
             import urllib.error
+            import urllib.request
 
             results = []
             for rel in relations:
@@ -307,7 +399,7 @@ class CometInferencer:
 
     def _extract_predicates(self, content: str) -> list[str]:
         """Extract sentences with named subjects and verbs."""
-        sentences = re.split(r'[.!?]+', content)
+        sentences = re.split(r"[.!?]+", content)
         predicates = []
         # Match sentences that start with a capitalized word (potential named subject)
         # followed by a verb-like word
@@ -316,7 +408,7 @@ class CometInferencer:
             if not sent:
                 continue
             # Simple heuristic: sentence has a proper noun or pronoun + verb
-            if re.match(r'^[A-Z][a-z]+\s+\w+', sent) or re.match(r'^(?:He|She|They|I|We)\s+', sent):
+            if re.match(r"^[A-Z][a-z]+\s+\w+", sent) or re.match(r"^(?:He|She|They|I|We)\s+", sent):
                 predicates.append(sent)
         return predicates if predicates else [content.strip()]
 
@@ -358,7 +450,7 @@ class CometInferencer:
                 else:
                     scores = torch.ones(len(outputs.sequences)) / len(outputs.sequences)
 
-                for seq, score in zip(outputs.sequences, scores):
+                for seq, score in zip(outputs.sequences, scores, strict=False):
                     text = self._tokenizer.decode(seq, skip_special_tokens=True).strip()
                     if not text or text.lower() == "none":
                         continue
@@ -471,7 +563,7 @@ class LogicExpander:
                 expansions.append(nominalization)
 
         # Also check for standalone gerunds in content
-        tokens = set(re.findall(r'\b\w+ing\b', content_lower))
+        tokens = set(re.findall(r"\b\w+ing\b", content_lower))
         for gerund in tokens:
             nominalization = _VERB_NOMINALIZATIONS.get(gerund)
             if nominalization and nominalization not in expansions:
@@ -486,13 +578,13 @@ class EnrichmentPipeline:
     def __init__(self, settings: Settings, embedding_engine=None) -> None:
         self._settings = settings
         self._embedding_engine = embedding_engine
-        self._fpa: Optional[FPAFilter] = None
-        self._conceptnet: Optional[ConceptNetExpander] = None
-        self._comet: Optional[CometInferencer] = None
-        self._doc2query: Optional[Doc2QueryExpander] = None
-        self._logic: Optional[LogicExpander] = None
+        self._fpa: FPAFilter | None = None
+        self._conceptnet: ConceptNetExpander | None = None
+        self._comet: CometInferencer | None = None
+        self._doc2query: Doc2QueryExpander | None = None
+        self._logic: LogicExpander | None = None
 
-    def _get_fpa(self) -> Optional[FPAFilter]:
+    def _get_fpa(self) -> FPAFilter | None:
         if self._fpa is None and self._embedding_engine is not None:
             self._fpa = FPAFilter(self._embedding_engine)
         return self._fpa
@@ -573,10 +665,7 @@ class EnrichmentPipeline:
 
         # Build enriched content
         all_terms = (
-            result.concepts
-            + result.comet_inferences
-            + result.queries
-            + result.logic_expansions
+            result.concepts + result.comet_inferences + result.queries + result.logic_expansions
         )
 
         if all_terms:

@@ -46,9 +46,13 @@ class YadgarDaemon:
         self._pid_file.parent.mkdir(parents=True, exist_ok=True)
 
         cmd = [
-            sys.executable, "-m", "yadgar",
-            "--transport", "streamable-http",
-            "--port", str(self.port),
+            sys.executable,
+            "-m",
+            "yadgar",
+            "--transport",
+            "streamable-http",
+            "--port",
+            str(self.port),
             "--quiet",
         ]
         if self.db_path:
@@ -56,7 +60,7 @@ class YadgarDaemon:
 
         proc = subprocess.Popen(
             cmd,
-            start_new_session=True,   # detach from terminal/session
+            start_new_session=True,  # detach from terminal/session
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             close_fds=True,
@@ -72,8 +76,12 @@ class YadgarDaemon:
             if self._health_ok():
                 return {"status": "started", "pid": proc.pid, "port": self.port}
 
-        return {"status": "started", "pid": proc.pid, "port": self.port,
-                "warning": "health check timed out — server may still be loading"}
+        return {
+            "status": "started",
+            "pid": proc.pid,
+            "port": self.port,
+            "warning": "health check timed out — server may still be loading",
+        }
 
     def stop(self) -> dict:
         """Stop the daemon gracefully (SIGTERM, then SIGKILL after 10s)."""
@@ -116,9 +124,7 @@ class YadgarDaemon:
                 return {"running": False}
 
         try:
-            resp = urllib.request.urlopen(
-                f"http://127.0.0.1:{self.port}/health", timeout=2
-            )
+            resp = urllib.request.urlopen(f"http://127.0.0.1:{self.port}/health", timeout=2)
             health = json.loads(resp.read().decode())
             return {"running": True, "pid": pid, "port": self.port, **health}
         except Exception:
@@ -194,14 +200,16 @@ WantedBy=default.target
     def _db_locked(self) -> bool:
         """Return True if another process holds the surrealkv DB lock."""
         import fcntl
+
         from yadgar.config import get_settings
+
         settings = get_settings()
         db_path = Path(self.db_path or settings.DB_PATH).expanduser()
         lock_path = db_path.parent / "yadgar.lock"
         if not lock_path.exists():
             return False
         try:
-            lf = open(lock_path, "r")
+            lf = open(lock_path)
             fcntl.flock(lf, fcntl.LOCK_EX | fcntl.LOCK_NB)
             fcntl.flock(lf, fcntl.LOCK_UN)
             lf.close()
@@ -240,6 +248,7 @@ WantedBy=default.target
         """
         try:
             from yadgar.config import get_settings
+
             settings = get_settings()
             db_path = Path(self.db_path or settings.DB_PATH).expanduser()
             lock_path = db_path.parent / "yadgar.lock"
@@ -264,9 +273,7 @@ WantedBy=default.target
 
     def _health_ok(self) -> bool:
         try:
-            urllib.request.urlopen(
-                f"http://127.0.0.1:{self.port}/health", timeout=1
-            )
+            urllib.request.urlopen(f"http://127.0.0.1:{self.port}/health", timeout=1)
             return True
         except Exception:
             return False

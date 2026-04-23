@@ -14,40 +14,97 @@ import logging
 import os
 import tomllib
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 # Directories to always skip
-_SKIP_DIRS = frozenset({
-    ".git", ".hg", ".svn",
-    "node_modules", ".node_modules",
-    "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
-    ".venv", "venv", "env", ".env",
-    "dist", "build", "out", "target",
-    ".next", ".nuxt", ".output",
-    ".tox", ".nox",
-    "vendor",
-    ".terraform",
-    ".idea", ".vscode",
-    "coverage", ".coverage",
-    ".lockstep",
-    ".claude",
-    "egg-info",
-})
+_SKIP_DIRS = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        "node_modules",
+        ".node_modules",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".venv",
+        "venv",
+        "env",
+        ".env",
+        "dist",
+        "build",
+        "out",
+        "target",
+        ".next",
+        ".nuxt",
+        ".output",
+        ".tox",
+        ".nox",
+        "vendor",
+        ".terraform",
+        ".idea",
+        ".vscode",
+        "coverage",
+        ".coverage",
+        ".lockstep",
+        ".claude",
+        "egg-info",
+    }
+)
 
 # Binary file extensions to skip reading
-_BINARY_EXTENSIONS = frozenset({
-    ".pyc", ".pyo", ".so", ".o", ".a", ".dll", ".exe", ".dylib",
-    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp",
-    ".woff", ".woff2", ".ttf", ".eot", ".otf",
-    ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx",
-    ".mp3", ".mp4", ".avi", ".mov", ".wav", ".flac",
-    ".wasm", ".class", ".jar",
-    ".db", ".sqlite", ".sqlite3",
-    ".lock",  # package lock files are huge and not useful
-})
+_BINARY_EXTENSIONS = frozenset(
+    {
+        ".pyc",
+        ".pyo",
+        ".so",
+        ".o",
+        ".a",
+        ".dll",
+        ".exe",
+        ".dylib",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".bmp",
+        ".ico",
+        ".svg",
+        ".webp",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".eot",
+        ".otf",
+        ".zip",
+        ".tar",
+        ".gz",
+        ".bz2",
+        ".xz",
+        ".7z",
+        ".rar",
+        ".pdf",
+        ".doc",
+        ".docx",
+        ".xls",
+        ".xlsx",
+        ".mp3",
+        ".mp4",
+        ".avi",
+        ".mov",
+        ".wav",
+        ".flac",
+        ".wasm",
+        ".class",
+        ".jar",
+        ".db",
+        ".sqlite",
+        ".sqlite3",
+        ".lock",  # package lock files are huge and not useful
+    }
+)
 
 # Config files that reveal project structure and dependencies
 # Keys are either exact filenames or glob patterns (prefixed with *)
@@ -97,27 +154,48 @@ _CONFIG_GLOBS = [
 ]
 
 # Documentation files to read
-_DOC_FILES = frozenset({
-    "README.md", "README.rst", "README.txt", "README",
-    "ARCHITECTURE.md", "DESIGN.md",
-    "CONTRIBUTING.md", "CONTRIBUTING.rst",
-    "CHANGELOG.md", "CHANGES.md",
-    "CLAUDE.md",
-})
+_DOC_FILES = frozenset(
+    {
+        "README.md",
+        "README.rst",
+        "README.txt",
+        "README",
+        "ARCHITECTURE.md",
+        "DESIGN.md",
+        "CONTRIBUTING.md",
+        "CONTRIBUTING.rst",
+        "CHANGELOG.md",
+        "CHANGES.md",
+        "CLAUDE.md",
+    }
+)
 
 # Entry point patterns (checked with fnmatch)
 _ENTRY_PATTERNS = [
-    "main.*", "index.*", "app.*", "server.*",
-    "cli.*", "cmd.*", "__main__.py",
-    "src/main.*", "src/index.*", "src/app.*",
-    "src/lib.*", "lib.rs",
+    "main.*",
+    "index.*",
+    "app.*",
+    "server.*",
+    "cli.*",
+    "cmd.*",
+    "__main__.py",
+    "src/main.*",
+    "src/index.*",
+    "src/app.*",
+    "src/lib.*",
+    "lib.rs",
 ]
 
 # CI/CD files detected by name (outside of .github/.gitlab dirs)
-_CI_FILES = frozenset({
-    ".gitlab-ci.yml", "Jenkinsfile", ".travis.yml",
-    "azure-pipelines.yml", ".drone.yml",
-})
+_CI_FILES = frozenset(
+    {
+        ".gitlab-ci.yml",
+        "Jenkinsfile",
+        ".travis.yml",
+        "azure-pipelines.yml",
+        ".drone.yml",
+    }
+)
 
 # Max file size to read (64KB)
 _MAX_FILE_SIZE = 64 * 1024
@@ -136,7 +214,7 @@ _HEAT_BY_TYPE = {
 }
 
 
-def _match_config(fname: str) -> Optional[str]:
+def _match_config(fname: str) -> str | None:
     """Match a filename against config files (exact + glob patterns)."""
     if fname in _CONFIG_EXACT:
         return _CONFIG_EXACT[fname]
@@ -157,7 +235,7 @@ def _should_skip_dir(name: str) -> bool:
     return False
 
 
-def _read_file_safe(path: Path) -> Optional[str]:
+def _read_file_safe(path: Path) -> str | None:
     """Read file content safely, respecting size limits and skipping binary files."""
     try:
         if path.suffix.lower() in _BINARY_EXTENSIONS:
@@ -245,36 +323,44 @@ def scan_project(directory: str) -> dict:
             if config_lang is not None:
                 content = _read_file_safe(filepath)
                 if content:
-                    configs.append({
-                        "path": os.path.join(rel_dir, fname) if rel_dir else fname,
-                        "language": config_lang,
-                        "content": content,
-                    })
+                    configs.append(
+                        {
+                            "path": os.path.join(rel_dir, fname) if rel_dir else fname,
+                            "language": config_lang,
+                            "content": content,
+                        }
+                    )
 
             # Check if it's a doc file
             if fname in _DOC_FILES:
                 content = _read_file_safe(filepath)
                 if content:
-                    docs.append({
-                        "path": os.path.join(rel_dir, fname) if rel_dir else fname,
-                        "content": content,
-                    })
+                    docs.append(
+                        {
+                            "path": os.path.join(rel_dir, fname) if rel_dir else fname,
+                            "content": content,
+                        }
+                    )
 
             # Check CI/CD
             if rel_dir in (".github/workflows", ".github", ".gitlab"):
                 content = _read_file_safe(filepath)
                 if content:
-                    ci_cd.append({
-                        "path": os.path.join(rel_dir, fname) if rel_dir else fname,
-                        "content": content,
-                    })
+                    ci_cd.append(
+                        {
+                            "path": os.path.join(rel_dir, fname) if rel_dir else fname,
+                            "content": content,
+                        }
+                    )
             elif fname in _CI_FILES:
                 content = _read_file_safe(filepath)
                 if content:
-                    ci_cd.append({
-                        "path": os.path.join(rel_dir, fname) if rel_dir else fname,
-                        "content": content,
-                    })
+                    ci_cd.append(
+                        {
+                            "path": os.path.join(rel_dir, fname) if rel_dir else fname,
+                            "content": content,
+                        }
+                    )
 
             # Check entry points (only in root or src/)
             if rel_dir in ("", "src"):
@@ -283,10 +369,12 @@ def scan_project(directory: str) -> dict:
                     if fnmatch.fnmatch(rel_path, pattern):
                         content = _read_file_safe(filepath)
                         if content:
-                            entry_points.append({
-                                "path": rel_path,
-                                "content": content,
-                            })
+                            entry_points.append(
+                                {
+                                    "path": rel_path,
+                                    "content": content,
+                                }
+                            )
                         break
 
         if dir_files:
@@ -318,15 +406,28 @@ def _detect_stack(configs: list[dict], stats: dict) -> str:
         languages.add(cfg["language"])
 
     ext_map = {
-        ".py": "Python", ".js": "JavaScript", ".ts": "TypeScript",
-        ".rs": "Rust", ".go": "Go", ".java": "Java", ".kt": "Kotlin",
-        ".rb": "Ruby", ".php": "PHP", ".cs": "C#", ".cpp": "C++",
-        ".c": "C", ".swift": "Swift", ".ex": "Elixir", ".zig": "Zig",
-        ".jsx": "React/JSX", ".tsx": "React/TSX", ".vue": "Vue",
+        ".py": "Python",
+        ".js": "JavaScript",
+        ".ts": "TypeScript",
+        ".rs": "Rust",
+        ".go": "Go",
+        ".java": "Java",
+        ".kt": "Kotlin",
+        ".rb": "Ruby",
+        ".php": "PHP",
+        ".cs": "C#",
+        ".cpp": "C++",
+        ".c": "C",
+        ".swift": "Swift",
+        ".ex": "Elixir",
+        ".zig": "Zig",
+        ".jsx": "React/JSX",
+        ".tsx": "React/TSX",
+        ".vue": "Vue",
         ".svelte": "Svelte",
     }
 
-    for ext, count in stats.get("top_extensions", []):
+    for ext, _count in stats.get("top_extensions", []):
         if ext in ext_map:
             languages.add(ext_map[ext])
 
@@ -422,7 +523,9 @@ def _summarize_pyproject(content: str) -> str:
 
     optional = project.get("optional-dependencies", {})
     for group, group_deps in list(optional.items())[:3]:
-        parts.append(f"Optional [{group}] ({len(group_deps)}): {', '.join(str(d) for d in group_deps[:8])}")
+        parts.append(
+            f"Optional [{group}] ({len(group_deps)}): {', '.join(str(d) for d in group_deps[:8])}"
+        )
 
     scripts = project.get("scripts", {})
     if scripts:
@@ -481,16 +584,17 @@ def _summarize_cargo_toml(content: str) -> str:
 def _summarize_go_mod(content: str) -> str:
     """Extract key info from go.mod."""
     import re
+
     parts = []
-    mod_match = re.search(r'^module\s+(\S+)', content, re.MULTILINE)
+    mod_match = re.search(r"^module\s+(\S+)", content, re.MULTILINE)
     if mod_match:
         parts.append(f"Module: {mod_match.group(1)}")
 
-    go_match = re.search(r'^go\s+(\S+)', content, re.MULTILINE)
+    go_match = re.search(r"^go\s+(\S+)", content, re.MULTILINE)
     if go_match:
         parts.append(f"Go version: {go_match.group(1)}")
 
-    requires = re.findall(r'^\s+(\S+)\s+v', content, re.MULTILINE)
+    requires = re.findall(r"^\s+(\S+)\s+v", content, re.MULTILINE)
     if requires:
         parts.append(f"Dependencies ({len(requires)}): {', '.join(requires[:15])}")
 
@@ -515,9 +619,15 @@ def _summarize_config(config: dict) -> str:
     elif fname == "go.mod":
         return _summarize_go_mod(content)
     elif fname == "requirements.txt":
-        lines = [l.strip() for l in content.splitlines() if l.strip() and not l.startswith("#")]
+        lines = [ln.strip() for ln in content.splitlines() if ln.strip() and not ln.startswith("#")]
         return f"Python dependencies ({len(lines)}): {', '.join(lines[:20])}"
-    elif fname in ("Dockerfile", "docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"):
+    elif fname in (
+        "Dockerfile",
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        "compose.yml",
+        "compose.yaml",
+    ):
         return _truncate(content, 1000)
     else:
         return _truncate(content, 800)
@@ -575,23 +685,27 @@ def generate_memories(scan_data: dict) -> list[dict]:
         f"Top extensions: {', '.join(f'{ext}({n})' for ext, n in stats['top_extensions'][:8])}\n\n"
         f"Structure:\n{structure_summary}"
     )
-    memories.append({
-        "content": _truncate(overview),
-        "context": directory,
-        "tags": ["_seed", "overview", "structure"],
-        "heat_type": "overview",
-    })
+    memories.append(
+        {
+            "content": _truncate(overview),
+            "context": directory,
+            "tags": ["_seed", "overview", "structure"],
+            "heat_type": "overview",
+        }
+    )
 
     # 2. Config file memories
     for config in scan_data["configs"]:
         summary = _summarize_config(config)
         content = f"Config: {config['path']}\nLanguage: {config['language']}\n\n{summary}"
-        memories.append({
-            "content": _truncate(content),
-            "context": directory,
-            "tags": ["_seed", "config", config["language"]],
-            "heat_type": "config",
-        })
+        memories.append(
+            {
+                "content": _truncate(content),
+                "context": directory,
+                "tags": ["_seed", "config", config["language"]],
+                "heat_type": "config",
+            }
+        )
 
     # 3. Documentation memories
     for doc in scan_data["docs"]:
@@ -599,12 +713,14 @@ def generate_memories(scan_data: dict) -> list[dict]:
         doc_dir = os.path.dirname(doc["path"])
         extra_tags = [doc_dir] if doc_dir else []
         content = f"Documentation: {doc['path']}\n\n{doc['content']}"
-        memories.append({
-            "content": _truncate(content),
-            "context": directory,
-            "tags": ["_seed", "documentation"] + extra_tags,
-            "heat_type": "documentation",
-        })
+        memories.append(
+            {
+                "content": _truncate(content),
+                "context": directory,
+                "tags": ["_seed", "documentation"] + extra_tags,
+                "heat_type": "documentation",
+            }
+        )
 
     # 4. CI/CD memories
     if scan_data["ci_cd"]:
@@ -612,30 +728,32 @@ def generate_memories(scan_data: dict) -> list[dict]:
         for ci in scan_data["ci_cd"]:
             ci_parts.append(f"--- {ci['path']} ---\n{_truncate(ci['content'], 600)}")
         ci_content = f"CI/CD configuration for {project_name}:\n\n" + "\n\n".join(ci_parts)
-        memories.append({
-            "content": _truncate(ci_content),
-            "context": directory,
-            "tags": ["_seed", "ci_cd", "devops"],
-            "heat_type": "ci_cd",
-        })
+        memories.append(
+            {
+                "content": _truncate(ci_content),
+                "context": directory,
+                "tags": ["_seed", "ci_cd", "devops"],
+                "heat_type": "ci_cd",
+            }
+        )
 
     # 5. Entry point memories
     for ep in scan_data["entry_points"]:
         content = f"Entry point: {ep['path']}\n\n{_truncate(ep['content'], 1500)}"
-        memories.append({
-            "content": _truncate(content),
-            "context": directory,
-            "tags": ["_seed", "entry_point"],
-            "heat_type": "entry_point",
-        })
+        memories.append(
+            {
+                "content": _truncate(content),
+                "context": directory,
+                "tags": ["_seed", "entry_point"],
+                "heat_type": "entry_point",
+            }
+        )
 
     # 6. Per-component memories — use sub-project boundaries for monorepos
     boundaries = _find_subproject_boundaries(structure, scan_data["configs"])
     if not boundaries:
         # Fallback: top-level directories
-        boundaries = sorted(
-            d for d in structure if d != "." and "/" not in d and os.sep not in d
-        )
+        boundaries = sorted(d for d in structure if d != "." and "/" not in d and os.sep not in d)
 
     for d in boundaries:
         # Gather all files under this component
@@ -656,13 +774,18 @@ def generate_memories(scan_data: dict) -> list[dict]:
             if ext:
                 exts[ext] = exts.get(ext, 0) + 1
 
-        ext_summary = ", ".join(f"{ext}({n})" for ext, n in sorted(exts.items(), key=lambda x: -x[1])[:5])
+        ext_summary = ", ".join(
+            f"{ext}({n})" for ext, n in sorted(exts.items(), key=lambda x: -x[1])[:5]
+        )
 
         # Get subdirectory structure
-        subdirs = sorted(set(
-            key for key in structure
-            if (key.startswith(d + "/") or key.startswith(d + os.sep)) and key != d
-        ))
+        subdirs = sorted(
+            set(
+                key
+                for key in structure
+                if (key.startswith(d + "/") or key.startswith(d + os.sep)) and key != d
+            )
+        )
         subdir_names = [os.path.relpath(sd, d) for sd in subdirs[:15]]
 
         # Check if this component has its own README
@@ -682,14 +805,16 @@ def generate_memories(scan_data: dict) -> list[dict]:
         if len(sub_files) <= 20:
             content += f"All files: {', '.join(os.path.basename(f) for f in sub_files)}\n"
         else:
-            content += f"Sample files: {', '.join(os.path.basename(f) for f in sub_files[:15])}, ... (+{len(sub_files)-15} more)\n"
+            content += f"Sample files: {', '.join(os.path.basename(f) for f in sub_files[:15])}, ... (+{len(sub_files) - 15} more)\n"
 
-        memories.append({
-            "content": _truncate(content),
-            "context": directory,
-            "tags": ["_seed", "component", d],
-            "heat_type": "component",
-        })
+        memories.append(
+            {
+                "content": _truncate(content),
+                "context": directory,
+                "tags": ["_seed", "component", d],
+                "heat_type": "component",
+            }
+        )
 
     return memories
 
@@ -709,24 +834,18 @@ def _delete_existing_seed_memories(storage, directory: str) -> int:
     ids = [r[0] for r in rows]
     for mid in ids:
         # Delete FK dependents first
-        storage._conn.execute(
-            "DELETE FROM memory_archives WHERE original_memory_id = ?", (mid,)
-        )
+        storage._conn.execute("DELETE FROM memory_archives WHERE original_memory_id = ?", (mid,))
         storage._conn.execute(
             "DELETE FROM memory_transitions WHERE from_memory_id = ? OR to_memory_id = ?",
             (mid, mid),
         )
         # Clean up vector tables
         try:
-            storage._conn.execute(
-                "DELETE FROM memory_vectors WHERE rowid = ?", (mid,)
-            )
+            storage._conn.execute("DELETE FROM memory_vectors WHERE rowid = ?", (mid,))
         except Exception:
             pass
         try:
-            storage._conn.execute(
-                "DELETE FROM memory_implicit_vectors WHERE rowid = ?", (mid,)
-            )
+            storage._conn.execute("DELETE FROM memory_implicit_vectors WHERE rowid = ?", (mid,))
         except Exception:
             pass
         # Now safe to delete the memory itself
@@ -737,7 +856,7 @@ def _delete_existing_seed_memories(storage, directory: str) -> int:
 
 def seed_project(
     directory: str,
-    db_path: Optional[str] = None,
+    db_path: str | None = None,
     dry_run: bool = False,
     storage=None,
     embeddings=None,
@@ -776,18 +895,18 @@ def seed_project(
     own_storage = storage is None
     if own_storage:
         from yadgar.config import Settings
-        from yadgar.storage import StorageEngine
-        from yadgar.embeddings import EmbeddingEngine
-        from yadgar.thermodynamics import MemoryThermodynamics
         from yadgar.curation import MemoryCurator
+        from yadgar.embeddings import EmbeddingEngine
         from yadgar.knowledge_graph import KnowledgeGraph
+        from yadgar.storage import StorageEngine
+        from yadgar.thermodynamics import MemoryThermodynamics
 
         settings = Settings()
         storage = StorageEngine(db_path or settings.DB_PATH)
         embeddings = EmbeddingEngine(settings.EMBEDDING_MODEL)
-        kg = KnowledgeGraph(storage, settings)
+        KnowledgeGraph(storage, settings)
         thermo = MemoryThermodynamics(storage, embeddings, settings)
-        curator = MemoryCurator(storage, embeddings, thermo, settings)
+        MemoryCurator(storage, embeddings, thermo, settings)
 
     created = 0
     replaced = 0
@@ -819,16 +938,18 @@ def seed_project(
             initial_heat = min(base_heat + surprise * 0.1, 1.0)
 
             # Insert directly (no curator dedup since we already cleared old seeds)
-            memory_id = storage.insert_memory({
-                "content": content,
-                "embedding": embedding,
-                "tags": tags,
-                "directory_context": context,
-                "heat": initial_heat,
-                "is_stale": False,
-                "file_hash": None,
-                "embedding_model": embeddings.get_model_name(),
-            })
+            memory_id = storage.insert_memory(
+                {
+                    "content": content,
+                    "embedding": embedding,
+                    "tags": tags,
+                    "directory_context": context,
+                    "heat": initial_heat,
+                    "is_stale": False,
+                    "file_hash": None,
+                    "embedding_model": embeddings.get_model_name(),
+                }
+            )
 
             # Set thermodynamic scores
             storage.update_memory_scores(

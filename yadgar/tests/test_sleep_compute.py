@@ -1,7 +1,7 @@
 """Tests for the sleep-time compute system."""
 
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -46,7 +46,12 @@ def sleep_engine(storage, mock_embeddings, settings):
     thermo = MemoryThermodynamics(storage, mock_embeddings, settings)
     curator = MemoryCurator(storage, mock_embeddings, thermo, settings)
     return SleepComputeEngine(
-        storage, mock_embeddings, graph, curator, thermo, settings,
+        storage,
+        mock_embeddings,
+        graph,
+        curator,
+        thermo,
+        settings,
     )
 
 
@@ -60,25 +65,29 @@ def _make_embedding(value: float = 1.0) -> bytes:
 
 
 def _old_timestamp(days: int) -> str:
-    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    return (datetime.now(UTC) - timedelta(days=days)).isoformat()
 
 
 class TestDreamReplay:
     def test_finds_connections(self, sleep_engine, storage, mock_embeddings):
         """Related but unconnected memories should be discovered."""
         vec = _make_embedding(1.0)
-        storage.insert_memory({
-            "content": "Python FastAPI web server implementation",
-            "embedding": vec,
-            "directory_context": "/project-a",
-            "heat": 0.8,
-        })
-        storage.insert_memory({
-            "content": "Flask HTTP API endpoint design",
-            "embedding": vec,
-            "directory_context": "/project-b",
-            "heat": 0.7,
-        })
+        storage.insert_memory(
+            {
+                "content": "Python FastAPI web server implementation",
+                "embedding": vec,
+                "directory_context": "/project-a",
+                "heat": 0.8,
+            }
+        )
+        storage.insert_memory(
+            {
+                "content": "Flask HTTP API endpoint design",
+                "embedding": vec,
+                "directory_context": "/project-b",
+                "heat": 0.7,
+            }
+        )
 
         # Mock similarity above moderate threshold
         mock_embeddings.similarity.return_value = 0.5
@@ -91,18 +100,22 @@ class TestDreamReplay:
 
     def test_no_false_positives(self, sleep_engine, storage, mock_embeddings):
         """Unrelated memories should not get connected."""
-        storage.insert_memory({
-            "content": "Database optimization techniques",
-            "embedding": _make_embedding(1.0),
-            "directory_context": "/proj",
-            "heat": 0.8,
-        })
-        storage.insert_memory({
-            "content": "Cooking recipe for pasta",
-            "embedding": _make_embedding(-1.0),
-            "directory_context": "/other",
-            "heat": 0.7,
-        })
+        storage.insert_memory(
+            {
+                "content": "Database optimization techniques",
+                "embedding": _make_embedding(1.0),
+                "directory_context": "/proj",
+                "heat": 0.8,
+            }
+        )
+        storage.insert_memory(
+            {
+                "content": "Cooking recipe for pasta",
+                "embedding": _make_embedding(-1.0),
+                "directory_context": "/other",
+                "heat": 0.7,
+            }
+        )
 
         # Mock similarity below threshold
         mock_embeddings.similarity.return_value = 0.1
@@ -116,18 +129,22 @@ class TestDreamReplay:
     def test_strong_connection_generates_insight(self, sleep_engine, storage, mock_embeddings):
         """Strongly similar memories (>0.7) should generate dream insights."""
         vec = _make_embedding(1.0)
-        storage.insert_memory({
-            "content": "React component lifecycle hooks",
-            "embedding": vec,
-            "directory_context": "/frontend",
-            "heat": 0.9,
-        })
-        storage.insert_memory({
-            "content": "Vue.js component lifecycle methods",
-            "embedding": vec,
-            "directory_context": "/other-frontend",
-            "heat": 0.8,
-        })
+        storage.insert_memory(
+            {
+                "content": "React component lifecycle hooks",
+                "embedding": vec,
+                "directory_context": "/frontend",
+                "heat": 0.9,
+            }
+        )
+        storage.insert_memory(
+            {
+                "content": "Vue.js component lifecycle methods",
+                "embedding": vec,
+                "directory_context": "/other-frontend",
+                "heat": 0.8,
+            }
+        )
 
         mock_embeddings.similarity.return_value = 0.8
 
@@ -137,35 +154,39 @@ class TestDreamReplay:
         assert stats["insights_generated"] >= 1
 
         # Verify dream insight memory was created
-        dream_mems = storage._db.query(
-            "SELECT * FROM memory WHERE content ~ 'Dream connection:'"
-        )
+        dream_mems = storage._db.query("SELECT * FROM memory WHERE content ~ 'Dream connection:'")
         assert len(dream_mems) >= 1
 
     def test_skips_already_connected(self, sleep_engine, storage, mock_embeddings):
         """Memories already connected should be skipped."""
         vec = _make_embedding(1.0)
-        mid_a = storage.insert_memory({
-            "content": "Memory A",
-            "embedding": vec,
-            "directory_context": "/proj",
-            "heat": 0.8,
-        })
-        mid_b = storage.insert_memory({
-            "content": "Memory B",
-            "embedding": vec,
-            "directory_context": "/proj",
-            "heat": 0.7,
-        })
+        mid_a = storage.insert_memory(
+            {
+                "content": "Memory A",
+                "embedding": vec,
+                "directory_context": "/proj",
+                "heat": 0.8,
+            }
+        )
+        mid_b = storage.insert_memory(
+            {
+                "content": "Memory B",
+                "embedding": vec,
+                "directory_context": "/proj",
+                "heat": 0.7,
+            }
+        )
 
         # Pre-connect them
         eid_a = storage.insert_entity({"name": f"memory:{mid_a}", "type": "file"})
         eid_b = storage.insert_entity({"name": f"memory:{mid_b}", "type": "file"})
-        storage.insert_relationship({
-            "source_entity_id": eid_a,
-            "target_entity_id": eid_b,
-            "relationship_type": "co_occurrence",
-        })
+        storage.insert_relationship(
+            {
+                "source_entity_id": eid_a,
+                "target_entity_id": eid_b,
+                "relationship_type": "co_occurrence",
+            }
+        )
 
         mock_embeddings.similarity.return_value = 0.9
 
@@ -190,24 +211,36 @@ class TestCommunityDetection:
         e5 = storage.insert_entity({"name": "webpack", "type": "dependency"})
 
         # Intra-cluster edges for cluster 1
-        storage.insert_relationship({
-            "source_entity_id": e1, "target_entity_id": e2,
-            "relationship_type": "co_occurrence",
-        })
-        storage.insert_relationship({
-            "source_entity_id": e1, "target_entity_id": e3,
-            "relationship_type": "co_occurrence",
-        })
-        storage.insert_relationship({
-            "source_entity_id": e2, "target_entity_id": e3,
-            "relationship_type": "co_occurrence",
-        })
+        storage.insert_relationship(
+            {
+                "source_entity_id": e1,
+                "target_entity_id": e2,
+                "relationship_type": "co_occurrence",
+            }
+        )
+        storage.insert_relationship(
+            {
+                "source_entity_id": e1,
+                "target_entity_id": e3,
+                "relationship_type": "co_occurrence",
+            }
+        )
+        storage.insert_relationship(
+            {
+                "source_entity_id": e2,
+                "target_entity_id": e3,
+                "relationship_type": "co_occurrence",
+            }
+        )
 
         # Intra-cluster edges for cluster 2
-        storage.insert_relationship({
-            "source_entity_id": e4, "target_entity_id": e5,
-            "relationship_type": "co_occurrence",
-        })
+        storage.insert_relationship(
+            {
+                "source_entity_id": e4,
+                "target_entity_id": e5,
+                "relationship_type": "co_occurrence",
+            }
+        )
 
         communities = sleep_engine.detect_communities()
 
@@ -227,20 +260,24 @@ class TestCommunityDetection:
 class TestClusterSummarization:
     def test_clusters_get_summaries(self, sleep_engine, storage, mock_embeddings):
         """Clusters with > 3 members should get summaries and centroids."""
-        cluster_id = storage.insert_cluster({
-            "name": "test_cluster",
-            "level": 1,
-            "member_count": 5,
-        })
+        cluster_id = storage.insert_cluster(
+            {
+                "name": "test_cluster",
+                "level": 1,
+                "member_count": 5,
+            }
+        )
 
         vec = _make_embedding(1.0)
         for i in range(5):
-            mid = storage.insert_memory({
-                "content": f"Memory about import fastapi and yadgar/server.py part {i}",
-                "embedding": vec,
-                "directory_context": "/project",
-                "heat": 0.7,
-            })
+            mid = storage.insert_memory(
+                {
+                    "content": f"Memory about import fastapi and yadgar/server.py part {i}",
+                    "embedding": vec,
+                    "directory_context": "/project",
+                    "heat": 0.7,
+                }
+            )
             storage._db.query(
                 "UPDATE type::thing('memory', $mid) SET cluster_id = $cid",
                 {"mid": mid, "cid": cluster_id},
@@ -254,12 +291,14 @@ class TestClusterSummarization:
 
     def test_small_clusters_skipped(self, sleep_engine, storage):
         """Clusters with <= 3 members should not be summarized."""
-        cluster_id = storage.insert_cluster({
-            "name": "small_cluster",
-            "level": 1,
-            "summary": "original",
-            "member_count": 2,
-        })
+        cluster_id = storage.insert_cluster(
+            {
+                "name": "small_cluster",
+                "level": 1,
+                "summary": "original",
+                "member_count": 2,
+            }
+        )
 
         sleep_engine.generate_cluster_summaries()
 
@@ -273,20 +312,24 @@ class TestReembedStale:
         old_vec = _make_embedding(0.5)
         new_vec = _make_embedding(1.0)
 
-        mid1 = storage.insert_memory({
-            "content": "Old embedding test",
-            "embedding": old_vec,
-            "directory_context": "/proj",
-            "heat": 0.8,
-            "embedding_model": "old-model-v1",
-        })
-        mid2 = storage.insert_memory({
-            "content": "Another old embedding",
-            "embedding": old_vec,
-            "directory_context": "/proj",
-            "heat": 0.7,
-            "embedding_model": "old-model-v1",
-        })
+        mid1 = storage.insert_memory(
+            {
+                "content": "Old embedding test",
+                "embedding": old_vec,
+                "directory_context": "/proj",
+                "heat": 0.8,
+                "embedding_model": "old-model-v1",
+            }
+        )
+        mid2 = storage.insert_memory(
+            {
+                "content": "Another old embedding",
+                "embedding": old_vec,
+                "directory_context": "/proj",
+                "heat": 0.7,
+                "embedding_model": "old-model-v1",
+            }
+        )
 
         mock_embeddings.encode_batch.return_value = [new_vec, new_vec]
 
@@ -301,13 +344,15 @@ class TestReembedStale:
     def test_current_model_not_reembedded(self, sleep_engine, storage, mock_embeddings):
         """Memories already using the current model should not be re-embedded."""
         vec = _make_embedding(1.0)
-        storage.insert_memory({
-            "content": "Current model memory",
-            "embedding": vec,
-            "directory_context": "/proj",
-            "heat": 0.8,
-            "embedding_model": "all-MiniLM-L6-v2",
-        })
+        storage.insert_memory(
+            {
+                "content": "Current model memory",
+                "embedding": vec,
+                "directory_context": "/proj",
+                "heat": 0.8,
+                "embedding_model": "all-MiniLM-L6-v2",
+            }
+        )
 
         count = sleep_engine.reembed_stale()
         assert count == 0
@@ -323,14 +368,16 @@ class TestMemoryCompression:
             + "The final fix was in yadgar/storage.py which resolved the issue."
         )
         old_time = _old_timestamp(60)
-        mid = storage.insert_memory({
-            "content": long_content,
-            "embedding": _make_embedding(1.0),
-            "directory_context": "/proj",
-            "heat": 0.5,
-            "created_at": old_time,
-            "last_accessed": old_time,
-        })
+        mid = storage.insert_memory(
+            {
+                "content": long_content,
+                "embedding": _make_embedding(1.0),
+                "directory_context": "/proj",
+                "heat": 0.5,
+                "created_at": old_time,
+                "last_accessed": old_time,
+            }
+        )
 
         count = sleep_engine.compress_old_memories(days_threshold=30)
         assert count >= 1
@@ -341,12 +388,14 @@ class TestMemoryCompression:
 
     def test_recent_memories_not_compressed(self, sleep_engine, storage):
         """Recent memories should not be compressed regardless of length."""
-        mid = storage.insert_memory({
-            "content": "x " * 600,  # long but recent
-            "embedding": _make_embedding(1.0),
-            "directory_context": "/proj",
-            "heat": 0.8,
-        })
+        storage.insert_memory(
+            {
+                "content": "x " * 600,  # long but recent
+                "embedding": _make_embedding(1.0),
+                "directory_context": "/proj",
+                "heat": 0.8,
+            }
+        )
 
         count = sleep_engine.compress_old_memories(days_threshold=30)
         assert count == 0
@@ -354,14 +403,16 @@ class TestMemoryCompression:
     def test_short_memories_not_compressed(self, sleep_engine, storage):
         """Short old memories should not be compressed."""
         old_time = _old_timestamp(60)
-        storage.insert_memory({
-            "content": "Short memory",
-            "embedding": _make_embedding(1.0),
-            "directory_context": "/proj",
-            "heat": 0.5,
-            "created_at": old_time,
-            "last_accessed": old_time,
-        })
+        storage.insert_memory(
+            {
+                "content": "Short memory",
+                "embedding": _make_embedding(1.0),
+                "directory_context": "/proj",
+                "heat": 0.5,
+                "created_at": old_time,
+                "last_accessed": old_time,
+            }
+        )
 
         count = sleep_engine.compress_old_memories(days_threshold=30)
         assert count == 0
@@ -372,13 +423,15 @@ class TestFullSleepCycle:
         """Full sleep cycle should execute all phases without errors."""
         vec = _make_embedding(1.0)
         for i in range(3):
-            storage.insert_memory({
-                "content": f"Memory {i} about testing sleep cycle",
-                "embedding": vec,
-                "directory_context": "/proj",
-                "heat": 0.7,
-                "embedding_model": "all-MiniLM-L6-v2",
-            })
+            storage.insert_memory(
+                {
+                    "content": f"Memory {i} about testing sleep cycle",
+                    "embedding": vec,
+                    "directory_context": "/proj",
+                    "heat": 0.7,
+                    "embedding_model": "all-MiniLM-L6-v2",
+                }
+            )
 
         mock_embeddings.similarity.return_value = 0.3  # below threshold
 

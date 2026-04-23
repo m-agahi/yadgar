@@ -2,9 +2,8 @@
 
 import json
 import logging
-import re
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from yadgar.config import Settings
 from yadgar.knowledge_graph import KnowledgeGraph
@@ -13,16 +12,39 @@ from yadgar.storage import StorageEngine
 logger = logging.getLogger(__name__)
 
 # Keywords that signal a decision
-_DECISION_KEYWORDS = frozenset({
-    "decided", "chose", "choosing", "switched", "migrated", "replaced",
-    "using", "adopted", "selected", "picked", "went with",
-})
+_DECISION_KEYWORDS = frozenset(
+    {
+        "decided",
+        "chose",
+        "choosing",
+        "switched",
+        "migrated",
+        "replaced",
+        "using",
+        "adopted",
+        "selected",
+        "picked",
+        "went with",
+    }
+)
 
 # Keywords that signal notable events
-_EVENT_KEYWORDS = frozenset({
-    "error", "fix", "fixed", "bug", "resolved", "broke", "crash",
-    "deployed", "released", "implemented", "completed", "refactored",
-})
+_EVENT_KEYWORDS = frozenset(
+    {
+        "error",
+        "fix",
+        "fixed",
+        "bug",
+        "resolved",
+        "broke",
+        "crash",
+        "deployed",
+        "released",
+        "implemented",
+        "completed",
+        "refactored",
+    }
+)
 
 
 class NarrativeEngine:
@@ -50,14 +72,13 @@ class NarrativeEngine:
         if period_hours is None:
             period_hours = self._settings.NARRATIVE_INTERVAL_HOURS
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         period_start = now - timedelta(hours=period_hours)
 
         # Collect memories for this directory within the time window
         all_memories = self._storage.get_memories_for_directory(directory, min_heat=0.0)
         period_memories = [
-            m for m in all_memories
-            if datetime.fromisoformat(m["created_at"]) >= period_start
+            m for m in all_memories if datetime.fromisoformat(m["created_at"]) >= period_start
         ]
 
         count = len(period_memories)
@@ -117,7 +138,7 @@ class NarrativeEngine:
         """
         stats = {"directories_checked": 0, "narratives_generated": 0}
         interval = self._settings.NARRATIVE_INTERVAL_HOURS
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cutoff = now - timedelta(hours=interval)
 
         # Find active directories
@@ -190,16 +211,14 @@ class NarrativeEngine:
         for mem in memories:
             # Extract entities from content using simple patterns
             entities = self._graph.extract_entities_typed(mem["content"], "")
-            for name, etype, _ in entities:
+            for name, _etype, _ in entities:
                 entity_counts[name] += 1
 
         return [name for name, _ in entity_counts.most_common(10)]
 
     def _get_high_heat_topics(self, directory: str) -> list[str]:
         """Get topics from high-heat memories in this directory."""
-        hot_memories = self._storage.get_memories_for_directory(
-            directory, min_heat=0.7
-        )
+        hot_memories = self._storage.get_memories_for_directory(directory, min_heat=0.7)
         topics = []
         for mem in hot_memories[:10]:
             # First meaningful sentence

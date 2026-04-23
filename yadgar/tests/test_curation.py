@@ -1,7 +1,5 @@
 """Tests for the active memory curation engine and memify self-improvement layer."""
 
-import json
-
 import numpy as np
 import pytest
 
@@ -187,7 +185,7 @@ def test_curate_link_moderate(curator, storage, embeddings):
     else:
         # If model gives different similarity, test the mechanism with synthetic embeddings
         emb_base = _make_embedding(seed=100)
-        result_base = curator.curate_on_remember(
+        curator.curate_on_remember(
             content="Base memory content for linking test",
             context="/test/project",
             tags=["base"],
@@ -224,14 +222,16 @@ def test_contradiction_detection(curator, storage, embeddings):
     """Opposing content is flagged as contradicting."""
     content1 = "We use PostgreSQL as our primary database for the application"
     emb1 = embeddings.encode(content1)
-    storage.insert_memory({
-        "content": content1,
-        "embedding": emb1,
-        "tags": ["database"],
-        "directory_context": "/test",
-        "heat": 1.0,
-        "is_stale": False,
-    })
+    storage.insert_memory(
+        {
+            "content": content1,
+            "embedding": emb1,
+            "tags": ["database"],
+            "directory_context": "/test",
+            "heat": 1.0,
+            "is_stale": False,
+        }
+    )
 
     content2 = "We no longer use PostgreSQL, instead of PostgreSQL we switched to MySQL"
     emb2 = embeddings.encode(content2)
@@ -240,8 +240,9 @@ def test_contradiction_detection(curator, storage, embeddings):
 
     # Should detect the contradiction (negation pattern present in new content)
     if contradictions:
-        assert any(c["reason"] in ("negation_mismatch", "action_divergence")
-                    for c in contradictions)
+        assert any(
+            c["reason"] in ("negation_mismatch", "action_divergence") for c in contradictions
+        )
         # Old memory's confidence should be reduced
         for c in contradictions:
             old_mem = storage.get_memory(c["memory_id"])
@@ -254,14 +255,16 @@ def test_contradiction_detection(curator, storage, embeddings):
 def test_memify_prune(curator, storage):
     """Cold unreliable memories with zero access get pruned."""
     emb = _make_embedding(seed=10)
-    mid = storage.insert_memory({
-        "content": "This is a cold unreliable memory that was never accessed",
-        "embedding": emb,
-        "tags": ["cold"],
-        "directory_context": "/test",
-        "heat": 0.005,  # < 0.01
-        "is_stale": False,
-    })
+    mid = storage.insert_memory(
+        {
+            "content": "This is a cold unreliable memory that was never accessed",
+            "embedding": emb,
+            "tags": ["cold"],
+            "directory_context": "/test",
+            "heat": 0.005,  # < 0.01
+            "is_stale": False,
+        }
+    )
     # Set confidence < 0.3 and access_count = 0
     storage._db.query(
         "UPDATE type::thing('memory', $id) SET confidence = 0.2, access_count = 0",
@@ -279,14 +282,16 @@ def test_memify_prune(curator, storage):
 def test_memify_strengthen(curator, storage):
     """Frequently used high-confidence memories get importance boosted."""
     emb = _make_embedding(seed=20)
-    mid = storage.insert_memory({
-        "content": "Frequently accessed and useful memory about project architecture",
-        "embedding": emb,
-        "tags": ["architecture"],
-        "directory_context": "/test",
-        "heat": 0.8,
-        "is_stale": False,
-    })
+    mid = storage.insert_memory(
+        {
+            "content": "Frequently accessed and useful memory about project architecture",
+            "embedding": emb,
+            "tags": ["architecture"],
+            "directory_context": "/test",
+            "heat": 0.8,
+            "is_stale": False,
+        }
+    )
     storage._db.query(
         "UPDATE type::thing('memory', $id) SET access_count = 10, confidence = 0.9, importance = 0.5",
         {"id": mid},
@@ -304,19 +309,21 @@ def test_memify_strengthen(curator, storage):
 
 def test_memify_derive(curator, storage):
     """High-weight entity pairs generate derived fact memories."""
-    now = storage._now_iso()
+    storage._now_iso()
 
     # Create two entities
     eid1 = storage.insert_entity({"name": "module.py", "type": "file"})
     eid2 = storage.insert_entity({"name": "utils.py", "type": "file"})
 
     # Create a high-weight co_occurrence relationship (weight > 10)
-    storage.insert_relationship({
-        "source_entity_id": eid1,
-        "target_entity_id": eid2,
-        "relationship_type": "co_occurrence",
-        "weight": 12.0,
-    })
+    storage.insert_relationship(
+        {
+            "source_entity_id": eid1,
+            "target_entity_id": eid2,
+            "relationship_type": "co_occurrence",
+            "weight": 12.0,
+        }
+    )
 
     stats = curator.memify_cycle()
     assert stats["derived"] >= 1
@@ -334,14 +341,16 @@ def test_memify_derive(curator, storage):
 def test_curation_preserves_existing(curator, storage):
     """Existing memories are not corrupted by curation operations."""
     emb1 = _make_embedding(seed=50)
-    mid1 = storage.insert_memory({
-        "content": "Important existing memory about database migrations",
-        "embedding": emb1,
-        "tags": ["database", "migrations"],
-        "directory_context": "/test/project",
-        "heat": 0.9,
-        "is_stale": False,
-    })
+    mid1 = storage.insert_memory(
+        {
+            "content": "Important existing memory about database migrations",
+            "embedding": emb1,
+            "tags": ["database", "migrations"],
+            "directory_context": "/test/project",
+            "heat": 0.9,
+            "is_stale": False,
+        }
+    )
     storage._db.query(
         "UPDATE type::thing('memory', $id) SET confidence = 0.95, access_count = 3, importance = 0.7",
         {"id": mid1},
@@ -379,12 +388,14 @@ def test_memify_reweight(curator, storage):
     eid1 = storage.insert_entity({"name": "hot_entity_a", "type": "file", "heat": 0.9})
     eid2 = storage.insert_entity({"name": "hot_entity_b", "type": "file", "heat": 0.8})
 
-    rid = storage.insert_relationship({
-        "source_entity_id": eid1,
-        "target_entity_id": eid2,
-        "relationship_type": "co_occurrence",
-        "weight": 6.0,  # Established relationship (>= 5.0)
-    })
+    rid = storage.insert_relationship(
+        {
+            "source_entity_id": eid1,
+            "target_entity_id": eid2,
+            "relationship_type": "co_occurrence",
+            "weight": 6.0,  # Established relationship (>= 5.0)
+        }
+    )
 
     stats = curator.memify_cycle()
     assert stats["reweighted"] >= 1
@@ -401,12 +412,14 @@ def test_memify_reweight_cold_decay(curator, storage):
     eid1 = storage.insert_entity({"name": "cold_a", "type": "file", "heat": 0.05})
     eid2 = storage.insert_entity({"name": "cold_b", "type": "file", "heat": 0.05})
 
-    rid = storage.insert_relationship({
-        "source_entity_id": eid1,
-        "target_entity_id": eid2,
-        "relationship_type": "co_occurrence",
-        "weight": 3.0,
-    })
+    rid = storage.insert_relationship(
+        {
+            "source_entity_id": eid1,
+            "target_entity_id": eid2,
+            "relationship_type": "co_occurrence",
+            "weight": 3.0,
+        }
+    )
 
     stats = curator.memify_cycle()
     assert stats["reweighted"] >= 1
@@ -423,12 +436,14 @@ def test_memify_derive_idempotent(curator, storage):
     eid1 = storage.insert_entity({"name": "a.py", "type": "file"})
     eid2 = storage.insert_entity({"name": "b.py", "type": "file"})
 
-    storage.insert_relationship({
-        "source_entity_id": eid1,
-        "target_entity_id": eid2,
-        "relationship_type": "co_occurrence",
-        "weight": 15.0,
-    })
+    storage.insert_relationship(
+        {
+            "source_entity_id": eid1,
+            "target_entity_id": eid2,
+            "relationship_type": "co_occurrence",
+            "weight": 15.0,
+        }
+    )
 
     stats1 = curator.memify_cycle()
     assert stats1["derived"] >= 1

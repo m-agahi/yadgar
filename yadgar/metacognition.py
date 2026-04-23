@@ -11,7 +11,7 @@ and Cognitive Workspace (arXiv:2508.13171):
 
 import logging
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 def _extract_entities(query: str) -> list[str]:
     """Re-use retrieval entity extraction without circular import."""
     from yadgar.retrieval import _extract_query_entities
+
     return _extract_query_entities(query)
 
 
@@ -57,9 +58,7 @@ class MetaCognition:
         matching_memories = []
 
         try:
-            fts_results = self._storage.search_memories_fts(
-                query, min_heat=0.0, limit=50
-            )
+            fts_results = self._storage.search_memories_fts(query, min_heat=0.0, limit=50)
             if fts_results:
                 matching_memories.extend(fts_results)
         except Exception:
@@ -67,9 +66,7 @@ class MetaCognition:
 
         query_embedding = self._embeddings.encode(query)
         if query_embedding is not None:
-            vec_hits = self._storage.search_vectors(
-                query_embedding, top_k=50, min_heat=0.0
-            )
+            vec_hits = self._storage.search_vectors(query_embedding, top_k=50, min_heat=0.0)
             seen_ids = {m["id"] for m in matching_memories}
             for mid, _distance in vec_hits:
                 if mid not in seen_ids:
@@ -111,7 +108,7 @@ class MetaCognition:
         # c) Recency: age of most recent relevant memory
         recency_score = 0.0
         if matching_memories:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             most_recent = None
             for m in matching_memories:
                 created = m.get("created_at")
@@ -122,7 +119,7 @@ class MetaCognition:
                         except (ValueError, TypeError):
                             continue
                     if created.tzinfo is None:
-                        created = created.replace(tzinfo=timezone.utc)
+                        created = created.replace(tzinfo=UTC)
                     if most_recent is None or created > most_recent:
                         most_recent = created
             if most_recent is not None:
@@ -139,17 +136,12 @@ class MetaCognition:
         # d) Confidence: average confidence score of matching memories
         confidence_score = 0.0
         if matching_memories:
-            confidences = [
-                m.get("confidence", 1.0) for m in matching_memories
-            ]
+            confidences = [m.get("confidence", 1.0) for m in matching_memories]
             confidence_score = sum(confidences) / len(confidences)
 
         # Overall coverage (weighted blend)
         overall = (
-            0.3 * density
-            + 0.3 * entity_coverage
-            + 0.2 * recency_score
-            + 0.2 * confidence_score
+            0.3 * density + 0.3 * entity_coverage + 0.2 * recency_score + 0.2 * confidence_score
         )
 
         # Suggestion
@@ -190,32 +182,30 @@ class MetaCognition:
         gaps: list[dict] = []
 
         # a) Isolated entities: entities with 0 or 1 relationships
-        all_entities = self._storage.get_all_entities(
-            min_heat=0.0, include_archived=False
-        )
+        all_entities = self._storage.get_all_entities(min_heat=0.0, include_archived=False)
         for entity in all_entities:
             neighbors = self._graph._get_adjacent(entity["id"], None)
             if len(neighbors) <= 1:
-                gaps.append({
-                    "type": "isolated_entity",
-                    "description": (
-                        f"Entity '{entity['name']}' has only "
-                        f"{len(neighbors)} connection(s) — poorly integrated "
-                        f"into the knowledge graph."
-                    ),
-                    "severity": 0.6 if len(neighbors) == 0 else 0.4,
-                    "entities": [entity["name"]],
-                    "suggestion": (
-                        f"Add more context about '{entity['name']}' to "
-                        f"strengthen its connections in the knowledge graph."
-                    ),
-                })
+                gaps.append(
+                    {
+                        "type": "isolated_entity",
+                        "description": (
+                            f"Entity '{entity['name']}' has only "
+                            f"{len(neighbors)} connection(s) — poorly integrated "
+                            f"into the knowledge graph."
+                        ),
+                        "severity": 0.6 if len(neighbors) == 0 else 0.4,
+                        "entities": [entity["name"]],
+                        "suggestion": (
+                            f"Add more context about '{entity['name']}' to "
+                            f"strengthen its connections in the knowledge graph."
+                        ),
+                    }
+                )
 
         # b) Stale regions: clusters of memories with heat < 0.3
         if directory:
-            dir_memories = self._storage.get_memories_for_directory(
-                directory, min_heat=0.0
-            )
+            dir_memories = self._storage.get_memories_for_directory(directory, min_heat=0.0)
         else:
             dir_memories = self._storage.get_all_memories_for_decay()
 
@@ -226,43 +216,44 @@ class MetaCognition:
                 tags = m.get("tags", [])
                 if isinstance(tags, list):
                     stale_tags.update(tags)
-            gaps.append({
-                "type": "stale_region",
-                "description": (
-                    f"{len(stale_memories)} memories have decayed below "
-                    f"heat 0.3 — knowledge may be outdated."
-                ),
-                "severity": min(0.9, 0.3 + len(stale_memories) * 0.1),
-                "entities": list(stale_tags)[:10],
-                "suggestion": (
-                    "Review and refresh these memories or validate "
-                    "against current project state."
-                ),
-            })
+            gaps.append(
+                {
+                    "type": "stale_region",
+                    "description": (
+                        f"{len(stale_memories)} memories have decayed below "
+                        f"heat 0.3 — knowledge may be outdated."
+                    ),
+                    "severity": min(0.9, 0.3 + len(stale_memories) * 0.1),
+                    "entities": list(stale_tags)[:10],
+                    "suggestion": (
+                        "Review and refresh these memories or validate "
+                        "against current project state."
+                    ),
+                }
+            )
 
         # c) Low-confidence zones: memories with confidence < 0.5
-        low_conf = [
-            m for m in dir_memories
-            if m.get("confidence", 1.0) < 0.5
-        ]
+        low_conf = [m for m in dir_memories if m.get("confidence", 1.0) < 0.5]
         if low_conf:
             low_conf_descriptions = []
             for m in low_conf[:5]:
                 content_preview = m.get("content", "")[:60]
                 low_conf_descriptions.append(content_preview)
-            gaps.append({
-                "type": "low_confidence",
-                "description": (
-                    f"{len(low_conf)} memories have confidence below 0.5 "
-                    f"— unreliable knowledge detected."
-                ),
-                "severity": min(0.8, 0.3 + len(low_conf) * 0.1),
-                "entities": low_conf_descriptions,
-                "suggestion": (
-                    "Validate low-confidence memories against "
-                    "current source code or documentation."
-                ),
-            })
+            gaps.append(
+                {
+                    "type": "low_confidence",
+                    "description": (
+                        f"{len(low_conf)} memories have confidence below 0.5 "
+                        f"— unreliable knowledge detected."
+                    ),
+                    "severity": min(0.8, 0.3 + len(low_conf) * 0.1),
+                    "entities": low_conf_descriptions,
+                    "suggestion": (
+                        "Validate low-confidence memories against "
+                        "current source code or documentation."
+                    ),
+                }
+            )
 
         # d) Missing connections: entities that co-occur in content
         #    but have no relationship in the graph
@@ -274,7 +265,7 @@ class MetaCognition:
                 if entity["name"] in content:
                     entities_in_mem.append(entity["id"])
             for i, eid_a in enumerate(entities_in_mem):
-                for eid_b in entities_in_mem[i + 1:]:
+                for eid_b in entities_in_mem[i + 1 :]:
                     entity_cooccurrence[(eid_a, eid_b)].add(m.get("id"))
 
         for (eid_a, eid_b), mem_ids in entity_cooccurrence.items():
@@ -286,29 +277,27 @@ class MetaCognition:
                 ent_a = self._storage.get_entity_by_id(eid_a)
                 ent_b = self._storage.get_entity_by_id(eid_b)
                 if ent_a and ent_b:
-                    gaps.append({
-                        "type": "missing_connection",
-                        "description": (
-                            f"'{ent_a['name']}' and '{ent_b['name']}' co-occur in "
-                            f"{len(mem_ids)} memories but have no relationship."
-                        ),
-                        "severity": min(0.7, 0.2 + len(mem_ids) * 0.1),
-                        "entities": [ent_a["name"], ent_b["name"]],
-                        "suggestion": (
-                            f"Add a relationship between '{ent_a['name']}' and "
-                            f"'{ent_b['name']}' to capture their connection."
-                        ),
-                    })
+                    gaps.append(
+                        {
+                            "type": "missing_connection",
+                            "description": (
+                                f"'{ent_a['name']}' and '{ent_b['name']}' co-occur in "
+                                f"{len(mem_ids)} memories but have no relationship."
+                            ),
+                            "severity": min(0.7, 0.2 + len(mem_ids) * 0.1),
+                            "entities": [ent_a["name"], ent_b["name"]],
+                            "suggestion": (
+                                f"Add a relationship between '{ent_a['name']}' and "
+                                f"'{ent_b['name']}' to capture their connection."
+                            ),
+                        }
+                    )
 
         # e) One-sided knowledge: only errors stored, no solutions (or vice versa)
-        error_entities = [
-            e for e in all_entities if e.get("type") == "error"
-        ]
-        solution_entities = [
-            e for e in all_entities if e.get("type") == "solution"
-        ]
-        error_names = {e["name"] for e in error_entities}
-        solution_names = {e["name"] for e in solution_entities}
+        error_entities = [e for e in all_entities if e.get("type") == "error"]
+        solution_entities = [e for e in all_entities if e.get("type") == "solution"]
+        {e["name"] for e in error_entities}
+        {e["name"] for e in solution_entities}
 
         # Check for "resolved_by" relationships from error entities
         for err_entity in error_entities:
@@ -316,27 +305,27 @@ class MetaCognition:
                 err_entity["id"], "resolved_by"
             )
             if has_resolution is None:
-                gaps.append({
-                    "type": "one_sided_knowledge",
-                    "description": (
-                        f"Error '{err_entity['name']}' has no recorded "
-                        f"resolution — only the problem is known."
-                    ),
-                    "severity": 0.5,
-                    "entities": [err_entity["name"]],
-                    "suggestion": (
-                        f"Record how '{err_entity['name']}' was resolved "
-                        f"to complete the knowledge."
-                    ),
-                })
+                gaps.append(
+                    {
+                        "type": "one_sided_knowledge",
+                        "description": (
+                            f"Error '{err_entity['name']}' has no recorded "
+                            f"resolution — only the problem is known."
+                        ),
+                        "severity": 0.5,
+                        "entities": [err_entity["name"]],
+                        "suggestion": (
+                            f"Record how '{err_entity['name']}' was resolved "
+                            f"to complete the knowledge."
+                        ),
+                    }
+                )
 
         return gaps
 
     # ── 3. Cognitive Load Management ──────────────────────────────────
 
-    def manage_context(
-        self, memories: list[dict], max_chunks: int | None = None
-    ) -> list[dict]:
+    def manage_context(self, memories: list[dict], max_chunks: int | None = None) -> list[dict]:
         """Apply Cowan's 4±1 cognitive load optimization.
 
         If memories fit within the chunk limit, return as-is.
@@ -384,7 +373,7 @@ class MetaCognition:
 
         # Step 6: Flatten chunks into memory list with metadata
         result = []
-        for pos_idx, (chunk_id, chunk, score) in enumerate(positioned):
+        for pos_idx, (chunk_id, chunk, _score) in enumerate(positioned):
             reason = self._position_reason(pos_idx, len(positioned))
             for mem in chunk:
                 enriched = dict(mem)
@@ -466,9 +455,9 @@ class MetaCognition:
                     t_i = timestamps[i]
                     t_j = timestamps[j]
                     if t_i.tzinfo is None:
-                        t_i = t_i.replace(tzinfo=timezone.utc)
+                        t_i = t_i.replace(tzinfo=UTC)
                     if t_j.tzinfo is None:
-                        t_j = t_j.replace(tzinfo=timezone.utc)
+                        t_j = t_j.replace(tzinfo=UTC)
                     diff = abs((t_i - t_j).total_seconds())
                     if diff < 7200:  # 2 hours
                         chunk.append(memories[j])
@@ -479,9 +468,7 @@ class MetaCognition:
 
         return chunks
 
-    def summarize_overflow(
-        self, excess_memories: list[dict], target_count: int = 1
-    ) -> list[dict]:
+    def summarize_overflow(self, excess_memories: list[dict], target_count: int = 1) -> list[dict]:
         """Compress multiple low-priority memories into summary chunks.
 
         Preserves verbatim: high-surprise (>0.7) and high-importance (>0.7).
@@ -509,7 +496,7 @@ class MetaCognition:
             # Group into target_count summary chunks
             chunk_size = max(1, len(to_summarize) // max(1, target_count))
             for start in range(0, len(to_summarize), chunk_size):
-                batch = to_summarize[start:start + chunk_size]
+                batch = to_summarize[start : start + chunk_size]
                 if not batch:
                     continue
 
@@ -523,27 +510,26 @@ class MetaCognition:
                         snippet += "..."
                     snippets.append(snippet)
 
-                summary_content = (
-                    f"[Summary of {len(batch)} memories] "
-                    + " | ".join(snippets)
-                )
+                summary_content = f"[Summary of {len(batch)} memories] " + " | ".join(snippets)
 
                 # Aggregate metadata
                 avg_heat = sum(m.get("heat", 0.5) for m in batch) / len(batch)
                 avg_importance = sum(m.get("importance", 0.5) for m in batch) / len(batch)
                 avg_confidence = sum(m.get("confidence", 1.0) for m in batch) / len(batch)
 
-                result.append({
-                    "content": summary_content,
-                    "heat": avg_heat,
-                    "importance": avg_importance,
-                    "confidence": avg_confidence,
-                    "surprise_score": 0.0,
-                    "tags": [],
-                    "_is_summary": True,
-                    "_summarized_count": len(batch),
-                    "_source_ids": [m.get("id") for m in batch if m.get("id")],
-                })
+                result.append(
+                    {
+                        "content": summary_content,
+                        "heat": avg_heat,
+                        "importance": avg_importance,
+                        "confidence": avg_confidence,
+                        "surprise_score": 0.0,
+                        "tags": [],
+                        "_is_summary": True,
+                        "_summarized_count": len(batch),
+                        "_source_ids": [m.get("id") for m in batch if m.get("id")],
+                    }
+                )
 
         return result
 
@@ -566,8 +552,8 @@ class MetaCognition:
             return list(scored_chunks)
 
         # Already sorted by score descending
-        first = scored_chunks[0]   # primacy
-        last = scored_chunks[1]    # recency (second highest)
+        first = scored_chunks[0]  # primacy
+        last = scored_chunks[1]  # recency (second highest)
         middle = scored_chunks[2:]  # rest in middle
 
         return [first] + middle + [last]

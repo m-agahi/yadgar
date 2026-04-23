@@ -2,7 +2,7 @@
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
@@ -67,9 +67,7 @@ class MemoryThermodynamics:
         if query_embedding is None:
             return 0.5
 
-        vec_hits = self._storage.search_vectors(
-            query_embedding, top_k=5, min_heat=0.0
-        )
+        vec_hits = self._storage.search_vectors(query_embedding, top_k=5, min_heat=0.0)
         if not vec_hits:
             return 0.5
 
@@ -198,7 +196,7 @@ class MemoryThermodynamics:
         # Clamp factor to valid range
         effective_factor = max(0.0, min(effective_factor, 1.0))
 
-        new_heat = memory["heat"] * (effective_factor ** hours_elapsed)
+        new_heat = memory["heat"] * (effective_factor**hours_elapsed)
         return new_heat
 
     # -- f. Metamemory --
@@ -218,9 +216,7 @@ class MemoryThermodynamics:
         else:
             confidence = mem.get("confidence", 1.0)
 
-        self._storage.update_memory_metamemory(
-            memory_id, access_count, useful_count, confidence
-        )
+        self._storage.update_memory_metamemory(memory_id, access_count, useful_count, confidence)
 
     def get_reliability(self, memory_id: int) -> float:
         """Return the confidence score for a memory.
@@ -251,9 +247,9 @@ class MemoryThermodynamics:
         try:
             mem_dt = datetime.fromisoformat(created_at)
             if mem_dt.tzinfo is None:
-                mem_dt = mem_dt.replace(tzinfo=timezone.utc)
+                mem_dt = mem_dt.replace(tzinfo=UTC)
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             hours = (now - mem_dt).total_seconds() / 3600.0
             window = self._settings.SESSION_COHERENCE_WINDOW_HOURS
 

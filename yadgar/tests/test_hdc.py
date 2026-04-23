@@ -10,7 +10,6 @@ from yadgar.knowledge_graph import KnowledgeGraph
 from yadgar.retrieval import HippoRetriever
 from yadgar.storage import StorageEngine
 
-
 # -- Fixtures --
 
 
@@ -55,16 +54,18 @@ def retriever(storage, embeddings, graph, settings):
 def _make_memory(storage, embeddings, content, directory="/proj", tags=None, heat=1.0):
     """Insert a memory with embedding and return its ID."""
     embedding = embeddings.encode(content)
-    return storage.insert_memory({
-        "content": content,
-        "embedding": embedding,
-        "tags": tags or [],
-        "directory_context": directory,
-        "heat": heat,
-        "is_stale": False,
-        "file_hash": None,
-        "embedding_model": embeddings.get_model_name(),
-    })
+    return storage.insert_memory(
+        {
+            "content": content,
+            "embedding": embedding,
+            "tags": tags or [],
+            "directory_context": directory,
+            "heat": heat,
+            "is_stale": False,
+            "file_hash": None,
+            "embedding_model": embeddings.get_model_name(),
+        }
+    )
 
 
 # -- Core HDC operation tests --
@@ -273,9 +274,7 @@ class TestHDCEncoding:
         sim_a = hdc.similarity(query_alpha, mem_proj_a)
         sim_b = hdc.similarity(query_alpha, mem_proj_b)
 
-        assert sim_a > sim_b, (
-            f"Directory query should prefer matching project: {sim_a} vs {sim_b}"
-        )
+        assert sim_a > sim_b, f"Directory query should prefer matching project: {sim_a} vs {sim_b}"
 
     def test_tag_query_discriminates(self, hdc):
         """Tag-based query finds memories with matching tags."""
@@ -366,9 +365,7 @@ class TestHDCSearch:
 
     def test_search_top_k(self, hdc):
         """Search respects top_k limit."""
-        candidates = [
-            (i, hdc._random_vector()) for i in range(20)
-        ]
+        candidates = [(i, hdc._random_vector()) for i in range(20)]
         query = hdc._random_vector()
         results = hdc.search(query, candidates, top_k=5)
         assert len(results) == 5
@@ -490,8 +487,11 @@ class TestHDCRetrievalIntegration:
         # Create memories with HDC vectors
         content_auth = "Fixed authentication bug in auth.py login flow"
         mid1 = _make_memory(
-            storage, embeddings, content_auth,
-            directory="/proj", tags=["bug", "auth"],
+            storage,
+            embeddings,
+            content_auth,
+            directory="/proj",
+            tags=["bug", "auth"],
         )
         hdc_vec1 = hdc.encode_memory("/proj", ["bug", "auth"], ["auth.py", "login"])
         storage._db.query(
@@ -501,8 +501,11 @@ class TestHDCRetrievalIntegration:
 
         content_db = "Added database migration for user table schema"
         mid2 = _make_memory(
-            storage, embeddings, content_db,
-            directory="/proj", tags=["database", "migration"],
+            storage,
+            embeddings,
+            content_db,
+            directory="/proj",
+            tags=["database", "migration"],
         )
         hdc_vec2 = hdc.encode_memory("/proj", ["database", "migration"], ["models.py", "schema"])
         storage._db.query(
@@ -524,10 +527,12 @@ class TestHDCRetrievalIntegration:
         retriever = HippoRetriever(storage, embeddings, graph, settings)
         # Don't set HDC — _hdc stays None
 
-        mid = _make_memory(
-            storage, embeddings,
+        _make_memory(
+            storage,
+            embeddings,
             "Test memory content for basic retrieval",
-            directory="/proj", tags=["test"],
+            directory="/proj",
+            tags=["test"],
         )
 
         results = retriever.recall("test memory content", max_results=5)
@@ -540,15 +545,17 @@ class TestHDCRetrievalIntegration:
         blob = hdc.to_bytes(vec)
 
         # Insert a memory first
-        mid = storage.insert_memory({
-            "content": "test content",
-            "embedding": None,
-            "tags": ["test"],
-            "directory_context": "/proj",
-            "heat": 1.0,
-            "is_stale": False,
-            "file_hash": None,
-        })
+        mid = storage.insert_memory(
+            {
+                "content": "test content",
+                "embedding": None,
+                "tags": ["test"],
+                "directory_context": "/proj",
+                "heat": 1.0,
+                "is_stale": False,
+                "file_hash": None,
+            }
+        )
 
         # Store HDC vector
         storage._db.query(
@@ -557,9 +564,7 @@ class TestHDCRetrievalIntegration:
         )
 
         # Read it back
-        rows = storage._db.query(
-            "SELECT hdc_vector FROM type::thing('memory', $id)", {"id": mid}
-        )
+        rows = storage._db.query("SELECT hdc_vector FROM type::thing('memory', $id)", {"id": mid})
         assert rows[0].get("hdc_vector") is not None
         restored = hdc.from_bytes(rows[0]["hdc_vector"])
         np.testing.assert_array_equal(restored, vec.astype(np.float32))

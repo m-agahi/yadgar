@@ -21,7 +21,7 @@ def _db_locked(db_path: Path) -> bool:
     if not lock_path.exists():
         return False
     try:
-        lf = open(lock_path, "r")
+        lf = open(lock_path)
         fcntl.flock(lf, fcntl.LOCK_EX | fcntl.LOCK_NB)
         fcntl.flock(lf, fcntl.LOCK_UN)
         lf.close()
@@ -43,8 +43,9 @@ def main():
     # Try HTTP endpoint first — works in daemon mode where DB lock is always held
     _port = os.environ.get("YADGAR_PORT", "8765")
     try:
-        import urllib.request as _req
         import urllib.parse as _parse
+        import urllib.request as _req
+
         _url = f"http://127.0.0.1:{_port}/hooks/session-context?directory={_parse.quote(cwd)}"
         _resp = _req.urlopen(_url, timeout=2)
         _text = json.loads(_resp.read().decode()).get("text", "")
@@ -59,6 +60,7 @@ def main():
 
     try:
         from surrealdb import Surreal
+
         db = Surreal(f"surrealkv://{db_path}")
         db.use("yadgar", "main")
     except Exception:

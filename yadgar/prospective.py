@@ -1,14 +1,19 @@
 """Prospective memory system — future-oriented triggers that fire on matching context."""
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from yadgar.config import Settings
 from yadgar.storage import StorageEngine
 
-VALID_TRIGGER_TYPES = frozenset({
-    "directory_match", "keyword_match", "entity_match", "time_based",
-})
+VALID_TRIGGER_TYPES = frozenset(
+    {
+        "directory_match",
+        "keyword_match",
+        "entity_match",
+        "time_based",
+    }
+)
 
 # Future-oriented phrases that signal prospective intent
 _PROSPECTIVE_PATTERNS = [
@@ -55,13 +60,15 @@ class ProspectiveMemoryEngine:
                 f"Must be one of {sorted(VALID_TRIGGER_TYPES)}"
             )
 
-        return self._storage.insert_prospective_memory({
-            "content": content,
-            "trigger_condition": trigger_condition,
-            "trigger_type": trigger_type,
-            "target_directory": target_directory,
-            "is_active": True,
-        })
+        return self._storage.insert_prospective_memory(
+            {
+                "content": content,
+                "trigger_condition": trigger_condition,
+                "trigger_type": trigger_type,
+                "target_directory": target_directory,
+                "is_active": True,
+            }
+        )
 
     def check_triggers(self, context: dict) -> list[dict]:
         """Check all active triggers against the given context.
@@ -81,7 +88,7 @@ class ProspectiveMemoryEngine:
         directory = context.get("directory", "")
         content = context.get("content", "")
         entities = context.get("entities", [])
-        current_time = context.get("current_time", datetime.now(timezone.utc))
+        current_time = context.get("current_time", datetime.now(UTC))
 
         for pm in active:
             if self._matches(pm, directory, content, entities, current_time):
@@ -109,7 +116,8 @@ class ProspectiveMemoryEngine:
 
                 # Extract keywords from the actionable phrase for trigger_condition
                 keywords = " ".join(
-                    w for w in actionable.split()
+                    w
+                    for w in actionable.split()
                     if len(w) > 2 and w.lower() not in {"the", "and", "for", "with"}
                 )
                 if not keywords:

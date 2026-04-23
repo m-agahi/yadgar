@@ -59,8 +59,10 @@ def _count_human_messages(transcript_path: str) -> int:
         ):
             continue
         # List content that is only tool results — skip
-        if isinstance(content, list) and content and all(
-            isinstance(b, dict) and b.get("type") == "tool_result" for b in content
+        if (
+            isinstance(content, list)
+            and content
+            and all(isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
         ):
             continue
 

@@ -84,26 +84,40 @@ class MemoryCurator:
             if sim >= threshold:
                 existing = self._storage.get_memory(mem_id)
                 if existing and self._has_textual_overlap(content, existing["content"]):
-                    return self._merge_memory(
-                        mem_id, content, tags, embedding, contextual_prefix
-                    )
+                    return self._merge_memory(mem_id, content, tags, embedding, contextual_prefix)
 
         # Check for moderate similarity -> link
         for mem_id, sim in similar:
             if _LINK_LOW <= sim < threshold:
                 new_id = self._insert_new_memory(
-                    content, context, tags, embedding, initial_heat,
-                    file_hash, embedding_model, contextual_prefix,
-                    surprise, importance, valence,
+                    content,
+                    context,
+                    tags,
+                    embedding,
+                    initial_heat,
+                    file_hash,
+                    embedding_model,
+                    contextual_prefix,
+                    surprise,
+                    importance,
+                    valence,
                 )
                 self._create_link(new_id, mem_id)
                 return {"action": "linked", "memory_id": new_id, "linked_to": mem_id}
 
         # No similar memory -> create new
         new_id = self._insert_new_memory(
-            content, context, tags, embedding, initial_heat,
-            file_hash, embedding_model, contextual_prefix,
-            surprise, importance, valence,
+            content,
+            context,
+            tags,
+            embedding,
+            initial_heat,
+            file_hash,
+            embedding_model,
+            contextual_prefix,
+            surprise,
+            importance,
+            valence,
         )
         return {"action": "created", "memory_id": new_id}
 
@@ -114,11 +128,9 @@ class MemoryCurator:
         if embedding is None:
             return []
 
-        vec_hits = self._storage.search_vectors(
-            embedding, top_k=10, min_heat=0.0
-        )
+        vec_hits = self._storage.search_vectors(embedding, top_k=10, min_heat=0.0)
         results = []
-        for mid, distance in vec_hits:
+        for mid, _distance in vec_hits:
             mem = self._storage.get_memory(mid)
             if mem and mem.get("embedding"):
                 sim = self._embeddings.similarity(embedding, mem["embedding"])
@@ -208,16 +220,18 @@ class MemoryCurator:
         valence: float,
     ) -> int:
         """Insert a brand-new memory and set its scores."""
-        memory_id = self._storage.insert_memory({
-            "content": content,
-            "embedding": embedding,
-            "tags": tags,
-            "directory_context": context,
-            "heat": heat,
-            "is_stale": False,
-            "file_hash": file_hash,
-            "embedding_model": embedding_model,
-        })
+        memory_id = self._storage.insert_memory(
+            {
+                "content": content,
+                "embedding": embedding,
+                "tags": tags,
+                "directory_context": context,
+                "heat": heat,
+                "is_stale": False,
+                "file_hash": file_hash,
+                "embedding_model": embedding_model,
+            }
+        )
 
         if contextual_prefix:
             self._storage.update_memory_fields(memory_id, contextual_prefix=contextual_prefix)
@@ -233,37 +247,33 @@ class MemoryCurator:
 
     def _create_link(self, new_id: int, existing_id: int) -> None:
         """Create a derived_from relationship between two memories via entities."""
-        now = self._storage._now_iso()
+        self._storage._now_iso()
         # Use entity system: create ephemeral entity nodes for both memories
         # and link them with a derived_from relationship
         src_entity = self._storage.get_entity_by_name(f"memory:{new_id}")
         if src_entity is None:
-            src_eid = self._storage.insert_entity(
-                {"name": f"memory:{new_id}", "type": "file"}
-            )
+            src_eid = self._storage.insert_entity({"name": f"memory:{new_id}", "type": "file"})
         else:
             src_eid = src_entity["id"]
 
         tgt_entity = self._storage.get_entity_by_name(f"memory:{existing_id}")
         if tgt_entity is None:
-            tgt_eid = self._storage.insert_entity(
-                {"name": f"memory:{existing_id}", "type": "file"}
-            )
+            tgt_eid = self._storage.insert_entity({"name": f"memory:{existing_id}", "type": "file"})
         else:
             tgt_eid = tgt_entity["id"]
 
-        self._storage.insert_relationship({
-            "source_entity_id": src_eid,
-            "target_entity_id": tgt_eid,
-            "relationship_type": "derived_from",
-        })
+        self._storage.insert_relationship(
+            {
+                "source_entity_id": src_eid,
+                "target_entity_id": tgt_eid,
+                "relationship_type": "derived_from",
+            }
+        )
         logger.info("Linked memory %d -> derived_from -> memory %d", new_id, existing_id)
 
     # ── b. Contradiction Detection ───────────────────────────────────────
 
-    def detect_contradictions(
-        self, new_content: str, new_embedding: bytes
-    ) -> list[dict]:
+    def detect_contradictions(self, new_content: str, new_embedding: bytes) -> list[dict]:
         """Find existing memories that may contradict new_content.
 
         Returns list of dicts: {"memory_id", "content", "similarity", "reason"}.
@@ -287,15 +297,19 @@ class MemoryCurator:
 
             # Check 1: one has negation patterns, the other doesn't
             if new_has_negation != old_has_negation:
-                contradictions.append({
-                    "memory_id": mem_id,
-                    "content": old_content,
-                    "similarity": sim,
-                    "reason": "negation_mismatch",
-                })
+                contradictions.append(
+                    {
+                        "memory_id": mem_id,
+                        "content": old_content,
+                        "similarity": sim,
+                        "reason": "negation_mismatch",
+                    }
+                )
                 # Reduce confidence of old contradicting memory
                 old_confidence = mem.get("confidence", 1.0)
-                self._storage.update_memory_fields(mem_id, confidence=max(old_confidence - 0.2, 0.1))
+                self._storage.update_memory_fields(
+                    mem_id, confidence=max(old_confidence - 0.2, 0.1)
+                )
                 continue
 
             # Check 2: same entities but different actions
@@ -305,14 +319,18 @@ class MemoryCurator:
                 # (similarity > 0.7 already ensures topical overlap)
                 shared = new_actions & old_actions
                 if len(shared) < len(new_actions | old_actions) * 0.5:
-                    contradictions.append({
-                        "memory_id": mem_id,
-                        "content": old_content,
-                        "similarity": sim,
-                        "reason": "action_divergence",
-                    })
+                    contradictions.append(
+                        {
+                            "memory_id": mem_id,
+                            "content": old_content,
+                            "similarity": sim,
+                            "reason": "action_divergence",
+                        }
+                    )
                     old_confidence = mem.get("confidence", 1.0)
-                    self._storage.update_memory_fields(mem_id, confidence=max(old_confidence - 0.1, 0.1))
+                    self._storage.update_memory_fields(
+                        mem_id, confidence=max(old_confidence - 0.1, 0.1)
+                    )
 
         return contradictions
 
@@ -371,7 +389,7 @@ class MemoryCurator:
 
         seen_rel_ids: set[int] = set()
         for i, src_id in enumerate(entity_ids):
-            for tgt_id in entity_ids[i + 1:]:
+            for tgt_id in entity_ids[i + 1 :]:
                 rel = self._storage.get_relationship_between(src_id, tgt_id)
                 if rel is None:
                     continue
@@ -404,14 +422,11 @@ class MemoryCurator:
         entity_ids = list(entity_map.keys())
 
         # Pre-build existing content set for dedup
-        existing_contents = {
-            m["content"]
-            for m in self._storage.get_all_memories_with_embeddings()
-        }
+        existing_contents = {m["content"] for m in self._storage.get_all_memories_with_embeddings()}
 
         seen_rel_ids: set[int] = set()
         for i, src_id in enumerate(entity_ids):
-            for tgt_id in entity_ids[i + 1:]:
+            for tgt_id in entity_ids[i + 1 :]:
                 rel = self._storage.get_relationship_between(src_id, tgt_id)
                 if rel is None:
                     continue
@@ -441,15 +456,17 @@ class MemoryCurator:
                     continue
 
                 embedding = self._embeddings.encode(derived_content)
-                memory_id = self._storage.insert_memory({
-                    "content": derived_content,
-                    "embedding": embedding,
-                    "tags": ["derived", "auto-generated"],
-                    "directory_context": "system",
-                    "heat": 0.5,
-                    "is_stale": False,
-                    "embedding_model": self._embeddings.get_model_name(),
-                })
+                memory_id = self._storage.insert_memory(
+                    {
+                        "content": derived_content,
+                        "embedding": embedding,
+                        "tags": ["derived", "auto-generated"],
+                        "directory_context": "system",
+                        "heat": 0.5,
+                        "is_stale": False,
+                        "embedding_model": self._embeddings.get_model_name(),
+                    }
+                )
                 self._storage.update_memory_scores(
                     memory_id,
                     importance=0.6,

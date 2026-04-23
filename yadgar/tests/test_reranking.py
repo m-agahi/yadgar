@@ -45,16 +45,18 @@ def retriever(storage, embeddings, graph, settings):
 
 def _make_memory(storage, embeddings, content, directory="/proj", tags=None):
     embedding = embeddings.encode(content)
-    return storage.insert_memory({
-        "content": content,
-        "embedding": embedding,
-        "tags": tags or [],
-        "directory_context": directory,
-        "heat": 1.0,
-        "is_stale": False,
-        "file_hash": None,
-        "embedding_model": embeddings.get_model_name(),
-    })
+    return storage.insert_memory(
+        {
+            "content": content,
+            "embedding": embedding,
+            "tags": tags or [],
+            "directory_context": directory,
+            "heat": 1.0,
+            "is_stale": False,
+            "file_hash": None,
+            "embedding_model": embeddings.get_model_name(),
+        }
+    )
 
 
 # ── _question_to_statement ────────────────────────────────────────────

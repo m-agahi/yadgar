@@ -88,9 +88,7 @@ class StalenessDetector:
         memories = self._storage.get_memories_by_file_hash(old_hash)
 
         parent_dir = str(Path(filepath).parent)
-        dir_memories = self._storage.get_memories_for_directory(
-            parent_dir, min_heat=0.0
-        )
+        dir_memories = self._storage.get_memories_for_directory(parent_dir, min_heat=0.0)
 
         seen_ids: set[int] = set()
         all_memories = []
@@ -132,9 +130,7 @@ class StalenessDetector:
         flagged_memory_ids: set[int] = set()
 
         for root, dirs, files in os.walk(directory):
-            dirs[:] = [
-                d for d in dirs if d not in IGNORE_DIRS and not d.startswith(".")
-            ]
+            dirs[:] = [d for d in dirs if d not in IGNORE_DIRS and not d.startswith(".")]
 
             for filename in files:
                 if any(filename.endswith(ext) for ext in IGNORE_EXTENSIONS):
@@ -161,9 +157,7 @@ class StalenessDetector:
                     for m in memories + dir_memories:
                         if m["id"] not in flagged_memory_ids:
                             flagged_memory_ids.add(m["id"])
-                            self._storage.update_memory_heat(
-                                m["id"], m["heat"] / 2.0
-                            )
+                            self._storage.update_memory_heat(m["id"], m["heat"] / 2.0)
                             self._storage.update_memory_staleness(m["id"], True)
 
                 self._storage.upsert_file_hash(filepath, new_hash)
@@ -188,5 +182,5 @@ class StalenessDetector:
             with open(filepath, "rb") as f:
                 chunk = f.read(8192)
                 return b"\x00" in chunk
-        except (OSError, IOError):
+        except OSError:
             return True

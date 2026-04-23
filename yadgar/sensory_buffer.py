@@ -1,6 +1,6 @@
 import uuid
 from collections import deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from yadgar.config import Settings
 from yadgar.storage import StorageEngine
@@ -21,7 +21,7 @@ class SensoryBuffer:
         self.session_id = uuid.uuid4().hex
         self.current_episode = {
             "session_id": self.session_id,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "directory": "",
             "raw_content": "",
             "overlap_start": None,
@@ -43,7 +43,7 @@ class SensoryBuffer:
         ep_id = self._storage.insert_episode(self.current_episode)
         self.current_episode = {
             "session_id": self.session_id,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "directory": self.current_episode["directory"],
             "raw_content": "",
             "overlap_start": None,
@@ -73,7 +73,7 @@ class SensoryBuffer:
             "directory": directory,
             "summary": summary[:200],
             "result_type": result_type,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         self._action_stream.append(action)
 
@@ -104,14 +104,14 @@ class SensoryBuffer:
         self._storage.insert_episode(self.current_episode)
 
         # Extract overlap from the end of old content
-        overlap = old_content[-self._overlap_chars:]
+        overlap = old_content[-self._overlap_chars :]
         overlap_start = len(old_content) - len(overlap)
         overlap_end = len(old_content)
 
         # Start new episode with overlap as seed
         self.current_episode = {
             "session_id": self.session_id,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "directory": old_directory,
             "raw_content": overlap,
             "overlap_start": overlap_start,

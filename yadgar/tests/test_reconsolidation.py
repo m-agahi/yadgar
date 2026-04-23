@@ -1,6 +1,6 @@
 """Tests for memory reconsolidation — labile retrieval, plasticity, stability, and extinction."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -71,7 +71,8 @@ class TestComputeMismatch:
     def test_mismatch_completely_different(self, engine, storage, embeddings):
         """Completely unrelated content should yield high mismatch."""
         mid = _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Fix the authentication bug in login.py",
             directory="/home/user/project-a",
         )
@@ -87,7 +88,8 @@ class TestComputeMismatch:
     def test_mismatch_moderate(self, engine, storage, embeddings):
         """Related but changed context should yield mid-range mismatch."""
         mid = _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Implemented user authentication with JWT tokens",
             directory="/home/user/webapp",
             tags=["auth", "jwt", "security"],
@@ -160,7 +162,8 @@ class TestReconsolidate:
     def test_update_moderate_mismatch(self, engine, storage, embeddings):
         """Moderate mismatch merges new context into memory."""
         mid = _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Implemented user authentication with JWT tokens",
             directory="/home/user/webapp",
         )
@@ -186,7 +189,9 @@ class TestReconsolidate:
         """Archived content should match the original exactly."""
         original_content = "Implemented caching layer with Redis"
         mid = _make_memory(
-            storage, embeddings, original_content,
+            storage,
+            embeddings,
+            original_content,
             directory="/home/user/backend",
         )
         # Force archive by setting low stability, high plasticity
@@ -211,7 +216,8 @@ class TestReconsolidate:
     def test_reconsolidation_count_increments(self, engine, storage, embeddings):
         """Reconsolidation count should increase after each reconsolidation event."""
         mid = _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Database migration strategy for PostgreSQL",
             directory="/home/user/db",
         )
@@ -246,7 +252,7 @@ class TestPlasticity:
         # Set plasticity to a known low value
         storage._db.query(
             "UPDATE type::thing('memory', $id) SET plasticity = 0.2, last_excitability_update = $ts",
-            {"id": mid, "ts": datetime.now(timezone.utc).isoformat()},
+            {"id": mid, "ts": datetime.now(UTC).isoformat()},
         )
 
         new_plasticity = engine.update_plasticity(mid)
@@ -260,7 +266,7 @@ class TestPlasticity:
         mid = _make_memory(storage, embeddings, "test decay content")
 
         # Set plasticity high and last update 12 hours ago (2 half-lives)
-        past = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
+        past = (datetime.now(UTC) - timedelta(hours=12)).isoformat()
         storage._db.query(
             "UPDATE type::thing('memory', $id) SET plasticity = 1.0, last_excitability_update = $ts",
             {"id": mid, "ts": past},
@@ -279,7 +285,7 @@ class TestPlasticity:
         # Set plasticity already high
         storage._db.query(
             "UPDATE type::thing('memory', $id) SET plasticity = 0.9, last_excitability_update = $ts",
-            {"id": mid, "ts": datetime.now(timezone.utc).isoformat()},
+            {"id": mid, "ts": datetime.now(UTC).isoformat()},
         )
 
         new_plasticity = engine.update_plasticity(mid)
@@ -348,7 +354,7 @@ class TestArchivePreservation:
         """_archive_memory should preserve original content and embedding in archive table."""
         original_content = "Original important decision about architecture"
         mid = _make_memory(storage, embeddings, original_content)
-        mem = storage.get_memory(mid)
+        storage.get_memory(mid)
 
         archive_id = engine._archive_memory(mid, 0.8, "test_reason")
         assert archive_id > 0

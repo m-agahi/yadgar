@@ -81,7 +81,7 @@ def test_batch_encode():
     individual = [engine.encode(t) for t in texts]
 
     assert len(batch) == 3
-    for b, i in zip(batch, individual):
+    for b, i in zip(batch, individual, strict=False):
         assert isinstance(b, bytes)
         b_arr = np.frombuffer(b, dtype=np.float32)
         i_arr = np.frombuffer(i, dtype=np.float32)

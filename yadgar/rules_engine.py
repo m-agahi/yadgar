@@ -11,16 +11,32 @@ logger = logging.getLogger(__name__)
 
 # Valid condition operators
 VALID_OPERATORS = {
-    "==", "!=", "contains", "not_contains",
-    ">", "<", ">=", "<=", "matches",
+    "==",
+    "!=",
+    "contains",
+    "not_contains",
+    ">",
+    "<",
+    ">=",
+    "<=",
+    "matches",
 }
 
 # Fields that are numeric (use float comparison)
 NUMERIC_FIELDS = {
-    "heat", "importance", "surprise_score", "confidence",
-    "emotional_valence", "plasticity", "stability", "excitability",
-    "narrative_weight", "access_count", "useful_count",
-    "compression_level", "reconsolidation_count",
+    "heat",
+    "importance",
+    "surprise_score",
+    "confidence",
+    "emotional_valence",
+    "plasticity",
+    "stability",
+    "excitability",
+    "narrative_weight",
+    "access_count",
+    "useful_count",
+    "compression_level",
+    "reconsolidation_count",
 }
 
 
@@ -147,15 +163,17 @@ class RulesEngine:
             if action_type != "filter":
                 raise ValueError("Hard rules must use 'filter' action")
 
-        rule_id = self._storage.insert_rule({
-            "rule_type": rule_type,
-            "scope": scope,
-            "scope_value": scope_value,
-            "condition": condition,
-            "action": action,
-            "priority": priority,
-            "is_active": True,
-        })
+        rule_id = self._storage.insert_rule(
+            {
+                "rule_type": rule_type,
+                "scope": scope,
+                "scope_value": scope_value,
+                "condition": condition,
+                "action": action,
+                "priority": priority,
+                "is_active": True,
+            }
+        )
         return rule_id
 
     def get_applicable_rules(self, directory: str) -> list[dict]:
@@ -217,10 +235,7 @@ class RulesEngine:
 
             if rule_type == "hard":
                 # Filter: keep only memories that satisfy the condition
-                result = [
-                    m for m in result
-                    if self.evaluate_condition(condition, m)
-                ]
+                result = [m for m in result if self.evaluate_condition(condition, m)]
             elif rule_type == "soft":
                 action_type, action_value = _parse_action(action)
                 for m in result:
@@ -265,7 +280,9 @@ class RulesEngine:
         # Numeric comparisons
         if operator in (">", "<", ">=", "<="):
             try:
-                num_field = float(field_value) if not isinstance(field_value, (int, float)) else field_value
+                num_field = (
+                    float(field_value) if not isinstance(field_value, (int, float)) else field_value
+                )
                 num_value = float(value)
             except (ValueError, TypeError):
                 return False
@@ -301,18 +318,12 @@ class RulesEngine:
         if operator == "contains":
             if isinstance(field_value, list):
                 # Check if value is in the list (case-insensitive)
-                return any(
-                    value.lower() in str(item).lower()
-                    for item in field_value
-                )
+                return any(value.lower() in str(item).lower() for item in field_value)
             return value.lower() in str(field_value).lower()
 
         if operator == "not_contains":
             if isinstance(field_value, list):
-                return not any(
-                    value.lower() in str(item).lower()
-                    for item in field_value
-                )
+                return not any(value.lower() in str(item).lower() for item in field_value)
             return value.lower() not in str(field_value).lower()
 
         # Glob matching

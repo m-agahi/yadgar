@@ -1,8 +1,7 @@
 """Tests for the metacognition module — coverage assessment, gap detection,
 and cognitive load management."""
 
-import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -11,7 +10,6 @@ from yadgar.embeddings import EmbeddingEngine
 from yadgar.knowledge_graph import KnowledgeGraph
 from yadgar.metacognition import MetaCognition
 from yadgar.storage import StorageEngine
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────
 
@@ -54,16 +52,18 @@ def _make_memory(
     created_at=None,
 ):
     embedding = embeddings.encode(content)
-    mid = storage.insert_memory({
-        "content": content,
-        "embedding": embedding,
-        "tags": tags or [],
-        "directory_context": directory,
-        "heat": heat,
-        "is_stale": False,
-        "file_hash": None,
-        "embedding_model": embeddings.get_model_name(),
-    })
+    mid = storage.insert_memory(
+        {
+            "content": content,
+            "embedding": embedding,
+            "tags": tags or [],
+            "directory_context": directory,
+            "heat": heat,
+            "is_stale": False,
+            "file_hash": None,
+            "embedding_model": embeddings.get_model_name(),
+        }
+    )
     updates = {}
     if confidence != 1.0:
         updates["confidence"] = confidence
@@ -98,7 +98,8 @@ class TestCoverageAssessment:
         # Create 7 memories about FastAPI
         for i in range(7):
             _make_memory(
-                storage, embeddings,
+                storage,
+                embeddings,
                 f"FastAPI endpoint {i}: handles REST API requests with uvicorn",
                 tags=["FastAPI", "api"],
             )
@@ -127,12 +128,14 @@ class TestCoverageAssessment:
         """Some memories → medium coverage."""
         # Create 2-3 memories
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Django uses ORM for database queries",
             tags=["Django"],
         )
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Django views handle HTTP requests",
             tags=["Django"],
         )
@@ -146,9 +149,10 @@ class TestCoverageAssessment:
 
     def test_coverage_recency_scoring(self, meta, storage, embeddings):
         """Recent memories score higher for recency."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "React hooks for state management",
             tags=["React"],
             created_at=now - timedelta(hours=2),
@@ -159,9 +163,10 @@ class TestCoverageAssessment:
 
     def test_coverage_old_recency(self, meta, storage, embeddings):
         """Old memories score lower for recency."""
-        old_date = datetime.now(timezone.utc) - timedelta(days=60)
+        old_date = datetime.now(UTC) - timedelta(days=60)
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Legacy React class components",
             tags=["React"],
             created_at=old_date,
@@ -173,7 +178,8 @@ class TestCoverageAssessment:
     def test_coverage_entity_gap_detection(self, meta, storage, embeddings, graph):
         """Unknown entities appear in gaps list."""
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Python typing module for type hints",
             tags=["Python"],
         )
@@ -221,7 +227,8 @@ class TestGapDetection:
         # Create multiple low-heat memories
         for i in range(3):
             _make_memory(
-                storage, embeddings,
+                storage,
+                embeddings,
                 f"Old architecture decision {i}",
                 directory="/proj",
                 tags=["architecture"],
@@ -238,13 +245,15 @@ class TestGapDetection:
         """Finds unreliable memories."""
         # Create low-confidence memories
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Maybe the config file is at /etc/app.conf",
             directory="/proj",
             confidence=0.3,
         )
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "The database might use PostgreSQL or MySQL",
             directory="/proj",
             confidence=0.2,
@@ -263,12 +272,14 @@ class TestGapDetection:
 
         # Create memories where both appear together, but no relationship
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Redis is used as the broker for Celery task queue",
             directory="/proj",
         )
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Configure Redis connection for Celery workers",
             directory="/proj",
         )
@@ -343,7 +354,7 @@ class TestManageContext:
         """Truncates to chunk limit when over."""
         # Use very distinct content and spread-out timestamps so each memory
         # forms its own chunk (no entity overlap, no temporal proximity)
-        base = datetime.now(timezone.utc)
+        base = datetime.now(UTC)
         topics = [
             "PostgreSQL indexing strategies",
             "Kubernetes pod scheduling",
@@ -357,10 +368,16 @@ class TestManageContext:
             "Prometheus alerting rules",
         ]
         memories = [
-            {"id": i, "content": topics[i],
-             "heat": 0.5, "importance": 0.5, "confidence": 0.8,
-             "surprise_score": 0.0, "tags": [f"tag{i}"],
-             "created_at": (base - timedelta(days=i * 5)).isoformat()}
+            {
+                "id": i,
+                "content": topics[i],
+                "heat": 0.5,
+                "importance": 0.5,
+                "confidence": 0.8,
+                "surprise_score": 0.0,
+                "tags": [f"tag{i}"],
+                "created_at": (base - timedelta(days=i * 5)).isoformat(),
+            }
             for i in range(10)
         ]
 
@@ -386,7 +403,7 @@ class TestManageContext:
 
     def test_primacy_recency_positioning(self, meta):
         """Most important at start (primacy) and second most at end (recency)."""
-        base = datetime.now(timezone.utc)
+        base = datetime.now(UTC)
         # Distinct topics spread far apart in time, with varying importance
         topics = [
             "PostgreSQL indexing strategies",
@@ -403,11 +420,16 @@ class TestManageContext:
             "ElasticSearch aggregations",
         ]
         memories = [
-            {"id": i, "content": topics[i],
-             "heat": 0.3 + i * 0.05, "importance": 0.3 + i * 0.05,
-             "confidence": 0.8, "surprise_score": 0.0,
-             "tags": [f"unique_tag_{i}"],
-             "created_at": (base - timedelta(days=i * 5)).isoformat()}
+            {
+                "id": i,
+                "content": topics[i],
+                "heat": 0.3 + i * 0.05,
+                "importance": 0.3 + i * 0.05,
+                "confidence": 0.8,
+                "surprise_score": 0.0,
+                "tags": [f"unique_tag_{i}"],
+                "created_at": (base - timedelta(days=i * 5)).isoformat(),
+            }
             for i in range(12)
         ]
 
@@ -425,15 +447,26 @@ class TestManageContext:
 class TestChunkMemories:
     def test_chunk_related_memories(self, meta):
         """Related memories (same tags/entities) grouped together."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         memories = [
-            {"id": 1, "content": "FastAPI endpoint for users",
-             "tags": ["FastAPI", "users"], "created_at": now.isoformat()},
-            {"id": 2, "content": "FastAPI middleware for auth",
-             "tags": ["FastAPI", "auth"], "created_at": now.isoformat()},
-            {"id": 3, "content": "Django ORM models",
-             "tags": ["Django", "database"],
-             "created_at": (now - timedelta(days=5)).isoformat()},
+            {
+                "id": 1,
+                "content": "FastAPI endpoint for users",
+                "tags": ["FastAPI", "users"],
+                "created_at": now.isoformat(),
+            },
+            {
+                "id": 2,
+                "content": "FastAPI middleware for auth",
+                "tags": ["FastAPI", "auth"],
+                "created_at": now.isoformat(),
+            },
+            {
+                "id": 3,
+                "content": "Django ORM models",
+                "tags": ["Django", "database"],
+                "created_at": (now - timedelta(days=5)).isoformat(),
+            },
         ]
 
         chunks = meta.chunk_memories(memories)
@@ -449,17 +482,26 @@ class TestChunkMemories:
 
     def test_chunk_temporal_proximity(self, meta):
         """Memories close in time get chunked together."""
-        base = datetime.now(timezone.utc)
+        base = datetime.now(UTC)
         memories = [
-            {"id": 1, "content": "first thing alpha bravo",
-             "tags": ["session1"],
-             "created_at": base.isoformat()},
-            {"id": 2, "content": "second thing charlie delta",
-             "tags": ["session1"],
-             "created_at": (base + timedelta(minutes=30)).isoformat()},
-            {"id": 3, "content": "third thing echo foxtrot",
-             "tags": ["session2"],
-             "created_at": (base + timedelta(hours=5)).isoformat()},
+            {
+                "id": 1,
+                "content": "first thing alpha bravo",
+                "tags": ["session1"],
+                "created_at": base.isoformat(),
+            },
+            {
+                "id": 2,
+                "content": "second thing charlie delta",
+                "tags": ["session1"],
+                "created_at": (base + timedelta(minutes=30)).isoformat(),
+            },
+            {
+                "id": 3,
+                "content": "third thing echo foxtrot",
+                "tags": ["session2"],
+                "created_at": (base + timedelta(hours=5)).isoformat(),
+            },
         ]
 
         chunks = meta.chunk_memories(memories)
@@ -474,12 +516,18 @@ class TestChunkMemories:
     def test_chunk_singletons(self, meta):
         """Unrelated memories stay as individual chunks."""
         memories = [
-            {"id": 1, "content": "alpha bravo charlie",
-             "tags": ["a"],
-             "created_at": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()},
-            {"id": 2, "content": "delta echo foxtrot",
-             "tags": ["b"],
-             "created_at": (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()},
+            {
+                "id": 1,
+                "content": "alpha bravo charlie",
+                "tags": ["a"],
+                "created_at": (datetime.now(UTC) - timedelta(days=1)).isoformat(),
+            },
+            {
+                "id": 2,
+                "content": "delta echo foxtrot",
+                "tags": ["b"],
+                "created_at": (datetime.now(UTC) - timedelta(days=10)).isoformat(),
+            },
         ]
 
         chunks = meta.chunk_memories(memories)
@@ -496,9 +544,14 @@ class TestSummarizeOverflow:
     def test_overflow_summarized(self, meta):
         """Excess memories compressed to summary."""
         memories = [
-            {"id": i, "content": f"Low priority memory about topic {i}",
-             "heat": 0.3, "importance": 0.3, "confidence": 0.7,
-             "surprise_score": 0.1}
+            {
+                "id": i,
+                "content": f"Low priority memory about topic {i}",
+                "heat": 0.3,
+                "importance": 0.3,
+                "confidence": 0.7,
+                "surprise_score": 0.1,
+            }
             for i in range(5)
         ]
 
@@ -513,15 +566,30 @@ class TestSummarizeOverflow:
     def test_overflow_preserves_high_value(self, meta):
         """High-surprise and high-importance memories preserved verbatim."""
         memories = [
-            {"id": 1, "content": "Critical finding!",
-             "heat": 0.5, "importance": 0.9, "confidence": 0.8,
-             "surprise_score": 0.2},
-            {"id": 2, "content": "Surprising discovery!",
-             "heat": 0.5, "importance": 0.3, "confidence": 0.8,
-             "surprise_score": 0.8},
-            {"id": 3, "content": "Routine note",
-             "heat": 0.3, "importance": 0.3, "confidence": 0.7,
-             "surprise_score": 0.1},
+            {
+                "id": 1,
+                "content": "Critical finding!",
+                "heat": 0.5,
+                "importance": 0.9,
+                "confidence": 0.8,
+                "surprise_score": 0.2,
+            },
+            {
+                "id": 2,
+                "content": "Surprising discovery!",
+                "heat": 0.5,
+                "importance": 0.3,
+                "confidence": 0.8,
+                "surprise_score": 0.8,
+            },
+            {
+                "id": 3,
+                "content": "Routine note",
+                "heat": 0.3,
+                "importance": 0.3,
+                "confidence": 0.7,
+                "surprise_score": 0.1,
+            },
         ]
 
         result = meta.summarize_overflow(memories)

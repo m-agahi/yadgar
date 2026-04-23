@@ -32,19 +32,28 @@ _ARCHITECTURE_KEYWORDS = re.compile(
 )
 
 # Tags that indicate semantic content
-_SEMANTIC_TAGS = frozenset({
-    "rule", "convention", "preference", "standard", "architecture",
-    "principle", "guideline", "best-practice", "design-pattern",
-})
+_SEMANTIC_TAGS = frozenset(
+    {
+        "rule",
+        "convention",
+        "preference",
+        "standard",
+        "architecture",
+        "principle",
+        "guideline",
+        "best-practice",
+        "design-pattern",
+    }
+)
 
 # Specific-content indicators (file paths, line numbers, error traces)
 _SPECIFIC_INDICATORS = re.compile(
     r"(?:"
     r"(?:\.{0,2}/)?(?:[\w@.-]+/)+[\w@.-]+\.\w+"  # file paths
-    r"|line \d+"                                     # line numbers
-    r"|Traceback \(most recent call last\)"          # tracebacks
-    r"|(?:Error|Exception):\s"                       # error messages
-    r"|0x[0-9a-fA-F]+"                               # memory addresses
+    r"|line \d+"  # line numbers
+    r"|Traceback \(most recent call last\)"  # tracebacks
+    r"|(?:Error|Exception):\s"  # error messages
+    r"|0x[0-9a-fA-F]+"  # memory addresses
     r")"
 )
 
@@ -116,9 +125,9 @@ class DualStoreCLS:
         """
         # 1. Get episodic memories
         if directory:
-            memories = self._storage.get_memories_by_store_type('episodic', directory=directory)
+            memories = self._storage.get_memories_by_store_type("episodic", directory=directory)
         else:
-            memories = self._storage.get_memories_by_store_type('episodic')
+            memories = self._storage.get_memories_by_store_type("episodic")
         if len(memories) < min_occurrences:
             return []
 
@@ -133,12 +142,10 @@ class DualStoreCLS:
             cluster = [mem_a]
             assigned.add(mem_a["id"])
 
-            for mem_b in memories[i + 1:]:
+            for mem_b in memories[i + 1 :]:
                 if mem_b["id"] in assigned:
                     continue
-                sim = self._embeddings.similarity(
-                    mem_a["embedding"], mem_b["embedding"]
-                )
+                sim = self._embeddings.similarity(mem_a["embedding"], mem_b["embedding"])
                 if sim >= threshold:
                     cluster.append(mem_b)
                     assigned.add(mem_b["id"])
@@ -171,13 +178,15 @@ class DualStoreCLS:
             if len(session_ids) < 2:
                 continue
 
-            qualifying.append({
-                "memories": cluster,
-                "pattern_summary": self._summarize_cluster(cluster),
-                "occurrence_count": len(cluster),
-                "session_count": len(session_ids),
-                "directories": list(directories),
-            })
+            qualifying.append(
+                {
+                    "memories": cluster,
+                    "pattern_summary": self._summarize_cluster(cluster),
+                    "occurrence_count": len(cluster),
+                    "session_count": len(session_ids),
+                    "directories": list(directories),
+                }
+            )
 
         return qualifying
 
@@ -200,7 +209,7 @@ class DualStoreCLS:
             content_a = mem_a.get("content", "")
             has_neg_a = bool(_negation_re.search(content_a))
 
-            for mem_b in cluster_memories[i + 1:]:
+            for mem_b in cluster_memories[i + 1 :]:
                 content_b = mem_b.get("content", "")
                 has_neg_b = bool(_negation_re.search(content_b))
 
@@ -245,18 +254,50 @@ class DualStoreCLS:
 
         # Find words that appear in majority of memories (>= 50%)
         common_threshold = max(n_memories / 2, 2)
-        common_words = {
-            w for w, count in word_freq.items()
-            if count >= common_threshold
-        }
+        common_words = {w for w, count in word_freq.items() if count >= common_threshold}
 
         # Remove stop words
         stop_words = {
-            "the", "and", "for", "with", "that", "this", "from", "was",
-            "were", "are", "has", "had", "have", "been", "will", "would",
-            "could", "should", "can", "may", "might", "its", "but", "not",
-            "all", "any", "each", "also", "into", "than", "then", "when",
-            "which", "who", "how", "what", "where", "there", "here", "does",
+            "the",
+            "and",
+            "for",
+            "with",
+            "that",
+            "this",
+            "from",
+            "was",
+            "were",
+            "are",
+            "has",
+            "had",
+            "have",
+            "been",
+            "will",
+            "would",
+            "could",
+            "should",
+            "can",
+            "may",
+            "might",
+            "its",
+            "but",
+            "not",
+            "all",
+            "any",
+            "each",
+            "also",
+            "into",
+            "than",
+            "then",
+            "when",
+            "which",
+            "who",
+            "how",
+            "what",
+            "where",
+            "there",
+            "here",
+            "does",
         }
         meaningful = common_words - stop_words
 
@@ -339,16 +380,12 @@ class DualStoreCLS:
             # c. Check if we already have a similar semantic memory
             schema_embedding = self._embeddings.encode(schema)
             if schema_embedding is not None:
-                existing = self._storage.search_vectors(
-                    schema_embedding, top_k=3, min_heat=0.0
-                )
+                existing = self._storage.search_vectors(schema_embedding, top_k=3, min_heat=0.0)
                 skip = False
-                for mid, distance in existing:
+                for mid, _distance in existing:
                     mem = self._storage.get_memory(mid)
                     if mem and mem.get("store_type") == "semantic":
-                        sim = self._embeddings.similarity(
-                            schema_embedding, mem["embedding"]
-                        )
+                        sim = self._embeddings.similarity(schema_embedding, mem["embedding"])
                         if sim > self._settings.CURATION_SIMILARITY_THRESHOLD:
                             skip = True
                             break
@@ -359,18 +396,20 @@ class DualStoreCLS:
             directories = pattern["directories"]
             primary_dir = directories[0] if directories else "system"
 
-            semantic_id = self._storage.insert_memory({
-                "content": schema,
-                "embedding": schema_embedding,
-                "tags": ["semantic", "auto-abstracted"],
-                "directory_context": primary_dir,
-                "heat": 0.8,
-                "is_stale": False,
-                "embedding_model": self._embeddings.get_model_name(),
-            })
+            semantic_id = self._storage.insert_memory(
+                {
+                    "content": schema,
+                    "embedding": schema_embedding,
+                    "tags": ["semantic", "auto-abstracted"],
+                    "directory_context": primary_dir,
+                    "heat": 0.8,
+                    "is_stale": False,
+                    "embedding_model": self._embeddings.get_model_name(),
+                }
+            )
 
             # Set store_type to semantic
-            self._storage.update_memory_fields(semantic_id, store_type='semantic')
+            self._storage.update_memory_fields(semantic_id, store_type="semantic")
 
             # e. Link episodic memories to semantic via derived_from
             for mem in cluster_mems:
@@ -379,17 +418,15 @@ class DualStoreCLS:
             stats["promoted"] += 1
 
         # Count totals
-        stats["total_episodic"] = self._storage.count_memories_by_store_type('episodic')
-        stats["total_semantic"] = self._storage.count_memories_by_store_type('semantic')
+        stats["total_episodic"] = self._storage.count_memories_by_store_type("episodic")
+        stats["total_semantic"] = self._storage.count_memories_by_store_type("semantic")
 
         logger.info("CLS consolidation cycle: %s", stats)
         return stats
 
     # ── Dual-Store Query ──────────────────────────────────────────────────
 
-    def query_dual(
-        self, query: str, directory: str, prefer: str = "auto"
-    ) -> list[dict]:
+    def query_dual(self, query: str, directory: str, prefer: str = "auto") -> list[dict]:
         """Query both episodic and semantic stores, merge results.
 
         prefer: "auto" (query analysis), "episodic", or "semantic"
@@ -409,12 +446,8 @@ class DualStoreCLS:
             return []
 
         # Search both stores
-        episodic_results = self._search_store(
-            query, query_embedding, "episodic", directory
-        )
-        semantic_results = self._search_store(
-            query, query_embedding, "semantic", directory
-        )
+        episodic_results = self._search_store(query, query_embedding, "episodic", directory)
+        semantic_results = self._search_store(query, query_embedding, "semantic", directory)
 
         # Score and merge
         scored: dict[int, dict] = {}
@@ -456,8 +489,7 @@ class DualStoreCLS:
         """
         has_specific = bool(_SPECIFIC_INDICATORS.search(query))
         has_semantic_kw = bool(
-            _DECISION_KEYWORDS.search(query)
-            or _ARCHITECTURE_KEYWORDS.search(query)
+            _DECISION_KEYWORDS.search(query) or _ARCHITECTURE_KEYWORDS.search(query)
         )
 
         if has_specific and not has_semantic_kw:
@@ -483,9 +515,7 @@ class DualStoreCLS:
         results = []
         for mem in memories:
             if mem.get("embedding"):
-                sim = self._embeddings.similarity(
-                    query_embedding, mem["embedding"]
-                )
+                sim = self._embeddings.similarity(query_embedding, mem["embedding"])
                 results.append((mem, sim))
 
         results.sort(key=lambda x: x[1], reverse=True)
@@ -504,17 +534,13 @@ class DualStoreCLS:
 
         src_entity = self._storage.get_entity_by_name(src_name)
         if src_entity is None:
-            src_eid = self._storage.insert_entity(
-                {"name": src_name, "type": "file"}
-            )
+            src_eid = self._storage.insert_entity({"name": src_name, "type": "file"})
         else:
             src_eid = src_entity["id"]
 
         tgt_entity = self._storage.get_entity_by_name(tgt_name)
         if tgt_entity is None:
-            tgt_eid = self._storage.insert_entity(
-                {"name": tgt_name, "type": "file"}
-            )
+            tgt_eid = self._storage.insert_entity({"name": tgt_name, "type": "file"})
         else:
             tgt_eid = tgt_entity["id"]
 
@@ -523,8 +549,10 @@ class DualStoreCLS:
         if existing:
             self._storage.reinforce_relationship(existing["id"])
         else:
-            self._storage.insert_relationship({
-                "source_entity_id": src_eid,
-                "target_entity_id": tgt_eid,
-                "relationship_type": "derived_from",
-            })
+            self._storage.insert_relationship(
+                {
+                    "source_entity_id": src_eid,
+                    "target_entity_id": tgt_eid,
+                    "relationship_type": "derived_from",
+                }
+            )
