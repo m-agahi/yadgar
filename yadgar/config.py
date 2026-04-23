@@ -42,7 +42,7 @@ class YamlConfigSource(PydanticBaseSettingsSource):
 class Settings(BaseSettings):
     PORT: int = 8742
     IDLE_THRESHOLD_SECONDS: int = 300
-    DECAY_FACTOR: float = 0.95
+    DECAY_FACTOR: float = 0.9995  # ~34% heat after 3 months without access
     COLD_THRESHOLD: float = 0.0  # All memories accessible
     HOT_THRESHOLD: float = 0.0  # All memories accessible (zero threshold policy)
     PROJECT_CONTEXT_MIN_HEAT: float = 0.0  # All memories accessible
@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     DB_PATH: str = "~/.yadgar/surreal_db"
 
     # v2 settings
-    IMPORTANCE_DECAY_FACTOR: float = 0.998
+    IMPORTANCE_DECAY_FACTOR: float = 0.9999  # ~81% heat after 3 months for important memories
     SURPRISE_BOOST: float = 0.3
     EMOTIONAL_DECAY_RESISTANCE: float = 0.5
     DREAM_REPLAY_PAIRS: int = 20
@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     NUM_ASTROCYTE_PROCESSES: int = 4
     NARRATIVE_INTERVAL_HOURS: int = 24
     CONTEXTUAL_PREFIX_ENABLED: bool = True
-    CURATION_SIMILARITY_THRESHOLD: float = 0.85
+    CURATION_SIMILARITY_THRESHOLD: float = 0.95  # Only merge near-exact duplicates
 
     # v3 frontier settings
     HOPFIELD_BETA: float = 8.0  # Hopfield sharpness (low=blended, high=precise)

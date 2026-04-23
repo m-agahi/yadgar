@@ -6,7 +6,6 @@ from datetime import UTC
 from pathlib import Path
 
 from yadgar import __version__
-from yadgar.server import main
 
 VALID_TRANSPORTS = ("stdio", "sse", "streamable-http")
 
@@ -818,6 +817,17 @@ def cmd_seed(args):
     print(json.dumps(result))
 
 
+def cmd_viz(args):
+    """Start the knowledge graph visualization server."""
+    from yadgar.viz_server import run_viz_server
+
+    run_viz_server(
+        port=args.port,
+        daemon_url=args.daemon_url,
+        open_browser=args.open,
+    )
+
+
 def cmd_daemon(args):
     """Manage the Yadgar background daemon."""
     import os as _os
@@ -977,6 +987,21 @@ def cli():
     config_set_p.add_argument("value", help="New value")
     config_sub.add_parser("edit", help="Open config.yaml in $EDITOR")
 
+    # viz subcommand
+    viz_parser = subparsers.add_parser(
+        "viz", help="Start knowledge graph visualization server (http://localhost:42069)"
+    )
+    viz_parser.add_argument(
+        "--port", type=int, default=42069, help="Viz server port (default: 42069)"
+    )
+    viz_parser.add_argument("--open", action="store_true", help="Open browser automatically")
+    viz_parser.add_argument(
+        "--daemon-url",
+        type=str,
+        default="http://127.0.0.1:8765",
+        help="Yadgar daemon URL (default: http://127.0.0.1:8765)",
+    )
+
     # daemon subcommand
     daemon_parser = subparsers.add_parser("daemon", help="Manage the Yadgar background daemon")
     daemon_parser.add_argument("--port", type=int, default=None, help="Daemon port (default: 8765)")
@@ -1031,6 +1056,8 @@ def cli():
         cmd_seed(args)
     elif args.command == "stats":
         cmd_stats(args)
+    elif args.command == "viz":
+        cmd_viz(args)
     elif args.command == "daemon":
         cmd_daemon(args)
     else:
@@ -1043,6 +1070,8 @@ def cli():
             if args.db_path:
                 print(f"Database: {args.db_path}", file=sys.stderr)
             print(file=sys.stderr)
+
+        from yadgar.server import main
 
         main(port=args.port, db_path=args.db_path, transport=args.transport)
 

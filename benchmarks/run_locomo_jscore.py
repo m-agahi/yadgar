@@ -30,6 +30,7 @@ Usage:
   # F1-only mode (no LLM judge needed, just generation):
   python benchmarks/run_locomo_jscore.py --f1-only
 """
+
 import argparse
 import gc
 import json
@@ -45,12 +46,6 @@ os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from yadgar.config import Settings
-from yadgar.embeddings import EmbeddingEngine
-from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.retrieval import HippoRetriever
-from yadgar.storage import StorageEngine
-
 from benchmarks.test_e_locomo import (
     CATEGORY_MAP,
     CATEGORY_NAMES,
@@ -60,6 +55,11 @@ from benchmarks.test_e_locomo import (
     _ingest_conversation,
     _make_settings,
 )
+from yadgar.embeddings import EmbeddingEngine
+from yadgar.knowledge_graph import KnowledgeGraph
+from yadgar.retrieval import HippoRetriever
+from yadgar.storage import StorageEngine
+
 
 # ─── Logging ───────────────────────────────────────────────────────────────
 def log(msg: str):
@@ -73,6 +73,7 @@ def log(msg: str):
 
 try:
     from nltk.stem import PorterStemmer
+
     _STEMMER = PorterStemmer()
 except ImportError:
     _STEMMER = None
@@ -152,8 +153,10 @@ def compute_official_f1(prediction: str, gold_answer: str, category_num: int) ->
 # LLM Providers
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def _call_openai(model: str, system: str, user: str, temperature: float = 0.1) -> str:
     import openai
+
     client = openai.OpenAI()
     resp = client.chat.completions.create(
         model=model,
@@ -169,6 +172,7 @@ def _call_openai(model: str, system: str, user: str, temperature: float = 0.1) -
 
 def _call_anthropic(model: str, system: str, user: str, temperature: float = 0.1) -> str:
     import anthropic
+
     client = anthropic.Anthropic()
     resp = client.messages.create(
         model=model,
@@ -189,6 +193,7 @@ def _ensure_gemini_client():
     if _GEMINI_CLIENT is not None:
         return
     from google import genai
+
     api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("Set GOOGLE_API_KEY or GEMINI_API_KEY env var")
@@ -198,6 +203,7 @@ def _ensure_gemini_client():
 
 def _call_gemini(model: str, system: str, user: str, temperature: float = 0.1) -> str:
     from google.genai import types
+
     _ensure_gemini_client()
 
     config_kwargs = dict(
@@ -224,7 +230,7 @@ def _call_gemini(model: str, system: str, user: str, temperature: float = 0.1) -
             err_str = str(e)
             if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
                 wait = min(15 * (attempt + 1), 60)
-                log(f"  [RATE] Gemini 429, waiting {wait}s (attempt {attempt+1}/5)")
+                log(f"  [RATE] Gemini 429, waiting {wait}s (attempt {attempt + 1}/5)")
                 time.sleep(wait)
             else:
                 raise
@@ -255,6 +261,7 @@ def _ensure_local_model(model_name: str):
 
     if _USE_4BIT:
         from transformers import BitsAndBytesConfig
+
         load_kwargs["quantization_config"] = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_compute_dtype=torch.float16,
@@ -271,6 +278,7 @@ def _ensure_local_model(model_name: str):
 
 def _call_local(model: str, system: str, user: str, temperature: float = 0.1) -> str:
     import torch
+
     _ensure_local_model(model)
 
     messages = [
@@ -278,7 +286,9 @@ def _call_local(model: str, system: str, user: str, temperature: float = 0.1) ->
         {"role": "user", "content": user},
     ]
     text = _LOCAL_TOKENIZER.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True,
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
     )
     inputs = _LOCAL_TOKENIZER(text, return_tensors="pt").to(_LOCAL_MODEL.device)
 
@@ -292,7 +302,7 @@ def _call_local(model: str, system: str, user: str, temperature: float = 0.1) ->
             pad_token_id=_LOCAL_TOKENIZER.eos_token_id,
         )
 
-    generated = outputs[0][inputs["input_ids"].shape[1]:]
+    generated = outputs[0][inputs["input_ids"].shape[1] :]
     return _LOCAL_TOKENIZER.decode(generated, skip_special_tokens=True).strip()
 
 
@@ -353,6 +363,7 @@ Evaluate:"""
 # Core Evaluation
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def generate_answer(
     question: str,
     retrieved_memories: list[dict],
@@ -370,6 +381,7 @@ def generate_answer(
         if created_at:
             try:
                 from datetime import datetime as _dt
+
                 dt = _dt.fromisoformat(created_at.replace("Z", "+00:00"))
                 date_str = f" (Date: {dt.strftime('%-d %B %Y')})"
             except (ValueError, TypeError):
@@ -379,7 +391,12 @@ def generate_answer(
     context = "\n\n".join(context_parts) if context_parts else "(No relevant memories found)"
     user_msg = GENERATION_USER.format(context=context, question=question)
 
-    call_fn = {"openai": _call_openai, "anthropic": _call_anthropic, "local": _call_local, "gemini": _call_gemini}[provider]
+    call_fn = {
+        "openai": _call_openai,
+        "anthropic": _call_anthropic,
+        "local": _call_local,
+        "gemini": _call_gemini,
+    }[provider]
     return call_fn(model, GENERATION_SYSTEM, user_msg, temperature=0.1)
 
 
@@ -398,7 +415,12 @@ def judge_answer(
         generated_answer=generated_answer,
     )
 
-    call_fn = {"openai": _call_openai, "anthropic": _call_anthropic, "local": _call_local, "gemini": _call_gemini}[provider]
+    call_fn = {
+        "openai": _call_openai,
+        "anthropic": _call_anthropic,
+        "local": _call_local,
+        "gemini": _call_gemini,
+    }[provider]
     raw = call_fn(model, JUDGE_SYSTEM, user_msg, temperature=0.1)
 
     try:
@@ -469,9 +491,9 @@ def run_eval(
         qa_items = conv.get("qa", conv.get("qa_pairs", []))
         n_qa = len(qa_items)
 
-        log(f"\n{'='*60}")
-        log(f"CONVERSATION {run_idx+1}/{len(selected)} (source={conv_idx}) — {n_qa} QA pairs")
-        log(f"{'='*60}")
+        log(f"\n{'=' * 60}")
+        log(f"CONVERSATION {run_idx + 1}/{len(selected)} (source={conv_idx}) — {n_qa} QA pairs")
+        log(f"{'=' * 60}")
 
         if not qa_items:
             continue
@@ -491,8 +513,10 @@ def run_eval(
 
         log("  [INGEST] Starting...")
         ingest_t0 = time.time()
-        _ingest_conversation(conv, storage, embeddings, project_dir, obs_mode=True, settings=settings)
-        log(f"  [INGEST] Done in {time.time()-ingest_t0:.1f}s")
+        _ingest_conversation(
+            conv, storage, embeddings, project_dir, obs_mode=True, settings=settings
+        )
+        log(f"  [INGEST] Done in {time.time() - ingest_t0:.1f}s")
 
         retriever = HippoRetriever(storage, embeddings, kg, settings)
 
@@ -501,7 +525,9 @@ def run_eval(
             gold_answer = str(qa.get("answer", ""))
             raw_category = qa.get("category", "unknown")
             category = CATEGORY_MAP.get(raw_category, str(raw_category))
-            category_num = raw_category if isinstance(raw_category, int) else CATEGORY_NUM.get(category, 0)
+            category_num = (
+                raw_category if isinstance(raw_category, int) else CATEGORY_NUM.get(category, 0)
+            )
 
             if not question:
                 continue
@@ -512,8 +538,10 @@ def run_eval(
             # Step 2: Generate
             try:
                 generated = generate_answer(
-                    question, results,
-                    provider=provider, model=gen_model,
+                    question,
+                    results,
+                    provider=provider,
+                    model=gen_model,
                     top_k_context=top_k_context,
                 )
                 llm_calls += 1
@@ -530,8 +558,11 @@ def run_eval(
             if not f1_only:
                 try:
                     judgment = judge_answer(
-                        question, gold_answer, generated,
-                        provider=judge_provider, model=judge_model,
+                        question,
+                        gold_answer,
+                        generated,
+                        provider=judge_provider,
+                        model=judge_model,
                     )
                     llm_calls += 1
                     j_correct = judgment["label"].upper() == "CORRECT"
@@ -561,10 +592,10 @@ def run_eval(
                 if not f1_only:
                     j_total = sum(1 for r in all_results if r["j_correct"] is not None)
                     j_ok = sum(1 for r in all_results if r["j_correct"])
-                    status += f" J={j_ok/j_total*100:.1f}%" if j_total else ""
-                log(f"  [EVAL] Q{qi+1}/{n_qa} ({category}) — {status} — LLM calls: {llm_calls}")
+                    status += f" J={j_ok / j_total * 100:.1f}%" if j_total else ""
+                log(f"  [EVAL] Q{qi + 1}/{n_qa} ({category}) — {status} — LLM calls: {llm_calls}")
 
-        log(f"  [DONE] Conv {conv_idx} in {time.time()-conv_t0:.1f}s")
+        log(f"  [DONE] Conv {conv_idx} in {time.time() - conv_t0:.1f}s")
         del retriever, storage, kg
         gc.collect()
 
@@ -594,9 +625,9 @@ def run_eval(
         metrics_table[cat] = entry
 
     # ─── Print results ─────────────────────────────────────────────────────
-    log(f"\n{'='*70}")
+    log(f"\n{'=' * 70}")
     log(f"FINAL RESULTS — {len(selected)} conversations — {grand_elapsed:.1f}s")
-    log(f"{'='*70}")
+    log(f"{'=' * 70}")
     log(f"Provider: {provider} | Gen: {gen_model} | LLM calls: {llm_calls}")
     log("")
 
@@ -616,7 +647,9 @@ def run_eval(
             if cat in metrics_table and "j_score" in metrics_table[cat]:
                 m = metrics_table[cat]
                 marker = " <<<" if cat in ("open_domain", "overall") else ""
-                log(f"  {cat:15s}: J-Score={m['j_score']:5.1f}%  ({m['j_correct']}/{m['j_total']}){marker}")
+                log(
+                    f"  {cat:15s}: J-Score={m['j_score']:5.1f}%  ({m['j_correct']}/{m['j_total']}){marker}"
+                )
 
     # Comparison
     log("")
@@ -671,30 +704,49 @@ def run_eval(
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--provider", default="local", choices=["local", "openai", "anthropic", "gemini"],
-                        help="LLM provider. 'local' runs free on GPU (default).")
-    parser.add_argument("--gen-model", default=None,
-                        help="Model for answer generation.")
-    parser.add_argument("--judge-model", default=None,
-                        help="Model for J-Score judging. Default: same as gen-model.")
-    parser.add_argument("--judge-provider", default=None,
-                        choices=["local", "openai", "anthropic", "gemini"],
-                        help="Provider for J-Score judging. Default: same as --provider.")
-    parser.add_argument("--conversation-indexes", default="",
-                        help="Comma-separated conversation indexes. Default: all.")
-    parser.add_argument("--top-k-retrieve", type=int, default=10,
-                        help="Number of memories to retrieve.")
-    parser.add_argument("--top-k-context", type=int, default=5,
-                        help="Number of memories to include in LLM context.")
-    parser.add_argument("--output-json", default="benchmarks/eval_results.json",
-                        help="Output JSON path.")
-    parser.add_argument("--overrides-json", default="",
-                        help="JSON overrides for Yadgar settings.")
-    parser.add_argument("--f1-only", action="store_true",
-                        help="Only compute F1 (skip LLM judge). Halves LLM calls.")
-    parser.add_argument("--4bit", dest="use_4bit", action="store_true",
-                        help="Load model in 4-bit NF4 quantization (fits 7B in 8GB VRAM).")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--provider",
+        default="local",
+        choices=["local", "openai", "anthropic", "gemini"],
+        help="LLM provider. 'local' runs free on GPU (default).",
+    )
+    parser.add_argument("--gen-model", default=None, help="Model for answer generation.")
+    parser.add_argument(
+        "--judge-model", default=None, help="Model for J-Score judging. Default: same as gen-model."
+    )
+    parser.add_argument(
+        "--judge-provider",
+        default=None,
+        choices=["local", "openai", "anthropic", "gemini"],
+        help="Provider for J-Score judging. Default: same as --provider.",
+    )
+    parser.add_argument(
+        "--conversation-indexes",
+        default="",
+        help="Comma-separated conversation indexes. Default: all.",
+    )
+    parser.add_argument(
+        "--top-k-retrieve", type=int, default=10, help="Number of memories to retrieve."
+    )
+    parser.add_argument(
+        "--top-k-context", type=int, default=5, help="Number of memories to include in LLM context."
+    )
+    parser.add_argument(
+        "--output-json", default="benchmarks/eval_results.json", help="Output JSON path."
+    )
+    parser.add_argument("--overrides-json", default="", help="JSON overrides for Yadgar settings.")
+    parser.add_argument(
+        "--f1-only", action="store_true", help="Only compute F1 (skip LLM judge). Halves LLM calls."
+    )
+    parser.add_argument(
+        "--4bit",
+        dest="use_4bit",
+        action="store_true",
+        help="Load model in 4-bit NF4 quantization (fits 7B in 8GB VRAM).",
+    )
     return parser.parse_args()
 
 

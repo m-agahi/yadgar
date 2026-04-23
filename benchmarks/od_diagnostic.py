@@ -1,11 +1,8 @@
 """Open_domain diagnostic: show what CE ranks above correct evidence."""
+
 import json
 import os
-import time
-from collections import defaultdict
-from pathlib import Path
 
-from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.knowledge_graph import KnowledgeGraph
 from yadgar.retrieval import HippoRetriever
@@ -21,9 +18,7 @@ LOCOMO_JSON_PATH = os.path.expanduser(
 )
 
 # Import benchmark helpers
-from test_e_locomo import (
-    _ingest_conversation, _make_settings, _reformulate_to_observation
-)
+from test_e_locomo import _ingest_conversation, _make_settings
 
 
 def run_diagnostic(n_convs=3, target_category="open_domain"):
@@ -36,7 +31,6 @@ def run_diagnostic(n_convs=3, target_category="open_domain"):
     hit_at_3 = 0
     hit_at_10 = 0
     total = 0
-    miss_details = []
 
     for conv_idx in range(min(n_convs, len(data))):
         conv = data[conv_idx]
@@ -104,14 +98,15 @@ def run_diagnostic(n_convs=3, target_category="open_domain"):
 
     print(f"\n=== {target_category} Diagnostic ===")
     print(f"Total: {total}")
-    print(f"Hit@1: {hit_at_1}/{total} = {hit_at_1/total:.3f}" if total else "No questions")
-    print(f"Hit@3: {hit_at_3}/{total} = {hit_at_3/total:.3f}" if total else "")
-    print(f"Hit@10: {hit_at_10}/{total} = {hit_at_10/total:.3f}" if total else "")
-    print(f"MRR: {sum(1/r if r else 0 for r in []) / total:.3f}" if total else "")  # placeholder
+    print(f"Hit@1: {hit_at_1}/{total} = {hit_at_1 / total:.3f}" if total else "No questions")
+    print(f"Hit@3: {hit_at_3}/{total} = {hit_at_3 / total:.3f}" if total else "")
+    print(f"Hit@10: {hit_at_10}/{total} = {hit_at_10 / total:.3f}" if total else "")
+    print(f"MRR: {sum(1 / r if r else 0 for r in []) / total:.3f}" if total else "")  # placeholder
 
 
 if __name__ == "__main__":
     import sys
+
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 3
     cat = sys.argv[2] if len(sys.argv) > 2 else "open_domain"
     run_diagnostic(n, cat)

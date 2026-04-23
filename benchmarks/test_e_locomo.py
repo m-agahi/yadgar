@@ -11,6 +11,7 @@ Phase 1-3 optimizations:
 - MMR diversity enforcement
 - Z-score adversarial abstention
 """
+
 import json
 import os
 import re
@@ -92,7 +93,12 @@ def _reformulate_to_observation(speaker: str, text: str) -> str:
     """
     obs = text.strip()
     # Remove common dialogue markers
-    obs = re.sub(r"^(hey|hi|hello|oh|well|yeah|yes|no|okay|ok|sure|haha|lol|hmm|wow|aww)\b[,!.]*\s*", "", obs, flags=re.IGNORECASE)
+    obs = re.sub(
+        r"^(hey|hi|hello|oh|well|yeah|yes|no|okay|ok|sure|haha|lol|hmm|wow|aww)\b[,!.]*\s*",
+        "",
+        obs,
+        flags=re.IGNORECASE,
+    )
 
     # Replace first-person with speaker name
     # "I love" → "Speaker loves", "I'm" → "Speaker is", etc.
@@ -184,7 +190,9 @@ def _ingest_conversation(
             i = 0
             while i < len(turns):
                 turn_a = turns[i] if isinstance(turns[i], dict) else None
-                turn_b = turns[i + 1] if i + 1 < len(turns) and isinstance(turns[i + 1], dict) else None
+                turn_b = (
+                    turns[i + 1] if i + 1 < len(turns) and isinstance(turns[i + 1], dict) else None
+                )
 
                 if not turn_a or not turn_a.get("text", turn_a.get("content", "")):
                     i += 1
@@ -207,7 +215,11 @@ def _ingest_conversation(
                     else:
                         embed_text = dialogue
                         content = dialogue
-                    tags = [session_key, speaker_a, speaker_b] if speaker_a != speaker_b else [session_key, speaker_a]
+                    tags = (
+                        [session_key, speaker_a, speaker_b]
+                        if speaker_a != speaker_b
+                        else [session_key, speaker_a]
+                    )
                     vec = embeddings.encode_document(embed_text)
                     mem_data = {
                         "content": content,
@@ -218,7 +230,9 @@ def _ingest_conversation(
                     }
                     if iso_date:
                         mem_data["created_at"] = iso_date
-                    mem_id = storage.insert_memory(mem_data, embeddings_engine=embeddings, settings=settings)
+                    mem_id = storage.insert_memory(
+                        mem_data, embeddings_engine=embeddings, settings=settings
+                    )
                     if dia_id_a:
                         dia_id_to_memory_id[str(dia_id_a)] = mem_id
                     if dia_id_b:
@@ -244,7 +258,9 @@ def _ingest_conversation(
                     }
                     if iso_date:
                         mem_data["created_at"] = iso_date
-                    mem_id = storage.insert_memory(mem_data, embeddings_engine=embeddings, settings=settings)
+                    mem_id = storage.insert_memory(
+                        mem_data, embeddings_engine=embeddings, settings=settings
+                    )
                     if dia_id_a:
                         dia_id_to_memory_id[str(dia_id_a)] = mem_id
                     i += 1
@@ -277,7 +293,9 @@ def _ingest_conversation(
                 }
                 if iso_date:
                     mem_data["created_at"] = iso_date
-                mem_id = storage.insert_memory(mem_data, embeddings_engine=embeddings, settings=settings)
+                mem_id = storage.insert_memory(
+                    mem_data, embeddings_engine=embeddings, settings=settings
+                )
                 if dia_id:
                     dia_id_to_memory_id[str(dia_id)] = mem_id
 
@@ -533,7 +551,9 @@ class TestLoCoMoObservation:
             for cat in CATEGORY_NAMES + ["overall"]:
                 if cat in results:
                     r = results[cat]
-                    print(f"  {cat:15s}: MRR={r.get('mrr',0):.3f}  R@10={r.get('recall@10',0):.3f}  n={r.get('count',0)}")
+                    print(
+                        f"  {cat:15s}: MRR={r.get('mrr', 0):.3f}  R@10={r.get('recall@10', 0):.3f}  n={r.get('count', 0)}"
+                    )
 
 
 def _print_micro_averaged(all_results: dict, label: str, elapsed: float):
@@ -559,7 +579,7 @@ class TestLoCoMoFullBenchmark:
         all_results = defaultdict(list)
 
         t0 = time.time()
-        for i, (retriever, conv, dia_map, project_dir) in enumerate(locomo_full):
+        for _i, (retriever, conv, dia_map, _project_dir) in enumerate(locomo_full):
             qa_items = conv.get("qa", conv.get("qa_pairs", []))
             if not qa_items:
                 continue
@@ -579,7 +599,7 @@ class TestLoCoMoFullObs:
         all_results = defaultdict(list)
 
         t0 = time.time()
-        for i, (retriever, conv, dia_map, project_dir) in enumerate(locomo_full_obs):
+        for _i, (retriever, conv, dia_map, _project_dir) in enumerate(locomo_full_obs):
             qa_items = conv.get("qa", conv.get("qa_pairs", []))
             if not qa_items:
                 continue
@@ -661,9 +681,15 @@ class TestLoCoMoABSweep:
             overall = all_results.get("overall", [])
             total_n = sum(r.get("count", 0) for r in overall)
             avg_mrr = sum(r["mrr"] * r["count"] for r in overall) / total_n if total_n else 0.0
-            avg_recall = sum(r.get("recall@10", 0) * r.get("count", 0) for r in overall) / total_n if total_n else 0.0
+            avg_recall = (
+                sum(r.get("recall@10", 0) * r.get("count", 0) for r in overall) / total_n
+                if total_n
+                else 0.0
+            )
 
-            print(f"\n  [{config_name}] MRR={avg_mrr:.3f}  R@10={avg_recall:.3f}  Time={elapsed:.1f}s  n={total_n}")
+            print(
+                f"\n  [{config_name}] MRR={avg_mrr:.3f}  R@10={avg_recall:.3f}  Time={elapsed:.1f}s  n={total_n}"
+            )
             for cat in CATEGORY_NAMES:
                 if cat in all_results:
                     items = all_results[cat]
@@ -726,9 +752,15 @@ class TestLoCoMoObsSweep:
             overall = all_results.get("overall", [])
             total_n = sum(r.get("count", 0) for r in overall)
             avg_mrr = sum(r["mrr"] * r["count"] for r in overall) / total_n if total_n else 0.0
-            avg_recall = sum(r.get("recall@10", 0) * r.get("count", 0) for r in overall) / total_n if total_n else 0.0
+            avg_recall = (
+                sum(r.get("recall@10", 0) * r.get("count", 0) for r in overall) / total_n
+                if total_n
+                else 0.0
+            )
 
-            print(f"\n  [{config_name}] MRR={avg_mrr:.3f}  R@10={avg_recall:.3f}  Time={elapsed:.1f}s  n={total_n}")
+            print(
+                f"\n  [{config_name}] MRR={avg_mrr:.3f}  R@10={avg_recall:.3f}  Time={elapsed:.1f}s  n={total_n}"
+            )
             for cat in CATEGORY_NAMES:
                 if cat in all_results:
                     items = all_results[cat]

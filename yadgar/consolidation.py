@@ -264,13 +264,7 @@ class AstrocyteEngine:
         except Exception:
             logger.exception("CLS consolidation cycle failed")
 
-        # Run rate-distortion compression as the LAST step
-        try:
-            comp_stats = self._compressor.compression_cycle()
-            stats["compression_to_gist"] = comp_stats.get("compressed_to_gist", 0)
-            stats["compression_to_tag"] = comp_stats.get("compressed_to_tag", 0)
-        except Exception:
-            logger.exception("Compression cycle failed")
+        # Compression disabled: memory content must stay intact for LLM usage.
 
         # Process action_log entries into real memories
         try:
@@ -325,6 +319,8 @@ class AstrocyteEngine:
         cold = self._settings.COLD_THRESHOLD
 
         for mem in self._storage.get_all_memories_for_decay():
+            if mem.get("is_protected"):
+                continue
             last = datetime.fromisoformat(mem["last_accessed"])
             hours = (now - last).total_seconds() / 3600.0
             new_heat = self._thermo.compute_decay(mem, hours)
@@ -592,10 +588,16 @@ class AstrocyteEngine:
             for mem_b in memories[i + 1 :]:
                 if mem_b["id"] in to_delete:
                     continue
-                if mem_a["embedding"] is None or mem_b["embedding"] is None:
-                    continue
-                sim = self._embeddings.similarity(mem_a["embedding"], mem_b["embedding"])
-                if sim > 0.95:
+                # Identical content is always a duplicate (catches prefix-embedding mismatch)
+                content_a = mem_a.get("content") or ""
+                content_b = mem_b.get("content") or ""
+                is_duplicate = content_a and content_a == content_b
+                if not is_duplicate:
+                    if mem_a["embedding"] is None or mem_b["embedding"] is None:
+                        continue
+                    sim = self._embeddings.similarity(mem_a["embedding"], mem_b["embedding"])
+                    is_duplicate = sim > 0.95
+                if is_duplicate:
                     victim = mem_b["id"] if mem_a["heat"] >= mem_b["heat"] else mem_a["id"]
                     to_delete.add(victim)
 

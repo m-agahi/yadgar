@@ -15,7 +15,6 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "benchmarks" / "run_benchmark_gpu.py"
 RESULTS_DIR = ROOT / "benchmarks" / "ablation_runs"
@@ -131,7 +130,9 @@ PHASE1_CONFIGS = [
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--workers", type=int, default=4, help="Parallel benchmark shards per config.")
+    parser.add_argument(
+        "--workers", type=int, default=4, help="Parallel benchmark shards per config."
+    )
     parser.add_argument(
         "--phase",
         default="all",
@@ -259,7 +260,7 @@ def _run_sharded_config(spec: ConfigSpec, *, workers: int, force: bool) -> Path:
         procs.append(proc)
 
     failed = []
-    for proc, part_log in zip(procs, part_logs):
+    for proc, part_log in zip(procs, part_logs, strict=False):
         rc = proc.wait()
         if rc != 0:
             failed.append((rc, part_log))
@@ -279,7 +280,11 @@ def _load_run(path: Path) -> dict:
 
 
 def _extract_series(run: dict, category: str) -> list[float]:
-    return [sample["mrr"] for sample in run["per_query"] if category == "overall" or sample["category"] == category]
+    return [
+        sample["mrr"]
+        for sample in run["per_query"]
+        if category == "overall" or sample["category"] == category
+    ]
 
 
 def _paired_delta_stats(baseline: dict, candidate: dict, category: str) -> dict:
@@ -327,7 +332,7 @@ def _two_sided_sign_test_pvalue(wins: int, losses: int) -> float:
     if trials == 0:
         return 1.0
     k = min(wins, losses)
-    cumulative = sum(math.comb(trials, i) for i in range(k + 1)) / (2 ** trials)
+    cumulative = sum(math.comb(trials, i) for i in range(k + 1)) / (2**trials)
     return min(1.0, 2 * cumulative)
 
 
@@ -377,7 +382,9 @@ def _pick_combined_spec(phase1_rows: list[dict]) -> ConfigSpec:
 
     if not selected:
         selected = dict(BASELINE_OVERRIDES)
-        descriptions = ["No feature had non-negative overall MRR; combined config falls back to baseline."]
+        descriptions = [
+            "No feature had non-negative overall MRR; combined config falls back to baseline."
+        ]
     else:
         selected = {**BASELINE_OVERRIDES, **selected}
 
@@ -455,15 +462,21 @@ def _run_dev_config(spec: ConfigSpec, *, force: bool) -> Path:
     ]
     log_path = RESULTS_DIR / f"{spec.label}.log"
     with open(log_path, "w") as log_f:
-        subprocess.run(command, cwd=ROOT, env=env, stdout=log_f, stderr=subprocess.STDOUT, check=True)
+        subprocess.run(
+            command, cwd=ROOT, env=env, stdout=log_f, stderr=subprocess.STDOUT, check=True
+        )
     return path
 
 
 def _select_best_dev_run(base_dev: dict, dev_runs: list[dict]) -> dict | None:
     best = None
     for run in dev_runs:
-        overall_delta = run["aggregated"]["overall"]["mrr"] - base_dev["aggregated"]["overall"]["mrr"]
-        open_delta = run["aggregated"]["open_domain"]["mrr"] - base_dev["aggregated"]["open_domain"]["mrr"]
+        overall_delta = (
+            run["aggregated"]["overall"]["mrr"] - base_dev["aggregated"]["overall"]["mrr"]
+        )
+        open_delta = (
+            run["aggregated"]["open_domain"]["mrr"] - base_dev["aggregated"]["open_domain"]["mrr"]
+        )
         key = (open_delta, overall_delta)
         if best is None or key > best[0]:
             best = (key, run)
@@ -527,8 +540,14 @@ def _markdown_dev_table(base_run: dict, runs: list[dict]) -> str:
                     run["label"],
                     _format_float(run["aggregated"]["overall"]["mrr"]),
                     _format_float(run["aggregated"]["open_domain"]["mrr"]),
-                    _format_signed(run["aggregated"]["overall"]["mrr"] - base_run["aggregated"]["overall"]["mrr"]),
-                    _format_signed(run["aggregated"]["open_domain"]["mrr"] - base_run["aggregated"]["open_domain"]["mrr"]),
+                    _format_signed(
+                        run["aggregated"]["overall"]["mrr"]
+                        - base_run["aggregated"]["overall"]["mrr"]
+                    ),
+                    _format_signed(
+                        run["aggregated"]["open_domain"]["mrr"]
+                        - base_run["aggregated"]["open_domain"]["mrr"]
+                    ),
                 ]
             )
             + " |\n"
@@ -585,7 +604,9 @@ def main() -> int:
     phase1_paths = {}
     if args.phase in {"all", "phase1", "phase3", "phase4"}:
         for spec in PHASE1_CONFIGS:
-            phase1_paths[spec.label] = _run_sharded_config(spec, workers=args.workers, force=args.force)
+            phase1_paths[spec.label] = _run_sharded_config(
+                spec, workers=args.workers, force=args.force
+            )
 
     phase1_runs = {label: _load_run(path) for label, path in phase1_paths.items()}
     baseline_run = phase1_runs["baseline_v16"]
@@ -633,14 +654,16 @@ def main() -> int:
                         "description": spec.description,
                         "run": run,
                         "overall_stats": {
-                            "mean_delta": run["aggregated"]["overall"]["mrr"] - combined_dev_run["aggregated"]["overall"]["mrr"],
+                            "mean_delta": run["aggregated"]["overall"]["mrr"]
+                            - combined_dev_run["aggregated"]["overall"]["mrr"],
                             "ci95": (0.0, 0.0),
                             "wins": 0,
                             "losses": 0,
                             "ties": 0,
                         },
                         "open_stats": {
-                            "mean_delta": run["aggregated"]["open_domain"]["mrr"] - combined_dev_run["aggregated"]["open_domain"]["mrr"],
+                            "mean_delta": run["aggregated"]["open_domain"]["mrr"]
+                            - combined_dev_run["aggregated"]["open_domain"]["mrr"],
                             "ci95": (0.0, 0.0),
                             "wins": 0,
                             "losses": 0,
@@ -658,7 +681,9 @@ def main() -> int:
                     f"Best dev sweep validated on full benchmark ({best_dev['label']})",
                     best_dev["overrides"],
                 )
-                validated_run = _load_run(_run_sharded_config(validated_spec, workers=args.workers, force=args.force))
+                validated_run = _load_run(
+                    _run_sharded_config(validated_spec, workers=args.workers, force=args.force)
+                )
                 validated_row = {
                     "label": validated_spec.label,
                     "phase": validated_spec.phase,

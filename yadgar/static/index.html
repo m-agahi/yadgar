@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Yadgar — Knowledge Graph</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0d1117;
+  color: #c9d1d9;
+  font-family: 'Cascadia Code', 'Fira Mono', monospace;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Top bar ───────────────────────────────────────────── */
+#topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  flex-shrink: 0;
+}
+#topbar h1 { font-size: 13px; color: #58a6ff; letter-spacing: 2px; margin-right: 4px; }
+#search {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  color: #c9d1d9;
+  padding: 3px 8px;
+  font-size: 11px;
+  width: 180px;
+  outline: none;
+}
+#search:focus { border-color: #58a6ff; }
+.btn {
+  padding: 3px 10px;
+  background: #21262d;
+  color: #c9d1d9;
+  border: 1px solid #30363d;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.btn:hover { background: #30363d; }
+.btn.active { background: #1f3a5c; border-color: #58a6ff; color: #58a6ff; }
+#status-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #8b949e; flex-shrink: 0;
+}
+#status-dot.live { background: #3fb950; }
+#status-dot.err  { background: #f85149; }
+#status-text { font-size: 10px; color: #8b949e; margin-left: auto; }
+
+/* ── Main layout ───────────────────────────────────────── */
+#main { display: flex; flex: 1; min-height: 0; }
+
+/* ── Left controls ─────────────────────────────────────── */
+#left {
+  width: 180px;
+  flex-shrink: 0;
+  background: #161b22;
+  border-right: 1px solid #30363d;
+  padding: 10px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.sec-title {
+  color: #58a6ff;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 5px;
+  border-bottom: 1px solid #21262d;
+  padding-bottom: 3px;
+}
+label { display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 2px 0; line-height: 1.4; }
+label:hover { color: #58a6ff; }
+input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
+.heat-val-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+#heat-val { color: #58a6ff; }
+.stat-row { display: flex; justify-content: space-between; padding: 2px 0; }
+.stat-lbl { color: #8b949e; }
+.stat-val { color: #c9d1d9; font-weight: bold; }
+
+/* ── Canvas ────────────────────────────────────────────── */
+#canvas-wrap { flex: 1; position: relative; min-width: 0; }
+
+/* ── Right detail panel ────────────────────────────────── */
+#right {
+  width: 280px;
+  flex-shrink: 0;
+  background: #161b22;
+  border-left: 1px solid #30363d;
+  padding: 10px;
+  overflow-y: auto;
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+}
+#right.open { display: flex; }
+#det-header { display: flex; justify-content: space-between; align-items: flex-start; }
+#det-close { cursor: pointer; color: #8b949e; font-size: 16px; line-height: 1; padding: 0 2px; }
+#det-close:hover { color: #f0f0f0; }
+#det-type { font-size: 9px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; }
+#det-title { font-size: 13px; color: #58a6ff; word-break: break-word; line-height: 1.4; }
+.heat-bar { height: 4px; background: #21262d; border-radius: 2px; }
+.heat-fill { height: 100%; border-radius: 2px; }
+.det-sec { display: flex; flex-direction: column; gap: 3px; }
+.det-lbl { color: #8b949e; font-size: 9px; text-transform: uppercase; letter-spacing: 1px; }
+.det-val { word-break: break-word; line-height: 1.5; color: #c9d1d9; }
+.tag {
+  display: inline-block; background: #21262d; border: 1px solid #30363d;
+  padding: 1px 6px; margin: 2px 2px 0 0; font-size: 10px; border-radius: 10px;
+}
+.rel-row { padding: 2px 0; color: #8b949e; }
+.rel-type { color: #58a6ff; }
+
+/* ── System metrics bar ────────────────────────────────── */
+#sys-bar {
+  flex-shrink: 0;
+  background: #161b22;
+  border-top: 1px solid #30363d;
+  padding: 6px 12px;
+}
+#sys-tiles {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.metric-tile {
+  background: #0d1117;
+  border: 1px solid #21262d;
+  border-radius: 4px;
+  padding: 4px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 70px;
+}
+.metric-tile .m-lbl { font-size: 9px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; }
+.metric-tile .m-val { font-size: 14px; color: #58a6ff; font-weight: bold; line-height: 1.3; }
+.metric-tile .m-sub { font-size: 9px; color: #8b949e; }
+.metric-tile.warn .m-val { color: #d29922; }
+.metric-tile.crit .m-val { color: #f85149; }
+#sys-sparks {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  margin-left: 8px;
+}
+.spark-wrap { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.spark-lbl { font-size: 9px; color: #8b949e; }
+
+/* ── Debug drawer ──────────────────────────────────────── */
+#debug-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(13,17,23,0.92);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+}
+#debug-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  flex-shrink: 0;
+}
+#debug-header h2 { color: #58a6ff; font-size: 13px; letter-spacing: 1px; }
+#debug-close { margin-left: auto; cursor: pointer; color: #8b949e; font-size: 18px; }
+#debug-close:hover { color: #f0f0f0; }
+#debug-tabs { display: flex; gap: 2px; padding: 6px 14px 0; flex-shrink: 0; }
+.dtab {
+  padding: 4px 14px;
+  cursor: pointer;
+  background: #21262d;
+  border: 1px solid #30363d;
+  border-bottom: none;
+  font-size: 11px;
+  font-family: inherit;
+  color: #8b949e;
+  border-radius: 4px 4px 0 0;
+}
+.dtab.active { background: #161b22; color: #58a6ff; border-color: #58a6ff; }
+#debug-body {
+  flex: 1;
+  overflow: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+#debug-toolbar { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+#debug-url { color: #8b949e; font-size: 10px; }
+#debug-status { font-size: 10px; color: #3fb950; }
+#debug-json {
+  flex: 1;
+  background: #0d1117;
+  border: 1px solid #21262d;
+  border-radius: 4px;
+  padding: 10px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: #c9d1d9;
+}
+/* JSON syntax highlight classes */
+.jk { color: #79c0ff; }  /* key */
+.js { color: #a5d6ff; }  /* string value */
+.jn { color: #3fb950; }  /* number */
+.jb { color: #d29922; }  /* bool/null */
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <h1>YADGAR</h1>
+  <span style="color:#8b949e;font-size:10px">Knowledge Graph</span>
+  <input id="search" type="search" placeholder="Search nodes…">
+  <button class="btn" onclick="loadGraph()">↺ Reload</button>
+  <button class="btn" onclick="fitGraph()">⊞ Fit</button>
+  <button class="btn" onclick="resetLayout()">⟳ Reset</button>
+  <button class="btn" id="debug-btn" onclick="openDebug()">⚙ Debug</button>
+  <span id="status-dot"></span>
+  <span id="status-text">Connecting…</span>
+</div>
+
+<div id="main">
+  <!-- Controls -->
+  <div id="left">
+    <div>
+      <div class="sec-title">Node Types</div>
+      <label><input type="checkbox" id="show-memory" checked> Memories ●</label>
+      <label><input type="checkbox" id="show-entity" checked> Entities ◆</label>
+    </div>
+    <div>
+      <div class="sec-title">Edge Types</div>
+      <label><input type="checkbox" id="show-semantic" checked> <span style="color:#1f6feb">■</span> Semantic</label>
+      <label><input type="checkbox" id="show-causal"   checked> <span style="color:#d29922">■</span> Causal</label>
+      <label><input type="checkbox" id="show-kg"       checked> <span style="color:#484f58">■</span> KG Relations</label>
+      <label><input type="checkbox" id="show-temporal">          <span style="color:#6e40c9">■</span> Temporal</label>
+    </div>
+    <div>
+      <div class="sec-title">Heat Filter</div>
+      <div class="heat-val-row"><span style="color:#8b949e">Min heat</span><span id="heat-val">0.00</span></div>
+      <input type="range" id="heat-slider" min="0" max="1" step="0.01" value="0">
+    </div>
+    <div>
+      <div class="sec-title">Graph Stats</div>
+      <div class="stat-row"><span class="stat-lbl">Memories</span><span class="stat-val" id="s-mem">—</span></div>
+      <div class="stat-row"><span class="stat-lbl">Entities</span><span class="stat-val" id="s-ent">—</span></div>
+      <div class="stat-row"><span class="stat-lbl">KG edges</span><span class="stat-val" id="s-kg">—</span></div>
+      <div class="stat-row"><span class="stat-lbl">Causal</span><span class="stat-val" id="s-cau">—</span></div>
+      <div class="stat-row"><span class="stat-lbl">Visible nodes</span><span class="stat-val" id="s-vis">—</span></div>
+    </div>
+  </div>
+
+  <!-- Graph canvas -->
+  <div id="canvas-wrap"></div>
+
+  <!-- Node detail panel -->
+  <div id="right">
+    <div id="det-header">
+      <div id="det-type"></div>
+      <span id="det-close" onclick="closeDetail()">✕</span>
+    </div>
+    <div id="det-title"></div>
+    <div class="heat-bar"><div class="heat-fill" id="det-heat-fill"></div></div>
+    <div id="det-body"></div>
+  </div>
+</div>
+
+<!-- System metrics bar (always visible) -->
+<div id="sys-bar">
+  <div id="sys-tiles">
+    <div class="metric-tile" id="tile-cpu">
+      <span class="m-lbl">CPU</span>
+      <span class="m-val" id="m-cpu">—</span>
+      <span class="m-sub">daemon</span>
+    </div>
+    <div class="metric-tile" id="tile-rss">
+      <span class="m-lbl">RSS</span>
+      <span class="m-val" id="m-rss">—</span>
+      <span class="m-sub">daemon</span>
+    </div>
+    <div class="metric-tile">
+      <span class="m-lbl">Threads</span>
+      <span class="m-val" id="m-threads">—</span>
+      <span class="m-sub">daemon</span>
+    </div>
+    <div class="metric-tile" id="tile-db">
+      <span class="m-lbl">DB Size</span>
+      <span class="m-val" id="m-db">—</span>
+      <span class="m-sub">on disk</span>
+    </div>
+    <div class="metric-tile" id="tile-ram">
+      <span class="m-lbl">RAM Free</span>
+      <span class="m-val" id="m-ram">—</span>
+      <span class="m-sub" id="m-ram-sub">of —</span>
+    </div>
+    <div class="metric-tile">
+      <span class="m-lbl">Load avg</span>
+      <span class="m-val" id="m-load">—</span>
+      <span class="m-sub" id="m-load-sub">1m / 5m / 15m</span>
+    </div>
+    <div id="sys-sparks">
+      <div class="spark-wrap">
+        <canvas id="spark-cpu" width="140" height="32"></canvas>
+        <span class="spark-lbl">CPU %</span>
+      </div>
+      <div class="spark-wrap">
+        <canvas id="spark-db" width="140" height="32"></canvas>
+        <span class="spark-lbl">DB MB</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Debug drawer (hidden by default) -->
+<div id="debug-overlay" style="display:none">
+  <div id="debug-header">
+    <h2>API DEBUG</h2>
+    <span style="color:#8b949e;font-size:10px" id="debug-url"></span>
+    <button class="btn" onclick="refreshDebug()">↺ Refresh</button>
+    <span id="debug-status"></span>
+    <span id="debug-close" onclick="closeDebug()">✕</span>
+  </div>
+  <div id="debug-tabs">
+    <button class="dtab active" onclick="switchTab('graph')">GET /api/graph</button>
+    <button class="dtab" onclick="switchTab('stats')">GET /api/graph/stats</button>
+    <button class="dtab" onclick="switchTab('system')">GET /api/system</button>
+    <button class="dtab" onclick="switchTab('nodes')">Nodes table</button>
+  </div>
+  <div id="debug-body">
+    <pre id="debug-json">Select a tab and click Refresh.</pre>
+  </div>
+</div>
+
+<script src="https://unpkg.com/force-graph@1/dist/force-graph.min.js"></script>
+<script>
+// ── Config ─────────────────────────────────────────────────────────────────
+const DAEMON = 'http://127.0.0.1:8765';
+const EDGE_COLOR = { semantic: '#1f6feb', causal: '#d29922', kg: '#484f58', temporal: '#6e40c9' };
+const ENT_COLOR  = {
+  function: '#3fb950', file: '#79c0ff', concept: '#a5d6ff',
+  error: '#f85149', library: '#d2a8ff', person: '#ffa657', default: '#8b949e'
+};
+
+// ── State ───────────────────────────────────────────────────────────────────
+let allNodes = [], allLinks = [];
+let graph = null;
+let lastSeq = 0;
+let sse = null;
+let debugTab = 'graph';
+const sparkCpu = Array(60).fill(0);
+const sparkDb  = Array(60).fill(0);
+let sparkDbMax = 1;
+
+// ── Colour helpers ──────────────────────────────────────────────────────────
+function heatColor(h) {
+  h = Math.max(0, Math.min(1, h || 0));
+  return `hsl(${(1 - h) * 240},${60 + h * 30}%,${40 + h * 20}%)`;
+}
+function entColor(type) { return ENT_COLOR[type] || ENT_COLOR.default; }
+
+// ── Graph initialisation ────────────────────────────────────────────────────
+function initGraph() {
+  const wrap = document.getElementById('canvas-wrap');
+  graph = ForceGraph()(wrap)
+    .backgroundColor('#0d1117')
+    .nodeId('id')
+    .linkSource('source')
+    .linkTarget('target')
+    .nodeLabel(n => n.type === 'memory'
+      ? `[heat=${(n.heat||0).toFixed(3)}] ${(n.content || n.label || '').slice(0, 120)}`
+      : `${n.name || n.label} (${n.entity_type || 'entity'})`)
+    .linkColor(l => EDGE_COLOR[l.type] || '#484f58')
+    .linkWidth(l => l.type === 'causal' ? 2.5 : l.type === 'semantic' ? 1 : 1.5)
+    .linkDirectionalArrowLength(l => l.type === 'causal' ? 5 : 0)
+    .linkDirectionalArrowRelPos(1)
+    .nodeCanvasObject(drawNode)
+    .nodeCanvasObjectMode(() => 'replace')
+    .nodePointerAreaPaint((node, color, ctx) => {
+      // Explicit hit area so custom shapes are clickable
+      const r = node.type === 'memory'
+        ? Math.max(3, Math.min(14, 3 + (node.heat || 0) * 11))
+        : Math.max(5, Math.min(12, 5 + (node.__deg || 0) * 1.2));
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, r + 2, 0, 2 * Math.PI);
+      ctx.fill();
+    })
+    .onNodeClick(showDetail)
+    .onBackgroundClick(closeDetail);
+
+  window.addEventListener('resize', () => {
+    graph.width(wrap.clientWidth).height(wrap.clientHeight);
+  });
+}
+
+function drawNode(node, ctx, scale) {
+  const isMemory = node.type === 'memory';
+  const heat = node.heat || 0;
+  const r = isMemory
+    ? Math.max(3, Math.min(14, 3 + heat * 11))
+    : Math.max(5, Math.min(12, 5 + (node.__deg || 0) * 1.2));
+  const color = isMemory ? heatColor(heat) : entColor(node.entity_type);
+
+  ctx.beginPath();
+  if (isMemory) {
+    ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
+  } else {
+    ctx.moveTo(node.x,     node.y - r);
+    ctx.lineTo(node.x + r, node.y    );
+    ctx.lineTo(node.x,     node.y + r);
+    ctx.lineTo(node.x - r, node.y    );
+    ctx.closePath();
+  }
+  ctx.fillStyle = color;
+  ctx.fill();
+
+  if (node.__match) {
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5 / scale;
+    ctx.stroke();
+  }
+
+  if (scale > 3 && node.label) {
+    const sz = 9 / scale;
+    ctx.font = `${sz}px monospace`;
+    ctx.fillStyle = '#c9d1d9';
+    ctx.textAlign = 'center';
+    ctx.fillText(node.label.slice(0, 28), node.x, node.y + r + sz * 1.2);
+  }
+}
+
+// ── Data loading ────────────────────────────────────────────────────────────
+async function loadGraph() {
+  status('Loading…', 'wait');
+  try {
+    const r = await fetch(`${DAEMON}/api/graph`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    allNodes = d.nodes || [];
+    allLinks = d.edges || [];
+    calcDegrees();
+    applyFilters();
+    status(`${allNodes.length} nodes · ${allLinks.length} edges`, 'ok');
+  } catch (e) { status(`⚠ ${e.message}`, 'err'); }
+
+  try {
+    const s = await (await fetch(`${DAEMON}/api/graph/stats`)).json();
+    document.getElementById('s-mem').textContent  = s.memory_count ?? '—';
+    document.getElementById('s-ent').textContent  = s.entity_count ?? '—';
+    document.getElementById('s-kg').textContent   = s.relationship_count ?? '—';
+    document.getElementById('s-cau').textContent  = s.causal_edge_count ?? '—';
+  } catch (_) {}
+
+  try {
+    const m = await (await fetch(`${DAEMON}/api/system`)).json();
+    updateSys(m);
+  } catch (_) {}
+}
+
+function calcDegrees() {
+  const deg = {};
+  for (const l of allLinks) {
+    const s = l.source?.id ?? l.source, t = l.target?.id ?? l.target;
+    deg[s] = (deg[s]||0) + 1;
+    deg[t] = (deg[t]||0) + 1;
+  }
+  for (const n of allNodes) n.__deg = deg[n.id] || 0;
+}
+
+// ── Filters ─────────────────────────────────────────────────────────────────
+function applyFilters() {
+  if (!graph) return;
+  const showMem = document.getElementById('show-memory').checked;
+  const showEnt = document.getElementById('show-entity').checked;
+  const showSem = document.getElementById('show-semantic').checked;
+  const showCau = document.getElementById('show-causal').checked;
+  const showKg  = document.getElementById('show-kg').checked;
+  const showTmp = document.getElementById('show-temporal').checked;
+  const minH    = parseFloat(document.getElementById('heat-slider').value);
+  const q       = document.getElementById('search').value.toLowerCase().trim();
+
+  const vis = new Set();
+  const nodes = allNodes.filter(n => {
+    if (n.type === 'memory' && !showMem) return false;
+    if (n.type === 'entity' && !showEnt) return false;
+    if (n.type === 'memory' && (n.heat||0) < minH) return false;
+    n.__match = q && (
+      (n.content||'').toLowerCase().includes(q) ||
+      (n.label||'').toLowerCase().includes(q) ||
+      (n.name||'').toLowerCase().includes(q)
+    );
+    vis.add(n.id);
+    return true;
+  });
+
+  const links = allLinks.filter(l => {
+    const s = l.source?.id ?? l.source, t = l.target?.id ?? l.target;
+    if (!vis.has(s) || !vis.has(t)) return false;
+    if (l.type === 'semantic' && !showSem) return false;
+    if (l.type === 'causal'   && !showCau) return false;
+    if (l.type === 'kg'       && !showKg)  return false;
+    if (l.type === 'temporal' && !showTmp) return false;
+    return true;
+  });
+
+  graph.graphData({ nodes, links });
+  document.getElementById('s-vis').textContent = nodes.length;
+}
+
+// ── Detail panel ─────────────────────────────────────────────────────────────
+function showDetail(node) {
+  const panel = document.getElementById('right');
+  panel.classList.add('open');
+  document.getElementById('det-type').textContent = node.type.toUpperCase();
+  document.getElementById('det-title').textContent =
+    node.type === 'memory' ? (node.content||'').slice(0, 100) : (node.name || node.label || '');
+
+  const heat = node.heat || 0;
+  const fill = document.getElementById('det-heat-fill');
+  fill.style.width     = `${heat * 100}%`;
+  fill.style.background = heatColor(heat);
+
+  const rows = [];
+
+  rows.push(`<div class="det-sec">
+    <div class="det-lbl">Heat</div>
+    <div class="det-val">${heat.toFixed(4)}</div>
+  </div>`);
+
+  if (node.type === 'memory') {
+    if (node.content)
+      rows.push(`<div class="det-sec">
+        <div class="det-lbl">Content</div>
+        <div class="det-val">${esc(node.content)}</div>
+      </div>`);
+
+    if (node.tags?.length)
+      rows.push(`<div class="det-sec">
+        <div class="det-lbl">Tags</div>
+        <div>${node.tags.map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</div>
+      </div>`);
+
+    if (node.directory)
+      rows.push(`<div class="det-sec">
+        <div class="det-lbl">Project</div>
+        <div class="det-val" style="color:#8b949e;word-break:break-all">${esc(node.directory)}</div>
+      </div>`);
+
+    if (node.created_at)
+      rows.push(`<div class="det-sec">
+        <div class="det-lbl">Created</div>
+        <div class="det-val" style="color:#8b949e">${String(node.created_at).slice(0,19)}</div>
+      </div>`);
+
+    rows.push(`<div class="det-sec">
+      <div class="det-lbl">Node ID</div>
+      <div class="det-val" style="color:#8b949e">${esc(node.id)}</div>
+    </div>`);
+  } else {
+    rows.push(`<div class="det-sec">
+      <div class="det-lbl">Entity type</div>
+      <div class="det-val" style="color:${entColor(node.entity_type)}">${node.entity_type||'concept'}</div>
+    </div>`);
+
+    rows.push(`<div class="det-sec">
+      <div class="det-lbl">Name</div>
+      <div class="det-val">${esc(node.name || node.label || '—')}</div>
+    </div>`);
+
+    rows.push(`<div class="det-sec">
+      <div class="det-lbl">Degree (connections)</div>
+      <div class="det-val">${node.__deg||0}</div>
+    </div>`);
+
+    rows.push(`<div class="det-sec">
+      <div class="det-lbl">Node ID</div>
+      <div class="det-val" style="color:#8b949e">${esc(node.id)}</div>
+    </div>`);
+
+    const rels = allLinks.filter(l => {
+      const s = l.source?.id??l.source, t = l.target?.id??l.target;
+      return (s===node.id||t===node.id) && l.type==='kg';
+    });
+    if (rels.length) {
+      const relRows = rels.slice(0,15).map(r => {
+        const s=r.source?.id??r.source, t=r.target?.id??r.target;
+        const other = s===node.id ? t : s;
+        const on = allNodes.find(n=>n.id===other);
+        return `<div class="rel-row"><span class="rel-type">${esc(r.label||r.type)}</span> → ${esc(on?.name||on?.label||other)}</div>`;
+      }).join('');
+      const more = rels.length > 15 ? `<div style="color:#8b949e">…+${rels.length-15} more</div>` : '';
+      rows.push(`<div class="det-sec">
+        <div class="det-lbl">KG Relationships (${rels.length})</div>
+        <div>${relRows}${more}</div>
+      </div>`);
+    }
+  }
+
+  document.getElementById('det-body').innerHTML = rows.join('');
+}
+
+function closeDetail() { document.getElementById('right').classList.remove('open'); }
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── System metrics ───────────────────────────────────────────────────────────
+function updateSys(m) {
+  if (!m) return;
+  const cpu = m.daemon_cpu_pct;
+  const rss = m.daemon_rss_mb;
+  const db  = m.db_size_mb;
+  const ramFree = m.system_ram_available_mb;
+  const ramTotal = m.system_ram_total_mb;
+  const load1 = m.load_avg_1m, load5 = m.load_avg_5m, load15 = m.load_avg_15m;
+
+  if (cpu != null) {
+    document.getElementById('m-cpu').textContent = cpu.toFixed(1) + '%';
+    const tile = document.getElementById('tile-cpu');
+    tile.className = 'metric-tile' + (cpu > 70 ? ' crit' : cpu > 40 ? ' warn' : '');
+    sparkCpu.push(cpu); sparkCpu.shift();
+    spark('spark-cpu', sparkCpu, 100, '#1f6feb');
+  }
+  if (rss != null) {
+    document.getElementById('m-rss').textContent = rss.toFixed(0) + ' MB';
+    const tile = document.getElementById('tile-rss');
+    tile.className = 'metric-tile' + (rss > 1500 ? ' crit' : rss > 800 ? ' warn' : '');
+  }
+  if (m.daemon_threads != null)
+    document.getElementById('m-threads').textContent = m.daemon_threads;
+  if (db != null) {
+    document.getElementById('m-db').textContent = db.toFixed(1) + ' MB';
+    sparkDbMax = Math.max(sparkDbMax, db, 1);
+    sparkDb.push(db); sparkDb.shift();
+    spark('spark-db', sparkDb, sparkDbMax, '#3fb950');
+  }
+  if (ramFree != null) {
+    document.getElementById('m-ram').textContent = (ramFree / 1024).toFixed(1) + ' GB';
+    if (ramTotal) {
+      document.getElementById('m-ram-sub').textContent =
+        'of ' + (ramTotal / 1024).toFixed(0) + ' GB';
+      const pctUsed = 1 - ramFree / ramTotal;
+      const tile = document.getElementById('tile-ram');
+      tile.className = 'metric-tile' + (pctUsed > 0.9 ? ' crit' : pctUsed > 0.75 ? ' warn' : '');
+    }
+  }
+  if (load1 != null) {
+    document.getElementById('m-load').textContent = load1.toFixed(2);
+    if (load5 != null && load15 != null)
+      document.getElementById('m-load-sub').textContent =
+        `${load1.toFixed(2)} / ${load5.toFixed(2)} / ${load15.toFixed(2)}`;
+  }
+}
+
+function spark(id, data, max, color) {
+  const cv = document.getElementById(id);
+  if (!cv) return;
+  const ctx = cv.getContext('2d');
+  const w = cv.width, h = cv.height;
+  ctx.clearRect(0,0,w,h);
+  ctx.beginPath();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  const step = w / (data.length - 1);
+  data.forEach((v,i) => {
+    const x = i*step, y = h - (v/Math.max(max,0.001))*h;
+    i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+  ctx.lineTo(w,h); ctx.lineTo(0,h); ctx.closePath();
+  ctx.fillStyle = color+'22'; ctx.fill();
+}
+
+// ── SSE ──────────────────────────────────────────────────────────────────────
+function connectSSE() {
+  if (sse) sse.close();
+  sse = new EventSource(`${DAEMON}/api/graph/events?since=${lastSeq}`);
+  sse.onopen    = () => {
+    status('Live ●', 'ok');
+    document.getElementById('status-dot').className = 'live';
+  };
+  sse.onerror   = () => {
+    document.getElementById('status-dot').className = 'err';
+    setTimeout(connectSSE, 5000);
+  };
+  sse.onmessage = e => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.event === 'system_metrics') { updateSys(msg.data); return; }
+      if (msg.seq) lastSeq = msg.seq;
+      if (msg.event === 'memory_added' && msg.node) {
+        const n = msg.node;
+        n.label = (n.content||'').slice(0, 60);
+        n.__deg = 0; n.__match = false;
+        if (!allNodes.find(x => x.id === n.id)) {
+          allNodes.push(n);
+          status(`+1 memory · ${allNodes.length} total`, 'ok');
+          applyFilters();
+        }
+      }
+    } catch(_) {}
+  };
+}
+
+// ── Status helpers ───────────────────────────────────────────────────────────
+function status(msg, state) {
+  document.getElementById('status-text').textContent = msg;
+  const dot = document.getElementById('status-dot');
+  if (state === 'ok')   dot.className = 'live';
+  else if (state === 'err') dot.className = 'err';
+  else if (state === 'wait') dot.className = '';
+}
+
+// ── Graph controls ───────────────────────────────────────────────────────────
+function fitGraph() { graph?.zoomToFit(400, 40); }
+function resetLayout() {
+  if (!graph) return;
+  const d = graph.graphData();
+  d.nodes.forEach(n => { delete n.x; delete n.y; delete n.vx; delete n.vy; });
+  graph.graphData({ nodes: [], links: [] });
+  setTimeout(() => graph.graphData(d), 50);
+}
+
+// ── Debug panel ──────────────────────────────────────────────────────────────
+function openDebug() {
+  document.getElementById('debug-overlay').style.display = 'flex';
+  document.getElementById('debug-btn').classList.add('active');
+  refreshDebug();
+}
+
+function closeDebug() {
+  document.getElementById('debug-overlay').style.display = 'none';
+  document.getElementById('debug-btn').classList.remove('active');
+}
+
+function switchTab(tab) {
+  debugTab = tab;
+  document.querySelectorAll('.dtab').forEach((el, i) => {
+    const tabs = ['graph','stats','system','nodes'];
+    el.classList.toggle('active', tabs[i] === tab);
+  });
+  refreshDebug();
+}
+
+async function refreshDebug() {
+  const el = document.getElementById('debug-json');
+  const urlEl = document.getElementById('debug-url');
+  const stEl  = document.getElementById('debug-status');
+  const t0 = Date.now();
+  el.textContent = 'Fetching…';
+
+  if (debugTab === 'nodes') {
+    urlEl.textContent = '(in-memory allNodes array)';
+    el.innerHTML = syntaxHL(JSON.stringify(allNodes.slice(0, 50).map(n => ({
+      id: n.id, type: n.type, heat: n.heat, label: n.label,
+      entity_type: n.entity_type, __deg: n.__deg,
+      directory: n.directory, tags: n.tags,
+    })), null, 2));
+    stEl.textContent = `${allNodes.length} total nodes (showing ≤50)`;
+    return;
+  }
+
+  const paths = { graph: '/api/graph', stats: '/api/graph/stats', system: '/api/system' };
+  const url = DAEMON + paths[debugTab];
+  urlEl.textContent = url;
+
+  try {
+    const r = await fetch(url);
+    const raw = await r.json();
+    const ms = Date.now() - t0;
+
+    // For /api/graph, show summary first then full JSON
+    let display = raw;
+    if (debugTab === 'graph') {
+      display = {
+        _summary: {
+          nodes: raw.nodes?.length,
+          edges: raw.edges?.length,
+          memory_nodes: raw.nodes?.filter(n=>n.type==='memory').length,
+          entity_nodes: raw.nodes?.filter(n=>n.type==='entity').length,
+          edge_types: [...new Set(raw.edges?.map(e=>e.type))],
+        },
+        nodes: raw.nodes,
+        edges: raw.edges,
+      };
+    }
+
+    el.innerHTML = syntaxHL(JSON.stringify(display, null, 2));
+    stEl.textContent = `HTTP ${r.status} · ${ms}ms · ${JSON.stringify(raw).length} bytes`;
+  } catch (err) {
+    el.textContent = `Error: ${err.message}`;
+    stEl.textContent = '';
+  }
+}
+
+function syntaxHL(json) {
+  return json.replace(
+    /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d+)?(?:[eE][+\-]?\d+)?)/g,
+    match => {
+      if (/^"/.test(match)) {
+        if (/:$/.test(match)) return `<span class="jk">${match}</span>`;
+        return `<span class="js">${match}</span>`;
+      }
+      if (/true|false|null/.test(match)) return `<span class="jb">${match}</span>`;
+      return `<span class="jn">${match}</span>`;
+    }
+  );
+}
+
+// ── Event bindings ───────────────────────────────────────────────────────────
+['show-memory','show-entity','show-semantic','show-causal','show-kg','show-temporal']
+  .forEach(id => document.getElementById(id).addEventListener('change', applyFilters));
+
+document.getElementById('heat-slider').addEventListener('input', e => {
+  document.getElementById('heat-val').textContent = parseFloat(e.target.value).toFixed(2);
+  applyFilters();
+});
+
+document.getElementById('search').addEventListener('input', applyFilters);
+
+// Close debug on Escape
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeDebug();
+});
+
+// ── Boot ─────────────────────────────────────────────────────────────────────
+initGraph();
+loadGraph();
+connectSSE();
+</script>
+</body>
+</html>

@@ -195,6 +195,9 @@ class AstrocytePool:
                 memory_ids.remove(mid)
                 continue
 
+            if mem.get("is_protected"):
+                continue
+
             stats["memories_processed"] += 1
 
             last = datetime.fromisoformat(mem["last_accessed"])
