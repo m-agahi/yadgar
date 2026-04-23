@@ -109,26 +109,18 @@ class HDCEncoder:
         components: list[np.ndarray] = []
 
         # Directory binding
-        components.append(
-            self.bind(self._roles["directory"], self.get_or_create_atom(directory))
-        )
+        components.append(self.bind(self._roles["directory"], self.get_or_create_atom(directory)))
 
         # Tag bindings
         for tag in tags:
-            components.append(
-                self.bind(self._roles["tag"], self.get_or_create_atom(tag))
-            )
+            components.append(self.bind(self._roles["tag"], self.get_or_create_atom(tag)))
 
         # Entity bindings
         for entity in entities:
-            components.append(
-                self.bind(self._roles["entity"], self.get_or_create_atom(entity))
-            )
+            components.append(self.bind(self._roles["entity"], self.get_or_create_atom(entity)))
 
         # Store type binding
-        components.append(
-            self.bind(self._roles["type"], self.get_or_create_atom(store_type))
-        )
+        components.append(self.bind(self._roles["type"], self.get_or_create_atom(store_type)))
 
         if not components:
             return self._random_vector()
@@ -157,20 +149,14 @@ class HDCEncoder:
 
         if tags is not None:
             for tag in tags:
-                components.append(
-                    self.bind(self._roles["tag"], self.get_or_create_atom(tag))
-                )
+                components.append(self.bind(self._roles["tag"], self.get_or_create_atom(tag)))
 
         if entities is not None:
             for entity in entities:
-                components.append(
-                    self.bind(self._roles["entity"], self.get_or_create_atom(entity))
-                )
+                components.append(self.bind(self._roles["entity"], self.get_or_create_atom(entity)))
 
         if store_type is not None:
-            components.append(
-                self.bind(self._roles["type"], self.get_or_create_atom(store_type))
-            )
+            components.append(self.bind(self._roles["type"], self.get_or_create_atom(store_type)))
 
         if not components:
             return self._random_vector()
@@ -195,10 +181,7 @@ class HDCEncoder:
 
         Returns top_k (id, similarity) pairs sorted descending.
         """
-        scored = [
-            (cid, self.similarity(query_vec, cvec))
-            for cid, cvec in candidates
-        ]
+        scored = [(cid, self.similarity(query_vec, cvec)) for cid, cvec in candidates]
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[:top_k]
 

@@ -1,7 +1,6 @@
 """Tests for rate-distortion compression (yadgar.compression)."""
 
-from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 import pytest
@@ -24,7 +23,7 @@ def settings(tmp_path):
     return Settings(
         DB_PATH=str(tmp_path / "test.db"),
         COMPRESSION_GIST_AGE_HOURS=168.0,  # 7 days
-        COMPRESSION_TAG_AGE_HOURS=720.0,   # 30 days
+        COMPRESSION_TAG_AGE_HOURS=720.0,  # 30 days
     )
 
 
@@ -58,7 +57,7 @@ def compressor(storage, mock_embeddings, settings):
 
 
 def _hours_ago(hours: float) -> str:
-    return (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    return (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
 
 
 def _days_ago(days: float) -> str:
@@ -79,8 +78,16 @@ def _make_memory(storage, content="test memory", hours_old=0, **kwargs):
 
     # Set additional fields that insert_memory doesn't handle
     extra_fields = {}
-    for field in ("importance", "surprise_score", "confidence", "access_count",
-                  "store_type", "is_protected", "compression_level", "original_content"):
+    for field in (
+        "importance",
+        "surprise_score",
+        "confidence",
+        "access_count",
+        "store_type",
+        "is_protected",
+        "compression_level",
+        "original_content",
+    ):
         if field in kwargs:
             extra_fields[field] = kwargs[field]
 
@@ -208,21 +215,23 @@ class TestGistCompression:
 
     def test_compress_gist_reduces_length(self, compressor, storage):
         """Gist should be shorter than original content."""
-        content = "\n".join([
-            "This is the first important sentence about the project setup.",
-            "We configured the database with PostgreSQL 14.2 for production.",
-            "The middleware layer handles authentication and rate limiting.",
-            "We set up Redis caching for frequently accessed endpoints.",
-            "The deployment pipeline uses GitHub Actions with Docker.",
-            "Testing coverage reached 85% across all modules.",
-            "Performance benchmarks show 50ms average response time.",
-            "The team decided to use TypeScript for the frontend rewrite.",
-            "Documentation was updated in the wiki.",
-            "Code review process now requires two approvals.",
-            "The staging environment mirrors production exactly.",
-            "Monitoring alerts are configured for CPU and memory usage.",
-            "This is the final wrap-up of the sprint review."
-        ])
+        content = "\n".join(
+            [
+                "This is the first important sentence about the project setup.",
+                "We configured the database with PostgreSQL 14.2 for production.",
+                "The middleware layer handles authentication and rate limiting.",
+                "We set up Redis caching for frequently accessed endpoints.",
+                "The deployment pipeline uses GitHub Actions with Docker.",
+                "Testing coverage reached 85% across all modules.",
+                "Performance benchmarks show 50ms average response time.",
+                "The team decided to use TypeScript for the frontend rewrite.",
+                "Documentation was updated in the wiki.",
+                "Code review process now requires two approvals.",
+                "The staging environment mirrors production exactly.",
+                "Monitoring alerts are configured for CPU and memory usage.",
+                "This is the final wrap-up of the sprint review.",
+            ]
+        )
         mid = _make_memory(storage, content=content, hours_old=0)
         gist = compressor.compress_to_gist(mid)
         assert len(gist) < len(content)
@@ -248,8 +257,7 @@ class TestGistCompression:
 
     def test_already_compressed_returns_content(self, compressor, storage):
         """Compressing a memory that's already at gist level returns current content."""
-        mid = _make_memory(storage, content="already gist", hours_old=0,
-                          compression_level=1)
+        mid = _make_memory(storage, content="already gist", hours_old=0, compression_level=1)
         result = compressor.compress_to_gist(mid)
         assert result == "already gist"
 
@@ -310,8 +318,7 @@ class TestTagCompression:
 
     def test_already_at_tag_returns_content(self, compressor, storage):
         """Compressing a memory already at tag level returns current content."""
-        mid = _make_memory(storage, content="old tag content", hours_old=0,
-                          compression_level=2)
+        mid = _make_memory(storage, content="old tag content", hours_old=0, compression_level=2)
         result = compressor.compress_to_tag(mid)
         assert result == "old tag content"
 
@@ -352,8 +359,9 @@ class TestArchiveAndDecompress:
 
     def test_decompress_no_archive(self, compressor, storage):
         """Decompress with no archive falls back to original_content field."""
-        mid = _make_memory(storage, content="current content", hours_old=0,
-                          original_content="saved original")
+        mid = _make_memory(
+            storage, content="current content", hours_old=0, original_content="saved original"
+        )
         restored = compressor.decompress(mid)
         assert restored == "saved original"
 
@@ -379,9 +387,13 @@ class TestCompressionCycle:
         # Recent memory (stays full)
         _make_memory(storage, content="recent memory", hours_old=24)
         # Medium-age memory (should become gist)
-        _make_memory(storage, content="medium age memory with enough text to compress", hours_old=240)
+        _make_memory(
+            storage, content="medium age memory with enough text to compress", hours_old=240
+        )
         # Old memory (should become tag) — confidence=1.0 gives 1.3x resistance, so tag threshold=936h
-        _make_memory(storage, content="old memory with content for tag compression step", hours_old=1000)
+        _make_memory(
+            storage, content="old memory with content for tag compression step", hours_old=1000
+        )
         # Protected memory (skipped)
         _make_memory(storage, content="protected memory", hours_old=800, is_protected=True)
         # Semantic memory (skipped)
@@ -420,8 +432,9 @@ class TestReEmbedding:
         )
         # Create a memory with an initial embedding
         initial_embedding = mock_embeddings.encode("initial")
-        mid = _make_memory(storage, content=original_content, hours_old=0,
-                          embedding=initial_embedding)
+        mid = _make_memory(
+            storage, content=original_content, hours_old=0, embedding=initial_embedding
+        )
 
         # Verify initial embedding is set
         mem_before = storage.get_memory(mid)
@@ -444,8 +457,7 @@ class TestReEmbedding:
             "Session management is handled by Redis."
         )
         initial_embedding = mock_embeddings.encode("initial")
-        mid = _make_memory(storage, content=content, hours_old=0,
-                          embedding=initial_embedding)
+        mid = _make_memory(storage, content=content, hours_old=0, embedding=initial_embedding)
 
         compressor.compress_to_gist(mid)
         compressor.compress_to_tag(mid)

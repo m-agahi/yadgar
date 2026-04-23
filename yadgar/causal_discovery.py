@@ -8,8 +8,8 @@ inference libraries required.
 
 import logging
 import math
-from collections import defaultdict, deque
-from datetime import datetime, timedelta, timezone
+from collections import deque
+from datetime import UTC, datetime, timedelta
 from itertools import combinations
 
 import numpy as np
@@ -51,14 +51,12 @@ class CausalDiscovery:
 
         Returns (data_matrix, variable_names, timestamps).
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cutoff = now - timedelta(hours=hours)
         cutoff_iso = cutoff.isoformat()
 
         # Collect entities active since cutoff
-        all_entities = self._storage.get_all_entities(
-            min_heat=0.0, include_archived=True
-        )
+        all_entities = self._storage.get_all_entities(min_heat=0.0, include_archived=True)
 
         # Collect episodes within the time range
         all_episodes = self._storage.get_episodes_since(0)
@@ -115,8 +113,7 @@ class CausalDiscovery:
             except (ValueError, TypeError):
                 continue
             bucket_idx = int(
-                (ep_time - cutoff.replace(minute=0, second=0, microsecond=0))
-                .total_seconds() / 3600
+                (ep_time - cutoff.replace(minute=0, second=0, microsecond=0)).total_seconds() / 3600
             )
             if 0 <= bucket_idx < n_windows:
                 for name in ep_ents:
@@ -229,10 +226,7 @@ class CausalDiscovery:
                         continue
 
                     # Get neighbors of i (excluding j)
-                    neighbors_i = [
-                        n for n in range(n_vars)
-                        if adjacency[i][n] and n != j
-                    ]
+                    neighbors_i = [n for n in range(n_vars) if adjacency[i][n] and n != j]
 
                     if len(neighbors_i) < k:
                         continue
@@ -245,9 +239,7 @@ class CausalDiscovery:
                         else:
                             z = data[:, list(subset)]
 
-                        if self.conditional_independence_test(
-                            data[:, i], data[:, j], z, alpha
-                        ):
+                        if self.conditional_independence_test(data[:, i], data[:, j], z, alpha):
                             edges_to_remove.append((i, j))
                             sep_sets[(i, j)] = set(subset)
                             sep_sets[(j, i)] = set(subset)
@@ -258,10 +250,7 @@ class CausalDiscovery:
                         continue
 
                     # Also check from j's perspective
-                    neighbors_j = [
-                        n for n in range(n_vars)
-                        if adjacency[j][n] and n != i
-                    ]
+                    neighbors_j = [n for n in range(n_vars) if adjacency[j][n] and n != i]
 
                     if len(neighbors_j) < k:
                         continue
@@ -272,9 +261,7 @@ class CausalDiscovery:
                         else:
                             z = data[:, list(subset)]
 
-                        if self.conditional_independence_test(
-                            data[:, i], data[:, j], z, alpha
-                        ):
+                        if self.conditional_independence_test(data[:, i], data[:, j], z, alpha):
                             edges_to_remove.append((i, j))
                             sep_sets[(i, j)] = set(subset)
                             sep_sets[(j, i)] = set(subset)
@@ -342,10 +329,9 @@ class CausalDiscovery:
                     # R3: If X - Y and X - Z1 and X - Z2 and Z1 -> Y and Z2 -> Y
                     # orient X -> Y
                     z_to_y = [
-                        z for z in range(n_vars)
-                        if z != i and z != j
-                        and adjacency[i][z]
-                        and directed[z][j]
+                        z
+                        for z in range(n_vars)
+                        if z != i and z != j and adjacency[i][z] and directed[z][j]
                     ]
                     if len(z_to_y) >= 2:
                         directed[i][j] = True
@@ -364,9 +350,7 @@ class CausalDiscovery:
                     # Compute edge confidence from correlation strength
                     r = abs(np.corrcoef(data[:, i], data[:, j])[0, 1])
                     conf = float(r) if not np.isnan(r) else 0.5
-                    directed_edges.append(
-                        (variable_names[i], variable_names[j], round(conf, 4))
-                    )
+                    directed_edges.append((variable_names[i], variable_names[j], round(conf, 4)))
                 elif not directed[j][i]:
                     edge_key = (min(i, j), max(i, j))
                     if edge_key not in seen_undirected:
@@ -402,9 +386,7 @@ class CausalDiscovery:
         Returns the discovered DAG with metadata, and stores directed
         edges in the causal_dag_edges table.
         """
-        data, variable_names, timestamps = self.build_event_matrix(
-            directory=directory, hours=hours
-        )
+        data, variable_names, timestamps = self.build_event_matrix(directory=directory, hours=hours)
 
         n_vars = len(variable_names)
         n_windows = len(timestamps)
@@ -422,26 +404,28 @@ class CausalDiscovery:
                     "time_windows": n_windows,
                     "status": "insufficient_data",
                     "reason": f"Need >= 5 variables and >= 10 time windows "
-                              f"(got {n_vars} vars, {n_windows} windows)",
+                    f"(got {n_vars} vars, {n_windows} windows)",
                 },
             }
 
         dag = self.pc_algorithm(data, variable_names)
 
         # Store directed edges in causal_dag_edges table
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         stored_count = 0
         for source_name, target_name, confidence in dag["directed_edges"]:
             source_entity = self._storage.get_entity_by_name(source_name)
             target_entity = self._storage.get_entity_by_name(target_name)
             if source_entity and target_entity:
-                self._storage.insert_causal_edge({
-                    "source_entity_id": source_entity["id"],
-                    "target_entity_id": target_entity["id"],
-                    "algorithm": algorithm,
-                    "confidence": confidence,
-                    "discovered_at": now_iso,
-                })
+                self._storage.insert_causal_edge(
+                    {
+                        "source_entity_id": source_entity["id"],
+                        "target_entity_id": target_entity["id"],
+                        "algorithm": algorithm,
+                        "confidence": confidence,
+                        "discovered_at": now_iso,
+                    }
+                )
                 stored_count += 1
 
         dag["metadata"] = {
@@ -456,9 +440,7 @@ class CausalDiscovery:
 
         return dag
 
-    def query_causes(
-        self, effect_entity: str, max_depth: int = 3
-    ) -> list[dict]:
+    def query_causes(self, effect_entity: str, max_depth: int = 3) -> list[dict]:
         """Find causes of an effect by traversing the DAG upstream.
 
         BFS from the effect node following edges in reverse direction
@@ -490,21 +472,21 @@ class CausalDiscovery:
                     src_entity = self._storage.get_entity_by_id(src_id)
                     src_name = src_entity["name"] if src_entity else str(src_id)
                     new_path = path + [src_name]
-                    results.append({
-                        "entity": src_name,
-                        "confidence": edge["confidence"],
-                        "depth": depth + 1,
-                        "path": new_path,
-                    })
+                    results.append(
+                        {
+                            "entity": src_name,
+                            "confidence": edge["confidence"],
+                            "depth": depth + 1,
+                            "path": new_path,
+                        }
+                    )
                     queue.append((src_id, src_name, depth + 1, new_path))
 
         # Sort by depth (closest causes first), then by confidence
         results.sort(key=lambda r: (r["depth"], -r["confidence"]))
         return results
 
-    def query_effects(
-        self, cause_entity: str, max_depth: int = 3
-    ) -> list[dict]:
+    def query_effects(self, cause_entity: str, max_depth: int = 3) -> list[dict]:
         """Find effects by traversing the DAG downstream.
 
         BFS from the cause node following edges in forward direction
@@ -535,12 +517,14 @@ class CausalDiscovery:
                     tgt_entity = self._storage.get_entity_by_id(tgt_id)
                     tgt_name = tgt_entity["name"] if tgt_entity else str(tgt_id)
                     new_path = path + [tgt_name]
-                    results.append({
-                        "entity": tgt_name,
-                        "confidence": edge["confidence"],
-                        "depth": depth + 1,
-                        "path": new_path,
-                    })
+                    results.append(
+                        {
+                            "entity": tgt_name,
+                            "confidence": edge["confidence"],
+                            "depth": depth + 1,
+                            "path": new_path,
+                        }
+                    )
                     queue.append((tgt_id, tgt_name, depth + 1, new_path))
 
         results.sort(key=lambda r: (r["depth"], -r["confidence"]))

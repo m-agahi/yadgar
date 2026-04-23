@@ -1,13 +1,13 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Tuple, Type
+from typing import Any
 
 from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
 
 class YamlConfigSource(PydanticBaseSettingsSource):
-    def __init__(self, settings_cls: Type[BaseSettings]):
+    def __init__(self, settings_cls: type[BaseSettings]):
         super().__init__(settings_cls)
         self._data: dict[str, Any] = {}
         self._load()
@@ -18,6 +18,7 @@ class YamlConfigSource(PydanticBaseSettingsSource):
             return
         try:
             from ruamel.yaml import YAML
+
             y = YAML()
             with open(config_path) as f:
                 raw = y.load(f)
@@ -26,13 +27,14 @@ class YamlConfigSource(PydanticBaseSettingsSource):
         except Exception:
             pass  # silently skip bad config
 
-    def get_field_value(self, field: FieldInfo, field_name: str) -> Tuple[Any, str, bool]:
+    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
         val = self._data.get(field_name)
         return val, field_name, self.field_is_complex(field)
 
     def __call__(self) -> dict[str, Any]:
         return {
-            k: v for k, v in self._data.items()
+            k: v
+            for k, v in self._data.items()
             if k in self.settings_cls.model_fields and v is not None
         }
 
@@ -172,7 +174,9 @@ class Settings(BaseSettings):
     CONCEPTNET_ENRICHMENT_ENABLED: bool = True
     CONCEPTNET_MIN_EDGE_WEIGHT: float = 1.0
     CONCEPTNET_MAX_TERMS: int = 10
-    CONCEPTNET_RELATIONS: str = "IsA,UsedFor,HasProperty,AtLocation,MotivatedByGoal,CausesDesire,CapableOf"
+    CONCEPTNET_RELATIONS: str = (
+        "IsA,UsedFor,HasProperty,AtLocation,MotivatedByGoal,CausesDesire,CapableOf"
+    )
     COMET_ENRICHMENT_ENABLED: bool = True
     COMET_QUERY_EXPANSION_ENABLED: bool = False  # COMET at query time for open_domain
     COMET_MODEL: str = "mismayil/comet-bart-ai2"
@@ -234,7 +238,7 @@ class Settings(BaseSettings):
     @classmethod
     def settings_customise_sources(
         cls,
-        settings_cls: Type[BaseSettings],
+        settings_cls: type[BaseSettings],
         init_settings: PydanticBaseSettingsSource,
         env_settings: PydanticBaseSettingsSource,
         dotenv_settings: PydanticBaseSettingsSource,

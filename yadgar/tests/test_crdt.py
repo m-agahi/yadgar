@@ -1,7 +1,6 @@
 """Tests for CRDT-based multi-agent memory sharing."""
 
 import json
-from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -70,7 +69,7 @@ class TestVectorClock:
     def test_clock_returns_copy(self, crdt):
         """increment_clock should return a copy, not a reference."""
         clock1 = crdt.increment_clock()
-        clock2 = crdt.increment_clock()
+        crdt.increment_clock()
         # Modifying returned clock shouldn't affect internal state
         clock1["agent-alpha"] = 999
         clock3 = crdt.increment_clock()

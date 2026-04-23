@@ -1,9 +1,8 @@
 """Tests for HippoRAG-style retrieval engine."""
 
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-import numpy as np
 import pytest
 
 from yadgar.config import Settings
@@ -49,43 +48,50 @@ def retriever(storage, embeddings, graph, settings):
 def _make_memory(storage, embeddings, content, directory="/proj", tags=None):
     """Helper to insert a memory with embedding."""
     embedding = embeddings.encode(content)
-    return storage.insert_memory({
-        "content": content,
-        "embedding": embedding,
-        "tags": tags or [],
-        "directory_context": directory,
-        "heat": 1.0,
-        "is_stale": False,
-        "file_hash": None,
-        "embedding_model": embeddings.get_model_name(),
-    })
+    return storage.insert_memory(
+        {
+            "content": content,
+            "embedding": embedding,
+            "tags": tags or [],
+            "directory_context": directory,
+            "heat": 1.0,
+            "is_stale": False,
+            "file_hash": None,
+            "embedding_model": embeddings.get_model_name(),
+        }
+    )
 
 
 def _setup_graph_with_memories(storage, embeddings, graph):
     """Set up a knowledge graph with entities, relationships, and memories."""
     # Create memories
     m1 = _make_memory(
-        storage, embeddings,
+        storage,
+        embeddings,
         "Using FastAPI for the REST API server with uvicorn",
         tags=["backend", "api"],
     )
     m2 = _make_memory(
-        storage, embeddings,
+        storage,
+        embeddings,
         "FastAPI integrates with pydantic for data validation",
         tags=["backend", "validation"],
     )
     m3 = _make_memory(
-        storage, embeddings,
+        storage,
+        embeddings,
         "SQLite with WAL mode for the storage engine database",
         tags=["database"],
     )
     m4 = _make_memory(
-        storage, embeddings,
+        storage,
+        embeddings,
         "pydantic models used for configuration settings",
         tags=["config"],
     )
     m5 = _make_memory(
-        storage, embeddings,
+        storage,
+        embeddings,
         "React frontend connects to the REST API server",
         tags=["frontend"],
     )
@@ -182,7 +188,7 @@ class TestContextualPrefix:
             "some content",
             "/home/user/myproject",
             ["tag1"],
-            datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc),
+            datetime(2026, 3, 1, 12, 0, tzinfo=UTC),
         )
         assert "[Project: myproject]" in prefix
 
@@ -191,7 +197,7 @@ class TestContextualPrefix:
             "some content",
             "/home/user/myproject",
             ["tag1"],
-            datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc),
+            datetime(2026, 3, 1, 12, 0, tzinfo=UTC),
         )
         assert "[Directory: /home/user/myproject]" in prefix
 
@@ -200,15 +206,13 @@ class TestContextualPrefix:
             "some content",
             "/proj",
             ["backend", "api"],
-            datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc),
+            datetime(2026, 3, 1, 12, 0, tzinfo=UTC),
         )
         assert "[Tags: backend, api]" in prefix
 
     def test_prefix_contains_timestamp(self, retriever):
-        ts = datetime(2026, 3, 1, 12, 30, tzinfo=timezone.utc)
-        prefix = retriever.generate_contextual_prefix(
-            "some content", "/proj", [], ts
-        )
+        ts = datetime(2026, 3, 1, 12, 30, tzinfo=UTC)
+        prefix = retriever.generate_contextual_prefix("some content", "/proj", [], ts)
         assert "[Recorded: 2026-03-01 12:30]" in prefix
 
     def test_prefix_contains_related_entities(self, storage, embeddings, graph, retriever):
@@ -222,23 +226,23 @@ class TestContextualPrefix:
             "FastAPI server setup",
             "/proj",
             ["backend"],
-            datetime(2026, 3, 1, tzinfo=timezone.utc),
+            datetime(2026, 3, 1, tzinfo=UTC),
         )
         assert "[Related entities:" in prefix
 
     def test_prefix_empty_tags_shows_none(self, retriever):
         prefix = retriever.generate_contextual_prefix(
-            "content", "/proj", [],
-            datetime(2026, 3, 1, tzinfo=timezone.utc),
+            "content",
+            "/proj",
+            [],
+            datetime(2026, 3, 1, tzinfo=UTC),
         )
         assert "[Tags: none]" in prefix
 
 
 class TestSpreadingActivation:
     def test_spreading_activates_related_memories(self, storage, embeddings, graph, retriever):
-        m1, m2, m3, m4, m5 = _setup_graph_with_memories(
-            storage, embeddings, graph
-        )
+        m1, m2, m3, m4, m5 = _setup_graph_with_memories(storage, embeddings, graph)
 
         # Seed with memory 1 (FastAPI) — should activate memories connected via graph
         results = retriever.spreading_activation([m1], spread_factor=0.5, max_depth=2)
@@ -248,9 +252,7 @@ class TestSpreadingActivation:
         assert m1 not in activated_ids  # seed excluded
 
     def test_spreading_excludes_seeds(self, storage, embeddings, graph, retriever):
-        m1, m2, m3, m4, m5 = _setup_graph_with_memories(
-            storage, embeddings, graph
-        )
+        m1, m2, m3, m4, m5 = _setup_graph_with_memories(storage, embeddings, graph)
 
         results = retriever.spreading_activation([m1, m2])
         activated_ids = {mid for mid, _ in results}
@@ -258,13 +260,9 @@ class TestSpreadingActivation:
         assert m2 not in activated_ids
 
     def test_spreading_activation_decays_with_depth(self, storage, embeddings, graph, retriever):
-        m1, m2, m3, m4, m5 = _setup_graph_with_memories(
-            storage, embeddings, graph
-        )
+        m1, m2, m3, m4, m5 = _setup_graph_with_memories(storage, embeddings, graph)
 
-        results = retriever.spreading_activation(
-            [m1], spread_factor=0.5, max_depth=2
-        )
+        results = retriever.spreading_activation([m1], spread_factor=0.5, max_depth=2)
         if len(results) >= 2:
             # Scores should vary (deeper = lower activation)
             scores = [s for _, s in results]
@@ -285,9 +283,7 @@ class TestSpreadingActivation:
             GRAPH_SPREADING_MAX_DEPTH=1,
         )
         retriever = HippoRetriever(storage, embeddings, graph, custom_settings)
-        m1, m2, m3, m4, m5 = _setup_graph_with_memories(
-            storage, embeddings, graph
-        )
+        m1, m2, m3, m4, m5 = _setup_graph_with_memories(storage, embeddings, graph)
 
         # Call without explicit args — should use settings defaults
         results = retriever.spreading_activation([m1])
@@ -379,19 +375,22 @@ class TestRecallRanking:
         """The most relevant result should rank first."""
         # Insert a highly specific memory
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "networkx PageRank algorithm for graph-based retrieval in HippoRAG",
             tags=["retrieval", "graph"],
         )
         # Insert a less relevant memory
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "General logging configuration for the application",
             tags=["config"],
         )
         # Insert another relevant one
         _make_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Using PageRank for personalized search ranking",
             tags=["search"],
         )
@@ -421,7 +420,8 @@ class TestRecallPerformance:
         for i in range(100):
             topic = topics[i % len(topics)]
             _make_memory(
-                storage, embeddings,
+                storage,
+                embeddings,
                 f"Memory {i}: {topic} - variation {i}",
                 tags=["perf-test"],
             )
@@ -576,7 +576,9 @@ class TestDetectAdversarial:
 
 
 class TestConfidenceGating:
-    def test_gating_zeros_low_confidence_signal(self, storage, embeddings, graph, settings, tmp_path):
+    def test_gating_zeros_low_confidence_signal(
+        self, storage, embeddings, graph, settings, tmp_path
+    ):
         """Signals below threshold should have their weight zeroed."""
         settings_gated = Settings(
             DB_PATH=str(tmp_path / "gated.db"),

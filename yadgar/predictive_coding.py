@@ -15,13 +15,12 @@ References:
 import logging
 import re
 from collections import Counter, deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
-from yadgar.knowledge_graph import KnowledgeGraph
 from yadgar.retrieval import HippoRetriever
 from yadgar.storage import StorageEngine
 
@@ -61,9 +60,7 @@ class PredictiveCodingGate:
         self._settings = settings
         self._threshold = settings.WRITE_GATE_THRESHOLD
         # Task continuity tracking — recent stores form a "working context"
-        self._recent_stores: deque[dict] = deque(
-            maxlen=settings.WRITE_GATE_CONTINUITY_WINDOW
-        )
+        self._recent_stores: deque[dict] = deque(maxlen=settings.WRITE_GATE_CONTINUITY_WINDOW)
 
     # ── Task Continuity ──────────────────────────────────────────────────
 
@@ -74,11 +71,13 @@ class PredictiveCodingGate:
         'working context' that reduces the threshold for follow-up memories
         about the same task.
         """
-        self._recent_stores.append({
-            "directory": directory,
-            "embedding": embedding,
-            "timestamp": datetime.now(timezone.utc),
-        })
+        self._recent_stores.append(
+            {
+                "directory": directory,
+                "embedding": embedding,
+                "timestamp": datetime.now(UTC),
+            }
+        )
 
     def _compute_task_continuity(self, content: str, directory: str) -> float:
         """How task-continuous is this content with recent stores?
@@ -103,10 +102,9 @@ class PredictiveCodingGate:
         dir_continuity = dir_matches / n
 
         # Signal 2: Temporal proximity (within last hour)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         recent_count = sum(
-            1 for s in self._recent_stores
-            if (now - s["timestamp"]).total_seconds() < 3600
+            1 for s in self._recent_stores if (now - s["timestamp"]).total_seconds() < 3600
         )
         temporal_continuity = recent_count / n
 
@@ -123,19 +121,13 @@ class PredictiveCodingGate:
                 semantic_continuity = max(sims)
 
         # Weighted combination
-        continuity = (
-            0.3 * dir_continuity
-            + 0.3 * temporal_continuity
-            + 0.4 * semantic_continuity
-        )
+        continuity = 0.3 * dir_continuity + 0.3 * temporal_continuity + 0.4 * semantic_continuity
 
         return min(1.0, continuity)
 
     # ── Core: Surprisal Computation ──────────────────────────────────────
 
-    def compute_surprisal(
-        self, content: str, directory: str, tags: list[str]
-    ) -> float:
+    def compute_surprisal(self, content: str, directory: str, tags: list[str]) -> float:
         """Compute how surprising content is relative to the directory's generative model.
 
         Combines four signals:
@@ -147,13 +139,9 @@ class PredictiveCodingGate:
         Returns a float in [0.0, 1.0] where 1.0 = maximally surprising.
         """
         # Build generative model for this directory
-        recent_memories = self._storage.get_memories_for_directory(
-            directory, min_heat=0.0
-        )
+        recent_memories = self._storage.get_memories_for_directory(directory, min_heat=0.0)
         # Sort by created_at descending, take last 50
-        recent_memories.sort(
-            key=lambda m: m.get("created_at", ""), reverse=True
-        )
+        recent_memories.sort(key=lambda m: m.get("created_at", ""), reverse=True)
         recent_memories = recent_memories[:50]
 
         if not recent_memories:
@@ -191,9 +179,7 @@ class PredictiveCodingGate:
         if query_embedding is None:
             return 0.5
 
-        vec_hits = self._storage.search_vectors(
-            query_embedding, top_k=5, min_heat=0.0
-        )
+        vec_hits = self._storage.search_vectors(query_embedding, top_k=5, min_heat=0.0)
         if not vec_hits:
             return 0.8  # No vectors at all = fairly novel
 
@@ -201,9 +187,7 @@ class PredictiveCodingGate:
         for mid, _distance in vec_hits:
             mem = self._storage.get_memory(mid)
             if mem and mem.get("embedding"):
-                sim = self._embeddings.similarity(
-                    query_embedding, mem["embedding"]
-                )
+                sim = self._embeddings.similarity(query_embedding, mem["embedding"])
                 max_similarity = max(max_similarity, sim)
 
         return max(0.0, min(1.0, 1.0 - max_similarity))
@@ -246,9 +230,7 @@ class PredictiveCodingGate:
             entity_names_to_check.add(name)
 
         # Method 2: Check which existing entities appear in the content text
-        all_entities = self._storage.get_all_entities(
-            min_heat=0.0, include_archived=True
-        )
+        all_entities = self._storage.get_all_entities(min_heat=0.0, include_archived=True)
         for entity in all_entities:
             if entity["name"] in content and len(entity["name"]) > 1:
                 entity_names_to_check.add(entity["name"])
@@ -257,7 +239,7 @@ class PredictiveCodingGate:
             return 0.7  # No entities to check = surprising
 
         # Find most recent memory about any overlapping entity
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         most_recent_dt = None
 
         all_memories = self._storage.get_all_memories_for_decay()
@@ -269,7 +251,7 @@ class PredictiveCodingGate:
                     try:
                         mem_dt = datetime.fromisoformat(mem["created_at"])
                         if mem_dt.tzinfo is None:
-                            mem_dt = mem_dt.replace(tzinfo=timezone.utc)
+                            mem_dt = mem_dt.replace(tzinfo=UTC)
                         if most_recent_dt is None or mem_dt > most_recent_dt:
                             most_recent_dt = mem_dt
                     except (ValueError, TypeError):
@@ -287,9 +269,7 @@ class PredictiveCodingGate:
         else:
             return 0.7  # Old topic resurfacing = surprising
 
-    def _compute_structural_novelty(
-        self, content: str, directory: str
-    ) -> float:
+    def _compute_structural_novelty(self, content: str, directory: str) -> float:
         """Signal 4: Does this content introduce new relationship types or causal patterns?
 
         New relationship type in graph: 0.8
@@ -317,7 +297,7 @@ class PredictiveCodingGate:
         content_entity_names = {name for name, _, _ in extracted}
         content_entities = [e for e in all_entities if e["name"] in content_entity_names]
         for i, src in enumerate(content_entities):
-            for tgt in content_entities[i + 1:]:
+            for tgt in content_entities[i + 1 :]:
                 rel = self._storage.get_relationship_between(src["id"], tgt["id"])
                 if rel and rel.get("relationship_type"):
                     existing_rel_types.add(rel["relationship_type"])
@@ -345,14 +325,15 @@ class PredictiveCodingGate:
           - Decision keywords in content
           - Tags contain "important" or "critical"
         """
-        content_lower = content.lower()
+        content.lower()
 
         # Check bypass conditions FIRST
         if _ERROR_BYPASS_RE.search(content):
             surprisal = self.compute_surprisal(content, directory, tags)
             logger.debug(
                 "Write gate BYPASS (error keywords): surprisal=%.3f dir=%s",
-                surprisal, directory,
+                surprisal,
+                directory,
             )
             return (True, surprisal, "bypass_error_keywords")
 
@@ -360,7 +341,8 @@ class PredictiveCodingGate:
             surprisal = self.compute_surprisal(content, directory, tags)
             logger.debug(
                 "Write gate BYPASS (decision keywords): surprisal=%.3f dir=%s",
-                surprisal, directory,
+                surprisal,
+                directory,
             )
             return (True, surprisal, "bypass_decision_keywords")
 
@@ -368,7 +350,8 @@ class PredictiveCodingGate:
             surprisal = self.compute_surprisal(content, directory, tags)
             logger.debug(
                 "Write gate BYPASS (important/critical tag): surprisal=%.3f dir=%s",
-                surprisal, directory,
+                surprisal,
+                directory,
             )
             return (True, surprisal, "bypass_important_tag")
 
@@ -385,8 +368,12 @@ class PredictiveCodingGate:
             logger.debug(
                 "Write gate PASS: surprisal=%.3f >= effective_threshold=%.3f "
                 "(base=%.3f, continuity=%.2f, discount=%.3f) dir=%s",
-                surprisal, effective_threshold, self._threshold,
-                continuity, discount, directory,
+                surprisal,
+                effective_threshold,
+                self._threshold,
+                continuity,
+                discount,
+                directory,
             )
             reason = "high_surprisal"
             if discount > 0:
@@ -396,16 +383,17 @@ class PredictiveCodingGate:
             logger.debug(
                 "Write gate BLOCK: surprisal=%.3f < effective_threshold=%.3f "
                 "(base=%.3f, continuity=%.2f) dir=%s",
-                surprisal, effective_threshold, self._threshold,
-                continuity, directory,
+                surprisal,
+                effective_threshold,
+                self._threshold,
+                continuity,
+                directory,
             )
             return (False, surprisal, f"below_threshold (effective={effective_threshold:.2f})")
 
     # ── Event Boundary Detection ─────────────────────────────────────────
 
-    def compute_boundary_signal(
-        self, content: str, previous_content: str
-    ) -> float:
+    def compute_boundary_signal(self, content: str, previous_content: str) -> float:
         """Detect event boundaries — transitions between different topics/tasks.
 
         Encodes both contents, computes similarity.
@@ -444,9 +432,7 @@ class PredictiveCodingGate:
           - recent_topics: recent entity names
           - centroid_embedding: mean of all directory memory embeddings (bytes or None)
         """
-        memories = self._storage.get_memories_for_directory(
-            directory, min_heat=0.0
-        )
+        memories = self._storage.get_memories_for_directory(directory, min_heat=0.0)
 
         if not memories:
             return {
@@ -470,6 +456,7 @@ class PredictiveCodingGate:
             tags = m.get("tags", [])
             if isinstance(tags, str):
                 import json
+
                 try:
                     tags = json.loads(tags)
                 except (ValueError, TypeError):
@@ -482,21 +469,15 @@ class PredictiveCodingGate:
         entity_names = set()
         for m in memories:
             content = m.get("content", "")
-            entities = self._storage.get_all_entities(
-                min_heat=0.0, include_archived=True
-            )
+            entities = self._storage.get_all_entities(min_heat=0.0, include_archived=True)
             for e in entities:
                 if e["name"] in content:
                     entity_names.add(e["name"])
 
         # Recent topics: entities from most recent memories
-        recent_memories = sorted(
-            memories, key=lambda m: m.get("created_at", ""), reverse=True
-        )[:10]
+        recent_memories = sorted(memories, key=lambda m: m.get("created_at", ""), reverse=True)[:10]
         recent_entity_names = set()
-        all_entities = self._storage.get_all_entities(
-            min_heat=0.0, include_archived=True
-        )
+        all_entities = self._storage.get_all_entities(min_heat=0.0, include_archived=True)
         for m in recent_memories:
             content = m.get("content", "")
             for e in all_entities:

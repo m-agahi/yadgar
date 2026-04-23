@@ -1,9 +1,7 @@
 """Comprehensive integration tests for Yadgar memory engine."""
 
 import asyncio
-import json
-import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -23,7 +21,6 @@ from yadgar.sleep_compute import SleepComputeEngine
 from yadgar.staleness import StalenessDetector
 from yadgar.storage import StorageEngine
 from yadgar.thermodynamics import MemoryThermodynamics
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────
 
@@ -134,24 +131,38 @@ class TestFullRememberRecallCycle:
     def test_store_and_recall_ranked(self, storage, embeddings, buffer):
         """Store 5 memories, recall with a relevant query, verify ranking."""
         topics = [
-            ("Python list comprehensions are concise ways to create lists", "/proj", ["python", "syntax"]),
-            ("Docker containers isolate applications in lightweight environments", "/proj", ["docker", "devops"]),
+            (
+                "Python list comprehensions are concise ways to create lists",
+                "/proj",
+                ["python", "syntax"],
+            ),
+            (
+                "Docker containers isolate applications in lightweight environments",
+                "/proj",
+                ["docker", "devops"],
+            ),
             ("SQLite is an embedded relational database engine", "/proj", ["database", "sqlite"]),
-            ("Python decorators modify function behavior using the @ syntax", "/proj", ["python", "syntax"]),
+            (
+                "Python decorators modify function behavior using the @ syntax",
+                "/proj",
+                ["python", "syntax"],
+            ),
             ("Kubernetes orchestrates container deployment at scale", "/proj", ["k8s", "devops"]),
         ]
 
         memory_ids = []
         for content, ctx, tags in topics:
             embedding = embeddings.encode(content)
-            mid = storage.insert_memory({
-                "content": content,
-                "embedding": embedding,
-                "tags": tags,
-                "directory_context": ctx,
-                "heat": 1.0,
-                "is_stale": False,
-            })
+            mid = storage.insert_memory(
+                {
+                    "content": content,
+                    "embedding": embedding,
+                    "tags": tags,
+                    "directory_context": ctx,
+                    "heat": 1.0,
+                    "is_stale": False,
+                }
+            )
             memory_ids.append(mid)
             buffer.capture(content, ctx)
 
@@ -162,9 +173,7 @@ class TestFullRememberRecallCycle:
         if query_embedding is not None:
             candidates = storage.get_memories_by_heat(min_heat=0.1, limit=100)
             candidate_pairs = [
-                (m["id"], m["embedding"])
-                for m in candidates
-                if m.get("embedding") is not None
+                (m["id"], m["embedding"]) for m in candidates if m.get("embedding") is not None
             ]
             ranked = embeddings.search(query_embedding, candidate_pairs, top_k=5)
 
@@ -188,13 +197,15 @@ class TestRememberCreatesEpisode:
         context = "/projects/api"
 
         embedding = embeddings.encode(content)
-        storage.insert_memory({
-            "content": content,
-            "embedding": embedding,
-            "tags": ["fastapi"],
-            "directory_context": context,
-            "heat": 1.0,
-        })
+        storage.insert_memory(
+            {
+                "content": content,
+                "embedding": embedding,
+                "tags": ["fastapi"],
+                "directory_context": context,
+                "heat": 1.0,
+            }
+        )
         buffer.capture(content, context)
 
         # Flush the buffer to persist the episode
@@ -216,14 +227,16 @@ class TestStalenessIntegration:
         file_hash = StalenessDetector._compute_file_hash(str(test_file))
         storage.upsert_file_hash(str(test_file), file_hash)
 
-        mem_id = storage.insert_memory({
-            "content": "Database config uses SQLite",
-            "directory_context": str(tmp_path),
-            "tags": ["config"],
-            "heat": 1.0,
-            "is_stale": False,
-            "file_hash": file_hash,
-        })
+        mem_id = storage.insert_memory(
+            {
+                "content": "Database config uses SQLite",
+                "directory_context": str(tmp_path),
+                "tags": ["config"],
+                "heat": 1.0,
+                "is_stale": False,
+                "file_hash": file_hash,
+            }
+        )
 
         # Modify the file
         test_file.write_text("DB_URL = 'postgresql://localhost/app'")
@@ -242,16 +255,18 @@ class TestStalenessIntegration:
 class TestConsolidationDecay:
     def test_old_memories_decay(self, storage, embeddings, settings):
         """Memories with old timestamps should have their heat decreased."""
-        old_time = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+        old_time = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
 
         mem_ids = []
         for i in range(3):
-            mid = storage.insert_memory({
-                "content": f"old memory {i}",
-                "directory_context": "/proj",
-                "heat": 1.0,
-                "last_accessed": old_time,
-            })
+            mid = storage.insert_memory(
+                {
+                    "content": f"old memory {i}",
+                    "directory_context": "/proj",
+                    "heat": 1.0,
+                    "last_accessed": old_time,
+                }
+            )
             mem_ids.append(mid)
 
         engine = AstrocyteEngine(storage, embeddings, settings)
@@ -261,7 +276,7 @@ class TestConsolidationDecay:
             mem = storage.get_memory(mid)
             # Enhanced decay: default confidence=1.0 slows decay slightly
             effective_factor = 1.0 - (1.0 - 0.95) / (1.0 + 1.0 * 0.1)
-            expected = 1.0 * (effective_factor ** 48)
+            expected = 1.0 * (effective_factor**48)
             assert mem["heat"] == pytest.approx(expected, abs=1e-3)
             assert mem["heat"] < 1.0
 
@@ -269,14 +284,16 @@ class TestConsolidationDecay:
 class TestConsolidationArchival:
     def test_very_low_heat_gets_archived(self, storage, embeddings, settings):
         """A memory with very low heat should be archived (heat set to 0)."""
-        very_old_time = (datetime.now(timezone.utc) - timedelta(hours=200)).isoformat()
+        very_old_time = (datetime.now(UTC) - timedelta(hours=200)).isoformat()
 
-        mid = storage.insert_memory({
-            "content": "ancient memory that should be archived",
-            "directory_context": "/proj",
-            "heat": 0.1,
-            "last_accessed": very_old_time,
-        })
+        mid = storage.insert_memory(
+            {
+                "content": "ancient memory that should be archived",
+                "directory_context": "/proj",
+                "heat": 0.1,
+                "last_accessed": very_old_time,
+            }
+        )
 
         engine = AstrocyteEngine(storage, embeddings, settings)
         stats = engine.force_consolidate()
@@ -291,30 +308,36 @@ class TestMemoryStatsAccurate:
         """Create a mix of active, stale, and archived memories; verify stats."""
         # Active memories (heat >= 0.05, not stale)
         for i in range(3):
-            storage.insert_memory({
-                "content": f"active memory {i}",
-                "directory_context": "/proj",
-                "heat": 0.8,
-                "is_stale": False,
-            })
+            storage.insert_memory(
+                {
+                    "content": f"active memory {i}",
+                    "directory_context": "/proj",
+                    "heat": 0.8,
+                    "is_stale": False,
+                }
+            )
 
         # Stale memories
         for i in range(2):
-            storage.insert_memory({
-                "content": f"stale memory {i}",
-                "directory_context": "/proj",
-                "heat": 0.5,
-                "is_stale": True,
-            })
+            storage.insert_memory(
+                {
+                    "content": f"stale memory {i}",
+                    "directory_context": "/proj",
+                    "heat": 0.5,
+                    "is_stale": True,
+                }
+            )
 
         # Archived memories (heat < 0.05)
         for i in range(4):
-            storage.insert_memory({
-                "content": f"archived memory {i}",
-                "directory_context": "/proj",
-                "heat": 0.01,
-                "is_stale": False,
-            })
+            storage.insert_memory(
+                {
+                    "content": f"archived memory {i}",
+                    "directory_context": "/proj",
+                    "heat": 0.01,
+                    "is_stale": False,
+                }
+            )
 
         stats = storage.get_memory_stats()
         assert stats["total_memories"] == 9
@@ -326,30 +349,38 @@ class TestMemoryStatsAccurate:
 class TestProjectContext:
     def test_only_relevant_directory_returned(self, storage):
         """Memories for different directories should be isolated."""
-        storage.insert_memory({
-            "content": "frontend uses React with TypeScript",
-            "directory_context": "/projects/frontend",
-            "heat": 1.0,
-            "tags": ["react"],
-        })
-        storage.insert_memory({
-            "content": "frontend CSS uses Tailwind",
-            "directory_context": "/projects/frontend",
-            "heat": 0.9,
-            "tags": ["css"],
-        })
-        storage.insert_memory({
-            "content": "backend uses FastAPI with SQLAlchemy",
-            "directory_context": "/projects/backend",
-            "heat": 1.0,
-            "tags": ["fastapi"],
-        })
-        storage.insert_memory({
-            "content": "cold frontend memory",
-            "directory_context": "/projects/frontend",
-            "heat": 0.3,
-            "tags": ["old"],
-        })
+        storage.insert_memory(
+            {
+                "content": "frontend uses React with TypeScript",
+                "directory_context": "/projects/frontend",
+                "heat": 1.0,
+                "tags": ["react"],
+            }
+        )
+        storage.insert_memory(
+            {
+                "content": "frontend CSS uses Tailwind",
+                "directory_context": "/projects/frontend",
+                "heat": 0.9,
+                "tags": ["css"],
+            }
+        )
+        storage.insert_memory(
+            {
+                "content": "backend uses FastAPI with SQLAlchemy",
+                "directory_context": "/projects/backend",
+                "heat": 1.0,
+                "tags": ["fastapi"],
+            }
+        )
+        storage.insert_memory(
+            {
+                "content": "cold frontend memory",
+                "directory_context": "/projects/frontend",
+                "heat": 0.3,
+                "tags": ["old"],
+            }
+        )
 
         # Get project context for frontend (min_heat = HOT_THRESHOLD = 0.7)
         results = storage.get_memories_for_directory("/projects/frontend", min_heat=0.7)
@@ -366,25 +397,25 @@ class TestProjectContext:
 class TestConsolidationEntityExtraction:
     def test_episodes_produce_entities_and_relationships(self, storage, embeddings, settings):
         """Full cycle: episodes -> entity extraction -> knowledge graph."""
-        storage.insert_episode({
-            "session_id": "integration_sess",
-            "directory": "/proj",
-            "raw_content": (
-                "Editing yadgar/server.py\n"
-                "def remember():\n"
-                "    import json\n"
-                "    from pathlib import Path\n"
-            ),
-        })
-        storage.insert_episode({
-            "session_id": "integration_sess",
-            "directory": "/proj",
-            "raw_content": (
-                "def remember():\n"
-                "    import json\n"
-                "ValueError: invalid literal\n"
-            ),
-        })
+        storage.insert_episode(
+            {
+                "session_id": "integration_sess",
+                "directory": "/proj",
+                "raw_content": (
+                    "Editing yadgar/server.py\n"
+                    "def remember():\n"
+                    "    import json\n"
+                    "    from pathlib import Path\n"
+                ),
+            }
+        )
+        storage.insert_episode(
+            {
+                "session_id": "integration_sess",
+                "directory": "/proj",
+                "raw_content": ("def remember():\n    import json\nValueError: invalid literal\n"),
+            }
+        )
 
         engine = AstrocyteEngine(storage, embeddings, settings)
         engine._last_consolidated_episode_id = 0
@@ -446,13 +477,15 @@ class TestStalenessWatcherIntegration:
         file_hash = StalenessDetector._compute_file_hash(str(f))
         storage.upsert_file_hash(str(f), file_hash)
 
-        mem_id = storage.insert_memory({
-            "content": "module documentation",
-            "directory_context": str(tmp_path),
-            "heat": 1.0,
-            "is_stale": False,
-            "file_hash": file_hash,
-        })
+        mem_id = storage.insert_memory(
+            {
+                "content": "module documentation",
+                "directory_context": str(tmp_path),
+                "heat": 1.0,
+                "is_stale": False,
+                "file_hash": file_hash,
+            }
+        )
 
         f.write_text("modified content")
 
@@ -483,16 +516,20 @@ class TestFullRememberWithThermodynamics:
         valence = thermo.compute_valence(content)
         initial_heat = thermo.apply_surprise_boost(1.0, surprise)
 
-        mid = storage.insert_memory({
-            "content": content,
-            "embedding": embedding,
-            "tags": tags,
-            "directory_context": context,
-            "heat": initial_heat,
-            "is_stale": False,
-            "embedding_model": embeddings.get_model_name(),
-        })
-        storage.update_memory_scores(mid, surprise_score=surprise, importance=importance, emotional_valence=valence)
+        mid = storage.insert_memory(
+            {
+                "content": content,
+                "embedding": embedding,
+                "tags": tags,
+                "directory_context": context,
+                "heat": initial_heat,
+                "is_stale": False,
+                "embedding_model": embeddings.get_model_name(),
+            }
+        )
+        storage.update_memory_scores(
+            mid, surprise_score=surprise, importance=importance, emotional_valence=valence
+        )
         buffer.capture(content, context)
 
         mem = storage.get_memory(mid)
@@ -516,20 +553,28 @@ class TestRememberWithCurationMerge:
         emb2 = embeddings.encode(content2)
 
         # First insert directly
-        mid1 = storage.insert_memory({
-            "content": content1,
-            "embedding": emb1,
-            "tags": ["python", "fastapi"],
-            "directory_context": "/proj",
-            "heat": 1.0,
-            "is_stale": False,
-            "embedding_model": embeddings.get_model_name(),
-        })
+        mid1 = storage.insert_memory(
+            {
+                "content": content1,
+                "embedding": emb1,
+                "tags": ["python", "fastapi"],
+                "directory_context": "/proj",
+                "heat": 1.0,
+                "is_stale": False,
+                "embedding_model": embeddings.get_model_name(),
+            }
+        )
 
         # Second via curator
         result = curator.curate_on_remember(
-            content2, "/proj", ["python", "fastapi"], emb2,
-            initial_heat=1.0, surprise=0.1, importance=0.5, valence=0.0,
+            content2,
+            "/proj",
+            ["python", "fastapi"],
+            emb2,
+            initial_heat=1.0,
+            surprise=0.1,
+            importance=0.5,
+            valence=0.0,
             embedding_model=embeddings.get_model_name(),
         )
 
@@ -555,15 +600,17 @@ class TestRecallMultiSignal:
 
         for content in contents:
             embedding = embeddings.encode(content)
-            storage.insert_memory({
-                "content": content,
-                "embedding": embedding,
-                "tags": ["tech"],
-                "directory_context": "/proj",
-                "heat": 1.0,
-                "is_stale": False,
-                "embedding_model": embeddings.get_model_name(),
-            })
+            storage.insert_memory(
+                {
+                    "content": content,
+                    "embedding": embedding,
+                    "tags": ["tech"],
+                    "directory_context": "/proj",
+                    "heat": 1.0,
+                    "is_stale": False,
+                    "embedding_model": embeddings.get_model_name(),
+                }
+            )
 
         retriever = HippoRetriever(storage, embeddings, kg, settings)
         results = retriever.recall("Python web framework API", max_results=3, min_heat=0.1)
@@ -582,28 +629,32 @@ class TestRecallMultiSignal:
 class TestSynapticTaggingIntegration:
     def test_high_importance_boosts_nearby(self, storage, embeddings, thermo, settings):
         """Store high-importance memory, verify nearby memories get boosted."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         # Create 3 memories with same timestamp (within synaptic window)
         mids = []
         for i in range(3):
-            mid = storage.insert_memory({
-                "content": f"nearby memory {i}",
-                "directory_context": "/proj",
-                "heat": 0.5,
-                "created_at": now,
-                "last_accessed": now,
-            })
+            mid = storage.insert_memory(
+                {
+                    "content": f"nearby memory {i}",
+                    "directory_context": "/proj",
+                    "heat": 0.5,
+                    "created_at": now,
+                    "last_accessed": now,
+                }
+            )
             mids.append(mid)
 
         # Create a high-importance event memory
-        event_mid = storage.insert_memory({
-            "content": "Critical error fixed in production deployment",
-            "directory_context": "/proj",
-            "heat": 1.0,
-            "created_at": now,
-            "last_accessed": now,
-        })
+        event_mid = storage.insert_memory(
+            {
+                "content": "Critical error fixed in production deployment",
+                "directory_context": "/proj",
+                "heat": 1.0,
+                "created_at": now,
+                "last_accessed": now,
+            }
+        )
 
         # Boost nearby memories
         boosted = thermo.synaptic_boost(event_mid, 1.0)
@@ -647,11 +698,13 @@ class TestCausalDetectionIntegration:
         """Create pattern where A consistently precedes B, verify causal edge."""
         # Create episodes where "compile" consistently appears before "test"
         for i in range(3):
-            storage.insert_episode({
-                "session_id": f"causal_sess_{i}",
-                "directory": "/proj",
-                "raw_content": f"Running compile step {i}\nThen running test step {i}",
-            })
+            storage.insert_episode(
+                {
+                    "session_id": f"causal_sess_{i}",
+                    "directory": "/proj",
+                    "raw_content": f"Running compile step {i}\nThen running test step {i}",
+                }
+            )
 
         # Extract entities from episodes
         engine = AstrocyteEngine(storage, EmbeddingEngine(), settings)
@@ -675,17 +728,19 @@ class TestFractalTreeIntegration:
             "React router manages client-side navigation",
         ]
 
-        for content, dir_ctx in zip(contents, dirs):
+        for content, dir_ctx in zip(contents, dirs, strict=False):
             embedding = embeddings.encode(content)
-            storage.insert_memory({
-                "content": content,
-                "embedding": embedding,
-                "tags": ["code"],
-                "directory_context": dir_ctx,
-                "heat": 1.0,
-                "is_stale": False,
-                "embedding_model": embeddings.get_model_name(),
-            })
+            storage.insert_memory(
+                {
+                    "content": content,
+                    "embedding": embedding,
+                    "tags": ["code"],
+                    "directory_context": dir_ctx,
+                    "heat": 1.0,
+                    "is_stale": False,
+                    "embedding_model": embeddings.get_model_name(),
+                }
+            )
 
         stats = fractal.build_tree()
         assert stats["memories_assigned"] >= 3
@@ -709,15 +764,17 @@ class TestDreamReplayIntegration:
 
         for content in contents:
             embedding = embeddings.encode(content)
-            storage.insert_memory({
-                "content": content,
-                "embedding": embedding,
-                "tags": ["tech"],
-                "directory_context": "/proj",
-                "heat": 1.0,
-                "is_stale": False,
-                "embedding_model": embeddings.get_model_name(),
-            })
+            storage.insert_memory(
+                {
+                    "content": content,
+                    "embedding": embedding,
+                    "tags": ["tech"],
+                    "directory_context": "/proj",
+                    "heat": 1.0,
+                    "is_stale": False,
+                    "embedding_model": embeddings.get_model_name(),
+                }
+            )
 
         stats = sleep_engine.dream_replay()
 
@@ -740,7 +797,7 @@ class TestProspectiveMemoryTrigger:
             "directory": "/proj",
             "content": "Working on auth tests for the login endpoint",
             "entities": ["auth", "login"],
-            "current_time": datetime.now(timezone.utc),
+            "current_time": datetime.now(UTC),
         }
 
         triggered = prospective.check_triggers(context)
@@ -771,15 +828,17 @@ class TestNarrativeGeneration:
 
         for content in contents:
             embedding = embeddings.encode(content)
-            storage.insert_memory({
-                "content": content,
-                "embedding": embedding,
-                "tags": ["development"],
-                "directory_context": "/proj/api",
-                "heat": 1.0,
-                "is_stale": False,
-                "embedding_model": embeddings.get_model_name(),
-            })
+            storage.insert_memory(
+                {
+                    "content": content,
+                    "embedding": embedding,
+                    "tags": ["development"],
+                    "directory_context": "/proj/api",
+                    "heat": 1.0,
+                    "is_stale": False,
+                    "embedding_model": embeddings.get_model_name(),
+                }
+            )
 
         entry = narrative.generate_narrative("/proj/api", period_hours=24)
         assert entry is not None
@@ -797,34 +856,40 @@ class TestAstrocyteDomainAssignment:
     def test_memories_assigned_to_correct_domains(self, storage, embeddings, pool):
         """Store code and decision memories, verify correct domain assignment."""
         # Code memory
-        code_mem = storage.insert_memory({
-            "content": "Implemented a new function to handle file imports and module loading",
-            "directory_context": "/proj",
-            "heat": 1.0,
-            "tags": ["code"],
-        })
+        code_mem = storage.insert_memory(
+            {
+                "content": "Implemented a new function to handle file imports and module loading",
+                "directory_context": "/proj",
+                "heat": 1.0,
+                "tags": ["code"],
+            }
+        )
         code_data = storage.get_memory(code_mem)
         code_domains = pool.assign_memory(code_data)
         assert "code-patterns" in code_domains
 
         # Decision memory
-        decision_mem = storage.insert_memory({
-            "content": "Decided to use PostgreSQL instead of MySQL for the trade-off of better JSON support",
-            "directory_context": "/proj",
-            "heat": 1.0,
-            "tags": ["decision"],
-        })
+        decision_mem = storage.insert_memory(
+            {
+                "content": "Decided to use PostgreSQL instead of MySQL for the trade-off of better JSON support",
+                "directory_context": "/proj",
+                "heat": 1.0,
+                "tags": ["decision"],
+            }
+        )
         decision_data = storage.get_memory(decision_mem)
         decision_domains = pool.assign_memory(decision_data)
         assert "decisions" in decision_domains
 
         # Error memory
-        error_mem = storage.insert_memory({
-            "content": "Encountered a timeout error in the API. The fix was to increase the connection pool",
-            "directory_context": "/proj",
-            "heat": 1.0,
-            "tags": ["error", "fix"],
-        })
+        error_mem = storage.insert_memory(
+            {
+                "content": "Encountered a timeout error in the API. The fix was to increase the connection pool",
+                "directory_context": "/proj",
+                "heat": 1.0,
+                "tags": ["error", "fix"],
+            }
+        )
         error_data = storage.get_memory(error_mem)
         error_domains = pool.assign_memory(error_data)
         assert "errors" in error_domains
@@ -833,11 +898,13 @@ class TestAstrocyteDomainAssignment:
 class TestMetamemoryFeedback:
     def test_rate_memories_updates_confidence(self, storage, thermo):
         """Rate memories as useful/not useful, verify confidence updates."""
-        mid = storage.insert_memory({
-            "content": "Always run tests before committing code",
-            "directory_context": "/proj",
-            "heat": 1.0,
-        })
+        mid = storage.insert_memory(
+            {
+                "content": "Always run tests before committing code",
+                "directory_context": "/proj",
+                "heat": 1.0,
+            }
+        )
 
         # Rate as useful 4 times (access_count > 3 triggers confidence calc)
         for _ in range(4):
@@ -863,15 +930,17 @@ class TestFullSleepCycle:
         # Seed some memories for the sleep cycle to work with
         for i in range(5):
             embedding = embeddings.encode(f"Memory about topic {i} in the codebase")
-            storage.insert_memory({
-                "content": f"Memory about topic {i} in the codebase",
-                "embedding": embedding,
-                "tags": ["topic"],
-                "directory_context": "/proj",
-                "heat": 1.0,
-                "is_stale": False,
-                "embedding_model": embeddings.get_model_name(),
-            })
+            storage.insert_memory(
+                {
+                    "content": f"Memory about topic {i} in the codebase",
+                    "embedding": embedding,
+                    "tags": ["topic"],
+                    "directory_context": "/proj",
+                    "heat": 1.0,
+                    "is_stale": False,
+                    "embedding_model": embeddings.get_model_name(),
+                }
+            )
 
         stats = sleep_engine.run_sleep_cycle()
 
@@ -926,14 +995,20 @@ class TestAllMCPTools:
         tool_names = {t.name for t in tools}
 
         expected_tools = {
-            "remember", "recall", "forget", "validate_memory",
-            "get_project_context", "consolidate_now", "memory_stats",
-            "rate_memory", "recall_hierarchical", "drill_down",
-            "create_trigger", "get_project_story",
+            "remember",
+            "recall",
+            "forget",
+            "validate_memory",
+            "get_project_context",
+            "consolidate_now",
+            "memory_stats",
+            "rate_memory",
+            "recall_hierarchical",
+            "drill_down",
+            "create_trigger",
+            "get_project_story",
         }
-        assert expected_tools.issubset(tool_names), (
-            f"Missing tools: {expected_tools - tool_names}"
-        )
+        assert expected_tools.issubset(tool_names), f"Missing tools: {expected_tools - tool_names}"
 
     def test_all_resources_registered(self, server_engines):
         """Verify all MCP resources are registered."""
@@ -1031,7 +1106,7 @@ class TestRememberProspectiveTrigger:
     def test_todo_creates_trigger_and_fires(self, server_engines):
         """Verify TODO in content creates prospective trigger, and matching content triggers it."""
         # Store content with a TODO
-        result1 = server.remember(
+        server.remember(
             "TODO: add input validation for email fields",
             "/proj",
             ["task"],
@@ -1040,7 +1115,10 @@ class TestRememberProspectiveTrigger:
         # Check that a prospective trigger was created
         active = server._storage.get_active_prospective_memories()
         assert len(active) >= 1
-        assert any("validation" in pm["content"].lower() or "email" in pm["content"].lower() for pm in active)
+        assert any(
+            "validation" in pm["content"].lower() or "email" in pm["content"].lower()
+            for pm in active
+        )
 
         # Store matching content - should trigger
         result2 = server.remember(
@@ -1060,7 +1138,9 @@ class TestRecallHierarchical:
         """Verify recall_hierarchical tool works via server."""
         # Store memories
         for i in range(5):
-            server.remember(f"Hierarchical test memory {i} about Python coding", "/proj", ["python"])
+            server.remember(
+                f"Hierarchical test memory {i} about Python coding", "/proj", ["python"]
+            )
 
         # First build the tree via consolidation
         server.consolidate_now()

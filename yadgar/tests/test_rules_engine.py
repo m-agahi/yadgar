@@ -38,9 +38,17 @@ def engine(storage, settings):
 
 
 def _make_memory_dict(
-    mid, content, tags=None, directory="/project", heat=1.0,
-    importance=0.5, confidence=1.0, surprise_score=0.0,
-    score=0.5, store_type="episodic", compression_level=0,
+    mid,
+    content,
+    tags=None,
+    directory="/project",
+    heat=1.0,
+    importance=0.5,
+    confidence=1.0,
+    surprise_score=0.0,
+    score=0.5,
+    store_type="episodic",
+    compression_level=0,
 ):
     """Create a memory dict for testing (not persisted)."""
     return {
@@ -89,7 +97,11 @@ class TestParseCondition:
         assert _parse_condition("tag contains architecture") == ("tag", "contains", "architecture")
 
     def test_not_contains(self):
-        assert _parse_condition("content not_contains password") == ("content", "not_contains", "password")
+        assert _parse_condition("content not_contains password") == (
+            "content",
+            "not_contains",
+            "password",
+        )
 
     def test_greater_than(self):
         assert _parse_condition("importance > 0.7") == ("importance", ">", "0.7")
@@ -105,7 +117,9 @@ class TestParseCondition:
 
     def test_matches(self):
         assert _parse_condition("directory_context matches /project/*") == (
-            "directory_context", "matches", "/project/*"
+            "directory_context",
+            "matches",
+            "/project/*",
         )
 
     def test_invalid(self):
@@ -372,8 +386,12 @@ class TestSoftRuleBoosts:
 class TestDirectoryScopedRule:
     def test_applies_in_matching_directory(self, engine):
         engine.add_rule(
-            "hard", "directory", "importance > 0.5", "filter",
-            priority=10, scope_value="/critical-project",
+            "hard",
+            "directory",
+            "importance > 0.5",
+            "filter",
+            priority=10,
+            scope_value="/critical-project",
         )
 
         memories = [
@@ -388,8 +406,12 @@ class TestDirectoryScopedRule:
 
     def test_does_not_apply_outside_directory(self, engine):
         engine.add_rule(
-            "hard", "directory", "importance > 0.5", "filter",
-            priority=10, scope_value="/critical-project",
+            "hard",
+            "directory",
+            "importance > 0.5",
+            "filter",
+            priority=10,
+            scope_value="/critical-project",
         )
 
         memories = [
@@ -421,8 +443,12 @@ class TestGlobalRuleAppliesEverywhere:
 class TestFileScopedRule:
     def test_file_glob_matching(self, engine):
         engine.add_rule(
-            "soft", "file", "tag contains typescript", "boost:0.5",
-            priority=5, scope_value="*.ts",
+            "soft",
+            "file",
+            "tag contains typescript",
+            "boost:0.5",
+            priority=5,
+            scope_value="*.ts",
         )
 
         memories = [
@@ -520,24 +546,31 @@ class TestIntegrationRecall:
 
         # Insert memories with different content
         _insert_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "TypeScript is the best language for web development",
             tags=["typescript", "web"],
         )
         _insert_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "Python is great for data science and machine learning",
             tags=["python", "ml"],
         )
         _insert_memory(
-            storage, embeddings,
+            storage,
+            embeddings,
             "JavaScript was the original web scripting language",
             tags=["javascript", "web"],
         )
 
         # Add a hard rule: only keep memories containing "TypeScript" OR "JavaScript"
         rules_engine.add_rule(
-            "hard", "global", "content contains web", "filter", 10,
+            "hard",
+            "global",
+            "content contains web",
+            "filter",
+            10,
         )
 
         # Recall should filter based on rules
@@ -565,11 +598,11 @@ class TestIntegrationRecall:
 class TestMcpAddRuleTool:
     def test_add_rule_tool(self, storage, settings):
         """Test that the server-level add_rule tool function works."""
+        # Temporarily set the global _rules_engine
+        import yadgar.server as srv
         from yadgar.server import add_rule as _add_rule_tool
         from yadgar.server import get_rules as _get_rules_tool
 
-        # Temporarily set the global _rules_engine
-        import yadgar.server as srv
         original = srv._rules_engine
         try:
             srv._rules_engine = RulesEngine(storage, settings)
@@ -594,9 +627,9 @@ class TestMcpAddRuleTool:
 
     def test_add_rule_tool_validation_error(self, storage, settings):
         """Test that invalid rules return error."""
+        import yadgar.server as srv
         from yadgar.server import add_rule as _add_rule_tool
 
-        import yadgar.server as srv
         original = srv._rules_engine
         try:
             srv._rules_engine = RulesEngine(storage, settings)
@@ -613,9 +646,9 @@ class TestMcpAddRuleTool:
 
     def test_add_rule_tool_not_initialized(self):
         """Test that add_rule returns error when engine not initialized."""
+        import yadgar.server as srv
         from yadgar.server import add_rule as _add_rule_tool
 
-        import yadgar.server as srv
         original = srv._rules_engine
         try:
             srv._rules_engine = None
@@ -631,9 +664,9 @@ class TestMcpAddRuleTool:
 
     def test_get_rules_with_directory_filter(self, storage, settings):
         """Test get_rules with directory scoping."""
+        import yadgar.server as srv
         from yadgar.server import get_rules as _get_rules_tool
 
-        import yadgar.server as srv
         original = srv._rules_engine
         try:
             srv._rules_engine = RulesEngine(storage, settings)
@@ -641,8 +674,12 @@ class TestMcpAddRuleTool:
 
             rules_eng.add_rule("hard", "global", "importance > 0.5", "filter", 10)
             rules_eng.add_rule(
-                "soft", "directory", "tag contains web", "boost:0.2",
-                priority=5, scope_value="/web-project",
+                "soft",
+                "directory",
+                "tag contains web",
+                "boost:0.2",
+                priority=5,
+                scope_value="/web-project",
             )
 
             # All rules

@@ -13,7 +13,6 @@ Key math:
 """
 
 import logging
-from typing import Optional
 
 import numpy as np
 
@@ -33,7 +32,7 @@ class CognitiveMap:
         self._storage = storage
         self._discount = settings.SR_DISCOUNT  # γ
         self._lr = settings.SR_UPDATE_RATE  # TD learning rate
-        self._sr_matrix: Optional[np.ndarray] = None
+        self._sr_matrix: np.ndarray | None = None
         self._memory_index: dict[int, int] = {}  # memory_id → row index
         self._index_memory: dict[int, int] = {}  # row index → memory_id
         self._dirty = True
@@ -48,12 +47,14 @@ class CognitiveMap:
         if existing:
             self._storage.increment_transition(from_memory_id, to_memory_id)
         else:
-            self._storage.insert_transition({
-                "from_memory_id": from_memory_id,
-                "to_memory_id": to_memory_id,
-                "count": 1,
-                "session_id": session_id,
-            })
+            self._storage.insert_transition(
+                {
+                    "from_memory_id": from_memory_id,
+                    "to_memory_id": to_memory_id,
+                    "count": 1,
+                    "session_id": session_id,
+                }
+            )
         self._dirty = True
 
     # -- Transition matrix --
@@ -215,9 +216,7 @@ class CognitiveMap:
         distances.sort(key=lambda x: x[1], reverse=True)
         return distances[:top_k]
 
-    def get_neighborhood(
-        self, memory_id: int, radius: float = 0.5
-    ) -> list[dict]:
+    def get_neighborhood(self, memory_id: int, radius: float = 0.5) -> list[dict]:
         """Find memories within Euclidean distance 'radius' in SR space."""
         coords = self.extract_coordinates(n_dims=2)
         if memory_id not in coords:
@@ -282,9 +281,7 @@ class CognitiveMap:
             return {}
 
         # Find query position via embedding similarity
-        vec_hits = self._storage.search_vectors(
-            query_embedding, top_k=5, min_heat=0.0
-        )
+        vec_hits = self._storage.search_vectors(query_embedding, top_k=5, min_heat=0.0)
 
         seed_coords = []
         for mid, _dist in vec_hits:

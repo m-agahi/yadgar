@@ -14,7 +14,7 @@ Three compression levels:
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
@@ -24,9 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Patterns for identifying high-information sentences
 _CODE_BLOCK_RE = re.compile(r"```[\s\S]*?```")
-_FILE_PATH_RE = re.compile(
-    r"(?:\.{0,2}/)?(?:[\w@.-]+/)+[\w@.-]+\.\w+"
-)
+_FILE_PATH_RE = re.compile(r"(?:\.{0,2}/)?(?:[\w@.-]+/)+[\w@.-]+\.\w+")
 _ERROR_RE = re.compile(r"\b\w*(?:Error|Exception|Traceback)\b")
 _DECISION_RE = re.compile(
     r"\b(?:decided|chose|choosing|using|switched|migrated|replaced|selected|adopted)\b",
@@ -78,10 +76,10 @@ class MemoryCompressor:
         except (ValueError, TypeError):
             return 0
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # Handle naive datetimes by assuming UTC
         if created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=timezone.utc)
+            created_at = created_at.replace(tzinfo=UTC)
         hours_elapsed = (now - created_at).total_seconds() / 3600.0
 
         # Compute resistance multiplier from memory properties
@@ -125,12 +123,14 @@ class MemoryCompressor:
         original_content = memory["content"]
 
         # Archive original content
-        self._storage.insert_archive({
-            "original_memory_id": memory_id,
-            "content": original_content,
-            "embedding": memory.get("embedding"),
-            "archive_reason": "compression",
-        })
+        self._storage.insert_archive(
+            {
+                "original_memory_id": memory_id,
+                "content": original_content,
+                "embedding": memory.get("embedding"),
+                "archive_reason": "compression",
+            }
+        )
 
         # Generate gist
         gist = self._extract_gist(original_content)
@@ -176,12 +176,14 @@ class MemoryCompressor:
         gist_content = memory["content"]
 
         # Archive gist content
-        self._storage.insert_archive({
-            "original_memory_id": memory_id,
-            "content": gist_content,
-            "embedding": memory.get("embedding"),
-            "archive_reason": "compression",
-        })
+        self._storage.insert_archive(
+            {
+                "original_memory_id": memory_id,
+                "content": gist_content,
+                "embedding": memory.get("embedding"),
+                "archive_reason": "compression",
+            }
+        )
 
         # Generate tag representation
         tag_repr = self._generate_tag(gist_content, memory)
@@ -335,7 +337,7 @@ class MemoryCompressor:
     def _split_sentences(self, text: str) -> list[str]:
         """Split text into sentences, filtering out empty lines."""
         # Split on sentence-ending punctuation or newlines
-        raw = re.split(r'(?<=[.!?])\s+|\n+', text)
+        raw = re.split(r"(?<=[.!?])\s+|\n+", text)
         return [s.strip() for s in raw if s.strip()]
 
     def _score_sentence(self, sentence: str) -> float:
@@ -412,7 +414,7 @@ class MemoryCompressor:
             # Shorten summary to fit
             available = 200 - len(f" | Tags: {tag_part} | Created: {date_str}")
             if available > 10:
-                summary = summary[:available - 3] + "..."
+                summary = summary[: available - 3] + "..."
             else:
                 summary = summary[:30] + "..."
                 tag_part = ", ".join(entity_list[:2]) if entity_list else "general"

@@ -8,25 +8,25 @@ import re
 import signal
 import sys
 import time
+from datetime import UTC
 from pathlib import Path
-
-from yadgar import __version__
 
 from mcp.server.fastmcp import FastMCP
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from yadgar import __version__
 from yadgar.astrocyte_pool import AstrocytePool
+from yadgar.causal_discovery import CausalDiscovery
 from yadgar.cls_store import DualStoreCLS
 from yadgar.cognitive_map import CognitiveMap
 from yadgar.compression import MemoryCompressor
-from yadgar.config import Settings, get_settings
+from yadgar.config import get_settings
 from yadgar.consolidation import AstrocyteEngine
 from yadgar.crdt_sync import CRDTMemorySync
-from yadgar.engram import EngramAllocator
-from yadgar.causal_discovery import CausalDiscovery
 from yadgar.curation import MemoryCurator
 from yadgar.embeddings import EmbeddingEngine
+from yadgar.engram import EngramAllocator
 from yadgar.fractal import FractalMemoryTree
 from yadgar.hdc_encoder import HDCEncoder
 from yadgar.hopfield import HopfieldMemory
@@ -36,14 +36,15 @@ from yadgar.narrative import NarrativeEngine
 from yadgar.predictive_coding import PredictiveCodingGate
 from yadgar.prospective import ProspectiveMemoryEngine
 from yadgar.reconsolidation import ReconsolidationEngine
+
+# SurrealDB is the sole storage backend (StorageEngine in storage.py)
+from yadgar.restoration import HippocampalReplay
 from yadgar.retrieval import HippoRetriever
 from yadgar.rules_engine import RulesEngine
 from yadgar.sensory_buffer import SensoryBuffer
 from yadgar.sleep_compute import SleepComputeEngine
 from yadgar.staleness import StalenessDetector
 from yadgar.storage import StorageEngine
-# SurrealDB is the sole storage backend (StorageEngine in storage.py)
-from yadgar.restoration import HippocampalReplay
 from yadgar.thermodynamics import MemoryThermodynamics
 
 logger = logging.getLogger(__name__)
@@ -114,13 +115,15 @@ async def health_check(request: Request) -> JSONResponse:
     if mcp_server._session_manager is not None:
         session_count = len(mcp_server._session_manager._server_instances)
 
-    return JSONResponse({
-        "status": "ok",
-        "version": __version__,
-        "transport": _active_transport,
-        "uptime_seconds": round(time.time() - _start_time, 1) if _start_time else 0,
-        "active_sessions": session_count,
-    })
+    return JSONResponse(
+        {
+            "status": "ok",
+            "version": __version__,
+            "transport": _active_transport,
+            "uptime_seconds": round(time.time() - _start_time, 1) if _start_time else 0,
+            "active_sessions": session_count,
+        }
+    )
 
 
 @mcp_server.custom_route("/hooks/pre-compact", methods=["POST"])
@@ -134,7 +137,9 @@ async def hook_pre_compact(request: Request) -> JSONResponse:
     directory = body.get("cwd", os.getcwd())
     replay = _replay
     if replay is None:
-        return JSONResponse({"status": "error", "message": "Replay engine not initialized"}, status_code=503)
+        return JSONResponse(
+            {"status": "error", "message": "Replay engine not initialized"}, status_code=503
+        )
 
     result = replay.pre_compact_drain(directory)
 
@@ -154,7 +159,9 @@ async def hook_post_compact(request: Request) -> JSONResponse:
     directory = request.query_params.get("directory", os.getcwd())
     replay = _replay
     if replay is None:
-        return JSONResponse({"status": "error", "message": "Replay engine not initialized"}, status_code=503)
+        return JSONResponse(
+            {"status": "error", "message": "Replay engine not initialized"}, status_code=503
+        )
 
     result = replay.restore(directory)
     return JSONResponse(result)
@@ -174,9 +181,12 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
 
     storage = _storage
     if storage is None:
-        return JSONResponse({"status": "error", "message": "Storage not initialized"}, status_code=503)
+        return JSONResponse(
+            {"status": "error", "message": "Storage not initialized"}, status_code=503
+        )
 
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     tool_name = body.get("tool_name", "unknown")
 
     # Skip Yadgar's own tools
@@ -188,7 +198,7 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
         tool_input_summary=body.get("summary", "")[:200],
         directory=body.get("directory", ""),
         session_id=body.get("session_id", ""),
-        timestamp=datetime.now(timezone.utc).isoformat(),
+        timestamp=datetime.now(UTC).isoformat(),
     )
 
     if _consolidation is not None:
@@ -278,6 +288,7 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
 
     try:
         import asyncio
+
         results = await asyncio.to_thread(retriever.recall, query, max_results=5, min_heat=0.0)
     except Exception as e:
         logger.debug("prompt-recall hook error: %s", e)
@@ -397,9 +408,7 @@ def remember(content: str, context: str, tags: list[str]) -> dict:
     # Predictive coding write gate — FIRST check before any storage
     gate_result = None
     if _write_gate is not None:
-        should_store, surprisal, reason = _write_gate.should_store(
-            content, context, tags
-        )
+        should_store, surprisal, reason = _write_gate.should_store(content, context, tags)
         gate_result = {
             "surprisal": round(surprisal, 4),
             "gate_reason": reason,
@@ -416,9 +425,10 @@ def remember(content: str, context: str, tags: list[str]) -> dict:
     contextual_prefix = None
     retriever = _retriever
     if retriever is not None and settings.CONTEXTUAL_PREFIX_ENABLED:
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         contextual_prefix = retriever.generate_contextual_prefix(
-            content, context, tags, datetime.now(timezone.utc)
+            content, context, tags, datetime.now(UTC)
         )
 
     # Embed with contextual prefix prepended if available
@@ -452,7 +462,10 @@ def remember(content: str, context: str, tags: list[str]) -> dict:
     curator = _curator
     if curator is not None and embedding is not None:
         curation_result = curator.curate_on_remember(
-            content, context, tags, embedding,
+            content,
+            context,
+            tags,
+            embedding,
             initial_heat=initial_heat,
             surprise=surprise,
             importance=importance,
@@ -543,12 +556,13 @@ def remember(content: str, context: str, tags: list[str]) -> dict:
     if _prospective is not None:
         _prospective.auto_create_from_content(content, context)
 
-        from datetime import datetime as _dt, timezone as _tz
+        from datetime import datetime as _dt
+
         trigger_context = {
             "directory": context,
             "content": content,
             "entities": tags,
-            "current_time": _dt.now(_tz.utc),
+            "current_time": _dt.now(UTC),
         }
         triggered_memories = _prospective.check_triggers(trigger_context)
 
@@ -564,6 +578,7 @@ def remember(content: str, context: str, tags: list[str]) -> dict:
     if _hdc is not None:
         try:
             from yadgar.retrieval import _extract_query_entities
+
             hdc_entities = _extract_query_entities(content)
             hdc_vec = _hdc.encode_memory(
                 directory=context,
@@ -592,18 +607,14 @@ def remember(content: str, context: str, tags: list[str]) -> dict:
     if thermo is not None:
         mem_data = storage.get_memory(memory_id)
         if mem_data and mem_data.get("created_at"):
-            coherent_heat = thermo.apply_session_coherence(
-                mem_data["heat"], mem_data["created_at"]
-            )
+            coherent_heat = thermo.apply_session_coherence(mem_data["heat"], mem_data["created_at"])
             if coherent_heat != mem_data["heat"]:
                 storage.update_memory_heat(memory_id, coherent_heat)
 
     # 4. Micro-checkpoint: auto-checkpoint on significant events
     if _replay is not None and settings.MICRO_CHECKPOINT_ENABLED:
         gate_surprisal = gate_result["surprisal"] if gate_result else 0.0
-        should_micro, micro_reason = _replay.should_micro_checkpoint(
-            content, tags, gate_surprisal
-        )
+        should_micro, micro_reason = _replay.should_micro_checkpoint(content, tags, gate_surprisal)
         if should_micro:
             try:
                 _replay.create_micro_checkpoint(context, content, micro_reason)
@@ -621,7 +632,8 @@ def remember(content: str, context: str, tags: list[str]) -> dict:
     if settings.REINJECTION_ENABLED and _retriever is not None:
         try:
             related = _retriever.recall(
-                content[:300], max_results=settings.REINJECTION_MAX_RESULTS + 1,
+                content[:300],
+                max_results=settings.REINJECTION_MAX_RESULTS + 1,
                 min_heat=0.0,
             )
             for r in related:
@@ -629,11 +641,13 @@ def remember(content: str, context: str, tags: list[str]) -> dict:
                     r_content = r.get("content", "")
                     if len(r_content) > 300:
                         r_content = r_content[:300] + "..."
-                    related_context.append({
-                        "id": r["id"],
-                        "content": r_content,
-                        "heat": r.get("heat", 0),
-                    })
+                    related_context.append(
+                        {
+                            "id": r["id"],
+                            "content": r_content,
+                            "heat": r.get("heat", 0),
+                        }
+                    )
                 if len(related_context) >= settings.REINJECTION_MAX_RESULTS:
                     break
         except Exception:
@@ -647,7 +661,12 @@ def remember(content: str, context: str, tags: list[str]) -> dict:
 
     memory = storage.get_memory(memory_id)
     if memory is None:
-        return {"stored": True, "id": memory_id, "curation_action": curation_action, "warning": "memory written but not found on readback"}
+        return {
+            "stored": True,
+            "id": memory_id,
+            "curation_action": curation_action,
+            "warning": "memory written but not found on readback",
+        }
     # Strip binary fields from response (not JSON-serializable)
     memory.pop("embedding", None)
     memory.pop("hdc_vector", None)
@@ -657,8 +676,7 @@ def remember(content: str, context: str, tags: list[str]) -> dict:
         memory["gate_reason"] = gate_result["gate_reason"]
     if triggered_memories:
         memory["triggered_prospective_memories"] = [
-            {"id": pm["id"], "content": pm["content"]}
-            for pm in triggered_memories
+            {"id": pm["id"], "content": pm["content"]} for pm in triggered_memories
         ]
     if engram_result is not None:
         memory["engram_slot"] = engram_result["slot_index"]
@@ -760,7 +778,9 @@ def recall(query: str, max_results: int = 5, min_heat: float = 0.0) -> list[dict
     buffer = _buffer
     if buffer is not None:
         result_count = len(merged)
-        buffer.capture_action("recall", "", f"query='{query[:80]}' results={result_count}", f"found_{result_count}")
+        buffer.capture_action(
+            "recall", "", f"query='{query[:80]}' results={result_count}", f"found_{result_count}"
+        )
 
     # Track tool call for auto-checkpoint interval
     if _replay is not None:
@@ -826,7 +846,9 @@ def get_project_context(directory: str) -> dict:
     and includes a suggestion if they're missing.
     """
     storage = _get_storage()
-    memories = storage.get_memories_for_directory(directory, min_heat=settings.PROJECT_CONTEXT_MIN_HEAT)
+    memories = storage.get_memories_for_directory(
+        directory, min_heat=settings.PROJECT_CONTEXT_MIN_HEAT
+    )
     for m in memories:
         m.pop("embedding", None)
         m.pop("hdc_vector", None)
@@ -842,10 +864,7 @@ def get_project_context(directory: str) -> dict:
                 data = json.loads(hooks_settings.read_text())
                 hooks = data.get("hooks", {})
                 has_pre = "PreCompact" in hooks
-                has_post = any(
-                    h.get("matcher") == "compact"
-                    for h in hooks.get("SessionStart", [])
-                )
+                has_post = any(h.get("matcher") == "compact" for h in hooks.get("SessionStart", []))
                 hooks_installed = has_pre and has_post
             except Exception:
                 pass
@@ -901,7 +920,7 @@ def reembed_all() -> dict:
         texts = [r["content"] for r in batch]
         ids = [r["id"] for r in batch]
         encoded = embeddings.encode_batch(texts)
-        for mid, emb in zip(ids, encoded):
+        for mid, emb in zip(ids, encoded, strict=False):
             if emb is not None:
                 storage.update_memory_embedding(mid, emb, embeddings.model_name)
                 total += 1
@@ -953,7 +972,9 @@ def memory_stats() -> dict:
             stats[f"compressed_level_{level}"] = storage.count_memories_by_compression_level(level)
 
     if _cognitive_map is not None:
-        stats["sr_dimensions"] = "active" if _cognitive_map.has_sufficient_data() else "insufficient_data"
+        stats["sr_dimensions"] = (
+            "active" if _cognitive_map.has_sufficient_data() else "insufficient_data"
+        )
 
     if _causal is not None:
         causal_edges = storage.get_all_causal_edges()
@@ -1002,9 +1023,7 @@ def rate_memory(memory_id: int, was_useful: bool) -> dict:
 
 
 @mcp_server.tool()
-def recall_hierarchical(
-    query: str, level: int = None, max_results: int = 10
-) -> list[dict]:
+def recall_hierarchical(query: str, level: int = None, max_results: int = 10) -> list[dict]:
     """Retrieve memories from the fractal hierarchy at a specific level or adaptively."""
     retriever = _get_retriever()
     return retriever.recall_hierarchical(query, level=level, max_results=max_results)
@@ -1028,7 +1047,10 @@ def create_trigger(
     if _prospective is None:
         return {"status": "error", "message": "ProspectiveMemoryEngine not initialized"}
     pm_id = _prospective.create_trigger(
-        content, trigger_condition, trigger_type, target_directory,
+        content,
+        trigger_condition,
+        trigger_type,
+        target_directory,
     )
     return {"status": "created", "prospective_memory_id": pm_id}
 
@@ -1179,7 +1201,9 @@ def checkpoint(
     if buffer is not None:
         action_summary = buffer.get_action_summary()
         if action_summary:
-            enriched_context = f"{custom_context}\n\n{action_summary}" if custom_context else action_summary
+            enriched_context = (
+                f"{custom_context}\n\n{action_summary}" if custom_context else action_summary
+            )
 
     return replay.create_checkpoint(
         directory=directory,
@@ -1318,26 +1342,30 @@ def install_hooks(project_directory: str = "") -> dict:
     session_hooks = []
 
     # All sessions: inject lightweight context
-    session_hooks.append({
-        "matcher": "",
-        "hooks": [
-            {
-                "type": "command",
-                "command": f'python3 "{session_ctx_dst}"',
-            }
-        ],
-    })
+    session_hooks.append(
+        {
+            "matcher": "",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": f'python3 "{session_ctx_dst}"',
+                }
+            ],
+        }
+    )
 
     # After compaction: full restore with working memory, anchored, SR predictions
-    session_hooks.append({
-        "matcher": "compact",
-        "hooks": [
-            {
-                "type": "command",
-                "command": f'"{post_compact_dst}"',
-            }
-        ],
-    })
+    session_hooks.append(
+        {
+            "matcher": "compact",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": f'"{post_compact_dst}"',
+                }
+            ],
+        }
+    )
 
     hooks_config["SessionStart"] = session_hooks
 
@@ -1477,6 +1505,7 @@ def sync_instructions(claude_md_path: str = "") -> dict:
 
         # Find and replace existing Yadgar section
         import re
+
         # Match from "## Memory System" to next "## " header or end of file
         pattern = r"## Memory System — Yadgar[^\n]*\n(?:(?!## )[^\n]*\n)*"
         if re.search(pattern, content):
@@ -1600,8 +1629,26 @@ def init_engines(
 ):
     """Initialize all engines. Returns (storage, embeddings, buffer, consolidation, staleness)."""
     global _storage, _embeddings, _buffer, _consolidation, _staleness, _thermo, _retriever, _curator
-    global _prospective, _narrative, _sleep, _fractal, _pool, _kg, _reconsolidation, _write_gate, _engram
-    global _rules_engine, _hopfield, _cls, _compressor, _hdc, _cognitive_map, _causal, _metacognition, _crdt
+    global \
+        _prospective, \
+        _narrative, \
+        _sleep, \
+        _fractal, \
+        _pool, \
+        _kg, \
+        _reconsolidation, \
+        _write_gate, \
+        _engram
+    global \
+        _rules_engine, \
+        _hopfield, \
+        _cls, \
+        _compressor, \
+        _hdc, \
+        _cognitive_map, \
+        _causal, \
+        _metacognition, \
+        _crdt
     global _replay
 
     _settings = get_settings()
@@ -1663,8 +1710,26 @@ def init_engines(
 def shutdown():
     """Gracefully shut down all engines."""
     global _storage, _embeddings, _buffer, _consolidation, _staleness, _thermo, _retriever, _curator
-    global _prospective, _narrative, _sleep, _fractal, _pool, _kg, _reconsolidation, _write_gate, _engram
-    global _rules_engine, _hopfield, _cls, _compressor, _hdc, _cognitive_map, _causal, _metacognition, _crdt
+    global \
+        _prospective, \
+        _narrative, \
+        _sleep, \
+        _fractal, \
+        _pool, \
+        _kg, \
+        _reconsolidation, \
+        _write_gate, \
+        _engram
+    global \
+        _rules_engine, \
+        _hopfield, \
+        _cls, \
+        _compressor, \
+        _hdc, \
+        _cognitive_map, \
+        _causal, \
+        _metacognition, \
+        _crdt
     global _replay
 
     if _consolidation is not None:
@@ -1758,8 +1823,8 @@ def main(
 
     # Auto-install hooks for the current project if not already present
     try:
-        install_hooks(cwd)
-        logger.info("Hippocampal Replay hooks installed for %s", cwd)
+        install_hooks(os.getcwd())
+        logger.info("Hippocampal Replay hooks installed for %s", os.getcwd())
     except Exception:
         logger.debug("Auto-install of hooks failed (non-fatal)")
 

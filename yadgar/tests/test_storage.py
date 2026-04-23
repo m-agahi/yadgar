@@ -1,8 +1,6 @@
-import json
-
 import pytest
 
-from yadgar.storage import StorageEngine, _FTS_STOP_WORDS
+from yadgar.storage import _FTS_STOP_WORDS, StorageEngine
 
 
 @pytest.fixture
@@ -36,19 +34,23 @@ class TestSchemaCreation:
 
         # relationship table
         eid2 = storage.insert_entity({"name": "schema_entity2", "type": "file"})
-        rid = storage.insert_relationship({
-            "source_entity_id": eid,
-            "target_entity_id": eid2,
-            "relationship_type": "imports",
-        })
+        rid = storage.insert_relationship(
+            {
+                "source_entity_id": eid,
+                "target_entity_id": eid2,
+                "relationship_type": "imports",
+            }
+        )
         assert rid is not None
 
         # episode table
-        epid = storage.insert_episode({
-            "session_id": "sess-schema",
-            "directory": "/tmp",
-            "raw_content": "schema test",
-        })
+        epid = storage.insert_episode(
+            {
+                "session_id": "sess-schema",
+                "directory": "/tmp",
+                "raw_content": "schema test",
+            }
+        )
         assert epid is not None
 
         # consolidation_log table
@@ -60,27 +62,33 @@ class TestSchemaCreation:
         assert storage.get_cluster(clid) is not None
 
         # prospective_memory table
-        pmid = storage.insert_prospective_memory({
-            "content": "schema check pm",
-            "trigger_condition": "test",
-            "trigger_type": "keyword_match",
-        })
+        pmid = storage.insert_prospective_memory(
+            {
+                "content": "schema check pm",
+                "trigger_condition": "test",
+                "trigger_type": "keyword_match",
+            }
+        )
         assert pmid is not None
 
         # narrative_entry table
-        nid = storage.insert_narrative_entry({
-            "directory_context": "/tmp",
-            "summary": "schema narrative",
-            "period_start": "2026-01-01T00:00:00",
-            "period_end": "2026-01-01T23:59:59",
-        })
+        nid = storage.insert_narrative_entry(
+            {
+                "directory_context": "/tmp",
+                "summary": "schema narrative",
+                "period_start": "2026-01-01T00:00:00",
+                "period_end": "2026-01-01T23:59:59",
+            }
+        )
         assert nid is not None
 
         # astrocyte_process table
-        aid = storage.insert_astrocyte_process({
-            "name": "schema-proc",
-            "domain": "test",
-        })
+        aid = storage.insert_astrocyte_process(
+            {
+                "name": "schema-proc",
+                "domain": "test",
+            }
+        )
         assert aid is not None
 
     def test_schema_is_idempotent(self, tmp_path):
@@ -209,10 +217,12 @@ class TestMemoryHeatFiltering:
 
 class TestEntities:
     def test_insert_and_get_entity(self, storage):
-        entity_id = storage.insert_entity({
-            "name": "storage.py",
-            "type": "file",
-        })
+        entity_id = storage.insert_entity(
+            {
+                "name": "storage.py",
+                "type": "file",
+            }
+        )
         assert entity_id is not None
 
         retrieved = storage.get_entity_by_name("storage.py")
@@ -289,10 +299,12 @@ class TestMemoryStats:
         stale_id = storage.insert_memory(_make_memory(content="stale", heat=0.6))
         storage.update_memory_staleness(stale_id, True)
 
-        storage.insert_consolidation_log({
-            "memories_added": 4,
-            "duration_ms": 120,
-        })
+        storage.insert_consolidation_log(
+            {
+                "memories_added": 4,
+                "duration_ms": 120,
+            }
+        )
 
         stats = storage.get_memory_stats()
         assert stats["total_memories"] == 4
@@ -315,21 +327,25 @@ class TestRelationships:
     def test_insert_relationship(self, storage):
         src = storage.insert_entity({"name": "main.py", "type": "file"})
         tgt = storage.insert_entity({"name": "utils.py", "type": "file"})
-        rel_id = storage.insert_relationship({
-            "source_entity_id": src,
-            "target_entity_id": tgt,
-            "relationship_type": "imports",
-        })
+        rel_id = storage.insert_relationship(
+            {
+                "source_entity_id": src,
+                "target_entity_id": tgt,
+                "relationship_type": "imports",
+            }
+        )
         assert rel_id is not None
 
     def test_get_relationship_between(self, storage):
         src = storage.insert_entity({"name": "a.py", "type": "file"})
         tgt = storage.insert_entity({"name": "b.py", "type": "file"})
-        storage.insert_relationship({
-            "source_entity_id": src,
-            "target_entity_id": tgt,
-            "relationship_type": "calls",
-        })
+        storage.insert_relationship(
+            {
+                "source_entity_id": src,
+                "target_entity_id": tgt,
+                "relationship_type": "calls",
+            }
+        )
         rel = storage.get_relationship_between(src, tgt)
         assert rel is not None
         assert rel["relationship_type"] == "calls"
@@ -337,52 +353,64 @@ class TestRelationships:
 
 class TestEpisodes:
     def test_insert_episode(self, storage):
-        ep_id = storage.insert_episode({
-            "session_id": "sess-001",
-            "directory": "/home/user/project",
-            "raw_content": "git status\n# output here",
-        })
+        ep_id = storage.insert_episode(
+            {
+                "session_id": "sess-001",
+                "directory": "/home/user/project",
+                "raw_content": "git status\n# output here",
+            }
+        )
         assert ep_id is not None
 
     def test_get_session_episodes(self, storage):
-        storage.insert_episode({
-            "session_id": "sess-abc",
-            "directory": "/proj",
-            "raw_content": "content 1",
-        })
-        storage.insert_episode({
-            "session_id": "sess-abc",
-            "directory": "/proj",
-            "raw_content": "content 2",
-        })
-        storage.insert_episode({
-            "session_id": "sess-other",
-            "directory": "/proj",
-            "raw_content": "other",
-        })
+        storage.insert_episode(
+            {
+                "session_id": "sess-abc",
+                "directory": "/proj",
+                "raw_content": "content 1",
+            }
+        )
+        storage.insert_episode(
+            {
+                "session_id": "sess-abc",
+                "directory": "/proj",
+                "raw_content": "content 2",
+            }
+        )
+        storage.insert_episode(
+            {
+                "session_id": "sess-other",
+                "directory": "/proj",
+                "raw_content": "other",
+            }
+        )
         eps = storage.get_session_episodes("sess-abc")
         assert len(eps) == 2
 
 
 class TestConsolidationLog:
     def test_insert_consolidation_log(self, storage):
-        log_id = storage.insert_consolidation_log({
-            "memories_added": 10,
-            "memories_updated": 3,
-            "memories_archived": 2,
-            "memories_deleted": 1,
-            "duration_ms": 500,
-        })
+        log_id = storage.insert_consolidation_log(
+            {
+                "memories_added": 10,
+                "memories_updated": 3,
+                "memories_archived": 2,
+                "memories_deleted": 1,
+                "duration_ms": 500,
+            }
+        )
         assert log_id is not None
 
 
 class TestMemoryClusters:
     def test_insert_and_get_cluster(self, storage):
-        cid = storage.insert_cluster({
-            "name": "python-debugging",
-            "level": 0,
-            "summary": "Memories about debugging Python code",
-        })
+        cid = storage.insert_cluster(
+            {
+                "name": "python-debugging",
+                "level": 0,
+                "summary": "Memories about debugging Python code",
+            }
+        )
         assert cid is not None
         cluster = storage.get_cluster(cid)
         assert cluster["name"] == "python-debugging"
@@ -421,12 +449,14 @@ class TestMemoryClusters:
 
 class TestProspectiveMemories:
     def test_insert_and_get_active(self, storage):
-        pm_id = storage.insert_prospective_memory({
-            "content": "Remind about testing",
-            "trigger_condition": "pytest",
-            "trigger_type": "keyword_match",
-            "target_directory": "/home/user/project",
-        })
+        pm_id = storage.insert_prospective_memory(
+            {
+                "content": "Remind about testing",
+                "trigger_condition": "pytest",
+                "trigger_type": "keyword_match",
+                "target_directory": "/home/user/project",
+            }
+        )
         assert pm_id is not None
 
         active = storage.get_active_prospective_memories()
@@ -437,11 +467,13 @@ class TestProspectiveMemories:
         assert active[0]["triggered_count"] == 0
 
     def test_trigger_prospective_memory(self, storage):
-        pm_id = storage.insert_prospective_memory({
-            "content": "Check docs",
-            "trigger_condition": "docs/",
-            "trigger_type": "directory_match",
-        })
+        pm_id = storage.insert_prospective_memory(
+            {
+                "content": "Check docs",
+                "trigger_condition": "docs/",
+                "trigger_type": "directory_match",
+            }
+        )
         storage.trigger_prospective_memory(pm_id)
 
         active = storage.get_active_prospective_memories()
@@ -449,11 +481,13 @@ class TestProspectiveMemories:
         assert active[0]["triggered_at"] is not None
 
     def test_trigger_increments_count(self, storage):
-        pm_id = storage.insert_prospective_memory({
-            "content": "Check docs",
-            "trigger_condition": "docs/",
-            "trigger_type": "directory_match",
-        })
+        pm_id = storage.insert_prospective_memory(
+            {
+                "content": "Check docs",
+                "trigger_condition": "docs/",
+                "trigger_type": "directory_match",
+            }
+        )
         storage.trigger_prospective_memory(pm_id)
         storage.trigger_prospective_memory(pm_id)
 
@@ -461,25 +495,29 @@ class TestProspectiveMemories:
         assert active[0]["triggered_count"] == 2
 
     def test_inactive_not_returned(self, storage):
-        storage.insert_prospective_memory({
-            "content": "inactive",
-            "trigger_condition": "x",
-            "trigger_type": "keyword_match",
-            "is_active": False,
-        })
+        storage.insert_prospective_memory(
+            {
+                "content": "inactive",
+                "trigger_condition": "x",
+                "trigger_type": "keyword_match",
+                "is_active": False,
+            }
+        )
         assert len(storage.get_active_prospective_memories()) == 0
 
 
 class TestNarrativeEntries:
     def test_insert_and_get_narratives(self, storage):
-        nid = storage.insert_narrative_entry({
-            "directory_context": "/home/user/project",
-            "summary": "Set up project structure and CI",
-            "period_start": "2026-03-01T00:00:00",
-            "period_end": "2026-03-01T23:59:59",
-            "key_decisions": ["Use FastAPI", "SurrealDB WAL"],
-            "key_events": ["Init repo", "First test pass"],
-        })
+        nid = storage.insert_narrative_entry(
+            {
+                "directory_context": "/home/user/project",
+                "summary": "Set up project structure and CI",
+                "period_start": "2026-03-01T00:00:00",
+                "period_end": "2026-03-01T23:59:59",
+                "key_decisions": ["Use FastAPI", "SurrealDB WAL"],
+                "key_events": ["Init repo", "First test pass"],
+            }
+        )
         assert nid is not None
 
         entries = storage.get_narratives_for_directory("/home/user/project")
@@ -490,18 +528,22 @@ class TestNarrativeEntries:
         assert entries[0]["heat"] == 1.0
 
     def test_narratives_filtered_by_directory(self, storage):
-        storage.insert_narrative_entry({
-            "directory_context": "/proj/a",
-            "summary": "A stuff",
-            "period_start": "2026-03-01T00:00:00",
-            "period_end": "2026-03-01T23:59:59",
-        })
-        storage.insert_narrative_entry({
-            "directory_context": "/proj/b",
-            "summary": "B stuff",
-            "period_start": "2026-03-01T00:00:00",
-            "period_end": "2026-03-01T23:59:59",
-        })
+        storage.insert_narrative_entry(
+            {
+                "directory_context": "/proj/a",
+                "summary": "A stuff",
+                "period_start": "2026-03-01T00:00:00",
+                "period_end": "2026-03-01T23:59:59",
+            }
+        )
+        storage.insert_narrative_entry(
+            {
+                "directory_context": "/proj/b",
+                "summary": "B stuff",
+                "period_start": "2026-03-01T00:00:00",
+                "period_end": "2026-03-01T23:59:59",
+            }
+        )
         results = storage.get_narratives_for_directory("/proj/a")
         assert len(results) == 1
         assert results[0]["summary"] == "A stuff"
@@ -509,13 +551,15 @@ class TestNarrativeEntries:
 
 class TestAstrocyteProcesses:
     def test_insert_and_get_processes(self, storage):
-        pid = storage.insert_astrocyte_process({
-            "name": "consolidator",
-            "domain": "memory-management",
-            "specialization": "heat decay",
-            "memory_ids": [1, 2, 3],
-            "entity_ids": [10, 20],
-        })
+        pid = storage.insert_astrocyte_process(
+            {
+                "name": "consolidator",
+                "domain": "memory-management",
+                "specialization": "heat decay",
+                "memory_ids": [1, 2, 3],
+                "entity_ids": [10, 20],
+            }
+        )
         assert pid is not None
 
         procs = storage.get_astrocyte_processes()
@@ -527,25 +571,32 @@ class TestAstrocyteProcesses:
         assert procs[0]["heat"] == 1.0
 
     def test_update_astrocyte_process(self, storage):
-        pid = storage.insert_astrocyte_process({
-            "name": "proc1",
-            "domain": "test",
-        })
-        storage.update_astrocyte_process(pid, {
-            "heat": 0.5,
-            "memory_ids": [4, 5],
-            "specialization": "clustering",
-        })
+        pid = storage.insert_astrocyte_process(
+            {
+                "name": "proc1",
+                "domain": "test",
+            }
+        )
+        storage.update_astrocyte_process(
+            pid,
+            {
+                "heat": 0.5,
+                "memory_ids": [4, 5],
+                "specialization": "clustering",
+            },
+        )
         procs = storage.get_astrocyte_processes()
         assert procs[0]["heat"] == 0.5
         assert procs[0]["memory_ids"] == [4, 5]
         assert procs[0]["specialization"] == "clustering"
 
     def test_update_ignores_invalid_fields(self, storage):
-        pid = storage.insert_astrocyte_process({
-            "name": "proc1",
-            "domain": "test",
-        })
+        pid = storage.insert_astrocyte_process(
+            {
+                "name": "proc1",
+                "domain": "test",
+            }
+        )
         storage.update_astrocyte_process(pid, {"bad_field": "nope"})
         procs = storage.get_astrocyte_processes()
         assert procs[0]["name"] == "proc1"
@@ -560,12 +611,14 @@ class TestContextManager:
 
 class TestMemoryRules:
     def test_insert_and_get_rule(self, storage):
-        rid = storage.insert_rule({
-            "rule_type": "filter",
-            "scope": "global",
-            "condition": "heat < 0.1",
-            "action": "archive",
-        })
+        rid = storage.insert_rule(
+            {
+                "rule_type": "filter",
+                "scope": "global",
+                "condition": "heat < 0.1",
+                "action": "archive",
+            }
+        )
         assert rid is not None
 
         rules = storage.get_rules_for_scope("global")
@@ -573,12 +626,14 @@ class TestMemoryRules:
         assert rules[0]["rule_type"] == "filter"
 
     def test_delete_rule(self, storage):
-        rid = storage.insert_rule({
-            "rule_type": "filter",
-            "scope": "global",
-            "condition": "heat < 0.1",
-            "action": "archive",
-        })
+        rid = storage.insert_rule(
+            {
+                "rule_type": "filter",
+                "scope": "global",
+                "condition": "heat < 0.1",
+                "action": "archive",
+            }
+        )
         storage.delete_rule(rid)
         rules = storage.get_rules_for_scope("global")
         assert len(rules) == 0
@@ -589,12 +644,14 @@ class TestMemoryTransitions:
         mid1 = storage.insert_memory(_make_memory(content="mem1"))
         mid2 = storage.insert_memory(_make_memory(content="mem2"))
 
-        tid = storage.insert_transition({
-            "from_memory_id": mid1,
-            "to_memory_id": mid2,
-            "count": 1,
-            "session_id": "sess-test",
-        })
+        tid = storage.insert_transition(
+            {
+                "from_memory_id": mid1,
+                "to_memory_id": mid2,
+                "count": 1,
+                "session_id": "sess-test",
+            }
+        )
         assert tid is not None
 
         trans = storage.get_transition(mid1, mid2)

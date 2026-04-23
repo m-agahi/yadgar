@@ -1,11 +1,11 @@
 """Tests for the typed temporal knowledge graph."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from yadgar.config import Settings
-from yadgar.knowledge_graph import KnowledgeGraph, VALID_REL_TYPES
+from yadgar.knowledge_graph import VALID_REL_TYPES, KnowledgeGraph
 from yadgar.storage import StorageEngine
 
 
@@ -29,9 +29,7 @@ def graph(storage, settings):
 class TestAddTypedRelationship:
     def test_creates_relationship_with_type(self, graph, storage):
         rid = graph.add_relationship("module_a", "module_b", "imports")
-        rows = storage._db.query(
-            "SELECT * FROM type::thing('relationship', $id)", {"id": rid}
-        )
+        rows = storage._db.query("SELECT * FROM type::thing('relationship', $id)", {"id": rid})
         row = storage._row_to_dict(rows[0]) if rows else None
         assert row["relationship_type"] == "imports"
         assert row["weight"] == 1.0
@@ -46,7 +44,7 @@ class TestAddTypedRelationship:
             graph.add_relationship("a", "b", "nonexistent_type")
 
     def test_stores_event_time_and_record_time(self, graph, storage):
-        event = datetime(2025, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+        event = datetime(2025, 6, 15, 12, 0, 0, tzinfo=UTC)
         rid = graph.add_relationship("x", "y", "calls", event_time=event)
         rows = storage._db.query(
             "SELECT event_time, record_time FROM type::thing('relationship', $id)",
@@ -79,9 +77,7 @@ class TestRelationshipReinforcement:
         rid = graph.add_relationship("a", "b", "imports")
         graph.add_relationship("a", "b", "imports")
         graph.add_relationship("a", "b", "imports")
-        rows = storage._db.query(
-            "SELECT weight FROM type::thing('relationship', $id)", {"id": rid}
-        )
+        rows = storage._db.query("SELECT weight FROM type::thing('relationship', $id)", {"id": rid})
         assert rows[0]["weight"] == pytest.approx(3.0)
 
     def test_different_types_are_separate(self, graph, storage):
@@ -92,7 +88,7 @@ class TestRelationshipReinforcement:
 
 class TestBiTemporal:
     def test_event_time_vs_record_time(self, graph, storage):
-        past = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        past = datetime(2024, 1, 1, tzinfo=UTC)
         rid = graph.add_relationship("a", "b", "imports", event_time=past)
         rows = storage._db.query(
             "SELECT event_time, record_time FROM type::thing('relationship', $id)",
@@ -105,9 +101,9 @@ class TestBiTemporal:
         assert record_time.year >= 2026  # recorded now
 
     def test_relationships_at_time_filters(self, graph):
-        t1 = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        t2 = datetime(2025, 6, 1, tzinfo=timezone.utc)
-        t3 = datetime(2025, 12, 1, tzinfo=timezone.utc)
+        t1 = datetime(2025, 1, 1, tzinfo=UTC)
+        t2 = datetime(2025, 6, 1, tzinfo=UTC)
+        t3 = datetime(2025, 12, 1, tzinfo=UTC)
 
         graph.add_relationship("srv", "db", "calls", event_time=t1)
         graph.add_relationship("srv", "cache", "calls", event_time=t3)
@@ -121,7 +117,7 @@ class TestBiTemporal:
         assert "cache" not in target_names
 
     def test_relationship_history_returns_all(self, graph):
-        for i in range(3):
+        for _i in range(3):
             graph.add_relationship("mod", "lib", "imports")
 
         history = graph.get_relationship_history("mod", "lib")
@@ -137,22 +133,26 @@ class TestCausalDetection:
         # Create entities with co_occurrence weight >= CAUSAL_THRESHOLD
         eid_a = storage.insert_entity({"name": "config_change", "type": "file"})
         eid_b = storage.insert_entity({"name": "ImportError", "type": "error"})
-        storage.insert_relationship({
-            "source_entity_id": eid_a,
-            "target_entity_id": eid_b,
-            "relationship_type": "co_occurrence",
-            "weight": 3.0,
-        })
+        storage.insert_relationship(
+            {
+                "source_entity_id": eid_a,
+                "target_entity_id": eid_b,
+                "relationship_type": "co_occurrence",
+                "weight": 3.0,
+            }
+        )
 
         # Create episodes where config_change appears BEFORE ImportError
         for i in range(4):
-            ts = (datetime.now(timezone.utc) - timedelta(hours=10 - i)).isoformat()
-            storage.insert_episode({
-                "session_id": f"sess_{i}",
-                "directory": "/proj",
-                "raw_content": f"Modified config_change in step {i}, then got ImportError",
-                "timestamp": ts,
-            })
+            ts = (datetime.now(UTC) - timedelta(hours=10 - i)).isoformat()
+            storage.insert_episode(
+                {
+                    "session_id": f"sess_{i}",
+                    "directory": "/proj",
+                    "raw_content": f"Modified config_change in step {i}, then got ImportError",
+                    "timestamp": ts,
+                }
+            )
 
         created = graph.detect_causality()
         assert created >= 1
@@ -166,18 +166,22 @@ class TestCausalDetection:
     def test_no_causality_below_threshold(self, graph, storage):
         eid_a = storage.insert_entity({"name": "alpha", "type": "variable"})
         eid_b = storage.insert_entity({"name": "beta", "type": "variable"})
-        storage.insert_relationship({
-            "source_entity_id": eid_a,
-            "target_entity_id": eid_b,
-            "relationship_type": "co_occurrence",
-            "weight": 1.0,  # below threshold of 3
-        })
+        storage.insert_relationship(
+            {
+                "source_entity_id": eid_a,
+                "target_entity_id": eid_b,
+                "relationship_type": "co_occurrence",
+                "weight": 1.0,  # below threshold of 3
+            }
+        )
 
-        storage.insert_episode({
-            "session_id": "s1",
-            "directory": "/proj",
-            "raw_content": "alpha then beta",
-        })
+        storage.insert_episode(
+            {
+                "session_id": "s1",
+                "directory": "/proj",
+                "raw_content": "alpha then beta",
+            }
+        )
 
         created = graph.detect_causality()
         assert created == 0

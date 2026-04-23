@@ -1,6 +1,6 @@
 """Tests for engram allocation — competitive memory slot storage with temporal linking."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -93,7 +93,7 @@ class TestExcitabilityDecay:
         assert initial > 0.4  # Should be ~0.5
 
         # Simulate time passing by updating the last_activated timestamp
-        past = (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat()
+        past = (datetime.now(UTC) - timedelta(hours=6)).isoformat()
         storage.update_engram_slot(0, 0.5, past)
 
         # After one half-life, excitability should be approximately halved
@@ -106,7 +106,7 @@ class TestExcitabilityDecay:
         allocator.boost_excitability(0)
 
         # Set last_activated to 48 hours ago (8 half-lives)
-        past = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+        past = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
         storage.update_engram_slot(0, 0.5, past)
 
         decayed = allocator.get_excitability(0)
@@ -225,10 +225,10 @@ class TestNoLinkingAfterDecay:
         alloc.boost_excitability(3)
         mid1 = _make_memory(storage, embeddings, "Error report: auth failure")
         result1 = alloc.allocate(mid1)
-        slot1 = result1["slot_index"]
+        result1["slot_index"]
 
         # Simulate 2 days passing by setting all slot timestamps far in the past
-        past = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+        past = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
         for i in range(10):
             slot = storage.get_engram_slot(i)
             if slot:
@@ -320,7 +320,7 @@ class TestProtectedSlotBehavior:
             mids.append((mid, result["slot_index"]))
 
         # All should be in slot 7
-        for mid, slot in mids:
+        for _mid, slot in mids:
             assert slot == 7
 
     def test_competition_after_inhibition(self, allocator, storage, embeddings):
@@ -347,14 +347,14 @@ class TestProtectedSlotBehavior:
 class TestIntegrationRemember:
     def test_integration_remember(self, tmp_path):
         """remember() response should include temporal links when engram is active."""
-        from yadgar.server import init_engines, shutdown, remember
+        from yadgar.server import init_engines, remember, shutdown
 
         db_path = str(tmp_path / "test_integration.db")
         try:
             init_engines(db_path=db_path)
 
             # Store two related memories quickly
-            result1 = remember(
+            remember(
                 content="Error: NullPointerException in UserService.java",
                 context="/tmp/project",
                 tags=["error", "java"],
@@ -378,19 +378,19 @@ class TestIntegrationRemember:
 
     def test_integration_remember_temporal_link_content(self, tmp_path):
         """Verify that temporal links actually point to related memories."""
-        from yadgar.server import init_engines, shutdown, remember
+        from yadgar.server import init_engines, remember, shutdown
 
         db_path = str(tmp_path / "test_integration2.db")
         try:
             init_engines(db_path=db_path)
 
-            r1 = remember(
+            remember(
                 content="Bug report: login fails with expired tokens",
                 context="/tmp/project",
                 tags=["bug"],
             )
 
-            r2 = remember(
+            remember(
                 content="Root cause: token refresh logic skipped in auth middleware",
                 context="/tmp/project",
                 tags=["debug"],

@@ -1,67 +1,114 @@
 """Memobase-style structured user profiles + Hindsight derived beliefs."""
+
 import json
 import logging
 import re
-from datetime import datetime, timezone
 
 from yadgar.config import Settings
 from yadgar.storage import StorageEngine
 
 logger = logging.getLogger(__name__)
 
-_NAME_RE = re.compile(r'\b([A-Z][a-z]+)\b')
+_NAME_RE = re.compile(r"\b([A-Z][a-z]+)\b")
 
 # Pattern: {Name} likes/loves/enjoys/prefers {X}
 _INTEREST_RE = re.compile(
-    r'\b([A-Z][a-z]+)\s+(?:likes?|loves?|enjoys?|prefers?)\s+(.+?)(?:\.|,|$)',
+    r"\b([A-Z][a-z]+)\s+(?:likes?|loves?|enjoys?|prefers?)\s+(.+?)(?:\.|,|$)",
     re.IGNORECASE,
 )
 
 # Pattern: {Name} is {adjective}
 _TRAIT_RE = re.compile(
-    r'\b([A-Z][a-z]+)\s+is\s+([a-z]+)\b',
+    r"\b([A-Z][a-z]+)\s+is\s+([a-z]+)\b",
 )
 
 # Pattern: {Name} went to/visited/traveled to {place}
 _TRAVEL_RE = re.compile(
-    r'\b([A-Z][a-z]+)\s+(?:went\s+to|visited|traveled\s+to|travelled\s+to)\s+(.+?)(?:\.|,|$)',
+    r"\b([A-Z][a-z]+)\s+(?:went\s+to|visited|traveled\s+to|travelled\s+to)\s+(.+?)(?:\.|,|$)",
     re.IGNORECASE,
 )
 
 # Pattern: {Name} works as/is a {job}
 _CAREER_RE = re.compile(
-    r'\b([A-Z][a-z]+)\s+(?:works\s+as\s+(?:a\s+|an\s+)?|is\s+a(?:n)?\s+)(.+?)(?:\.|,|$)',
+    r"\b([A-Z][a-z]+)\s+(?:works\s+as\s+(?:a\s+|an\s+)?|is\s+a(?:n)?\s+)(.+?)(?:\.|,|$)",
     re.IGNORECASE,
 )
 
 # Pattern: {Name} believes/thinks {X}
 _OPINION_RE = re.compile(
-    r'\b([A-Z][a-z]+)\s+(?:believes?|thinks?)\s+(.+?)(?:\.|,|$)',
+    r"\b([A-Z][a-z]+)\s+(?:believes?|thinks?)\s+(.+?)(?:\.|,|$)",
     re.IGNORECASE,
 )
 
 # Pattern: {Name} wants to/hopes to {X}
 _GOAL_RE = re.compile(
-    r'\b([A-Z][a-z]+)\s+(?:wants?\s+to|hopes?\s+to)\s+(.+?)(?:\.|,|$)',
+    r"\b([A-Z][a-z]+)\s+(?:wants?\s+to|hopes?\s+to)\s+(.+?)(?:\.|,|$)",
     re.IGNORECASE,
 )
 
 # Pattern: {Name} always/usually/often {X}
 _HABIT_RE = re.compile(
-    r'\b([A-Z][a-z]+)\s+(?:always|usually|often)\s+(.+?)(?:\.|,|$)',
+    r"\b([A-Z][a-z]+)\s+(?:always|usually|often)\s+(.+?)(?:\.|,|$)",
     re.IGNORECASE,
 )
 
 # Common non-name words that match [A-Z][a-z]+ at sentence starts
-_NON_NAMES = frozenset({
-    "The", "This", "That", "These", "Those", "There", "They", "Then",
-    "What", "When", "Where", "Which", "While", "Who", "Why", "How",
-    "Here", "His", "Her", "Its", "Our", "Your", "Their", "Some",
-    "Many", "Most", "Each", "Every", "Any", "All", "Both", "Few",
-    "She", "But", "And", "For", "Not", "Yet", "Also", "Just",
-    "Very", "Really", "Always", "Usually", "Often", "Never",
-    "Because", "Since", "After", "Before", "During", "Until",
-})
+_NON_NAMES = frozenset(
+    {
+        "The",
+        "This",
+        "That",
+        "These",
+        "Those",
+        "There",
+        "They",
+        "Then",
+        "What",
+        "When",
+        "Where",
+        "Which",
+        "While",
+        "Who",
+        "Why",
+        "How",
+        "Here",
+        "His",
+        "Her",
+        "Its",
+        "Our",
+        "Your",
+        "Their",
+        "Some",
+        "Many",
+        "Most",
+        "Each",
+        "Every",
+        "Any",
+        "All",
+        "Both",
+        "Few",
+        "She",
+        "But",
+        "And",
+        "For",
+        "Not",
+        "Yet",
+        "Also",
+        "Just",
+        "Very",
+        "Really",
+        "Always",
+        "Usually",
+        "Often",
+        "Never",
+        "Because",
+        "Since",
+        "After",
+        "Before",
+        "During",
+        "Until",
+    }
+)
 
 
 def _normalize(text: str) -> str:
@@ -94,11 +141,13 @@ class ProfileExtractor:
             )
         logger.debug(
             "Profile extraction: %d attributes from memory %d",
-            len(attrs), memory_id,
+            len(attrs),
+            memory_id,
         )
 
     def _extract_attributes(
-        self, content: str,
+        self,
+        content: str,
     ) -> list[tuple[str, str, str, str, float]]:
         results: list[tuple[str, str, str, str, float]] = []
 
@@ -140,7 +189,9 @@ class ProfileExtractor:
         return results
 
     def generate_profile_summary(
-        self, entity_name: str, directory_context: str,
+        self,
+        entity_name: str,
+        directory_context: str,
     ) -> str | None:
         profiles = self._storage.get_profiles_for_entity(entity_name, directory_context)
         if len(profiles) < 3:
@@ -180,16 +231,33 @@ class ProfileExtractor:
 
 
 ACTIVITY_CATEGORIES = {
-    "camping": "outdoor", "hiking": "outdoor", "fishing": "outdoor",
-    "kayaking": "outdoor", "climbing": "outdoor", "cycling": "outdoor",
-    "painting": "creative", "drawing": "creative", "pottery": "creative",
-    "sculpture": "creative", "photography": "creative", "writing": "creative",
-    "piano": "music", "violin": "music", "guitar": "music",
-    "singing": "music", "drums": "music",
-    "running": "fitness", "swimming": "fitness", "yoga": "fitness",
-    "pilates": "fitness", "weightlifting": "fitness",
-    "cooking": "domestic", "baking": "domestic", "gardening": "domestic",
-    "sewing": "domestic", "knitting": "domestic",
+    "camping": "outdoor",
+    "hiking": "outdoor",
+    "fishing": "outdoor",
+    "kayaking": "outdoor",
+    "climbing": "outdoor",
+    "cycling": "outdoor",
+    "painting": "creative",
+    "drawing": "creative",
+    "pottery": "creative",
+    "sculpture": "creative",
+    "photography": "creative",
+    "writing": "creative",
+    "piano": "music",
+    "violin": "music",
+    "guitar": "music",
+    "singing": "music",
+    "drums": "music",
+    "running": "fitness",
+    "swimming": "fitness",
+    "yoga": "fitness",
+    "pilates": "fitness",
+    "weightlifting": "fitness",
+    "cooking": "domestic",
+    "baking": "domestic",
+    "gardening": "domestic",
+    "sewing": "domestic",
+    "knitting": "domestic",
 }
 
 _CATEGORY_LABELS = {
@@ -209,7 +277,10 @@ class BeliefDeriver:
         self._settings = settings
 
     def derive_from_memory(
-        self, content: str, memory_id: int, directory_context: str,
+        self,
+        content: str,
+        memory_id: int,
+        directory_context: str,
     ) -> None:
         content_lower = content.lower()
 
@@ -261,7 +332,9 @@ class BeliefDeriver:
                 )
 
     def derive_from_profiles(
-        self, entity_name: str, directory_context: str,
+        self,
+        entity_name: str,
+        directory_context: str,
     ) -> None:
         profiles = self._storage.get_profiles_for_entity(entity_name, directory_context)
         if not profiles:
@@ -286,9 +359,14 @@ class BeliefDeriver:
                     evidence_ids = []
                     for p in by_type["interest"]:
                         if p["attribute_value"] in values:
-                            ids = json.loads(p["evidence_memory_ids"]) if isinstance(
-                                p["evidence_memory_ids"], str,
-                            ) else p["evidence_memory_ids"]
+                            ids = (
+                                json.loads(p["evidence_memory_ids"])
+                                if isinstance(
+                                    p["evidence_memory_ids"],
+                                    str,
+                                )
+                                else p["evidence_memory_ids"]
+                            )
                             evidence_ids.extend(ids)
                     self._storage.insert_belief(
                         belief_type="preference",
@@ -304,9 +382,14 @@ class BeliefDeriver:
             trait_values = [p["attribute_value"] for p in by_type["trait"]]
             evidence_ids = []
             for p in by_type["trait"]:
-                ids = json.loads(p["evidence_memory_ids"]) if isinstance(
-                    p["evidence_memory_ids"], str,
-                ) else p["evidence_memory_ids"]
+                ids = (
+                    json.loads(p["evidence_memory_ids"])
+                    if isinstance(
+                        p["evidence_memory_ids"],
+                        str,
+                    )
+                    else p["evidence_memory_ids"]
+                )
                 evidence_ids.extend(ids)
             self._storage.insert_belief(
                 belief_type="summary",

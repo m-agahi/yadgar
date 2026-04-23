@@ -16,7 +16,9 @@ def storage(tmp_path):
 
 
 def _settings(**overrides) -> Settings:
-    import tempfile, os
+    import os
+    import tempfile
+
     defaults = {
         "DB_PATH": os.path.join(tempfile.mkdtemp(), "test.db"),
         "PROFILE_EXTRACTION_ENABLED": True,
@@ -37,7 +39,11 @@ class TestProfileExtractionLikes:
 
         profiles = storage.get_profiles_for_entity("Melanie", "/proj")
         assert len(profiles) >= 1
-        match = [p for p in profiles if p["entity_name"] == "Melanie" and p["attribute_type"] == "interest"]
+        match = [
+            p
+            for p in profiles
+            if p["entity_name"] == "Melanie" and p["attribute_type"] == "interest"
+        ]
         assert len(match) >= 1, f"Expected interest profile for Melanie, got {profiles}"
 
 
@@ -45,7 +51,9 @@ class TestProfileExtractionTrait:
     def test_profile_extraction_trait(self, storage):
         settings = _settings()
         extractor = ProfileExtractor(storage, settings)
-        extractor.extract_and_store("Melanie is adventurous", memory_id=1, directory_context="/proj")
+        extractor.extract_and_store(
+            "Melanie is adventurous", memory_id=1, directory_context="/proj"
+        )
 
         profiles = storage.get_profiles_for_entity("Melanie", "/proj")
         match = [p for p in profiles if p["attribute_type"] == "trait"]
@@ -65,7 +73,9 @@ class TestProfileAccumulation:
         initial_confidence = camping_profiles[0]["confidence"]
 
         # Insert same normalized key to trigger UNIQUE constraint → confidence +0.1
-        extractor.extract_and_store("Melanie enjoys camping", memory_id=2, directory_context="/proj")
+        extractor.extract_and_store(
+            "Melanie enjoys camping", memory_id=2, directory_context="/proj"
+        )
         extractor.extract_and_store("Melanie likes camping", memory_id=3, directory_context="/proj")
 
         updated = storage.get_profiles_for_entity("Melanie", "/proj")
@@ -83,7 +93,9 @@ class TestProfileSummaryGeneration:
 
         # Insert 3+ attributes for the same entity
         extractor.extract_and_store("Melanie loves camping", memory_id=1, directory_context="/proj")
-        extractor.extract_and_store("Melanie is adventurous", memory_id=2, directory_context="/proj")
+        extractor.extract_and_store(
+            "Melanie is adventurous", memory_id=2, directory_context="/proj"
+        )
         extractor.extract_and_store("Melanie enjoys hiking", memory_id=3, directory_context="/proj")
 
         summary = extractor.generate_profile_summary("Melanie", "/proj")
@@ -129,6 +141,7 @@ class TestConvexFusionBasic:
         graph = KnowledgeGraph(storage, settings)
 
         from yadgar.retrieval import HippoRetriever
+
         retriever = HippoRetriever(storage, embeddings, graph, settings)
 
         signal_scores = {
@@ -240,7 +253,9 @@ class TestAllFeaturesToggleable:
         settings = _settings(PROFILE_SUMMARY_ENABLED=False)
         extractor = ProfileExtractor(storage, settings)
         extractor.extract_and_store("Melanie loves camping", memory_id=1, directory_context="/proj")
-        extractor.extract_and_store("Melanie is adventurous", memory_id=2, directory_context="/proj")
+        extractor.extract_and_store(
+            "Melanie is adventurous", memory_id=2, directory_context="/proj"
+        )
         extractor.extract_and_store("Melanie enjoys hiking", memory_id=3, directory_context="/proj")
         # Summary generation should still work at extractor level (toggle controls pipeline)
         summary = extractor.generate_profile_summary("Melanie", "/proj")

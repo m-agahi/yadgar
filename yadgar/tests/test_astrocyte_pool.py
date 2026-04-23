@@ -1,11 +1,10 @@
 """Tests for the AstrocytePool domain-aware consolidation system."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
-import numpy as np
 import pytest
 
-from yadgar.astrocyte_pool import AstrocytePool, DOMAIN_DEFINITIONS
+from yadgar.astrocyte_pool import AstrocytePool
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.knowledge_graph import KnowledgeGraph
@@ -14,7 +13,7 @@ from yadgar.thermodynamics import MemoryThermodynamics
 
 
 def _hours_ago(hours: float) -> str:
-    return (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    return (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
 
 
 @pytest.fixture
@@ -70,7 +69,9 @@ class TestProcessInitialization:
         procs = storage.get_astrocyte_processes()
         assert len(procs) == 4
 
-    def test_idempotent_initialization(self, storage, embeddings, knowledge_graph, thermo, settings):
+    def test_idempotent_initialization(
+        self, storage, embeddings, knowledge_graph, thermo, settings
+    ):
         """Calling init_processes twice doesn't duplicate."""
         p1 = AstrocytePool(storage, embeddings, knowledge_graph, thermo, settings)
         p1.init_processes()
@@ -90,51 +91,61 @@ class TestProcessInitialization:
 
 class TestMemoryAssignment:
     def test_code_memory_assigned_to_code_patterns(self, pool, storage):
-        mid = storage.insert_memory({
-            "content": "def process_items():\n    class DataHandler:\n        pass",
-            "directory_context": "/proj",
-            "heat": 1.0,
-        })
+        mid = storage.insert_memory(
+            {
+                "content": "def process_items():\n    class DataHandler:\n        pass",
+                "directory_context": "/proj",
+                "heat": 1.0,
+            }
+        )
         mem = storage.get_memory(mid)
         assigned = pool.assign_memory(mem)
         assert "code-patterns" in assigned
 
     def test_error_memory_assigned_to_errors(self, pool, storage):
-        mid = storage.insert_memory({
-            "content": "Got a TypeError exception when running the tests. Fixed the bug by checking types.",
-            "directory_context": "/proj",
-            "heat": 1.0,
-        })
+        mid = storage.insert_memory(
+            {
+                "content": "Got a TypeError exception when running the tests. Fixed the bug by checking types.",
+                "directory_context": "/proj",
+                "heat": 1.0,
+            }
+        )
         mem = storage.get_memory(mid)
         assigned = pool.assign_memory(mem)
         assert "errors" in assigned
 
     def test_decision_memory_assigned_to_decisions(self, pool, storage):
-        mid = storage.insert_memory({
-            "content": "We decided to use Redis instead of Memcached. Chose Redis for its data structures.",
-            "directory_context": "/proj",
-            "heat": 1.0,
-        })
+        mid = storage.insert_memory(
+            {
+                "content": "We decided to use Redis instead of Memcached. Chose Redis for its data structures.",
+                "directory_context": "/proj",
+                "heat": 1.0,
+            }
+        )
         mem = storage.get_memory(mid)
         assigned = pool.assign_memory(mem)
         assert "decisions" in assigned
 
     def test_dependency_memory_assigned_to_dependencies(self, pool, storage):
-        mid = storage.insert_memory({
-            "content": "pip install flask==2.0. Updated the package dependency for the web framework.",
-            "directory_context": "/proj",
-            "heat": 1.0,
-        })
+        mid = storage.insert_memory(
+            {
+                "content": "pip install flask==2.0. Updated the package dependency for the web framework.",
+                "directory_context": "/proj",
+                "heat": 1.0,
+            }
+        )
         mem = storage.get_memory(mid)
         assigned = pool.assign_memory(mem)
         assert "dependencies" in assigned
 
     def test_generic_memory_defaults_to_code_patterns(self, pool, storage):
-        mid = storage.insert_memory({
-            "content": "The sky is blue today.",
-            "directory_context": "/proj",
-            "heat": 1.0,
-        })
+        mid = storage.insert_memory(
+            {
+                "content": "The sky is blue today.",
+                "directory_context": "/proj",
+                "heat": 1.0,
+            }
+        )
         mem = storage.get_memory(mid)
         assigned = pool.assign_memory(mem)
         assert "code-patterns" in assigned
@@ -142,12 +153,14 @@ class TestMemoryAssignment:
 
 class TestDomainConsolidation:
     def test_consolidation_runs_per_domain(self, pool, storage):
-        mid = storage.insert_memory({
-            "content": "def compute(): pass\nclass Handler: pass",
-            "directory_context": "/proj",
-            "heat": 0.8,
-            "last_accessed": _hours_ago(10),
-        })
+        mid = storage.insert_memory(
+            {
+                "content": "def compute(): pass\nclass Handler: pass",
+                "directory_context": "/proj",
+                "heat": 0.8,
+                "last_accessed": _hours_ago(10),
+            }
+        )
         mem = storage.get_memory(mid)
         pool.assign_memory(mem)
 
@@ -157,18 +170,22 @@ class TestDomainConsolidation:
 
     def test_domain_decay_applied(self, pool, storage):
         """Errors domain (multiplier 0.7) should decay faster than decisions (1.5)."""
-        mid_err = storage.insert_memory({
-            "content": "RuntimeError exception in handler. Bug crash failure.",
-            "directory_context": "/proj",
-            "heat": 0.9,
-            "last_accessed": _hours_ago(24),
-        })
-        mid_dec = storage.insert_memory({
-            "content": "We decided to use PostgreSQL. Chose it for reliability. Selected approach.",
-            "directory_context": "/proj",
-            "heat": 0.9,
-            "last_accessed": _hours_ago(24),
-        })
+        mid_err = storage.insert_memory(
+            {
+                "content": "RuntimeError exception in handler. Bug crash failure.",
+                "directory_context": "/proj",
+                "heat": 0.9,
+                "last_accessed": _hours_ago(24),
+            }
+        )
+        mid_dec = storage.insert_memory(
+            {
+                "content": "We decided to use PostgreSQL. Chose it for reliability. Selected approach.",
+                "directory_context": "/proj",
+                "heat": 0.9,
+                "last_accessed": _hours_ago(24),
+            }
+        )
 
         pool.assign_memory(storage.get_memory(mid_err))
         pool.assign_memory(storage.get_memory(mid_dec))
@@ -188,11 +205,13 @@ class TestDomainConsolidation:
         assert "error" in result
 
     def test_deleted_memory_cleaned_up(self, pool, storage):
-        mid = storage.insert_memory({
-            "content": "def helper(): pass\nfunction doStuff() {}",
-            "directory_context": "/proj",
-            "heat": 0.5,
-        })
+        mid = storage.insert_memory(
+            {
+                "content": "def helper(): pass\nfunction doStuff() {}",
+                "directory_context": "/proj",
+                "heat": 0.5,
+            }
+        )
         mem = storage.get_memory(mid)
         pool.assign_memory(mem)
         storage.delete_memory(mid)
@@ -204,11 +223,13 @@ class TestDomainConsolidation:
 
 class TestConsensusRetrieval:
     def test_single_domain_retrieval(self, pool, storage):
-        mid = storage.insert_memory({
-            "content": "def process_data(): implemented data pipeline function",
-            "directory_context": "/proj",
-            "heat": 0.8,
-        })
+        mid = storage.insert_memory(
+            {
+                "content": "def process_data(): implemented data pipeline function",
+                "directory_context": "/proj",
+                "heat": 0.8,
+            }
+        )
         mem = storage.get_memory(mid)
         pool.assign_memory(mem)
 
@@ -219,11 +240,13 @@ class TestConsensusRetrieval:
     def test_cross_domain_boost(self, pool, storage):
         """Memory in multiple domains gets boosted score."""
         # This memory has both error AND code keywords
-        mid = storage.insert_memory({
-            "content": "def fix_handler(): resolved TypeError exception in the function implementation",
-            "directory_context": "/proj",
-            "heat": 0.8,
-        })
+        mid = storage.insert_memory(
+            {
+                "content": "def fix_handler(): resolved TypeError exception in the function implementation",
+                "directory_context": "/proj",
+                "heat": 0.8,
+            }
+        )
         mem = storage.get_memory(mid)
         assigned = pool.assign_memory(mem)
         # Should be in both code-patterns and errors
@@ -239,11 +262,13 @@ class TestConsensusRetrieval:
         assert results == []
 
     def test_consensus_score_present(self, pool, storage):
-        mid = storage.insert_memory({
-            "content": "decided to use FastAPI framework for the API. Chose it over Flask.",
-            "directory_context": "/proj",
-            "heat": 0.9,
-        })
+        mid = storage.insert_memory(
+            {
+                "content": "decided to use FastAPI framework for the API. Chose it over Flask.",
+                "directory_context": "/proj",
+                "heat": 0.9,
+            }
+        )
         pool.assign_memory(storage.get_memory(mid))
 
         results = pool.consensus_retrieve("API framework decision", top_k=5)
@@ -255,11 +280,13 @@ class TestConsensusRetrieval:
 class TestCrossDomainMemory:
     def test_memory_in_multiple_domains(self, pool, storage):
         """A memory with both error and dependency keywords should land in both."""
-        mid = storage.insert_memory({
-            "content": "pip install requests failed with ImportError exception. Package dependency broken.",
-            "directory_context": "/proj",
-            "heat": 0.9,
-        })
+        mid = storage.insert_memory(
+            {
+                "content": "pip install requests failed with ImportError exception. Package dependency broken.",
+                "directory_context": "/proj",
+                "heat": 0.9,
+            }
+        )
         mem = storage.get_memory(mid)
         assigned = pool.assign_memory(mem)
         assert "errors" in assigned
@@ -267,12 +294,14 @@ class TestCrossDomainMemory:
 
     def test_cross_domain_consolidation_independent(self, pool, storage):
         """Each domain consolidates its copy independently."""
-        mid = storage.insert_memory({
-            "content": "pip install numpy failed with ModuleNotFoundError. Fix dependency issue.",
-            "directory_context": "/proj",
-            "heat": 0.8,
-            "last_accessed": _hours_ago(12),
-        })
+        mid = storage.insert_memory(
+            {
+                "content": "pip install numpy failed with ModuleNotFoundError. Fix dependency issue.",
+                "directory_context": "/proj",
+                "heat": 0.8,
+                "last_accessed": _hours_ago(12),
+            }
+        )
         pool.assign_memory(storage.get_memory(mid))
 
         err_stats = pool.consolidate_domain("errors")
@@ -295,11 +324,13 @@ class TestProcessStats:
             assert "domain" in s
 
     def test_stats_reflect_assignments(self, pool, storage):
-        mid = storage.insert_memory({
-            "content": "def compute(): implementing a new function method",
-            "directory_context": "/proj",
-            "heat": 0.7,
-        })
+        mid = storage.insert_memory(
+            {
+                "content": "def compute(): implementing a new function method",
+                "directory_context": "/proj",
+                "heat": 0.7,
+            }
+        )
         pool.assign_memory(storage.get_memory(mid))
 
         stats = pool.get_process_stats()

@@ -16,8 +16,8 @@ def storage(tmp_path):
 @pytest.fixture
 def settings(tmp_path):
     return Settings(
-        MAX_EPISODE_TOKENS=100,   # 400 chars max per episode
-        OVERLAP_TOKENS=25,        # 100 chars overlap
+        MAX_EPISODE_TOKENS=100,  # 400 chars max per episode
+        OVERLAP_TOKENS=25,  # 100 chars overlap
         DB_PATH=str(tmp_path / "test.db"),
     )
 

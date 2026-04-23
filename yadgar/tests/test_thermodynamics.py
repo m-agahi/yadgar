@@ -1,6 +1,6 @@
 """Tests for the neuroscience-inspired memory thermodynamics module."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 import pytest
@@ -61,11 +61,11 @@ def _make_embedding(dim: int = 384, seed: int = 0) -> bytes:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _minutes_ago(minutes: int) -> str:
-    return (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+    return (datetime.now(UTC) - timedelta(minutes=minutes)).isoformat()
 
 
 # -- a. Surprise Scoring --
@@ -77,11 +77,13 @@ class TestSurpriseScoring:
         """New content unlike anything stored should have high surprise."""
         # Store a memory about Python
         emb = embeddings.encode("Python web framework using Flask for REST APIs")
-        storage.insert_memory({
-            "content": "Python web framework using Flask for REST APIs",
-            "embedding": emb,
-            "directory_context": "/proj",
-        })
+        storage.insert_memory(
+            {
+                "content": "Python web framework using Flask for REST APIs",
+                "embedding": emb,
+                "directory_context": "/proj",
+            }
+        )
 
         # Compute surprise for completely different content
         surprise = thermo.compute_surprise(
@@ -96,11 +98,13 @@ class TestSurpriseScoring:
         """Content very similar to existing memory should have low surprise."""
         content = "Python Flask REST API development with SQLAlchemy"
         emb = embeddings.encode(content)
-        storage.insert_memory({
-            "content": content,
-            "embedding": emb,
-            "directory_context": "/proj",
-        })
+        storage.insert_memory(
+            {
+                "content": content,
+                "embedding": emb,
+                "directory_context": "/proj",
+            }
+        )
 
         # Nearly identical content
         surprise = thermo.compute_surprise(
@@ -121,15 +125,11 @@ class TestSurpriseScoring:
 
 class TestImportanceScoring:
     def test_error_content(self, thermo):
-        score = thermo.compute_importance(
-            "Got a TypeError exception in the traceback", []
-        )
+        score = thermo.compute_importance("Got a TypeError exception in the traceback", [])
         assert score >= 0.2
 
     def test_decision_content(self, thermo):
-        score = thermo.compute_importance(
-            "Decided to switch from Redis to PostgreSQL", []
-        )
+        score = thermo.compute_importance("Decided to switch from Redis to PostgreSQL", [])
         assert score >= 0.3
 
     def test_architecture_content(self, thermo):
@@ -139,9 +139,7 @@ class TestImportanceScoring:
         assert score >= 0.2
 
     def test_many_tags(self, thermo):
-        score = thermo.compute_importance(
-            "Simple note", ["tag1", "tag2", "tag3"]
-        )
+        score = thermo.compute_importance("Simple note", ["tag1", "tag2", "tag3"])
         assert score >= 0.1
 
     def test_long_content(self, thermo):
@@ -149,9 +147,7 @@ class TestImportanceScoring:
         assert score >= 0.1
 
     def test_code_blocks(self, thermo):
-        score = thermo.compute_importance(
-            "Found in `config.py` at src/main/app.py", []
-        )
+        score = thermo.compute_importance("Found in `config.py` at src/main/app.py", [])
         assert score >= 0.1
 
     def test_high_importance_combined(self, thermo):
@@ -195,9 +191,7 @@ class TestEmotionalValence:
 
     def test_valence_neutral(self, thermo):
         """Content with no emotional signals should be neutral."""
-        valence = thermo.compute_valence(
-            "The cat sat on the mat while the dog slept nearby."
-        )
+        valence = thermo.compute_valence("The cat sat on the mat while the dog slept nearby.")
         assert valence == 0.0
 
     def test_valence_range(self, thermo):
@@ -219,7 +213,12 @@ class TestEnhancedDecay:
         """High-importance memories should decay slower than normal ones."""
         hours = 24.0
         normal_mem = {"heat": 1.0, "importance": 0.3, "emotional_valence": 0.0, "confidence": 1.0}
-        important_mem = {"heat": 1.0, "importance": 0.8, "emotional_valence": 0.0, "confidence": 1.0}
+        important_mem = {
+            "heat": 1.0,
+            "importance": 0.8,
+            "emotional_valence": 0.0,
+            "confidence": 1.0,
+        }
 
         normal_heat = thermo.compute_decay(normal_mem, hours)
         important_heat = thermo.compute_decay(important_mem, hours)
@@ -234,7 +233,12 @@ class TestEnhancedDecay:
         """High-valence memories should decay slower."""
         hours = 24.0
         neutral_mem = {"heat": 1.0, "importance": 0.3, "emotional_valence": 0.0, "confidence": 1.0}
-        emotional_mem = {"heat": 1.0, "importance": 0.3, "emotional_valence": -0.8, "confidence": 1.0}
+        emotional_mem = {
+            "heat": 1.0,
+            "importance": 0.3,
+            "emotional_valence": -0.8,
+            "confidence": 1.0,
+        }
 
         neutral_heat = thermo.compute_decay(neutral_mem, hours)
         emotional_heat = thermo.compute_decay(emotional_mem, hours)
@@ -270,20 +274,24 @@ class TestSynapticBoost:
         five_min_ago = _minutes_ago(5)
 
         # Create a nearby memory (5 min ago)
-        nearby_id = storage.insert_memory({
-            "content": "nearby context memory",
-            "directory_context": "/proj",
-            "heat": 0.5,
-            "created_at": five_min_ago,
-        })
+        nearby_id = storage.insert_memory(
+            {
+                "content": "nearby context memory",
+                "directory_context": "/proj",
+                "heat": 0.5,
+                "created_at": five_min_ago,
+            }
+        )
 
         # Create the high-importance memory (now)
-        target_id = storage.insert_memory({
-            "content": "critical decision memory",
-            "directory_context": "/proj",
-            "heat": 1.0,
-            "created_at": now,
-        })
+        target_id = storage.insert_memory(
+            {
+                "content": "critical decision memory",
+                "directory_context": "/proj",
+                "heat": 1.0,
+                "created_at": now,
+            }
+        )
 
         boosted = thermo.synaptic_boost(target_id, 1.0)
 
@@ -295,12 +303,14 @@ class TestSynapticBoost:
     def test_synaptic_boost_no_self(self, thermo, storage):
         """A memory should not boost itself."""
         now = _now_iso()
-        mid = storage.insert_memory({
-            "content": "self memory",
-            "directory_context": "/proj",
-            "heat": 0.5,
-            "created_at": now,
-        })
+        mid = storage.insert_memory(
+            {
+                "content": "self memory",
+                "directory_context": "/proj",
+                "heat": 0.5,
+                "created_at": now,
+            }
+        )
         thermo.synaptic_boost(mid, 1.0)
         mem = storage.get_memory(mid)
         # Heat should be unchanged (no self-boost)
@@ -309,23 +319,27 @@ class TestSynapticBoost:
     def test_synaptic_boost_respects_window(self, thermo, storage):
         """Memories outside the time window should not be boosted."""
         now = _now_iso()
-        long_ago = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        long_ago = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
 
         # Create a distant memory (2 hours ago)
-        distant_id = storage.insert_memory({
-            "content": "old context memory",
-            "directory_context": "/proj",
-            "heat": 0.5,
-            "created_at": long_ago,
-        })
+        distant_id = storage.insert_memory(
+            {
+                "content": "old context memory",
+                "directory_context": "/proj",
+                "heat": 0.5,
+                "created_at": long_ago,
+            }
+        )
 
         # Create the high-importance memory (now)
-        target_id = storage.insert_memory({
-            "content": "recent event",
-            "directory_context": "/proj",
-            "heat": 1.0,
-            "created_at": now,
-        })
+        target_id = storage.insert_memory(
+            {
+                "content": "recent event",
+                "directory_context": "/proj",
+                "heat": 1.0,
+                "created_at": now,
+            }
+        )
 
         thermo.synaptic_boost(target_id, 1.0)
 
@@ -339,10 +353,12 @@ class TestSynapticBoost:
 class TestMetamemory:
     def test_metamemory_tracking(self, thermo, storage):
         """Access and usefulness tracking should work correctly."""
-        mid = storage.insert_memory({
-            "content": "trackable memory",
-            "directory_context": "/proj",
-        })
+        mid = storage.insert_memory(
+            {
+                "content": "trackable memory",
+                "directory_context": "/proj",
+            }
+        )
 
         thermo.record_access(mid, was_useful=True)
         thermo.record_access(mid, was_useful=True)
@@ -356,10 +372,12 @@ class TestMetamemory:
 
     def test_confidence_calculation(self, thermo, storage):
         """Confidence should update after 3+ accesses."""
-        mid = storage.insert_memory({
-            "content": "confidence test memory",
-            "directory_context": "/proj",
-        })
+        mid = storage.insert_memory(
+            {
+                "content": "confidence test memory",
+                "directory_context": "/proj",
+            }
+        )
 
         # 4 accesses, 3 useful
         thermo.record_access(mid, was_useful=True)
@@ -375,18 +393,22 @@ class TestMetamemory:
 
     def test_reliability_benefit_of_doubt(self, thermo, storage):
         """New memories with few accesses should get benefit of the doubt."""
-        mid = storage.insert_memory({
-            "content": "new memory",
-            "directory_context": "/proj",
-        })
+        mid = storage.insert_memory(
+            {
+                "content": "new memory",
+                "directory_context": "/proj",
+            }
+        )
         assert thermo.get_reliability(mid) == 1.0
 
     def test_reliability_after_many_accesses(self, thermo, storage):
         """Reliability should reflect actual usefulness after enough data."""
-        mid = storage.insert_memory({
-            "content": "tested memory",
-            "directory_context": "/proj",
-        })
+        mid = storage.insert_memory(
+            {
+                "content": "tested memory",
+                "directory_context": "/proj",
+            }
+        )
 
         # 5 accesses, 2 useful → confidence = 0.4
         for useful in [True, True, False, False, False]:

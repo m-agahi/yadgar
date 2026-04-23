@@ -3,7 +3,6 @@
 import logging
 import os
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -77,7 +76,8 @@ class EmbeddingEngine:
                 for snapshot in snapshots.iterdir():
                     if snapshot.is_dir() and any(
                         f.suffix in (".bin", ".safetensors", ".json")
-                        for f in snapshot.iterdir() if f.is_file()
+                        for f in snapshot.iterdir()
+                        if f.is_file()
                     ):
                         return True
         return False
@@ -100,7 +100,8 @@ class EmbeddingEngine:
 
             try:
                 self._model = SentenceTransformer(
-                    self.model_name, trust_remote_code=True,
+                    self.model_name,
+                    trust_remote_code=True,
                     local_files_only=local_only,
                 )
             except Exception:
@@ -114,9 +115,7 @@ class EmbeddingEngine:
                     # Only try online if user didn't explicitly set HF_HUB_OFFLINE.
                     if old_offline is not None:
                         raise  # User wants offline — respect that
-                    self._model = SentenceTransformer(
-                        self.model_name, trust_remote_code=True
-                    )
+                    self._model = SentenceTransformer(self.model_name, trust_remote_code=True)
             finally:
                 # Restore original HF_HUB_OFFLINE state
                 if old_offline is None:
@@ -129,6 +128,7 @@ class EmbeddingEngine:
             # outer ceiling; this is the inner soft cap.
             try:
                 import torch
+
                 _n = max(1, (os.cpu_count() or 2) // 2)
                 torch.set_num_threads(_n)
                 try:
@@ -140,8 +140,7 @@ class EmbeddingEngine:
 
         except ImportError:
             logger.warning(
-                "sentence-transformers is not installed; "
-                "embedding operations will return None"
+                "sentence-transformers is not installed; embedding operations will return None"
             )
             self._unavailable = True
 
@@ -166,7 +165,7 @@ class EmbeddingEngine:
             return True
         return stored_model != self.model_name
 
-    def encode_adaptive(self, text: str, dimensions: int = None) -> Optional[bytes]:
+    def encode_adaptive(self, text: str, dimensions: int = None) -> bytes | None:
         """Encode text with Matryoshka adaptive dimensionality.
 
         If dimensions < the model's native dimensions, truncate and re-normalize
@@ -184,7 +183,7 @@ class EmbeddingEngine:
         arr = self._normalize(arr)
         return arr.tobytes()
 
-    def batch_reembed(self, texts: list[str]) -> list[Optional[bytes]]:
+    def batch_reembed(self, texts: list[str]) -> list[bytes | None]:
         """Efficiently re-embed a batch of texts with the current model."""
         return self.encode_batch(texts)
 
@@ -209,12 +208,12 @@ class EmbeddingEngine:
             return arr.astype(np.float32).tobytes()
         raise ValueError(f"Unsupported dequantization bits: {bits}")
 
-    def encode_query(self, text: str) -> Optional[bytes]:
+    def encode_query(self, text: str) -> bytes | None:
         """Encode a query with model-specific query prefix for asymmetric retrieval."""
         prefix = MODEL_QUERY_PREFIX.get(self.model_name, "")
         return self.encode(prefix + text if prefix else text)
 
-    def encode_document(self, text: str) -> Optional[bytes]:
+    def encode_document(self, text: str) -> bytes | None:
         """Encode a document with model-specific document prefix for asymmetric retrieval."""
         prefix = MODEL_DOC_PREFIX.get(self.model_name, "")
         return self.encode(prefix + text if prefix else text)
@@ -231,7 +230,7 @@ class EmbeddingEngine:
             arr = arr / norm
         return arr
 
-    def encode(self, text: str) -> Optional[bytes]:
+    def encode(self, text: str) -> bytes | None:
         """Encode text to a float32 byte blob for SQLite BLOB storage."""
         if text in self._query_cache:
             return self._query_cache[text]
@@ -246,7 +245,7 @@ class EmbeddingEngine:
         self._query_cache[text] = result
         return result
 
-    def encode_batch(self, texts: list[str]) -> list[Optional[bytes]]:
+    def encode_batch(self, texts: list[str]) -> list[bytes | None]:
         """Batch encode texts for efficiency during consolidation."""
         self._ensure_model()
         if self._unavailable:
@@ -275,9 +274,6 @@ class EmbeddingEngine:
         top_k: int = 5,
     ) -> list[tuple[int, float]]:
         """Rank candidates by similarity to query, return top_k (id, score) pairs."""
-        scored = [
-            (mid, self.similarity(query_embedding, emb))
-            for mid, emb in candidate_embeddings
-        ]
+        scored = [(mid, self.similarity(query_embedding, emb)) for mid, emb in candidate_embeddings]
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[:top_k]

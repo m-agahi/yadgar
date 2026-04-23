@@ -2,6 +2,7 @@
 
 import argparse
 import sys
+from datetime import UTC
 from pathlib import Path
 
 from yadgar import __version__
@@ -43,17 +44,18 @@ MCP Resources: memory://stats, memory://hot, memory://stale,
 def _init_replay_lightweight(db_path=None):
     """Initialize only the engines needed for drain/restore (no daemons, no server)."""
     import logging
+
     # Suppress all library logging — hooks must only output data to stdout
     logging.disable(logging.CRITICAL)
 
-    from yadgar.config import Settings
-    from yadgar.storage import StorageEngine
-    from yadgar.embeddings import EmbeddingEngine
     from yadgar.cognitive_map import CognitiveMap
-    from yadgar.metacognition import MetaCognition
+    from yadgar.config import Settings
+    from yadgar.embeddings import EmbeddingEngine
     from yadgar.knowledge_graph import KnowledgeGraph
-    from yadgar.retrieval import HippoRetriever
+    from yadgar.metacognition import MetaCognition
     from yadgar.restoration import HippocampalReplay
+    from yadgar.retrieval import HippoRetriever
+    from yadgar.storage import StorageEngine
 
     settings = Settings()
     storage = StorageEngine(db_path or settings.DB_PATH)
@@ -78,6 +80,7 @@ def _init_replay_lightweight(db_path=None):
 def cmd_drain(args):
     """Pre-compaction drain: save context to DB before Claude compacts."""
     import json
+
     directory = args.directory
     storage, replay = _init_replay_lightweight(args.db_path)
     try:
@@ -90,7 +93,6 @@ def cmd_drain(args):
 
 def cmd_restore(args):
     """Post-compaction restore: reconstruct context and print markdown to stdout."""
-    import json
     directory = args.directory
     storage, replay = _init_replay_lightweight(args.db_path)
     try:
@@ -107,8 +109,10 @@ def cmd_capture(args):
 
     Used by PostToolCall hooks and manual capture.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     from surrealdb import Surreal
+
     from yadgar.config import Settings
 
     settings = Settings()
@@ -125,7 +129,7 @@ def cmd_capture(args):
                 "s": args.summary or "",
                 "d": args.directory or "",
                 "sid": args.session or "",
-                "ts": datetime.now(timezone.utc).isoformat(),
+                "ts": datetime.now(UTC).isoformat(),
             },
         )
     except Exception as e:
@@ -139,6 +143,7 @@ def cmd_context(args):
     Used by SessionStart hooks to inject context on every session.
     """
     from surrealdb import Surreal
+
     from yadgar.config import Settings
 
     settings = Settings()
@@ -190,8 +195,10 @@ def cmd_context(args):
 def cmd_stats(args):
     """Show detailed memory statistics."""
     import json
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     from surrealdb import Surreal
+
     from yadgar.config import Settings
 
     settings = Settings()
@@ -239,8 +246,7 @@ def cmd_stats(args):
                 {"p": project},
             )
             archived_res = db.query(
-                "SELECT count() FROM memory WHERE directory_context = $p "
-                "AND heat < 0.05 GROUP ALL",
+                "SELECT count() FROM memory WHERE directory_context = $p AND heat < 0.05 GROUP ALL",
                 {"p": project},
             )
             protected_res = db.query(
@@ -252,12 +258,8 @@ def cmd_stats(args):
             active_res = db.query(
                 "SELECT count() FROM memory WHERE is_stale = false AND heat >= 0.05 GROUP ALL"
             )
-            stale_res = db.query(
-                "SELECT count() FROM memory WHERE is_stale = true GROUP ALL"
-            )
-            archived_res = db.query(
-                "SELECT count() FROM memory WHERE heat < 0.05 GROUP ALL"
-            )
+            stale_res = db.query("SELECT count() FROM memory WHERE is_stale = true GROUP ALL")
+            archived_res = db.query("SELECT count() FROM memory WHERE heat < 0.05 GROUP ALL")
             protected_res = db.query(
                 "SELECT count() FROM memory WHERE is_protected = true GROUP ALL"
             )
@@ -386,9 +388,7 @@ def cmd_stats(args):
             useful_res = db.query(
                 "SELECT math::sum(useful_count) AS total_uc FROM memory GROUP ALL"
             )
-            never_res = db.query(
-                "SELECT count() FROM memory WHERE access_count = 0 GROUP ALL"
-            )
+            never_res = db.query("SELECT count() FROM memory WHERE access_count = 0 GROUP ALL")
         total_accesses = _one(access_res, "total_ac", 0) or 0
         avg_accesses = _one(access_res, "avg_ac", 0) or 0
         max_accesses = _one(access_res, "max_ac", 0) or 0
@@ -412,7 +412,7 @@ def cmd_stats(args):
         newest = _one(temporal_res, "newest", None)
         last_accessed = _one(temporal_res, "last_acc", None)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         age_days = None
         if oldest:
             try:
@@ -441,7 +441,7 @@ def cmd_stats(args):
             "SELECT timestamp, duration_ms, memories_added, memories_archived "
             "FROM consolidation_log ORDER BY id DESC LIMIT 1"
         )
-        last_consol = (last_consol_res[0][0] if last_consol_res and last_consol_res[0] else None)
+        last_consol = last_consol_res[0][0] if last_consol_res and last_consol_res[0] else None
 
         avg_dur_res = db.query(
             "SELECT math::mean(duration_ms) AS avg_d FROM consolidation_log GROUP ALL"
@@ -495,8 +495,7 @@ def cmd_stats(args):
             )
             triggers_active = _count(trig_active_res)
             trig_fired_res = db.query(
-                "SELECT math::sum(triggered_count) AS total_fired "
-                "FROM prospective_memory GROUP ALL"
+                "SELECT math::sum(triggered_count) AS total_fired FROM prospective_memory GROUP ALL"
             )
             triggers_fired = _one(trig_fired_res, "total_fired", 0) or 0
         except Exception:
@@ -511,9 +510,9 @@ def cmd_stats(args):
             )
         else:
             tags_res = db.query("SELECT tags FROM memory")
-        for row in (tags_res[0] if tags_res else []):
+        for row in tags_res[0] if tags_res else []:
             try:
-                for tag in (row.get("tags") or []):
+                for tag in row.get("tags") or []:
                     tag_counts[tag] = tag_counts.get(tag, 0) + 1
             except Exception:
                 pass
@@ -526,29 +525,53 @@ def cmd_stats(args):
     # ── Output ──
     if args.format == "json":
         data = {
-            "total": total, "active": active, "stale": stale, "archived": archived,
-            "protected": protected, "episodic": episodic, "semantic": semantic,
+            "total": total,
+            "active": active,
+            "stale": stale,
+            "archived": archived,
+            "protected": protected,
+            "episodic": episodic,
+            "semantic": semantic,
             "compression": {"raw": comp_0, "gist": comp_1, "tag": comp_2},
-            "heat": {"min": heat_min, "avg": heat_avg, "max": heat_max,
-                     "buckets": {b[0]: b[1] for b in heat_buckets}},
-            "access": {"total": total_accesses, "avg": avg_accesses,
-                       "max": max_accesses, "useful": total_useful,
-                       "never_accessed": never_accessed},
-            "temporal": {"oldest": oldest, "newest": newest,
-                         "last_accessed": last_accessed, "age_days": age_days},
-            "consolidation": {"total": total_consolidations,
-                              "avg_duration_ms": avg_duration},
-            "knowledge_graph": {"entities": entity_count, "relationships": rel_count,
-                                "causal_edges": causal_edges},
+            "heat": {
+                "min": heat_min,
+                "avg": heat_avg,
+                "max": heat_max,
+                "buckets": {b[0]: b[1] for b in heat_buckets},
+            },
+            "access": {
+                "total": total_accesses,
+                "avg": avg_accesses,
+                "max": max_accesses,
+                "useful": total_useful,
+                "never_accessed": never_accessed,
+            },
+            "temporal": {
+                "oldest": oldest,
+                "newest": newest,
+                "last_accessed": last_accessed,
+                "age_days": age_days,
+            },
+            "consolidation": {"total": total_consolidations, "avg_duration_ms": avg_duration},
+            "knowledge_graph": {
+                "entities": entity_count,
+                "relationships": rel_count,
+                "causal_edges": causal_edges,
+            },
             "action_log": {"total": action_total, "unprocessed": action_unprocessed},
-            "clusters": cluster_count, "narratives": narrative_count,
+            "clusters": cluster_count,
+            "narratives": narrative_count,
             "triggers": {"active": triggers_active, "fired": triggers_fired},
             "top_tags": dict(top_tags),
         }
         if project_rows:
             data["projects"] = [
-                {"directory": r["directory_context"], "count": r["cnt"],
-                 "avg_heat": round(r["avg_h"] or 0, 4), "last_created": r["last_created"]}
+                {
+                    "directory": r["directory_context"],
+                    "count": r["cnt"],
+                    "avg_heat": round(r["avg_h"] or 0, 4),
+                    "last_created": r["last_created"],
+                }
                 for r in project_rows
             ]
         print(json.dumps(data, indent=2))
@@ -607,7 +630,9 @@ def cmd_stats(args):
     print(f"  Avg duration:    {avg_duration:.0f}ms")
     if last_consol:
         print(f"  Last run:        {last_consol['timestamp']}")
-        print(f"    Added: {last_consol['memories_added']}  Archived: {last_consol['memories_archived']}  Duration: {last_consol['duration_ms']}ms")
+        print(
+            f"    Added: {last_consol['memories_added']}  Archived: {last_consol['memories_archived']}  Duration: {last_consol['duration_ms']}ms"
+        )
     print()
 
     print("KNOWLEDGE GRAPH")
@@ -633,6 +658,7 @@ def cmd_stats(args):
 def cmd_seed(args):
     """Bootstrap memory for an existing project by scanning its structure."""
     import json
+
     from yadgar.seed import seed_project
 
     directory = str(Path(args.directory).resolve())
@@ -645,12 +671,15 @@ def cmd_seed(args):
     )
 
     if args.dry_run:
-        print(f"\n[DRY RUN] Would create {result['memories_generated']} memories for {result['project']}\n", file=sys.stderr)
+        print(
+            f"\n[DRY RUN] Would create {result['memories_generated']} memories for {result['project']}\n",
+            file=sys.stderr,
+        )
         for mem in result.get("memories", []):
             tags = ", ".join(mem["tags"])
             print(f"  [{tags}] {mem['content'][:120]}...", file=sys.stderr)
     else:
-        replaced_msg = f", replaced {result['replaced']} old" if result.get('replaced') else ""
+        replaced_msg = f", replaced {result['replaced']} old" if result.get("replaced") else ""
         print(
             f"\nSeeded {result['project']}: "
             f"{result['created']} created{replaced_msg} "
@@ -664,6 +693,7 @@ def cmd_seed(args):
 def cmd_daemon(args):
     """Manage the Yadgar background daemon."""
     import os as _os
+
     from yadgar.daemon import YadgarDaemon
 
     port = int(getattr(args, "port", None) or _os.environ.get("YADGAR_PORT", "8765"))
@@ -678,8 +708,8 @@ def cmd_daemon(args):
         result = daemon.start()
         if result["status"] == "started":
             print(f"Yadgar daemon started (PID: {result['pid']}, port: {result['port']})")
-            print(f"  Switch MCP to HTTP:  yadgar daemon configure-mcp")
-            print(f"  Auto-start on login: yadgar daemon install-service")
+            print("  Switch MCP to HTTP:  yadgar daemon configure-mcp")
+            print("  Auto-start on login: yadgar daemon install-service")
         elif result["status"] == "already_running":
             print(f"Yadgar daemon already running (PID: {result['pid']}, port: {result['port']})")
         elif result["status"] == "failed":
@@ -774,23 +804,38 @@ def cli():
 
     # stats subcommand
     stats_parser = subparsers.add_parser("stats", help="Show detailed memory statistics")
-    stats_parser.add_argument("--project", type=str, default=None, help="Filter to a specific project directory")
+    stats_parser.add_argument(
+        "--project", type=str, default=None, help="Filter to a specific project directory"
+    )
     stats_parser.add_argument("--db-path", type=str, default=None, help="Database path")
-    stats_parser.add_argument("--format", choices=["table", "json"], default="table", help="Output format (default: table)")
+    stats_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format (default: table)",
+    )
 
     # seed subcommand
     seed_parser = subparsers.add_parser("seed", help="Bootstrap memory for an existing project")
     seed_parser.add_argument("directory", help="Project directory to scan and seed")
     seed_parser.add_argument("--db-path", type=str, default=None, help="Database path")
-    seed_parser.add_argument("--dry-run", action="store_true", help="Scan and show what would be stored without storing")
+    seed_parser.add_argument(
+        "--dry-run", action="store_true", help="Scan and show what would be stored without storing"
+    )
 
     # config subcommand
     config_parser = subparsers.add_parser("config", help="Manage Yadgar configuration")
     config_sub = config_parser.add_subparsers(dest="config_command")
-    config_init_p = config_sub.add_parser("init", help="Write default config.yaml with all settings commented")
+    config_init_p = config_sub.add_parser(
+        "init", help="Write default config.yaml with all settings commented"
+    )
     config_init_p.add_argument("--force", action="store_true", help="Overwrite existing config")
-    config_list_p = config_sub.add_parser("list", help="List all settings with current values and sources")
-    config_list_p.add_argument("--section", type=str, default=None, help="Filter to a section (e.g. daemon)")
+    config_list_p = config_sub.add_parser(
+        "list", help="List all settings with current values and sources"
+    )
+    config_list_p.add_argument(
+        "--section", type=str, default=None, help="Filter to a section (e.g. daemon)"
+    )
     config_get_p = config_sub.add_parser("get", help="Get a single setting value")
     config_get_p.add_argument("key", help="Setting name (e.g. daemon_check_interval)")
     config_set_p = config_sub.add_parser("set", help="Set a setting value in config.yaml")
@@ -807,13 +852,24 @@ def cli():
     daemon_sub.add_parser("stop", help="Stop the running daemon")
     daemon_sub.add_parser("restart", help="Restart the daemon")
     daemon_sub.add_parser("status", help="Show daemon status")
-    daemon_sub.add_parser("configure-mcp", help="Switch ~/.claude.json MCP config to HTTP transport")
-    daemon_sub.add_parser("install-service", help="Install systemd user service for auto-start on login")
+    daemon_sub.add_parser(
+        "configure-mcp", help="Switch ~/.claude.json MCP config to HTTP transport"
+    )
+    daemon_sub.add_parser(
+        "install-service", help="Install systemd user service for auto-start on login"
+    )
 
     args = parser.parse_args()
 
     if args.command == "config":
-        from yadgar.config_yaml import cmd_config_init, cmd_config_list, cmd_config_get, cmd_config_set, cmd_config_edit
+        from yadgar.config_yaml import (
+            cmd_config_edit,
+            cmd_config_get,
+            cmd_config_init,
+            cmd_config_list,
+            cmd_config_set,
+        )
+
         sub = getattr(args, "config_command", None)
         if sub is None:
             config_parser.print_help()

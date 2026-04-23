@@ -5,7 +5,7 @@ import pytest
 
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
-from yadgar.hopfield import HopfieldMemory, _softmax, _sparsemax, _logsumexp
+from yadgar.hopfield import HopfieldMemory, _logsumexp, _softmax, _sparsemax
 from yadgar.knowledge_graph import KnowledgeGraph
 from yadgar.retrieval import HippoRetriever
 from yadgar.storage import StorageEngine
@@ -20,7 +20,9 @@ def storage(tmp_path):
 
 @pytest.fixture
 def settings(tmp_path):
-    return Settings(DB_PATH=str(tmp_path / "test.db"), HOPFIELD_BETA=8.0, HOPFIELD_MAX_PATTERNS=5000)
+    return Settings(
+        DB_PATH=str(tmp_path / "test.db"), HOPFIELD_BETA=8.0, HOPFIELD_MAX_PATTERNS=5000
+    )
 
 
 @pytest.fixture
@@ -46,16 +48,18 @@ def retriever(storage, embeddings, graph, settings):
 def _make_memory(storage, embeddings, content, directory="/proj", tags=None, heat=1.0):
     """Insert a memory with embedding and return its ID."""
     embedding = embeddings.encode(content)
-    mid = storage.insert_memory({
-        "content": content,
-        "embedding": embedding,
-        "tags": tags or [],
-        "directory_context": directory,
-        "heat": heat,
-        "is_stale": False,
-        "file_hash": None,
-        "embedding_model": embeddings.get_model_name(),
-    })
+    mid = storage.insert_memory(
+        {
+            "content": content,
+            "embedding": embedding,
+            "tags": tags or [],
+            "directory_context": directory,
+            "heat": heat,
+            "is_stale": False,
+            "file_hash": None,
+            "embedding_model": embeddings.get_model_name(),
+        }
+    )
     return mid
 
 
@@ -351,7 +355,7 @@ class TestCacheInvalidation:
         _make_memory(storage, embeddings, "New memory added")
 
         # Next retrieval should rebuild and include the new memory
-        results = hopfield.retrieve(query_emb, top_k=10)
+        hopfield.retrieve(query_emb, top_k=10)
         assert not hopfield._dirty
         assert hopfield.get_pattern_count() == 2
 

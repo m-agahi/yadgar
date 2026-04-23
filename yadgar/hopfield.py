@@ -13,7 +13,6 @@ Key capabilities:
 """
 
 import logging
-from typing import Optional
 
 import numpy as np
 
@@ -83,7 +82,7 @@ class HopfieldMemory:
         self._settings = settings
         self._beta: float = settings.HOPFIELD_BETA
         self._max_patterns: int = settings.HOPFIELD_MAX_PATTERNS
-        self._pattern_matrix: Optional[np.ndarray] = None  # Cached N×d matrix
+        self._pattern_matrix: np.ndarray | None = None  # Cached N×d matrix
         self._pattern_ids: list[int] = []  # Memory IDs for each row
         self._dirty: bool = True  # Flag to rebuild cache
 
@@ -126,9 +125,7 @@ class HopfieldMemory:
         self._pattern_ids = ids
         self._dirty = False
 
-    def retrieve(
-        self, query_embedding: bytes, top_k: int = 10
-    ) -> list[tuple[int, float]]:
+    def retrieve(self, query_embedding: bytes, top_k: int = 10) -> list[tuple[int, float]]:
         """Retrieve memories using Modern Hopfield attention.
 
         Computes: attention = softmax(β · X · query)
@@ -160,16 +157,12 @@ class HopfieldMemory:
         # Get top-k by attention weight
         top_indices = np.argsort(attention)[::-1][:top_k]
         results = [
-            (self._pattern_ids[i], float(attention[i]))
-            for i in top_indices
-            if attention[i] > 0
+            (self._pattern_ids[i], float(attention[i])) for i in top_indices if attention[i] > 0
         ]
 
         return results
 
-    def retrieve_sparse(
-        self, query_embedding: bytes, top_k: int = 10
-    ) -> list[tuple[int, float]]:
+    def retrieve_sparse(self, query_embedding: bytes, top_k: int = 10) -> list[tuple[int, float]]:
         """Hopfield-Fenchel-Young retrieval using sparsemax.
 
         Replaces softmax with sparsemax, which projects onto the probability
@@ -196,16 +189,11 @@ class HopfieldMemory:
 
         # Sort nonzero by weight descending
         sorted_nz = nonzero_indices[np.argsort(weights[nonzero_indices])[::-1]]
-        results = [
-            (self._pattern_ids[i], float(weights[i]))
-            for i in sorted_nz[:top_k]
-        ]
+        results = [(self._pattern_ids[i], float(weights[i])) for i in sorted_nz[:top_k]]
 
         return results
 
-    def pattern_completion(
-        self, partial_embedding: bytes, iterations: int = 5
-    ) -> bytes:
+    def pattern_completion(self, partial_embedding: bytes, iterations: int = 5) -> bytes:
         """Iterative Hopfield dynamics for completing partial/noisy queries.
 
         For each iteration: ξ_new = Xᵀ @ softmax(β · X @ ξ_old)

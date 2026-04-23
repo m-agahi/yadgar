@@ -3,22 +3,19 @@
 import json
 import logging
 import re
-from datetime import datetime, timezone
 
-from yadgar.config import Settings
-from yadgar.storage import StorageEngine
-from yadgar.embeddings import EmbeddingEngine
-from yadgar.retrieval import HippoRetriever
 from yadgar.cognitive_map import CognitiveMap
-from yadgar.metacognition import MetaCognition
+from yadgar.config import Settings
+from yadgar.embeddings import EmbeddingEngine
 from yadgar.fractal import FractalMemoryTree
+from yadgar.metacognition import MetaCognition
+from yadgar.retrieval import HippoRetriever
+from yadgar.storage import StorageEngine
 
 logger = logging.getLogger(__name__)
 
 # Patterns that trigger micro-checkpoints
-_MICRO_ERROR_RE = re.compile(
-    r"\b(error|exception|traceback|failed|crash|bug)\b", re.IGNORECASE
-)
+_MICRO_ERROR_RE = re.compile(r"\b(error|exception|traceback|failed|crash|bug)\b", re.IGNORECASE)
 _MICRO_DECISION_RE = re.compile(
     r"\b(decided|chose|switched|migrated|will use|going with|opted)\b", re.IGNORECASE
 )
@@ -81,18 +78,20 @@ class HippocampalReplay:
     ) -> dict:
         """Create a working state checkpoint for post-compaction recovery."""
         epoch = self._storage.get_current_epoch()
-        checkpoint_id = self._storage.insert_checkpoint({
-            "session_id": session_id,
-            "directory_context": directory,
-            "current_task": current_task,
-            "files_being_edited": files_being_edited or [],
-            "key_decisions": key_decisions or [],
-            "open_questions": open_questions or [],
-            "next_steps": next_steps or [],
-            "active_errors": active_errors or [],
-            "custom_context": custom_context,
-            "epoch": epoch,
-        })
+        checkpoint_id = self._storage.insert_checkpoint(
+            {
+                "session_id": session_id,
+                "directory_context": directory,
+                "current_task": current_task,
+                "files_being_edited": files_being_edited or [],
+                "key_decisions": key_decisions or [],
+                "open_questions": open_questions or [],
+                "next_steps": next_steps or [],
+                "active_errors": active_errors or [],
+                "custom_context": custom_context,
+                "epoch": epoch,
+            }
+        )
         self.reset_tool_count()
         return {
             "checkpoint_id": checkpoint_id,
@@ -107,16 +106,18 @@ class HippocampalReplay:
         They are ALWAYS included in restoration regardless of other scoring.
         """
         embedding = self._embeddings.encode(content)
-        memory_id = self._storage.insert_memory({
-            "content": content,
-            "embedding": embedding,
-            "tags": tags + ["_anchor"],
-            "directory_context": context,
-            "heat": self._settings.REPLAY_ANCHOR_HEAT,
-            "is_stale": False,
-            "file_hash": None,
-            "embedding_model": self._embeddings.get_model_name(),
-        })
+        memory_id = self._storage.insert_memory(
+            {
+                "content": content,
+                "embedding": embedding,
+                "tags": tags + ["_anchor"],
+                "directory_context": context,
+                "heat": self._settings.REPLAY_ANCHOR_HEAT,
+                "is_stale": False,
+                "file_hash": None,
+                "embedding_model": self._embeddings.get_model_name(),
+            }
+        )
         # Set protection and importance flags
         self._storage.protect_memory(
             memory_id,
@@ -126,7 +127,9 @@ class HippocampalReplay:
         )
         return memory_id
 
-    def should_micro_checkpoint(self, content: str, tags: list[str], surprisal: float = 0.0) -> tuple[bool, str]:
+    def should_micro_checkpoint(
+        self, content: str, tags: list[str], surprisal: float = 0.0
+    ) -> tuple[bool, str]:
         """Check if content warrants a micro-checkpoint.
 
         Triggers on significant state changes:
@@ -187,12 +190,14 @@ class HippocampalReplay:
         active = self._storage.get_active_checkpoint()
         auto_created = False
         if active is None or active.get("epoch", 0) < new_epoch - 1:
-            self._storage.insert_checkpoint({
-                "session_id": "auto-drain",
-                "directory_context": directory,
-                "current_task": "[auto-captured before compaction]",
-                "epoch": new_epoch,
-            })
+            self._storage.insert_checkpoint(
+                {
+                    "session_id": "auto-drain",
+                    "directory_context": directory,
+                    "current_task": "[auto-captured before compaction]",
+                    "epoch": new_epoch,
+                }
+            )
             auto_created = True
         else:
             # Update existing checkpoint with new epoch
@@ -246,9 +251,7 @@ class HippocampalReplay:
                 directory, min_heat=self._settings.HOT_THRESHOLD
             )
         else:
-            hot_memories = self._storage.get_memories_by_heat(
-                self._settings.HOT_THRESHOLD
-            )
+            hot_memories = self._storage.get_memories_by_heat(self._settings.HOT_THRESHOLD)
         for m in hot_memories:
             m.pop("embedding", None)
             m.pop("hdc_vector", None)

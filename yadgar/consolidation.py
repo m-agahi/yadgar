@@ -4,7 +4,7 @@ import logging
 import re
 import threading
 import time
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from itertools import combinations
 
 from yadgar.cls_store import DualStoreCLS
@@ -26,6 +26,7 @@ def _get_pool_class():
     global _AstrocytePool
     if _AstrocytePool is None:
         from yadgar.astrocyte_pool import AstrocytePool
+
         _AstrocytePool = AstrocytePool
     return _AstrocytePool
 
@@ -34,15 +35,15 @@ def _get_causal_discovery_class():
     global _CausalDiscovery
     if _CausalDiscovery is None:
         from yadgar.causal_discovery import CausalDiscovery
+
         _CausalDiscovery = CausalDiscovery
     return _CausalDiscovery
+
 
 logger = logging.getLogger(__name__)
 
 # Regex patterns for entity extraction
-_FILE_PATH_RE = re.compile(
-    r"(?:\.{0,2}/)?(?:[\w@.-]+/)+[\w@.-]+\.\w+"
-)
+_FILE_PATH_RE = re.compile(r"(?:\.{0,2}/)?(?:[\w@.-]+/)+[\w@.-]+\.\w+")
 _PYTHON_DEF_RE = re.compile(r"\b(def|class)\s+(\w+)")
 _JS_FUNCTION_RE = re.compile(r"\bfunction\s+(\w+)")
 _ERROR_RE = re.compile(r"\b(\w*(?:Error|Exception))\b")
@@ -56,11 +57,35 @@ _DECISION_RE = re.compile(
     re.IGNORECASE,
 )
 
-_CODE_EXTENSIONS = frozenset((
-    ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".c", ".h",
-    ".cpp", ".rb", ".toml", ".yaml", ".yml", ".json", ".md", ".txt", ".cfg",
-    ".ini", ".sh", ".css", ".html", ".sql", ".proto",
-))
+_CODE_EXTENSIONS = frozenset(
+    (
+        ".py",
+        ".js",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".go",
+        ".rs",
+        ".java",
+        ".c",
+        ".h",
+        ".cpp",
+        ".rb",
+        ".toml",
+        ".yaml",
+        ".yml",
+        ".json",
+        ".md",
+        ".txt",
+        ".cfg",
+        ".ini",
+        ".sh",
+        ".css",
+        ".html",
+        ".sql",
+        ".proto",
+    )
+)
 
 
 class AstrocyteEngine:
@@ -92,7 +117,7 @@ class AstrocyteEngine:
         self._last_sleep_cycle: datetime | None = None
         self._last_consolidation_date: date | None = None
 
-        self.last_activity: datetime = datetime.now(timezone.utc)
+        self.last_activity: datetime = datetime.now(UTC)
         self.is_running: bool = False
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -103,9 +128,7 @@ class AstrocyteEngine:
         self._events_since_last_discovery = 0
         try:
             CausalDiscoveryCls = _get_causal_discovery_class()
-            self._causal_discovery = CausalDiscoveryCls(
-                storage, self._graph, settings
-            )
+            self._causal_discovery = CausalDiscoveryCls(storage, self._graph, settings)
         except Exception:
             logger.exception("Failed to initialize CausalDiscovery")
 
@@ -113,9 +136,7 @@ class AstrocyteEngine:
         self._pool = None
         try:
             PoolCls = _get_pool_class()
-            self._pool = PoolCls(
-                storage, embeddings, self._graph, self._thermo, settings
-            )
+            self._pool = PoolCls(storage, embeddings, self._graph, self._thermo, settings)
             self._pool.init_processes()
         except Exception:
             logger.exception("Failed to initialize AstrocytePool")
@@ -141,7 +162,7 @@ class AstrocyteEngine:
         logger.info("Astrocyte daemon stopped")
 
     def record_activity(self) -> None:
-        self.last_activity = datetime.now(timezone.utc)
+        self.last_activity = datetime.now(UTC)
 
     def force_consolidate(self) -> dict:
         """Run a consolidation cycle immediately. Returns the cycle stats."""
@@ -154,7 +175,7 @@ class AstrocyteEngine:
             self._stop_event.wait(timeout=self._settings.DAEMON_CHECK_INTERVAL)
             if self._stop_event.is_set():
                 break
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             today = now.date()
             # Run once per day at midnight UTC (00:00–00:01 window)
             if now.hour == 0 and now.minute == 0 and self._last_consolidation_date != today:
@@ -167,7 +188,7 @@ class AstrocyteEngine:
 
     def _maybe_sleep_cycle(self) -> None:
         """Run a full sleep cycle if at least 6 hours since the last one."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if self._last_sleep_cycle is not None:
             hours_since = (now - self._last_sleep_cycle).total_seconds() / 3600.0
             if hours_since < 6.0:
@@ -211,9 +232,7 @@ class AstrocyteEngine:
             if self._events_since_last_discovery >= 50:
                 try:
                     dag = self._causal_discovery.discover_dag()
-                    stats["causal_dag_edges"] = dag.get("metadata", {}).get(
-                        "directed_count", 0
-                    )
+                    stats["causal_dag_edges"] = dag.get("metadata", {}).get("directed_count", 0)
                     self._events_since_last_discovery = 0
                 except Exception:
                     logger.exception("Causal discovery failed")
@@ -262,13 +281,13 @@ class AstrocyteEngine:
             logger.exception("Action log processing failed")
 
         duration_ms = int((time.monotonic() - start) * 1000)
-        self._storage.insert_consolidation_log({
-            **stats,
-            "duration_ms": duration_ms,
-        })
-        logger.info(
-            "Consolidation complete in %dms: %s", duration_ms, stats
+        self._storage.insert_consolidation_log(
+            {
+                **stats,
+                "duration_ms": duration_ms,
+            }
         )
+        logger.info("Consolidation complete in %dms: %s", duration_ms, stats)
         return stats
 
     @property
@@ -301,7 +320,7 @@ class AstrocyteEngine:
     # -- Thermodynamic decay --
 
     def _apply_decay(self, stats: dict) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         decay = self._settings.DECAY_FACTOR
         cold = self._settings.COLD_THRESHOLD
 
@@ -319,7 +338,7 @@ class AstrocyteEngine:
         for ent in self._storage.get_all_entities_for_decay():
             last = datetime.fromisoformat(ent["last_accessed"])
             hours = (now - last).total_seconds() / 3600.0
-            new_heat = ent["heat"] * (decay ** hours)
+            new_heat = ent["heat"] * (decay**hours)
             if new_heat < cold:
                 new_heat = 0.0
                 self._storage.archive_entity(ent["id"])
@@ -329,9 +348,7 @@ class AstrocyteEngine:
     # -- Entity extraction and graph building --
 
     def _process_new_episodes(self, stats: dict) -> None:
-        episodes = self._storage.get_episodes_since(
-            self._last_consolidated_episode_id
-        )
+        episodes = self._storage.get_episodes_since(self._last_consolidated_episode_id)
         for ep in episodes:
             # Use typed extraction for richer relationships
             typed_entities = self._graph.extract_entities_typed(
@@ -359,9 +376,7 @@ class AstrocyteEngine:
                     self._storage.reinforce_entity(existing["id"])
                     entity_ids.append(existing["id"])
                 else:
-                    eid = self._storage.insert_entity(
-                        {"name": name, "type": etype}
-                    )
+                    eid = self._storage.insert_entity({"name": name, "type": etype})
                     entity_ids.append(eid)
                 entity_names.append(name)
 
@@ -371,11 +386,13 @@ class AstrocyteEngine:
                 if rel:
                     self._storage.reinforce_relationship(rel["id"])
                 else:
-                    self._storage.insert_relationship({
-                        "source_entity_id": id_a,
-                        "target_entity_id": id_b,
-                        "relationship_type": "co_occurrence",
-                    })
+                    self._storage.insert_relationship(
+                        {
+                            "source_entity_id": id_a,
+                            "target_entity_id": id_b,
+                            "relationship_type": "co_occurrence",
+                        }
+                    )
 
             # Build typed relationships from extraction context
             for name, ctx in rel_contexts.items():
@@ -383,18 +400,14 @@ class AstrocyteEngine:
                     # Find the module this was imported from (nearest dependency)
                     for other_name, other_type in entity_map.items():
                         if other_type == "dependency" and other_name != name:
-                            self._graph.add_relationship(
-                                name, other_name, "imports"
-                            )
+                            self._graph.add_relationship(name, other_name, "imports")
                             break
                 elif ctx == "calls":
                     pass  # calls are implicit from co_occurrence for now
                 elif ctx == "resolved_by":
                     for other_name, other_type in entity_map.items():
                         if other_type == "solution" and other_name != name:
-                            self._graph.add_relationship(
-                                other_name, name, "resolved_by"
-                            )
+                            self._graph.add_relationship(other_name, name, "resolved_by")
                             break
                 elif ctx == "decided_to_use":
                     pass  # decision pairs handled by extract_entities_typed
@@ -404,13 +417,9 @@ class AstrocyteEngine:
             if ep.get("source_episode_id") is not None:
                 source_mem = self._storage.get_memory(ep["source_episode_id"])
                 if source_mem and source_mem.get("importance", 0.5) > 0.7:
-                    self._thermo.synaptic_boost(
-                        source_mem["id"], source_mem["heat"]
-                    )
+                    self._thermo.synaptic_boost(source_mem["id"], source_mem["heat"])
 
-            self._last_consolidated_episode_id = max(
-                self._last_consolidated_episode_id, ep["id"]
-            )
+            self._last_consolidated_episode_id = max(self._last_consolidated_episode_id, ep["id"])
 
     @staticmethod
     def _extract_entities(content: str) -> list[tuple[str, str]]:
@@ -518,7 +527,7 @@ class AstrocyteEngine:
 
         # Find pairs above threshold (upper triangle only)
         links_created = 0
-        n = len(ids)
+        len(ids)
         # Get indices sorted by descending similarity for best-first linking
         rows, cols = np.where(np.triu(sim_matrix, k=1) >= threshold)
         sims = sim_matrix[rows, cols]
@@ -533,17 +542,13 @@ class AstrocyteEngine:
 
             # Ensure entities exist
             if mid_a not in entity_cache:
-                eid_a = self._storage.insert_entity(
-                    {"name": f"memory:{mid_a}", "type": "memory"}
-                )
+                eid_a = self._storage.insert_entity({"name": f"memory:{mid_a}", "type": "memory"})
                 entity_cache[mid_a] = eid_a
             else:
                 eid_a = entity_cache[mid_a]
 
             if mid_b not in entity_cache:
-                eid_b = self._storage.insert_entity(
-                    {"name": f"memory:{mid_b}", "type": "memory"}
-                )
+                eid_b = self._storage.insert_entity({"name": f"memory:{mid_b}", "type": "memory"})
                 entity_cache[mid_b] = eid_b
             else:
                 eid_b = entity_cache[mid_b]
@@ -560,12 +565,14 @@ class AstrocyteEngine:
                         )
                     continue
 
-            self._storage.insert_relationship({
-                "source_entity_id": eid_a,
-                "target_entity_id": eid_b,
-                "relationship_type": "semantic_similarity",
-                "weight": round(sim, 4),
-            })
+            self._storage.insert_relationship(
+                {
+                    "source_entity_id": eid_a,
+                    "target_entity_id": eid_b,
+                    "relationship_type": "semantic_similarity",
+                    "weight": round(sim, 4),
+                }
+            )
             existing_rels.add(rel_key)
             links_created += 1
 
@@ -587,15 +594,9 @@ class AstrocyteEngine:
                     continue
                 if mem_a["embedding"] is None or mem_b["embedding"] is None:
                     continue
-                sim = self._embeddings.similarity(
-                    mem_a["embedding"], mem_b["embedding"]
-                )
+                sim = self._embeddings.similarity(mem_a["embedding"], mem_b["embedding"])
                 if sim > 0.95:
-                    victim = (
-                        mem_b["id"]
-                        if mem_a["heat"] >= mem_b["heat"]
-                        else mem_a["id"]
-                    )
+                    victim = mem_b["id"] if mem_a["heat"] >= mem_b["heat"] else mem_a["id"]
                     to_delete.add(victim)
 
         for mid in to_delete:
@@ -611,7 +612,7 @@ class AstrocyteEngine:
         a summary memory for each group. This is the cold path — the hot
         path (PostToolCall hook) just writes to action_log.
         """
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         stats = {"processed": 0, "memories_created": 0}
 
@@ -637,15 +638,17 @@ class AstrocyteEngine:
             key = f"{directory}|{bucket}"
             if key not in groups:
                 groups[key] = []
-            groups[key].append({
-                "id": row.get("id"),
-                "tool": row.get("tool_name", ""),
-                "summary": row.get("tool_input_summary", ""),
-                "directory": directory,
-            })
+            groups[key].append(
+                {
+                    "id": row.get("id"),
+                    "tool": row.get("tool_name", ""),
+                    "summary": row.get("tool_input_summary", ""),
+                    "directory": directory,
+                }
+            )
 
         # Create a summary memory for each group with 3+ actions
-        for key, actions in groups.items():
+        for _key, actions in groups.items():
             directory = actions[0]["directory"]
 
             # Build action summary
@@ -657,23 +660,27 @@ class AstrocyteEngine:
                     details.append(f"{a['tool']}: {a['summary'][:80]}")
 
             if len(actions) >= 3:
-                tools_str = ", ".join(f"{t}({c})" for t, c in sorted(tool_counts.items(), key=lambda x: -x[1]))
+                tools_str = ", ".join(
+                    f"{t}({c})" for t, c in sorted(tool_counts.items(), key=lambda x: -x[1])
+                )
                 content = f"Session activity [{tools_str}]: {len(actions)} tool calls"
                 if details:
                     content += "\n" + "\n".join(f"- {d}" for d in details)
 
                 # Store as a low-heat episodic memory (will be consolidated normally)
                 embedding = self._embeddings.encode(content)
-                self._storage.insert_memory({
-                    "content": content,
-                    "embedding": embedding,
-                    "tags": ["_action_stream", "_auto"],
-                    "directory_context": directory,
-                    "heat": 0.4,
-                    "is_stale": False,
-                    "file_hash": None,
-                    "embedding_model": self._embeddings.get_model_name(),
-                })
+                self._storage.insert_memory(
+                    {
+                        "content": content,
+                        "embedding": embedding,
+                        "tags": ["_action_stream", "_auto"],
+                        "directory_context": directory,
+                        "heat": 0.4,
+                        "is_stale": False,
+                        "file_hash": None,
+                        "embedding_model": self._embeddings.get_model_name(),
+                    }
+                )
                 stats["memories_created"] += 1
 
             # Mark all as processed

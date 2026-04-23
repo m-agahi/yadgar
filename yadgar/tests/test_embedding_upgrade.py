@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from yadgar.embeddings import EmbeddingEngine, MODEL_DIMENSIONS
+from yadgar.embeddings import MODEL_DIMENSIONS, EmbeddingEngine
 from yadgar.storage import StorageEngine
 
 # Detect whether the model can actually be loaded
@@ -150,7 +150,7 @@ class TestBatchReembed:
         reembedded = engine.batch_reembed(texts)
         encoded = engine.encode_batch(texts)
         assert len(reembedded) == len(encoded)
-        for r, e in zip(reembedded, encoded):
+        for r, e in zip(reembedded, encoded, strict=False):
             assert r == e
 
     def test_batch_reembed_unavailable(self):
@@ -177,9 +177,7 @@ class TestModelVersioningStorage:
 
     def test_embedding_model_null_by_default(self, storage):
         emb = _make_embedding(seed=2)
-        mid = storage.insert_memory(
-            _make_memory(content="no model", embedding=emb)
-        )
+        mid = storage.insert_memory(_make_memory(content="no model", embedding=emb))
         mem = storage.get_memory(mid)
         assert mem["embedding_model"] is None
 
@@ -207,9 +205,7 @@ class TestModelVersioningStorage:
         )
 
         # Memory with no model tag — should need re-embedding
-        mid_null = storage.insert_memory(
-            _make_memory(content="null model", embedding=emb3)
-        )
+        mid_null = storage.insert_memory(_make_memory(content="null model", embedding=emb3))
 
         needs = storage.get_memories_needing_reembedding("BAAI/bge-small-en-v1.5")
         need_ids = {m["id"] for m in needs}
@@ -262,9 +258,7 @@ class TestRecreateVectorTable:
 
         # Insert a memory with 384-dim embedding
         emb_384 = _make_embedding(dim=384, seed=50)
-        storage.insert_memory(
-            _make_memory(content="384 dim", embedding=emb_384)
-        )
+        storage.insert_memory(_make_memory(content="384 dim", embedding=emb_384))
 
         # Recreate with 768 dimensions
         storage.recreate_vector_table(768)
@@ -276,9 +270,7 @@ class TestRecreateVectorTable:
 
         # Can now insert 768-dim vectors
         emb_768 = _make_embedding(dim=768, seed=51)
-        mid = storage.insert_memory(
-            _make_memory(content="768 dim")
-        )
+        mid = storage.insert_memory(_make_memory(content="768 dim"))
         storage.insert_vector(mid, emb_768)
         results = storage.search_vectors(emb_768, top_k=1)
         assert len(results) == 1

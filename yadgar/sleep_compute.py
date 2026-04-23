@@ -4,7 +4,7 @@ import logging
 import random
 import re
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 
@@ -119,9 +119,7 @@ class SleepComputeEngine:
         entity_a = self._storage.get_entity_by_name(f"memory:{mem_a_id}")
         entity_b = self._storage.get_entity_by_name(f"memory:{mem_b_id}")
         if entity_a and entity_b:
-            rel = self._storage.get_relationship_between(
-                entity_a["id"], entity_b["id"]
-            )
+            rel = self._storage.get_relationship_between(entity_a["id"], entity_b["id"])
             return rel is not None
         return False
 
@@ -130,12 +128,14 @@ class SleepComputeEngine:
         src_eid = self._ensure_memory_entity(mem_a_id)
         tgt_eid = self._ensure_memory_entity(mem_b_id)
 
-        self._storage.insert_relationship({
-            "source_entity_id": src_eid,
-            "target_entity_id": tgt_eid,
-            "relationship_type": "co_occurrence",
-            "weight": 0.5,
-        })
+        self._storage.insert_relationship(
+            {
+                "source_entity_id": src_eid,
+                "target_entity_id": tgt_eid,
+                "relationship_type": "co_occurrence",
+                "weight": 0.5,
+            }
+        )
 
     def _ensure_memory_entity(self, memory_id: int) -> int:
         """Get or create an entity node for a memory."""
@@ -152,15 +152,17 @@ class SleepComputeEngine:
         content = f"Dream connection: {summary_a} may relate to {summary_b}"
 
         embedding = self._embeddings.encode(content)
-        memory_id = self._storage.insert_memory({
-            "content": content,
-            "embedding": embedding,
-            "tags": ["dream", "auto-generated"],
-            "directory_context": "system",
-            "heat": 0.5,
-            "is_stale": False,
-            "embedding_model": self._embeddings.get_model_name(),
-        })
+        memory_id = self._storage.insert_memory(
+            {
+                "content": content,
+                "embedding": embedding,
+                "tags": ["dream", "auto-generated"],
+                "directory_context": "system",
+                "heat": 0.5,
+                "is_stale": False,
+                "embedding_model": self._embeddings.get_model_name(),
+            }
+        )
         self._storage.update_memory_scores(
             memory_id,
             surprise_score=0.8,
@@ -186,7 +188,7 @@ class SleepComputeEngine:
         # Build edges from all entity pairs using public API
         entity_ids = list(entity_map.keys())
         for i, src_id in enumerate(entity_ids):
-            for tgt_id in entity_ids[i + 1:]:
+            for tgt_id in entity_ids[i + 1 :]:
                 rel = self._storage.get_relationship_between(src_id, tgt_id)
                 if rel is not None:
                     G.add_edge(src_id, tgt_id, weight=rel.get("weight") or 1.0)
@@ -197,9 +199,11 @@ class SleepComputeEngine:
         # Run Louvain community detection with label propagation fallback
         try:
             from networkx.algorithms.community import louvain_communities
+
             communities = louvain_communities(G, seed=42)
         except Exception:
             from networkx.algorithms.community import label_propagation_communities
+
             communities = list(label_propagation_communities(G))
 
         results = []
@@ -222,23 +226,27 @@ class SleepComputeEngine:
             memory_ids = self._find_memories_for_entities(member_names)
 
             # Create cluster record
-            cluster_id = self._storage.insert_cluster({
-                "name": cluster_name,
-                "level": 1,
-                "summary": summary,
-                "member_count": len(memory_ids),
-            })
+            cluster_id = self._storage.insert_cluster(
+                {
+                    "name": cluster_name,
+                    "level": 1,
+                    "summary": summary,
+                    "member_count": len(memory_ids),
+                }
+            )
 
             # Assign memories to this cluster
             for mid in memory_ids:
                 self._storage.update_memory_fields(mid, cluster_id=cluster_id)
 
-            results.append({
-                "cluster_id": cluster_id,
-                "name": cluster_name,
-                "entity_count": len(community),
-                "member_count": len(memory_ids),
-            })
+            results.append(
+                {
+                    "cluster_id": cluster_id,
+                    "name": cluster_name,
+                    "entity_count": len(community),
+                    "member_count": len(memory_ids),
+                }
+            )
 
         return results
 
@@ -274,7 +282,8 @@ class SleepComputeEngine:
             cluster_id = cluster["id"]
             all_memories = self._storage.get_all_memories_with_embeddings()
             rows = [
-                m for m in all_memories
+                m
+                for m in all_memories
                 if m.get("cluster_id") == cluster_id and m.get("heat", 0) > 0
             ]
 
@@ -289,11 +298,36 @@ class SleepComputeEngine:
 
             # Top keywords by frequency (excluding stop words)
             words = all_content.lower().split()
-            stop_words = frozenset({
-                "the", "a", "an", "is", "are", "was", "were", "and", "or",
-                "to", "in", "of", "for", "with", "on", "at", "by", "from",
-                "this", "that", "it", "not", "be", "as", "has", "have",
-            })
+            stop_words = frozenset(
+                {
+                    "the",
+                    "a",
+                    "an",
+                    "is",
+                    "are",
+                    "was",
+                    "were",
+                    "and",
+                    "or",
+                    "to",
+                    "in",
+                    "of",
+                    "for",
+                    "with",
+                    "on",
+                    "at",
+                    "by",
+                    "from",
+                    "this",
+                    "that",
+                    "it",
+                    "not",
+                    "be",
+                    "as",
+                    "has",
+                    "have",
+                }
+            )
             meaningful = [w for w in words if w not in stop_words and len(w) > 2]
             word_counts = Counter(meaningful)
             top_keywords = [w for w, _ in word_counts.most_common(5)]
@@ -316,10 +350,13 @@ class SleepComputeEngine:
                     centroid_arr = centroid_arr / norm
                 centroid = centroid_arr.tobytes()
 
-            self._storage.update_cluster(cluster_id, {
-                "summary": summary,
-                "centroid_embedding": centroid,
-            })
+            self._storage.update_cluster(
+                cluster_id,
+                {
+                    "summary": summary,
+                    "centroid_embedding": centroid,
+                },
+            )
 
         # Create level 2 (root) clusters by grouping level 1 by directory_context
         self._create_root_clusters()
@@ -352,17 +389,22 @@ class SleepComputeEngine:
             root_name = f"root_{dir_ctx.replace('/', '_').strip('_')}"
             total_members = sum(c["member_count"] for c in group_clusters)
 
-            root_id = self._storage.insert_cluster({
-                "name": root_name,
-                "level": 2,
-                "summary": f"Root cluster for {dir_ctx}",
-                "member_count": total_members,
-            })
+            root_id = self._storage.insert_cluster(
+                {
+                    "name": root_name,
+                    "level": 2,
+                    "summary": f"Root cluster for {dir_ctx}",
+                    "member_count": total_members,
+                }
+            )
 
             for child in group_clusters:
-                self._storage.update_cluster(child["id"], {
-                    "parent_cluster_id": root_id,
-                })
+                self._storage.update_cluster(
+                    child["id"],
+                    {
+                        "parent_cluster_id": root_id,
+                    },
+                )
 
     # -- d. Incremental Re-embedding --
 
@@ -382,11 +424,9 @@ class SleepComputeEngine:
             texts = [m["content"] for m in batch]
             embeddings = self._embeddings.encode_batch(texts)
 
-            for mem, emb in zip(batch, embeddings):
+            for mem, emb in zip(batch, embeddings, strict=False):
                 if emb is not None:
-                    self._storage.update_memory_embedding(
-                        mem["id"], emb, current_model
-                    )
+                    self._storage.update_memory_embedding(mem["id"], emb, current_model)
                     count += 1
 
         return count
@@ -395,13 +435,12 @@ class SleepComputeEngine:
 
     def compress_old_memories(self, days_threshold: int = 30) -> int:
         """Compress old verbose memories by extracting key entity-bearing sentences."""
-        cutoff = (
-            datetime.now(timezone.utc) - timedelta(days=days_threshold)
-        ).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(days=days_threshold)).isoformat()
 
         all_memories = self._storage.get_all_memories_for_decay()
         rows = [
-            m for m in all_memories
+            m
+            for m in all_memories
             if m.get("created_at", "") < cutoff
             and len(m.get("content", "")) > 1000
             and not m.get("compressed", False)
@@ -429,9 +468,7 @@ class SleepComputeEngine:
 
             # Update content, set compressed flag, re-embed
             new_embedding = self._embeddings.encode(compressed_content)
-            self._storage.update_memory_fields(
-                mem_id, content=compressed_content, compressed=1
-            )
+            self._storage.update_memory_fields(mem_id, content=compressed_content, compressed=1)
 
             if new_embedding is not None:
                 self._storage.update_memory_embedding(

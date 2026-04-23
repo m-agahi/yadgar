@@ -13,7 +13,7 @@ from yadgar.embeddings import EmbeddingEngine
 from yadgar.fractal import FractalMemoryTree
 from yadgar.hopfield import HopfieldMemory
 from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.storage import StorageEngine, _FTS_STOP_WORDS
+from yadgar.storage import _FTS_STOP_WORDS, StorageEngine
 
 # Lazy import to avoid circular dependency
 _RulesEngine = None
@@ -23,8 +23,10 @@ def _get_rules_engine_class():
     global _RulesEngine
     if _RulesEngine is None:
         from yadgar.rules_engine import RulesEngine
+
         _RulesEngine = RulesEngine
     return _RulesEngine
+
 
 # Lazy import to avoid circular dependency
 _EngramAllocator = None
@@ -34,8 +36,10 @@ def _get_engram_class():
     global _EngramAllocator
     if _EngramAllocator is None:
         from yadgar.engram import EngramAllocator
+
         _EngramAllocator = EngramAllocator
     return _EngramAllocator
+
 
 logger = logging.getLogger(__name__)
 
@@ -50,19 +54,25 @@ _KEYWORD_RE = re.compile(r"\b[a-z_]\w{2,}\b")
 # -- Temporal expression parsing --
 # Compiled patterns for temporal extraction (module-level for performance)
 _MONTH_NAMES = [
-    "january", "february", "march", "april", "may", "june",
-    "july", "august", "september", "october", "november", "december",
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
 ]
 _MONTH_PATTERN = "|".join(_MONTH_NAMES)
 _DATE_MONTH_YEAR_RE = re.compile(
     rf"\b(\d{{1,2}}\s+(?:{_MONTH_PATTERN})\s+\d{{4}})\b", re.IGNORECASE
 )
-_MONTH_YEAR_RE = re.compile(
-    rf"\b((?:{_MONTH_PATTERN})\s+\d{{4}})\b", re.IGNORECASE
-)
-_MONTH_ONLY_RE = re.compile(
-    rf"\b({_MONTH_PATTERN})\b", re.IGNORECASE
-)
+_MONTH_YEAR_RE = re.compile(rf"\b((?:{_MONTH_PATTERN})\s+\d{{4}})\b", re.IGNORECASE)
+_MONTH_ONLY_RE = re.compile(rf"\b({_MONTH_PATTERN})\b", re.IGNORECASE)
 _ISO_DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 _RELATIVE_RE = re.compile(
     r"\b(yesterday|today|last\s+week|last\s+month|"
@@ -184,14 +194,77 @@ def _extract_query_entities(query: str) -> list[str]:
 
 _QUESTION_WORDS = {"who", "what", "where", "when", "why", "how", "which", "whose", "whom"}
 _QUERY_STOP_WORDS = _QUESTION_WORDS | {
-    "would", "could", "should", "does", "did", "is", "are", "was", "were",
-    "do", "has", "have", "had", "can", "will", "the", "a", "an", "if", "not",
-    "it", "in", "on", "at", "to", "of", "for", "and", "or", "but", "with",
-    "by", "from", "as", "be", "this", "that", "so", "no", "yes", "my", "your",
-    "its", "our", "their", "we", "he", "she", "they", "me", "him", "her", "us",
-    "them", "about", "also", "likely", "probably", "possibly", "still", "more",
-    "most", "very", "around", "what's", "whats", "interested", "going",
-    "considered", "consider", "considering",
+    "would",
+    "could",
+    "should",
+    "does",
+    "did",
+    "is",
+    "are",
+    "was",
+    "were",
+    "do",
+    "has",
+    "have",
+    "had",
+    "can",
+    "will",
+    "the",
+    "a",
+    "an",
+    "if",
+    "not",
+    "it",
+    "in",
+    "on",
+    "at",
+    "to",
+    "of",
+    "for",
+    "and",
+    "or",
+    "but",
+    "with",
+    "by",
+    "from",
+    "as",
+    "be",
+    "this",
+    "that",
+    "so",
+    "no",
+    "yes",
+    "my",
+    "your",
+    "its",
+    "our",
+    "their",
+    "we",
+    "he",
+    "she",
+    "they",
+    "me",
+    "him",
+    "her",
+    "us",
+    "them",
+    "about",
+    "also",
+    "likely",
+    "probably",
+    "possibly",
+    "still",
+    "more",
+    "most",
+    "very",
+    "around",
+    "what's",
+    "whats",
+    "interested",
+    "going",
+    "considered",
+    "consider",
+    "considering",
 }
 _OPEN_DOMAIN_MODAL_WORDS = {"would", "could", "might", "likely", "probably", "possibly"}
 _OPEN_DOMAIN_CUE_PHRASES = (
@@ -262,44 +335,60 @@ _LINE_SUBJECT_RE = re.compile(r"^(?P<subject>[A-Z][a-z]+)\b")
 # Strip question syntax to convert queries into declarative pseudo-documents
 # for better vector similarity (documents are statements, not questions).
 _HYDE_STRIP_WORDS = {
-    "what", "when", "where", "who", "why", "how",
-    "does", "did", "is", "are", "was", "were",
-    "would", "could", "should", "do", "can", "will",
-    "has", "have", "had",
+    "what",
+    "when",
+    "where",
+    "who",
+    "why",
+    "how",
+    "does",
+    "did",
+    "is",
+    "are",
+    "was",
+    "were",
+    "would",
+    "could",
+    "should",
+    "do",
+    "can",
+    "will",
+    "has",
+    "have",
+    "had",
 }
 # Patterns for question-to-statement conversion
 _HYDE_QTO_S = [
     # "What is X?" → "X is"
-    (re.compile(r"^what\s+(?:is|are|was|were)\s+(.+?)\??$", re.IGNORECASE),
-     r"\1 is"),
+    (re.compile(r"^what\s+(?:is|are|was|were)\s+(.+?)\??$", re.IGNORECASE), r"\1 is"),
     # "What does X do?" → "X does"
-    (re.compile(r"^what\s+(?:does|did|do)\s+(.+?)\??$", re.IGNORECASE),
-     r"\1"),
+    (re.compile(r"^what\s+(?:does|did|do)\s+(.+?)\??$", re.IGNORECASE), r"\1"),
     # "Who is X?" → "X is"
-    (re.compile(r"^who\s+(?:is|are|was|were)\s+(.+?)\??$", re.IGNORECASE),
-     r"\1 is"),
+    (re.compile(r"^who\s+(?:is|are|was|were)\s+(.+?)\??$", re.IGNORECASE), r"\1 is"),
     # "Where is X?" → "X is located"
-    (re.compile(r"^where\s+(?:is|are|was|were)\s+(.+?)\??$", re.IGNORECASE),
-     r"\1 is located"),
+    (re.compile(r"^where\s+(?:is|are|was|were)\s+(.+?)\??$", re.IGNORECASE), r"\1 is located"),
     # "When did X?" → "X"
-    (re.compile(r"^when\s+(?:did|does|do|was|were|is|are)\s+(.+?)\??$", re.IGNORECASE),
-     r"\1"),
+    (re.compile(r"^when\s+(?:did|does|do|was|were|is|are)\s+(.+?)\??$", re.IGNORECASE), r"\1"),
     # "How does X?" → "X"
-    (re.compile(r"^how\s+(?:does|did|do|is|are|was|were|can|could|should|would)\s+(.+?)\??$", re.IGNORECASE),
-     r"\1"),
+    (
+        re.compile(
+            r"^how\s+(?:does|did|do|is|are|was|were|can|could|should|would)\s+(.+?)\??$",
+            re.IGNORECASE,
+        ),
+        r"\1",
+    ),
     # "Why does X?" → "X because"
-    (re.compile(r"^why\s+(?:does|did|do|is|are|was|were)\s+(.+?)\??$", re.IGNORECASE),
-     r"\1 because"),
+    (
+        re.compile(r"^why\s+(?:does|did|do|is|are|was|were)\s+(.+?)\??$", re.IGNORECASE),
+        r"\1 because",
+    ),
     # "Is X Y?" → "X Y" (strip auxiliary, keep subject+predicate)
     # Avoids broken grammar like "X Y is" — just let "X Y" match documents
-    (re.compile(r"^(?:is|are|was|were)\s+(.+?)\??$", re.IGNORECASE),
-     r"\1"),
+    (re.compile(r"^(?:is|are|was|were)\s+(.+?)\??$", re.IGNORECASE), r"\1"),
     # "Does X ...?" → "X ..."
-    (re.compile(r"^(?:does|did|do)\s+(.+?)\??$", re.IGNORECASE),
-     r"\1"),
+    (re.compile(r"^(?:does|did|do)\s+(.+?)\??$", re.IGNORECASE), r"\1"),
     # "Can/Could/Would/Should X?" → "X"
-    (re.compile(r"^(?:can|could|would|should)\s+(.+?)\??$", re.IGNORECASE),
-     r"\1"),
+    (re.compile(r"^(?:can|could|would|should)\s+(.+?)\??$", re.IGNORECASE), r"\1"),
 ]
 
 
@@ -399,8 +488,17 @@ def _extract_comparison_options(query: str) -> list[str]:
         return []
 
     stop_boundaries = _QUERY_STOP_WORDS | {
-        "going", "interested", "interest", "considered", "consider", "likely",
-        "would", "could", "might", "more", "less",
+        "going",
+        "interested",
+        "interest",
+        "considered",
+        "consider",
+        "likely",
+        "would",
+        "could",
+        "might",
+        "more",
+        "less",
     }
 
     def _collect_left(idx: int) -> str:
@@ -554,25 +652,58 @@ def _derive_implied_fact_passages(content: str) -> list[str]:
                 if obj:
                     _add(template.format(subject=match.group("subject"), object=obj))
 
-        if any(word in lower for word in ("camping", "campfire", "meteor shower", "hiking", "forest", "mountains")):
-            _add(f"{subject} enjoys outdoor activities, nature, camping, hiking, and national parks")
+        if any(
+            word in lower
+            for word in ("camping", "campfire", "meteor shower", "hiking", "forest", "mountains")
+        ):
+            _add(
+                f"{subject} enjoys outdoor activities, nature, camping, hiking, and national parks"
+            )
         elif any(word in lower for word in ("nature", "outdoors")):
             _add(f"{subject} enjoys outdoor activities and nature")
         if any(word in lower for word in ("classical", "bach", "mozart", "orchestra", "symphony")):
             _add(f"{subject} enjoys classical music and composers like Vivaldi")
-        if any(word in lower for word in ("dr. seuss", "children's books", "kids' books", "kids books")) or ("classic" in lower and "book" in lower):
+        if any(
+            word in lower for word in ("dr. seuss", "children's books", "kids' books", "kids books")
+        ) or ("classic" in lower and "book" in lower):
             _add(f"{subject} collects children's books and classic books")
         if any(word in lower for word in ("counseling", "mental health")):
             _add(f"{subject} is interested in counseling and mental health careers")
-        if any(word in lower for word in ("volunteer", "shelter", "make a difference", "help others", "community service")):
+        if any(
+            word in lower
+            for word in (
+                "volunteer",
+                "shelter",
+                "make a difference",
+                "help others",
+                "community service",
+            )
+        ):
             _add(f"{subject} values helping others and community service")
-        if any(word in lower for word in ("church", "faith", "cross necklace", "spiritual", "prayer")):
+        if any(
+            word in lower for word in ("church", "faith", "cross necklace", "spiritual", "prayer")
+        ):
             _add(f"{subject} has religious or spiritual beliefs")
-        if any(word in lower for word in ("serve my country", "join the military", "running for office", "policymaking", "veteran")):
+        if any(
+            word in lower
+            for word in (
+                "serve my country",
+                "join the military",
+                "running for office",
+                "policymaking",
+                "veteran",
+            )
+        ):
             _add(f"{subject} is patriotic and interested in public service")
-        if any(word in lower for word in ("adoption", "have a family", "having a family", "kids who need it")):
+        if any(
+            word in lower
+            for word in ("adoption", "have a family", "having a family", "kids who need it")
+        ):
             _add(f"{subject} wants a family and cares about children")
-        if any(word in lower for word in ("lgbtq", "transgender", "rights", "acceptance", "supportive community")):
+        if any(
+            word in lower
+            for word in ("lgbtq", "transgender", "rights", "acceptance", "supportive community")
+        ):
             _add(f"{subject} supports LGBTQ rights and acceptance")
 
     return hints[:4]
@@ -614,7 +745,8 @@ def analyze_query(query: str, settings) -> dict:
 
     named_entity_lowers = {name.lower() for name in named_entities}
     content_terms = [
-        term for term in _extract_content_terms(query, limit=12)
+        term
+        for term in _extract_content_terms(query, limit=12)
         if term.lower() not in named_entity_lowers
     ][:8]
     comparison_options = _extract_comparison_options(query)
@@ -736,11 +868,12 @@ class HippoRetriever:
         Reformulates the query as an event and generates xWant/xAttr inferences
         to bridge the cue-trigger semantic disconnect at query time.
         """
-        if not getattr(self._settings, 'COMET_QUERY_EXPANSION_ENABLED', False):
+        if not getattr(self._settings, "COMET_QUERY_EXPANSION_ENABLED", False):
             return []
         try:
             if self._comet_expander is None:
                 from yadgar.enrichment import CometInferencer
+
                 self._comet_expander = CometInferencer()
 
             # Reformulate query as a COMET-compatible event
@@ -758,7 +891,7 @@ class HippoRetriever:
 
     def _dual_vector_search(self, query_embedding, top_k: int) -> list[tuple[int, float]]:
         """Search both explicit and implicit vector spaces."""
-        if not getattr(self._settings, 'DUAL_VECTORS_ENABLED', False):
+        if not getattr(self._settings, "DUAL_VECTORS_ENABLED", False):
             return []
 
         explicit_results = self._storage.search_vectors(query_embedding, top_k)
@@ -778,9 +911,7 @@ class HippoRetriever:
 
     # -- a. Personalized PageRank Retrieval --
 
-    def ppr_retrieve(
-        self, query: str, top_k: int = 10
-    ) -> list[tuple[int, float]]:
+    def ppr_retrieve(self, query: str, top_k: int = 10) -> list[tuple[int, float]]:
         """Run Personalized PageRank seeded by query entities.
 
         Returns (memory_id, ppr_score) sorted by score descending.
@@ -808,10 +939,7 @@ class HippoRetriever:
             return []
 
         # 4. Run Personalized PageRank
-        personalization = {
-            eid: 1.0 / len(seed_entity_ids) for eid in seed_entity_ids
-            if eid in G
-        }
+        personalization = {eid: 1.0 / len(seed_entity_ids) for eid in seed_entity_ids if eid in G}
         if not personalization:
             return []
 
@@ -832,9 +960,7 @@ class HippoRetriever:
             )
 
         # 5. Map high-PPR entities back to their associated memories
-        entity_scores = sorted(
-            ppr_scores.items(), key=lambda x: x[1], reverse=True
-        )
+        entity_scores = sorted(ppr_scores.items(), key=lambda x: x[1], reverse=True)
 
         memory_scores: dict[int, float] = defaultdict(float)
         for entity_id, score in entity_scores:
@@ -928,7 +1054,7 @@ class HippoRetriever:
                         continue
                     visited_entities.add(nid)
                     current_depth = depth + 1
-                    activation = spread_factor ** current_depth
+                    activation = spread_factor**current_depth
 
                     # Find memories for this neighbor entity
                     entity_row = self._storage.get_entity_by_id(nid)
@@ -936,9 +1062,7 @@ class HippoRetriever:
                         mids = self._find_memories_for_entity(entity_row["name"])
                         for mid in mids:
                             if mid not in seed_memory_set:
-                                activated[mid] = max(
-                                    activated.get(mid, 0.0), activation
-                                )
+                                activated[mid] = max(activated.get(mid, 0.0), activation)
 
                     next_frontier.append((nid, current_depth))
             frontier = next_frontier
@@ -948,9 +1072,7 @@ class HippoRetriever:
 
     # -- d. Unified Recall --
 
-    def recall(
-        self, query: str, max_results: int = 5, min_heat: float = 0.1
-    ) -> list[dict]:
+    def recall(self, query: str, max_results: int = 5, min_heat: float = 0.1) -> list[dict]:
         """Combine retrieval signals via Weighted Reciprocal Rank Fusion (WRRF).
 
         Each signal produces a ranked list of memory IDs. Scores are fused as:
@@ -959,18 +1081,21 @@ class HippoRetriever:
         An optional heuristic reranker refines the final ordering.
         """
         # Check if SR signal is available
-        sr_active = (
-            self._cognitive_map is not None
-            and self._cognitive_map.has_sufficient_data()
-        )
+        sr_active = self._cognitive_map is not None and self._cognitive_map.has_sufficient_data()
 
         w_temporal = 0.0  # Dynamically set if temporal markers found
 
         scores: dict[int, dict] = defaultdict(
             lambda: {
-                "vector": 0.0, "fts": 0.0, "ppr": 0.0,
-                "spread": 0.0, "fractal": 0.0, "hopfield": 0.0,
-                "hdc": 0.0, "sr": 0.0, "temporal": 0.0,
+                "vector": 0.0,
+                "fts": 0.0,
+                "ppr": 0.0,
+                "spread": 0.0,
+                "fractal": 0.0,
+                "hopfield": 0.0,
+                "hdc": 0.0,
+                "sr": 0.0,
+                "temporal": 0.0,
             }
         )
 
@@ -984,9 +1109,7 @@ class HippoRetriever:
 
         open_domain_mode = query_analysis.get("is_open_domain_like", False)
         open_domain_subqueries = (
-            _build_open_domain_subqueries(query, query_analysis)
-            if open_domain_mode
-            else []
+            _build_open_domain_subqueries(query, query_analysis) if open_domain_mode else []
         )
 
         candidate_k = max_results * self._settings.CANDIDATE_POOL_MULTIPLIER
@@ -1017,7 +1140,9 @@ class HippoRetriever:
                     bm25_min, bm25_max = min(bm25_vals), max(bm25_vals)
                     bm25_range = bm25_max - bm25_min
                     for mid, bm25_score in fts_scored:
-                        normalized = (bm25_score - bm25_min) / bm25_range if bm25_range > 1e-9 else 0.5
+                        normalized = (
+                            (bm25_score - bm25_min) / bm25_range if bm25_range > 1e-9 else 0.5
+                        )
                         scores[mid]["fts"] = max(
                             scores[mid].get("fts", 0.0),
                             normalized * strength,
@@ -1034,7 +1159,8 @@ class HippoRetriever:
                 entity_names = [
                     w.strip(".,;:!?()[]{}\"'")
                     for w in query.split()
-                    if w[0:1].isupper() and len(w.strip(".,;:!?()[]{}\"'")) >= 2
+                    if w[0:1].isupper()
+                    and len(w.strip(".,;:!?()[]{}\"'")) >= 2
                     and w.strip(".,;:!?()[]{}\"'").lower() not in _QUERY_STOP_WORDS
                 ]
                 if entity_names:
@@ -1049,7 +1175,9 @@ class HippoRetriever:
                         ent_min, ent_max = min(ent_vals), max(ent_vals)
                         ent_range = ent_max - ent_min
                         for mid, ent_score in entity_hits:
-                            normalized = (ent_score - ent_min) / ent_range if ent_range > 1e-9 else 0.5
+                            normalized = (
+                                (ent_score - ent_min) / ent_range if ent_range > 1e-9 else 0.5
+                            )
                             # Use max to not overwrite a better FTS score
                             scores[mid]["fts"] = max(
                                 scores[mid].get("fts", 0.0),
@@ -1067,7 +1195,9 @@ class HippoRetriever:
                 try:
                     comet_query = " ".join(comet_terms[:6])
                     comet_hits = self._storage.search_memories_fts_scored(
-                        comet_query, min_heat=min_heat, limit=candidate_k,
+                        comet_query,
+                        min_heat=min_heat,
+                        limit=candidate_k,
                     )
                     if comet_hits:
                         # SurrealDB returns negative BM25 scores — use min-max normalization
@@ -1075,7 +1205,11 @@ class HippoRetriever:
                         comet_min, comet_max = min(comet_vals), max(comet_vals)
                         comet_range = comet_max - comet_min
                         for mid, comet_score in comet_hits:
-                            normalized = (comet_score - comet_min) / comet_range if comet_range > 1e-9 else 0.5
+                            normalized = (
+                                (comet_score - comet_min) / comet_range
+                                if comet_range > 1e-9
+                                else 0.5
+                            )
                             scores[mid]["fts"] = max(
                                 scores[mid].get("fts", 0.0),
                                 normalized * 0.6,  # Lower weight than direct FTS match
@@ -1147,9 +1281,7 @@ class HippoRetriever:
 
         # 5. Fractal cluster matching
         if enabled_signals is None or "fractal" in enabled_signals:
-            fractal_results = self._fractal.fractal_score(
-                query, max_results=candidate_k
-            )
+            fractal_results = self._fractal.fractal_score(query, max_results=candidate_k)
             if fractal_results:
                 max_fractal = max(s for _, s in fractal_results) if fractal_results else 1.0
                 for mid, fractal_score in fractal_results:
@@ -1160,9 +1292,7 @@ class HippoRetriever:
         if enabled_signals is None or "hopfield" in enabled_signals:
             if query_embedding is not None:
                 try:
-                    hopfield_results = self._hopfield.retrieve(
-                        query_embedding, top_k=candidate_k
-                    )
+                    hopfield_results = self._hopfield.retrieve(query_embedding, top_k=candidate_k)
                     if hopfield_results:
                         max_hop = max(s for _, s in hopfield_results) if hopfield_results else 1.0
                         for mid, hop_score in hopfield_results:
@@ -1185,7 +1315,7 @@ class HippoRetriever:
                             all_mems = self._storage.get_memories_by_heat(min_heat, candidate_k)
                             candidate_ids = [m["id"] for m in all_mems]
 
-                        hdc_candidates: list[tuple[int, "np.ndarray"]] = []
+                        hdc_candidates: list[tuple[int, bytes]] = []
                         for mid in candidate_ids:
                             mem = self._storage.get_memory(mid)
                             if mem and mem.get("hdc_vector") is not None:
@@ -1225,7 +1355,7 @@ class HippoRetriever:
                     logger.debug("SR retrieval failed, skipping signal")
 
         # 9. Temporal retrieval boost — temporal_retrieval signal
-        if getattr(self._settings, 'TEMPORAL_RETRIEVAL_ENABLED', False):
+        if getattr(self._settings, "TEMPORAL_RETRIEVAL_ENABLED", False):
             temporal_info = parse_temporal_expression(query)
             if temporal_info["has_temporal"]:
                 try:
@@ -1277,23 +1407,24 @@ class HippoRetriever:
             signal_weights["fts"] *= getattr(self._settings, "OPEN_DOMAIN_FTS_BOOST", 1.6)
 
         # Apply confidence gating
-        if getattr(self._settings, 'CONFIDENCE_GATING_ENABLED', False):
+        if getattr(self._settings, "CONFIDENCE_GATING_ENABLED", False):
             _conf_name_map = {"spread": "spreading"}
             thresholds = {
-                "vector": getattr(self._settings, 'CONFIDENCE_THRESHOLD_VECTOR', 0.1),
-                "fts": getattr(self._settings, 'CONFIDENCE_THRESHOLD_FTS', 0.1),
-                "ppr": getattr(self._settings, 'CONFIDENCE_THRESHOLD_PPR', 0.1),
-                "spread": getattr(self._settings, 'CONFIDENCE_THRESHOLD_SPREADING', 0.1),
-                "hopfield": getattr(self._settings, 'CONFIDENCE_THRESHOLD_HOPFIELD', 0.1),
-                "hdc": getattr(self._settings, 'CONFIDENCE_THRESHOLD_HDC', 0.1),
-                "fractal": getattr(self._settings, 'CONFIDENCE_THRESHOLD_FRACTAL', 0.1),
-                "sr": getattr(self._settings, 'CONFIDENCE_THRESHOLD_SR', 0.1),
-                "temporal": getattr(self._settings, 'CONFIDENCE_THRESHOLD_TEMPORAL', 0.1),
+                "vector": getattr(self._settings, "CONFIDENCE_THRESHOLD_VECTOR", 0.1),
+                "fts": getattr(self._settings, "CONFIDENCE_THRESHOLD_FTS", 0.1),
+                "ppr": getattr(self._settings, "CONFIDENCE_THRESHOLD_PPR", 0.1),
+                "spread": getattr(self._settings, "CONFIDENCE_THRESHOLD_SPREADING", 0.1),
+                "hopfield": getattr(self._settings, "CONFIDENCE_THRESHOLD_HOPFIELD", 0.1),
+                "hdc": getattr(self._settings, "CONFIDENCE_THRESHOLD_HDC", 0.1),
+                "fractal": getattr(self._settings, "CONFIDENCE_THRESHOLD_FRACTAL", 0.1),
+                "sr": getattr(self._settings, "CONFIDENCE_THRESHOLD_SR", 0.1),
+                "temporal": getattr(self._settings, "CONFIDENCE_THRESHOLD_TEMPORAL", 0.1),
             }
             for sig in list(signal_weights.keys()):
                 ranked = sorted(
                     [(mid, s[sig]) for mid, s in scores.items() if s[sig] > 0],
-                    key=lambda x: x[1], reverse=True,
+                    key=lambda x: x[1],
+                    reverse=True,
                 )
                 conf_name = _conf_name_map.get(sig, sig)
                 confidence = self._compute_signal_confidence(conf_name, ranked)
@@ -1308,18 +1439,18 @@ class HippoRetriever:
             # Build signal_scores: signal_name -> {memory_id: raw_score}
             signal_scores_for_convex: dict[str, dict[int, float]] = {}
             for sig in signal_weights:
-                sig_dict = {
-                    mid: s[sig] for mid, s in scores.items() if s[sig] > 0
-                }
+                sig_dict = {mid: s[sig] for mid, s in scores.items() if s[sig] > 0}
                 if sig_dict:
                     signal_scores_for_convex[sig] = sig_dict
             fused = self._convex_fuse(signal_scores_for_convex, signal_weights)
             fused_scores = dict(fused)
         else:
             # Existing WRRF-style normalized weighted sum
-            signal_names = list({sig for mid, sigs in scores.items() for sig, v in sigs.items() if v > 0})
+            signal_names = list(
+                {sig for mid, sigs in scores.items() for sig, v in sigs.items() if v > 0}
+            )
             normalized: dict[int, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-            fusion_norm = getattr(self._settings, 'FUSION_NORM', 'zscore')
+            fusion_norm = getattr(self._settings, "FUSION_NORM", "zscore")
 
             for sig in signal_names:
                 sig_vals = [(mid, s[sig]) for mid, s in scores.items() if s[sig] > 0]
@@ -1347,10 +1478,10 @@ class HippoRetriever:
                         for mid, z in z_scores:
                             normalized[mid][sig] = (z - z_min) / z_rng if z_rng > 1e-9 else 0.5
                     else:
-                        for mid, v in sig_vals:
+                        for mid, _v in sig_vals:
                             normalized[mid][sig] = 0.5
 
-            combmnz = getattr(self._settings, 'COMBMNZ_ENABLED', False)
+            combmnz = getattr(self._settings, "COMBMNZ_ENABLED", False)
 
             fused_scores = {}
             for mid, norm_sigs in normalized.items():
@@ -1389,14 +1520,15 @@ class HippoRetriever:
         # Inject top signal-specific results for CE pool diversity
         # This ensures CE sees the best FTS/vector candidates even if
         # they didn't rank in the fused top-K
-        if getattr(self._settings, 'CROSS_ENCODER_ENABLED', False):
-            diversity_k = getattr(self._settings, 'CE_DIVERSITY_INJECT_K', 10)
+        if getattr(self._settings, "CROSS_ENCODER_ENABLED", False):
+            diversity_k = getattr(self._settings, "CE_DIVERSITY_INJECT_K", 10)
             if open_domain_mode:
                 diversity_k = max(diversity_k, 15)
             for sig in ["fts", "vector"]:
                 top_sig = sorted(
                     [(mid, s[sig]) for mid, s in scores.items() if s[sig] > 0],
-                    key=lambda x: x[1], reverse=True,
+                    key=lambda x: x[1],
+                    reverse=True,
                 )[:diversity_k]
                 for mid, _ in top_sig:
                     if mid not in seen_ids:
@@ -1411,19 +1543,23 @@ class HippoRetriever:
         if self._settings.RERANKER_ENABLED:
             # When CE follows, don't clip yet — let CE see the full pool
             heuristic_k = max_results
-            if getattr(self._settings, 'CROSS_ENCODER_ENABLED', False):
+            if getattr(self._settings, "CROSS_ENCODER_ENABLED", False):
                 heuristic_k = None  # Uses RERANKER_TOP_K (50)
             result_memories = self._heuristic_rerank(result_memories, query, top_k=heuristic_k)
 
         # Comparison dual search: merge extra candidates for "A or B?" queries
         comparison_options = query_analysis.get("comparison_options", [])
-        if (
-            getattr(self._settings, "COMPARISON_DUAL_SEARCH_ENABLED", False)
-            and comparison_options
-        ):
-            subject = query_analysis.get("named_entities", [None])[0] if query_analysis.get("named_entities") else None
+        if getattr(self._settings, "COMPARISON_DUAL_SEARCH_ENABLED", False) and comparison_options:
+            subject = (
+                query_analysis.get("named_entities", [None])[0]
+                if query_analysis.get("named_entities")
+                else None
+            )
             comp_results = self._comparison_dual_search(
-                query, comparison_options, subject, max_results,
+                query,
+                comparison_options,
+                subject,
+                max_results,
             )
             for r in comp_results:
                 rid = r.get("id", -1)
@@ -1436,12 +1572,13 @@ class HippoRetriever:
         # Cross-encoder reranker (FlashRank ONNX — fast CPU inference)
         # Feed the raw query directly — CE performs best with the original question.
         # CE query augmentation (concatenating HyDE expansion) was tested and HURTS MRR.
-        if getattr(self._settings, 'CROSS_ENCODER_ENABLED', False):
+        if getattr(self._settings, "CROSS_ENCODER_ENABLED", False):
             result_memories = self._cross_encoder_rerank(result_memories, query)
 
         # NLI entailment scoring: complementary signal to CE for open-domain queries
-        if (getattr(self._settings, 'NLI_RERANKING_ENABLED', False)
-                and (not self._settings.NLI_ONLY_FOR_OPEN_DOMAIN or open_domain_mode)):
+        if getattr(self._settings, "NLI_RERANKING_ENABLED", False) and (
+            not self._settings.NLI_ONLY_FOR_OPEN_DOMAIN or open_domain_mode
+        ):
             result_memories = self._nli_rerank(query, result_memories)
             # Blend NLI with CE score
             nli_weight = self._settings.NLI_WEIGHT
@@ -1452,7 +1589,7 @@ class HippoRetriever:
             result_memories.sort(key=lambda m: m.get("_retrieval_score", 0), reverse=True)
 
         # Multi-passage evidence aggregation: boost scattered evidence clusters
-        if getattr(self._settings, 'MULTI_PASSAGE_RERANKING_ENABLED', False):
+        if getattr(self._settings, "MULTI_PASSAGE_RERANKING_ENABLED", False):
             result_memories = self._multi_passage_rerank(query, result_memories, max_results)
 
         # Profile and belief search: merge structured knowledge after CE reranking
@@ -1462,20 +1599,25 @@ class HippoRetriever:
                 directory = mem["directory_context"]
                 break
         profile_belief_results = self._search_profiles_and_beliefs(
-            query, directory, max_results,
+            query,
+            directory,
+            max_results,
         )
         if profile_belief_results:
             result_memories.extend(profile_belief_results)
             result_memories.sort(
-                key=lambda m: m.get("_retrieval_score", 0), reverse=True,
+                key=lambda m: m.get("_retrieval_score", 0),
+                reverse=True,
             )
             result_memories = result_memories[: max_results * 2]
 
         # MMR diversity reranking — avoid all top-K from same conversation segment
-        if getattr(self._settings, 'ADVERSARIAL_DIVERSITY_ENFORCEMENT', False):
+        if getattr(self._settings, "ADVERSARIAL_DIVERSITY_ENFORCEMENT", False):
             result_memories = self._mmr_rerank(
-                result_memories, query_embedding,
-                top_k=max_results, lambda_param=0.7,
+                result_memories,
+                query_embedding,
+                top_k=max_results,
+                lambda_param=0.7,
             )
 
         # Trim to max_results after reranking
@@ -1489,7 +1631,8 @@ class HippoRetriever:
             if adv_info["is_uncertain"]:
                 logger.debug(
                     "Low retrieval confidence (%.3f), score_gap=%.3f",
-                    adv_info["confidence"], adv_info["score_gap"]
+                    adv_info["confidence"],
+                    adv_info["score_gap"],
                 )
 
         # Apply neuro-symbolic rules (hard filter + soft re-rank) as final step
@@ -1517,9 +1660,7 @@ class HippoRetriever:
         # Apply cognitive load management via metacognition
         if self._metacognition is not None and result_memories:
             try:
-                result_memories = self._metacognition.manage_context(
-                    result_memories
-                )
+                result_memories = self._metacognition.manage_context(result_memories)
             except Exception:
                 logger.debug("Metacognition manage_context failed, returning unoptimized")
 
@@ -1598,8 +1739,7 @@ class HippoRetriever:
         combined: dict[int, float] = {}
         for mid in all_mids:
             combined[mid] = sum(
-                norm_weights.get(sig, 0) * normalized.get(sig, {}).get(mid, 0)
-                for sig in normalized
+                norm_weights.get(sig, 0) * normalized.get(sig, {}).get(mid, 0) for sig in normalized
             )
         return sorted(combined.items(), key=lambda x: x[1], reverse=True)
 
@@ -1624,14 +1764,15 @@ class HippoRetriever:
                     top_k=self._settings.COMPARISON_TOP_K_PER_OPTION,
                     min_heat=0.1,
                 )
-                for mid, distance in vec_hits:
+                for mid, _distance in vec_hits:
                     mem = self._storage.get_memory(mid)
                     if mem:
                         mem.pop("embedding", None)
                         vec_results.append(mem)
             # Also do FTS
             fts_results = self._storage.search_memories_fts(
-                sub_query, limit=self._settings.COMPARISON_TOP_K_PER_OPTION,
+                sub_query,
+                limit=self._settings.COMPARISON_TOP_K_PER_OPTION,
             )
             # Merge
             seen: set[int] = set()
@@ -1669,12 +1810,14 @@ class HippoRetriever:
             try:
                 profiles = self._storage.search_profiles_fts(query, limit=max_results)
                 for p in profiles:
-                    extra_results.append({
-                        "id": -p.get("id", 0),  # Negative to distinguish from memories
-                        "content": f"{p['entity_name']}: {p['attribute_type']} = {p['attribute_value']}",
-                        "_source": "profile",
-                        "_retrieval_score": self._settings.PROFILE_SEARCH_WEIGHT,
-                    })
+                    extra_results.append(
+                        {
+                            "id": -p.get("id", 0),  # Negative to distinguish from memories
+                            "content": f"{p['entity_name']}: {p['attribute_type']} = {p['attribute_value']}",
+                            "_source": "profile",
+                            "_retrieval_score": self._settings.PROFILE_SEARCH_WEIGHT,
+                        }
+                    )
             except Exception:
                 pass
 
@@ -1689,12 +1832,14 @@ class HippoRetriever:
                         if b.get("confidence", 0) > 0.7
                         else b.get("confidence", 0.5)
                     )
-                    extra_results.append({
-                        "id": -b.get("id", 0) - 100000,  # Negative offset to distinguish
-                        "content": b["content"],
-                        "_source": "belief",
-                        "_retrieval_score": score,
-                    })
+                    extra_results.append(
+                        {
+                            "id": -b.get("id", 0) - 100000,  # Negative offset to distinguish
+                            "content": b["content"],
+                            "_source": "belief",
+                            "_retrieval_score": score,
+                        }
+                    )
             except Exception:
                 pass
 
@@ -1730,13 +1875,58 @@ class HippoRetriever:
                 query_entities.add(stripped.lower())
 
         # Tokenize query (excluding common question words)
-        _question_words = {"what", "who", "when", "where", "why", "how", "would",
-                          "could", "should", "does", "did", "is", "are", "was",
-                          "were", "do", "has", "have", "had", "can", "will",
-                          "the", "a", "an", "of", "in", "to", "for", "and",
-                          "or", "be", "if", "that", "this", "it", "on", "at",
-                          "by", "with", "as", "not", "but", "from", "likely",
-                          "still", "also", "more", "most", "very", "about"}
+        _question_words = {
+            "what",
+            "who",
+            "when",
+            "where",
+            "why",
+            "how",
+            "would",
+            "could",
+            "should",
+            "does",
+            "did",
+            "is",
+            "are",
+            "was",
+            "were",
+            "do",
+            "has",
+            "have",
+            "had",
+            "can",
+            "will",
+            "the",
+            "a",
+            "an",
+            "of",
+            "in",
+            "to",
+            "for",
+            "and",
+            "or",
+            "be",
+            "if",
+            "that",
+            "this",
+            "it",
+            "on",
+            "at",
+            "by",
+            "with",
+            "as",
+            "not",
+            "but",
+            "from",
+            "likely",
+            "still",
+            "also",
+            "more",
+            "most",
+            "very",
+            "about",
+        }
         query_terms = set()
         query_content_terms = set()  # Terms that carry meaning
         for token in query_lower.split():
@@ -1751,7 +1941,7 @@ class HippoRetriever:
         q_words = [w for w in q_words if w]
         query_bigrams = set()
         for j in range(len(q_words) - 1):
-            query_bigrams.add(f"{q_words[j]} {q_words[j+1]}")
+            query_bigrams.add(f"{q_words[j]} {q_words[j + 1]}")
 
         if not query_terms:
             return memories[:top_k]
@@ -1781,11 +1971,13 @@ class HippoRetriever:
             # 3. Bigram overlap (phrase matching)
             bigram_score = 0.0
             if query_bigrams:
-                c_words = [t.strip(".,;:!?()[]{}\"'`~@#$%^&*-_+=<>/\\|") for t in content_lower.split()]
+                c_words = [
+                    t.strip(".,;:!?()[]{}\"'`~@#$%^&*-_+=<>/\\|") for t in content_lower.split()
+                ]
                 c_words = [w for w in c_words if w]
                 content_bigrams = set()
                 for j in range(len(c_words) - 1):
-                    content_bigrams.add(f"{c_words[j]} {c_words[j+1]}")
+                    content_bigrams.add(f"{c_words[j]} {c_words[j + 1]}")
                 bigram_overlap = query_bigrams & content_bigrams
                 bigram_score = len(bigram_overlap) / len(query_bigrams)
 
@@ -1793,18 +1985,13 @@ class HippoRetriever:
             exact_match = 1.0 if query_lower in content_lower else 0.0
 
             rerank_score = (
-                entity_score * 0.35
-                + term_score * 0.30
-                + bigram_score * 0.20
-                + exact_match * 0.15
+                entity_score * 0.35 + term_score * 0.30 + bigram_score * 0.20 + exact_match * 0.15
             )
             mem["_rerank_score"] = round(rerank_score, 4)
 
             # Combine: retrieval score (85%) + rerank (15%)
             retrieval_score = mem.get("_retrieval_score", 0.0)
-            mem["_retrieval_score"] = round(
-                0.85 * retrieval_score + 0.15 * rerank_score, 4
-            )
+            mem["_retrieval_score"] = round(0.85 * retrieval_score + 0.15 * rerank_score, 4)
 
         memories.sort(key=lambda m: m["_retrieval_score"], reverse=True)
         return memories[:top_k]
@@ -1831,10 +2018,11 @@ class HippoRetriever:
 
         # Try GTE-Reranker first (better zero-shot OOD generalization)
         gte_failed = False
-        if getattr(self._settings, 'GTE_RERANKER_ENABLED', False):
+        if getattr(self._settings, "GTE_RERANKER_ENABLED", False):
             try:
                 if self._gte_reranker is None:
                     from sentence_transformers import CrossEncoder as STCrossEncoder
+
                     self._gte_reranker = STCrossEncoder(
                         self._settings.GTE_RERANKER_MODEL,
                         max_length=self._settings.GTE_RERANKER_MAX_LENGTH,
@@ -1850,10 +2038,12 @@ class HippoRetriever:
                     min_score = min(raw_scores)
                     score_range = max_score - min_score
 
-                    ce_weight = getattr(self._settings, 'CROSS_ENCODER_WEIGHT', 0.6)
+                    ce_weight = getattr(self._settings, "CROSS_ENCODER_WEIGHT", 0.6)
                     ret_weight = 1.0 - ce_weight
                     for i, mem in enumerate(memories):
-                        ce_norm = (raw_scores[i] - min_score) / score_range if score_range > 0 else 0.5
+                        ce_norm = (
+                            (raw_scores[i] - min_score) / score_range if score_range > 0 else 0.5
+                        )
 
                         content = mem.get("content", "")
                         content_len = len(content)
@@ -1876,14 +2066,14 @@ class HippoRetriever:
                 gte_failed = True
 
         # If GTE was enabled but failed, respect fallback setting
-        if gte_failed and not getattr(self._settings, 'GTE_RERANKER_FALLBACK_TO_FLASHRANK', True):
+        if gte_failed and not getattr(self._settings, "GTE_RERANKER_FALLBACK_TO_FLASHRANK", True):
             return memories[:top_k]
 
         # Try FlashRank (ONNX cross-encoder fallback)
         try:
             from flashrank import Ranker, RerankRequest
 
-            if not hasattr(self, '_flashrank_ranker') or self._flashrank_ranker is None:
+            if not hasattr(self, "_flashrank_ranker") or self._flashrank_ranker is None:
                 self._flashrank_ranker = Ranker(
                     model_name="ms-marco-MiniLM-L-12-v2",
                     cache_dir=os.path.expanduser("~/.cache/flashrank"),
@@ -1920,7 +2110,7 @@ class HippoRetriever:
             min_score = min(raw_scores) if raw_scores else 0.0
             score_range = max_score - min_score
 
-            ce_weight = getattr(self._settings, 'CROSS_ENCODER_WEIGHT', 0.6)
+            ce_weight = getattr(self._settings, "CROSS_ENCODER_WEIGHT", 0.6)
             ret_weight = 1.0 - ce_weight
             for i, mem in enumerate(memories):
                 raw = memory_raw_scores.get(i, 0.0)
@@ -1957,11 +2147,9 @@ class HippoRetriever:
             logger.warning("No reranker available; skipping cross-encoder reranking")
             return memories
 
-        if not hasattr(self, '_cross_encoder') or self._cross_encoder is None:
+        if not hasattr(self, "_cross_encoder") or self._cross_encoder is None:
             try:
-                self._cross_encoder = CrossEncoder(
-                    self._settings.CROSS_ENCODER_MODEL
-                )
+                self._cross_encoder = CrossEncoder(self._settings.CROSS_ENCODER_MODEL)
             except Exception:
                 self._cross_encoder = None
                 return memories
@@ -1980,37 +2168,39 @@ class HippoRetriever:
         else:
             normalized_ce = [1.0] * len(ce_scores)
 
-        ce_weight = getattr(self._settings, 'CROSS_ENCODER_WEIGHT', 0.6)
+        ce_weight = getattr(self._settings, "CROSS_ENCODER_WEIGHT", 0.6)
         ret_weight = 1.0 - ce_weight
-        for mem, ce_norm in zip(memories, normalized_ce):
+        for mem, ce_norm in zip(memories, normalized_ce, strict=False):
             retrieval_score = mem.get("_retrieval_score", 0.0)
             mem["_cross_encoder_score"] = round(ce_norm, 4)
-            mem["_retrieval_score"] = round(
-                ret_weight * retrieval_score + ce_weight * ce_norm, 4
-            )
+            mem["_retrieval_score"] = round(ret_weight * retrieval_score + ce_weight * ce_norm, 4)
 
         memories.sort(key=lambda m: m["_retrieval_score"], reverse=True)
         return memories[:top_k]
 
     def _nli_rerank(self, query: str, memories: list[dict]) -> list[dict]:
         """Score memories by NLI entailment probability."""
-        if not getattr(self._settings, 'NLI_RERANKING_ENABLED', False):
+        if not getattr(self._settings, "NLI_RERANKING_ENABLED", False):
             return memories
 
         try:
             if self._nli_model is None:
                 from sentence_transformers import CrossEncoder
+
                 self._nli_model = CrossEncoder(self._settings.NLI_MODEL)
                 logger.info("Loaded NLI model: %s", self._settings.NLI_MODEL)
 
             hypothesis = _question_to_statement(query)
             pairs = [(m["content"][:512], hypothesis) for m in memories]
-            scores = self._nli_model.predict(pairs)  # Shape: (n, 3) for [contradiction, neutral, entailment]
+            scores = self._nli_model.predict(
+                pairs
+            )  # Shape: (n, 3) for [contradiction, neutral, entailment]
 
             for i, mem in enumerate(memories):
-                if hasattr(scores[i], '__len__') and len(scores[i]) == 3:
+                if hasattr(scores[i], "__len__") and len(scores[i]) == 3:
                     # Softmax to get probabilities
                     import numpy as np
+
                     exp_scores = np.exp(scores[i] - np.max(scores[i]))
                     probs = exp_scores / exp_scores.sum()
                     mem["_nli_entailment_score"] = float(probs[2])  # Index 2 = entailment
@@ -2027,8 +2217,8 @@ class HippoRetriever:
 
     def _cluster_memories(self, memories: list[dict]) -> list[list[dict]]:
         """Cluster memories by entity/topic overlap using Jaccard similarity."""
-        threshold = getattr(self._settings, 'MULTI_PASSAGE_CLUSTER_OVERLAP_THRESHOLD', 0.3)
-        max_size = getattr(self._settings, 'MULTI_PASSAGE_MAX_CLUSTER_SIZE', 3)
+        threshold = getattr(self._settings, "MULTI_PASSAGE_CLUSTER_OVERLAP_THRESHOLD", 0.3)
+        max_size = getattr(self._settings, "MULTI_PASSAGE_MAX_CLUSTER_SIZE", 3)
 
         # Tokenize each memory
         tokenized = []
@@ -2058,14 +2248,13 @@ class HippoRetriever:
 
         return clusters
 
-    def _multi_passage_rerank(self, query: str, memories: list[dict],
-                              top_k: int) -> list[dict]:
+    def _multi_passage_rerank(self, query: str, memories: list[dict], top_k: int) -> list[dict]:
         """Multi-passage evidence aggregation reranking.
 
         Groups related memories and re-scores clusters to detect when multiple
         weak pieces of evidence combine into strong evidence.
         """
-        if not getattr(self._settings, 'MULTI_PASSAGE_RERANKING_ENABLED', False):
+        if not getattr(self._settings, "MULTI_PASSAGE_RERANKING_ENABLED", False):
             return memories[:top_k]
 
         # Cluster top-20 candidates
@@ -2082,8 +2271,7 @@ class HippoRetriever:
 
             # If combined evidence is stronger, boost individual members
             max_individual = max(
-                m.get("_cross_encoder_score", m.get("_retrieval_score", 0))
-                for m in cluster_mems
+                m.get("_cross_encoder_score", m.get("_retrieval_score", 0)) for m in cluster_mems
             )
             if combined_score > max_individual:
                 boost = (combined_score - max_individual) * 0.5
@@ -2098,10 +2286,11 @@ class HippoRetriever:
         try:
             if self._gte_reranker and self._gte_reranker is not False:
                 scores = self._gte_reranker.predict([(query, document[:512])])
-                return float(scores[0]) if hasattr(scores, '__len__') else float(scores)
+                return float(scores[0]) if hasattr(scores, "__len__") else float(scores)
             # Fallback to FlashRank
-            if hasattr(self, '_flashrank_ranker') and self._flashrank_ranker:
+            if hasattr(self, "_flashrank_ranker") and self._flashrank_ranker:
                 from flashrank import RerankRequest
+
                 req = RerankRequest(query=query, passages=[{"text": document[:512]}])
                 result = self._flashrank_ranker.rerank(req)
                 return result[0]["score"] if result else 0.0
@@ -2205,7 +2394,12 @@ class HippoRetriever:
         if len(result_memories) == 1:
             score = result_memories[0].get("_retrieval_score", 0.0)
             conf = min(1.0, score * 2)
-            return {"is_uncertain": conf < 0.3, "confidence": conf, "score_gap": 0.0, "abstain": conf < 0.1}
+            return {
+                "is_uncertain": conf < 0.3,
+                "confidence": conf,
+                "score_gap": 0.0,
+                "abstain": conf < 0.1,
+            }
 
         scores = [mem.get("_retrieval_score", 0.0) for mem in result_memories]
 
@@ -2214,7 +2408,7 @@ class HippoRetriever:
         std_s = (sum((s - mean_s) ** 2 for s in scores) / len(scores)) ** 0.5
 
         # Top-1 z-score: how far above mean is the best result?
-        top1_z = (scores[0] - mean_s) / std_s if std_s > 1e-9 else 0.0
+        (scores[0] - mean_s) / std_s if std_s > 1e-9 else 0.0
 
         # Score gap between top-1 and top-2
         raw_gap = scores[0] - scores[1]
@@ -2233,7 +2427,6 @@ class HippoRetriever:
 
         confidence = 0.4 * gap_conf + 0.4 * abs_conf + 0.2 * dist_conf
 
-        threshold = self._settings.ADVERSARIAL_SCORE_GAP_THRESHOLD
         is_uncertain = confidence < self._settings.ADVERSARIAL_MIN_CONFIDENCE
         abstain = confidence < 0.15 or (scores[0] < 0.1 and z_gap < 0.5)
 
@@ -2354,9 +2547,7 @@ class HippoRetriever:
                 entity_ids.add(entity["id"])
         return entity_ids
 
-    def _get_top_cooccurring_entities(
-        self, content: str, limit: int = 5
-    ) -> list[str]:
+    def _get_top_cooccurring_entities(self, content: str, limit: int = 5) -> list[str]:
         """Find entities that co-occur with entities mentioned in this content."""
         # Find entities mentioned in the content
         content_entities = self._find_entities_in_content(content)
@@ -2373,7 +2564,5 @@ class HippoRetriever:
                     partner_counts[entity_row["name"]] += n["weight"]
 
         # Sort by weight and return top
-        sorted_partners = sorted(
-            partner_counts.items(), key=lambda x: x[1], reverse=True
-        )
+        sorted_partners = sorted(partner_counts.items(), key=lambda x: x[1], reverse=True)
         return [name for name, _ in sorted_partners[:limit]]

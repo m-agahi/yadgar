@@ -132,7 +132,9 @@ class TestMemoryModelFields:
 
 class TestNewModels:
     def test_memory_rule_defaults(self):
-        r = MemoryRule(rule_type="hard", scope="global", condition="tag contains x", action="filter")
+        r = MemoryRule(
+            rule_type="hard", scope="global", condition="tag contains x", action="filter"
+        )
         assert r.id is None
         assert r.rule_type == "hard"
         assert r.scope == "global"
@@ -143,8 +145,12 @@ class TestNewModels:
 
     def test_memory_rule_soft_directory(self):
         r = MemoryRule(
-            rule_type="soft", scope="directory", scope_value="/home/user",
-            condition="language == python", action="boost:0.3", priority=5,
+            rule_type="soft",
+            scope="directory",
+            scope_value="/home/user",
+            condition="language == python",
+            action="boost:0.3",
+            priority=5,
         )
         assert r.rule_type == "soft"
         assert r.scope == "directory"
@@ -163,8 +169,10 @@ class TestNewModels:
 
     def test_memory_archive_with_reason(self):
         a = MemoryArchive(
-            original_memory_id=5, content="data",
-            mismatch_score=0.7, archive_reason="reconsolidation",
+            original_memory_id=5,
+            content="data",
+            mismatch_score=0.7,
+            archive_reason="reconsolidation",
         )
         assert a.mismatch_score == 0.7
         assert a.archive_reason == "reconsolidation"
@@ -190,8 +198,11 @@ class TestNewModels:
 
     def test_causal_dag_edge_custom(self):
         e = CausalDAGEdge(
-            source_entity_id=1, target_entity_id=2,
-            algorithm="ges", confidence=0.85, is_validated=True,
+            source_entity_id=1,
+            target_entity_id=2,
+            algorithm="ges",
+            confidence=0.85,
+            is_validated=True,
         )
         assert e.algorithm == "ges"
         assert e.confidence == 0.85
@@ -268,7 +279,9 @@ class TestFrontierSchema:
     def test_new_tables_exist(self, storage):
         """Verify the new SurrealDB tables exist by inserting and querying a record."""
         # memory_rule table
-        rid = storage.insert_rule({"rule_type": "hard", "scope": "global", "condition": "x", "action": "filter"})
+        rid = storage.insert_rule(
+            {"rule_type": "hard", "scope": "global", "condition": "x", "action": "filter"}
+        )
         assert rid > 0
         # memory_archive table
         mem_id = storage.insert_memory(_make_memory())
@@ -286,13 +299,15 @@ class TestFrontierSchema:
 
     def test_memory_rules_columns(self, storage):
         """Verify memory_rule record has expected fields."""
-        rid = storage.insert_rule({
-            "rule_type": "hard",
-            "scope": "global",
-            "condition": "tag contains secret",
-            "action": "filter",
-            "priority": 5,
-        })
+        storage.insert_rule(
+            {
+                "rule_type": "hard",
+                "scope": "global",
+                "condition": "tag contains secret",
+                "action": "filter",
+                "priority": 5,
+            }
+        )
         rules = storage.get_rules_for_scope("global")
         assert len(rules) >= 1
         row = rules[0]
@@ -302,12 +317,14 @@ class TestFrontierSchema:
     def test_memory_archives_columns(self, storage):
         """Verify memory_archive record has expected fields."""
         mem_id = storage.insert_memory(_make_memory())
-        storage.insert_archive({
-            "original_memory_id": mem_id,
-            "content": "old content",
-            "mismatch_score": 0.5,
-            "archive_reason": "test",
-        })
+        storage.insert_archive(
+            {
+                "original_memory_id": mem_id,
+                "content": "old content",
+                "mismatch_score": 0.5,
+                "archive_reason": "test",
+            }
+        )
         archives = storage.get_archives_for_memory(mem_id)
         row = archives[0]
         for field in ("original_memory_id", "content", "mismatch_score", "archive_reason"):
@@ -326,15 +343,23 @@ class TestFrontierSchema:
         """Verify causal_dag_edge record has expected fields."""
         e1 = storage.insert_entity({"name": "p", "type": "file"})
         e2 = storage.insert_entity({"name": "q", "type": "file"})
-        storage.insert_causal_edge({
-            "source_entity_id": e1,
-            "target_entity_id": e2,
-            "algorithm": "pc",
-            "confidence": 0.8,
-        })
+        storage.insert_causal_edge(
+            {
+                "source_entity_id": e1,
+                "target_entity_id": e2,
+                "algorithm": "pc",
+                "confidence": 0.8,
+            }
+        )
         edges = storage.get_causal_edges_for_entity(e1)
         row = edges[0]
-        for field in ("source_entity_id", "target_entity_id", "algorithm", "confidence", "is_validated"):
+        for field in (
+            "source_entity_id",
+            "target_entity_id",
+            "algorithm",
+            "confidence",
+            "is_validated",
+        ):
             assert field in row, f"Field {field} missing from causal_dag_edge"
 
     def test_frontier_memory_columns_exist(self, storage):
@@ -342,9 +367,17 @@ class TestFrontierSchema:
         mem_id = storage.insert_memory(_make_memory())
         mem = storage.get_memory(mem_id)
         frontier_cols = [
-            "plasticity", "stability", "excitability",
-            "store_type", "compression_level", "sr_x", "sr_y",
-            "reconsolidation_count", "provenance_agent", "vector_clock", "is_protected",
+            "plasticity",
+            "stability",
+            "excitability",
+            "store_type",
+            "compression_level",
+            "sr_x",
+            "sr_y",
+            "reconsolidation_count",
+            "provenance_agent",
+            "vector_clock",
+            "is_protected",
         ]
         for col in frontier_cols:
             assert col in mem, f"Column {col} missing from memory record"
@@ -365,7 +398,9 @@ class TestFrontierSchema:
         storage.insert_causal_edge({"source_entity_id": e1, "target_entity_id": e2})
         assert len(storage.get_causal_edges_for_entity(e1)) == 1
         # memory_rule: lookup by scope
-        storage.insert_rule({"rule_type": "hard", "scope": "global", "condition": "x", "action": "filter"})
+        storage.insert_rule(
+            {"rule_type": "hard", "scope": "global", "condition": "x", "action": "filter"}
+        )
         assert len(storage.get_rules_for_scope("global")) >= 1
 
     def test_schema_migration_idempotent(self, tmp_path):
@@ -376,7 +411,9 @@ class TestFrontierSchema:
         # Open again — migration runs again on same DB
         engine2 = StorageEngine(db_path)
         # Verify tables still work by exercising CRUD
-        rid = engine2.insert_rule({"rule_type": "hard", "scope": "global", "condition": "x", "action": "filter"})
+        rid = engine2.insert_rule(
+            {"rule_type": "hard", "scope": "global", "condition": "x", "action": "filter"}
+        )
         assert rid > 0
         engine2.close()
 
@@ -386,12 +423,14 @@ class TestFrontierSchema:
 
 class TestMemoryRulesCRUD:
     def test_insert_and_get_global_rule(self, storage):
-        rule_id = storage.insert_rule({
-            "rule_type": "hard",
-            "scope": "global",
-            "condition": "tag contains secret",
-            "action": "filter",
-        })
+        rule_id = storage.insert_rule(
+            {
+                "rule_type": "hard",
+                "scope": "global",
+                "condition": "tag contains secret",
+                "action": "filter",
+            }
+        )
         assert rule_id > 0
         rules = storage.get_rules_for_scope("global")
         assert len(rules) == 1
@@ -400,45 +439,75 @@ class TestMemoryRulesCRUD:
         assert rules[0]["is_active"] is True
 
     def test_insert_directory_scoped_rule(self, storage):
-        storage.insert_rule({
-            "rule_type": "soft",
-            "scope": "directory",
-            "scope_value": "/home/user/project",
-            "condition": "language == python",
-            "action": "boost:0.3",
-            "priority": 10,
-        })
+        storage.insert_rule(
+            {
+                "rule_type": "soft",
+                "scope": "directory",
+                "scope_value": "/home/user/project",
+                "condition": "language == python",
+                "action": "boost:0.3",
+                "priority": 10,
+            }
+        )
         rules = storage.get_rules_for_scope("directory", "/home/user/project")
         assert len(rules) == 1
         assert rules[0]["priority"] == 10
 
     def test_update_rule(self, storage):
-        rule_id = storage.insert_rule({
-            "rule_type": "hard",
-            "scope": "global",
-            "condition": "x",
-            "action": "filter",
-        })
+        rule_id = storage.insert_rule(
+            {
+                "rule_type": "hard",
+                "scope": "global",
+                "condition": "x",
+                "action": "filter",
+            }
+        )
         storage.update_rule(rule_id, {"priority": 99, "is_active": False})
         # Inactive rule should not appear in get_rules_for_scope
         rules = storage.get_rules_for_scope("global")
         assert len(rules) == 0
 
     def test_delete_rule(self, storage):
-        rule_id = storage.insert_rule({
-            "rule_type": "hard",
-            "scope": "global",
-            "condition": "x",
-            "action": "filter",
-        })
+        rule_id = storage.insert_rule(
+            {
+                "rule_type": "hard",
+                "scope": "global",
+                "condition": "x",
+                "action": "filter",
+            }
+        )
         storage.delete_rule(rule_id)
         rules = storage.get_rules_for_scope("global")
         assert len(rules) == 0
 
     def test_rules_ordered_by_priority(self, storage):
-        storage.insert_rule({"rule_type": "hard", "scope": "global", "condition": "a", "action": "filter", "priority": 1})
-        storage.insert_rule({"rule_type": "soft", "scope": "global", "condition": "b", "action": "boost:0.1", "priority": 10})
-        storage.insert_rule({"rule_type": "hard", "scope": "global", "condition": "c", "action": "filter", "priority": 5})
+        storage.insert_rule(
+            {
+                "rule_type": "hard",
+                "scope": "global",
+                "condition": "a",
+                "action": "filter",
+                "priority": 1,
+            }
+        )
+        storage.insert_rule(
+            {
+                "rule_type": "soft",
+                "scope": "global",
+                "condition": "b",
+                "action": "boost:0.1",
+                "priority": 10,
+            }
+        )
+        storage.insert_rule(
+            {
+                "rule_type": "hard",
+                "scope": "global",
+                "condition": "c",
+                "action": "filter",
+                "priority": 5,
+            }
+        )
         rules = storage.get_rules_for_scope("global")
         priorities = [r["priority"] for r in rules]
         assert priorities == sorted(priorities, reverse=True)
@@ -450,12 +519,14 @@ class TestMemoryRulesCRUD:
 class TestMemoryArchivesCRUD:
     def test_insert_and_get_archive(self, storage):
         mem_id = storage.insert_memory(_make_memory())
-        archive_id = storage.insert_archive({
-            "original_memory_id": mem_id,
-            "content": "old version of content",
-            "mismatch_score": 0.42,
-            "archive_reason": "reconsolidation",
-        })
+        archive_id = storage.insert_archive(
+            {
+                "original_memory_id": mem_id,
+                "content": "old version of content",
+                "mismatch_score": 0.42,
+                "archive_reason": "reconsolidation",
+            }
+        )
         assert archive_id > 0
         archives = storage.get_archives_for_memory(mem_id)
         assert len(archives) == 1
@@ -474,11 +545,13 @@ class TestMemoryArchivesCRUD:
     def test_archive_with_embedding(self, storage):
         mem_id = storage.insert_memory(_make_memory())
         blob = b"\x00" * 16
-        archive_id = storage.insert_archive({
-            "original_memory_id": mem_id,
-            "content": "data",
-            "embedding": blob,
-        })
+        storage.insert_archive(
+            {
+                "original_memory_id": mem_id,
+                "content": "data",
+                "embedding": blob,
+            }
+        )
         archives = storage.get_archives_for_memory(mem_id)
         assert archives[0]["embedding"] == blob
 
@@ -525,7 +598,7 @@ class TestMemoryTransitionsCRUD:
         m1 = storage.insert_memory(_make_memory("a"))
         m2 = storage.insert_memory(_make_memory("b"))
         storage.insert_transition({"from_memory_id": m1, "to_memory_id": m2})
-        with pytest.raises(Exception):
+        with pytest.raises(Exception):  # noqa: B017
             storage.insert_transition({"from_memory_id": m1, "to_memory_id": m2})
 
     def test_get_transition_nonexistent(self, storage):
@@ -539,12 +612,14 @@ class TestCausalDAGEdgesCRUD:
     def test_insert_and_get_edges(self, storage):
         e1 = storage.insert_entity({"name": "file_a", "type": "file"})
         e2 = storage.insert_entity({"name": "file_b", "type": "file"})
-        edge_id = storage.insert_causal_edge({
-            "source_entity_id": e1,
-            "target_entity_id": e2,
-            "algorithm": "ges",
-            "confidence": 0.9,
-        })
+        edge_id = storage.insert_causal_edge(
+            {
+                "source_entity_id": e1,
+                "target_entity_id": e2,
+                "algorithm": "ges",
+                "confidence": 0.9,
+            }
+        )
         assert edge_id > 0
         edges = storage.get_causal_edges_for_entity(e1)
         assert len(edges) == 1
@@ -563,8 +638,12 @@ class TestCausalDAGEdgesCRUD:
         e1 = storage.insert_entity({"name": "a", "type": "file"})
         e2 = storage.insert_entity({"name": "b", "type": "file"})
         e3 = storage.insert_entity({"name": "c", "type": "file"})
-        storage.insert_causal_edge({"source_entity_id": e1, "target_entity_id": e2, "confidence": 0.5})
-        storage.insert_causal_edge({"source_entity_id": e2, "target_entity_id": e3, "confidence": 0.9})
+        storage.insert_causal_edge(
+            {"source_entity_id": e1, "target_entity_id": e2, "confidence": 0.5}
+        )
+        storage.insert_causal_edge(
+            {"source_entity_id": e2, "target_entity_id": e3, "confidence": 0.9}
+        )
         all_edges = storage.get_all_causal_edges()
         assert len(all_edges) == 2
         # Ordered by confidence DESC
@@ -573,11 +652,13 @@ class TestCausalDAGEdgesCRUD:
     def test_validated_edge(self, storage):
         e1 = storage.insert_entity({"name": "p", "type": "variable"})
         e2 = storage.insert_entity({"name": "q", "type": "variable"})
-        storage.insert_causal_edge({
-            "source_entity_id": e1,
-            "target_entity_id": e2,
-            "is_validated": True,
-        })
+        storage.insert_causal_edge(
+            {
+                "source_entity_id": e1,
+                "target_entity_id": e2,
+                "is_validated": True,
+            }
+        )
         edges = storage.get_causal_edges_for_entity(e1)
         assert edges[0]["is_validated"] is True
 

@@ -5,28 +5,109 @@ import logging
 import re
 import shutil
 import struct
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 _log = logging.getLogger(__name__)
 
-_FTS_STOP_WORDS = frozenset({
-    # Standard English stop words
-    "a", "an", "the", "is", "it", "in", "on", "at", "to", "of",
-    "for", "and", "or", "but", "not", "with", "by", "from", "as",
-    "be", "was", "were", "been", "are", "am", "do", "did", "does",
-    "has", "had", "have", "will", "would", "could", "should", "may",
-    "can", "this", "that", "these", "those", "what", "which", "who",
-    "how", "when", "where", "why", "if", "then", "so", "no", "yes",
-    "all", "any", "some", "my", "your", "its", "our", "their", "we",
-    "he", "she", "they", "me", "him", "her", "us", "them",
-    # Coding/conversation domain stop words
-    "use", "using", "used", "like", "just", "get", "got", "set",
-    "make", "made", "let", "try", "need", "want", "know", "think",
-    "code", "file", "thing", "stuff",
-})
+_FTS_STOP_WORDS = frozenset(
+    {
+        # Standard English stop words
+        "a",
+        "an",
+        "the",
+        "is",
+        "it",
+        "in",
+        "on",
+        "at",
+        "to",
+        "of",
+        "for",
+        "and",
+        "or",
+        "but",
+        "not",
+        "with",
+        "by",
+        "from",
+        "as",
+        "be",
+        "was",
+        "were",
+        "been",
+        "are",
+        "am",
+        "do",
+        "did",
+        "does",
+        "has",
+        "had",
+        "have",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "can",
+        "this",
+        "that",
+        "these",
+        "those",
+        "what",
+        "which",
+        "who",
+        "how",
+        "when",
+        "where",
+        "why",
+        "if",
+        "then",
+        "so",
+        "no",
+        "yes",
+        "all",
+        "any",
+        "some",
+        "my",
+        "your",
+        "its",
+        "our",
+        "their",
+        "we",
+        "he",
+        "she",
+        "they",
+        "me",
+        "him",
+        "her",
+        "us",
+        "them",
+        # Coding/conversation domain stop words
+        "use",
+        "using",
+        "used",
+        "like",
+        "just",
+        "get",
+        "got",
+        "set",
+        "make",
+        "made",
+        "let",
+        "try",
+        "need",
+        "want",
+        "know",
+        "think",
+        "code",
+        "file",
+        "thing",
+        "stuff",
+    }
+)
 
-_CAMEL_CASE_RE = re.compile(r'([a-z])([A-Z])')
+_CAMEL_CASE_RE = re.compile(r"([a-z])([A-Z])")
 
 _enrichment_pipeline = None
 
@@ -35,6 +116,7 @@ def _get_enrichment_pipeline(settings, embeddings_engine=None):
     global _enrichment_pipeline
     if _enrichment_pipeline is None:
         from yadgar.enrichment import EnrichmentPipeline
+
         _enrichment_pipeline = EnrichmentPipeline(settings, embeddings_engine)
     return _enrichment_pipeline
 
@@ -46,6 +128,7 @@ _EMBEDDING_FIELDS = ("embedding", "centroid_embedding", "hdc_vector", "implicit_
 class StorageEngine:
     def __init__(self, db_path: str, embedding_dim: int = 384):
         from surrealdb import Surreal
+
         resolved = Path(db_path).expanduser()
         resolved.parent.mkdir(parents=True, exist_ok=True)
         self._embedding_dim = embedding_dim
@@ -66,7 +149,7 @@ class StorageEngine:
                 f"Another yadgar process holds the DB lock ({self._lock_path}). "
                 "surrealkv does not support concurrent access. "
                 "Close other Claude sessions or kill stale yadgar processes."
-            )
+            ) from None
 
         # Backup DB before opening — defense against crash corruption.
         # Keeps one rolling backup so we can restore if the clog is damaged.
@@ -100,12 +183,17 @@ class StorageEngine:
                 return  # Empty DB, nothing to check
 
             heat_rows = self._q("SELECT math::mean(heat) AS avg FROM memory GROUP ALL")
-            avg_heat = float(heat_rows[0]["avg"]) if heat_rows and heat_rows[0].get("avg") is not None else 0.0
+            avg_heat = (
+                float(heat_rows[0]["avg"])
+                if heat_rows and heat_rows[0].get("avg") is not None
+                else 0.0
+            )
 
             if total > 0 and avg_heat == 0.0:
                 _log.warning(
                     "DB health check: %d memories but avg_heat=0.0 — possible corruption. "
-                    "Attempting restore from backup.", total
+                    "Attempting restore from backup.",
+                    total,
                 )
                 if self._backup_path.exists():
                     self._restore_from_backup()
@@ -122,6 +210,7 @@ class StorageEngine:
             pass
 
         from surrealdb import Surreal
+
         resolved = self._resolved_path
         _log.warning("Restoring DB from backup %s", self._backup_path)
         try:
@@ -138,24 +227,22 @@ class StorageEngine:
 
     def _bytes_to_floats(self, data: bytes) -> list[float]:
         n = len(data) // 4
-        return list(struct.unpack(f'<{n}f', data))
+        return list(struct.unpack(f"<{n}f", data))
 
     def _floats_to_bytes(self, floats: list[float]) -> bytes:
-        return struct.pack(f'<{len(floats)}f', *floats)
+        return struct.pack(f"<{len(floats)}f", *floats)
 
     def _extract_id(self, record_id) -> int:
         if record_id is None:
             return None
-        if hasattr(record_id, 'id') and hasattr(record_id, 'table_name'):
+        if hasattr(record_id, "id") and hasattr(record_id, "table_name"):
             return int(record_id.id)
-        if isinstance(record_id, str) and ':' in record_id:
-            return int(record_id.split(':')[1])
+        if isinstance(record_id, str) and ":" in record_id:
+            return int(record_id.split(":")[1])
         return int(record_id)
 
     def _next_id(self, table: str) -> int:
-        result = self._db.query(
-            f"UPSERT counter:{table} SET val = (val ?? 0) + 1"
-        )
+        result = self._db.query(f"UPSERT counter:{table} SET val = (val ?? 0) + 1")
         if result and isinstance(result, list) and result[0]:
             row = result[0]
             if isinstance(row, list):
@@ -175,16 +262,31 @@ class StorageEngine:
             if emb_field in d and isinstance(d[emb_field], list):
                 d[emb_field] = self._floats_to_bytes(d[emb_field])
         # JSON fields — SurrealDB stores them as native lists; ensure they are lists
-        for json_field in ("tags", "key_decisions", "key_events", "memory_ids",
-                           "entity_ids", "evidence_memory_ids",
-                           "files_being_edited", "open_questions",
-                           "next_steps", "active_errors"):
+        for json_field in (
+            "tags",
+            "key_decisions",
+            "key_events",
+            "memory_ids",
+            "entity_ids",
+            "evidence_memory_ids",
+            "files_being_edited",
+            "open_questions",
+            "next_steps",
+            "active_errors",
+        ):
             if json_field in d and isinstance(d[json_field], str):
                 d[json_field] = json.loads(d[json_field])
         # Booleans
-        for bool_field in ("archived", "is_stale", "is_prospective", "is_causal",
-                           "is_active", "compressed", "is_protected",
-                           "is_validated"):
+        for bool_field in (
+            "archived",
+            "is_stale",
+            "is_prospective",
+            "is_causal",
+            "is_active",
+            "compressed",
+            "is_protected",
+            "is_validated",
+        ):
             if bool_field in d:
                 d[bool_field] = bool(d[bool_field])
         return d
@@ -193,7 +295,7 @@ class StorageEngine:
         return [self._row_to_dict(r) for r in rows if r is not None]
 
     def _now_iso(self) -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     def _q(self, surql: str, params: dict | None = None) -> list:
         """Run a parameterised query and return rows as a flat list of dicts.
@@ -230,8 +332,8 @@ class StorageEngine:
         tokens = content.split()
         extra_tokens = []
         for token in tokens:
-            split = _CAMEL_CASE_RE.sub(r'\1 \2', token)
-            split = split.replace('_', ' ')
+            split = _CAMEL_CASE_RE.sub(r"\1 \2", token)
+            split = split.replace("_", " ")
             sub_tokens = split.split()
             if len(sub_tokens) > 1:
                 extra_tokens.extend(t for t in sub_tokens if t != token)
@@ -250,18 +352,15 @@ class StorageEngine:
         raw_tokens = query.split()
 
         for token in raw_tokens:
-            token = token.strip('?!,;:()[]{}"\'"')
+            token = token.strip('?!,;:()[]{}"\'"')  # noqa: B005
             if not token:
                 continue
 
-            split_term = _CAMEL_CASE_RE.sub(r'\1 \2', token)
-            split_term = split_term.replace('_', ' ').replace('.', ' ')
+            split_term = _CAMEL_CASE_RE.sub(r"\1 \2", token)
+            split_term = split_term.replace("_", " ").replace(".", " ")
             sub_tokens = split_term.split()
 
-            filtered = [
-                t for t in sub_tokens
-                if t.lower() not in _FTS_STOP_WORDS and len(t) >= 2
-            ]
+            filtered = [t for t in sub_tokens if t.lower() not in _FTS_STOP_WORDS and len(t) >= 2]
 
             parts.extend(filtered)
 
@@ -291,12 +390,25 @@ class StorageEngine:
 
         # ---- Tables (SCHEMALESS) ----
         for table in (
-            "episode", "entity", "relationship", "consolidation_log",
-            "file_hash", "memory_cluster", "prospective_memory",
-            "narrative_entry", "astrocyte_process", "memory_rule",
-            "memory_archive", "memory_transition", "causal_dag_edge",
-            "engram_slot", "checkpoint", "action_log",
-            "user_profile", "derived_belief", "counter",
+            "episode",
+            "entity",
+            "relationship",
+            "consolidation_log",
+            "file_hash",
+            "memory_cluster",
+            "prospective_memory",
+            "narrative_entry",
+            "astrocyte_process",
+            "memory_rule",
+            "memory_archive",
+            "memory_transition",
+            "causal_dag_edge",
+            "engram_slot",
+            "checkpoint",
+            "action_log",
+            "user_profile",
+            "derived_belief",
+            "counter",
         ):
             db.query(f"DEFINE TABLE IF NOT EXISTS {table} SCHEMALESS;")
 
@@ -439,19 +551,29 @@ class StorageEngine:
 
         # Enrichment pipeline
         enrichment_data = {}
-        if (settings and getattr(settings, 'INDEX_ENRICHMENT_ENABLED', False)
-                and len(memory["content"]) >= getattr(settings, 'ENRICHMENT_MIN_CONTENT_LENGTH', 20)
-                and embeddings_engine is not None and embedding is not None):
+        if (
+            settings
+            and getattr(settings, "INDEX_ENRICHMENT_ENABLED", False)
+            and len(memory["content"]) >= getattr(settings, "ENRICHMENT_MIN_CONTENT_LENGTH", 20)
+            and embeddings_engine is not None
+            and embedding is not None
+        ):
             try:
                 pipeline = _get_enrichment_pipeline(settings, embeddings_engine)
                 result = pipeline.enrich(memory["content"], embedding, settings)
                 enrichment_data = {
                     "enrichment_concepts": result.concepts if result.concepts else None,
-                    "enrichment_comet": result.comet_inferences if result.comet_inferences else None,
+                    "enrichment_comet": result.comet_inferences
+                    if result.comet_inferences
+                    else None,
                     "enrichment_queries": result.queries if result.queries else None,
-                    "enrichment_logic": result.logic_expansions if result.logic_expansions else None,
+                    "enrichment_logic": result.logic_expansions
+                    if result.logic_expansions
+                    else None,
                     "enriched_content": result.enriched_content or None,
-                    "enrichment_model_versions": result.model_versions if result.model_versions else None,
+                    "enrichment_model_versions": result.model_versions
+                    if result.model_versions
+                    else None,
                 }
                 if any(v is not None for v in enrichment_data.values()):
                     set_parts = []
@@ -465,7 +587,10 @@ class StorageEngine:
                             f"UPDATE type::thing('memory', $id) SET {', '.join(set_parts)}",
                             params,
                         )
-                        if enrichment_data.get("enriched_content") and embeddings_engine is not None:
+                        if (
+                            enrichment_data.get("enriched_content")
+                            and embeddings_engine is not None
+                        ):
                             new_embedding = embeddings_engine.encode_document_enriched(
                                 memory["content"], enrichment_data["enriched_content"]
                             )
@@ -477,18 +602,19 @@ class StorageEngine:
                                 )
             except Exception as e:
                 import logging
+
                 logging.getLogger(__name__).warning("Enrichment failed: %s", e)
 
         # Profile extraction
-        if (settings and getattr(settings, 'PROFILE_EXTRACTION_ENABLED', False)):
+        if settings and getattr(settings, "PROFILE_EXTRACTION_ENABLED", False):
             try:
                 from yadgar.profiles import ProfileExtractor
+
                 extractor = ProfileExtractor(self, settings)
-                extractor.extract_and_store(
-                    memory["content"], mid, memory["directory_context"]
-                )
+                extractor.extract_and_store(memory["content"], mid, memory["directory_context"])
             except Exception as e:
                 import logging
+
                 logging.getLogger(__name__).warning("Profile extraction failed: %s", e)
 
         # insert_vector is a no-op for the separate table, but keep for API compat
@@ -549,9 +675,7 @@ class StorageEngine:
             {"id": memory_id},
         )
 
-    def get_memories_for_directory(
-        self, directory: str, min_heat: float = 0.1
-    ) -> list[dict]:
+    def get_memories_for_directory(self, directory: str, min_heat: float = 0.1) -> list[dict]:
         rows = self._q(
             "SELECT * FROM memory WHERE directory_context = $dir AND heat >= $min "
             "ORDER BY heat DESC",
@@ -575,20 +699,14 @@ class StorageEngine:
         return self._rows_to_dicts(rows)
 
     def get_all_memories_with_embeddings(self) -> list[dict]:
-        rows = self._q(
-            "SELECT * FROM memory WHERE embedding IS NOT NONE AND heat > 0"
-        )
+        rows = self._q("SELECT * FROM memory WHERE embedding IS NOT NONE AND heat > 0")
         return self._rows_to_dicts(rows)
 
     def get_memories_without_embeddings(self) -> list[dict]:
-        rows = self._q(
-            "SELECT * FROM memory WHERE embedding IS NONE AND heat > 0"
-        )
+        rows = self._q("SELECT * FROM memory WHERE embedding IS NONE AND heat > 0")
         return self._rows_to_dicts(rows)
 
-    def search_memories_fts(
-        self, query: str, min_heat: float = 0.1, limit: int = 5
-    ) -> list[dict]:
+    def search_memories_fts(self, query: str, min_heat: float = 0.1, limit: int = 5) -> list[dict]:
         fts_query = self._preprocess_fts_query(query)
         rows = self._q(
             "SELECT * FROM memory WHERE content @@ $q AND heat >= $min "
@@ -663,16 +781,21 @@ class StorageEngine:
     ) -> list[int]:
         """Find memory IDs whose created_at falls in the given month(s)."""
         month_map = {
-            "january": "01", "february": "02", "march": "03", "april": "04",
-            "may": "05", "june": "06", "july": "07", "august": "08",
-            "september": "09", "october": "10", "november": "11", "december": "12",
+            "january": "01",
+            "february": "02",
+            "march": "03",
+            "april": "04",
+            "may": "05",
+            "june": "06",
+            "july": "07",
+            "august": "08",
+            "september": "09",
+            "october": "10",
+            "november": "11",
+            "december": "12",
         }
         # Build list of 2-char month codes
-        month_codes = [
-            month_map[h.lower()]
-            for h in month_hints
-            if h.lower() in month_map
-        ]
+        month_codes = [month_map[h.lower()] for h in month_hints if h.lower() in month_map]
         if not month_codes:
             return []
 
@@ -786,9 +909,7 @@ class StorageEngine:
         )
         return self._rows_to_dicts(rows)
 
-    def update_memory_embedding(
-        self, memory_id: int, embedding: bytes, embedding_model: str
-    ):
+    def update_memory_embedding(self, memory_id: int, embedding: bytes, embedding_model: str):
         floats = self._bytes_to_floats(embedding)
         self._db.query(
             "UPDATE type::thing('memory', $id) SET embedding = $emb, embedding_model = $model",
@@ -878,9 +999,7 @@ class StorageEngine:
         )
         return self._row_to_dict(rows[0]) if rows else None
 
-    def get_all_entities(
-        self, min_heat: float = 0.0, include_archived: bool = False
-    ) -> list[dict]:
+    def get_all_entities(self, min_heat: float = 0.0, include_archived: bool = False) -> list[dict]:
         if include_archived:
             rows = self._q(
                 "SELECT * FROM entity WHERE heat >= $min ORDER BY heat DESC",
@@ -888,8 +1007,7 @@ class StorageEngine:
             )
         else:
             rows = self._q(
-                "SELECT * FROM entity WHERE heat >= $min AND archived = false "
-                "ORDER BY heat DESC",
+                "SELECT * FROM entity WHERE heat >= $min AND archived = false ORDER BY heat DESC",
                 {"min": min_heat},
             )
         return self._rows_to_dicts(rows)
@@ -939,9 +1057,7 @@ class StorageEngine:
         )
         return rid
 
-    def get_relationship_between(
-        self, source_id: int, target_id: int
-    ) -> dict | None:
+    def get_relationship_between(self, source_id: int, target_id: int) -> dict | None:
         rows = self._q(
             "SELECT * FROM relationship WHERE "
             "(source_entity_id = $src AND target_entity_id = $tgt) OR "
@@ -950,9 +1066,7 @@ class StorageEngine:
         )
         return self._row_to_dict(rows[0]) if rows else None
 
-    def get_typed_relationship(
-        self, source_id: int, target_id: int, rel_type: str
-    ) -> dict | None:
+    def get_typed_relationship(self, source_id: int, target_id: int, rel_type: str) -> dict | None:
         """Return a relationship between two entities of a specific type (directional)."""
         rows = self._q(
             "SELECT * FROM relationship WHERE "
@@ -1007,9 +1121,7 @@ class StorageEngine:
         sets = ", ".join(f"{k} = ${k}" for k in fields)
         params = dict(fields)
         params["id"] = rel_id
-        self._db.query(
-            f"UPDATE type::thing('relationship', $id) SET {sets}", params
-        )
+        self._db.query(f"UPDATE type::thing('relationship', $id) SET {sets}", params)
 
     def insert_typed_relationship(
         self,
@@ -1128,22 +1240,18 @@ class StorageEngine:
         )
         active = int(active_rows[0]["c"]) if active_rows else 0
 
-        archived_rows = self._q(
-            "SELECT count() AS c FROM memory WHERE heat < 0.05 GROUP ALL"
-        )
+        archived_rows = self._q("SELECT count() AS c FROM memory WHERE heat < 0.05 GROUP ALL")
         archived = int(archived_rows[0]["c"]) if archived_rows else 0
 
-        stale_rows = self._q(
-            "SELECT count() AS c FROM memory WHERE is_stale = true GROUP ALL"
-        )
+        stale_rows = self._q("SELECT count() AS c FROM memory WHERE is_stale = true GROUP ALL")
         stale = int(stale_rows[0]["c"]) if stale_rows else 0
 
         heat_rows = self._q("SELECT math::mean(heat) AS avg FROM memory GROUP ALL")
-        avg_heat = float(heat_rows[0]["avg"]) if heat_rows and heat_rows[0].get("avg") is not None else 0.0
-
-        log_rows = self._q(
-            "SELECT * FROM consolidation_log ORDER BY timestamp DESC LIMIT 1"
+        avg_heat = (
+            float(heat_rows[0]["avg"]) if heat_rows and heat_rows[0].get("avg") is not None else 0.0
         )
+
+        log_rows = self._q("SELECT * FROM consolidation_log ORDER BY timestamp DESC LIMIT 1")
         last_consolidation = log_rows[0]["timestamp"] if log_rows else None
 
         return {
@@ -1197,8 +1305,14 @@ class StorageEngine:
 
     def update_cluster(self, cluster_id: int, updates: dict):
         allowed = {
-            "name", "level", "parent_cluster_id", "summary",
-            "centroid_embedding", "member_count", "heat", "last_updated",
+            "name",
+            "level",
+            "parent_cluster_id",
+            "summary",
+            "centroid_embedding",
+            "member_count",
+            "heat",
+            "last_updated",
         }
         fields = {k: v for k, v in updates.items() if k in allowed}
         if not fields:
@@ -1280,9 +1394,7 @@ class StorageEngine:
         )
         return nid
 
-    def get_narratives_for_directory(
-        self, directory: str, limit: int = 10
-    ) -> list[dict]:
+    def get_narratives_for_directory(self, directory: str, limit: int = 10) -> list[dict]:
         rows = self._q(
             "SELECT * FROM narrative_entry WHERE directory_context = $dir "
             "ORDER BY period_end DESC LIMIT $lim",
@@ -1320,8 +1432,13 @@ class StorageEngine:
 
     def update_astrocyte_process(self, proc_id: int, updates: dict):
         allowed = {
-            "name", "domain", "specialization", "memory_ids",
-            "entity_ids", "heat", "last_active",
+            "name",
+            "domain",
+            "specialization",
+            "memory_ids",
+            "entity_ids",
+            "heat",
+            "last_active",
         }
         fields = {}
         for k, v in updates.items():
@@ -1388,9 +1505,7 @@ class StorageEngine:
             },
         )
 
-    def get_memories_in_time_window(
-        self, center_time: str, window_minutes: int
-    ) -> list[dict]:
+    def get_memories_in_time_window(self, center_time: str, window_minutes: int) -> list[dict]:
         """Return memories created within window_minutes of center_time."""
         # Parse center_time and compute window bounds in Python (no julianday in SurrealDB)
         try:
@@ -1398,12 +1513,12 @@ class StorageEngine:
         except ValueError:
             return []
         from datetime import timedelta
+
         delta = timedelta(minutes=window_minutes)
         start = (center_dt - delta).isoformat()
         end = (center_dt + delta).isoformat()
         rows = self._q(
-            "SELECT * FROM memory WHERE heat > 0 "
-            "AND created_at >= $start AND created_at <= $end",
+            "SELECT * FROM memory WHERE heat > 0 AND created_at >= $start AND created_at <= $end",
             {"start": start, "end": end},
         )
         return self._rows_to_dicts(rows)
@@ -1447,7 +1562,15 @@ class StorageEngine:
         return self._rows_to_dicts(rows)
 
     def update_rule(self, rule_id: int, updates: dict):
-        allowed = {"rule_type", "scope", "scope_value", "condition", "action", "priority", "is_active"}
+        allowed = {
+            "rule_type",
+            "scope",
+            "scope_value",
+            "condition",
+            "action",
+            "priority",
+            "is_active",
+        }
         fields = {k: v for k, v in updates.items() if k in allowed}
         if not fields:
             return
@@ -1537,16 +1660,13 @@ class StorageEngine:
 
     def get_transitions_from(self, memory_id: int) -> list[dict]:
         rows = self._q(
-            "SELECT * FROM memory_transition WHERE from_memory_id = $mid "
-            "ORDER BY count DESC",
+            "SELECT * FROM memory_transition WHERE from_memory_id = $mid ORDER BY count DESC",
             {"mid": memory_id},
         )
         return self._rows_to_dicts(rows)
 
     def get_all_transitions(self) -> list[dict]:
-        rows = self._q(
-            "SELECT from_memory_id, to_memory_id, count FROM memory_transition"
-        )
+        rows = self._q("SELECT from_memory_id, to_memory_id, count FROM memory_transition")
         # No id to extract; pass through as-is (no embedding fields)
         return [dict(r) for r in rows]
 
@@ -1557,11 +1677,13 @@ class StorageEngine:
         )
 
     def get_memories_with_sr_coords(self) -> list[dict]:
-        rows = self._q(
-            "SELECT id, sr_x, sr_y FROM memory WHERE sr_x != 0.0 OR sr_y != 0.0"
-        )
+        rows = self._q("SELECT id, sr_x, sr_y FROM memory WHERE sr_x != 0.0 OR sr_y != 0.0")
         return [
-            {"id": self._extract_id(r.get("id")), "sr_x": r.get("sr_x", 0.0), "sr_y": r.get("sr_y", 0.0)}
+            {
+                "id": self._extract_id(r.get("id")),
+                "sr_x": r.get("sr_x", 0.0),
+                "sr_y": r.get("sr_y", 0.0),
+            }
             for r in rows
         ]
 
@@ -1596,9 +1718,7 @@ class StorageEngine:
         return self._rows_to_dicts(rows)
 
     def get_all_causal_edges(self) -> list[dict]:
-        rows = self._q(
-            "SELECT * FROM causal_dag_edge ORDER BY confidence DESC"
-        )
+        rows = self._q("SELECT * FROM causal_dag_edge ORDER BY confidence DESC")
         return self._rows_to_dicts(rows)
 
     # ------------------------------------------------------------------ Engram Slots
@@ -1647,8 +1767,7 @@ class StorageEngine:
 
     def get_memories_in_slot(self, slot_index: int) -> list[dict]:
         rows = self._q(
-            "SELECT * FROM memory WHERE slot_index = $si AND heat > 0 "
-            "ORDER BY created_at",
+            "SELECT * FROM memory WHERE slot_index = $si AND heat > 0 ORDER BY created_at",
             {"si": slot_index},
         )
         return self._rows_to_dicts(rows)
@@ -1702,8 +1821,7 @@ class StorageEngine:
     def get_active_checkpoint(self) -> dict | None:
         """Get the most recent active checkpoint."""
         rows = self._q(
-            "SELECT * FROM checkpoint WHERE is_active = true "
-            "ORDER BY created_at DESC LIMIT 1"
+            "SELECT * FROM checkpoint WHERE is_active = true ORDER BY created_at DESC LIMIT 1"
         )
         if not rows:
             return None
@@ -1898,9 +2016,7 @@ class StorageEngine:
         return self._rows_to_dicts(rows)
 
     def get_episode_session_id(self, episode_id: int) -> str | None:
-        rows = self._q(
-            f"SELECT session_id FROM episode:{episode_id}"
-        )
+        rows = self._q(f"SELECT session_id FROM episode:{episode_id}")
         return rows[0].get("session_id") if rows else None
 
     def get_relationship_by_source_and_type(
@@ -1924,14 +2040,17 @@ class StorageEngine:
         timestamp: str,
     ):
         aid = self._next_id("action_log")
-        self._db.create(f"action_log:{aid}", {
-            "tool_name": tool_name,
-            "tool_input_summary": tool_input_summary,
-            "directory": directory,
-            "session_id": session_id,
-            "timestamp": timestamp,
-            "processed": False,
-        })
+        self._db.create(
+            f"action_log:{aid}",
+            {
+                "tool_name": tool_name,
+                "tool_input_summary": tool_input_summary,
+                "directory": directory,
+                "session_id": session_id,
+                "timestamp": timestamp,
+                "processed": False,
+            },
+        )
 
     def update_memory_fields(self, memory_id: int, **fields):
         if not fields:
@@ -1959,9 +2078,7 @@ class StorageEngine:
         )
 
     def get_total_reconsolidation_count(self) -> int:
-        rows = self._q(
-            "SELECT math::sum(reconsolidation_count) AS total FROM memory GROUP ALL"
-        )
+        rows = self._q("SELECT math::sum(reconsolidation_count) AS total FROM memory GROUP ALL")
         return int(rows[0]["total"]) if rows and rows[0].get("total") is not None else 0
 
     def count_memories_by_store_type(self, store_type: str) -> int:
@@ -1982,8 +2099,7 @@ class StorageEngine:
 
     def get_unprocessed_actions(self, limit: int = 200) -> list[dict]:
         rows = self._q(
-            "SELECT * FROM action_log WHERE processed = false "
-            "ORDER BY timestamp ASC LIMIT $lim",
+            "SELECT * FROM action_log WHERE processed = false ORDER BY timestamp ASC LIMIT $lim",
             {"lim": limit},
         )
         return self._rows_to_dicts(rows)
@@ -1992,9 +2108,7 @@ class StorageEngine:
         if not ids:
             return
         for aid in ids:
-            self._q(
-                f"UPDATE action_log:{aid} SET processed = true"
-            )
+            self._q(f"UPDATE action_log:{aid} SET processed = true")
 
     def get_entity_by_id(self, entity_id: int) -> dict | None:
         """Fetch a single entity row by its integer ID."""
@@ -2016,8 +2130,7 @@ class StorageEngine:
             return [self._extract_id(r.get("id")) for r in rows]
         except Exception:
             rows = self._q(
-                "SELECT id FROM memory "
-                "WHERE string::contains(content, $name) AND heat > 0",
+                "SELECT id FROM memory WHERE string::contains(content, $name) AND heat > 0",
                 {"name": entity_name},
             )
             return [self._extract_id(r.get("id")) for r in rows]
@@ -2045,8 +2158,7 @@ class StorageEngine:
     def get_all_active_rules(self) -> list[dict]:
         """Return all active rules, sorted by scope then priority descending."""
         rows = self._q(
-            "SELECT * FROM memory_rule WHERE is_active = true "
-            "ORDER BY scope, priority DESC"
+            "SELECT * FROM memory_rule WHERE is_active = true ORDER BY scope, priority DESC"
         )
         return self._rows_to_dicts(rows)
 
@@ -2064,7 +2176,12 @@ class StorageEngine:
             self._db.query(
                 "UPDATE type::thing('memory', $id) SET "
                 "is_protected = $prot, importance = $imp, contextual_prefix = $prefix",
-                {"id": memory_id, "prot": is_protected, "imp": importance, "prefix": contextual_prefix},
+                {
+                    "id": memory_id,
+                    "prot": is_protected,
+                    "imp": importance,
+                    "prefix": contextual_prefix,
+                },
             )
         else:
             self._db.query(

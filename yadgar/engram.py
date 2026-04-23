@@ -7,7 +7,7 @@ creating automatic temporal linking with zero explicit logic.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from yadgar.config import Settings
 from yadgar.storage import StorageEngine
@@ -73,9 +73,7 @@ class EngramAllocator:
         slot = self._storage.get_engram_slot(slot_index)
         if slot is None:
             return 0.0
-        return self._compute_decayed_excitability(
-            slot["excitability"], slot.get("last_activated")
-        )
+        return self._compute_decayed_excitability(slot["excitability"], slot.get("last_activated"))
 
     def boost_excitability(self, slot_index: int) -> float:
         """Boost a slot's excitability by EXCITABILITY_BOOST, capped at 1.0."""
@@ -140,10 +138,10 @@ class EngramAllocator:
         try:
             last_dt = datetime.fromisoformat(last_activated)
             if last_dt.tzinfo is None:
-                last_dt = last_dt.replace(tzinfo=timezone.utc)
+                last_dt = last_dt.replace(tzinfo=UTC)
         except (ValueError, TypeError):
             return 0.0
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         elapsed_hours = (now - last_dt).total_seconds() / 3600.0
         if elapsed_hours < 0:
             elapsed_hours = 0.0

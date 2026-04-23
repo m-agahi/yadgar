@@ -1,17 +1,25 @@
 """Rich typed temporal knowledge graph for Yadgar."""
 
 import re
-from collections import defaultdict, deque
-from datetime import datetime, timezone
+from collections import deque
+from datetime import UTC, datetime
 
 from yadgar.config import Settings
 from yadgar.storage import StorageEngine
 
-VALID_REL_TYPES = frozenset({
-    "co_occurrence", "imports", "calls", "debugged_with",
-    "decided_to_use", "caused_by", "resolved_by",
-    "preceded_by", "derived_from",
-})
+VALID_REL_TYPES = frozenset(
+    {
+        "co_occurrence",
+        "imports",
+        "calls",
+        "debugged_with",
+        "decided_to_use",
+        "caused_by",
+        "resolved_by",
+        "preceded_by",
+        "derived_from",
+    }
+)
 
 # Patterns for typed entity extraction
 _IMPORT_FULL_RE = re.compile(r"(?:^|\n)\s*import\s+([\w.]+)")
@@ -56,40 +64,35 @@ class KnowledgeGraph:
 
         source_entity = self._ensure_entity(source)
         target_entity = self._ensure_entity(target)
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         event_time_iso = event_time.isoformat() if event_time else now
 
-        existing = self._get_typed_relationship(
-            source_entity["id"], target_entity["id"], rel_type
-        )
+        existing = self._get_typed_relationship(source_entity["id"], target_entity["id"], rel_type)
         if existing:
             self._reinforce_typed_relationship(existing["id"], now)
             return existing["id"]
 
         return self._insert_typed_relationship(
-            source_entity["id"], target_entity["id"],
-            rel_type, event_time_iso, now, confidence,
+            source_entity["id"],
+            target_entity["id"],
+            rel_type,
+            event_time_iso,
+            now,
+            confidence,
         )
 
     # -- b. Bi-Temporal Queries --
 
-    def get_relationships_at_time(
-        self, entity_name: str, event_time: datetime
-    ) -> list[dict]:
+    def get_relationships_at_time(self, entity_name: str, event_time: datetime) -> list[dict]:
         entity = self._storage.get_entity_by_name(entity_name)
         if not entity:
             return []
         eid = entity["id"]
         event_iso = event_time.isoformat()
         all_rels = self._storage.get_relationships_for_entity(eid)
-        return [
-            r for r in all_rels
-            if r.get("event_time") and r["event_time"] <= event_iso
-        ]
+        return [r for r in all_rels if r.get("event_time") and r["event_time"] <= event_iso]
 
-    def get_relationship_history(
-        self, source: str, target: str
-    ) -> list[dict]:
+    def get_relationship_history(self, source: str, target: str) -> list[dict]:
         source_entity = self._storage.get_entity_by_name(source)
         target_entity = self._storage.get_entity_by_name(target)
         if not source_entity or not target_entity:
@@ -97,7 +100,8 @@ class KnowledgeGraph:
         sid, tid = source_entity["id"], target_entity["id"]
         all_rels = self._storage.get_relationships_for_entity(sid)
         filtered = [
-            r for r in all_rels
+            r
+            for r in all_rels
             if (r["source_entity_id"] == sid and r["target_entity_id"] == tid)
             or (r["source_entity_id"] == tid and r["target_entity_id"] == sid)
         ]
@@ -132,20 +136,18 @@ class KnowledgeGraph:
             else:
                 causal_src, causal_tgt = tgt_name, src_name
 
-            existing = self._get_typed_relationship_by_name(
-                causal_src, causal_tgt, "caused_by"
-            )
+            existing = self._get_typed_relationship_by_name(causal_src, causal_tgt, "caused_by")
             if existing:
                 self._reinforce_typed_relationship(
                     existing["id"],
-                    datetime.now(timezone.utc).isoformat(),
+                    datetime.now(UTC).isoformat(),
                 )
                 self._storage.update_relationship_fields(existing["id"], is_causal=1)
             else:
                 src_e = self._storage.get_entity_by_name(causal_src)
                 tgt_e = self._storage.get_entity_by_name(causal_tgt)
                 if src_e and tgt_e:
-                    now = datetime.now(timezone.utc).isoformat()
+                    now = datetime.now(UTC).isoformat()
                     self._storage.insert_typed_relationship(
                         source_entity_id=src_e["id"],
                         target_entity_id=tgt_e["id"],
@@ -161,9 +163,7 @@ class KnowledgeGraph:
 
     # -- d. Enhanced Entity Extraction --
 
-    def extract_entities_typed(
-        self, content: str, directory: str
-    ) -> list[tuple[str, str, str]]:
+    def extract_entities_typed(self, content: str, directory: str) -> list[tuple[str, str, str]]:
         results: list[tuple[str, str, str]] = []
 
         # Import relationships: "from X import Y" -> (X, dependency, imports)
@@ -197,7 +197,7 @@ class KnowledgeGraph:
                 # Check if this match is NOT the definition line
                 start = m.start()
                 line_start = content.rfind("\n", 0, start) + 1
-                line = content[line_start:content.find("\n", start)]
+                line = content[line_start : content.find("\n", start)]
                 if not line.strip().startswith("def "):
                     results.append((fname, "function", "calls"))
 
@@ -247,19 +247,19 @@ class KnowledgeGraph:
                 nid = neighbor["entity_id"]
                 if nid not in visited:
                     visited.add(nid)
-                    result.append({
-                        "entity_id": nid,
-                        "entity_name": neighbor["entity_name"],
-                        "relationship_type": neighbor["relationship_type"],
-                        "weight": neighbor["weight"],
-                        "depth": current_depth + 1,
-                    })
+                    result.append(
+                        {
+                            "entity_id": nid,
+                            "entity_name": neighbor["entity_name"],
+                            "relationship_type": neighbor["relationship_type"],
+                            "weight": neighbor["weight"],
+                            "depth": current_depth + 1,
+                        }
+                    )
                     queue.append((nid, current_depth + 1))
         return result
 
-    def get_subgraph(
-        self, entity_names: list[str], depth: int = 2
-    ) -> dict:
+    def get_subgraph(self, entity_names: list[str], depth: int = 2) -> dict:
         nodes: dict[int, dict] = {}
         edges: list[dict] = []
         edge_set: set[tuple[int, int, str]] = set()
@@ -304,12 +304,14 @@ class KnowledgeGraph:
                 )
                 if edge_key not in edge_set:
                     edge_set.add(edge_key)
-                    edges.append({
-                        "source": current_id,
-                        "target": nid,
-                        "relationship_type": neighbor["relationship_type"],
-                        "weight": neighbor["weight"],
-                    })
+                    edges.append(
+                        {
+                            "source": current_id,
+                            "target": nid,
+                            "relationship_type": neighbor["relationship_type"],
+                            "weight": neighbor["weight"],
+                        }
+                    )
 
                 if nid not in visited:
                     visited.add(nid)
@@ -326,9 +328,7 @@ class KnowledgeGraph:
         eid = self._storage.insert_entity({"name": name, "type": "variable"})
         return self._storage.get_entity_by_id(eid)
 
-    def _get_typed_relationship(
-        self, source_id: int, target_id: int, rel_type: str
-    ) -> dict | None:
+    def _get_typed_relationship(self, source_id: int, target_id: int, rel_type: str) -> dict | None:
         return self._storage.get_typed_relationship(source_id, target_id, rel_type)
 
     def _get_typed_relationship_by_name(
@@ -363,9 +363,7 @@ class KnowledgeGraph:
     def _reinforce_typed_relationship(self, rel_id: int, now_iso: str) -> None:
         self._storage.reinforce_relationship(rel_id, weight_increase=1.0)
 
-    def _get_adjacent(
-        self, entity_id: int, rel_types: list[str] | None
-    ) -> list[dict]:
+    def _get_adjacent(self, entity_id: int, rel_types: list[str] | None) -> list[dict]:
         rows = self._storage.get_relationships_for_entity(entity_id, rel_types)
         result = []
         for row_d in rows:
@@ -379,17 +377,17 @@ class KnowledgeGraph:
                 if row_d["source_entity_id"] == entity_id
                 else row_d.get("source_name")
             )
-            result.append({
-                "entity_id": other_id,
-                "entity_name": other_name,
-                "relationship_type": row_d["relationship_type"],
-                "weight": row_d["weight"],
-            })
+            result.append(
+                {
+                    "entity_id": other_id,
+                    "entity_name": other_name,
+                    "relationship_type": row_d["relationship_type"],
+                    "weight": row_d["weight"],
+                }
+            )
         return result
 
-    def _check_temporal_order(
-        self, entity_a: str, entity_b: str
-    ) -> str | None:
+    def _check_temporal_order(self, entity_a: str, entity_b: str) -> str | None:
         episodes = self._storage.get_all_episodes()
 
         a_before_b = 0

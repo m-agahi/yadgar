@@ -11,9 +11,9 @@ directly to the shared SurrealDB database.
 
 import fcntl
 import json
-import sys
 import os
-from datetime import datetime, timezone
+import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -26,7 +26,7 @@ def _db_locked(db_path: Path) -> bool:
     if not lock_path.exists():
         return False
     try:
-        lf = open(lock_path, "r")
+        lf = open(lock_path)
         fcntl.flock(lf, fcntl.LOCK_EX | fcntl.LOCK_NB)
         fcntl.flock(lf, fcntl.LOCK_UN)
         lf.close()
@@ -40,8 +40,15 @@ _SKIP_PREFIXES = ("mcp__yadgar__",)
 
 # High-value tool input fields to extract as summary
 _SUMMARY_FIELDS = (
-    "command", "content", "query", "file_path", "pattern",
-    "prompt", "old_string", "skill", "description",
+    "command",
+    "content",
+    "query",
+    "file_path",
+    "pattern",
+    "prompt",
+    "old_string",
+    "skill",
+    "description",
 )
 
 
@@ -81,12 +88,15 @@ def main():
     _port = os.environ.get("YADGAR_PORT", "8765")
     try:
         import urllib.request as _req
-        _payload = json.dumps({
-            "tool_name": tool_name,
-            "summary": summary,
-            "directory": cwd,
-            "session_id": session_id,
-        }).encode()
+
+        _payload = json.dumps(
+            {
+                "tool_name": tool_name,
+                "summary": summary,
+                "directory": cwd,
+                "session_id": session_id,
+            }
+        ).encode()
         _r = _req.Request(
             f"http://127.0.0.1:{_port}/hooks/auto-capture",
             data=_payload,
@@ -102,9 +112,10 @@ def main():
 
     try:
         from surrealdb import Surreal
+
         db = Surreal(f"surrealkv://{db_path}")
         db.use("yadgar", "main")
-        ts = datetime.now(timezone.utc).isoformat()
+        ts = datetime.now(UTC).isoformat()
         db.query(
             "CREATE action_log SET "
             "tool_name = $tn, "
