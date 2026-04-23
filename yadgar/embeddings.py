@@ -123,6 +123,21 @@ class EmbeddingEngine:
                     os.environ.pop("HF_HUB_OFFLINE", None)
                 else:
                     os.environ["HF_HUB_OFFLINE"] = old_offline
+
+            # Cap PyTorch threads to half the available cores so inference
+            # never saturates the machine. The OS-level CPUQuota acts as an
+            # outer ceiling; this is the inner soft cap.
+            try:
+                import torch
+                _n = max(1, (os.cpu_count() or 2) // 2)
+                torch.set_num_threads(_n)
+                try:
+                    torch.set_num_interop_threads(_n)
+                except RuntimeError:
+                    pass  # inter-op pool already initialized — intra-op cap is enough
+            except Exception:
+                pass
+
         except ImportError:
             logger.warning(
                 "sentence-transformers is not installed; "
