@@ -79,8 +79,11 @@ class YadgarDaemon:
         """Stop the daemon gracefully (SIGTERM, then SIGKILL after 10s)."""
         pid = self._read_pid()
         if pid is None or not self._pid_alive(pid):
-            self._pid_file.unlink(missing_ok=True)
-            return {"status": "not_running"}
+            # PID file missing or stale — scan /proc for a process holding the DB lock
+            pid = self._find_pid_by_lock()
+            if pid is None:
+                self._pid_file.unlink(missing_ok=True)
+                return {"status": "not_running"}
 
         try:
             os.kill(pid, signal.SIGTERM)
@@ -108,7 +111,9 @@ class YadgarDaemon:
         if pid is None or not self._pid_alive(pid):
             if pid is not None:
                 self._pid_file.unlink(missing_ok=True)
-            return {"running": False}
+            pid = self._find_pid_by_lock()
+            if pid is None:
+                return {"running": False}
 
         try:
             resp = urllib.request.urlopen(
@@ -223,7 +228,39 @@ WantedBy=default.target
 
     def _is_running(self) -> bool:
         pid = self._read_pid()
-        return pid is not None and self._pid_alive(pid)
+        if pid is not None and self._pid_alive(pid):
+            return True
+        return self._find_pid_by_lock() is not None
+
+    def _find_pid_by_lock(self) -> int | None:
+        """Find a running yadgar process by scanning /proc for the DB lock file.
+
+        Used as fallback when the PID file is missing (e.g. daemon started by
+        systemd/home-manager rather than `yadgar daemon start`).
+        """
+        try:
+            from yadgar.config import get_settings
+            settings = get_settings()
+            db_path = Path(self.db_path or settings.DB_PATH).expanduser()
+            lock_path = db_path.parent / "yadgar.lock"
+            if not lock_path.exists():
+                return None
+            lock_str = str(lock_path)
+            for pid_dir in Path("/proc").iterdir():
+                if not pid_dir.name.isdigit():
+                    continue
+                try:
+                    for fd_link in (pid_dir / "fd").iterdir():
+                        try:
+                            if os.readlink(str(fd_link)) == lock_str:
+                                return int(pid_dir.name)
+                        except (OSError, ValueError):
+                            continue
+                except (PermissionError, FileNotFoundError, OSError):
+                    continue
+        except Exception:
+            pass
+        return None
 
     def _health_ok(self) -> bool:
         try:

@@ -1751,6 +1751,14 @@ def main(
     if port is not None:
         mcp_server.settings.port = port
 
+    if transport == "streamable-http":
+        # Trigger lazy session manager creation so we can set idle timeout.
+        # Sessions from closed Claude windows are auto-terminated after 30 min,
+        # preventing zombie sessions from spinning asyncio threads indefinitely.
+        _ = mcp_server.streamable_http_app
+        if mcp_server._session_manager is not None:
+            mcp_server._session_manager.session_idle_timeout = 1800.0
+
     try:
         mcp_server.run(transport=transport)
     finally:
