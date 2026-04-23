@@ -1,7 +1,40 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Any, Tuple, Type
 
-from pydantic_settings import BaseSettings
+from pydantic.fields import FieldInfo
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
+
+
+class YamlConfigSource(PydanticBaseSettingsSource):
+    def __init__(self, settings_cls: Type[BaseSettings]):
+        super().__init__(settings_cls)
+        self._data: dict[str, Any] = {}
+        self._load()
+
+    def _load(self) -> None:
+        config_path = Path("~/.yadgar/config.yaml").expanduser()
+        if not config_path.exists():
+            return
+        try:
+            from ruamel.yaml import YAML
+            y = YAML()
+            with open(config_path) as f:
+                raw = y.load(f)
+            if isinstance(raw, dict):
+                self._data = {k.upper(): v for k, v in raw.items() if v is not None}
+        except Exception:
+            pass  # silently skip bad config
+
+    def get_field_value(self, field: FieldInfo, field_name: str) -> Tuple[Any, str, bool]:
+        val = self._data.get(field_name)
+        return val, field_name, self.field_is_complex(field)
+
+    def __call__(self) -> dict[str, Any]:
+        return {
+            k: v for k, v in self._data.items()
+            if k in self.settings_cls.model_fields and v is not None
+        }
 
 
 class Settings(BaseSettings):
@@ -197,6 +230,22 @@ class Settings(BaseSettings):
     IMPLICIT_VECTOR_WEIGHT: float = 0.5
 
     model_config = {"env_prefix": "YADGAR_"}
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: Type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple:
+        return (
+            init_settings,
+            env_settings,
+            YamlConfigSource(settings_cls),
+            file_secret_settings,
+        )
 
     @property
     def db_path_resolved(self) -> Path:
