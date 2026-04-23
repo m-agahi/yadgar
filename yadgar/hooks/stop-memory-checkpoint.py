@@ -16,7 +16,7 @@ import json
 import sys
 from pathlib import Path
 
-INTERVAL = 15  # human messages between checkpoints
+INTERVAL = 25  # human messages between checkpoints
 
 _PROMPT = (
     "Yadgar checkpoint: call remember() once or twice to capture key decisions, "
