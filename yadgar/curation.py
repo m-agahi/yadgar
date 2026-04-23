@@ -352,9 +352,20 @@ class MemoryCurator:
         return stats
 
     def _memify_prune(self, stats: dict) -> None:
-        """Delete memories with heat < 0.01 AND confidence < 0.3 AND access_count == 0."""
+        """Delete only auto-generated action-stream memories that went cold and were never accessed.
+
+        User-stored memories are never auto-deleted — only summaries tagged _action_stream
+        meet the criteria (heat<0.01 AND confidence<0.3 AND access_count==0).
+        """
         candidates = self._storage.get_memories_by_heat(min_heat=0.0, limit=10000)
         for mem in candidates:
+            tags = mem.get("tags", [])
+            if isinstance(tags, str):
+                tags = json.loads(tags)
+            if "_action_stream" not in tags:
+                continue
+            if mem.get("is_protected"):
+                continue
             if (
                 (mem.get("heat") or 0.0) < 0.01
                 and (mem.get("confidence") or 1.0) < 0.3

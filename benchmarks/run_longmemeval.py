@@ -34,20 +34,19 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from yadgar.config import Settings
+from yadgar.curation import MemoryCurator
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.knowledge_graph import KnowledgeGraph
 from yadgar.retrieval import HippoRetriever
 from yadgar.storage import StorageEngine
 from yadgar.thermodynamics import MemoryThermodynamics
-from yadgar.predictive_coding import PredictiveCodingGate
-from yadgar.curation import MemoryCurator
 
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -79,6 +78,7 @@ ABILITY_MAP = {
 
 # ── Dataset Download ──────────────────────────────────────────────────
 
+
 def download_dataset(variant: str = "s") -> Path:
     """Download LongMemEval dataset from HuggingFace if not cached."""
     filename_map = {
@@ -98,6 +98,7 @@ def download_dataset(variant: str = "s") -> Path:
     print(f"Downloading {url} ...")
 
     import urllib.request
+
     urllib.request.urlretrieve(url, local_path)
     print(f"Saved to {local_path} ({local_path.stat().st_size / 1024 / 1024:.1f} MB)")
     return local_path
@@ -131,6 +132,7 @@ def load_dataset(path: Path) -> list[dict]:
 
 
 # ── Yadgar Engine Factory ──────────────────────────────────────────
+
 
 def make_benchmark_settings(**overrides) -> Settings:
     """Create Yadgar settings optimized for LongMemEval retrieval."""
@@ -197,6 +199,7 @@ def create_engines(db_path: str, settings: Settings):
 
 # ── Ingestion ─────────────────────────────────────────────────────────
 
+
 def ingest_question_haystack(
     question: dict,
     storage: StorageEngine,
@@ -220,8 +223,8 @@ def ingest_question_haystack(
     session_ids = question["haystack_session_ids"]
     session_dates = question["haystack_dates"]
 
-    for idx, (session, session_id, session_date) in enumerate(
-        zip(sessions, session_ids, session_dates)
+    for _idx, (session, session_id, session_date) in enumerate(
+        zip(sessions, session_ids, session_dates, strict=False)
     ):
         memory_ids = []
 
@@ -270,16 +273,18 @@ def ingest_question_haystack(
             if embedding is None:
                 continue
 
-            memory_id = storage.insert_memory({
-                "content": content,
-                "embedding": embedding,
-                "tags": tags,
-                "directory_context": "/benchmark/longmemeval",
-                "heat": 1.0,
-                "is_stale": False,
-                "file_hash": None,
-                "embedding_model": embeddings.get_model_name(),
-            })
+            memory_id = storage.insert_memory(
+                {
+                    "content": content,
+                    "embedding": embedding,
+                    "tags": tags,
+                    "directory_context": "/benchmark/longmemeval",
+                    "heat": 1.0,
+                    "is_stale": False,
+                    "file_hash": None,
+                    "embedding_model": embeddings.get_model_name(),
+                }
+            )
 
             # Set importance and surprise scores
             importance = thermo.compute_importance(content, tags)
@@ -298,6 +303,7 @@ def ingest_question_haystack(
 
 
 # ── Retrieval Evaluation ──────────────────────────────────────────────
+
 
 def compute_ndcg(retrieved_session_ids: list[str], gold_session_ids: set[str], k: int) -> float:
     """Compute NDCG@k with binary relevance."""
@@ -467,7 +473,7 @@ def generate_answer(
     context_parts = []
     for i, mem in enumerate(retrieved_memories[:top_k_context]):
         content = mem.get("content", "")
-        context_parts.append(f"[{i+1}] {content}")
+        context_parts.append(f"[{i + 1}] {content}")
     context = "\n\n".join(context_parts)
 
     prompt = READER_PROMPT_TEMPLATE.format(
@@ -493,7 +499,7 @@ def judge_answer(question: dict, hypothesis: str) -> dict:
     try:
         # Try to extract JSON from response
         if "{" in response:
-            json_str = response[response.index("{"):response.rindex("}") + 1]
+            json_str = response[response.index("{") : response.rindex("}") + 1]
             result = json.loads(json_str)
             return {"correct": bool(result.get("correct", False)), "raw": response}
     except (json.JSONDecodeError, ValueError):
@@ -506,6 +512,7 @@ def judge_answer(question: dict, hypothesis: str) -> dict:
 
 
 # ── Main Benchmark Pipeline ──────────────────────────────────────────
+
 
 def run_benchmark(
     dataset_path: Path,
@@ -543,7 +550,7 @@ def run_benchmark(
     results = {
         "benchmark": "LongMemEval",
         "variant": dataset_path.stem,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "total_questions": len(data),
         "retrieval_only": retrieval_only,
         "max_results": max_results,
@@ -560,7 +567,9 @@ def run_benchmark(
         qtype = question["question_type"]
         is_abs = qid.endswith("_abs")
 
-        print(f"\r[{qi+1}/{len(data)}] {qtype}: {question['question'][:60]}...", end="", flush=True)
+        print(
+            f"\r[{qi + 1}/{len(data)}] {qtype}: {question['question'][:60]}...", end="", flush=True
+        )
 
         # Create fresh DB for this question (no cross-contamination)
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -657,7 +666,15 @@ def run_benchmark(
         type_agg = {"count": len(queries)}
 
         if retrieval_queries:
-            for metric in ["recall@5", "recall@10", "recall@50", "ndcg@5", "ndcg@10", "ndcg@50", "mrr"]:
+            for metric in [
+                "recall@5",
+                "recall@10",
+                "recall@50",
+                "ndcg@5",
+                "ndcg@10",
+                "ndcg@50",
+                "mrr",
+            ]:
                 vals = [q.get(metric, 0) for q in retrieval_queries if metric in q]
                 if vals:
                     type_agg[metric] = round(sum(vals) / len(vals), 4)
@@ -724,9 +741,11 @@ def run_benchmark(
 
     if "abstention" in agg and not retrieval_only:
         a = agg["abstention"]
-        print(f"{'abstention':<30} {a['count']:>5} {'N/A':>7} {'N/A':>7} {'N/A':>7} {'N/A':>7} {a.get('qa_accuracy', 0):>7.1%}")
+        print(
+            f"{'abstention':<30} {a['count']:>5} {'N/A':>7} {'N/A':>7} {'N/A':>7} {'N/A':>7} {a.get('qa_accuracy', 0):>7.1%}"
+        )
 
-    print(f"\nElapsed: {elapsed:.0f}s ({elapsed/60:.1f}min)")
+    print(f"\nElapsed: {elapsed:.0f}s ({elapsed / 60:.1f}min)")
 
     # Save JSON
     if output_path is None:
@@ -745,10 +764,15 @@ def run_benchmark(
         hyp_path = output_path.replace(".json", "_hypotheses.jsonl")
         with open(hyp_path, "w") as f:
             for qr in results["per_query"]:
-                f.write(json.dumps({
-                    "question_id": qr["question_id"],
-                    "hypothesis": qr.get("hypothesis", ""),
-                }) + "\n")
+                f.write(
+                    json.dumps(
+                        {
+                            "question_id": qr["question_id"],
+                            "hypothesis": qr.get("hypothesis", ""),
+                        }
+                    )
+                    + "\n"
+                )
         print(f"Hypotheses JSONL: {hyp_path}")
 
     return results
@@ -756,36 +780,48 @@ def run_benchmark(
 
 # ── CLI ───────────────────────────────────────────────────────────────
 
+
 def main():
-    parser = argparse.ArgumentParser(
-        description="Run LongMemEval benchmark against Yadgar"
-    )
+    parser = argparse.ArgumentParser(description="Run LongMemEval benchmark against Yadgar")
     parser.add_argument(
-        "--variant", choices=["oracle", "s", "m"], default="s",
+        "--variant",
+        choices=["oracle", "s", "m"],
+        default="s",
         help="Dataset variant: oracle (evidence only), s (~40 sessions), m (~500 sessions)",
     )
     parser.add_argument(
-        "--retrieval-only", action="store_true",
+        "--retrieval-only",
+        action="store_true",
         help="Only compute retrieval metrics (no LLM calls, fast)",
     )
     parser.add_argument(
-        "--max-questions", type=int, default=0,
+        "--max-questions",
+        type=int,
+        default=0,
         help="Limit number of questions (0 = all)",
     )
     parser.add_argument(
-        "--types", type=str, default="",
+        "--types",
+        type=str,
+        default="",
         help="Comma-separated question types to evaluate",
     )
     parser.add_argument(
-        "--max-results", type=int, default=50,
+        "--max-results",
+        type=int,
+        default=50,
         help="Max memories to retrieve per question",
     )
     parser.add_argument(
-        "--top-k-context", type=int, default=10,
+        "--top-k-context",
+        type=int,
+        default=10,
         help="Top-k retrieved memories to include in reader prompt",
     )
     parser.add_argument(
-        "--output", type=str, default=None,
+        "--output",
+        type=str,
+        default=None,
         help="Output JSON path",
     )
 

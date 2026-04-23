@@ -6,6 +6,7 @@ Usage:
   CUDA_VISIBLE_DEVICES=0 python benchmarks/run_benchmark_gpu.py \
     --label baseline --overrides-json '{"INDEX_ENRICHMENT_ENABLED": false}'
 """
+
 import argparse
 import gc
 import json
@@ -22,12 +23,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 
-from yadgar.config import Settings
-from yadgar.embeddings import EmbeddingEngine
-from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.retrieval import HippoRetriever
-from yadgar.storage import StorageEngine
-
 # Import benchmark helpers
 from benchmarks.test_e_locomo import (
     CATEGORY_MAP,
@@ -37,14 +32,19 @@ from benchmarks.test_e_locomo import (
     LOCOMO_JSON_PATH,
     _ingest_conversation,
     _make_settings,
-    _normalize_answer,
     _token_f1,
 )
+from yadgar.embeddings import EmbeddingEngine
+from yadgar.knowledge_graph import KnowledgeGraph
+from yadgar.retrieval import HippoRetriever
+from yadgar.storage import StorageEngine
+
 
 # ─── Logging ───────────────────────────────────────────────────────────────
 def log(msg: str):
     ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
     print(f"[{ts}] {msg}", flush=True)
+
 
 def log_gpu():
     if torch.cuda.is_available():
@@ -52,10 +52,13 @@ def log_gpu():
         resrv = torch.cuda.memory_reserved() / 1e6
         log(f"  GPU mem: {alloc:.0f}MB allocated, {resrv:.0f}MB reserved")
 
+
 def log_ram():
     import resource
+
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024  # MB on Linux
     log(f"  RAM RSS: {rss:.0f}MB")
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -145,6 +148,7 @@ def run_benchmark(
     # Check ONNX providers
     try:
         import onnxruntime
+
         providers = onnxruntime.get_available_providers()
         log(f"ONNX providers: {providers}")
     except ImportError:
@@ -160,7 +164,7 @@ def run_benchmark(
     t0 = time.time()
     with open(LOCOMO_JSON_PATH) as f:
         locomo_data = json.load(f)
-    log(f"Loaded {len(locomo_data)} conversations in {time.time()-t0:.1f}s")
+    log(f"Loaded {len(locomo_data)} conversations in {time.time() - t0:.1f}s")
 
     # Count total QA
     total_qa = sum(len(c.get("qa", c.get("qa_pairs", []))) for c in locomo_data)
@@ -191,9 +195,9 @@ def run_benchmark(
         n_qa = len(qa_items)
 
         log("")
-        log(f"{'='*60}")
-        log(f"CONVERSATION {run_idx+1}/{len(selected)} (source={conv_idx}) — {n_qa} QA pairs")
-        log(f"{'='*60}")
+        log(f"{'=' * 60}")
+        log(f"CONVERSATION {run_idx + 1}/{len(selected)} (source={conv_idx}) — {n_qa} QA pairs")
+        log(f"{'=' * 60}")
 
         if not qa_items:
             log("  SKIP: No QA items")
@@ -290,12 +294,12 @@ def run_benchmark(
                 rate = (qi + 1) / elapsed_so_far if elapsed_so_far > 0 else 0
                 remaining = (n_qa - qi - 1) / rate if rate > 0 else 0
                 log(
-                    f"  [EVAL] Query {qi+1}/{n_qa} ({category}) — {q_elapsed:.2f}s — "
+                    f"  [EVAL] Query {qi + 1}/{n_qa} ({category}) — {q_elapsed:.2f}s — "
                     f"MRR={rr:.3f} — Rate: {rate:.1f}q/s — ETA: {remaining:.0f}s"
                 )
             elif category == "open_domain" and rr == 0:
                 log(
-                    f"  [EVAL] Query {qi+1}/{n_qa} MISS ({category}) — "
+                    f"  [EVAL] Query {qi + 1}/{n_qa} MISS ({category}) — "
                     f"Q: {question[:80]}... — MRR=0.000 — {q_elapsed:.2f}s"
                 )
 
@@ -336,14 +340,16 @@ def run_benchmark(
                 "categories": conv_results,
             }
         )
-        log(f"  [RESULTS] Conv {conv_idx+1} — {eval_elapsed:.1f}s eval, {conv_elapsed:.1f}s total")
+        log(
+            f"  [RESULTS] Conv {conv_idx + 1} — {eval_elapsed:.1f}s eval, {conv_elapsed:.1f}s total"
+        )
         for cat in CATEGORY_NAMES + ["overall"]:
             if cat in conv_results:
                 r = conv_results[cat]
                 marker = " <<<" if cat == "open_domain" else ""
                 log(
                     f"    {cat:15s}: MRR={r['mrr']:.3f}  "
-                    f"R@10={r.get('recall@10',0):.3f}  n={r['count']}{marker}"
+                    f"R@10={r.get('recall@10', 0):.3f}  n={r['count']}{marker}"
                 )
 
         log_ram()
@@ -372,7 +378,7 @@ def run_benchmark(
             )
 
     log("")
-    log(f"Total time: {grand_elapsed:.1f}s ({grand_elapsed/60:.1f}min)")
+    log(f"Total time: {grand_elapsed:.1f}s ({grand_elapsed / 60:.1f}min)")
 
     return {
         "label": label,

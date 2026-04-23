@@ -695,7 +695,7 @@ class StorageEngine:
         return self._rows_to_dicts(rows)
 
     def get_all_memories_for_decay(self) -> list[dict]:
-        rows = self._q("SELECT * FROM memory WHERE heat > 0")
+        rows = self._q("SELECT * FROM memory WHERE heat > 0 AND is_protected = false")
         return self._rows_to_dicts(rows)
 
     def get_all_memories_with_embeddings(self) -> list[dict]:

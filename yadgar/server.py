@@ -1,5 +1,6 @@
 """Yadgar MCP server — supports SSE and Streamable HTTP transports."""
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -7,13 +8,15 @@ import os
 import re
 import signal
 import sys
+import threading
 import time
+from collections import deque
 from datetime import UTC
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, StreamingResponse
 
 from yadgar import __version__
 from yadgar.astrocyte_pool import AstrocytePool
@@ -28,6 +31,7 @@ from yadgar.curation import MemoryCurator
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.engram import EngramAllocator
 from yadgar.fractal import FractalMemoryTree
+from yadgar.graph_api import GraphAPI
 from yadgar.hdc_encoder import HDCEncoder
 from yadgar.hopfield import HopfieldMemory
 from yadgar.knowledge_graph import KnowledgeGraph
@@ -85,6 +89,20 @@ _causal: CausalDiscovery | None = None
 _metacognition: MetaCognition | None = None
 _crdt: CRDTMemorySync | None = None
 _replay: HippocampalReplay | None = None
+
+# ── Visualization event queue ──────────────────────────────────────────────
+# Ring buffer of the last 500 events; SSE clients poll with a sequence cursor.
+_event_queue: deque = deque(maxlen=500)
+_event_seq: int = 0
+_system_metrics_cache: dict = {}
+
+
+def _push_event(event: dict) -> None:
+    """Append an event to the ring buffer with a monotonic sequence number."""
+    global _event_seq
+    _event_seq += 1
+    _event_queue.append({"seq": _event_seq, **event})
+
 
 # Session state for transition tracking
 _last_recalled_ids: dict[str, int] = {}  # session_id → last recalled memory_id
@@ -317,6 +335,72 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
     return JSONResponse({"text": "\n".join(lines)})
 
 
+# ── Graph / Visualization API ──────────────────────────────────────────────
+_CORS = {"Access-Control-Allow-Origin": "*", "Cache-Control": "no-cache"}
+
+
+@mcp_server.custom_route("/api/graph", methods=["GET"])
+async def api_graph(request: Request) -> JSONResponse:
+    """Return full knowledge graph (nodes + edges) for visualization."""
+    if _storage is None:
+        return JSONResponse({"nodes": [], "edges": []}, status_code=503)
+    max_mem = int(request.query_params.get("max_memories", 500))
+    data = await asyncio.to_thread(GraphAPI(_storage).get_full_graph, max_mem)
+    return JSONResponse(data, headers=_CORS)
+
+
+@mcp_server.custom_route("/api/graph/stats", methods=["GET"])
+async def api_graph_stats(request: Request) -> JSONResponse:
+    """Return graph statistics: counts + top entities by heat."""
+    if _storage is None:
+        return JSONResponse({}, status_code=503)
+    data = await asyncio.to_thread(GraphAPI(_storage).get_graph_stats)
+    return JSONResponse(data, headers=_CORS)
+
+
+@mcp_server.custom_route("/api/graph/neighborhood/{node_id}", methods=["GET"])
+async def api_graph_neighborhood(request: Request) -> JSONResponse:
+    """Return 1–2 hop subgraph around a node."""
+    if _storage is None:
+        return JSONResponse({"nodes": [], "edges": []}, status_code=503)
+    node_id = request.path_params.get("node_id", "")
+    hops = int(request.query_params.get("hops", 2))
+    data = await asyncio.to_thread(GraphAPI(_storage).get_neighborhood, node_id, hops)
+    return JSONResponse(data, headers=_CORS)
+
+
+@mcp_server.custom_route("/api/system", methods=["GET"])
+async def api_system(request: Request) -> JSONResponse:
+    """Return current system and process metrics."""
+    return JSONResponse(_system_metrics_cache, headers=_CORS)
+
+
+@mcp_server.custom_route("/api/graph/events", methods=["GET"])
+async def api_graph_events(request: Request) -> StreamingResponse:
+    """SSE stream of incremental graph update events + system metrics every 5s."""
+    last_seq = int(request.query_params.get("since", 0))
+
+    async def event_stream():
+        nonlocal last_seq
+        last_sys_push = 0.0
+        while True:
+            now = time.time()
+            # Drain new graph events
+            new_events = [e for e in _event_queue if e["seq"] > last_seq]
+            for e in new_events:
+                last_seq = e["seq"]
+                yield f"data: {json.dumps(e)}\n\n"
+            # Push system metrics every 5 s
+            if now - last_sys_push >= 5.0 and _system_metrics_cache:
+                last_sys_push = now
+                payload = json.dumps({"event": "system_metrics", "data": _system_metrics_cache})
+                yield f"data: {payload}\n\n"
+            await asyncio.sleep(0.5)
+
+    headers = {**_CORS, "Content-Type": "text/event-stream", "X-Accel-Buffering": "no"}
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
+
+
 def _get_storage() -> StorageEngine:
     assert _storage is not None, "StorageEngine not initialized"
     return _storage
@@ -394,12 +478,24 @@ def _file_hash(filepath: str) -> str | None:
 
 
 @mcp_server.tool()
-def remember(content: str, context: str, tags: list[str]) -> dict:
-    """Store a new memory with embedding and optional file hash.
+def remember(
+    content: str,
+    context: str,
+    tags: list[str],
+    is_protected: bool = False,
+) -> dict:
+    """Store a new memory with embedding.
 
     context MUST be the actual working directory path (e.g., '/home/user/projects/myapp'),
     NOT a description. get_project_context() filters by directory path match —
     descriptive strings will make memories unfindable by project.
+
+    Persistence options:
+    - is_protected=True: memory is exempt from heat decay and will never be aged out.
+      Use this for facts that must persist indefinitely (credentials locations, key
+      decisions, permanent constraints). Equivalent to calling anchor() but inline.
+    - Alternatively, include "_anchor" in tags for the same effect.
+    - Without either flag, memories decay naturally based on heat and last-access time.
     """
     storage = _get_storage()
     embeddings = _get_embeddings()
@@ -596,9 +692,17 @@ def remember(content: str, context: str, tags: list[str]) -> dict:
     if _write_gate is not None:
         _write_gate.record_stored(content, context, embedding)
 
-    # 2. Decision auto-protection: detect decisions and shield from decay
+    # 2. Explicit protection + decision auto-protection
     auto_protected = False
-    if settings.DECISION_AUTO_PROTECT and _DECISION_STRONG_RE.search(content):
+    explicit_anchor = is_protected or "_anchor" in tags
+    if explicit_anchor:
+        storage.update_memory_fields(memory_id, is_protected=1, importance=1.0)
+        if "_anchor" not in tags:
+            tags = list(tags) + ["_anchor"]
+            storage.update_memory_fields(memory_id, tags=tags)
+        auto_protected = True
+        logger.debug("Explicitly protected: memory %s", memory_id)
+    elif settings.DECISION_AUTO_PROTECT and _DECISION_STRONG_RE.search(content):
         storage.update_memory_fields(memory_id, is_protected=1, importance=1.0)
         auto_protected = True
         logger.debug("Decision auto-protected: memory %s", memory_id)
@@ -670,6 +774,21 @@ def remember(content: str, context: str, tags: list[str]) -> dict:
     # Strip binary fields from response (not JSON-serializable)
     memory.pop("embedding", None)
     memory.pop("hdc_vector", None)
+
+    # Publish visualization event
+    _push_event(
+        {
+            "event": "memory_added",
+            "node": {
+                "id": f"mem:{memory_id}",
+                "heat": memory.get("heat", initial_heat),
+                "content": content[:200],
+                "tags": tags,
+                "directory": context,
+            },
+        }
+    )
+
     memory["curation_action"] = curation_action
     if gate_result is not None:
         memory["surprisal"] = gate_result["surprisal"]
@@ -765,14 +884,8 @@ def recall(query: str, max_results: int = 5, min_heat: float = 0.0) -> list[dict
                 logger.debug("SR transition recording failed")
         _last_recalled_ids[session_key] = top_id
 
-    # Reconsolidate: retrieved memories become labile and may be updated
-    # This happens AFTER scoring, so it doesn't affect the current recall
-    if _reconsolidation is not None:
-        for m in merged:
-            try:
-                _reconsolidation.reconsolidate(m["id"], query, "")
-            except Exception:
-                logger.debug("Reconsolidation failed for memory %s", m.get("id"))
+    # Reconsolidation disabled: memories are never rewritten on retrieval.
+    # Content integrity must be preserved exactly as stored.
 
     # Action stream: log this recall operation
     buffer = _buffer
@@ -1700,6 +1813,39 @@ def init_engines(
         _consolidation.start()
         if watch_directory:
             _staleness.start(watch_directory)
+        # Background system-metrics sampler for /api/system and SSE events
+        _pid = os.getpid()
+        _db_path = _settings.DB_PATH
+
+        def _metrics_thread(pid: int = _pid, db_path: str = _db_path) -> None:
+            from yadgar.graph_api import sample_system_metrics
+
+            sample_system_metrics(pid, db_path)  # prime CPU delta baseline
+            while True:
+                time.sleep(5)
+                try:
+                    result = sample_system_metrics(pid, db_path)
+                    _system_metrics_cache.update(result)
+                except Exception:
+                    pass
+
+        threading.Thread(target=_metrics_thread, daemon=True).start()
+
+        # Auto-start viz server alongside the daemon
+        _viz_port = getattr(_settings, "VIZ_PORT", 42069)
+
+        def _viz_thread(port: int = _viz_port) -> None:
+            try:
+                from yadgar.viz_server import run_viz_server
+
+                logger.info("Viz server starting on http://127.0.0.1:%d", port)
+                run_viz_server(port=port)
+            except OSError as exc:
+                logger.warning("Viz server could not bind port %d: %s", port, exc)
+            except Exception as exc:
+                logger.warning("Viz server error: %s", exc)
+
+        threading.Thread(target=_viz_thread, daemon=True).start()
 
     # Eagerly warm up the embedding model so the first recall isn't slow.
     _embeddings._ensure_model()
@@ -1832,12 +1978,12 @@ def main(
         mcp_server.settings.port = port
 
     if transport == "streamable-http":
-        # Trigger lazy session manager creation so we can set idle timeout.
-        # Sessions from closed Claude windows are auto-terminated after 30 min,
-        # preventing zombie sessions from spinning asyncio threads indefinitely.
-        _ = mcp_server.streamable_http_app
-        if mcp_server._session_manager is not None:
-            mcp_server._session_manager.session_idle_timeout = 1800.0
+        # Enable stateless mode: each POST /mcp is handled independently with no
+        # session ID required. This makes daemon restarts transparent — Claude Code
+        # reconnects and tool calls work immediately without a stale-session failure.
+        # Must be set on settings BEFORE streamable_http_app() is first called (lazy
+        # init reads this flag to construct the StreamableHTTPSessionManager).
+        mcp_server.settings.stateless_http = True
 
     try:
         mcp_server.run(transport=transport)
