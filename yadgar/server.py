@@ -1704,6 +1704,12 @@ def shutdown():
     _crdt = None
     _replay = None
 
+    # Remove PID file on clean shutdown
+    try:
+        Path("~/.yadgar/yadgar.pid").expanduser().unlink(missing_ok=True)
+    except Exception:
+        pass
+
 
 def _signal_handler(signum, frame):
     """Handle SIGINT/SIGTERM for graceful shutdown."""
@@ -1724,6 +1730,15 @@ def main(
 
     _active_transport = transport
     _start_time = time.time()
+
+    # Self-register PID file so `yadgar daemon stop/restart/status` can find us
+    # regardless of how the process was started (systemd, direct CLI, etc.).
+    _pid_path = Path("~/.yadgar/yadgar.pid").expanduser()
+    try:
+        _pid_path.parent.mkdir(parents=True, exist_ok=True)
+        _pid_path.write_text(str(os.getpid()))
+    except Exception:
+        pass
 
     # Don't auto-watch cwd — in daemon/systemd mode cwd is $HOME, which would
     # recursively watch everything including the DB files, causing a watchdog storm.
