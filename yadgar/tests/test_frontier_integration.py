@@ -11,7 +11,6 @@ import pytest
 
 from yadgar import server
 from yadgar.cognitive_map import CognitiveMap
-from yadgar.hopfield import HopfieldMemory
 from yadgar.metacognition import MetaCognition
 
 # ── Fixtures ───────────────────────────────────────────────────────────
@@ -183,27 +182,6 @@ class TestRecallFullPipeline:
         for r in results:
             assert "embedding" not in r
 
-    def test_hopfield_in_retrieval(self):
-        """test_hopfield_in_retrieval: Hopfield scores present in recall results."""
-        assert server._hopfield is not None
-        assert isinstance(server._hopfield, HopfieldMemory)
-        # The Hopfield is used internally by the retriever — verify it exists
-        assert server._retriever._hopfield is not None
-
-    def test_hdc_in_retrieval(self):
-        """test_hdc_in_retrieval: HDC scores present in recall results."""
-        assert server._hdc is not None
-        # Store a memory to get HDC vector
-        result = _store_novel_memory(
-            "HDC test: machine learning model deployment pipeline",
-            "/test/hdc",
-            ["ml", "deployment"],
-        )
-        storage = server._get_storage()
-        mem = storage.get_memory(result["id"])
-        # HDC vector should have been computed on store
-        assert mem.get("hdc_vector") is not None
-
     def test_rules_filter_in_recall(self):
         """test_rules_filter_in_recall: hard rule filters results."""
         _store_novel_memory(
@@ -348,7 +326,6 @@ class TestAllMCPToolsRegistered:
             "rate_memory",
             "add_rule",
             "get_rules",
-            "navigate_memory",
             "get_causal_chain",
             "assess_coverage",
             "detect_gaps",
@@ -381,20 +358,12 @@ class TestMemoryStatsFrontierFields:
         assert "active_count" in stats
 
         # Frontier metrics
-        assert "hopfield_patterns" in stats
         assert "engram_slot_utilization" in stats
         assert "active_rules" in stats
         assert "episodic_count" in stats
         assert "semantic_count" in stats
         assert "sr_dimensions" in stats
         assert "causal_edges" in stats
-        assert "agent_id" in stats
-        assert "conflict_count" in stats
-
-        # Compression levels
-        assert "compressed_level_0" in stats
-        assert "compressed_level_1" in stats
-        assert "compressed_level_2" in stats
 
 
 # ── Tests: Server Lifecycle ───────────────────────────────────────────
@@ -413,18 +382,13 @@ class TestServerStartsCleanly:
         assert server._thermo is not None
         assert server._retriever is not None
         assert server._curator is not None
-        assert server._hopfield is not None
         assert server._cls is not None
-        assert server._compressor is not None
-        assert server._reconsolidation is not None
         assert server._write_gate is not None
         assert server._engram is not None
         assert server._rules_engine is not None
-        assert server._hdc is not None
         assert server._cognitive_map is not None
         assert server._causal is not None
         assert server._metacognition is not None
-        assert server._crdt is not None
 
 
 # ── Tests: Backward Compatibility ─────────────────────────────────────
@@ -486,12 +450,6 @@ class TestAddRule:
         rules = server.get_rules()
         assert len(rules) >= 1
         assert any(r["condition"] == "importance > 0.5" for r in rules)
-
-
-class TestNavigateMemory:
-    def test_navigate_memory_returns_list(self):
-        result = server.navigate_memory("test query")
-        assert isinstance(result, list)
 
 
 class TestGetCausalChain:

@@ -28,10 +28,7 @@ from yadgar.consolidation import ConsolidationScheduler
 from yadgar.curation import MemoryCurator
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.engram import EngramAllocator
-from yadgar.fractal import FractalMemoryTree
 from yadgar.graph_api import GraphAPI
-from yadgar.hdc_encoder import HDCEncoder
-from yadgar.hopfield import HopfieldMemory
 from yadgar.knowledge_graph import KnowledgeGraph
 from yadgar.metacognition import MetaCognition
 from yadgar.narrative import NarrativeEngine
@@ -71,15 +68,12 @@ _curator: MemoryCurator | None = None
 _prospective: ProspectiveMemoryEngine | None = None
 _narrative: NarrativeEngine | None = None
 _sleep: SleepComputeEngine | None = None
-_fractal: FractalMemoryTree | None = None
 _pool: AstrocytePool | None = None
 _kg: KnowledgeGraph | None = None
 _write_gate: WriteGate | None = None
 _engram: EngramAllocator | None = None
 _rules_engine: RulesEngine | None = None
-_hopfield: HopfieldMemory | None = None
 _cls: DualStoreCLS | None = None
-_hdc: HDCEncoder | None = None
 _cognitive_map: CognitiveMap | None = None
 _causal: CausalDiscovery | None = None
 _metacognition: MetaCognition | None = None
@@ -502,11 +496,6 @@ def _get_engram() -> EngramAllocator:
     return _engram
 
 
-def _get_cognitive_map() -> CognitiveMap:
-    assert _cognitive_map is not None, "CognitiveMap not initialized"
-    return _cognitive_map
-
-
 def _get_replay() -> CheckpointRestore:
     assert _replay is not None, "CheckpointRestore not initialized"
     return _replay
@@ -699,22 +688,6 @@ def remember(
         except Exception:
             logger.debug("Engram allocation failed for memory %s", memory_id)
 
-    # HDC encoding — compute compositional hyperdimensional vector
-    if _hdc is not None:
-        try:
-            from yadgar.retrieval import _extract_query_entities
-
-            hdc_entities = _extract_query_entities(content)
-            hdc_vec = _hdc.encode_memory(
-                directory=context,
-                tags=tags,
-                entities=hdc_entities,
-                store_type="episodic",
-            )
-            storage.update_memory_fields(memory_id, hdc_vector=_hdc.to_bytes(hdc_vec))
-        except Exception:
-            logger.debug("HDC encoding failed for memory %s", memory_id)
-
     # ── Zero-Gap Enhancements ────────────────────────────────────────────
 
     # 1. Record store in write gate for task continuity tracking
@@ -802,7 +775,6 @@ def remember(
         }
     # Strip binary fields from response (not JSON-serializable)
     memory.pop("embedding", None)
-    memory.pop("hdc_vector", None)
 
     # Publish visualization event
     _push_event(
@@ -886,7 +858,6 @@ def recall(query: str, max_results: int = 5, min_heat: float = 0.0) -> list[dict
         merged = merged[:max_results]
         for m in merged:
             m.pop("embedding", None)
-            m.pop("hdc_vector", None)
 
     # Boost heat, update last_accessed, and record metamemory access
     now = storage._now_iso()
@@ -961,7 +932,6 @@ def recall(query: str, max_results: int = 5, min_heat: float = 0.0) -> list[dict
     # Strip binary fields from response (not JSON-serializable)
     for m in merged:
         m.pop("embedding", None)
-        m.pop("hdc_vector", None)
 
     return merged
 
@@ -1023,7 +993,6 @@ def get_project_context(directory: str) -> dict:
     )
     for m in memories:
         m.pop("embedding", None)
-        m.pop("hdc_vector", None)
 
     # Check if hooks are installed for this project
     hooks_installed = False
@@ -1111,10 +1080,6 @@ def memory_stats() -> dict:
     storage = _get_storage()
     stats = storage.get_memory_stats()
 
-    # Frontier metrics
-    if _hopfield is not None:
-        stats["hopfield_patterns"] = _hopfield.get_pattern_count()
-
     if _write_gate is not None:
         # Track rejections via memories with surprisal below threshold
         stats["write_gate_rejections"] = getattr(_write_gate, "_rejection_count", 0)
@@ -1175,20 +1140,6 @@ def rate_memory(memory_id: int, was_useful: bool) -> dict:
         "confidence": updated.get("confidence", 1.0),
         "stability": updated.get("stability", 0.0),
     }
-
-
-@mcp_server.tool()
-def recall_hierarchical(query: str, level: int = None, max_results: int = 10) -> list[dict]:
-    """Retrieve memories from the fractal hierarchy at a specific level or adaptively."""
-    retriever = _get_retriever()
-    return retriever.recall_hierarchical(query, level=level, max_results=max_results)
-
-
-@mcp_server.tool()
-def drill_down(cluster_id: int) -> list[dict]:
-    """Drill into a cluster to see its members."""
-    retriever = _get_retriever()
-    return retriever._fractal.drill_down(cluster_id)
 
 
 @mcp_server.tool()
@@ -1260,42 +1211,6 @@ def get_rules(directory: str = "") -> list[dict]:
     if directory:
         return _rules_engine.get_applicable_rules(directory)
     return _rules_engine.get_all_rules()
-
-
-@mcp_server.tool()
-def navigate_memory(query: str, top_k: int = 5) -> list[dict]:
-    """Navigate concept space using Successor Representation cognitive maps.
-
-    Instead of nearest-neighbor search, this navigates to the query's projected
-    location in SR space — memories accessed in similar CONTEXTS cluster together,
-    even if their CONTENT differs.
-    """
-    if _cognitive_map is None:
-        return [{"error": "CognitiveMap not initialized"}]
-
-    if not _cognitive_map.has_sufficient_data():
-        return [{"info": "Insufficient transition data for SR navigation (need >= 20)"}]
-
-    embeddings = _get_embeddings()
-    query_embedding = embeddings.encode(query)
-    if query_embedding is None:
-        return [{"error": "Failed to encode query"}]
-
-    results = _cognitive_map.navigate_to(query_embedding, embeddings, top_k=top_k)
-    if not results:
-        return []
-
-    storage = _get_storage()
-    output = []
-    for mid, proximity in results:
-        mem = storage.get_memory(mid)
-        if mem:
-            mem.pop("embedding", None)
-            mem.pop("hdc_vector", None)
-            mem["sr_proximity"] = round(proximity, 4)
-            output.append(mem)
-
-    return output
 
 
 @mcp_server.tool()
@@ -1642,8 +1557,6 @@ def sync_instructions(claude_md_path: str = "") -> dict:
 - `sync_instructions(claude_md_path)` — Update CLAUDE.md with latest rules
 - `consolidate_now()` — Force consolidation cycle
 - `memory_stats()` — System statistics
-- `recall_hierarchical(query, level)` — Fractal hierarchy query
-- `navigate_memory(query)` — SR cognitive map navigation
 - `assess_coverage(query, directory)` — Knowledge coverage check
 - `detect_gaps(directory)` — Find knowledge gaps
 - `seed_project(directory, dry_run)` — Bootstrap memory for an existing project in one call
@@ -1705,7 +1618,7 @@ def resource_hot() -> str:
     memories = storage.get_memories_by_heat(settings.HOT_THRESHOLD)
     for m in memories:
         m.pop("embedding", None)
-        m.pop("hdc_vector", None)
+
     return json.dumps(memories, default=str)
 
 
@@ -1716,7 +1629,7 @@ def resource_stale() -> str:
     memories = storage.get_stale_memories()
     for m in memories:
         m.pop("embedding", None)
-        m.pop("hdc_vector", None)
+
     return json.dumps(memories, default=str)
 
 
@@ -1912,8 +1825,8 @@ def init_engines(
 ):
     """Initialize all engines. Returns (storage, embeddings, buffer, consolidation, staleness)."""
     global _storage, _embeddings, _buffer, _consolidation, _staleness, _thermo, _retriever, _curator
-    global _prospective, _narrative, _sleep, _fractal, _pool, _kg, _write_gate, _engram
-    global _rules_engine, _hopfield, _cls, _hdc, _cognitive_map, _causal, _metacognition
+    global _prospective, _narrative, _sleep, _pool, _kg, _write_gate, _engram
+    global _rules_engine, _cls, _cognitive_map, _causal, _metacognition
     global _replay, _wiki
 
     _settings = get_settings()
@@ -1923,11 +1836,8 @@ def init_engines(
     _buffer.start_session()
     _thermo = MemoryThermodynamics(_storage, _embeddings, _settings)
     _kg = KnowledgeGraph(_storage, _settings)
-    _hdc = HDCEncoder(dimensions=_settings.HDC_DIMENSIONS)
     _cognitive_map = CognitiveMap(_storage, _settings)
     _retriever = Retriever(_storage, _embeddings, _kg, _settings)
-    _retriever.set_hdc(_hdc)
-    _retriever.set_cognitive_map(_cognitive_map)
     _curator = MemoryCurator(_storage, _embeddings, _thermo, _settings)
     _consolidation = ConsolidationScheduler(_storage, _embeddings, _settings)
     _staleness = StalenessDetector(_storage, _settings)
@@ -1953,10 +1863,7 @@ def init_engines(
 
     # Expose inner engines as server-level globals for direct access
     _sleep = _consolidation._sleep_engine
-    _fractal = _retriever._fractal
-    _replay._fractal = _fractal
     _pool = _consolidation.pool
-    _hopfield = _retriever._hopfield
     _cls = _consolidation.cls
 
     if start_daemons:
@@ -2018,8 +1925,8 @@ def init_engines(
 def shutdown():
     """Gracefully shut down all engines."""
     global _storage, _embeddings, _buffer, _consolidation, _staleness, _thermo, _retriever, _curator
-    global _prospective, _narrative, _sleep, _fractal, _pool, _kg, _write_gate, _engram
-    global _rules_engine, _hopfield, _cls, _hdc, _cognitive_map, _causal, _metacognition
+    global _prospective, _narrative, _sleep, _pool, _kg, _write_gate, _engram
+    global _rules_engine, _cls, _cognitive_map, _causal, _metacognition
     global _replay, _wiki
 
     if _consolidation is not None:
@@ -2042,15 +1949,12 @@ def shutdown():
     _prospective = None
     _narrative = None
     _sleep = None
-    _fractal = None
     _pool = None
     _kg = None
     _write_gate = None
     _engram = None
     _rules_engine = None
-    _hopfield = None
     _cls = None
-    _hdc = None
     _cognitive_map = None
     _causal = None
     _metacognition = None

@@ -497,36 +497,6 @@ class TestComputeSignalConfidence:
         spread_conf = retriever._compute_signal_confidence("spreading", ranked)
         assert ppr_conf == spread_conf
 
-    def test_hopfield_empty(self, retriever):
-        assert retriever._compute_signal_confidence("hopfield", []) == 0.0
-
-    def test_hopfield_returns_max_score(self, retriever):
-        result = retriever._compute_signal_confidence("hopfield", [(1, 0.6), (2, 0.3)])
-        assert result == 0.6
-
-    def test_hdc_empty(self, retriever):
-        assert retriever._compute_signal_confidence("hdc", []) == 0.0
-
-    def test_hdc_count_based(self, retriever):
-        ranked = [(i, 0.5) for i in range(3)]
-        result = retriever._compute_signal_confidence("hdc", ranked)
-        assert result == pytest.approx(0.6)  # 3/5.0
-
-    def test_fractal_empty(self, retriever):
-        assert retriever._compute_signal_confidence("fractal", []) == 0.0
-
-    def test_fractal_returns_top_score(self, retriever):
-        result = retriever._compute_signal_confidence("fractal", [(1, 0.75), (2, 0.3)])
-        assert result == 0.75
-
-    def test_sr_empty(self, retriever):
-        assert retriever._compute_signal_confidence("sr", []) == 0.0
-
-    def test_sr_count_based(self, retriever):
-        ranked = [(i, 0.5) for i in range(6)]
-        result = retriever._compute_signal_confidence("sr", ranked)
-        assert result == 1.0  # 6/3.0 capped at 1.0
-
     def test_unknown_signal_returns_default(self, retriever):
         result = retriever._compute_signal_confidence("unknown_signal", [(1, 0.5)])
         assert result == 0.5

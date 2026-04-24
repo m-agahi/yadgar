@@ -65,10 +65,6 @@ class TestMemoryModelFields:
         m = Memory(content="x", directory_context="/tmp")
         assert m.original_content is None
 
-    def test_hdc_vector_default(self):
-        m = Memory(content="x", directory_context="/tmp")
-        assert m.hdc_vector is None
-
     def test_sr_coordinates_default(self):
         m = Memory(content="x", directory_context="/tmp")
         assert m.sr_x == 0.0
@@ -104,7 +100,6 @@ class TestMemoryModelFields:
             store_type="semantic",
             compression_level=2,
             original_content="full text",
-            hdc_vector=b"\x01\x02",
             sr_x=1.5,
             sr_y=-0.5,
             reconsolidation_count=3,
@@ -118,7 +113,6 @@ class TestMemoryModelFields:
         assert m.store_type == "semantic"
         assert m.compression_level == 2
         assert m.original_content == "full text"
-        assert m.hdc_vector == b"\x01\x02"
         assert m.sr_x == 1.5
         assert m.sr_y == -0.5
         assert m.reconsolidation_count == 3
@@ -691,7 +685,6 @@ class TestFrontierMemoryPersistence:
         mem = storage.get_memory(mem_id)
         assert mem["last_excitability_update"] is None
         assert mem["original_content"] is None
-        assert mem["hdc_vector"] is None
         assert mem["last_reconsolidated"] is None
 
     def test_update_frontier_fields(self, storage):
@@ -709,16 +702,6 @@ class TestFrontierMemoryPersistence:
         assert mem["sr_x"] == pytest.approx(2.5)
         assert mem["sr_y"] == pytest.approx(-1.3)
         assert mem["is_protected"] is True
-
-    def test_hdc_vector_blob_persists(self, storage):
-        mem_id = storage.insert_memory(_make_memory())
-        blob = b"\xab\xcd\xef" * 100
-        storage._db.query(
-            "UPDATE type::thing('memory', $id) SET hdc_vector = $v",
-            {"id": mem_id, "v": blob},
-        )
-        mem = storage.get_memory(mem_id)
-        assert mem["hdc_vector"] == blob
 
     def test_vector_clock_json_persists(self, storage):
         mem_id = storage.insert_memory(_make_memory())

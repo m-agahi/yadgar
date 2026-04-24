@@ -12,8 +12,6 @@ import networkx as nx
 
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
-from yadgar.fractal import FractalMemoryTree
-from yadgar.hopfield import HopfieldMemory
 from yadgar.knowledge_graph import KnowledgeGraph
 from yadgar.storage import _FTS_STOP_WORDS, StorageEngine
 
@@ -774,7 +772,7 @@ def analyze_query(query: str, settings) -> dict:
     )
 
     # 4. Classify
-    all_signals = ["vector", "fts", "ppr", "spreading", "fractal", "hopfield", "hdc", "sr"]
+    all_signals = ["vector", "fts", "ppr", "spreading"]
     has_question = any(w in _QUESTION_WORDS for w in words)
 
     if temporal_markers:
@@ -831,12 +829,8 @@ class Retriever:
         self._embeddings = embeddings
         self._graph = knowledge_graph
         self._settings = settings
-        self._fractal = FractalMemoryTree(storage, embeddings, settings)
-        self._hopfield = HopfieldMemory(storage, embeddings, settings)
         self._engram = None  # Set externally via set_engram()
         self._rules_engine = None  # Set externally via set_rules_engine()
-        self._hdc = None  # Set externally via set_hdc()
-        self._cognitive_map = None  # Set externally via set_cognitive_map()
         self._metacognition = None  # Set externally via set_metacognition()
         self._gte_reranker = None  # Lazy-loaded GTE-Reranker
         self._nli_model = None  # Lazy-loaded NLI model
@@ -850,14 +844,6 @@ class Retriever:
     def set_rules_engine(self, rules_engine) -> None:
         """Attach a RulesEngine for neuro-symbolic filtering/re-ranking."""
         self._rules_engine = rules_engine
-
-    def set_hdc(self, hdc) -> None:
-        """Attach an HDCEncoder for compositional structured queries."""
-        self._hdc = hdc
-
-    def set_cognitive_map(self, cognitive_map) -> None:
-        """Attach a CognitiveMap for SR-based navigation signal."""
-        self._cognitive_map = cognitive_map
 
     def set_metacognition(self, metacognition) -> None:
         """Attach a MetaCognition engine for cognitive load management."""
@@ -1083,9 +1069,6 @@ class Retriever:
         where k = WRRF_K (default 60) and w_i are per-signal weights from settings.
         An optional heuristic reranker refines the final ordering.
         """
-        # Check if SR signal is available
-        sr_active = self._cognitive_map is not None and self._cognitive_map.has_sufficient_data()
-
         w_temporal = 0.0  # Dynamically set if temporal markers found
 
         scores: dict[int, dict] = defaultdict(
@@ -1094,10 +1077,6 @@ class Retriever:
                 "fts": 0.0,
                 "ppr": 0.0,
                 "spread": 0.0,
-                "fractal": 0.0,
-                "hopfield": 0.0,
-                "hdc": 0.0,
-                "sr": 0.0,
                 "temporal": 0.0,
             }
         )
@@ -1282,82 +1261,7 @@ class Retriever:
                         normalized = spread_score / max_spread if max_spread > 0 else 0.0
                         scores[mid]["spread"] = normalized
 
-        # 5. Fractal cluster matching
-        if enabled_signals is None or "fractal" in enabled_signals:
-            fractal_results = self._fractal.fractal_score(query, max_results=candidate_k)
-            if fractal_results:
-                max_fractal = max(s for _, s in fractal_results) if fractal_results else 1.0
-                for mid, fractal_score in fractal_results:
-                    normalized = fractal_score / max_fractal if max_fractal > 0 else 0.0
-                    scores[mid]["fractal"] = normalized
-
-        # 6. Modern Hopfield energy-based retrieval
-        if enabled_signals is None or "hopfield" in enabled_signals:
-            if query_embedding is not None:
-                try:
-                    hopfield_results = self._hopfield.retrieve(query_embedding, top_k=candidate_k)
-                    if hopfield_results:
-                        max_hop = max(s for _, s in hopfield_results) if hopfield_results else 1.0
-                        for mid, hop_score in hopfield_results:
-                            normalized = hop_score / max_hop if max_hop > 0 else 0.0
-                            scores[mid]["hopfield"] = normalized
-                except Exception:
-                    logger.debug("Hopfield retrieval failed, skipping signal")
-
-        # 7. HDC compositional query
-        if enabled_signals is None or "hdc" in enabled_signals:
-            if self._hdc is not None:
-                try:
-                    query_entities = _extract_query_entities(query)
-                    if query_entities:
-                        hdc_query = self._hdc.encode_query(entities=query_entities)
-                        # Load HDC vectors for candidate memories
-                        candidate_ids = list(scores.keys()) if scores else []
-                        if not candidate_ids:
-                            # If no candidates from other signals, get recent memories
-                            all_mems = self._storage.get_memories_by_heat(min_heat, candidate_k)
-                            candidate_ids = [m["id"] for m in all_mems]
-
-                        hdc_candidates: list[tuple[int, bytes]] = []
-                        for mid in candidate_ids:
-                            mem = self._storage.get_memory(mid)
-                            if mem and mem.get("hdc_vector") is not None:
-                                hdc_vec = self._hdc.from_bytes(mem["hdc_vector"])
-                                hdc_candidates.append((mid, hdc_vec))
-
-                        if hdc_candidates:
-                            hdc_results = self._hdc.search(
-                                hdc_query, hdc_candidates, top_k=candidate_k
-                            )
-                            if hdc_results:
-                                max_hdc = max(s for _, s in hdc_results) if hdc_results else 1.0
-                                for mid, hdc_score in hdc_results:
-                                    if max_hdc > 0:
-                                        normalized = max(0.0, hdc_score) / max_hdc
-                                    else:
-                                        normalized = 0.0
-                                    scores[mid]["hdc"] = normalized
-                except Exception:
-                    logger.debug("HDC retrieval failed, skipping signal")
-
-        # 8. Successor Representation navigation
-        if enabled_signals is None or "sr" in enabled_signals:
-            if sr_active and query_embedding is not None:
-                try:
-                    candidate_ids = list(scores.keys()) if scores else []
-                    if candidate_ids:
-                        sr_scores = self._cognitive_map.get_sr_scores(
-                            query_embedding, self._embeddings, candidate_ids
-                        )
-                        if sr_scores:
-                            max_sr = max(sr_scores.values()) if sr_scores else 1.0
-                            for mid, sr_score in sr_scores.items():
-                                normalized = sr_score / max_sr if max_sr > 0 else 0.0
-                                scores[mid]["sr"] = normalized
-                except Exception:
-                    logger.debug("SR retrieval failed, skipping signal")
-
-        # 9. Temporal retrieval boost — temporal_retrieval signal
+        # 5. Temporal retrieval boost — temporal_retrieval signal
         if getattr(self._settings, "TEMPORAL_RETRIEVAL_ENABLED", False):
             temporal_info = parse_temporal_expression(query)
             if temporal_info["has_temporal"]:
@@ -1399,10 +1303,6 @@ class Retriever:
             "fts": self._settings.WRRF_FTS_WEIGHT,
             "ppr": self._settings.WRRF_PPR_WEIGHT,
             "spread": self._settings.WRRF_SPREADING_WEIGHT,
-            "hopfield": self._settings.WRRF_HOPFIELD_WEIGHT,
-            "hdc": self._settings.WRRF_HDC_WEIGHT,
-            "fractal": self._settings.WRRF_FRACTAL_WEIGHT,
-            "sr": self._settings.WRRF_SR_WEIGHT,
         }
         if w_temporal > 0:
             signal_weights["temporal"] = w_temporal
@@ -1417,10 +1317,6 @@ class Retriever:
                 "fts": getattr(self._settings, "CONFIDENCE_THRESHOLD_FTS", 0.1),
                 "ppr": getattr(self._settings, "CONFIDENCE_THRESHOLD_PPR", 0.1),
                 "spread": getattr(self._settings, "CONFIDENCE_THRESHOLD_SPREADING", 0.1),
-                "hopfield": getattr(self._settings, "CONFIDENCE_THRESHOLD_HOPFIELD", 0.1),
-                "hdc": getattr(self._settings, "CONFIDENCE_THRESHOLD_HDC", 0.1),
-                "fractal": getattr(self._settings, "CONFIDENCE_THRESHOLD_FRACTAL", 0.1),
-                "sr": getattr(self._settings, "CONFIDENCE_THRESHOLD_SR", 0.1),
                 "temporal": getattr(self._settings, "CONFIDENCE_THRESHOLD_TEMPORAL", 0.1),
             }
             for sig in list(signal_weights.keys()):
@@ -1668,14 +1564,6 @@ class Retriever:
                 logger.debug("Metacognition manage_context failed, returning unoptimized")
 
         return result_memories
-
-    # -- e. Hierarchical Recall --
-
-    def recall_hierarchical(
-        self, query: str, level: int | None = None, max_results: int = 10
-    ) -> list[dict]:
-        """Level-specific retrieval through the fractal hierarchy."""
-        return self._fractal.retrieve_tree(query, target_level=level)[:max_results]
 
     # -- Internal helpers --
 
@@ -2496,27 +2384,6 @@ class Retriever:
             max_score = max(scores)
             mean_score = sum(scores) / len(scores)
             return (max_score - mean_score) / max_score if max_score > 0 else 0.0
-
-        elif signal_name == "hopfield":
-            if not ranked_list:
-                return 0.0
-            scores = [s for _, s in ranked_list]
-            return max(scores)
-
-        elif signal_name == "hdc":
-            if not ranked_list:
-                return 0.0
-            return min(1.0, len(ranked_list) / 5.0)
-
-        elif signal_name == "fractal":
-            if not ranked_list:
-                return 0.0
-            return ranked_list[0][1] if ranked_list else 0.0
-
-        elif signal_name == "sr":
-            if not ranked_list:
-                return 0.0
-            return min(1.0, len(ranked_list) / 3.0)
 
         elif signal_name == "temporal":
             if not ranked_list:

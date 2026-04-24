@@ -11,7 +11,6 @@ from yadgar.config import Settings
 from yadgar.consolidation import ConsolidationScheduler
 from yadgar.curation import MemoryCurator
 from yadgar.embeddings import EmbeddingEngine
-from yadgar.fractal import FractalMemoryTree
 from yadgar.knowledge_graph import KnowledgeGraph
 from yadgar.narrative import NarrativeEngine
 from yadgar.prospective import ProspectiveMemoryEngine
@@ -88,11 +87,6 @@ def pool(storage, embeddings, kg, thermo, settings):
     p = AstrocytePool(storage, embeddings, kg, thermo, settings)
     p.init_processes()
     return p
-
-
-@pytest.fixture
-def fractal(storage, embeddings, settings):
-    return FractalMemoryTree(storage, embeddings, settings)
 
 
 @pytest.fixture
@@ -718,40 +712,6 @@ class TestCausalDetectionIntegration:
         assert created >= 0
 
 
-class TestFractalTreeIntegration:
-    def test_build_and_retrieve_hierarchy(self, storage, embeddings, fractal, settings):
-        """Store memories in different directories, build tree, verify hierarchy."""
-        dirs = ["/proj/frontend", "/proj/backend", "/proj/frontend"]
-        contents = [
-            "React component uses hooks for state management",
-            "FastAPI endpoint handles user authentication",
-            "React router manages client-side navigation",
-        ]
-
-        for content, dir_ctx in zip(contents, dirs, strict=False):
-            embedding = embeddings.encode(content)
-            storage.insert_memory(
-                {
-                    "content": content,
-                    "embedding": embedding,
-                    "tags": ["code"],
-                    "directory_context": dir_ctx,
-                    "heat": 1.0,
-                    "is_stale": False,
-                    "embedding_model": embeddings.get_model_name(),
-                }
-            )
-
-        stats = fractal.build_tree()
-        assert stats["memories_assigned"] >= 3
-        assert stats["level_1_clusters"] >= 1
-
-        # Retrieve at level 0 (individual memories)
-        results = fractal.retrieve_tree("React component", target_level=0)
-        assert len(results) >= 1
-        assert results[0]["level"] == 0
-
-
 class TestDreamReplayIntegration:
     def test_dream_discovers_connections(self, storage, embeddings, sleep_engine):
         """Store unconnected but related memories, run dream replay, verify connections."""
@@ -1003,8 +963,6 @@ class TestAllMCPTools:
             "consolidate_now",
             "memory_stats",
             "rate_memory",
-            "recall_hierarchical",
-            "drill_down",
             "create_trigger",
             "get_project_story",
         }
@@ -1041,7 +999,6 @@ class TestServerStartupShutdown:
         assert server._prospective is not None
         assert server._narrative is not None
         assert server._sleep is not None
-        assert server._fractal is not None
         assert server._pool is not None
         assert server._kg is not None
 
@@ -1064,7 +1021,6 @@ class TestServerStartupShutdown:
         assert server._prospective is None
         assert server._narrative is None
         assert server._sleep is None
-        assert server._fractal is None
         assert server._pool is None
         assert server._kg is None
 
@@ -1131,24 +1087,6 @@ class TestRememberProspectiveTrigger:
         # (depends on keyword matching)
         # At minimum, the memory was created successfully
         assert result2["id"] is not None
-
-
-class TestRecallHierarchical:
-    def test_hierarchical_recall_through_server(self, server_engines):
-        """Verify recall_hierarchical tool works via server."""
-        # Store memories
-        for i in range(5):
-            server.remember(
-                f"Hierarchical test memory {i} about Python coding", "/proj", ["python"]
-            )
-
-        # First build the tree via consolidation
-        server.consolidate_now()
-
-        # Recall hierarchically
-        results = server.recall_hierarchical("Python coding", level=0, max_results=5)
-        # Should return results (may be empty if no clusters built yet)
-        assert isinstance(results, list)
 
 
 class TestRateMemory:

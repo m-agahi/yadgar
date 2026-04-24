@@ -122,7 +122,7 @@ def _get_enrichment_pipeline(settings, embeddings_engine=None):
 
 
 # Embedding fields that hold float arrays in SurrealDB and must be converted to bytes on read
-_EMBEDDING_FIELDS = ("embedding", "centroid_embedding", "hdc_vector", "implicit_embedding")
+_EMBEDDING_FIELDS = ("embedding", "centroid_embedding", "implicit_embedding")
 
 
 class StorageEngine:
