@@ -409,6 +409,8 @@ class StorageEngine:
             "user_profile",
             "derived_belief",
             "counter",
+            "wiki_page",
+            "wiki_crossref",
         ):
             db.query(f"DEFINE TABLE IF NOT EXISTS {table} SCHEMALESS;")
 
@@ -474,6 +476,33 @@ class StorageEngine:
         db.query("""
             DEFINE INDEX IF NOT EXISTS engram_slot_idx
                 ON engram_slot FIELDS slot_index;
+        """)
+
+        # wiki_page: FTS on content (BM25 keyword search)
+        db.query("""
+            DEFINE INDEX IF NOT EXISTS wiki_content_idx
+                ON wiki_page FIELDS content
+                SEARCH ANALYZER mem_analyzer BM25;
+        """)
+        # wiki_page: MTREE vector index on embedding (semantic search)
+        db.query(f"""
+            DEFINE INDEX IF NOT EXISTS wiki_embedding_idx
+                ON wiki_page FIELDS embedding
+                MTREE DIMENSION {self._embedding_dim} DIST COSINE;
+        """)
+        # wiki_page: slug lookup
+        db.query("""
+            DEFINE INDEX IF NOT EXISTS wiki_slug_idx
+                ON wiki_page FIELDS slug;
+        """)
+        # wiki_crossref: from/to indexes
+        db.query("""
+            DEFINE INDEX IF NOT EXISTS wiki_crossref_from_idx
+                ON wiki_crossref FIELDS from_slug;
+        """)
+        db.query("""
+            DEFINE INDEX IF NOT EXISTS wiki_crossref_to_idx
+                ON wiki_crossref FIELDS to_slug;
         """)
 
     # ------------------------------------------------------------------ Episodes
@@ -2235,6 +2264,172 @@ class StorageEngine:
             "last_excitability_update = $now",
             {"id": memory_id, "exc": excitability, "now": now},
         )
+
+    # ------------------------------------------------------------------ Wiki Pages
+
+    def insert_wiki_page(self, page: dict) -> int:
+        """Insert a new wiki page, return its integer ID."""
+        now = self._now_iso()
+        pid = self._next_id("wiki_page")
+        embedding = page.get("embedding")
+        emb_floats = self._bytes_to_floats(embedding) if isinstance(embedding, bytes) else embedding
+        self._db.query(
+            "CREATE type::thing('wiki_page', $id) SET "
+            "title = $title, slug = $slug, content = $content, "
+            "category = $category, tags = $tags, links = $links, "
+            "confidence = $confidence, embedding = $embedding, "
+            "source_memory_ids = $source_memory_ids, "
+            "created_at = $created_at, updated_at = $updated_at",
+            {
+                "id": pid,
+                "title": page.get("title", ""),
+                "slug": page["slug"],
+                "content": page.get("content", ""),
+                "category": page.get("category"),
+                "tags": page.get("tags", []),
+                "links": page.get("links", []),
+                "confidence": page.get("confidence", 1.0),
+                "embedding": emb_floats,
+                "source_memory_ids": page.get("source_memory_ids", []),
+                "created_at": page.get("created_at", now),
+                "updated_at": page.get("updated_at", now),
+            },
+        )
+        return pid
+
+    def update_wiki_page(self, page_id: int, updates: dict) -> bool:
+        """Update fields on an existing wiki page. Return True if found."""
+        if not updates:
+            return False
+        # Handle embedding conversion if present
+        if "embedding" in updates and isinstance(updates["embedding"], bytes):
+            updates = dict(updates)
+            updates["embedding"] = self._bytes_to_floats(updates["embedding"])
+        updates = dict(updates)
+        updates["updated_at"] = self._now_iso()
+        set_parts = []
+        params = {"id": int(page_id)}
+        for col, val in updates.items():
+            set_parts.append(f"{col} = ${col}")
+            params[col] = val
+        rows = self._q(
+            f"UPDATE type::thing('wiki_page', $id) SET {', '.join(set_parts)}",
+            params,
+        )
+        return len(rows) > 0
+
+    def get_wiki_page(self, page_id: int) -> dict | None:
+        """Get a wiki page by ID."""
+        pid = int(page_id)
+        rows = self._q(f"SELECT * FROM wiki_page:{pid}")
+        return self._row_to_dict(rows[0]) if rows else None
+
+    def get_wiki_page_by_slug(self, slug: str) -> dict | None:
+        """Get a wiki page by slug."""
+        rows = self._q(
+            "SELECT * FROM wiki_page WHERE slug = $slug LIMIT 1",
+            {"slug": slug},
+        )
+        return self._row_to_dict(rows[0]) if rows else None
+
+    def delete_wiki_page(self, page_id: int) -> bool:
+        """Delete a wiki page by ID. Return True if deleted."""
+        pid = int(page_id)
+        # Check existence first
+        rows = self._q(f"SELECT id FROM wiki_page:{pid}")
+        if not rows:
+            return False
+        self._db.query(
+            "DELETE type::thing('wiki_page', $id)",
+            {"id": pid},
+        )
+        return True
+
+    def list_wiki_pages(self, category: str | None = None) -> list[dict]:
+        """List all wiki pages, optionally filtered by category."""
+        if category:
+            rows = self._q(
+                "SELECT * FROM wiki_page WHERE category = $cat ORDER BY updated_at DESC",
+                {"cat": category},
+            )
+        else:
+            rows = self._q("SELECT * FROM wiki_page ORDER BY updated_at DESC")
+        return self._rows_to_dicts(rows)
+
+    # ------------------------------------------------------------------ Wiki Search
+
+    def search_wiki_fts(self, query: str, limit: int = 10) -> list[dict]:
+        """BM25 full-text search on wiki page content."""
+        fts_query = self._preprocess_fts_query(query)
+        rows = self._q(
+            "SELECT * FROM wiki_page WHERE content @@ $q ORDER BY search::score(1) DESC LIMIT $lim",
+            {"q": fts_query, "lim": limit},
+        )
+        return self._rows_to_dicts(rows)
+
+    def search_wiki_fts_scored(self, query: str, limit: int = 10) -> list[tuple[int, float]]:
+        """BM25 search returning (page_id, score) tuples."""
+        fts_query = self._preprocess_fts_query(query)
+        rows = self._q(
+            "SELECT id, search::score(1) AS score FROM wiki_page "
+            "WHERE content @1@ $q "
+            "ORDER BY score DESC LIMIT $lim",
+            {"q": fts_query, "lim": limit},
+        )
+        results = []
+        for row in rows:
+            pid = self._extract_id(row.get("id"))
+            score = float(row.get("score", 0.0))
+            results.append((pid, score))
+        return results
+
+    def search_wiki_vectors(
+        self, query_embedding: bytes, top_k: int = 5
+    ) -> list[tuple[int, float]]:
+        """KNN search on wiki page embeddings. Returns (page_id, distance)."""
+        fetch_k = min(top_k * 4, 4096)
+        floats = self._bytes_to_floats(query_embedding)
+        rows = self._q(
+            f"SELECT id, vector::similarity::cosine(embedding, $qv) AS sim "
+            f"FROM wiki_page WHERE embedding <|{fetch_k}|> $qv "
+            f"ORDER BY sim DESC",
+            {"qv": floats},
+        )
+        results = []
+        for row in rows:
+            pid = self._extract_id(row.get("id"))
+            dist = 1.0 - float(row.get("sim", 0.0))
+            results.append((pid, dist))
+            if len(results) >= top_k:
+                break
+        return results
+
+    # ------------------------------------------------------------------ Wiki Cross-References
+
+    def replace_wiki_crossrefs(self, from_slug: str, to_slugs: list[str]) -> None:
+        """Atomic replace: delete all existing crossrefs FROM this slug, insert new ones."""
+        self._db.query(
+            "DELETE FROM wiki_crossref WHERE from_slug = $slug",
+            {"slug": from_slug},
+        )
+        for to_slug in to_slugs:
+            self._db.query(
+                "CREATE wiki_crossref SET from_slug = $from, to_slug = $to",
+                {"from": from_slug, "to": to_slug},
+            )
+
+    def get_wiki_backlinks(self, slug: str) -> list[str]:
+        """Get all slugs that link TO this slug."""
+        rows = self._q(
+            "SELECT from_slug FROM wiki_crossref WHERE to_slug = $slug",
+            {"slug": slug},
+        )
+        return [row["from_slug"] for row in rows if "from_slug" in row]
+
+    def get_all_wiki_crossrefs(self) -> list[dict]:
+        """Get all cross-references for graph visualization."""
+        rows = self._q("SELECT from_slug, to_slug FROM wiki_crossref")
+        return [{"from_slug": r["from_slug"], "to_slug": r["to_slug"]} for r in rows]
 
     # ------------------------------------------------------------------ Context manager
 
