@@ -961,6 +961,36 @@ def recall(query: str, max_results: int = 5, min_heat: float = 0.0) -> list[dict
     if _replay is not None:
         _replay.record_tool_call()
 
+    # Wiki blending — AFTER heat boost (wiki pages have no heat field)
+    if _wiki is not None:
+        try:
+            wiki_results = _wiki.query(query, max_results=3)
+            for wr in wiki_results:
+                wr["_source"] = "wiki"
+                wr["_retrieval_score"] = wr.get("_retrieval_score", 0.5) + 0.15  # curated boost
+                wr.pop("embedding", None)
+            if wiki_results:
+                # Interleave wiki results between memory results
+                blended = []
+                mem_idx = 0
+                wiki_idx = 0
+                pos = 0
+                while mem_idx < len(merged) or wiki_idx < len(wiki_results):
+                    # Insert wiki at positions 1, 3, 5 (between memories)
+                    if pos % 2 == 1 and wiki_idx < len(wiki_results):
+                        blended.append(wiki_results[wiki_idx])
+                        wiki_idx += 1
+                    elif mem_idx < len(merged):
+                        blended.append(merged[mem_idx])
+                        mem_idx += 1
+                    elif wiki_idx < len(wiki_results):
+                        blended.append(wiki_results[wiki_idx])
+                        wiki_idx += 1
+                    pos += 1
+                merged = blended[:max_results]
+        except Exception:
+            pass  # Wiki blending is best-effort
+
     # Strip binary fields from response (not JSON-serializable)
     for m in merged:
         m.pop("embedding", None)
