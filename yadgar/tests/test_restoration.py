@@ -8,7 +8,7 @@ import pytest
 
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
-from yadgar.restoration import HippocampalReplay
+from yadgar.restoration import CheckpointRestore
 from yadgar.storage import StorageEngine
 
 
@@ -25,7 +25,7 @@ def engines(temp_db):
     settings = Settings(DB_PATH=temp_db)
     storage = StorageEngine(temp_db)
     embeddings = EmbeddingEngine()
-    replay = HippocampalReplay(
+    replay = CheckpointRestore(
         storage=storage,
         embeddings=embeddings,
         settings=settings,

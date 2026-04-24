@@ -16,14 +16,14 @@ Biologically-inspired persistent memory engine for Claude Code
 Active modules:
   * StorageEngine         (SurrealDB with KV + FTS + vector search)
   * EmbeddingEngine       (sentence-transformers)
-  * SensoryBuffer         (episode capture)
+  * ActionLogger          (episode capture)
   * MemoryThermodynamics  (surprise, importance, valence, decay)
   * KnowledgeGraph        (typed relationships, causal detection)
-  * HippoRetriever        (PPR + vector + FTS5 + spreading activation + fractal)
+  * Retriever             (PPR + vector + FTS + spreading activation)
   * MemoryCurator         (merge/link/create, contradiction, memify)
-  * AstrocyteEngine       (background consolidation daemon)
+  * ConsolidationScheduler (background consolidation daemon)
   * AstrocytePool         (domain-aware processes: code/decisions/errors/deps)
-  * SleepComputeEngine    (dream replay, compression, community detection)
+  * SleepComputeEngine    (dream replay, community detection)
   * FractalMemoryTree     (hierarchical multi-scale retrieval)
   * ProspectiveMemory     (future-oriented triggers)
   * NarrativeEngine       (autobiographical project stories)
@@ -52,8 +52,8 @@ def _init_replay_lightweight(db_path=None):
     from yadgar.embeddings import EmbeddingEngine
     from yadgar.knowledge_graph import KnowledgeGraph
     from yadgar.metacognition import MetaCognition
-    from yadgar.restoration import HippocampalReplay
-    from yadgar.retrieval import HippoRetriever
+    from yadgar.restoration import CheckpointRestore
+    from yadgar.retrieval import Retriever
     from yadgar.storage import StorageEngine
 
     settings = Settings()
@@ -61,11 +61,11 @@ def _init_replay_lightweight(db_path=None):
     embeddings = EmbeddingEngine(settings.EMBEDDING_MODEL)
     kg = KnowledgeGraph(storage, settings)
     cognitive_map = CognitiveMap(storage, settings)
-    retriever = HippoRetriever(storage, embeddings, kg, settings)
+    retriever = Retriever(storage, embeddings, kg, settings)
     retriever.set_cognitive_map(cognitive_map)
     metacognition = MetaCognition(storage, embeddings, kg, settings)
 
-    replay = HippocampalReplay(
+    replay = CheckpointRestore(
         storage=storage,
         embeddings=embeddings,
         retriever=retriever,

@@ -11,7 +11,6 @@ import pytest
 
 from yadgar import server
 from yadgar.cognitive_map import CognitiveMap
-from yadgar.compression import MemoryCompressor
 from yadgar.hopfield import HopfieldMemory
 from yadgar.metacognition import MetaCognition
 
@@ -326,13 +325,6 @@ class TestConsolidationFullCycle:
         assert "memories_updated" in result
         # CLS and compression stats should be present
         assert "cls_patterns_found" in result or "compression_to_gist" in result or True
-
-    def test_compression_in_consolidation(self):
-        """test_compression_in_consolidation: old memories compressed."""
-        assert server._compressor is not None
-        assert isinstance(server._compressor, MemoryCompressor)
-        # Compressor is wired into consolidation cycle
-        assert server._consolidation._compressor is not None
 
 
 # ── Tests: MCP Tools ──────────────────────────────────────────────────

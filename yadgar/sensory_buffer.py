@@ -6,7 +6,7 @@ from yadgar.config import Settings
 from yadgar.storage import StorageEngine
 
 
-class SensoryBuffer:
+class ActionLogger:
     def __init__(self, storage: StorageEngine, settings: Settings):
         self._storage = storage
         self._settings = settings

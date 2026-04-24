@@ -7,7 +7,7 @@ from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.hdc_encoder import HDCEncoder
 from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.retrieval import HippoRetriever
+from yadgar.retrieval import Retriever
 from yadgar.storage import StorageEngine
 
 # -- Fixtures --
@@ -48,7 +48,7 @@ def graph(storage, settings):
 
 @pytest.fixture
 def retriever(storage, embeddings, graph, settings):
-    return HippoRetriever(storage, embeddings, graph, settings)
+    return Retriever(storage, embeddings, graph, settings)
 
 
 def _make_memory(storage, embeddings, content, directory="/proj", tags=None, heat=1.0):
@@ -476,12 +476,12 @@ class TestHDCCodebook:
 
 
 class TestHDCRetrievalIntegration:
-    """Test HDC integration with the HippoRetriever recall pipeline."""
+    """Test HDC integration with the Retriever recall pipeline."""
 
     def test_integration_retrieval(self, storage, embeddings, graph, settings):
         """HDC scores appear in recall results when HDC encoder is attached."""
         hdc = HDCEncoder(dimensions=2000, seed=42)
-        retriever = HippoRetriever(storage, embeddings, graph, settings)
+        retriever = Retriever(storage, embeddings, graph, settings)
         retriever.set_hdc(hdc)
 
         # Create memories with HDC vectors
@@ -524,7 +524,7 @@ class TestHDCRetrievalIntegration:
 
     def test_retriever_without_hdc(self, storage, embeddings, graph, settings):
         """Retriever works fine without HDC encoder attached."""
-        retriever = HippoRetriever(storage, embeddings, graph, settings)
+        retriever = Retriever(storage, embeddings, graph, settings)
         # Don't set HDC — _hdc stays None
 
         _make_memory(

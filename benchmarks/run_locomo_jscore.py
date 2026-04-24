@@ -57,7 +57,7 @@ from benchmarks.test_e_locomo import (
 )
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.retrieval import HippoRetriever
+from yadgar.retrieval import Retriever
 from yadgar.storage import StorageEngine
 
 
@@ -518,7 +518,7 @@ def run_eval(
         )
         log(f"  [INGEST] Done in {time.time() - ingest_t0:.1f}s")
 
-        retriever = HippoRetriever(storage, embeddings, kg, settings)
+        retriever = Retriever(storage, embeddings, kg, settings)
 
         for qi, qa in enumerate(qa_items):
             question = qa.get("question", qa.get("query", ""))

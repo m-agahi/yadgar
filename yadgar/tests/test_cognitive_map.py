@@ -7,7 +7,7 @@ from yadgar.cognitive_map import _MIN_TRANSITIONS, CognitiveMap
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.retrieval import HippoRetriever
+from yadgar.retrieval import Retriever
 from yadgar.storage import StorageEngine
 
 
@@ -40,7 +40,7 @@ def graph(storage, settings):
 
 @pytest.fixture
 def retriever(storage, embeddings, graph, settings):
-    ret = HippoRetriever(storage, embeddings, graph, settings)
+    ret = Retriever(storage, embeddings, graph, settings)
     return ret
 
 
@@ -708,7 +708,7 @@ class TestIntegration:
     def test_sr_retrieval_signal(self, storage, embeddings, graph, settings):
         """SR scores appear in recall when active (sufficient transitions)."""
         cmap = CognitiveMap(storage, settings)
-        retriever = HippoRetriever(storage, embeddings, graph, settings)
+        retriever = Retriever(storage, embeddings, graph, settings)
         retriever.set_cognitive_map(cmap)
 
         # Create memories
@@ -731,7 +731,7 @@ class TestIntegration:
     def test_sr_retrieval_signal_inactive(self, storage, embeddings, graph, settings):
         """SR signal is not used when insufficient data."""
         cmap = CognitiveMap(storage, settings)
-        retriever = HippoRetriever(storage, embeddings, graph, settings)
+        retriever = Retriever(storage, embeddings, graph, settings)
         retriever.set_cognitive_map(cmap)
 
         m1 = _make_memory(storage, embeddings, "Python Flask web server")

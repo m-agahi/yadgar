@@ -634,18 +634,6 @@ class StorageEngine:
 
                 logging.getLogger(__name__).warning("Enrichment failed: %s", e)
 
-        # Profile extraction
-        if settings and getattr(settings, "PROFILE_EXTRACTION_ENABLED", False):
-            try:
-                from yadgar.profiles import ProfileExtractor
-
-                extractor = ProfileExtractor(self, settings)
-                extractor.extract_and_store(memory["content"], mid, memory["directory_context"])
-            except Exception as e:
-                import logging
-
-                logging.getLogger(__name__).warning("Profile extraction failed: %s", e)
-
         # insert_vector is a no-op for the separate table, but keep for API compat
         if embedding is not None:
             self.insert_vector(mid, embedding)
@@ -724,7 +712,9 @@ class StorageEngine:
         return self._rows_to_dicts(rows)
 
     def get_all_memories_for_decay(self) -> list[dict]:
-        rows = self._q("SELECT * FROM memory WHERE heat > 0 AND is_protected = false")
+        rows = self._q(
+            "SELECT * FROM memory WHERE heat > 0 AND (is_protected = false OR is_protected = NONE)"
+        )
         return self._rows_to_dicts(rows)
 
     def get_all_memories_with_embeddings(self) -> list[dict]:
@@ -2233,13 +2223,13 @@ class StorageEngine:
         if exclude_anchored:
             rows = self._q(
                 "SELECT * FROM memory "
-                "WHERE heat > 0 AND is_protected = false AND '_anchor' NOTINSIDE tags "
+                "WHERE heat > 0 AND (is_protected = false OR is_protected = NONE) AND '_anchor' NOTINSIDE tags "
                 "ORDER BY created_at DESC LIMIT $lim",
                 {"lim": limit},
             )
         else:
             rows = self._q(
-                "SELECT * FROM memory WHERE heat > 0 AND is_protected = false "
+                "SELECT * FROM memory WHERE heat > 0 AND (is_protected = false OR is_protected = NONE) "
                 "ORDER BY created_at DESC LIMIT $lim",
                 {"lim": limit},
             )

@@ -36,7 +36,7 @@ from benchmarks.test_e_locomo import (
 )
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.retrieval import HippoRetriever
+from yadgar.retrieval import Retriever
 from yadgar.storage import StorageEngine
 
 
@@ -239,7 +239,7 @@ def run_benchmark(
         log(f"  [INGEST] Done — {len(dia_map)} dialogue IDs mapped in {ingest_elapsed:.1f}s")
         log_ram()
 
-        retriever = HippoRetriever(storage, embeddings, kg, settings)
+        retriever = Retriever(storage, embeddings, kg, settings)
 
         per_category = defaultdict(list)
         eval_t0 = time.time()

@@ -5,7 +5,7 @@ import pytest
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.retrieval import HippoRetriever
+from yadgar.retrieval import Retriever
 from yadgar.rules_engine import (
     RulesEngine,
     _parse_action,
@@ -534,13 +534,13 @@ class TestRuleDeletion:
         assert len(engine.get_all_rules()) == 0
 
 
-# -- Integration with HippoRetriever --
+# -- Integration with Retriever --
 
 
 class TestIntegrationRecall:
     def test_rules_affect_recall_results(self, storage, embeddings, settings):
         kg = KnowledgeGraph(storage, settings)
-        retriever = HippoRetriever(storage, embeddings, kg, settings)
+        retriever = Retriever(storage, embeddings, kg, settings)
         rules_engine = RulesEngine(storage, settings)
         retriever.set_rules_engine(rules_engine)
 
@@ -583,7 +583,7 @@ class TestIntegrationRecall:
     def test_recall_without_rules_engine(self, storage, embeddings, settings):
         """Verify recall works fine when no rules engine is set."""
         kg = KnowledgeGraph(storage, settings)
-        retriever = HippoRetriever(storage, embeddings, kg, settings)
+        retriever = Retriever(storage, embeddings, kg, settings)
         # No rules engine set
 
         _insert_memory(storage, embeddings, "some test memory", tags=["test"])

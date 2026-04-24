@@ -816,7 +816,7 @@ def analyze_query(query: str, settings) -> dict:
     }
 
 
-class HippoRetriever:
+class Retriever:
     """HippoRAG-style retrieval combining PPR, spreading activation,
     vector similarity, and FTS5 keyword search."""
 

@@ -9,7 +9,7 @@ from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.fractal import FractalMemoryTree
 from yadgar.metacognition import MetaCognition
-from yadgar.retrieval import HippoRetriever
+from yadgar.retrieval import Retriever
 from yadgar.storage import StorageEngine
 
 logger = logging.getLogger(__name__)
@@ -21,7 +21,7 @@ _MICRO_DECISION_RE = re.compile(
 )
 
 
-class HippocampalReplay:
+class CheckpointRestore:
     """Reconstructs context after Claude Code compaction events.
 
     Named after the neuroscience phenomenon where the hippocampus
@@ -34,7 +34,7 @@ class HippocampalReplay:
         self,
         storage: StorageEngine,
         embeddings: EmbeddingEngine,
-        retriever: HippoRetriever | None = None,
+        retriever: Retriever | None = None,
         cognitive_map: CognitiveMap | None = None,
         metacognition: MetaCognition | None = None,
         fractal: FractalMemoryTree | None = None,
