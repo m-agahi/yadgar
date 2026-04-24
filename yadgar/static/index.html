@@ -317,6 +317,12 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
       <label><input type="checkbox" id="show-semantic" checked> <span style="color:#1f6feb">■</span> Semantic</label>
       <label><input type="checkbox" id="show-temporal" checked> <span style="color:#6e40c9">■</span> Temporal</label>
       <label><input type="checkbox" id="show-transition" checked> <span style="color:#3fb950">■</span> Transitions</label>
+      <label><input type="checkbox" id="show-wiki-crossref" checked> <span style="color:#d2a8ff">■</span> Wiki Links</label>
+      <label><input type="checkbox" id="show-memory-wiki" checked> <span style="color:#ffa657">■</span> Mem→Wiki</label>
+    </div>
+    <div>
+      <div class="sec-title">Node Types</div>
+      <label><input type="checkbox" id="show-wiki" checked> <span style="color:#d2a8ff">⬡</span> Wiki</label>
     </div>
     <div>
       <div class="sec-title">Heat Filter</div>
@@ -328,6 +334,7 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
       <div class="stat-row"><span class="stat-lbl">Memories</span><span class="stat-val" id="s-mem">—</span></div>
       <div class="stat-row"><span class="stat-lbl">Temporal</span><span class="stat-val" id="s-tmp">—</span></div>
       <div class="stat-row"><span class="stat-lbl">Transitions</span><span class="stat-val" id="s-trn">—</span></div>
+      <div class="stat-row"><span class="stat-lbl">Wiki</span><span class="stat-val" id="s-wiki">—</span></div>
       <div class="stat-row"><span class="stat-lbl">Visible</span><span class="stat-val" id="s-vis">—</span></div>
     </div>
   </div>
@@ -443,7 +450,12 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
 <script>
 // ── Config ─────────────────────────────────────────────────────────────────
 const DAEMON = 'http://127.0.0.1:8765';
-const EDGE_COLOR = { semantic: '#1f6feb', temporal: '#6e40c9', transition: '#3fb950' };
+const EDGE_COLOR = { semantic: '#1f6feb', temporal: '#6e40c9', transition: '#3fb950', wiki_crossref: '#d2a8ff', memory_wiki: '#ffa657' };
+const WIKI_CAT_COLOR = {
+  architecture: '#58a6ff', decision: '#ffa657', pattern: '#3fb950',
+  debugging: '#f85149', reference: '#8b949e', convention: '#d2a8ff',
+  fact: '#a5d6ff', analysis: '#d29922',
+};
 
 // ── State ───────────────────────────────────────────────────────────────────
 let allNodes = [], allLinks = [];
@@ -469,10 +481,12 @@ function initGraph() {
     .nodeId('id')
     .linkSource('source')
     .linkTarget('target')
-    .nodeLabel(n => `[heat=${(n.heat||0).toFixed(3)}] ${(n.content || n.label || '').slice(0, 120)}`)
+    .nodeLabel(n => n.type === 'wiki'
+      ? `[wiki:${n.category}] ${n.label}`
+      : `[heat=${(n.heat||0).toFixed(3)}] ${(n.content || n.label || '').slice(0, 120)}`)
     .linkColor(l => EDGE_COLOR[l.type] || '#484f58')
-    .linkWidth(l => l.type === 'transition' ? Math.min(4, 1 + Math.log2(l.count || 1)) : l.type === 'semantic' ? 1 : 1.5)
-    .linkDirectionalArrowLength(l => l.type === 'transition' ? 5 : 0)
+    .linkWidth(l => l.type === 'transition' ? Math.min(4, 1 + Math.log2(l.count || 1)) : l.type === 'semantic' ? 1 : l.type === 'wiki_crossref' ? 1 : 1.5)
+    .linkDirectionalArrowLength(l => (l.type === 'transition' || l.type === 'memory_wiki') ? 5 : 0)
     .linkDirectionalArrowRelPos(1)
     .nodeCanvasObject(drawNode)
     .nodeCanvasObjectMode(() => 'replace')
@@ -514,6 +528,35 @@ function initGraph() {
 }
 
 function drawNode(node, ctx, scale) {
+  if (node.type === 'wiki') {
+    // Hexagon
+    const r = 8;
+    const color = WIKI_CAT_COLOR[node.category] || '#8b949e';
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const angle = Math.PI / 3 * i - Math.PI / 6;
+      const x = node.x + r * Math.cos(angle);
+      const y = node.y + r * Math.sin(angle);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+    if (node.__match) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5 / scale;
+      ctx.stroke();
+    }
+    if (scale > 3 && node.label) {
+      const sz = 9 / scale;
+      ctx.font = `${sz}px monospace`;
+      ctx.fillStyle = '#c9d1d9';
+      ctx.textAlign = 'center';
+      ctx.fillText(node.label.slice(0, 28), node.x, node.y + r + sz * 1.2);
+    }
+    return;
+  }
+  // Memory node
   const heat = node.heat || 0;
   const r = 6;
 
@@ -561,6 +604,7 @@ async function loadGraph() {
     document.getElementById('s-mem').textContent  = s.memory_count ?? '—';
     document.getElementById('s-tmp').textContent  = s.temporal_edge_count ?? '—';
     document.getElementById('s-trn').textContent  = s.transition_edge_count ?? '—';
+    document.getElementById('s-wiki').textContent = s.wiki_page_count ?? '—';
   } catch (_) {}
 
   try {
@@ -582,9 +626,12 @@ function calcDegrees() {
 // ── Filters ─────────────────────────────────────────────────────────────────
 function applyFilters() {
   if (!graph) return;
-  const showSem = document.getElementById('show-semantic').checked;
-  const showTmp = document.getElementById('show-temporal').checked;
-  const showTrn = document.getElementById('show-transition').checked;
+  const showSem  = document.getElementById('show-semantic').checked;
+  const showTmp  = document.getElementById('show-temporal').checked;
+  const showTrn  = document.getElementById('show-transition').checked;
+  const showWiki = document.getElementById('show-wiki').checked;
+  const showXref = document.getElementById('show-wiki-crossref').checked;
+  const showMemWiki = document.getElementById('show-memory-wiki').checked;
   const minH    = parseFloat(document.getElementById('heat-slider').value);
   const q       = document.getElementById('search').value.toLowerCase().trim();
 
@@ -592,7 +639,11 @@ function applyFilters() {
   const vis = new Set();
   let visCount = 0;
   for (const n of allNodes) {
-    n.__visible = (n.heat || 0) >= minH;
+    if (n.type === 'wiki') {
+      n.__visible = showWiki;
+    } else {
+      n.__visible = (n.heat || 0) >= minH;
+    }
     n.__match = q && (
       (n.content||'').toLowerCase().includes(q) ||
       (n.label||'').toLowerCase().includes(q)
@@ -608,6 +659,8 @@ function applyFilters() {
       if (l.type === 'semantic'   && !showSem) return false;
       if (l.type === 'temporal'   && !showTmp) return false;
       if (l.type === 'transition' && !showTrn) return false;
+      if (l.type === 'wiki_crossref' && !showXref) return false;
+      if (l.type === 'memory_wiki' && !showMemWiki) return false;
       return true;
     });
 
@@ -618,6 +671,62 @@ function applyFilters() {
 function showDetail(node) {
   const panel = document.getElementById('right');
   panel.classList.add('open');
+
+  if (node.type === 'wiki') {
+    document.getElementById('det-type').textContent = 'WIKI';
+    document.getElementById('det-title').textContent = node.label || node.slug || '';
+
+    const fill = document.getElementById('det-heat-fill');
+    const color = WIKI_CAT_COLOR[node.category] || '#8b949e';
+    fill.style.width = '100%';
+    fill.style.background = color;
+
+    const rows = [];
+
+    rows.push(`<div class="det-sec">
+      <div class="det-lbl">Category</div>
+      <div class="det-val">${esc(node.category || 'uncategorized')}</div>
+    </div>`);
+
+    if (node.slug)
+      rows.push(`<div class="det-sec">
+        <div class="det-lbl">Slug</div>
+        <div class="det-val" style="color:#8b949e">${esc(node.slug)}</div>
+      </div>`);
+
+    if (node.tags?.length)
+      rows.push(`<div class="det-sec">
+        <div class="det-lbl">Tags</div>
+        <div>${node.tags.map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</div>
+      </div>`);
+
+    if (node.updated_at)
+      rows.push(`<div class="det-sec">
+        <div class="det-lbl">Updated</div>
+        <div class="det-val" style="color:#8b949e">${String(node.updated_at).slice(0,19)}</div>
+      </div>`);
+
+    // Show connected edges summary
+    const conns = allLinks.filter(l => {
+      const s = l.source?.id??l.source, t = l.target?.id??l.target;
+      return s===node.id || t===node.id;
+    });
+    const byXref = conns.filter(l => l.type === 'wiki_crossref').length;
+    const byMemWiki = conns.filter(l => l.type === 'memory_wiki').length;
+    rows.push(`<div class="det-sec">
+      <div class="det-lbl">Connections</div>
+      <div class="det-val" style="color:#8b949e">${byXref} cross-refs · ${byMemWiki} source memories</div>
+    </div>`);
+
+    rows.push(`<div class="det-sec">
+      <div class="det-lbl">Node ID</div>
+      <div class="det-val" style="color:#8b949e">${esc(node.id)}</div>
+    </div>`);
+
+    document.getElementById('det-body').innerHTML = rows.join('');
+    return;
+  }
+
   document.getElementById('det-type').textContent = 'MEMORY';
   document.getElementById('det-title').textContent = (node.content||'').slice(0, 100);
 
@@ -665,9 +774,12 @@ function showDetail(node) {
   const bySem = conns.filter(l => l.type === 'semantic').length;
   const byTmp = conns.filter(l => l.type === 'temporal').length;
   const byTrn = conns.filter(l => l.type === 'transition').length;
+  const byMemWiki = conns.filter(l => l.type === 'memory_wiki').length;
+  let connText = `${bySem} semantic · ${byTmp} temporal · ${byTrn} transition`;
+  if (byMemWiki) connText += ` · ${byMemWiki} wiki`;
   rows.push(`<div class="det-sec">
     <div class="det-lbl">Connections</div>
-    <div class="det-val" style="color:#8b949e">${bySem} semantic · ${byTmp} temporal · ${byTrn} transition</div>
+    <div class="det-val" style="color:#8b949e">${connText}</div>
   </div>`);
 
   rows.push(`<div class="det-sec">
@@ -883,7 +995,7 @@ function syntaxHL(json) {
 }
 
 // ── Event bindings ───────────────────────────────────────────────────────────
-['show-semantic','show-temporal','show-transition']
+['show-semantic','show-temporal','show-transition','show-wiki','show-wiki-crossref','show-memory-wiki']
   .forEach(id => document.getElementById(id).addEventListener('change', applyFilters));
 
 document.getElementById('heat-slider').addEventListener('input', e => {

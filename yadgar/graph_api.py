@@ -109,6 +109,70 @@ class GraphAPI:
         if len(embeddings_for_sem) >= 2:
             edges.extend(self._compute_semantic_edges(embeddings_for_sem, top_k=top_k))
 
+        # ── Wiki nodes ────────────────────────────────────────────────────────
+        try:
+            wiki_pages = self._s._q(
+                "SELECT id, title, slug, category, tags, links, source_memory_ids, "
+                "updated_at FROM wiki_page ORDER BY updated_at DESC LIMIT 200"
+            )
+        except Exception:
+            wiki_pages = []
+
+        wiki_slug_to_id: dict[str, str] = {}
+        for wp in wiki_pages or []:
+            raw_id = self._extract_id(wp.get("id"))
+            if raw_id is None:
+                continue
+            node_id = f"wiki:{raw_id}"
+            slug = wp.get("slug") or ""
+            wiki_slug_to_id[slug] = node_id
+            nodes.append(
+                {
+                    "id": node_id,
+                    "type": "wiki",
+                    "label": wp.get("title") or slug,
+                    "slug": slug,
+                    "category": wp.get("category") or "",
+                    "tags": wp.get("tags") or [],
+                    "updated_at": str(wp.get("updated_at") or ""),
+                }
+            )
+
+        # ── Wiki cross-reference edges ────────────────────────────────────
+        try:
+            crossrefs = self._s.get_all_wiki_crossrefs()
+        except Exception:
+            crossrefs = []
+
+        for cr in crossrefs:
+            src = wiki_slug_to_id.get(cr.get("from_slug"))
+            tgt = wiki_slug_to_id.get(cr.get("to_slug"))
+            if src and tgt:
+                edges.append(
+                    {
+                        "source": src,
+                        "target": tgt,
+                        "type": "wiki_crossref",
+                    }
+                )
+
+        # ── Memory → Wiki edges (via source_memory_ids) ──────────────────
+        for wp in wiki_pages or []:
+            raw_id = self._extract_id(wp.get("id"))
+            if raw_id is None:
+                continue
+            source_ids = wp.get("source_memory_ids") or []
+            wiki_nid = f"wiki:{raw_id}"
+            for mid in source_ids:
+                if isinstance(mid, int) and mid in mem_ids:
+                    edges.append(
+                        {
+                            "source": f"mem:{mid}",
+                            "target": wiki_nid,
+                            "type": "memory_wiki",
+                        }
+                    )
+
         return {"nodes": nodes, "edges": edges}
 
     def get_graph_stats(self) -> dict:
@@ -134,6 +198,9 @@ class GraphAPI:
                 for r in slot_rows
                 if (r.get("cnt") or 0) >= 2
             )
+            wiki_count = (self._s._q("SELECT count() FROM wiki_page GROUP ALL") or [{}])[0].get(
+                "count", 0
+            )
         except Exception as exc:
             logger.debug("graph_stats error: %s", exc)
             return {}
@@ -142,6 +209,7 @@ class GraphAPI:
             "memory_count": mem_count,
             "temporal_edge_count": temporal_count,
             "transition_edge_count": transition_count,
+            "wiki_page_count": wiki_count,
         }
 
     def get_neighborhood(self, node_id: str, hops: int = 2) -> dict:
