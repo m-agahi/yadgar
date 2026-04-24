@@ -168,7 +168,9 @@ class AstrocyteProcess(BaseModel):
 
 class MemoryRule(BaseModel):
     id: int | None = None
-    rule_type: Literal["hard", "soft"]  # hard = must satisfy, soft = preference
+    rule_type: Literal[
+        "hard", "soft", "write_block", "write_redact"
+    ]  # hard/soft = read-path; write_block/write_redact = write-path
     scope: Literal["global", "directory", "file"]  # where rule applies
     scope_value: str | None = None  # directory path or file pattern for scoped rules
     condition: str  # e.g. "language == typescript", "tag contains architecture"

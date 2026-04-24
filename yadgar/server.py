@@ -39,6 +39,7 @@ from yadgar.prospective import ProspectiveMemoryEngine
 from yadgar.restoration import CheckpointRestore
 from yadgar.retrieval import Retriever
 from yadgar.rules_engine import RulesEngine
+from yadgar.secrets import check_secrets
 from yadgar.sensory_buffer import ActionLogger
 from yadgar.sleep_compute import SleepComputeEngine
 from yadgar.staleness import StalenessDetector
@@ -535,6 +536,21 @@ def remember(
     storage = _get_storage()
     embeddings = _get_embeddings()
     buffer = _get_buffer()
+
+    # Secret detection — always on, fires before anything else
+    sec_blocked, sec_reason, sec_pattern = check_secrets(content)
+    if sec_blocked:
+        return {"stored": False, "reason": sec_reason, "pattern_matched": sec_pattern}
+
+    # Write-path policy rules — may block or redact content
+    if _rules_engine is not None:
+        wp_blocked, wp_reason, wp_modified = _rules_engine.check_write_policy(
+            content, context, tags
+        )
+        if wp_blocked:
+            return {"stored": False, "reason": f"blocked_by_policy: {wp_reason}"}
+        if wp_modified is not None:
+            content = wp_modified
 
     # Predictive coding write gate — FIRST check before any storage
     gate_result = None
@@ -1704,6 +1720,20 @@ def wiki_add(
     Confidence: high, medium, low.
     """
     assert _wiki is not None, "WikiStore not initialized"
+
+    # Secret detection and write-path rules
+    sec_blocked, sec_reason, sec_pattern = check_secrets(content)
+    if sec_blocked:
+        return {"stored": False, "reason": sec_reason, "pattern_matched": sec_pattern}
+    if _rules_engine is not None:
+        wp_blocked, wp_reason, wp_modified = _rules_engine.check_write_policy(
+            content, "", tags or []
+        )
+        if wp_blocked:
+            return {"stored": False, "reason": f"blocked_by_policy: {wp_reason}"}
+        if wp_modified is not None:
+            content = wp_modified
+
     result = _wiki.add(title, content, category, tags or [], source_memory_ids, confidence)
     result.pop("embedding", None)
     _push_event(
@@ -1788,6 +1818,20 @@ def wiki_ingest(
     Tags and source_memory_ids are merged. Use for accumulating knowledge over time.
     """
     assert _wiki is not None, "WikiStore not initialized"
+
+    # Secret detection and write-path rules
+    sec_blocked, sec_reason, sec_pattern = check_secrets(content)
+    if sec_blocked:
+        return {"stored": False, "reason": sec_reason, "pattern_matched": sec_pattern}
+    if _rules_engine is not None:
+        wp_blocked, wp_reason, wp_modified = _rules_engine.check_write_policy(
+            content, "", tags or []
+        )
+        if wp_blocked:
+            return {"stored": False, "reason": f"blocked_by_policy: {wp_reason}"}
+        if wp_modified is not None:
+            content = wp_modified
+
     result = _wiki.ingest(content, title, tags, source_memory_ids)
     result.pop("embedding", None)
     event_type = "wiki_updated" if result.get("_merged") else "wiki_added"
@@ -1812,6 +1856,29 @@ def wiki_lint() -> dict:
     """
     assert _wiki is not None, "WikiStore not initialized"
     return _wiki.lint()
+
+
+# ── Default rules ──────────────────────────────────────────────────────
+
+
+def _load_default_rules(engine: RulesEngine) -> None:
+    """Seed the rules engine with defaults on a fresh install.
+
+    Only runs when no rules exist — preserves any user-configured rules.
+    """
+    if engine.get_all_rules():
+        return
+    try:
+        # Action-stream memories are noisy; deprioritize them in recall results.
+        engine.add_rule(
+            rule_type="soft",
+            scope="global",
+            condition="tag contains _action_stream",
+            action="penalty:0.3",
+            priority=-10,
+        )
+    except Exception:
+        logger.debug("Failed to load default rules", exc_info=True)
 
 
 # ── Startup ────────────────────────────────────────────────────────────
@@ -1846,6 +1913,7 @@ def init_engines(
     _write_gate = WriteGate(_storage, _embeddings, _retriever, _settings)
     _engram = EngramAllocator(_storage, _settings)
     _rules_engine = RulesEngine(_storage, _settings)
+    _load_default_rules(_rules_engine)
     _causal = CausalDiscovery(_storage, _kg, _settings)
     _metacognition = MetaCognition(_storage, _embeddings, _kg, _settings)
     _replay = CheckpointRestore(
