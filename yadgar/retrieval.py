@@ -1,8 +1,10 @@
 """HippoRAG-style retrieval using Personalized PageRank over the knowledge graph."""
 
+import gc
 import logging
 import os
 import re
+import time
 from collections import defaultdict
 from datetime import datetime
 
@@ -839,6 +841,7 @@ class HippoRetriever:
         self._gte_reranker = None  # Lazy-loaded GTE-Reranker
         self._nli_model = None  # Lazy-loaded NLI model
         self._comet_expander = None  # Lazy-loaded COMET query expander
+        self._last_reranker_used: float = 0.0  # monotonic timestamp of last reranker call
 
     def set_engram(self, engram) -> None:
         """Attach an EngramAllocator for temporal linking in recall results."""
@@ -1996,6 +1999,26 @@ class HippoRetriever:
         memories.sort(key=lambda m: m["_retrieval_score"], reverse=True)
         return memories[:top_k]
 
+    def unload_rerankers_if_idle(self, idle_seconds: float = 600.0) -> None:
+        """Unload all reranker models if unused for `idle_seconds`. Frees ~500MB RSS."""
+        if self._last_reranker_used == 0.0:
+            return  # Never used — nothing to unload
+        if time.monotonic() - self._last_reranker_used < idle_seconds:
+            return
+        unloaded = []
+        if self._gte_reranker not in (None, False):
+            self._gte_reranker = None
+            unloaded.append("GTE-Reranker")
+        if self._nli_model not in (None, False):
+            self._nli_model = None
+            unloaded.append("NLI")
+        if getattr(self, "_cross_encoder", None) is not None:
+            self._cross_encoder = None
+            unloaded.append("FlashRank-CE")
+        if unloaded:
+            gc.collect()
+            logger.info("Idle reranker unload (%.0fs idle): %s", idle_seconds, ", ".join(unloaded))
+
     def _cross_encoder_rerank(
         self,
         memories: list[dict],
@@ -2007,6 +2030,7 @@ class HippoRetriever:
         Tries GTE-Reranker-ModernBERT first (better zero-shot OOD generalization),
         falls back to FlashRank (ONNX, faster on CPU), then sentence-transformers.
         """
+        self._last_reranker_used = time.monotonic()
         if top_k is None:
             top_k = self._settings.CROSS_ENCODER_TOP_K
 

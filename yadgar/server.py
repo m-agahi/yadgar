@@ -345,7 +345,8 @@ async def api_graph(request: Request) -> JSONResponse:
     if _storage is None:
         return JSONResponse({"nodes": [], "edges": []}, status_code=503)
     max_mem = int(request.query_params.get("max_memories", 500))
-    data = await asyncio.to_thread(GraphAPI(_storage).get_full_graph, max_mem)
+    top_k = int(request.query_params.get("top_k", 5))
+    data = await asyncio.to_thread(GraphAPI(_storage).get_full_graph, max_mem, top_k)
     return JSONResponse(data, headers=_CORS)
 
 
@@ -373,6 +374,65 @@ async def api_graph_neighborhood(request: Request) -> JSONResponse:
 async def api_system(request: Request) -> JSONResponse:
     """Return current system and process metrics."""
     return JSONResponse(_system_metrics_cache, headers=_CORS)
+
+
+@mcp_server.custom_route("/api/metrics/heat-histogram", methods=["GET"])
+async def api_heat_histogram(request: Request) -> JSONResponse:
+    """Return heat distribution bucketed into N bins."""
+    if _storage is None:
+        return JSONResponse({"buckets": [], "total": 0}, status_code=503)
+    n_bins = max(1, min(50, int(request.query_params.get("bins", 10))))
+
+    def _compute() -> dict:
+        rows = _storage._q("SELECT heat FROM memory") or []
+        heats = [float(r.get("heat") or 0) for r in rows]
+        step = 1.0 / n_bins
+        counts = [0] * n_bins
+        for h in heats:
+            counts[min(int(h / step), n_bins - 1)] += 1
+        return {
+            "buckets": [
+                {"min": round(i * step, 3), "max": round((i + 1) * step, 3), "count": counts[i]}
+                for i in range(n_bins)
+            ],
+            "total": len(heats),
+        }
+
+    data = await asyncio.to_thread(_compute)
+    return JSONResponse(data, headers=_CORS)
+
+
+@mcp_server.custom_route("/api/metrics/consolidation-log", methods=["GET"])
+async def api_consolidation_log(request: Request) -> JSONResponse:
+    """Return last N consolidation cycle records (oldest first)."""
+    if _storage is None:
+        return JSONResponse([], status_code=503)
+    limit = max(1, min(200, int(request.query_params.get("limit", 30))))
+
+    def _fetch() -> list:
+        rows = (
+            _storage._q(
+                "SELECT timestamp, memories_added, memories_updated, "
+                "memories_archived, memories_deleted, duration_ms "
+                "FROM consolidation_log ORDER BY timestamp ASC LIMIT $lim",
+                {"lim": limit},
+            )
+            or []
+        )
+        return [
+            {
+                "timestamp": str(r.get("timestamp") or ""),
+                "added": int(r.get("memories_added") or 0),
+                "updated": int(r.get("memories_updated") or 0),
+                "archived": int(r.get("memories_archived") or 0),
+                "deleted": int(r.get("memories_deleted") or 0),
+                "duration_ms": int(r.get("duration_ms") or 0),
+            }
+            for r in rows
+        ]
+
+    data = await asyncio.to_thread(_fetch)
+    return JSONResponse(data, headers=_CORS)
 
 
 @mcp_server.custom_route("/api/graph/events", methods=["GET"])
@@ -1830,6 +1890,18 @@ def init_engines(
                     pass
 
         threading.Thread(target=_metrics_thread, daemon=True).start()
+
+        # Idle reranker unloader — frees ~500MB after 10 min of no recall activity
+        def _reranker_idle_thread() -> None:
+            while True:
+                time.sleep(60)
+                try:
+                    if _retriever is not None:
+                        _retriever.unload_rerankers_if_idle(idle_seconds=600.0)
+                except Exception:
+                    pass
+
+        threading.Thread(target=_reranker_idle_thread, daemon=True).start()
 
         # Auto-start viz server alongside the daemon
         _viz_port = getattr(_settings, "VIZ_PORT", 42069)
