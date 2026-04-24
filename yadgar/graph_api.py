@@ -16,7 +16,7 @@ class GraphAPI:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def get_full_graph(self, max_memories: int = 500) -> dict:
+    def get_full_graph(self, max_memories: int = 500, top_k: int = 5) -> dict:
         """Return full graph: nodes (memories + entities) and edges.
 
         Memory nodes: id="mem:{id}", type="memory"
@@ -131,9 +131,9 @@ class GraphAPI:
                     }
                 )
 
-        # ── Semantic edges (top-200 memories, cosine ≥ 0.75) ─────────────────
+        # ── Semantic edges (top-200 memories, cosine ≥ 0.75, top-K per node) ──
         if len(embeddings_for_sem) >= 2:
-            edges.extend(self._compute_semantic_edges(embeddings_for_sem))
+            edges.extend(self._compute_semantic_edges(embeddings_for_sem, top_k=top_k))
 
         return {"nodes": nodes, "edges": edges}
 
@@ -273,9 +273,12 @@ class GraphAPI:
             self._expand_entity(next_id, nodes, edges, seen_nodes, seen_edges, max_hops, depth + 1)
 
     def _compute_semantic_edges(
-        self, embeddings_list: list[tuple[str, bytes]], threshold: float = 0.75
+        self,
+        embeddings_list: list[tuple[str, bytes]],
+        threshold: float = 0.75,
+        top_k: int = 5,
     ) -> list[dict]:
-        """Compute pairwise cosine similarity; return edges above threshold."""
+        """Compute pairwise cosine similarity; return top-K edges per node above threshold."""
         try:
             import numpy as np
 
@@ -299,15 +302,26 @@ class GraphAPI:
             matrix = matrix / norms
             sim = matrix @ matrix.T
             n = len(ids)
+            seen: set[tuple[int, int]] = set()
             result = []
             for i in range(n):
-                for j in range(i + 1, n):
-                    s = float(sim[i, j])
-                    if s >= threshold:
+                # Collect all neighbours above threshold, sorted by similarity desc
+                neighbours = sorted(
+                    (
+                        (float(sim[i, j]), j)
+                        for j in range(n)
+                        if j != i and float(sim[i, j]) >= threshold
+                    ),
+                    reverse=True,
+                )
+                for s, j in neighbours[:top_k]:
+                    key = (min(i, j), max(i, j))
+                    if key not in seen:
+                        seen.add(key)
                         result.append(
                             {
-                                "source": ids[i],
-                                "target": ids[j],
+                                "source": ids[key[0]],
+                                "target": ids[key[1]],
                                 "type": "semantic",
                                 "similarity": round(s, 3),
                             }
