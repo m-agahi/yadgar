@@ -16,12 +16,11 @@ class GraphAPI:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def get_full_graph(self, max_memories: int = 500, top_k: int = 5) -> dict:
-        """Return full graph: nodes (memories + entities) and edges.
+    def get_full_graph(self, max_memories: int = 500, top_k: int = 100) -> dict:
+        """Return full graph: memory nodes with semantic, temporal, and transition edges.
 
         Memory nodes: id="mem:{id}", type="memory"
-        Entity nodes: id="ent:{id}", type="entity"
-        Edge types: "kg", "causal", "semantic"
+        Edge types: "semantic", "temporal", "transition"
         """
         nodes: list[dict] = []
         edges: list[dict] = []
@@ -30,20 +29,22 @@ class GraphAPI:
         try:
             memories = self._s._q(
                 "SELECT id, content, heat, tags, directory_context, created_at, "
-                "embedding FROM memory ORDER BY heat DESC LIMIT $lim",
+                "slot_index, embedding FROM memory ORDER BY heat DESC LIMIT $lim",
                 {"lim": max_memories},
             )
         except Exception:
             memories = []
 
-        ent_id_map: dict[int, str] = {}  # raw int id → "ent:{id}"
         embeddings_for_sem: list[tuple[str, bytes]] = []  # (node_id, bytes)
+        mem_ids: set[int] = set()  # track which memories are in the graph
+        slot_map: dict[int, list[tuple[int, str]]] = {}  # slot_index → [(raw_id, created_at)]
 
         for m in memories:
             raw_id = self._extract_id(m.get("id"))
             if raw_id is None:
                 continue
             node_id = f"mem:{raw_id}"
+            mem_ids.add(raw_id)
             nodes.append(
                 {
                     "id": node_id,
@@ -61,75 +62,48 @@ class GraphAPI:
                 if emb:
                     embeddings_for_sem.append((node_id, emb))
 
-        # ── Entity nodes ──────────────────────────────────────────────────────
-        try:
-            entities = self._s.get_all_entities(min_heat=0.0)
-        except Exception:
-            entities = []
+            # Collect slot assignments for temporal edges
+            slot = m.get("slot_index")
+            if slot is not None:
+                slot_map.setdefault(int(slot), []).append((raw_id, str(m.get("created_at") or "")))
 
-        for e in entities:
-            raw_id = self._extract_id(e.get("id"))
-            if raw_id is None:
+        # ── Temporal edges (memories sharing an engram slot) ──────────────────
+        for _slot, members in slot_map.items():
+            # Cap to 10 most recent per slot to avoid O(n^2) in large slots
+            if len(members) > 10:
+                members = sorted(members, key=lambda x: x[1], reverse=True)[:10]
+            for i, (id_a, _) in enumerate(members):
+                for id_b, _ in members[i + 1 :]:
+                    edges.append(
+                        {
+                            "source": f"mem:{id_a}",
+                            "target": f"mem:{id_b}",
+                            "type": "temporal",
+                        }
+                    )
+
+        # ── Transition edges (memory co-recall patterns) ──────────────────────
+        try:
+            transitions = self._s.get_all_transitions()
+        except Exception:
+            transitions = []
+
+        for t in transitions:
+            from_id = self._extract_id(t.get("from_memory_id"))
+            to_id = self._extract_id(t.get("to_memory_id"))
+            count = int(t.get("count") or 0)
+            if from_id is None or to_id is None or count < 2:
                 continue
-            node_id = f"ent:{raw_id}"
-            ent_id_map[raw_id] = node_id
-            nodes.append(
+            if from_id not in mem_ids or to_id not in mem_ids:
+                continue
+            edges.append(
                 {
-                    "id": node_id,
-                    "type": "entity",
-                    "heat": round(float(e.get("heat") or 0), 4),
-                    "label": e.get("name") or "",
-                    "name": e.get("name") or "",
-                    "entity_type": e.get("entity_type") or "concept",
+                    "source": f"mem:{from_id}",
+                    "target": f"mem:{to_id}",
+                    "type": "transition",
+                    "count": count,
                 }
             )
-
-        # ── KG relationship edges ─────────────────────────────────────────────
-        try:
-            rels = self._s._q("SELECT * FROM relationship")
-        except Exception:
-            rels = []
-
-        for r in rels:
-            src_id = self._extract_id(r.get("source_entity_id") or r.get("source_id"))
-            tgt_id = self._extract_id(r.get("target_entity_id") or r.get("target_id"))
-            if src_id is None or tgt_id is None:
-                continue
-            src_nid = ent_id_map.get(src_id)
-            tgt_nid = ent_id_map.get(tgt_id)
-            if src_nid and tgt_nid:
-                edges.append(
-                    {
-                        "source": src_nid,
-                        "target": tgt_nid,
-                        "type": "kg",
-                        "label": r.get("relationship_type") or r.get("rel_type") or "",
-                        "weight": round(float(r.get("weight") or r.get("confidence") or 1.0), 3),
-                    }
-                )
-
-        # ── Causal edges ──────────────────────────────────────────────────────
-        try:
-            causal = self._s.get_all_causal_edges()
-        except Exception:
-            causal = []
-
-        for c in causal:
-            src_id = self._extract_id(c.get("source_entity_id") or c.get("source_id"))
-            tgt_id = self._extract_id(c.get("target_entity_id") or c.get("target_id"))
-            if src_id is None or tgt_id is None:
-                continue
-            src_nid = ent_id_map.get(src_id)
-            tgt_nid = ent_id_map.get(tgt_id)
-            if src_nid and tgt_nid:
-                edges.append(
-                    {
-                        "source": src_nid,
-                        "target": tgt_nid,
-                        "type": "causal",
-                        "confidence": round(float(c.get("confidence") or 1.0), 3),
-                    }
-                )
 
         # ── Semantic edges (top-200 memories, cosine ≥ 0.75, top-K per node) ──
         if len(embeddings_for_sem) >= 2:
@@ -138,22 +112,27 @@ class GraphAPI:
         return {"nodes": nodes, "edges": edges}
 
     def get_graph_stats(self) -> dict:
-        """Return graph statistics: counts, density, top entities by heat."""
+        """Return graph statistics: memory count, edge type counts."""
         try:
             mem_count = (self._s._q("SELECT count() FROM memory GROUP ALL") or [{}])[0].get(
                 "count", 0
             )
-            ent_count = (self._s._q("SELECT count() FROM entity GROUP ALL") or [{}])[0].get(
-                "count", 0
+            transition_count = (
+                self._s._q("SELECT count() FROM memory_transition WHERE count >= 2 GROUP ALL")
+                or [{}]
+            )[0].get("count", 0)
+            # Temporal edges = memories sharing slots; approximate by counting slots with 2+ members
+            slot_rows = (
+                self._s._q(
+                    "SELECT slot_index, count() as cnt FROM memory "
+                    "WHERE slot_index IS NOT NULL GROUP BY slot_index"
+                )
+                or []
             )
-            rel_count = (self._s._q("SELECT count() FROM relationship GROUP ALL") or [{}])[0].get(
-                "count", 0
-            )
-            causal_count = (self._s._q("SELECT count() FROM causal_dag_edge GROUP ALL") or [{}])[
-                0
-            ].get("count", 0)
-            top_entities = self._s._q(
-                "SELECT name, entity_type, heat FROM entity ORDER BY heat DESC LIMIT 10"
+            temporal_count = sum(
+                r.get("cnt", 0) * (r.get("cnt", 0) - 1) // 2
+                for r in slot_rows
+                if (r.get("cnt") or 0) >= 2
             )
         except Exception as exc:
             logger.debug("graph_stats error: %s", exc)
@@ -161,29 +140,21 @@ class GraphAPI:
 
         return {
             "memory_count": mem_count,
-            "entity_count": ent_count,
-            "relationship_count": rel_count,
-            "causal_edge_count": causal_count,
-            "top_entities": top_entities or [],
+            "temporal_edge_count": temporal_count,
+            "transition_edge_count": transition_count,
         }
 
     def get_neighborhood(self, node_id: str, hops: int = 2) -> dict:
-        """Return 1–2 hop subgraph around a node."""
+        """Return subgraph around a memory node."""
         nodes: list[dict] = []
-        edges: list[dict] = []
         seen_nodes: set[str] = set()
-        seen_edges: set[str] = set()
 
         if node_id.startswith("mem:"):
             raw_id = self._extract_id(node_id[4:])
             if raw_id is not None:
                 self._expand_memory(raw_id, nodes, seen_nodes)
-        elif node_id.startswith("ent:"):
-            raw_id = self._extract_id(node_id[4:])
-            if raw_id is not None:
-                self._expand_entity(raw_id, nodes, edges, seen_nodes, seen_edges, hops, 0)
 
-        return {"nodes": nodes, "edges": edges}
+        return {"nodes": nodes, "edges": []}
 
     # ── Private helpers ───────────────────────────────────────────────────────
 
@@ -210,68 +181,6 @@ class GraphAPI:
                 }
             )
 
-    def _expand_entity(
-        self,
-        ent_id: int,
-        nodes: list,
-        edges: list,
-        seen_nodes: set,
-        seen_edges: set,
-        max_hops: int,
-        depth: int,
-    ) -> None:
-        if depth > max_hops:
-            return
-        try:
-            e = self._s.get_entity_by_id(ent_id)
-        except Exception:
-            return
-        if e is None:
-            return
-        raw_id = self._extract_id(e.get("id"))
-        if raw_id is None:
-            return
-        nid = f"ent:{raw_id}"
-        if nid in seen_nodes:
-            return
-        seen_nodes.add(nid)
-        nodes.append(
-            {
-                "id": nid,
-                "type": "entity",
-                "heat": round(float(e.get("heat") or 0), 4),
-                "label": e.get("name") or "",
-                "name": e.get("name") or "",
-                "entity_type": e.get("entity_type") or "concept",
-            }
-        )
-        if depth >= max_hops:
-            return
-        try:
-            rels = self._s.get_relationships_for_entity(raw_id)
-        except Exception:
-            rels = []
-        for r in rels:
-            src_id = self._extract_id(r.get("source_entity_id") or r.get("source_id"))
-            tgt_id = self._extract_id(r.get("target_entity_id") or r.get("target_id"))
-            if src_id is None or tgt_id is None:
-                continue
-            edge_key = (
-                f"{min(src_id, tgt_id)}-{max(src_id, tgt_id)}-{r.get('relationship_type', '')}"
-            )
-            if edge_key not in seen_edges:
-                seen_edges.add(edge_key)
-                edges.append(
-                    {
-                        "source": f"ent:{src_id}",
-                        "target": f"ent:{tgt_id}",
-                        "type": "kg",
-                        "label": r.get("relationship_type") or "",
-                    }
-                )
-            next_id = tgt_id if src_id == raw_id else src_id
-            self._expand_entity(next_id, nodes, edges, seen_nodes, seen_edges, max_hops, depth + 1)
-
     def _compute_semantic_edges(
         self,
         embeddings_list: list[tuple[str, bytes]],
@@ -284,9 +193,14 @@ class GraphAPI:
 
             ids = []
             vecs = []
-            for node_id, emb_bytes in embeddings_list:
+            for node_id, emb_data in embeddings_list:
                 try:
-                    arr = np.frombuffer(emb_bytes, dtype=np.float32).copy()
+                    if isinstance(emb_data, (bytes, bytearray)):
+                        arr = np.frombuffer(emb_data, dtype=np.float32).copy()
+                    elif isinstance(emb_data, list):
+                        arr = np.array(emb_data, dtype=np.float32)
+                    else:
+                        continue
                     if arr.size > 0:
                         ids.append(node_id)
                         vecs.append(arr)
