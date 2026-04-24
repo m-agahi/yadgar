@@ -2,6 +2,7 @@
 
 import fnmatch
 import logging
+import re
 from typing import Any
 
 from yadgar.config import Settings
@@ -77,6 +78,29 @@ def _parse_condition(condition: str) -> tuple[str, str, str]:
     raise ValueError(f"Cannot parse condition: {condition!r}")
 
 
+def _parse_write_action(action: str) -> tuple[str, str, str]:
+    """Parse a write-path action string.
+
+    "filter"                               -> ("filter", "", "")
+    "redact:password=[A-Za-z]+:password=***" -> ("redact", "password=[A-Za-z]+", "password=***")
+
+    The pattern portion cannot contain a bare colon (use character classes instead).
+    """
+    if action == "filter":
+        return "filter", "", ""
+    if action.startswith("redact:"):
+        rest = action[len("redact:") :]
+        parts = rest.split(":", 1)
+        if len(parts) != 2:
+            raise ValueError(
+                f"Invalid redact action {action!r}. Expected 'redact:pattern:replacement'"
+            )
+        return "redact", parts[0], parts[1]
+    raise ValueError(
+        f"Invalid write-path action: {action!r}. Expected 'filter' or 'redact:pattern:replacement'"
+    )
+
+
 def _parse_action(action: str) -> tuple[str, float]:
     """Parse an action string into (action_type, value).
 
@@ -146,22 +170,33 @@ class RulesEngine:
         Returns:
             Rule ID
         """
-        if rule_type not in ("hard", "soft"):
-            raise ValueError(f"rule_type must be 'hard' or 'soft', got {rule_type!r}")
+        _READ_TYPES = ("hard", "soft")
+        _WRITE_TYPES = ("write_block", "write_redact")
+        if rule_type not in _READ_TYPES + _WRITE_TYPES:
+            raise ValueError(
+                f"rule_type must be one of {_READ_TYPES + _WRITE_TYPES!r}, got {rule_type!r}"
+            )
         if scope not in ("global", "directory", "file"):
             raise ValueError(f"scope must be 'global', 'directory', or 'file', got {scope!r}")
 
         # Validate condition parses correctly
         _parse_condition(condition)
 
-        # Validate action parses correctly
-        _parse_action(action)
-
-        # Hard rules must use "filter" action
-        if rule_type == "hard":
-            action_type, _ = _parse_action(action)
-            if action_type != "filter":
-                raise ValueError("Hard rules must use 'filter' action")
+        if rule_type in _READ_TYPES:
+            # Validate read-path action
+            _parse_action(action)
+            # Hard rules must use "filter" action
+            if rule_type == "hard":
+                action_type, _ = _parse_action(action)
+                if action_type != "filter":
+                    raise ValueError("Hard rules must use 'filter' action")
+        else:
+            # Validate write-path action
+            _parse_write_action(action)
+            if rule_type == "write_block":
+                action_type, _, _ = _parse_write_action(action)
+                if action_type != "filter":
+                    raise ValueError("write_block rules must use 'filter' action")
 
         rule_id = self._storage.insert_rule(
             {
@@ -345,3 +380,83 @@ class RulesEngine:
     def get_all_rules(self) -> list[dict]:
         """Return all active rules, sorted by scope then priority."""
         return self._storage.get_all_active_rules()
+
+    def check_write_policy(
+        self, content: str, context: str, tags: list[str]
+    ) -> tuple[bool, str, str | None]:
+        """Apply write-path rules to content before storage.
+
+        Evaluates write_block and write_redact rules in priority order.
+        Secrets check is separate (secrets.check_secrets) and runs first.
+
+        Args:
+            content: The text about to be stored.
+            context: Directory path (used for scope matching).
+            tags: Memory tags.
+
+        Returns:
+            (blocked, reason, modified_content) where:
+            - blocked=True: a write_block rule matched → don't store
+            - modified_content: redacted text if a write_redact rule fired, else None
+        """
+        mem: dict = {"content": content, "directory_context": context, "tags": tags}
+
+        all_rules = self.get_applicable_rules(context)
+        write_rules = [r for r in all_rules if r["rule_type"] in ("write_block", "write_redact")]
+
+        if not write_rules:
+            return False, "", None
+
+        modified = content
+        was_redacted = False
+
+        for rule in write_rules:
+            if not self.evaluate_condition(rule["condition"], mem):
+                continue
+
+            if rule["rule_type"] == "write_block":
+                return True, rule["condition"], None
+
+            # write_redact
+            action_type, pattern, replacement = _parse_write_action(rule["action"])
+            if action_type == "redact" and pattern:
+                try:
+                    modified = re.sub(pattern, replacement, modified)
+                    was_redacted = True
+                    mem = {**mem, "content": modified}
+                except re.error as exc:
+                    logger.warning("Bad redact pattern %r: %s", pattern, exc)
+
+        return False, "", modified if was_redacted else None
+
+    def export_rules(self) -> list[dict]:
+        """Serialize all active rules to a list of plain dicts (YAML/JSON-safe)."""
+        return [
+            {
+                "rule_type": r["rule_type"],
+                "scope": r["scope"],
+                "condition": r["condition"],
+                "action": r["action"],
+                "priority": r.get("priority", 0),
+                "scope_value": r.get("scope_value"),
+            }
+            for r in self.get_all_rules()
+        ]
+
+    def import_rules(self, rules: list[dict]) -> int:
+        """Import rules from a list of dicts. Returns count of successfully imported rules."""
+        count = 0
+        for rule in rules:
+            try:
+                self.add_rule(
+                    rule_type=rule["rule_type"],
+                    scope=rule["scope"],
+                    condition=rule["condition"],
+                    action=rule["action"],
+                    priority=rule.get("priority", 0),
+                    scope_value=rule.get("scope_value"),
+                )
+                count += 1
+            except (ValueError, KeyError) as exc:
+                logger.warning("Skipping invalid rule during import: %s — %s", rule, exc)
+        return count
