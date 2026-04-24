@@ -155,22 +155,6 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Weight of spreading activation signal",
         "section": "retrieval_fusion",
     },
-    "wrrf_hopfield_weight": {
-        "desc": "Weight of Hopfield network signal",
-        "section": "retrieval_fusion",
-    },
-    "wrrf_hdc_weight": {
-        "desc": "Weight of hyperdimensional computing signal",
-        "section": "retrieval_fusion",
-    },
-    "wrrf_fractal_weight": {
-        "desc": "Weight of fractal hierarchy signal",
-        "section": "retrieval_fusion",
-    },
-    "wrrf_sr_weight": {
-        "desc": "Weight of successor representation signal",
-        "section": "retrieval_fusion",
-    },
     "fusion_method": {"desc": "Fusion method: convex or other", "section": "retrieval_fusion"},
     "fusion_norm": {
         "desc": "Score normalization before fusion: zscore, minmax, or raw",
@@ -316,10 +300,6 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Model for implicit/latent embedding channel",
         "section": "embedding_enhancement",
     },
-    "implicit_vector_weight": {
-        "desc": "Weight of implicit vector in dual-vector blend",
-        "section": "embedding_enhancement",
-    },
     # graph_knowledge
     "graph_max_hops": {
         "desc": "Maximum graph traversal hops for spreading activation",
@@ -351,25 +331,7 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Minimum similarity to assign a memory to a cluster",
         "section": "graph_knowledge",
     },
-    "fractal_levels": {
-        "desc": "Number of fractal hierarchy levels for multi-scale retrieval",
-        "section": "graph_knowledge",
-    },
     # neuromorphic
-    "hopfield_beta": {
-        "desc": "Hopfield network sharpness (low=blended recall, high=precise recall)",
-        "section": "neuromorphic",
-    },
-    "hopfield_max_patterns": {
-        "desc": "Maximum patterns stored in Hopfield energy store",
-        "section": "neuromorphic",
-    },
-    "hdc_dimensions": {"desc": "Hyperdimensional vector dimensionality", "section": "neuromorphic"},
-    "sr_discount": {
-        "desc": "Successor representation discount factor γ",
-        "section": "neuromorphic",
-    },
-    "sr_update_rate": {"desc": "Incremental SR update learning rate", "section": "neuromorphic"},
     "cognitive_load_limit": {
         "desc": "Max chunks in active context (Cowan's 4±1 rule)",
         "section": "neuromorphic",
@@ -478,10 +440,6 @@ FIELD_META: dict[str, dict[str, str]] = {
     },
     "profile_confidence_inferred": {
         "desc": "Confidence for inferred profile attributes",
-        "section": "profiles_beliefs",
-    },
-    "profile_search_weight": {
-        "desc": "Profile signal weight in retrieval blend",
         "section": "profiles_beliefs",
     },
     "profile_summary_enabled": {

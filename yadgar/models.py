@@ -76,7 +76,6 @@ class Memory(BaseModel):
     store_type: str = "episodic"  # "episodic" or "semantic" (CLS dual-store)
     compression_level: int = 0  # 0=full, 1=gist, 2=tag (rate-distortion)
     original_content: str | None = None  # Full content preserved before compression
-    hdc_vector: bytes | None = None  # Hyperdimensional computing vector
     sr_x: float = 0.0  # Successor representation x coordinate (cognitive map)
     sr_y: float = 0.0  # Successor representation y coordinate (cognitive map)
     reconsolidation_count: int = 0  # Number of times reconsolidated

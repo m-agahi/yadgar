@@ -24,16 +24,14 @@ Active modules:
   * ConsolidationScheduler (background consolidation daemon)
   * AstrocytePool         (domain-aware processes: code/decisions/errors/deps)
   * SleepComputeEngine    (dream replay, community detection)
-  * FractalMemoryTree     (hierarchical multi-scale retrieval)
   * ProspectiveMemory     (future-oriented triggers)
   * NarrativeEngine       (autobiographical project stories)
   * StalenessDetector     (file-change watchdog)
 
 MCP Tools: remember, recall, forget, validate_memory, get_project_context,
-           consolidate_now, memory_stats, rate_memory, recall_hierarchical,
-           drill_down, create_trigger, get_project_story, seed_project,
-           checkpoint, restore, anchor, navigate_memory, assess_coverage,
-           detect_gaps, install_hooks, sync_instructions
+           consolidate_now, memory_stats, rate_memory, create_trigger,
+           get_project_story, seed_project, checkpoint, restore, anchor,
+           assess_coverage, detect_gaps, install_hooks, sync_instructions
 
 MCP Resources: memory://stats, memory://hot, memory://stale,
                memory://processes, memory://narrative/{{directory}}

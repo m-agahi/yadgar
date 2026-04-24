@@ -7,7 +7,6 @@ import re
 from yadgar.cognitive_map import CognitiveMap
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
-from yadgar.fractal import FractalMemoryTree
 from yadgar.metacognition import MetaCognition
 from yadgar.retrieval import Retriever
 from yadgar.storage import StorageEngine
@@ -37,7 +36,6 @@ class CheckpointRestore:
         retriever: Retriever | None = None,
         cognitive_map: CognitiveMap | None = None,
         metacognition: MetaCognition | None = None,
-        fractal: FractalMemoryTree | None = None,
         settings: Settings | None = None,
     ):
         self._storage = storage
@@ -45,7 +43,6 @@ class CheckpointRestore:
         self._retriever = retriever
         self._cognitive_map = cognitive_map
         self._metacognition = metacognition
-        self._fractal = fractal
         self._settings = settings or Settings()
         self._tool_call_count = 0
 
@@ -230,7 +227,6 @@ class CheckpointRestore:
         anchored = self._storage.get_anchored_memories(limit=max_memories)
         for m in anchored:
             m.pop("embedding", None)
-            m.pop("hdc_vector", None)
 
         # 3. Recently stored memories (working memory — what was actively being worked on)
         # These capture incremental progress that may not be "hot" yet but represents
@@ -240,7 +236,7 @@ class CheckpointRestore:
             recent_memories = self._storage.get_recent_memories(limit=max_memories)
             for m in recent_memories:
                 m.pop("embedding", None)
-                m.pop("hdc_vector", None)
+
         except Exception:
             logger.debug("Failed to fetch recently stored memories for restore")
 
@@ -254,7 +250,6 @@ class CheckpointRestore:
             hot_memories = self._storage.get_memories_by_heat(self._settings.HOT_THRESHOLD)
         for m in hot_memories:
             m.pop("embedding", None)
-            m.pop("hdc_vector", None)
 
         # Exclude anchored and recent IDs from hot to avoid duplicates
         anchor_ids = {m["id"] for m in anchored}
@@ -283,7 +278,6 @@ class CheckpointRestore:
                             mem = self._storage.get_memory(mid)
                             if mem:
                                 mem.pop("embedding", None)
-                                mem.pop("hdc_vector", None)
                                 mem["_sr_proximity"] = round(proximity, 4)
                                 predicted.append(mem)
                                 seen_ids.add(mid)

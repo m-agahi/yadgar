@@ -82,7 +82,6 @@ class Settings(BaseSettings):
     WRITE_GATE_THRESHOLD: float = 0.0  # Store everything — no write gate filtering
     COMPRESSION_GIST_AGE_HOURS: float = 168.0  # 7 days before gist compression
     COMPRESSION_TAG_AGE_HOURS: float = 720.0  # 30 days before tag compression
-    HDC_DIMENSIONS: int = 10000  # Hyperdimensional vector size
     SR_DISCOUNT: float = 0.9  # Successor representation discount factor γ
     SR_UPDATE_RATE: float = 0.1  # Incremental SR update learning rate
     COGNITIVE_LOAD_LIMIT: int = 4  # Max chunks in active context (Cowan's 4±1)
@@ -109,13 +108,9 @@ class Settings(BaseSettings):
     WRRF_K: int = 60  # RRF constant k
     WRRF_CANDIDATE_MULTIPLIER: int = 10  # Candidate pool = max_results * this
     WRRF_VECTOR_WEIGHT: float = 1.0
-    WRRF_FTS_WEIGHT: float = 0.0
+    WRRF_FTS_WEIGHT: float = 0.5
     WRRF_PPR_WEIGHT: float = 0.5
     WRRF_SPREADING_WEIGHT: float = 0.3
-    WRRF_HOPFIELD_WEIGHT: float = 0.2
-    WRRF_HDC_WEIGHT: float = 0.3
-    WRRF_FRACTAL_WEIGHT: float = 0.2
-    WRRF_SR_WEIGHT: float = 0.3
     RERANKER_ENABLED: bool = True
     RERANKER_TOP_K: int = 50
 
@@ -195,7 +190,6 @@ class Settings(BaseSettings):
     PROFILE_EXTRACTION_ENABLED: bool = True
     PROFILE_CONFIDENCE_DIRECT: float = 0.7
     PROFILE_CONFIDENCE_INFERRED: float = 0.4
-    PROFILE_SEARCH_WEIGHT: float = 0.8
     PROFILE_SUMMARY_ENABLED: bool = True
 
     # v19 Derived Beliefs (Hindsight)
@@ -231,7 +225,6 @@ class Settings(BaseSettings):
     # v25 Dual-Vector Architecture (prep only, not active until DualCSE trained)
     DUAL_VECTORS_ENABLED: bool = False
     IMPLICIT_EMBEDDING_MODEL: str = ""
-    IMPLICIT_VECTOR_WEIGHT: float = 0.5
 
     model_config = {"env_prefix": "YADGAR_"}
 

@@ -683,7 +683,7 @@ class TestHasSufficientData:
 
 class TestIntegration:
     def test_integration_navigate_tool(self, storage, embeddings, settings):
-        """Navigate tool works end-to-end (simulate server.navigate_memory)."""
+        """SR matrix navigate end-to-end: build transitions, compute matrix, verify."""
         cmap = CognitiveMap(storage, settings)
 
         # Create memories with real embeddings
@@ -704,47 +704,6 @@ class TestIntegration:
         assert len(results) == 3
         memory_ids = {mid for mid, _ in results}
         assert memory_ids == {m1, m2, m3}
-
-    def test_sr_retrieval_signal(self, storage, embeddings, graph, settings):
-        """SR scores appear in recall when active (sufficient transitions)."""
-        cmap = CognitiveMap(storage, settings)
-        retriever = Retriever(storage, embeddings, graph, settings)
-        retriever.set_cognitive_map(cmap)
-
-        # Create memories
-        m1 = _make_memory(storage, embeddings, "Python Flask web server API")
-        m2 = _make_memory(storage, embeddings, "REST API endpoint design patterns")
-        m3 = _make_memory(storage, embeddings, "Database schema migration tools")
-
-        # Build enough transitions to activate SR
-        for _ in range(_MIN_TRANSITIONS // 3 + 1):
-            cmap.record_transition(m1, m2)
-            cmap.record_transition(m2, m3)
-            cmap.record_transition(m3, m1)
-
-        assert cmap.has_sufficient_data()
-
-        # Recall should include SR signal
-        results = retriever.recall("Flask API development", max_results=3)
-        assert len(results) > 0
-
-    def test_sr_retrieval_signal_inactive(self, storage, embeddings, graph, settings):
-        """SR signal is not used when insufficient data."""
-        cmap = CognitiveMap(storage, settings)
-        retriever = Retriever(storage, embeddings, graph, settings)
-        retriever.set_cognitive_map(cmap)
-
-        m1 = _make_memory(storage, embeddings, "Python Flask web server")
-        m2 = _make_memory(storage, embeddings, "Database optimization")
-
-        # Only a few transitions — not enough
-        cmap.record_transition(m1, m2)
-
-        assert not cmap.has_sufficient_data()
-
-        # Should still work, just without SR
-        results = retriever.recall("web server", max_results=2)
-        assert len(results) > 0
 
     def test_get_sr_scores(self, storage, embeddings, settings):
         """get_sr_scores returns proximity scores for candidate memories."""
