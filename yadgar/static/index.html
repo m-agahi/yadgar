@@ -313,16 +313,10 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
   <!-- Controls -->
   <div id="left">
     <div>
-      <div class="sec-title">Node Types</div>
-      <label><input type="checkbox" id="show-memory" checked> Memories ●</label>
-      <label><input type="checkbox" id="show-entity" checked> Entities ◆</label>
-    </div>
-    <div>
       <div class="sec-title">Edge Types</div>
       <label><input type="checkbox" id="show-semantic" checked> <span style="color:#1f6feb">■</span> Semantic</label>
-      <label><input type="checkbox" id="show-causal"   checked> <span style="color:#d29922">■</span> Causal</label>
-      <label><input type="checkbox" id="show-kg"       checked> <span style="color:#484f58">■</span> KG Relations</label>
-      <label><input type="checkbox" id="show-temporal">          <span style="color:#6e40c9">■</span> Temporal</label>
+      <label><input type="checkbox" id="show-temporal" checked> <span style="color:#6e40c9">■</span> Temporal</label>
+      <label><input type="checkbox" id="show-transition" checked> <span style="color:#3fb950">■</span> Transitions</label>
     </div>
     <div>
       <div class="sec-title">Heat Filter</div>
@@ -330,17 +324,11 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
       <input type="range" id="heat-slider" min="0" max="1" step="0.01" value="0">
     </div>
     <div>
-      <div class="sec-title">Semantic Edges</div>
-      <div class="heat-val-row"><span style="color:#8b949e">Max / node</span><span id="sem-topk-val">5</span></div>
-      <input type="range" id="sem-topk-slider" min="1" max="20" step="1" value="5">
-    </div>
-    <div>
       <div class="sec-title">Graph Stats</div>
       <div class="stat-row"><span class="stat-lbl">Memories</span><span class="stat-val" id="s-mem">—</span></div>
-      <div class="stat-row"><span class="stat-lbl">Entities</span><span class="stat-val" id="s-ent">—</span></div>
-      <div class="stat-row"><span class="stat-lbl">KG edges</span><span class="stat-val" id="s-kg">—</span></div>
-      <div class="stat-row"><span class="stat-lbl">Causal</span><span class="stat-val" id="s-cau">—</span></div>
-      <div class="stat-row"><span class="stat-lbl">Visible nodes</span><span class="stat-val" id="s-vis">—</span></div>
+      <div class="stat-row"><span class="stat-lbl">Temporal</span><span class="stat-val" id="s-tmp">—</span></div>
+      <div class="stat-row"><span class="stat-lbl">Transitions</span><span class="stat-val" id="s-trn">—</span></div>
+      <div class="stat-row"><span class="stat-lbl">Visible</span><span class="stat-val" id="s-vis">—</span></div>
     </div>
   </div>
 
@@ -455,11 +443,7 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
 <script>
 // ── Config ─────────────────────────────────────────────────────────────────
 const DAEMON = 'http://127.0.0.1:8765';
-const EDGE_COLOR = { semantic: '#1f6feb', causal: '#d29922', kg: '#484f58', temporal: '#6e40c9' };
-const ENT_COLOR  = {
-  function: '#3fb950', file: '#79c0ff', concept: '#a5d6ff',
-  error: '#f85149', library: '#d2a8ff', person: '#ffa657', default: '#8b949e'
-};
+const EDGE_COLOR = { semantic: '#1f6feb', temporal: '#6e40c9', transition: '#3fb950' };
 
 // ── State ───────────────────────────────────────────────────────────────────
 let allNodes = [], allLinks = [];
@@ -476,7 +460,6 @@ function heatColor(h) {
   h = Math.max(0, Math.min(1, h || 0));
   return `hsl(${(1 - h) * 240},${60 + h * 30}%,${40 + h * 20}%)`;
 }
-function entColor(type) { return ENT_COLOR[type] || ENT_COLOR.default; }
 
 // ── Graph initialisation ────────────────────────────────────────────────────
 function initGraph() {
@@ -486,27 +469,44 @@ function initGraph() {
     .nodeId('id')
     .linkSource('source')
     .linkTarget('target')
-    .nodeLabel(n => n.type === 'memory'
-      ? `[heat=${(n.heat||0).toFixed(3)}] ${(n.content || n.label || '').slice(0, 120)}`
-      : `${n.name || n.label} (${n.entity_type || 'entity'})`)
+    .nodeLabel(n => `[heat=${(n.heat||0).toFixed(3)}] ${(n.content || n.label || '').slice(0, 120)}`)
     .linkColor(l => EDGE_COLOR[l.type] || '#484f58')
-    .linkWidth(l => l.type === 'causal' ? 2.5 : l.type === 'semantic' ? 1 : 1.5)
-    .linkDirectionalArrowLength(l => l.type === 'causal' ? 5 : 0)
+    .linkWidth(l => l.type === 'transition' ? Math.min(4, 1 + Math.log2(l.count || 1)) : l.type === 'semantic' ? 1 : 1.5)
+    .linkDirectionalArrowLength(l => l.type === 'transition' ? 5 : 0)
     .linkDirectionalArrowRelPos(1)
     .nodeCanvasObject(drawNode)
     .nodeCanvasObjectMode(() => 'replace')
     .nodePointerAreaPaint((node, color, ctx) => {
-      // Explicit hit area so custom shapes are clickable
-      const r = node.type === 'memory'
-        ? Math.max(3, Math.min(14, 3 + (node.heat || 0) * 11))
-        : Math.max(5, Math.min(12, 5 + (node.__deg || 0) * 1.2));
       ctx.fillStyle = color;
       ctx.beginPath();
-      ctx.arc(node.x, node.y, r + 2, 0, 2 * Math.PI);
+      ctx.arc(node.x, node.y, 8, 0, 2 * Math.PI);
       ctx.fill();
     })
     .onNodeClick(showDetail)
-    .onBackgroundClick(closeDetail);
+    .onBackgroundClick(closeDetail)
+    .onNodeDrag((node) => {
+      graph.enableZoomInteraction(false);
+      // Pin all other nodes so they don't drift
+      for (const n of graph.graphData().nodes) {
+        if (n !== node) { n.fx = n.x; n.fy = n.y; }
+      }
+    })
+    .onNodeDragEnd((node) => {
+      graph.enableZoomInteraction(true);
+      // Keep dragged node pinned at its new position too
+      node.fx = node.x;
+      node.fy = node.y;
+    })
+    .onEngineStop(() => {
+      // After layout settles, pin everything so forces can't push nodes around
+      for (const n of graph.graphData().nodes) {
+        if (n.fx == null) { n.fx = n.x; n.fy = n.y; }
+      }
+    });
+
+  // Softer repulsion — default -30 spreads clusters too far
+  graph.d3Force('charge').strength(-12);
+  graph.d3Force('link').distance(30);
 
   window.addEventListener('resize', () => {
     graph.width(wrap.clientWidth).height(wrap.clientHeight);
@@ -514,24 +514,12 @@ function initGraph() {
 }
 
 function drawNode(node, ctx, scale) {
-  const isMemory = node.type === 'memory';
   const heat = node.heat || 0;
-  const r = isMemory
-    ? Math.max(3, Math.min(14, 3 + heat * 11))
-    : Math.max(5, Math.min(12, 5 + (node.__deg || 0) * 1.2));
-  const color = isMemory ? heatColor(heat) : entColor(node.entity_type);
+  const r = 6;
 
   ctx.beginPath();
-  if (isMemory) {
-    ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
-  } else {
-    ctx.moveTo(node.x,     node.y - r);
-    ctx.lineTo(node.x + r, node.y    );
-    ctx.lineTo(node.x,     node.y + r);
-    ctx.lineTo(node.x - r, node.y    );
-    ctx.closePath();
-  }
-  ctx.fillStyle = color;
+  ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
+  ctx.fillStyle = heatColor(heat);
   ctx.fill();
 
   if (node.__match) {
@@ -552,14 +540,18 @@ function drawNode(node, ctx, scale) {
 // ── Data loading ────────────────────────────────────────────────────────────
 async function loadGraph() {
   status('Loading…', 'wait');
-  const topK = document.getElementById('sem-topk-slider').value;
   try {
-    const r = await fetch(`${DAEMON}/api/graph?top_k=${topK}`);
+    const r = await fetch(`${DAEMON}/api/graph`);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
+    // Preserve existing node positions across reloads
+    const posMap = {};
+    for (const n of allNodes) { if (n.x != null) posMap[n.id] = { x: n.x, y: n.y, vx: n.vx, vy: n.vy }; }
     allNodes = d.nodes || [];
+    for (const n of allNodes) { const p = posMap[n.id]; if (p) Object.assign(n, p); }
     allLinks = d.edges || [];
     calcDegrees();
+    graph.graphData({ nodes: allNodes, links: allLinks });
     applyFilters();
     status(`${allNodes.length} nodes · ${allLinks.length} edges`, 'ok');
   } catch (e) { status(`⚠ ${e.message}`, 'err'); }
@@ -567,9 +559,8 @@ async function loadGraph() {
   try {
     const s = await (await fetch(`${DAEMON}/api/graph/stats`)).json();
     document.getElementById('s-mem').textContent  = s.memory_count ?? '—';
-    document.getElementById('s-ent').textContent  = s.entity_count ?? '—';
-    document.getElementById('s-kg').textContent   = s.relationship_count ?? '—';
-    document.getElementById('s-cau').textContent  = s.causal_edge_count ?? '—';
+    document.getElementById('s-tmp').textContent  = s.temporal_edge_count ?? '—';
+    document.getElementById('s-trn').textContent  = s.transition_edge_count ?? '—';
   } catch (_) {}
 
   try {
@@ -591,50 +582,44 @@ function calcDegrees() {
 // ── Filters ─────────────────────────────────────────────────────────────────
 function applyFilters() {
   if (!graph) return;
-  const showMem = document.getElementById('show-memory').checked;
-  const showEnt = document.getElementById('show-entity').checked;
   const showSem = document.getElementById('show-semantic').checked;
-  const showCau = document.getElementById('show-causal').checked;
-  const showKg  = document.getElementById('show-kg').checked;
   const showTmp = document.getElementById('show-temporal').checked;
+  const showTrn = document.getElementById('show-transition').checked;
   const minH    = parseFloat(document.getElementById('heat-slider').value);
   const q       = document.getElementById('search').value.toLowerCase().trim();
 
+  // Mark visibility on nodes — they stay in the force layout either way
   const vis = new Set();
-  const nodes = allNodes.filter(n => {
-    if (n.type === 'memory' && !showMem) return false;
-    if (n.type === 'entity' && !showEnt) return false;
-    if (n.type === 'memory' && (n.heat||0) < minH) return false;
+  let visCount = 0;
+  for (const n of allNodes) {
+    n.__visible = (n.heat || 0) >= minH;
     n.__match = q && (
       (n.content||'').toLowerCase().includes(q) ||
-      (n.label||'').toLowerCase().includes(q) ||
-      (n.name||'').toLowerCase().includes(q)
+      (n.label||'').toLowerCase().includes(q)
     );
-    vis.add(n.id);
-    return true;
-  });
+    if (n.__visible) { vis.add(n.id); visCount++; }
+  }
 
-  const links = allLinks.filter(l => {
-    const s = l.source?.id ?? l.source, t = l.target?.id ?? l.target;
-    if (!vis.has(s) || !vis.has(t)) return false;
-    if (l.type === 'semantic' && !showSem) return false;
-    if (l.type === 'causal'   && !showCau) return false;
-    if (l.type === 'kg'       && !showKg)  return false;
-    if (l.type === 'temporal' && !showTmp) return false;
-    return true;
-  });
+  graph
+    .nodeVisibility(n => n.__visible)
+    .linkVisibility(l => {
+      const s = l.source?.id ?? l.source, t = l.target?.id ?? l.target;
+      if (!vis.has(s) || !vis.has(t)) return false;
+      if (l.type === 'semantic'   && !showSem) return false;
+      if (l.type === 'temporal'   && !showTmp) return false;
+      if (l.type === 'transition' && !showTrn) return false;
+      return true;
+    });
 
-  graph.graphData({ nodes, links });
-  document.getElementById('s-vis').textContent = nodes.length;
+  document.getElementById('s-vis').textContent = visCount;
 }
 
 // ── Detail panel ─────────────────────────────────────────────────────────────
 function showDetail(node) {
   const panel = document.getElementById('right');
   panel.classList.add('open');
-  document.getElementById('det-type').textContent = node.type.toUpperCase();
-  document.getElementById('det-title').textContent =
-    node.type === 'memory' ? (node.content||'').slice(0, 100) : (node.name || node.label || '');
+  document.getElementById('det-type').textContent = 'MEMORY';
+  document.getElementById('det-title').textContent = (node.content||'').slice(0, 100);
 
   const heat = node.heat || 0;
   const fill = document.getElementById('det-heat-fill');
@@ -648,74 +633,47 @@ function showDetail(node) {
     <div class="det-val">${heat.toFixed(4)}</div>
   </div>`);
 
-  if (node.type === 'memory') {
-    if (node.content)
-      rows.push(`<div class="det-sec">
-        <div class="det-lbl">Content</div>
-        <div class="det-val">${esc(node.content)}</div>
-      </div>`);
-
-    if (node.tags?.length)
-      rows.push(`<div class="det-sec">
-        <div class="det-lbl">Tags</div>
-        <div>${node.tags.map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</div>
-      </div>`);
-
-    if (node.directory)
-      rows.push(`<div class="det-sec">
-        <div class="det-lbl">Project</div>
-        <div class="det-val" style="color:#8b949e;word-break:break-all">${esc(node.directory)}</div>
-      </div>`);
-
-    if (node.created_at)
-      rows.push(`<div class="det-sec">
-        <div class="det-lbl">Created</div>
-        <div class="det-val" style="color:#8b949e">${String(node.created_at).slice(0,19)}</div>
-      </div>`);
-
+  if (node.content)
     rows.push(`<div class="det-sec">
-      <div class="det-lbl">Node ID</div>
-      <div class="det-val" style="color:#8b949e">${esc(node.id)}</div>
-    </div>`);
-  } else {
-    rows.push(`<div class="det-sec">
-      <div class="det-lbl">Entity type</div>
-      <div class="det-val" style="color:${entColor(node.entity_type)}">${node.entity_type||'concept'}</div>
+      <div class="det-lbl">Content</div>
+      <div class="det-val">${esc(node.content)}</div>
     </div>`);
 
+  if (node.tags?.length)
     rows.push(`<div class="det-sec">
-      <div class="det-lbl">Name</div>
-      <div class="det-val">${esc(node.name || node.label || '—')}</div>
+      <div class="det-lbl">Tags</div>
+      <div>${node.tags.map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</div>
     </div>`);
 
+  if (node.directory)
     rows.push(`<div class="det-sec">
-      <div class="det-lbl">Degree (connections)</div>
-      <div class="det-val">${node.__deg||0}</div>
+      <div class="det-lbl">Project</div>
+      <div class="det-val" style="color:#8b949e;word-break:break-all">${esc(node.directory)}</div>
     </div>`);
 
+  if (node.created_at)
     rows.push(`<div class="det-sec">
-      <div class="det-lbl">Node ID</div>
-      <div class="det-val" style="color:#8b949e">${esc(node.id)}</div>
+      <div class="det-lbl">Created</div>
+      <div class="det-val" style="color:#8b949e">${String(node.created_at).slice(0,19)}</div>
     </div>`);
 
-    const rels = allLinks.filter(l => {
-      const s = l.source?.id??l.source, t = l.target?.id??l.target;
-      return (s===node.id||t===node.id) && l.type==='kg';
-    });
-    if (rels.length) {
-      const relRows = rels.slice(0,15).map(r => {
-        const s=r.source?.id??r.source, t=r.target?.id??r.target;
-        const other = s===node.id ? t : s;
-        const on = allNodes.find(n=>n.id===other);
-        return `<div class="rel-row"><span class="rel-type">${esc(r.label||r.type)}</span> → ${esc(on?.name||on?.label||other)}</div>`;
-      }).join('');
-      const more = rels.length > 15 ? `<div style="color:#8b949e">…+${rels.length-15} more</div>` : '';
-      rows.push(`<div class="det-sec">
-        <div class="det-lbl">KG Relationships (${rels.length})</div>
-        <div>${relRows}${more}</div>
-      </div>`);
-    }
-  }
+  // Show connected edges summary
+  const conns = allLinks.filter(l => {
+    const s = l.source?.id??l.source, t = l.target?.id??l.target;
+    return s===node.id || t===node.id;
+  });
+  const bySem = conns.filter(l => l.type === 'semantic').length;
+  const byTmp = conns.filter(l => l.type === 'temporal').length;
+  const byTrn = conns.filter(l => l.type === 'transition').length;
+  rows.push(`<div class="det-sec">
+    <div class="det-lbl">Connections</div>
+    <div class="det-val" style="color:#8b949e">${bySem} semantic · ${byTmp} temporal · ${byTrn} transition</div>
+  </div>`);
+
+  rows.push(`<div class="det-sec">
+    <div class="det-lbl">Node ID</div>
+    <div class="det-val" style="color:#8b949e">${esc(node.id)}</div>
+  </div>`);
 
   document.getElementById('det-body').innerHTML = rows.join('');
 }
@@ -835,7 +793,7 @@ function fitGraph() { graph?.zoomToFit(400, 40); }
 function resetLayout() {
   if (!graph) return;
   const d = graph.graphData();
-  d.nodes.forEach(n => { delete n.x; delete n.y; delete n.vx; delete n.vy; });
+  d.nodes.forEach(n => { n.fx = undefined; n.fy = undefined; delete n.x; delete n.y; delete n.vx; delete n.vy; });
   graph.graphData({ nodes: [], links: [] });
   setTimeout(() => graph.graphData(d), 50);
 }
@@ -893,10 +851,8 @@ async function refreshDebug() {
     if (debugTab === 'graph') {
       display = {
         _summary: {
-          nodes: raw.nodes?.length,
+          memories: raw.nodes?.length,
           edges: raw.edges?.length,
-          memory_nodes: raw.nodes?.filter(n=>n.type==='memory').length,
-          entity_nodes: raw.nodes?.filter(n=>n.type==='entity').length,
           edge_types: [...new Set(raw.edges?.map(e=>e.type))],
         },
         nodes: raw.nodes,
@@ -927,7 +883,7 @@ function syntaxHL(json) {
 }
 
 // ── Event bindings ───────────────────────────────────────────────────────────
-['show-memory','show-entity','show-semantic','show-causal','show-kg','show-temporal']
+['show-semantic','show-temporal','show-transition']
   .forEach(id => document.getElementById(id).addEventListener('change', applyFilters));
 
 document.getElementById('heat-slider').addEventListener('input', e => {
@@ -936,15 +892,6 @@ document.getElementById('heat-slider').addEventListener('input', e => {
 });
 
 document.getElementById('search').addEventListener('input', applyFilters);
-
-// Semantic top-K slider — update label on input, reload graph on release
-document.getElementById('sem-topk-slider').addEventListener('input', e => {
-  document.getElementById('sem-topk-val').textContent = e.target.value;
-});
-document.getElementById('sem-topk-slider').addEventListener('change', e => {
-  localStorage.setItem('yadgar-sem-topk', e.target.value);
-  loadGraph();
-});
 
 // Close overlays on Escape
 document.addEventListener('keydown', e => {
@@ -990,14 +937,6 @@ document.addEventListener('keydown', e => {
   });
 })();
 
-// Restore saved top-K
-(function () {
-  const saved = localStorage.getItem('yadgar-sem-topk');
-  if (saved) {
-    document.getElementById('sem-topk-slider').value = saved;
-    document.getElementById('sem-topk-val').textContent = saved;
-  }
-})();
 
 // ── Stats panel ──────────────────────────────────────────────────────────────
 let _chartHeat = null, _chartConsol = null;

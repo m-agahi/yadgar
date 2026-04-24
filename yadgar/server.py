@@ -345,7 +345,7 @@ async def api_graph(request: Request) -> JSONResponse:
     if _storage is None:
         return JSONResponse({"nodes": [], "edges": []}, status_code=503)
     max_mem = int(request.query_params.get("max_memories", 500))
-    top_k = int(request.query_params.get("top_k", 5))
+    top_k = int(request.query_params.get("top_k", 100))
     data = await asyncio.to_thread(GraphAPI(_storage).get_full_graph, max_mem, top_k)
     return JSONResponse(data, headers=_CORS)
 
