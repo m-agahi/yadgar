@@ -23,10 +23,8 @@ from yadgar.astrocyte_pool import AstrocytePool
 from yadgar.causal_discovery import CausalDiscovery
 from yadgar.cls_store import DualStoreCLS
 from yadgar.cognitive_map import CognitiveMap
-from yadgar.compression import MemoryCompressor
 from yadgar.config import get_settings
-from yadgar.consolidation import AstrocyteEngine
-from yadgar.crdt_sync import CRDTMemorySync
+from yadgar.consolidation import ConsolidationScheduler
 from yadgar.curation import MemoryCurator
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.engram import EngramAllocator
@@ -37,15 +35,14 @@ from yadgar.hopfield import HopfieldMemory
 from yadgar.knowledge_graph import KnowledgeGraph
 from yadgar.metacognition import MetaCognition
 from yadgar.narrative import NarrativeEngine
-from yadgar.predictive_coding import PredictiveCodingGate
+from yadgar.predictive_coding import WriteGate
 from yadgar.prospective import ProspectiveMemoryEngine
-from yadgar.reconsolidation import ReconsolidationEngine
 
 # SurrealDB is the sole storage backend (StorageEngine in storage.py)
-from yadgar.restoration import HippocampalReplay
-from yadgar.retrieval import HippoRetriever
+from yadgar.restoration import CheckpointRestore
+from yadgar.retrieval import Retriever
 from yadgar.rules_engine import RulesEngine
-from yadgar.sensory_buffer import SensoryBuffer
+from yadgar.sensory_buffer import ActionLogger
 from yadgar.sleep_compute import SleepComputeEngine
 from yadgar.staleness import StalenessDetector
 from yadgar.storage import StorageEngine
@@ -65,11 +62,11 @@ _DECISION_STRONG_RE = re.compile(
 # Global instances — initialized in main()
 _storage: StorageEngine | None = None
 _embeddings: EmbeddingEngine | None = None
-_buffer: SensoryBuffer | None = None
-_consolidation: AstrocyteEngine | None = None
+_buffer: ActionLogger | None = None
+_consolidation: ConsolidationScheduler | None = None
 _staleness: StalenessDetector | None = None
 _thermo: MemoryThermodynamics | None = None
-_retriever: HippoRetriever | None = None
+_retriever: Retriever | None = None
 _curator: MemoryCurator | None = None
 _prospective: ProspectiveMemoryEngine | None = None
 _narrative: NarrativeEngine | None = None
@@ -77,19 +74,16 @@ _sleep: SleepComputeEngine | None = None
 _fractal: FractalMemoryTree | None = None
 _pool: AstrocytePool | None = None
 _kg: KnowledgeGraph | None = None
-_reconsolidation: ReconsolidationEngine | None = None
-_write_gate: PredictiveCodingGate | None = None
+_write_gate: WriteGate | None = None
 _engram: EngramAllocator | None = None
 _rules_engine: RulesEngine | None = None
 _hopfield: HopfieldMemory | None = None
 _cls: DualStoreCLS | None = None
-_compressor: MemoryCompressor | None = None
 _hdc: HDCEncoder | None = None
 _cognitive_map: CognitiveMap | None = None
 _causal: CausalDiscovery | None = None
 _metacognition: MetaCognition | None = None
-_crdt: CRDTMemorySync | None = None
-_replay: HippocampalReplay | None = None
+_replay: CheckpointRestore | None = None
 _wiki: WikiStore | None = None
 
 # ── Visualization event queue ──────────────────────────────────────────────
@@ -473,13 +467,13 @@ def _get_embeddings() -> EmbeddingEngine:
     return _embeddings
 
 
-def _get_buffer() -> SensoryBuffer:
-    assert _buffer is not None, "SensoryBuffer not initialized"
+def _get_buffer() -> ActionLogger:
+    assert _buffer is not None, "ActionLogger not initialized"
     return _buffer
 
 
-def _get_consolidation() -> AstrocyteEngine:
-    assert _consolidation is not None, "AstrocyteEngine not initialized"
+def _get_consolidation() -> ConsolidationScheduler:
+    assert _consolidation is not None, "ConsolidationScheduler not initialized"
     return _consolidation
 
 
@@ -493,18 +487,13 @@ def _get_thermo() -> MemoryThermodynamics:
     return _thermo
 
 
-def _get_retriever() -> HippoRetriever:
-    assert _retriever is not None, "HippoRetriever not initialized"
+def _get_retriever() -> Retriever:
+    assert _retriever is not None, "Retriever not initialized"
     return _retriever
 
 
-def _get_reconsolidation() -> ReconsolidationEngine:
-    assert _reconsolidation is not None, "ReconsolidationEngine not initialized"
-    return _reconsolidation
-
-
-def _get_write_gate() -> PredictiveCodingGate:
-    assert _write_gate is not None, "PredictiveCodingGate not initialized"
+def _get_write_gate() -> WriteGate:
+    assert _write_gate is not None, "WriteGate not initialized"
     return _write_gate
 
 
@@ -513,18 +502,13 @@ def _get_engram() -> EngramAllocator:
     return _engram
 
 
-def _get_crdt() -> CRDTMemorySync:
-    assert _crdt is not None, "CRDTMemorySync not initialized"
-    return _crdt
-
-
 def _get_cognitive_map() -> CognitiveMap:
     assert _cognitive_map is not None, "CognitiveMap not initialized"
     return _cognitive_map
 
 
-def _get_replay() -> HippocampalReplay:
-    assert _replay is not None, "HippocampalReplay not initialized"
+def _get_replay() -> CheckpointRestore:
+    assert _replay is not None, "CheckpointRestore not initialized"
     return _replay
 
 
@@ -607,15 +591,6 @@ def remember(
         valence = 0.0
         initial_heat = 1.0
 
-    # CRDT provenance tagging — stamp agent ID and vector clock
-    crdt = _crdt
-    crdt_provenance = {}
-    if crdt is not None:
-        crdt_provenance = {
-            "provenance_agent": crdt.get_agent_id(),
-            "vector_clock": json.dumps(crdt.increment_clock()),
-        }
-
     # Use curator for intelligent ingestion (merge/link/create)
     curator = _curator
     if curator is not None and embedding is not None:
@@ -674,14 +649,6 @@ def remember(
             emotional_valence=valence,
         )
         curation_action = "created"
-
-    # Apply CRDT provenance to the stored memory
-    if crdt_provenance:
-        storage.update_memory_fields(
-            memory_id,
-            provenance_agent=crdt_provenance["provenance_agent"],
-            vector_clock=crdt_provenance["vector_clock"],
-        )
 
     # CLS dual-store: classify memory as episodic or semantic
     if _consolidation is not None and _consolidation.cls is not None:
@@ -1148,9 +1115,6 @@ def memory_stats() -> dict:
     if _hopfield is not None:
         stats["hopfield_patterns"] = _hopfield.get_pattern_count()
 
-    if _reconsolidation is not None:
-        stats["reconsolidation_count"] = storage.get_total_reconsolidation_count()
-
     if _write_gate is not None:
         # Track rejections via memories with surprisal below threshold
         stats["write_gate_rejections"] = getattr(_write_gate, "_rejection_count", 0)
@@ -1172,10 +1136,6 @@ def memory_stats() -> dict:
         stats["episodic_count"] = storage.count_memories_by_store_type("episodic")
         stats["semantic_count"] = storage.count_memories_by_store_type("semantic")
 
-    if _compressor is not None:
-        for level in (0, 1, 2):
-            stats[f"compressed_level_{level}"] = storage.count_memories_by_compression_level(level)
-
     if _cognitive_map is not None:
         stats["sr_dimensions"] = (
             "active" if _cognitive_map.has_sufficient_data() else "insufficient_data"
@@ -1189,12 +1149,6 @@ def memory_stats() -> dict:
         # Average coverage across recent queries isn't tracked globally,
         # but we can report the chunk limit setting
         stats["cognitive_load_limit"] = _metacognition._chunk_limit
-
-    if _crdt is not None:
-        crdt_stats = _crdt.get_agent_stats()
-        stats["agent_id"] = crdt_stats["agent_id"]
-        stats["conflict_count"] = crdt_stats["conflicts_pending"]
-        stats["crdt"] = crdt_stats
 
     return stats
 
@@ -1210,10 +1164,6 @@ def rate_memory(memory_id: int, was_useful: bool) -> dict:
         return {"memory_id": memory_id, "status": "not_found"}
 
     thermo.record_access(memory_id, was_useful)
-
-    # Update reconsolidation stability based on usefulness
-    if _reconsolidation is not None:
-        _reconsolidation.update_stability(memory_id, was_useful)
 
     updated = storage.get_memory(memory_id)
     return {
@@ -1962,53 +1912,33 @@ def init_engines(
 ):
     """Initialize all engines. Returns (storage, embeddings, buffer, consolidation, staleness)."""
     global _storage, _embeddings, _buffer, _consolidation, _staleness, _thermo, _retriever, _curator
-    global \
-        _prospective, \
-        _narrative, \
-        _sleep, \
-        _fractal, \
-        _pool, \
-        _kg, \
-        _reconsolidation, \
-        _write_gate, \
-        _engram
-    global \
-        _rules_engine, \
-        _hopfield, \
-        _cls, \
-        _compressor, \
-        _hdc, \
-        _cognitive_map, \
-        _causal, \
-        _metacognition, \
-        _crdt
+    global _prospective, _narrative, _sleep, _fractal, _pool, _kg, _write_gate, _engram
+    global _rules_engine, _hopfield, _cls, _hdc, _cognitive_map, _causal, _metacognition
     global _replay, _wiki
 
     _settings = get_settings()
     _storage = StorageEngine(db_path or _settings.DB_PATH)
     _embeddings = EmbeddingEngine(embedding_model or _settings.EMBEDDING_MODEL)
-    _buffer = SensoryBuffer(_storage, _settings)
+    _buffer = ActionLogger(_storage, _settings)
     _buffer.start_session()
     _thermo = MemoryThermodynamics(_storage, _embeddings, _settings)
     _kg = KnowledgeGraph(_storage, _settings)
     _hdc = HDCEncoder(dimensions=_settings.HDC_DIMENSIONS)
     _cognitive_map = CognitiveMap(_storage, _settings)
-    _retriever = HippoRetriever(_storage, _embeddings, _kg, _settings)
+    _retriever = Retriever(_storage, _embeddings, _kg, _settings)
     _retriever.set_hdc(_hdc)
     _retriever.set_cognitive_map(_cognitive_map)
     _curator = MemoryCurator(_storage, _embeddings, _thermo, _settings)
-    _consolidation = AstrocyteEngine(_storage, _embeddings, _settings)
+    _consolidation = ConsolidationScheduler(_storage, _embeddings, _settings)
     _staleness = StalenessDetector(_storage, _settings)
     _prospective = ProspectiveMemoryEngine(_storage, _settings)
     _narrative = NarrativeEngine(_storage, _kg, _settings)
-    _reconsolidation = ReconsolidationEngine(_storage, _embeddings, _settings)
-    _write_gate = PredictiveCodingGate(_storage, _embeddings, _retriever, _settings)
+    _write_gate = WriteGate(_storage, _embeddings, _retriever, _settings)
     _engram = EngramAllocator(_storage, _settings)
     _rules_engine = RulesEngine(_storage, _settings)
     _causal = CausalDiscovery(_storage, _kg, _settings)
     _metacognition = MetaCognition(_storage, _embeddings, _kg, _settings)
-    _crdt = CRDTMemorySync(_storage, _settings)
-    _replay = HippocampalReplay(
+    _replay = CheckpointRestore(
         storage=_storage,
         embeddings=_embeddings,
         retriever=_retriever,
@@ -2028,7 +1958,6 @@ def init_engines(
     _pool = _consolidation.pool
     _hopfield = _retriever._hopfield
     _cls = _consolidation.cls
-    _compressor = _consolidation._compressor
 
     if start_daemons:
         _consolidation.start()
@@ -2089,26 +2018,8 @@ def init_engines(
 def shutdown():
     """Gracefully shut down all engines."""
     global _storage, _embeddings, _buffer, _consolidation, _staleness, _thermo, _retriever, _curator
-    global \
-        _prospective, \
-        _narrative, \
-        _sleep, \
-        _fractal, \
-        _pool, \
-        _kg, \
-        _reconsolidation, \
-        _write_gate, \
-        _engram
-    global \
-        _rules_engine, \
-        _hopfield, \
-        _cls, \
-        _compressor, \
-        _hdc, \
-        _cognitive_map, \
-        _causal, \
-        _metacognition, \
-        _crdt
+    global _prospective, _narrative, _sleep, _fractal, _pool, _kg, _write_gate, _engram
+    global _rules_engine, _hopfield, _cls, _hdc, _cognitive_map, _causal, _metacognition
     global _replay, _wiki
 
     if _consolidation is not None:
@@ -2134,18 +2045,15 @@ def shutdown():
     _fractal = None
     _pool = None
     _kg = None
-    _reconsolidation = None
     _write_gate = None
     _engram = None
     _rules_engine = None
     _hopfield = None
     _cls = None
-    _compressor = None
     _hdc = None
     _cognitive_map = None
     _causal = None
     _metacognition = None
-    _crdt = None
     _replay = None
     _wiki = None
 

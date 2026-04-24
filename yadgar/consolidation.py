@@ -8,7 +8,6 @@ from datetime import UTC, date, datetime
 from itertools import combinations
 
 from yadgar.cls_store import DualStoreCLS
-from yadgar.compression import MemoryCompressor
 from yadgar.config import Settings
 from yadgar.curation import MemoryCurator
 from yadgar.embeddings import EmbeddingEngine
@@ -88,7 +87,7 @@ _CODE_EXTENSIONS = frozenset(
 )
 
 
-class AstrocyteEngine:
+class ConsolidationScheduler:
     """Background consolidation daemon inspired by astrocyte glial cells.
 
     Wakes up after a period of user inactivity to:
@@ -113,7 +112,6 @@ class AstrocyteEngine:
             storage, embeddings, self._graph, self._curator, self._thermo, settings
         )
         self._cls = DualStoreCLS(storage, embeddings, settings)
-        self._compressor = MemoryCompressor(storage, embeddings, settings)
         self._last_sleep_cycle: datetime | None = None
         self._last_consolidation_date: date | None = None
 

@@ -8,15 +8,15 @@ import pytest
 from yadgar import server
 from yadgar.astrocyte_pool import AstrocytePool
 from yadgar.config import Settings
-from yadgar.consolidation import AstrocyteEngine
+from yadgar.consolidation import ConsolidationScheduler
 from yadgar.curation import MemoryCurator
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.fractal import FractalMemoryTree
 from yadgar.knowledge_graph import KnowledgeGraph
 from yadgar.narrative import NarrativeEngine
 from yadgar.prospective import ProspectiveMemoryEngine
-from yadgar.retrieval import HippoRetriever
-from yadgar.sensory_buffer import SensoryBuffer
+from yadgar.retrieval import Retriever
+from yadgar.sensory_buffer import ActionLogger
 from yadgar.sleep_compute import SleepComputeEngine
 from yadgar.staleness import StalenessDetector
 from yadgar.storage import StorageEngine
@@ -53,7 +53,7 @@ def embeddings():
 
 @pytest.fixture
 def buffer(storage, settings):
-    buf = SensoryBuffer(storage, settings)
+    buf = ActionLogger(storage, settings)
     buf.start_session()
     return buf
 
@@ -70,7 +70,7 @@ def kg(storage, settings):
 
 @pytest.fixture
 def retriever(storage, embeddings, kg, settings):
-    return HippoRetriever(storage, embeddings, kg, settings)
+    return Retriever(storage, embeddings, kg, settings)
 
 
 @pytest.fixture
@@ -80,7 +80,7 @@ def curator(storage, embeddings, thermo, settings):
 
 @pytest.fixture
 def consolidation(storage, embeddings, settings):
-    return AstrocyteEngine(storage, embeddings, settings)
+    return ConsolidationScheduler(storage, embeddings, settings)
 
 
 @pytest.fixture
@@ -269,7 +269,7 @@ class TestConsolidationDecay:
             )
             mem_ids.append(mid)
 
-        engine = AstrocyteEngine(storage, embeddings, settings)
+        engine = ConsolidationScheduler(storage, embeddings, settings)
         engine.force_consolidate()
 
         for mid in mem_ids:
@@ -295,7 +295,7 @@ class TestConsolidationArchival:
             }
         )
 
-        engine = AstrocyteEngine(storage, embeddings, settings)
+        engine = ConsolidationScheduler(storage, embeddings, settings)
         stats = engine.force_consolidate()
 
         mem = storage.get_memory(mid)
@@ -417,7 +417,7 @@ class TestConsolidationEntityExtraction:
             }
         )
 
-        engine = AstrocyteEngine(storage, embeddings, settings)
+        engine = ConsolidationScheduler(storage, embeddings, settings)
         engine._last_consolidated_episode_id = 0
         engine.force_consolidate()
 
@@ -442,7 +442,7 @@ class TestConsolidationEntityExtraction:
 class TestBufferEpisodeIntegration:
     def test_multiple_captures_accumulate_and_flush(self, storage, settings):
         """Multiple captures should accumulate in a single episode until flushed."""
-        buf = SensoryBuffer(storage, settings)
+        buf = ActionLogger(storage, settings)
         buf.start_session()
         sid = buf.session_id
 
@@ -612,7 +612,7 @@ class TestRecallMultiSignal:
                 }
             )
 
-        retriever = HippoRetriever(storage, embeddings, kg, settings)
+        retriever = Retriever(storage, embeddings, kg, settings)
         results = retriever.recall("Python web framework API", max_results=3, min_heat=0.1)
 
         assert len(results) >= 1
@@ -707,7 +707,7 @@ class TestCausalDetectionIntegration:
             )
 
         # Extract entities from episodes
-        engine = AstrocyteEngine(storage, EmbeddingEngine(), settings)
+        engine = ConsolidationScheduler(storage, EmbeddingEngine(), settings)
         engine._last_consolidated_episode_id = 0
         engine.force_consolidate()
 

@@ -7,7 +7,7 @@ from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.hopfield import HopfieldMemory, _logsumexp, _softmax, _sparsemax
 from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.retrieval import HippoRetriever
+from yadgar.retrieval import Retriever
 from yadgar.storage import StorageEngine
 
 
@@ -42,7 +42,7 @@ def graph(storage, settings):
 
 @pytest.fixture
 def retriever(storage, embeddings, graph, settings):
-    return HippoRetriever(storage, embeddings, graph, settings)
+    return Retriever(storage, embeddings, graph, settings)
 
 
 def _make_memory(storage, embeddings, content, directory="/proj", tags=None, heat=1.0):
@@ -368,7 +368,7 @@ class TestCacheInvalidation:
 
 class TestRetrievalIntegration:
     def test_hopfield_scores_in_recall(self, storage, embeddings, graph, retriever):
-        """Hopfield scores should appear in HippoRetriever.recall() results."""
+        """Hopfield scores should appear in Retriever.recall() results."""
         # Insert memories
         _make_memory(storage, embeddings, "Python web development with FastAPI")
         _make_memory(storage, embeddings, "Database optimization with indexes")
@@ -383,7 +383,7 @@ class TestRetrievalIntegration:
             assert mem["_retrieval_score"] > 0
 
     def test_hopfield_integrated_in_retriever(self, retriever):
-        """HippoRetriever should have a _hopfield attribute."""
+        """Retriever should have a _hopfield attribute."""
         assert hasattr(retriever, "_hopfield")
         assert isinstance(retriever._hopfield, HopfieldMemory)
 

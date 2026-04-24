@@ -21,7 +21,7 @@ import numpy as np
 
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
-from yadgar.retrieval import HippoRetriever
+from yadgar.retrieval import Retriever
 from yadgar.storage import StorageEngine
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ _DECISION_BYPASS_RE = re.compile(
 _BYPASS_TAGS = frozenset({"important", "critical"})
 
 
-class PredictiveCodingGate:
+class WriteGate:
     """Write gate that filters incoming memories by surprisal.
 
     Only stores prediction errors — information that violates the existing
@@ -51,7 +51,7 @@ class PredictiveCodingGate:
         self,
         storage: StorageEngine,
         embeddings: EmbeddingEngine,
-        retriever: HippoRetriever,
+        retriever: Retriever,
         settings: Settings,
     ) -> None:
         self._storage = storage

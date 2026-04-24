@@ -1,7 +1,7 @@
 import pytest
 
 from yadgar.config import Settings
-from yadgar.sensory_buffer import SensoryBuffer
+from yadgar.sensory_buffer import ActionLogger
 from yadgar.storage import StorageEngine
 
 
@@ -24,7 +24,7 @@ def settings(tmp_path):
 
 @pytest.fixture
 def buffer(storage, settings):
-    return SensoryBuffer(storage, settings)
+    return ActionLogger(storage, settings)
 
 
 class TestStartSession:

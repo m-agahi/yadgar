@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from yadgar.config import Settings
-from yadgar.consolidation import AstrocyteEngine
+from yadgar.consolidation import ConsolidationScheduler
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.storage import StorageEngine
 
@@ -38,7 +38,7 @@ def embeddings():
 
 @pytest.fixture
 def engine(storage, embeddings, settings):
-    return AstrocyteEngine(storage, embeddings, settings)
+    return ConsolidationScheduler(storage, embeddings, settings)
 
 
 def _hours_ago(hours: float) -> str:
@@ -292,7 +292,7 @@ class TestDuplicateMerge:
             }
         )
 
-        engine = AstrocyteEngine(storage, mock_emb, settings)
+        engine = ConsolidationScheduler(storage, mock_emb, settings)
         engine.force_consolidate()
 
         # Higher-heat memory survives
@@ -324,7 +324,7 @@ class TestDuplicateMerge:
             }
         )
 
-        engine = AstrocyteEngine(storage, mock_emb, settings)
+        engine = ConsolidationScheduler(storage, mock_emb, settings)
         engine.force_consolidate()
 
         assert storage.get_memory(id_a) is not None

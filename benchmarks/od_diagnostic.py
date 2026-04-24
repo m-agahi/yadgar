@@ -5,7 +5,7 @@ import os
 
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.retrieval import HippoRetriever
+from yadgar.retrieval import Retriever
 from yadgar.storage import StorageEngine
 
 EMBEDDING_MODEL = "nomic-ai/nomic-embed-text-v1.5"
@@ -46,7 +46,7 @@ def run_diagnostic(n_convs=3, target_category="open_domain"):
         storage = StorageEngine(db_path, embedding_dim=EMBEDDING_DIM)
         kg = KnowledgeGraph(storage, settings)
         dia_map = _ingest_conversation(conv, storage, embeddings, project_dir, obs_mode=True)
-        retriever = HippoRetriever(storage, embeddings, kg, settings)
+        retriever = Retriever(storage, embeddings, kg, settings)
 
         qa_items = conv.get("qa", [])
         for qa in qa_items:

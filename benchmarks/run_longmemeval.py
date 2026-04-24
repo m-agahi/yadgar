@@ -44,7 +44,7 @@ from yadgar.config import Settings
 from yadgar.curation import MemoryCurator
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.retrieval import HippoRetriever
+from yadgar.retrieval import Retriever
 from yadgar.storage import StorageEngine
 from yadgar.thermodynamics import MemoryThermodynamics
 
@@ -191,7 +191,7 @@ def create_engines(db_path: str, settings: Settings):
     embeddings = EmbeddingEngine(settings.EMBEDDING_MODEL)
     kg = KnowledgeGraph(storage, settings)
     thermo = MemoryThermodynamics(storage, embeddings, settings)
-    retriever = HippoRetriever(storage, embeddings, kg, settings)
+    retriever = Retriever(storage, embeddings, kg, settings)
     curator = MemoryCurator(storage, embeddings, thermo, settings)
 
     return storage, embeddings, retriever, curator, thermo
@@ -331,7 +331,7 @@ def compute_recall(retrieved_session_ids: list[str], gold_session_ids: set[str],
 
 def evaluate_retrieval(
     question: dict,
-    retriever: HippoRetriever,
+    retriever: Retriever,
     session_map: dict[str, list[int]],
     max_results: int = 50,
 ) -> dict:
@@ -578,7 +578,7 @@ def run_benchmark(
             storage = StorageEngine(db_path)
             kg = KnowledgeGraph(storage, settings)
             thermo = MemoryThermodynamics(storage, embeddings, settings)
-            retriever = HippoRetriever(storage, embeddings, kg, settings)
+            retriever = Retriever(storage, embeddings, kg, settings)
             curator = MemoryCurator(storage, embeddings, thermo, settings)
 
             # Phase 1a: Ingest haystack

@@ -26,7 +26,7 @@ import pytest
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.retrieval import HippoRetriever
+from yadgar.retrieval import Retriever
 from yadgar.storage import StorageEngine
 
 # Use nomic for higher quality embeddings (768d, 62.28 nDCG@10 vs 41.95)
@@ -375,7 +375,7 @@ def locomo_conv0(locomo_data, tmp_path_factory):
     conv = locomo_data[0]
     dia_map = _ingest_conversation(conv, storage, embeddings, project_dir)
 
-    retriever = HippoRetriever(storage, embeddings, kg, settings)
+    retriever = Retriever(storage, embeddings, kg, settings)
     return retriever, conv, dia_map, project_dir
 
 
@@ -395,7 +395,7 @@ def locomo_full(locomo_data, tmp_path_factory):
         kg = KnowledgeGraph(storage, settings)
 
         dia_map = _ingest_conversation(conv, storage, embeddings, project_dir)
-        retriever = HippoRetriever(storage, embeddings, kg, settings)
+        retriever = Retriever(storage, embeddings, kg, settings)
         contexts.append((retriever, conv, dia_map, project_dir))
     return contexts
 
@@ -416,13 +416,13 @@ def locomo_full_obs(locomo_data, tmp_path_factory):
         kg = KnowledgeGraph(storage, settings)
 
         dia_map = _ingest_conversation(conv, storage, embeddings, project_dir, obs_mode=True)
-        retriever = HippoRetriever(storage, embeddings, kg, settings)
+        retriever = Retriever(storage, embeddings, kg, settings)
         contexts.append((retriever, conv, dia_map, project_dir))
     return contexts
 
 
 def _evaluate_retrieval_for_qa(
-    retriever: HippoRetriever,
+    retriever: Retriever,
     qa_items: list[dict],
     dia_map: dict[str, int],
     max_results: int = 10,
@@ -541,7 +541,7 @@ class TestLoCoMoObservation:
             embeddings = EmbeddingEngine(EMBEDDING_MODEL)
             kg = KnowledgeGraph(storage, settings)
             dia_map = _ingest_conversation(conv, storage, embeddings, project_dir, obs_mode=obs)
-            retriever = HippoRetriever(storage, embeddings, kg, settings)
+            retriever = Retriever(storage, embeddings, kg, settings)
 
             t0 = time.time()
             results = _evaluate_retrieval_for_qa(retriever, qa_items, dia_map)
@@ -671,7 +671,7 @@ class TestLoCoMoABSweep:
                 if not qa_items:
                     continue
                 settings = _make_settings(DB_PATH=db_path, **overrides)
-                retriever = HippoRetriever(storage, embeddings, kg, settings)
+                retriever = Retriever(storage, embeddings, kg, settings)
 
                 results = _evaluate_retrieval_for_qa(retriever, qa_items, dia_map)
                 for cat, metrics in results.items():
@@ -742,7 +742,7 @@ class TestLoCoMoObsSweep:
                 if not qa_items:
                     continue
                 settings = _make_settings(DB_PATH=db_path, **overrides)
-                retriever = HippoRetriever(storage, embeddings, kg, settings)
+                retriever = Retriever(storage, embeddings, kg, settings)
 
                 results = _evaluate_retrieval_for_qa(retriever, qa_items, dia_map)
                 for cat, metrics in results.items():

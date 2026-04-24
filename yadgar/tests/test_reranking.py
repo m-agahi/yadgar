@@ -5,7 +5,7 @@ import pytest
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.retrieval import HippoRetriever, _question_to_statement
+from yadgar.retrieval import Retriever, _question_to_statement
 from yadgar.storage import StorageEngine
 
 
@@ -40,7 +40,7 @@ def graph(storage, settings):
 
 @pytest.fixture
 def retriever(storage, embeddings, graph, settings):
-    return HippoRetriever(storage, embeddings, graph, settings)
+    return Retriever(storage, embeddings, graph, settings)
 
 
 def _make_memory(storage, embeddings, content, directory="/proj", tags=None):
@@ -159,7 +159,7 @@ class TestAllFeaturesToggleable:
             CROSS_ENCODER_ENABLED=False,
             QUERY_ROUTING_ENABLED=False,
         )
-        r = HippoRetriever(storage, embeddings, graph, s)
+        r = Retriever(storage, embeddings, graph, s)
         _make_memory(storage, embeddings, "test memory for toggle check")
         results = r.recall("test", max_results=5)
         assert isinstance(results, list)

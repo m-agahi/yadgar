@@ -5,8 +5,8 @@ import pytest
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.predictive_coding import PredictiveCodingGate
-from yadgar.retrieval import HippoRetriever
+from yadgar.predictive_coding import WriteGate
+from yadgar.retrieval import Retriever
 from yadgar.storage import StorageEngine
 
 
@@ -38,12 +38,12 @@ def kg(storage, settings):
 
 @pytest.fixture
 def retriever(storage, embeddings, kg, settings):
-    return HippoRetriever(storage, embeddings, kg, settings)
+    return Retriever(storage, embeddings, kg, settings)
 
 
 @pytest.fixture
 def gate(storage, embeddings, retriever, settings):
-    return PredictiveCodingGate(storage, embeddings, retriever, settings)
+    return WriteGate(storage, embeddings, retriever, settings)
 
 
 def _make_memory(storage, embeddings, content, directory="/tmp/project", tags=None, **kwargs):

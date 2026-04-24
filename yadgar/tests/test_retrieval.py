@@ -9,7 +9,7 @@ from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.knowledge_graph import KnowledgeGraph
 from yadgar.retrieval import (
-    HippoRetriever,
+    Retriever,
     _derive_implied_fact_passages,
     _extract_query_entities,
     _pseudo_hyde_expand,
@@ -42,7 +42,7 @@ def graph(storage, settings):
 
 @pytest.fixture
 def retriever(storage, embeddings, graph, settings):
-    return HippoRetriever(storage, embeddings, graph, settings)
+    return Retriever(storage, embeddings, graph, settings)
 
 
 def _make_memory(storage, embeddings, content, directory="/proj", tags=None):
@@ -282,7 +282,7 @@ class TestSpreadingActivation:
             GRAPH_SPREADING_DECAY=0.3,
             GRAPH_SPREADING_MAX_DEPTH=1,
         )
-        retriever = HippoRetriever(storage, embeddings, graph, custom_settings)
+        retriever = Retriever(storage, embeddings, graph, custom_settings)
         m1, m2, m3, m4, m5 = _setup_graph_with_memories(storage, embeddings, graph)
 
         # Call without explicit args — should use settings defaults
@@ -299,7 +299,7 @@ class TestPPREntityMinLength:
             DB_PATH=str(tmp_path / "ppr.db"),
             GRAPH_ENTITY_MIN_LENGTH=3,
         )
-        retriever = HippoRetriever(storage, embeddings, graph, custom_settings)
+        retriever = Retriever(storage, embeddings, graph, custom_settings)
         _setup_graph_with_memories(storage, embeddings, graph)
 
         # Add a short-named entity to the graph
@@ -585,7 +585,7 @@ class TestConfidenceGating:
             CONFIDENCE_GATING_ENABLED=True,
             QUERY_ROUTING_ENABLED=False,
         )
-        retriever = HippoRetriever(storage, embeddings, graph, settings_gated)
+        retriever = Retriever(storage, embeddings, graph, settings_gated)
 
         # Insert only 1 memory so FTS returns very few results → low confidence
         _make_memory(storage, embeddings, "lonely memory about testing")
@@ -602,7 +602,7 @@ class TestConfidenceGating:
             CONFIDENCE_GATING_ENABLED=False,
             QUERY_ROUTING_ENABLED=False,
         )
-        retriever = HippoRetriever(storage, embeddings, graph, settings_off)
+        retriever = Retriever(storage, embeddings, graph, settings_off)
         _make_memory(storage, embeddings, "test memory")
 
         results = retriever.recall("test", max_results=5)
@@ -617,7 +617,7 @@ class TestCandidatePoolMultiplier:
             CANDIDATE_POOL_MULTIPLIER=7,
             QUERY_ROUTING_ENABLED=False,
         )
-        retriever = HippoRetriever(storage, embeddings, graph, custom_settings)
+        retriever = Retriever(storage, embeddings, graph, custom_settings)
         _make_memory(storage, embeddings, "test memory about retrieval")
 
         # Patch search_memories_fts_scored to capture the limit argument
@@ -738,7 +738,7 @@ class TestPseudoHydeExpand:
             QUERY_EXPANSION_ENABLED=True,
             QUERY_ROUTING_ENABLED=False,
         )
-        retriever = HippoRetriever(storage, embeddings, graph, settings_on)
+        retriever = Retriever(storage, embeddings, graph, settings_on)
         _make_memory(storage, embeddings, "Alice's hobby is painting landscapes")
 
         results = retriever.recall("What is Alice's hobby?", max_results=5)
@@ -751,7 +751,7 @@ class TestPseudoHydeExpand:
             QUERY_EXPANSION_ENABLED=False,
             QUERY_ROUTING_ENABLED=False,
         )
-        retriever = HippoRetriever(storage, embeddings, graph, settings_off)
+        retriever = Retriever(storage, embeddings, graph, settings_off)
         _make_memory(storage, embeddings, "Alice's hobby is painting landscapes")
 
         results = retriever.recall("What is Alice's hobby?", max_results=5)
