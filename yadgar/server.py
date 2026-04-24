@@ -50,6 +50,7 @@ from yadgar.sleep_compute import SleepComputeEngine
 from yadgar.staleness import StalenessDetector
 from yadgar.storage import StorageEngine
 from yadgar.thermodynamics import MemoryThermodynamics
+from yadgar.wiki import WikiStore
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,7 @@ _causal: CausalDiscovery | None = None
 _metacognition: MetaCognition | None = None
 _crdt: CRDTMemorySync | None = None
 _replay: HippocampalReplay | None = None
+_wiki: WikiStore | None = None
 
 # ── Visualization event queue ──────────────────────────────────────────────
 # Ring buffer of the last 500 events; SSE clients poll with a sequence cursor.
@@ -1791,6 +1793,134 @@ def seed_project(directory: str, dry_run: bool = False) -> dict:
     return result
 
 
+# ── Wiki tools ─────────────────────────────────────────────────────────────
+
+
+@mcp_server.tool()
+def wiki_add(
+    title: str,
+    content: str,
+    category: str = "reference",
+    tags: list[str] | None = None,
+    source_memory_ids: list[int] | None = None,
+    confidence: str = "medium",
+) -> dict:
+    """Create or update a wiki page. Content can include [[slug]] cross-references.
+
+    Categories: architecture, decision, pattern, debugging, reference, convention, fact, analysis.
+    Confidence: high, medium, low.
+    """
+    assert _wiki is not None, "WikiStore not initialized"
+    result = _wiki.add(title, content, category, tags or [], source_memory_ids, confidence)
+    result.pop("embedding", None)
+    _push_event(
+        {
+            "event": "wiki_added",
+            "node": {
+                "id": f"wiki:{result.get('id', '')}",
+                "slug": result.get("slug", ""),
+                "title": result.get("title", ""),
+            },
+        }
+    )
+    return result
+
+
+@mcp_server.tool()
+def wiki_query(
+    query: str,
+    tags: list[str] | None = None,
+    category: str | None = None,
+    max_results: int = 5,
+) -> list[dict]:
+    """Search wiki pages by keyword + semantic similarity.
+
+    Returns matching pages with relevance scores. Use tags and category to filter.
+    """
+    assert _wiki is not None, "WikiStore not initialized"
+    results = _wiki.query(query, tags, category, max_results)
+    for r in results:
+        r.pop("embedding", None)
+    return results
+
+
+@mcp_server.tool()
+def wiki_read(slug: str) -> dict:
+    """Read a specific wiki page by slug."""
+    assert _wiki is not None, "WikiStore not initialized"
+    page = _wiki.read(slug)
+    if page is None:
+        return {"error": f"Wiki page '{slug}' not found"}
+    page.pop("embedding", None)
+    return page
+
+
+@mcp_server.tool()
+def wiki_delete(slug: str) -> dict:
+    """Delete a wiki page by slug."""
+    assert _wiki is not None, "WikiStore not initialized"
+    deleted = _wiki.delete(slug)
+    if deleted:
+        _push_event({"event": "wiki_deleted", "slug": slug})
+        return {"deleted": True, "slug": slug}
+    return {"deleted": False, "error": f"Wiki page '{slug}' not found"}
+
+
+@mcp_server.tool()
+def wiki_list(category: str | None = None) -> list[dict]:
+    """List all wiki pages, optionally filtered by category.
+
+    Categories: architecture, decision, pattern, debugging, reference, convention, fact, analysis.
+    """
+    assert _wiki is not None, "WikiStore not initialized"
+    pages = _wiki.list_pages(category)
+    for p in pages:
+        p.pop("embedding", None)
+        # Trim content for listing
+        if p.get("content"):
+            p["content"] = p["content"][:200]
+    return pages
+
+
+@mcp_server.tool()
+def wiki_ingest(
+    content: str,
+    title: str | None = None,
+    tags: list[str] | None = None,
+    source_memory_ids: list[int] | None = None,
+) -> dict:
+    """Ingest content into the wiki. Merges into existing page if title matches.
+
+    If a page with the same slug already exists, content is appended with a timestamp.
+    Tags and source_memory_ids are merged. Use for accumulating knowledge over time.
+    """
+    assert _wiki is not None, "WikiStore not initialized"
+    result = _wiki.ingest(content, title, tags, source_memory_ids)
+    result.pop("embedding", None)
+    event_type = "wiki_updated" if result.get("_merged") else "wiki_added"
+    _push_event(
+        {
+            "event": event_type,
+            "node": {
+                "id": f"wiki:{result.get('id', '')}",
+                "slug": result.get("slug", ""),
+                "title": result.get("title", ""),
+            },
+        }
+    )
+    return result
+
+
+@mcp_server.tool()
+def wiki_lint() -> dict:
+    """Check wiki health: orphan pages, broken cross-refs, stale pages, low confidence.
+
+    Returns issues list and summary stats.
+    """
+    assert _wiki is not None, "WikiStore not initialized"
+    return _wiki.lint()
+
+
 # ── Startup ────────────────────────────────────────────────────────────
 
 
@@ -1822,7 +1952,7 @@ def init_engines(
         _causal, \
         _metacognition, \
         _crdt
-    global _replay
+    global _replay, _wiki
 
     _settings = get_settings()
     _storage = StorageEngine(db_path or _settings.DB_PATH)
@@ -1856,6 +1986,7 @@ def init_engines(
         metacognition=_metacognition,
         settings=_settings,
     )
+    _wiki = WikiStore(_storage, _embeddings)
     _retriever.set_engram(_engram)
     _retriever.set_rules_engine(_rules_engine)
     _retriever.set_metacognition(_metacognition)
@@ -1948,7 +2079,7 @@ def shutdown():
         _causal, \
         _metacognition, \
         _crdt
-    global _replay
+    global _replay, _wiki
 
     if _consolidation is not None:
         _consolidation.stop()
@@ -1986,6 +2117,7 @@ def shutdown():
     _metacognition = None
     _crdt = None
     _replay = None
+    _wiki = None
 
     # Remove PID file on clean shutdown
     try:
