@@ -2421,6 +2421,59 @@ class StorageEngine:
         rows = self._q("SELECT from_slug, to_slug FROM wiki_crossref")
         return [{"from_slug": r["from_slug"], "to_slug": r["to_slug"]} for r in rows]
 
+    # ------------------------------------------------------------------ Wiki Drafts
+
+    def insert_wiki_draft(self, draft: dict) -> int:
+        """Insert a wiki draft. Returns draft ID."""
+        now = self._now_iso()
+        did = self._next_id("wiki_draft")
+        self._db.query(
+            "CREATE type::thing('wiki_draft', $id) SET "
+            "title = $title, slug = $slug, content = $content, "
+            "category = $category, tags = $tags, confidence = $confidence, "
+            "source_memory_ids = $source_memory_ids, created_at = $created_at",
+            {
+                "id": did,
+                "title": draft.get("title", ""),
+                "slug": draft["slug"],
+                "content": draft.get("content", ""),
+                "category": draft.get("category", "reference"),
+                "tags": draft.get("tags", []),
+                "confidence": draft.get("confidence", "medium"),
+                "source_memory_ids": draft.get("source_memory_ids", []),
+                "created_at": draft.get("created_at", now),
+            },
+        )
+        return did
+
+    def get_wiki_draft_by_slug(self, slug: str) -> dict | None:
+        """Get a wiki draft by slug."""
+        rows = self._q(
+            "SELECT * FROM wiki_draft WHERE slug = $slug LIMIT 1",
+            {"slug": slug},
+        )
+        return self._row_to_dict(rows[0]) if rows else None
+
+    def list_wiki_drafts(self) -> list[dict]:
+        """List all wiki drafts ordered by creation time."""
+        rows = self._q("SELECT * FROM wiki_draft ORDER BY created_at DESC")
+        return self._rows_to_dicts(rows)
+
+    def delete_wiki_draft(self, slug: str) -> bool:
+        """Delete a wiki draft by slug. Return True if deleted."""
+        rows = self._q(
+            "SELECT id FROM wiki_draft WHERE slug = $slug LIMIT 1",
+            {"slug": slug},
+        )
+        if not rows:
+            return False
+        did = self._extract_id(rows[0].get("id"))
+        self._db.query(
+            "DELETE type::thing('wiki_draft', $id)",
+            {"id": did},
+        )
+        return True
+
     # ------------------------------------------------------------------ Context manager
 
     def close(self):

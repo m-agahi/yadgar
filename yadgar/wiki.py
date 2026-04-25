@@ -80,6 +80,7 @@ class WikiStore:
             }
             self._storage.update_wiki_page(existing["id"], updates)
             self._sync_crossrefs(slug, links)
+            self._link_memories(slug, source_memory_ids)
             return {**existing, **updates}
 
         links = self._extract_wikilinks(content)
@@ -100,6 +101,7 @@ class WikiStore:
         page_id = self._storage.insert_wiki_page(page)
         page["id"] = page_id
         self._sync_crossrefs(slug, links)
+        self._link_memories(slug, source_memory_ids)
         return page
 
     def read(self, slug: str) -> dict | None:
@@ -217,6 +219,7 @@ class WikiStore:
             }
             self._storage.update_wiki_page(existing["id"], updates)
             self._sync_crossrefs(slug, links)
+            self._link_memories(slug, source_memory_ids or [])
             return {**existing, **updates}
 
         return self.add(
@@ -345,3 +348,17 @@ class WikiStore:
     def _sync_crossrefs(self, slug: str, links: list[str]) -> None:
         """Update wiki_crossref table to match extracted links."""
         self._storage.replace_wiki_crossrefs(slug, links)
+
+    def _link_memories(self, slug: str, memory_ids: list[int]) -> None:
+        """Add this wiki page's slug to wiki_refs on each source memory."""
+        for mid in memory_ids:
+            try:
+                mem = self._storage.get_memory(mid)
+                if mem is None:
+                    continue
+                refs = list(mem.get("wiki_refs") or [])
+                if slug not in refs:
+                    refs.append(slug)
+                    self._storage.update_memory_fields(mid, wiki_refs=refs)
+            except Exception:
+                logger.debug("Failed to link memory %s to wiki page %s", mid, slug)

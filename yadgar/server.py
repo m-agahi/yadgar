@@ -467,6 +467,16 @@ def _get_buffer() -> ActionLogger:
     return _buffer
 
 
+def _is_episodic_query(query: str) -> bool:
+    """Return True if the query is temporal/episodic — wiki blending is skipped."""
+    q = query.lower()
+    for kw in settings.TEMPORAL_KEYWORDS.split(","):
+        kw = kw.strip()
+        if kw and kw in q:
+            return True
+    return False
+
+
 def _get_consolidation() -> ConsolidationScheduler:
     assert _consolidation is not None, "ConsolidationScheduler not initialized"
     return _consolidation
@@ -915,33 +925,20 @@ def recall(query: str, max_results: int = 5, min_heat: float = 0.0) -> list[dict
     if _replay is not None:
         _replay.record_tool_call()
 
-    # Wiki blending — AFTER heat boost (wiki pages have no heat field)
-    if _wiki is not None:
+    # Wiki blending — relevance-gated, skip for episodic/temporal queries
+    if _wiki is not None and not _is_episodic_query(query):
         try:
-            wiki_results = _wiki.query(query, max_results=3)
-            for wr in wiki_results:
+            wiki_results = _wiki.query(query, max_results=5)
+            qualifying = [wr for wr in wiki_results if wr.get("_retrieval_score", 0.0) > 0.3]
+            for wr in qualifying:
                 wr["_source"] = "wiki"
-                wr["_retrieval_score"] = wr.get("_retrieval_score", 0.5) + 0.15  # curated boost
                 wr.pop("embedding", None)
-            if wiki_results:
-                # Interleave wiki results between memory results
-                blended = []
-                mem_idx = 0
-                wiki_idx = 0
-                pos = 0
-                while mem_idx < len(merged) or wiki_idx < len(wiki_results):
-                    # Insert wiki at positions 1, 3, 5 (between memories)
-                    if pos % 2 == 1 and wiki_idx < len(wiki_results):
-                        blended.append(wiki_results[wiki_idx])
-                        wiki_idx += 1
-                    elif mem_idx < len(merged):
-                        blended.append(merged[mem_idx])
-                        mem_idx += 1
-                    elif wiki_idx < len(wiki_results):
-                        blended.append(wiki_results[wiki_idx])
-                        wiki_idx += 1
-                    pos += 1
-                merged = blended[:max_results]
+            if qualifying:
+                merged = sorted(
+                    merged + qualifying,
+                    key=lambda m: m.get("_retrieval_score", 0.0),
+                    reverse=True,
+                )[:max_results]
         except Exception:
             pass  # Wiki blending is best-effort
 
@@ -1856,6 +1853,59 @@ def wiki_lint() -> dict:
     """
     assert _wiki is not None, "WikiStore not initialized"
     return _wiki.lint()
+
+
+@mcp_server.tool()
+def wiki_drafts() -> list[dict]:
+    """List all pending wiki drafts awaiting review.
+
+    Drafts are candidate wiki pages queued but not yet approved.
+    Use wiki_approve to promote a draft to a full page, or wiki_discard to delete it.
+    """
+    storage = _get_storage()
+    drafts = storage.list_wiki_drafts()
+    for d in drafts:
+        if d.get("content"):
+            d["content"] = d["content"][:200]
+    return drafts
+
+
+@mcp_server.tool()
+def wiki_approve(slug: str) -> dict:
+    """Promote a pending draft wiki page to a full wiki page.
+
+    Moves the draft into the wiki knowledge base with all its metadata,
+    then deletes the draft. Fails if no draft with that slug exists.
+    """
+    assert _wiki is not None, "WikiStore not initialized"
+    storage = _get_storage()
+    draft = storage.get_wiki_draft_by_slug(slug)
+    if draft is None:
+        return {"approved": False, "error": f"Draft '{slug}' not found"}
+    result = _wiki.add(
+        title=draft["title"],
+        content=draft["content"],
+        category=draft.get("category", "reference"),
+        tags=draft.get("tags", []),
+        source_memory_ids=draft.get("source_memory_ids", []),
+        confidence=draft.get("confidence", "medium"),
+    )
+    result.pop("embedding", None)
+    storage.delete_wiki_draft(slug)
+    return {"approved": True, "slug": slug, "page": result}
+
+
+@mcp_server.tool()
+def wiki_discard(slug: str) -> dict:
+    """Discard a pending wiki draft without promoting it to a full page.
+
+    Permanently deletes the draft. Use for incorrect or low-value drafts.
+    """
+    storage = _get_storage()
+    deleted = storage.delete_wiki_draft(slug)
+    if deleted:
+        return {"discarded": True, "slug": slug}
+    return {"discarded": False, "error": f"Draft '{slug}' not found"}
 
 
 # ── Default rules ──────────────────────────────────────────────────────
