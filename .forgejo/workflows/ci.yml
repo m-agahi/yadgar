@@ -1,0 +1,112 @@
+---
+name: CI
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+    branches: [master]
+
+jobs:
+  validate:
+    runs-on: docker
+    container:
+      image: python:3.14-slim
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+
+      - name: Install pre-commit
+        run: pip install pre-commit
+
+      - name: Run pre-commit
+        run: pre-commit run --all-files
+
+  test:
+    runs-on: docker
+    container:
+      image: python:3.14-slim
+    if: github.event_name == 'push'
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+
+      - name: Install dependencies
+        run: pip install -e ".[test]"
+
+      - name: Run tests
+        run: python -m pytest yadgar/tests/ -q --tb=short
+
+  docker:
+    needs: test
+    runs-on: docker
+    container:
+      image: debian:bookworm-slim
+    if: github.event_name == 'push'
+    env:
+      DOCKER_HOST: tcp://172.17.0.1:2375
+    steps:
+      - name: Install Docker CLI + buildx
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends \
+            git curl gnupg ca-certificates python3
+          install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/debian/gpg \
+            | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] \
+            https://download.docker.com/linux/debian bookworm stable" \
+            > /etc/apt/sources.list.d/docker.list
+          apt-get update && apt-get install -y --no-install-recommends \
+            docker-ce-cli docker-buildx-plugin
+
+      - uses: https://data.forgejo.org/actions/checkout@v6
+
+      - name: Detect platforms
+        run: |
+          if docker run --rm --privileged tonistiigi/binfmt --install all 2>/dev/null; then
+            echo "QEMU registered — creating multi-arch builder"
+            docker buildx create --name multiarch --driver docker-container --use
+            docker buildx inspect --bootstrap
+            echo "PLATFORMS=linux/amd64,linux/arm64" >> "$GITHUB_ENV"
+          else
+            echo "QEMU not available — building amd64 only"
+            echo "PLATFORMS=linux/amd64" >> "$GITHUB_ENV"
+          fi
+
+      - name: Extract version
+        run: |
+          VERSION=$(python3 -c "
+          import re
+          print(re.search(r'version = \"(.+?)\"', open('pyproject.toml').read()).group(1))
+          ")
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Login to Docker Hub
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" \
+            | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Build and push (master — latest only)
+        if: github.ref == 'refs/heads/master'
+        run: |
+          docker buildx build \
+            --platform "${{ env.PLATFORMS }}" \
+            --target prod \
+            -t looseking/yadgar:latest \
+            --push \
+            .
+
+      - name: Build and push (tag — latest + version)
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          docker buildx build \
+            --platform "${{ env.PLATFORMS }}" \
+            --target prod \
+            -t looseking/yadgar:latest \
+            -t looseking/yadgar:${{ env.VERSION }} \
+            --push \
+            .
