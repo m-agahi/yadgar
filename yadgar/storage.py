@@ -1050,7 +1050,7 @@ class StorageEngine:
     def reinforce_entity(self, entity_id: int, heat_bump: float = 0.1):
         self._db.query(
             "UPDATE type::thing('entity', $id) SET "
-            "heat = math::min(heat + $bump, 1.0), last_accessed = $now",
+            "heat = math::min([heat + $bump, 1.0]), last_accessed = $now",
             {"id": entity_id, "bump": heat_bump, "now": self._now_iso()},
         )
 

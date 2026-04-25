@@ -175,6 +175,15 @@ class ConsolidationScheduler:
                 break
             now = datetime.now(UTC)
             today = now.date()
+            # Idle-triggered consolidation: process new episodes when system is idle
+            idle_seconds = (now - self.last_activity).total_seconds()
+            if idle_seconds >= self._settings.IDLE_THRESHOLD_SECONDS:
+                new_episodes = self._storage.get_episodes_since(self._last_consolidated_episode_id)
+                if new_episodes:
+                    try:
+                        self._consolidation_cycle()
+                    except Exception:
+                        logger.exception("Idle consolidation cycle failed")
             # Run once per day at midnight UTC (00:00–00:01 window)
             if now.hour == 0 and now.minute == 0 and self._last_consolidation_date != today:
                 try:
