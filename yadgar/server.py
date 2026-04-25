@@ -81,6 +81,21 @@ _metacognition: MetaCognition | None = None
 _replay: CheckpointRestore | None = None
 _wiki: WikiStore | None = None
 
+# ── Hook state ─────────────────────────────────────────────────────────────
+# Only capture state-modifying tool calls (skip Read, Glob, Grep, etc.)
+_CAPTURE_TOOLS: frozenset[str] = frozenset({"Write", "Edit", "Bash", "NotebookEdit", "Agent"})
+# Tool name prefixes that are self-referential — never capture
+_SKIP_TOOL_PREFIXES: tuple[str, ...] = (
+    "mcp__yadgar__",
+    "mcp__plugin_claude-code-home-manager_yadgar__",
+    "mcp__plugin_oh-my-claudecode_t__",
+)
+# Batch buffer: session_id → list of pending action dicts (flush at 5)
+_action_batch: dict[str, list] = {}
+# Throttle timestamps: directory → monotonic time
+_last_session_context: dict[str, float] = {}
+_last_prompt_recall: dict[str, float] = {}
+
 # ── Visualization event queue ──────────────────────────────────────────────
 # Ring buffer of the last 500 events; SSE clients poll with a sequence cursor.
 _event_queue: deque = deque(maxlen=500)
@@ -217,22 +232,47 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
 
     tool_name = body.get("tool_name", "unknown")
 
-    # Skip Yadgar's own tools
-    if tool_name.startswith("mcp__yadgar__"):
-        return JSONResponse({"status": "skipped", "reason": "yadgar_tool"})
+    # Skip self-referential Yadgar tools
+    for prefix in _SKIP_TOOL_PREFIXES:
+        if tool_name.startswith(prefix):
+            return JSONResponse({"status": "skipped", "reason": "yadgar_tool"})
+
+    # Only capture state-modifying tools
+    if tool_name not in _CAPTURE_TOOLS:
+        return JSONResponse({"status": "skipped", "reason": "read_only_tool"})
+
+    session_id = body.get("session_id", "default")
+    action = {
+        "tool_name": tool_name,
+        "summary": body.get("summary", "")[:200],
+        "directory": body.get("directory", ""),
+        "session_id": session_id,
+    }
+
+    # Batch: accumulate 5 actions, then flush as one combined entry
+    batch = _action_batch.setdefault(session_id, [])
+    batch.append(action)
+    if len(batch) < 5:
+        return JSONResponse({"status": "batched", "pending": len(batch)})
+
+    # Flush batch → one combined action_log entry
+    combined_tools = ",".join(a["tool_name"] for a in batch)
+    combined_summary = " | ".join(a["summary"] for a in batch if a["summary"])
+    directory = batch[-1]["directory"]
+    _action_batch[session_id] = []
 
     storage.insert_action_log(
-        tool_name=tool_name,
-        tool_input_summary=body.get("summary", "")[:200],
-        directory=body.get("directory", ""),
-        session_id=body.get("session_id", ""),
+        tool_name=f"batch[{combined_tools}]",
+        tool_input_summary=combined_summary[:500],
+        directory=directory,
+        session_id=session_id,
         timestamp=datetime.now(UTC).isoformat(),
     )
 
     if _consolidation is not None:
         _consolidation.record_activity()
 
-    return JSONResponse({"status": "captured"})
+    return JSONResponse({"status": "captured", "batch_size": 5})
 
 
 @mcp_server.custom_route("/hooks/session-context", methods=["GET"])
@@ -257,7 +297,7 @@ async def hook_session_context(request: Request) -> JSONResponse:
         hot = storage._q(
             "SELECT content, heat FROM memory "
             "WHERE directory_context = $dir AND heat >= 0 "
-            "ORDER BY heat DESC LIMIT 6",
+            "ORDER BY heat DESC LIMIT 10",
             {"dir": directory},
         )
 
@@ -267,12 +307,26 @@ async def hook_session_context(request: Request) -> JSONResponse:
             "AND tags CONTAINSANY ['_anchor'] "
             "ORDER BY created_at DESC LIMIT 4"
         )
+
+        total_res = storage._q(
+            "SELECT count() AS n FROM memory "
+            "WHERE directory_context = $dir AND is_stale = false GROUP ALL",
+            {"dir": directory},
+        )
+        total_count = total_res[0].get("n", 0) if total_res else 0
+
+        wiki_pages = storage._q(
+            "SELECT title, content FROM wiki_page ORDER BY updated_at DESC LIMIT 5"
+        )
     except Exception as e:
         logger.debug("session-context hook error: %s", e)
         return JSONResponse({"text": ""})
 
     if not hot and not anchored:
         return JSONResponse({"text": ""})
+
+    # Record timestamp for prompt-recall throttling
+    _last_session_context[directory] = time.monotonic()
 
     lines = ["# Yadgar — Session Context\n"]
     if checkpoint and checkpoint.get("current_task"):
@@ -285,12 +339,19 @@ async def hook_session_context(request: Request) -> JSONResponse:
             lines.append(f"- {row['content'][:200]}")
         lines.append("")
     if hot:
-        lines.append("## Project Context")
+        shown = len(hot)
+        lines.append(f"## Project Context (showing {shown} of {total_count} memories)")
         for row in hot:
             content = row["content"]
             if len(content) > 200:
                 content = content[:200] + "..."
             lines.append(f"- [{row['heat']:.1f}] {content}")
+        lines.append("")
+    if wiki_pages:
+        lines.append("## Wiki")
+        for page in wiki_pages:
+            snippet = page.get("content", "")[:120].replace("\n", " ")
+            lines.append(f"- **{page['title']}**: {snippet}...")
         lines.append("")
     lines.append(f"*Context for: {directory}*")
 
@@ -309,6 +370,14 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
 
     if not query or len(query) < 2:
         return JSONResponse({"text": ""})
+
+    # Throttle: skip if session-context ran < 3 min ago (already loaded context)
+    now = time.monotonic()
+    if now - _last_session_context.get(directory, 0) < 180:
+        return JSONResponse({"text": "", "skipped": "session_context_recent"})
+    # Throttle: max 1 recall per 2 minutes per directory
+    if now - _last_prompt_recall.get(directory, 0) < 120:
+        return JSONResponse({"text": "", "skipped": "rate_limited"})
 
     retriever = _retriever
     if retriever is None:
@@ -342,6 +411,7 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
         total_chars += len(content)
     lines.append(f"\n*{len(results)} memories surfaced for: {directory}*")
 
+    _last_prompt_recall[directory] = time.monotonic()
     return JSONResponse({"text": "\n".join(lines)})
 
 
