@@ -36,6 +36,11 @@ _MODEL_DIMENSIONS = MODEL_DIMENSIONS
 class EmbeddingEngine:
     """Lazy-loading wrapper around SentenceTransformer for local embeddings."""
 
+    # Process-level cache: model_name -> SentenceTransformer instance.
+    # Shared across all EmbeddingEngine instances in a process so the ~80MB
+    # model is loaded at most once per worker (crucial for test-suite speed).
+    _model_cache: dict[str, object] = {}
+
     def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
         self.model_name = model_name
         self._model = None
@@ -86,6 +91,10 @@ class EmbeddingEngine:
         """Load the SentenceTransformer model if not already loaded."""
         if self._model is not None or self._unavailable:
             return
+        # Check process-level cache first — avoids reloading across test fixtures
+        if self.model_name in EmbeddingEngine._model_cache:
+            self._model = EmbeddingEngine._model_cache[self.model_name]
+            return
         try:
             from sentence_transformers import SentenceTransformer
 
@@ -122,6 +131,10 @@ class EmbeddingEngine:
                     os.environ.pop("HF_HUB_OFFLINE", None)
                 else:
                     os.environ["HF_HUB_OFFLINE"] = old_offline
+
+            # Store in process-level cache so subsequent EmbeddingEngine
+            # instances in this process skip the expensive load.
+            EmbeddingEngine._model_cache[self.model_name] = self._model
 
             # Cap PyTorch threads to half the available cores so inference
             # never saturates the machine. The OS-level CPUQuota acts as an

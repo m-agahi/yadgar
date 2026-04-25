@@ -72,5 +72,12 @@ ignore = [
     "UP007",  # use X | Y for unions — already done where possible
 ]
 
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pytest-xdist>=3.0",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["yadgar/tests"]
+addopts = ["-n", "auto"]

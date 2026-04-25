@@ -99,6 +99,10 @@ class ProspectiveMemoryEngine:
                 pm["triggered_count"] = new_count
                 triggered.append(pm)
 
+                # Deactivate triggers that have exceeded the fire limit
+                if new_count > MAX_TRIGGER_COUNT:
+                    self._storage.deactivate_prospective_memory(pm["id"])
+
         return triggered
 
     def auto_create_from_content(self, content: str, directory: str) -> list[int]:

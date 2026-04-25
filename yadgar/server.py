@@ -905,6 +905,17 @@ def remember(
         }
     )
 
+    memory.setdefault("file_hash", None)
+    # Stamp CRDT provenance on newly created memories
+    if curation_action == "created":
+        _agent = settings.CRDT_AGENT_ID
+        _clock = json.dumps({_agent: 1})
+        storage._db.query(
+            "UPDATE type::thing('memory', $id) SET provenance_agent = $a, vector_clock = $c",
+            {"id": memory_id, "a": _agent, "c": _clock},
+        )
+        memory["provenance_agent"] = _agent
+        memory["vector_clock"] = _clock
     memory["curation_action"] = curation_action
     if gate_result is not None:
         memory["surprisal"] = gate_result["surprisal"]
@@ -1128,8 +1139,6 @@ def consolidate_now() -> dict:
     """Trigger an immediate consolidation cycle."""
     if _consolidation is not None:
         stats = _consolidation.force_consolidate()
-        # Also run memify cycle (already included in force_consolidate via _consolidation_cycle)
-        # Run sleep-time compute if available
         if _sleep is not None:
             try:
                 sleep_stats = _sleep.run_sleep_cycle()

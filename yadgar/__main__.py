@@ -60,7 +60,6 @@ def _init_replay_lightweight(db_path=None):
     kg = KnowledgeGraph(storage, settings)
     cognitive_map = CognitiveMap(storage, settings)
     retriever = Retriever(storage, embeddings, kg, settings)
-    retriever.set_cognitive_map(cognitive_map)
     metacognition = MetaCognition(storage, embeddings, kg, settings)
 
     replay = CheckpointRestore(

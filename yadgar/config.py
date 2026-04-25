@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     DECAY_FACTOR: float = 0.9995  # ~34% heat after 3 months without access
     COLD_THRESHOLD: float = 0.0  # All memories accessible
     HOT_THRESHOLD: float = 0.0  # All memories accessible (zero threshold policy)
-    PROJECT_CONTEXT_MIN_HEAT: float = 0.0  # All memories accessible
+    PROJECT_CONTEXT_MIN_HEAT: float = 0.01  # Filter nearly-cold memories from session context
     MAX_EPISODE_TOKENS: int = 50000
     OVERLAP_TOKENS: int = 2000
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"

@@ -119,8 +119,10 @@ class TestValidateMemory:
 
 class TestScanDirectory:
     def test_scan_directory(self, storage, detector, tmp_path):
-        a = tmp_path / "a.py"
-        b = tmp_path / "b.py"
+        scan_dir = tmp_path / "project"
+        scan_dir.mkdir()
+        a = scan_dir / "a.py"
+        b = scan_dir / "b.py"
         a.write_text("content_a")
         b.write_text("content_b")
 
@@ -132,41 +134,47 @@ class TestScanDirectory:
         storage.insert_memory(
             _make_memory(
                 content="about a",
-                directory=str(tmp_path),
+                directory=str(scan_dir),
                 file_hash=hash_a,
             )
         )
 
         a.write_text("modified_a")
 
-        result = detector.scan_directory(str(tmp_path))
+        result = detector.scan_directory(str(scan_dir))
         assert result["files_scanned"] == 2
         assert result["files_changed"] == 1
         assert result["memories_flagged"] >= 1
 
     def test_scan_skips_ignored_dirs(self, storage, detector, tmp_path):
-        git_dir = tmp_path / ".git"
+        scan_dir = tmp_path / "project"
+        scan_dir.mkdir()
+
+        git_dir = scan_dir / ".git"
         git_dir.mkdir()
         (git_dir / "config").write_text("git config")
 
-        pycache = tmp_path / "__pycache__"
+        pycache = scan_dir / "__pycache__"
         pycache.mkdir()
         (pycache / "mod.cpython-311.pyc").write_text("bytecode")
 
-        normal = tmp_path / "main.py"
+        normal = scan_dir / "main.py"
         normal.write_text("print('hi')")
 
-        result = detector.scan_directory(str(tmp_path))
+        result = detector.scan_directory(str(scan_dir))
         assert result["files_scanned"] == 1
 
     def test_scan_skips_binary_files(self, storage, detector, tmp_path):
-        text_file = tmp_path / "readme.txt"
+        scan_dir = tmp_path / "project"
+        scan_dir.mkdir()
+
+        text_file = scan_dir / "readme.txt"
         text_file.write_text("hello")
 
-        binary_file = tmp_path / "image.dat"
+        binary_file = scan_dir / "image.dat"
         binary_file.write_bytes(b"\x00\x01\x02\x03")
 
-        result = detector.scan_directory(str(tmp_path))
+        result = detector.scan_directory(str(scan_dir))
         assert result["files_scanned"] == 1
 
 
