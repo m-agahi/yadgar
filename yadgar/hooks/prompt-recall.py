@@ -12,6 +12,7 @@ Target latency: <500ms.
 """
 
 import fcntl
+import hashlib
 import json
 import os
 import sys
@@ -215,6 +216,19 @@ def main():
 
     if _db_locked(db_path):
         return  # MCP server owns the DB — skip direct access
+
+    # Fallback throttle: max 1 recall per 2 minutes per directory (file-based)
+    _dir_hash = hashlib.md5(directory.encode()).hexdigest()[:8]
+    _stamp_file = db_path.parent / f"last_recall_{_dir_hash}"
+    _now = time.monotonic()
+    try:
+        if _stamp_file.exists():
+            _last = float(_stamp_file.read_text())
+            if _now - _last < 120:
+                return
+        _stamp_file.write_text(str(_now))
+    except Exception:
+        pass
 
     try:
         from surrealdb import Surreal

@@ -35,8 +35,15 @@ def _db_locked(db_path: Path) -> bool:
         return True  # Lock held by MCP server
 
 
-# Tools to skip (Yadgar's own tools — prevents infinite loops)
-_SKIP_PREFIXES = ("mcp__yadgar__",)
+# Tool name prefixes that are self-referential — never capture
+_SKIP_PREFIXES = (
+    "mcp__yadgar__",
+    "mcp__plugin_claude-code-home-manager_yadgar__",
+    "mcp__plugin_oh-my-claudecode_t__",
+)
+
+# Only capture state-modifying tools; skip Read, Glob, Grep, WebFetch, etc.
+_CAPTURE_TOOLS = frozenset({"Write", "Edit", "Bash", "NotebookEdit", "Agent"})
 
 # High-value tool input fields to extract as summary
 _SUMMARY_FIELDS = (
@@ -60,10 +67,14 @@ def main():
 
     tool_name = data.get("tool_name", "unknown")
 
-    # Skip Yadgar's own tools to prevent capture loops
+    # Skip self-referential Yadgar tools
     for prefix in _SKIP_PREFIXES:
         if tool_name.startswith(prefix):
             return
+
+    # Only capture state-modifying tools
+    if tool_name not in _CAPTURE_TOOLS:
+        return
 
     cwd = data.get("cwd", "")
     session_id = data.get("session_id", "")

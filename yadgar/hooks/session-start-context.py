@@ -77,12 +77,12 @@ def main():
         if cp_res and cp_res[0]:
             checkpoint = cp_res[0][0]
 
-        # 2. Get hot memories for this directory
+        # 2. Get hot memories for this directory (cap at 10)
         hot_res = db.query(
             "SELECT content, heat, created_at "
             "FROM memory "
             "WHERE directory_context = $dir AND heat >= 0 "
-            "ORDER BY heat DESC LIMIT 6",
+            "ORDER BY heat DESC LIMIT 10",
             {"dir": cwd},
         )
         hot = hot_res[0] if hot_res and hot_res[0] else []
@@ -96,7 +96,19 @@ def main():
         )
         anchored = anch_res[0] if anch_res and anch_res[0] else []
 
-        # 4. Get recent actions (last 10)
+        # 4. Total memory count for this directory
+        count_res = db.query(
+            "SELECT count() AS n FROM memory "
+            "WHERE directory_context = $dir AND is_stale = false GROUP ALL",
+            {"dir": cwd},
+        )
+        total_count = count_res[0][0].get("n", 0) if count_res and count_res[0] else 0
+
+        # 5. Top-5 wiki pages (most recently updated)
+        wiki_res = db.query("SELECT title, content FROM wiki_page ORDER BY updated_at DESC LIMIT 5")
+        wiki_pages = wiki_res[0] if wiki_res and wiki_res[0] else []
+
+        # 6. Get recent actions (last 10)
         act_res = db.query(
             "SELECT tool_name, tool_input_summary, timestamp "
             "FROM action_log "
@@ -136,12 +148,20 @@ def main():
         lines.append("")
 
     if hot:
-        lines.append("## Project Context")
+        shown = len(hot)
+        lines.append(f"## Project Context (showing {shown} of {total_count} memories)")
         for row in hot:
             content = row["content"]
             if len(content) > 200:
                 content = content[:200] + "..."
             lines.append(f"- [{row['heat']:.1f}] {content}")
+        lines.append("")
+
+    if wiki_pages:
+        lines.append("## Wiki")
+        for page in wiki_pages:
+            snippet = page.get("content", "")[:120].replace("\n", " ")
+            lines.append(f"- **{page['title']}**: {snippet}...")
         lines.append("")
 
     if actions:
