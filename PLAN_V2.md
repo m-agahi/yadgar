@@ -607,6 +607,208 @@ CMD ["yadgar", "start", "--host", "0.0.0.0"]
 
 ---
 
+## Phase 6.5: Docker-Only Deployment
+
+**Goal**: `yadgar daemon` manages a Docker container, not a local process. Server always runs in Docker with hard resource limits.
+
+### Architecture
+
+```
+Host                          Container (yadgar)
+├── pip install yadgar        ├── Yadgar MCP server
+│   ├── yadgar setup          │   ├── SurrealDB (embedded)
+│   ├── yadgar daemon *       │   ├── EmbeddingEngine
+│   ├── yadgar stats          │   ├── ConsolidationScheduler
+│   └── hooks (HTTP-first)    │   └── 0.0.0.0:8765
+│                              │
+└── Claude Code ──HTTP──────────┘
+```
+
+`pip install yadgar` is still the install path. It becomes a thin client: daemon management, setup wizard, hooks, and CLI commands that proxy to the container.
+
+### 6.5.1 Resource Limits
+
+The daemon must constrain the container to prevent Yadgar from throttling the host system.
+
+| Constraint | Value | Flag | Rationale |
+|---|---|---|---|
+| CPU | 1 core | `--cpus=1` | Hard ceiling via cgroup cpu.max. Prevents consolidation/embedding work from stealing cycles. |
+| Memory | host_mem / 8 | `--memory={computed}m` | Dynamic: 2GB on 16GB host, 4GB on 32GB. Min floor: 512MB (surrealkv mmap safety). |
+| Swap | disabled | `--memory-swap={same as memory}` | Same value as `--memory` = no swap. Swap thrashes embedded DB. |
+| OOM kill | enabled (default) | — | Do NOT use `--oom-kill-disable`. Let kernel kill on exceed rather than hang. |
+| Restart | on-failure | `--restart=on-failure:3` | Auto-restart on crash, max 3 retries. |
+
+**Host memory detection (Python, no psutil):**
+
+```python
+import os, platform
+
+def _host_memory_bytes() -> int:
+    """Detect total host RAM. Linux /proc/meminfo, macOS sysctl, fallback os.sysconf."""
+    if platform.system() == "Linux":
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) * 1024
+    if platform.system() == "Darwin":
+        import subprocess
+        r = subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True)
+        return int(r.stdout.strip())
+    # POSIX fallback
+    return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+
+def _container_memory_mb() -> int:
+    """1/8th of host RAM, clamped to [512, 8192] MB."""
+    eighth = _host_memory_bytes() // (8 * 1024 * 1024)
+    return max(512, min(eighth, 8192))
+```
+
+### 6.5.2 `daemon.py` Rewrite
+
+Replace subprocess/PID approach with Docker CLI:
+
+```python
+# start()
+cmd = [
+    "docker", "run", "-d",
+    "--name", self.container_name,    # default: "yadgar"
+    "--cpus", "1",
+    "--memory", f"{_container_memory_mb()}m",
+    "--memory-swap", f"{_container_memory_mb()}m",
+    "--restart", "on-failure:3",
+    "-v", f"{self.volume_name}:/data",
+    "-p", f"{self.port}:8765",
+    self.image_name,                  # default: "yadgar"
+]
+
+# stop()
+subprocess.run(["docker", "stop", self.container_name])
+
+# status()
+# docker inspect + existing health check (http://127.0.0.1:{port}/health)
+
+# restart()
+subprocess.run(["docker", "restart", self.container_name])
+```
+
+**Removed:**
+- PID file management (`~/.yadgar/yadgar.pid`)
+- `_db_locked()` check (DB is inside container)
+- `_find_pid_by_lock()` /proc scanning
+- `subprocess.Popen(sys.executable, "-m", "yadgar", ...)` process spawning
+
+**Added:**
+- `container_name` setting (default: `"yadgar"`, env: `YADGAR_CONTAINER`)
+- `image_name` setting (default: `"yadgar"`, env: `YADGAR_IMAGE`)
+- `volume_name` setting (default: `"yadgar-data"`, env: `YADGAR_VOLUME`)
+- Docker availability check: `docker info --format '{{.ID}}'` on startup
+- Image pull if not present: `docker image inspect {image} || docker pull {image}`
+
+### 6.5.3 CLI Commands — HTTP Proxy or docker exec
+
+Commands that currently open SurrealDB directly need to route through the container:
+
+| Command | Current | Docker-only approach |
+|---|---|---|
+| `stats` | Direct DB query | Add `GET /api/stats` endpoint to server.py; CLI calls it via HTTP |
+| `context` | DB-first, HTTP fallback | HTTP only (remove DB fallback) |
+| `capture` | DB-first, HTTP fallback | HTTP only (remove DB fallback) |
+| `drain` | Direct DB | `docker exec yadgar yadgar drain {dir}` |
+| `restore` | Direct DB | `docker exec yadgar yadgar restore {dir}` |
+| `seed` | Direct DB | `docker exec yadgar yadgar seed {dir}` |
+| `vacuum` | Direct DB, server stopped | `docker stop yadgar && docker run --rm -v yadgar-data:/data yadgar vacuum && docker start yadgar` |
+
+**New HTTP endpoints needed in server.py:**
+- `GET /api/stats?project={dir}` — returns JSON stats (reuse cmd_stats logic)
+
+### 6.5.4 `yadgar setup` — Docker-Aware
+
+```
+$ yadgar setup
+
+Checking Docker...                    ✓ Docker 27.1.1
+Pulling yadgar image...               ✓ yadgar:latest
+Creating data volume...               ✓ yadgar-data
+
+=== Yadgar v3.0.0 — setup complete ===
+
+Start the server:
+  yadgar daemon start
+
+Add to ~/.claude.json:
+{
+  "mcpServers": {
+    "yadgar": {
+      "type": "streamable-http",
+      "url": "http://localhost:8765/mcp"
+    }
+  }
+}
+
+Restart Claude Code and you're ready.
+```
+
+### 6.5.5 `install_systemd_service` — Docker Unit
+
+```ini
+[Unit]
+Description=Yadgar Memory Engine (Docker)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=simple
+ExecStartPre=-docker stop yadgar
+ExecStartPre=-docker rm yadgar
+ExecStart=docker run --rm \
+    --name yadgar \
+    --cpus 1 \
+    --memory {computed}m \
+    --memory-swap {computed}m \
+    -v yadgar-data:/data \
+    -p 8765:8765 \
+    yadgar
+ExecStop=docker stop yadgar
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+```
+
+### 6.5.6 `configure_mcp` Fix
+
+Current code writes `"type": "sse", "url": ".../sse"`. Update to:
+
+```python
+mcp_servers["yadgar"] = {
+    "type": "streamable-http",
+    "url": f"http://127.0.0.1:{self.port}/mcp",
+}
+```
+
+### 6.5.7 What Stays Unchanged
+
+- **Hooks**: Already HTTP-first. Container down → hooks fail silently (existing behavior).
+- **stdio mode**: Kept for development/testing. `yadgar --transport stdio` still works locally.
+- **All MCP tools**: Server code inside container is identical.
+- **Dockerfile**: Already correct (YADGAR_HOST=0.0.0.0, YADGAR_PORT=8765, YADGAR_DB_PATH=/data/surreal_db).
+
+### 6.5.8 Verification
+
+- `docker info` check on `yadgar setup` and `yadgar daemon start`
+- `yadgar daemon start` creates container with correct resource limits
+- `docker inspect yadgar` shows `--cpus=1` and `--memory` set correctly
+- `yadgar daemon stop` + `yadgar daemon start` preserves data (volume)
+- `yadgar stats` works via HTTP endpoint
+- `yadgar vacuum` works via stop-exec-start cycle
+- Hooks fire and reach container HTTP endpoints
+- On 16GB host: container gets ~2GB memory limit
+- On 64GB host: container gets ~8GB (capped)
+- On 4GB host: container gets 512MB (floor)
+
+---
+
 ## Phase 7: Viz as Product Feature
 
 **Goal**: Visualization convinces users that something real and useful is happening.
@@ -656,19 +858,23 @@ CMD ["yadgar", "start", "--host", "0.0.0.0"]
 ## Execution Order & Dependencies
 
 ```
-Phase 0 (Prune)           ← No dependencies. Do first. ~1-2 sessions.
+Phase 0 (Prune)           ← No dependencies. Do first. ~1-2 sessions.        ✅
     ↓
-Phase 1 (Retrieval)       ← Depends on Phase 0 (less code). ~2-3 sessions.
+Phase 1 (Retrieval)       ← Depends on Phase 0 (less code). ~2-3 sessions.    ✅
     ↓
-Phase 2 (Rules + Secrets) ← Independent of Phase 1, but cleaner after. ~2 sessions.
+Phase 2 (Rules + Secrets) ← Independent of Phase 1, but cleaner after.        ✅
     ↓
-Phase 3 (Wiki)            ← Depends on Phase 2 (rules govern wiki blending). ~2-3 sessions.
+Phase 3 (Wiki)            ← Depends on Phase 2 (rules govern wiki blending).  ✅
     ↓
-Phase 4 (Tools)           ← Depends on Phase 0-3 (know what survives). ~1 session.
+Phase 4 (Tools)           ← Depends on Phase 0-3 (know what survives).        ✅
     ↓
 Phase 5 (Hooks)           ← Can parallel with Phase 4. ~1 session.
     ↓
-Phase 6 (Portability)     ← Blocked by Phases 0-5 (package what's clean). ~2-3 sessions.
+Phase 5.5 (Test cleanup)  ← Gate for Phase 6.                                 ✅
+    ↓
+Phase 6 (Portability)     ← Package what's clean. v3.0.0.                     ✅
+    ↓
+Phase 6.5 (Docker-only)   ← Daemon manages Docker container. ~1-2 sessions.
     ↓
 Phase 7 (Viz)             ← After Phase 3 (wiki nodes). ~2-3 sessions.
 ```
