@@ -113,6 +113,7 @@ class Settings(BaseSettings):
     WRRF_SPREADING_WEIGHT: float = 0.3
     RERANKER_ENABLED: bool = True
     RERANKER_TOP_K: int = 50
+    RETRIEVAL_PROFILE: str = "balanced"  # fast | balanced | full
 
     # v7: Query routing settings
     QUERY_ROUTING_ENABLED: bool = True
