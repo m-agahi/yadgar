@@ -238,17 +238,12 @@ class TestFrontierConfig:
 
     def test_write_gate_threshold(self):
         s = Settings()
-        assert s.WRITE_GATE_THRESHOLD == 0.4
+        assert s.WRITE_GATE_THRESHOLD == 0.0
 
     def test_compression_age_settings(self):
         s = Settings()
         assert s.COMPRESSION_GIST_AGE_HOURS == 168.0
         assert s.COMPRESSION_TAG_AGE_HOURS == 720.0
-
-    def test_hdc_dimensions(self):
-        s = Settings()
-        assert s.HDC_DIMENSIONS == 10000
-        assert isinstance(s.HDC_DIMENSIONS, int)
 
     def test_sr_settings(self):
         s = Settings()

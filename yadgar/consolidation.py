@@ -244,14 +244,6 @@ class ConsolidationScheduler:
                 except Exception:
                     logger.exception("Causal discovery failed")
 
-        # Run domain-specific consolidation via astrocyte pool
-        if self._pool is not None:
-            try:
-                domain_stats = self._run_domain_consolidation()
-                stats["domain_consolidation"] = domain_stats
-            except Exception:
-                logger.exception("Domain consolidation failed")
-
         # Run memify self-improvement cycle
         try:
             memify_stats = self._curator.memify_cycle()

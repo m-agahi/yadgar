@@ -1,8 +1,7 @@
 """Tests for Hippocampal Replay restoration engine."""
 
 import json
-import os
-import tempfile
+import sys
 
 import pytest
 
@@ -13,11 +12,9 @@ from yadgar.storage import StorageEngine
 
 
 @pytest.fixture
-def temp_db():
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    yield path
-    os.unlink(path)
+def temp_db(tmp_path):
+    # surrealkv needs a directory path (not an existing file)
+    yield str(tmp_path / "test.db")
 
 
 @pytest.fixture
@@ -30,7 +27,8 @@ def engines(temp_db):
         embeddings=embeddings,
         settings=settings,
     )
-    return storage, embeddings, replay
+    yield storage, embeddings, replay
+    storage.close()
 
 
 class TestCheckpoints:
@@ -185,7 +183,7 @@ class TestCLISubcommands:
         import subprocess
 
         result = subprocess.run(
-            ["python", "-m", "yadgar", "drain", "/test/project", "--db-path", temp_db],
+            [sys.executable, "-m", "yadgar", "drain", "/test/project", "--db-path", temp_db],
             capture_output=True,
             text=True,
             timeout=120,
@@ -200,14 +198,14 @@ class TestCLISubcommands:
 
         # First drain to create a checkpoint
         subprocess.run(
-            ["python", "-m", "yadgar", "drain", "/test/project", "--db-path", temp_db],
+            [sys.executable, "-m", "yadgar", "drain", "/test/project", "--db-path", temp_db],
             capture_output=True,
             text=True,
             timeout=120,
         )
         # Then restore
         result = subprocess.run(
-            ["python", "-m", "yadgar", "restore", "/test/project", "--db-path", temp_db],
+            [sys.executable, "-m", "yadgar", "restore", "/test/project", "--db-path", temp_db],
             capture_output=True,
             text=True,
             timeout=120,
@@ -219,7 +217,7 @@ class TestCLISubcommands:
         import subprocess
 
         result = subprocess.run(
-            ["python", "-m", "yadgar", "restore", "/test/project", "--db-path", temp_db],
+            [sys.executable, "-m", "yadgar", "restore", "/test/project", "--db-path", temp_db],
             capture_output=True,
             text=True,
             timeout=120,

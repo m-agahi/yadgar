@@ -495,6 +495,47 @@ Fix:
 
 ---
 
+## ✅ Phase 5.5: Test Suite Cleanup — COMPLETE
+
+**Goal**: Fix all pre-existing test failures before packaging so PyPI consumers don't inherit a broken suite.
+
+### Results
+
+22 failures + 14 errors → **0 failures**. Full suite: ~22 min → **5:54** (354s).
+
+### Bugs fixed
+
+| File | Fix |
+|---|---|
+| `storage.py` | `insert_memory()`: add 11 frontier fields (plasticity, stability, excitability, store_type, compression_level, sr_x, sr_y, reconsolidation_count, provenance_agent, vector_clock, is_protected) |
+| `storage.py` | `get_memory()`: setdefault nullable fields SurrealDB omits when NULL |
+| `storage.py` | Add `deactivate_prospective_memory()` |
+| `storage.py` | `insert_transition()`: raise ValueError on duplicate |
+| `consolidation.py` | Remove double-decay: `_consolidation_cycle()` was calling `_run_domain_consolidation()` on top of `_apply_decay()` → 2× heat decay |
+| `server.py` | Add CRDT provenance stamp after memory creation |
+| `server.py` | `remember()`: set `file_hash = None` default before returning |
+| `prospective.py` | Deactivate triggers exceeding MAX_TRIGGER_COUNT |
+| `__main__.py` | Remove `retriever.set_cognitive_map()` call (method removed in Phase 1) |
+| `config.py` | `PROJECT_CONTEXT_MIN_HEAT`: 0.0 → 0.01 to filter near-cold memories |
+
+### Tests fixed
+
+| File | Fix |
+|---|---|
+| `test_staleness.py` | Scan subdirectory instead of `tmp_path` (storage fixture creates `.db/` inside `tmp_path`) |
+| `test_frontier_schema.py` | Update `WRITE_GATE_THRESHOLD` assertion (0.4 → 0.0); remove `test_hdc_dimensions` (setting removed) |
+| `test_curation.py` | Add `_action_stream` tag — pruner only removes action-stream memories |
+| `test_restoration.py` | Use `sys.executable` for subprocess; fix fixture: `tempfile.mkstemp` → `tmp_path`; `return` → `yield` + `storage.close()` |
+
+### Performance fix
+
+Added process-level `EmbeddingEngine._model_cache` (keyed by model name). Each xdist worker process loads the `~80MB SentenceTransformer` model once and reuses it across all tests in that worker. Combined with `pytest-xdist -n auto`:
+
+- `test_memory_behavior.py`: **782s → 62s** (12.6× speedup)
+- Full suite: **~22 min → ~6 min** (3.7× speedup)
+
+---
+
 ## Phase 6: Portability & Packaging
 
 **Goal**: `pip install yadgar && yadgar start` works on macOS, Linux, any Python ≥3.11.

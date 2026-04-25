@@ -259,7 +259,7 @@ def test_memify_prune(curator, storage):
         {
             "content": "This is a cold unreliable memory that was never accessed",
             "embedding": emb,
-            "tags": ["cold"],
+            "tags": ["cold", "_action_stream"],  # pruner only removes _action_stream memories
             "directory_context": "/test",
             "heat": 0.005,  # < 0.01
             "is_stale": False,

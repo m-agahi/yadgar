@@ -561,7 +561,13 @@ class StorageEngine:
             "directory_context = $directory_context, "
             "created_at = $created_at, last_accessed = $last_accessed, "
             "heat = $heat, is_stale = $is_stale, file_hash = $file_hash, "
-            "embedding_model = $embedding_model",
+            "embedding_model = $embedding_model, "
+            "plasticity = $plasticity, stability = $stability, "
+            "excitability = $excitability, store_type = $store_type, "
+            "compression_level = $compression_level, sr_x = $sr_x, sr_y = $sr_y, "
+            "reconsolidation_count = $reconsolidation_count, "
+            "provenance_agent = $provenance_agent, vector_clock = $vector_clock, "
+            "is_protected = $is_protected",
             {
                 "id": mid,
                 "content": memory["content"],
@@ -575,6 +581,17 @@ class StorageEngine:
                 "is_stale": bool(memory.get("is_stale", False)),
                 "file_hash": memory.get("file_hash"),
                 "embedding_model": memory.get("embedding_model"),
+                "plasticity": memory.get("plasticity", 1.0),
+                "stability": memory.get("stability", 0.0),
+                "excitability": memory.get("excitability", 1.0),
+                "store_type": memory.get("store_type", "episodic"),
+                "compression_level": memory.get("compression_level", 0),
+                "sr_x": memory.get("sr_x", 0.0),
+                "sr_y": memory.get("sr_y", 0.0),
+                "reconsolidation_count": memory.get("reconsolidation_count", 0),
+                "provenance_agent": memory.get("provenance_agent", "default"),
+                "vector_clock": memory.get("vector_clock", "{}"),
+                "is_protected": bool(memory.get("is_protected", False)),
             },
         )
 
@@ -644,7 +661,15 @@ class StorageEngine:
         # Use direct record ID syntax — more reliable than type::thing() in surrealkv
         mid = int(memory_id)  # sanitize
         rows = self._q(f"SELECT * FROM memory:{mid}")
-        return self._row_to_dict(rows[0]) if rows else None
+        result = self._row_to_dict(rows[0]) if rows else None
+        if result is not None:
+            # SurrealDB omits fields set to NONE; add expected nullable defaults
+            result.setdefault("embedding_model", None)
+            result.setdefault("file_hash", None)
+            result.setdefault("last_excitability_update", None)
+            result.setdefault("original_content", None)
+            result.setdefault("last_reconsolidated", None)
+        return result
 
     def get_memories_by_heat(self, min_heat: float, limit: int = 100) -> list[dict]:
         rows = self._q(
@@ -1643,7 +1668,18 @@ class StorageEngine:
 
     # ------------------------------------------------------------------ Memory Transitions
 
+    def deactivate_prospective_memory(self, pm_id: int) -> None:
+        self._db.query(
+            "UPDATE type::thing('prospective_memory', $id) SET is_active = false",
+            {"id": pm_id},
+        )
+
     def insert_transition(self, transition: dict) -> int:
+        existing = self.get_transition(transition["from_memory_id"], transition["to_memory_id"])
+        if existing is not None:
+            raise ValueError(
+                f"Transition ({transition['from_memory_id']}, {transition['to_memory_id']}) already exists"
+            )
         now = self._now_iso()
         tid = self._next_id("memory_transition")
         self._db.query(
