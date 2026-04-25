@@ -11,7 +11,7 @@ VALID_TRANSPORTS = ("stdio", "sse", "streamable-http")
 
 STARTUP_BANNER = f"""\
 === Yadgar v{__version__} ===
-Biologically-inspired persistent memory engine for Claude Code
+Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage
 
 Active modules:
   * StorageEngine         (SurrealDB with KV + FTS + vector search)

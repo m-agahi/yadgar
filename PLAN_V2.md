@@ -2,7 +2,7 @@
 
 ## Context
 
-Yadgar is a biologically-inspired persistent memory engine for Claude Code. After Phase 1-3 (core migration, visualization, wiki), the system works but carries significant dead weight from experiments that didn't survive contact with reality. This plan finishes the design by cutting what failed, strengthening what survived, and making the system usable by others.
+Yadgar is a persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage. After Phase 1-3 (core migration, visualization, wiki), the system works but carries significant dead weight from experiments that didn't survive contact with reality. This plan finishes the design by cutting what failed, strengthening what survived, and making the system usable by others.
 
 ### Goals
 1. **1000+ memories, 100+ wiki pages** — scale for heavy multi-project use
@@ -538,7 +538,7 @@ Added process-level `EmbeddingEngine._model_cache` (keyed by model name). Each x
 
 ## Phase 6: Portability & Packaging
 
-**Goal**: `pip install yadgar && yadgar start` works on macOS, Linux, any Python ≥3.11.
+**Goal**: `pip install yadgar && yadgar start` works on macOS, Linux, Python 3.14.
 
 ### 6.0 TODOs (implement before packaging)
 
@@ -572,7 +572,7 @@ Added process-level `EmbeddingEngine._model_cache` (keyed by model name). Each x
 ### 6.3 Docker Image
 
 ```dockerfile
-FROM python:3.12-slim
+FROM python:3.14-slim
 RUN pip install yadgar
 EXPOSE 8765 42069
 VOLUME /data
@@ -584,7 +584,7 @@ CMD ["yadgar", "start", "--host", "0.0.0.0"]
 
 - Clean pyproject.toml (already well-structured)
 - Add `py.typed` marker
-- Test install in clean venv on Python 3.11, 3.12, 3.13
+- Test install in clean venv on Python 3.14
 - CI: GitHub Actions for test + publish on tag
 
 ### 6.5 README + Documentation
