@@ -40,7 +40,8 @@ class YamlConfigSource(PydanticBaseSettingsSource):
 
 
 class Settings(BaseSettings):
-    PORT: int = 8742
+    HOST: str = "127.0.0.1"
+    PORT: int = 8765
     IDLE_THRESHOLD_SECONDS: int = 300
     DECAY_FACTOR: float = 0.9995  # ~34% heat after 3 months without access
     COLD_THRESHOLD: float = 0.0  # All memories accessible

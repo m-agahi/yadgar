@@ -1023,7 +1023,8 @@ def cli():
     subparsers = parser.add_subparsers(dest="command")
 
     # Default server mode (no subcommand)
-    parser.add_argument("--port", type=int, default=None, help="Server port (default: 8742)")
+    parser.add_argument("--host", type=str, default=None, help="Bind host (default: 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=None, help="Server port (default: 8765)")
     parser.add_argument("--db-path", type=str, default=None, help="Database path")
     parser.add_argument(
         "--transport",
@@ -1207,9 +1208,19 @@ def cli():
         cmd_daemon(args)
     else:
         # Default: run MCP server
+        # Set env vars before importing server so get_settings() picks them up
+        import os as _os
+
+        if args.host:
+            _os.environ["YADGAR_HOST"] = args.host
+        if args.port:
+            _os.environ["YADGAR_PORT"] = str(args.port)
+
         if not args.quiet and args.transport != "stdio":
             print(STARTUP_BANNER, file=sys.stderr)
             print(f"Transport: {args.transport}", file=sys.stderr)
+            if args.host:
+                print(f"Host: {args.host}", file=sys.stderr)
             if args.port:
                 print(f"Port: {args.port}", file=sys.stderr)
             if args.db_path:

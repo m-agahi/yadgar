@@ -94,8 +94,14 @@ yadgar rules import my_rules.yaml
 ## Docker
 
 ```bash
-docker run -v ~/.yadgar:/data -p 8765:8765 yadgar
+docker run -d \
+  -v yadgar-data:/data \
+  -p 8765:8765 \
+  --name yadgar \
+  yadgar
 ```
+
+Add to `~/.claude.json`:
 
 ```json
 {
@@ -107,6 +113,8 @@ docker run -v ~/.yadgar:/data -p 8765:8765 yadgar
   }
 }
 ```
+
+Data persists in the `yadgar-data` Docker volume across container restarts. To backup: `docker run --rm -v yadgar-data:/data -v $(pwd):/backup alpine tar czf /backup/yadgar-backup.tar.gz /data`
 
 ## CLI reference
 
