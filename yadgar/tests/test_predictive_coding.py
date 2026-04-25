@@ -433,7 +433,7 @@ class TestWriteGateIntegration:
 
         try:
             # First, store a base memory (novel, should pass gate)
-            result1 = server.remember(
+            result1 = server.memorize(
                 content="Using Redis for caching with TTL-based expiration",
                 context="/tmp/integration-test",
                 tags=["redis", "caching"],
@@ -442,14 +442,14 @@ class TestWriteGateIntegration:
             assert "id" in result1
 
             # Store another base memory
-            server.remember(
+            server.memorize(
                 content="PostgreSQL database with connection pooling via pgbouncer",
                 context="/tmp/integration-test",
                 tags=["postgres", "database"],
             )
 
             # Now try to store a near-duplicate — should be blocked
-            result3 = server.remember(
+            result3 = server.memorize(
                 content="Using Redis for caching with TTL-based expiration policy",
                 context="/tmp/integration-test",
                 tags=["redis"],
@@ -478,7 +478,7 @@ class TestSurprisalReturnedInResponse:
 
         try:
             # Store a novel memory
-            result = server.remember(
+            result = server.memorize(
                 content="Implementing a brand new quantum error correction algorithm",
                 context="/tmp/surprisal-test",
                 tags=["quantum"],
@@ -502,14 +502,14 @@ class TestSurprisalReturnedInResponse:
         try:
             # Store several base memories to build a generative model
             base_content = "Python Flask web application with REST API endpoints"
-            server.remember(
+            server.memorize(
                 content=base_content,
                 context="/tmp/surprisal-block-test",
                 tags=["flask"],
             )
 
             # Try near-duplicate
-            result = server.remember(
+            result = server.memorize(
                 content=base_content,  # Exact same content
                 context="/tmp/surprisal-block-test",
                 tags=["flask"],

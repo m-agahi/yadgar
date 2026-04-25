@@ -536,7 +536,7 @@ Added process-level `EmbeddingEngine._model_cache` (keyed by model name). Each x
 
 ---
 
-## Phase 6: Portability & Packaging
+## ✅ Phase 6: Portability & Packaging — COMPLETE
 
 **Goal**: `pip install yadgar && yadgar start` works on macOS, Linux, Python 3.14.
 

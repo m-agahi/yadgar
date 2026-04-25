@@ -915,7 +915,7 @@ class TestFullSleepCycle:
 class TestBackwardCompatibility:
     def test_basic_remember_recall_works(self, server_engines):
         """Verify basic remember/recall still works with the original simple interface."""
-        result = server.remember(
+        result = server.memorize(
             "backward compat test memory",
             "/tmp/compat",
             ["test"],
@@ -930,14 +930,14 @@ class TestBackwardCompatibility:
 
     def test_forget_still_works(self, server_engines):
         """Verify forget still deletes memories."""
-        result = server.remember("to be forgotten", "/tmp", ["test"])
+        result = server.memorize("to be forgotten", "/tmp", ["test"])
         mid = result["id"]
         resp = server.forget(mid)
         assert resp["status"] == "deleted"
 
     def test_memory_stats_still_works(self, server_engines):
         """Verify stats returns expected structure."""
-        server.remember("stats test", "/tmp", ["test"])
+        server.memorize("stats test", "/tmp", ["test"])
         stats = server.memory_stats()
         assert "total_memories" in stats
         assert "active_count" in stats
@@ -1003,7 +1003,7 @@ class TestServerStartupShutdown:
         assert server._kg is not None
 
         # Verify a memory can be stored
-        result = server.remember("lifecycle test", "/tmp", ["test"])
+        result = server.memorize("lifecycle test", "/tmp", ["test"])
         assert result["id"] is not None
 
         # Shutdown
@@ -1028,7 +1028,7 @@ class TestServerStartupShutdown:
 class TestRememberWithAstrocyteAssignment:
     def test_remember_assigns_to_astrocyte_pool(self, server_engines):
         """Verify remember tool assigns memory to astrocyte processes."""
-        result = server.remember(
+        result = server.memorize(
             "Implemented a new class with import statements and function definitions",
             "/proj/code",
             ["code", "implementation"],
@@ -1048,7 +1048,7 @@ class TestConsolidateNowWithSleepCycle:
         """Verify consolidate_now runs full consolidation + sleep cycle."""
         # Add some memories for sleep cycle to process
         for i in range(3):
-            server.remember(f"consolidation test memory {i}", "/proj", ["test"])
+            server.memorize(f"consolidation test memory {i}", "/proj", ["test"])
 
         result = server.consolidate_now()
         assert result["status"] == "completed"
@@ -1062,7 +1062,7 @@ class TestRememberProspectiveTrigger:
     def test_todo_creates_trigger_and_fires(self, server_engines):
         """Verify TODO in content creates prospective trigger, and matching content triggers it."""
         # Store content with a TODO
-        server.remember(
+        server.memorize(
             "TODO: add input validation for email fields",
             "/proj",
             ["task"],
@@ -1077,7 +1077,7 @@ class TestRememberProspectiveTrigger:
         )
 
         # Store matching content - should trigger
-        result2 = server.remember(
+        result2 = server.memorize(
             "Added validation for email input fields in the form",
             "/proj",
             ["validation"],

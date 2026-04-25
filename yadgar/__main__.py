@@ -14,27 +14,26 @@ STARTUP_BANNER = f"""\
 Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage
 
 Active modules:
-  * StorageEngine         (SurrealDB with KV + FTS + vector search)
-  * EmbeddingEngine       (sentence-transformers)
-  * ActionLogger          (episode capture)
-  * MemoryThermodynamics  (surprise, importance, valence, decay)
-  * KnowledgeGraph        (typed relationships, causal detection)
-  * Retriever             (PPR + vector + FTS + spreading activation)
-  * MemoryCurator         (merge/link/create, contradiction, memify)
-  * ConsolidationScheduler (background consolidation daemon)
-  * AstrocytePool         (domain-aware processes: code/decisions/errors/deps)
-  * SleepComputeEngine    (dream replay, community detection)
-  * ProspectiveMemory     (future-oriented triggers)
-  * NarrativeEngine       (autobiographical project stories)
-  * StalenessDetector     (file-change watchdog)
+  * StorageEngine          (SurrealDB with KV + FTS + vector search)
+  * EmbeddingEngine        (sentence-transformers)
+  * ActionLogger           (episode capture)
+  * MemoryThermodynamics   (surprise, importance, valence, decay)
+  * KnowledgeGraph         (typed relationships)
+  * Retriever              (PPR + vector + FTS + spreading activation)
+  * MemoryCurator          (merge/link/create, contradiction detection)
+  * ConsolidationScheduler (background consolidation + sleep cycle)
+  * ProspectiveMemory      (future-oriented triggers)
+  * StalenessDetector      (file-change watchdog)
 
-MCP Tools: remember, recall, forget, validate_memory, get_project_context,
-           consolidate_now, memory_stats, rate_memory, create_trigger,
-           get_project_story, seed_project, checkpoint, restore, anchor,
-           assess_coverage, detect_gaps, install_hooks, sync_instructions
+Core tools: memorize, recall, forget, get_project_context, checkpoint,
+            restore, anchor, wiki_query, wiki_add, memory_stats
+Power tools: add_rule, get_rules, wiki_read, wiki_list, wiki_delete,
+             wiki_approve, wiki_discard, wiki_drafts, consolidate_now,
+             reembed_all, validate_memory, seed_project, install_hooks,
+             sync_instructions
 
 MCP Resources: memory://stats, memory://hot, memory://stale,
-               memory://processes, memory://narrative/{{directory}}
+               memory://processes
 """
 
 
@@ -882,6 +881,63 @@ def cmd_rules_import(args):
         storage.close()
 
 
+def cmd_setup(args):
+    """First-run setup: create config dir, write default config, print MCP snippet."""
+    import json
+
+    from yadgar import __version__
+    from yadgar.config import Settings
+
+    settings = Settings()
+    yadgar_dir = Path("~/.yadgar").expanduser()
+    yadgar_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write default config.yaml if not present
+    from yadgar.config_yaml import cmd_config_init, get_config_path
+
+    config_path = get_config_path()
+    if not config_path.exists():
+        import types
+
+        _fake = types.SimpleNamespace(force=False)
+        cmd_config_init(_fake)
+        print(f"Config written: {config_path}")
+    else:
+        print(f"Config already exists: {config_path}")
+
+    # Data directory
+    db_dir = Path(settings.DB_PATH).expanduser().parent
+    db_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Data directory: {db_dir}")
+
+    # MCP config snippet
+    mcp_config = {
+        "mcpServers": {
+            "yadgar": {
+                "command": "yadgar",
+                "args": [],
+                "env": {},
+            }
+        }
+    }
+    print()
+    print("=== Yadgar v" + __version__ + " — setup complete ===")
+    print()
+    print("Add to ~/.claude.json (merge with existing mcpServers):")
+    print()
+    print(json.dumps(mcp_config, indent=2))
+    print()
+    print("Next steps:")
+    print("  1. Restart Claude Code — Yadgar tools will appear automatically")
+    print("  2. In Claude: get_project_context('/your/project')")
+    print("  3. In Claude: memorize('First memory', '/your/project', ['setup'])")
+    print()
+    print("Optional — run as persistent daemon (recommended for heavy use):")
+    print("  yadgar daemon start")
+    print("  yadgar daemon configure-mcp   # switch to HTTP transport")
+    print("  yadgar daemon install-service # auto-start on login")
+
+
 def cmd_viz(args):
     """Start the knowledge graph visualization server."""
     from yadgar.viz_server import run_viz_server
@@ -1076,6 +1132,9 @@ def cli():
         help="Yadgar daemon URL (default: http://127.0.0.1:8765)",
     )
 
+    # setup subcommand
+    subparsers.add_parser("setup", help="First-run setup: create config and print MCP snippet")
+
     # daemon subcommand
     daemon_parser = subparsers.add_parser("daemon", help="Manage the Yadgar background daemon")
     daemon_parser.add_argument("--port", type=int, default=None, help="Daemon port (default: 8765)")
@@ -1140,6 +1199,8 @@ def cli():
             cmd_rules_export(args)
         elif sub == "import":
             cmd_rules_import(args)
+    elif args.command == "setup":
+        cmd_setup(args)
     elif args.command == "viz":
         cmd_viz(args)
     elif args.command == "daemon":

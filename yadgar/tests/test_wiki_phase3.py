@@ -74,7 +74,7 @@ class TestWikiBlendingThreshold:
     def test_episodic_query_skips_wiki(self):
         """Temporal/episodic queries must NOT blend wiki results."""
         _wiki().add("Architecture Overview", "Core design of the system.", "architecture")
-        server.remember(content="Fixed a bug yesterday.", context="/tmp", tags=[])
+        server.memorize(content="Fixed a bug yesterday.", context="/tmp", tags=[])
         results = server.recall(query="what happened yesterday", max_results=5)
         wiki_hits = [r for r in results if r.get("_source") == "wiki"]
         assert len(wiki_hits) == 0
@@ -87,7 +87,7 @@ class TestWikiBlendingThreshold:
             "architecture",
             confidence="high",
         )
-        server.remember(
+        server.memorize(
             content="Storage engine handles all persistence operations.",
             context="/tmp",
             tags=[],
@@ -102,7 +102,7 @@ class TestWikiBlendingThreshold:
         _wiki().add(
             "Test Architecture", "Key design decisions for the test system.", "architecture"
         )
-        server.remember(content="Test system architecture notes.", context="/tmp", tags=[])
+        server.memorize(content="Test system architecture notes.", context="/tmp", tags=[])
         results = server.recall(query="test architecture", max_results=10)
         if len(results) >= 2:
             scores = [r.get("_retrieval_score", 0.0) for r in results]
@@ -117,7 +117,7 @@ class TestWikiBlendingThreshold:
                 "reference",
             )
         for i in range(5):
-            server.remember(content=f"Memory {i} about topic {i}.", context="/tmp", tags=[])
+            server.memorize(content=f"Memory {i} about topic {i}.", context="/tmp", tags=[])
         results = server.recall(query="topic", max_results=4)
         assert len(results) <= 4
 
@@ -128,7 +128,7 @@ class TestWikiBlendingThreshold:
 class TestBidirectionalLinking:
     def test_add_links_source_memories(self):
         """wiki_add with source_memory_ids should update wiki_refs on each memory."""
-        mem_result = server.remember(
+        mem_result = server.memorize(
             content="Designed the storage engine using SurrealDB.",
             context="/tmp",
             tags=[],
@@ -149,8 +149,8 @@ class TestBidirectionalLinking:
 
     def test_upsert_merges_source_memories_and_links(self):
         """Upserting a wiki page with new memory IDs links those memories too."""
-        m1 = server.remember(content="First design note.", context="/tmp", tags=[])["id"]
-        m2 = server.remember(content="Second design note.", context="/tmp", tags=[])["id"]
+        m1 = server.memorize(content="First design note.", context="/tmp", tags=[])["id"]
+        m2 = server.memorize(content="Second design note.", context="/tmp", tags=[])["id"]
 
         _wiki().add("Design Notes", "Initial design.", source_memory_ids=[m1])
         _wiki().add("Design Notes", "Updated design.", source_memory_ids=[m2])
@@ -160,7 +160,7 @@ class TestBidirectionalLinking:
 
     def test_ingest_links_source_memories_new_page(self):
         """wiki_ingest on a new page should link source memories."""
-        mid = server.remember(content="Wrote the ingestion module.", context="/tmp", tags=[])["id"]
+        mid = server.memorize(content="Wrote the ingestion module.", context="/tmp", tags=[])["id"]
         _wiki().ingest("Notes about ingestion.", title="Ingestion Notes", source_memory_ids=[mid])
         mem = _storage().get_memory(mid)
         assert "ingestion-notes" in (mem.get("wiki_refs") or [])
@@ -168,14 +168,14 @@ class TestBidirectionalLinking:
     def test_ingest_links_source_memories_existing_page(self):
         """wiki_ingest on an existing page should also link new source memories."""
         _wiki().add("Existing Page", "Initial content.")
-        mid = server.remember(content="Added to existing page.", context="/tmp", tags=[])["id"]
+        mid = server.memorize(content="Added to existing page.", context="/tmp", tags=[])["id"]
         _wiki().ingest("Update content.", title="Existing Page", source_memory_ids=[mid])
         mem = _storage().get_memory(mid)
         assert "existing-page" in (mem.get("wiki_refs") or [])
 
     def test_no_duplicate_refs(self):
         """Adding the same page twice should not duplicate wiki_refs."""
-        mid = server.remember(content="Original note.", context="/tmp", tags=[])["id"]
+        mid = server.memorize(content="Original note.", context="/tmp", tags=[])["id"]
         _wiki().add("My Page", "Content.", source_memory_ids=[mid])
         _wiki().add("My Page", "Updated content.", source_memory_ids=[mid])
         mem = _storage().get_memory(mid)

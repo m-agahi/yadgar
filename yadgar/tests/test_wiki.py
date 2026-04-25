@@ -337,7 +337,7 @@ class TestRecallIntegration:
             confidence="high",
         )
         # Also store a memory so recall has something to blend with
-        server.remember(
+        server.memorize(
             content="Yadgar uses SurrealDB for storage.",
             context="/tmp/test",
             tags=["test"],
@@ -348,7 +348,7 @@ class TestRecallIntegration:
         assert wiki_results[0].get("title") == "Yadgar Architecture"
 
     def test_recall_without_wiki_still_works(self):
-        server.remember(
+        server.memorize(
             content="A plain memory without any wiki pages related.",
             context="/tmp/test",
             tags=["test"],

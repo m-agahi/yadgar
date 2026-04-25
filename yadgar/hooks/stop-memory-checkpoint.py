@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Yadgar stop hook — periodic memory checkpoint.
 
-Fires every INTERVAL human messages and prompts Claude to call remember()
+Fires every INTERVAL human messages and prompts Claude to call memorize()
 with key decisions/context from the session, then continue the conversation.
 
 Installed globally to ~/.claude/hooks/ so it fires in every session
@@ -19,7 +19,7 @@ from pathlib import Path
 INTERVAL = 25  # human messages between checkpoints
 
 _PROMPT = (
-    "Yadgar checkpoint: call remember() once or twice to capture key decisions, "
+    "Yadgar checkpoint: call memorize() once or twice to capture key decisions, "
     "context, or learnings from this session. Be concise. "
     "Then continue the conversation naturally."
 )

@@ -347,7 +347,8 @@ class TestProtectedSlotBehavior:
 class TestIntegrationRemember:
     def test_integration_remember(self, tmp_path):
         """remember() response should include temporal links when engram is active."""
-        from yadgar.server import init_engines, remember, shutdown
+        from yadgar.server import init_engines, shutdown
+        from yadgar.server import memorize as remember
 
         db_path = str(tmp_path / "test_integration.db")
         try:
@@ -378,7 +379,8 @@ class TestIntegrationRemember:
 
     def test_integration_remember_temporal_link_content(self, tmp_path):
         """Verify that temporal links actually point to related memories."""
-        from yadgar.server import init_engines, remember, shutdown
+        from yadgar.server import init_engines, shutdown
+        from yadgar.server import memorize as remember
 
         db_path = str(tmp_path / "test_integration2.db")
         try:
