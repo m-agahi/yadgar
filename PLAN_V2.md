@@ -20,7 +20,7 @@ Yadgar is a biologically-inspired persistent memory engine for Claude Code. Afte
 
 ---
 
-## Phase 0: Finish the Design (Prune Dead Code)
+## ✅ Phase 0: Finish the Design (Prune Dead Code) — COMPLETE (commits aeffcfb, 41d7644)
 
 **Goal**: Remove experiments that didn't work. Every remaining module earns its place.
 
@@ -89,7 +89,7 @@ Keep the biological branding externally ("biologically-inspired memory engine").
 
 ---
 
-## Phase 1: Simplify Retrieval
+## ✅ Phase 1: Simplify Retrieval — COMPLETE (commits aeffcfb, 41d7644)
 
 **Goal**: Cut from 8 signals to 3-4. Re-enable FTS. Break apart retrieval.py (2,592 lines).
 
@@ -164,7 +164,7 @@ retrieval_profile: balanced  # fast | balanced | full
 
 ---
 
-## Phase 2: Rules Engine as Policy Layer + Secret Protection
+## ✅ Phase 2: Rules Engine as Policy Layer + Secret Protection — COMPLETE (commit 2ad0987)
 
 **Goal**: Rules engine governs both write path (remember, wiki_add) and read path (recall). Built-in secret detection prevents sensitive data from being stored.
 
@@ -273,7 +273,7 @@ Also: rules should be stored with `is_protected`-equivalent semantics — they s
 
 ---
 
-## Phase 3: Fix Wiki Architecture
+## ✅ Phase 3: Fix Wiki Architecture — COMPLETE (commit 1f5b73c)
 
 **Goal**: Wiki blending is relevance-gated, bidirectional linking works, auto-curation via LLM proposals.
 

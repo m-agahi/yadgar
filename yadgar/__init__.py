@@ -1,1 +1,6 @@
-__version__ = "1.6.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("yadgar")
+except PackageNotFoundError:
+    __version__ = "unknown"
