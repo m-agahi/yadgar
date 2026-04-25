@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "yadgar": {
+      "command": "yadgar",
+      "env": {
+        "YADGAR_PROFILE": "minimal"
+      }
+    }
+  }
+}

@@ -385,15 +385,24 @@ wiki_autocuration:
 
 ---
 
-## Phase 4: Tool Audit & Tiering
+## ✅ Phase 4: Tool Audit & Tiering — COMPLETE
 
 **Goal**: Reduce from 31 tools to ~10 core (always loaded) + power tier (on demand).
 
-### 4.1 Core Tier (Always Loaded)
+### 4.0 TODOs (implement during this phase)
+
+- **Merge `wiki_ingest` into `wiki_add`**: Add `append: bool = False` parameter to `wiki_add`. When `append=True`, treat the content as appended to an existing page (current `wiki_ingest` behavior). Drop `wiki_ingest` as a separate MCP tool. Update all callers, tests, and Phase 2 write-policy references.
+- **Two install-time MCP config profiles**: Instead of dynamic tool loading at runtime (infeasible — MCP sends full schema at session init), ship two static config files:
+  - `minimal` — core 10 tools only (default for new installs)
+  - `full` — all tools including power tier (for power users)
+  - Document both profiles in `yadgar setup` output and README.
+- **Hard rename `remember` → `memorize`** deferred to Phase 6 (breaking change — see Phase 6 TODO).
+
+### 4.1 Core Tier (Always Loaded, minimal profile)
 
 | # | Tool | Purpose |
 |---|---|---|
-| 1 | `remember` | Write memories |
+| 1 | `memorize` | Write memories (renamed from `remember` — see Phase 6) |
 | 2 | `recall` | Read memories |
 | 3 | `get_project_context` | Session context |
 | 4 | `forget` | Delete memories |
@@ -401,16 +410,16 @@ wiki_autocuration:
 | 6 | `restore` | Reload working state |
 | 7 | `anchor` | Protect critical facts |
 | 8 | `wiki_query` | Search wiki + memories |
-| 9 | `wiki_add` | Create wiki pages |
+| 9 | `wiki_add` | Create/append wiki pages (`append=False` → create, `append=True` → ingest) |
 | 10 | `memory_stats` | System health |
-| 11 | `add_rule` | Create policy rules |
-| 12 | `get_rules` | View active rules |
 
-### 4.2 Power Tier (Loaded on Demand)
+**10 core tools.**
 
-Loaded via `load_tools("wiki")` or `load_tools("admin")` or auto-loaded when a power tool is first called:
+### 4.2 Power Tier (full profile only)
 
-**Wiki tools**: `wiki_read`, `wiki_list`, `wiki_delete`, `wiki_ingest`, `wiki_lint`, `wiki_approve`, `wiki_discard`, `wiki_drafts`
+**Rules tools**: `add_rule`, `get_rules`
+
+**Wiki tools**: `wiki_read`, `wiki_list`, `wiki_delete`, `wiki_lint`, `wiki_approve`, `wiki_discard`, `wiki_drafts`
 
 **Admin tools**: `consolidate_now`, `reembed_all`, `validate_memory`, `seed_project`, `install_hooks`, `sync_instructions`
 
@@ -427,8 +436,9 @@ Loaded via `load_tools("wiki")` or `load_tools("admin")` or auto-loaded when a p
 | `detect_gaps` | Metacognition removed (Phase 0) |
 | `get_project_story` | Narrative engine removed (Phase 0) |
 | `create_trigger` | Prospective memory — unused |
+| `wiki_ingest` | Merged into `wiki_add` via `append=True` parameter |
 
-**9 tools removed. 31 → 22 → split into 12 core + 10 power.**
+**10 tools removed. 31 → 21 → split into 10 core + 11 power.**
 
 ### 4.4 MCP Resources Audit
 
@@ -438,9 +448,10 @@ Remove `memory://narrative/{directory}` (narrative engine deleted). Keep others 
 
 ### 4.5 Verification
 
-- Core tools load on startup
-- Power tools load on demand without errors
+- Core tools load on startup (minimal profile: 10 tools)
+- Power tools present in full profile config
 - Removed tools are fully gone (no dangling references)
+- `wiki_add(append=True)` behaves identically to old `wiki_ingest`
 - Tool schema token overhead measured before/after
 
 ---
@@ -487,6 +498,16 @@ Fix:
 ## Phase 6: Portability & Packaging
 
 **Goal**: `pip install yadgar && yadgar start` works on macOS, Linux, any Python ≥3.11.
+
+### 6.0 TODOs (implement before packaging)
+
+- **Hard rename `remember` → `memorize`** (breaking change — deferred from Phase 4):
+  - Rename MCP tool `remember` → `memorize` in `server.py`
+  - Update `install_hooks` and all generated hook scripts (PostToolUse hook references `remember`)
+  - Update `sync_instructions` template (CLAUDE.md snippet references `remember`)
+  - Update CLAUDE.md global instructions (all `remember(...)` calls → `memorize(...)`)
+  - Bump major version (3.0.0) — this is a breaking API change for existing users
+  - Add shim: if client calls `remember`, return a clear error: `"Tool renamed to memorize — update your MCP config"`
 
 ### 6.1 Remove Platform Assumptions
 
