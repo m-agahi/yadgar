@@ -123,7 +123,7 @@ settings = get_settings()
 
 mcp_server = FastMCP(
     name="yadgar",
-    instructions="Biologically-inspired persistent memory engine for Claude Code.",
+    instructions="Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage.",
     host="127.0.0.1",
     port=settings.PORT,
 )
