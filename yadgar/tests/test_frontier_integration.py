@@ -311,7 +311,7 @@ class TestConsolidationFullCycle:
 class TestAllMCPToolsRegistered:
     """test_all_mcp_tools_registered: all MCP tools are accessible."""
 
-    def test_all_15_tools_registered(self):
+    def test_core_tools_registered(self):
         tools = mcp_server_tools()
         tool_names = {t.name for t in tools}
 
@@ -319,23 +319,20 @@ class TestAllMCPToolsRegistered:
             "remember",
             "recall",
             "forget",
-            "validate_memory",
             "get_project_context",
-            "consolidate_now",
             "memory_stats",
-            "rate_memory",
-            "add_rule",
-            "get_rules",
-            "get_causal_chain",
-            "assess_coverage",
-            "detect_gaps",
+            "checkpoint",
+            "restore",
+            "anchor",
+            "wiki_add",
+            "wiki_query",
         }
 
         for tool_name in expected_tools:
             assert tool_name in tool_names, f"Tool '{tool_name}' not registered"
 
-        # Verify we have at least 14 tools (expected minimum)
-        assert len(tool_names) >= 14
+        # Verify we have at least 10 tools (core minimum)
+        assert len(tool_names) >= 10
 
 
 # ── Tests: Memory Stats ──────────────────────────────────────────────
@@ -450,29 +447,3 @@ class TestAddRule:
         rules = server.get_rules()
         assert len(rules) >= 1
         assert any(r["condition"] == "importance > 0.5" for r in rules)
-
-
-class TestGetCausalChain:
-    def test_get_causal_chain_returns_dict(self):
-        result = server.get_causal_chain("test_entity")
-        assert isinstance(result, dict)
-        assert "entity" in result
-
-
-class TestAssessCoverage:
-    def test_assess_coverage_returns_dict(self):
-        _store_novel_memory(
-            "Coverage test: Python testing best practices with pytest",
-            "/test/coverage",
-            ["testing", "python"],
-        )
-        result = server.assess_coverage("Python testing")
-        assert isinstance(result, dict)
-        assert "coverage" in result
-        assert "suggestion" in result
-
-
-class TestDetectGaps:
-    def test_detect_gaps_returns_list(self):
-        result = server.detect_gaps("/test/gaps")
-        assert isinstance(result, list)

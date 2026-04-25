@@ -958,13 +958,13 @@ class TestAllMCPTools:
             "remember",
             "recall",
             "forget",
-            "validate_memory",
             "get_project_context",
-            "consolidate_now",
             "memory_stats",
-            "rate_memory",
-            "create_trigger",
-            "get_project_story",
+            "checkpoint",
+            "restore",
+            "anchor",
+            "wiki_add",
+            "wiki_query",
         }
         assert expected_tools.issubset(tool_names), f"Missing tools: {expected_tools - tool_names}"
 
@@ -1087,59 +1087,3 @@ class TestRememberProspectiveTrigger:
         # (depends on keyword matching)
         # At minimum, the memory was created successfully
         assert result2["id"] is not None
-
-
-class TestRateMemory:
-    def test_rate_memory_through_server(self, server_engines):
-        """Verify rate_memory MCP tool works."""
-        mem = server.remember("rate this memory", "/proj", ["test"])
-        mid = mem["id"]
-
-        # Rate as useful
-        result = server.rate_memory(mid, was_useful=True)
-        assert result["status"] == "rated"
-        assert result["was_useful"] is True
-        assert result["access_count"] == 1
-        assert result["useful_count"] == 1
-
-        # Rate as not useful
-        result = server.rate_memory(mid, was_useful=False)
-        assert result["access_count"] == 2
-        assert result["useful_count"] == 1
-
-
-class TestCreateTrigger:
-    def test_create_trigger_through_server(self, server_engines):
-        """Verify create_trigger MCP tool works."""
-        result = server.create_trigger(
-            content="Remind me to update docs",
-            trigger_condition="update documentation",
-            trigger_type="keyword_match",
-            target_directory="/proj",
-        )
-        assert result["status"] == "created"
-        assert result["prospective_memory_id"] is not None
-
-
-class TestGetProjectStory:
-    def test_project_story_through_server(self, server_engines):
-        """Verify get_project_story MCP tool works."""
-        # Store some memories
-        server.remember(
-            "Decided to use SQLite for the database backend",
-            "/proj/story",
-            ["decision", "database"],
-        )
-        server.remember(
-            "Fixed authentication bug in login endpoint",
-            "/proj/story",
-            ["fix", "auth"],
-        )
-
-        # Generate narrative first
-        if server._narrative is not None:
-            server._narrative.generate_narrative("/proj/story", period_hours=24)
-
-        story = server.get_project_story("/proj/story")
-        assert isinstance(story, str)
-        assert len(story) > 0

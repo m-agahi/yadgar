@@ -113,6 +113,25 @@ mcp_server = FastMCP(
     port=settings.PORT,
 )
 
+# ── Tool profile (read at import time — decorators execute on module load) ────
+# YADGAR_PROFILE=minimal  →  10 core tools only
+# YADGAR_PROFILE=full     →  all tools including power tier (default)
+_PROFILE = os.environ.get("YADGAR_PROFILE", "full")
+
+
+def _tool(power: bool = False):
+    """Register a function as an MCP tool.
+
+    power=True tools are omitted when YADGAR_PROFILE=minimal.
+    """
+
+    def decorator(func):
+        if power and _PROFILE == "minimal":
+            return func  # skip registration; function still callable internally
+        return mcp_server.tool()(func)
+
+    return decorator
+
 
 # ── Custom HTTP Endpoints ─────────────────────────────────────────────
 
@@ -523,7 +542,7 @@ def _file_hash(filepath: str) -> str | None:
 # ── MCP Tools ──────────────────────────────────────────────────────────
 
 
-@mcp_server.tool()
+@_tool()
 def remember(
     content: str,
     context: str,
@@ -836,7 +855,7 @@ def remember(
     return memory
 
 
-@mcp_server.tool()
+@_tool()
 def recall(query: str, max_results: int = 5, min_heat: float = 0.0) -> list[dict]:
     """Semantic + keyword search filtered by heat. Boosts accessed memories."""
     storage = _get_storage()
@@ -949,7 +968,7 @@ def recall(query: str, max_results: int = 5, min_heat: float = 0.0) -> list[dict
     return merged
 
 
-@mcp_server.tool()
+@_tool()
 def forget(memory_id: int) -> dict:
     """Mark a memory for deletion by setting heat to 0, then delete it."""
     storage = _get_storage()
@@ -960,7 +979,7 @@ def forget(memory_id: int) -> dict:
     return {"memory_id": memory_id, "status": "deleted"}
 
 
-@mcp_server.tool()
+@_tool(power=True)
 def validate_memory(memory_id: int) -> dict:
     """Check memory validity against current file state."""
     if _staleness is not None:
@@ -993,7 +1012,7 @@ def validate_memory(memory_id: int) -> dict:
     return {"memory_id": memory_id, "is_valid": True, "reason": "file hash matches"}
 
 
-@mcp_server.tool()
+@_tool()
 def get_project_context(directory: str) -> dict:
     """Return all hot memories for a directory, sorted by heat descending.
 
@@ -1034,7 +1053,7 @@ def get_project_context(directory: str) -> dict:
     return result
 
 
-@mcp_server.tool()
+@_tool(power=True)
 def consolidate_now() -> dict:
     """Trigger an immediate consolidation cycle."""
     if _consolidation is not None:
@@ -1051,7 +1070,7 @@ def consolidate_now() -> dict:
     return {"status": "error", "message": "Consolidation engine not initialized"}
 
 
-@mcp_server.tool()
+@_tool(power=True)
 def reembed_all() -> dict:
     """Generate embeddings for all memories that are missing them.
 
@@ -1087,7 +1106,7 @@ def reembed_all() -> dict:
     }
 
 
-@mcp_server.tool()
+@_tool()
 def memory_stats() -> dict:
     """Return system memory statistics."""
     storage = _get_storage()
@@ -1131,58 +1150,7 @@ def memory_stats() -> dict:
     return stats
 
 
-@mcp_server.tool()
-def rate_memory(memory_id: int, was_useful: bool) -> dict:
-    """Rate a memory's usefulness for metamemory tracking."""
-    storage = _get_storage()
-    thermo = _get_thermo()
-
-    mem = storage.get_memory(memory_id)
-    if mem is None:
-        return {"memory_id": memory_id, "status": "not_found"}
-
-    thermo.record_access(memory_id, was_useful)
-
-    updated = storage.get_memory(memory_id)
-    return {
-        "memory_id": memory_id,
-        "status": "rated",
-        "was_useful": was_useful,
-        "access_count": updated.get("access_count", 0),
-        "useful_count": updated.get("useful_count", 0),
-        "confidence": updated.get("confidence", 1.0),
-        "stability": updated.get("stability", 0.0),
-    }
-
-
-@mcp_server.tool()
-def create_trigger(
-    content: str,
-    trigger_condition: str,
-    trigger_type: str,
-    target_directory: str | None = None,
-) -> dict:
-    """Create a prospective memory trigger that fires on matching context."""
-    if _prospective is None:
-        return {"status": "error", "message": "ProspectiveMemoryEngine not initialized"}
-    pm_id = _prospective.create_trigger(
-        content,
-        trigger_condition,
-        trigger_type,
-        target_directory,
-    )
-    return {"status": "created", "prospective_memory_id": pm_id}
-
-
-@mcp_server.tool()
-def get_project_story(directory: str) -> str:
-    """Get the autobiographical narrative for a project directory."""
-    if _narrative is None:
-        return "NarrativeEngine not initialized"
-    return _narrative.get_project_story(directory)
-
-
-@mcp_server.tool()
+@_tool(power=True)
 def add_rule(
     rule_type: str,
     scope: str,
@@ -1216,7 +1184,7 @@ def add_rule(
         return {"status": "error", "message": str(e)}
 
 
-@mcp_server.tool()
+@_tool(power=True)
 def get_rules(directory: str = "") -> list[dict]:
     """Get active rules. If directory is provided, returns only applicable rules."""
     if _rules_engine is None:
@@ -1226,40 +1194,7 @@ def get_rules(directory: str = "") -> list[dict]:
     return _rules_engine.get_all_rules()
 
 
-@mcp_server.tool()
-def get_causal_chain(entity: str) -> dict:
-    """Get causal causes and effects for an entity from the PC algorithm DAG."""
-    if _causal is None:
-        return {"error": "CausalDiscovery not initialized"}
-    return _causal.get_causal_chain(entity)
-
-
-@mcp_server.tool()
-def assess_coverage(query: str, directory: str = "") -> dict:
-    """Assess how well Yadgar knows about a topic.
-
-    Returns coverage score (0-1), confidence, suggestion
-    (sufficient/partial/insufficient), identified gaps, and signal breakdowns.
-    """
-    if _metacognition is None:
-        return {"error": "MetaCognition not initialized"}
-    return _metacognition.assess_coverage(query, directory)
-
-
-@mcp_server.tool()
-def detect_gaps(directory: str) -> list[dict]:
-    """Detect knowledge gaps for a project directory.
-
-    Returns list of gaps with type (isolated_entity, stale_region,
-    low_confidence, missing_connection, one_sided_knowledge),
-    description, severity, affected entities, and suggestions.
-    """
-    if _metacognition is None:
-        return [{"error": "MetaCognition not initialized"}]
-    return _metacognition.detect_gaps(directory)
-
-
-@mcp_server.tool()
+@_tool()
 def checkpoint(
     directory: str,
     current_task: str = "",
@@ -1300,7 +1235,7 @@ def checkpoint(
     )
 
 
-@mcp_server.tool()
+@_tool()
 def restore(directory: str = "") -> dict:
     """Restore context after compaction using Hippocampal Replay.
 
@@ -1318,7 +1253,7 @@ def restore(directory: str = "") -> dict:
     return replay.restore(directory=directory)
 
 
-@mcp_server.tool()
+@_tool()
 def anchor(content: str, context: str, reason: str = "") -> dict:
     """Mark critical context as compaction-resistant.
 
@@ -1340,7 +1275,7 @@ def anchor(content: str, context: str, reason: str = "") -> dict:
     }
 
 
-@mcp_server.tool()
+@_tool(power=True)
 def install_hooks(project_directory: str = "") -> dict:
     """Install Claude Code hooks for automatic memory capture and replay.
 
@@ -1522,7 +1457,7 @@ def install_hooks(project_directory: str = "") -> dict:
     }
 
 
-@mcp_server.tool()
+@_tool(power=True)
 def sync_instructions(claude_md_path: str = "") -> dict:
     """Sync Yadgar instructions into the global CLAUDE.md file.
 
@@ -1570,8 +1505,8 @@ def sync_instructions(claude_md_path: str = "") -> dict:
 - `sync_instructions(claude_md_path)` — Update CLAUDE.md with latest rules
 - `consolidate_now()` — Force consolidation cycle
 - `memory_stats()` — System statistics
-- `assess_coverage(query, directory)` — Knowledge coverage check
-- `detect_gaps(directory)` — Find knowledge gaps
+- `wiki_add(title, content, append=False)` — Create or append wiki pages
+- `wiki_query(query)` — Search wiki pages
 - `seed_project(directory, dry_run)` — Bootstrap memory for an existing project in one call
 
 ### Auto-Capture Hooks (v1.3.0)
@@ -1656,18 +1591,10 @@ def resource_processes() -> str:
     return json.dumps(pool.get_process_stats(), default=str)
 
 
-@mcp_server.resource("memory://narrative/{directory}")
-def resource_narrative(directory: str) -> str:
-    """Project story for a directory."""
-    if _narrative is None:
-        return json.dumps({"error": "NarrativeEngine not initialized"})
-    return _narrative.get_project_story(directory)
-
-
 # ── Project Seeding ────────────────────────────────────────────────────
 
 
-@mcp_server.tool()
+@_tool(power=True)
 def seed_project(directory: str, dry_run: bool = False) -> dict:
     """Bootstrap Yadgar memory for an existing project in one call.
 
@@ -1702,7 +1629,7 @@ def seed_project(directory: str, dry_run: bool = False) -> dict:
 # ── Wiki tools ─────────────────────────────────────────────────────────────
 
 
-@mcp_server.tool()
+@_tool()
 def wiki_add(
     title: str,
     content: str,
@@ -1710,8 +1637,13 @@ def wiki_add(
     tags: list[str] | None = None,
     source_memory_ids: list[int] | None = None,
     confidence: str = "medium",
+    append: bool = False,
 ) -> dict:
     """Create or update a wiki page. Content can include [[slug]] cross-references.
+
+    append=False (default): create a new page or overwrite an existing one.
+    append=True: merge content into an existing page (appends with timestamp,
+      merges tags and source_memory_ids). Use for accumulating knowledge over time.
 
     Categories: architecture, decision, pattern, debugging, reference, convention, fact, analysis.
     Confidence: high, medium, low.
@@ -1731,11 +1663,15 @@ def wiki_add(
         if wp_modified is not None:
             content = wp_modified
 
-    result = _wiki.add(title, content, category, tags or [], source_memory_ids, confidence)
+    if append:
+        result = _wiki.ingest(content, title, tags, source_memory_ids)
+    else:
+        result = _wiki.add(title, content, category, tags or [], source_memory_ids, confidence)
     result.pop("embedding", None)
+    event_type = "wiki_updated" if result.get("_merged") else "wiki_added"
     _push_event(
         {
-            "event": "wiki_added",
+            "event": event_type,
             "node": {
                 "id": f"wiki:{result.get('id', '')}",
                 "slug": result.get("slug", ""),
@@ -1746,7 +1682,7 @@ def wiki_add(
     return result
 
 
-@mcp_server.tool()
+@_tool()
 def wiki_query(
     query: str,
     tags: list[str] | None = None,
@@ -1764,7 +1700,7 @@ def wiki_query(
     return results
 
 
-@mcp_server.tool()
+@_tool(power=True)
 def wiki_read(slug: str) -> dict:
     """Read a specific wiki page by slug."""
     assert _wiki is not None, "WikiStore not initialized"
@@ -1775,7 +1711,7 @@ def wiki_read(slug: str) -> dict:
     return page
 
 
-@mcp_server.tool()
+@_tool(power=True)
 def wiki_delete(slug: str) -> dict:
     """Delete a wiki page by slug."""
     assert _wiki is not None, "WikiStore not initialized"
@@ -1786,7 +1722,7 @@ def wiki_delete(slug: str) -> dict:
     return {"deleted": False, "error": f"Wiki page '{slug}' not found"}
 
 
-@mcp_server.tool()
+@_tool(power=True)
 def wiki_list(category: str | None = None) -> list[dict]:
     """List all wiki pages, optionally filtered by category.
 
@@ -1802,50 +1738,7 @@ def wiki_list(category: str | None = None) -> list[dict]:
     return pages
 
 
-@mcp_server.tool()
-def wiki_ingest(
-    content: str,
-    title: str | None = None,
-    tags: list[str] | None = None,
-    source_memory_ids: list[int] | None = None,
-) -> dict:
-    """Ingest content into the wiki. Merges into existing page if title matches.
-
-    If a page with the same slug already exists, content is appended with a timestamp.
-    Tags and source_memory_ids are merged. Use for accumulating knowledge over time.
-    """
-    assert _wiki is not None, "WikiStore not initialized"
-
-    # Secret detection and write-path rules
-    sec_blocked, sec_reason, sec_pattern = check_secrets(content)
-    if sec_blocked:
-        return {"stored": False, "reason": sec_reason, "pattern_matched": sec_pattern}
-    if _rules_engine is not None:
-        wp_blocked, wp_reason, wp_modified = _rules_engine.check_write_policy(
-            content, "", tags or []
-        )
-        if wp_blocked:
-            return {"stored": False, "reason": f"blocked_by_policy: {wp_reason}"}
-        if wp_modified is not None:
-            content = wp_modified
-
-    result = _wiki.ingest(content, title, tags, source_memory_ids)
-    result.pop("embedding", None)
-    event_type = "wiki_updated" if result.get("_merged") else "wiki_added"
-    _push_event(
-        {
-            "event": event_type,
-            "node": {
-                "id": f"wiki:{result.get('id', '')}",
-                "slug": result.get("slug", ""),
-                "title": result.get("title", ""),
-            },
-        }
-    )
-    return result
-
-
-@mcp_server.tool()
+@_tool(power=True)
 def wiki_lint() -> dict:
     """Check wiki health: orphan pages, broken cross-refs, stale pages, low confidence.
 
@@ -1855,7 +1748,7 @@ def wiki_lint() -> dict:
     return _wiki.lint()
 
 
-@mcp_server.tool()
+@_tool(power=True)
 def wiki_drafts() -> list[dict]:
     """List all pending wiki drafts awaiting review.
 
@@ -1870,7 +1763,7 @@ def wiki_drafts() -> list[dict]:
     return drafts
 
 
-@mcp_server.tool()
+@_tool(power=True)
 def wiki_approve(slug: str) -> dict:
     """Promote a pending draft wiki page to a full wiki page.
 
@@ -1895,7 +1788,7 @@ def wiki_approve(slug: str) -> dict:
     return {"approved": True, "slug": slug, "page": result}
 
 
-@mcp_server.tool()
+@_tool(power=True)
 def wiki_discard(slug: str) -> dict:
     """Discard a pending wiki draft without promoting it to a full page.
 
