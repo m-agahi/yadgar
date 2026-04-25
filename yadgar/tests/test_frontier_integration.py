@@ -40,7 +40,7 @@ def _store_novel_memory(content: str, context: str = "/test/project", tags=None)
     """Store a memory that is guaranteed to pass the write gate (novel content)."""
     if tags is None:
         tags = ["testing"]
-    return server.remember(content, context, tags)
+    return server.memorize(content, context, tags)
 
 
 # ── Tests: Remember Pipeline ──────────────────────────────────────────
@@ -124,7 +124,7 @@ class TestWriteGate:
 
     def test_write_gate_passes_novel(self):
         """test_write_gate_passes_novel: high-surprisal memory stored."""
-        result = server.remember(
+        result = server.memorize(
             "Discovered critical XSS vulnerability in authentication module",
             "/test/security",
             ["critical", "security"],
@@ -148,7 +148,7 @@ class TestWriteGate:
         original_threshold = gate._threshold
         try:
             gate._threshold = 0.99  # Very high threshold — almost nothing passes
-            result = server.remember(
+            result = server.memorize(
                 "Updated the README file with project description again",
                 "/test/boring",
                 ["docs"],

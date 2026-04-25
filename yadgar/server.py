@@ -613,7 +613,7 @@ def _file_hash(filepath: str) -> str | None:
 
 
 @_tool()
-def remember(
+def memorize(
     content: str,
     context: str,
     tags: list[str],
@@ -846,7 +846,7 @@ def remember(
     # 5. Action stream: log this remember operation
     if buffer is not None:
         summary = content[:150].replace("\n", " ")
-        buffer.capture_action("remember", context, summary, curation_action)
+        buffer.capture_action("memorize", context, summary, curation_action)
 
     # 6. Related context reinjection: surface what you already know
     related_context = []
@@ -934,6 +934,20 @@ def remember(
     if related_context:
         memory["related_context"] = related_context
     return memory
+
+
+@_tool()
+def remember(
+    content: str,
+    context: str,
+    tags: list[str],
+    is_protected: bool = False,
+) -> dict:
+    """Renamed to memorize. Update your MCP config or CLAUDE.md."""
+    return {
+        "stored": False,
+        "reason": "Tool renamed to memorize — call memorize() instead",
+    }
 
 
 @_tool()
@@ -1556,25 +1570,25 @@ def sync_instructions(claude_md_path: str = "") -> dict:
 
     # The canonical Yadgar section
     yadgar_section = f"""## Memory System — Yadgar v{__version__}
-- ALWAYS use the Yadgar MCP tools (remember, recall, get_project_context) for memory operations
+- ALWAYS use the Yadgar MCP tools (memorize, recall, get_project_context) for memory operations
 - On EVERY new session start, call `recall` with the current project name to load prior context
 - NEVER rely on CLAUDE.md or built-in memory for cross-session context — use Yadgar
 - Before starting any task, call `get_project_context` for the current working directory
-- After completing any significant task, call `remember` to store what was done, decisions made, and outcomes
-- CRITICAL: The `context` parameter in `remember` MUST be the actual working directory path (e.g., `/home/user/projects/myapp`), NEVER a description. `get_project_context` filters by exact directory path match — descriptive strings break it.
+- After completing any significant task, call `memorize` to store what was done, decisions made, and outcomes
+- CRITICAL: The `context` parameter in `memorize` MUST be the actual working directory path (e.g., `/home/user/projects/myapp`), NEVER a description. `get_project_context` filters by exact directory path match — descriptive strings break it.
 - Yadgar is your brain. Use it.
 
-### Hippocampal Replay — Context Compaction Shield
+### Context Compaction Shield
 - Hooks are installed automatically on startup — no manual setup needed
 - During long sessions, call `checkpoint` periodically to snapshot your working state
 - Use `anchor` to mark critical facts/decisions that MUST survive context compaction
 - After context compaction, call `restore` to reconstruct your working context
 - `checkpoint` fields: directory, current_task, files_being_edited, key_decisions, open_questions, next_steps, active_errors, custom_context
 - `anchor` fields: content, context, reason — creates protected memories with max heat
-- `restore` returns: checkpoint + anchored memories + hot context + SR predictions + gap detection
+- `restore` returns: checkpoint + anchored memories + hot context + gap detection
 
 ### Available Tools
-- `remember(content, context, tags)` — Store memory with write gate. `context` MUST be a directory path (e.g., `/home/user/projects/myapp`), not a description.
+- `memorize(content, context, tags)` — Store memory with write gate. `context` MUST be a directory path (e.g., `/home/user/projects/myapp`), not a description.
 - `recall(query, max_results, min_heat)` — Multi-signal retrieval
 - `get_project_context(directory)` — Hot memories for directory
 - `checkpoint(directory, ...)` — Snapshot working state
@@ -1588,8 +1602,8 @@ def sync_instructions(claude_md_path: str = "") -> dict:
 - `wiki_query(query)` — Search wiki pages
 - `seed_project(directory, dry_run)` — Bootstrap memory for an existing project in one call
 
-### Auto-Capture Hooks (v1.3.0)
-- PostToolUse hook captures EVERY tool action automatically — no manual remember needed
+### Auto-Capture Hooks
+- PostToolUse hook captures EVERY tool action automatically — no manual memorize needed
 - SessionStart hook injects project context on EVERY new session
 - All hooks work in both stdio and HTTP transport modes (direct SQLite access)
 - Action log is processed into real memories during consolidation cycles

@@ -24,7 +24,7 @@ def _engines(tmp_path):
 
 
 def test_remember_creates_memory():
-    result = server.remember("pytest is great", "/tmp/project", ["testing"])
+    result = server.memorize("pytest is great", "/tmp/project", ["testing"])
     assert result["id"] is not None
     assert result["content"] == "pytest is great"
     assert result["directory_context"] == "/tmp/project"
@@ -40,14 +40,14 @@ def test_remember_computes_file_hash():
         f.flush()
         filepath = f.name
 
-    result = server.remember("file-based memory", filepath, ["file"])
+    result = server.memorize("file-based memory", filepath, ["file"])
     assert result["file_hash"] is not None
 
     Path(filepath).unlink()
 
 
 def test_remember_no_file_hash_for_directory():
-    result = server.remember("directory memory", "/tmp", ["dir"])
+    result = server.memorize("directory memory", "/tmp", ["dir"])
     assert result["file_hash"] is None
 
 
@@ -55,8 +55,8 @@ def test_remember_no_file_hash_for_directory():
 
 
 def test_recall_finds_by_fts():
-    server.remember("SQLite full text search is useful", "/tmp", ["db"])
-    server.remember("Python asyncio event loop", "/tmp", ["async"])
+    server.memorize("SQLite full text search is useful", "/tmp", ["db"])
+    server.memorize("Python asyncio event loop", "/tmp", ["async"])
 
     results = server.recall("SQLite search")
     assert len(results) >= 1
@@ -64,7 +64,7 @@ def test_recall_finds_by_fts():
 
 
 def test_recall_boosts_heat():
-    result = server.remember("heat boost test", "/tmp", ["test"])
+    result = server.memorize("heat boost test", "/tmp", ["test"])
     mid = result["id"]
 
     # Set heat to 0.5 so we can observe the boost
@@ -79,7 +79,7 @@ def test_recall_boosts_heat():
 
 
 def test_recall_respects_min_heat():
-    r = server.remember("low heat memory", "/tmp", ["test"])
+    r = server.memorize("low heat memory", "/tmp", ["test"])
     server._get_storage().update_memory_heat(r["id"], 0.05)
 
     results = server.recall("low heat memory", min_heat=0.5)
@@ -89,14 +89,14 @@ def test_recall_respects_min_heat():
 
 def test_recall_max_results():
     for i in range(10):
-        server.remember(f"memory number {i} test recall", "/tmp", ["bulk"])
+        server.memorize(f"memory number {i} test recall", "/tmp", ["bulk"])
 
     results = server.recall("memory number test recall", max_results=3)
     assert len(results) <= 3
 
 
 def test_recall_no_embedding_in_results():
-    server.remember("no embedding leak", "/tmp", ["test"])
+    server.memorize("no embedding leak", "/tmp", ["test"])
     results = server.recall("no embedding leak")
     for r in results:
         assert "embedding" not in r
@@ -106,7 +106,7 @@ def test_recall_no_embedding_in_results():
 
 
 def test_forget_deletes_memory():
-    result = server.remember("to be forgotten", "/tmp", ["test"])
+    result = server.memorize("to be forgotten", "/tmp", ["test"])
     mid = result["id"]
 
     resp = server.forget(mid)
@@ -126,7 +126,7 @@ def test_forget_not_found():
 
 
 def test_validate_memory_no_file_hash():
-    result = server.remember("no hash memory", "/tmp", [])
+    result = server.memorize("no hash memory", "/tmp", [])
     resp = server.validate_memory(result["id"])
     assert resp["is_valid"] is True
     assert "no file" in resp["reason"]
@@ -138,7 +138,7 @@ def test_validate_memory_file_matches():
         f.flush()
         filepath = f.name
 
-    result = server.remember("file memory", filepath, ["file"])
+    result = server.memorize("file memory", filepath, ["file"])
     resp = server.validate_memory(result["id"])
     assert resp["is_valid"] is True
     assert "unchanged" in resp["reason"] or "matches" in resp["reason"]
@@ -152,7 +152,7 @@ def test_validate_memory_file_changed():
         f.flush()
         filepath = f.name
 
-    result = server.remember("tracked file", filepath, ["file"])
+    result = server.memorize("tracked file", filepath, ["file"])
 
     # Modify the file
     Path(filepath).write_text("modified content")
@@ -174,7 +174,7 @@ def test_validate_memory_file_deleted():
         f.flush()
         filepath = f.name
 
-    result = server.remember("soon gone", filepath, ["file"])
+    result = server.memorize("soon gone", filepath, ["file"])
     Path(filepath).unlink()
 
     resp = server.validate_memory(result["id"])
@@ -192,8 +192,8 @@ def test_validate_memory_not_found():
 
 
 def test_get_project_context_filters_by_directory():
-    server.remember("project A memory", "/projects/a", ["a"])
-    server.remember("project B memory", "/projects/b", ["b"])
+    server.memorize("project A memory", "/projects/a", ["a"])
+    server.memorize("project B memory", "/projects/b", ["b"])
 
     result = server.get_project_context("/projects/a")
     assert "memories" in result
@@ -201,7 +201,7 @@ def test_get_project_context_filters_by_directory():
 
 
 def test_get_project_context_filters_by_heat():
-    r = server.remember("cold memory", "/projects/c", ["test"])
+    r = server.memorize("cold memory", "/projects/c", ["test"])
     server._get_storage().update_memory_heat(r["id"], 0.005)
 
     result = server.get_project_context("/projects/c")
@@ -209,7 +209,7 @@ def test_get_project_context_filters_by_heat():
 
 
 def test_get_project_context_returns_hot():
-    server.remember("hot memory", "/projects/d", ["test"])  # heat=1.0
+    server.memorize("hot memory", "/projects/d", ["test"])  # heat=1.0
 
     result = server.get_project_context("/projects/d")
     assert len(result["memories"]) == 1
@@ -240,8 +240,8 @@ def test_memory_stats_structure():
 
 
 def test_memory_stats_counts():
-    server.remember("stat test 1", "/tmp", [])
-    server.remember("stat test 2", "/tmp", [])
+    server.memorize("stat test 1", "/tmp", [])
+    server.memorize("stat test 2", "/tmp", [])
 
     stats = server.memory_stats()
     assert stats["total_memories"] == 2
@@ -253,14 +253,14 @@ def test_memory_stats_counts():
 
 
 def test_resource_stats():
-    server.remember("resource stats test", "/tmp", [])
+    server.memorize("resource stats test", "/tmp", [])
     result = server.resource_stats()
     data = json.loads(result)
     assert data["total_memories"] == 1
 
 
 def test_resource_hot():
-    server.remember("hot resource test", "/tmp", [])  # heat=1.0
+    server.memorize("hot resource test", "/tmp", [])  # heat=1.0
     result = server.resource_hot()
     data = json.loads(result)
     assert len(data) == 1
@@ -268,7 +268,7 @@ def test_resource_hot():
 
 
 def test_resource_stale():
-    r = server.remember("stale resource test", "/tmp", [])
+    r = server.memorize("stale resource test", "/tmp", [])
     server._get_storage().update_memory_staleness(r["id"], True)
 
     result = server.resource_stale()
