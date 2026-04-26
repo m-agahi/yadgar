@@ -1,0 +1,15 @@
+.venv
+.git
+.github
+.forgejo
+.omc
+.claude
+.ruff_cache
+.pytest_cache
+__pycache__
+*.pyc
+*.egg-info
+dist
+build
+benchmarks
+PLAN*.md

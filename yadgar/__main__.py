@@ -6,6 +6,7 @@ from datetime import UTC
 from pathlib import Path
 
 from yadgar import __version__
+from yadgar.daemon import DOCKERHUB_IMAGE
 
 VALID_TRANSPORTS = ("stdio", "sse", "streamable-http")
 
@@ -188,9 +189,42 @@ def cmd_context(args):
 
 
 def cmd_stats(args):
-    """Show detailed memory statistics."""
+    """Show detailed memory statistics.
+
+    Tries the running daemon's HTTP endpoint first (works when server is in Docker).
+    Falls back to direct DB access when no daemon is reachable.
+    """
     import json
+    import os as _os
+    import urllib.parse
+    import urllib.request
     from datetime import datetime
+
+    port = int(_os.environ.get("YADGAR_PORT", "8765"))
+    http_url = f"http://127.0.0.1:{port}/api/stats"
+    if args.project:
+        http_url += "?" + urllib.parse.urlencode({"project": args.project})
+    try:
+        resp = urllib.request.urlopen(http_url, timeout=2)
+        data = json.loads(resp.read().decode())
+        if args.format == "json":
+            print(json.dumps(data, indent=2))
+        else:
+            # Brief summary — daemon has limited stats; full detail needs direct DB
+            header = f"=== Yadgar Stats{f' — {args.project}' if args.project else ''} ==="
+            print(header)
+            print()
+            print(f"  Total:    {data.get('total_memories', '?')}")
+            print(f"  Active:   {data.get('active_count', '?')}")
+            print(f"  Archived: {data.get('archived_count', '?')}")
+            print(f"  Stale:    {data.get('stale_count', '?')}")
+            print(f"  Avg heat: {data.get('avg_heat', 0):.4f}")
+            print(f"  Last consolidation: {data.get('last_consolidation', 'n/a')}")
+            print()
+            print("(Daemon running in Docker — for full stats run with direct DB access)")
+        return
+    except Exception:
+        pass  # daemon not running or unreachable — fall back to direct DB access
 
     from surrealdb import Surreal
 
@@ -882,13 +916,22 @@ def cmd_rules_import(args):
 
 
 def cmd_setup(args):
-    """First-run setup: create config dir, write default config, print MCP snippet."""
+    """First-run setup: check Docker, create config dir, print MCP snippet."""
     import json
 
     from yadgar import __version__
-    from yadgar.config import Settings
+    from yadgar.daemon import YadgarDaemon
 
-    settings = Settings()
+    # ── Docker check ──
+    print("Checking Docker...", end="  ", flush=True)
+    check = YadgarDaemon.check_docker()
+    if check["ok"]:
+        print(f"✓ Docker {check.get('version', 'available')}")
+    else:
+        print(f"✗ {check['reason']}")
+        print("  Install Docker Desktop or Docker Engine and re-run setup.")
+        # Don't exit — let the rest of setup complete so config is written
+
     yadgar_dir = Path("~/.yadgar").expanduser()
     yadgar_dir.mkdir(parents=True, exist_ok=True)
 
@@ -903,39 +946,51 @@ def cmd_setup(args):
         cmd_config_init(_fake)
         print(f"Config written: {config_path}")
     else:
-        print(f"Config already exists: {config_path}")
+        print(f"Config:         {config_path}")
 
-    # Data directory
-    db_dir = Path(settings.DB_PATH).expanduser().parent
-    db_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Data directory: {db_dir}")
-
-    # MCP config snippet
-    mcp_config = {
-        "mcpServers": {
-            "yadgar": {
-                "command": "yadgar",
-                "args": [],
-                "env": {},
-            }
-        }
-    }
     print()
     print("=== Yadgar v" + __version__ + " — setup complete ===")
     print()
-    print("Add to ~/.claude.json (merge with existing mcpServers):")
-    print()
-    print(json.dumps(mcp_config, indent=2))
-    print()
-    print("Next steps:")
-    print("  1. Restart Claude Code — Yadgar tools will appear automatically")
-    print("  2. In Claude: get_project_context('/your/project')")
-    print("  3. In Claude: memorize('First memory', '/your/project', ['setup'])")
-    print()
-    print("Optional — run as persistent daemon (recommended for heavy use):")
-    print("  yadgar daemon start")
-    print("  yadgar daemon configure-mcp   # switch to HTTP transport")
-    print("  yadgar daemon install-service # auto-start on login")
+
+    if check["ok"]:
+        # Docker-mode MCP config (streamable-http)
+        mcp_config = {
+            "mcpServers": {
+                "yadgar": {
+                    "type": "streamable-http",
+                    "url": "http://localhost:8765/mcp",
+                }
+            }
+        }
+        print("Start the server:")
+        print("  yadgar daemon start")
+        print()
+        print("Add to ~/.claude.json:")
+        print()
+        print(json.dumps(mcp_config, indent=2))
+        print()
+        print("Restart Claude Code and you're ready.")
+    else:
+        # Fallback: stdio mode (no Docker)
+        mcp_config = {
+            "mcpServers": {
+                "yadgar": {
+                    "command": "yadgar",
+                    "args": [],
+                    "env": {},
+                }
+            }
+        }
+        print("Docker unavailable — using stdio mode (one process per Claude session).")
+        print()
+        print("Add to ~/.claude.json (merge with existing mcpServers):")
+        print()
+        print(json.dumps(mcp_config, indent=2))
+        print()
+        print("Next steps:")
+        print("  1. Restart Claude Code — Yadgar tools will appear automatically")
+        print("  2. In Claude: get_project_context('/your/project')")
+        print("  3. In Claude: memorize('First memory', '/your/project', ['setup'])")
 
 
 def cmd_viz(args):
@@ -950,27 +1005,67 @@ def cmd_viz(args):
 
 
 def cmd_daemon(args):
-    """Manage the Yadgar background daemon."""
+    """Manage the Yadgar background daemon (Docker container)."""
     import os as _os
 
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.daemon import DEFAULT_DEV_PORT, YadgarDaemon
 
     port = int(getattr(args, "port", None) or _os.environ.get("YADGAR_PORT", "8765"))
+    dev = bool(getattr(args, "dev", False))
     daemon = YadgarDaemon(port=port, db_path=getattr(args, "db_path", None))
 
     sub = args.daemon_command
     if sub is None:
-        print("Usage: yadgar daemon <start|stop|restart|status|configure-mcp|install-service>")
+        print(
+            "Usage: yadgar daemon [--dev] <pull|build|push|start|stop|restart|status|"
+            "configure-mcp|install-service|test|lint|shell>"
+        )
         return
 
-    if sub == "start":
-        result = daemon.start()
+    if sub == "pull":
+        check = YadgarDaemon.check_docker()
+        if not check["ok"]:
+            print(f"Docker not available: {check['reason']}", file=sys.stderr)
+            sys.exit(1)
+        result = daemon.pull()
+        if result["ok"]:
+            print(f"Pulled {result['image']}")
+        else:
+            print(f"Pull failed: {result['reason']}", file=sys.stderr)
+            sys.exit(1)
+
+    elif sub == "build":
+        check = YadgarDaemon.check_docker()
+        if not check["ok"]:
+            print(f"Docker not available: {check['reason']}", file=sys.stderr)
+            sys.exit(1)
+        no_cache = bool(getattr(args, "no_cache", False))
+        result = daemon.build(dev=dev, no_cache=no_cache)
+        if result["ok"]:
+            print(f"Built image {result['image']!r} (target={result['target']})")
+        else:
+            print(f"Build failed: {result['reason']}", file=sys.stderr)
+            sys.exit(1)
+
+    elif sub == "start":
+        # Check Docker availability first
+        check = YadgarDaemon.check_docker()
+        if not check["ok"]:
+            print(f"Docker not available: {check['reason']}", file=sys.stderr)
+            sys.exit(1)
+
+        result = daemon.start(dev=dev)
         if result["status"] == "started":
-            print(f"Yadgar daemon started (PID: {result['pid']}, port: {result['port']})")
+            container = result["container"]
+            p = result["port"]
+            mem = result.get("memory_mb", "?")
+            print(f"Yadgar daemon started (container: {container}, port: {p}, memory: {mem}MB)")
             print("  Switch MCP to HTTP:  yadgar daemon configure-mcp")
             print("  Auto-start on login: yadgar daemon install-service")
         elif result["status"] == "already_running":
-            print(f"Yadgar daemon already running (PID: {result['pid']}, port: {result['port']})")
+            container = result["container"]
+            p = result["port"]
+            print(f"Yadgar daemon already running (container: {container}, port: {p})")
         elif result["status"] == "failed":
             print(f"Cannot start daemon: {result['reason']}", file=sys.stderr)
             sys.exit(1)
@@ -978,44 +1073,75 @@ def cmd_daemon(args):
             print(f"Unexpected result: {result}", file=sys.stderr)
             sys.exit(1)
 
+    elif sub == "push":
+        check = YadgarDaemon.check_docker()
+        if not check["ok"]:
+            print(f"Docker not available: {check['reason']}", file=sys.stderr)
+            sys.exit(1)
+        result = daemon.push(tag=getattr(args, "tag", None))
+        if result["ok"]:
+            for t in result["pushed"]:
+                print(f"Pushed {t}")
+        else:
+            print(f"Push failed: {result['reason']}", file=sys.stderr)
+            sys.exit(1)
+
     elif sub == "stop":
-        result = daemon.stop()
+        result = daemon.stop(dev=dev)
         if result["status"] == "stopped":
-            print(f"Yadgar daemon stopped (was PID: {result['pid']})")
+            print(f"Yadgar daemon stopped (container: {result['container']})")
         else:
             print("Yadgar daemon is not running.")
 
     elif sub == "restart":
-        result = daemon.restart()
+        result = daemon.restart(dev=dev)
         start = result["started"]
         if start.get("status") in ("started", "already_running"):
-            print(f"Yadgar daemon restarted (PID: {start.get('pid')}, port: {start.get('port')})")
+            print(
+                f"Yadgar daemon restarted "
+                f"(container: {start.get('container')}, port: {start.get('port')})"
+            )
         else:
             print(f"Restart result: {result}", file=sys.stderr)
 
     elif sub == "status":
-        result = daemon.status()
+        result = daemon.status(dev=dev)
         if result.get("running"):
             print("Yadgar daemon: running")
-            print(f"  PID:     {result.get('pid')}")
-            print(f"  Port:    {result.get('port')}")
-            print(f"  Version: {result.get('version', '?')}")
-            print(f"  Uptime:  {result.get('uptime_seconds', '?')}s")
+            print(f"  Container: {result.get('container')}")
+            print(f"  Port:      {result.get('port')}")
+            print(f"  Version:   {result.get('version', '?')}")
+            print(f"  Uptime:    {result.get('uptime_seconds', '?')}s")
         else:
+            flag = " --dev" if dev else ""
             print("Yadgar daemon: not running")
-            print("  Start with: yadgar daemon start")
+            print(f"  Start with: yadgar daemon start{flag}")
 
     elif sub == "configure-mcp":
-        result = daemon.configure_mcp()
+        result = daemon.configure_mcp(dev=dev)
+        p = DEFAULT_DEV_PORT if dev else port
         print(f"MCP config updated: {result['updated']}")
-        print(f"  Sessions connect to: http://127.0.0.1:{port}/sse")
+        print(f"  Sessions connect to: http://127.0.0.1:{p}/mcp")
 
     elif sub == "install-service":
-        result = daemon.install_systemd_service()
+        result = daemon.install_systemd_service(dev=dev)
         print(f"Systemd service written: {result['service_file']}")
         print(f"  Enable:  {result['enable']}")
         print(f"  Start:   {result['start']}")
         print(f"  Status:  {result['status']}")
+
+    elif sub == "test":
+        # Run pytest inside the dev container with xdist parallelism
+        extra = list(getattr(args, "extra_args", []) or [])
+        if not any(a.startswith("-n") or a == "--dist" for a in extra):
+            extra = ["-n", "auto"] + extra
+        sys.exit(daemon.exec_in_container(["pytest"] + extra, dev=True))
+
+    elif sub == "lint":
+        sys.exit(daemon.exec_in_container(["ruff", "check", "yadgar/"], dev=True))
+
+    elif sub == "shell":
+        sys.exit(daemon.exec_in_container(["/bin/bash"], interactive=True, dev=True))
 
 
 def cli():
@@ -1137,19 +1263,39 @@ def cli():
     subparsers.add_parser("setup", help="First-run setup: create config and print MCP snippet")
 
     # daemon subcommand
-    daemon_parser = subparsers.add_parser("daemon", help="Manage the Yadgar background daemon")
+    daemon_parser = subparsers.add_parser(
+        "daemon", help="Manage the Yadgar background daemon (Docker container)"
+    )
     daemon_parser.add_argument("--port", type=int, default=None, help="Daemon port (default: 8765)")
     daemon_parser.add_argument("--db-path", type=str, default=None, help="Database path")
+    daemon_parser.add_argument(
+        "--dev", action="store_true", help="Use dev profile (port 8766, source bind-mount)"
+    )
     daemon_sub = daemon_parser.add_subparsers(dest="daemon_command")
-    daemon_sub.add_parser("start", help="Start the daemon in the background")
-    daemon_sub.add_parser("stop", help="Stop the running daemon")
-    daemon_sub.add_parser("restart", help="Restart the daemon")
-    daemon_sub.add_parser("status", help="Show daemon status")
     daemon_sub.add_parser(
-        "configure-mcp", help="Switch ~/.claude.json MCP config to HTTP transport"
+        "pull", help=f"Pull the latest prod image from Docker Hub ({DOCKERHUB_IMAGE})"
+    )
+    build_p = daemon_sub.add_parser("build", help="Build the Docker image locally (prod or dev)")
+    build_p.add_argument("--no-cache", action="store_true", help="Pass --no-cache to docker build")
+    push_p = daemon_sub.add_parser("push", help="Tag and push the prod image to Docker Hub")
+    push_p.add_argument(
+        "--tag", type=str, default=None, help="Override version tag (default: package version)"
+    )
+    daemon_sub.add_parser("start", help="Start the daemon container")
+    daemon_sub.add_parser("stop", help="Stop the running daemon container")
+    daemon_sub.add_parser("restart", help="Restart the daemon container")
+    daemon_sub.add_parser("status", help="Show daemon container status")
+    daemon_sub.add_parser(
+        "configure-mcp", help="Switch ~/.claude.json MCP config to streamable-http transport"
     )
     daemon_sub.add_parser(
         "install-service", help="Install systemd user service for auto-start on login"
+    )
+    test_p = daemon_sub.add_parser("test", help="Run pytest inside the dev container (yadgar-dev)")
+    test_p.add_argument("extra_args", nargs="*", help="Extra arguments forwarded to pytest")
+    daemon_sub.add_parser("lint", help="Run ruff inside the dev container (yadgar-dev)")
+    daemon_sub.add_parser(
+        "shell", help="Open an interactive bash shell in the dev container (yadgar-dev)"
     )
 
     args = parser.parse_args()

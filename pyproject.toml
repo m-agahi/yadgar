@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "3.0.0"
+version = "3.1.0"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "MIT"
@@ -75,7 +75,10 @@ test = [
     "pytest>=8.0",
     "pytest-xdist>=3.0",
 ]
+dev = [
+    "yadgar[test]",
+    "ruff>=0.4.0",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["yadgar/tests"]
-addopts = ["-n", "auto"]

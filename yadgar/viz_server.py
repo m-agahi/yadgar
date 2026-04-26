@@ -45,4 +45,4 @@ def run_viz_server(
     if open_browser:
         Timer(0.5, lambda: webbrowser.open(url)).start()
 
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")

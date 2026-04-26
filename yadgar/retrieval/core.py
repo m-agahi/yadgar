@@ -524,7 +524,8 @@ class Retriever:
                     )
                     if temporal_memories:
                         for i, mem in enumerate(temporal_memories):
-                            scores[mem["id"]]["temporal"] = 1.0 / (1 + i)
+                            if mem.get("id") is not None:
+                                scores[mem["id"]]["temporal"] = 1.0 / (1 + i)
                         w_temporal = 0.8
 
                     # B) Timestamp-based temporal matching (created_at proximity)
@@ -656,7 +657,7 @@ class Retriever:
         seen_ids: set[int] = set()
         for mid, total_score in fused:
             mem = self._storage.get_memory(mid)
-            if mem and mem["heat"] >= min_heat:
+            if mem and mem.get("id") is not None and mem["heat"] >= min_heat:
                 mem["_retrieval_score"] = round(total_score, 4)
                 mem.pop("embedding", None)
                 result_memories.append(mem)
@@ -683,7 +684,7 @@ class Retriever:
                 for mid, _ in top_sig:
                     if mid not in seen_ids:
                         mem = self._storage.get_memory(mid)
-                        if mem and mem["heat"] >= min_heat:
+                        if mem and mem.get("id") is not None and mem["heat"] >= min_heat:
                             mem["_retrieval_score"] = round(fused_scores.get(mid, 0.0), 4)
                             mem.pop("embedding", None)
                             result_memories.append(mem)
