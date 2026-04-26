@@ -9,8 +9,21 @@ on:
   push:
     branches: [master]
     tags: ["v*"]
+    paths:
+      - "yadgar/**"
+      - "pyproject.toml"
+      - "Dockerfile"
+      - "entrypoint.sh"
+      - "server.json"
   pull_request:
     branches: [master]
+    paths:
+      - "yadgar/**"
+      - "pyproject.toml"
+      - "Dockerfile"
+      - "entrypoint.sh"
+      - "server.json"
+      - ".pre-commit-config.yaml"
 
 jobs:
   validate:
