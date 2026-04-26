@@ -24,7 +24,7 @@ jobs:
       - name: Install Docker CLI + buildx
         run: |
           apt-get update && apt-get install -y --no-install-recommends \
-            git curl gnupg ca-certificates python3
+            nodejs git curl gnupg ca-certificates python3
           install -m 0755 -d /etc/apt/keyrings
           curl -fsSL https://download.docker.com/linux/debian/gpg \
             | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
