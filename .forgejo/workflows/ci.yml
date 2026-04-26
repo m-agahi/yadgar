@@ -83,6 +83,8 @@ jobs:
       - name: Run tests
         env:
           YADGAR_DB_URL: ws://127.0.0.1:8000
+          TRANSFORMERS_OFFLINE: "1"
+          HF_DATASETS_OFFLINE: "1"
         run: python -m pytest -q --tb=short
 
   docker:
