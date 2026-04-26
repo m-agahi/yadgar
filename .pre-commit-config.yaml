@@ -23,16 +23,14 @@ repos:
         entry: gitleaks git --pre-commit --staged --verbose
         pass_filenames: false
 
-      - id: ruff-lint
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.10
+    hooks:
+      - id: ruff
         name: Lint Python (ruff)
-        language: system
-        entry: ruff check --fix --unsafe-fixes
-        types: [python]
+        args: [--fix, --unsafe-fixes]
         exclude: "^benchmarks/"
 
       - id: ruff-format
         name: Format Python (ruff)
-        language: system
-        entry: ruff format
-        types: [python]
         exclude: "^benchmarks/"
