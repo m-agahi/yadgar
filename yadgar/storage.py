@@ -131,6 +131,7 @@ class StorageEngine:
     def __init__(self, db_path: str, embedding_dim: int = 384):
         self._embedding_dim = embedding_dim
         self._conn = None  # some callers access storage._conn.execute() directly
+        self._db_path = db_path
         self._db_url = os.environ.get("YADGAR_DB_URL")
 
         if self._db_url:
