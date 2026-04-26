@@ -1,9 +1,5 @@
 ---
-name: CI
-
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: false
+name: Build
 
 on:
   push:
@@ -15,84 +11,13 @@ on:
       - "Dockerfile"
       - "entrypoint.sh"
       - "server.json"
-  pull_request:
-    branches: [master]
-    paths:
-      - "yadgar/**"
-      - "pyproject.toml"
-      - "Dockerfile"
-      - "entrypoint.sh"
-      - "server.json"
-      - ".pre-commit-config.yaml"
   workflow_dispatch:
 
 jobs:
-  validate:
-    runs-on: docker
-    container:
-      image: python:3.14-slim
-    if: github.event_name == 'pull_request'
-    steps:
-      - name: Install Node.js, git, and gitleaks
-        run: |
-          apt-get update -qq && apt-get install -y --no-install-recommends nodejs git curl ca-certificates
-          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz" \
-            | tar -xz -C /usr/local/bin gitleaks
-
-      - uses: https://data.forgejo.org/actions/checkout@v6
-
-      - name: Install pre-commit
-        run: pip install pre-commit
-
-      - name: Run pre-commit
-        run: pre-commit run --all-files
-
-  test:
-    runs-on: docker
-    container:
-      image: python:3.14-slim
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    steps:
-      - name: Install system deps
-        run: apt-get update -qq && apt-get install -y --no-install-recommends nodejs git curl ca-certificates
-
-      - uses: https://data.forgejo.org/actions/checkout@v6
-
-      - name: Install SurrealDB v2.0.4
-        run: |
-          curl -sSL "https://github.com/surrealdb/surrealdb/releases/download/v2.0.4/surreal-v2.0.4.linux-amd64.tgz" \
-            | tar -xz -C /usr/local/bin surreal
-
-      - name: Start SurrealDB
-        run: |
-          surreal start --no-banner --bind 127.0.0.1:8000 \
-            --user root --pass root surrealkv:///tmp/test_db &
-          sleep 2
-
-      - name: Cache HuggingFace models
-        uses: https://data.forgejo.org/actions/cache@v4
-        with:
-          path: /root/.cache/huggingface
-          key: hf-all-MiniLM-L6-v2
-
-      - name: Install dependencies
-        run: |
-          pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
-          pip install --no-cache-dir -e ".[test]"
-
-      - name: Run tests
-        env:
-          YADGAR_DB_URL: ws://127.0.0.1:8000
-          TRANSFORMERS_OFFLINE: "1"
-          HF_DATASETS_OFFLINE: "1"
-        run: python -m pytest -q --tb=short
-
   docker:
-    needs: test
     runs-on: docker
     container:
       image: debian:bookworm-slim
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     env:
       DOCKER_HOST: tcp://172.17.0.1:2375
     steps:
