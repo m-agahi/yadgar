@@ -607,36 +607,42 @@ CMD ["yadgar", "start", "--host", "0.0.0.0"]
 
 ---
 
-## Phase 6.5: Docker-Only Deployment
+## ✅ Phase 6.5: Docker-Only Deployment — COMPLETE
 
-**Goal**: `yadgar daemon` manages a Docker container, not a local process. Server always runs in Docker with hard resource limits.
+**Goal**: `yadgar daemon` manages a Docker container, not a local process. Server always runs in Docker with hard resource limits — both in production and during development. This prevents consolidation, embedding, and test runs from exhausting host resources.
 
 ### Architecture
 
 ```
-Host                          Container (yadgar)
+Host                          Container (yadgar / yadgar-dev)
 ├── pip install yadgar        ├── Yadgar MCP server
 │   ├── yadgar setup          │   ├── SurrealDB (embedded)
 │   ├── yadgar daemon *       │   ├── EmbeddingEngine
-│   ├── yadgar stats          │   ├── ConsolidationScheduler
-│   └── hooks (HTTP-first)    │   └── 0.0.0.0:8765
-│                              │
-└── Claude Code ──HTTP──────────┘
+│   ├── yadgar test           │   ├── ConsolidationScheduler
+│   ├── yadgar lint           │   └── 0.0.0.0:8765 (prod) / 8766 (dev)
+│   ├── yadgar shell          │
+│   ├── yadgar stats          │   [dev only]
+│   └── hooks (HTTP-first)    │   ├── editable install (bind-mounted /app)
+│                              │   ├── pytest + ruff
+└── Claude Code ──HTTP──────────┘   └── hot reload on code changes
 ```
 
-`pip install yadgar` is still the install path. It becomes a thin client: daemon management, setup wizard, hooks, and CLI commands that proxy to the container.
+`pip install yadgar` is still the install path. It becomes a thin client: daemon management, setup wizard, hooks, and CLI commands that proxy to the container. **Editing always happens on the host; all compute (server, tests, linting, embeddings) runs inside the container.**
 
-### 6.5.1 Resource Limits
+### 6.5.1 Resource Profiles
 
-The daemon must constrain the container to prevent Yadgar from throttling the host system.
+Two profiles — prod and dev — with separate container names, ports, and volumes so both can run simultaneously.
 
-| Constraint | Value | Flag | Rationale |
+| Constraint | Prod | Dev | Rationale |
 |---|---|---|---|
-| CPU | 1 core | `--cpus=1` | Hard ceiling via cgroup cpu.max. Prevents consolidation/embedding work from stealing cycles. |
-| Memory | host_mem / 8 | `--memory={computed}m` | Dynamic: 2GB on 16GB host, 4GB on 32GB. Min floor: 512MB (surrealkv mmap safety). |
-| Swap | disabled | `--memory-swap={same as memory}` | Same value as `--memory` = no swap. Swap thrashes embedded DB. |
-| OOM kill | enabled (default) | — | Do NOT use `--oom-kill-disable`. Let kernel kill on exceed rather than hang. |
-| Restart | on-failure | `--restart=on-failure:3` | Auto-restart on crash, max 3 retries. |
+| CPU | `--cpus=1` | `--cpus=2` | Dev needs more for xdist test parallelism |
+| Memory | host_mem / 8 | host_mem / 8 | Same cap — embedding + DB memory cost is identical |
+| Swap | disabled | disabled | Swap thrashes embedded DB in both cases |
+| OOM kill | enabled (default) | enabled (default) | Let kernel kill rather than hang |
+| Restart | `on-failure:3` | `no` | Dev containers shouldn't auto-restart after a crash |
+| Port | `8765` | `8766` | Separate ports — both can run simultaneously |
+| Container name | `yadgar` | `yadgar-dev` | Separate names — no conflict |
+| Data volume | `yadgar-data` | `yadgar-dev-data` | Separate data — dev experiments don't pollute prod |
 
 **Host memory detection (Python, no psutil):**
 
@@ -663,32 +669,62 @@ def _container_memory_mb() -> int:
     return max(512, min(eighth, 8192))
 ```
 
-### 6.5.2 `daemon.py` Rewrite
+### 6.5.2 Dockerfile — Multi-Stage (prod + dev)
 
-Replace subprocess/PID approach with Docker CLI:
+One Dockerfile, two targets. Prod installs from the wheel. Dev does an editable install over a bind-mounted source tree.
+
+```dockerfile
+# ── prod (default) ──
+FROM python:3.14-slim AS prod
+WORKDIR /app
+COPY . /app
+RUN pip install /app
+EXPOSE 8765
+VOLUME /data
+ENV YADGAR_HOST=0.0.0.0 YADGAR_PORT=8765 YADGAR_DB_PATH=/data/surreal_db
+CMD ["yadgar", "start"]
+
+# ── dev ──
+FROM prod AS dev
+RUN pip install -e "/app[dev]"   # editable install: pytest, ruff, etc.
+# Source is bind-mounted at runtime: -v /host/repo:/app
+# Embedding model cache is bind-mounted: -v ~/.cache/huggingface:/root/.cache/huggingface
+CMD ["yadgar", "start", "--reload"]
+```
+
+### 6.5.3 `daemon.py` Rewrite
+
+Replace subprocess/PID approach with Docker CLI. `--dev` flag switches to the dev profile.
 
 ```python
-# start()
+# start(dev: bool = False)
+profile = _dev_profile() if dev else _prod_profile()
 cmd = [
     "docker", "run", "-d",
-    "--name", self.container_name,    # default: "yadgar"
-    "--cpus", "1",
+    "--name", profile.container_name,
+    "--cpus", str(profile.cpus),
     "--memory", f"{_container_memory_mb()}m",
     "--memory-swap", f"{_container_memory_mb()}m",
-    "--restart", "on-failure:3",
-    "-v", f"{self.volume_name}:/data",
-    "-p", f"{self.port}:8765",
-    self.image_name,                  # default: "yadgar"
+    "--restart", profile.restart_policy,
+    "-v", f"{profile.volume_name}:/data",
+    "-p", f"{profile.port}:8765",
 ]
+if dev:
+    # Bind-mount source tree for editable install + hot reload
+    cmd += ["-v", f"{_source_root()}:/app"]
+    # Reuse host embedding model cache (avoids 80MB re-download)
+    cmd += ["-v", f"{Path.home()}/.cache/huggingface:/root/.cache/huggingface"]
+    cmd += ["--target", "dev"]
+cmd += [profile.image_name]
 
-# stop()
-subprocess.run(["docker", "stop", self.container_name])
+# stop(dev: bool = False)
+subprocess.run(["docker", "stop", profile.container_name])
 
-# status()
-# docker inspect + existing health check (http://127.0.0.1:{port}/health)
+# status(dev: bool = False)
+# docker inspect + HTTP health check (http://127.0.0.1:{port}/health)
 
-# restart()
-subprocess.run(["docker", "restart", self.container_name])
+# restart(dev: bool = False)
+subprocess.run(["docker", "restart", profile.container_name])
 ```
 
 **Removed:**
@@ -698,13 +734,13 @@ subprocess.run(["docker", "restart", self.container_name])
 - `subprocess.Popen(sys.executable, "-m", "yadgar", ...)` process spawning
 
 **Added:**
-- `container_name` setting (default: `"yadgar"`, env: `YADGAR_CONTAINER`)
+- `container_name` setting (default: `"yadgar"` / `"yadgar-dev"`, env: `YADGAR_CONTAINER`)
 - `image_name` setting (default: `"yadgar"`, env: `YADGAR_IMAGE`)
-- `volume_name` setting (default: `"yadgar-data"`, env: `YADGAR_VOLUME`)
+- `volume_name` setting (default: `"yadgar-data"` / `"yadgar-dev-data"`, env: `YADGAR_VOLUME`)
 - Docker availability check: `docker info --format '{{.ID}}'` on startup
 - Image pull if not present: `docker image inspect {image} || docker pull {image}`
 
-### 6.5.3 CLI Commands — HTTP Proxy or docker exec
+### 6.5.4 CLI Commands — HTTP Proxy or docker exec
 
 Commands that currently open SurrealDB directly need to route through the container:
 
@@ -721,7 +757,17 @@ Commands that currently open SurrealDB directly need to route through the contai
 **New HTTP endpoints needed in server.py:**
 - `GET /api/stats?project={dir}` — returns JSON stats (reuse cmd_stats logic)
 
-### 6.5.4 `yadgar setup` — Docker-Aware
+**New dev proxy commands** (`yadgar-dev` container must be running):
+
+| Command | Executes |
+|---|---|
+| `yadgar test [args]` | `docker exec yadgar-dev pytest [args]` |
+| `yadgar lint` | `docker exec yadgar-dev ruff check yadgar/` |
+| `yadgar shell` | `docker exec -it yadgar-dev /bin/bash` |
+
+These commands run all heavy compute inside the resource-capped container. Developers never run pytest or ruff on the host directly.
+
+### 6.5.5 `yadgar setup` — Docker-Aware
 
 ```
 $ yadgar setup
@@ -748,7 +794,7 @@ Add to ~/.claude.json:
 Restart Claude Code and you're ready.
 ```
 
-### 6.5.5 `install_systemd_service` — Docker Unit
+### 6.5.6 `install_systemd_service` — Docker Unit
 
 ```ini
 [Unit]
@@ -776,7 +822,7 @@ RestartSec=10
 WantedBy=default.target
 ```
 
-### 6.5.6 `configure_mcp` Fix
+### 6.5.7 `configure_mcp` Fix
 
 Current code writes `"type": "sse", "url": ".../sse"`. Update to:
 
@@ -787,25 +833,240 @@ mcp_servers["yadgar"] = {
 }
 ```
 
-### 6.5.7 What Stays Unchanged
+### 6.5.8 What Stays Unchanged
 
 - **Hooks**: Already HTTP-first. Container down → hooks fail silently (existing behavior).
-- **stdio mode**: Kept for development/testing. `yadgar --transport stdio` still works locally.
-- **All MCP tools**: Server code inside container is identical.
-- **Dockerfile**: Already correct (YADGAR_HOST=0.0.0.0, YADGAR_PORT=8765, YADGAR_DB_PATH=/data/surreal_db).
+- **stdio mode**: Kept as testing escape hatch only (`yadgar --transport stdio`). HTTP is default even in dev.
+- **All MCP tools**: Server code inside container is identical between prod and dev.
+- **Editing**: Always on the host. The container is only for compute.
 
-### 6.5.8 Verification
+### 6.5.9 Gotchas
+
+**xdist CPU over-subscription**: Inside `--cpus=2`, `os.cpu_count()` still returns the host CPU count. `pytest -n auto` will spawn too many workers and get throttled by cgroups. Fix: read `/sys/fs/cgroup/cpu.max` inside the container and pass `-n {cgroup_cpu_count}` explicitly, or hardcode `-n 2` in `pyproject.toml` for the dev profile.
+
+**Embedding model cache**: Without bind-mounting `~/.cache/huggingface`, every container rebuild re-downloads the 80MB SentenceTransformer model. The `daemon start --dev` command must mount it.
+
+**stdio transport in Docker**: `yadgar --transport stdio` requires `docker run --rm -i` to pipe stdin/stdout. It works but is awkward. HTTP (port 8766) is the recommended dev transport.
+
+**Port conflict**: Dev (8766) and prod (8765) intentionally use different ports. `configure_mcp` in dev mode writes port 8766; prod writes 8765.
+
+### 6.5.10 Verification
 
 - `docker info` check on `yadgar setup` and `yadgar daemon start`
-- `yadgar daemon start` creates container with correct resource limits
-- `docker inspect yadgar` shows `--cpus=1` and `--memory` set correctly
-- `yadgar daemon stop` + `yadgar daemon start` preserves data (volume)
+- `yadgar daemon start` creates prod container: `--cpus=1`, correct memory, port 8765
+- `yadgar daemon start --dev` creates dev container: `--cpus=2`, same memory, port 8766, source bind-mounted
+- `docker inspect yadgar` and `docker inspect yadgar-dev` show correct limits
+- `yadgar daemon stop` + `yadgar daemon start` preserves data (volume round-trip)
+- `yadgar test` runs pytest inside `yadgar-dev` with resource cap enforced
+- `yadgar lint` runs ruff inside `yadgar-dev`
+- `yadgar shell` opens bash in `yadgar-dev`
 - `yadgar stats` works via HTTP endpoint
 - `yadgar vacuum` works via stop-exec-start cycle
 - Hooks fire and reach container HTTP endpoints
-- On 16GB host: container gets ~2GB memory limit
-- On 64GB host: container gets ~8GB (capped)
-- On 4GB host: container gets 512MB (floor)
+- Embedding model cache is reused (not re-downloaded) between dev container restarts
+- On 16GB host: both containers get ~2GB memory limit
+- On 64GB host: both containers get ~8GB (capped)
+- On 4GB host: both containers get 512MB (floor)
+- Full test suite run inside `yadgar-dev` completes without OOM or host resource exhaustion
+
+---
+
+## ✅ Phase 6.6: SurrealDB Server — Concurrent Access — COMPLETE
+
+**Goal**: Replace embedded SurrealKV with a SurrealDB server process running inside the same container. Eliminates the single-connection bottleneck that causes cascading timeouts under concurrent MCP sessions.
+
+**Why now**: Load testing (3 concurrent agents) revealed: CPU pegged at ~195%, 6/10 recalls timed out, `get_project_context` returned 400–500K char responses. Root cause: `surrealkv` embedded mode enforces a single connection via `fcntl.LOCK_EX` — all `asyncio.to_thread` calls serialize behind it. A SurrealDB server accepts N concurrent connections natively.
+
+**Why not a single shared `Surreal()` instance**: The sync WebSocket client (`BlockingWsSurrealConnection`) uses an internal `threading.Lock` on `_send()`. A single shared instance would just move serialization from the file lock to a WebSocket mutex — same throughput, extra network hop. The fix is **one connection per thread** via `threading.local()`.
+
+**Why not Valkey/Redis**: Considered and rejected. Recall queries are natural language — near-zero cache hit rate with any reasonable TTL. `get_project_context` returning 400K chars is a pagination bug, not a caching problem (fixed by adding `limit`). A 3rd process adds ~50MB RAM, a new dependency, and cache invalidation complexity for marginal gain. The embedding query cache stays in-memory (no network hop for deterministic computation).
+
+### 6.6.0 Critical Pre-Check: Data Format Compatibility
+
+**Before writing any code**, verify that SurrealDB server can open a directory created by the Python `surrealkv://` embedded client:
+
+```bash
+# Copy DB out of running container
+docker cp yadgar:/data/surreal_db /tmp/surreal_test_db
+
+# Try opening with SurrealDB server
+surreal start --no-banner --bind 127.0.0.1:9999 --user root --pass root \
+  --path surrealkv:///tmp/surreal_test_db
+
+# If it starts, query test:
+surreal sql --endpoint http://127.0.0.1:9999 --user root --pass root \
+  --ns yadgar --db main "SELECT count() FROM memory GROUP ALL"
+```
+
+If incompatible, add export/import tooling before proceeding.
+
+**Finding (2026-04-26)**: SurrealDB **v3.x is incompatible** with the Python `surrealdb==2.0.0` embedded format (manifest format version 0). SurrealDB **v2.3.5 is compatible** — it reads the existing data successfully. The Dockerfile pins `COPY --from=surrealdb/surrealdb:v2.3.5` accordingly. Health check uses Python's `urllib.request` (no curl needed) since the base image is `python:3.14-slim`.
+
+### 6.6.1 `entrypoint.sh` (new file)
+
+Replace `CMD ["yadgar", "--transport", "streamable-http"]` with a startup script with proper signal handling (prevents orphaned SurrealDB process on `docker stop`):
+
+```bash
+#!/bin/bash
+set -e
+
+cleanup() {
+  kill "$SURREAL_PID" 2>/dev/null
+  wait "$SURREAL_PID" 2>/dev/null
+}
+trap cleanup TERM INT
+
+surreal start \
+  --no-banner \
+  --bind 127.0.0.1:8000 \
+  --user root \
+  --pass root \
+  --path surrealkv:///data/surreal_db &
+SURREAL_PID=$!
+
+until curl -sf http://127.0.0.1:8000/health > /dev/null 2>&1; do
+  sleep 0.2
+done
+
+exec yadgar --transport streamable-http
+```
+
+### 6.6.2 `Dockerfile`
+
+```dockerfile
+# After existing pip installs:
+RUN curl -sSf https://install.surrealdb.com | sh && \
+    mv ~/.surrealdb/surreal /usr/local/bin/surreal
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENV YADGAR_DB_URL=ws://127.0.0.1:8000
+
+CMD ["/entrypoint.sh"]
+```
+
+Image size impact: ~60–80MB for SurrealDB binary.
+
+### 6.6.3 `yadgar/storage.py` — Per-thread connection pool
+
+A single shared `Surreal()` instance with WebSocket transport serializes via internal `threading.Lock` — defeating the purpose of the server. Use `threading.local()` so each `asyncio.to_thread` worker gets its own connection:
+
+```python
+import os
+import threading
+
+class StorageEngine:
+    def __init__(self, db_path: str, embedding_dim: int = 384):
+        self._db_url = os.environ.get("YADGAR_DB_URL")
+        self._local = threading.local()
+
+        if self._db_url:
+            # Server mode — per-thread connections via _db property
+            # Verify server is reachable with a throwaway connection
+            db = self._make_connection()
+            db.close()
+        else:
+            # Embedded mode — single connection, file lock (existing behavior unchanged)
+            self._embedded_db = Surreal(f"surrealkv://{resolved}")
+            self._embedded_db.use("yadgar", "main")
+            # ... keep existing fcntl lock, backup, _verify_health for embedded ...
+
+    def _make_connection(self) -> Surreal:
+        db = Surreal(self._db_url)
+        db.signin({"username": "root", "password": "root"})
+        db.use("yadgar", "main")
+        return db
+
+    @property
+    def _db(self):
+        """Per-thread connection (server) or shared connection (embedded)."""
+        if self._db_url:
+            if not hasattr(self._local, 'db') or self._local.db is None:
+                self._local.db = self._make_connection()
+            return self._local.db
+        return self._embedded_db
+```
+
+**Embedded mode stays unchanged**: `fcntl` lock, rolling backup, `_verify_health()` — all preserved for tests and local dev without Docker. Only server mode skips them.
+
+### 6.6.4 `yadgar/server.py` — Cap `get_project_context`
+
+The 400–500K char responses are a pagination bug, not a caching problem. Add `limit` (default 15), return total count:
+
+```python
+# In get_project_context handler:
+memories = memories[:limit]
+return {
+    "memories": memories,
+    "total": total_count,
+    "showing": len(memories),
+    "hint": f"Showing {len(memories)} of {total_count}. Use recall() for specific queries."
+}
+```
+
+### 6.6.5 `yadgar/embeddings.py` — LRU cache
+
+Replace the clear-all eviction (`if len > 128: clear()`) with proper LRU using `collections.OrderedDict`:
+
+```python
+from collections import OrderedDict
+_CACHE_MAX = 512
+
+# __init__:
+self._query_cache: OrderedDict[str, bytes] = OrderedDict()
+
+# encode():
+if text in self._query_cache:
+    self._query_cache.move_to_end(text)
+    return self._query_cache[text]
+# ... encode ...
+self._query_cache[text] = result
+self._query_cache.move_to_end(text)
+if len(self._query_cache) > _CACHE_MAX:
+    self._query_cache.popitem(last=False)
+return result
+```
+
+### 6.6.6 Bug fix: `id` KeyError in retrieval
+
+Load test found: `Error executing tool recall: 'id'` — a memory record missing an `id` field crashing result processing. In `yadgar/retrieval/core.py` around lines 657–664:
+
+```python
+# Before:
+if mem and mem["heat"] >= min_heat:
+# After:
+if mem and mem.get("id") is not None and mem["heat"] >= min_heat:
+```
+
+Apply same defensive `.get("id")` check wherever `mem["id"]` is accessed directly.
+
+### 6.6.7 Files Changed
+
+| File | Change |
+|---|---|
+| `entrypoint.sh` | New — starts SurrealDB (with signal trap) then yadgar |
+| `Dockerfile` | Install SurrealDB binary, switch to entrypoint, add `YADGAR_DB_URL` env |
+| `yadgar/storage.py` | `threading.local()` connection pool for server mode; embedded mode unchanged |
+| `yadgar/server.py` | `get_project_context` capped at 15 memories with total count |
+| `yadgar/embeddings.py` | LRU cache (512 entries, OrderedDict eviction) |
+| `yadgar/retrieval/core.py` | Defensive `id` KeyError fix |
+
+Not changed: `daemon.py` (volume mount unchanged), `llm.nix` (already at 2g/2cpu), tests (env var fallback keeps embedded mode working — no `YADGAR_DB_URL` set in tests).
+
+### 6.6.8 Verification
+
+1. **Data compatibility** (6.6.0): `surreal start --path surrealkv:///data/surreal_db` reads existing DB — **verify before anything else**
+2. `yadgar daemon build` — image builds cleanly
+3. `yadgar daemon start` — logs show SurrealDB started, then yadgar
+4. `curl http://127.0.0.1:8765/health` → ok
+5. `docker exec yadgar curl http://127.0.0.1:8000/health` → SurrealDB ok
+6. MCP `recall` returns existing memories (data compatibility confirmed)
+7. `get_project_context` returns capped response (~5K, not 400K)
+8. Re-run 3-agent load test — no cascading timeouts, threads use separate connections
+9. `docker stats yadgar` — CPU distributes more evenly, memory stable
+10. `yadgar daemon --dev exec pytest` — tests pass (embedded fallback, lock + backup intact)
+11. `docker stop yadgar` — clean shutdown, SurrealDB not orphaned (signal trap works)
 
 ---
 
@@ -874,7 +1135,9 @@ Phase 5.5 (Test cleanup)  ← Gate for Phase 6.                                 
     ↓
 Phase 6 (Portability)     ← Package what's clean. v3.0.0.                     ✅
     ↓
-Phase 6.5 (Docker-only)   ← Daemon manages Docker container. ~1-2 sessions.
+Phase 6.5 (Docker-only)   ← Daemon manages Docker container. ~1-2 sessions.   ✅
+    ↓
+Phase 6.6 (SurrealDB)     ← Concurrent access, LRU cache, id bug fix. ~1 session.   ✅
     ↓
 Phase 7 (Viz)             ← After Phase 3 (wiki nodes). ~2-3 sessions.
 ```

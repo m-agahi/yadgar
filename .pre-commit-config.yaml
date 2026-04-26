@@ -10,6 +10,13 @@ repos:
 
   - repo: local
     hooks:
+      - id: sync-version
+        name: Sync version to server.json
+        language: system
+        entry: python3 scripts/sync_version.py
+        files: ^pyproject\.toml$
+        pass_filenames: false
+
       - id: gitleaks
         name: Detect secrets and credentials
         language: system

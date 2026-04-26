@@ -2,9 +2,12 @@
 
 import logging
 import os
+from collections import OrderedDict
 from pathlib import Path
 
 import numpy as np
+
+_CACHE_MAX = 512
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +48,7 @@ class EmbeddingEngine:
         self.model_name = model_name
         self._model = None
         self._unavailable = False
-        self._query_cache: dict[str, bytes] = {}
+        self._query_cache: OrderedDict[str, bytes] = OrderedDict()
 
     def _is_model_cached(self) -> bool:
         """Check if the model is already downloaded in the HuggingFace cache."""
@@ -246,6 +249,7 @@ class EmbeddingEngine:
     def encode(self, text: str) -> bytes | None:
         """Encode text to a float32 byte blob for SQLite BLOB storage."""
         if text in self._query_cache:
+            self._query_cache.move_to_end(text)
             return self._query_cache[text]
         self._ensure_model()
         if self._unavailable:
@@ -253,9 +257,10 @@ class EmbeddingEngine:
         vec = self._model.encode(text)
         arr = self._normalize(np.asarray(vec, dtype=np.float32))
         result = arr.tobytes()
-        if len(self._query_cache) > 128:
-            self._query_cache.clear()
         self._query_cache[text] = result
+        self._query_cache.move_to_end(text)
+        if len(self._query_cache) > _CACHE_MAX:
+            self._query_cache.popitem(last=False)
         return result
 
     def encode_batch(self, texts: list[str]) -> list[bytes | None]:

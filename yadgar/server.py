@@ -430,6 +430,18 @@ async def api_graph(request: Request) -> JSONResponse:
     return JSONResponse(data, headers=_CORS)
 
 
+@mcp_server.custom_route("/api/stats", methods=["GET"])
+async def api_stats(request: Request) -> JSONResponse:
+    """Return memory statistics as JSON (used by `yadgar stats` CLI when daemon is running)."""
+    if _storage is None:
+        return JSONResponse({}, status_code=503)
+    project = request.query_params.get("project")
+    data = await asyncio.to_thread(_storage.get_memory_stats)
+    if project:
+        data["project_filter"] = project
+    return JSONResponse(data, headers=_CORS)
+
+
 @mcp_server.custom_route("/api/graph/stats", methods=["GET"])
 async def api_graph_stats(request: Request) -> JSONResponse:
     """Return graph statistics: counts + top entities by heat."""
@@ -1121,6 +1133,10 @@ def get_project_context(directory: str) -> dict:
     for m in memories:
         m.pop("embedding", None)
 
+    total_count = len(memories)
+    limit = 15
+    memories = memories[:limit]
+
     # Check if hooks are installed for this project
     hooks_installed = False
     project_dir = Path(directory)
@@ -1138,7 +1154,11 @@ def get_project_context(directory: str) -> dict:
                 pass
             break
 
-    result = {"memories": memories}
+    result = {"memories": memories, "total": total_count, "showing": len(memories)}
+    if total_count > limit:
+        result["_context_hint"] = (
+            f"Showing {limit} of {total_count} memories. Use recall() for specific queries."
+        )
     if not hooks_installed:
         result["_hint"] = (
             "Hippocampal Replay hooks are not installed for this project. "

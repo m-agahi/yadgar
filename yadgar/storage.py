@@ -2,9 +2,11 @@ import atexit
 import fcntl
 import json
 import logging
+import os
 import re
 import shutil
 import struct
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -127,12 +129,26 @@ _EMBEDDING_FIELDS = ("embedding", "centroid_embedding", "implicit_embedding")
 
 class StorageEngine:
     def __init__(self, db_path: str, embedding_dim: int = 384):
+        self._embedding_dim = embedding_dim
+        self._conn = None  # some callers access storage._conn.execute() directly
+        self._db_url = os.environ.get("YADGAR_DB_URL")
+
+        if self._db_url:
+            # Server mode: SurrealDB runs as a separate process inside the container.
+            # Use per-thread WebSocket connections via threading.local() so each
+            # asyncio.to_thread worker gets its own connection (no serialization).
+            self._local = threading.local()
+            test = self._make_connection()
+            test.close()
+            self._init_schema()
+            atexit.register(self.close)
+            return
+
+        # Embedded mode (existing behavior): single surrealkv connection with file lock.
         from surrealdb import Surreal
 
         resolved = Path(db_path).expanduser()
         resolved.parent.mkdir(parents=True, exist_ok=True)
-        self._embedding_dim = embedding_dim
-        self._conn = None  # some callers access storage._conn.execute() directly
         self._resolved_path = resolved
 
         # surrealkv embedded mode does not support concurrent connections.
@@ -141,7 +157,7 @@ class StorageEngine:
         self._lock_file = open(self._lock_path, "w")
         try:
             fcntl.flock(self._lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            self._lock_file.write(str(__import__("os").getpid()))
+            self._lock_file.write(str(os.getpid()))
             self._lock_file.flush()
         except OSError:
             self._lock_file.close()
@@ -163,8 +179,8 @@ class StorageEngine:
             except Exception as e:
                 _log.warning("DB backup failed (non-fatal): %s", e)
 
-        self._db = Surreal(f"surrealkv://{resolved}")
-        self._db.use("yadgar", "main")
+        self._embedded_db = Surreal(f"surrealkv://{resolved}")
+        self._embedded_db.use("yadgar", "main")
         self._init_schema()
 
         # Health check: verify we can read field data, not just count records.
@@ -173,6 +189,24 @@ class StorageEngine:
 
         # Register atexit handler for clean shutdown even if close() isn't called
         atexit.register(self.close)
+
+    @property
+    def _db(self):
+        """Per-thread WebSocket connection (server mode) or shared embedded connection."""
+        if self._db_url:
+            if not hasattr(self._local, "db") or self._local.db is None:
+                self._local.db = self._make_connection()
+            return self._local.db
+        return self._embedded_db
+
+    def _make_connection(self):
+        """Create a new WebSocket connection to the SurrealDB server."""
+        from surrealdb import Surreal
+
+        db = Surreal(self._db_url)
+        db.signin({"username": "root", "password": "root"})
+        db.use("yadgar", "main")
+        return db
 
     def _verify_health(self):
         """Post-startup health check — detect corrupted DB state."""
@@ -205,7 +239,7 @@ class StorageEngine:
     def _restore_from_backup(self):
         """Restore DB from the rolling backup after detecting corruption."""
         try:
-            self._db.close()
+            self._embedded_db.close()
         except Exception:
             pass
 
@@ -216,8 +250,8 @@ class StorageEngine:
         try:
             shutil.rmtree(resolved)
             shutil.copytree(self._backup_path, resolved)
-            self._db = Surreal(f"surrealkv://{resolved}")
-            self._db.use("yadgar", "main")
+            self._embedded_db = Surreal(f"surrealkv://{resolved}")
+            self._embedded_db.use("yadgar", "main")
             self._init_schema()
             _log.warning("DB restored from backup successfully.")
         except Exception as e:
@@ -2518,8 +2552,21 @@ class StorageEngine:
             atexit.unregister(self.close)
         except Exception:
             pass
+        if getattr(self, "_db_url", None):
+            # Server mode: close current thread's connection if open
+            local = getattr(self, "_local", None)
+            if local is not None:
+                conn = getattr(local, "db", None)
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    local.db = None
+            return
+        # Embedded mode: close DB and release file lock
         try:
-            self._db.close()
+            self._embedded_db.close()
         except Exception:
             pass
         # Release the file lock
