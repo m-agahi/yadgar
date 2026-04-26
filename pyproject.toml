@@ -74,6 +74,7 @@ ignore = [
 test = [
     "pytest>=8.0",
     "pytest-xdist>=3.0",
+    "pytest-timeout>=2.3",
 ]
 dev = [
     "yadgar[test]",
@@ -82,3 +83,4 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["yadgar/tests"]
+addopts = "-n auto --timeout=300"

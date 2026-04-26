@@ -57,13 +57,19 @@ jobs:
 
       - uses: https://data.forgejo.org/actions/checkout@v6
 
+      - name: Cache HuggingFace models
+        uses: https://data.forgejo.org/actions/cache@v4
+        with:
+          path: /root/.cache/huggingface
+          key: hf-all-MiniLM-L6-v2
+
       - name: Install dependencies
         run: |
           pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
           pip install --no-cache-dir -e ".[test]"
 
       - name: Run tests
-        run: python -m pytest yadgar/tests/ -q --tb=short
+        run: python -m pytest -q --tb=short
 
   docker:
     needs: test
