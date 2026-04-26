@@ -45,7 +45,9 @@ jobs:
       - uses: https://data.forgejo.org/actions/checkout@v6
 
       - name: Install dependencies
-        run: pip install -e ".[test]"
+        run: |
+          pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+          pip install --no-cache-dir -e ".[test]"
 
       - name: Run tests
         run: python -m pytest yadgar/tests/ -q --tb=short
