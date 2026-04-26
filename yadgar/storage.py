@@ -277,12 +277,9 @@ class StorageEngine:
         return int(record_id)
 
     def _next_id(self, table: str) -> int:
-        result = self._db.query(f"UPSERT counter:{table} SET val = (val ?? 0) + 1")
-        if result and isinstance(result, list) and result[0]:
-            row = result[0]
-            if isinstance(row, list):
-                row = row[0]
-            return int(row.get("val", 1))
+        rows = self._q(f"UPSERT counter:{table} SET val = (val ?? 0) + 1")
+        if rows:
+            return int(rows[0].get("val", 1))
         return 1
 
     def _row_to_dict(self, record: dict | None) -> dict | None:
@@ -341,7 +338,16 @@ class StorageEngine:
         - CREATE/UPDATE: a single dict (not wrapped in a list)
         We normalise all cases to a flat list of dicts.
         """
-        result = self._db.query(surql, params or {})
+        for attempt in range(2):
+            try:
+                result = self._db.query(surql, params or {})
+                break
+            except Exception as exc:
+                if attempt == 0 and self._db_url:
+                    _log.debug("DB connection lost (%s), reconnecting…", exc)
+                    self._local.db = None  # force fresh connection via _db property
+                    continue
+                raise
         if result is None:
             return []
         if isinstance(result, dict):
