@@ -52,10 +52,21 @@ jobs:
       image: python:3.14-slim
     if: github.event_name == 'push'
     steps:
-      - name: Install Node.js and git (required for actions)
-        run: apt-get update -qq && apt-get install -y --no-install-recommends nodejs git
+      - name: Install system deps
+        run: apt-get update -qq && apt-get install -y --no-install-recommends nodejs git curl ca-certificates
 
       - uses: https://data.forgejo.org/actions/checkout@v6
+
+      - name: Install SurrealDB v2.0.4
+        run: |
+          curl -sSL "https://github.com/surrealdb/surrealdb/releases/download/v2.0.4/surreal-v2.0.4.linux-amd64.tgz" \
+            | tar -xz -C /usr/local/bin surreal
+
+      - name: Start SurrealDB
+        run: |
+          surreal start --no-banner --bind 127.0.0.1:8000 \
+            --user root --pass root surrealkv:///tmp/test_db &
+          sleep 2
 
       - name: Cache HuggingFace models
         uses: https://data.forgejo.org/actions/cache@v4
@@ -69,6 +80,8 @@ jobs:
           pip install --no-cache-dir -e ".[test]"
 
       - name: Run tests
+        env:
+          YADGAR_DB_URL: ws://127.0.0.1:8000
         run: python -m pytest -q --tb=short
 
   docker:
