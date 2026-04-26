@@ -24,6 +24,7 @@ on:
       - "entrypoint.sh"
       - "server.json"
       - ".pre-commit-config.yaml"
+  workflow_dispatch:
 
 jobs:
   validate:
@@ -50,7 +51,7 @@ jobs:
     runs-on: docker
     container:
       image: python:3.14-slim
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Install system deps
         run: apt-get update -qq && apt-get install -y --no-install-recommends nodejs git curl ca-certificates
@@ -89,7 +90,7 @@ jobs:
     runs-on: docker
     container:
       image: debian:bookworm-slim
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     env:
       DOCKER_HOST: tcp://172.17.0.1:2375
     steps:
