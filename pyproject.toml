@@ -83,4 +83,4 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["yadgar/tests"]
-addopts = "-n auto --timeout=300"
+addopts = "--timeout=300"
