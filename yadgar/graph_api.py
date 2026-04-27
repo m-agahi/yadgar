@@ -315,14 +315,27 @@ class GraphAPI:
 
     @staticmethod
     def _extract_id(raw) -> int | None:
-        """Extract numeric ID from a SurrealDB record ID (e.g. 'entity:42' → 42)."""
+        """Extract numeric ID from a SurrealDB record ID (e.g. 'entity:42' → 42).
+
+        Handles both integer and string record_id variants produced by the
+        surrealdb Python client:
+          - RecordID with int .id   → str() = "memory:42"    → 42
+          - RecordID with str .id   → str() = "memory:'42'"  → .id attr → 42
+        """
         if raw is None:
             return None
         if isinstance(raw, int):
             return raw
+        # RecordID object: use .id attribute directly (handles both int and str IDs)
+        if hasattr(raw, "id") and hasattr(raw, "table_name"):
+            try:
+                return int(raw.id)
+            except (ValueError, TypeError):
+                return None
         s = str(raw)
         if ":" in s:
             s = s.rsplit(":", 1)[-1]
+        s = s.strip("'\"")
         try:
             return int(s)
         except (ValueError, TypeError):
