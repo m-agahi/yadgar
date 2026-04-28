@@ -922,7 +922,7 @@ def memorize(
     if curation_action == "created":
         _agent = settings.CRDT_AGENT_ID
         _clock = json.dumps({_agent: 1})
-        storage._db.query(
+        storage._q(
             "UPDATE type::thing('memory', $id) SET provenance_agent = $a, vector_clock = $c",
             {"id": memory_id, "a": _agent, "c": _clock},
         )

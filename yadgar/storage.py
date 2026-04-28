@@ -1,4 +1,5 @@
 import atexit
+import base64
 import fcntl
 import json
 import logging
@@ -6,7 +7,6 @@ import os
 import re
 import shutil
 import struct
-import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -135,12 +135,27 @@ class StorageEngine:
         self._db_url = os.environ.get("YADGAR_DB_URL")
 
         if self._db_url:
-            # Server mode: SurrealDB runs as a separate process inside the container.
-            # Use per-thread WebSocket connections via threading.local() so each
-            # asyncio.to_thread worker gets its own connection (no serialization).
-            self._local = threading.local()
-            test = self._make_connection()
-            test.close()
+            # Server mode: talk to the SurrealDB HTTP API with a shared httpx.Client.
+            import logging as _logging
+
+            import httpx
+
+            _logging.getLogger("httpx").setLevel(_logging.WARNING)
+            _logging.getLogger("httpcore").setLevel(_logging.WARNING)
+
+            _user = os.environ.get("YADGAR_DB_USER", "root")
+            _pass = os.environ.get("YADGAR_DB_PASS", "root")
+            _auth = base64.b64encode(f"{_user}:{_pass}".encode()).decode()
+            self._http = httpx.Client(
+                base_url=self._db_url,
+                headers={
+                    "Authorization": f"Basic {_auth}",
+                    "surreal-ns": "yadgar",
+                    "surreal-db": "main",
+                    "Accept": "application/json",
+                },
+                timeout=30.0,
+            )
             self._init_schema()
             atexit.register(self.close)
             return
@@ -193,21 +208,10 @@ class StorageEngine:
 
     @property
     def _db(self):
-        """Per-thread WebSocket connection (server mode) or shared embedded connection."""
+        """Embedded mode only. Raises if called in server mode — use _q() instead."""
         if self._db_url:
-            if not hasattr(self._local, "db") or self._local.db is None:
-                self._local.db = self._make_connection()
-            return self._local.db
+            raise RuntimeError("_db accessed in server mode — use _q() instead")
         return self._embedded_db
-
-    def _make_connection(self):
-        """Create a new WebSocket connection to the SurrealDB server."""
-        from surrealdb import Surreal
-
-        db = Surreal(self._db_url)
-        db.signin({"username": "root", "password": "root"})
-        db.use("yadgar", "main")
-        return db
 
     def _verify_health(self):
         """Post-startup health check — detect corrupted DB state."""
@@ -330,42 +334,56 @@ class StorageEngine:
         return datetime.now(UTC).isoformat()
 
     def _q(self, surql: str, params: dict | None = None) -> list:
-        """Run a parameterised query and return rows as a flat list of dicts.
+        """Run a parameterised query via HTTP (server mode) or embedded SDK.
 
-        surrealdb Python client 1.0.x returns results in different shapes:
-        - Single statement: flat list of dicts [row1, row2, ...]
-        - Multi-statement: list of result sets [[row1, ...], [row2, ...]]
-        - CREATE/UPDATE: a single dict (not wrapped in a list)
-        We normalise all cases to a flat list of dicts.
+        Returns rows as a flat list of dicts.
         """
-        for attempt in range(2):
-            try:
-                result = self._db.query(surql, params or {})
-                break
-            except Exception as exc:
-                if attempt == 0 and self._db_url:
-                    _log.debug("DB connection lost (%s), reconnecting…", exc)
-                    self._local.db = None  # force fresh connection via _db property
-                    continue
-                raise
-        if result is None:
+        import json as _json
+
+        if self._db_url:
+            # Server mode: POST to /sql with LET preamble for params.
+            if params:
+                lets = [f"LET ${k} = {_json.dumps(v)};" for k, v in params.items()]
+                body = "\n".join(lets) + "\n" + surql
+            else:
+                body = surql
+            resp = self._http.post(
+                "/sql", content=body.encode(), headers={"Content-Type": "text/plain"}
+            )
+            resp.raise_for_status()
+            results = resp.json()
+            # Raise on any SurrealDB-level error (HTTP is always 200).
+            for entry in results:
+                if entry.get("status") == "ERR":
+                    raise RuntimeError(
+                        f"SurrealDB error: {entry.get('detail') or entry.get('result') or entry}"
+                    )
+            # Last entry is the actual query result (LET entries precede it).
+            raw = results[-1].get("result") if results else None
+        else:
+            # Embedded mode: delegate to the surrealkv SDK with retry.
+            for attempt in range(2):
+                try:
+                    raw = self._embedded_db.query(surql, params or {})
+                    break
+                except Exception as exc:
+                    if attempt == 0:
+                        _log.debug("Embedded DB error (%s), retrying…", exc)
+                        continue
+                    raise
+
+        # Normalise to flat list of dicts.
+        if raw is None:
             return []
-        if isinstance(result, dict):
-            # Single record (e.g. from CREATE returning one object)
-            return [result]
-        if isinstance(result, list):
-            if len(result) == 0:
+        if isinstance(raw, dict):
+            return [raw]
+        if isinstance(raw, list):
+            if not raw:
                 return []
-            first = result[0]
+            first = raw[0]
             if isinstance(first, list):
-                # Nested result sets — return the first set
                 return first
-            if isinstance(first, dict):
-                # Flat list of row dicts — return as-is
-                return result
-            if first is None:
-                return []
-            return result
+            return raw
         return []
 
     def _enrich_content_for_fts(self, content: str) -> str:
@@ -410,20 +428,18 @@ class StorageEngine:
     # ------------------------------------------------------------------ schema
 
     def _init_schema(self):
-        db = self._db
-
         # ---- Analyzers ----
-        db.query("""
+        self._q("""
             DEFINE ANALYZER IF NOT EXISTS mem_analyzer
                 TOKENIZERS blank, class
                 FILTERS lowercase, snowball(english);
         """)
-        db.query("""
+        self._q("""
             DEFINE ANALYZER IF NOT EXISTS profile_analyzer
                 TOKENIZERS blank, class
                 FILTERS lowercase, snowball(english);
         """)
-        db.query("""
+        self._q("""
             DEFINE ANALYZER IF NOT EXISTS belief_analyzer
                 TOKENIZERS blank, class
                 FILTERS lowercase, snowball(english);
@@ -453,52 +469,52 @@ class StorageEngine:
             "wiki_page",
             "wiki_crossref",
         ):
-            db.query(f"DEFINE TABLE IF NOT EXISTS {table} SCHEMALESS;")
+            self._q(f"DEFINE TABLE IF NOT EXISTS {table} SCHEMALESS;")
 
-        db.query("DEFINE TABLE IF NOT EXISTS memory SCHEMALESS;")
+        self._q("DEFINE TABLE IF NOT EXISTS memory SCHEMALESS;")
 
         # ---- Indexes ----
 
         # memory: MTREE vector index on embedding
-        db.query(f"""
+        self._q(f"""
             DEFINE INDEX IF NOT EXISTS memory_embedding_idx
                 ON memory FIELDS embedding
                 MTREE DIMENSION {self._embedding_dim} DIST COSINE;
         """)
         # memory: SEARCH index on content (FTS)
-        db.query("""
+        self._q("""
             DEFINE INDEX IF NOT EXISTS memory_content_idx
                 ON memory FIELDS content
                 SEARCH ANALYZER mem_analyzer BM25;
         """)
         # memory: MTREE for implicit embedding
-        db.query(f"""
+        self._q(f"""
             DEFINE INDEX IF NOT EXISTS memory_implicit_idx
                 ON memory FIELDS implicit_embedding
                 MTREE DIMENSION {self._embedding_dim} DIST COSINE;
         """)
 
         # file_hash: index on filepath (non-UNIQUE — surrealkv UNIQUE breaks WHERE)
-        db.query("""
+        self._q("""
             DEFINE INDEX IF NOT EXISTS file_hash_filepath_idx
                 ON file_hash FIELDS filepath;
         """)
 
         # memory_transition: index on (from_memory_id, to_memory_id)
-        db.query("""
+        self._q("""
             DEFINE INDEX IF NOT EXISTS transition_unique_idx
                 ON memory_transition FIELDS from_memory_id, to_memory_id;
         """)
 
         # user_profile: index on (entity_name, attribute_type, attribute_key, directory_context)
-        db.query("""
+        self._q("""
             DEFINE INDEX IF NOT EXISTS profile_unique_idx
                 ON user_profile
                 FIELDS entity_name, attribute_type, attribute_key, directory_context;
         """)
 
         # FTS on user_profile
-        db.query("""
+        self._q("""
             DEFINE INDEX IF NOT EXISTS profile_fts_idx
                 ON user_profile
                 FIELDS entity_name, attribute_type, attribute_key, attribute_value
@@ -506,7 +522,7 @@ class StorageEngine:
         """)
 
         # FTS on derived_belief
-        db.query("""
+        self._q("""
             DEFINE INDEX IF NOT EXISTS belief_fts_idx
                 ON derived_belief
                 FIELDS subject, belief_type, content
@@ -514,34 +530,34 @@ class StorageEngine:
         """)
 
         # engram_slot: index on slot_index
-        db.query("""
+        self._q("""
             DEFINE INDEX IF NOT EXISTS engram_slot_idx
                 ON engram_slot FIELDS slot_index;
         """)
 
         # wiki_page: FTS on content (BM25 keyword search)
-        db.query("""
+        self._q("""
             DEFINE INDEX IF NOT EXISTS wiki_content_idx
                 ON wiki_page FIELDS content
                 SEARCH ANALYZER mem_analyzer BM25;
         """)
         # wiki_page: MTREE vector index on embedding (semantic search)
-        db.query(f"""
+        self._q(f"""
             DEFINE INDEX IF NOT EXISTS wiki_embedding_idx
                 ON wiki_page FIELDS embedding
                 MTREE DIMENSION {self._embedding_dim} DIST COSINE;
         """)
         # wiki_page: slug lookup
-        db.query("""
+        self._q("""
             DEFINE INDEX IF NOT EXISTS wiki_slug_idx
                 ON wiki_page FIELDS slug;
         """)
         # wiki_crossref: from/to indexes
-        db.query("""
+        self._q("""
             DEFINE INDEX IF NOT EXISTS wiki_crossref_from_idx
                 ON wiki_crossref FIELDS from_slug;
         """)
-        db.query("""
+        self._q("""
             DEFINE INDEX IF NOT EXISTS wiki_crossref_to_idx
                 ON wiki_crossref FIELDS to_slug;
         """)
@@ -550,7 +566,7 @@ class StorageEngine:
 
     def insert_episode(self, episode: dict) -> int:
         eid = self._next_id("episode")
-        self._db.query(
+        self._q(
             "CREATE type::thing('episode', $id) SET "
             "session_id = $session_id, timestamp = $timestamp, "
             "directory = $directory, raw_content = $raw_content, "
@@ -595,7 +611,7 @@ class StorageEngine:
         embedding = memory.get("embedding")
         emb_floats = self._bytes_to_floats(embedding) if embedding else None
 
-        self._db.query(
+        self._q(
             "CREATE type::thing('memory', $id) SET "
             "content = $content, embedding = $embedding, tags = $tags, "
             "source_episode_id = $source_episode_id, "
@@ -670,7 +686,7 @@ class StorageEngine:
                             set_parts.append(f"{col} = ${col}")
                             params[col] = val
                     if set_parts:
-                        self._db.query(
+                        self._q(
                             f"UPDATE type::thing('memory', $id) SET {', '.join(set_parts)}",
                             params,
                         )
@@ -683,7 +699,7 @@ class StorageEngine:
                             )
                             if new_embedding is not None:
                                 new_floats = self._bytes_to_floats(new_embedding)
-                                self._db.query(
+                                self._q(
                                     "UPDATE type::thing('memory', $id) SET embedding = $emb",
                                     {"id": mid, "emb": new_floats},
                                 )
@@ -720,24 +736,24 @@ class StorageEngine:
         return self._rows_to_dicts(rows)
 
     def update_memory_heat(self, memory_id: int, new_heat: float):
-        self._db.query(
+        self._q(
             "UPDATE type::thing('memory', $id) SET heat = $heat",
             {"id": memory_id, "heat": new_heat},
         )
 
     def update_memory_staleness(self, memory_id: int, is_stale: bool):
-        self._db.query(
+        self._q(
             "UPDATE type::thing('memory', $id) SET is_stale = $stale",
             {"id": memory_id, "stale": is_stale},
         )
 
     def delete_memory(self, memory_id: int):
         # Delete FK dependents first
-        self._db.query(
+        self._q(
             "DELETE FROM memory_archive WHERE original_memory_id = $mid",
             {"mid": memory_id},
         )
-        self._db.query(
+        self._q(
             "DELETE FROM memory_transition WHERE from_memory_id = $mid OR to_memory_id = $mid",
             {"mid": memory_id},
         )
@@ -747,13 +763,13 @@ class StorageEngine:
         except Exception:
             pass
         try:
-            self._db.query(
+            self._q(
                 "UPDATE type::thing('memory', $id) SET implicit_embedding = NONE",
                 {"id": memory_id},
             )
         except Exception:
             pass
-        self._db.query(
+        self._q(
             "DELETE type::thing('memory', $id)",
             {"id": memory_id},
         )
@@ -905,14 +921,14 @@ class StorageEngine:
     def insert_vector(self, memory_id: int, embedding: bytes):
         """Update the embedding field on the memory record."""
         floats = self._bytes_to_floats(embedding)
-        self._db.query(
+        self._q(
             "UPDATE type::thing('memory', $id) SET embedding = $emb",
             {"id": memory_id, "emb": floats},
         )
 
     def delete_vector(self, memory_id: int):
         """Clear the embedding field on the memory record."""
-        self._db.query(
+        self._q(
             "UPDATE type::thing('memory', $id) SET embedding = NONE",
             {"id": memory_id},
         )
@@ -924,7 +940,7 @@ class StorageEngine:
     def insert_implicit_vector(self, memory_id: int, embedding: bytes):
         """Store implicit embedding on the memory record."""
         floats = self._bytes_to_floats(embedding)
-        self._db.query(
+        self._q(
             "UPDATE type::thing('memory', $id) SET implicit_embedding = $emb",
             {"id": memory_id, "emb": floats},
         )
@@ -996,7 +1012,7 @@ class StorageEngine:
 
     def update_memory_embedding(self, memory_id: int, embedding: bytes, embedding_model: str):
         floats = self._bytes_to_floats(embedding)
-        self._db.query(
+        self._q(
             "UPDATE type::thing('memory', $id) SET embedding = $emb, embedding_model = $model",
             {"id": memory_id, "emb": floats, "model": embedding_model},
         )
@@ -1011,9 +1027,9 @@ class StorageEngine:
 
     def recreate_vector_table(self, new_dim: int):
         """Drop and recreate the MTREE index with new dimensions; clear all embeddings."""
-        self._db.query("REMOVE INDEX IF EXISTS memory_embedding_idx ON memory")
-        self._db.query("UPDATE memory SET embedding = NONE")
-        self._db.query(
+        self._q("REMOVE INDEX IF EXISTS memory_embedding_idx ON memory")
+        self._q("UPDATE memory SET embedding = NONE")
+        self._q(
             f"DEFINE INDEX memory_embedding_idx ON memory FIELDS embedding "
             f"MTREE DIMENSION {new_dim} DIST COSINE"
         )
@@ -1036,13 +1052,13 @@ class StorageEngine:
         }
         if original_content is not None:
             params["orig"] = original_content
-            self._db.query(
+            self._q(
                 "UPDATE type::thing('memory', $id) SET content = $content, "
                 "embedding = $emb, compression_level = $level, original_content = $orig",
                 params,
             )
         else:
-            self._db.query(
+            self._q(
                 "UPDATE type::thing('memory', $id) SET content = $content, "
                 "embedding = $emb, compression_level = $level",
                 params,
@@ -1061,7 +1077,7 @@ class StorageEngine:
     def insert_entity(self, entity: dict) -> int:
         now = self._now_iso()
         eid = self._next_id("entity")
-        self._db.query(
+        self._q(
             "CREATE type::thing('entity', $id) SET "
             "name = $name, type = $type, created_at = $created_at, "
             "last_accessed = $last_accessed, heat = $heat, archived = $archived",
@@ -1098,7 +1114,7 @@ class StorageEngine:
         return self._rows_to_dicts(rows)
 
     def update_entity_heat(self, entity_id: int, new_heat: float):
-        self._db.query(
+        self._q(
             "UPDATE type::thing('entity', $id) SET heat = $heat",
             {"id": entity_id, "heat": new_heat},
         )
@@ -1108,13 +1124,13 @@ class StorageEngine:
         return self._rows_to_dicts(rows)
 
     def archive_entity(self, entity_id: int):
-        self._db.query(
+        self._q(
             "UPDATE type::thing('entity', $id) SET archived = true",
             {"id": entity_id},
         )
 
     def reinforce_entity(self, entity_id: int, heat_bump: float = 0.1):
-        self._db.query(
+        self._q(
             "UPDATE type::thing('entity', $id) SET "
             "heat = math::min([heat + $bump, 1.0]), last_accessed = $now",
             {"id": entity_id, "bump": heat_bump, "now": self._now_iso()},
@@ -1125,7 +1141,7 @@ class StorageEngine:
     def insert_relationship(self, relationship: dict) -> int:
         now = self._now_iso()
         rid = self._next_id("relationship")
-        self._db.query(
+        self._q(
             "CREATE type::thing('relationship', $id) SET "
             "source_entity_id = $src, target_entity_id = $tgt, "
             "relationship_type = $rtype, weight = $weight, "
@@ -1206,7 +1222,7 @@ class StorageEngine:
         sets = ", ".join(f"{k} = ${k}" for k in fields)
         params = dict(fields)
         params["id"] = rel_id
-        self._db.query(f"UPDATE type::thing('relationship', $id) SET {sets}", params)
+        self._q(f"UPDATE type::thing('relationship', $id) SET {sets}", params)
 
     def insert_typed_relationship(
         self,
@@ -1222,7 +1238,7 @@ class StorageEngine:
         """Insert a relationship with bi-temporal and causal metadata."""
         now = self._now_iso()
         rid = self._next_id("relationship")
-        self._db.query(
+        self._q(
             "CREATE type::thing('relationship', $id) SET "
             "source_entity_id = $src, target_entity_id = $tgt, "
             "relationship_type = $rt, weight = $w, "
@@ -1251,7 +1267,7 @@ class StorageEngine:
         return self._rows_to_dicts(rows)
 
     def reinforce_relationship(self, rel_id: int, weight_increase: float = 1.0):
-        self._db.query(
+        self._q(
             "UPDATE type::thing('relationship', $id) SET "
             "weight = weight + $inc, last_reinforced = $now",
             {"id": rel_id, "inc": weight_increase, "now": self._now_iso()},
@@ -1267,13 +1283,13 @@ class StorageEngine:
         )
         if rows:
             fid = self._extract_id(rows[0]["id"])
-            self._db.query(
+            self._q(
                 "UPDATE type::thing('file_hash', $id) SET hash = $hash, last_checked = $now",
                 {"id": fid, "hash": hash_value, "now": now},
             )
         else:
             fid = self._next_id("file_hash")
-            self._db.query(
+            self._q(
                 "CREATE type::thing('file_hash', $id) SET "
                 "filepath = $fp, hash = $hash, last_checked = $now",
                 {"id": fid, "fp": filepath, "hash": hash_value, "now": now},
@@ -1297,7 +1313,7 @@ class StorageEngine:
 
     def insert_consolidation_log(self, log: dict) -> int:
         cid = self._next_id("consolidation_log")
-        self._db.query(
+        self._q(
             "CREATE type::thing('consolidation_log', $id) SET "
             "timestamp = $timestamp, memories_added = $added, "
             "memories_updated = $updated, memories_archived = $archived, "
@@ -1355,7 +1371,7 @@ class StorageEngine:
         cid = self._next_id("memory_cluster")
         centroid = cluster.get("centroid_embedding")
         centroid_floats = self._bytes_to_floats(centroid) if centroid else None
-        self._db.query(
+        self._q(
             "CREATE type::thing('memory_cluster', $id) SET "
             "name = $name, level = $level, parent_cluster_id = $parent, "
             "summary = $summary, centroid_embedding = $centroid, "
@@ -1412,7 +1428,7 @@ class StorageEngine:
         for k, v in fields.items():
             params[k] = v
             set_parts.append(f"{k} = ${k}")
-        self._db.query(
+        self._q(
             f"UPDATE type::thing('memory_cluster', $id) SET {', '.join(set_parts)}",
             params,
         )
@@ -1422,7 +1438,7 @@ class StorageEngine:
     def insert_prospective_memory(self, pm: dict) -> int:
         now = self._now_iso()
         pid = self._next_id("prospective_memory")
-        self._db.query(
+        self._q(
             "CREATE type::thing('prospective_memory', $id) SET "
             "content = $content, trigger_condition = $trigger_condition, "
             "trigger_type = $trigger_type, target_directory = $target_directory, "
@@ -1448,7 +1464,7 @@ class StorageEngine:
 
     def trigger_prospective_memory(self, pm_id: int):
         now = self._now_iso()
-        self._db.query(
+        self._q(
             "UPDATE type::thing('prospective_memory', $id) SET "
             "triggered_at = $now, triggered_count = triggered_count + 1",
             {"id": pm_id, "now": now},
@@ -1459,7 +1475,7 @@ class StorageEngine:
     def insert_narrative_entry(self, entry: dict) -> int:
         now = self._now_iso()
         nid = self._next_id("narrative_entry")
-        self._db.query(
+        self._q(
             "CREATE type::thing('narrative_entry', $id) SET "
             "directory_context = $dir, summary = $summary, "
             "period_start = $period_start, period_end = $period_end, "
@@ -1492,7 +1508,7 @@ class StorageEngine:
     def insert_astrocyte_process(self, proc: dict) -> int:
         now = self._now_iso()
         aid = self._next_id("astrocyte_process")
-        self._db.query(
+        self._q(
             "CREATE type::thing('astrocyte_process', $id) SET "
             "name = $name, domain = $domain, specialization = $specialization, "
             "memory_ids = $memory_ids, entity_ids = $entity_ids, "
@@ -1539,7 +1555,7 @@ class StorageEngine:
         for k, v in fields.items():
             params[k] = v
             set_parts.append(f"{k} = ${k}")
-        self._db.query(
+        self._q(
             f"UPDATE type::thing('astrocyte_process', $id) SET {', '.join(set_parts)}",
             params,
         )
@@ -1567,7 +1583,7 @@ class StorageEngine:
         for k, v in fields.items():
             params[k] = v
             set_parts.append(f"{k} = ${k}")
-        self._db.query(
+        self._q(
             f"UPDATE type::thing('memory', $id) SET {', '.join(set_parts)}",
             params,
         )
@@ -1579,7 +1595,7 @@ class StorageEngine:
         useful_count: int,
         confidence: float,
     ):
-        self._db.query(
+        self._q(
             "UPDATE type::thing('memory', $id) SET "
             "access_count = $ac, useful_count = $uc, confidence = $conf",
             {
@@ -1613,7 +1629,7 @@ class StorageEngine:
     def insert_rule(self, rule: dict) -> int:
         now = self._now_iso()
         rid = self._next_id("memory_rule")
-        self._db.query(
+        self._q(
             "CREATE type::thing('memory_rule', $id) SET "
             "rule_type = $rule_type, scope = $scope, scope_value = $scope_value, "
             "condition = $condition, action = $action, priority = $priority, "
@@ -1664,13 +1680,13 @@ class StorageEngine:
         for k, v in fields.items():
             params[k] = v
             set_parts.append(f"{k} = ${k}")
-        self._db.query(
+        self._q(
             f"UPDATE type::thing('memory_rule', $id) SET {', '.join(set_parts)}",
             params,
         )
 
     def delete_rule(self, rule_id: int):
-        self._db.query(
+        self._q(
             "DELETE type::thing('memory_rule', $id)",
             {"id": rule_id},
         )
@@ -1682,7 +1698,7 @@ class StorageEngine:
         aid = self._next_id("memory_archive")
         emb = archive.get("embedding")
         emb_floats = self._bytes_to_floats(emb) if emb else None
-        self._db.query(
+        self._q(
             "CREATE type::thing('memory_archive', $id) SET "
             "original_memory_id = $orig, content = $content, embedding = $emb, "
             "archived_at = $archived_at, mismatch_score = $mismatch_score, "
@@ -1710,7 +1726,7 @@ class StorageEngine:
     # ------------------------------------------------------------------ Memory Transitions
 
     def deactivate_prospective_memory(self, pm_id: int) -> None:
-        self._db.query(
+        self._q(
             "UPDATE type::thing('prospective_memory', $id) SET is_active = false",
             {"id": pm_id},
         )
@@ -1723,7 +1739,7 @@ class StorageEngine:
             )
         now = self._now_iso()
         tid = self._next_id("memory_transition")
-        self._db.query(
+        self._q(
             "CREATE type::thing('memory_transition', $id) SET "
             "from_memory_id = $from_id, to_memory_id = $to_id, count = $count, "
             "last_transition = $last_transition, session_id = $session_id",
@@ -1748,7 +1764,7 @@ class StorageEngine:
 
     def increment_transition(self, from_id: int, to_id: int):
         now = self._now_iso()
-        self._db.query(
+        self._q(
             "UPDATE memory_transition SET count = count + 1, last_transition = $now "
             "WHERE from_memory_id = $from_id AND to_memory_id = $to_id",
             {"now": now, "from_id": from_id, "to_id": to_id},
@@ -1767,7 +1783,7 @@ class StorageEngine:
         return [dict(r) for r in rows]
 
     def update_memory_sr_coords(self, memory_id: int, sr_x: float, sr_y: float):
-        self._db.query(
+        self._q(
             "UPDATE type::thing('memory', $id) SET sr_x = $x, sr_y = $y",
             {"id": memory_id, "x": sr_x, "y": sr_y},
         )
@@ -1788,7 +1804,7 @@ class StorageEngine:
     def insert_causal_edge(self, edge: dict) -> int:
         now = self._now_iso()
         eid = self._next_id("causal_dag_edge")
-        self._db.query(
+        self._q(
             "CREATE type::thing('causal_dag_edge', $id) SET "
             "source_entity_id = $src, target_entity_id = $tgt, "
             "algorithm = $algo, confidence = $conf, "
@@ -1829,7 +1845,7 @@ class StorageEngine:
             )
             if not existing:
                 sid = self._next_id("engram_slot")
-                self._db.query(
+                self._q(
                     "CREATE type::thing('engram_slot', $id) SET "
                     "slot_index = $si, excitability = 0.0, last_activated = $now",
                     {"id": sid, "si": i, "now": now},
@@ -1847,7 +1863,7 @@ class StorageEngine:
         return [self._row_to_dict(r) for r in rows]
 
     def update_engram_slot(self, slot_index: int, excitability: float, last_activated: str):
-        self._db.query(
+        self._q(
             "UPDATE engram_slot SET excitability = $exc, last_activated = $la "
             "WHERE slot_index = $si",
             {"si": slot_index, "exc": excitability, "la": last_activated},
@@ -1855,7 +1871,7 @@ class StorageEngine:
 
     def assign_memory_slot(self, memory_id: int, slot_index: int):
         now = self._now_iso()
-        self._db.query(
+        self._q(
             "UPDATE type::thing('memory', $id) SET "
             "slot_index = $si, excitability = 1.0, last_excitability_update = $now",
             {"id": memory_id, "si": slot_index, "now": now},
@@ -1887,9 +1903,9 @@ class StorageEngine:
     def insert_checkpoint(self, data: dict) -> int:
         """Insert a new checkpoint, deactivating all previous ones."""
         now = self._now_iso()
-        self._db.query("UPDATE checkpoint SET is_active = false WHERE is_active = true")
+        self._q("UPDATE checkpoint SET is_active = false WHERE is_active = true")
         cid = self._next_id("checkpoint")
-        self._db.query(
+        self._q(
             "CREATE type::thing('checkpoint', $id) SET "
             "session_id = $session_id, directory_context = $dir, "
             "current_task = $task, files_being_edited = $files, "
@@ -1970,7 +1986,7 @@ class StorageEngine:
                 evidence = json.loads(evidence)
             if memory_id is not None and memory_id not in evidence:
                 evidence.append(memory_id)
-            self._db.query(
+            self._q(
                 "UPDATE type::thing('user_profile', $id) SET "
                 "attribute_value = $av, confidence = $conf, "
                 "evidence_memory_ids = $evids, updated_at = $now",
@@ -1986,7 +2002,7 @@ class StorageEngine:
 
         evidence = [memory_id] if memory_id is not None else []
         pid = self._next_id("user_profile")
-        self._db.query(
+        self._q(
             "CREATE type::thing('user_profile', $id) SET "
             "entity_name = $en, attribute_type = $at, attribute_key = $ak, "
             "attribute_value = $av, evidence_memory_ids = $evids, "
@@ -2047,7 +2063,7 @@ class StorageEngine:
         evidence = evidence_memory_ids or []
         emb_floats = self._bytes_to_floats(embedding) if embedding else None
         bid = self._next_id("derived_belief")
-        self._db.query(
+        self._q(
             "CREATE type::thing('derived_belief', $id) SET "
             "belief_type = $bt, subject = $subject, content = $content, "
             "evidence_memory_ids = $evids, confidence = $conf, "
@@ -2136,15 +2152,18 @@ class StorageEngine:
         timestamp: str,
     ):
         aid = self._next_id("action_log")
-        self._db.create(
-            f"action_log:{aid}",
+        self._q(
+            "CREATE type::thing('action_log', $id) SET "
+            "tool_name = $tool_name, tool_input_summary = $tis, "
+            "directory = $directory, session_id = $sid, "
+            "timestamp = $ts, processed = false",
             {
+                "id": aid,
                 "tool_name": tool_name,
-                "tool_input_summary": tool_input_summary,
+                "tis": tool_input_summary,
                 "directory": directory,
-                "session_id": session_id,
-                "timestamp": timestamp,
-                "processed": False,
+                "sid": session_id,
+                "ts": timestamp,
             },
         )
 
@@ -2269,7 +2288,7 @@ class StorageEngine:
     ):
         """Set is_protected, importance, and optionally contextual_prefix on a memory."""
         if contextual_prefix is not None:
-            self._db.query(
+            self._q(
                 "UPDATE type::thing('memory', $id) SET "
                 "is_protected = $prot, importance = $imp, contextual_prefix = $prefix",
                 {
@@ -2280,7 +2299,7 @@ class StorageEngine:
                 },
             )
         else:
-            self._db.query(
+            self._q(
                 "UPDATE type::thing('memory', $id) SET is_protected = $prot, importance = $imp",
                 {"id": memory_id, "prot": is_protected, "imp": importance},
             )
@@ -2316,7 +2335,7 @@ class StorageEngine:
 
     def update_checkpoint_epoch(self, checkpoint_id: int, epoch: int):
         """Update the epoch field on an existing checkpoint."""
-        self._db.query(
+        self._q(
             "UPDATE type::thing('checkpoint', $id) SET epoch = $epoch",
             {"id": checkpoint_id, "epoch": epoch},
         )
@@ -2326,7 +2345,7 @@ class StorageEngine:
     def update_memory_excitability(self, memory_id: int, excitability: float):
         """Update excitability and last_excitability_update for a memory."""
         now = self._now_iso()
-        self._db.query(
+        self._q(
             "UPDATE type::thing('memory', $id) SET excitability = $exc, "
             "last_excitability_update = $now",
             {"id": memory_id, "exc": excitability, "now": now},
@@ -2340,7 +2359,7 @@ class StorageEngine:
         pid = self._next_id("wiki_page")
         embedding = page.get("embedding")
         emb_floats = self._bytes_to_floats(embedding) if isinstance(embedding, bytes) else embedding
-        self._db.query(
+        self._q(
             "CREATE type::thing('wiki_page', $id) SET "
             "title = $title, slug = $slug, content = $content, "
             "category = $category, tags = $tags, links = $links, "
@@ -2406,7 +2425,7 @@ class StorageEngine:
         rows = self._q(f"SELECT id FROM wiki_page:{pid}")
         if not rows:
             return False
-        self._db.query(
+        self._q(
             "DELETE type::thing('wiki_page', $id)",
             {"id": pid},
         )
@@ -2475,12 +2494,12 @@ class StorageEngine:
 
     def replace_wiki_crossrefs(self, from_slug: str, to_slugs: list[str]) -> None:
         """Atomic replace: delete all existing crossrefs FROM this slug, insert new ones."""
-        self._db.query(
+        self._q(
             "DELETE FROM wiki_crossref WHERE from_slug = $slug",
             {"slug": from_slug},
         )
         for to_slug in to_slugs:
-            self._db.query(
+            self._q(
                 "CREATE wiki_crossref SET from_slug = $from, to_slug = $to",
                 {"from": from_slug, "to": to_slug},
             )
@@ -2504,7 +2523,7 @@ class StorageEngine:
         """Insert a wiki draft. Returns draft ID."""
         now = self._now_iso()
         did = self._next_id("wiki_draft")
-        self._db.query(
+        self._q(
             "CREATE type::thing('wiki_draft', $id) SET "
             "title = $title, slug = $slug, content = $content, "
             "category = $category, tags = $tags, confidence = $confidence, "
@@ -2545,7 +2564,7 @@ class StorageEngine:
         if not rows:
             return False
         did = self._extract_id(rows[0].get("id"))
-        self._db.query(
+        self._q(
             "DELETE type::thing('wiki_draft', $id)",
             {"id": did},
         )
@@ -2560,16 +2579,13 @@ class StorageEngine:
         except Exception:
             pass
         if getattr(self, "_db_url", None):
-            # Server mode: close current thread's connection if open
-            local = getattr(self, "_local", None)
-            if local is not None:
-                conn = getattr(local, "db", None)
-                if conn is not None:
-                    try:
-                        conn.close()
-                    except Exception:
-                        pass
-                    local.db = None
+            # Server mode: close the shared httpx client.
+            http = getattr(self, "_http", None)
+            if http is not None:
+                try:
+                    http.close()
+                except Exception:
+                    pass
             return
         # Embedded mode: close DB and release file lock
         try:

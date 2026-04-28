@@ -5,14 +5,13 @@ Automatically retrieves relevant memories for every user prompt and
 outputs plain text to stdout so Claude receives them as context without
 needing to call any tool.
 
-Uses SurrealDB FTS keyword search for retrieval.
+HTTP-only: retrieval via daemon HTTP endpoint. No direct surrealkv.
 Each invocation is a fresh process; kept fast for per-prompt use.
 
 Target latency: <500ms.
 """
 
 import fcntl
-import hashlib
 import json
 import os
 import sys
@@ -181,7 +180,7 @@ def _format_context(memories: list, directory: str) -> str:
 
 
 def main():
-    start = time.monotonic()
+    time.monotonic()
 
     try:
         data = json.load(sys.stdin)
@@ -194,7 +193,7 @@ def main():
 
     directory = data.get("cwd", "") or os.getcwd()
 
-    db_path = Path(os.environ.get("YADGAR_DB_PATH", "~/.yadgar/surreal_db")).expanduser()
+    Path(os.environ.get("YADGAR_DB_PATH", "~/.yadgar/surreal_db")).expanduser()
 
     # Try HTTP endpoint first — works in daemon mode where DB lock is always held
     _port = os.environ.get("YADGAR_PORT", "8765")
@@ -212,49 +211,7 @@ def main():
             print(_text)
         return
     except Exception:
-        pass
-
-    if _db_locked(db_path):
-        return  # MCP server owns the DB — skip direct access
-
-    # Fallback throttle: max 1 recall per 2 minutes per directory (file-based)
-    _dir_hash = hashlib.md5(directory.encode()).hexdigest()[:8]
-    _stamp_file = db_path.parent / f"last_recall_{_dir_hash}"
-    _now = time.monotonic()
-    try:
-        if _stamp_file.exists():
-            _last = float(_stamp_file.read_text())
-            if _now - _last < 120:
-                return
-        _stamp_file.write_text(str(_now))
-    except Exception:
-        pass
-
-    try:
-        from surrealdb import Surreal
-
-        db = Surreal(f"surrealkv://{db_path}")
-        db.use("yadgar", "main")
-    except Exception:
-        return
-
-    # FTS search
-    fts_results = _fts_search(db, query, directory)
-
-    # Check time budget
-    if time.monotonic() - start > TIME_BUDGET:
-        fts_results = fts_results[:MAX_RESULTS]
-
-    merged = _merge_and_rank(fts_results, directory)
-
-    if not merged:
-        return
-
-    context = _format_context(merged, directory)
-    if not context:
-        return
-
-    print(context)
+        pass  # Daemon down — skip; never use surrealkv directly from host
 
 
 if __name__ == "__main__":
