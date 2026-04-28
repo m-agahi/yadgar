@@ -1,10 +1,18 @@
 # ── prod ──────────────────────────────────────────────────────────────────────
 FROM python:3.14-slim AS prod
+ARG TARGETARCH
 WORKDIR /app
 COPY . /app
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
-    pip install --no-cache-dir /app
+# torch: use PyTorch CPU wheel index for amd64; fall back to PyPI for arm64
+# (whl/cpu index only carries x86_64 wheels).
+RUN --mount=type=cache,target=/root/.cache/pip \
+    if [ "$TARGETARCH" = "arm64" ]; then \
+        pip install torch; \
+    else \
+        pip install torch --index-url https://download.pytorch.org/whl/cpu; \
+    fi && \
+    pip install /app
 # SurrealDB server binary — version decoupled from Python client (now httpx-based).
 COPY --from=surrealdb/surrealdb:v2.6.5 /surreal /usr/local/bin/surreal
 COPY entrypoint.sh /entrypoint.sh

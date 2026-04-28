@@ -67,6 +67,8 @@ jobs:
           docker buildx build \
             --platform "${{ env.PLATFORMS }}" \
             --target prod \
+            --cache-from type=registry,ref=looseking/yadgar:buildcache \
+            --cache-to   type=registry,ref=looseking/yadgar:buildcache,mode=max \
             -t looseking/yadgar:latest \
             --push \
             .
@@ -77,6 +79,8 @@ jobs:
           docker buildx build \
             --platform "${{ env.PLATFORMS }}" \
             --target prod \
+            --cache-from type=registry,ref=looseking/yadgar:buildcache \
+            --cache-to   type=registry,ref=looseking/yadgar:buildcache,mode=max \
             -t looseking/yadgar:latest \
             -t looseking/yadgar:${{ env.VERSION }} \
             --push \
