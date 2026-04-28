@@ -5,15 +5,14 @@ Reads tool call JSON from stdin, writes to action_log table.
 Only imports stdlib (json, sys) plus surrealdb — no ML model loading.
 Runs in <100ms. Backgrounded by the shell wrapper for zero latency.
 
-Works in both stdio and HTTP transport modes because it writes
-directly to the shared SurrealDB database.
+HTTP-only: writes via daemon HTTP endpoint. No direct surrealkv
+access — the host path differs from the container path (/data/...).
 """
 
 import fcntl
 import json
 import os
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -93,7 +92,7 @@ def main():
     else:
         summary = str(tool_input)[:200]
 
-    db_path = Path(os.environ.get("YADGAR_DB_PATH", "~/.yadgar/surreal_db")).expanduser()
+    Path(os.environ.get("YADGAR_DB_PATH", "~/.yadgar/surreal_db")).expanduser()
 
     # Try HTTP endpoint first — works in daemon mode where DB lock is always held
     _port = os.environ.get("YADGAR_PORT", "8765")
@@ -116,30 +115,7 @@ def main():
         _req.urlopen(_r, timeout=1)
         return
     except Exception:
-        pass
-
-    if _db_locked(db_path):
-        return  # MCP server owns the DB — skip direct access
-
-    try:
-        from surrealdb import Surreal
-
-        db = Surreal(f"surrealkv://{db_path}")
-        db.use("yadgar", "main")
-        ts = datetime.now(UTC).isoformat()
-        db.query(
-            "CREATE action_log SET "
-            "tool_name = $tn, "
-            "tool_input_summary = $s, "
-            "directory = $d, "
-            "session_id = $sid, "
-            "timestamp = $ts, "
-            "processed = false",
-            {"tn": tool_name, "s": summary, "d": cwd, "sid": session_id, "ts": ts},
-        )
-    except Exception:
-        # Never fail the hook — swallow all errors
-        pass
+        pass  # Daemon down — skip; never use surrealkv directly from host
 
 
 if __name__ == "__main__":

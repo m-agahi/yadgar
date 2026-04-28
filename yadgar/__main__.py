@@ -743,7 +743,7 @@ def cmd_vacuum(args):
     total = 0
     for table in KEEP_TABLES:
         try:
-            rows = storage._db.query(f"SELECT * FROM {table}")
+            rows = storage._q(f"SELECT * FROM {table}")
             records = rows[0] if rows else []
             if not isinstance(records, list):
                 records = []
@@ -787,7 +787,7 @@ def cmd_vacuum(args):
                     s = str(rid)
                     raw_id = s.split(":")[-1] if ":" in s else s
                 content = {k: v for k, v in rec.items() if k != "id"}
-                storage._db.query(
+                storage._q(
                     f"UPSERT {table}:{raw_id} CONTENT $data",
                     {"data": content},
                 )

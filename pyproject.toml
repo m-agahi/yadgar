@@ -41,7 +41,7 @@ dependencies = [
     "pydantic>=2.5.0",
     "pydantic-settings>=2.0.0",
     "numpy>=1.24.0",
-    "surrealdb>=1.0.0",
+    "httpx>=0.27",
     "networkx>=3.0",
     "ruamel.yaml>=0.18.0",
 ]
@@ -79,6 +79,7 @@ test = [
 dev = [
     "yadgar[test]",
     "ruff>=0.4.0",
+    "surrealdb>=1.0.0",
 ]
 
 [tool.pytest.ini_options]
