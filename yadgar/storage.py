@@ -1035,6 +1035,35 @@ class StorageEngine:
         )
         self._embedding_dim = new_dim
 
+    def probe_vector_indexes(self) -> bool:
+        """Quick KNN probe — returns False if either MTREE index is corrupted."""
+        count = self._q("SELECT count() AS c FROM memory GROUP ALL")
+        if not count or int(count[0]["c"]) == 0:
+            return True  # empty table, nothing to corrupt
+        try:
+            zero = [0.0] * self._embedding_dim
+            self._q(
+                "SELECT id FROM memory WHERE embedding <|1|> $qv LIMIT 1",
+                {"qv": zero},
+            )
+            self._q(
+                "SELECT id FROM memory WHERE implicit_embedding <|1|> $qv LIMIT 1",
+                {"qv": zero},
+            )
+            return True
+        except Exception:
+            return False
+
+    def rebuild_vector_indexes(self) -> bool:
+        """Rebuild both MTREE indexes from stored embeddings. Returns True on success."""
+        try:
+            self._q("REBUILD INDEX memory_embedding_idx ON memory")
+            self._q("REBUILD INDEX memory_implicit_idx ON memory")
+            return True
+        except Exception:
+            _log.critical("MTREE index rebuild failed — container restart required")
+            return False
+
     def update_memory_compression(
         self,
         memory_id: int,

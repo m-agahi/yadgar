@@ -281,6 +281,20 @@ class ConsolidationScheduler:
             }
         )
         logger.info("Consolidation complete in %dms: %s", duration_ms, stats)
+
+        # Post-consolidation MTREE health probe: bulk embedding writes during
+        # consolidation are the primary trigger for SurrealDB 2.6.x index
+        # corruption. Detect and auto-recover while the damage is still fresh.
+        if not self._storage.probe_vector_indexes():
+            logger.warning("MTREE index corruption detected after consolidation — rebuilding")
+            if self._storage.rebuild_vector_indexes():
+                logger.info("MTREE indexes rebuilt successfully")
+            else:
+                logger.critical(
+                    "MTREE index rebuild failed; vector search will be degraded "
+                    "until the container is restarted"
+                )
+
         return stats
 
     @property
