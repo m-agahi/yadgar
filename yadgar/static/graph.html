@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Yadgar Memory Graph</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0a0a0f; color: #e0e0ff; font-family: monospace; overflow: hidden; }
+    #graph { width: 100vw; height: 100vh; }
+    #hud {
+      position: fixed; top: 16px; left: 16px; z-index: 100;
+      background: rgba(10,10,20,0.85); border: 1px solid #334;
+      border-radius: 8px; padding: 12px 16px; max-width: 320px;
+    }
+    #hud h1 { font-size: 14px; color: #8af; margin-bottom: 8px; }
+    #hud p { font-size: 11px; color: #889; line-height: 1.6; }
+    #tooltip {
+      position: fixed; pointer-events: none; z-index: 200;
+      background: rgba(10,10,30,0.95); border: 1px solid #446;
+      border-radius: 6px; padding: 8px 12px; max-width: 280px;
+      font-size: 11px; line-height: 1.5; display: none;
+    }
+    #stats { position: fixed; bottom: 16px; right: 16px; z-index: 100;
+      background: rgba(10,10,20,0.85); border: 1px solid #334;
+      border-radius: 8px; padding: 8px 12px; font-size: 11px; color: #667; }
+  </style>
+</head>
+<body>
+  <div id="hud">
+    <h1>Yadgar Memory Graph</h1>
+    <p id="status">Loading memories...</p>
+  </div>
+  <div id="tooltip"></div>
+  <div id="graph"></div>
+  <div id="stats"></div>
+
+  <script src="https://unpkg.com/three@0.158.0/build/three.min.js"
+    integrity="sha384-5UGTcMIxVUKFeJH0zOS3lqMAZNBG+fCXJbi3UglUq6ABO4MQJu6rxNa+MPP+qtwq"
+    crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/3d-force-graph@1.73.0/dist/3d-force-graph.min.js"
+    integrity="sha384-RVJW4dJGo0ZcKn5786L3F59X867QWiwZe/dtY/PukzLv9yWBMkwFosnV3xmqc6Kf"
+    crossorigin="anonymous"></script>
+  <script>
+    const API = window.location.origin;
+    const tooltip = document.getElementById('tooltip');
+    const status = document.getElementById('status');
+    const statsEl = document.getElementById('stats');
+
+    function esc(s) {
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    // Heat → color: cold=blue, warm=orange, hot=red
+    function heatColor(heat) {
+      const h = Math.max(0, Math.min(1, heat));
+      const r = Math.round(20 + h * 235);
+      const g = Math.round(20 + (1 - Math.abs(h - 0.5) * 2) * 180);
+      const b = Math.round(255 - h * 235);
+      return `rgb(${r},${g},${b})`;
+    }
+
+    async function loadGraph() {
+      try {
+        // Fetch hot memories from the /hooks/session-context endpoint
+        const resp = await fetch(`${API}/hooks/session-context`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const text = await resp.text();
+
+        // Parse memories from the markdown response (best-effort)
+        const lines = text.split('\n');
+        const nodes = [], links = [];
+        const seen = new Set();
+        let nodeId = 0;
+
+        lines.forEach(line => {
+          const m = line.match(/\*\*(.+?)\*\*.*heat[:\s]+([\d.]+)/i);
+          if (m && !seen.has(m[1])) {
+            seen.add(m[1]);
+            nodes.push({
+              id: nodeId++,
+              name: m[1].substring(0, 60),
+              heat: parseFloat(m[2]) || 0.5,
+              val: 2 + parseFloat(m[2]) * 4,
+            });
+          }
+        });
+
+        // If we couldn't parse markdown, try a direct stats call
+        if (nodes.length === 0) {
+          const sr = await fetch(`${API}/health`);
+          const sd = await sr.json();
+          nodes.push({ id: 0, name: 'Yadgar Core', heat: 1.0, val: 6 });
+          status.textContent = `Connected • ${JSON.stringify(sd.status)}`;
+        } else {
+          status.textContent = `${nodes.length} memories loaded`;
+          // Add some synthetic edges between nearby nodes
+          for (let i = 1; i < Math.min(nodes.length, 50); i++) {
+            links.push({ source: i - 1, target: i, value: 0.3 });
+            if (i > 2 && Math.random() > 0.7) {
+              links.push({ source: i, target: Math.floor(Math.random() * (i - 1)), value: 0.1 });
+            }
+          }
+        }
+
+        statsEl.textContent = `nodes: ${nodes.length} • links: ${links.length}`;
+
+        const Graph = ForceGraph3D()(document.getElementById('graph'))
+          .backgroundColor('#0a0a0f')
+          .nodeColor(n => heatColor(n.heat))
+          .nodeVal(n => n.val)
+          .nodeLabel(n => `<span style="color:#cdf;font-size:12px">${esc(n.name)}</span>`)
+          .linkColor(() => '#334455')
+          .linkOpacity(0.4)
+          .linkWidth(0.5)
+          .graphData({ nodes, links })
+          .onNodeHover(node => {
+            if (node) {
+              tooltip.style.display = 'block';
+              // Use DOM methods to avoid XSS from memory content
+              tooltip.replaceChildren();
+              const strong = document.createElement('strong');
+              strong.style.color = '#8af';
+              strong.textContent = node.name;
+              tooltip.appendChild(strong);
+              tooltip.appendChild(document.createElement('br'));
+              tooltip.appendChild(document.createTextNode(`heat: ${node.heat.toFixed(3)}`));
+            } else {
+              tooltip.style.display = 'none';
+            }
+          });
+
+        document.addEventListener('mousemove', e => {
+          tooltip.style.left = (e.clientX + 12) + 'px';
+          tooltip.style.top = (e.clientY - 8) + 'px';
+        });
+
+        // Auto-rotate
+        let angle = 0;
+        setInterval(() => {
+          Graph.cameraPosition({
+            x: 300 * Math.sin(angle),
+            z: 300 * Math.cos(angle),
+          });
+          angle += 0.002;
+        }, 16);
+
+      } catch (err) {
+        status.textContent = `Error: ${err.message}`;
+        console.error(err);
+      }
+    }
+
+    loadGraph();
+  </script>
+</body>
+</html>

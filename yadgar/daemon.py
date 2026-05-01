@@ -23,6 +23,11 @@ DEFAULT_PORT = 8765
 DEFAULT_DEV_PORT = 8766
 _HEALTH_TIMEOUT = 60.0  # Docker startup takes longer than a local process
 DOCKERHUB_IMAGE = "looseking/yadgar:latest"
+DOCKERHUB_BACKEND_IMAGE = "looseking/yadgar-backend:latest"
+DEFAULT_BACKEND_EMBED_PORT = 8001
+_BACKEND_CONTAINER = "yadgar-backend"
+_BACKEND_VOLUME = "yadgar-db-data"
+_NETWORK_NAME = "yadgar-net"
 
 
 # ── Host memory detection ──────────────────────────────────────────────────────
@@ -112,6 +117,23 @@ def _dev_profile(port: int = DEFAULT_DEV_PORT) -> ContainerProfile:
     )
 
 
+# ── Network helper ────────────────────────────────────────────────────────────
+
+
+def _ensure_network() -> None:
+    """Create the yadgar Docker network if it doesn't exist."""
+    result = subprocess.run(
+        ["docker", "network", "inspect", _NETWORK_NAME],
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        subprocess.run(
+            ["docker", "network", "create", "--driver", "bridge", _NETWORK_NAME],
+            check=True,
+            capture_output=True,
+        )
+
+
 # ── Main class ─────────────────────────────────────────────────────────────────
 
 
@@ -149,6 +171,17 @@ class YadgarDaemon:
                 "reason": f"Image {profile.image_name!r} not found. Run: {hint}",
             }
 
+        # Ensure network exists and backend is running before starting core
+        _ensure_network()
+        backend_name = os.environ.get("YADGAR_BACKEND_CONTAINER", _BACKEND_CONTAINER)
+        if not self._container_running(backend_name):
+            be = self.start_backend()
+            if be.get("status") == "failed":
+                return {
+                    "status": "failed",
+                    "reason": f"Backend failed to start: {be.get('reason')}",
+                }
+
         mem_mb = _container_memory_mb()
 
         cmd = [
@@ -157,6 +190,8 @@ class YadgarDaemon:
             "-d",
             "--name",
             profile.container_name,
+            "--network",
+            _NETWORK_NAME,
             "--cpus",
             str(profile.cpus),
             "--memory",
@@ -169,6 +204,12 @@ class YadgarDaemon:
             f"{profile.volume_name}:/data",
             "-p",
             f"{profile.port}:8765",
+            "-e",
+            f"YADGAR_DB_URL=http://{backend_name}:8000",
+            "-e",
+            f"YADGAR_EMBED_URL=http://{backend_name}:8001",
+            "-e",
+            "YADGAR_DATA_DIR=/data",
         ]
 
         if profile.is_dev:
@@ -176,7 +217,7 @@ class YadgarDaemon:
             cmd += ["-v", f"{source}:/app"]
             hf_cache = Path.home() / ".cache" / "huggingface"
             if hf_cache.exists():
-                cmd += ["-v", f"{hf_cache}:/root/.cache/huggingface"]
+                cmd += ["-v", f"{hf_cache}:/home/yadgar/.cache/huggingface"]
 
         cmd.append(profile.image_name)
 
@@ -214,25 +255,124 @@ class YadgarDaemon:
             "warning": "health check timed out — server may still be loading",
         }
 
+    def start_backend(self) -> dict:
+        """Start the backend container (SurrealDB + embed service)."""
+        name = os.environ.get("YADGAR_BACKEND_CONTAINER", _BACKEND_CONTAINER)
+        image = os.environ.get("YADGAR_BACKEND_IMAGE", DOCKERHUB_BACKEND_IMAGE)
+        volume = os.environ.get("YADGAR_BACKEND_VOLUME", _BACKEND_VOLUME)
+
+        if self._container_running(name):
+            return {"status": "already_running", "container": name}
+
+        subprocess.run(["docker", "rm", name], capture_output=True)
+
+        if not self._image_exists(image):
+            return {
+                "status": "failed",
+                "reason": f"Backend image {image!r} not found. Run: yadgar daemon pull",
+            }
+
+        _ensure_network()
+        mem_mb = _container_memory_mb()
+
+        cmd = [
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            name,
+            "--network",
+            _NETWORK_NAME,
+            "--cpus",
+            "1.0",
+            "--memory",
+            f"{mem_mb}m",
+            "--memory-swap",
+            f"{mem_mb}m",
+            "--restart",
+            "on-failure:3",
+            "-v",
+            f"{volume}:/data",
+            "-p",
+            f"{DEFAULT_BACKEND_EMBED_PORT}:8001",  # embed service only
+            image,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            return {"status": "failed", "reason": result.stderr.strip()}
+
+        container_id = result.stdout.strip()
+
+        # Wait for backend embed service (port 8001) to be healthy
+        deadline = time.monotonic() + _HEALTH_TIMEOUT
+        while time.monotonic() < deadline:
+            time.sleep(2.0)
+            if not self._container_running(name):
+                logs = subprocess.run(
+                    ["docker", "logs", "--tail", "20", name],
+                    capture_output=True,
+                    text=True,
+                ).stdout
+                return {"status": "failed", "reason": f"container exited. Logs:\n{logs}"}
+            if self._health_ok(DEFAULT_BACKEND_EMBED_PORT):
+                return {
+                    "status": "started",
+                    "container": name,
+                    "embed_port": DEFAULT_BACKEND_EMBED_PORT,
+                    "id": container_id[:12],
+                }
+
+        return {
+            "status": "started",
+            "container": name,
+            "embed_port": DEFAULT_BACKEND_EMBED_PORT,
+            "warning": "health check timed out — model may still be loading",
+        }
+
     def stop(self, dev: bool = False) -> dict:
-        """Stop the daemon container."""
+        """Stop the core container (and optionally the backend)."""
         profile = _dev_profile() if dev else _prod_profile(self.port)
-        if not self._container_exists(profile.container_name):
-            return {"status": "not_running"}
-        result = subprocess.run(
-            ["docker", "stop", profile.container_name],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            return {"status": "stopped", "container": profile.container_name}
-        return {"status": "error", "reason": result.stderr.strip()}
+        results = {}
+
+        # Stop core first
+        if self._container_exists(profile.container_name):
+            r = subprocess.run(
+                ["docker", "stop", profile.container_name],
+                capture_output=True,
+                text=True,
+            )
+            results["core"] = "stopped" if r.returncode == 0 else r.stderr.strip()
+        else:
+            results["core"] = "not_running"
+
+        # Stop backend
+        backend_name = os.environ.get("YADGAR_BACKEND_CONTAINER", _BACKEND_CONTAINER)
+        if self._container_exists(backend_name):
+            r = subprocess.run(
+                ["docker", "stop", backend_name],
+                capture_output=True,
+                text=True,
+            )
+            results["backend"] = "stopped" if r.returncode == 0 else r.stderr.strip()
+        else:
+            results["backend"] = "not_running"
+
+        return {"status": "stopped", **results}
 
     def status(self, dev: bool = False) -> dict:
         """Return daemon status dict."""
         profile = _dev_profile() if dev else _prod_profile(self.port)
-        if not self._container_running(profile.container_name):
-            return {"running": False, "container": profile.container_name}
+        backend_name = os.environ.get("YADGAR_BACKEND_CONTAINER", _BACKEND_CONTAINER)
+        backend_running = self._container_running(backend_name)
+        core_running = self._container_running(profile.container_name)
+
+        if not core_running:
+            return {
+                "running": False,
+                "container": profile.container_name,
+                "backend_running": backend_running,
+                "backend_container": backend_name,
+            }
         try:
             resp = urllib.request.urlopen(f"http://127.0.0.1:{profile.port}/health", timeout=2)
             health = json.loads(resp.read().decode())
@@ -240,6 +380,8 @@ class YadgarDaemon:
                 "running": True,
                 "container": profile.container_name,
                 "port": profile.port,
+                "backend_running": backend_running,
+                "backend_container": backend_name,
                 **health,
             }
         except Exception:
@@ -247,6 +389,8 @@ class YadgarDaemon:
                 "running": True,
                 "container": profile.container_name,
                 "port": profile.port,
+                "backend_running": backend_running,
+                "backend_container": backend_name,
                 "health": "unreachable",
             }
 
@@ -282,20 +426,57 @@ class YadgarDaemon:
         }
 
     def install_systemd_service(self, dev: bool = False) -> dict:
-        """Write a systemd user service unit that manages the Docker container."""
+        """Write two systemd user service units: yadgar-db.service and yadgar.service."""
         profile = _dev_profile() if dev else _prod_profile(self.port)
         service_dir = Path.home() / ".config" / "systemd" / "user"
         service_dir.mkdir(parents=True, exist_ok=True)
 
+        backend_name = os.environ.get("YADGAR_BACKEND_CONTAINER", _BACKEND_CONTAINER)
+        backend_image = os.environ.get("YADGAR_BACKEND_IMAGE", DOCKERHUB_BACKEND_IMAGE)
+        backend_volume = os.environ.get("YADGAR_BACKEND_VOLUME", _BACKEND_VOLUME)
         mem_mb = _container_memory_mb()
-        suffix = "-dev" if dev else ""
-        service_name = f"yadgar{suffix}.service"
 
-        unit = f"""\
+        # yadgar-db.service — backend (SurrealDB + embed)
+        hf_cache = Path.home() / ".cache" / "huggingface"
+        hf_mount = (
+            f"    -v {hf_cache}:/home/yadgar/.cache/huggingface \\\n" if hf_cache.exists() else ""
+        )
+
+        db_unit = f"""\
 [Unit]
-Description=Yadgar Memory Engine (Docker{" dev" if dev else ""})
+Description=Yadgar Backend — SurrealDB and Embedding Service
 Requires=docker.service
 After=docker.service
+
+[Service]
+Type=simple
+ExecStartPre=-docker network create --driver bridge {_NETWORK_NAME}
+ExecStartPre=-docker stop {backend_name}
+ExecStartPre=-docker rm {backend_name}
+ExecStart=docker run --rm \\
+    --name {backend_name} \\
+    --network {_NETWORK_NAME} \\
+    --cpus 1.0 \\
+    --memory {mem_mb}m \\
+    --memory-swap {mem_mb}m \\
+    -v {backend_volume}:/data \\
+    -p {DEFAULT_BACKEND_EMBED_PORT}:8001 \\
+{hf_mount}    {backend_image}
+ExecStop=docker stop {backend_name}
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+"""
+
+        # yadgar.service — core (MCP server)
+        suffix = "-dev" if dev else ""
+        core_unit = f"""\
+[Unit]
+Description=Yadgar Memory Engine — MCP Core Server
+Requires=docker.service yadgar-db{suffix}.service
+After=docker.service yadgar-db{suffix}.service
 
 [Service]
 Type=simple
@@ -303,27 +484,38 @@ ExecStartPre=-docker stop {profile.container_name}
 ExecStartPre=-docker rm {profile.container_name}
 ExecStart=docker run --rm \\
     --name {profile.container_name} \\
+    --network {_NETWORK_NAME} \\
     --cpus {profile.cpus} \\
     --memory {mem_mb}m \\
     --memory-swap {mem_mb}m \\
     -v {profile.volume_name}:/data \\
     -p {profile.port}:8765 \\
+    -e YADGAR_DB_URL=http://{backend_name}:8000 \\
+    -e YADGAR_EMBED_URL=http://{backend_name}:8001 \\
+    -e YADGAR_DATA_DIR=/data \\
     {profile.image_name}
 ExecStop=docker stop {profile.container_name}
 Restart=on-failure
-RestartSec=10
+RestartSec=5
 
 [Install]
 WantedBy=default.target
 """
-        service_path = service_dir / service_name
-        service_path.write_text(unit)
+
+        db_service_name = f"yadgar-db{suffix}.service"
+        core_service_name = f"yadgar{suffix}.service"
+
+        db_path = service_dir / db_service_name
+        core_path = service_dir / core_service_name
+        db_path.write_text(db_unit)
+        core_path.write_text(core_unit)
 
         return {
-            "service_file": str(service_path),
-            "enable": f"systemctl --user enable {service_name}",
-            "start": f"systemctl --user start {service_name}",
-            "status": f"systemctl --user status {service_name}",
+            "db_service": str(db_path),
+            "core_service": str(core_path),
+            "enable": f"systemctl --user enable {db_service_name} {core_service_name}",
+            "start": f"systemctl --user start {db_service_name} && systemctl --user start {core_service_name}",
+            "status": f"systemctl --user status {db_service_name} {core_service_name}",
         }
 
     def pull(self) -> dict:
@@ -372,10 +564,24 @@ WantedBy=default.target
 
         return {"ok": True, "pushed": pushed}
 
-    def build(self, dev: bool = False, no_cache: bool = False) -> dict:
+    def build(self, dev: bool = False, no_cache: bool = False, backend: bool = False) -> dict:
         """Build the Docker image for the given profile."""
-        profile = _dev_profile() if dev else _prod_profile(self.port)
         source = _source_root()
+        if backend:
+            dockerfile = source / "Dockerfile.backend"
+            if not dockerfile.exists():
+                return {"ok": False, "reason": f"No Dockerfile.backend found at {source}"}
+            image_name = os.environ.get("YADGAR_BACKEND_IMAGE", DOCKERHUB_BACKEND_IMAGE)
+            cmd = ["docker", "build", "-f", str(dockerfile), "-t", image_name, str(source)]
+            if no_cache:
+                cmd.insert(2, "--no-cache")
+            print(f"Building {image_name!r} (backend)...", file=sys.stderr)
+            result = subprocess.run(cmd)
+            if result.returncode != 0:
+                return {"ok": False, "reason": f"docker build failed (exit {result.returncode})"}
+            return {"ok": True, "image": image_name, "target": "backend"}
+
+        profile = _dev_profile() if dev else _prod_profile(self.port)
         if not (source / "Dockerfile").exists():
             return {
                 "ok": False,

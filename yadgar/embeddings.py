@@ -247,7 +247,7 @@ class EmbeddingEngine:
         return arr
 
     def encode(self, text: str) -> bytes | None:
-        """Encode text to a float32 byte blob for SQLite BLOB storage."""
+        """Encode text to a float32 byte blob."""
         if text in self._query_cache:
             self._query_cache.move_to_end(text)
             return self._query_cache[text]

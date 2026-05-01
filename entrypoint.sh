@@ -1,28 +1,24 @@
 #!/bin/bash
+# Core container entrypoint: MCP server only
 set -e
 
-cleanup() {
-  kill "$SURREAL_PID" 2>/dev/null
-  wait "$SURREAL_PID" 2>/dev/null
-}
-trap cleanup TERM INT
-
-surreal start \
-  --no-banner \
-  --bind 127.0.0.1:8000 \
-  --user root \
-  --pass root \
-  surrealkv:///data/surreal_db &
-SURREAL_PID=$!
-
-until python3 -c "
-import urllib.request, sys
+# Wait for backend embed service to be ready (max 120s)
+echo "Waiting for backend embed service..."
+_deadline=$(( $(date +%s) + 120 ))
+until python3 - <<'PYEOF' 2>/dev/null
+import urllib.request, sys, os
+url = os.environ.get("YADGAR_EMBED_URL", "http://yadgar-backend:8001")
 try:
-    urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=1)
+    urllib.request.urlopen(url + "/health", timeout=2)
 except Exception:
     sys.exit(1)
-" 2>/dev/null; do
-  sleep 0.2
+PYEOF
+do
+  if [ "$(date +%s)" -ge "$_deadline" ]; then
+    echo "Backend not ready after 120s — starting in degraded mode"
+    break
+  fi
+  sleep 1
 done
 
 exec yadgar --transport streamable-http

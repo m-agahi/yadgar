@@ -75,13 +75,13 @@ def _make_memory(
     if updates:
         set_clauses = ", ".join(f"{k} = ${k}" for k in updates)
         params = {"id": mid, **updates}
-        storage._db.query(
+        storage._q(
             f"UPDATE type::thing('memory', $id) SET {set_clauses}",
             params,
         )
 
     if created_at is not None:
-        storage._db.query(
+        storage._q(
             "UPDATE type::thing('memory', $id) SET created_at = $ts",
             {"id": mid, "ts": created_at.isoformat()},
         )

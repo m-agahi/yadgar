@@ -824,33 +824,23 @@ def _delete_existing_seed_memories(storage, directory: str) -> int:
 
     Returns count of deleted memories.
     """
-    rows = storage._conn.execute(
-        "SELECT id FROM memories WHERE directory_context = ? AND tags LIKE '%\"_seed\"%'",
-        (directory,),
-    ).fetchall()
+    rows = storage._q(
+        "SELECT id FROM memory WHERE directory_context = $dir AND '_seed' IN tags",
+        {"dir": directory},
+    )
     if not rows:
         return 0
 
-    ids = [r[0] for r in rows]
+    ids = [storage._extract_id(r.get("id")) for r in rows]
     for mid in ids:
-        # Delete FK dependents first
-        storage._conn.execute("DELETE FROM memory_archives WHERE original_memory_id = ?", (mid,))
-        storage._conn.execute(
-            "DELETE FROM memory_transitions WHERE from_memory_id = ? OR to_memory_id = ?",
-            (mid, mid),
+        # Delete SR transitions referencing this memory
+        storage._q(
+            "DELETE memory_transition WHERE from_memory_id = $id OR to_memory_id = $id",
+            {"id": mid},
         )
-        # Clean up vector tables
-        try:
-            storage._conn.execute("DELETE FROM memory_vectors WHERE rowid = ?", (mid,))
-        except Exception:
-            pass
-        try:
-            storage._conn.execute("DELETE FROM memory_implicit_vectors WHERE rowid = ?", (mid,))
-        except Exception:
-            pass
-        # Now safe to delete the memory itself
-        storage._conn.execute("DELETE FROM memories WHERE id = ?", (mid,))
-    storage._conn.commit()
+        # Delete the memory itself (embedding fields are on the record — no separate table)
+        storage._q("DELETE type::thing('memory', $id)", {"id": mid})
+
     return len(ids)
 
 

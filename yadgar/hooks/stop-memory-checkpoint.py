@@ -19,9 +19,10 @@ from pathlib import Path
 INTERVAL = 25  # human messages between checkpoints
 
 _PROMPT = (
-    "Yadgar checkpoint: call memorize() once or twice to capture key decisions, "
-    "context, or learnings from this session. Be concise. "
-    "Then continue the conversation naturally."
+    "Yadgar checkpoint: call `memorize()` once or twice for key decisions or learnings. "
+    "If anything wiki-worthy was discussed (architecture, concepts, decisions), call `wiki_add()` too. "
+    "Then look at your last message — if you asked a question or were mid-thought, "
+    "repeat it so the conversation can continue naturally."
 )
 
 

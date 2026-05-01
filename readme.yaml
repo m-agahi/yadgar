@@ -1,0 +1,100 @@
+name: Yadgar
+tagline: Persistent memory engine for Claude Code — biological memory dynamics, not a database
+
+description: >
+  Yadgar gives Claude Code a persistent, evolving memory across sessions.
+  Unlike static RAG systems or manual note-taking tools, Yadgar models memory
+  as a biological process — memories decay, consolidate, merge, and surface
+  based on relevance and recency, not just semantic similarity.
+
+differentiators:
+
+  heat_decay:
+    summary: Memories have temperature that decays over time
+    detail: >
+      A memory accessed yesterday ranks higher than one from six months ago.
+      Relevance is temporal, not just semantic. Cold memories get compressed
+      or eventually dropped. Hot memories surface first in recall.
+
+  surprise_gated_writes:
+    summary: Not everything gets stored — only novel information
+    detail: >
+      If what you are writing is semantically close to something already in
+      memory, it gets merged or skipped. This prevents noise accumulation
+      that degrades RAG quality over time. The write gate compares incoming
+      content against existing memories before committing.
+
+  consolidation_cycles:
+    summary: Background process that runs like sleep — memory improves passively
+    detail: >
+      A consolidation engine runs on a timer and merges duplicates, links
+      related memories, runs causal discovery, and compresses cold memories.
+      You do not curate memory manually — the system does it. The longer
+      Yadgar runs, the better the memory graph becomes.
+
+  passive_capture:
+    summary: Every Claude Code tool use is captured automatically
+    detail: >
+      The action log records tool calls, file edits, and decisions without
+      you calling memorize(). The consolidation cycle decides what matters
+      and promotes it to long-term memory. Explicit memorize() calls are
+      available but not required.
+
+  causal_links:
+    summary: Memories are linked by causation, not just similarity
+    detail: >
+      Beyond vector similarity, Yadgar runs causal discovery to link memories
+      that caused each other. A decision made in one session that drove an
+      action in a later session gets a causal edge, not just a semantic one.
+
+  project_context_anchoring:
+    summary: Memory is anchored to your working directory
+    detail: >
+      Recall is filtered by project path. Memory from one codebase does not
+      pollute context when you switch projects. Each project has its own
+      hot memory surface derived from what you actually worked on there.
+
+  mcp_native:
+    summary: Built for Claude Code as a first-class MCP server
+    detail: >
+      Yadgar is not a general-purpose vector store with an MCP adapter bolted
+      on. The MCP tools (memorize, recall, get_project_context, anchor,
+      checkpoint, restore) are the primary interface, designed around how
+      Claude Code actually uses memory across sessions.
+
+versus:
+
+  obsidian:
+    summary: Manual PKM vs automatic biological memory
+    detail: >
+      Obsidian requires you to write notes, define links, and curate your
+      graph. RAG over Obsidian is vector search over your manually-written
+      documents — static, equal-weight, no temporal dynamics. Yadgar captures
+      passively, decays automatically, and improves without curation.
+
+  standard_rag:
+    summary: Static equal-weight store vs dynamic decaying memory
+    detail: >
+      Standard RAG puts things in and they stay forever at equal weight.
+      Everything you ever stored competes equally for the top-K recall slots.
+      There is no forgetting, no importance weighting, no temporal dynamics.
+      Six-month-old context is as loud as yesterday's decision.
+
+  mem0:
+    summary: Fact store vs memory dynamics
+    detail: >
+      mem0 stores extracted facts with entity deduplication. It does not have
+      heat decay, consolidation cycles, surprise-gated writes, or causal
+      discovery. It is a cleaner, simpler tool — Yadgar trades simplicity
+      for biological fidelity.
+
+  graphiti:
+    summary: Temporal knowledge graph vs memory engine
+    detail: >
+      Graphiti (Zep) builds temporal entity graphs with episode provenance —
+      excellent for tracking how facts change over time. It does not model
+      memory dynamics (decay, consolidation, surprise gating). The two are
+      complementary: Graphiti for entity tracking, Yadgar for session memory.
+
+status: active development — v4 in planning (see PLAN_V4.md)
+license: MIT

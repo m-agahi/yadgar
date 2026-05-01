@@ -126,11 +126,82 @@ def _get_enrichment_pipeline(settings, embeddings_engine=None):
 # Embedding fields that hold float arrays in SurrealDB and must be converted to bytes on read
 _EMBEDDING_FIELDS = ("embedding", "centroid_embedding", "implicit_embedding")
 
+_MEMORY_UPDATABLE_FIELDS = frozenset(
+    {
+        "content",
+        "tags",
+        "embedding",
+        "embedding_model",
+        "contextual_prefix",
+        "heat",
+        "importance",
+        "surprise_score",
+        "emotional_valence",
+        "is_protected",
+        "is_stale",
+        "is_prospective",
+        "compressed",
+        "store_type",
+        "cluster_id",
+        "wiki_refs",
+        "compression_level",
+        "file_hash",
+        "provenance_agent",
+        "vector_clock",
+    }
+)
+
+_RELATIONSHIP_UPDATABLE_FIELDS = frozenset(
+    {
+        "is_causal",
+        "weight",
+        "confidence",
+        "relationship_type",
+        "event_time",
+        "record_time",
+    }
+)
+
+
+# ── Schema migrations ──────────────────────────────────────────────────────────
+# Each entry: {"version": str, "fn": callable(StorageEngine) -> None}
+# Applied exactly once, in order, on first run with a new version.
+# Add new migrations at the END of this list only — never reorder or edit existing ones.
+
+
+def _migration_001_hnsw_indexes(storage: "StorageEngine") -> None:
+    """Migrate MTREE vector indexes to HNSW (SurrealDB v3 upgrade)."""
+    dim = storage._embedding_dim
+    # Drop old MTREE indexes (IF EXISTS so it's safe even if already gone)
+    for idx in ("memory_embedding_idx", "memory_implicit_idx"):
+        storage._q(f"REMOVE INDEX IF EXISTS {idx} ON memory;")
+    storage._q("REMOVE INDEX IF EXISTS wiki_embedding_idx ON wiki_page;")
+    # Recreate as HNSW
+    storage._q(f"""
+        DEFINE INDEX IF NOT EXISTS memory_embedding_idx
+            ON memory FIELDS embedding
+            HNSW DIMENSION {dim} DIST COSINE TYPE F32 EFC 150 M 12;
+    """)
+    storage._q(f"""
+        DEFINE INDEX IF NOT EXISTS memory_implicit_idx
+            ON memory FIELDS implicit_embedding
+            HNSW DIMENSION {dim} DIST COSINE TYPE F32 EFC 150 M 12;
+    """)
+    storage._q(f"""
+        DEFINE INDEX IF NOT EXISTS wiki_embedding_idx
+            ON wiki_page FIELDS embedding
+            HNSW DIMENSION {dim} DIST COSINE TYPE F32 EFC 150 M 12;
+    """)
+
+
+_MIGRATIONS: list[dict] = [
+    {"version": "001_hnsw_indexes", "fn": _migration_001_hnsw_indexes},
+]
+
 
 class StorageEngine:
     def __init__(self, db_path: str, embedding_dim: int = 384):
         self._embedding_dim = embedding_dim
-        self._conn = None  # some callers access storage._conn.execute() directly
         self._db_path = db_path
         self._db_url = os.environ.get("YADGAR_DB_URL")
 
@@ -271,7 +342,7 @@ class StorageEngine:
     def _floats_to_bytes(self, floats: list[float]) -> bytes:
         return struct.pack(f"<{len(floats)}f", *floats)
 
-    def _extract_id(self, record_id) -> int:
+    def _extract_id(self, record_id) -> int | None:
         if record_id is None:
             return None
         if hasattr(record_id, "id") and hasattr(record_id, "table_name"):
@@ -427,6 +498,32 @@ class StorageEngine:
 
     # ------------------------------------------------------------------ schema
 
+    def _run_migrations(self) -> None:
+        """Apply pending schema migrations in order.
+
+        Migration state is stored in a `schema_version` table. Each migration
+        runs exactly once; the version table records which have been applied.
+
+        Migrations only run in server mode (SurrealDB v3 HTTP). The embedded
+        Python surrealdb package uses SurrealDB v2 which predates HNSW indexes
+        and is only used for local development/testing.
+        """
+        if not self._db_url:
+            return  # embedded mode: no migrations needed
+
+        self._q("DEFINE TABLE IF NOT EXISTS schema_version SCHEMALESS;")
+
+        for migration in _MIGRATIONS:
+            ver = migration["version"]
+            rows = self._q("SELECT version FROM schema_version WHERE version = $v", {"v": ver})
+            if rows:
+                continue  # already applied
+            migration["fn"](self)
+            self._q(
+                "CREATE schema_version SET version = $v, applied_at = $ts",
+                {"v": ver, "ts": self._now_iso()},
+            )
+
     def _init_schema(self):
         # ---- Analyzers ----
         self._q("""
@@ -468,6 +565,7 @@ class StorageEngine:
             "counter",
             "wiki_page",
             "wiki_crossref",
+            "wiki_draft",
         ):
             self._q(f"DEFINE TABLE IF NOT EXISTS {table} SCHEMALESS;")
 
@@ -475,24 +573,39 @@ class StorageEngine:
 
         # ---- Indexes ----
 
-        # memory: MTREE vector index on embedding
-        self._q(f"""
-            DEFINE INDEX IF NOT EXISTS memory_embedding_idx
-                ON memory FIELDS embedding
-                MTREE DIMENSION {self._embedding_dim} DIST COSINE;
-        """)
+        # memory: vector index on embedding
+        # Server mode (SurrealDB v3): HNSW; embedded mode (Python surrealdb v2): MTREE
+        if self._db_url:
+            self._q(f"""
+                DEFINE INDEX IF NOT EXISTS memory_embedding_idx
+                    ON memory FIELDS embedding
+                    HNSW DIMENSION {self._embedding_dim} DIST COSINE TYPE F32 EFC 150 M 12;
+            """)
+        else:
+            self._q(f"""
+                DEFINE INDEX IF NOT EXISTS memory_embedding_idx
+                    ON memory FIELDS embedding
+                    MTREE DIMENSION {self._embedding_dim} DIST COSINE TYPE F32;
+            """)
         # memory: SEARCH index on content (FTS)
         self._q("""
             DEFINE INDEX IF NOT EXISTS memory_content_idx
                 ON memory FIELDS content
                 SEARCH ANALYZER mem_analyzer BM25;
         """)
-        # memory: MTREE for implicit embedding
-        self._q(f"""
-            DEFINE INDEX IF NOT EXISTS memory_implicit_idx
-                ON memory FIELDS implicit_embedding
-                MTREE DIMENSION {self._embedding_dim} DIST COSINE;
-        """)
+        # memory: vector index on implicit embedding
+        if self._db_url:
+            self._q(f"""
+                DEFINE INDEX IF NOT EXISTS memory_implicit_idx
+                    ON memory FIELDS implicit_embedding
+                    HNSW DIMENSION {self._embedding_dim} DIST COSINE TYPE F32 EFC 150 M 12;
+            """)
+        else:
+            self._q(f"""
+                DEFINE INDEX IF NOT EXISTS memory_implicit_idx
+                    ON memory FIELDS implicit_embedding
+                    MTREE DIMENSION {self._embedding_dim} DIST COSINE TYPE F32;
+            """)
 
         # file_hash: index on filepath (non-UNIQUE — surrealkv UNIQUE breaks WHERE)
         self._q("""
@@ -541,12 +654,19 @@ class StorageEngine:
                 ON wiki_page FIELDS content
                 SEARCH ANALYZER mem_analyzer BM25;
         """)
-        # wiki_page: MTREE vector index on embedding (semantic search)
-        self._q(f"""
-            DEFINE INDEX IF NOT EXISTS wiki_embedding_idx
-                ON wiki_page FIELDS embedding
-                MTREE DIMENSION {self._embedding_dim} DIST COSINE;
-        """)
+        # wiki_page: vector index on embedding (semantic search)
+        if self._db_url:
+            self._q(f"""
+                DEFINE INDEX IF NOT EXISTS wiki_embedding_idx
+                    ON wiki_page FIELDS embedding
+                    HNSW DIMENSION {self._embedding_dim} DIST COSINE TYPE F32 EFC 150 M 12;
+            """)
+        else:
+            self._q(f"""
+                DEFINE INDEX IF NOT EXISTS wiki_embedding_idx
+                    ON wiki_page FIELDS embedding
+                    MTREE DIMENSION {self._embedding_dim} DIST COSINE TYPE F32;
+            """)
         # wiki_page: slug lookup
         self._q("""
             DEFINE INDEX IF NOT EXISTS wiki_slug_idx
@@ -561,6 +681,10 @@ class StorageEngine:
             DEFINE INDEX IF NOT EXISTS wiki_crossref_to_idx
                 ON wiki_crossref FIELDS to_slug;
         """)
+
+        # ---- Schema migration ----
+        # Run AFTER all tables and indexes are defined so migrations can reference them
+        self._run_migrations()
 
     # ------------------------------------------------------------------ Episodes
 
@@ -845,7 +969,9 @@ class StorageEngine:
         """Search memory content for temporal references using FTS."""
         terms = []
         for hint in date_hints:
-            terms.append('"' + hint + '"')
+            safe = hint.replace('"', "").replace("\\", "")
+            if safe:
+                terms.append(f'"{safe}"')
         for hint in month_hints:
             terms.append(hint)
         for hint in session_hints:
@@ -969,7 +1095,7 @@ class StorageEngine:
             if float(row.get("heat", 0)) < min_heat:
                 continue
             mid = self._extract_id(row.get("id"))
-            # Convert similarity to distance for backward compat with sqlite-vec
+            # Convert similarity to distance
             dist = 1.0 - float(row.get("sim", 0.0))
             results.append((mid, dist))
             if len(results) >= top_k:
@@ -1026,13 +1152,19 @@ class StorageEngine:
                 pass
 
     def recreate_vector_table(self, new_dim: int):
-        """Drop and recreate the MTREE index with new dimensions; clear all embeddings."""
+        """Drop and recreate the vector index with new dimensions; clear all embeddings."""
         self._q("REMOVE INDEX IF EXISTS memory_embedding_idx ON memory")
         self._q("UPDATE memory SET embedding = NONE")
-        self._q(
-            f"DEFINE INDEX memory_embedding_idx ON memory FIELDS embedding "
-            f"MTREE DIMENSION {new_dim} DIST COSINE"
-        )
+        if self._db_url:
+            self._q(
+                f"DEFINE INDEX memory_embedding_idx ON memory FIELDS embedding "
+                f"HNSW DIMENSION {new_dim} DIST COSINE TYPE F32 EFC 150 M 12"
+            )
+        else:
+            self._q(
+                f"DEFINE INDEX memory_embedding_idx ON memory FIELDS embedding "
+                f"MTREE DIMENSION {new_dim} DIST COSINE TYPE F32"
+            )
         self._embedding_dim = new_dim
 
     def probe_vector_indexes(self) -> bool:
@@ -1246,6 +1378,9 @@ class StorageEngine:
 
     def update_relationship_fields(self, rel_id: int, **fields) -> None:
         """Update arbitrary columns on a relationship row."""
+        if not fields:
+            return
+        fields = {k: v for k, v in fields.items() if k in _RELATIONSHIP_UPDATABLE_FIELDS}
         if not fields:
             return
         sets = ", ".join(f"{k} = ${k}" for k in fields)
@@ -2197,6 +2332,9 @@ class StorageEngine:
         )
 
     def update_memory_fields(self, memory_id: int, **fields):
+        if not fields:
+            return
+        fields = {k: v for k, v in fields.items() if k in _MEMORY_UPDATABLE_FIELDS}
         if not fields:
             return
         converted = {}

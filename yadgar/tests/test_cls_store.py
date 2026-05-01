@@ -72,7 +72,7 @@ def _make_memory(
     mid = storage.insert_memory(mem)
 
     # Set store_type
-    storage._db.query(
+    storage._q(
         "UPDATE type::thing('memory', $id) SET store_type = $store_type",
         {"id": mid, "store_type": store_type},
     )
