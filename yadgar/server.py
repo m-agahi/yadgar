@@ -1,5 +1,7 @@
 """Yadgar MCP server — supports SSE and Streamable HTTP transports."""
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import json
@@ -13,10 +15,11 @@ import time
 from collections import deque
 from datetime import UTC
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from mcp.server.fastmcp import FastMCP
 from starlette.requests import Request
-from starlette.responses import JSONResponse, StreamingResponse
+from starlette.responses import FileResponse, JSONResponse, StreamingResponse
 
 from yadgar import __version__
 from yadgar.astrocyte_pool import AstrocytePool
@@ -28,6 +31,7 @@ from yadgar.consolidation import ConsolidationScheduler
 from yadgar.curation import MemoryCurator
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.engram import EngramAllocator
+from yadgar.file_queue import is_draining
 from yadgar.graph_api import GraphAPI
 from yadgar.knowledge_graph import KnowledgeGraph
 from yadgar.metacognition import MetaCognition
@@ -46,6 +50,9 @@ from yadgar.staleness import StalenessDetector
 from yadgar.storage import StorageEngine
 from yadgar.thermodynamics import MemoryThermodynamics
 from yadgar.wiki import WikiStore
+
+if TYPE_CHECKING:
+    from yadgar.file_queue import FileQueue, QueueDrainer
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +87,10 @@ _causal: CausalDiscovery | None = None
 _metacognition: MetaCognition | None = None
 _replay: CheckpointRestore | None = None
 _wiki: WikiStore | None = None
+_file_queue: FileQueue | None = None
+_queue_drainer: QueueDrainer | None = None
+_queue_lock = threading.Lock()
+_event_lock = threading.Lock()
 
 # ── Hook state ─────────────────────────────────────────────────────────────
 # Only capture state-modifying tool calls (skip Read, Glob, Grep, etc.)
@@ -106,8 +117,9 @@ _system_metrics_cache: dict = {}
 def _push_event(event: dict) -> None:
     """Append an event to the ring buffer with a monotonic sequence number."""
     global _event_seq
-    _event_seq += 1
-    _event_queue.append({"seq": _event_seq, **event})
+    with _event_lock:
+        _event_seq += 1
+        _event_queue.append({"seq": _event_seq, **event})
 
 
 # Session state for transition tracking
@@ -154,19 +166,47 @@ def _tool(power: bool = False):
 @mcp_server.custom_route("/health", methods=["GET"])
 async def health_check(request: Request) -> JSONResponse:
     """Health check endpoint."""
+    import httpx
+
     session_count = 0
     if mcp_server._session_manager is not None:
         session_count = len(mcp_server._session_manager._server_instances)
 
-    return JSONResponse(
-        {
-            "status": "ok",
-            "version": __version__,
-            "transport": _active_transport,
-            "uptime_seconds": round(time.time() - _start_time, 1) if _start_time else 0,
-            "active_sessions": session_count,
-        }
-    )
+    db_url = os.environ.get("YADGAR_DB_URL")
+    embed_url = os.environ.get("YADGAR_EMBED_URL")
+
+    db_ok = None
+    embed_ok = None
+
+    if db_url:
+        try:
+            r = httpx.get(f"{db_url}/health", timeout=2.0)
+            db_ok = r.status_code == 200
+        except Exception:
+            db_ok = False
+
+    if embed_url:
+        try:
+            r = httpx.get(f"{embed_url}/health", timeout=2.0)
+            embed_ok = r.status_code == 200
+        except Exception:
+            embed_ok = False
+
+    payload: dict = {
+        "status": "ok",
+        "version": __version__,
+        "transport": _active_transport,
+        "uptime_seconds": round(time.time() - _start_time, 1) if _start_time else 0,
+        "active_sessions": session_count,
+    }
+    if db_ok is not None:
+        payload["db"] = db_ok
+    if embed_ok is not None:
+        payload["embed"] = embed_ok
+    if db_ok is False or embed_ok is False:
+        payload["status"] = "degraded"
+
+    return JSONResponse(payload)
 
 
 @mcp_server.custom_route("/hooks/pre-compact", methods=["POST"])
@@ -256,10 +296,12 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
         return JSONResponse({"status": "batched", "pending": len(batch)})
 
     # Flush batch → one combined action_log entry
-    combined_tools = ",".join(a["tool_name"] for a in batch)
-    combined_summary = " | ".join(a["summary"] for a in batch if a["summary"])
-    directory = batch[-1]["directory"]
+    # Take local snapshot then clear so concurrent appends go to the new list
+    to_flush = list(batch)
     _action_batch[session_id] = []
+    combined_tools = ",".join(a["tool_name"] for a in to_flush)
+    combined_summary = " | ".join(a["summary"] for a in to_flush if a["summary"])
+    directory = to_flush[-1]["directory"]
 
     storage.insert_action_log(
         tool_name=f"batch[{combined_tools}]",
@@ -416,7 +458,7 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
 
 
 # ── Graph / Visualization API ──────────────────────────────────────────────
-_CORS = {"Access-Control-Allow-Origin": "*", "Cache-Control": "no-cache"}
+_CORS = {"Cache-Control": "no-cache"}
 
 
 @mcp_server.custom_route("/api/graph", methods=["GET"])
@@ -424,8 +466,14 @@ async def api_graph(request: Request) -> JSONResponse:
     """Return full knowledge graph (nodes + edges) for visualization."""
     if _storage is None:
         return JSONResponse({"nodes": [], "edges": []}, status_code=503)
-    max_mem = int(request.query_params.get("max_memories", 500))
-    top_k = int(request.query_params.get("top_k", 100))
+    try:
+        max_mem = int(request.query_params.get("max_memories", 500))
+    except (ValueError, TypeError):
+        max_mem = 500
+    try:
+        top_k = int(request.query_params.get("top_k", 100))
+    except (ValueError, TypeError):
+        top_k = 100
     data = await asyncio.to_thread(GraphAPI(_storage).get_full_graph, max_mem, top_k)
     return JSONResponse(data, headers=_CORS)
 
@@ -457,7 +505,10 @@ async def api_graph_neighborhood(request: Request) -> JSONResponse:
     if _storage is None:
         return JSONResponse({"nodes": [], "edges": []}, status_code=503)
     node_id = request.path_params.get("node_id", "")
-    hops = int(request.query_params.get("hops", 2))
+    try:
+        hops = int(request.query_params.get("hops", 2))
+    except (ValueError, TypeError):
+        hops = 2
     data = await asyncio.to_thread(GraphAPI(_storage).get_neighborhood, node_id, hops)
     return JSONResponse(data, headers=_CORS)
 
@@ -473,7 +524,10 @@ async def api_heat_histogram(request: Request) -> JSONResponse:
     """Return heat distribution bucketed into N bins."""
     if _storage is None:
         return JSONResponse({"buckets": [], "total": 0}, status_code=503)
-    n_bins = max(1, min(50, int(request.query_params.get("bins", 10))))
+    try:
+        n_bins = max(1, min(50, int(request.query_params.get("bins", 10))))
+    except (ValueError, TypeError):
+        n_bins = 10
 
     def _compute() -> dict:
         rows = _storage._q("SELECT heat FROM memory") or []
@@ -499,7 +553,10 @@ async def api_consolidation_log(request: Request) -> JSONResponse:
     """Return last N consolidation cycle records (oldest first)."""
     if _storage is None:
         return JSONResponse([], status_code=503)
-    limit = max(1, min(200, int(request.query_params.get("limit", 30))))
+    try:
+        limit = max(1, min(200, int(request.query_params.get("limit", 30))))
+    except (ValueError, TypeError):
+        limit = 30
 
     def _fetch() -> list:
         rows = (
@@ -530,7 +587,10 @@ async def api_consolidation_log(request: Request) -> JSONResponse:
 @mcp_server.custom_route("/api/graph/events", methods=["GET"])
 async def api_graph_events(request: Request) -> StreamingResponse:
     """SSE stream of incremental graph update events + system metrics every 5s."""
-    last_seq = int(request.query_params.get("since", 0))
+    try:
+        last_seq = int(request.query_params.get("since", 0))
+    except (ValueError, TypeError):
+        last_seq = 0
 
     async def event_stream():
         nonlocal last_seq
@@ -551,6 +611,13 @@ async def api_graph_events(request: Request) -> StreamingResponse:
 
     headers = {**_CORS, "Content-Type": "text/event-stream", "X-Accel-Buffering": "no"}
     return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
+
+
+@mcp_server.custom_route("/graph", methods=["GET"])
+async def graph_view(request: Request) -> FileResponse:
+    """3D memory force graph visualization."""
+    static_dir = Path(__file__).parent / "static"
+    return FileResponse(static_dir / "graph.html")
 
 
 def _get_storage() -> StorageEngine:
@@ -613,9 +680,26 @@ def _get_replay() -> CheckpointRestore:
     return _replay
 
 
+def _get_file_queue():
+    global _file_queue, _queue_drainer
+    if _file_queue is None:
+        with _queue_lock:
+            if _file_queue is None:
+                from yadgar.file_queue import FileQueue, QueueDrainer
+
+                base = Path(os.environ.get("YADGAR_DATA_DIR", settings.DATA_DIR))
+                _file_queue = FileQueue(base)
+                _queue_drainer = QueueDrainer(_file_queue, _get_storage)
+                _queue_drainer.start()
+    return _file_queue
+
+
 def _file_hash(filepath: str) -> str | None:
-    """Compute SHA-256 hash of a file if it exists."""
-    p = Path(filepath).expanduser()
+    """Compute SHA-256 hash of a file if it exists and is a regular file."""
+    try:
+        p = Path(filepath).expanduser().resolve()
+    except Exception:
+        return None
     if not p.is_file():
         return None
     return hashlib.sha256(p.read_bytes()).hexdigest()
@@ -644,6 +728,9 @@ def memorize(
     - Alternatively, include "_anchor" in tags for the same effect.
     - Without either flag, memories decay naturally based on heat and last-access time.
     """
+    if len(content) > 32_768:
+        return {"stored": False, "reason": "content_too_large", "max_bytes": 32_768}
+
     storage = _get_storage()
     embeddings = _get_embeddings()
     buffer = _get_buffer()
@@ -678,6 +765,22 @@ def memorize(
                 "reason": reason,
                 "message": "Memory below surprisal threshold, skipped",
             }
+
+    # Write to file queue first — durable crash-recovery journal (skip during replay)
+    _fq_path = None
+    if not is_draining():
+        try:
+            _fq_path = _get_file_queue().enqueue(
+                "memorize",
+                {
+                    "content": content,
+                    "context": context,
+                    "tags": list(tags),
+                    "is_protected": is_protected,
+                },
+            )
+        except Exception as _fq_exc:
+            logger.debug("File queue enqueue failed (non-fatal): %s", _fq_exc)
 
     # Generate contextual prefix for richer embedding semantics
     contextual_prefix = None
@@ -894,6 +997,12 @@ def memorize(
 
     memory = storage.get_memory(memory_id)
     if memory is None:
+        # Archive queue entry even on readback failure — DB write succeeded
+        if _fq_path is not None:
+            try:
+                _get_file_queue().archive(Path(_fq_path))
+            except Exception as _fq_exc:
+                logger.debug("File queue archive failed (non-fatal): %s", _fq_exc)
         return {
             "stored": True,
             "id": memory_id,
@@ -945,6 +1054,14 @@ def memorize(
         memory["protection_reason"] = "decision_detected"
     if related_context:
         memory["related_context"] = related_context
+
+    # Archive the queue entry — DB write confirmed
+    if _fq_path is not None:
+        try:
+            _get_file_queue().archive(Path(_fq_path))
+        except Exception as _fq_exc:
+            logger.debug("File queue archive failed (non-fatal): %s", _fq_exc)
+
     return memory
 
 
@@ -1324,6 +1441,26 @@ def checkpoint(
     the restore tool uses this checkpoint to reconstruct what you were doing.
     Checkpoints auto-supersede — only the latest one matters.
     """
+    # Write to file queue first — durable crash-recovery journal (skip during replay)
+    _fq_path = None
+    if not is_draining():
+        try:
+            _fq_path = _get_file_queue().enqueue(
+                "checkpoint",
+                {
+                    "directory": directory,
+                    "current_task": current_task,
+                    "files_being_edited": files_being_edited,
+                    "key_decisions": key_decisions,
+                    "open_questions": open_questions,
+                    "next_steps": next_steps,
+                    "active_errors": active_errors,
+                    "custom_context": custom_context,
+                },
+            )
+        except Exception as _fq_exc:
+            logger.debug("File queue enqueue failed (non-fatal): %s", _fq_exc)
+
     replay = _get_replay()
 
     # Enrich checkpoint with action stream summary if available
@@ -1336,7 +1473,7 @@ def checkpoint(
                 f"{custom_context}\n\n{action_summary}" if custom_context else action_summary
             )
 
-    return replay.create_checkpoint(
+    result = replay.create_checkpoint(
         directory=directory,
         current_task=current_task,
         files_being_edited=files_being_edited,
@@ -1346,6 +1483,15 @@ def checkpoint(
         active_errors=active_errors,
         custom_context=enriched_context,
     )
+
+    # Archive the queue entry — DB write confirmed
+    if _fq_path is not None:
+        try:
+            _get_file_queue().archive(Path(_fq_path))
+        except Exception as _fq_exc:
+            logger.debug("File queue archive failed (non-fatal): %s", _fq_exc)
+
+    return result
 
 
 @_tool()
@@ -1375,17 +1521,37 @@ def anchor(content: str, context: str, reason: str = "") -> dict:
     of other scoring. Use for decisions, constraints, and critical facts
     that must survive compaction.
     """
+    # Write to file queue first — durable crash-recovery journal (skip during replay)
+    _fq_path = None
+    if not is_draining():
+        try:
+            _fq_path = _get_file_queue().enqueue(
+                "anchor",
+                {"content": content, "context": context, "reason": reason},
+            )
+        except Exception as _fq_exc:
+            logger.debug("File queue enqueue failed (non-fatal): %s", _fq_exc)
+
     replay = _get_replay()
     tags = ["_anchor"]
     if reason:
         tags.append(f"anchor:{reason}")
     memory_id = replay.anchor_memory(content, context, tags, reason)
-    return {
+    result = {
         "memory_id": memory_id,
         "status": "anchored",
         "is_protected": True,
         "reason": reason,
     }
+
+    # Archive the queue entry — DB write confirmed
+    if _fq_path is not None:
+        try:
+            _get_file_queue().archive(Path(_fq_path))
+        except Exception as _fq_exc:
+            logger.debug("File queue archive failed (non-fatal): %s", _fq_exc)
+
+    return result
 
 
 @_tool(power=True)
@@ -1399,8 +1565,7 @@ def install_hooks(project_directory: str = "") -> dict:
       - PostToolUse: capture every tool action into action_log
       - UserPromptSubmit: auto-recall relevant memories on every user turn
 
-    Works in both stdio and HTTP transport modes — all hooks use
-    direct SQLite access (no server communication needed).
+    Works in both stdio and HTTP transport modes.
 
     project_directory: The project root. Defaults to cwd.
     """
@@ -1526,6 +1691,30 @@ def install_hooks(project_directory: str = "") -> dict:
         }
     ]
 
+    # PreToolUse hook — block direct docker exec into yadgar containers
+    _db_lockdown_cmd = (
+        'python3 -c "'
+        "import sys, json\n"
+        "data = json.load(sys.stdin)\n"
+        "cmd = data.get('tool_input', {}).get('command', '')\n"
+        "if 'docker exec yadgar-backend' in cmd or 'docker exec yadgar-db' in cmd:\n"
+        "    print(json.dumps({'decision': 'block', 'reason': 'Direct docker exec into yadgar DB/backend containers is blocked to prevent data corruption. Use yadgar MCP tools instead.'}))\n"
+        "    sys.exit(0)\n"
+        "print(json.dumps({'decision': 'allow'}))\n"
+        '"'
+    )
+    hooks_config["PreToolUse"] = [
+        {
+            "matcher": "Bash",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": _db_lockdown_cmd,
+                }
+            ],
+        }
+    ]
+
     settings_data["hooks"] = hooks_config
     settings_path.write_text(json.dumps(settings_data, indent=2))
 
@@ -1563,6 +1752,7 @@ def install_hooks(project_directory: str = "") -> dict:
             "SessionStart (compact restore)",
             "PostToolUse (auto-capture)",
             "UserPromptSubmit (auto-recall)",
+            "PreToolUse (DB lockdown)",
             "Stop (memory checkpoint — global)",
         ],
         "settings_file": str(settings_path),
@@ -1625,7 +1815,7 @@ def sync_instructions(claude_md_path: str = "") -> dict:
 ### Auto-Capture Hooks
 - PostToolUse hook captures EVERY tool action automatically — no manual memorize needed
 - SessionStart hook injects project context on EVERY new session
-- All hooks work in both stdio and HTTP transport modes (direct SQLite access)
+- All hooks work in both stdio and HTTP transport modes
 - Action log is processed into real memories during consolidation cycles
 - Decisions are auto-protected from decay/compression when detected"""
 
@@ -1763,6 +1953,9 @@ def wiki_add(
     """
     assert _wiki is not None, "WikiStore not initialized"
 
+    if len(content) > 65_536:
+        return {"stored": False, "reason": "content_too_large", "max_bytes": 65_536}
+
     # Secret detection and write-path rules
     sec_blocked, sec_reason, sec_pattern = check_secrets(content)
     if sec_blocked:
@@ -1775,6 +1968,25 @@ def wiki_add(
             return {"stored": False, "reason": f"blocked_by_policy: {wp_reason}"}
         if wp_modified is not None:
             content = wp_modified
+
+    # Write to file queue first — durable crash-recovery journal (skip during replay)
+    _fq_path = None
+    if not is_draining():
+        try:
+            _fq_path = _get_file_queue().enqueue(
+                "wiki_add",
+                {
+                    "title": title,
+                    "content": content,
+                    "category": category,
+                    "tags": tags,
+                    "source_memory_ids": source_memory_ids,
+                    "confidence": confidence,
+                    "append": append,
+                },
+            )
+        except Exception as _fq_exc:
+            logger.debug("File queue enqueue failed (non-fatal): %s", _fq_exc)
 
     if append:
         result = _wiki.ingest(content, title, tags, source_memory_ids)
@@ -1792,6 +2004,16 @@ def wiki_add(
             },
         }
     )
+
+    # Also write wiki .md mirror and archive the queue entry
+    try:
+        fq = _get_file_queue()
+        fq.write_wiki(result.get("slug", title), content)
+        if _fq_path is not None:
+            fq.archive(Path(_fq_path))
+    except Exception as _fq_exc:
+        logger.debug("File queue wiki archive failed (non-fatal): %s", _fq_exc)
+
     return result
 
 
@@ -1954,7 +2176,12 @@ def init_engines(
 
     _settings = get_settings()
     _storage = StorageEngine(db_path or _settings.DB_PATH)
-    _embeddings = EmbeddingEngine(embedding_model or _settings.EMBEDDING_MODEL)
+    if os.environ.get("YADGAR_EMBED_URL"):
+        from yadgar.remote_embeddings import RemoteEmbeddingEngine
+
+        _embeddings = RemoteEmbeddingEngine(embedding_model or _settings.EMBEDDING_MODEL)
+    else:
+        _embeddings = EmbeddingEngine(embedding_model or _settings.EMBEDDING_MODEL)
     _buffer = ActionLogger(_storage, _settings)
     _buffer.start_session()
     _thermo = MemoryThermodynamics(_storage, _embeddings, _settings)
@@ -2043,6 +2270,12 @@ def init_engines(
     # Eagerly warm up the embedding model so the first recall isn't slow.
     _embeddings._ensure_model()
 
+    # Start file queue drainer — processes any pending writes from previous sessions
+    try:
+        _get_file_queue()
+    except Exception as exc:
+        logger.warning("File queue init failed (non-fatal): %s", exc)
+
     return _storage, _embeddings, _buffer, _consolidation, _staleness
 
 
@@ -2051,8 +2284,10 @@ def shutdown():
     global _storage, _embeddings, _buffer, _consolidation, _staleness, _thermo, _retriever, _curator
     global _prospective, _narrative, _sleep, _pool, _kg, _write_gate, _engram
     global _rules_engine, _cls, _cognitive_map, _causal, _metacognition
-    global _replay, _wiki
+    global _replay, _wiki, _file_queue, _queue_drainer
 
+    if _queue_drainer is not None:
+        _queue_drainer.stop()
     if _consolidation is not None:
         _consolidation.stop()
     if _staleness is not None:
@@ -2084,6 +2319,8 @@ def shutdown():
     _metacognition = None
     _replay = None
     _wiki = None
+    _file_queue = None
+    _queue_drainer = None
 
     # Remove PID file on clean shutdown
     try:

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "3.1.0"
+version = "4.0.0"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "MIT"
@@ -36,11 +36,11 @@ dependencies = [
     "sse-starlette>=1.6.0",
     "uvicorn>=0.24.0",
     "mcp>=1.23.0",
-    "sentence-transformers>=2.2.0",
     "watchdog>=3.0.0",
     "pydantic>=2.5.0",
     "pydantic-settings>=2.0.0",
     "numpy>=1.24.0",
+    "scipy>=1.11.0",
     "httpx>=0.27",
     "networkx>=3.0",
     "ruamel.yaml>=0.18.0",
@@ -71,6 +71,9 @@ ignore = [
 ]
 
 [project.optional-dependencies]
+ml = [
+    "sentence-transformers>=2.2.0",
+]
 test = [
     "pytest>=8.0",
     "pytest-xdist>=3.0",

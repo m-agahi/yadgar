@@ -178,9 +178,7 @@ def test_curate_link_moderate(curator, storage, embeddings):
         assert storage.get_memory(original_id) is not None
 
         # Check that a derived_from relationship was created
-        rels = storage._db.query(
-            "SELECT * FROM relationship WHERE relationship_type = 'derived_from'"
-        )
+        rels = storage._q("SELECT * FROM relationship WHERE relationship_type = 'derived_from'")
         assert len(rels) >= 1
     else:
         # If model gives different similarity, test the mechanism with synthetic embeddings
@@ -266,7 +264,7 @@ def test_memify_prune(curator, storage):
         }
     )
     # Set confidence < 0.3 and access_count = 0
-    storage._db.query(
+    storage._q(
         "UPDATE type::thing('memory', $id) SET confidence = 0.2, access_count = 0",
         {"id": mid},
     )
@@ -292,7 +290,7 @@ def test_memify_strengthen(curator, storage):
             "is_stale": False,
         }
     )
-    storage._db.query(
+    storage._q(
         "UPDATE type::thing('memory', $id) SET access_count = 10, confidence = 0.9, importance = 0.5",
         {"id": mid},
     )
@@ -329,7 +327,7 @@ def test_memify_derive(curator, storage):
     assert stats["derived"] >= 1
 
     # Check the derived memory exists
-    rows = storage._db.query(
+    rows = storage._q(
         "SELECT * FROM memory WHERE content ~ 'module.py' AND content ~ 'utils.py' AND content ~ 'frequently modified'"
     )
     assert len(rows) >= 1
@@ -351,7 +349,7 @@ def test_curation_preserves_existing(curator, storage):
             "is_stale": False,
         }
     )
-    storage._db.query(
+    storage._q(
         "UPDATE type::thing('memory', $id) SET confidence = 0.95, access_count = 3, importance = 0.7",
         {"id": mid1},
     )
@@ -400,7 +398,7 @@ def test_memify_reweight(curator, storage):
     stats = curator.memify_cycle()
     assert stats["reweighted"] >= 1
 
-    rows = storage._db.query(
+    rows = storage._q(
         "SELECT weight FROM type::thing('relationship', $id)",
         {"id": rid},
     )
@@ -424,7 +422,7 @@ def test_memify_reweight_cold_decay(curator, storage):
     stats = curator.memify_cycle()
     assert stats["reweighted"] >= 1
 
-    rows = storage._db.query(
+    rows = storage._q(
         "SELECT weight FROM type::thing('relationship', $id)",
         {"id": rid},
     )
@@ -451,7 +449,7 @@ def test_memify_derive_idempotent(curator, storage):
     stats2 = curator.memify_cycle()
     assert stats2["derived"] == 0  # Should not re-derive
 
-    rows = storage._db.query(
+    rows = storage._q(
         "SELECT * FROM memory WHERE content ~ 'a.py' AND content ~ 'b.py' AND content ~ 'frequently'"
     )
     assert len(rows) == 1

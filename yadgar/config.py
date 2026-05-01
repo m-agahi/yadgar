@@ -228,6 +228,9 @@ class Settings(BaseSettings):
     DUAL_VECTORS_ENABLED: bool = False
     IMPLICIT_EMBEDDING_MODEL: str = ""
 
+    # File queue — async write queue base directory
+    DATA_DIR: str = str(Path.home() / ".yadgar")
+
     model_config = {"env_prefix": "YADGAR_"}
 
     @classmethod

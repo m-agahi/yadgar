@@ -54,7 +54,7 @@ class TestCheckpoints:
         assert active["current_task"] == "Task 2"
 
         # Only one active checkpoint
-        rows = storage._db.query("SELECT * FROM checkpoint WHERE is_active = true")
+        rows = storage._q("SELECT * FROM checkpoint WHERE is_active = true")
         assert len(rows) == 1
 
     def test_epoch_tracking(self, engines):

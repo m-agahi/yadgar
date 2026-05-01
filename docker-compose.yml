@@ -1,0 +1,65 @@
+# Yadgar v4 — dev-only Docker Compose
+# Production uses plain docker run via systemd (see: yadgar daemon install-service)
+# Usage: docker compose up --build
+version: "3.9"
+
+networks:
+  yadgar-net:
+    driver: bridge
+
+volumes:
+  yadgar-db-data:
+  yadgar-dev-data:
+  yadgar-queue-data:
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: yadgar-backend
+    networks:
+      - yadgar-net
+    ports:
+      - "127.0.0.1:8001:8001"   # embed service (localhost only)
+    volumes:
+      - yadgar-db-data:/data
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+    environment:
+      SURREAL_USER: root
+      SURREAL_PASS: root
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s  # model load can take a while
+
+  core:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    container_name: yadgar-core
+    networks:
+      - yadgar-net
+    ports:
+      - "8765:8765"
+    volumes:
+      - .:/app                             # source mount for editable install
+      - yadgar-queue-data:/data            # persistent file queue + archive
+    environment:
+      YADGAR_DB_URL: http://yadgar-backend:8000
+      YADGAR_EMBED_URL: http://yadgar-backend:8001
+      YADGAR_HOST: "0.0.0.0"
+      YADGAR_PORT: "8765"
+      YADGAR_DATA_DIR: "/data"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s

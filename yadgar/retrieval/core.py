@@ -447,7 +447,7 @@ class Retriever:
                 except Exception:
                     pass
 
-        # 2. Vector similarity via sqlite-vec KNN
+        # 2. Vector similarity via SurrealDB KNN
         #    Dual vector search: search with both original AND HyDE-expanded queries
         #    to maximize recall. Union candidates, keep max similarity per memory.
         vector_memory_ids: list[int] = []

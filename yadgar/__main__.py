@@ -101,70 +101,60 @@ def cmd_restore(args):
 
 
 def cmd_capture(args):
-    """Lightweight action capture — writes directly to SurrealDB without ML models.
-
-    Used by PostToolCall hooks and manual capture.
-    """
+    """Lightweight action capture — writes directly to DB without ML models."""
     from datetime import datetime
 
-    from surrealdb import Surreal
-
     from yadgar.config import Settings
+    from yadgar.storage import StorageEngine
 
     settings = Settings()
     db_path = str(Path(args.db_path or settings.DB_PATH).expanduser())
-
+    storage = StorageEngine(db_path)
     try:
-        db = Surreal(f"surrealkv://{db_path}")
-        db.use("yadgar", "main")
-        db.query(
-            "CREATE action_log SET tool_name = $tn, tool_input_summary = $s, "
-            "directory = $d, session_id = $sid, timestamp = $ts, processed = false",
-            {
-                "tn": args.tool_name,
-                "s": args.summary or "",
-                "d": args.directory or "",
-                "sid": args.session or "",
-                "ts": datetime.now(UTC).isoformat(),
-            },
+        storage.insert_action_log(
+            tool_name=args.tool_name,
+            tool_input_summary=args.summary or "",
+            directory=args.directory or "",
+            session_id=args.session or "",
+            timestamp=datetime.now(UTC).isoformat(),
         )
     except Exception as e:
         print(f"Failed to capture action: {e}", file=sys.stderr)
         sys.exit(1)
+    finally:
+        storage.close()
 
 
 def cmd_context(args):
-    """Lightweight context query — reads hot memories without loading ML models.
-
-    Used by SessionStart hooks to inject context on every session.
-    """
-    from surrealdb import Surreal
-
+    """Lightweight context query — reads hot memories without loading ML models."""
     from yadgar.config import Settings
+    from yadgar.storage import StorageEngine
 
     settings = Settings()
     db_path = str(Path(args.db_path or settings.DB_PATH).expanduser())
     directory = args.directory
 
     try:
-        db = Surreal(f"surrealkv://{db_path}")
-        db.use("yadgar", "main")
-
-        hot_results = db.query(
-            "SELECT content, heat FROM memory "
-            "WHERE directory_context = $dir AND heat >= 0 "
-            "ORDER BY heat DESC LIMIT 6",
-            {"dir": directory},
+        storage = StorageEngine(db_path)
+        hot = (
+            storage._q(
+                "SELECT content, heat FROM memory "
+                "WHERE directory_context = $dir AND heat >= 0 "
+                "ORDER BY heat DESC LIMIT 6",
+                {"dir": directory},
+            )
+            or []
         )
-        hot = hot_results[0] if hot_results else []
-
-        anchored_results = db.query(
-            "SELECT content FROM memory "
-            "WHERE is_protected = true AND heat > 0 AND $anchor IN tags "
-            "ORDER BY created_at DESC LIMIT 4",
-            {"anchor": "_anchor"},
+        anchored = (
+            storage._q(
+                "SELECT content FROM memory "
+                "WHERE is_protected = true AND heat > 0 AND $anchor IN tags "
+                "ORDER BY created_at DESC LIMIT 4",
+                {"anchor": "_anchor"},
+            )
+            or []
         )
-        anchored = anchored_results[0] if anchored_results else []
+        storage.close()
     except Exception:
         return
 
@@ -226,7 +216,15 @@ def cmd_stats(args):
     except Exception:
         pass  # daemon not running or unreachable — fall back to direct DB access
 
-    from surrealdb import Surreal
+    try:
+        from surrealdb import Surreal
+    except ImportError:
+        print(
+            "surrealdb package not installed and daemon is not reachable.\n"
+            "Install it with: pip install surrealdb  or start the daemon: yadgar daemon start",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     from yadgar.config import Settings
 
@@ -689,7 +687,7 @@ def cmd_vacuum(args):
 
     Must be run while the daemon is stopped (it holds an exclusive DB lock).
     """
-    import pickle
+    import json
     import shutil
 
     from yadgar.config import Settings
@@ -754,9 +752,9 @@ def cmd_vacuum(args):
             print(f"  {table}: skipped — {e}")
             dump[table] = []
 
-    dump_path = db_path.parent / "vacuum_dump.pkl"
-    with open(dump_path, "wb") as f:
-        pickle.dump(dump, f, protocol=pickle.HIGHEST_PROTOCOL)
+    dump_path = db_path.parent / "vacuum_dump.json"
+    with open(dump_path, "w") as f:
+        json.dump(dump, f, default=str)
     print(f"\n{total} records saved to {dump_path}")
     storage.close()
 
@@ -773,6 +771,9 @@ def cmd_vacuum(args):
     print("Reimporting into fresh database...")
     storage = StorageEngine(db_path_str)
 
+    with open(dump_path) as f:
+        dump = json.load(f)
+
     for table in KEEP_TABLES:
         records = dump.get(table, [])
         ok = errors = 0
@@ -788,8 +789,8 @@ def cmd_vacuum(args):
                     raw_id = s.split(":")[-1] if ":" in s else s
                 content = {k: v for k, v in rec.items() if k != "id"}
                 storage._q(
-                    f"UPSERT {table}:{raw_id} CONTENT $data",
-                    {"data": content},
+                    "UPSERT type::thing($tbl, $rid) CONTENT $data",
+                    {"tbl": table, "rid": raw_id, "data": content},
                 )
                 ok += 1
             except Exception:
@@ -809,7 +810,7 @@ def cmd_vacuum(args):
     print(f"  After:  {new_size / 1024 / 1024:.0f} MB")
     print(f"  Saved:  {saved / 1024 / 1024:.0f} MB ({pct}%)")
     print(f"\nBackup clog: {backup_clog}")
-    print(f"Pickle dump: {dump_path}")
+    print(f"JSON dump:   {dump_path}")
 
 
 def cmd_seed(args):
