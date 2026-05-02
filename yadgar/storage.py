@@ -591,7 +591,7 @@ class StorageEngine:
         self._q("""
             DEFINE INDEX IF NOT EXISTS memory_content_idx
                 ON memory FIELDS content
-                SEARCH ANALYZER mem_analyzer BM25;
+                FULLTEXT ANALYZER mem_analyzer BM25;
         """)
         # memory: vector index on implicit embedding
         if self._db_url:
@@ -631,7 +631,7 @@ class StorageEngine:
             DEFINE INDEX IF NOT EXISTS profile_fts_idx
                 ON user_profile
                 FIELDS entity_name, attribute_type, attribute_key, attribute_value
-                SEARCH ANALYZER profile_analyzer BM25;
+                FULLTEXT ANALYZER profile_analyzer BM25;
         """)
 
         # FTS on derived_belief
@@ -639,7 +639,7 @@ class StorageEngine:
             DEFINE INDEX IF NOT EXISTS belief_fts_idx
                 ON derived_belief
                 FIELDS subject, belief_type, content
-                SEARCH ANALYZER belief_analyzer BM25;
+                FULLTEXT ANALYZER belief_analyzer BM25;
         """)
 
         # engram_slot: index on slot_index
@@ -652,7 +652,7 @@ class StorageEngine:
         self._q("""
             DEFINE INDEX IF NOT EXISTS wiki_content_idx
                 ON wiki_page FIELDS content
-                SEARCH ANALYZER mem_analyzer BM25;
+                FULLTEXT ANALYZER mem_analyzer BM25;
         """)
         # wiki_page: vector index on embedding (semantic search)
         if self._db_url:
