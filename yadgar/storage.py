@@ -1086,16 +1086,16 @@ class StorageEngine:
         top_k: int = 10,
         min_heat: float = 0.1,
     ) -> list[tuple[int, float]]:
-        """KNN search via MTREE index, filtered by min_heat.
+        """KNN search via HNSW index, filtered by min_heat.
 
         Returns list of (memory_id, distance) tuples sorted by ascending distance.
+        SurrealDB v3: KNN operator requires <|K, EF|> — single-param <|K|> is broken.
         """
         fetch_k = min(top_k * 4, 4096)
         floats = self._bytes_to_floats(query_embedding)
-        # KNN limit <|K|> must be a literal, not a parameter
         rows = self._q(
             f"SELECT id, heat, vector::similarity::cosine(embedding, $qv) AS sim "
-            f"FROM memory WHERE embedding <|{fetch_k}|> $qv "
+            f"FROM memory WHERE embedding <|{fetch_k}, 40|> $qv "
             f"ORDER BY sim DESC",
             {"qv": floats},
         )
@@ -1124,7 +1124,7 @@ class StorageEngine:
         floats = self._bytes_to_floats(query_embedding)
         rows = self._q(
             f"SELECT id, vector::similarity::cosine(implicit_embedding, $qv) AS sim "
-            f"FROM memory WHERE implicit_embedding <|{fetch_k}|> $qv "
+            f"FROM memory WHERE implicit_embedding <|{fetch_k}, 40|> $qv "
             f"ORDER BY sim DESC",
             {"qv": floats},
         )
@@ -1184,11 +1184,11 @@ class StorageEngine:
         try:
             zero = [0.0] * self._embedding_dim
             self._q(
-                "SELECT id FROM memory WHERE embedding <|1|> $qv LIMIT 1",
+                "SELECT id FROM memory WHERE embedding <|1, 40|> $qv LIMIT 1",
                 {"qv": zero},
             )
             self._q(
-                "SELECT id FROM memory WHERE implicit_embedding <|1|> $qv LIMIT 1",
+                "SELECT id FROM memory WHERE implicit_embedding <|1, 40|> $qv LIMIT 1",
                 {"qv": zero},
             )
             return True
@@ -2653,7 +2653,7 @@ class StorageEngine:
         floats = self._bytes_to_floats(query_embedding)
         rows = self._q(
             f"SELECT id, vector::similarity::cosine(embedding, $qv) AS sim "
-            f"FROM wiki_page WHERE embedding <|{fetch_k}|> $qv "
+            f"FROM wiki_page WHERE embedding <|{fetch_k}, 40|> $qv "
             f"ORDER BY sim DESC",
             {"qv": floats},
         )
