@@ -14,7 +14,7 @@ volumes:
 
 services:
   backend:
-    image: looseking/yadgar-backend:4.0.1
+    image: looseking/yadgar-backend:4.0.2
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -37,7 +37,7 @@ services:
       start_period: 60s  # model load can take a while
 
   core:
-    image: looseking/yadgar:4.0.1
+    image: looseking/yadgar:4.0.2
     build:
       context: .
       dockerfile: Dockerfile
