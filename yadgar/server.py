@@ -1969,11 +1969,10 @@ def wiki_add(
         if wp_modified is not None:
             content = wp_modified
 
-    # Write to file queue first — durable crash-recovery journal (skip during replay)
-    _fq_path = None
+    # Async path: enqueue and return immediately (skip during drain replay)
     if not is_draining():
         try:
-            _fq_path = _get_file_queue().enqueue(
+            _get_file_queue().enqueue(
                 "wiki_add",
                 {
                     "title": title,
@@ -1985,9 +1984,14 @@ def wiki_add(
                     "append": append,
                 },
             )
-        except Exception as _fq_exc:
-            logger.debug("File queue enqueue failed (non-fatal): %s", _fq_exc)
+            import re as _re
 
+            slug = (_re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "untitled")[:64]
+            return {"stored": True, "queued": True, "slug": slug, "title": title}
+        except Exception as _fq_exc:
+            logger.debug("File queue enqueue failed, falling back to sync write: %s", _fq_exc)
+
+    # Sync path: called by QueueDrainer (is_draining=True) or queue fallback
     if append:
         result = _wiki.ingest(content, title, tags, source_memory_ids)
     else:
@@ -2005,14 +2009,10 @@ def wiki_add(
         }
     )
 
-    # Also write wiki .md mirror and archive the queue entry
     try:
-        fq = _get_file_queue()
-        fq.write_wiki(result.get("slug", title), content)
-        if _fq_path is not None:
-            fq.archive(Path(_fq_path))
+        _get_file_queue().write_wiki(result.get("slug", title), content)
     except Exception as _fq_exc:
-        logger.debug("File queue wiki archive failed (non-fatal): %s", _fq_exc)
+        logger.debug("File queue wiki mirror failed (non-fatal): %s", _fq_exc)
 
     return result
 

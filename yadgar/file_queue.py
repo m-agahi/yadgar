@@ -102,8 +102,8 @@ class FileQueue:
         """Delete archive files older than _ARCHIVE_MAX_AGE. Returns count deleted."""
         cutoff = time.time() - _ARCHIVE_MAX_AGE
         deleted = 0
-        # Walk memories/ dated subdirectories only (wiki/ mirrors are not time-pruned)
-        for subdir in (self.archive_dir / "memories",):
+        # Walk memories/ and wiki/ dated subdirectories
+        for subdir in (self.archive_dir / "memories", self.wiki_dir):
             if not subdir.exists():
                 continue
             for date_dir in subdir.iterdir():
@@ -131,28 +131,40 @@ class FileQueue:
                 pass
         return deleted
 
+    def _wiki_date_dir(self) -> Path:
+        """Return today's wiki archive dir, creating it if needed."""
+        d = self.wiki_dir / _today_str()
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
     def write_wiki(self, slug: str, content: str) -> None:
-        """Persist a wiki page as an always-current .md mirror in archive/wiki/."""
+        """Persist a wiki page as a date-stamped .md in archive/wiki/YYYY-MM-DD/."""
         import re
 
         safe = re.sub(r"[^a-zA-Z0-9_\-]", "_", slug)
-        wiki_path = self.wiki_dir / (safe + ".md")
+        date_dir = self._wiki_date_dir()
+        wiki_path = date_dir / (safe + ".md")
         # Verify resolved path stays inside wiki_dir (defense-in-depth)
         if not str(wiki_path.resolve()).startswith(str(self.wiki_dir.resolve())):
             raise ValueError(f"Slug {slug!r} resolves outside wiki directory")
-        tmp = self.wiki_dir / (safe + ".md.tmp")
-        tmp.write_text(content)
+        tmp = date_dir / (safe + ".md.tmp")
+        tmp.write_text(content, encoding="utf-8")
         tmp.rename(wiki_path)
 
     def delete_wiki(self, slug: str) -> None:
-        """Remove the .md mirror for a deleted wiki page."""
+        """Remove .md mirror(s) for a deleted wiki page across all dated dirs."""
         import re
 
         safe = re.sub(r"[^a-zA-Z0-9_\-]", "_", slug)
-        wiki_path = self.wiki_dir / (safe + ".md")
-        if not str(wiki_path.resolve()).startswith(str(self.wiki_dir.resolve())):
-            raise ValueError(f"Slug {slug!r} resolves outside wiki directory")
-        wiki_path.unlink(missing_ok=True)
+        if not self.wiki_dir.exists():
+            return
+        for date_dir in self.wiki_dir.iterdir():
+            if not date_dir.is_dir():
+                continue
+            wiki_path = date_dir / (safe + ".md")
+            if not str(wiki_path.resolve()).startswith(str(self.wiki_dir.resolve())):
+                continue
+            wiki_path.unlink(missing_ok=True)
 
 
 class QueueDrainer(threading.Thread):
