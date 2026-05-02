@@ -2010,19 +2010,19 @@ class StorageEngine:
 
     def init_engram_slots(self, num_slots: int):
         """Ensure all slot indices exist in the engram_slot table."""
+        import json as _json
+
         now = self._now_iso()
-        for i in range(num_slots):
-            existing = self._q(
-                "SELECT id FROM engram_slot WHERE slot_index = $si LIMIT 1",
-                {"si": i},
-            )
-            if not existing:
-                sid = self._next_id("engram_slot")
-                self._q(
-                    "CREATE type::record('engram_slot', $id) SET "
-                    "slot_index = $si, excitability = 0.0, last_activated = $now",
-                    {"id": sid, "si": i, "now": now},
-                )
+        rows = self._q("SELECT VALUE slot_index FROM engram_slot")
+        existing = {r for r in rows if isinstance(r, int)}
+        missing = [i for i in range(num_slots) if i not in existing]
+        if not missing:
+            return
+        records = [{"slot_index": i, "excitability": 0.0, "last_activated": now} for i in missing]
+        _CHUNK = 500
+        for start in range(0, len(records), _CHUNK):
+            chunk = records[start : start + _CHUNK]
+            self._q(f"INSERT INTO engram_slot {_json.dumps(chunk)}")
 
     def get_engram_slot(self, slot_index: int) -> dict | None:
         rows = self._q(
