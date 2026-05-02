@@ -61,7 +61,7 @@ jobs:
       - id: check
         run: |
           if git rev-parse HEAD~1 >/dev/null 2>&1 && \
-             ! git diff --name-only HEAD~1 HEAD | grep -qE '^(Dockerfile|Dockerfile\.backend|entrypoint.*\.sh|yadgar/|pyproject\.toml)'; then
+             ! git diff --name-only HEAD~1 HEAD | grep -qE '^(Dockerfile|Dockerfile\.backend|entrypoint.*\.sh|yadgar/|pyproject\.toml|\.github/workflows/ci\.yaml)'; then
             echo "docker=false" >> "$GITHUB_OUTPUT"
           else
             echo "docker=true" >> "$GITHUB_OUTPUT"
@@ -88,7 +88,12 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Generate tags for core image: latest on master, semver on tags
+      - name: Get version from pyproject.toml
+        id: get-version
+        run: |
+          echo "version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" >> "$GITHUB_OUTPUT"
+
+      # Generate tags for core image: latest + exact version on master, semver on tags
       - name: Docker metadata (core)
         id: meta-core
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051  # v5
@@ -98,6 +103,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.get-version.outputs.version }},enable={{is_default_branch}}
 
       # Generate tags for backend image
       - name: Docker metadata (backend)
@@ -109,6 +115,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.get-version.outputs.version }},enable={{is_default_branch}}
 
       - name: Build and push core image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6
