@@ -4,12 +4,13 @@ Write flow:
   1. Caller writes to queue/ (atomic rename, fast)
   2. Returns success immediately
   3. Background QueueDrainer flushes queue/ -> DB
-  4. Confirmed writes move to archive/
+  4. Confirmed writes move to archive/memories/YYYY-MM-DD/
 
 Directory layout under base_dir (default YADGAR_DATA_DIR or /data in Docker):
-  queue/    — pending writes not yet confirmed by DB
-  archive/  — writes confirmed, kept for 30 days then pruned
-  wiki/     — wiki pages as .md files, always current
+  queue/                          — pending writes not yet confirmed by DB
+  archive/memories/YYYY-MM-DD/   — queue ops confirmed, kept 30 days then pruned
+  archive/wiki/YYYY-MM-DD/       — wiki .md snapshots, kept 30 days then pruned
+  wiki/                           — always-current wiki .md mirrors
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import logging
 import threading
 import time
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -47,6 +49,11 @@ def _json_default(obj):
     return str(obj)
 
 
+def _today_str() -> str:
+    """Return today's date as YYYY-MM-DD in UTC."""
+    return datetime.now(tz=UTC).strftime("%Y-%m-%d")
+
+
 class FileQueue:
     """Atomic file-based write queue."""
 
@@ -58,6 +65,18 @@ class FileQueue:
         self.queue_dir.mkdir(parents=True, exist_ok=True)
         self.archive_dir.mkdir(parents=True, exist_ok=True)
         self.wiki_dir.mkdir(parents=True, exist_ok=True)
+
+    def _memories_archive_dir(self) -> Path:
+        """Return today's memories archive dir, creating it if needed."""
+        d = self.archive_dir / "memories" / _today_str()
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _wiki_archive_dir(self) -> Path:
+        """Return today's wiki archive dir, creating it if needed."""
+        d = self.archive_dir / "wiki" / _today_str()
+        d.mkdir(parents=True, exist_ok=True)
+        return d
 
     def enqueue(self, op_type: str, payload: dict) -> str:
         """Write a queued operation atomically. Returns the queue file path."""
@@ -80,8 +99,8 @@ class FileQueue:
         return sorted(self.queue_dir.glob("*.json"))
 
     def archive(self, path: Path) -> None:
-        """Move a confirmed queue file to archive/."""
-        dest = self.archive_dir / path.name
+        """Move a confirmed queue file to archive/memories/YYYY-MM-DD/."""
+        dest = self._memories_archive_dir() / path.name
         try:
             path.rename(dest)
         except OSError:
@@ -91,6 +110,26 @@ class FileQueue:
         """Delete archive files older than _ARCHIVE_MAX_AGE. Returns count deleted."""
         cutoff = time.time() - _ARCHIVE_MAX_AGE
         deleted = 0
+        # Walk both memories/ and wiki/ subdirectories
+        for subdir in (self.archive_dir / "memories", self.archive_dir / "wiki"):
+            if not subdir.exists():
+                continue
+            for date_dir in subdir.iterdir():
+                if not date_dir.is_dir():
+                    continue
+                for f in date_dir.iterdir():
+                    try:
+                        if f.stat().st_mtime < cutoff:
+                            f.unlink(missing_ok=True)
+                            deleted += 1
+                    except OSError:
+                        pass
+                # Remove empty date dirs
+                try:
+                    date_dir.rmdir()
+                except OSError:
+                    pass
+        # Also clean up any legacy flat archive files (migration)
         for f in self.archive_dir.glob("*.json"):
             try:
                 if f.stat().st_mtime < cutoff:
@@ -101,7 +140,7 @@ class FileQueue:
         return deleted
 
     def write_wiki(self, slug: str, content: str) -> None:
-        """Persist a wiki page as a .md file (always-current mirror)."""
+        """Persist a wiki page as a .md file (always-current mirror) and archive a snapshot."""
         import re
 
         safe = re.sub(r"[^a-zA-Z0-9_\-]", "_", slug)
@@ -112,6 +151,24 @@ class FileQueue:
         tmp = self.wiki_dir / (safe + ".md.tmp")
         tmp.write_text(content)
         tmp.rename(wiki_path)
+
+        # Archive a dated snapshot for crash recovery
+        try:
+            snap_name = f"{int(time.time() * 1000):016d}_{safe}.md"
+            snap = self._wiki_archive_dir() / snap_name
+            snap.write_text(content)
+        except OSError:
+            pass
+
+    def delete_wiki(self, slug: str) -> None:
+        """Remove the .md mirror for a deleted wiki page."""
+        import re
+
+        safe = re.sub(r"[^a-zA-Z0-9_\-]", "_", slug)
+        wiki_path = self.wiki_dir / (safe + ".md")
+        if not str(wiki_path.resolve()).startswith(str(self.wiki_dir.resolve())):
+            raise ValueError(f"Slug {slug!r} resolves outside wiki directory")
+        wiki_path.unlink(missing_ok=True)
 
 
 class QueueDrainer(threading.Thread):

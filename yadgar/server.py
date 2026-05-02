@@ -2053,6 +2053,10 @@ def wiki_delete(slug: str) -> dict:
     deleted = _wiki.delete(slug)
     if deleted:
         _push_event({"event": "wiki_deleted", "slug": slug})
+        try:
+            _get_file_queue().delete_wiki(slug)
+        except Exception as _fq_exc:
+            logger.debug("File queue wiki mirror cleanup failed (non-fatal): %s", _fq_exc)
         return {"deleted": True, "slug": slug}
     return {"deleted": False, "error": f"Wiki page '{slug}' not found"}
 
@@ -2120,6 +2124,10 @@ def wiki_approve(slug: str) -> dict:
     )
     result.pop("embedding", None)
     storage.delete_wiki_draft(slug)
+    try:
+        _get_file_queue().write_wiki(result.get("slug", slug), draft["content"])
+    except Exception as _fq_exc:
+        logger.debug("File queue wiki mirror failed (non-fatal): %s", _fq_exc)
     return {"approved": True, "slug": slug, "page": result}
 
 
