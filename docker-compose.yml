@@ -37,7 +37,7 @@ services:
       start_period: 60s  # model load can take a while
 
   core:
-    image: looseking/yadgar:4.0.5
+    image: looseking/yadgar:4.1.0
     build:
       context: .
       dockerfile: Dockerfile

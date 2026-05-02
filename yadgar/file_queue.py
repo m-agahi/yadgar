@@ -9,8 +9,7 @@ Write flow:
 Directory layout under base_dir (default YADGAR_DATA_DIR or /data in Docker):
   queue/                          — pending writes not yet confirmed by DB
   archive/memories/YYYY-MM-DD/   — queue ops confirmed, kept 30 days then pruned
-  archive/wiki/YYYY-MM-DD/       — wiki .md snapshots, kept 30 days then pruned
-  wiki/                           — always-current wiki .md mirrors
+  archive/wiki/                   — always-current wiki .md mirrors
 """
 
 from __future__ import annotations
@@ -27,7 +26,6 @@ logger = logging.getLogger(__name__)
 
 _QUEUE_DIR = "queue"
 _ARCHIVE_DIR = "archive"
-_WIKI_DIR = "wiki"
 _DRAIN_INTERVAL = 5.0  # seconds between drain passes
 _ARCHIVE_MAX_AGE = 30 * 86400  # 30 days in seconds
 _CLEANUP_EVERY = 720  # drain passes between archive cleanups (~1 hour at 5s interval)
@@ -61,7 +59,7 @@ class FileQueue:
         base = Path(base_dir or Path.home() / ".yadgar")
         self.queue_dir = base / _QUEUE_DIR
         self.archive_dir = base / _ARCHIVE_DIR
-        self.wiki_dir = base / _WIKI_DIR
+        self.wiki_dir = base / _ARCHIVE_DIR / "wiki"
         self.queue_dir.mkdir(parents=True, exist_ok=True)
         self.archive_dir.mkdir(parents=True, exist_ok=True)
         self.wiki_dir.mkdir(parents=True, exist_ok=True)
@@ -69,12 +67,6 @@ class FileQueue:
     def _memories_archive_dir(self) -> Path:
         """Return today's memories archive dir, creating it if needed."""
         d = self.archive_dir / "memories" / _today_str()
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-
-    def _wiki_archive_dir(self) -> Path:
-        """Return today's wiki archive dir, creating it if needed."""
-        d = self.archive_dir / "wiki" / _today_str()
         d.mkdir(parents=True, exist_ok=True)
         return d
 
@@ -110,8 +102,8 @@ class FileQueue:
         """Delete archive files older than _ARCHIVE_MAX_AGE. Returns count deleted."""
         cutoff = time.time() - _ARCHIVE_MAX_AGE
         deleted = 0
-        # Walk both memories/ and wiki/ subdirectories
-        for subdir in (self.archive_dir / "memories", self.archive_dir / "wiki"):
+        # Walk memories/ dated subdirectories only (wiki/ mirrors are not time-pruned)
+        for subdir in (self.archive_dir / "memories",):
             if not subdir.exists():
                 continue
             for date_dir in subdir.iterdir():
@@ -140,7 +132,7 @@ class FileQueue:
         return deleted
 
     def write_wiki(self, slug: str, content: str) -> None:
-        """Persist a wiki page as a .md file (always-current mirror) and archive a snapshot."""
+        """Persist a wiki page as an always-current .md mirror in archive/wiki/."""
         import re
 
         safe = re.sub(r"[^a-zA-Z0-9_\-]", "_", slug)
@@ -151,14 +143,6 @@ class FileQueue:
         tmp = self.wiki_dir / (safe + ".md.tmp")
         tmp.write_text(content)
         tmp.rename(wiki_path)
-
-        # Archive a dated snapshot for crash recovery
-        try:
-            snap_name = f"{int(time.time() * 1000):016d}_{safe}.md"
-            snap = self._wiki_archive_dir() / snap_name
-            snap.write_text(content)
-        except OSError:
-            pass
 
     def delete_wiki(self, slug: str) -> None:
         """Remove the .md mirror for a deleted wiki page."""
