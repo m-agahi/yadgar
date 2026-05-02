@@ -22,8 +22,20 @@ from pathlib import Path
 DEFAULT_PORT = 8765
 DEFAULT_DEV_PORT = 8766
 _HEALTH_TIMEOUT = 60.0  # Docker startup takes longer than a local process
-DOCKERHUB_IMAGE = "looseking/yadgar:latest"
-DOCKERHUB_BACKEND_IMAGE = "looseking/yadgar-backend:latest"
+
+
+def _default_image(repo: str) -> str:
+    """Return repo:version using the installed package version, fallback to :latest."""
+    try:
+        from importlib.metadata import version as _pkg_version
+
+        return f"{repo}:{_pkg_version('yadgar')}"
+    except Exception:
+        return f"{repo}:latest"
+
+
+DOCKERHUB_IMAGE = _default_image("looseking/yadgar")
+DOCKERHUB_BACKEND_IMAGE = _default_image("looseking/yadgar-backend")
 DEFAULT_BACKEND_EMBED_PORT = 8001
 _BACKEND_CONTAINER = "yadgar-backend"
 _BACKEND_VOLUME = "yadgar-db-data"
