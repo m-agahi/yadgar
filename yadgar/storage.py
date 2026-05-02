@@ -626,21 +626,30 @@ class StorageEngine:
                 FIELDS entity_name, attribute_type, attribute_key, directory_context;
         """)
 
-        # FTS on user_profile
-        self._q("""
-            DEFINE INDEX IF NOT EXISTS profile_fts_idx
-                ON user_profile
-                FIELDS entity_name, attribute_type, attribute_key, attribute_value
-                FULLTEXT ANALYZER profile_analyzer BM25;
-        """)
+        # FTS on user_profile — one index per field (SurrealDB v3 FULLTEXT is single-field only)
+        for _field, _idx in [
+            ("entity_name", "profile_entity_name_idx"),
+            ("attribute_type", "profile_attribute_type_idx"),
+            ("attribute_key", "profile_attribute_key_idx"),
+            ("attribute_value", "profile_attribute_value_idx"),
+        ]:
+            self._q(f"""
+                DEFINE INDEX IF NOT EXISTS {_idx}
+                    ON user_profile FIELDS {_field}
+                    FULLTEXT ANALYZER profile_analyzer BM25;
+            """)
 
-        # FTS on derived_belief
-        self._q("""
-            DEFINE INDEX IF NOT EXISTS belief_fts_idx
-                ON derived_belief
-                FIELDS subject, belief_type, content
-                FULLTEXT ANALYZER belief_analyzer BM25;
-        """)
+        # FTS on derived_belief — one index per field
+        for _field, _idx in [
+            ("subject", "belief_subject_idx"),
+            ("belief_type", "belief_type_idx"),
+            ("content", "belief_content_idx"),
+        ]:
+            self._q(f"""
+                DEFINE INDEX IF NOT EXISTS {_idx}
+                    ON derived_belief FIELDS {_field}
+                    FULLTEXT ANALYZER belief_analyzer BM25;
+            """)
 
         # engram_slot: index on slot_index
         self._q("""
