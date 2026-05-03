@@ -105,15 +105,11 @@ class GraphAPI:
                 }
             )
 
-        # ── Semantic edges (top-200 memories, cosine ≥ 0.75, top-K per node) ──
-        if len(embeddings_for_sem) >= 2:
-            edges.extend(self._compute_semantic_edges(embeddings_for_sem, top_k=top_k))
-
         # ── Wiki nodes ────────────────────────────────────────────────────────
         try:
             wiki_pages = self._s._q(
                 "SELECT id, title, slug, category, tags, links, source_memory_ids, "
-                "updated_at FROM wiki_page ORDER BY updated_at DESC LIMIT 200"
+                "embedding, updated_at FROM wiki_page ORDER BY updated_at DESC LIMIT 200"
             )
         except Exception:
             wiki_pages = []
@@ -137,6 +133,13 @@ class GraphAPI:
                     "updated_at": str(wp.get("updated_at") or ""),
                 }
             )
+            emb = wp.get("embedding")
+            if emb and len(embeddings_for_sem) < 400:
+                embeddings_for_sem.append((node_id, emb))
+
+        # ── Semantic edges (memories + wikis, cosine ≥ 0.75, top-K per node) ─
+        if len(embeddings_for_sem) >= 2:
+            edges.extend(self._compute_semantic_edges(embeddings_for_sem, top_k=top_k))
 
         # ── Wiki cross-reference edges ────────────────────────────────────
         try:
@@ -287,7 +290,7 @@ class GraphAPI:
             seen: set[tuple[int, int]] = set()
             result = []
             for i in range(n):
-                # Collect all neighbours above threshold, sorted by similarity desc
+                # Collect top-K neighbours above threshold, sorted by similarity desc
                 neighbours = sorted(
                     (
                         (float(sim[i, j]), j)

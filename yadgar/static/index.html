@@ -490,7 +490,7 @@ function initGraph() {
       : `[heat=${(n.heat||0).toFixed(3)}] ${(n.content || n.label || '').slice(0, 120)}`)
     .linkColor(l => EDGE_COLOR[l.type] || '#484f58')
     .linkWidth(l => l.type === 'transition' ? Math.min(4, 1 + Math.log2(l.count || 1)) : l.type === 'semantic' ? 1 : l.type === 'wiki_crossref' ? 1 : 1.5)
-    .linkDirectionalArrowLength(l => (l.type === 'transition' || l.type === 'memory_wiki') ? 5 : 0)
+    .linkDirectionalArrowLength(l => (l.type === 'transition' || l.type === 'memory_wiki' || l.type === 'wiki_crossref') ? 5 : 0)
     .linkDirectionalArrowRelPos(1)
     .nodeCanvasObject(drawNode)
     .nodeCanvasObjectMode(() => 'replace')

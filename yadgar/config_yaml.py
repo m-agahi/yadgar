@@ -103,7 +103,11 @@ FIELD_META: dict[str, dict[str, str]] = {
         "section": "thermodynamics",
     },
     "cold_threshold": {
-        "desc": "Heat below which a memory is archived (0.0 = never archive)",
+        "desc": "Heat below which a memory is archived (0.02 = ~6 months no-access floor)",
+        "section": "thermodynamics",
+    },
+    "action_stream_cold_threshold": {
+        "desc": "Heat below which an auto-captured action-stream memory is archived (higher than cold_threshold so they expire faster)",
         "section": "thermodynamics",
     },
     "hot_threshold": {

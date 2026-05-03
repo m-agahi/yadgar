@@ -4,12 +4,12 @@ Write flow:
   1. Caller writes to queue/ (atomic rename, fast)
   2. Returns success immediately
   3. Background QueueDrainer flushes queue/ -> DB
-  4. Confirmed writes move to archive/
+  4. Confirmed writes move to archive/memories/YYYY-MM-DD/
 
 Directory layout under base_dir (default YADGAR_DATA_DIR or /data in Docker):
-  queue/    — pending writes not yet confirmed by DB
-  archive/  — writes confirmed, kept for 30 days then pruned
-  wiki/     — wiki pages as .md files, always current
+  queue/                          — pending writes not yet confirmed by DB
+  archive/memories/YYYY-MM-DD/   — queue ops confirmed, kept 30 days then pruned
+  archive/wiki/                   — always-current wiki .md mirrors
 """
 
 from __future__ import annotations
@@ -19,16 +19,16 @@ import logging
 import threading
 import time
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 _QUEUE_DIR = "queue"
 _ARCHIVE_DIR = "archive"
-_WIKI_DIR = "wiki"
-_DRAIN_INTERVAL = 5.0  # seconds between drain passes
+_DRAIN_INTERVAL = 30.0  # seconds between drain passes (configurable via QueueDrainer)
 _ARCHIVE_MAX_AGE = 30 * 86400  # 30 days in seconds
-_CLEANUP_EVERY = 720  # drain passes between archive cleanups (~1 hour at 5s interval)
+_CLEANUP_EVERY = 120  # drain passes between archive cleanups (~1 hour at 30s interval)
 
 # Thread-local flag: True while QueueDrainer._apply() is executing.
 # Write tools check this to skip re-enqueueing during crash-recovery replay.
@@ -47,17 +47,29 @@ def _json_default(obj):
     return str(obj)
 
 
+def _today_str() -> str:
+    """Return today's date as YYYY-MM-DD in UTC."""
+    return datetime.now(tz=UTC).strftime("%Y-%m-%d")
+
+
 class FileQueue:
     """Atomic file-based write queue."""
 
-    def __init__(self, base_dir: str | Path | None = None) -> None:
+    def __init__(self, base_dir: str | Path | None = None, wiki_prefix: str = "") -> None:
         base = Path(base_dir or Path.home() / ".yadgar")
         self.queue_dir = base / _QUEUE_DIR
         self.archive_dir = base / _ARCHIVE_DIR
-        self.wiki_dir = base / _WIKI_DIR
+        self.wiki_dir = base / _ARCHIVE_DIR / "wiki"
+        self.wiki_prefix = wiki_prefix.strip("-").strip() if wiki_prefix else ""
         self.queue_dir.mkdir(parents=True, exist_ok=True)
         self.archive_dir.mkdir(parents=True, exist_ok=True)
         self.wiki_dir.mkdir(parents=True, exist_ok=True)
+
+    def _memories_archive_dir(self) -> Path:
+        """Return today's memories archive dir, creating it if needed."""
+        d = self.archive_dir / "memories" / _today_str()
+        d.mkdir(parents=True, exist_ok=True)
+        return d
 
     def enqueue(self, op_type: str, payload: dict) -> str:
         """Write a queued operation atomically. Returns the queue file path."""
@@ -80,8 +92,8 @@ class FileQueue:
         return sorted(self.queue_dir.glob("*.json"))
 
     def archive(self, path: Path) -> None:
-        """Move a confirmed queue file to archive/."""
-        dest = self.archive_dir / path.name
+        """Move a confirmed queue file to archive/memories/YYYY-MM-DD/."""
+        dest = self._memories_archive_dir() / path.name
         try:
             path.rename(dest)
         except OSError:
@@ -91,6 +103,26 @@ class FileQueue:
         """Delete archive files older than _ARCHIVE_MAX_AGE. Returns count deleted."""
         cutoff = time.time() - _ARCHIVE_MAX_AGE
         deleted = 0
+        # Walk memories/ and wiki/ dated subdirectories
+        for subdir in (self.archive_dir / "memories", self.wiki_dir):
+            if not subdir.exists():
+                continue
+            for date_dir in subdir.iterdir():
+                if not date_dir.is_dir():
+                    continue
+                for f in date_dir.iterdir():
+                    try:
+                        if f.stat().st_mtime < cutoff:
+                            f.unlink(missing_ok=True)
+                            deleted += 1
+                    except OSError:
+                        pass
+                # Remove empty date dirs
+                try:
+                    date_dir.rmdir()
+                except OSError:
+                    pass
+        # Also clean up any legacy flat archive files (migration)
         for f in self.archive_dir.glob("*.json"):
             try:
                 if f.stat().st_mtime < cutoff:
@@ -100,29 +132,58 @@ class FileQueue:
                 pass
         return deleted
 
+    def _wiki_date_dir(self) -> Path:
+        """Return today's wiki archive dir, creating it if needed."""
+        d = self.wiki_dir / _today_str()
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
     def write_wiki(self, slug: str, content: str) -> None:
-        """Persist a wiki page as a .md file (always-current mirror)."""
+        """Persist a wiki page as a date-stamped .md in archive/wiki/YYYY-MM-DD/."""
         import re
 
         safe = re.sub(r"[^a-zA-Z0-9_\-]", "_", slug)
-        wiki_path = self.wiki_dir / (safe + ".md")
+        if self.wiki_prefix:
+            safe = f"{self.wiki_prefix}-{safe}"
+        date_dir = self._wiki_date_dir()
+        wiki_path = date_dir / (safe + ".md")
         # Verify resolved path stays inside wiki_dir (defense-in-depth)
         if not str(wiki_path.resolve()).startswith(str(self.wiki_dir.resolve())):
             raise ValueError(f"Slug {slug!r} resolves outside wiki directory")
-        tmp = self.wiki_dir / (safe + ".md.tmp")
-        tmp.write_text(content)
+        tmp = date_dir / (safe + ".md.tmp")
+        tmp.write_text(content, encoding="utf-8")
         tmp.rename(wiki_path)
+
+    def delete_wiki(self, slug: str) -> None:
+        """Remove .md mirror(s) for a deleted wiki page across all dated dirs."""
+        import re
+
+        safe = re.sub(r"[^a-zA-Z0-9_\-]", "_", slug)
+        if self.wiki_prefix:
+            safe = f"{self.wiki_prefix}-{safe}"
+        if not self.wiki_dir.exists():
+            return
+        for date_dir in self.wiki_dir.iterdir():
+            if not date_dir.is_dir():
+                continue
+            wiki_path = date_dir / (safe + ".md")
+            if not str(wiki_path.resolve()).startswith(str(self.wiki_dir.resolve())):
+                continue
+            wiki_path.unlink(missing_ok=True)
 
 
 class QueueDrainer(threading.Thread):
     """Background thread: drain FileQueue -> StorageEngine via tool replay."""
 
-    def __init__(self, queue: FileQueue, storage_factory) -> None:
+    def __init__(
+        self, queue: FileQueue, storage_factory, drain_interval: float = _DRAIN_INTERVAL
+    ) -> None:
         super().__init__(daemon=True, name="yadgar-queue-drainer")
         self._queue = queue
         self._storage_factory = storage_factory  # callable -> StorageEngine
         self._stop_event = threading.Event()
         self._drain_count = 0
+        self._drain_interval = drain_interval
 
     def run(self) -> None:
         while not self._stop_event.is_set():
@@ -130,7 +191,7 @@ class QueueDrainer(threading.Thread):
                 self._drain_once()
             except Exception as exc:
                 logger.warning("Queue drain error: %s", exc)
-            self._stop_event.wait(timeout=_DRAIN_INTERVAL)
+            self._stop_event.wait(timeout=self._drain_interval)
 
     def stop(self) -> None:
         self._stop_event.set()

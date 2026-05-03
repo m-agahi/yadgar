@@ -371,6 +371,33 @@ class TestAutoDeletion:
             "_action_stream cold memory was NOT pruned during consolidation"
         )
 
+    def test_action_stream_insert_has_zero_confidence(self):
+        """Action stream memories created by the consolidation pipeline have confidence=0.0.
+
+        This is required for _memify_prune to be able to delete them when they go cold
+        and were never accessed. A NULL confidence coerces to 1.0 in the prune check,
+        blocking deletion permanently.
+        """
+        storage = server._get_storage()
+        embeddings = server._get_embeddings()
+        mid = storage.insert_memory(
+            {
+                "content": "Session activity [Bash(3)]: 3 tool calls",
+                "embedding": embeddings.encode("Session activity [Bash(3)]: 3 tool calls"),
+                "tags": ["_action_stream", "_auto"],
+                "directory_context": "/home/user/project",
+                "heat": 0.4,
+                "confidence": 0.0,
+                "is_stale": False,
+                "file_hash": None,
+                "embedding_model": embeddings.get_model_name(),
+            }
+        )
+        mem = storage.get_memory(mid)
+        assert (mem.get("confidence") or 0.0) < 0.3, (
+            "action stream memory should have confidence=0.0 to be eligible for pruning"
+        )
+
     def test_protected_memory_never_deleted_even_with_action_stream_tag(self):
         """is_protected wins over _action_stream — protected memories are never deleted."""
         storage = server._get_storage()
