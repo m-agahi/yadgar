@@ -133,6 +133,76 @@ class TestColdArchival:
         mem = storage.get_memory(mid)
         assert mem["heat"] > 0.05
 
+    def test_action_stream_archived_at_higher_threshold(self, storage, embeddings, tmp_path):
+        """Action stream memories use ACTION_STREAM_COLD_THRESHOLD, not global COLD_THRESHOLD.
+
+        A memory at heat=0.08 should be archived when ACTION_STREAM_COLD_THRESHOLD=0.1
+        but a normal memory at the same heat should survive when COLD_THRESHOLD=0.02.
+        """
+        settings = Settings(
+            DB_PATH=str(tmp_path / "test_pertype.db"),
+            IDLE_THRESHOLD_SECONDS=1,
+            DECAY_FACTOR=0.95,
+            COLD_THRESHOLD=0.02,
+            ACTION_STREAM_COLD_THRESHOLD=0.1,
+            DAEMON_CHECK_INTERVAL=1,
+        )
+        engine = ConsolidationScheduler(storage, embeddings, settings)
+
+        action_mid = storage.insert_memory(
+            {
+                "content": "Session activity [Bash(3)]: 3 tool calls",
+                "directory_context": "/proj",
+                "tags": ["_action_stream", "_auto"],
+                "heat": 0.08,
+                "last_accessed": _hours_ago(0),
+            }
+        )
+        normal_mid = storage.insert_memory(
+            {
+                "content": "important architectural decision",
+                "directory_context": "/proj",
+                "heat": 0.08,
+                "last_accessed": _hours_ago(0),
+            }
+        )
+
+        engine.force_consolidate()
+
+        assert storage.get_memory(action_mid)["heat"] == 0.0, (
+            "action stream memory above ACTION_STREAM_COLD_THRESHOLD should be archived"
+        )
+        assert storage.get_memory(normal_mid)["heat"] > 0.0, (
+            "normal memory above COLD_THRESHOLD should NOT be archived"
+        )
+
+    def test_global_cold_threshold_archives_normal_memory(self, storage, embeddings, tmp_path):
+        """Normal memories are archived when heat drops below COLD_THRESHOLD=0.02."""
+        settings = Settings(
+            DB_PATH=str(tmp_path / "test_global_cold.db"),
+            IDLE_THRESHOLD_SECONDS=1,
+            DECAY_FACTOR=0.95,
+            COLD_THRESHOLD=0.02,
+            ACTION_STREAM_COLD_THRESHOLD=0.1,
+            DAEMON_CHECK_INTERVAL=1,
+        )
+        engine = ConsolidationScheduler(storage, embeddings, settings)
+
+        mid = storage.insert_memory(
+            {
+                "content": "rarely accessed fact",
+                "directory_context": "/proj",
+                "heat": 0.01,
+                "last_accessed": _hours_ago(0),
+            }
+        )
+
+        engine.force_consolidate()
+
+        assert storage.get_memory(mid)["heat"] == 0.0, (
+            "memory below COLD_THRESHOLD should be archived to heat=0.0"
+        )
+
 
 class TestEntityExtraction:
     def test_extracts_file_paths(self, engine, storage):

@@ -591,7 +591,7 @@ class StorageEngine:
         self._q("""
             DEFINE INDEX IF NOT EXISTS memory_content_idx
                 ON memory FIELDS content
-                SEARCH ANALYZER mem_analyzer BM25;
+                FULLTEXT ANALYZER mem_analyzer BM25;
         """)
         # memory: vector index on implicit embedding
         if self._db_url:
@@ -626,21 +626,30 @@ class StorageEngine:
                 FIELDS entity_name, attribute_type, attribute_key, directory_context;
         """)
 
-        # FTS on user_profile
-        self._q("""
-            DEFINE INDEX IF NOT EXISTS profile_fts_idx
-                ON user_profile
-                FIELDS entity_name, attribute_type, attribute_key, attribute_value
-                SEARCH ANALYZER profile_analyzer BM25;
-        """)
+        # FTS on user_profile — one index per field (SurrealDB v3 FULLTEXT is single-field only)
+        for _field, _idx in [
+            ("entity_name", "profile_entity_name_idx"),
+            ("attribute_type", "profile_attribute_type_idx"),
+            ("attribute_key", "profile_attribute_key_idx"),
+            ("attribute_value", "profile_attribute_value_idx"),
+        ]:
+            self._q(f"""
+                DEFINE INDEX IF NOT EXISTS {_idx}
+                    ON user_profile FIELDS {_field}
+                    FULLTEXT ANALYZER profile_analyzer BM25;
+            """)
 
-        # FTS on derived_belief
-        self._q("""
-            DEFINE INDEX IF NOT EXISTS belief_fts_idx
-                ON derived_belief
-                FIELDS subject, belief_type, content
-                SEARCH ANALYZER belief_analyzer BM25;
-        """)
+        # FTS on derived_belief — one index per field
+        for _field, _idx in [
+            ("subject", "belief_subject_idx"),
+            ("belief_type", "belief_type_idx"),
+            ("content", "belief_content_idx"),
+        ]:
+            self._q(f"""
+                DEFINE INDEX IF NOT EXISTS {_idx}
+                    ON derived_belief FIELDS {_field}
+                    FULLTEXT ANALYZER belief_analyzer BM25;
+            """)
 
         # engram_slot: index on slot_index
         self._q("""
@@ -652,7 +661,7 @@ class StorageEngine:
         self._q("""
             DEFINE INDEX IF NOT EXISTS wiki_content_idx
                 ON wiki_page FIELDS content
-                SEARCH ANALYZER mem_analyzer BM25;
+                FULLTEXT ANALYZER mem_analyzer BM25;
         """)
         # wiki_page: vector index on embedding (semantic search)
         if self._db_url:
@@ -691,7 +700,7 @@ class StorageEngine:
     def insert_episode(self, episode: dict) -> int:
         eid = self._next_id("episode")
         self._q(
-            "CREATE type::thing('episode', $id) SET "
+            "CREATE type::record('episode', $id) SET "
             "session_id = $session_id, timestamp = $timestamp, "
             "directory = $directory, raw_content = $raw_content, "
             "overlap_start = $overlap_start, overlap_end = $overlap_end",
@@ -736,7 +745,7 @@ class StorageEngine:
         emb_floats = self._bytes_to_floats(embedding) if embedding else None
 
         self._q(
-            "CREATE type::thing('memory', $id) SET "
+            "CREATE type::record('memory', $id) SET "
             "content = $content, embedding = $embedding, tags = $tags, "
             "source_episode_id = $source_episode_id, "
             "directory_context = $directory_context, "
@@ -811,7 +820,7 @@ class StorageEngine:
                             params[col] = val
                     if set_parts:
                         self._q(
-                            f"UPDATE type::thing('memory', $id) SET {', '.join(set_parts)}",
+                            f"UPDATE type::record('memory', $id) SET {', '.join(set_parts)}",
                             params,
                         )
                         if (
@@ -824,7 +833,7 @@ class StorageEngine:
                             if new_embedding is not None:
                                 new_floats = self._bytes_to_floats(new_embedding)
                                 self._q(
-                                    "UPDATE type::thing('memory', $id) SET embedding = $emb",
+                                    "UPDATE type::record('memory', $id) SET embedding = $emb",
                                     {"id": mid, "emb": new_floats},
                                 )
             except Exception as e:
@@ -839,7 +848,7 @@ class StorageEngine:
         return mid
 
     def get_memory(self, memory_id: int) -> dict | None:
-        # Use direct record ID syntax — more reliable than type::thing() in surrealkv
+        # Use direct record ID syntax — more reliable than type::record() in surrealkv
         mid = int(memory_id)  # sanitize
         rows = self._q(f"SELECT * FROM memory:{mid}")
         result = self._row_to_dict(rows[0]) if rows else None
@@ -861,13 +870,13 @@ class StorageEngine:
 
     def update_memory_heat(self, memory_id: int, new_heat: float):
         self._q(
-            "UPDATE type::thing('memory', $id) SET heat = $heat",
+            "UPDATE type::record('memory', $id) SET heat = $heat",
             {"id": memory_id, "heat": new_heat},
         )
 
     def update_memory_staleness(self, memory_id: int, is_stale: bool):
         self._q(
-            "UPDATE type::thing('memory', $id) SET is_stale = $stale",
+            "UPDATE type::record('memory', $id) SET is_stale = $stale",
             {"id": memory_id, "stale": is_stale},
         )
 
@@ -888,13 +897,13 @@ class StorageEngine:
             pass
         try:
             self._q(
-                "UPDATE type::thing('memory', $id) SET implicit_embedding = NONE",
+                "UPDATE type::record('memory', $id) SET implicit_embedding = NONE",
                 {"id": memory_id},
             )
         except Exception:
             pass
         self._q(
-            "DELETE type::thing('memory', $id)",
+            "DELETE type::record('memory', $id)",
             {"id": memory_id},
         )
 
@@ -1048,14 +1057,14 @@ class StorageEngine:
         """Update the embedding field on the memory record."""
         floats = self._bytes_to_floats(embedding)
         self._q(
-            "UPDATE type::thing('memory', $id) SET embedding = $emb",
+            "UPDATE type::record('memory', $id) SET embedding = $emb",
             {"id": memory_id, "emb": floats},
         )
 
     def delete_vector(self, memory_id: int):
         """Clear the embedding field on the memory record."""
         self._q(
-            "UPDATE type::thing('memory', $id) SET embedding = NONE",
+            "UPDATE type::record('memory', $id) SET embedding = NONE",
             {"id": memory_id},
         )
 
@@ -1067,7 +1076,7 @@ class StorageEngine:
         """Store implicit embedding on the memory record."""
         floats = self._bytes_to_floats(embedding)
         self._q(
-            "UPDATE type::thing('memory', $id) SET implicit_embedding = $emb",
+            "UPDATE type::record('memory', $id) SET implicit_embedding = $emb",
             {"id": memory_id, "emb": floats},
         )
 
@@ -1077,16 +1086,16 @@ class StorageEngine:
         top_k: int = 10,
         min_heat: float = 0.1,
     ) -> list[tuple[int, float]]:
-        """KNN search via MTREE index, filtered by min_heat.
+        """KNN search via HNSW index, filtered by min_heat.
 
         Returns list of (memory_id, distance) tuples sorted by ascending distance.
+        SurrealDB v3: KNN operator requires <|K, EF|> — single-param <|K|> is broken.
         """
         fetch_k = min(top_k * 4, 4096)
         floats = self._bytes_to_floats(query_embedding)
-        # KNN limit <|K|> must be a literal, not a parameter
         rows = self._q(
             f"SELECT id, heat, vector::similarity::cosine(embedding, $qv) AS sim "
-            f"FROM memory WHERE embedding <|{fetch_k}|> $qv "
+            f"FROM memory WHERE embedding <|{fetch_k}, 40|> $qv "
             f"ORDER BY sim DESC",
             {"qv": floats},
         )
@@ -1115,7 +1124,7 @@ class StorageEngine:
         floats = self._bytes_to_floats(query_embedding)
         rows = self._q(
             f"SELECT id, vector::similarity::cosine(implicit_embedding, $qv) AS sim "
-            f"FROM memory WHERE implicit_embedding <|{fetch_k}|> $qv "
+            f"FROM memory WHERE implicit_embedding <|{fetch_k}, 40|> $qv "
             f"ORDER BY sim DESC",
             {"qv": floats},
         )
@@ -1139,7 +1148,7 @@ class StorageEngine:
     def update_memory_embedding(self, memory_id: int, embedding: bytes, embedding_model: str):
         floats = self._bytes_to_floats(embedding)
         self._q(
-            "UPDATE type::thing('memory', $id) SET embedding = $emb, embedding_model = $model",
+            "UPDATE type::record('memory', $id) SET embedding = $emb, embedding_model = $model",
             {"id": memory_id, "emb": floats, "model": embedding_model},
         )
         # update_vector is a no-op distinction in SurrealDB (already done above)
@@ -1175,11 +1184,11 @@ class StorageEngine:
         try:
             zero = [0.0] * self._embedding_dim
             self._q(
-                "SELECT id FROM memory WHERE embedding <|1|> $qv LIMIT 1",
+                "SELECT id FROM memory WHERE embedding <|1, 40|> $qv LIMIT 1",
                 {"qv": zero},
             )
             self._q(
-                "SELECT id FROM memory WHERE implicit_embedding <|1|> $qv LIMIT 1",
+                "SELECT id FROM memory WHERE implicit_embedding <|1, 40|> $qv LIMIT 1",
                 {"qv": zero},
             )
             return True
@@ -1214,13 +1223,13 @@ class StorageEngine:
         if original_content is not None:
             params["orig"] = original_content
             self._q(
-                "UPDATE type::thing('memory', $id) SET content = $content, "
+                "UPDATE type::record('memory', $id) SET content = $content, "
                 "embedding = $emb, compression_level = $level, original_content = $orig",
                 params,
             )
         else:
             self._q(
-                "UPDATE type::thing('memory', $id) SET content = $content, "
+                "UPDATE type::record('memory', $id) SET content = $content, "
                 "embedding = $emb, compression_level = $level",
                 params,
             )
@@ -1239,7 +1248,7 @@ class StorageEngine:
         now = self._now_iso()
         eid = self._next_id("entity")
         self._q(
-            "CREATE type::thing('entity', $id) SET "
+            "CREATE type::record('entity', $id) SET "
             "name = $name, type = $type, created_at = $created_at, "
             "last_accessed = $last_accessed, heat = $heat, archived = $archived",
             {
@@ -1276,7 +1285,7 @@ class StorageEngine:
 
     def update_entity_heat(self, entity_id: int, new_heat: float):
         self._q(
-            "UPDATE type::thing('entity', $id) SET heat = $heat",
+            "UPDATE type::record('entity', $id) SET heat = $heat",
             {"id": entity_id, "heat": new_heat},
         )
 
@@ -1286,13 +1295,13 @@ class StorageEngine:
 
     def archive_entity(self, entity_id: int):
         self._q(
-            "UPDATE type::thing('entity', $id) SET archived = true",
+            "UPDATE type::record('entity', $id) SET archived = true",
             {"id": entity_id},
         )
 
     def reinforce_entity(self, entity_id: int, heat_bump: float = 0.1):
         self._q(
-            "UPDATE type::thing('entity', $id) SET "
+            "UPDATE type::record('entity', $id) SET "
             "heat = math::min([heat + $bump, 1.0]), last_accessed = $now",
             {"id": entity_id, "bump": heat_bump, "now": self._now_iso()},
         )
@@ -1303,7 +1312,7 @@ class StorageEngine:
         now = self._now_iso()
         rid = self._next_id("relationship")
         self._q(
-            "CREATE type::thing('relationship', $id) SET "
+            "CREATE type::record('relationship', $id) SET "
             "source_entity_id = $src, target_entity_id = $tgt, "
             "relationship_type = $rtype, weight = $weight, "
             "created_at = $created_at, last_reinforced = $last_reinforced",
@@ -1386,7 +1395,7 @@ class StorageEngine:
         sets = ", ".join(f"{k} = ${k}" for k in fields)
         params = dict(fields)
         params["id"] = rel_id
-        self._q(f"UPDATE type::thing('relationship', $id) SET {sets}", params)
+        self._q(f"UPDATE type::record('relationship', $id) SET {sets}", params)
 
     def insert_typed_relationship(
         self,
@@ -1403,7 +1412,7 @@ class StorageEngine:
         now = self._now_iso()
         rid = self._next_id("relationship")
         self._q(
-            "CREATE type::thing('relationship', $id) SET "
+            "CREATE type::record('relationship', $id) SET "
             "source_entity_id = $src, target_entity_id = $tgt, "
             "relationship_type = $rt, weight = $w, "
             "created_at = $cat, last_reinforced = $lr, "
@@ -1432,7 +1441,7 @@ class StorageEngine:
 
     def reinforce_relationship(self, rel_id: int, weight_increase: float = 1.0):
         self._q(
-            "UPDATE type::thing('relationship', $id) SET "
+            "UPDATE type::record('relationship', $id) SET "
             "weight = weight + $inc, last_reinforced = $now",
             {"id": rel_id, "inc": weight_increase, "now": self._now_iso()},
         )
@@ -1448,13 +1457,13 @@ class StorageEngine:
         if rows:
             fid = self._extract_id(rows[0]["id"])
             self._q(
-                "UPDATE type::thing('file_hash', $id) SET hash = $hash, last_checked = $now",
+                "UPDATE type::record('file_hash', $id) SET hash = $hash, last_checked = $now",
                 {"id": fid, "hash": hash_value, "now": now},
             )
         else:
             fid = self._next_id("file_hash")
             self._q(
-                "CREATE type::thing('file_hash', $id) SET "
+                "CREATE type::record('file_hash', $id) SET "
                 "filepath = $fp, hash = $hash, last_checked = $now",
                 {"id": fid, "fp": filepath, "hash": hash_value, "now": now},
             )
@@ -1478,7 +1487,7 @@ class StorageEngine:
     def insert_consolidation_log(self, log: dict) -> int:
         cid = self._next_id("consolidation_log")
         self._q(
-            "CREATE type::thing('consolidation_log', $id) SET "
+            "CREATE type::record('consolidation_log', $id) SET "
             "timestamp = $timestamp, memories_added = $added, "
             "memories_updated = $updated, memories_archived = $archived, "
             "memories_deleted = $deleted, duration_ms = $duration_ms",
@@ -1536,7 +1545,7 @@ class StorageEngine:
         centroid = cluster.get("centroid_embedding")
         centroid_floats = self._bytes_to_floats(centroid) if centroid else None
         self._q(
-            "CREATE type::thing('memory_cluster', $id) SET "
+            "CREATE type::record('memory_cluster', $id) SET "
             "name = $name, level = $level, parent_cluster_id = $parent, "
             "summary = $summary, centroid_embedding = $centroid, "
             "member_count = $member_count, created_at = $created_at, "
@@ -1593,7 +1602,7 @@ class StorageEngine:
             params[k] = v
             set_parts.append(f"{k} = ${k}")
         self._q(
-            f"UPDATE type::thing('memory_cluster', $id) SET {', '.join(set_parts)}",
+            f"UPDATE type::record('memory_cluster', $id) SET {', '.join(set_parts)}",
             params,
         )
 
@@ -1603,7 +1612,7 @@ class StorageEngine:
         now = self._now_iso()
         pid = self._next_id("prospective_memory")
         self._q(
-            "CREATE type::thing('prospective_memory', $id) SET "
+            "CREATE type::record('prospective_memory', $id) SET "
             "content = $content, trigger_condition = $trigger_condition, "
             "trigger_type = $trigger_type, target_directory = $target_directory, "
             "is_active = $is_active, created_at = $created_at, "
@@ -1629,7 +1638,7 @@ class StorageEngine:
     def trigger_prospective_memory(self, pm_id: int):
         now = self._now_iso()
         self._q(
-            "UPDATE type::thing('prospective_memory', $id) SET "
+            "UPDATE type::record('prospective_memory', $id) SET "
             "triggered_at = $now, triggered_count = triggered_count + 1",
             {"id": pm_id, "now": now},
         )
@@ -1640,7 +1649,7 @@ class StorageEngine:
         now = self._now_iso()
         nid = self._next_id("narrative_entry")
         self._q(
-            "CREATE type::thing('narrative_entry', $id) SET "
+            "CREATE type::record('narrative_entry', $id) SET "
             "directory_context = $dir, summary = $summary, "
             "period_start = $period_start, period_end = $period_end, "
             "key_decisions = $key_decisions, key_events = $key_events, "
@@ -1673,7 +1682,7 @@ class StorageEngine:
         now = self._now_iso()
         aid = self._next_id("astrocyte_process")
         self._q(
-            "CREATE type::thing('astrocyte_process', $id) SET "
+            "CREATE type::record('astrocyte_process', $id) SET "
             "name = $name, domain = $domain, specialization = $specialization, "
             "memory_ids = $memory_ids, entity_ids = $entity_ids, "
             "heat = $heat, created_at = $created_at, last_active = $last_active",
@@ -1720,7 +1729,7 @@ class StorageEngine:
             params[k] = v
             set_parts.append(f"{k} = ${k}")
         self._q(
-            f"UPDATE type::thing('astrocyte_process', $id) SET {', '.join(set_parts)}",
+            f"UPDATE type::record('astrocyte_process', $id) SET {', '.join(set_parts)}",
             params,
         )
 
@@ -1748,7 +1757,7 @@ class StorageEngine:
             params[k] = v
             set_parts.append(f"{k} = ${k}")
         self._q(
-            f"UPDATE type::thing('memory', $id) SET {', '.join(set_parts)}",
+            f"UPDATE type::record('memory', $id) SET {', '.join(set_parts)}",
             params,
         )
 
@@ -1760,7 +1769,7 @@ class StorageEngine:
         confidence: float,
     ):
         self._q(
-            "UPDATE type::thing('memory', $id) SET "
+            "UPDATE type::record('memory', $id) SET "
             "access_count = $ac, useful_count = $uc, confidence = $conf",
             {
                 "id": memory_id,
@@ -1794,7 +1803,7 @@ class StorageEngine:
         now = self._now_iso()
         rid = self._next_id("memory_rule")
         self._q(
-            "CREATE type::thing('memory_rule', $id) SET "
+            "CREATE type::record('memory_rule', $id) SET "
             "rule_type = $rule_type, scope = $scope, scope_value = $scope_value, "
             "condition = $condition, action = $action, priority = $priority, "
             "created_at = $created_at, is_active = $is_active",
@@ -1845,13 +1854,13 @@ class StorageEngine:
             params[k] = v
             set_parts.append(f"{k} = ${k}")
         self._q(
-            f"UPDATE type::thing('memory_rule', $id) SET {', '.join(set_parts)}",
+            f"UPDATE type::record('memory_rule', $id) SET {', '.join(set_parts)}",
             params,
         )
 
     def delete_rule(self, rule_id: int):
         self._q(
-            "DELETE type::thing('memory_rule', $id)",
+            "DELETE type::record('memory_rule', $id)",
             {"id": rule_id},
         )
 
@@ -1863,7 +1872,7 @@ class StorageEngine:
         emb = archive.get("embedding")
         emb_floats = self._bytes_to_floats(emb) if emb else None
         self._q(
-            "CREATE type::thing('memory_archive', $id) SET "
+            "CREATE type::record('memory_archive', $id) SET "
             "original_memory_id = $orig, content = $content, embedding = $emb, "
             "archived_at = $archived_at, mismatch_score = $mismatch_score, "
             "archive_reason = $archive_reason",
@@ -1891,7 +1900,7 @@ class StorageEngine:
 
     def deactivate_prospective_memory(self, pm_id: int) -> None:
         self._q(
-            "UPDATE type::thing('prospective_memory', $id) SET is_active = false",
+            "UPDATE type::record('prospective_memory', $id) SET is_active = false",
             {"id": pm_id},
         )
 
@@ -1904,7 +1913,7 @@ class StorageEngine:
         now = self._now_iso()
         tid = self._next_id("memory_transition")
         self._q(
-            "CREATE type::thing('memory_transition', $id) SET "
+            "CREATE type::record('memory_transition', $id) SET "
             "from_memory_id = $from_id, to_memory_id = $to_id, count = $count, "
             "last_transition = $last_transition, session_id = $session_id",
             {
@@ -1948,7 +1957,7 @@ class StorageEngine:
 
     def update_memory_sr_coords(self, memory_id: int, sr_x: float, sr_y: float):
         self._q(
-            "UPDATE type::thing('memory', $id) SET sr_x = $x, sr_y = $y",
+            "UPDATE type::record('memory', $id) SET sr_x = $x, sr_y = $y",
             {"id": memory_id, "x": sr_x, "y": sr_y},
         )
 
@@ -1969,7 +1978,7 @@ class StorageEngine:
         now = self._now_iso()
         eid = self._next_id("causal_dag_edge")
         self._q(
-            "CREATE type::thing('causal_dag_edge', $id) SET "
+            "CREATE type::record('causal_dag_edge', $id) SET "
             "source_entity_id = $src, target_entity_id = $tgt, "
             "algorithm = $algo, confidence = $conf, "
             "discovered_at = $discovered_at, is_validated = $is_validated",
@@ -2001,19 +2010,19 @@ class StorageEngine:
 
     def init_engram_slots(self, num_slots: int):
         """Ensure all slot indices exist in the engram_slot table."""
+        import json as _json
+
         now = self._now_iso()
-        for i in range(num_slots):
-            existing = self._q(
-                "SELECT id FROM engram_slot WHERE slot_index = $si LIMIT 1",
-                {"si": i},
-            )
-            if not existing:
-                sid = self._next_id("engram_slot")
-                self._q(
-                    "CREATE type::thing('engram_slot', $id) SET "
-                    "slot_index = $si, excitability = 0.0, last_activated = $now",
-                    {"id": sid, "si": i, "now": now},
-                )
+        rows = self._q("SELECT VALUE slot_index FROM engram_slot")
+        existing = {r for r in rows if isinstance(r, int)}
+        missing = [i for i in range(num_slots) if i not in existing]
+        if not missing:
+            return
+        records = [{"slot_index": i, "excitability": 0.0, "last_activated": now} for i in missing]
+        _CHUNK = 500
+        for start in range(0, len(records), _CHUNK):
+            chunk = records[start : start + _CHUNK]
+            self._q(f"INSERT INTO engram_slot {_json.dumps(chunk)}")
 
     def get_engram_slot(self, slot_index: int) -> dict | None:
         rows = self._q(
@@ -2036,7 +2045,7 @@ class StorageEngine:
     def assign_memory_slot(self, memory_id: int, slot_index: int):
         now = self._now_iso()
         self._q(
-            "UPDATE type::thing('memory', $id) SET "
+            "UPDATE type::record('memory', $id) SET "
             "slot_index = $si, excitability = 1.0, last_excitability_update = $now",
             {"id": memory_id, "si": slot_index, "now": now},
         )
@@ -2070,7 +2079,7 @@ class StorageEngine:
         self._q("UPDATE checkpoint SET is_active = false WHERE is_active = true")
         cid = self._next_id("checkpoint")
         self._q(
-            "CREATE type::thing('checkpoint', $id) SET "
+            "CREATE type::record('checkpoint', $id) SET "
             "session_id = $session_id, directory_context = $dir, "
             "current_task = $task, files_being_edited = $files, "
             "key_decisions = $decisions, open_questions = $questions, "
@@ -2151,7 +2160,7 @@ class StorageEngine:
             if memory_id is not None and memory_id not in evidence:
                 evidence.append(memory_id)
             self._q(
-                "UPDATE type::thing('user_profile', $id) SET "
+                "UPDATE type::record('user_profile', $id) SET "
                 "attribute_value = $av, confidence = $conf, "
                 "evidence_memory_ids = $evids, updated_at = $now",
                 {
@@ -2167,7 +2176,7 @@ class StorageEngine:
         evidence = [memory_id] if memory_id is not None else []
         pid = self._next_id("user_profile")
         self._q(
-            "CREATE type::thing('user_profile', $id) SET "
+            "CREATE type::record('user_profile', $id) SET "
             "entity_name = $en, attribute_type = $at, attribute_key = $ak, "
             "attribute_value = $av, evidence_memory_ids = $evids, "
             "confidence = $conf, created_at = $now, updated_at = $now, "
@@ -2228,7 +2237,7 @@ class StorageEngine:
         emb_floats = self._bytes_to_floats(embedding) if embedding else None
         bid = self._next_id("derived_belief")
         self._q(
-            "CREATE type::thing('derived_belief', $id) SET "
+            "CREATE type::record('derived_belief', $id) SET "
             "belief_type = $bt, subject = $subject, content = $content, "
             "evidence_memory_ids = $evids, confidence = $conf, "
             "embedding = $emb, embedding_model = $em, "
@@ -2317,7 +2326,7 @@ class StorageEngine:
     ):
         aid = self._next_id("action_log")
         self._q(
-            "CREATE type::thing('action_log', $id) SET "
+            "CREATE type::record('action_log', $id) SET "
             "tool_name = $tool_name, tool_input_summary = $tis, "
             "directory = $directory, session_id = $sid, "
             "timestamp = $ts, processed = false",
@@ -2456,7 +2465,7 @@ class StorageEngine:
         """Set is_protected, importance, and optionally contextual_prefix on a memory."""
         if contextual_prefix is not None:
             self._q(
-                "UPDATE type::thing('memory', $id) SET "
+                "UPDATE type::record('memory', $id) SET "
                 "is_protected = $prot, importance = $imp, contextual_prefix = $prefix",
                 {
                     "id": memory_id,
@@ -2467,7 +2476,7 @@ class StorageEngine:
             )
         else:
             self._q(
-                "UPDATE type::thing('memory', $id) SET is_protected = $prot, importance = $imp",
+                "UPDATE type::record('memory', $id) SET is_protected = $prot, importance = $imp",
                 {"id": memory_id, "prot": is_protected, "imp": importance},
             )
 
@@ -2503,7 +2512,7 @@ class StorageEngine:
     def update_checkpoint_epoch(self, checkpoint_id: int, epoch: int):
         """Update the epoch field on an existing checkpoint."""
         self._q(
-            "UPDATE type::thing('checkpoint', $id) SET epoch = $epoch",
+            "UPDATE type::record('checkpoint', $id) SET epoch = $epoch",
             {"id": checkpoint_id, "epoch": epoch},
         )
 
@@ -2513,7 +2522,7 @@ class StorageEngine:
         """Update excitability and last_excitability_update for a memory."""
         now = self._now_iso()
         self._q(
-            "UPDATE type::thing('memory', $id) SET excitability = $exc, "
+            "UPDATE type::record('memory', $id) SET excitability = $exc, "
             "last_excitability_update = $now",
             {"id": memory_id, "exc": excitability, "now": now},
         )
@@ -2527,7 +2536,7 @@ class StorageEngine:
         embedding = page.get("embedding")
         emb_floats = self._bytes_to_floats(embedding) if isinstance(embedding, bytes) else embedding
         self._q(
-            "CREATE type::thing('wiki_page', $id) SET "
+            "CREATE type::record('wiki_page', $id) SET "
             "title = $title, slug = $slug, content = $content, "
             "category = $category, tags = $tags, links = $links, "
             "confidence = $confidence, embedding = $embedding, "
@@ -2566,7 +2575,7 @@ class StorageEngine:
             set_parts.append(f"{col} = ${col}")
             params[col] = val
         rows = self._q(
-            f"UPDATE type::thing('wiki_page', $id) SET {', '.join(set_parts)}",
+            f"UPDATE type::record('wiki_page', $id) SET {', '.join(set_parts)}",
             params,
         )
         return len(rows) > 0
@@ -2593,7 +2602,7 @@ class StorageEngine:
         if not rows:
             return False
         self._q(
-            "DELETE type::thing('wiki_page', $id)",
+            "DELETE type::record('wiki_page', $id)",
             {"id": pid},
         )
         return True
@@ -2644,7 +2653,7 @@ class StorageEngine:
         floats = self._bytes_to_floats(query_embedding)
         rows = self._q(
             f"SELECT id, vector::similarity::cosine(embedding, $qv) AS sim "
-            f"FROM wiki_page WHERE embedding <|{fetch_k}|> $qv "
+            f"FROM wiki_page WHERE embedding <|{fetch_k}, 40|> $qv "
             f"ORDER BY sim DESC",
             {"qv": floats},
         )
@@ -2691,7 +2700,7 @@ class StorageEngine:
         now = self._now_iso()
         did = self._next_id("wiki_draft")
         self._q(
-            "CREATE type::thing('wiki_draft', $id) SET "
+            "CREATE type::record('wiki_draft', $id) SET "
             "title = $title, slug = $slug, content = $content, "
             "category = $category, tags = $tags, confidence = $confidence, "
             "source_memory_ids = $source_memory_ids, created_at = $created_at",
@@ -2732,7 +2741,7 @@ class StorageEngine:
             return False
         did = self._extract_id(rows[0].get("id"))
         self._q(
-            "DELETE type::thing('wiki_draft', $id)",
+            "DELETE type::record('wiki_draft', $id)",
             {"id": did},
         )
         return True

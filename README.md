@@ -33,64 +33,6 @@ yadgar daemon configure-mcp   # switches Claude to HTTP transport
 yadgar daemon install-service # auto-start on login (systemd)
 ```
 
-## First use
-
-```
-memorize("We're using SurrealDB with surrealkv backend", "/home/user/myproject", ["db", "infra"])
-recall("database setup")
-get_project_context("/home/user/myproject")
-```
-
-## How it works
-
-**Heat decay** — every memory has a heat score (0–1) that decays at 0.9995× per consolidation cycle. Cold memories fade; hot ones persist. Protected memories (`is_protected=True` or `_anchor` tag) never decay.
-
-**Surprise-gated writes** — `memorize()` passes content through a write gate. If the content is too similar to what's already stored, it's rejected. Only novel information gets in.
-
-**Sleep consolidation** — a background daemon runs periodic consolidation: heat decay, cluster detection, action-log processing, wiki draft proposals.
-
-**Semantic retrieval** — `recall()` fuses vector similarity, BM25 full-text search, personalized PageRank (knowledge graph walk), and spreading activation, then re-ranks with a cross-encoder.
-
-## Core tools
-
-| Tool | Purpose |
-|---|---|
-| `memorize(content, context, tags)` | Store a memory. `context` must be the absolute directory path. |
-| `recall(query)` | Semantic + keyword search across all memories. |
-| `get_project_context(directory)` | Hot memories + wiki for a project directory. |
-| `forget(memory_id)` | Delete a memory. |
-| `checkpoint(directory, ...)` | Snapshot working state before context compaction. |
-| `restore(directory)` | Reconstruct context after compaction. |
-| `anchor(content, context, reason)` | Store a protected memory that never decays. |
-| `wiki_add(title, content)` | Create a wiki page. |
-| `wiki_query(query)` | Search wiki pages. |
-| `memory_stats()` | System health and counts. |
-
-## Configuration
-
-```bash
-yadgar config init        # write ~/.yadgar/config.yaml with all defaults
-yadgar config list        # show current settings
-yadgar config set retrieval_profile fast
-```
-
-Retrieval profiles: `fast` (vector + BM25, no reranking), `balanced` (+ PPR + cross-encoder, default), `full` (all signals).
-
-## Secret protection
-
-Always-on patterns block storage of AWS keys, private keys, JWT tokens, GitHub tokens, database connection strings, and generic credential patterns. These cannot be disabled.
-
-User-defined rules:
-
-```bash
-# Block all memories from a directory
-yadgar rules add write_block "directory_context matches /work/classified/*"
-
-# Export/import rules
-yadgar rules export > my_rules.yaml
-yadgar rules import my_rules.yaml
-```
-
 ## Docker
 
 ```bash
@@ -114,7 +56,22 @@ Add to `~/.claude.json`:
 }
 ```
 
-Data persists in the `yadgar-data` Docker volume across container restarts. To backup: `docker run --rm -v yadgar-data:/data -v $(pwd):/backup alpine tar czf /backup/yadgar-backup.tar.gz /data`
+Data persists in the `yadgar-data` volume. Backup: `docker run --rm -v yadgar-data:/data -v $(pwd):/backup alpine tar czf /backup/yadgar-backup.tar.gz /data`
+
+## Core tools
+
+| Tool | Purpose |
+|---|---|
+| `memorize(content, context, tags)` | Store a memory. `context` must be the absolute directory path. |
+| `recall(query)` | Semantic + keyword search across all memories. |
+| `get_project_context(directory)` | Hot memories + wiki for a project directory. |
+| `forget(memory_id)` | Delete a memory. |
+| `checkpoint(directory, ...)` | Snapshot working state before context compaction. |
+| `restore(directory)` | Reconstruct context after compaction. |
+| `anchor(content, context, reason)` | Store a protected memory that never decays. |
+| `wiki_add(title, content)` | Create a wiki page. |
+| `wiki_query(query)` | Search wiki pages. |
+| `memory_stats()` | System health and counts. |
 
 ## CLI reference
 
@@ -133,20 +90,31 @@ yadgar rules export|import
 yadgar config init|list|get|set|edit
 ```
 
-## FAQ
+## Configuration
 
-**How is this different from just using markdown files?**
+```bash
+yadgar config init        # write ~/.yadgar/config.yaml with all defaults
+yadgar config list        # show current settings and sources
+yadgar config set retrieval_profile fast
+```
 
-Markdown files don't decay, don't rank by recency or relevance, don't detect duplicates, don't protect critical facts from being forgotten, and don't surface related context automatically. Yadgar behaves more like long-term memory than a note-taking tool — it forgets what you don't revisit and strengthens what you use.
+Settings can also be set via environment variables (`YADGAR_*`) or by editing `~/.yadgar/config.yaml` directly. Environment variables take priority over the file, which takes priority over defaults.
 
-**Why `memorize` instead of `remember`?**
+## Documentation
 
-`remember` is a common word that collides with natural language. `memorize` is specific enough that Claude won't accidentally call it when the user says "remember to do X."
+- [Architecture](docs/architecture.md) — component map, data flow, module responsibilities
+- [Memory lifecycle](docs/memory-lifecycle.md) — heat decay, archiving, action stream, pruning
+- [Retrieval pipeline](docs/retrieval.md) — multi-signal fusion, reranking, query routing
+- [Configuration reference](docs/configuration.md) — all settings with defaults and env vars
 
-**Does it work without the daemon?**
+## Secret protection
 
-Yes — `yadgar` with no arguments runs as a stdio MCP server. The daemon is optional but recommended for persistent consolidation and lower per-session startup cost.
+Always-on patterns block storage of AWS keys, private keys, JWT tokens, GitHub tokens, database connection strings, and generic credential patterns. These cannot be disabled.
 
-**Where is data stored?**
+User-defined rules:
 
-`~/.yadgar/surreal_db/` by default. Override with `YADGAR_DATA_DIR` or `--db-path`. In containers, mount `/data` as a volume.
+```bash
+yadgar rules add write_block "directory_context matches /work/classified/*"
+yadgar rules export > my_rules.yaml
+yadgar rules import my_rules.yaml
+```

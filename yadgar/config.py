@@ -44,7 +44,10 @@ class Settings(BaseSettings):
     PORT: int = 8765
     IDLE_THRESHOLD_SECONDS: int = 300
     DECAY_FACTOR: float = 0.9995  # ~34% heat after 3 months without access
-    COLD_THRESHOLD: float = 0.0  # All memories accessible
+    COLD_THRESHOLD: float = 0.02  # Archive memories below this heat (~6 months of no access)
+    ACTION_STREAM_COLD_THRESHOLD: float = (
+        0.1  # Archive action-stream memories below this heat (~weeks of no access)
+    )
     HOT_THRESHOLD: float = 0.0  # All memories accessible (zero threshold policy)
     PROJECT_CONTEXT_MIN_HEAT: float = 0.01  # Filter nearly-cold memories from session context
     MAX_EPISODE_TOKENS: int = 50000
@@ -230,6 +233,10 @@ class Settings(BaseSettings):
 
     # File queue — async write queue base directory
     DATA_DIR: str = str(Path.home() / ".yadgar")
+    # Optional prefix for wiki .md archive filenames (e.g. "myproject" → "myproject-overview.md")
+    WIKI_SLUG_PREFIX: str = ""
+    # Drain interval in seconds — how long queue entries stay visible before being flushed to DB
+    QUEUE_DRAIN_INTERVAL: int = 30
 
     model_config = {"env_prefix": "YADGAR_"}
 

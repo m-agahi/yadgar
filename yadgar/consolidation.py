@@ -330,6 +330,7 @@ class ConsolidationScheduler:
         now = datetime.now(UTC)
         decay = self._settings.DECAY_FACTOR
         cold = self._settings.COLD_THRESHOLD
+        action_stream_cold = self._settings.ACTION_STREAM_COLD_THRESHOLD
 
         for mem in self._storage.get_all_memories_for_decay():
             if mem.get("is_protected"):
@@ -337,7 +338,13 @@ class ConsolidationScheduler:
             last = datetime.fromisoformat(mem["last_accessed"])
             hours = (now - last).total_seconds() / 3600.0
             new_heat = self._thermo.compute_decay(mem, hours)
-            if new_heat < cold:
+            tags = mem.get("tags") or []
+            if isinstance(tags, str):
+                import json
+
+                tags = json.loads(tags)
+            effective_cold = action_stream_cold if "_action_stream" in tags else cold
+            if new_heat < effective_cold:
                 new_heat = 0.0
                 stats["memories_archived"] += 1
             if abs(new_heat - mem["heat"]) > 1e-9:
@@ -691,6 +698,7 @@ class ConsolidationScheduler:
                         "tags": ["_action_stream", "_auto"],
                         "directory_context": directory,
                         "heat": 0.4,
+                        "confidence": 0.0,
                         "is_stale": False,
                         "file_hash": None,
                         "embedding_model": self._embeddings.get_model_name(),
