@@ -19,7 +19,10 @@ from yadgar.sensory_buffer import ActionLogger
 from yadgar.sleep_compute import SleepComputeEngine
 from yadgar.staleness import StalenessDetector
 from yadgar.storage import StorageEngine
+from yadgar.tests.conftest import memorize_sync
 from yadgar.thermodynamics import MemoryThermodynamics
+
+pytestmark = pytest.mark.xdist_group("server_globals")
 
 # ── Fixtures ──────────────────────────────────────────────────────────
 
@@ -43,11 +46,6 @@ def storage(tmp_path):
     engine = StorageEngine(str(tmp_path / "integration.db"))
     yield engine
     engine.close()
-
-
-@pytest.fixture
-def embeddings():
-    return EmbeddingEngine()
 
 
 @pytest.fixture
@@ -915,7 +913,7 @@ class TestFullSleepCycle:
 class TestBackwardCompatibility:
     def test_basic_remember_recall_works(self, server_engines):
         """Verify basic remember/recall still works with the original simple interface."""
-        result = server.memorize(
+        result = memorize_sync(
             "backward compat test memory",
             "/tmp/compat",
             ["test"],
@@ -930,14 +928,15 @@ class TestBackwardCompatibility:
 
     def test_forget_still_works(self, server_engines):
         """Verify forget still deletes memories."""
-        result = server.memorize("to be forgotten", "/tmp", ["test"])
+        result = memorize_sync("to be forgotten", "/tmp", ["test"])
         mid = result["id"]
         resp = server.forget(mid)
         assert resp["status"] == "deleted"
 
-    def test_memory_stats_still_works(self, server_engines):
+    def test_memory_stats_still_works(self, server_engines, flush_queue):
         """Verify stats returns expected structure."""
         server.memorize("stats test", "/tmp", ["test"])
+        flush_queue()
         stats = server.memory_stats()
         assert "total_memories" in stats
         assert "active_count" in stats
@@ -1003,7 +1002,7 @@ class TestServerStartupShutdown:
         assert server._kg is not None
 
         # Verify a memory can be stored
-        result = server.memorize("lifecycle test", "/tmp", ["test"])
+        result = memorize_sync("lifecycle test", "/tmp", ["test"])
         assert result["id"] is not None
 
         # Shutdown
@@ -1028,7 +1027,7 @@ class TestServerStartupShutdown:
 class TestRememberWithAstrocyteAssignment:
     def test_remember_assigns_to_astrocyte_pool(self, server_engines):
         """Verify remember tool assigns memory to astrocyte processes."""
-        result = server.memorize(
+        result = memorize_sync(
             "Implemented a new class with import statements and function definitions",
             "/proj/code",
             ["code", "implementation"],
@@ -1044,11 +1043,12 @@ class TestRememberWithAstrocyteAssignment:
 
 
 class TestConsolidateNowWithSleepCycle:
-    def test_consolidate_runs_sleep_cycle(self, server_engines):
+    def test_consolidate_runs_sleep_cycle(self, server_engines, flush_queue):
         """Verify consolidate_now runs full consolidation + sleep cycle."""
         # Add some memories for sleep cycle to process
         for i in range(3):
             server.memorize(f"consolidation test memory {i}", "/proj", ["test"])
+        flush_queue()
 
         result = server.consolidate_now()
         assert result["status"] == "completed"
@@ -1059,7 +1059,7 @@ class TestConsolidateNowWithSleepCycle:
 
 
 class TestRememberProspectiveTrigger:
-    def test_todo_creates_trigger_and_fires(self, server_engines):
+    def test_todo_creates_trigger_and_fires(self, server_engines, flush_queue):
         """Verify TODO in content creates prospective trigger, and matching content triggers it."""
         # Store content with a TODO
         server.memorize(
@@ -1067,6 +1067,7 @@ class TestRememberProspectiveTrigger:
             "/proj",
             ["task"],
         )
+        flush_queue()
 
         # Check that a prospective trigger was created
         active = server._storage.get_active_prospective_memories()
@@ -1077,13 +1078,11 @@ class TestRememberProspectiveTrigger:
         )
 
         # Store matching content - should trigger
-        result2 = server.memorize(
+        result2 = memorize_sync(
             "Added validation for email input fields in the form",
             "/proj",
             ["validation"],
         )
 
-        # If triggered, the result should include triggered_prospective_memories
-        # (depends on keyword matching)
         # At minimum, the memory was created successfully
         assert result2["id"] is not None

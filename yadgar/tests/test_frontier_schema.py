@@ -685,7 +685,7 @@ class TestFrontierMemoryPersistence:
     def test_update_frontier_fields(self, storage):
         mem_id = storage.insert_memory(_make_memory())
         storage._q(
-            "UPDATE type::thing('memory', $id) SET plasticity = 0.7, stability = 0.5, "
+            "UPDATE type::record('memory', $id) SET plasticity = 0.7, stability = 0.5, "
             "store_type = 'semantic', compression_level = 1, sr_x = 2.5, sr_y = -1.3, is_protected = true",
             {"id": mem_id},
         )
@@ -702,7 +702,7 @@ class TestFrontierMemoryPersistence:
         mem_id = storage.insert_memory(_make_memory())
         vc = json.dumps({"agent1": 3, "agent2": 1})
         storage._q(
-            "UPDATE type::thing('memory', $id) SET vector_clock = $vc",
+            "UPDATE type::record('memory', $id) SET vector_clock = $vc",
             {"id": mem_id, "vc": vc},
         )
         mem = storage.get_memory(mem_id)

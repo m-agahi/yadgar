@@ -789,7 +789,7 @@ def cmd_vacuum(args):
                     raw_id = s.split(":")[-1] if ":" in s else s
                 content = {k: v for k, v in rec.items() if k != "id"}
                 storage._q(
-                    "UPSERT type::thing($tbl, $rid) CONTENT $data",
+                    "UPSERT type::record($tbl, $rid) CONTENT $data",
                     {"tbl": table, "rid": raw_id, "data": content},
                 )
                 ok += 1

@@ -6,7 +6,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from yadgar.config import Settings
-from yadgar.embeddings import EmbeddingEngine
 from yadgar.knowledge_graph import KnowledgeGraph
 from yadgar.metacognition import MetaCognition
 from yadgar.storage import StorageEngine
@@ -22,11 +21,6 @@ def settings(tmp_path):
 @pytest.fixture
 def storage(tmp_path, settings):
     return StorageEngine(str(tmp_path / "test_meta.db"))
-
-
-@pytest.fixture
-def embeddings():
-    return EmbeddingEngine("all-MiniLM-L6-v2")
 
 
 @pytest.fixture
@@ -76,13 +70,13 @@ def _make_memory(
         set_clauses = ", ".join(f"{k} = ${k}" for k in updates)
         params = {"id": mid, **updates}
         storage._q(
-            f"UPDATE type::thing('memory', $id) SET {set_clauses}",
+            f"UPDATE type::record('memory', $id) SET {set_clauses}",
             params,
         )
 
     if created_at is not None:
         storage._q(
-            "UPDATE type::thing('memory', $id) SET created_at = $ts",
+            "UPDATE type::record('memory', $id) SET created_at = $ts",
             {"id": mid, "ts": created_at.isoformat()},
         )
 

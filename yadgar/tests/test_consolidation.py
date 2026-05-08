@@ -444,8 +444,11 @@ class TestActivityTracking:
         )
         engine.start()
         engine._last_consolidated_episode_id = 0
-        # Give the daemon loop time to fire
-        time.sleep(2)
+        # Poll until the daemon loop fires and extracts the entity (up to 2 s)
+        for _ in range(20):
+            if storage.get_entity_by_name("idle_test") is not None:
+                break
+            time.sleep(0.1)
         engine.stop()
 
         # Entity should have been extracted during idle consolidation

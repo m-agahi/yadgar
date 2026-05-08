@@ -265,7 +265,7 @@ def test_memify_prune(curator, storage):
     )
     # Set confidence < 0.3 and access_count = 0
     storage._q(
-        "UPDATE type::thing('memory', $id) SET confidence = 0.2, access_count = 0",
+        "UPDATE type::record('memory', $id) SET confidence = 0.2, access_count = 0",
         {"id": mid},
     )
 
@@ -291,7 +291,7 @@ def test_memify_strengthen(curator, storage):
         }
     )
     storage._q(
-        "UPDATE type::thing('memory', $id) SET access_count = 10, confidence = 0.9, importance = 0.5",
+        "UPDATE type::record('memory', $id) SET access_count = 10, confidence = 0.9, importance = 0.5",
         {"id": mid},
     )
 
@@ -328,7 +328,7 @@ def test_memify_derive(curator, storage):
 
     # Check the derived memory exists
     rows = storage._q(
-        "SELECT * FROM memory WHERE content ~ 'module.py' AND content ~ 'utils.py' AND content ~ 'frequently modified'"
+        "SELECT * FROM memory WHERE string::contains(content, 'module.py') AND string::contains(content, 'utils.py') AND string::contains(content, 'frequently modified')"
     )
     assert len(rows) >= 1
 
@@ -350,7 +350,7 @@ def test_curation_preserves_existing(curator, storage):
         }
     )
     storage._q(
-        "UPDATE type::thing('memory', $id) SET confidence = 0.95, access_count = 3, importance = 0.7",
+        "UPDATE type::record('memory', $id) SET confidence = 0.95, access_count = 3, importance = 0.7",
         {"id": mid1},
     )
 
@@ -399,7 +399,7 @@ def test_memify_reweight(curator, storage):
     assert stats["reweighted"] >= 1
 
     rows = storage._q(
-        "SELECT weight FROM type::thing('relationship', $id)",
+        "SELECT weight FROM type::record('relationship', $id)",
         {"id": rid},
     )
     assert rows[0]["weight"] == pytest.approx(6.5, abs=0.01)  # 6.0 + 0.5 boost
@@ -423,7 +423,7 @@ def test_memify_reweight_cold_decay(curator, storage):
     assert stats["reweighted"] >= 1
 
     rows = storage._q(
-        "SELECT weight FROM type::thing('relationship', $id)",
+        "SELECT weight FROM type::record('relationship', $id)",
         {"id": rid},
     )
     assert rows[0]["weight"] == pytest.approx(2.7, abs=0.01)  # 3.0 * 0.9
@@ -450,6 +450,6 @@ def test_memify_derive_idempotent(curator, storage):
     assert stats2["derived"] == 0  # Should not re-derive
 
     rows = storage._q(
-        "SELECT * FROM memory WHERE content ~ 'a.py' AND content ~ 'b.py' AND content ~ 'frequently'"
+        "SELECT * FROM memory WHERE string::contains(content, 'a.py') AND string::contains(content, 'b.py') AND string::contains(content, 'frequently')"
     )
     assert len(rows) == 1

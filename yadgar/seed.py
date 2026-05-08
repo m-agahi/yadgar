@@ -839,7 +839,7 @@ def _delete_existing_seed_memories(storage, directory: str) -> int:
             {"id": mid},
         )
         # Delete the memory itself (embedding fields are on the record — no separate table)
-        storage._q("DELETE type::thing('memory', $id)", {"id": mid})
+        storage._q("DELETE type::record('memory', $id)", {"id": mid})
 
     return len(ids)
 

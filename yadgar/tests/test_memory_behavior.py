@@ -18,13 +18,17 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from yadgar import server
+from yadgar.tests.conftest import memorize_sync
+
+pytestmark = pytest.mark.xdist_group("server_globals")
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
-    """Full server engine stack with isolated temp database per test."""
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
+    """Full server engine stack with isolated temp database per module."""
+    tmp_path = tmp_path_factory.mktemp("behavior")
     server.init_engines(
         db_path=str(tmp_path / "behavior.db"),
         embedding_model="all-MiniLM-L6-v2",
@@ -67,7 +71,7 @@ class TestContentIntegrity:
     def test_exact_content_preserved(self):
         """recall() returns the exact content that was stored."""
         content = "The deployment uses Helm chart version 3.14.2 with replicas=5"
-        result = server.memorize(content, "/home/user/project", ["infra"])
+        result = memorize_sync(content, "/home/user/project", ["infra"])
         mid = result["id"]
 
         # Recall with a related query
@@ -81,7 +85,7 @@ class TestContentIntegrity:
     def test_specific_detail_preserved(self):
         """Specific identifiers (IDs, paths, item names) survive retrieval unchanged."""
         content = "Codeberg PAT is stored in 1Password item zqq55bz2qi53gw375jlm2sh4jq"
-        result = server.memorize(content, "/home/user", ["codeberg", "secrets"])
+        result = memorize_sync(content, "/home/user", ["codeberg", "secrets"])
         mid = result["id"]
 
         hits = server.recall("codeberg personal access token")
@@ -94,7 +98,7 @@ class TestContentIntegrity:
     def test_recall_does_not_rewrite_content(self):
         """Calling recall() multiple times with different queries never rewrites content."""
         content = "Redis cluster uses Sentinel mode with quorum=2 and auth password stored in Vault"
-        result = server.memorize(content, "/home/user/ops", ["redis", "vault"])
+        result = memorize_sync(content, "/home/user/ops", ["redis", "vault"])
         mid = result["id"]
 
         queries = [
@@ -116,7 +120,7 @@ class TestContentIntegrity:
     def test_consolidation_does_not_alter_content(self):
         """consolidate_now() never modifies the content field."""
         content = "API key for Datadog is sk-dd-prod-XXXX stored in ~/.secrets/datadog"
-        result = server.memorize(content, "/home/user/monitoring", ["datadog", "api-key"])
+        result = memorize_sync(content, "/home/user/monitoring", ["datadog", "api-key"])
         mid = result["id"]
 
         server.consolidate_now()
@@ -141,7 +145,7 @@ class TestNoCompression:
         content = (
             "PostgreSQL migration: added index on users.email using CONCURRENTLY to avoid lock"
         )
-        result = server.memorize(content, "/home/user/db", ["postgres", "migration"])
+        result = memorize_sync(content, "/home/user/db", ["postgres", "migration"])
         mid = result["id"]
         _set_memory_age(mid, hours_ago=7 * 24 + 1)  # 7 days + 1h
 
@@ -162,7 +166,7 @@ class TestNoCompression:
             "team=platform, cost-center=infra-001. Last reviewed 2024-01-15."
         )
         assert len(content) > 200, "test setup: content must exceed old tag-compression threshold"
-        result = server.memorize(content, "/home/user/infra", ["k8s", "autoscaler"])
+        result = memorize_sync(content, "/home/user/infra", ["k8s", "autoscaler"])
         mid = result["id"]
         _set_memory_age(mid, hours_ago=30 * 24 + 1)  # 30 days + 1h
 
@@ -176,7 +180,7 @@ class TestNoCompression:
     def test_long_content_not_truncated(self):
         """A 2500-char memory retains its full length after consolidation."""
         long_content = "Detail: " + ("x" * 2490)  # over 2000-char reconsolidation truncation limit
-        result = server.memorize(long_content, "/home/user/docs", ["long"])
+        result = memorize_sync(long_content, "/home/user/docs", ["long"])
         mid = result["id"]
         _set_memory_age(mid, hours_ago=10 * 24)
 
@@ -206,7 +210,7 @@ class TestHeatDecay:
 
     def test_heat_after_24h_above_98_percent(self):
         """After 24h, heat should still be above 98% of original."""
-        result = server.memorize("fresh memory", "/home/user/test", ["test"])
+        result = memorize_sync("fresh memory", "/home/user/test", ["test"])
         mid = result["id"]
         _set_memory_age(mid, hours_ago=24)
 
@@ -218,7 +222,7 @@ class TestHeatDecay:
 
     def test_heat_after_90_days_above_30_percent(self):
         """After 90 days without access, heat should still be above 30%."""
-        result = server.memorize("90 day old fact", "/home/user/test", ["test"])
+        result = memorize_sync("90 day old fact", "/home/user/test", ["test"])
         mid = result["id"]
         _set_memory_age(mid, hours_ago=90 * 24)
 
@@ -230,7 +234,7 @@ class TestHeatDecay:
 
     def test_important_memory_heat_after_90_days_above_75_percent(self):
         """Important memories (importance > 0.7) decay much more slowly."""
-        result = server.memorize("critical architecture decision", "/home/user/test", ["arch"])
+        result = memorize_sync("critical architecture decision", "/home/user/test", ["arch"])
         mid = result["id"]
         # Set high importance — triggers IMPORTANCE_DECAY_FACTOR path
         server._get_storage().update_memory_fields(mid, importance=0.9)
@@ -246,7 +250,7 @@ class TestHeatDecay:
 
     def test_heat_after_180_days_above_10_percent(self):
         """After 6 months without access, standard memories should still be above 10%."""
-        result = server.memorize("6 month old memory", "/home/user/test", ["test"])
+        result = memorize_sync("6 month old memory", "/home/user/test", ["test"])
         mid = result["id"]
         _set_memory_age(mid, hours_ago=180 * 24)
 
@@ -268,7 +272,7 @@ class TestProtectedMemories:
 
     def test_protected_memory_heat_not_decayed(self):
         """A protected memory's heat is untouched even after 1 year without access."""
-        result = server.memorize(
+        result = memorize_sync(
             "permanent config: prod DB is db.internal:5432",
             "/home/user/infra",
             ["db", "config"],
@@ -288,7 +292,7 @@ class TestProtectedMemories:
 
     def test_protected_memory_not_pruned(self):
         """A cold protected memory is never pruned."""
-        result = server.memorize(
+        result = memorize_sync(
             "protected cold memory that must survive",
             "/home/user/test",
             ["important"],
@@ -308,7 +312,7 @@ class TestProtectedMemories:
     def test_protected_memory_content_not_modified(self):
         """A 60-day-old protected memory's content is identical after consolidation."""
         content = "SSH key fingerprint for bastion host: SHA256:ABCDEF1234567890"
-        result = server.memorize(content, "/home/user/ssh", ["ssh", "bastion"], is_protected=True)
+        result = memorize_sync(content, "/home/user/ssh", ["ssh", "bastion"], is_protected=True)
         mid = result["id"]
         _set_memory_age(mid, hours_ago=60 * 24)
 
@@ -331,7 +335,7 @@ class TestAutoDeletion:
 
     def test_user_memory_not_auto_deleted(self):
         """A cold, unaccessed, low-confidence user memory is never auto-pruned."""
-        result = server.memorize(
+        result = memorize_sync(
             "important fact that should never be deleted",
             "/home/user/project",
             ["user-stored"],
@@ -363,7 +367,10 @@ class TestAutoDeletion:
                 "embedding_model": embeddings.get_model_name(),
             }
         )
-        storage.update_memory_fields(mid, confidence=0.15, access_count=0)
+        storage._q(
+            "UPDATE type::record('memory', $id) SET confidence = 0.15, access_count = 0",
+            {"id": mid},
+        )
 
         server.consolidate_now()
 
@@ -437,12 +444,12 @@ class TestCurationThreshold:
 
     def test_distinct_facts_stored_as_separate_memories(self):
         """Two related but distinct facts produce two separate memory IDs."""
-        r1 = server.memorize(
+        r1 = memorize_sync(
             "Production database host is prod-db-primary.internal port 5432",
             "/home/user/infra",
             ["db", "prod"],
         )
-        r2 = server.memorize(
+        r2 = memorize_sync(
             "Staging database host is staging-db.internal port 5433",
             "/home/user/infra",
             ["db", "staging"],
@@ -452,8 +459,8 @@ class TestCurationThreshold:
     def test_near_duplicate_content_merged_on_ingest(self):
         """Storing the exact same content twice results in only one memory."""
         content = "AWS account ID for production environment is 123456789012"
-        r1 = server.memorize(content, "/home/user/aws", ["aws", "prod"])
-        r2 = server.memorize(content, "/home/user/aws", ["aws", "prod"])
+        r1 = memorize_sync(content, "/home/user/aws", ["aws", "prod"])
+        r2 = memorize_sync(content, "/home/user/aws", ["aws", "prod"])
         # Merged: both should resolve to the same memory ID
         assert r1["id"] == r2["id"], (
             "Identical content produced two separate memories instead of merging"
@@ -473,7 +480,7 @@ class TestDeduplication:
     def test_exact_duplicate_removed_by_consolidation(self):
         """Two memories with identical content → consolidation keeps only one."""
         content = "Duplicate fact that should be deduplicated"
-        r1 = server.memorize(content, "/home/user/test", ["test"])
+        r1 = memorize_sync(content, "/home/user/test", ["test"])
         # Force a second distinct ID by inserting directly
         storage = server._get_storage()
         embeddings = server._get_embeddings()
@@ -502,12 +509,12 @@ class TestDeduplication:
 
     def test_similar_but_distinct_memories_both_kept(self):
         """Two distinct memories at moderate similarity are both kept after consolidation."""
-        r1 = server.memorize(
+        r1 = memorize_sync(
             "The Python asyncio event loop runs coroutines cooperatively",
             "/home/user/test",
             ["python"],
         )
-        r2 = server.memorize(
+        r2 = memorize_sync(
             "JavaScript uses an event loop for non-blocking I/O operations",
             "/home/user/test",
             ["javascript"],
@@ -536,7 +543,7 @@ class TestRegressionScenarios:
         Fix: reconsolidation disabled — recall() is now read-only.
         """
         content = "Codeberg PAT is stored in 1Password item zqq55bz2qi53gw375jlm2sh4jq under Personal vault"
-        result = server.memorize(content, "/home/user", ["codeberg", "1password", "pat"])
+        result = memorize_sync(content, "/home/user", ["codeberg", "1password", "pat"])
         mid = result["id"]
 
         # Recall with very different contexts that previously triggered extinction
@@ -563,7 +570,7 @@ class TestRegressionScenarios:
         triggering reconsolidation when recalling from a different project context.
         """
         content = "GitHub token for CI: ghp_SECRETTOKEN1234567890abcdefghijk"
-        result = server.memorize(content, "/home/user/projectA", ["github", "ci", "token"])
+        result = memorize_sync(content, "/home/user/projectA", ["github", "ci", "token"])
         mid = result["id"]
 
         # Recall from a completely different project

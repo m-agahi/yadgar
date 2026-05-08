@@ -12,13 +12,17 @@ import pytest
 from yadgar import server
 from yadgar.cognitive_map import CognitiveMap
 from yadgar.metacognition import MetaCognition
+from yadgar.tests.conftest import memorize_sync
+
+pytestmark = pytest.mark.xdist_group("server_globals")
 
 # ── Fixtures ───────────────────────────────────────────────────────────
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
-    """Initialize global engines with a temp database for each test."""
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
+    """Initialize global engines with a temp database for the module."""
+    tmp_path = tmp_path_factory.mktemp("frontier")
     db_path = str(tmp_path / "frontier_test.db")
     server.init_engines(db_path=db_path, embedding_model="all-MiniLM-L6-v2")
     yield
@@ -37,10 +41,13 @@ def mcp_server_tools():
 
 
 def _store_novel_memory(content: str, context: str = "/test/project", tags=None):
-    """Store a memory that is guaranteed to pass the write gate (novel content)."""
+    """Store a memory that is guaranteed to pass the write gate (novel content).
+
+    Uses memorize_sync so the memory is immediately queryable after return.
+    """
     if tags is None:
         tags = ["testing"]
-    return server.memorize(content, context, tags)
+    return memorize_sync(content, context, tags)
 
 
 # ── Tests: Remember Pipeline ──────────────────────────────────────────
@@ -56,8 +63,7 @@ class TestRememberFullPipeline:
             ["architecture", "decision"],
         )
         assert result.get("id") is not None
-        assert result.get("curation_action") in ("created", "merged", "linked")
-        # Thermodynamic scores should be computed
+        # Thermodynamic scores should be computed and persisted
         assert "surprise_score" in result
         assert "importance" in result
         assert "emotional_valence" in result
@@ -114,8 +120,13 @@ class TestRememberFullPipeline:
         # Both should have been stored (bypass keywords: decided/critical)
         assert r1.get("id") is not None
         assert r2.get("id") is not None
-        # Engram slot info should be present on at least one
-        has_engram = r1.get("engram_slot") is not None or r2.get("engram_slot") is not None
+        # Engram slot should be persisted on the DB record for at least one memory
+        storage = server._get_storage()
+        m1 = storage.get_memory(r1["id"])
+        m2 = storage.get_memory(r2["id"])
+        has_engram = (m1 is not None and m1.get("slot_index") is not None) or (
+            m2 is not None and m2.get("slot_index") is not None
+        )
         assert has_engram
 
 
@@ -124,7 +135,7 @@ class TestWriteGate:
 
     def test_write_gate_passes_novel(self):
         """test_write_gate_passes_novel: high-surprisal memory stored."""
-        result = server.memorize(
+        result = memorize_sync(
             "Discovered critical XSS vulnerability in authentication module",
             "/test/security",
             ["critical", "security"],
@@ -132,7 +143,7 @@ class TestWriteGate:
         assert result.get("stored", True) is not False
         assert result.get("id") is not None
 
-    def test_write_gate_blocks_boring(self):
+    def test_write_gate_blocks_boring(self, flush_queue):
         """test_write_gate_blocks_boring: low-surprisal memory rejected by write gate."""
         # First, store several identical-ish memories to build the "generative model"
         for i in range(5):
@@ -146,18 +157,22 @@ class TestWriteGate:
         # Use a very high threshold to force rejection
         gate = server._write_gate
         original_threshold = gate._threshold
+        original_setting = gate._settings.WRITE_GATE_THRESHOLD
+        gate._threshold = 0.99  # Very high threshold — almost nothing passes
+        gate._settings.WRITE_GATE_THRESHOLD = 0.99
         try:
-            gate._threshold = 0.99  # Very high threshold — almost nothing passes
-            result = server.memorize(
-                "Updated the README file with project description again",
+            server.memorize(
+                "boring duplicate content for gate rejection test",
                 "/test/boring",
                 ["docs"],
             )
-            # Either blocked or stored (depends on bypass keywords)
-            if result.get("stored") is False:
-                assert "below" in result.get("reason", "") or "surprisal" in str(result)
+            flush_queue()
+            # After drain, the gate should have rejected and no memory exists
+            results = server.recall("boring duplicate content for gate rejection test")
+            assert not results, "Gate failed to reject boring content"
         finally:
             gate._threshold = original_threshold
+            gate._settings.WRITE_GATE_THRESHOLD = original_setting
 
 
 # ── Tests: Recall Pipeline ────────────────────────────────────────────

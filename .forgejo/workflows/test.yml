@@ -11,7 +11,7 @@ on:
 
 jobs:
   test:
-    runs-on: docker
+    runs-on: codeberg-small
     container:
       image: python:3.14-slim
     steps:

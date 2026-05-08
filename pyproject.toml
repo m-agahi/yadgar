@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "4.3.0"
+version = "4.4.0"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "MIT"
@@ -78,6 +78,7 @@ test = [
     "pytest>=8.0",
     "pytest-xdist>=3.0",
     "pytest-timeout>=2.3",
+    "hypothesis>=6",
 ]
 dev = [
     "yadgar[test]",
@@ -87,4 +88,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["yadgar/tests"]
-addopts = "--timeout=300"
+addopts = "--timeout=120 -n auto --dist loadgroup"
+markers = [
+    "xdist_group: group tests that share server module-level globals into one worker",
+]

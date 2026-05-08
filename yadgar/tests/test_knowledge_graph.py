@@ -29,7 +29,7 @@ def graph(storage, settings):
 class TestAddTypedRelationship:
     def test_creates_relationship_with_type(self, graph, storage):
         rid = graph.add_relationship("module_a", "module_b", "imports")
-        rows = storage._q("SELECT * FROM type::thing('relationship', $id)", {"id": rid})
+        rows = storage._q("SELECT * FROM type::record('relationship', $id)", {"id": rid})
         row = storage._row_to_dict(rows[0]) if rows else None
         assert row["relationship_type"] == "imports"
         assert row["weight"] == 1.0
@@ -47,7 +47,7 @@ class TestAddTypedRelationship:
         event = datetime(2025, 6, 15, 12, 0, 0, tzinfo=UTC)
         rid = graph.add_relationship("x", "y", "calls", event_time=event)
         rows = storage._q(
-            "SELECT event_time, record_time FROM type::thing('relationship', $id)",
+            "SELECT event_time, record_time FROM type::record('relationship', $id)",
             {"id": rid},
         )
         row = rows[0] if rows else {}
@@ -57,7 +57,7 @@ class TestAddTypedRelationship:
 
     def test_confidence_stored(self, graph, storage):
         rid = graph.add_relationship("a", "b", "derived_from", confidence=0.75)
-        rows = storage._q("SELECT confidence FROM type::thing('relationship', $id)", {"id": rid})
+        rows = storage._q("SELECT confidence FROM type::record('relationship', $id)", {"id": rid})
         assert rows[0]["confidence"] == pytest.approx(0.75)
 
 
@@ -66,14 +66,14 @@ class TestRelationshipReinforcement:
         rid1 = graph.add_relationship("foo", "bar", "co_occurrence")
         rid2 = graph.add_relationship("foo", "bar", "co_occurrence")
         assert rid1 == rid2  # same relationship returned
-        rows = storage._q("SELECT weight FROM type::thing('relationship', $id)", {"id": rid1})
+        rows = storage._q("SELECT weight FROM type::record('relationship', $id)", {"id": rid1})
         assert rows[0]["weight"] == pytest.approx(2.0)
 
     def test_triple_reinforcement(self, graph, storage):
         rid = graph.add_relationship("a", "b", "imports")
         graph.add_relationship("a", "b", "imports")
         graph.add_relationship("a", "b", "imports")
-        rows = storage._q("SELECT weight FROM type::thing('relationship', $id)", {"id": rid})
+        rows = storage._q("SELECT weight FROM type::record('relationship', $id)", {"id": rid})
         assert rows[0]["weight"] == pytest.approx(3.0)
 
     def test_different_types_are_separate(self, graph, storage):
@@ -87,7 +87,7 @@ class TestBiTemporal:
         past = datetime(2024, 1, 1, tzinfo=UTC)
         rid = graph.add_relationship("a", "b", "imports", event_time=past)
         rows = storage._q(
-            "SELECT event_time, record_time FROM type::thing('relationship', $id)",
+            "SELECT event_time, record_time FROM type::record('relationship', $id)",
             {"id": rid},
         )
         row = rows[0] if rows else {}
