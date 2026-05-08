@@ -17,7 +17,7 @@ on:
 
 jobs:
   docker:
-    runs-on: codeberg-small
+    runs-on: ubuntu-latest
     container:
       image: docker:cli
     steps:
