@@ -237,6 +237,12 @@ class Settings(BaseSettings):
     WIKI_SLUG_PREFIX: str = ""
     # Drain interval in seconds — how long queue entries stay visible before being flushed to DB
     QUEUE_DRAIN_INTERVAL: int = 30
+    # DLQ / retry policy
+    QUEUE_MAX_PERMANENT_ATTEMPTS: int = 3  # 4xx failures → DLQ after this many tries
+    QUEUE_MAX_TRANSIENT_ATTEMPTS: int = 20  # 5xx / network failures → DLQ after this many tries
+    QUEUE_BACKOFF_BASE_S: int = 30  # initial retry delay in seconds
+    QUEUE_BACKOFF_MAX_S: int = 3600  # maximum retry delay cap
+    QUEUE_DLQ_RETENTION_DAYS: int = 90  # prune DLQ entries older than this
 
     model_config = {"env_prefix": "YADGAR_"}
 

@@ -26,4 +26,4 @@ RUN useradd -r -m -u 1001 -s /sbin/nologin yadgar
 USER yadgar
 
 CMD ["/entrypoint-backend.sh"]
-LABEL version="4.2.0"
+LABEL version="4.3.0"

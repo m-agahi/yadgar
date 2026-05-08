@@ -469,8 +469,48 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
         total_chars += len(content)
     lines.append(f"\n*{len(results)} memories surfaced for: {directory}*")
 
+    # Prepend DLQ alerts if any items are stuck
+    dlq_text = _build_dlq_alert_text()
+    if dlq_text:
+        lines = [dlq_text, ""] + lines
+
     _last_prompt_recall[directory] = time.monotonic()
     return JSONResponse({"text": "\n".join(lines)})
+
+
+def _build_dlq_alert_text() -> str:
+    """Return a markdown warning string if any items are in the DLQ, else ''."""
+    try:
+        data_dir = Path(os.environ.get("YADGAR_DATA_DIR", settings.DATA_DIR))
+        dlq_dir = data_dir / "dlq"
+        if not dlq_dir.exists():
+            return ""
+        alerts = []
+        for sidecar in sorted(dlq_dir.glob("*.json.error.json")):
+            try:
+                meta = json.loads(sidecar.read_text())
+                meta["_file"] = sidecar.name[: -len(".error.json")]
+                alerts.append(meta)
+            except Exception:
+                pass
+        if not alerts:
+            return ""
+        lines = [f"# Yadgar DLQ Alert — {len(alerts)} item(s) stuck\n"]
+        lines.append("These writes failed permanently and will not be retried automatically.")
+        lines.append(
+            "Run `dlq_inspect()` for details, `dlq_requeue(filename)` after fixing root cause.\n"
+        )
+        for a in alerts[:5]:
+            lines.append(
+                f"- {a.get('op_type', '?')}  attempts={a.get('attempts')}  "
+                f"moved={a.get('moved_to_dlq_at', '')[:19]}  "
+                f"error={str(a.get('last_error', ''))[:80]}"
+            )
+        if len(alerts) > 5:
+            lines.append(f"  ... and {len(alerts) - 5} more")
+        return "\n".join(lines)
+    except Exception:
+        return ""
 
 
 # ── Graph / Visualization API ──────────────────────────────────────────────
@@ -706,7 +746,14 @@ def _get_file_queue():
                 base = Path(os.environ.get("YADGAR_DATA_DIR", settings.DATA_DIR))
                 _file_queue = FileQueue(base, wiki_prefix=settings.WIKI_SLUG_PREFIX)
                 _queue_drainer = QueueDrainer(
-                    _file_queue, _get_storage, drain_interval=float(settings.QUEUE_DRAIN_INTERVAL)
+                    _file_queue,
+                    _get_storage,
+                    drain_interval=float(settings.QUEUE_DRAIN_INTERVAL),
+                    max_permanent_attempts=settings.QUEUE_MAX_PERMANENT_ATTEMPTS,
+                    max_transient_attempts=settings.QUEUE_MAX_TRANSIENT_ATTEMPTS,
+                    backoff_base_s=float(settings.QUEUE_BACKOFF_BASE_S),
+                    backoff_max_s=float(settings.QUEUE_BACKOFF_MAX_S),
+                    dlq_retention_days=settings.QUEUE_DLQ_RETENTION_DAYS,
                 )
                 _queue_drainer.start()
     return _file_queue
@@ -2160,6 +2207,82 @@ def wiki_discard(slug: str) -> dict:
     if deleted:
         return {"discarded": True, "slug": slug}
     return {"discarded": False, "error": f"Draft '{slug}' not found"}
+
+
+# ── DLQ tools ─────────────────────────────────────────────────────────
+
+
+@_tool()
+def dlq_inspect() -> list[dict]:
+    """List items stuck in the dead-letter queue (failed writes that exhausted retries).
+
+    Returns entries with op_type, attempts, classification, last_error, moved_to_dlq_at,
+    and file_size. Each entry has a filename you can pass to dlq_requeue().
+
+    These operations will NOT be retried automatically. Fix the root cause first, then
+    call dlq_requeue(filename) to send them back through the queue.
+    """
+    fq = _get_file_queue()
+    if not fq.dlq_dir.exists():
+        return []
+    results = []
+    for sidecar in sorted(fq.dlq_dir.glob("*.json.error.json")):
+        try:
+            meta = json.loads(sidecar.read_text())
+        except Exception:
+            meta = {}
+        fname = sidecar.name[: -len(".error.json")]
+        main_file = fq.dlq_dir / fname
+        try:
+            file_size = main_file.stat().st_size if main_file.exists() else None
+        except OSError:
+            file_size = None
+        results.append(
+            {
+                "file": fname,
+                "op_type": meta.get("op_type", "unknown"),
+                "attempts": meta.get("attempts"),
+                "classification": meta.get("classification"),
+                "last_error": (meta.get("last_error") or "")[:200],
+                "first_failed_at": meta.get("first_failed_at"),
+                "moved_to_dlq_at": meta.get("moved_to_dlq_at"),
+                "file_size": file_size,
+            }
+        )
+    return results
+
+
+@_tool(power=True)
+def dlq_requeue(filename: str) -> dict:
+    """Move a DLQ item back to the queue so it will be retried on the next drain pass.
+
+    Call after fixing the root cause of the failure. The item's retry counter is reset.
+
+    filename: exact filename from dlq_inspect() (e.g. "0001778139482800_<uuid>.json")
+    """
+    if "/" in filename or "\\" in filename or filename.startswith("."):
+        return {"requeued": False, "error": "Invalid filename — must be a plain filename"}
+    fq = _get_file_queue()
+    src = fq.dlq_dir / filename
+    if not src.exists():
+        return {"requeued": False, "error": f"Not found in DLQ: {filename}"}
+    dest = fq.queue_dir / filename
+    if dest.exists():
+        return {"requeued": False, "error": f"Already exists in queue: {filename}"}
+    try:
+        src.rename(dest)
+    except OSError as exc:
+        return {"requeued": False, "error": str(exc)}
+    # Remove sidecar
+    (fq.dlq_dir / (filename + ".error.json")).unlink(missing_ok=True)
+    # Reset in-memory retry tracker
+    if _queue_drainer is not None:
+        _queue_drainer.reset_attempt(filename)
+    return {
+        "requeued": True,
+        "file": filename,
+        "message": "Item will be retried on next drain pass",
+    }
 
 
 # ── Default rules ──────────────────────────────────────────────────────

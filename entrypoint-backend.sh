@@ -36,7 +36,8 @@ python3 -m uvicorn yadgar.embed_service:app \
   --no-access-log &
 EMBED_PID=$!
 
-# Backup cron: first backup immediately, then every 6 hours, keep 7 days
+# Backup cron: first backup immediately, then at 06:10, 12:10, 18:10, 21:10 local time.
+# The 21:10 last slot avoids the previous 00:10 run that woke the laptop overnight.
 (
   _do_backup() {
     STAMP=$(date +%Y%m%d_%H%M%S)
@@ -52,9 +53,24 @@ EMBED_PID=$!
     fi
     find /data -name 'backup_*.surql' -mtime +7 -delete
   }
+  _sleep_until_next_backup() {
+    python3 - <<'PYEOF'
+import datetime
+now = datetime.datetime.now()
+for h in [6, 12, 18, 21]:
+    t = now.replace(hour=h, minute=10, second=0, microsecond=0)
+    if t > now:
+        print(int((t - now).total_seconds()))
+        break
+else:
+    t = (now + datetime.timedelta(days=1)).replace(hour=6, minute=10, second=0, microsecond=0)
+    print(int((t - now).total_seconds()))
+PYEOF
+  }
   _do_backup
   while true; do
-    sleep 21600
+    # Fall back to 1h sleep if Python helper ever errors, so the loop never silently dies.
+    sleep "$(_sleep_until_next_backup)" || sleep 3600
     _do_backup
   done
 ) &
