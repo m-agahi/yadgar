@@ -2033,11 +2033,15 @@ class StorageEngine:
             "SELECT * FROM engram_slot WHERE slot_index = $si LIMIT 1",
             {"si": slot_index},
         )
-        return self._row_to_dict(rows[0]) if rows else None
+        # Engram slots use SurrealDB auto-generated string IDs; skip _row_to_dict
+        # which would try to coerce the ID to int and fail.
+        return dict(rows[0]) if rows else None
 
     def get_all_engram_slots(self) -> list[dict]:
         rows = self._q("SELECT * FROM engram_slot ORDER BY slot_index")
-        return [self._row_to_dict(r) for r in rows]
+        # Engram slots use SurrealDB auto-generated string IDs; skip _row_to_dict
+        # which would try to coerce the ID to int and fail.
+        return [dict(r) for r in rows]
 
     def update_engram_slot(self, slot_index: int, excitability: float, last_activated: str):
         self._q(

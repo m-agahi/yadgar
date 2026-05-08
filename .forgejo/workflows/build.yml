@@ -9,13 +9,15 @@ on:
       - "yadgar/**"
       - "pyproject.toml"
       - "Dockerfile"
+      - "Dockerfile.backend"
       - "entrypoint.sh"
+      - "entrypoint-backend.sh"
       - "server.json"
   workflow_dispatch:
 
 jobs:
   docker:
-    runs-on: docker
+    runs-on: codeberg-small
     container:
       image: debian:bookworm-slim
     env:
@@ -36,17 +38,19 @@ jobs:
 
       - uses: https://data.forgejo.org/actions/checkout@v6
 
-      - name: Detect platforms
+      - name: Login to Docker Hub
         run: |
-          if docker run --rm --privileged tonistiigi/binfmt --install all 2>/dev/null; then
-            echo "QEMU registered — creating multi-arch builder"
-            docker buildx create --name multiarch --driver docker-container --use
-            docker buildx inspect --bootstrap
-            echo "PLATFORMS=linux/amd64,linux/arm64" >> "$GITHUB_ENV"
-          else
-            echo "QEMU not available — building amd64 only"
-            echo "PLATFORMS=linux/amd64" >> "$GITHUB_ENV"
-          fi
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" \
+            | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Set up Docker Build Cloud builder
+        # openfantasy/builder is a Docker Build Cloud builder. Build steps run
+        # remotely on Docker's infrastructure (multi-arch native, fast cache),
+        # not on the codeberg-small runner.
+        run: |
+          docker buildx create --driver cloud openfantasy/builder --name cloud-builder
+          docker buildx use cloud-builder
+          docker buildx inspect --bootstrap
 
       - name: Extract version
         run: |
@@ -56,32 +60,58 @@ jobs:
           ")
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
-      - name: Login to Docker Hub
-        run: |
-          echo "${{ secrets.DOCKERHUB_TOKEN }}" \
-            | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+      # ── Core image (yadgar) ──────────────────────────────────────────────
 
-      - name: Build and push (master — latest only)
+      - name: Build and push core (master — latest only)
         if: github.ref == 'refs/heads/master'
         run: |
           docker buildx build \
-            --platform "${{ env.PLATFORMS }}" \
+            --platform linux/amd64,linux/arm64 \
             --target prod \
-            --cache-from type=registry,ref=looseking/yadgar:buildcache \
-            --cache-to   type=registry,ref=looseking/yadgar:buildcache,mode=max \
-            -t looseking/yadgar:latest \
+            --cache-from type=registry,ref=openfantasy/yadgar:buildcache \
+            --cache-to   type=registry,ref=openfantasy/yadgar:buildcache,mode=max \
+            -f Dockerfile \
+            -t openfantasy/yadgar:latest \
             --push \
             .
 
-      - name: Build and push (tag — latest + version)
+      - name: Build and push core (tag — latest + version)
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           docker buildx build \
-            --platform "${{ env.PLATFORMS }}" \
+            --platform linux/amd64,linux/arm64 \
             --target prod \
-            --cache-from type=registry,ref=looseking/yadgar:buildcache \
-            --cache-to   type=registry,ref=looseking/yadgar:buildcache,mode=max \
-            -t looseking/yadgar:latest \
-            -t looseking/yadgar:${{ env.VERSION }} \
+            --cache-from type=registry,ref=openfantasy/yadgar:buildcache \
+            --cache-to   type=registry,ref=openfantasy/yadgar:buildcache,mode=max \
+            -f Dockerfile \
+            -t openfantasy/yadgar:latest \
+            -t openfantasy/yadgar:${{ env.VERSION }} \
+            --push \
+            .
+
+      # ── Backend image (yadgar-backend) ───────────────────────────────────
+
+      - name: Build and push backend (master — latest only)
+        if: github.ref == 'refs/heads/master'
+        run: |
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --cache-from type=registry,ref=openfantasy/yadgar-backend:buildcache \
+            --cache-to   type=registry,ref=openfantasy/yadgar-backend:buildcache,mode=max \
+            -f Dockerfile.backend \
+            -t openfantasy/yadgar-backend:latest \
+            --push \
+            .
+
+      - name: Build and push backend (tag — latest + version)
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --cache-from type=registry,ref=openfantasy/yadgar-backend:buildcache \
+            --cache-to   type=registry,ref=openfantasy/yadgar-backend:buildcache,mode=max \
+            -f Dockerfile.backend \
+            -t openfantasy/yadgar-backend:latest \
+            -t openfantasy/yadgar-backend:${{ env.VERSION }} \
             --push \
             .

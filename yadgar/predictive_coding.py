@@ -325,6 +325,9 @@ class WriteGate:
           - Decision keywords in content
           - Tags contain "important" or "critical"
         """
+        if self._settings.WRITE_GATE_THRESHOLD <= 0.0:
+            return True, 0.0, "gate_disabled"
+
         content.lower()
 
         # Check bypass conditions FIRST

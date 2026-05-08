@@ -154,7 +154,9 @@ class TestDreamReplay:
         assert stats["insights_generated"] >= 1
 
         # Verify dream insight memory was created
-        dream_mems = storage._q("SELECT * FROM memory WHERE content ~ 'Dream connection:'")
+        dream_mems = storage._q(
+            "SELECT * FROM memory WHERE string::contains(content, 'Dream connection:')"
+        )
         assert len(dream_mems) >= 1
 
     def test_skips_already_connected(self, sleep_engine, storage, mock_embeddings):
@@ -279,7 +281,7 @@ class TestClusterSummarization:
                 }
             )
             storage._q(
-                "UPDATE type::thing('memory', $mid) SET cluster_id = $cid",
+                "UPDATE type::record('memory', $mid) SET cluster_id = $cid",
                 {"mid": mid, "cid": cluster_id},
             )
 

@@ -13,6 +13,9 @@ import pytest
 from yadgar import server
 from yadgar.server import _is_episodic_query
 from yadgar.storage import StorageEngine
+from yadgar.tests.conftest import memorize_sync
+
+pytestmark = pytest.mark.xdist_group("server_globals")
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -79,7 +82,7 @@ class TestWikiBlendingThreshold:
         wiki_hits = [r for r in results if r.get("_source") == "wiki"]
         assert len(wiki_hits) == 0
 
-    def test_relevant_wiki_appears_in_results(self):
+    def test_relevant_wiki_appears_in_results(self, flush_queue):
         """A wiki page with sufficient relevance should surface in recall."""
         _wiki().add(
             "Storage Engine Design",
@@ -92,6 +95,7 @@ class TestWikiBlendingThreshold:
             context="/tmp",
             tags=[],
         )
+        flush_queue()
         results = server.recall(query="storage engine design", max_results=10)
         wiki_hits = [r for r in results if r.get("_source") == "wiki"]
         # At least one wiki result should be present (relevance gate passed)
@@ -128,7 +132,7 @@ class TestWikiBlendingThreshold:
 class TestBidirectionalLinking:
     def test_add_links_source_memories(self):
         """wiki_add with source_memory_ids should update wiki_refs on each memory."""
-        mem_result = server.memorize(
+        mem_result = memorize_sync(
             content="Designed the storage engine using SurrealDB.",
             context="/tmp",
             tags=[],
@@ -149,8 +153,8 @@ class TestBidirectionalLinking:
 
     def test_upsert_merges_source_memories_and_links(self):
         """Upserting a wiki page with new memory IDs links those memories too."""
-        m1 = server.memorize(content="First design note.", context="/tmp", tags=[])["id"]
-        m2 = server.memorize(content="Second design note.", context="/tmp", tags=[])["id"]
+        m1 = memorize_sync(content="First design note.", context="/tmp", tags=[])["id"]
+        m2 = memorize_sync(content="Second design note.", context="/tmp", tags=[])["id"]
 
         _wiki().add("Design Notes", "Initial design.", source_memory_ids=[m1])
         _wiki().add("Design Notes", "Updated design.", source_memory_ids=[m2])
@@ -160,7 +164,7 @@ class TestBidirectionalLinking:
 
     def test_ingest_links_source_memories_new_page(self):
         """wiki_ingest on a new page should link source memories."""
-        mid = server.memorize(content="Wrote the ingestion module.", context="/tmp", tags=[])["id"]
+        mid = memorize_sync(content="Wrote the ingestion module.", context="/tmp", tags=[])["id"]
         _wiki().ingest("Notes about ingestion.", title="Ingestion Notes", source_memory_ids=[mid])
         mem = _storage().get_memory(mid)
         assert "ingestion-notes" in (mem.get("wiki_refs") or [])
@@ -168,14 +172,14 @@ class TestBidirectionalLinking:
     def test_ingest_links_source_memories_existing_page(self):
         """wiki_ingest on an existing page should also link new source memories."""
         _wiki().add("Existing Page", "Initial content.")
-        mid = server.memorize(content="Added to existing page.", context="/tmp", tags=[])["id"]
+        mid = memorize_sync(content="Added to existing page.", context="/tmp", tags=[])["id"]
         _wiki().ingest("Update content.", title="Existing Page", source_memory_ids=[mid])
         mem = _storage().get_memory(mid)
         assert "existing-page" in (mem.get("wiki_refs") or [])
 
     def test_no_duplicate_refs(self):
         """Adding the same page twice should not duplicate wiki_refs."""
-        mid = server.memorize(content="Original note.", context="/tmp", tags=[])["id"]
+        mid = memorize_sync(content="Original note.", context="/tmp", tags=[])["id"]
         _wiki().add("My Page", "Content.", source_memory_ids=[mid])
         _wiki().add("My Page", "Updated content.", source_memory_ids=[mid])
         mem = _storage().get_memory(mid)

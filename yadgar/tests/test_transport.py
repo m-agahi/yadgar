@@ -155,11 +155,20 @@ class TestTransportSelection:
 # ── Streamable HTTP App Structure ─────────────────────────────────────
 
 
+def _unwrap_starlette(app):
+    """Walk through ASGI middleware wrappers until a Starlette instance is found."""
+    from starlette.applications import Starlette
+
+    while app is not None and not isinstance(app, Starlette):
+        app = getattr(app, "app", None)
+    return app
+
+
 class TestStreamableHttpApp:
     def test_streamable_http_app_is_starlette(self):
         from starlette.applications import Starlette
 
-        app = server.mcp_server.streamable_http_app()
+        app = _unwrap_starlette(server.mcp_server.streamable_http_app())
         assert isinstance(app, Starlette)
 
     def test_sse_app_is_starlette(self):
@@ -170,14 +179,14 @@ class TestStreamableHttpApp:
 
     def test_streamable_http_mcp_endpoint_exists(self):
         """The /mcp endpoint should exist on the streamable HTTP app."""
-        app = server.mcp_server.streamable_http_app()
+        app = _unwrap_starlette(server.mcp_server.streamable_http_app())
         paths = [route.path for route in app.routes]
         assert "/mcp" in paths
 
     def test_health_endpoint_on_both_transports(self):
         """Health endpoint is available on both SSE and Streamable HTTP apps."""
         sse_app = server.mcp_server.sse_app()
-        http_app = server.mcp_server.streamable_http_app()
+        http_app = _unwrap_starlette(server.mcp_server.streamable_http_app())
 
         sse_paths = [route.path for route in sse_app.routes]
         http_paths = [route.path for route in http_app.routes]

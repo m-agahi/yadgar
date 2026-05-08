@@ -8,15 +8,15 @@
 # Options:
 #   --db <file>       SurrealDB .surql export to restore
 #   --archive <dir>   Archive directory (memories/ + wiki/) to restore
-#   --version <tag>   Image tag to use (default: 4.3.0)
+#   --version <tag>   Image tag to use (default: 4.4.0)
 #   --help            Show this help
 
 set -euo pipefail
 
-CORE_VERSION="4.3.0"
-BACKEND_VERSION="4.3.0"
-BACKEND_IMAGE="looseking/yadgar-backend:${BACKEND_VERSION}"
-CORE_IMAGE="looseking/yadgar:${CORE_VERSION}"
+CORE_VERSION="4.4.0"
+BACKEND_VERSION="4.4.0"
+BACKEND_IMAGE="openfantasy/yadgar-backend:${BACKEND_VERSION}"
+CORE_IMAGE="openfantasy/yadgar:${CORE_VERSION}"
 BACKEND_CONTAINER="yadgar-backend"
 CORE_CONTAINER="yadgar"
 NETWORK="yadgar-net"
@@ -34,8 +34,8 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --db)       DB_FILE="$2";      shift 2 ;;
         --archive)  ARCHIVE_DIR="$2";  shift 2 ;;
-        --version)  CORE_VERSION="$2"; CORE_IMAGE="looseking/yadgar:${CORE_VERSION}"; shift 2 ;;
-        --backend-version) BACKEND_VERSION="$2"; BACKEND_IMAGE="looseking/yadgar-backend:${BACKEND_VERSION}"; shift 2 ;;
+        --version)  CORE_VERSION="$2"; CORE_IMAGE="openfantasy/yadgar:${CORE_VERSION}"; shift 2 ;;
+        --backend-version) BACKEND_VERSION="$2"; BACKEND_IMAGE="openfantasy/yadgar-backend:${BACKEND_VERSION}"; shift 2 ;;
         --help|-h)
             sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;

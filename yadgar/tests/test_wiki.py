@@ -328,7 +328,7 @@ class TestValidation:
 class TestRecallIntegration:
     """Wiki results are blended into recall() output."""
 
-    def test_recall_includes_wiki_results(self):
+    def test_recall_includes_wiki_results(self, flush_queue):
         _wiki().add(
             "Yadgar Architecture",
             "Yadgar is a biologically-inspired memory engine with WRRF retrieval.",
@@ -342,16 +342,18 @@ class TestRecallIntegration:
             context="/tmp/test",
             tags=["test"],
         )
+        flush_queue()
         results = server.recall(query="yadgar architecture", max_results=5)
         wiki_results = [r for r in results if r.get("_source") == "wiki"]
         assert len(wiki_results) >= 1
         assert wiki_results[0].get("title") == "Yadgar Architecture"
 
-    def test_recall_without_wiki_still_works(self):
+    def test_recall_without_wiki_still_works(self, flush_queue):
         server.memorize(
             content="A plain memory without any wiki pages related.",
             context="/tmp/test",
             tags=["test"],
         )
+        flush_queue()
         results = server.recall(query="plain memory", max_results=5)
         assert len(results) >= 1

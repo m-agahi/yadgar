@@ -114,6 +114,18 @@ _event_seq: int = 0
 _system_metrics_cache: dict = {}
 
 
+def _has_unpaired_surrogate(s: str) -> bool:
+    """Return True if the string contains unpaired UTF-16 surrogate code points,
+    which cannot be encoded as UTF-8 and would crash the storage pipeline."""
+    if not s:
+        return False
+    try:
+        s.encode("utf-8")
+    except UnicodeEncodeError:
+        return True
+    return False
+
+
 def _push_event(event: dict) -> None:
     """Append an event to the ring buffer with a monotonic sequence number."""
     global _event_seq
@@ -796,10 +808,6 @@ def memorize(
     if len(content) > 32_768:
         return {"stored": False, "reason": "content_too_large", "max_bytes": 32_768}
 
-    storage = _get_storage()
-    embeddings = _get_embeddings()
-    buffer = _get_buffer()
-
     # Secret detection — always on, fires before anything else
     sec_blocked, sec_reason, sec_pattern = check_secrets(content)
     if sec_blocked:
@@ -814,6 +822,32 @@ def memorize(
             return {"stored": False, "reason": f"blocked_by_policy: {wp_reason}"}
         if wp_modified is not None:
             content = wp_modified
+
+    if _has_unpaired_surrogate(content):
+        return {"stored": False, "reason": "invalid_unicode_surrogates"}
+
+    # Async path: enqueue and return immediately (skip during drain replay)
+    if not is_draining():
+        try:
+            _fq_path = _get_file_queue().enqueue(
+                "memorize",
+                {
+                    "content": content,
+                    "context": context,
+                    "tags": list(tags),
+                    "is_protected": is_protected,
+                },
+            )
+            from pathlib import Path as _Path
+
+            return {"stored": True, "queued": True, "queue_id": _Path(_fq_path).name}
+        except Exception as _fq_exc:
+            logger.warning("File queue enqueue failed, falling back to sync: %s", _fq_exc)
+
+    # Sync path — only runs during drain replay (is_draining=True) or queue fallback
+    storage = _get_storage()
+    embeddings = _get_embeddings()
+    buffer = _get_buffer()
 
     # Predictive coding write gate — FIRST check before any storage
     gate_result = None
@@ -831,21 +865,8 @@ def memorize(
                 "message": "Memory below surprisal threshold, skipped",
             }
 
-    # Write to file queue first — durable crash-recovery journal (skip during replay)
+    # Archive path var not needed in sync path (drainer archives on its own)
     _fq_path = None
-    if not is_draining():
-        try:
-            _fq_path = _get_file_queue().enqueue(
-                "memorize",
-                {
-                    "content": content,
-                    "context": context,
-                    "tags": list(tags),
-                    "is_protected": is_protected,
-                },
-            )
-        except Exception as _fq_exc:
-            logger.debug("File queue enqueue failed (non-fatal): %s", _fq_exc)
 
     # Generate contextual prefix for richer embedding semantics
     contextual_prefix = None
@@ -1097,7 +1118,7 @@ def memorize(
         _agent = settings.CRDT_AGENT_ID
         _clock = json.dumps({_agent: 1})
         storage._q(
-            "UPDATE type::thing('memory', $id) SET provenance_agent = $a, vector_clock = $c",
+            "UPDATE type::record('memory', $id) SET provenance_agent = $a, vector_clock = $c",
             {"id": memory_id, "a": _agent, "c": _clock},
         )
         memory["provenance_agent"] = _agent
@@ -1506,11 +1527,24 @@ def checkpoint(
     the restore tool uses this checkpoint to reconstruct what you were doing.
     Checkpoints auto-supersede — only the latest one matters.
     """
-    # Write to file queue first — durable crash-recovery journal (skip during replay)
-    _fq_path = None
+    for _field in (current_task, custom_context):
+        if _has_unpaired_surrogate(_field):
+            return {"stored": False, "reason": "invalid_unicode_surrogates"}
+    for _lst in (
+        key_decisions or [],
+        open_questions or [],
+        next_steps or [],
+        active_errors or [],
+        files_being_edited or [],
+    ):
+        for _item in _lst:
+            if isinstance(_item, str) and _has_unpaired_surrogate(_item):
+                return {"stored": False, "reason": "invalid_unicode_surrogates"}
+
+    # Async path: enqueue and return immediately (skip during drain replay)
     if not is_draining():
         try:
-            _fq_path = _get_file_queue().enqueue(
+            _get_file_queue().enqueue(
                 "checkpoint",
                 {
                     "directory": directory,
@@ -1523,9 +1557,11 @@ def checkpoint(
                     "custom_context": custom_context,
                 },
             )
+            return {"queued": True, "directory": directory}
         except Exception as _fq_exc:
-            logger.debug("File queue enqueue failed (non-fatal): %s", _fq_exc)
+            logger.warning("File queue enqueue failed, falling back to sync: %s", _fq_exc)
 
+    # Sync path — only runs during drain replay (is_draining=True) or queue fallback
     replay = _get_replay()
 
     # Enrich checkpoint with action stream summary if available
@@ -1538,7 +1574,7 @@ def checkpoint(
                 f"{custom_context}\n\n{action_summary}" if custom_context else action_summary
             )
 
-    result = replay.create_checkpoint(
+    return replay.create_checkpoint(
         directory=directory,
         current_task=current_task,
         files_being_edited=files_being_edited,
@@ -1548,15 +1584,6 @@ def checkpoint(
         active_errors=active_errors,
         custom_context=enriched_context,
     )
-
-    # Archive the queue entry — DB write confirmed
-    if _fq_path is not None:
-        try:
-            _get_file_queue().archive(Path(_fq_path))
-        except Exception as _fq_exc:
-            logger.debug("File queue archive failed (non-fatal): %s", _fq_exc)
-
-    return result
 
 
 @_tool()
@@ -1586,37 +1613,33 @@ def anchor(content: str, context: str, reason: str = "") -> dict:
     of other scoring. Use for decisions, constraints, and critical facts
     that must survive compaction.
     """
-    # Write to file queue first — durable crash-recovery journal (skip during replay)
-    _fq_path = None
+    for _field in (content, context, reason):
+        if _has_unpaired_surrogate(_field):
+            return {"stored": False, "reason": "invalid_unicode_surrogates"}
+
+    # Async path: enqueue and return immediately (skip during drain replay)
     if not is_draining():
         try:
-            _fq_path = _get_file_queue().enqueue(
+            _get_file_queue().enqueue(
                 "anchor",
                 {"content": content, "context": context, "reason": reason},
             )
+            return {"queued": True, "status": "anchored", "is_protected": True, "reason": reason}
         except Exception as _fq_exc:
-            logger.debug("File queue enqueue failed (non-fatal): %s", _fq_exc)
+            logger.warning("File queue enqueue failed, falling back to sync: %s", _fq_exc)
 
+    # Sync path — only runs during drain replay (is_draining=True) or queue fallback
     replay = _get_replay()
     tags = ["_anchor"]
     if reason:
         tags.append(f"anchor:{reason}")
     memory_id = replay.anchor_memory(content, context, tags, reason)
-    result = {
+    return {
         "memory_id": memory_id,
         "status": "anchored",
         "is_protected": True,
         "reason": reason,
     }
-
-    # Archive the queue entry — DB write confirmed
-    if _fq_path is not None:
-        try:
-            _get_file_queue().archive(Path(_fq_path))
-        except Exception as _fq_exc:
-            logger.debug("File queue archive failed (non-fatal): %s", _fq_exc)
-
-    return result
 
 
 @_tool(power=True)
@@ -2034,6 +2057,10 @@ def wiki_add(
         if wp_modified is not None:
             content = wp_modified
 
+    for _field in (content, title):
+        if _has_unpaired_surrogate(_field):
+            return {"stored": False, "reason": "invalid_unicode_surrogates"}
+
     # Async path: enqueue and return immediately (skip during drain replay)
     if not is_draining():
         try:
@@ -2127,19 +2154,37 @@ def wiki_delete(slug: str) -> dict:
 
 
 @_tool(power=True)
-def wiki_list(category: str | None = None) -> list[dict]:
-    """List all wiki pages, optionally filtered by category.
+def wiki_list(
+    category: str | None = None,
+    limit: int = 100,
+    slug_prefix: str | None = None,
+) -> list[dict]:
+    """List wiki pages by metadata only (no content). Use wiki_read(slug) for full content.
 
     Categories: architecture, decision, pattern, debugging, reference, convention, fact, analysis.
     """
     assert _wiki is not None, "WikiStore not initialized"
     pages = _wiki.list_pages(category)
+    if slug_prefix:
+        pages = [p for p in pages if p.get("slug", "").startswith(slug_prefix)]
+    # Clamp limit: 0/-1/None means "no cap"; otherwise apply
+    if limit is not None and limit > 0:
+        pages = pages[:limit]
+    out = []
     for p in pages:
-        p.pop("embedding", None)
-        # Trim content for listing
-        if p.get("content"):
-            p["content"] = p["content"][:200]
-    return pages
+        out.append(
+            {
+                "slug": p.get("slug"),
+                "title": p.get("title"),
+                "category": p.get("category"),
+                "tags": p.get("tags", []),
+                "confidence": p.get("confidence"),
+                "created_at": p.get("created_at"),
+                "updated_at": p.get("updated_at"),
+                "source_count": len(p.get("source_memory_ids") or []),
+            }
+        )
+    return out
 
 
 @_tool(power=True)

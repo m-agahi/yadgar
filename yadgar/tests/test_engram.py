@@ -346,34 +346,32 @@ class TestProtectedSlotBehavior:
 
 class TestIntegrationRemember:
     def test_integration_remember(self, tmp_path):
-        """remember() response should include temporal links when engram is active."""
+        """Engram allocation should persist slot_index on the memory DB record."""
         from yadgar.server import init_engines, shutdown
-        from yadgar.server import memorize as remember
+        from yadgar.tests.conftest import memorize_sync
 
         db_path = str(tmp_path / "test_integration.db")
         try:
             init_engines(db_path=db_path)
 
-            # Store two related memories quickly
-            remember(
+            # Store two related memories — memorize_sync drains and returns DB row
+            memorize_sync(
                 content="Error: NullPointerException in UserService.java",
                 context="/tmp/project",
                 tags=["error", "java"],
             )
 
-            result2 = remember(
+            result2 = memorize_sync(
                 content="Fix: Added null check in UserService.getUser()",
                 context="/tmp/project",
                 tags=["fix", "java"],
             )
 
-            # Check that engram allocation data is present
-            # Note: result2 may or may not have temporal_links depending on
-            # whether write gate passes. Check for presence if stored.
-            if result2.get("stored") is not False:
-                assert "engram_slot" in result2
-                assert "temporal_links" in result2
-                assert "temporal_link_count" in result2
+            # v4.4 async path: engram allocation runs during drain.
+            # The DB row returned by memorize_sync has slot_index if engram ran.
+            # If the memory was stored (has id), slot_index must be set.
+            if result2.get("id") is not None:
+                assert result2.get("slot_index") is not None
         finally:
             shutdown()
 

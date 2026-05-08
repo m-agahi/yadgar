@@ -3,7 +3,6 @@
 import pytest
 
 from yadgar.config import Settings
-from yadgar.embeddings import EmbeddingEngine
 from yadgar.knowledge_graph import KnowledgeGraph
 from yadgar.retrieval import Retriever, _question_to_statement
 from yadgar.storage import StorageEngine
@@ -26,11 +25,6 @@ def settings(tmp_path):
         DUAL_VECTORS_ENABLED=False,
         CROSS_ENCODER_ENABLED=False,
     )
-
-
-@pytest.fixture
-def embeddings():
-    return EmbeddingEngine("all-MiniLM-L6-v2")
 
 
 @pytest.fixture
