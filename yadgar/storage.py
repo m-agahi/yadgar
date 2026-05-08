@@ -413,8 +413,12 @@ class StorageEngine:
 
         if self._db_url:
             # Server mode: POST to /sql with LET preamble for params.
+            # ensure_ascii=False so emoji and other non-ASCII pass as UTF-8; SurrealDB v3
+            # rejects \uD800–\uDFFF surrogate pairs that json.dumps emits with ensure_ascii=True.
             if params:
-                lets = [f"LET ${k} = {_json.dumps(v)};" for k, v in params.items()]
+                lets = [
+                    f"LET ${k} = {_json.dumps(v, ensure_ascii=False)};" for k, v in params.items()
+                ]
                 body = "\n".join(lets) + "\n" + surql
             else:
                 body = surql
