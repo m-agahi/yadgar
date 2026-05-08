@@ -88,7 +88,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["yadgar/tests"]
-addopts = "--timeout=120 -n auto --dist loadgroup"
+addopts = "--timeout=120 -n 4 --dist loadgroup --maxprocesses=4"
 markers = [
     "xdist_group: group tests that share server module-level globals into one worker",
 ]
