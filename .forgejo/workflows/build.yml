@@ -19,34 +19,43 @@ jobs:
   docker:
     runs-on: codeberg-small
     container:
-      image: debian:bookworm-slim
-    env:
-      DOCKER_HOST: tcp://172.17.0.1:2375
+      image: docker:cli
     steps:
-      - name: Install Docker CLI + buildx
-        run: |
-          apt-get update && apt-get install -y --no-install-recommends \
-            nodejs git curl gnupg ca-certificates python3
-          install -m 0755 -d /etc/apt/keyrings
-          curl -fsSL https://download.docker.com/linux/debian/gpg \
-            | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] \
-            https://download.docker.com/linux/debian bookworm stable" \
-            > /etc/apt/sources.list.d/docker.list
-          apt-get update && apt-get install -y --no-install-recommends \
-            docker-ce-cli docker-buildx-plugin
+      - name: Install minimal tools
+        # docker:cli is alpine-based and already has docker + buildx.
+        # We only need bash for the heredoc auth config and python for
+        # version extraction.
+        run: apk add --no-cache bash python3 nodejs git
 
       - uses: https://data.forgejo.org/actions/checkout@v6
 
-      - name: Login to Docker Hub
+      - name: Configure Docker Hub credentials (no daemon needed)
+        # Build Cloud uses the buildx cloud driver, which doesn't require
+        # a local docker daemon. `docker login` queries the daemon for
+        # credential storage, so we write ~/.docker/config.json directly
+        # — buildx reads this for both Docker Hub pushes and cloud builder
+        # authentication.
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
-          echo "${{ secrets.DOCKERHUB_TOKEN }}" \
-            | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+          mkdir -p ~/.docker
+          AUTH=$(printf "%s:%s" "$DOCKERHUB_USERNAME" "$DOCKERHUB_TOKEN" | base64 -w0)
+          cat > ~/.docker/config.json <<EOF
+          {
+            "auths": {
+              "https://index.docker.io/v1/": {
+                "auth": "$AUTH"
+              }
+            }
+          }
+          EOF
+          chmod 600 ~/.docker/config.json
 
       - name: Set up Docker Build Cloud builder
-        # openfantasy/builder is a Docker Build Cloud builder. Build steps run
-        # remotely on Docker's infrastructure (multi-arch native, fast cache),
-        # not on the codeberg-small runner.
+        # openfantasy/builder is the Build Cloud builder. Build steps run
+        # remotely on Docker's infrastructure (multi-arch native, fast cache);
+        # the codeberg-small runner only orchestrates.
         run: |
           docker buildx create --driver cloud openfantasy/builder --name cloud-builder
           docker buildx use cloud-builder
