@@ -18,7 +18,8 @@ COPY entrypoint-backend.sh /entrypoint-backend.sh
 RUN chmod +x /entrypoint-backend.sh
 EXPOSE 8001
 VOLUME /data
-ENV YADGAR_DB_URL=http://127.0.0.1:8000 \
+ENV PYTHONUNBUFFERED=1 \
+    YADGAR_DB_URL=http://127.0.0.1:8000 \
     SURREAL_USER=root \
     SURREAL_PASS=root \
     HOME=/home/yadgar
@@ -26,4 +27,4 @@ RUN useradd -r -m -u 1001 -s /sbin/nologin yadgar
 USER yadgar
 
 CMD ["/entrypoint-backend.sh"]
-LABEL version="4.4.5"
+LABEL version="4.4.6"

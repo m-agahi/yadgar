@@ -1378,6 +1378,7 @@ def cli():
                     _logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s")
                 )
                 _yadgar_logger.addHandler(_handler)
+                _yadgar_logger.propagate = False
 
         if not args.quiet and args.transport != "stdio":
             print(STARTUP_BANNER, file=sys.stderr)

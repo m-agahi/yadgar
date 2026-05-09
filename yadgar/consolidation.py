@@ -218,18 +218,37 @@ class ConsolidationScheduler:
             "memories_deleted": 0,
         }
 
+        _t = time.monotonic()
+        logger.info("phase: apply_decay starting")
         self._apply_decay(stats)
+        logger.info("phase: apply_decay complete in %dms", int((time.monotonic() - _t) * 1000))
+
+        _t = time.monotonic()
+        logger.info("phase: process_episodes starting")
         self._process_new_episodes(stats)
+        logger.info("phase: process_episodes complete in %dms", int((time.monotonic() - _t) * 1000))
+
+        _t = time.monotonic()
+        logger.info("phase: merge_duplicates starting")
         self._merge_duplicates(stats)
+        logger.info("phase: merge_duplicates complete in %dms", int((time.monotonic() - _t) * 1000))
 
         # Semantic similarity linking — create relationships between similar memories
         try:
+            _t = time.monotonic()
+            logger.info("phase: link_similar starting")
             self._link_similar_memories(stats)
+            logger.info("phase: link_similar complete in %dms", int((time.monotonic() - _t) * 1000))
         except Exception:
             logger.exception("Similarity linking failed")
 
         try:
+            _t = time.monotonic()
+            logger.info("phase: detect_causality starting")
             self._graph.detect_causality()
+            logger.info(
+                "phase: detect_causality complete in %dms", int((time.monotonic() - _t) * 1000)
+            )
         except Exception:
             logger.exception("Causal detection failed")
 
@@ -238,28 +257,42 @@ class ConsolidationScheduler:
             self._events_since_last_discovery += stats.get("memories_added", 0)
             if self._events_since_last_discovery >= 50:
                 try:
+                    _t = time.monotonic()
+                    logger.info("phase: causal_discovery starting")
                     dag = self._causal_discovery.discover_dag()
                     stats["causal_dag_edges"] = dag.get("metadata", {}).get("directed_count", 0)
                     self._events_since_last_discovery = 0
+                    logger.info(
+                        "phase: causal_discovery complete in %dms",
+                        int((time.monotonic() - _t) * 1000),
+                    )
                 except Exception:
                     logger.exception("Causal discovery failed")
 
         # Run memify self-improvement cycle
         try:
+            _t = time.monotonic()
+            logger.info("phase: memify starting")
             memify_stats = self._curator.memify_cycle()
             stats["memify_pruned"] = memify_stats.get("pruned", 0)
             stats["memify_strengthened"] = memify_stats.get("strengthened", 0)
             stats["memify_reweighted"] = memify_stats.get("reweighted", 0)
             stats["memify_derived"] = memify_stats.get("derived", 0)
+            logger.info("phase: memify complete in %dms", int((time.monotonic() - _t) * 1000))
         except Exception:
             logger.exception("Memify cycle failed")
 
         # Run CLS dual-store consolidation (Go-CLS: episodic → semantic)
         try:
+            _t = time.monotonic()
+            logger.info("phase: cls_consolidation starting")
             cls_stats = self._cls.consolidation_cycle()
             stats["cls_patterns_found"] = cls_stats.get("patterns_found", 0)
             stats["cls_promoted"] = cls_stats.get("promoted", 0)
             stats["cls_skipped_inconsistent"] = cls_stats.get("skipped_inconsistent", 0)
+            logger.info(
+                "phase: cls_consolidation complete in %dms", int((time.monotonic() - _t) * 1000)
+            )
         except Exception:
             logger.exception("CLS consolidation cycle failed")
 
@@ -267,12 +300,17 @@ class ConsolidationScheduler:
 
         # Process action_log entries into real memories
         try:
+            _t = time.monotonic()
+            logger.info("phase: action_log starting")
             action_stats = self._process_action_log()
             stats["actions_processed"] = action_stats.get("processed", 0)
             stats["action_memories_created"] = action_stats.get("memories_created", 0)
+            logger.info("phase: action_log complete in %dms", int((time.monotonic() - _t) * 1000))
         except Exception:
             logger.exception("Action log processing failed")
 
+        _t = time.monotonic()
+        logger.info("phase: insert_consolidation_log starting")
         duration_ms = int((time.monotonic() - start) * 1000)
         self._storage.insert_consolidation_log(
             {
@@ -280,11 +318,16 @@ class ConsolidationScheduler:
                 "duration_ms": duration_ms,
             }
         )
+        logger.info(
+            "phase: insert_consolidation_log complete in %dms", int((time.monotonic() - _t) * 1000)
+        )
         logger.info("Consolidation complete in %dms: %s", duration_ms, stats)
 
         # Post-consolidation MTREE health probe: bulk embedding writes during
         # consolidation are the primary trigger for SurrealDB 2.6.x index
         # corruption. Detect and auto-recover while the damage is still fresh.
+        logger.info("phase: mtree_probe starting")
+        _t = time.monotonic()
         if not self._storage.probe_vector_indexes():
             logger.warning("MTREE index corruption detected after consolidation — rebuilding")
             if self._storage.rebuild_vector_indexes():
@@ -294,6 +337,7 @@ class ConsolidationScheduler:
                     "MTREE index rebuild failed; vector search will be degraded "
                     "until the container is restarted"
                 )
+        logger.info("phase: mtree_probe complete in %dms", int((time.monotonic() - _t) * 1000))
 
         return stats
 
