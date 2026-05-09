@@ -377,6 +377,7 @@ class MemoryCurator:
     def _memify_strengthen(self, stats: dict) -> None:
         """Boost importance for memories accessed > 5 times with confidence > 0.8."""
         candidates = self._storage.get_memories_by_heat(min_heat=0.0, limit=10000)
+        to_update: list[tuple[int, float]] = []
         for mem in candidates:
             if (
                 (mem.get("access_count") or 0) > 5
@@ -385,8 +386,18 @@ class MemoryCurator:
             ):
                 current_importance = mem.get("importance") or 0.5
                 new_importance = min(current_importance + 0.1, 1.0)
-                self._storage.update_memory_fields(mem["id"], importance=new_importance)
+                to_update.append((mem["id"], new_importance))
                 stats["strengthened"] += 1
+
+        if to_update:
+            batch = [
+                (
+                    "UPDATE type::record('memory', $id) SET importance = $importance",
+                    {"id": mid, "importance": new_imp},
+                )
+                for mid, new_imp in to_update
+            ]
+            self._storage.batch_writes(batch)
 
     def _memify_reweight(self, stats: dict) -> None:
         """Adjust relationship weights based on usage patterns.
@@ -448,6 +459,11 @@ class MemoryCurator:
         # Pre-build existing content set for dedup
         existing_contents = {m["content"] for m in self._storage.get_all_memories_with_embeddings()}
 
+        now = self._storage._now_iso()
+        model_name = self._embeddings.get_model_name()
+
+        # Phase 1: walk entity pairs, compute embeddings, collect inserts
+        to_insert: list[dict] = []
         seen_rel_ids: set[int] = set()
         for i, src_id in enumerate(entity_ids):
             for tgt_id in entity_ids[i + 1 :]:
@@ -480,22 +496,81 @@ class MemoryCurator:
                     continue
 
                 embedding = self._embeddings.encode(derived_content)
-                memory_id = self._storage.insert_memory(
+                memory_id = self._storage._next_id("memory")
+                to_insert.append(
                     {
+                        "memory_id": memory_id,
                         "content": derived_content,
                         "embedding": embedding,
-                        "tags": ["derived", "auto-generated"],
-                        "directory_context": "system",
-                        "heat": 0.5,
-                        "is_stale": False,
-                        "embedding_model": self._embeddings.get_model_name(),
+                        "src_name": src_name,
+                        "tgt_name": tgt_name,
                     }
-                )
-                self._storage.update_memory_scores(
-                    memory_id,
-                    importance=0.6,
-                    surprise_score=0.0,
-                    emotional_valence=0.0,
                 )
                 existing_contents.add(derived_content)
                 stats["derived"] += 1
+
+        if not to_insert:
+            return
+
+        # Phase 2: batch all CREATEs and score UPDATEs into one transaction
+        batch: list[tuple[str, dict | None]] = []
+        for item in to_insert:
+            mid = item["memory_id"]
+            emb = item["embedding"]
+            emb_floats = self._storage._bytes_to_floats(emb) if emb else None
+            batch.append(
+                (
+                    "CREATE type::record('memory', $id) SET "
+                    "content = $content, embedding = $embedding, tags = $tags, "
+                    "source_episode_id = $source_episode_id, "
+                    "directory_context = $directory_context, "
+                    "created_at = $created_at, last_accessed = $last_accessed, "
+                    "heat = $heat, is_stale = $is_stale, file_hash = $file_hash, "
+                    "embedding_model = $embedding_model, "
+                    "plasticity = $plasticity, stability = $stability, "
+                    "excitability = $excitability, store_type = $store_type, "
+                    "compression_level = $compression_level, sr_x = $sr_x, sr_y = $sr_y, "
+                    "reconsolidation_count = $reconsolidation_count, "
+                    "provenance_agent = $provenance_agent, vector_clock = $vector_clock, "
+                    "is_protected = $is_protected",
+                    {
+                        "id": mid,
+                        "content": item["content"],
+                        "embedding": emb_floats,
+                        "tags": ["derived", "auto-generated"],
+                        "source_episode_id": None,
+                        "directory_context": "system",
+                        "created_at": now,
+                        "last_accessed": now,
+                        "heat": 0.5,
+                        "is_stale": False,
+                        "file_hash": None,
+                        "embedding_model": model_name,
+                        "plasticity": 1.0,
+                        "stability": 0.0,
+                        "excitability": 1.0,
+                        "store_type": "episodic",
+                        "compression_level": 0,
+                        "sr_x": 0.0,
+                        "sr_y": 0.0,
+                        "reconsolidation_count": 0,
+                        "provenance_agent": "default",
+                        "vector_clock": "{}",
+                        "is_protected": False,
+                    },
+                )
+            )
+            batch.append(
+                (
+                    "UPDATE type::record('memory', $id) SET "
+                    "importance = $importance, surprise_score = $surprise_score, "
+                    "emotional_valence = $emotional_valence",
+                    {
+                        "id": mid,
+                        "importance": 0.6,
+                        "surprise_score": 0.0,
+                        "emotional_valence": 0.0,
+                    },
+                )
+            )
+        self._storage.batch_writes(batch)
