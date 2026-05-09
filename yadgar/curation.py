@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+import time
 
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
@@ -202,7 +203,7 @@ class MemoryCurator:
 
         # Update FTS content is handled by the trigger on memories table
 
-        logger.info("Merged new content into memory %d", existing_id)
+        logger.debug("Merged new content into memory %d", existing_id)
         return {"action": "merged", "memory_id": existing_id}
 
     def _insert_new_memory(
@@ -269,7 +270,7 @@ class MemoryCurator:
                 "relationship_type": "derived_from",
             }
         )
-        logger.info("Linked memory %d -> derived_from -> memory %d", new_id, existing_id)
+        logger.debug("Linked memory %d -> derived_from -> memory %d", new_id, existing_id)
 
     # ── b. Contradiction Detection ───────────────────────────────────────
 
@@ -342,13 +343,35 @@ class MemoryCurator:
         Returns stats: {pruned, strengthened, reweighted, derived}.
         """
         stats = {"pruned": 0, "strengthened": 0, "reweighted": 0, "derived": 0}
+        _cycle_start = time.monotonic()
 
+        _t = time.monotonic()
+        logger.info("phase: memify_prune starting")
         self._memify_prune(stats)
-        self._memify_strengthen(stats)
-        self._memify_reweight(stats)
-        self._memify_derive(stats)
+        logger.info("phase: memify_prune complete in %dms", int((time.monotonic() - _t) * 1000))
 
-        logger.info("Memify cycle complete: %s", stats)
+        _t = time.monotonic()
+        logger.info("phase: memify_strengthen starting")
+        self._memify_strengthen(stats)
+        logger.info(
+            "phase: memify_strengthen complete in %dms", int((time.monotonic() - _t) * 1000)
+        )
+
+        _t = time.monotonic()
+        logger.info("phase: memify_reweight starting")
+        self._memify_reweight(stats)
+        logger.info("phase: memify_reweight complete in %dms", int((time.monotonic() - _t) * 1000))
+
+        _t = time.monotonic()
+        logger.info("phase: memify_derive starting")
+        self._memify_derive(stats)
+        logger.info("phase: memify_derive complete in %dms", int((time.monotonic() - _t) * 1000))
+
+        logger.info(
+            "Memify cycle complete in %dms: %s",
+            int((time.monotonic() - _cycle_start) * 1000),
+            stats,
+        )
         return stats
 
     def _memify_prune(self, stats: dict) -> None:

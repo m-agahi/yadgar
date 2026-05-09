@@ -437,6 +437,15 @@ class CausalDiscovery:
             "stored_edges": stored_count,
             "status": "completed",
         }
+        logger.info(
+            "discover_dag: algorithm=%s, variables=%d, windows=%d, directed=%d, undirected=%d, stored=%d",
+            algorithm,
+            n_vars,
+            n_windows,
+            len(dag["directed_edges"]),
+            len(dag["undirected_edges"]),
+            stored_count,
+        )
 
         return dag
 

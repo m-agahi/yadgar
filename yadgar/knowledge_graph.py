@@ -1,11 +1,14 @@
 """Rich typed temporal knowledge graph for Yadgar."""
 
+import logging
 import re
 from collections import deque
 from datetime import UTC, datetime
 
 from yadgar.config import Settings
 from yadgar.storage import StorageEngine
+
+logger = logging.getLogger(__name__)
 
 VALID_REL_TYPES = frozenset(
     {
@@ -114,6 +117,7 @@ class KnowledgeGraph:
         created = 0
 
         entities = self._storage.get_all_entities(min_heat=0.0, include_archived=True)
+        logger.info("detect_causality: %d entities, threshold=%.2f", len(entities), threshold)
         entity_map = {e["id"]: e for e in entities}
 
         co_rels = self._storage.get_relationships_by_type_and_weight(
@@ -159,6 +163,7 @@ class KnowledgeGraph:
                         confidence=0.8,
                     )
                     created += 1
+        logger.debug("detect_causality: %d causal edges added", created)
         return created
 
     # -- d. Enhanced Entity Extraction --

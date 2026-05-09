@@ -6,15 +6,29 @@
 #   ./scripts/setup.sh --db /path/to/backup.surql --archive /path/to/archive
 #
 # Options:
-#   --db <file>       SurrealDB .surql export to restore
-#   --archive <dir>   Archive directory (memories/ + wiki/) to restore
-#   --version <tag>   Image tag to use (default: 4.4.0)
-#   --help            Show this help
+#   --db <file>        SurrealDB .surql export to restore
+#   --archive <dir>    Archive directory (memories/ + wiki/) to restore
+#   --version <tag>    Image tag to use (default: 4.4.7)
+#   --log-level <lvl>  YADGAR_LOG_LEVEL to inject into the core container (e.g. INFO, DEBUG)
+#   --root-user <u>    SurrealDB ROOT username (default: root)
+#   --root-pass <p>    SurrealDB ROOT password (default: root)
+#   --rw-user <u>      yadgar-rw DB OWNER username (YADGAR_RW_USER)
+#   --rw-pass <p>      yadgar-rw DB OWNER password (YADGAR_RW_PASS)
+#   --ro-user <u>      yadgar-ro DB VIEWER username (YADGAR_RO_USER)
+#   --ro-pass <p>      yadgar-ro DB VIEWER password (YADGAR_RO_PASS)
+#   --help             Show this help
 
 set -euo pipefail
 
-CORE_VERSION="4.4.0"
-BACKEND_VERSION="4.4.0"
+CORE_VERSION="4.4.7"
+BACKEND_VERSION="4.4.7"
+LOG_LEVEL=""
+ROOT_USER="root"
+ROOT_PASS="root"
+RW_USER=""
+RW_PASS=""
+RO_USER=""
+RO_PASS=""
 BACKEND_IMAGE="openfantasy/yadgar-backend:${BACKEND_VERSION}"
 CORE_IMAGE="openfantasy/yadgar:${CORE_VERSION}"
 BACKEND_CONTAINER="yadgar-backend"
@@ -36,8 +50,15 @@ while [[ $# -gt 0 ]]; do
         --archive)  ARCHIVE_DIR="$2";  shift 2 ;;
         --version)  CORE_VERSION="$2"; CORE_IMAGE="openfantasy/yadgar:${CORE_VERSION}"; shift 2 ;;
         --backend-version) BACKEND_VERSION="$2"; BACKEND_IMAGE="openfantasy/yadgar-backend:${BACKEND_VERSION}"; shift 2 ;;
+        --log-level) LOG_LEVEL="$2";   shift 2 ;;
+        --root-user) ROOT_USER="$2";   shift 2 ;;
+        --root-pass) ROOT_PASS="$2";   shift 2 ;;
+        --rw-user)  RW_USER="$2";      shift 2 ;;
+        --rw-pass)  RW_PASS="$2";      shift 2 ;;
+        --ro-user)  RO_USER="$2";      shift 2 ;;
+        --ro-pass)  RO_PASS="$2";      shift 2 ;;
         --help|-h)
-            sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *) echo "Unknown argument: $1" >&2; exit 1 ;;
     esac
@@ -148,7 +169,7 @@ if [[ -n "${DB_FILE}" ]]; then
     docker run --rm \
         --network "${NETWORK}" \
         -v "${DB_FILE}:/restore.surql:ro" \
-        surrealdb/surrealdb:v3.0.0 \
+        surrealdb/surrealdb:v3.0.5 \
         import \
         --endpoint http://"${BACKEND_CONTAINER}":8000 \
         --username root \
@@ -171,6 +192,18 @@ mkdir -p "${SERVICE_DIR}"
 HF_MOUNT=""
 [[ -d "${HF_CACHE}" ]] && HF_MOUNT="-v ${HF_CACHE}:/root/.cache/huggingface \\"$'\n    '
 
+LOG_LEVEL_ENV=""
+[[ -n "${LOG_LEVEL}" ]] && LOG_LEVEL_ENV="-e YADGAR_LOG_LEVEL=${LOG_LEVEL} \\"$'\n    '
+
+RW_ENV=""
+[[ -n "${RW_USER}" ]] && RW_ENV="-e YADGAR_RW_USER=${RW_USER} \\"$'\n    '"-e YADGAR_RW_PASS=${RW_PASS} \\"$'\n    '
+
+RO_ENV=""
+[[ -n "${RO_USER}" ]] && RO_ENV="-e YADGAR_RO_USER=${RO_USER} \\"$'\n    '"-e YADGAR_RO_PASS=${RO_PASS} \\"$'\n    '
+
+DB_USER_ENV=""
+[[ -n "${RW_USER}" ]] && DB_USER_ENV="-e YADGAR_DB_USER=${RW_USER} \\"$'\n    '"-e YADGAR_DB_PASS=${RW_PASS} \\"$'\n    '
+
 cat > "${SERVICE_DIR}/yadgar-backend.service" <<EOF
 [Unit]
 Description=Yadgar Backend (SurrealDB + Embeddings)
@@ -185,9 +218,9 @@ ExecStart=${DOCKER} run --name ${BACKEND_CONTAINER} --rm --user root \\
     --network ${NETWORK} \\
     -p 127.0.0.1:8001:8001 \\
     -v ${YADGAR_DIR}:/data \\
-    ${HF_MOUNT}-e SURREAL_USER=root \\
-    -e SURREAL_PASS=root \\
-    --memory 4g --cpus 2 --stop-timeout 30 \\
+    ${HF_MOUNT}-e SURREAL_USER=${ROOT_USER} \\
+    -e SURREAL_PASS=${ROOT_PASS} \\
+    ${RW_ENV}${RO_ENV}--memory 4g --cpus 2 --stop-timeout 30 \\
     ${BACKEND_IMAGE}
 ExecStop=${DOCKER} stop ${BACKEND_CONTAINER}
 Restart=on-failure
@@ -218,7 +251,7 @@ ExecStart=${DOCKER} run --name ${CORE_CONTAINER} --rm --user root \\
     -e YADGAR_HOST=0.0.0.0 \\
     -e YADGAR_PORT=8765 \\
     -e YADGAR_DATA_DIR=/data \\
-    --memory 1g --cpus 1 --stop-timeout 30 \\
+    ${LOG_LEVEL_ENV}--memory 1g --cpus 1 --stop-timeout 30 \\
     ${CORE_IMAGE}
 ExecStop=${DOCKER} stop ${CORE_CONTAINER}
 Restart=on-failure

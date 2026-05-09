@@ -279,6 +279,7 @@ class QueueDrainer(threading.Thread):
         files = self._queue.pending()
         processed = 0
         now = time.time()
+        logger.info("Queue drain pass: %d pending files", len(files))
 
         if files:
             for path in files:
@@ -328,6 +329,8 @@ class QueueDrainer(threading.Thread):
                     if attempt.count >= max_attempts:
                         self._move_to_dlq(path, attempt, op_type)
                         self._attempts.pop(fname, None)
+
+        logger.info("Queue drain pass complete: %d processed", processed)
 
         # Periodic archive + DLQ cleanup (roughly once per hour)
         self._drain_count += 1

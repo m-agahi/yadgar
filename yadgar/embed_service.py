@@ -77,6 +77,9 @@ app = FastAPI(title="yadgar-embed", version="1.0", lifespan=lifespan)
 
 @app.post("/embed", response_model=EmbedResponse)
 async def embed(req: EmbedRequest):
+    import time as _time
+
+    t0 = _time.monotonic()
     engine = _get_engine()
     if engine is None:
         raise HTTPException(status_code=503, detail="Embedding engine not ready")
@@ -98,6 +101,12 @@ async def embed(req: EmbedRequest):
         return results
 
     results = await asyncio.to_thread(_encode_all)
+    logger.info(
+        "embed: %d texts, mode=%s, latency=%dms",
+        len(req.texts),
+        req.mode,
+        int((_time.monotonic() - t0) * 1000),
+    )
     return EmbedResponse(
         embeddings=results,
         model=engine.model_name,

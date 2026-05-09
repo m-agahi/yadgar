@@ -9,6 +9,7 @@ Based on:
 
 import logging
 import re
+import time
 from collections import defaultdict
 
 from yadgar.config import Settings
@@ -352,6 +353,8 @@ class DualStoreCLS:
            e. Do NOT delete episodic memories
         3. Return stats
         """
+        logger.info("phase: cls_consolidation starting")
+        _cycle_start = time.monotonic()
         stats = {
             "patterns_found": 0,
             "promoted": 0,
@@ -360,8 +363,15 @@ class DualStoreCLS:
             "total_semantic": 0,
         }
 
+        _t = time.monotonic()
+        logger.info("phase: find_recurring_patterns starting")
         patterns = self.find_recurring_patterns()
         stats["patterns_found"] = len(patterns)
+        logger.info(
+            "phase: find_recurring_patterns complete in %dms, found %d patterns",
+            int((time.monotonic() - _t) * 1000),
+            len(patterns),
+        )
 
         for pattern in patterns:
             cluster_mems = pattern["memories"]
@@ -421,7 +431,11 @@ class DualStoreCLS:
         stats["total_episodic"] = self._storage.count_memories_by_store_type("episodic")
         stats["total_semantic"] = self._storage.count_memories_by_store_type("semantic")
 
-        logger.info("CLS consolidation cycle: %s", stats)
+        logger.info(
+            "CLS consolidation cycle complete in %dms: %s",
+            int((time.monotonic() - _cycle_start) * 1000),
+            stats,
+        )
         return stats
 
     # ── Dual-Store Query ──────────────────────────────────────────────────
