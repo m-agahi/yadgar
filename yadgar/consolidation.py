@@ -332,6 +332,7 @@ class ConsolidationScheduler:
         cold = self._settings.COLD_THRESHOLD
         action_stream_cold = self._settings.ACTION_STREAM_COLD_THRESHOLD
 
+        mem_batch: list[tuple[str, dict | None]] = []
         for mem in self._storage.get_all_memories_for_decay():
             if mem.get("is_protected"):
                 continue
@@ -348,18 +349,38 @@ class ConsolidationScheduler:
                 new_heat = 0.0
                 stats["memories_archived"] += 1
             if abs(new_heat - mem["heat"]) > 1e-9:
-                self._storage.update_memory_heat(mem["id"], new_heat)
+                mem_batch.append(
+                    (
+                        "UPDATE type::record('memory', $id) SET heat = $heat",
+                        {"id": mem["id"], "heat": new_heat},
+                    )
+                )
                 stats["memories_updated"] += 1
 
+        if mem_batch:
+            self._storage.batch_writes(mem_batch)
+
+        ent_batch: list[tuple[str, dict | None]] = []
         for ent in self._storage.get_all_entities_for_decay():
             last = datetime.fromisoformat(ent["last_accessed"])
             hours = (now - last).total_seconds() / 3600.0
             new_heat = ent["heat"] * (decay**hours)
-            if new_heat < cold:
+            goes_cold = new_heat < cold
+            if goes_cold:
                 new_heat = 0.0
-                self._storage.archive_entity(ent["id"])
-            if abs(new_heat - ent["heat"]) > 1e-9:
-                self._storage.update_entity_heat(ent["id"], new_heat)
+            if abs(new_heat - ent["heat"]) > 1e-9 or goes_cold:
+                set_clause = "heat = $heat"
+                if goes_cold:
+                    set_clause += ", archived = true"
+                ent_batch.append(
+                    (
+                        f"UPDATE type::record('entity', $id) SET {set_clause}",
+                        {"id": ent["id"], "heat": new_heat},
+                    )
+                )
+
+        if ent_batch:
+            self._storage.batch_writes(ent_batch)
 
     # -- Entity extraction and graph building --
 
