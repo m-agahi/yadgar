@@ -490,10 +490,10 @@ class ConsolidationScheduler:
     # -- Semantic similarity linking --
 
     def _link_similar_memories(self, stats: dict) -> None:
-        """Create relationship records between semantically similar memories.
+        """Create memory_similarity_link records between semantically similar memories.
 
         Uses numpy matrix multiplication for fast pairwise cosine similarity,
-        then creates entity + relationship records for pairs above threshold.
+        then upserts into memory_similarity_link (no entity-table rows created).
         Capped per cycle to keep consolidation fast.
         """
         import numpy as np
@@ -526,25 +526,9 @@ class ConsolidationScheduler:
         # Pairwise cosine similarity via matrix multiplication (fast)
         sim_matrix = matrix @ matrix.T  # N x N
 
-        # Pre-load existing entity names → IDs to avoid repeated DB lookups
-        entity_cache = {}
-        for mid in ids:
-            ename = f"memory:{mid}"
-            ent = self._storage.get_entity_by_name(ename)
-            if ent:
-                entity_cache[mid] = ent["id"]
-
-        # Pre-load existing relationships between known entities
-        existing_rels = set()
-        for eid_a in entity_cache.values():
-            for eid_b in entity_cache.values():
-                if eid_a < eid_b:
-                    existing_rels.add((eid_a, eid_b))
-
         # Find pairs above threshold (upper triangle only)
-        links_created = 0
-        len(ids)
         # Get indices sorted by descending similarity for best-first linking
+        links_created = 0
         rows, cols = np.where(np.triu(sim_matrix, k=1) >= threshold)
         sims = sim_matrix[rows, cols]
         order = np.argsort(-sims)
@@ -556,40 +540,16 @@ class ConsolidationScheduler:
             sim = float(sims[idx])
             mid_a, mid_b = ids[i], ids[j]
 
-            # Ensure entities exist
-            if mid_a not in entity_cache:
-                eid_a = self._storage.insert_entity({"name": f"memory:{mid_a}", "type": "memory"})
-                entity_cache[mid_a] = eid_a
-            else:
-                eid_a = entity_cache[mid_a]
+            existing = self._storage.get_memory_similarity_link(mid_a, mid_b)
+            if existing:
+                # Reinforce if new similarity is higher
+                if sim > existing.get("weight", 0):
+                    self._storage.reinforce_memory_similarity_link(
+                        existing["id"], sim - existing["weight"]
+                    )
+                continue
 
-            if mid_b not in entity_cache:
-                eid_b = self._storage.insert_entity({"name": f"memory:{mid_b}", "type": "memory"})
-                entity_cache[mid_b] = eid_b
-            else:
-                eid_b = entity_cache[mid_b]
-
-            # Skip if relationship already exists
-            rel_key = (min(eid_a, eid_b), max(eid_a, eid_b))
-            if rel_key in existing_rels:
-                existing = self._storage.get_relationship_between(eid_a, eid_b)
-                if existing:
-                    # Reinforce if new similarity is higher
-                    if sim > existing.get("weight", 0):
-                        self._storage.reinforce_relationship(
-                            existing["id"], sim - existing["weight"]
-                        )
-                    continue
-
-            self._storage.insert_relationship(
-                {
-                    "source_entity_id": eid_a,
-                    "target_entity_id": eid_b,
-                    "relationship_type": "semantic_similarity",
-                    "weight": round(sim, 4),
-                }
-            )
-            existing_rels.add(rel_key)
+            self._storage.insert_memory_similarity_link(mid_a, mid_b, round(sim, 4))
             links_created += 1
 
         stats["similarity_links_created"] = links_created

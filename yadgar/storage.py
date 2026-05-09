@@ -206,9 +206,22 @@ def _migration_002_relationship_indexes(storage: "StorageEngine") -> None:
     """)
 
 
+def _migration_003_memory_similarity_link_table(storage: "StorageEngine") -> None:
+    """Add memory_similarity_link table to stop entity-table bloat (perf v4.4.2)."""
+    storage._q("DEFINE TABLE IF NOT EXISTS memory_similarity_link TYPE ANY SCHEMALESS;")
+    storage._q("""
+        DEFINE INDEX IF NOT EXISTS memory_sim_link_pair_idx
+            ON memory_similarity_link FIELDS source_memory_id, target_memory_id UNIQUE;
+    """)
+
+
 _MIGRATIONS: list[dict] = [
     {"version": "001_hnsw_indexes", "fn": _migration_001_hnsw_indexes},
     {"version": "002_relationship_indexes", "fn": _migration_002_relationship_indexes},
+    {
+        "version": "003_memory_similarity_link_table",
+        "fn": _migration_003_memory_similarity_link_table,
+    },
 ]
 
 
@@ -1461,6 +1474,43 @@ class StorageEngine:
             "UPDATE type::record('relationship', $id) SET "
             "weight = weight + $inc, last_reinforced = $now",
             {"id": rel_id, "inc": weight_increase, "now": self._now_iso()},
+        )
+
+    # ------------------------------------------------------------------ Memory similarity links
+
+    def get_memory_similarity_link(self, mid_a: int, mid_b: int) -> dict | None:
+        src, tgt = (mid_a, mid_b) if mid_a < mid_b else (mid_b, mid_a)
+        rows = self._q(
+            "SELECT * FROM memory_similarity_link WHERE "
+            "source_memory_id = $src AND target_memory_id = $tgt LIMIT 1",
+            {"src": src, "tgt": tgt},
+        )
+        return self._row_to_dict(rows[0]) if rows else None
+
+    def insert_memory_similarity_link(self, mid_a: int, mid_b: int, weight: float) -> int:
+        src, tgt = (mid_a, mid_b) if mid_a < mid_b else (mid_b, mid_a)
+        now = self._now_iso()
+        lid = self._next_id("memory_similarity_link")
+        self._q(
+            "CREATE type::record('memory_similarity_link', $id) SET "
+            "source_memory_id = $src, target_memory_id = $tgt, "
+            "weight = $weight, created_at = $created_at, updated_at = $updated_at",
+            {
+                "id": lid,
+                "src": src,
+                "tgt": tgt,
+                "weight": weight,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        return lid
+
+    def reinforce_memory_similarity_link(self, link_id: int, weight_delta: float) -> None:
+        self._q(
+            "UPDATE type::record('memory_similarity_link', $id) SET "
+            "weight = weight + $delta, updated_at = $now",
+            {"id": link_id, "delta": weight_delta, "now": self._now_iso()},
         )
 
     # ------------------------------------------------------------------ File Hashes
