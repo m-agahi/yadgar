@@ -399,6 +399,7 @@ class MemoryCurator:
         entity_ids = list(entity_heat.keys())
 
         seen_rel_ids: set[int] = set()
+        pending: list[tuple[int, float]] = []  # (rel_id, delta)
         for i, src_id in enumerate(entity_ids):
             for tgt_id in entity_ids[i + 1 :]:
                 rel = self._storage.get_relationship_between(src_id, tgt_id)
@@ -416,15 +417,27 @@ class MemoryCurator:
 
                 if avg_heat > 0.7 and weight >= 5.0:
                     # Both entities are hot AND relationship is established -> boost
-                    self._storage.reinforce_relationship(rel_id, 0.5)
+                    pending.append((rel_id, 0.5))
                     stats["reweighted"] += 1
                 elif avg_heat < 0.1:
                     # Both entities are cold -> decay relationship
                     new_weight = max(weight * 0.9, 0.1)
                     delta = new_weight - weight
                     if abs(delta) > 1e-9:
-                        self._storage.reinforce_relationship(rel_id, delta)
+                        pending.append((rel_id, delta))
                         stats["reweighted"] += 1
+
+        if pending:
+            now = self._storage._now_iso()
+            batch = [
+                (
+                    "UPDATE type::record('relationship', $id) SET "
+                    "weight = weight + $inc, last_reinforced = $now",
+                    {"id": rel_id, "inc": delta, "now": now},
+                )
+                for rel_id, delta in pending
+            ]
+            self._storage.batch_writes(batch)
 
     def _memify_derive(self, stats: dict) -> None:
         """Generate synthetic derived-fact memories for high-weight entity pairs."""

@@ -487,6 +487,50 @@ class StorageEngine:
             return raw
         return []
 
+    def batch_writes(self, statements: list[tuple[str, dict | None]]) -> None:
+        """Execute multiple write statements in a single SurrealDB transaction.
+
+        Each (sql, params) tuple becomes one statement. LET bindings get
+        statement-scoped names to avoid collisions. Sends BEGIN/COMMIT in a
+        single HTTP POST — collapses N writes into 1 fsync.
+
+        Empty list is a no-op (no transaction sent).
+        Crash mid-batch rolls back the whole transaction.
+        Only supported in server mode (YADGAR_DB_URL set).
+        """
+        if not statements:
+            return
+        if self._db_url is None:
+            raise RuntimeError(
+                "batch_writes is only supported in server mode (YADGAR_DB_URL not set)"
+            )
+
+        import json as _json
+
+        parts = ["BEGIN TRANSACTION"]
+        for i, (sql, params) in enumerate(statements):
+            if params:
+                for k, v in params.items():
+                    parts.append(f"LET $p{i}_{k} = {_json.dumps(v, ensure_ascii=False)}")
+                # Rewrite $param_name → $p{i}_param_name using word-boundary regex
+                # to avoid corrupting longer tokens that share a prefix.
+                for k in params:
+                    sql = re.sub(rf"\${re.escape(k)}\b", f"$p{i}_{k}", sql)
+            parts.append(sql.rstrip(";"))
+        parts.append("COMMIT TRANSACTION")
+        body = ";\n".join(parts) + ";"
+
+        resp = self._http.post(
+            "/sql", content=body.encode(), headers={"Content-Type": "text/plain"}
+        )
+        resp.raise_for_status()
+        results = resp.json()
+        for entry in results:
+            if entry.get("status") == "ERR":
+                raise RuntimeError(
+                    f"SurrealDB batch error: {entry.get('detail') or entry.get('result') or entry}"
+                )
+
     def _enrich_content_for_fts(self, content: str) -> str:
         """Enrich content with split identifier tokens for better FTS matching."""
         tokens = content.split()
@@ -1512,6 +1556,11 @@ class StorageEngine:
             "weight = weight + $delta, updated_at = $now",
             {"id": link_id, "delta": weight_delta, "now": self._now_iso()},
         )
+
+    def get_all_memory_similarity_links(self) -> list[dict]:
+        """Return all memory_similarity_link rows. Used for pre-loading before batch writes."""
+        rows = self._q("SELECT * FROM memory_similarity_link")
+        return self._rows_to_dicts(rows)
 
     # ------------------------------------------------------------------ File Hashes
 
