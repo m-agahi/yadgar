@@ -1416,6 +1416,27 @@ class StorageEngine:
         )
         return self._row_to_dict(rows[0]) if rows else None
 
+    def get_all_relationships(self) -> list[dict]:
+        """Return all relationships in the store.
+
+        Used by memify_reweight to avoid the O(N²) per-pair HTTP pattern.
+        One HTTP request instead of N(N-1)/2.
+        """
+        rows = self._q("SELECT * FROM relationship")
+        return self._rows_to_dicts(rows)
+
+    def get_relationships_by_types(self, rel_types: list[str]) -> list[dict]:
+        """Return all relationships whose relationship_type is in rel_types.
+
+        Used by memify_derive to avoid the O(N²) per-pair HTTP pattern.
+        One HTTP request instead of N(N-1)/2.
+        """
+        rows = self._q(
+            "SELECT * FROM relationship WHERE relationship_type IN $types",
+            {"types": rel_types},
+        )
+        return self._rows_to_dicts(rows)
+
     def get_typed_relationship(self, source_id: int, target_id: int, rel_type: str) -> dict | None:
         """Return a relationship between two entities of a specific type (directional)."""
         rows = self._q(

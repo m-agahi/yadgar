@@ -430,36 +430,31 @@ class MemoryCurator:
         """
         entities = self._storage.get_all_entities(min_heat=0.0, include_archived=True)
         entity_heat = {e["id"]: (e.get("heat") or 0.0) for e in entities}
-        entity_ids = list(entity_heat.keys())
 
-        seen_rel_ids: set[int] = set()
+        # ONE query for all relationships instead of O(N²) per-pair HTTP calls.
+        relationships = self._storage.get_all_relationships()
+
         pending: list[tuple[int, float]] = []  # (rel_id, delta)
-        for i, src_id in enumerate(entity_ids):
-            for tgt_id in entity_ids[i + 1 :]:
-                rel = self._storage.get_relationship_between(src_id, tgt_id)
-                if rel is None:
-                    continue
-                rel_id = rel["id"]
-                if rel_id in seen_rel_ids:
-                    continue
-                seen_rel_ids.add(rel_id)
+        for rel in relationships:
+            sid = rel.get("source_entity_id")
+            tid = rel.get("target_entity_id")
+            if sid is None or tid is None:
+                continue
 
-                weight = rel.get("weight") or 1.0
-                src_heat = entity_heat.get(src_id, 0.0)
-                tgt_heat = entity_heat.get(tgt_id, 0.0)
-                avg_heat = (src_heat + tgt_heat) / 2.0
+            weight = rel.get("weight") or 1.0
+            avg_heat = (entity_heat.get(sid, 0.0) + entity_heat.get(tid, 0.0)) / 2.0
 
-                if avg_heat > 0.7 and weight >= 5.0:
-                    # Both entities are hot AND relationship is established -> boost
-                    pending.append((rel_id, 0.5))
+            if avg_heat > 0.7 and weight >= 5.0:
+                # Both entities are hot AND relationship is established -> boost
+                pending.append((rel["id"], 0.5))
+                stats["reweighted"] += 1
+            elif avg_heat < 0.1:
+                # Both entities are cold -> decay relationship
+                new_weight = max(weight * 0.9, 0.1)
+                delta = new_weight - weight
+                if abs(delta) > 1e-9:
+                    pending.append((rel["id"], delta))
                     stats["reweighted"] += 1
-                elif avg_heat < 0.1:
-                    # Both entities are cold -> decay relationship
-                    new_weight = max(weight * 0.9, 0.1)
-                    delta = new_weight - weight
-                    if abs(delta) > 1e-9:
-                        pending.append((rel_id, delta))
-                        stats["reweighted"] += 1
 
         if pending:
             now = self._storage._now_iso()
@@ -477,7 +472,6 @@ class MemoryCurator:
         """Generate synthetic derived-fact memories for high-weight entity pairs."""
         entities = self._storage.get_all_entities(min_heat=0.0, include_archived=True)
         entity_map = {e["id"]: e for e in entities}
-        entity_ids = list(entity_map.keys())
 
         # Pre-build existing content set for dedup
         existing_contents = {m["content"] for m in self._storage.get_all_memories_with_embeddings()}
@@ -485,52 +479,49 @@ class MemoryCurator:
         now = self._storage._now_iso()
         model_name = self._embeddings.get_model_name()
 
-        # Phase 1: walk entity pairs, compute embeddings, collect inserts
+        # ONE query for co_occurrence relationships instead of O(N²) per-pair HTTP calls.
+        relationships = self._storage.get_relationships_by_types(["co_occurrence"])
+
+        # Phase 1: walk relationships, compute embeddings, collect inserts
         to_insert: list[dict] = []
-        seen_rel_ids: set[int] = set()
-        for i, src_id in enumerate(entity_ids):
-            for tgt_id in entity_ids[i + 1 :]:
-                rel = self._storage.get_relationship_between(src_id, tgt_id)
-                if rel is None:
-                    continue
-                rel_id = rel["id"]
-                if rel_id in seen_rel_ids:
-                    continue
-                seen_rel_ids.add(rel_id)
+        for rel in relationships:
+            sid = rel.get("source_entity_id")
+            tid = rel.get("target_entity_id")
+            if sid is None or tid is None:
+                continue
 
-                weight = rel.get("weight") or 0.0
-                rel_type = rel.get("relationship_type") or ""
+            weight = rel.get("weight") or 0.0
 
-                # Check if co-occurrence count is high enough (weight as proxy)
-                if rel_type != "co_occurrence" or weight < 10.0:
-                    continue
+            # Check if co-occurrence count is high enough (weight as proxy)
+            if weight < 10.0:
+                continue
 
-                src_entity = entity_map.get(src_id)
-                tgt_entity = entity_map.get(tgt_id)
-                if src_entity is None or tgt_entity is None:
-                    continue
+            src_entity = entity_map.get(sid)
+            tgt_entity = entity_map.get(tid)
+            if src_entity is None or tgt_entity is None:
+                continue
 
-                src_name = src_entity["name"]
-                tgt_name = tgt_entity["name"]
+            src_name = src_entity["name"]
+            tgt_name = tgt_entity["name"]
 
-                # Check if we already derived a fact for this pair
-                derived_content = f"{src_name} and {tgt_name} are frequently modified together"
-                if derived_content in existing_contents:
-                    continue
+            # Check if we already derived a fact for this pair
+            derived_content = f"{src_name} and {tgt_name} are frequently modified together"
+            if derived_content in existing_contents:
+                continue
 
-                embedding = self._embeddings.encode(derived_content)
-                memory_id = self._storage._next_id("memory")
-                to_insert.append(
-                    {
-                        "memory_id": memory_id,
-                        "content": derived_content,
-                        "embedding": embedding,
-                        "src_name": src_name,
-                        "tgt_name": tgt_name,
-                    }
-                )
-                existing_contents.add(derived_content)
-                stats["derived"] += 1
+            embedding = self._embeddings.encode(derived_content)
+            memory_id = self._storage._next_id("memory")
+            to_insert.append(
+                {
+                    "memory_id": memory_id,
+                    "content": derived_content,
+                    "embedding": embedding,
+                    "src_name": src_name,
+                    "tgt_name": tgt_name,
+                }
+            )
+            existing_contents.add(derived_content)
+            stats["derived"] += 1
 
         if not to_insert:
             return

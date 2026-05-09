@@ -18,7 +18,7 @@ RUN useradd -r -m -u 1001 -s /sbin/nologin yadgar
 USER 1001
 
 CMD ["/entrypoint.sh"]
-LABEL version="4.4.7"
+LABEL version="4.4.8"
 
 # ── dev ───────────────────────────────────────────────────────────────────────
 FROM prod AS dev
