@@ -388,6 +388,15 @@ class StorageEngine:
             return int(rows[0].get("val", 1))
         return 1
 
+    def _reserve_ids(self, table: str, n: int) -> list[int]:
+        """Reserve n consecutive IDs in one HTTP request.
+
+        Returns [max-n+1, ..., max] so they can be assigned to n records.
+        """
+        rows = self._q(f"UPSERT counter:{table} SET val = (val ?? 0) + {n}")
+        top = int(rows[0].get("val", n)) if rows else n
+        return list(range(top - n + 1, top + 1))
+
     def _row_to_dict(self, record: dict | None) -> dict | None:
         if record is None:
             return None
@@ -1434,6 +1443,18 @@ class StorageEngine:
         rows = self._q(
             "SELECT * FROM relationship WHERE relationship_type IN $types",
             {"types": rel_types},
+        )
+        return self._rows_to_dicts(rows)
+
+    def get_relationships_among_entities(self, entity_ids: list[int]) -> list[dict]:
+        """Return all relationships where both endpoints are in entity_ids.
+
+        Used to avoid O(N²) per-pair HTTP calls when processing a bounded entity set.
+        One HTTP request instead of N(N-1)/2.
+        """
+        rows = self._q(
+            "SELECT * FROM relationship WHERE source_entity_id IN $ids AND target_entity_id IN $ids",
+            {"ids": entity_ids},
         )
         return self._rows_to_dicts(rows)
 

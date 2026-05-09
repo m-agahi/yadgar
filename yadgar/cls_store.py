@@ -421,9 +421,50 @@ class DualStoreCLS:
             # Set store_type to semantic
             self._storage.update_memory_fields(semantic_id, store_type="semantic")
 
-            # e. Link episodic memories to semantic via derived_from
+            # e. Link episodic memories to semantic via derived_from —
+            # ONE bulk fetch instead of O(cluster_size) per-pair HTTP calls.
+            tgt_name = f"memory:{semantic_id}"
+            tgt_entity = self._storage.get_entity_by_name(tgt_name)
+            if tgt_entity is None:
+                tgt_eid = self._storage.insert_entity({"name": tgt_name, "type": "file"})
+            else:
+                tgt_eid = tgt_entity["id"]
+
+            # Resolve (or create) source entity ids for each episodic memory.
+            src_eids: list[int] = []
             for mem in cluster_mems:
-                self._create_derived_link(mem["id"], semantic_id)
+                src_name = f"memory:{mem['id']}"
+                src_entity = self._storage.get_entity_by_name(src_name)
+                if src_entity is None:
+                    src_eid = self._storage.insert_entity({"name": src_name, "type": "file"})
+                else:
+                    src_eid = src_entity["id"]
+                src_eids.append(src_eid)
+
+            # One bulk relationship fetch for all (src_eid, tgt_eid) pairs.
+            all_eids = src_eids + [tgt_eid]
+            existing_rels = self._storage.get_relationships_among_entities(all_eids)
+            rel_index: dict[tuple[int, int], dict] = {
+                (
+                    min(r["source_entity_id"], r["target_entity_id"]),
+                    max(r["source_entity_id"], r["target_entity_id"]),
+                ): r
+                for r in existing_rels
+            }
+
+            for src_eid in src_eids:
+                key = (min(src_eid, tgt_eid), max(src_eid, tgt_eid))
+                existing = rel_index.get(key)
+                if existing:
+                    self._storage.reinforce_relationship(existing["id"])
+                else:
+                    self._storage.insert_relationship(
+                        {
+                            "source_entity_id": src_eid,
+                            "target_entity_id": tgt_eid,
+                            "relationship_type": "derived_from",
+                        }
+                    )
 
             stats["promoted"] += 1
 
@@ -539,34 +580,3 @@ class DualStoreCLS:
         """Generate a brief summary of a cluster of memories."""
         contents = [m.get("content", "")[:100] for m in cluster[:3]]
         return " | ".join(contents)
-
-    def _create_derived_link(self, episodic_id: int, semantic_id: int) -> None:
-        """Create a derived_from relationship between an episodic and semantic memory."""
-        # Create entity nodes for the memories if they don't exist
-        src_name = f"memory:{episodic_id}"
-        tgt_name = f"memory:{semantic_id}"
-
-        src_entity = self._storage.get_entity_by_name(src_name)
-        if src_entity is None:
-            src_eid = self._storage.insert_entity({"name": src_name, "type": "file"})
-        else:
-            src_eid = src_entity["id"]
-
-        tgt_entity = self._storage.get_entity_by_name(tgt_name)
-        if tgt_entity is None:
-            tgt_eid = self._storage.insert_entity({"name": tgt_name, "type": "file"})
-        else:
-            tgt_eid = tgt_entity["id"]
-
-        # Check for existing relationship
-        existing = self._storage.get_relationship_between(src_eid, tgt_eid)
-        if existing:
-            self._storage.reinforce_relationship(existing["id"])
-        else:
-            self._storage.insert_relationship(
-                {
-                    "source_entity_id": src_eid,
-                    "target_entity_id": tgt_eid,
-                    "relationship_type": "derived_from",
-                }
-            )

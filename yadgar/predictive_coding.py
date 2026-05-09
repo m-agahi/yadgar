@@ -290,17 +290,18 @@ class WriteGate:
         if not new_rel_contexts:
             return 0.2  # No relationship signals
 
-        # Check which relationship types already exist by sampling entity relationships
+        # Check which relationship types already exist — ONE bulk fetch instead of O(N²) HTTP calls.
         existing_rel_types = set()
         all_entities = self._storage.get_all_entities(min_heat=0.0, include_archived=True)
-        # Check relationships between entities mentioned in content
         content_entity_names = {name for name, _, _ in extracted}
         content_entities = [e for e in all_entities if e["name"] in content_entity_names]
-        for i, src in enumerate(content_entities):
-            for tgt in content_entities[i + 1 :]:
-                rel = self._storage.get_relationship_between(src["id"], tgt["id"])
-                if rel and rel.get("relationship_type"):
-                    existing_rel_types.add(rel["relationship_type"])
+        if content_entities:
+            content_entity_ids = [e["id"] for e in content_entities]
+            rels = self._storage.get_relationships_among_entities(content_entity_ids)
+            for rel in rels:
+                rtype = rel.get("relationship_type")
+                if rtype:
+                    existing_rel_types.add(rtype)
 
         # Check if any extracted relationship contexts are truly new
         has_new = False

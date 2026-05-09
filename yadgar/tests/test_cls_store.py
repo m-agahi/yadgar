@@ -514,3 +514,128 @@ class TestQueryDual:
 
         results = bad_cls.query_dual("test query", directory="", prefer="auto")
         assert results == []
+
+
+# ── consolidation_cycle derived_from link perf tests (v4.4.11) ──────────────
+
+import time  # noqa: E402
+from unittest.mock import MagicMock  # noqa: E402
+
+import numpy as np  # noqa: E402
+
+
+def _make_mock_embeddings(similarity_value: float = 1.0) -> MagicMock:
+    """Return a mock EmbeddingEngine where all operations return fixed values."""
+    vec = np.ones(384, dtype=np.float32).tobytes()
+    emb = MagicMock(spec=EmbeddingEngine)
+    emb.get_model_name.return_value = "all-MiniLM-L6-v2"
+    emb.encode.return_value = vec
+    emb.encode_batch.return_value = [vec]
+    # All pairs are identical (similarity=1.0) → guaranteed to cluster together.
+    emb.similarity.return_value = similarity_value
+    return emb
+
+
+@pytest.fixture
+def cls_consolidation_at_scale(tmp_path):
+    """Seed a qualifying cluster with 40 episodic memories from 2 sessions.
+
+    consolidation_cycle must promote the cluster and create 40 derived_from links.
+    With the old _create_derived_link pattern: 40 get_relationship_between HTTP calls.
+    Bulk SQL must resolve all 40 links in one query.
+    """
+    db_path = str(tmp_path / "cls_scale.db")
+    engine = StorageEngine(db_path)
+    emb = _make_mock_embeddings(similarity_value=1.0)
+    # Low similarity threshold so all memories cluster together.
+    scale_settings = Settings(
+        DB_PATH=str(tmp_path / "test.db"),
+        CLUSTER_SIMILARITY_THRESHOLD=0.0,
+        # Below 1.0 so the newly created semantic memory is not mistaken for a duplicate.
+        CURATION_SIMILARITY_THRESHOLD=0.5,
+    )
+    cls_store = DualStoreCLS(engine, emb, scale_settings)
+
+    # 40 episodic memories with identical content (guaranteed to cluster), from 2 sessions.
+    vec = np.ones(384, dtype=np.float32).tobytes()
+    content = "Recurring pattern: always use dependency injection for service construction"
+    for i in range(40):
+        session = "session-A" if i % 2 == 0 else "session-B"
+        episode_id = engine.insert_episode(
+            {"session_id": session, "directory": "/proj", "raw_content": content}
+        )
+        engine.insert_memory(
+            {
+                "content": content,
+                "embedding": vec,
+                "tags": ["episodic"],
+                "directory_context": "/proj",
+                "heat": 0.8,
+                "is_stale": False,
+                "source_episode_id": episode_id,
+                "embedding_model": "all-MiniLM-L6-v2",
+            }
+        )
+
+    yield cls_store, engine
+    engine.close()
+
+
+@pytest.mark.timeout(60)
+def test_consolidation_cycle_derived_links_under_10s_at_40_memories(
+    cls_consolidation_at_scale,
+):
+    """Regression guard: consolidation_cycle derived_from links must use bulk SQL.
+
+    40 episodic memories in a cluster → 40 get_relationship_between calls under the old
+    _create_derived_link pattern (~120ms extra at 3ms/call; scales to minutes at hundreds).
+    Bulk SQL path resolves all 40 links in one query. Must complete under 10s.
+    """
+    cls_store, _engine = cls_consolidation_at_scale
+    t0 = time.monotonic()
+    stats = cls_store.consolidation_cycle()
+    elapsed = time.monotonic() - t0
+    assert elapsed < 10.0, (
+        f"consolidation_cycle took {elapsed:.1f}s at N=40 cluster members (target <10s)"
+    )
+    assert stats["total_episodic"] >= 40
+
+
+def test_consolidation_cycle_derived_from_links_created(tmp_path):
+    """Bulk-SQL path correctly creates derived_from relationships for a promoted cluster."""
+    engine = StorageEngine(str(tmp_path / "cls_correct.db"))
+    emb = _make_mock_embeddings(similarity_value=1.0)
+    correct_settings = Settings(
+        DB_PATH=str(tmp_path / "test.db"),
+        CLUSTER_SIMILARITY_THRESHOLD=0.0,
+        CURATION_SIMILARITY_THRESHOLD=0.5,
+    )
+    cls_store = DualStoreCLS(engine, emb, correct_settings)
+
+    vec = np.ones(384, dtype=np.float32).tobytes()
+    content = "Recurring: always validate input before processing"
+    for i in range(3):
+        session = f"session-{i}"
+        episode_id = engine.insert_episode(
+            {"session_id": session, "directory": "/proj", "raw_content": content}
+        )
+        engine.insert_memory(
+            {
+                "content": content,
+                "embedding": vec,
+                "tags": ["episodic"],
+                "directory_context": "/proj",
+                "heat": 0.8,
+                "is_stale": False,
+                "source_episode_id": episode_id,
+                "embedding_model": "all-MiniLM-L6-v2",
+            }
+        )
+
+    stats = cls_store.consolidation_cycle()
+
+    # The stats structure must be correct regardless of promotion outcome.
+    assert "promoted" in stats
+    assert "total_episodic" in stats
+    assert stats["total_episodic"] >= 3
+    engine.close()

@@ -612,3 +612,77 @@ class TestEmbeddingNovelty:
             "Configuring Flask with SQLAlchemy for database operations"
         )
         assert novelty < 0.5
+
+
+# ── structural_novelty bulk-SQL perf tests (v4.4.10) ────────────────────────
+
+import time  # noqa: E402
+
+
+@pytest.fixture
+def structural_novelty_at_scale(tmp_path, settings, embeddings):
+    """Seed 50 entities whose names appear in content via 'from X import Y' statements.
+
+    'from X import Y' gives Y a rel_context="imports", so new_rel_contexts is non-empty
+    and the entity-pair loop actually runs. 50 'Y' entities → up to 1225 pairs.
+    At 3ms/pair that is ~3.7s with the old per-pair HTTP pattern.
+    """
+    from yadgar.knowledge_graph import KnowledgeGraph
+    from yadgar.retrieval import Retriever
+
+    engine = StorageEngine(str(tmp_path / "sn_scale.db"))
+    kg = KnowledgeGraph(engine, settings)
+    retriever = Retriever(engine, embeddings, kg, settings)
+    gate = WriteGate(engine, embeddings, retriever, settings)
+
+    n = 50
+    # "from base import func0, func1, ..." → each funcN gets rel_context="imports"
+    # All funcN names become content_entity_names; pre-insert them so they appear in all_entities
+    names = [f"func{i}" for i in range(n)]
+    for name in names:
+        engine.insert_entity({"name": name, "type": "function"})
+
+    # Single "from base import func0, func1, ..." line → n names with rel_context="imports"
+    content = "from base import " + ", ".join(names)
+
+    yield gate, engine, content
+    engine.close()
+
+
+@pytest.mark.timeout(60)
+def test_structural_novelty_under_5s_at_50_entities(structural_novelty_at_scale):
+    """Regression guard: _compute_structural_novelty must use bulk SQL not per-pair HTTP.
+
+    50 entities in content → up to 1225 pairs. Bulk SQL must finish under 5s.
+    """
+    gate, _engine, content = structural_novelty_at_scale
+    t0 = time.monotonic()
+    gate._compute_structural_novelty(content, "/proj")
+    elapsed = time.monotonic() - t0
+    assert elapsed < 5.0, f"_compute_structural_novelty took {elapsed:.1f}s at N=50 (target <5s)"
+
+
+def test_structural_novelty_correctness_returns_float(tmp_path, settings, embeddings):
+    """Bulk-SQL path returns a valid float in [0, 1]."""
+    from yadgar.knowledge_graph import KnowledgeGraph
+    from yadgar.retrieval import Retriever
+
+    engine = StorageEngine(str(tmp_path / "sn_correct.db"))
+    kg = KnowledgeGraph(engine, settings)
+    retriever = Retriever(engine, embeddings, kg, settings)
+    gate = WriteGate(engine, embeddings, retriever, settings)
+
+    e1 = engine.insert_entity({"name": "alpha", "type": "dependency"})
+    e2 = engine.insert_entity({"name": "beta", "type": "dependency"})
+    engine.insert_relationship(
+        {
+            "source_entity_id": e1,
+            "target_entity_id": e2,
+            "relationship_type": "imports",
+        }
+    )
+
+    result = gate._compute_structural_novelty("import alpha\nimport beta", "/proj")
+    assert isinstance(result, float)
+    assert 0.0 <= result <= 1.0
+    engine.close()

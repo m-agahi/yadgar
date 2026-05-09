@@ -453,3 +453,211 @@ class TestFullSleepCycle:
         assert stats["communities"] == []
         assert stats["reembedded"] == 0
         assert stats["compressed"] == 0
+
+
+# ── detect_communities bulk-SQL perf tests (v4.4.10) ────────────────────────
+
+import time  # noqa: E402
+
+
+@pytest.fixture
+def communities_at_scale(tmp_path, settings, mock_embeddings):
+    """Seed 100 entities + sparse relationships for community detection perf test.
+
+    100 entities → 4950 pairs in detect_communities nested loop.
+    At 3ms/pair that is ~15s with the old per-pair HTTP pattern.
+    """
+    engine = StorageEngine(str(tmp_path / "comm_scale.db"))
+    graph = KnowledgeGraph(engine, settings)
+    thermo = MemoryThermodynamics(engine, mock_embeddings, settings)
+    curator = MemoryCurator(engine, mock_embeddings, thermo, settings)
+    sleep_eng = SleepComputeEngine(engine, mock_embeddings, graph, curator, thermo, settings)
+
+    rng = random.Random(42)
+    n = 100
+    entity_ids = []
+    for i in range(n):
+        eid = engine.insert_entity({"name": f"ent_{i}", "type": "file"})
+        entity_ids.append(eid)
+
+    # Sparse relationships: ~50 random pairs
+    inserted: set[tuple[int, int]] = set()
+    for _ in range(50):
+        a, b = rng.sample(entity_ids, 2)
+        key = (min(a, b), max(a, b))
+        if key not in inserted:
+            inserted.add(key)
+            engine.insert_relationship(
+                {"source_entity_id": a, "target_entity_id": b, "relationship_type": "co_occurrence"}
+            )
+
+    yield sleep_eng, engine
+    engine.close()
+
+
+@pytest.mark.timeout(60)
+def test_detect_communities_under_5s_at_100_entities(communities_at_scale):
+    """Regression guard: detect_communities must use bulk SQL not per-pair HTTP.
+
+    100 entities → 4950 pairs. Bulk SQL should complete well under 5s.
+    Would exceed the 60s timeout with the old per-pair HTTP pattern.
+    """
+    sleep_eng, _engine = communities_at_scale
+    t0 = time.monotonic()
+    sleep_eng.detect_communities()
+    elapsed = time.monotonic() - t0
+    assert elapsed < 5.0, f"detect_communities took {elapsed:.1f}s at N=100 (target <5s)"
+
+
+def test_detect_communities_correctness_finds_clusters(tmp_path, settings, mock_embeddings):
+    """Bulk-SQL path correctly identifies communities from relationship graph."""
+    engine = StorageEngine(str(tmp_path / "comm_correct.db"))
+    graph = KnowledgeGraph(engine, settings)
+    thermo = MemoryThermodynamics(engine, mock_embeddings, settings)
+    curator = MemoryCurator(engine, mock_embeddings, thermo, settings)
+    sleep_eng = SleepComputeEngine(engine, mock_embeddings, graph, curator, thermo, settings)
+
+    # Two clusters: A-B-C fully connected, D-E-F fully connected
+    cluster1 = [engine.insert_entity({"name": f"a{i}", "type": "file"}) for i in range(3)]
+    cluster2 = [engine.insert_entity({"name": f"b{i}", "type": "file"}) for i in range(3)]
+
+    for i, a in enumerate(cluster1):
+        for b in cluster1[i + 1 :]:
+            engine.insert_relationship(
+                {"source_entity_id": a, "target_entity_id": b, "relationship_type": "co_occurrence"}
+            )
+    for i, a in enumerate(cluster2):
+        for b in cluster2[i + 1 :]:
+            engine.insert_relationship(
+                {"source_entity_id": a, "target_entity_id": b, "relationship_type": "co_occurrence"}
+            )
+
+    communities = sleep_eng.detect_communities()
+    assert len(communities) >= 1
+    engine.close()
+
+
+# ── dream_replay bulk-SQL perf tests (v4.4.11) ──────────────────────────────
+
+
+@pytest.fixture
+def dream_replay_at_scale(tmp_path, settings):
+    """Seed 60 memories with pre-existing entity nodes and no inter-entity relationships.
+
+    dream_replay with DREAM_REPLAY_PAIRS=200 → up to 200 _memories_connected checks.
+    Each check was one get_relationship_between HTTP call (~3ms) under the old pattern.
+    Bulk SQL must complete well under 5s.
+    """
+    high_pairs_settings = Settings(
+        DB_PATH=str(tmp_path / "test.db"),
+        DREAM_REPLAY_PAIRS=200,
+    )
+    engine = StorageEngine(str(tmp_path / "dream_scale.db"))
+    graph = KnowledgeGraph(engine, high_pairs_settings)
+    thermo = MemoryThermodynamics(engine, MagicMock(spec=EmbeddingEngine), high_pairs_settings)
+    curator = MemoryCurator(
+        engine,
+        MagicMock(spec=EmbeddingEngine),
+        thermo,
+        high_pairs_settings,
+    )
+
+    mock_emb = MagicMock(spec=EmbeddingEngine)
+    mock_emb.get_model_name.return_value = "all-MiniLM-L6-v2"
+    # All memories have embeddings; similarity below threshold so no writes occur
+    mock_emb.encode.return_value = np.ones(384, dtype=np.float32).tobytes()
+    mock_emb.similarity.return_value = 0.1  # below 0.4 threshold → pairs_examined but no writes
+
+    sleep_eng = SleepComputeEngine(engine, mock_emb, graph, curator, thermo, high_pairs_settings)
+
+    n = 60
+    vec = np.ones(384, dtype=np.float32).tobytes()
+    for i in range(n):
+        mem_id = engine.insert_memory(
+            {
+                "content": f"memory content {i}",
+                "embedding": vec,
+                "tags": [],
+                "directory_context": "/proj",
+                "heat": 0.5,
+                "is_stale": False,
+                "embedding_model": "all-MiniLM-L6-v2",
+            }
+        )
+        # Pre-create entity nodes so _memories_connected/entity resolution has work to do.
+        engine.insert_entity({"name": f"memory:{mem_id}", "type": "file"})
+
+    yield sleep_eng, engine
+    engine.close()
+
+
+@pytest.mark.timeout(60)
+def test_dream_replay_under_5s_at_60_memories(dream_replay_at_scale):
+    """Regression guard: dream_replay must use bulk SQL not per-pair HTTP.
+
+    60 memories × 200 DREAM_REPLAY_PAIRS. With the old _memories_connected pattern,
+    each pair triggered one get_relationship_between HTTP call (~3ms each → ~0.6s for
+    200 pairs). The bulk SQL path resolves all entity ids + relationships in two queries.
+    Must complete under 5s.
+    """
+    sleep_eng, _engine = dream_replay_at_scale
+    random.seed(42)
+    t0 = time.monotonic()
+    sleep_eng.dream_replay()
+    elapsed = time.monotonic() - t0
+    assert elapsed < 5.0, f"dream_replay took {elapsed:.1f}s at N=60 memories (target <5s)"
+
+
+def test_dream_replay_correctness_skips_connected(tmp_path, settings):
+    """Bulk-SQL path correctly skips memory pairs that already have a relationship."""
+    engine = StorageEngine(str(tmp_path / "dream_correct.db"))
+    graph = KnowledgeGraph(engine, settings)
+
+    mock_emb = MagicMock(spec=EmbeddingEngine)
+    mock_emb.get_model_name.return_value = "all-MiniLM-L6-v2"
+    mock_emb.encode.return_value = np.ones(384, dtype=np.float32).tobytes()
+    # High similarity so pairs WOULD be connected if not already skipped
+    mock_emb.similarity.return_value = 0.9
+
+    thermo = MemoryThermodynamics(engine, mock_emb, settings)
+    curator = MemoryCurator(engine, mock_emb, thermo, settings)
+    sleep_eng = SleepComputeEngine(engine, mock_emb, graph, curator, thermo, settings)
+
+    vec = np.ones(384, dtype=np.float32).tobytes()
+    mid_a = engine.insert_memory(
+        {
+            "content": "alpha memory",
+            "embedding": vec,
+            "directory_context": "/proj",
+            "heat": 0.8,
+            "is_stale": False,
+            "embedding_model": "all-MiniLM-L6-v2",
+        }
+    )
+    mid_b = engine.insert_memory(
+        {
+            "content": "beta memory",
+            "embedding": vec,
+            "directory_context": "/proj",
+            "heat": 0.8,
+            "is_stale": False,
+            "embedding_model": "all-MiniLM-L6-v2",
+        }
+    )
+
+    # Create entity nodes and a pre-existing relationship between them.
+    eid_a = engine.insert_entity({"name": f"memory:{mid_a}", "type": "file"})
+    eid_b = engine.insert_entity({"name": f"memory:{mid_b}", "type": "file"})
+    engine.insert_relationship(
+        {"source_entity_id": eid_a, "target_entity_id": eid_b, "relationship_type": "co_occurrence"}
+    )
+
+    random.seed(42)
+    stats = sleep_eng.dream_replay()
+
+    # The pair is already connected so dream_replay should skip it (pairs_examined = 0).
+    assert stats["pairs_examined"] == 0, (
+        f"Already-connected pair should be skipped, but pairs_examined={stats['pairs_examined']}"
+    )
+    assert stats["connections_found"] == 0
+    engine.close()

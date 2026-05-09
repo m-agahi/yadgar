@@ -87,6 +87,26 @@ class SleepComputeEngine:
             pairs.add((min(i, j), max(i, j)))
             attempts += 1
 
+        # Pre-build a connected-pair index: ONE bulk fetch instead of one
+        # get_relationship_between HTTP call per pair (_memories_connected).
+        candidate_mem_ids = {memories[i]["id"] for idx_pair in pairs for i in idx_pair}
+        # Resolve memory-entity names → entity ids (only for already-existing entities).
+        mem_entity_id: dict[int, int] = {}
+        for mid in candidate_mem_ids:
+            ent = self._storage.get_entity_by_name(f"memory:{mid}")
+            if ent is not None:
+                mem_entity_id[mid] = ent["id"]
+
+        # Bulk-fetch all relationships among the entity ids we found.
+        connected_pairs: set[tuple[int, int]] = set()
+        if len(mem_entity_id) >= 2:
+            entity_ids = list(mem_entity_id.values())
+            for rel in self._storage.get_relationships_among_entities(entity_ids):
+                sid = rel.get("source_entity_id")
+                tid = rel.get("target_entity_id")
+                if sid is not None and tid is not None:
+                    connected_pairs.add((min(sid, tid), max(sid, tid)))
+
         for idx_a, idx_b in pairs:
             mem_a = memories[idx_a]
             mem_b = memories[idx_b]
@@ -94,9 +114,12 @@ class SleepComputeEngine:
             if mem_a["embedding"] is None or mem_b["embedding"] is None:
                 continue
 
-            # Skip already-connected memories
-            if self._memories_connected(mem_a["id"], mem_b["id"]):
-                continue
+            # Skip already-connected memories — O(1) dict+set lookup.
+            eid_a = mem_entity_id.get(mem_a["id"])
+            eid_b = mem_entity_id.get(mem_b["id"])
+            if eid_a is not None and eid_b is not None:
+                if (min(eid_a, eid_b), max(eid_a, eid_b)) in connected_pairs:
+                    continue
 
             stats["pairs_examined"] += 1
             sim = self._embeddings.similarity(mem_a["embedding"], mem_b["embedding"])
@@ -113,15 +136,6 @@ class SleepComputeEngine:
                 stats["connections_found"] += 1
 
         return stats
-
-    def _memories_connected(self, mem_a_id: int, mem_b_id: int) -> bool:
-        """Check if two memories are already connected via entity relationships."""
-        entity_a = self._storage.get_entity_by_name(f"memory:{mem_a_id}")
-        entity_b = self._storage.get_entity_by_name(f"memory:{mem_b_id}")
-        if entity_a and entity_b:
-            rel = self._storage.get_relationship_between(entity_a["id"], entity_b["id"])
-            return rel is not None
-        return False
 
     def _create_dream_connection(self, mem_a_id: int, mem_b_id: int) -> None:
         """Create a weak co_occurrence link between two memories."""
@@ -185,13 +199,12 @@ class SleepComputeEngine:
         for e in entities:
             G.add_node(e["id"], name=e["name"], type=e["type"])
 
-        # Build edges from all entity pairs using public API
-        entity_ids = list(entity_map.keys())
-        for i, src_id in enumerate(entity_ids):
-            for tgt_id in entity_ids[i + 1 :]:
-                rel = self._storage.get_relationship_between(src_id, tgt_id)
-                if rel is not None:
-                    G.add_edge(src_id, tgt_id, weight=rel.get("weight") or 1.0)
+        # Build edges — ONE bulk fetch instead of O(N²) per-pair HTTP calls.
+        for rel in self._storage.get_all_relationships():
+            src_id = rel.get("source_entity_id")
+            tgt_id = rel.get("target_entity_id")
+            if src_id in entity_map and tgt_id in entity_map:
+                G.add_edge(src_id, tgt_id, weight=rel.get("weight") or 1.0)
 
         if G.number_of_edges() == 0:
             return []
