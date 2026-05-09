@@ -242,6 +242,11 @@ class StorageEngine:
 
             _user = os.environ.get("YADGAR_DB_USER", "root")
             _pass = os.environ.get("YADGAR_DB_PASS", "root")
+            if _user == "root" or _pass == "root":
+                _log.warning(
+                    "Using default 'root' credentials for SurrealDB — set YADGAR_DB_USER and"
+                    " YADGAR_DB_PASS to the yadgar-rw user for production"
+                )
             _auth = base64.b64encode(f"{_user}:{_pass}".encode()).decode()
             self._http = httpx.Client(
                 base_url=self._db_url,

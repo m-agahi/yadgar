@@ -251,7 +251,7 @@ ExecStart=${DOCKER} run --name ${CORE_CONTAINER} --rm --user root \\
     -e YADGAR_HOST=0.0.0.0 \\
     -e YADGAR_PORT=8765 \\
     -e YADGAR_DATA_DIR=/data \\
-    ${LOG_LEVEL_ENV}--memory 1g --cpus 1 --stop-timeout 30 \\
+    ${DB_USER_ENV}${LOG_LEVEL_ENV}--memory 1g --cpus 1 --stop-timeout 30 \\
     ${CORE_IMAGE}
 ExecStop=${DOCKER} stop ${CORE_CONTAINER}
 Restart=on-failure

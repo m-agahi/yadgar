@@ -29,6 +29,22 @@ do
   sleep 0.2
 done
 
+# Bootstrap database users (idempotent — IF NOT EXISTS).
+# Required env vars: YADGAR_RW_USER, YADGAR_RW_PASS, YADGAR_RO_USER, YADGAR_RO_PASS.
+# If any are missing, log a warning and skip (legacy mode — only ROOT user exists).
+if [[ -n "${YADGAR_RW_USER}" && -n "${YADGAR_RW_PASS}" && -n "${YADGAR_RO_USER}" && -n "${YADGAR_RO_PASS}" ]]; then
+    echo "Bootstrapping yadgar-rw and yadgar-ro users..."
+    _creds="${SURREAL_USER:-root}:${SURREAL_PASS:-root}"  # gitleaks:allow
+    _bootstrap_sql="DEFINE USER IF NOT EXISTS \"${YADGAR_RW_USER}\" ON DATABASE PASSWORD '${YADGAR_RW_PASS}' ROLES OWNER; DEFINE USER IF NOT EXISTS \"${YADGAR_RO_USER}\" ON DATABASE PASSWORD '${YADGAR_RO_PASS}' ROLES VIEWER;"
+    if curl -sf -u "${_creds}" -H "Surreal-NS: yadgar" -H "Surreal-DB: main" -H "Content-Type: text/plain" -X POST --data "${_bootstrap_sql}" http://127.0.0.1:8000/sql >/dev/null; then
+        echo "User bootstrap complete (yadgar-rw OWNER, yadgar-ro VIEWER)"
+    else
+        echo "WARNING: user bootstrap failed; backend may be running with only ROOT user" >&2
+    fi
+else
+    echo "WARNING: YADGAR_RW_USER/PASS or YADGAR_RO_USER/PASS not set — skipping user bootstrap (legacy ROOT-only mode)" >&2
+fi
+
 # Start embedding service
 python3 -m uvicorn yadgar.embed_service:app \
   --host 0.0.0.0 \
