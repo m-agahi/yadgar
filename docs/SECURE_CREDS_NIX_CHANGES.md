@@ -26,7 +26,7 @@ into each container's `ExecStart` line.
 | Item name    | Fields              | Role                        |
 |--------------|---------------------|-----------------------------|
 | yadgar-root  | username, password  | SurrealDB ROOT (bootstrap)  |
-| yadgar-rw    | username, password  | DB OWNER (yadgar StorageEngine) |
-| yadgar-ro    | username, password  | DB VIEWER (ad-hoc queries)  |
+| yadgar-rw    | username, password  | ROOT OWNER (yadgar StorageEngine; ON ROOT required for Basic auth in SurrealDB v3) |
+| yadgar-ro    | username, password  | ROOT VIEWER (ad-hoc queries; ON ROOT required for Basic auth in SurrealDB v3) |
 
 All items under vault: `Private`.
