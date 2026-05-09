@@ -32,12 +32,18 @@ done
 # Bootstrap database users (idempotent — IF NOT EXISTS).
 # Required env vars: YADGAR_RW_USER, YADGAR_RW_PASS, YADGAR_RO_USER, YADGAR_RO_PASS.
 # If any are missing, log a warning and skip (legacy mode — only ROOT user exists).
+#
+# Users are defined ON ROOT (not ON DATABASE) because SurrealDB v3 only supports
+# HTTP Basic auth for ON ROOT and ON NAMESPACE users. ON DATABASE users must use
+# the JWT /signin flow, which yadgar's StorageEngine does not implement. The
+# tradeoff: these users have full-server access rather than DB-scoped access.
+# If finer-grained isolation is needed, migrate StorageEngine to JWT auth.
 if [[ -n "${YADGAR_RW_USER}" && -n "${YADGAR_RW_PASS}" && -n "${YADGAR_RO_USER}" && -n "${YADGAR_RO_PASS}" ]]; then
     echo "Bootstrapping yadgar-rw and yadgar-ro users..."
     _creds="${SURREAL_USER:-root}:${SURREAL_PASS:-root}"  # gitleaks:allow
-    _bootstrap_sql="DEFINE USER IF NOT EXISTS \"${YADGAR_RW_USER}\" ON DATABASE PASSWORD '${YADGAR_RW_PASS}' ROLES OWNER; DEFINE USER IF NOT EXISTS \"${YADGAR_RO_USER}\" ON DATABASE PASSWORD '${YADGAR_RO_PASS}' ROLES VIEWER;"
+    _bootstrap_sql="DEFINE USER IF NOT EXISTS \"${YADGAR_RW_USER}\" ON ROOT PASSWORD '${YADGAR_RW_PASS}' ROLES OWNER; DEFINE USER IF NOT EXISTS \"${YADGAR_RO_USER}\" ON ROOT PASSWORD '${YADGAR_RO_PASS}' ROLES VIEWER;"
     if curl -sf -u "${_creds}" -H "Surreal-NS: yadgar" -H "Surreal-DB: main" -H "Content-Type: text/plain" -X POST --data "${_bootstrap_sql}" http://127.0.0.1:8000/sql >/dev/null; then
-        echo "User bootstrap complete (yadgar-rw OWNER, yadgar-ro VIEWER)"
+        echo "User bootstrap complete (yadgar-rw ROOT OWNER, yadgar-ro ROOT VIEWER)"
     else
         echo "WARNING: user bootstrap failed; backend may be running with only ROOT user" >&2
     fi
