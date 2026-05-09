@@ -370,12 +370,17 @@ class TestDuplicateMerge:
         assert storage.get_memory(id_b) is None
 
     def test_dissimilar_memories_kept(self, storage, settings):
+        # Note: the mock is vestigial after the numpy rewrite — the new path computes
+        # cosine directly from embeddings. vec_a and vec_b must be genuinely dissimilar
+        # vectors so cosine similarity is well below 0.95.
         mock_emb = MagicMock(spec=EmbeddingEngine)
         mock_emb.similarity.return_value = 0.4
 
+        # vec_a = all-ones; vec_b = [1.0, 0.0, 0.0, ...] — cosine ≈ 1/sqrt(384) ≈ 0.051
         vec_a = np.ones(384, dtype=np.float32).tobytes()
-        vec_b = np.zeros(384, dtype=np.float32).tobytes()
-        vec_b = np.ones(384, dtype=np.float32).tobytes()  # different content, low sim
+        unit_b = np.zeros(384, dtype=np.float32)
+        unit_b[0] = 1.0
+        vec_b = unit_b.tobytes()
 
         id_a = storage.insert_memory(
             {
@@ -467,3 +472,217 @@ class TestConsolidationLog:
         assert "memories_updated" in result
         assert "memories_archived" in result
         assert "memories_deleted" in result
+
+
+# ── process_episodes bulk-SQL perf tests (v4.4.10) ──────────────────────────
+
+
+@pytest.fixture
+def process_episodes_at_scale(tmp_path, settings):
+    """Build one episode that extracts 50 entities via import statements.
+
+    50 entities → 1225 pairs. At 3ms/pair that's ~3.7s with the old per-pair
+    HTTP pattern; bulk SQL should finish well under 5s.
+    Uses import statements so _extract_entities() actually finds them.
+    """
+    engine = StorageEngine(str(tmp_path / "pe_scale.db"))
+    emb = EmbeddingEngine()
+    emb._unavailable = True
+    sched = ConsolidationScheduler(engine, emb, settings)
+
+    n = 50
+    # "import mod_0" ... "import mod_49" — each matches _IMPORT_RE
+    lines = [f"import mod_{i}" for i in range(n)]
+    raw = "\n".join(lines)
+    engine.insert_episode({"session_id": "perf_test", "directory": "/proj", "raw_content": raw})
+
+    yield sched, engine
+    engine.close()
+
+
+@pytest.mark.timeout(60)
+def test_process_episodes_under_10s_at_50_entities(process_episodes_at_scale):
+    """Regression guard for the O(N²) per-pair HTTP bug fixed in v4.4.10.
+
+    50 import statements → 50 entities → 1225 pairs. At 3ms/pair that is ~3.7s
+    broken (before batch writes, >60s with the old per-pair pattern).
+    Bulk SQL + batched writes must finish under 10s total.
+    """
+    sched, _storage = process_episodes_at_scale
+    sched._last_consolidated_episode_id = 0
+    t0 = time.monotonic()
+    sched._process_new_episodes({"episodes_processed": 0})
+    elapsed = time.monotonic() - t0
+    assert elapsed < 10.0, f"_process_new_episodes took {elapsed:.1f}s at N=50 (target <10s)"
+
+
+def test_process_episodes_correctness_relationships_created(tmp_path, settings):
+    """Bulk-SQL path creates co_occurrence relationships for co-occurring entities."""
+    engine = StorageEngine(str(tmp_path / "pe_correct.db"))
+    emb = EmbeddingEngine()
+    emb._unavailable = True
+    sched = ConsolidationScheduler(engine, emb, settings)
+
+    engine.insert_episode(
+        {
+            "session_id": "s1",
+            "directory": "/proj",
+            "raw_content": "def alpha():\nimport beta",
+        }
+    )
+    sched._last_consolidated_episode_id = 0
+    sched._process_new_episodes({"episodes_processed": 0})
+
+    e_alpha = engine.get_entity_by_name("alpha")
+    e_beta = engine.get_entity_by_name("beta")
+    assert e_alpha is not None
+    assert e_beta is not None
+    rel = engine.get_relationship_between(e_alpha["id"], e_beta["id"])
+    assert rel is not None
+    assert rel["relationship_type"] == "co_occurrence"
+    engine.close()
+
+
+# ── _merge_duplicates numpy-vectorised perf tests (v4.4.10) ─────────────────
+
+
+def _make_merge_duplicates_storage(tmp_path, n: int, high_sim_pairs: int = 5):
+    """Create a StorageEngine with n memories.
+
+    The first `high_sim_pairs * 2` memories are near-identical pairs (sim ≈ 1.0)
+    so the merge path actually has work to do. The remainder are orthogonal-ish
+    vectors so they stay below the 0.95 threshold.
+    """
+    rng = np.random.default_rng(42)
+    engine = StorageEngine(str(tmp_path / "merge_scale.db"))
+
+    for i in range(n):
+        if i < high_sim_pairs * 2 and i % 2 == 1:
+            # Make this embedding nearly identical to the previous one (cosine ≈ 1.0)
+            # by copying and adding tiny noise
+            base = rng.standard_normal(384).astype(np.float32)
+            base /= np.linalg.norm(base)
+            noise = rng.standard_normal(384).astype(np.float32) * 1e-4
+            vec = base + noise
+        else:
+            vec = rng.standard_normal(384).astype(np.float32)
+        vec = vec / np.linalg.norm(vec)
+        engine.insert_memory(
+            {
+                "content": f"memory content {i}",
+                "embedding": vec.tobytes(),
+                "directory_context": "/proj",
+                "heat": float(rng.uniform(0.1, 1.0)),
+            }
+        )
+
+    return engine
+
+
+@pytest.mark.timeout(60)
+def test_merge_duplicates_under_5s_at_500_memories_with_embeddings(tmp_path, settings):
+    """Regression guard for the O(N²) Python-loop cosine sim in _merge_duplicates.
+
+    500 memories → 124 750 pairs. The legacy path calls EmbeddingEngine.similarity()
+    per pair (~125k calls, each doing numpy frombuffer + dot product).
+    The vectorised numpy path must finish well under 5s.
+    """
+    storage = _make_merge_duplicates_storage(tmp_path, n=500, high_sim_pairs=5)
+    emb = EmbeddingEngine()
+    emb._unavailable = True
+    sched = ConsolidationScheduler(storage, emb, settings)
+
+    t0 = time.monotonic()
+    stats: dict = {"memories_deleted": 0}
+    sched._merge_duplicates(stats)
+    elapsed = time.monotonic() - t0
+    storage.close()
+
+    assert elapsed < 5.0, f"_merge_duplicates took {elapsed:.2f}s at N=500 (target <5s)"
+
+
+def test_merge_duplicates_correctness_near_dup_pairs_deleted(tmp_path, settings):
+    """Vectorised _merge_duplicates deletes the lower-heat duplicate from each near-dup pair.
+
+    Inserts 3 near-identical pairs (cosine ≈ 1.0, noise ≈ 1e-5) and 4 dissimilar
+    singletons. Asserts that:
+    - exactly 3 memories are deleted (one per pair — the lower-heat one)
+    - the surviving members are the higher-heat ones from each pair
+    - the 4 singletons all survive
+    """
+    rng = np.random.default_rng(7)
+    storage = StorageEngine(str(tmp_path / "merge_correct.db"))
+
+    # Build 3 near-dup pairs with known heat ordering
+    # pair_i_A has heat in [0.6, 0.9], pair_i_B has heat in [0.1, 0.4] → A always wins
+    survivor_contents = set()
+    victim_contents = set()
+    singleton_contents = set()
+
+    for i in range(3):
+        base = rng.standard_normal(384).astype(np.float32)
+        base /= np.linalg.norm(base)
+        noise = rng.standard_normal(384).astype(np.float32) * 1e-5
+        vec_b = base + noise
+        vec_b /= np.linalg.norm(vec_b)
+
+        heat_a = float(rng.uniform(0.6, 0.9))
+        heat_b = float(rng.uniform(0.1, 0.4))
+        assert heat_a > heat_b  # sanity: A is hotter
+
+        content_a = f"dup pair {i} A"
+        content_b = f"dup pair {i} B"
+        storage.insert_memory(
+            {
+                "content": content_a,
+                "embedding": base.tobytes(),
+                "directory_context": "/proj",
+                "heat": heat_a,
+            }
+        )
+        storage.insert_memory(
+            {
+                "content": content_b,
+                "embedding": vec_b.tobytes(),
+                "directory_context": "/proj",
+                "heat": heat_b,
+            }
+        )
+
+        survivor_contents.add(content_a)
+        victim_contents.add(content_b)
+
+    for i in range(4):
+        v = rng.standard_normal(384).astype(np.float32)
+        v /= np.linalg.norm(v)
+        content = f"singleton {i}"
+        storage.insert_memory(
+            {
+                "content": content,
+                "embedding": v.tobytes(),
+                "directory_context": "/proj",
+                "heat": 0.5,
+            }
+        )
+        singleton_contents.add(content)
+
+    emb = EmbeddingEngine()
+    emb._unavailable = True
+    sched = ConsolidationScheduler(storage, emb, settings)
+
+    stats: dict = {"memories_deleted": 0}
+    sched._merge_duplicates(stats)
+
+    remaining = {m["content"] for m in storage.get_all_memories_with_embeddings()}
+    storage.close()
+
+    assert stats["memories_deleted"] == 3, f"expected 3 deletions, got {stats['memories_deleted']}"
+    assert survivor_contents.issubset(remaining), (
+        f"high-heat survivors missing: {survivor_contents - remaining}"
+    )
+    assert victim_contents.isdisjoint(remaining), (
+        f"low-heat victims still present: {victim_contents & remaining}"
+    )
+    assert singleton_contents.issubset(remaining), (
+        f"singletons wrongly deleted: {singleton_contents - remaining}"
+    )

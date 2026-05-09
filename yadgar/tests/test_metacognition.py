@@ -638,3 +638,88 @@ class TestMCPTools:
         # Should find at least isolated entity gap
         types = [g["type"] for g in result]
         assert "isolated_entity" in types
+
+
+# ── detect_gaps bulk-SQL perf tests (v4.4.10) ────────────────────────────────
+
+import time  # noqa: E402
+
+
+@pytest.fixture
+def gap_detection_at_scale(tmp_path, settings, embeddings):
+    """Seed 50 entities that all co-occur in multiple memories.
+
+    50 entities co-occurring → 1225 pairs in entity_cooccurrence.
+    At 3ms/pair that is ~3.7s with the old per-pair HTTP pattern.
+    The entities have no relationships, so every pair triggers get_relationship_between.
+    """
+    engine = StorageEngine(str(tmp_path / "gap_scale.db"))
+    graph = KnowledgeGraph(engine, settings)
+    mc = MetaCognition(engine, embeddings, graph, settings)
+
+    n = 50
+    names = [f"ent{i}" for i in range(n)]
+    for name in names:
+        engine.insert_entity({"name": name, "type": "file"})
+
+    # Two memories that mention all entity names → all N*(N-1)/2 pairs co-occur ≥ 2 times
+    shared_content = " ".join(names)
+    embedding = embeddings.encode(shared_content)
+    for _ in range(2):
+        engine.insert_memory(
+            {
+                "content": shared_content,
+                "embedding": embedding,
+                "tags": [],
+                "directory_context": "/proj",
+                "heat": 0.5,
+                "is_stale": False,
+                "embedding_model": embeddings.get_model_name(),
+            }
+        )
+
+    yield mc, engine
+    engine.close()
+
+
+@pytest.mark.timeout(60)
+def test_detect_gaps_under_5s_at_50_entities(gap_detection_at_scale):
+    """Regression guard: detect_gaps must use bulk SQL not per-pair HTTP.
+
+    50 entities co-occurring in 2 memories → 1225 pair checks.
+    Bulk SQL must complete under 5s. Would be ~3.7s broken.
+    """
+    mc, _engine = gap_detection_at_scale
+    t0 = time.monotonic()
+    mc.detect_gaps("/proj")
+    elapsed = time.monotonic() - t0
+    assert elapsed < 5.0, f"detect_gaps took {elapsed:.1f}s at N=50 entities (target <5s)"
+
+
+def test_detect_gaps_correctness_missing_connection_found(tmp_path, settings, embeddings):
+    """Bulk-SQL path correctly identifies missing connections."""
+    engine = StorageEngine(str(tmp_path / "gap_correct.db"))
+    graph = KnowledgeGraph(engine, settings)
+    mc = MetaCognition(engine, embeddings, graph, settings)
+
+    engine.insert_entity({"name": "alpha", "type": "file"})
+    engine.insert_entity({"name": "beta", "type": "file"})
+
+    embedding = embeddings.encode("alpha and beta work together")
+    for _ in range(2):
+        engine.insert_memory(
+            {
+                "content": "alpha and beta work together",
+                "embedding": embedding,
+                "tags": [],
+                "directory_context": "/proj",
+                "heat": 0.5,
+                "is_stale": False,
+                "embedding_model": embeddings.get_model_name(),
+            }
+        )
+
+    gaps = mc.detect_gaps("/proj")
+    types = [g["type"] for g in gaps]
+    assert "missing_connection" in types
+    engine.close()

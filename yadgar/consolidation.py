@@ -461,19 +461,54 @@ class ConsolidationScheduler:
                     entity_ids.append(eid)
                 entity_names.append(name)
 
-            # Build co-occurrence relationships
+            # Build co-occurrence relationships — ONE bulk fetch + batched writes
+            # instead of O(N²) per-pair HTTP calls.
+            existing_rels = self._storage.get_relationships_among_entities(entity_ids)
+            rel_index: dict[tuple[int, int], dict] = {
+                (
+                    min(r["source_entity_id"], r["target_entity_id"]),
+                    max(r["source_entity_id"], r["target_entity_id"]),
+                ): r
+                for r in existing_rels
+            }
+            to_reinforce: list[int] = []
+            to_insert: list[tuple[int, int]] = []
             for id_a, id_b in combinations(entity_ids, 2):
-                rel = self._storage.get_relationship_between(id_a, id_b)
+                key = (min(id_a, id_b), max(id_a, id_b))
+                rel = rel_index.get(key)
                 if rel:
-                    self._storage.reinforce_relationship(rel["id"])
+                    to_reinforce.append(rel["id"])
                 else:
-                    self._storage.insert_relationship(
-                        {
-                            "source_entity_id": id_a,
-                            "target_entity_id": id_b,
-                            "relationship_type": "co_occurrence",
-                        }
+                    to_insert.append((id_a, id_b))
+
+            now = self._storage._now_iso()
+            batch: list[tuple[str, dict | None]] = []
+
+            if to_reinforce:
+                for rid in to_reinforce:
+                    batch.append(
+                        (
+                            "UPDATE type::record('relationship', $id) SET "
+                            "weight = weight + $inc, last_reinforced = $now",
+                            {"id": rid, "inc": 1.0, "now": now},
+                        )
                     )
+
+            if to_insert:
+                new_ids = self._storage._reserve_ids("relationship", len(to_insert))
+                for (id_a, id_b), rid in zip(to_insert, new_ids, strict=True):
+                    batch.append(
+                        (
+                            "CREATE type::record('relationship', $id) SET "
+                            "source_entity_id = $src, target_entity_id = $tgt, "
+                            "relationship_type = 'co_occurrence', weight = 1.0, "
+                            "created_at = $now, last_reinforced = $now",
+                            {"id": rid, "src": id_a, "tgt": id_b, "now": now},
+                        )
+                    )
+
+            if batch:
+                self._storage.batch_writes(batch)
 
             # Build typed relationships from extraction context
             for name, ctx in rel_contexts.items():
@@ -666,29 +701,83 @@ class ConsolidationScheduler:
     # -- Duplicate merging --
 
     def _merge_duplicates(self, stats: dict) -> None:
+        """Delete near-duplicate memories (cosine similarity > 0.95), keeping the hotter one.
+
+        Uses numpy matrix multiplication for O(N·D) pairwise cosine similarity
+        (same approach as _link_similar_memories) instead of O(N²) per-pair calls
+        to EmbeddingEngine.similarity().
+
+        Two-pass approach:
+        1. Exact-content match pre-pass — catches duplicates even when one embedding
+           is missing/corrupt (preserves existing short-circuit semantics).
+        2. Embedding-similarity pass — numpy matmul over valid-embedding subset.
+        """
+        import numpy as np
+
         memories = self._storage.get_all_memories_with_embeddings()
         if len(memories) < 2:
             return
 
         to_delete: set[int] = set()
-        for i, mem_a in enumerate(memories):
-            if mem_a["id"] in to_delete:
+
+        # Pass 1: exact-content match (cheap, handles missing embeddings)
+        content_index: dict[str, int] = {}  # content → first-seen memory id
+        content_heat: dict[str, float] = {}  # content → heat of winner
+        for mem in memories:
+            content = mem.get("content") or ""
+            if not content:
                 continue
-            for mem_b in memories[i + 1 :]:
-                if mem_b["id"] in to_delete:
+            if content in content_index:
+                existing_id = content_index[content]
+                existing_heat = content_heat[content]
+                if mem["heat"] > existing_heat:
+                    # New one is hotter — evict the old winner
+                    to_delete.add(existing_id)
+                    content_index[content] = mem["id"]
+                    content_heat[content] = mem["heat"]
+                else:
+                    to_delete.add(mem["id"])
+            else:
+                content_index[content] = mem["id"]
+                content_heat[content] = mem["heat"]
+
+        # Pass 2: embedding-similarity pass via numpy matmul
+        # Only consider memories not already marked for deletion and with valid embeddings.
+        valid: list[tuple[int, np.ndarray, float]] = []  # (id, unit_vec, heat)
+        for mem in memories:
+            if mem["id"] in to_delete:
+                continue
+            emb = mem.get("embedding")
+            if not emb or len(emb) == 0:
+                continue
+            try:
+                arr = np.frombuffer(emb, dtype=np.float32)
+                norm = np.linalg.norm(arr)
+                if len(arr) == 0 or norm == 0:
                     continue
-                # Identical content is always a duplicate (catches prefix-embedding mismatch)
-                content_a = mem_a.get("content") or ""
-                content_b = mem_b.get("content") or ""
-                is_duplicate = content_a and content_a == content_b
-                if not is_duplicate:
-                    if mem_a["embedding"] is None or mem_b["embedding"] is None:
-                        continue
-                    sim = self._embeddings.similarity(mem_a["embedding"], mem_b["embedding"])
-                    is_duplicate = sim > 0.95
-                if is_duplicate:
-                    victim = mem_b["id"] if mem_a["heat"] >= mem_b["heat"] else mem_a["id"]
-                    to_delete.add(victim)
+                valid.append((mem["id"], arr / norm, mem["heat"]))
+            except Exception:
+                continue
+
+        if len(valid) >= 2:
+            ids = [v[0] for v in valid]
+            heats = [v[2] for v in valid]
+            matrix = np.stack([v[1] for v in valid])  # N x D
+
+            # Pairwise cosine similarity via matrix multiplication (fast, O(N·D))
+            sim_matrix = matrix @ matrix.T  # N x N
+
+            # Find pairs strictly above 0.95 in upper triangle (same semantics as legacy > 0.95)
+            rows, cols = np.where(np.triu(sim_matrix, k=1) > 0.95)
+
+            for i, j in zip(rows.tolist(), cols.tolist(), strict=False):
+                mid_a, mid_b = ids[i], ids[j]
+                if mid_a in to_delete or mid_b in to_delete:
+                    continue
+                # Keep higher-heat memory; on tie, keep the one with lower index (stable)
+                heat_a, heat_b = heats[i], heats[j]
+                victim = mid_b if heat_a >= heat_b else mid_a
+                to_delete.add(victim)
 
         for mid in to_delete:
             self._storage.delete_memory(mid)

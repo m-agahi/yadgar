@@ -268,14 +268,25 @@ class MetaCognition:
                 for eid_b in entities_in_mem[i + 1 :]:
                     entity_cooccurrence[(eid_a, eid_b)].add(m.get("id"))
 
+        # ONE bulk fetch for all co-occurring entity pairs instead of O(N²) HTTP calls.
+        cooccurrence_ids = list({eid for pair in entity_cooccurrence for eid in pair})
+        existing_rel_index: set[tuple[int, int]] = set()
+        if cooccurrence_ids:
+            for rel in self._storage.get_relationships_among_entities(cooccurrence_ids):
+                sid = rel.get("source_entity_id")
+                tid = rel.get("target_entity_id")
+                if sid is not None and tid is not None:
+                    existing_rel_index.add((min(sid, tid), max(sid, tid)))
+
+        entity_by_id = {e["id"]: e for e in all_entities}
         for (eid_a, eid_b), mem_ids in entity_cooccurrence.items():
             if len(mem_ids) < 2:
                 continue
-            # Check if relationship exists
-            existing = self._storage.get_relationship_between(eid_a, eid_b)
-            if existing is None:
-                ent_a = self._storage.get_entity_by_id(eid_a)
-                ent_b = self._storage.get_entity_by_id(eid_b)
+            # Check if relationship exists via pre-fetched index
+            existing = (min(eid_a, eid_b), max(eid_a, eid_b)) in existing_rel_index
+            if not existing:
+                ent_a = entity_by_id.get(eid_a)
+                ent_b = entity_by_id.get(eid_b)
                 if ent_a and ent_b:
                     gaps.append(
                         {
