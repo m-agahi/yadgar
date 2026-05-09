@@ -526,12 +526,22 @@ class ConsolidationScheduler:
         # Pairwise cosine similarity via matrix multiplication (fast)
         sim_matrix = matrix @ matrix.T  # N x N
 
+        # Pre-load all existing links to avoid per-pair read roundtrips.
+        # Key is canonical (source_memory_id, target_memory_id) — already stored as min/max.
+        existing_links: dict[tuple[int, int], dict] = {}
+        for link in self._storage.get_all_memory_similarity_links():
+            key = (link["source_memory_id"], link["target_memory_id"])
+            existing_links[key] = link
+
         # Find pairs above threshold (upper triangle only)
         # Get indices sorted by descending similarity for best-first linking
         links_created = 0
         rows, cols = np.where(np.triu(sim_matrix, k=1) >= threshold)
         sims = sim_matrix[rows, cols]
         order = np.argsort(-sims)
+
+        pending_inserts: list[tuple[int, int, float]] = []  # (mid_a, mid_b, weight)
+        pending_reinforces: list[tuple[int, float]] = []  # (link_id, delta)
 
         for idx in order:
             if links_created >= max_new_links:
@@ -540,17 +550,51 @@ class ConsolidationScheduler:
             sim = float(sims[idx])
             mid_a, mid_b = ids[i], ids[j]
 
-            existing = self._storage.get_memory_similarity_link(mid_a, mid_b)
+            # Canonical key matches storage convention (source < target)
+            key = (mid_a, mid_b) if mid_a < mid_b else (mid_b, mid_a)
+            existing = existing_links.get(key)
             if existing:
                 # Reinforce if new similarity is higher
                 if sim > existing.get("weight", 0):
-                    self._storage.reinforce_memory_similarity_link(
-                        existing["id"], sim - existing["weight"]
-                    )
+                    pending_reinforces.append((existing["id"], sim - existing["weight"]))
                 continue
 
-            self._storage.insert_memory_similarity_link(mid_a, mid_b, round(sim, 4))
+            pending_inserts.append((mid_a, mid_b, round(sim, 4)))
             links_created += 1
+
+        # Batch all writes into a single transaction
+        now = self._storage._now_iso()
+        batch: list[tuple[str, dict | None]] = []
+
+        for mid_a, mid_b, weight in pending_inserts:
+            src, tgt = (mid_a, mid_b) if mid_a < mid_b else (mid_b, mid_a)
+            lid = self._storage._next_id("memory_similarity_link")
+            batch.append(
+                (
+                    "CREATE type::record('memory_similarity_link', $id) SET "
+                    "source_memory_id = $src, target_memory_id = $tgt, "
+                    "weight = $weight, created_at = $created_at, updated_at = $updated_at",
+                    {
+                        "id": lid,
+                        "src": src,
+                        "tgt": tgt,
+                        "weight": weight,
+                        "created_at": now,
+                        "updated_at": now,
+                    },
+                )
+            )
+
+        for link_id, delta in pending_reinforces:
+            batch.append(
+                (
+                    "UPDATE type::record('memory_similarity_link', $id) SET "
+                    "weight = weight + $delta, updated_at = $now",
+                    {"id": link_id, "delta": delta, "now": now},
+                )
+            )
+
+        self._storage.batch_writes(batch)
 
         stats["similarity_links_created"] = links_created
 
