@@ -194,8 +194,21 @@ def _migration_001_hnsw_indexes(storage: "StorageEngine") -> None:
     """)
 
 
+def _migration_002_relationship_indexes(storage: "StorageEngine") -> None:
+    """Add indexes on relationship.source_entity_id / target_entity_id (perf v4.4.1)."""
+    storage._q("""
+        DEFINE INDEX IF NOT EXISTS rel_source_target_idx
+            ON relationship FIELDS source_entity_id, target_entity_id;
+    """)
+    storage._q("""
+        DEFINE INDEX IF NOT EXISTS rel_target_source_idx
+            ON relationship FIELDS target_entity_id, source_entity_id;
+    """)
+
+
 _MIGRATIONS: list[dict] = [
     {"version": "001_hnsw_indexes", "fn": _migration_001_hnsw_indexes},
+    {"version": "002_relationship_indexes", "fn": _migration_002_relationship_indexes},
 ]
 
 

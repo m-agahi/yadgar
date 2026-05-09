@@ -184,8 +184,8 @@ class ConsolidationScheduler:
                         self._consolidation_cycle()
                     except Exception:
                         logger.exception("Idle consolidation cycle failed")
-            # Run once per day at midnight UTC (00:00–00:01 window)
-            if now.hour == 0 and now.minute == 0 and self._last_consolidation_date != today:
+            # Run once per day at 18:30 UTC (18:30–18:31 window)
+            if now.hour == 18 and now.minute == 30 and self._last_consolidation_date != today:
                 try:
                     self._consolidation_cycle()
                     self._last_consolidation_date = today
