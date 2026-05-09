@@ -1,5 +1,9 @@
 """Tests for the active memory curation engine and memify self-improvement layer."""
 
+import logging
+import random
+import time
+
 import numpy as np
 import pytest
 
@@ -453,3 +457,172 @@ def test_memify_derive_idempotent(curator, storage):
         "SELECT * FROM memory WHERE string::contains(content, 'a.py') AND string::contains(content, 'b.py') AND string::contains(content, 'frequently')"
     )
     assert len(rows) == 1
+
+
+# ── scale fixtures ────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def memory_curator_at_scale(tmp_path, embeddings, settings):
+    """Seed 500 entities + 200 relationships for performance tests.
+
+    Returns (MemoryCurator, StorageEngine).  Fixture setup time is NOT counted
+    against the 30-second wall-time assertion — the timer starts after yield.
+    """
+    from yadgar.storage import StorageEngine
+    from yadgar.thermodynamics import MemoryThermodynamics
+
+    engine = StorageEngine(str(tmp_path / "scale_curation.db"), embedding_dim=384)
+    thermo = MemoryThermodynamics(engine, embeddings, settings)
+    curator = MemoryCurator(engine, embeddings, thermo, settings)
+
+    rng = random.Random(42)
+    n_entities = 500
+    n_relationships = 200
+
+    entity_ids = []
+    for i in range(n_entities):
+        heat = rng.uniform(0.0, 1.0)
+        eid = engine.insert_entity({"name": f"entity_{i}", "type": "file", "heat": heat})
+        entity_ids.append(eid)
+
+    rel_types = ["co_occurrence", "derived_from", "semantic_similarity", "caused_by"]
+    inserted_pairs: set[tuple[int, int]] = set()
+    count = 0
+    attempts = 0
+    while count < n_relationships and attempts < n_relationships * 10:
+        attempts += 1
+        src, tgt = rng.sample(entity_ids, 2)
+        pair = (min(src, tgt), max(src, tgt))
+        if pair in inserted_pairs:
+            continue
+        inserted_pairs.add(pair)
+        rtype = rng.choice(rel_types)
+        weight = rng.uniform(1.0, 15.0)
+        engine.insert_relationship(
+            {
+                "source_entity_id": src,
+                "target_entity_id": tgt,
+                "relationship_type": rtype,
+                "weight": weight,
+            }
+        )
+        count += 1
+
+    yield curator, engine
+    engine.close()
+
+
+# ── Test 1: performance regression guard ─────────────────────────────────
+
+
+@pytest.mark.timeout(60)
+def test_memify_reweight_under_30s_at_500_entities(memory_curator_at_scale):
+    """At production-like scale, memify_reweight must not block the cycle.
+
+    Regression test for the O(N²) per-pair HTTP bug fixed in v4.4.8.
+    """
+    curator, storage = memory_curator_at_scale
+    stats = {"reweighted": 0}
+    t0 = time.monotonic()
+    curator._memify_reweight(stats)
+    elapsed = time.monotonic() - t0
+    assert elapsed < 30.0, f"memify_reweight took {elapsed:.1f}s at N=500 (target <30s)"
+
+
+# ── Test 2: correctness with known heat distribution ──────────────────────
+
+
+def test_memify_reweight_correctness_with_known_heat_distribution(curator, storage):
+    """Known heat values produce exact reweight counts; also checks non-co_occurrence types."""
+    # Hot pair with established weight — should get boost
+    hot_a = storage.insert_entity({"name": "hot_x", "type": "file", "heat": 0.9})
+    hot_b = storage.insert_entity({"name": "hot_y", "type": "file", "heat": 0.85})
+    rid_hot = storage.insert_relationship(
+        {
+            "source_entity_id": hot_a,
+            "target_entity_id": hot_b,
+            "relationship_type": "semantic_similarity",
+            "weight": 7.0,
+        }
+    )
+
+    # Cold pair — should decay
+    cold_a = storage.insert_entity({"name": "cold_x", "type": "file", "heat": 0.02})
+    cold_b = storage.insert_entity({"name": "cold_y", "type": "file", "heat": 0.03})
+    rid_cold = storage.insert_relationship(
+        {
+            "source_entity_id": cold_a,
+            "target_entity_id": cold_b,
+            "relationship_type": "caused_by",
+            "weight": 4.0,
+        }
+    )
+
+    # Warm pair (neither hot nor cold) — should be untouched
+    warm_a = storage.insert_entity({"name": "warm_x", "type": "file", "heat": 0.5})
+    warm_b = storage.insert_entity({"name": "warm_y", "type": "file", "heat": 0.4})
+    rid_warm = storage.insert_relationship(
+        {
+            "source_entity_id": warm_a,
+            "target_entity_id": warm_b,
+            "relationship_type": "co_occurrence",
+            "weight": 3.0,
+        }
+    )
+
+    stats = {"reweighted": 0}
+    curator._memify_reweight(stats)
+
+    # Exactly 2 relationships should be touched: hot-boost + cold-decay
+    assert stats["reweighted"] == 2
+
+    hot_rows = storage._q("SELECT weight FROM type::record('relationship', $id)", {"id": rid_hot})
+    assert hot_rows[0]["weight"] == pytest.approx(7.5, abs=0.01)  # 7.0 + 0.5 boost
+
+    cold_rows = storage._q("SELECT weight FROM type::record('relationship', $id)", {"id": rid_cold})
+    assert cold_rows[0]["weight"] == pytest.approx(3.6, abs=0.01)  # 4.0 * 0.9
+
+    warm_rows = storage._q("SELECT weight FROM type::record('relationship', $id)", {"id": rid_warm})
+    assert warm_rows[0]["weight"] == pytest.approx(3.0, abs=0.01)  # unchanged
+
+
+# ── Test 3: consolidation cycle emits all phase complete markers ──────────
+
+
+def test_consolidation_cycle_emits_all_phase_complete_markers(tmp_path, caplog):
+    """Every unconditional consolidation phase must log both starting and complete records.
+
+    Regression guard: if a phase silently returns early (exception swallowed,
+    missing log call), this test will catch the missing marker.
+    """
+
+    from yadgar.config import Settings
+    from yadgar.consolidation import ConsolidationScheduler
+    from yadgar.embeddings import EmbeddingEngine
+    from yadgar.storage import StorageEngine
+
+    storage = StorageEngine(str(tmp_path / "phase_log.db"))
+    emb = EmbeddingEngine()
+    emb._unavailable = True  # skip model load
+    settings = Settings(DB_PATH=str(tmp_path / "phase_log.db"))
+    engine = ConsolidationScheduler(storage, emb, settings)
+
+    unconditional_phases = [
+        "apply_decay",
+        "process_episodes",
+        "merge_duplicates",
+        "memify",
+        "insert_consolidation_log",
+        "mtree_probe",
+    ]
+
+    with caplog.at_level(logging.INFO, logger="yadgar"):
+        engine.force_consolidate()
+
+    log_text = "\n".join(r.message for r in caplog.records)
+    for phase in unconditional_phases:
+        assert f"phase: {phase} starting" in log_text, f"missing 'phase: {phase} starting'"
+        assert f"phase: {phase} complete" in log_text, f"missing 'phase: {phase} complete'"
+
+    storage.close()
