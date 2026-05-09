@@ -1363,6 +1363,22 @@ def cli():
         if args.port:
             _os.environ["YADGAR_PORT"] = str(args.port)
 
+        # Opt-in INFO/DEBUG logging for diagnostics. Default: unset → root logger
+        # WARNING (current behavior, no daemon noise). Set YADGAR_LOG_LEVEL=INFO
+        # in the container env to surface consolidation phase markers, etc.
+        _log_level = _os.environ.get("YADGAR_LOG_LEVEL")
+        if _log_level:
+            import logging as _logging
+
+            _yadgar_logger = _logging.getLogger("yadgar")
+            _yadgar_logger.setLevel(getattr(_logging, _log_level.upper(), _logging.WARNING))
+            if not _yadgar_logger.handlers:
+                _handler = _logging.StreamHandler()
+                _handler.setFormatter(
+                    _logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s")
+                )
+                _yadgar_logger.addHandler(_handler)
+
         if not args.quiet and args.transport != "stdio":
             print(STARTUP_BANNER, file=sys.stderr)
             print(f"Transport: {args.transport}", file=sys.stderr)
