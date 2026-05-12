@@ -502,14 +502,18 @@ class StorageEngine:
         return []
 
     def batch_writes(self, statements: list[tuple[str, dict | None]]) -> None:
-        """Execute multiple write statements in a single SurrealDB transaction.
+        """Execute multiple write statements against SurrealDB.
 
-        Each (sql, params) tuple becomes one statement. LET bindings get
-        statement-scoped names to avoid collisions. Sends BEGIN/COMMIT in a
-        single HTTP POST — collapses N writes into 1 fsync.
+        Statements are split into chunks of at most MAX_BATCH_STATEMENTS (default
+        500). Each chunk becomes its own BEGIN…COMMIT transaction so we never
+        build a single unbounded SQL string that can crash SurrealDB's recursive
+        serialiser on large batches (e.g. full-table heat decay).
+
+        Each chunk is atomic in itself; a failure in one chunk does NOT roll back
+        earlier chunks — callers that require strict all-or-nothing must keep
+        batches under MAX_BATCH_STATEMENTS or use explicit transactions.
 
         Empty list is a no-op (no transaction sent).
-        Crash mid-batch rolls back the whole transaction.
         Only supported in server mode (YADGAR_DB_URL set).
         """
         if not statements:
@@ -519,31 +523,38 @@ class StorageEngine:
                 "batch_writes is only supported in server mode (YADGAR_DB_URL not set)"
             )
 
+        from yadgar.config import get_settings
+
+        chunk_size = get_settings().MAX_BATCH_STATEMENTS
+
         import json as _json
 
-        parts = ["BEGIN TRANSACTION"]
-        for i, (sql, params) in enumerate(statements):
-            if params:
-                for k, v in params.items():
-                    parts.append(f"LET $p{i}_{k} = {_json.dumps(v, ensure_ascii=False)}")
-                # Rewrite $param_name → $p{i}_param_name using word-boundary regex
-                # to avoid corrupting longer tokens that share a prefix.
-                for k in params:
-                    sql = re.sub(rf"\${re.escape(k)}\b", f"$p{i}_{k}", sql)
-            parts.append(sql.rstrip(";"))
-        parts.append("COMMIT TRANSACTION")
-        body = ";\n".join(parts) + ";"
+        # Process in chunks to avoid unbounded SQL blobs
+        for chunk_start in range(0, len(statements), chunk_size):
+            chunk = statements[chunk_start : chunk_start + chunk_size]
+            parts = ["BEGIN TRANSACTION"]
+            for i, (sql, params) in enumerate(chunk):
+                if params:
+                    for k, v in params.items():
+                        parts.append(f"LET $p{i}_{k} = {_json.dumps(v, ensure_ascii=False)}")
+                    # Rewrite $param_name → $p{i}_param_name using word-boundary regex
+                    # to avoid corrupting longer tokens that share a prefix.
+                    for k in params:
+                        sql = re.sub(rf"\${re.escape(k)}\b", f"$p{i}_{k}", sql)
+                parts.append(sql.rstrip(";"))
+            parts.append("COMMIT TRANSACTION")
+            body = ";\n".join(parts) + ";"
 
-        resp = self._http.post(
-            "/sql", content=body.encode(), headers={"Content-Type": "text/plain"}
-        )
-        resp.raise_for_status()
-        results = resp.json()
-        for entry in results:
-            if entry.get("status") == "ERR":
-                raise RuntimeError(
-                    f"SurrealDB batch error: {entry.get('detail') or entry.get('result') or entry}"
-                )
+            resp = self._http.post(
+                "/sql", content=body.encode(), headers={"Content-Type": "text/plain"}
+            )
+            resp.raise_for_status()
+            results = resp.json()
+            for entry in results:
+                if entry.get("status") == "ERR":
+                    raise RuntimeError(
+                        f"SurrealDB batch error: {entry.get('detail') or entry.get('result') or entry}"
+                    )
 
     def _enrich_content_for_fts(self, content: str) -> str:
         """Enrich content with split identifier tokens for better FTS matching."""
@@ -985,6 +996,19 @@ class StorageEngine:
             "WHERE source_memory_id = $mid OR target_memory_id = $mid",
             {"mid": memory_id},
         )
+        # Clean up synthetic memory:<id> entity rows (created by curation, cls_store,
+        # sleep_compute) and all relationship rows that reference them.  Without
+        # this they accumulate forever — the historical "entity-table bloat" noted
+        # in migration 003.
+        ent_name = f"memory:{memory_id}"
+        ent = self.get_entity_by_name(ent_name)
+        if ent is not None:
+            eid = ent["id"]  # already an int after _row_to_dict normalisation
+            self._q(
+                "DELETE FROM relationship WHERE source_entity_id = $eid OR target_entity_id = $eid",
+                {"eid": eid},
+            )
+            self._q("DELETE FROM entity WHERE name = $n", {"n": ent_name})
         # Clear vector fields (no separate table)
         try:
             self.delete_vector(memory_id)
@@ -1029,6 +1053,30 @@ class StorageEngine:
 
     def get_all_memories_with_embeddings(self) -> list[dict]:
         rows = self._q("SELECT * FROM memory WHERE embedding IS NOT NONE AND heat > 0")
+        return self._rows_to_dicts(rows)
+
+    def get_memories_with_embeddings(
+        self, limit: int | None = None, order_by: str = "last_accessed"
+    ) -> list[dict]:
+        """Return memories that have embeddings, ordered by `order_by` DESC.
+
+        When `limit` is None behaves identically to get_all_memories_with_embeddings.
+        Intended for callers that build an N×N similarity matrix and need to bound N.
+        """
+        allowed_order = {"last_accessed", "heat", "created_at"}
+        if order_by not in allowed_order:
+            order_by = "last_accessed"
+        if limit is None:
+            rows = self._q(
+                f"SELECT * FROM memory WHERE embedding IS NOT NONE AND heat > 0 "
+                f"ORDER BY {order_by} DESC"
+            )
+        else:
+            rows = self._q(
+                f"SELECT * FROM memory WHERE embedding IS NOT NONE AND heat > 0 "
+                f"ORDER BY {order_by} DESC LIMIT $lim",
+                {"lim": int(limit)},
+            )
         return self._rows_to_dicts(rows)
 
     def get_memories_without_embeddings(self) -> list[dict]:
@@ -1566,6 +1614,40 @@ class StorageEngine:
         """Return all episodes ordered by timestamp ascending."""
         rows = self._q("SELECT * FROM episode ORDER BY timestamp ASC")
         return self._rows_to_dicts(rows)
+
+    def get_recent_episodes(self, limit: int) -> list[dict]:
+        """Return the most recent ``limit`` episodes, ordered ascending by timestamp.
+
+        Used by _check_temporal_order to avoid scanning the full episode table
+        (which can be huge) on every consolidation cycle.
+        """
+        rows = self._q(
+            "SELECT * FROM episode ORDER BY timestamp DESC LIMIT $lim",
+            {"lim": limit},
+        )
+        # Re-order ascending so callers see chronological order
+        return list(reversed(self._rows_to_dicts(rows)))
+
+    def prune_old_episodes(self, older_than_days: int = 14) -> int:
+        """Delete episode rows older than ``older_than_days``.
+
+        Returns the number of rows deleted (approximate — counted before delete).
+        Prevents the episode table from growing without bound and keeps
+        _check_temporal_order O(recent episodes) instead of O(all time).
+        """
+        from datetime import UTC, datetime, timedelta
+
+        cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
+        rows = self._q(
+            "SELECT count() AS c FROM episode WHERE timestamp < $cutoff GROUP ALL",
+            {"cutoff": cutoff},
+        )
+        n = int(rows[0]["c"]) if rows and rows[0].get("c") else 0
+        self._q(
+            "DELETE FROM episode WHERE timestamp < $cutoff",
+            {"cutoff": cutoff},
+        )
+        return n
 
     def reinforce_relationship(self, rel_id: int, weight_increase: float = 1.0):
         self._q(
@@ -2176,6 +2258,72 @@ class StorageEngine:
         rows = self._q("SELECT * FROM causal_dag_edge ORDER BY confidence DESC")
         return self._rows_to_dicts(rows)
 
+    def clear_causal_dag_edges(self, algorithm: str | None = None) -> int:
+        """Delete causal DAG edges, optionally filtered by algorithm.
+
+        Called by discover_dag before re-inserting so the table is
+        truncate-and-rebuild rather than append-only.
+
+        Returns the number of rows deleted.
+        """
+        if algorithm is not None:
+            count_rows = self._q(
+                "SELECT count() AS c FROM causal_dag_edge WHERE algorithm = $algo GROUP ALL",
+                {"algo": algorithm},
+            )
+            n = int(count_rows[0]["c"]) if count_rows and count_rows[0].get("c") else 0
+            self._q(
+                "DELETE FROM causal_dag_edge WHERE algorithm = $algo",
+                {"algo": algorithm},
+            )
+        else:
+            count_rows = self._q("SELECT count() AS c FROM causal_dag_edge GROUP ALL")
+            n = int(count_rows[0]["c"]) if count_rows and count_rows[0].get("c") else 0
+            self._q("DELETE FROM causal_dag_edge")
+        return n
+
+    def prune_old_rows(
+        self,
+        table: str,
+        older_than_days: int,
+        age_field: str = "created_at",
+        extra_where: str | None = None,
+    ) -> int:
+        """Delete rows from `table` whose `age_field` is older than `older_than_days`.
+
+        `extra_where` may contain additional AND conditions (e.g. ``is_active = false``).
+        Only the listed tables may be pruned — rejects unknown tables to prevent SQL injection.
+
+        Returns the approximate number of rows deleted (counted before the DELETE).
+        """
+        from datetime import UTC, datetime, timedelta
+
+        _allowed_tables = frozenset(
+            {
+                "narrative_entry",
+                "astrocyte_process",
+                "memory_cluster",
+                "derived_belief",
+                "prospective_memory",
+            }
+        )
+        if table not in _allowed_tables:
+            raise ValueError(f"prune_old_rows: table '{table}' is not in the allowed set")
+        if older_than_days <= 0:
+            return 0
+
+        cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
+        where = f"{age_field} < $cutoff"
+        if extra_where:
+            where = f"{where} AND {extra_where}"
+        count_rows = self._q(
+            f"SELECT count() AS c FROM {table} WHERE {where} GROUP ALL",
+            {"cutoff": cutoff},
+        )
+        n = int(count_rows[0]["c"]) if count_rows and count_rows[0].get("c") else 0
+        self._q(f"DELETE FROM {table} WHERE {where}", {"cutoff": cutoff})
+        return n
+
     # ------------------------------------------------------------------ Engram Slots
 
     def init_engram_slots(self, num_slots: int):
@@ -2457,20 +2605,38 @@ class StorageEngine:
     # ------------------------------------------------------------------ Store-type + episode + relationship queries
 
     def get_memories_by_store_type(
-        self, store_type: str, directory: str | None = None
+        self,
+        store_type: str,
+        directory: str | None = None,
+        limit: int | None = None,
     ) -> list[dict]:
+        """Return memories for a store type.
+
+        When `limit` is given, returns the most-recently-accessed memories up
+        to that count (ORDER BY last_accessed DESC).  Callers that build pairwise
+        similarity matrices should pass limit=CLS_PATTERN_MAX_CANDIDATES to avoid
+        allocating an unbounded N×N matrix.
+        """
+        order_clause = " ORDER BY last_accessed DESC" if limit is not None else ""
+        limit_clause = " LIMIT $lim" if limit is not None else ""
         if directory:
+            params: dict = {"st": store_type, "dir": directory}
+            if limit is not None:
+                params["lim"] = int(limit)
             rows = self._q(
-                "SELECT * FROM memory WHERE store_type = $st "
-                "AND heat > 0 AND embedding IS NOT NONE "
-                "AND directory_context = $dir",
-                {"st": store_type, "dir": directory},
+                f"SELECT * FROM memory WHERE store_type = $st "
+                f"AND heat > 0 AND embedding IS NOT NONE "
+                f"AND directory_context = $dir{order_clause}{limit_clause}",
+                params,
             )
         else:
+            params = {"st": store_type}
+            if limit is not None:
+                params["lim"] = int(limit)
             rows = self._q(
-                "SELECT * FROM memory WHERE store_type = $st "
-                "AND heat > 0 AND embedding IS NOT NONE",
-                {"st": store_type},
+                f"SELECT * FROM memory WHERE store_type = $st "
+                f"AND heat > 0 AND embedding IS NOT NONE{order_clause}{limit_clause}",
+                params,
             )
         return self._rows_to_dicts(rows)
 
@@ -2574,6 +2740,28 @@ class StorageEngine:
             return
         for aid in ids:
             self._q(f"UPDATE action_log:{aid} SET processed = true")
+
+    def prune_processed_action_log(self, older_than_days: int = 7) -> int:
+        """Delete processed action_log rows older than ``older_than_days``.
+
+        Unprocessed rows are never pruned — they haven't been turned into
+        memories yet.  Returns the number of rows deleted.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
+        # SurrealDB does not expose a row-count from DELETE, so count first
+        rows = self._q(
+            "SELECT count() AS c FROM action_log "
+            "WHERE processed = true AND timestamp < $cutoff GROUP ALL",
+            {"cutoff": cutoff},
+        )
+        n = int(rows[0]["c"]) if rows and rows[0].get("c") else 0
+        self._q(
+            "DELETE FROM action_log WHERE processed = true AND timestamp < $cutoff",
+            {"cutoff": cutoff},
+        )
+        return n
 
     def get_entity_by_id(self, entity_id: int) -> dict | None:
         """Fetch a single entity row by its integer ID."""
@@ -2771,10 +2959,20 @@ class StorageEngine:
     def delete_wiki_page(self, page_id: int) -> bool:
         """Delete a wiki page by ID. Return True if deleted."""
         pid = int(page_id)
-        # Check existence first
-        rows = self._q(f"SELECT id FROM wiki_page:{pid}")
+        # Fetch slug before deleting so we can clean crossrefs keyed by slug
+        rows = self._q(f"SELECT id, slug FROM wiki_page:{pid}")
         if not rows:
             return False
+        slug = rows[0].get("slug", "")
+        # Clean ALL crossrefs referencing this page's slug (both outgoing and
+        # incoming).  wiki.delete() already calls replace_wiki_crossrefs(slug, [])
+        # for outgoing rows, but the INCOMING rows (to_slug = slug) are never
+        # removed, leaving dangling crossrefs after deletion.
+        if slug:
+            self._q(
+                "DELETE FROM wiki_crossref WHERE from_slug = $slug OR to_slug = $slug",
+                {"slug": slug},
+            )
         self._q(
             "DELETE type::record('wiki_page', $id)",
             {"id": pid},

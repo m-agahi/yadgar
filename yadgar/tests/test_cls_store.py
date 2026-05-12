@@ -639,3 +639,60 @@ def test_consolidation_cycle_derived_from_links_created(tmp_path):
     assert "total_episodic" in stats
     assert stats["total_episodic"] >= 3
     engine.close()
+
+
+# ── CLS_PATTERN_MAX_CANDIDATES cap tests ─────────────────────────────────────
+
+
+class TestClsPatternCandidateCap:
+    """find_recurring_patterns must not scan the full episodic store when
+    the count exceeds CLS_PATTERN_MAX_CANDIDATES."""
+
+    def test_find_recurring_patterns_respects_candidate_cap(self, tmp_path):
+        """With cap=5 and 10 episodic memories, get_memories_by_store_type is
+        called with limit=5 (not returning all 10)."""
+        from unittest.mock import patch
+
+        import numpy as np
+
+        cap = 5
+        settings = Settings(
+            DB_PATH=str(tmp_path / "cap_cls.db"),
+            CLS_PATTERN_MAX_CANDIDATES=cap,
+            CLUSTER_SIMILARITY_THRESHOLD=0.6,
+        )
+        storage = StorageEngine(str(tmp_path / "cap_cls.db"))
+        emb = EmbeddingEngine("all-MiniLM-L6-v2")
+        cls = DualStoreCLS(storage, emb, settings)
+
+        # Insert cap+5 episodic memories
+        for i in range(cap + 5):
+            vec = np.random.default_rng(i + 200).standard_normal(384).astype(np.float32)
+            vec /= np.linalg.norm(vec)
+            mid = storage.insert_memory(
+                {
+                    "content": f"cls cap test memory {i}",
+                    "embedding": vec.tobytes(),
+                    "directory_context": "/proj",
+                    "heat": 1.0,
+                }
+            )
+            storage._q(
+                "UPDATE type::record('memory', $id) SET store_type = 'episodic'",
+                {"id": mid},
+            )
+
+        original = storage.get_memories_by_store_type
+        called_with_limit = []
+
+        def spy(store_type, directory=None, limit=None):
+            called_with_limit.append(limit)
+            return original(store_type, directory=directory, limit=limit)
+
+        with patch.object(storage, "get_memories_by_store_type", side_effect=spy):
+            cls.find_recurring_patterns()
+
+        storage.close()
+
+        assert called_with_limit, "get_memories_by_store_type was not called"
+        assert called_with_limit[0] == cap, f"expected limit={cap}, got {called_with_limit[0]}"

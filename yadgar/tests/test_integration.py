@@ -424,8 +424,12 @@ class TestConsolidationEntityExtraction:
         remember_ent = storage.get_entity_by_name("remember")
         json_ent = storage.get_entity_by_name("json")
 
-        # Co-occurrence relationship should exist
-        rel = storage.get_relationship_between(remember_ent["id"], json_ent["id"])
+        # Co-occurrence relationship should exist. Query the co_occurrence type
+        # specifically (the graph may also hold typed rels like `imports` between
+        # the same pair); co_occurrence is symmetric so check both directions.
+        rel = storage.get_typed_relationship(
+            remember_ent["id"], json_ent["id"], "co_occurrence"
+        ) or storage.get_typed_relationship(json_ent["id"], remember_ent["id"], "co_occurrence")
         assert rel is not None
         # Appeared together in 2 episodes -> weight should be reinforced
         assert rel["weight"] >= 2.0

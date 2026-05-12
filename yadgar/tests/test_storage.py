@@ -135,6 +135,33 @@ class TestMemoryCRUD:
         # Both links touched b → both gone, no dangling rows left behind.
         assert storage.get_all_memory_similarity_links() == []
 
+    def test_delete_memory_removes_memory_entity_and_relationships(self, storage):
+        """delete_memory must clean up memory:<id> entity rows and their relationships."""
+        mid = storage.insert_memory(_make_memory(content="entity cleanup test"))
+
+        # Simulate the entity row that curation/cls_store/sleep_compute create
+        ent_name = f"memory:{mid}"
+        eid = storage.insert_entity({"name": ent_name, "type": "memory"})
+        assert storage.get_entity_by_name(ent_name) is not None
+
+        # Create a second entity and a relationship referencing the memory entity
+        other_eid = storage.insert_entity({"name": "other-entity", "type": "concept"})
+        storage.insert_relationship(
+            {
+                "source_entity_id": eid,
+                "target_entity_id": other_eid,
+                "relationship_type": "related_to",
+            }
+        )
+
+        storage.delete_memory(mid)
+
+        # Entity row must be gone
+        assert storage.get_entity_by_name(ent_name) is None
+        # Relationship rows referencing the deleted entity must be gone
+        remaining = storage.get_relationships_for_entity(eid)
+        assert remaining == []
+
 
 class TestFTSSearch:
     def test_fts_search(self, storage):
@@ -691,3 +718,262 @@ class TestMemoryScores:
         assert mem["surprise_score"] == 0.7
         assert mem["importance"] == 0.8
         assert mem["emotional_valence"] == 0.3
+
+
+class TestEpisodePrune:
+    """prune_old_episodes removes stale episode rows."""
+
+    def _insert_ep(self, storage, timestamp: str, content: str = "test") -> int:
+        return storage.insert_episode(
+            {
+                "session_id": "s1",
+                "directory": "/tmp",
+                "raw_content": content,
+                "timestamp": timestamp,
+            }
+        )
+
+    def test_prune_removes_old_episodes(self, storage):
+        from datetime import UTC, datetime, timedelta
+
+        old_ts = (datetime.now(UTC) - timedelta(days=20)).isoformat()
+        new_ts = datetime.now(UTC).isoformat()
+
+        old_ep = self._insert_ep(storage, old_ts)
+        new_ep = self._insert_ep(storage, new_ts)
+
+        pruned = storage.prune_old_episodes(older_than_days=14)
+        assert pruned >= 1
+
+        # Old row gone
+        old_rows = storage._q(f"SELECT id FROM episode:{old_ep}")
+        assert old_rows == []
+
+        # Recent row stays
+        new_rows = storage._q(f"SELECT id FROM episode:{new_ep}")
+        assert len(new_rows) == 1
+
+    def test_get_recent_episodes_capped(self, storage):
+        """get_recent_episodes returns at most limit rows in ascending order."""
+        from datetime import UTC, datetime, timedelta
+
+        for i in range(10):
+            ts = (datetime.now(UTC) - timedelta(hours=10 - i)).isoformat()
+            storage.insert_episode(
+                {"session_id": "s", "directory": "/tmp", "raw_content": f"ep {i}", "timestamp": ts}
+            )
+
+        recent = storage.get_recent_episodes(limit=5)
+        assert len(recent) == 5
+        # Ascending timestamp order
+        timestamps = [ep["timestamp"] for ep in recent]
+        assert timestamps == sorted(timestamps)
+
+
+class TestBatchWritesChunking:
+    """batch_writes must not build a single unbounded SQL string.
+
+    With MAX_BATCH_STATEMENTS=500 the implementation splits large batches
+    into multiple transactions, each capped at that size.  All statements
+    must still land.
+    """
+
+    def test_large_batch_all_land(self, storage):
+        """Write 750 memories via batch_writes (>500); all must be readable."""
+        import os
+
+        if not os.environ.get("YADGAR_DB_URL"):
+            pytest.skip("batch_writes requires server mode")
+
+        # Pre-insert memories so we have valid IDs to UPDATE
+        ids = [storage.insert_memory(_make_memory(content=f"batch-{i}")) for i in range(10)]
+
+        # Build 750 UPDATE statements (heat updates) — exceeds the 500-statement cap
+        stmts = [
+            (
+                "UPDATE type::record('memory', $id) SET tags = $tags",
+                {"id": ids[i % 10], "tags": [f"batch-tag-{i}"]},
+            )
+            for i in range(750)
+        ]
+        # Must not raise (previously a single SQL blob could crash SurrealDB's serialiser)
+        storage.batch_writes(stmts)
+
+        # Spot-check: last update should have persisted
+        mem = storage.get_memory(ids[9])
+        assert mem is not None
+
+    def test_empty_batch_is_noop(self, storage):
+        storage.batch_writes([])  # must not raise
+
+
+class TestActionLogPrune:
+    """prune_processed_action_log removes old processed rows."""
+
+    def _insert_action(self, storage, timestamp: str) -> int:
+        aid = storage._next_id("action_log")
+        storage._q(
+            "CREATE type::record('action_log', $id) SET "
+            "tool_name = $t, tool_input_summary = $s, "
+            "directory = $d, session_id = $sid, "
+            "timestamp = $ts, processed = true",
+            {
+                "id": aid,
+                "t": "Bash",
+                "s": "ls",
+                "d": "/tmp",
+                "sid": "s1",
+                "ts": timestamp,
+            },
+        )
+        return aid
+
+    def test_prune_removes_old_processed_rows(self, storage):
+        from datetime import UTC, datetime, timedelta
+
+        old_ts = (datetime.now(UTC) - timedelta(days=10)).isoformat()
+        new_ts = datetime.now(UTC).isoformat()
+
+        old_id = self._insert_action(storage, old_ts)
+        new_id = self._insert_action(storage, new_ts)
+
+        # Prune rows older than 7 days
+        storage.prune_processed_action_log(older_than_days=7)
+
+        # Old processed row gone
+        old_rows = storage._q(f"SELECT id FROM action_log:{old_id}")
+        assert old_rows == []
+
+        # Recent row still present
+        new_rows = storage._q(f"SELECT id FROM action_log:{new_id}")
+        assert len(new_rows) == 1
+
+    def test_prune_skips_unprocessed_rows(self, storage):
+        """Unprocessed rows must not be pruned regardless of age."""
+        from datetime import UTC, datetime, timedelta
+
+        old_ts = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+        aid = storage._next_id("action_log")
+        storage._q(
+            "CREATE type::record('action_log', $id) SET "
+            "tool_name = $t, tool_input_summary = $s, "
+            "directory = $d, session_id = $sid, "
+            "timestamp = $ts, processed = false",
+            {"id": aid, "t": "Bash", "s": "ls", "d": "/tmp", "sid": "s1", "ts": old_ts},
+        )
+
+        storage.prune_processed_action_log(older_than_days=7)
+
+        rows = storage._q(f"SELECT id FROM action_log:{aid}")
+        assert len(rows) == 1
+
+
+# ── prune_old_rows generic helper ────────────────────────────────────────────
+
+
+class TestPruneOldRows:
+    """prune_old_rows should delete old rows and return the count."""
+
+    def test_prune_narrative_entry(self, storage):
+        """Old narrative entries are pruned; recent ones are kept."""
+        from datetime import UTC, datetime, timedelta
+
+        old_date = (datetime.now(UTC) - timedelta(days=100)).isoformat()
+        recent_date = (datetime.now(UTC) - timedelta(days=10)).isoformat()
+
+        # Insert one old and one recent narrative entry
+        old_id = storage.insert_narrative_entry(
+            {
+                "directory_context": "/proj",
+                "summary": "old narrative",
+                "period_start": old_date,
+                "period_end": old_date,
+            }
+        )
+        recent_id = storage.insert_narrative_entry(
+            {
+                "directory_context": "/proj",
+                "summary": "recent narrative",
+                "period_start": recent_date,
+                "period_end": recent_date,
+            }
+        )
+        # Back-date old entry's created_at
+        storage._q(
+            "UPDATE type::record('narrative_entry', $id) SET created_at = $ts",
+            {"id": old_id, "ts": old_date},
+        )
+
+        pruned = storage.prune_old_rows("narrative_entry", older_than_days=90)
+
+        assert pruned >= 1
+        old_rows = storage._q(f"SELECT id FROM narrative_entry:{old_id}")
+        assert old_rows == [], "old narrative_entry should have been deleted"
+        recent_rows = storage._q(f"SELECT id FROM narrative_entry:{recent_id}")
+        assert len(recent_rows) == 1, "recent narrative_entry must survive"
+
+    def test_prune_prospective_memory_only_inactive(self, storage):
+        """prune_old_rows respects extra_where — only fired PMs are deleted."""
+        from datetime import UTC, datetime, timedelta
+
+        old_date = (datetime.now(UTC) - timedelta(days=40)).isoformat()
+
+        # Active PM — must survive even if old
+        active_id = storage.insert_prospective_memory(
+            {
+                "content": "check deploy",
+                "trigger_condition": "deploy",
+                "trigger_type": "keyword_match",
+                "is_active": True,
+            }
+        )
+        storage._q(
+            "UPDATE type::record('prospective_memory', $id) SET created_at = $ts",
+            {"id": active_id, "ts": old_date},
+        )
+
+        # Inactive (fired) PM — should be pruned
+        inactive_id = storage.insert_prospective_memory(
+            {
+                "content": "old fired reminder",
+                "trigger_condition": "done",
+                "trigger_type": "keyword_match",
+                "is_active": False,
+            }
+        )
+        storage._q(
+            "UPDATE type::record('prospective_memory', $id) SET created_at = $ts, is_active = false",
+            {"id": inactive_id, "ts": old_date},
+        )
+
+        pruned = storage.prune_old_rows(
+            "prospective_memory",
+            older_than_days=30,
+            extra_where="is_active = false",
+        )
+
+        assert pruned >= 1
+        inactive_rows = storage._q(f"SELECT id FROM prospective_memory:{inactive_id}")
+        assert inactive_rows == [], "fired prospective_memory should have been pruned"
+        active_rows = storage._q(f"SELECT id FROM prospective_memory:{active_id}")
+        assert len(active_rows) == 1, "active prospective_memory must survive"
+
+    def test_prune_unknown_table_raises(self, storage):
+        """prune_old_rows must refuse unknown tables to prevent injection."""
+        import pytest
+
+        with pytest.raises(ValueError, match="not in the allowed set"):
+            storage.prune_old_rows("memory", older_than_days=7)
+
+    def test_prune_zero_days_is_noop(self, storage):
+        """older_than_days=0 disables the prune (returns 0)."""
+        storage.insert_narrative_entry(
+            {
+                "directory_context": "/proj",
+                "summary": "test",
+                "period_start": "2020-01-01T00:00:00",
+                "period_end": "2020-01-01T00:00:00",
+            }
+        )
+        pruned = storage.prune_old_rows("narrative_entry", older_than_days=0)
+        assert pruned == 0

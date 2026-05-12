@@ -375,12 +375,23 @@ class MemoryCurator:
         return stats
 
     def _memify_prune(self, stats: dict) -> None:
-        """Delete only auto-generated action-stream memories that went cold and were never accessed.
+        """Delete cold, unaccessed, stale auto-generated memories.
 
-        User-stored memories are never auto-deleted — only summaries tagged _action_stream
-        meet the criteria (heat<0.01 AND confidence<0.3 AND access_count==0).
+        Pass 1 (action-stream): summaries tagged _action_stream that are cold
+        (heat<0.01), low-confidence (<0.3), and never accessed.
+
+        Pass 2 (auto-generated): memories tagged "auto-generated" (derived facts,
+        dream insights, CLS semantic promotions) that are cold (heat<COLD_THRESHOLD),
+        never accessed (access_count==0 or NONE), older than
+        AUTO_GENERATED_MEMORY_MAX_AGE_DAYS, and not protected.
+
+        User-created memories are never touched by either pass.
         """
+        from datetime import UTC, datetime, timedelta
+
         candidates = self._storage.get_memories_by_heat(min_heat=0.0, limit=10000)
+
+        # --- Pass 1: action-stream summaries ---
         for mem in candidates:
             tags = mem.get("tags", [])
             if isinstance(tags, str):
@@ -396,6 +407,32 @@ class MemoryCurator:
             ):
                 self._storage.delete_memory(mem["id"])
                 stats["pruned"] += 1
+
+        # --- Pass 2: cold unaccessed auto-generated memories ---
+        max_age_days = self._settings.AUTO_GENERATED_MEMORY_MAX_AGE_DAYS
+        if max_age_days <= 0:
+            return  # disabled
+
+        cold_threshold = self._settings.COLD_THRESHOLD
+        age_cutoff = (datetime.now(UTC) - timedelta(days=max_age_days)).isoformat()
+
+        for mem in candidates:
+            tags = mem.get("tags", [])
+            if isinstance(tags, str):
+                tags = json.loads(tags)
+            if "auto-generated" not in tags:
+                continue
+            if mem.get("is_protected"):
+                continue
+            if (mem.get("heat") or 0.0) >= cold_threshold:
+                continue
+            if (mem.get("access_count") or 0) != 0:
+                continue
+            created_at = mem.get("created_at") or ""
+            if created_at > age_cutoff:
+                continue  # too recent — spare it
+            self._storage.delete_memory(mem["id"])
+            stats["pruned"] += 1
 
     def _memify_strengthen(self, stats: dict) -> None:
         """Boost importance for memories accessed > 5 times with confidence > 0.8."""

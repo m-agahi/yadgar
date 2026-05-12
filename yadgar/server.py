@@ -1322,6 +1322,209 @@ def validate_memory(memory_id: int) -> dict:
     return {"memory_id": memory_id, "is_valid": True, "reason": "file hash matches"}
 
 
+@_tool(power=True)
+def check_invariants() -> dict:
+    """Run consistency checks on the memory store.
+
+    Returns {"ok": bool, "violations": [...], "counts": {...}}.
+    Each violation is a string describing the problem.
+    Logs CRITICAL for every violation detected.
+    """
+    storage = _get_storage()
+    return _run_check_invariants(storage)
+
+
+def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
+    """Core logic for check_invariants — separated so tests can call it directly."""
+    violations: list[str] = []
+    counts: dict[str, int] = {}
+
+    # ── 1. Dangling links ────────────────────────────────────────────────────
+
+    def _count_q(surql: str, params: dict | None = None) -> int:
+        rows = storage._q(surql, params)
+        if not rows:
+            return 0
+        row = rows[0]
+        return int(row.get("c", row.get("count", 0)))
+
+    # memory table row count (used repeatedly)
+    mem_count = _count_q("SELECT count() AS c FROM memory GROUP ALL")
+    counts["memory"] = mem_count
+
+    # memory_similarity_link dangling endpoints
+    try:
+        dangling_msl = _count_q(
+            "SELECT count() AS c FROM memory_similarity_link "
+            "WHERE source_memory_id NOT IN (SELECT VALUE meta::id(id) FROM memory) "
+            "OR target_memory_id NOT IN (SELECT VALUE meta::id(id) FROM memory) "
+            "GROUP ALL"
+        )
+        counts["memory_similarity_link_dangling"] = dangling_msl
+        if dangling_msl:
+            violations.append(
+                f"{dangling_msl} memory_similarity_link rows reference non-existent memory IDs"
+            )
+    except Exception as exc:
+        logger.warning("check_invariants: memory_similarity_link check failed: %s", exc)
+
+    # memory_transition dangling endpoints
+    try:
+        dangling_mt = _count_q(
+            "SELECT count() AS c FROM memory_transition "
+            "WHERE from_memory_id NOT IN (SELECT VALUE meta::id(id) FROM memory) "
+            "OR to_memory_id NOT IN (SELECT VALUE meta::id(id) FROM memory) "
+            "GROUP ALL"
+        )
+        counts["memory_transition_dangling"] = dangling_mt
+        if dangling_mt:
+            violations.append(
+                f"{dangling_mt} memory_transition rows reference non-existent memory IDs"
+            )
+    except Exception as exc:
+        logger.warning("check_invariants: memory_transition check failed: %s", exc)
+
+    # memory_archive dangling
+    try:
+        dangling_ma = _count_q(
+            "SELECT count() AS c FROM memory_archive "
+            "WHERE original_memory_id NOT IN (SELECT VALUE meta::id(id) FROM memory) "
+            "GROUP ALL"
+        )
+        counts["memory_archive_dangling"] = dangling_ma
+        if dangling_ma:
+            violations.append(
+                f"{dangling_ma} memory_archive rows reference non-existent memory IDs"
+            )
+    except Exception as exc:
+        logger.warning("check_invariants: memory_archive check failed: %s", exc)
+
+    # relationship dangling entity endpoints
+    try:
+        ent_count = _count_q("SELECT count() AS c FROM entity GROUP ALL")
+        counts["entity"] = ent_count
+        dangling_rel = _count_q(
+            "SELECT count() AS c FROM relationship "
+            "WHERE source_entity_id NOT IN (SELECT VALUE meta::id(id) FROM entity) "
+            "OR target_entity_id NOT IN (SELECT VALUE meta::id(id) FROM entity) "
+            "GROUP ALL"
+        )
+        counts["relationship_dangling"] = dangling_rel
+        if dangling_rel:
+            violations.append(f"{dangling_rel} relationship rows reference non-existent entity IDs")
+    except Exception as exc:
+        logger.warning("check_invariants: relationship check failed: %s", exc)
+
+    # wiki_crossref dangling slugs
+    try:
+        slug_rows = storage._q("SELECT VALUE slug FROM wiki_page")
+        valid_slugs = set(slug_rows) if slug_rows else set()
+        all_refs = storage.get_all_wiki_crossrefs()
+        dangling_xref = sum(
+            1
+            for r in all_refs
+            if r.get("from_slug") not in valid_slugs or r.get("to_slug") not in valid_slugs
+        )
+        counts["wiki_crossref_dangling"] = dangling_xref
+        if dangling_xref:
+            violations.append(
+                f"{dangling_xref} wiki_crossref rows reference non-existent page slugs"
+            )
+    except Exception as exc:
+        logger.warning("check_invariants: wiki_crossref check failed: %s", exc)
+
+    # ── 2. memory:N orphan entities ─────────────────────────────────────────
+    try:
+        mem_entity_rows = storage._q(
+            "SELECT meta::id(id) AS eid, name FROM entity "
+            "WHERE string::starts_with(name, 'memory:')"
+        )
+        orphan_count = 0
+        mem_ids_set: set[int] = set()
+        if mem_count > 0:
+            id_rows = storage._q("SELECT VALUE meta::id(id) FROM memory")
+            mem_ids_set = {int(x) for x in id_rows if x is not None}
+        for row in mem_entity_rows:
+            name = row.get("name", "")
+            suffix = name.split(":", 1)[1] if ":" in name else ""
+            try:
+                mid = int(suffix)
+            except (ValueError, TypeError):
+                continue
+            if mid not in mem_ids_set:
+                orphan_count += 1
+        counts["memory_entity_orphans"] = orphan_count
+        if orphan_count:
+            violations.append(
+                f"{orphan_count} entity rows named 'memory:<N>' where N is not a live memory ID"
+            )
+    except Exception as exc:
+        logger.warning("check_invariants: memory entity orphan check failed: %s", exc)
+
+    # ── 3. Row-count ceilings (warn only) ───────────────────────────────────
+    _CEILINGS = {
+        "action_log": 100_000,
+        "episode": 10_000,
+        "wiki_page": 5_000,
+    }
+    for table, ceiling in _CEILINGS.items():
+        try:
+            n = _count_q(f"SELECT count() AS c FROM {table} GROUP ALL")
+            counts[table] = n
+            if n > ceiling:
+                violations.append(f"{table} has {n} rows (ceiling {ceiling}) — consider pruning")
+        except Exception as exc:
+            logger.warning("check_invariants: %s ceiling check failed: %s", table, exc)
+
+    # memory_similarity_link ceiling (dynamic)
+    try:
+        msl_count = _count_q("SELECT count() AS c FROM memory_similarity_link GROUP ALL")
+        counts["memory_similarity_link"] = msl_count
+        msl_ceiling = mem_count * settings.MAX_SIMILARITY_LINKS_PER_MEMORY * 2
+        if msl_ceiling > 0 and msl_count > msl_ceiling:
+            violations.append(
+                f"memory_similarity_link has {msl_count} rows (ceiling {msl_ceiling})"
+            )
+    except Exception as exc:
+        logger.warning("check_invariants: msl ceiling check failed: %s", exc)
+
+    # ── 4. Engram slot distribution ─────────────────────────────────────────
+    try:
+        if mem_count > 0:
+            slot_rows = storage._q(
+                "SELECT slot_index, count() AS n FROM memory "
+                "WHERE slot_index IS NOT NONE GROUP BY slot_index"
+            )
+            threshold = int(mem_count * 0.05)
+            for row in slot_rows:
+                n = int(row.get("n", 0))
+                slot = row.get("slot_index")
+                if n > threshold:
+                    violations.append(
+                        f"Slot {slot} holds {n} memories (>{threshold}, >5% of {mem_count}) — engram collapse?"
+                    )
+    except Exception as exc:
+        logger.warning("check_invariants: slot distribution check failed: %s", exc)
+
+    # ── 5. Engram slot table integrity ──────────────────────────────────────
+    try:
+        engram_count = _count_q("SELECT count() AS c FROM engram_slot GROUP ALL")
+        counts["engram_slot"] = engram_count
+        expected = settings.HOPFIELD_MAX_PATTERNS
+        if engram_count != expected:
+            violations.append(
+                f"engram_slot has {engram_count} rows (expected {expected} = HOPFIELD_MAX_PATTERNS)"
+            )
+    except Exception as exc:
+        logger.warning("check_invariants: engram_slot check failed: %s", exc)
+
+    ok = len(violations) == 0
+    for v in violations:
+        logger.critical("check_invariants: %s", v)
+
+    return {"ok": ok, "violations": violations, "counts": counts}
+
+
 @_tool()
 def get_project_context(directory: str) -> dict:
     """Return all hot memories for a directory, sorted by heat descending.

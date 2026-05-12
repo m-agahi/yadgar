@@ -246,6 +246,42 @@ class Settings(BaseSettings):
     QUEUE_BACKOFF_MAX_S: int = 3600  # maximum retry delay cap
     QUEUE_DLQ_RETENTION_DAYS: int = 90  # prune DLQ entries older than this
 
+    # batch_writes chunk size — each transaction is capped at this many SQL
+    # statements to avoid SurrealDB's recursive serialiser blowing the stack
+    # on large batches (e.g. full-table heat decay).
+    MAX_BATCH_STATEMENTS: int = 500
+
+    # action_log retention — processed rows older than this are pruned each
+    # consolidation cycle to prevent unbounded table growth.
+    ACTION_LOG_RETENTION_DAYS: int = 7
+
+    # episode retention — rows older than this are pruned each consolidation
+    # cycle.  Keeps the episode table bounded so _check_temporal_order stays
+    # fast (it now scans only the 2000 most recent episodes regardless).
+    EPISODE_RETENTION_DAYS: int = 14
+
+    # similarity matrix candidate cap — _link_similar_memories and _merge_duplicates
+    # restrict the embedding matrix to at most this many memories (most-recently-
+    # accessed first) before building the N×N float32 matrix.  Prevents OOM at scale.
+    SIMILARITY_MATRIX_MAX_CANDIDATES: int = 4000
+
+    # CLS pattern detection candidate cap — find_recurring_patterns restricts its
+    # episodic memory scan to at most this many most-recently-accessed memories.
+    CLS_PATTERN_MAX_CANDIDATES: int = 2000
+
+    # auto-generated memory retention — _memify_prune deletes cold unaccessed
+    # memories tagged "auto-generated" that are older than this many days.
+    # Set to 0 to disable the auto-generated prune pass.
+    AUTO_GENERATED_MEMORY_MAX_AGE_DAYS: int = 30
+
+    # Table retention windows — rows older than these thresholds are pruned
+    # each consolidation cycle.  Set to 0 to disable for a specific table.
+    NARRATIVE_ENTRY_RETENTION_DAYS: int = 90
+    ASTROCYTE_PROCESS_RETENTION_DAYS: int = 7
+    MEMORY_CLUSTER_RETENTION_DAYS: int = 30
+    DERIVED_BELIEF_RETENTION_DAYS: int = 30
+    PROSPECTIVE_MEMORY_RETENTION_DAYS: int = 30
+
     model_config = {"env_prefix": "YADGAR_"}
 
     @classmethod

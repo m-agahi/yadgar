@@ -185,5 +185,18 @@ def memorize_sync(content: str, context: str, tags: list, **kwargs) -> dict:
                 return row
     except Exception:
         pass
+    # Merge case: curator may have merged new content into an existing memory,
+    # changing stored content to "<existing>\n<new>".  Scan for a memory in the
+    # same directory whose content *contains* the original string so callers
+    # that test deduplication still get a dict with 'id'.
+    try:
+        recent = storage.get_memories_by_heat(min_heat=0.0, limit=100)
+        for row in recent:
+            stored = row.get("content", "")
+            if content in stored and row.get("directory_context") == context:
+                row.pop("embedding", None)
+                return row
+    except Exception:
+        pass
     # Fallback: return the queued response if we can't find it
     return result
