@@ -1,5 +1,14 @@
 #!/bin/bash
-# Backend container entrypoint: SurrealDB + embedding service + backup cron
+# Backend container entrypoint: SurrealDB + embedding service.
+#
+# NOTE: no in-container backup loop. The previous `GET /export` cron triggered
+# a stack overflow in a `surrealdb-worker` thread (the export's recursive value
+# serializer blows the default ~2 MiB tokio stack on this dataset), aborting the
+# whole process and putting the container in a restart loop. DB snapshots are
+# handled outside the container by the systemd ExecStartPre `cp -r` of the
+# surrealkv data dir. If a logical (.surql) backup is needed again, run
+# `surreal export` from a one-off client against a *quiesced* DB, not on a hot
+# server, and only after the upstream export-recursion issue is resolved.
 set -e
 
 cleanup() {
@@ -7,6 +16,12 @@ cleanup() {
   wait "$SURREAL_PID" "$EMBED_PID" 2>/dev/null
 }
 trap cleanup TERM INT
+
+# Worker-thread stack size. Default tokio stack (~2 MiB) overflows on deep
+# queries (large transactions, long expression chains, deeply nested values),
+# aborting the whole process. 32 MiB gives headroom. Overridable via env.
+export SURREAL_RUNTIME_STACK_SIZE="${SURREAL_RUNTIME_STACK_SIZE:-33554432}"
+export RUST_MIN_STACK="${RUST_MIN_STACK:-33554432}"
 
 # Start SurrealDB
 surreal start \
@@ -57,44 +72,5 @@ python3 -m uvicorn yadgar.embed_service:app \
   --port 8001 \
   --no-access-log &
 EMBED_PID=$!
-
-# Backup cron: first backup immediately, then at 06:10, 12:10, 18:10, 21:10 local time.
-# The 21:10 last slot avoids the previous 00:10 run that woke the laptop overnight.
-(
-  _do_backup() {
-    STAMP=$(date +%Y%m%d_%H%M%S)
-    _creds="${SURREAL_USER:-root}:${SURREAL_PASS:-root}"  # gitleaks:allow
-    if curl -sf \
-      -u "$_creds" \
-      -H "Surreal-NS: yadgar" \
-      -H "Surreal-DB: main" \
-      -H "Accept: text/plain" \
-      -o "/data/backup_${STAMP}.surql" \
-      http://127.0.0.1:8000/export; then
-      echo "Backup written: /data/backup_${STAMP}.surql"
-    fi
-    find /data -name 'backup_*.surql' -mtime +7 -delete
-  }
-  _sleep_until_next_backup() {
-    python3 - <<'PYEOF'
-import datetime
-now = datetime.datetime.now()
-for h in [6, 12, 18, 21]:
-    t = now.replace(hour=h, minute=10, second=0, microsecond=0)
-    if t > now:
-        print(int((t - now).total_seconds()))
-        break
-else:
-    t = (now + datetime.timedelta(days=1)).replace(hour=6, minute=10, second=0, microsecond=0)
-    print(int((t - now).total_seconds()))
-PYEOF
-  }
-  _do_backup
-  while true; do
-    # Fall back to 1h sleep if Python helper ever errors, so the loop never silently dies.
-    sleep "$(_sleep_until_next_backup)" || sleep 3600
-    _do_backup
-  done
-) &
 
 wait -n "$SURREAL_PID" "$EMBED_PID"
