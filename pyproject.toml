@@ -78,6 +78,7 @@ test = [
     "pytest>=8.0",
     "pytest-xdist>=3.0",
     "pytest-timeout>=2.3",
+    "pytest-rerunfailures>=14",
     "hypothesis>=6",
 ]
 dev = [

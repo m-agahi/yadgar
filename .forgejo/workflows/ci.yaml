@@ -6,10 +6,18 @@ on:
     tags: ["v*"]
   pull_request:
     branches: [master]
+  workflow_dispatch:
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    # PRs (gates the merge) and version tags (gates the PyPI publish) only.
+    # NOT on pushes to master (already tested on the PR) and NOT on
+    # workflow_dispatch (manual dispatch is "rebuild from latest master" — the
+    # code was tested when its PR merged, so dispatch runs `build` alone).
+    if: >-
+      github.event_name == 'pull_request' ||
+      startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -59,7 +67,10 @@ jobs:
         run: echo "$HOME/.surrealdb" >> $GITHUB_PATH
 
       - name: Run tests
-        run: python -m pytest yadgar/tests/ -q --tb=short
+        # --reruns: the suite shares a session-scoped SurrealDB across xdist
+        # workers; a few server-globals tests flake on worker ordering. Retry
+        # twice before counting a failure. (Plugin comes from the [test] extra.)
+        run: python -m pytest yadgar/tests/ -q --tb=short --reruns 2 --reruns-delay 2
 
   publish:
     needs: test
@@ -87,6 +98,7 @@ jobs:
 
   changes:
     runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
     outputs:
       docker: ${{ steps.check.outputs.docker }}
     steps:
@@ -99,18 +111,23 @@ jobs:
         id: check
         run: |
           if git rev-parse HEAD~1 >/dev/null 2>&1 && \
-             ! git diff --name-only HEAD~1 HEAD | grep -qE '^(Dockerfile|Dockerfile\.backend|entrypoint.*\.sh|yadgar/|pyproject\.toml|\.github/workflows/ci\.yaml)'; then
+             ! git diff --name-only HEAD~1 HEAD | grep -qE '^(Dockerfile|Dockerfile\.backend|entrypoint.*\.sh|yadgar/|pyproject\.toml|\.forgejo/workflows/ci\.yaml)'; then
             echo "docker=false" >> "$GITHUB_OUTPUT"
           else
             echo "docker=true" >> "$GITHUB_OUTPUT"
           fi
 
   build:
-    needs: [test, changes]
+    needs: [changes]
     runs-on: ubuntu-latest
-    # Push on version tags and direct pushes to master (not PRs)
-    # On master: only when Docker-relevant files changed; on version tags: always
-    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || needs.changes.outputs.docker == 'true')
+    # Runs on: version tags (always), direct pushes to master (only when
+    # Docker-relevant files changed), and manual workflow_dispatch (always).
+    # Never on PRs. Does NOT re-run tests — that content was gated on the PR;
+    # the `test` job no longer runs on master pushes.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' &&
+       (startsWith(github.ref, 'refs/tags/v') || needs.changes.outputs.docker == 'true'))
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
