@@ -72,6 +72,8 @@ class Settings(BaseSettings):
     NARRATIVE_INTERVAL_HOURS: int = 24
     CONTEXTUAL_PREFIX_ENABLED: bool = True
     CURATION_SIMILARITY_THRESHOLD: float = 0.95  # Only merge near-exact duplicates
+    SIMILARITY_LINK_THRESHOLD: float = 0.78  # Min cosine to create a memory_similarity_link
+    MAX_SIMILARITY_LINKS_PER_MEMORY: int = 15  # Degree cap — bounds memory_similarity_link size
 
     # v3 frontier settings
     HOPFIELD_BETA: float = 8.0  # Hopfield sharpness (low=blended, high=precise)

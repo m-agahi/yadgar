@@ -16,7 +16,7 @@ class GraphAPI:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def get_full_graph(self, max_memories: int = 500, top_k: int = 100) -> dict:
+    def get_full_graph(self, max_memories: int = 500, top_k: int = 8) -> dict:
         """Return full graph: memory nodes with semantic, temporal, and transition edges.
 
         Memory nodes: id="mem:{id}", type="memory"
@@ -189,10 +189,14 @@ class GraphAPI:
                 or [{}]
             )[0].get("count", 0)
             # Temporal edges = memories sharing slots; approximate by counting slots with 2+ members
+            # NOTE: must be `IS NOT NONE`, not `IS NOT NULL` — in SurrealDB an
+            # unset field is NONE, and NONE passes `IS NOT NULL`. The old query
+            # lumped every slot-less memory into one phantom group, reporting a
+            # bogus all-pairs temporal-edge count (e.g. 1016 unassigned → ~515k).
             slot_rows = (
                 self._s._q(
                     "SELECT slot_index, count() as cnt FROM memory "
-                    "WHERE slot_index IS NOT NULL GROUP BY slot_index"
+                    "WHERE slot_index IS NOT NONE GROUP BY slot_index"
                 )
                 or []
             )

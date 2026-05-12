@@ -539,9 +539,9 @@ async def api_graph(request: Request) -> JSONResponse:
     except (ValueError, TypeError):
         max_mem = 500
     try:
-        top_k = int(request.query_params.get("top_k", 100))
+        top_k = int(request.query_params.get("top_k", 8))
     except (ValueError, TypeError):
-        top_k = 100
+        top_k = 8
     data = await asyncio.to_thread(GraphAPI(_storage).get_full_graph, max_mem, top_k)
     return JSONResponse(data, headers=_CORS)
 
