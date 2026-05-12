@@ -686,3 +686,40 @@ def test_merge_duplicates_correctness_near_dup_pairs_deleted(tmp_path, settings)
     assert singleton_contents.issubset(remaining), (
         f"singletons wrongly deleted: {singleton_contents - remaining}"
     )
+
+
+class TestSimilarityLinkDegreeCap:
+    def test_link_similar_memories_respects_degree_cap(self, storage, tmp_path):
+        """memory_similarity_link must not exceed MAX_SIMILARITY_LINKS_PER_MEMORY
+        per memory, even when every pair is above the similarity threshold."""
+        settings = Settings(
+            DB_PATH=str(tmp_path / "degree.db"),
+            MAX_SIMILARITY_LINKS_PER_MEMORY=3,
+            SIMILARITY_LINK_THRESHOLD=0.5,
+        )
+        emb = EmbeddingEngine()
+        emb._unavailable = True
+        sched = ConsolidationScheduler(storage, emb, settings)
+
+        # 8 memories with identical embeddings → cosine 1.0 between all pairs.
+        # The memory.embedding HNSW field is fixed at 384 dimensions.
+        vec = np.array([1.0] + [0.0] * 383, dtype=np.float32).tobytes()
+        for i in range(8):
+            storage.insert_memory(
+                {
+                    "content": f"identical-embedding memory {i}",
+                    "embedding": vec,
+                    "directory_context": "/proj",
+                    "heat": 1.0,
+                }
+            )
+
+        sched._link_similar_memories({})
+
+        degree: dict[int, int] = {}
+        for link in storage.get_all_memory_similarity_links():
+            degree[link["source_memory_id"]] = degree.get(link["source_memory_id"], 0) + 1
+            degree[link["target_memory_id"]] = degree.get(link["target_memory_id"], 0) + 1
+
+        assert degree, "expected some similarity links to be created"
+        assert max(degree.values()) <= 3, f"degree cap violated: {degree}"

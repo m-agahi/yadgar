@@ -84,6 +84,49 @@ class TestAllocateToHighestExcitability:
         assert result["slot_index"] == 0
 
 
+class TestColdStartSpreading:
+    def test_cold_starts_spread_across_empty_slots(self, storage, embeddings, tmp_path):
+        """Memories allocated when no slot is warm must NOT all pile into slot 0 —
+        each cold start should pick a fresh (least-occupied) slot."""
+        settings = Settings(
+            DB_PATH=str(tmp_path / "spread.db"),
+            HOPFIELD_MAX_PATTERNS=10,
+            EXCITABILITY_HALF_LIFE_HOURS=6.0,
+            EXCITABILITY_BOOST=0.5,
+        )
+        alloc = EngramAllocator(storage, settings)
+
+        assigned = []
+        for i in range(5):
+            mid = _make_memory(storage, embeddings, f"Cold-start memory {i}")
+            res = alloc.allocate(mid)
+            assigned.append(res["slot_index"])
+            # Simulate a long gap so every slot decays back to cold before the next
+            past = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
+            for s in range(10):
+                slot = storage.get_engram_slot(s)
+                if slot:
+                    storage.update_engram_slot(s, slot["excitability"], past)
+
+        # Five cold starts into a 10-slot table → five distinct slots
+        assert len(set(assigned)) == 5, f"expected 5 distinct slots, got {assigned}"
+
+    def test_warm_slot_keeps_clustering(self, storage, embeddings, tmp_path):
+        """A burst of memories with no decay between them shares one slot."""
+        settings = Settings(
+            DB_PATH=str(tmp_path / "burst.db"),
+            HOPFIELD_MAX_PATTERNS=10,
+            EXCITABILITY_HALF_LIFE_HOURS=6.0,
+            EXCITABILITY_BOOST=0.5,
+        )
+        alloc = EngramAllocator(storage, settings)
+        slots = []
+        for i in range(4):
+            mid = _make_memory(storage, embeddings, f"Burst memory {i}")
+            slots.append(alloc.allocate(mid)["slot_index"])
+        assert len(set(slots)) == 1, f"burst should share one slot, got {slots}"
+
+
 class TestExcitabilityDecay:
     def test_excitability_decays_over_time(self, allocator, storage):
         """Excitability should decrease with elapsed time."""

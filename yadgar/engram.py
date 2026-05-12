@@ -27,23 +27,45 @@ class EngramAllocator:
         # Ensure slot table is populated
         self._storage.init_engram_slots(self._num_slots)
 
+    # At/above this decayed-excitability level a slot is considered "warm" — a
+    # temporal cluster is currently active there. With a 0.5 boost and a ~6h
+    # half-life, a slot stays warm for roughly 3 half-lives (~18h) after its
+    # last activation, then goes cold and the next memory starts a new cluster.
+    _WARM_THRESHOLD = 0.05
+
     def allocate(self, memory_id: int) -> dict:
-        """Allocate a memory to the most excitable slot.
+        """Allocate a memory to a slot.
+
+        If a warm slot exists (a temporal cluster is currently active), the
+        memory joins it — temporally close memories share a slot. Otherwise this
+        starts a *new* cluster in the least-occupied slot, so clusters spread
+        across the slot table instead of all piling into slot 0.
 
         Returns dict with slot_index, excitability, temporally_linked IDs, and link_count.
         """
-        # Find the slot with highest current (decayed) excitability
-        best_slot = 0
-        best_excitability = -1.0
         all_slots = self._storage.get_all_engram_slots()
+        occupancy = self._storage.get_slot_occupancy()
 
-        for slot in all_slots:
-            exc = self._compute_decayed_excitability(
+        exc_by_slot = {
+            slot["slot_index"]: self._compute_decayed_excitability(
                 slot["excitability"], slot.get("last_activated")
             )
-            if exc > best_excitability:
-                best_excitability = exc
-                best_slot = slot["slot_index"]
+            for slot in all_slots
+        }
+        best_excitability = max(exc_by_slot.values(), default=0.0)
+
+        if best_excitability >= self._WARM_THRESHOLD:
+            # Continue the active temporal cluster. Among slots tied at the max
+            # excitability, prefer the least-occupied, then lowest index.
+            candidates = [
+                idx for idx, exc in exc_by_slot.items() if exc >= best_excitability - 1e-9
+            ]
+        else:
+            # Cold start — begin a new cluster. All slots are candidates; the
+            # least-occupied (an empty slot if any) wins.
+            candidates = list(exc_by_slot) or [0]
+
+        best_slot = min(candidates, key=lambda idx: (occupancy.get(idx, 0), idx))
 
         # Get memories already in this slot (these are temporally linked)
         existing_memories = self._storage.get_memories_in_slot(best_slot)

@@ -122,6 +122,19 @@ class TestMemoryCRUD:
         storage.delete_memory(mem_id)
         assert storage.get_memory(mem_id) is None
 
+    def test_delete_memory_removes_similarity_links(self, storage):
+        a = storage.insert_memory(_make_memory(content="link source"))
+        b = storage.insert_memory(_make_memory(content="link target"))
+        c = storage.insert_memory(_make_memory(content="unrelated"))
+        storage.insert_memory_similarity_link(a, b, 0.9)
+        storage.insert_memory_similarity_link(b, c, 0.85)
+        assert len(storage.get_all_memory_similarity_links()) == 2
+
+        storage.delete_memory(b)
+
+        # Both links touched b → both gone, no dangling rows left behind.
+        assert storage.get_all_memory_similarity_links() == []
+
 
 class TestFTSSearch:
     def test_fts_search(self, storage):

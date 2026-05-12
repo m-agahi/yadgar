@@ -602,8 +602,9 @@ class ConsolidationScheduler:
         if len(memories) < 2:
             return
 
-        threshold = 0.78
+        threshold = self._settings.SIMILARITY_LINK_THRESHOLD
         max_new_links = 100  # cap per consolidation cycle
+        max_degree = self._settings.MAX_SIMILARITY_LINKS_PER_MEMORY
 
         # Build embedding matrix (only memories with valid embeddings)
         valid = []
@@ -629,9 +630,12 @@ class ConsolidationScheduler:
         # Pre-load all existing links to avoid per-pair read roundtrips.
         # Key is canonical (source_memory_id, target_memory_id) — already stored as min/max.
         existing_links: dict[tuple[int, int], dict] = {}
+        degree: dict[int, int] = {}  # memory_id -> current link count
         for link in self._storage.get_all_memory_similarity_links():
-            key = (link["source_memory_id"], link["target_memory_id"])
-            existing_links[key] = link
+            src_id, tgt_id = link["source_memory_id"], link["target_memory_id"]
+            existing_links[(src_id, tgt_id)] = link
+            degree[src_id] = degree.get(src_id, 0) + 1
+            degree[tgt_id] = degree.get(tgt_id, 0) + 1
 
         # Find pairs above threshold (upper triangle only)
         # Get indices sorted by descending similarity for best-first linking
@@ -659,7 +663,15 @@ class ConsolidationScheduler:
                     pending_reinforces.append((existing["id"], sim - existing["weight"]))
                 continue
 
+            # Degree cap — keep the similarity graph sparse. Pairs are processed
+            # in descending-similarity order, so a capped-out memory has already
+            # kept its strongest links.
+            if degree.get(mid_a, 0) >= max_degree or degree.get(mid_b, 0) >= max_degree:
+                continue
+
             pending_inserts.append((mid_a, mid_b, round(sim, 4)))
+            degree[mid_a] = degree.get(mid_a, 0) + 1
+            degree[mid_b] = degree.get(mid_b, 0) + 1
             links_created += 1
 
         # Batch all writes into a single transaction

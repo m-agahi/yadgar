@@ -978,6 +978,13 @@ class StorageEngine:
             "DELETE FROM memory_transition WHERE from_memory_id = $mid OR to_memory_id = $mid",
             {"mid": memory_id},
         )
+        # Without this, deleted memories leave dangling similarity links that
+        # accumulate forever and bloat the store.
+        self._q(
+            "DELETE FROM memory_similarity_link "
+            "WHERE source_memory_id = $mid OR target_memory_id = $mid",
+            {"mid": memory_id},
+        )
         # Clear vector fields (no separate table)
         try:
             self.delete_vector(memory_id)
