@@ -219,6 +219,29 @@ class TestCrossReferences:
         _wiki().delete("deleting-linker")
         assert "deleting-linker" not in _wiki()._storage.get_wiki_backlinks("some-target")
 
+    def test_incoming_crossrefs_cleaned_when_target_deleted(self):
+        """Deleting a page must remove wiki_crossref rows pointing TO it.
+
+        Previously delete_wiki_page only removed the wiki_page row, leaving
+        dangling to_slug crossrefs behind.
+        """
+        _wiki().add("Source Page", "See [[target-to-delete]].", "reference")
+        assert "source-page" in _wiki()._storage.get_wiki_backlinks("target-to-delete")
+
+        # Add a target page so we can delete it by ID via the storage layer
+        _wiki().add("Target To Delete", "I will be deleted.", "reference")
+
+        # Delete the target page — incoming crossref from source-page must be removed
+        _wiki().delete("target-to-delete")
+
+        # No dangling to_slug row should survive
+        backlinks = _wiki()._storage.get_wiki_backlinks("target-to-delete")
+        assert backlinks == []
+
+        # Cross-reference table should have no row with to_slug = target-to-delete
+        all_refs = _wiki()._storage.get_all_wiki_crossrefs()
+        assert not any(r["to_slug"] == "target-to-delete" for r in all_refs)
+
 
 # ── G. Hybrid Search ────────────────────────────────────────────────────────
 

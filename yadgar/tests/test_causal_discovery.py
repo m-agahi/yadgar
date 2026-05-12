@@ -520,3 +520,37 @@ class TestDAGStoredInTable:
             assert "algorithm" in edge
             assert "confidence" in edge
             assert edge["algorithm"] == "pc"
+
+    def test_discover_dag_truncates_and_rebuilds(self, cd, storage):
+        """Running discover_dag twice must not accumulate duplicate edges.
+
+        The table is truncate-and-rebuilt each run, so edge count after run 2
+        should equal edge count after run 1.
+        """
+        now = datetime.now(UTC)
+
+        names = [f"trunc_{i}" for i in range(8)]
+        for name in names:
+            storage.insert_entity({"name": name, "type": "file"})
+
+        for h in range(24):
+            ts = (now - timedelta(hours=24 - h)).isoformat()
+            content = "trunc_0 trunc_1 trunc_2" if h % 2 == 0 else "trunc_3 trunc_4 trunc_5"
+            storage.insert_episode(
+                {
+                    "session_id": f"t{h}",
+                    "directory": "/proj",
+                    "raw_content": content,
+                    "timestamp": ts,
+                }
+            )
+
+        cd.discover_dag(hours=48)
+        count_after_run1 = len(storage.get_all_causal_edges())
+
+        cd.discover_dag(hours=48)
+        count_after_run2 = len(storage.get_all_causal_edges())
+
+        assert count_after_run2 == count_after_run1, (
+            f"discover_dag appended rows on second run: {count_after_run1} → {count_after_run2}"
+        )

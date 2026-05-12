@@ -117,37 +117,68 @@ class DualStoreCLS:
         """Find clusters of similar episodic memories that recur across sessions.
 
         Algorithm:
-        1. Get all episodic memories (optionally filtered by directory)
+        1. Get episodic memories (capped at CLS_PATTERN_MAX_CANDIDATES most-recent)
         2. Group by embedding similarity (threshold: CLUSTER_SIMILARITY_THRESHOLD)
+           using vectorised numpy matmul — O(N·D) instead of O(N²) Python calls
         3. For each cluster with >= min_occurrences members:
            - Check session diversity (>= 2 different sessions)
            - Check generalizability (>= 2 directories OR same directory)
         4. Return qualifying clusters
         """
-        # 1. Get episodic memories
+        import numpy as np
+
+        max_candidates = self._settings.CLS_PATTERN_MAX_CANDIDATES
+        # 1. Get episodic memories — cap to avoid O(N²) at scale
         if directory:
-            memories = self._storage.get_memories_by_store_type("episodic", directory=directory)
+            memories = self._storage.get_memories_by_store_type(
+                "episodic", directory=directory, limit=max_candidates
+            )
         else:
-            memories = self._storage.get_memories_by_store_type("episodic")
+            memories = self._storage.get_memories_by_store_type("episodic", limit=max_candidates)
         if len(memories) < min_occurrences:
             return []
 
-        # 2. Greedy clustering by embedding similarity
+        # 2. Vectorised greedy clustering via numpy matmul
         threshold = self._settings.CLUSTER_SIMILARITY_THRESHOLD
+
+        # Build unit-normalised embedding matrix for memories with valid embeddings
+        valid_mems: list[dict] = []
+        unit_vecs: list[np.ndarray] = []
+        for mem in memories:
+            emb = mem.get("embedding")
+            if not emb:
+                continue
+            try:
+                arr = np.frombuffer(emb, dtype=np.float32)
+                norm = np.linalg.norm(arr)
+                if len(arr) == 0 or norm == 0:
+                    continue
+                unit_vecs.append(arr / norm)
+                valid_mems.append(mem)
+            except Exception:
+                continue
+
+        if len(valid_mems) < min_occurrences:
+            return []
+
+        # Pairwise cosine similarity via matrix multiplication (O(N·D))
+        mat = np.stack(unit_vecs)  # N x D
+        sim_matrix = mat @ mat.T  # N x N
+
         clusters: list[list[dict]] = []
         assigned: set[int] = set()
 
-        for i, mem_a in enumerate(memories):
+        for i, mem_a in enumerate(valid_mems):
             if mem_a["id"] in assigned:
                 continue
             cluster = [mem_a]
             assigned.add(mem_a["id"])
 
-            for mem_b in memories[i + 1 :]:
+            for j in range(i + 1, len(valid_mems)):
+                mem_b = valid_mems[j]
                 if mem_b["id"] in assigned:
                     continue
-                sim = self._embeddings.similarity(mem_a["embedding"], mem_b["embedding"])
-                if sim >= threshold:
+                if sim_matrix[i, j] >= threshold:
                     cluster.append(mem_b)
                     assigned.add(mem_b["id"])
 
@@ -561,11 +592,20 @@ class DualStoreCLS:
         store_type: str,
         directory: str,
     ) -> list[tuple[dict, float]]:
-        """Search a specific store (episodic or semantic) by embedding similarity."""
+        """Search a specific store (episodic or semantic) by embedding similarity.
+
+        Scan is capped at CLS_PATTERN_MAX_CANDIDATES most-recently-accessed
+        memories to prevent O(N) full-table scans from blocking consolidation.
+        A full vector-index path (HNSW/MTREE) is the eventual target but not
+        implemented here to keep the change surgical.
+        """
+        cap = self._settings.CLS_PATTERN_MAX_CANDIDATES
         if directory:
-            memories = self._storage.get_memories_by_store_type(store_type, directory=directory)
+            memories = self._storage.get_memories_by_store_type(
+                store_type, directory=directory, limit=cap
+            )
         else:
-            memories = self._storage.get_memories_by_store_type(store_type)
+            memories = self._storage.get_memories_by_store_type(store_type, limit=cap)
 
         results = []
         for mem in memories:

@@ -393,7 +393,10 @@ class KnowledgeGraph:
         return result
 
     def _check_temporal_order(self, entity_a: str, entity_b: str) -> str | None:
-        episodes = self._storage.get_all_episodes()
+        # Only scan the most recent episodes — avoid a full-table scan that is
+        # O(episodes × content_len) and grows unboundedly with age.
+        _MAX_SCAN = 2000
+        episodes = self._storage.get_recent_episodes(_MAX_SCAN)
 
         a_before_b = 0
         b_before_a = 0

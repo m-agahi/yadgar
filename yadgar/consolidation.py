@@ -228,6 +228,15 @@ class ConsolidationScheduler:
         self._process_new_episodes(stats)
         logger.info("phase: process_episodes complete in %dms", int((time.monotonic() - _t) * 1000))
 
+        # Prune old episodes to keep the table bounded and _check_temporal_order fast
+        try:
+            retention = self._settings.EPISODE_RETENTION_DAYS
+            pruned = self._storage.prune_old_episodes(older_than_days=retention)
+            if pruned:
+                logger.info("phase: pruned %d old episodes (retention=%dd)", pruned, retention)
+        except Exception:
+            logger.debug("Episode prune failed (non-fatal)", exc_info=True)
+
         _t = time.monotonic()
         logger.info("phase: merge_duplicates starting")
         self._merge_duplicates(stats)
@@ -308,6 +317,48 @@ class ConsolidationScheduler:
             logger.info("phase: action_log complete in %dms", int((time.monotonic() - _t) * 1000))
         except Exception:
             logger.exception("Action log processing failed")
+
+        # Table retention prunes — each is non-fatal; logged at debug on error.
+        _retention_tasks = [
+            ("narrative_entry", self._settings.NARRATIVE_ENTRY_RETENTION_DAYS, "created_at", None),
+            (
+                "astrocyte_process",
+                self._settings.ASTROCYTE_PROCESS_RETENTION_DAYS,
+                "created_at",
+                None,
+            ),
+            ("memory_cluster", self._settings.MEMORY_CLUSTER_RETENTION_DAYS, "created_at", None),
+            ("derived_belief", self._settings.DERIVED_BELIEF_RETENTION_DAYS, "created_at", None),
+            (
+                "prospective_memory",
+                self._settings.PROSPECTIVE_MEMORY_RETENTION_DAYS,
+                "created_at",
+                "is_active = false",  # never delete pending reminders
+            ),
+        ]
+        for _table, _days, _field, _extra in _retention_tasks:
+            try:
+                pruned = self._storage.prune_old_rows(
+                    _table, _days, age_field=_field, extra_where=_extra
+                )
+                if pruned:
+                    logger.info("retention: pruned %d old rows from %s", pruned, _table)
+            except Exception:
+                logger.debug("retention prune failed for %s (non-fatal)", _table, exc_info=True)
+
+        # Run invariant checks — non-fatal; violations are logged CRITICAL
+        try:
+            from yadgar.server import _run_check_invariants
+
+            inv = _run_check_invariants(self._storage)
+            if not inv["ok"]:
+                logger.critical(
+                    "check_invariants: %d violation(s) detected after consolidation: %s",
+                    len(inv["violations"]),
+                    inv["violations"],
+                )
+        except Exception:
+            logger.debug("check_invariants failed (non-fatal)", exc_info=True)
 
         _t = time.monotonic()
         logger.info("phase: insert_consolidation_log starting")
@@ -598,7 +649,10 @@ class ConsolidationScheduler:
         """
         import numpy as np
 
-        memories = self._storage.get_all_memories_with_embeddings()
+        max_candidates = self._settings.SIMILARITY_MATRIX_MAX_CANDIDATES
+        memories = self._storage.get_memories_with_embeddings(
+            limit=max_candidates, order_by="last_accessed"
+        )
         if len(memories) < 2:
             return
 
@@ -726,7 +780,10 @@ class ConsolidationScheduler:
         """
         import numpy as np
 
-        memories = self._storage.get_all_memories_with_embeddings()
+        max_candidates = self._settings.SIMILARITY_MATRIX_MAX_CANDIDATES
+        memories = self._storage.get_memories_with_embeddings(
+            limit=max_candidates, order_by="last_accessed"
+        )
         if len(memories) < 2:
             return
 
@@ -880,5 +937,12 @@ class ConsolidationScheduler:
             ids = [a["id"] for a in actions]
             self._storage.mark_actions_processed(ids)
             stats["processed"] += len(actions)
+
+        # Prune old processed rows so action_log doesn't grow without bound.
+        try:
+            retention = self._settings.ACTION_LOG_RETENTION_DAYS
+            self._storage.prune_processed_action_log(older_than_days=retention)
+        except Exception:
+            logger.debug("action_log prune failed (non-fatal)", exc_info=True)
 
         return stats

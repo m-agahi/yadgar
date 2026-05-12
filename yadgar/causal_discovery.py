@@ -410,6 +410,10 @@ class CausalDiscovery:
 
         dag = self.pc_algorithm(data, variable_names)
 
+        # Truncate-and-rebuild: delete old edges for this algorithm before
+        # re-inserting so the table doesn't grow unboundedly across runs.
+        self._storage.clear_causal_dag_edges(algorithm=algorithm)
+
         # Store directed edges in causal_dag_edges table
         now_iso = datetime.now(UTC).isoformat()
         stored_count = 0

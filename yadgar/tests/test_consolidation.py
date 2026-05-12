@@ -330,7 +330,14 @@ class TestRelationshipBuilding:
 
         e1 = storage.get_entity_by_name("parse")
         e2 = storage.get_entity_by_name("json")
-        rel = storage.get_relationship_between(e1["id"], e2["id"])
+        # Query the co_occurrence rel specifically — once its weight hits
+        # CAUSAL_THRESHOLD the graph also derives a `caused_by` rel between the
+        # same pair, so the type-agnostic get_relationship_between is ambiguous.
+        # co_occurrence is symmetric; the stored direction depends on extraction
+        # order, so check both.
+        rel = storage.get_typed_relationship(
+            e1["id"], e2["id"], "co_occurrence"
+        ) or storage.get_typed_relationship(e2["id"], e1["id"], "co_occurrence")
         assert rel is not None
         # First episode creates at weight 1.0, next two reinforce by +1.0 each
         assert rel["weight"] == pytest.approx(3.0)
@@ -723,3 +730,100 @@ class TestSimilarityLinkDegreeCap:
 
         assert degree, "expected some similarity links to be created"
         assert max(degree.values()) <= 3, f"degree cap violated: {degree}"
+
+
+# ── SIMILARITY_MATRIX_MAX_CANDIDATES cap tests ──────────────────────────────
+
+
+class TestSimilarityMatrixCandidateCap:
+    """_link_similar_memories and _merge_duplicates must not build an N×N matrix
+    for the full table when N > SIMILARITY_MATRIX_MAX_CANDIDATES."""
+
+    def test_link_similar_memories_respects_candidate_cap(self, tmp_path):
+        """When N memories > cap, get_memories_with_embeddings is called with limit=cap."""
+        from unittest.mock import patch
+
+        import numpy as np
+
+        cap = 5
+        settings = Settings(
+            DB_PATH=str(tmp_path / "cap_link.db"),
+            SIMILARITY_MATRIX_MAX_CANDIDATES=cap,
+            SIMILARITY_LINK_THRESHOLD=0.5,
+        )
+        storage = StorageEngine(str(tmp_path / "cap_link.db"))
+        emb = EmbeddingEngine()
+        emb._unavailable = True
+        sched = ConsolidationScheduler(storage, emb, settings)
+
+        # Insert cap+5 memories with real embeddings
+        for i in range(cap + 5):
+            vec = np.random.default_rng(i).standard_normal(384).astype(np.float32)
+            vec /= np.linalg.norm(vec)
+            storage.insert_memory(
+                {
+                    "content": f"cap test memory {i}",
+                    "embedding": vec.tobytes(),
+                    "directory_context": "/proj",
+                    "heat": 1.0,
+                }
+            )
+
+        # Spy: track the limit argument passed to get_memories_with_embeddings
+        original = storage.get_memories_with_embeddings
+        called_with_limit = []
+
+        def spy(*args, **kwargs):
+            called_with_limit.append(kwargs.get("limit", args[0] if args else None))
+            return original(*args, **kwargs)
+
+        with patch.object(storage, "get_memories_with_embeddings", side_effect=spy):
+            sched._link_similar_memories({})
+
+        storage.close()
+
+        assert called_with_limit, "get_memories_with_embeddings was not called"
+        assert called_with_limit[0] == cap, f"expected limit={cap}, got {called_with_limit[0]}"
+
+    def test_merge_duplicates_respects_candidate_cap(self, tmp_path):
+        """When N memories > cap, _merge_duplicates uses at most cap candidates."""
+        from unittest.mock import patch
+
+        import numpy as np
+
+        cap = 5
+        settings = Settings(
+            DB_PATH=str(tmp_path / "cap_merge.db"),
+            SIMILARITY_MATRIX_MAX_CANDIDATES=cap,
+        )
+        storage = StorageEngine(str(tmp_path / "cap_merge.db"))
+        emb = EmbeddingEngine()
+        emb._unavailable = True
+        sched = ConsolidationScheduler(storage, emb, settings)
+
+        for i in range(cap + 5):
+            vec = np.random.default_rng(i + 100).standard_normal(384).astype(np.float32)
+            vec /= np.linalg.norm(vec)
+            storage.insert_memory(
+                {
+                    "content": f"merge cap test memory {i}",
+                    "embedding": vec.tobytes(),
+                    "directory_context": "/proj",
+                    "heat": 1.0,
+                }
+            )
+
+        original = storage.get_memories_with_embeddings
+        called_with_limit = []
+
+        def spy(*args, **kwargs):
+            called_with_limit.append(kwargs.get("limit", args[0] if args else None))
+            return original(*args, **kwargs)
+
+        with patch.object(storage, "get_memories_with_embeddings", side_effect=spy):
+            sched._merge_duplicates({"memories_deleted": 0})
+
+        storage.close()
+
+        assert called_with_limit, "get_memories_with_embeddings was not called"
+        assert called_with_limit[0] == cap, f"expected limit={cap}, got {called_with_limit[0]}"

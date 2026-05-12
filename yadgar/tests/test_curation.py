@@ -626,3 +626,92 @@ def test_consolidation_cycle_emits_all_phase_complete_markers(tmp_path, caplog):
         assert f"phase: {phase} complete" in log_text, f"missing 'phase: {phase} complete'"
 
     storage.close()
+
+
+# ── test_memify_prune_auto_generated ────────────────────────────────────────
+
+
+def test_memify_prune_auto_generated(tmp_path):
+    """_memify_prune deletes cold, unaccessed, old auto-generated memories.
+
+    Scenario:
+    - 1 old cold unaccessed auto-generated memory → should be pruned
+    - 1 user memory (no auto-generated tag)       → must survive
+    - 1 protected auto-generated memory            → must survive
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from yadgar.config import Settings
+    from yadgar.curation import MemoryCurator
+    from yadgar.embeddings import EmbeddingEngine
+    from yadgar.storage import StorageEngine
+    from yadgar.thermodynamics import MemoryThermodynamics
+
+    storage = StorageEngine(str(tmp_path / "autogen_prune.db"))
+    emb = EmbeddingEngine()
+    emb._unavailable = True
+    settings = Settings(
+        DB_PATH=str(tmp_path / "autogen_prune.db"),
+        AUTO_GENERATED_MEMORY_MAX_AGE_DAYS=30,
+        COLD_THRESHOLD=0.02,
+    )
+    thermo = MemoryThermodynamics(storage, emb, settings)
+    curator = MemoryCurator(storage, emb, thermo, settings)
+
+    old_date = (datetime.now(UTC) - timedelta(days=45)).isoformat()
+
+    # 1. Cold, unaccessed, old auto-generated memory — SHOULD be pruned
+    autogen_id = storage.insert_memory(
+        {
+            "content": "auto-generated derived fact about a.py and b.py",
+            "tags": ["derived", "auto-generated"],
+            "directory_context": "system",
+            "heat": 0.005,  # below COLD_THRESHOLD
+        }
+    )
+    # Back-date it so it exceeds the age floor
+    storage._q(
+        "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 0",
+        {"id": autogen_id, "ts": old_date},
+    )
+
+    # 2. User memory — MUST survive regardless
+    user_id = storage.insert_memory(
+        {
+            "content": "important user memory about project architecture",
+            "tags": ["architecture"],
+            "directory_context": "/proj",
+            "heat": 0.005,
+        }
+    )
+    storage._q(
+        "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 0",
+        {"id": user_id, "ts": old_date},
+    )
+
+    # 3. Protected auto-generated memory — MUST survive
+    protected_id = storage.insert_memory(
+        {
+            "content": "auto-generated but protected memory",
+            "tags": ["derived", "auto-generated"],
+            "directory_context": "system",
+            "heat": 0.005,
+        }
+    )
+    storage._q(
+        "UPDATE type::record('memory', $id) SET "
+        "created_at = $ts, access_count = 0, is_protected = true",
+        {"id": protected_id, "ts": old_date},
+    )
+
+    stats = {"pruned": 0}
+    curator._memify_prune(stats)
+
+    assert storage.get_memory(autogen_id) is None, (
+        "cold old unaccessed auto-generated memory should have been pruned"
+    )
+    assert storage.get_memory(user_id) is not None, "user memory must not be pruned"
+    assert storage.get_memory(protected_id) is not None, "protected memory must not be pruned"
+    assert stats["pruned"] >= 1
+
+    storage.close()

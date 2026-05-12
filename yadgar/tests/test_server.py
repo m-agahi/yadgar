@@ -303,6 +303,7 @@ def test_mcp_server_has_tools():
         "get_project_context",
         "consolidate_now",
         "memory_stats",
+        "check_invariants",
     }
     assert expected.issubset(tool_names)
 
@@ -314,6 +315,38 @@ def test_mcp_server_has_resources():
     assert "memory://stats" in uris
     assert "memory://hot" in uris
     assert "memory://stale" in uris
+
+
+# ── check_invariants ───────────────────────────────────────────────────
+
+
+def test_check_invariants_ok_on_clean_db():
+    """check_invariants returns ok=True on a fresh, empty database."""
+    from yadgar.server import _run_check_invariants
+
+    result = _run_check_invariants(server._get_storage())
+    assert result["ok"] is True
+    assert result["violations"] == []
+    assert "counts" in result
+
+
+def test_check_invariants_detects_dangling_similarity_link():
+    """Inserting a memory_similarity_link pointing to a non-existent memory triggers a violation."""
+    from yadgar.server import _run_check_invariants
+
+    storage = server._get_storage()
+    # Insert a link referencing memory IDs that don't exist
+    fake_id_a, fake_id_b = 999991, 999992
+    storage._q(
+        "CREATE memory_similarity_link SET "
+        "source_memory_id = $a, target_memory_id = $b, "
+        "weight = 0.9, created_at = time::now(), updated_at = time::now()",
+        {"a": fake_id_a, "b": fake_id_b},
+    )
+
+    result = _run_check_invariants(storage)
+    assert result["ok"] is False
+    assert any("memory_similarity_link" in v for v in result["violations"])
 
 
 # Helpers that call the async list methods on FastMCP

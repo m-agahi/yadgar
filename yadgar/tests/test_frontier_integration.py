@@ -167,9 +167,15 @@ class TestWriteGate:
                 ["docs"],
             )
             flush_queue()
-            # After drain, the gate should have rejected and no memory exists
-            results = server.recall("boring duplicate content for gate rejection test")
-            assert not results, "Gate failed to reject boring content"
+            # After drain, the gate should have rejected — verify by exact content
+            # lookup, not semantic recall (which can return unrelated memories).
+            storage = server._get_storage()
+            exact_hits = [
+                r
+                for r in storage.get_memories_by_heat(min_heat=0.0, limit=200)
+                if r.get("content") == "boring duplicate content for gate rejection test"
+            ]
+            assert not exact_hits, "Gate failed to reject boring content"
         finally:
             gate._threshold = original_threshold
             gate._settings.WRITE_GATE_THRESHOLD = original_setting
