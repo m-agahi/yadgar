@@ -1363,11 +1363,13 @@ def cli():
         if args.port:
             _os.environ["YADGAR_PORT"] = str(args.port)
 
-        # Opt-in INFO/DEBUG logging for diagnostics. Default: unset → root logger
-        # WARNING (current behavior, no daemon noise). Set YADGAR_LOG_LEVEL=INFO
-        # in the container env to surface consolidation phase markers, etc.
-        _log_level = _os.environ.get("YADGAR_LOG_LEVEL")
-        if _log_level:
+        # Opt-in INFO/DEBUG logging for diagnostics. Default: "warn".
+        # Set YADGAR_CORE_LOG_LEVEL=info in the container env to surface
+        # consolidation phase markers, etc.
+        from yadgar.config import get_settings as _get_settings
+
+        _log_level = _get_settings().CORE_LOG_LEVEL
+        if _log_level and _log_level.upper() != "WARN" and _log_level.upper() != "WARNING":
             import logging as _logging
 
             _yadgar_logger = _logging.getLogger("yadgar")

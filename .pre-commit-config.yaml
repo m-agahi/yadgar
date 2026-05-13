@@ -23,6 +23,13 @@ repos:
         entry: gitleaks git --pre-commit --staged --verbose
         pass_filenames: false
 
+      - id: check-versions
+        name: Check version consistency
+        language: system
+        entry: python3 scripts/check_versions.py
+        files: ^(pyproject\.toml|server\.json|docker-compose\.yml)$
+        pass_filenames: false
+
   - repo: local
     hooks:
       - id: ruff

@@ -93,6 +93,10 @@ class Settings(BaseSettings):
     COGNITIVE_LOAD_LIMIT: int = 4  # Max chunks in active context (Cowan's 4±1)
     CRDT_AGENT_ID: str = "default"  # Agent identifier for multi-agent CRDT
 
+    # logging
+    CORE_LOG_LEVEL: str = "warn"
+    BACKEND_LOG_LEVEL: str = "warn"
+
     # v4: Hippocampal Replay settings
     REPLAY_MAX_RESTORE_MEMORIES: int = 8  # Max memories to include in restoration
     REPLAY_ANCHOR_HEAT: float = 1.0  # Heat assigned to anchored memories
