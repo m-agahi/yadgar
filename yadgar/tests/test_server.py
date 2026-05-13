@@ -331,7 +331,7 @@ def test_check_invariants_ok_on_clean_db():
 
 
 def test_check_invariants_detects_dangling_similarity_link():
-    """Inserting a memory_similarity_link pointing to a non-existent memory triggers a violation."""
+    """Dangling memory_similarity_link rows are auto-repaired and appear in 'fixed', not 'violations'."""
     from yadgar.server import _run_check_invariants
 
     storage = server._get_storage()
@@ -345,8 +345,157 @@ def test_check_invariants_detects_dangling_similarity_link():
     )
 
     result = _run_check_invariants(storage)
-    assert result["ok"] is False
-    assert any("memory_similarity_link" in v for v in result["violations"])
+    # After auto-repair: ok=True, violations empty, fixed contains the repair description
+    assert result["ok"] is True
+    assert "fixed" in result
+    assert any("memory_similarity_link" in f for f in result["fixed"])
+    assert not any("memory_similarity_link" in v for v in result["violations"])
+
+
+def test_check_invariants_result_has_fixed_key():
+    """check_invariants always returns a 'fixed' key, even when nothing was fixed."""
+    from yadgar.server import _run_check_invariants
+
+    result = _run_check_invariants(server._get_storage())
+    assert "fixed" in result
+    assert isinstance(result["fixed"], list)
+
+
+def test_check_invariants_autorepair_wiki_crossref():
+    """Dangling wiki_crossref rows are auto-deleted and appear in 'fixed'."""
+    from yadgar.server import _run_check_invariants
+
+    storage = server._get_storage()
+    # Insert a crossref pointing to non-existent slugs
+    storage._q(
+        "CREATE wiki_crossref SET from_slug = $fs, to_slug = $ts",
+        {"fs": "nonexistent-page-from", "ts": "nonexistent-page-to"},
+    )
+
+    result = _run_check_invariants(storage)
+    assert "fixed" in result
+    assert any("wiki_crossref" in f for f in result["fixed"])
+    assert not any("wiki_crossref" in v for v in result["violations"])
+    # After fix: row should be gone
+    remaining = storage._q("SELECT count() AS c FROM wiki_crossref GROUP ALL")
+    count = int(remaining[0].get("c", 0)) if remaining else 0
+    assert count == 0
+
+
+def test_check_invariants_autorepair_memory_entity_orphans():
+    """memory:N entity rows where N is not a live memory ID are deleted and appear in 'fixed'."""
+    from yadgar.server import _run_check_invariants
+
+    storage = server._get_storage()
+    # Insert an orphan entity (memory ID 888888 doesn't exist)
+    storage._q(
+        "CREATE entity SET name = $n, entity_type = 'memory_node', "
+        "created_at = time::now(), updated_at = time::now()",
+        {"n": "memory:888888"},
+    )
+
+    result = _run_check_invariants(storage)
+    assert "fixed" in result
+    assert any("memory:N" in f or "memory_entity" in f or "entity" in f for f in result["fixed"])
+    assert not any(
+        "memory_entity_orphan" in v or ("entity" in v and "orphan" in v)
+        for v in result["violations"]
+    )
+
+
+def test_check_invariants_nonfixable_stays_in_violations():
+    """Ceiling breaches and slot anomalies remain in violations (not auto-repaired)."""
+    from unittest.mock import patch
+
+    from yadgar.server import _run_check_invariants
+
+    storage = server._get_storage()
+    # Patch the settings to set HOPFIELD_MAX_PATTERNS to a value that won't match
+    # engram_slot count, triggering a structural violation
+    with patch("yadgar.server.settings") as mock_settings:
+        mock_settings.MAX_SIMILARITY_LINKS_PER_MEMORY = 10
+        mock_settings.PROJECT_CONTEXT_MIN_HEAT = 0.01
+        mock_settings.HOPFIELD_MAX_PATTERNS = 99999  # wrong count → structural violation
+
+        result = _run_check_invariants(storage)
+        # The engram_slot mismatch should still be in violations, not fixed
+        assert any("engram_slot" in v for v in result["violations"])
+        assert result["ok"] is False
+
+
+# ── install_hooks (global scope) ───────────────────────────────────────
+
+
+def test_install_hooks_default_scope_is_project(tmp_path):
+    """install_hooks with no scope writes to project directory."""
+    result = server.install_hooks(str(tmp_path))
+    assert result["status"] == "installed"
+    assert result.get("scope", "project") == "project"
+    # Settings written to project .claude/settings.json
+    settings_file = tmp_path / ".claude" / "settings.json"
+    assert settings_file.exists()
+    data = json.loads(settings_file.read_text())
+    assert "hooks" in data
+
+
+def test_install_hooks_global_scope_writes_to_home(tmp_path, monkeypatch):
+    """install_hooks(scope='global') writes SessionStart+PreCompact+PostToolUse hooks to ~/.claude/settings.json."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    # Also monkeypatch Path.home() used inside install_hooks
+    from pathlib import Path as _Path
+
+    monkeypatch.setattr(_Path, "home", staticmethod(lambda: fake_home))
+
+    result = server.install_hooks(str(tmp_path), scope="global")
+    assert result["status"] == "installed"
+    assert result["scope"] == "global"
+
+    # Global settings.json must contain the hook entries
+    global_settings = fake_home / ".claude" / "settings.json"
+    assert global_settings.exists()
+    data = json.loads(global_settings.read_text())
+    hooks = data.get("hooks", {})
+    assert "SessionStart" in hooks
+    assert "PreCompact" in hooks
+
+    # Project .claude/settings.json should NOT have the project hooks
+    project_settings = tmp_path / ".claude" / "settings.json"
+    if project_settings.exists():
+        proj_data = json.loads(project_settings.read_text())
+        proj_hooks = proj_data.get("hooks", {})
+        # SessionStart and PreCompact should NOT be in project settings when scope=global
+        assert "SessionStart" not in proj_hooks
+        assert "PreCompact" not in proj_hooks
+
+
+def test_install_hooks_global_scope_hooks_dir_is_home(tmp_path, monkeypatch):
+    """install_hooks(scope='global') writes hook scripts to ~/.claude/hooks/."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    from pathlib import Path as _Path
+
+    monkeypatch.setattr(_Path, "home", staticmethod(lambda: fake_home))
+
+    result = server.install_hooks(str(tmp_path), scope="global")
+    global_hooks_dir = fake_home / ".claude" / "hooks"
+    assert global_hooks_dir.exists()
+    # Hook scripts should be in the global dir
+    assert result["hooks_directory"] == str(global_hooks_dir)
+
+
+def test_install_hooks_global_scope_returns_scope(tmp_path, monkeypatch):
+    """install_hooks(scope='global') return value includes scope='global'."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    from pathlib import Path as _Path
+
+    monkeypatch.setattr(_Path, "home", staticmethod(lambda: fake_home))
+
+    result = server.install_hooks(str(tmp_path), scope="global")
+    assert result["scope"] == "global"
 
 
 # Helpers that call the async list methods on FastMCP

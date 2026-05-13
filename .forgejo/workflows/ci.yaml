@@ -73,7 +73,7 @@ jobs:
           chmod +x /usr/local/bin/surreal
 
       - name: Install dependencies
-        run: pip install --no-cache-dir -e ".[test]"
+        run: pip install --no-cache-dir -e ".[test,ml]"
 
       - name: Run tests
         # --reruns: the suite shares a session-scoped SurrealDB across xdist
