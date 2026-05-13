@@ -14,7 +14,7 @@ volumes:
 
 services:
   backend:
-    image: openfantasy/yadgar-backend:4.6.0
+    image: openfantasy/yadgar-backend:${BACKEND_VERSION:-4.7.0}
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -29,6 +29,7 @@ services:
     environment:
       SURREAL_USER: root
       SURREAL_PASS: root
+      YADGAR_BACKEND_LOG_LEVEL: ${YADGAR_BACKEND_LOG_LEVEL:-warn}
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=2)"]
       interval: 10s
@@ -37,7 +38,7 @@ services:
       start_period: 60s  # model load can take a while
 
   core:
-    image: openfantasy/yadgar:4.6.0
+    image: openfantasy/yadgar:${CORE_VERSION:-4.7.0}
     build:
       context: .
       dockerfile: Dockerfile

@@ -11,6 +11,14 @@
 # server, and only after the upstream export-recursion issue is resolved.
 set -e
 
+# Log level configuration — shared across SurrealDB and the embed service.
+# YADGAR_BACKEND_LOG_LEVEL uses the SurrealDB convention (warn/info/debug/error).
+# uvicorn uses "warning" instead of "warn", so we remap before passing it.
+_LOG_LEVEL="${YADGAR_BACKEND_LOG_LEVEL:-warn}"
+export SURREAL_LOG="${_LOG_LEVEL}"
+_UVICORN_LOG_LEVEL="${_LOG_LEVEL}"
+[ "$_UVICORN_LOG_LEVEL" = "warn" ] && _UVICORN_LOG_LEVEL="warning"
+
 cleanup() {
   kill "$SURREAL_PID" "$EMBED_PID" 2>/dev/null
   wait "$SURREAL_PID" "$EMBED_PID" 2>/dev/null
@@ -29,6 +37,7 @@ surreal start \
   --bind 0.0.0.0:8000 \
   --user "${SURREAL_USER:-root}" \
   --pass "${SURREAL_PASS:-root}" \
+  --log "${SURREAL_LOG}" \
   surrealkv:///data/surreal_db &
 SURREAL_PID=$!
 
@@ -70,7 +79,8 @@ fi
 python3 -m uvicorn yadgar.embed_service:app \
   --host 0.0.0.0 \
   --port 8001 \
-  --no-access-log &
+  --no-access-log \
+  --log-level "${_UVICORN_LOG_LEVEL}" &
 EMBED_PID=$!
 
 wait -n "$SURREAL_PID" "$EMBED_PID"

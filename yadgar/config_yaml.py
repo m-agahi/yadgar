@@ -483,6 +483,15 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Minimum confidence required to surface a memory",
         "section": "adversarial",
     },
+    # logging
+    "core_log_level": {
+        "desc": "Log level for the core yadgar MCP server (DEBUG/INFO/WARNING/ERROR)",
+        "section": "logging",
+    },
+    "backend_log_level": {
+        "desc": "Log level for the backend container (embed service + SurrealDB)",
+        "section": "logging",
+    },
     # misc
     "contextual_prefix_enabled": {
         "desc": "Prepend contextual prefix to improve embedding quality",
@@ -524,6 +533,7 @@ SECTION_TITLES: dict[str, str] = {
     "enrichment": "Index-Time Enrichment",
     "profiles_beliefs": "Profiles & Beliefs",
     "adversarial": "Adversarial Protection",
+    "logging": "Logging",
     "misc": "Miscellaneous",
 }
 

@@ -63,6 +63,10 @@ class EmbedResponse(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Configure log level from env var (set by docker-compose / entrypoint)
+    _level = os.environ.get("YADGAR_BACKEND_LOG_LEVEL", "warn").upper()
+    logging.getLogger("yadgar").setLevel(getattr(logging, _level, logging.WARNING))
+
     # Load model eagerly so /health reflects true readiness
     try:
         await asyncio.to_thread(_get_engine)
