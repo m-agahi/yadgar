@@ -1324,19 +1324,27 @@ def validate_memory(memory_id: int) -> dict:
 
 @_tool(power=True)
 def check_invariants() -> dict:
-    """Run consistency checks on the memory store.
+    """Run consistency checks on the memory store, auto-repairing fixable issues.
 
-    Returns {"ok": bool, "violations": [...], "counts": {...}}.
-    Each violation is a string describing the problem.
-    Logs CRITICAL for every violation detected.
+    Returns {"ok": bool, "violations": [...], "fixed": [...], "counts": {...}}.
+    - violations: unfixable structural problems (ceiling breaches, slot anomalies, etc.)
+    - fixed: descriptions of auto-repaired issues (dangling FK rows deleted)
+    - ok: True only when violations is empty (fixed items don't affect ok)
+    Logs INFO for each auto-repair, CRITICAL for each remaining violation.
     """
     storage = _get_storage()
     return _run_check_invariants(storage)
 
 
 def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
-    """Core logic for check_invariants — separated so tests can call it directly."""
+    """Core logic for check_invariants — separated so tests can call it directly.
+
+    Auto-repairs fixable violations (dangling foreign keys with no information loss)
+    and returns them in the 'fixed' list. Non-fixable structural issues remain in
+    'violations'. ok=True only when violations is empty.
+    """
     violations: list[str] = []
+    fixed: list[str] = []
     counts: dict[str, int] = {}
 
     # ── 1. Dangling links ────────────────────────────────────────────────────
@@ -1352,7 +1360,7 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
     mem_count = _count_q("SELECT count() AS c FROM memory GROUP ALL")
     counts["memory"] = mem_count
 
-    # memory_similarity_link dangling endpoints
+    # memory_similarity_link dangling endpoints — FIXABLE (safe DELETE)
     try:
         dangling_msl = _count_q(
             "SELECT count() AS c FROM memory_similarity_link "
@@ -1362,13 +1370,22 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
         )
         counts["memory_similarity_link_dangling"] = dangling_msl
         if dangling_msl:
-            violations.append(
-                f"{dangling_msl} memory_similarity_link rows reference non-existent memory IDs"
+            storage._q(
+                "DELETE memory_similarity_link "
+                "WHERE source_memory_id NOT IN (SELECT VALUE meta::id(id) FROM memory) "
+                "OR target_memory_id NOT IN (SELECT VALUE meta::id(id) FROM memory)"
             )
+            fixed.append(
+                f"Deleted {dangling_msl} memory_similarity_link rows referencing non-existent memory IDs"
+            )
+            logger.info(
+                "check_invariants: auto-fixed %d dangling memory_similarity_link rows", dangling_msl
+            )
+            counts["memory_similarity_link_dangling"] = 0
     except Exception as exc:
         logger.warning("check_invariants: memory_similarity_link check failed: %s", exc)
 
-    # memory_transition dangling endpoints
+    # memory_transition dangling endpoints — NOT fixable (may encode important history)
     try:
         dangling_mt = _count_q(
             "SELECT count() AS c FROM memory_transition "
@@ -1384,7 +1401,7 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
     except Exception as exc:
         logger.warning("check_invariants: memory_transition check failed: %s", exc)
 
-    # memory_archive dangling
+    # memory_archive dangling — NOT fixable (archival records)
     try:
         dangling_ma = _count_q(
             "SELECT count() AS c FROM memory_archive "
@@ -1399,7 +1416,7 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
     except Exception as exc:
         logger.warning("check_invariants: memory_archive check failed: %s", exc)
 
-    # relationship dangling entity endpoints
+    # relationship dangling entity endpoints — NOT fixable
     try:
         ent_count = _count_q("SELECT count() AS c FROM entity GROUP ALL")
         counts["entity"] = ent_count
@@ -1415,31 +1432,47 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
     except Exception as exc:
         logger.warning("check_invariants: relationship check failed: %s", exc)
 
-    # wiki_crossref dangling slugs
+    # wiki_crossref dangling slugs — FIXABLE (safe DELETE, slugs are just links)
     try:
         slug_rows = storage._q("SELECT VALUE slug FROM wiki_page")
         valid_slugs = set(slug_rows) if slug_rows else set()
         all_refs = storage.get_all_wiki_crossrefs()
-        dangling_xref = sum(
-            1
+        dangling_xrefs = [
+            r
             for r in all_refs
             if r.get("from_slug") not in valid_slugs or r.get("to_slug") not in valid_slugs
-        )
+        ]
+        dangling_xref = len(dangling_xrefs)
         counts["wiki_crossref_dangling"] = dangling_xref
         if dangling_xref:
-            violations.append(
-                f"{dangling_xref} wiki_crossref rows reference non-existent page slugs"
+            # Delete each dangling crossref row
+            for ref in dangling_xrefs:
+                try:
+                    storage._q(
+                        "DELETE wiki_crossref WHERE from_slug = $fs AND to_slug = $ts",
+                        {"fs": ref.get("from_slug"), "ts": ref.get("to_slug")},
+                    )
+                except Exception as del_exc:
+                    logger.warning(
+                        "check_invariants: failed to delete wiki_crossref row: %s", del_exc
+                    )
+            fixed.append(
+                f"Deleted {dangling_xref} wiki_crossref rows referencing non-existent page slugs"
             )
+            logger.info(
+                "check_invariants: auto-fixed %d dangling wiki_crossref rows", dangling_xref
+            )
+            counts["wiki_crossref_dangling"] = 0
     except Exception as exc:
         logger.warning("check_invariants: wiki_crossref check failed: %s", exc)
 
-    # ── 2. memory:N orphan entities ─────────────────────────────────────────
+    # ── 2. memory:N orphan entities — FIXABLE (safe DELETE, purely derived data) ─
     try:
         mem_entity_rows = storage._q(
             "SELECT meta::id(id) AS eid, name FROM entity "
             "WHERE string::starts_with(name, 'memory:')"
         )
-        orphan_count = 0
+        orphan_eids: list[int] = []
         mem_ids_set: set[int] = set()
         if mem_count > 0:
             id_rows = storage._q("SELECT VALUE meta::id(id) FROM memory")
@@ -1452,16 +1485,31 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
             except (ValueError, TypeError):
                 continue
             if mid not in mem_ids_set:
-                orphan_count += 1
+                eid = row.get("eid")
+                if eid is not None:
+                    orphan_eids.append(eid)
+        orphan_count = len(orphan_eids)
         counts["memory_entity_orphans"] = orphan_count
         if orphan_count:
-            violations.append(
-                f"{orphan_count} entity rows named 'memory:<N>' where N is not a live memory ID"
+            for eid in orphan_eids:
+                try:
+                    storage._q(
+                        "DELETE type::record('entity', $eid)",
+                        {"eid": eid},
+                    )
+                except Exception as del_exc:
+                    logger.warning(
+                        "check_invariants: failed to delete orphan entity %s: %s", eid, del_exc
+                    )
+            fixed.append(
+                f"Deleted {orphan_count} entity rows named 'memory:<N>' where N is not a live memory ID"
             )
+            logger.info("check_invariants: auto-fixed %d memory entity orphans", orphan_count)
+            counts["memory_entity_orphans"] = 0
     except Exception as exc:
         logger.warning("check_invariants: memory entity orphan check failed: %s", exc)
 
-    # ── 3. Row-count ceilings (warn only) ───────────────────────────────────
+    # ── 3. Row-count ceilings (non-fixable — structural) ────────────────────
     _CEILINGS = {
         "action_log": 100_000,
         "episode": 10_000,
@@ -1476,7 +1524,7 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
         except Exception as exc:
             logger.warning("check_invariants: %s ceiling check failed: %s", table, exc)
 
-    # memory_similarity_link ceiling (dynamic)
+    # memory_similarity_link ceiling (dynamic, non-fixable)
     try:
         msl_count = _count_q("SELECT count() AS c FROM memory_similarity_link GROUP ALL")
         counts["memory_similarity_link"] = msl_count
@@ -1488,7 +1536,7 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
     except Exception as exc:
         logger.warning("check_invariants: msl ceiling check failed: %s", exc)
 
-    # ── 4. Engram slot distribution ─────────────────────────────────────────
+    # ── 4. Engram slot distribution (non-fixable — structural anomaly) ───────
     try:
         if mem_count > 0:
             slot_rows = storage._q(
@@ -1506,7 +1554,7 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
     except Exception as exc:
         logger.warning("check_invariants: slot distribution check failed: %s", exc)
 
-    # ── 5. Engram slot table integrity ──────────────────────────────────────
+    # ── 5. Engram slot table integrity (non-fixable — structural) ───────────
     try:
         engram_count = _count_q("SELECT count() AS c FROM engram_slot GROUP ALL")
         counts["engram_slot"] = engram_count
@@ -1522,7 +1570,7 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
     for v in violations:
         logger.critical("check_invariants: %s", v)
 
-    return {"ok": ok, "violations": violations, "counts": counts}
+    return {"ok": ok, "violations": violations, "fixed": fixed, "counts": counts}
 
 
 @_tool()
@@ -1846,7 +1894,7 @@ def anchor(content: str, context: str, reason: str = "") -> dict:
 
 
 @_tool(power=True)
-def install_hooks(project_directory: str = "") -> dict:
+def install_hooks(project_directory: str = "", scope: str = "project") -> dict:
     """Install Claude Code hooks for automatic memory capture and replay.
 
     Installs five hook types:
@@ -1859,13 +1907,35 @@ def install_hooks(project_directory: str = "") -> dict:
     Works in both stdio and HTTP transport modes.
 
     project_directory: The project root. Defaults to cwd.
+    scope: "project" (default) writes hooks to project .claude/settings.json;
+           "global" writes SessionStart, PreCompact, PostToolUse, UserPromptSubmit,
+           and PreToolUse hooks to ~/.claude/settings.json and scripts to ~/.claude/hooks/.
+           Stop hook is always global regardless of scope.
     """
     import shutil
 
+    if scope not in ("project", "global"):
+        return {
+            "status": "error",
+            "reason": f"Invalid scope '{scope}': must be 'project' or 'global'",
+        }
+
     project_dir = Path(project_directory) if project_directory else Path.cwd()
-    claude_dir = project_dir / ".claude"
-    hooks_dir = claude_dir / "hooks"
-    hooks_dir.mkdir(parents=True, exist_ok=True)
+
+    # Global paths (Stop hook always here; all hooks go here when scope=global)
+    global_claude_dir = Path.home() / ".claude"
+    global_hooks_dir = global_claude_dir / "hooks"
+    global_hooks_dir.mkdir(parents=True, exist_ok=True)
+
+    # Determine where hook scripts and settings are written based on scope
+    if scope == "global":
+        hooks_dir = global_hooks_dir
+        settings_target_dir = global_claude_dir
+    else:
+        claude_dir = project_dir / ".claude"
+        hooks_dir = claude_dir / "hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        settings_target_dir = claude_dir
 
     # Copy hook scripts from package
     package_hooks = Path(__file__).parent / "hooks"
@@ -1885,10 +1955,7 @@ def install_hooks(project_directory: str = "") -> dict:
             shutil.copy2(src, dst)
             dst.chmod(mode)
 
-    # Stop hook — installed globally so it fires in every session
-    global_claude_dir = Path.home() / ".claude"
-    global_hooks_dir = global_claude_dir / "hooks"
-    global_hooks_dir.mkdir(parents=True, exist_ok=True)
+    # Stop hook — always installed globally so it fires in every session
     stop_hook_src = package_hooks / "stop-memory-checkpoint.py"
     stop_hook_dst = global_hooks_dir / "yadgar-stop-memory-checkpoint.py"
     if stop_hook_src.exists():
@@ -1901,9 +1968,9 @@ def install_hooks(project_directory: str = "") -> dict:
     session_ctx_dst = hooks_dir / "session-start-context.py"
     prompt_recall_dst = hooks_dir / "prompt-recall.py"
 
-    # Write hooks configuration
-    settings_path = claude_dir / "settings.json"
-    settings_data = {}
+    # Write hooks configuration to the target settings file
+    settings_path = settings_target_dir / "settings.json"
+    settings_data: dict = {}
     if settings_path.exists():
         try:
             settings_data = json.loads(settings_path.read_text())
@@ -2010,6 +2077,7 @@ def install_hooks(project_directory: str = "") -> dict:
     settings_path.write_text(json.dumps(settings_data, indent=2))
 
     # Register Stop hook in global ~/.claude/settings.json
+    # (always global, regardless of scope — Stop must fire in every session)
     global_settings_path = global_claude_dir / "settings.json"
     global_settings: dict = {}
     if global_settings_path.exists():
@@ -2035,6 +2103,7 @@ def install_hooks(project_directory: str = "") -> dict:
 
     return {
         "status": "installed",
+        "scope": scope,
         "project_directory": str(project_dir),
         "hooks_directory": str(hooks_dir),
         "hooks_installed": [
@@ -2095,7 +2164,7 @@ def sync_instructions(claude_md_path: str = "") -> dict:
 - `checkpoint(directory, ...)` — Snapshot working state
 - `restore(directory)` — Reconstruct context after compaction
 - `anchor(content, context, reason)` — Protect critical context
-- `install_hooks(project_directory)` — Enable auto replay hooks
+- `install_hooks(project_directory, scope="project"|"global")` — Enable auto replay hooks; scope=global writes to ~/.claude/
 - `sync_instructions(claude_md_path)` — Update CLAUDE.md with latest rules
 - `consolidate_now()` — Force consolidation cycle
 - `memory_stats()` — System statistics

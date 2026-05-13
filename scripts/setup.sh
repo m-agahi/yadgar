@@ -20,8 +20,8 @@
 
 set -euo pipefail
 
-CORE_VERSION="4.4.7"
-BACKEND_VERSION="4.4.7"
+CORE_VERSION="4.6.0"
+BACKEND_VERSION="4.6.0"
 LOG_LEVEL=""
 ROOT_USER="root"
 ROOT_PASS="root"
