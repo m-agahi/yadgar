@@ -101,8 +101,43 @@ _SKIP_TOOL_PREFIXES: tuple[str, ...] = (
     "mcp__plugin_claude-code-home-manager_yadgar__",
     "mcp__plugin_oh-my-claudecode_t__",
 )
+# Per-table content fields used by check_invariants and memory_stats for size estimates.
+# Maps table name → content field (or None for row-count-only tables).
+_PER_TABLE_FIELDS: dict[str, str | None] = {
+    "memory": "content",
+    "wiki_page": "content",
+    "episode": "raw_content",
+    "action_log": None,
+    "entity": None,
+}
 # Batch buffer: session_id → list of pending action dicts (flush at 5)
 _action_batch: dict[str, list] = {}
+
+
+def _q_with_timeout(
+    storage, surql: str, params: dict | None = None, timeout_seconds: int = 60
+) -> list:  # noqa: E501
+    """Run a storage query with an optional per-request timeout.
+
+    In server (httpx) mode the httpx Client timeout is temporarily widened to
+    *timeout_seconds*.  In embedded mode _q handles its own retry.  Always routes
+    through storage._q so test stubs patching _q remain effective.
+    """
+    http = getattr(storage, "_http", None)
+    if http is not None:
+        try:
+            import httpx as _httpx
+        except ImportError:
+            return storage._q(surql, params)
+        old_timeout = http.timeout
+        try:
+            http.timeout = _httpx.Timeout(float(timeout_seconds))
+            return storage._q(surql, params)
+        finally:
+            http.timeout = old_timeout
+    return storage._q(surql, params)
+
+
 # Throttle timestamps: directory → monotonic time
 _last_session_context: dict[str, float] = {}
 _last_prompt_recall: dict[str, float] = {}
@@ -1416,27 +1451,8 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
         return isinstance(exc, TimeoutError)
 
     def _q_t(surql: str, params: dict | None = None) -> list:
-        """_q with a per-call timeout applied via the httpx client's timeout override.
-
-        Always routes through storage._q so that test stubs patching _q remain
-        effective.  In server (httpx) mode the httpx Client timeout is temporarily
-        widened to query_timeout; in embedded mode _q handles its own retry.
-        """
-        # If the storage has an httpx client, apply a per-request timeout by
-        # temporarily replacing the client-level timeout.  We do NOT call
-        # _q_timeout directly because tests patch storage._q and _q_timeout
-        # bypasses that patch in server mode.
-        http = getattr(storage, "_http", None)
-        if http is not None:
-            import httpx as _httpx
-
-            old_timeout = http.timeout
-            try:
-                http.timeout = _httpx.Timeout(float(query_timeout))
-                return storage._q(surql, params)
-            finally:
-                http.timeout = old_timeout
-        return storage._q(surql, params)
+        """_q with a per-call timeout — delegates to module-level _q_with_timeout."""
+        return _q_with_timeout(storage, surql, params, timeout_seconds=query_timeout)
 
     def _count_q(surql: str, params: dict | None = None) -> int:
         rows = _q_t(surql, params)
@@ -1561,28 +1577,139 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
         else:
             logger.warning("check_invariants: memory_archive check failed: %s", exc)
 
-    # relationship dangling entity endpoints — NOT fixable
+    # caused_by dangling entity endpoints — FIXABLE (safe DELETE: no information loss)
+    # Other relationship types — NOT fixable (structural data)
     try:
         ent_count = _count_q("SELECT count() AS c FROM entity GROUP ALL")
         counts["entity"] = ent_count
-        dangling_rel = _count_q(
-            "SELECT count() AS c FROM relationship "
-            "WHERE source_entity_id NOT IN (SELECT VALUE meta::id(id) FROM entity) "
-            "OR target_entity_id NOT IN (SELECT VALUE meta::id(id) FROM entity) "
-            "GROUP ALL"
-        )
-        counts["relationship_dangling"] = dangling_rel
-        if dangling_rel:
-            violations.append(f"{dangling_rel} relationship rows reference non-existent entity IDs")
+
+        # Fetch live entity IDs into a Python set for O(1) lookup.
+        live_ent_ids_rows = _q_t("SELECT VALUE meta::id(id) FROM entity")
+        live_ent_ids: set[int] = {int(x) for x in live_ent_ids_rows if x is not None}
+
+        # Safety guard: if the ID fetch returned nothing but the count query said >0 rows
+        # exist, this is a transient query glitch.  Proceeding would treat every caused_by
+        # row as dangling and mass-delete all of them.  Skip and let the next cycle retry.
+        if not live_ent_ids and ent_count > 0:
+            logger.critical(
+                "check_invariants: live_ent_ids is empty but ent_count=%d — "
+                "possible transient query glitch; skipping dangling-relationship detection "
+                "this cycle to avoid mass deletion",
+                ent_count,
+            )
+        else:
+            # Fetch all relationship rows that have dangling endpoints.
+            dangling_rel_rows = _q_t(
+                "SELECT meta::id(id) AS rid, relationship_type, source_entity_id, target_entity_id "
+                "FROM relationship"
+            )
+            dangling_caused_by_rids: list[int] = []
+            dangling_other_count = 0
+            for row in dangling_rel_rows:
+                src = row.get("source_entity_id")
+                tgt = row.get("target_entity_id")
+                is_dangling = src not in live_ent_ids or tgt not in live_ent_ids
+                if not is_dangling:
+                    continue
+                if row.get("relationship_type") == "caused_by":
+                    rid = row.get("rid")
+                    if rid is not None:
+                        dangling_caused_by_rids.append(rid)
+                else:
+                    dangling_other_count += 1
+
+            dangling_caused_by = len(dangling_caused_by_rids)
+            counts["caused_by_dangling"] = dangling_caused_by
+            if dangling_caused_by:
+                for rid in dangling_caused_by_rids:
+                    try:
+                        storage._q("DELETE type::record('relationship', $rid)", {"rid": rid})
+                    except Exception as del_exc:
+                        logger.warning(
+                            "check_invariants: failed to delete dangling caused_by row %s: %s",
+                            rid,
+                            del_exc,
+                        )
+                fixed.append(
+                    f"Deleted {dangling_caused_by} caused_by relationship rows referencing "
+                    f"non-existent entity IDs"
+                )
+                logger.info(
+                    "check_invariants: auto-fixed %d dangling caused_by rows", dangling_caused_by
+                )
+                counts["caused_by_dangling"] = 0
+
+            # Renamed from "relationship_dangling" in v4.9: caused_by got its own count key
+            # above; this key now represents non-caused_by dangling relationships only.
+            counts["relationship_dangling_other"] = dangling_other_count
+            if dangling_other_count:
+                violations.append(
+                    f"{dangling_other_count} relationship rows (non-caused_by) reference "
+                    f"non-existent entity IDs"
+                )
     except Exception as exc:
         if _is_timeout(exc):
             logger.warning(
-                "check_invariants: relationship check timed out after %ds; skipping this cycle",
+                "check_invariants: relationship/caused_by check timed out after %ds; "
+                "skipping this cycle",
                 query_timeout,
             )
             timed_out.append("relationship")
         else:
-            logger.warning("check_invariants: relationship check failed: %s", exc)
+            logger.warning("check_invariants: relationship/caused_by check failed: %s", exc)
+
+    # caused_by row-count ceiling — prune oldest by created_at when exceeded.
+    try:
+        caused_by_ceiling = settings.MAX_CAUSED_BY_ROWS
+        if caused_by_ceiling > 0:
+            caused_by_count = _count_q(
+                "SELECT count() AS c FROM relationship "
+                "WHERE relationship_type = 'caused_by' GROUP ALL"
+            )
+            counts["caused_by"] = caused_by_count
+            if caused_by_count > caused_by_ceiling:
+                excess = caused_by_count - caused_by_ceiling
+                # Fetch oldest rows to prune (by created_at ascending — oldest first).
+                # Fetch all matching rows and slice in Python to avoid SurrealDB v3
+                # LIMIT-with-parameter incompatibilities on the relationship table.
+                oldest_rows_all = _q_t(
+                    "SELECT meta::id(id) AS rid, created_at FROM relationship "
+                    "WHERE relationship_type = 'caused_by' "
+                    "ORDER BY created_at ASC"
+                )
+                oldest_rows = oldest_rows_all[:excess]
+                pruned = 0
+                for row in oldest_rows:
+                    rid = row.get("rid")
+                    if rid is not None:
+                        try:
+                            storage._q("DELETE type::record('relationship', $rid)", {"rid": rid})
+                            pruned += 1
+                        except Exception as del_exc:
+                            logger.warning(
+                                "check_invariants: failed to prune caused_by row %s: %s",
+                                rid,
+                                del_exc,
+                            )
+                if pruned:
+                    fixed.append(
+                        f"Pruned {pruned} oldest caused_by rows (ceiling={caused_by_ceiling})"
+                    )
+                    logger.info(
+                        "check_invariants: pruned %d oldest caused_by rows (ceiling=%d)",
+                        pruned,
+                        caused_by_ceiling,
+                    )
+    except Exception as exc:
+        if _is_timeout(exc):
+            logger.warning(
+                "check_invariants: caused_by ceiling check timed out after %ds; "
+                "skipping this cycle",
+                query_timeout,
+            )
+            timed_out.append("caused_by_ceiling")
+        else:
+            logger.warning("check_invariants: caused_by ceiling check failed: %s", exc)
 
     # wiki_crossref dangling slugs — FIXABLE (safe DELETE, slugs are just links)
     try:
@@ -1796,6 +1923,37 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
         logger.warning("check_invariants: db_size telemetry failed: %s", exc)
         db_size = {}
 
+    # ── 7. Per-table size breakdown ──────────────────────────────────────────
+    # Uses the module-level _PER_TABLE_FIELDS constant (shared with memory_stats).
+    per_table: dict[str, dict] = {}
+    for _tbl, _content_field in _PER_TABLE_FIELDS.items():
+        try:
+            if _content_field:
+                _rows = _q_t(
+                    f"SELECT count() AS c, "
+                    f"math::sum(string::len({_content_field})) AS content_bytes "
+                    f"FROM {_tbl} GROUP ALL"
+                )
+            else:
+                _rows = _q_t(f"SELECT count() AS c FROM {_tbl} GROUP ALL")
+            if _rows:
+                _r = _rows[0]
+                _row_count = int(_r.get("c", 0))
+                _entry: dict = {"rows": _row_count}
+                if _content_field:
+                    _entry["estimated_bytes"] = int(_r.get("content_bytes") or 0)
+                per_table[_tbl] = _entry
+            else:
+                per_table[_tbl] = {"rows": 0}
+        except Exception as _tbl_exc:
+            logger.warning(
+                "check_invariants: per_table size query failed for %s: %s", _tbl, _tbl_exc
+            )
+            per_table[_tbl] = {"rows": 0, "error": str(_tbl_exc)}
+
+    if db_size:
+        db_size["per_table"] = per_table
+
     # ok=False when any violations, warn_violations, or timeouts exist
     ok = len(violations) == 0 and len(warn_violations) == 0 and len(timed_out) == 0
     for v in violations:
@@ -1961,7 +2119,40 @@ def memory_stats() -> dict:
 
     # DB-size telemetry — always include so callers can monitor disk usage.
     try:
-        stats["db_size"] = storage.get_db_size()
+        db_size_info = storage.get_db_size()
+        # Append per-table breakdown so callers can identify which table drives bloat.
+        # Uses the module-level _PER_TABLE_FIELDS constant (shared with check_invariants).
+        _ms_timeout = settings.CHECK_INVARIANTS_QUERY_TIMEOUT_SECONDS
+        _ms_per_table: dict[str, dict] = {}
+        for _ms_tbl, _ms_field in _PER_TABLE_FIELDS.items():
+            try:
+                if _ms_field:
+                    _ms_rows = _q_with_timeout(
+                        storage,
+                        f"SELECT count() AS c, "
+                        f"math::sum(string::len({_ms_field})) AS content_bytes "
+                        f"FROM {_ms_tbl} GROUP ALL",
+                        timeout_seconds=_ms_timeout,
+                    )
+                else:
+                    _ms_rows = _q_with_timeout(
+                        storage,
+                        f"SELECT count() AS c FROM {_ms_tbl} GROUP ALL",
+                        timeout_seconds=_ms_timeout,
+                    )
+                if _ms_rows:
+                    _ms_r = _ms_rows[0]
+                    _ms_entry: dict = {"rows": int(_ms_r.get("c", 0))}
+                    if _ms_field:
+                        _ms_entry["estimated_bytes"] = int(_ms_r.get("content_bytes") or 0)
+                    _ms_per_table[_ms_tbl] = _ms_entry
+                else:
+                    _ms_per_table[_ms_tbl] = {"rows": 0}
+            except Exception as _ms_exc:
+                logger.warning("memory_stats: per_table query failed for %s: %s", _ms_tbl, _ms_exc)
+                _ms_per_table[_ms_tbl] = {"rows": 0, "error": str(_ms_exc)}
+        db_size_info["per_table"] = _ms_per_table
+        stats["db_size"] = db_size_info
     except Exception:
         pass  # non-fatal: stats are best-effort
 
