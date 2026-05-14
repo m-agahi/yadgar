@@ -2,6 +2,7 @@
 
 import logging
 import re
+import subprocess as _subprocess
 import threading
 import time
 from datetime import UTC, date, datetime
@@ -12,12 +13,48 @@ from yadgar.config import Settings
 from yadgar.curation import MemoryCurator
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.knowledge_graph import KnowledgeGraph
+from yadgar.ops import _fire_vacuum_service
 from yadgar.sleep_compute import SleepComputeEngine
 from yadgar.storage import StorageEngine
 from yadgar.thermodynamics import MemoryThermodynamics
 
 # Lazy imports to avoid circular dependencies
 _AstrocytePool = None
+
+# ---------------------------------------------------------------------------
+# Vacuum auto-trigger helpers (v4.9)
+# ---------------------------------------------------------------------------
+
+
+def _now_local() -> datetime:
+    """Return current local time as a naive datetime. Overridable in tests."""
+    return datetime.now()
+
+
+def _in_window(now: datetime, window_start: str, window_end: str) -> bool:
+    """Return True if *now* (naive local datetime) falls within [start, end).
+
+    Supports cross-midnight windows (e.g. start=23:00, end=02:00).
+    Equal start and end is treated as a zero-length window → always False.
+
+    Args:
+        now: Current local time (naive datetime, from _now_local()).
+        window_start: HH:MM string, inclusive start.
+        window_end: HH:MM string, exclusive end.
+    """
+    sh, sm = (int(x) for x in window_start.split(":"))
+    eh, em = (int(x) for x in window_end.split(":"))
+    start_m = sh * 60 + sm
+    end_m = eh * 60 + em
+    now_m = now.hour * 60 + now.minute
+    if start_m == end_m:
+        return False
+    if start_m < end_m:
+        return start_m <= now_m < end_m
+    # Cross-midnight: e.g. start=23:00 (1380), end=02:00 (120)
+    return now_m >= start_m or now_m < end_m
+
+
 _CausalDiscovery = None
 
 
@@ -140,6 +177,9 @@ class ConsolidationScheduler:
         except Exception:
             logger.exception("Failed to initialize AstrocytePool")
 
+        # v4.9: vacuum auto-trigger cooldown timestamp (in-memory; resets on restart)
+        self._last_vacuum_at: datetime | None = None
+
     # -- Public API --
 
     def start(self) -> None:
@@ -230,6 +270,63 @@ class ConsolidationScheduler:
             logger.info("Sleep cycle complete: %s", stats)
         except Exception:
             logger.exception("Sleep cycle failed")
+
+    def _maybe_auto_vacuum(self) -> None:
+        """v4.9: Fire yadgar-vacuum.service if DB is over threshold and in window.
+
+        Cooldown: 6 hours since last auto-fire (in-memory; resets on restart).
+        """
+        settings = self._settings
+        threshold = settings.VACUUM_AUTO_THRESHOLD_BYTES
+
+        # Cooldown check (6-hour hard-coded per plan)
+        _COOLDOWN_HOURS = 6.0
+        if self._last_vacuum_at is not None:
+            hours_since = (datetime.now(UTC) - self._last_vacuum_at).total_seconds() / 3600.0
+            if hours_since < _COOLDOWN_HOURS:
+                return
+
+        db_size_info = self._storage.get_db_size()
+        size = db_size_info.get("db_size_bytes", 0)
+
+        if size <= threshold:
+            return  # Below threshold — nothing to do
+
+        # Over threshold — check if we're in the configured window
+        now_local = _now_local()
+        if _in_window(
+            now_local, settings.VACUUM_AUTO_WINDOW_START, settings.VACUUM_AUTO_WINDOW_END
+        ):
+            # Pre-check: skip if yadgar-vacuum.service is already active/activating
+            try:
+                out = _subprocess.check_output(
+                    ["systemctl", "--user", "is-active", "yadgar-vacuum.service"],
+                    stderr=_subprocess.DEVNULL,
+                )
+                state = out.decode(errors="replace").strip()
+                if state in ("active", "activating"):
+                    logger.debug("Auto-vacuum skipped: yadgar-vacuum.service is %s", state)
+                    return  # Do NOT update _last_vacuum_at — retry next cycle
+            except FileNotFoundError:
+                logger.debug("Auto-vacuum skipped: systemctl not available")
+                return  # Do NOT update _last_vacuum_at
+            except _subprocess.CalledProcessError:
+                pass  # is-active returns non-zero for inactive/failed — proceed
+
+            _fire_vacuum_service()
+            self._last_vacuum_at = datetime.now(UTC)
+            logger.warning(
+                "Auto-vacuum triggered: db=%d MiB > %d MiB threshold",
+                size >> 20,
+                threshold >> 20,
+            )
+        else:
+            logger.warning(
+                "DB over auto-vacuum threshold (%d MiB) but outside window (%s–%s); deferred",
+                size >> 20,
+                settings.VACUUM_AUTO_WINDOW_START,
+                settings.VACUUM_AUTO_WINDOW_END,
+            )
 
     # -- Core consolidation --
 
@@ -383,6 +480,13 @@ class ConsolidationScheduler:
                 )
         except Exception:
             logger.debug("check_invariants failed (non-fatal)", exc_info=True)
+
+        # v4.9: threshold auto-trigger vacuum — non-fatal end-of-cycle check
+        if self._settings.VACUUM_AUTO_ENABLED:
+            try:
+                self._maybe_auto_vacuum()
+            except Exception:
+                logger.debug("auto-vacuum check failed (non-fatal)", exc_info=True)
 
         _t = time.monotonic()
         logger.info("phase: insert_consolidation_log starting")

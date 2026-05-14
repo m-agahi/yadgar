@@ -1,7 +1,9 @@
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from pydantic import field_validator
 from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
@@ -334,7 +336,23 @@ class Settings(BaseSettings):
     # scripts/cleanup-backups.sh after a successful vacuum.
     VACUUM_SNAPSHOT_RETENTION: int = 3
 
+    # v4.9: threshold auto-trigger for vacuum
+    # Fire vacuum automatically when DB exceeds this size (default 2 GiB).
+    VACUUM_AUTO_THRESHOLD_BYTES: int = 2_147_483_648
+    # Local time window for automatic vacuum (HH:MM, 24-hour, end is exclusive).
+    VACUUM_AUTO_WINDOW_START: str = "19:00"
+    VACUUM_AUTO_WINDOW_END: str = "23:00"
+    # Set to False to disable threshold auto-trigger.
+    VACUUM_AUTO_ENABLED: bool = True
+
     model_config = {"env_prefix": "YADGAR_"}
+
+    @field_validator("VACUUM_AUTO_WINDOW_START", "VACUUM_AUTO_WINDOW_END")
+    @classmethod
+    def _validate_hhmm(cls, v: str) -> str:
+        if not re.match(r"^([01]\d|2[0-3]):([0-5]\d)$", v):
+            raise ValueError(f"must be HH:MM (00:00-23:59), got {v!r}")
+        return v
 
     @classmethod
     def settings_customise_sources(
