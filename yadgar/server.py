@@ -145,6 +145,11 @@ _start_time: float = 0.0
 
 settings = get_settings()
 
+# DB-size warning throttle — stores the calendar hour (0–23) when the last
+# WARN was emitted.  -1 means "never logged".  Reset to -1 at midnight by
+# the consolidation cycle.  Guarded by the GIL (int write is atomic enough).
+_db_size_warn_last_logged_hour: int = -1
+
 mcp_server = FastMCP(
     name="yadgar",
     instructions="Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage.",
@@ -652,19 +657,37 @@ async def api_consolidation_log(request: Request) -> JSONResponse:
     return JSONResponse(data, headers=_CORS)
 
 
-@mcp_server.custom_route("/api/graph/events", methods=["GET"])
-async def api_graph_events(request: Request) -> StreamingResponse:
-    """SSE stream of incremental graph update events + system metrics every 5s."""
+async def _make_event_stream(request: Request):
+    """Async generator for one SSE client connection.
+
+    Checks client disconnect at the top of every loop iteration and exits
+    cleanly — no data is sent to an already-disconnected socket, so the
+    asyncio transport never reaches ``socket.send()`` on a closed fd.
+
+    Any transport-level write error that does slip through is caught here
+    (``ConnectionResetError``, ``BrokenPipeError``, ``OSError``) and logged
+    at DEBUG with the client id.  We do *not* re-raise: the generator simply
+    returns, letting ``StreamingResponse`` close the connection quietly.
+    This prevents the cascade of 74 ``socket.send() raised exception``
+    entries observed in the journal at 2026-05-13 23:18 when many viz-UI
+    tabs disconnected simultaneously.
+    """
     try:
         last_seq = int(request.query_params.get("since", 0))
     except (ValueError, TypeError):
         last_seq = 0
 
-    async def event_stream():
-        nonlocal last_seq
-        last_sys_push = 0.0
-        while True:
-            now = time.time()
+    last_sys_push = 0.0
+    client_id = id(request)
+
+    while True:
+        # Exit cleanly if the client disconnected before we yield anything.
+        if await request.is_disconnected():
+            logger.debug("SSE client %s disconnected; closing stream", client_id)
+            return
+
+        now = time.time()
+        try:
             # Drain new graph events
             new_events = [e for e in _event_queue if e["seq"] > last_seq]
             for e in new_events:
@@ -675,10 +698,27 @@ async def api_graph_events(request: Request) -> StreamingResponse:
                 last_sys_push = now
                 payload = json.dumps({"event": "system_metrics", "data": _system_metrics_cache})
                 yield f"data: {payload}\n\n"
-            await asyncio.sleep(0.5)
+        except (ConnectionResetError, BrokenPipeError, OSError) as exc:
+            # Transport write failed — client dropped between the disconnect
+            # check and the actual socket write.  Log once at DEBUG and stop.
+            logger.debug(
+                "SSE client %s send error (%s: %s); dropping connection",
+                client_id,
+                type(exc).__name__,
+                exc,
+            )
+            return
 
+        await asyncio.sleep(0.5)
+
+
+@mcp_server.custom_route("/api/graph/events", methods=["GET"])
+async def api_graph_events(request: Request) -> StreamingResponse:
+    """SSE stream of incremental graph update events + system metrics every 5s."""
     headers = {**_CORS, "Content-Type": "text/event-stream", "X-Accel-Buffering": "no"}
-    return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
+    return StreamingResponse(
+        _make_event_stream(request), media_type="text/event-stream", headers=headers
+    )
 
 
 @mcp_server.custom_route("/graph", methods=["GET"])
@@ -1342,39 +1382,110 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
     Auto-repairs fixable violations (dangling foreign keys with no information loss)
     and returns them in the 'fixed' list. Non-fixable structural issues remain in
     'violations'. ok=True only when violations is empty.
+
+    Each table check runs with a per-table timeout
+    (CHECK_INVARIANTS_QUERY_TIMEOUT_SECONDS, default 60 s).  On timeout the table
+    is logged at WARN and recorded in 'timeouts'; remaining tables still run.
+    'ok' is False whenever violations or timeouts is non-empty.
     """
+    import datetime as _dt
+
+    global _db_size_warn_last_logged_hour
+
     violations: list[str] = []
     fixed: list[str] = []
     counts: dict[str, int] = {}
+    timed_out: list[str] = []
 
-    # ── 1. Dangling links ────────────────────────────────────────────────────
+    query_timeout = settings.CHECK_INVARIANTS_QUERY_TIMEOUT_SECONDS
+
+    # ── helpers ──────────────────────────────────────────────────────────────
+
+    # Timeout sentinel — catch both Python's TimeoutError and httpx's variant.
+    def _is_timeout(exc: BaseException) -> bool:
+        try:
+            import httpx as _httpx
+
+            if isinstance(exc, _httpx.TimeoutException):
+                return True
+        except ImportError:
+            pass
+        return isinstance(exc, TimeoutError)
+
+    def _q_t(surql: str, params: dict | None = None) -> list:
+        """_q with a per-call timeout applied via the httpx client's timeout override.
+
+        Always routes through storage._q so that test stubs patching _q remain
+        effective.  In server (httpx) mode the httpx Client timeout is temporarily
+        widened to query_timeout; in embedded mode _q handles its own retry.
+        """
+        # If the storage has an httpx client, apply a per-request timeout by
+        # temporarily replacing the client-level timeout.  We do NOT call
+        # _q_timeout directly because tests patch storage._q and _q_timeout
+        # bypasses that patch in server mode.
+        http = getattr(storage, "_http", None)
+        if http is not None:
+            import httpx as _httpx
+
+            old_timeout = http.timeout
+            try:
+                http.timeout = _httpx.Timeout(float(query_timeout))
+                return storage._q(surql, params)
+            finally:
+                http.timeout = old_timeout
+        return storage._q(surql, params)
 
     def _count_q(surql: str, params: dict | None = None) -> int:
-        rows = storage._q(surql, params)
+        rows = _q_t(surql, params)
         if not rows:
             return 0
         row = rows[0]
         return int(row.get("c", row.get("count", 0)))
 
-    # memory table row count (used repeatedly)
+    # ── 1. Dangling links ────────────────────────────────────────────────────
+
+    # memory table row count (used repeatedly — short query, no special timeout)
     mem_count = _count_q("SELECT count() AS c FROM memory GROUP ALL")
     counts["memory"] = mem_count
 
-    # memory_similarity_link dangling endpoints — FIXABLE (safe DELETE)
+    # memory_similarity_link dangling endpoints — FIXABLE (safe DELETE).
+    #
+    # Previous implementation used a correlated NOT IN subquery that SurrealDB
+    # v3 re-evaluates per row → O(N*M) → timeout on large tables.
+    #
+    # Rewritten as a Python-side set-difference:
+    #   1. Fetch all live memory IDs into a Python set (one indexed lookup).
+    #   2. Fetch all MSL rows (source_memory_id, target_memory_id, id).
+    #   3. Compute dangling set in Python — no correlated subquery.
+    #   4. Issue targeted DELETE by ID list if needed.
     try:
-        dangling_msl = _count_q(
-            "SELECT count() AS c FROM memory_similarity_link "
-            "WHERE source_memory_id NOT IN (SELECT VALUE meta::id(id) FROM memory) "
-            "OR target_memory_id NOT IN (SELECT VALUE meta::id(id) FROM memory) "
-            "GROUP ALL"
+        live_ids_rows = _q_t("SELECT VALUE meta::id(id) FROM memory")
+        live_ids: set[int] = {int(x) for x in live_ids_rows if x is not None}
+
+        msl_rows = _q_t(
+            "SELECT meta::id(id) AS rid, source_memory_id, target_memory_id "
+            "FROM memory_similarity_link"
         )
+        dangling_rids: list[int] = []
+        for row in msl_rows:
+            src = row.get("source_memory_id")
+            tgt = row.get("target_memory_id")
+            if src not in live_ids or tgt not in live_ids:
+                rid = row.get("rid")
+                if rid is not None:
+                    dangling_rids.append(rid)
+
+        dangling_msl = len(dangling_rids)
         counts["memory_similarity_link_dangling"] = dangling_msl
         if dangling_msl:
-            storage._q(
-                "DELETE memory_similarity_link "
-                "WHERE source_memory_id NOT IN (SELECT VALUE meta::id(id) FROM memory) "
-                "OR target_memory_id NOT IN (SELECT VALUE meta::id(id) FROM memory)"
-            )
+            # Batch-delete by ID to avoid re-running the full scan.
+            for rid in dangling_rids:
+                try:
+                    storage._q("DELETE type::record('memory_similarity_link', $rid)", {"rid": rid})
+                except Exception as del_exc:
+                    logger.warning(
+                        "check_invariants: failed to delete dangling MSL row %s: %s", rid, del_exc
+                    )
             fixed.append(
                 f"Deleted {dangling_msl} memory_similarity_link rows referencing non-existent memory IDs"
             )
@@ -1383,7 +1494,15 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
             )
             counts["memory_similarity_link_dangling"] = 0
     except Exception as exc:
-        logger.warning("check_invariants: memory_similarity_link check failed: %s", exc)
+        if _is_timeout(exc):
+            logger.warning(
+                "check_invariants: memory_similarity_link check timed out after %ds; "
+                "skipping auto-repair this cycle",
+                query_timeout,
+            )
+            timed_out.append("memory_similarity_link")
+        else:
+            logger.warning("check_invariants: memory_similarity_link check failed: %s", exc)
 
     # memory_transition dangling endpoints — NOT fixable (may encode important history)
     try:
@@ -1399,7 +1518,14 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
                 f"{dangling_mt} memory_transition rows reference non-existent memory IDs"
             )
     except Exception as exc:
-        logger.warning("check_invariants: memory_transition check failed: %s", exc)
+        if _is_timeout(exc):
+            logger.warning(
+                "check_invariants: memory_transition check timed out after %ds; skipping this cycle",
+                query_timeout,
+            )
+            timed_out.append("memory_transition")
+        else:
+            logger.warning("check_invariants: memory_transition check failed: %s", exc)
 
     # memory_archive dangling — NOT fixable (archival records)
     try:
@@ -1414,7 +1540,14 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
                 f"{dangling_ma} memory_archive rows reference non-existent memory IDs"
             )
     except Exception as exc:
-        logger.warning("check_invariants: memory_archive check failed: %s", exc)
+        if _is_timeout(exc):
+            logger.warning(
+                "check_invariants: memory_archive check timed out after %ds; skipping this cycle",
+                query_timeout,
+            )
+            timed_out.append("memory_archive")
+        else:
+            logger.warning("check_invariants: memory_archive check failed: %s", exc)
 
     # relationship dangling entity endpoints — NOT fixable
     try:
@@ -1430,7 +1563,14 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
         if dangling_rel:
             violations.append(f"{dangling_rel} relationship rows reference non-existent entity IDs")
     except Exception as exc:
-        logger.warning("check_invariants: relationship check failed: %s", exc)
+        if _is_timeout(exc):
+            logger.warning(
+                "check_invariants: relationship check timed out after %ds; skipping this cycle",
+                query_timeout,
+            )
+            timed_out.append("relationship")
+        else:
+            logger.warning("check_invariants: relationship check failed: %s", exc)
 
     # wiki_crossref dangling slugs — FIXABLE (safe DELETE, slugs are just links)
     try:
@@ -1464,7 +1604,14 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
             )
             counts["wiki_crossref_dangling"] = 0
     except Exception as exc:
-        logger.warning("check_invariants: wiki_crossref check failed: %s", exc)
+        if _is_timeout(exc):
+            logger.warning(
+                "check_invariants: wiki_crossref check timed out after %ds; skipping this cycle",
+                query_timeout,
+            )
+            timed_out.append("wiki_crossref")
+        else:
+            logger.warning("check_invariants: wiki_crossref check failed: %s", exc)
 
     # ── 2. memory:N orphan entities — FIXABLE (safe DELETE, purely derived data) ─
     try:
@@ -1507,7 +1654,15 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
             logger.info("check_invariants: auto-fixed %d memory entity orphans", orphan_count)
             counts["memory_entity_orphans"] = 0
     except Exception as exc:
-        logger.warning("check_invariants: memory entity orphan check failed: %s", exc)
+        if _is_timeout(exc):
+            logger.warning(
+                "check_invariants: memory entity orphan check timed out after %ds; "
+                "skipping this cycle",
+                query_timeout,
+            )
+            timed_out.append("memory_entity_orphans")
+        else:
+            logger.warning("check_invariants: memory entity orphan check failed: %s", exc)
 
     # ── 3. Row-count ceilings (non-fixable — structural) ────────────────────
     _CEILINGS = {
@@ -1522,7 +1677,15 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
             if n > ceiling:
                 violations.append(f"{table} has {n} rows (ceiling {ceiling}) — consider pruning")
         except Exception as exc:
-            logger.warning("check_invariants: %s ceiling check failed: %s", table, exc)
+            if _is_timeout(exc):
+                logger.warning(
+                    "check_invariants: %s ceiling check timed out after %ds; skipping this cycle",
+                    table,
+                    query_timeout,
+                )
+                timed_out.append(f"{table}_ceiling")
+            else:
+                logger.warning("check_invariants: %s ceiling check failed: %s", table, exc)
 
     # memory_similarity_link ceiling (dynamic, non-fixable)
     try:
@@ -1534,7 +1697,14 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
                 f"memory_similarity_link has {msl_count} rows (ceiling {msl_ceiling})"
             )
     except Exception as exc:
-        logger.warning("check_invariants: msl ceiling check failed: %s", exc)
+        if _is_timeout(exc):
+            logger.warning(
+                "check_invariants: msl ceiling check timed out after %ds; skipping this cycle",
+                query_timeout,
+            )
+            timed_out.append("memory_similarity_link_ceiling")
+        else:
+            logger.warning("check_invariants: msl ceiling check failed: %s", exc)
 
     # ── 4. Engram slot distribution (non-fixable — structural anomaly) ───────
     try:
@@ -1552,7 +1722,14 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
                         f"Slot {slot} holds {n} memories (>{threshold}, >5% of {mem_count}) — engram collapse?"
                     )
     except Exception as exc:
-        logger.warning("check_invariants: slot distribution check failed: %s", exc)
+        if _is_timeout(exc):
+            logger.warning(
+                "check_invariants: slot distribution check timed out after %ds; skipping this cycle",
+                query_timeout,
+            )
+            timed_out.append("engram_slot_distribution")
+        else:
+            logger.warning("check_invariants: slot distribution check failed: %s", exc)
 
     # ── 5. Engram slot table integrity (non-fixable — structural) ───────────
     try:
@@ -1564,13 +1741,53 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
                 f"engram_slot has {engram_count} rows (expected {expected} = HOPFIELD_MAX_PATTERNS)"
             )
     except Exception as exc:
-        logger.warning("check_invariants: engram_slot check failed: %s", exc)
+        if _is_timeout(exc):
+            logger.warning(
+                "check_invariants: engram_slot check timed out after %ds; skipping this cycle",
+                query_timeout,
+            )
+            timed_out.append("engram_slot")
+        else:
+            logger.warning("check_invariants: engram_slot check failed: %s", exc)
 
-    ok = len(violations) == 0
+    # ── 6. DB-size telemetry ─────────────────────────────────────────────────
+    try:
+        db_size = storage.get_db_size()
+        if db_size["size_warning"]:
+            # Throttle WARN to at most once per hour.
+            current_hour = _dt.datetime.now(_dt.UTC).hour
+            if current_hour != _db_size_warn_last_logged_hour:
+                _db_size_warn_last_logged_hour = current_hour
+                logger.warning(
+                    "check_invariants: db_size %d bytes exceeds warning threshold %d bytes "
+                    "(vlog=%d, sstables=%d, wal=%d)",
+                    db_size["db_size_bytes"],
+                    settings.DB_SIZE_WARNING_BYTES,
+                    db_size["vlog_size_bytes"],
+                    db_size["sstables_size_bytes"],
+                    db_size["wal_size_bytes"],
+                )
+    except Exception as exc:
+        logger.warning("check_invariants: db_size telemetry failed: %s", exc)
+        db_size = {}
+
+    # ok=False when any violations or timeouts exist
+    ok = len(violations) == 0 and len(timed_out) == 0
     for v in violations:
         logger.critical("check_invariants: %s", v)
 
-    return {"ok": ok, "violations": violations, "fixed": fixed, "counts": counts}
+    result: dict = {
+        "ok": ok,
+        "violations": violations,
+        "fixed": fixed,
+        "counts": counts,
+    }
+    if timed_out:
+        result["timeouts"] = timed_out
+    if db_size:
+        result["db_size"] = db_size
+
+    return result
 
 
 @_tool()
@@ -1713,6 +1930,12 @@ def memory_stats() -> dict:
         # Average coverage across recent queries isn't tracked globally,
         # but we can report the chunk limit setting
         stats["cognitive_load_limit"] = _metacognition._chunk_limit
+
+    # DB-size telemetry — always include so callers can monitor disk usage.
+    try:
+        stats["db_size"] = storage.get_db_size()
+    except Exception:
+        pass  # non-fatal: stats are best-effort
 
     return stats
 

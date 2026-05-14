@@ -683,134 +683,19 @@ def cmd_stats(args):
 
 
 def cmd_vacuum(args):
-    """Compact the SurrealKV commit log by export → drop clog → reimport.
+    """Compact the SurrealKV DB via export → snapshot → swap → reimport.
 
-    Must be run while the daemon is stopped (it holds an exclusive DB lock).
+    The yadgar-backend daemon must be running (vacuum calls /export over HTTP).
+    Stop/start of both daemons is handled automatically by the service-mode
+    abstraction (systemd | docker | manual).
+
+    See yadgar/vacuum.py for the full implementation.
     """
-    import json
-    import shutil
+    from yadgar.vacuum import cmd_vacuum_impl
 
-    from yadgar.config import Settings
-    from yadgar.storage import StorageEngine
-
-    settings = Settings()
-    db_path_str = str(Path(args.db_path or settings.DB_PATH).expanduser())
-    db_path = Path(db_path_str)
-    clog_path = db_path / "clog"
-
-    if not clog_path.exists():
-        print("No clog directory found — nothing to vacuum.")
-        return
-
-    old_size = sum(f.stat().st_size for f in clog_path.rglob("*") if f.is_file())
-    print(f"Clog size before: {old_size / 1024 / 1024:.0f} MB")
-
-    # Preserve live data; skip ephemeral tables that get rebuilt automatically
-    KEEP_TABLES = [
-        "memory",
-        "memory_archive",
-        "memory_transition",
-        "entity",
-        "relationship",
-        "causal_dag_edge",
-        "user_profile",
-        "derived_belief",
-        "checkpoint",
-        "memory_rule",
-        "engram_slot",
-        "narrative_entry",
-        "prospective_memory",
-        "counter",
-        "episode",
-    ]
-
-    print("Opening database (will fail if daemon is running)...")
-    try:
-        storage = StorageEngine(db_path_str)
-    except RuntimeError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        print(
-            "Stop the daemon first:  systemctl --user stop yadgar.service",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    # ── Phase 1: Export ──────────────────────────────────────────────────────
-    print("Exporting tables...")
-    dump: dict = {}
-    total = 0
-    for table in KEEP_TABLES:
-        try:
-            rows = storage._q(f"SELECT * FROM {table}")
-            records = rows[0] if rows else []
-            if not isinstance(records, list):
-                records = []
-            dump[table] = records
-            total += len(records)
-            print(f"  {table}: {len(records)}")
-        except Exception as e:
-            print(f"  {table}: skipped — {e}")
-            dump[table] = []
-
-    dump_path = db_path.parent / "vacuum_dump.json"
-    with open(dump_path, "w") as f:
-        json.dump(dump, f, default=str)
-    print(f"\n{total} records saved to {dump_path}")
-    storage.close()
-
-    # ── Phase 2: Drop clog ───────────────────────────────────────────────────
-    backup_clog = db_path.parent / "surreal_db_clog.bak"
-    if backup_clog.exists():
-        shutil.rmtree(backup_clog)
-    print("Backing up and clearing clog...")
-    shutil.copytree(clog_path, backup_clog)
-    shutil.rmtree(clog_path)
-    clog_path.mkdir()
-
-    # ── Phase 3: Reimport ────────────────────────────────────────────────────
-    print("Reimporting into fresh database...")
-    storage = StorageEngine(db_path_str)
-
-    with open(dump_path) as f:
-        dump = json.load(f)
-
-    for table in KEEP_TABLES:
-        records = dump.get(table, [])
-        ok = errors = 0
-        for rec in records:
-            try:
-                rid = rec.get("id")
-                if rid is None:
-                    continue
-                if hasattr(rid, "id"):
-                    raw_id = rid.id
-                else:
-                    s = str(rid)
-                    raw_id = s.split(":")[-1] if ":" in s else s
-                content = {k: v for k, v in rec.items() if k != "id"}
-                storage._q(
-                    "UPSERT type::record($tbl, $rid) CONTENT $data",
-                    {"tbl": table, "rid": raw_id, "data": content},
-                )
-                ok += 1
-            except Exception:
-                errors += 1
-        msg = f"  {table}: {ok} restored"
-        if errors:
-            msg += f", {errors} errors"
-        print(msg)
-
-    storage.close()
-
-    new_size = sum(f.stat().st_size for f in clog_path.rglob("*") if f.is_file())
-    saved = old_size - new_size
-    pct = int(100 * saved // old_size) if old_size else 0
-    print("\nVacuum complete.")
-    print(f"  Before: {old_size / 1024 / 1024:.0f} MB")
-    print(f"  After:  {new_size / 1024 / 1024:.0f} MB")
-    print(f"  Saved:  {saved / 1024 / 1024:.0f} MB ({pct}%)")
-    print(f"\nBackup clog: {backup_clog}")
-    print(f"JSON dump:   {dump_path}")
+    exit_code = cmd_vacuum_impl(args)
+    if exit_code != 0:
+        sys.exit(exit_code)
 
 
 def cmd_seed(args):
@@ -1204,9 +1089,28 @@ def cli():
 
     # vacuum subcommand
     vacuum_parser = subparsers.add_parser(
-        "vacuum", help="Compact the SurrealKV commit log (daemon must be stopped)"
+        "vacuum",
+        help="Compact the SurrealKV DB via export → snapshot → swap → reimport",
     )
-    vacuum_parser.add_argument("--db-path", type=str, default=None, help="Database path")
+    vacuum_parser.add_argument("--db-path", type=str, default=None, help="Database path override")
+    vacuum_parser.add_argument(
+        "--backend-url",
+        type=str,
+        default="http://127.0.0.1:8080",
+        help="yadgar-backend HTTP endpoint (default: http://127.0.0.1:8080)",
+    )
+    vacuum_parser.add_argument(
+        "--service-mode",
+        choices=["systemd", "docker", "manual"],
+        default=None,
+        help="Service stop/start mode (default: auto-detected)",
+    )
+    vacuum_parser.add_argument(
+        "--yes",
+        action="store_true",
+        default=False,
+        help="Skip confirmation prompt",
+    )
 
     # seed subcommand
     seed_parser = subparsers.add_parser("seed", help="Bootstrap memory for an existing project")

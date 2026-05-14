@@ -51,9 +51,9 @@ if len(core_versions) > 1:
 if len(backend_versions) > 1:
     mismatches.append(("backend", backend_versions))
 
-# cross-check: if we have both roles, they should match too
-if core_versions and backend_versions and core_versions != backend_versions:
-    mismatches.append(("core vs backend", core_versions | backend_versions))
+# NOTE: core and backend versions are tracked independently since v4.7.0
+# (split-versions feature). They are NOT required to match — only the
+# intra-role checks above are enforced.
 
 if not mismatches:
     sys.exit(0)

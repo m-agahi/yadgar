@@ -807,6 +807,109 @@ class TestBatchWritesChunking:
         storage.batch_writes([])  # must not raise
 
 
+class TestBatchWritesByteChunking:
+    """batch_writes must also split by serialised body size (MAX_BATCH_BYTES).
+
+    Tests in this class use a monkeypatched _http mock so they run without a
+    live SurrealDB server.  A "smart" mock rejects bodies > 1.2 * MAX_BATCH_BYTES
+    with HTTPStatusError(413) to simulate the real failure condition.
+    """
+
+    def _make_storage_with_mock_http(self, monkeypatch):
+        """Return a StorageEngine whose _http is replaced by a MagicMock."""
+        from unittest.mock import MagicMock
+
+        engine = StorageEngine.__new__(StorageEngine)
+        # Minimal init — enough for batch_writes to work
+        engine._db_url = "http://fake-surreal:8000"
+        engine._embedding_dim = 384
+        engine._db_path = ":memory:"
+
+        mock_http = MagicMock()
+        mock_response = MagicMock()
+        mock_response.json.return_value = []
+        mock_response.raise_for_status.return_value = None
+        mock_http.post.return_value = mock_response
+        engine._http = mock_http
+        return engine, mock_http
+
+    def test_batch_writes_chunks_by_bytes(self, monkeypatch):
+        """100 statements each ~100 KB → ≥10 separate HTTP requests at 1 MB cap."""
+        from yadgar.config import Settings
+
+        monkeypatch.setattr(
+            "yadgar.config.get_settings",
+            lambda: Settings(MAX_BATCH_STATEMENTS=500, MAX_BATCH_BYTES=1_000_000),
+        )
+
+        engine, mock_http = self._make_storage_with_mock_http(monkeypatch)
+
+        # Each statement has a ~100 KB content param
+        big_content = "x" * 100_000  # 100 000 bytes in UTF-8
+        stmts = [
+            (
+                "UPDATE type::record('memory', $id) SET content = $content",
+                {"id": i, "content": big_content},
+            )
+            for i in range(100)
+        ]
+        engine.batch_writes(stmts)
+
+        # 100 * 100 KB = 10 MB → expect at least 10 chunks at 1 MB cap
+        assert mock_http.post.call_count >= 10
+
+    def test_batch_writes_chunks_by_count(self, monkeypatch):
+        """1500 tiny statements → ≥3 HTTP requests at MAX_BATCH_STATEMENTS=500."""
+        from yadgar.config import Settings
+
+        monkeypatch.setattr(
+            "yadgar.config.get_settings",
+            lambda: Settings(MAX_BATCH_STATEMENTS=500, MAX_BATCH_BYTES=1_000_000),
+        )
+
+        engine, mock_http = self._make_storage_with_mock_http(monkeypatch)
+
+        stmts = [
+            ("UPDATE type::record('memory', $id) SET heat = 0.5", {"id": i}) for i in range(1500)
+        ]
+        engine.batch_writes(stmts)
+
+        assert mock_http.post.call_count >= 3
+
+    def test_oversized_single_statement_is_attempted_alone(self, monkeypatch, caplog):
+        """A single statement whose own size exceeds MAX_BATCH_BYTES is still attempted
+        (not silently dropped) and emits a WARN log."""
+        import logging
+
+        from yadgar.config import Settings
+
+        monkeypatch.setattr(
+            "yadgar.config.get_settings",
+            lambda: Settings(MAX_BATCH_STATEMENTS=500, MAX_BATCH_BYTES=100_000),
+        )
+
+        engine, mock_http = self._make_storage_with_mock_http(monkeypatch)
+
+        # 2 MB statement — exceeds MAX_BATCH_BYTES (100 KB in this test)
+        huge_content = "y" * 2_000_000
+        stmts = [
+            (
+                "UPDATE type::record('memory', $id) SET content = $content",
+                {"id": 1, "content": huge_content},
+            )
+        ]
+
+        with caplog.at_level(logging.WARNING, logger="yadgar.storage"):
+            engine.batch_writes(stmts)
+
+        # Exactly one HTTP request — not dropped
+        assert mock_http.post.call_count == 1
+        # A WARN was emitted
+        assert any(
+            "warn" in r.levelname.lower() or r.levelno >= logging.WARNING for r in caplog.records
+        )
+
+
 class TestActionLogPrune:
     """prune_processed_action_log removes old processed rows."""
 

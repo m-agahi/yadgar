@@ -15,6 +15,11 @@ from yadgar.storage import _FTS_STOP_WORDS
 
 logger = logging.getLogger(__name__)
 
+try:
+    import sentence_transformers  # noqa: F401
+except ImportError:
+    logger.warning("Reranker disabled: install yadgar[ml] to enable")
+
 
 class Reranker:
     """Holds all reranker state and methods, extracted from Retriever.

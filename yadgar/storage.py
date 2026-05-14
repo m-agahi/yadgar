@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import struct
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -223,6 +224,51 @@ _MIGRATIONS: list[dict] = [
         "fn": _migration_003_memory_similarity_link_table,
     },
 ]
+
+
+def _chunk_by_bytes(
+    statements: list[tuple[str, dict | None]], max_bytes: int
+) -> Iterator[list[tuple[str, dict | None]]]:
+    """Yield sub-lists of *statements* whose combined serialised size stays under *max_bytes*.
+
+    Size is estimated as the sum of each statement's SQL text plus the
+    JSON-serialised lengths of its parameter values — the dominant cost when
+    content fields are large.  The estimate is conservative (ignores framing
+    overhead) so actual wire bytes may be slightly higher, but 1 MB default
+    leaves ample slack below SurrealDB's compiled-in body limit.
+
+    If a *single* statement's own size exceeds *max_bytes*, it is yielded
+    alone with a WARN log so the caller still attempts the request.  We would
+    rather receive a clean 413 (and surface it) than silently drop work.
+    """
+    current_chunk: list[tuple[str, dict | None]] = []
+    current_bytes = 0
+
+    for sql, params in statements:
+        # Estimate: SQL text + JSON-serialised param values
+        stmt_bytes = len(sql.encode())
+        if params:
+            for v in params.values():
+                stmt_bytes += len(json.dumps(v, ensure_ascii=False).encode())
+
+        if current_chunk and current_bytes + stmt_bytes > max_bytes:
+            yield current_chunk
+            current_chunk = []
+            current_bytes = 0
+
+        if stmt_bytes > max_bytes:
+            _log.warning(
+                "batch_writes: single statement size %d bytes exceeds MAX_BATCH_BYTES=%d; "
+                "attempting alone — expect possible 413 if the server rejects it",
+                stmt_bytes,
+                max_bytes,
+            )
+
+        current_chunk.append((sql, params))
+        current_bytes += stmt_bytes
+
+    if current_chunk:
+        yield current_chunk
 
 
 class StorageEngine:
@@ -444,6 +490,54 @@ class StorageEngine:
     def _now_iso(self) -> str:
         return datetime.now(UTC).isoformat()
 
+    def _q_timeout(self, surql: str, params: dict | None = None, timeout: float = 30.0) -> list:
+        """Like _q but with a per-request timeout (seconds).
+
+        Uses httpx's per-request timeout in server mode.  In embedded mode falls
+        back to _q (the SDK doesn't support per-call timeouts).
+        """
+        import json as _json
+
+        if self._db_url:
+            if params:
+                lets = [
+                    f"LET ${k} = {_json.dumps(v, ensure_ascii=False)};" for k, v in params.items()
+                ]
+                body = "\n".join(lets) + "\n" + surql
+            else:
+                body = surql
+            resp = self._http.post(
+                "/sql",
+                content=body.encode(),
+                headers={"Content-Type": "text/plain"},
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            results = resp.json()
+            for entry in results:
+                if entry.get("status") == "ERR":
+                    raise RuntimeError(
+                        f"SurrealDB error: {entry.get('detail') or entry.get('result') or entry}"
+                    )
+            raw = results[-1].get("result") if results else None
+        else:
+            # Embedded mode: delegate to _q (no per-call timeout in the SDK).
+            return self._q(surql, params)
+
+        # Normalise to flat list of dicts (same as _q).
+        if raw is None:
+            return []
+        if isinstance(raw, dict):
+            return [raw]
+        if isinstance(raw, list):
+            if not raw:
+                return []
+            first = raw[0]
+            if isinstance(first, list):
+                return first
+            return raw
+        return []
+
     def _q(self, surql: str, params: dict | None = None) -> list:
         """Run a parameterised query via HTTP (server mode) or embedded SDK.
 
@@ -504,14 +598,16 @@ class StorageEngine:
     def batch_writes(self, statements: list[tuple[str, dict | None]]) -> None:
         """Execute multiple write statements against SurrealDB.
 
-        Statements are split into chunks of at most MAX_BATCH_STATEMENTS (default
-        500). Each chunk becomes its own BEGIN…COMMIT transaction so we never
-        build a single unbounded SQL string that can crash SurrealDB's recursive
-        serialiser on large batches (e.g. full-table heat decay).
+        Statements are split into chunks limited by *both* MAX_BATCH_STATEMENTS
+        (default 500 rows) *and* MAX_BATCH_BYTES (default 1 MB of serialised
+        body).  Whichever limit fires first starts a new chunk.  Each chunk
+        becomes its own BEGIN…COMMIT transaction so we never build a single
+        unbounded SQL string that can crash SurrealDB's recursive serialiser or
+        exceed the HTTP body limit (HTTP 413 Payload Too Large).
 
         Each chunk is atomic in itself; a failure in one chunk does NOT roll back
         earlier chunks — callers that require strict all-or-nothing must keep
-        batches under MAX_BATCH_STATEMENTS or use explicit transactions.
+        batches small enough to fit in a single chunk.
 
         Empty list is a no-op (no transaction sent).
         Only supported in server mode (YADGAR_DB_URL set).
@@ -525,36 +621,41 @@ class StorageEngine:
 
         from yadgar.config import get_settings
 
-        chunk_size = get_settings().MAX_BATCH_STATEMENTS
+        settings = get_settings()
+        chunk_size = settings.MAX_BATCH_STATEMENTS
+        max_bytes = settings.MAX_BATCH_BYTES
 
         import json as _json
 
-        # Process in chunks to avoid unbounded SQL blobs
-        for chunk_start in range(0, len(statements), chunk_size):
-            chunk = statements[chunk_start : chunk_start + chunk_size]
-            parts = ["BEGIN TRANSACTION"]
-            for i, (sql, params) in enumerate(chunk):
-                if params:
-                    for k, v in params.items():
-                        parts.append(f"LET $p{i}_{k} = {_json.dumps(v, ensure_ascii=False)}")
-                    # Rewrite $param_name → $p{i}_param_name using word-boundary regex
-                    # to avoid corrupting longer tokens that share a prefix.
-                    for k in params:
-                        sql = re.sub(rf"\${re.escape(k)}\b", f"$p{i}_{k}", sql)
-                parts.append(sql.rstrip(";"))
-            parts.append("COMMIT TRANSACTION")
-            body = ";\n".join(parts) + ";"
+        # Split by statement count first, then apply byte cap within each
+        # count-chunk.  _chunk_by_bytes handles oversized single statements
+        # gracefully (yields them alone with a WARN).
+        for count_chunk_start in range(0, len(statements), chunk_size):
+            count_chunk = statements[count_chunk_start : count_chunk_start + chunk_size]
+            for chunk in _chunk_by_bytes(count_chunk, max_bytes):
+                parts = ["BEGIN TRANSACTION"]
+                for i, (sql, params) in enumerate(chunk):
+                    if params:
+                        for k, v in params.items():
+                            parts.append(f"LET $p{i}_{k} = {_json.dumps(v, ensure_ascii=False)}")
+                        # Rewrite $param_name → $p{i}_param_name using word-boundary regex
+                        # to avoid corrupting longer tokens that share a prefix.
+                        for k in params:
+                            sql = re.sub(rf"\${re.escape(k)}\b", f"$p{i}_{k}", sql)
+                    parts.append(sql.rstrip(";"))
+                parts.append("COMMIT TRANSACTION")
+                body = ";\n".join(parts) + ";"
 
-            resp = self._http.post(
-                "/sql", content=body.encode(), headers={"Content-Type": "text/plain"}
-            )
-            resp.raise_for_status()
-            results = resp.json()
-            for entry in results:
-                if entry.get("status") == "ERR":
-                    raise RuntimeError(
-                        f"SurrealDB batch error: {entry.get('detail') or entry.get('result') or entry}"
-                    )
+                resp = self._http.post(
+                    "/sql", content=body.encode(), headers={"Content-Type": "text/plain"}
+                )
+                resp.raise_for_status()
+                results = resp.json()
+                for entry in results:
+                    if entry.get("status") == "ERR":
+                        raise RuntimeError(
+                            f"SurrealDB batch error: {entry.get('detail') or entry.get('result') or entry}"
+                        )
 
     def _enrich_content_for_fts(self, content: str) -> str:
         """Enrich content with split identifier tokens for better FTS matching."""
@@ -1787,6 +1888,56 @@ class StorageEngine:
             "stale_count": stale,
             "avg_heat": avg_heat,
             "last_consolidation": last_consolidation,
+        }
+
+    def get_db_size(self) -> dict:
+        """Return a breakdown of the SurrealDB directory size in bytes.
+
+        Walks DB_PATH using os.walk() + stat() — no subprocess.  Subdirs of
+        interest: vlog/, sstables/, wal/.  Anything else (LOCK, manifest, etc.)
+        goes into other_size_bytes.
+        """
+        import os as _os
+
+        from yadgar.config import get_settings as _get_settings
+
+        db_path = _get_settings().db_path_resolved
+
+        known_subdirs = {"vlog", "sstables", "wal"}
+        size_by_dir: dict[str, int] = {k: 0 for k in known_subdirs}
+        other_size = 0
+
+        if not db_path.exists():
+            total = 0
+        else:
+            for dirpath, _dirs, filenames in _os.walk(db_path):
+                rel = _os.path.relpath(dirpath, db_path)
+                # Determine which bucket this path belongs to.
+                top = rel.split(_os.sep)[0] if rel != "." else ""
+                for fname in filenames:
+                    try:
+                        fsize = _os.stat(_os.path.join(dirpath, fname)).st_size
+                    except OSError:
+                        continue
+                    if top in known_subdirs:
+                        size_by_dir[top] += fsize
+                    else:
+                        other_size += fsize
+
+            total = sum(size_by_dir.values()) + other_size
+
+        vlog = size_by_dir["vlog"]
+        vlog_pct = int(vlog * 100 / total) if total > 0 else 0
+        threshold = _get_settings().DB_SIZE_WARNING_BYTES
+
+        return {
+            "db_size_bytes": total,
+            "vlog_size_bytes": vlog,
+            "sstables_size_bytes": size_by_dir["sstables"],
+            "wal_size_bytes": size_by_dir["wal"],
+            "other_size_bytes": other_size,
+            "vlog_pct_of_total": vlog_pct,
+            "size_warning": total > threshold,
         }
 
     # ------------------------------------------------------------------ Memory Clusters
