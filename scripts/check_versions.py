@@ -28,6 +28,14 @@ m_backend = re.search(r"\$\{BACKEND_VERSION:-([^}]+)\}", compose_text)
 compose_core_version = m_core.group(1) if m_core else ""
 compose_backend_version = m_backend.group(1) if m_backend else ""
 
+uv_lock_path = root / "uv.lock"
+uv_version = ""
+if uv_lock_path.exists():
+    uv_text = uv_lock_path.read_text()
+    m_uv = re.search(r'\[\[package\]\]\nname = "yadgar"\nversion = "([^"]+)"', uv_text)
+    if m_uv:
+        uv_version = m_uv.group(1)
+
 # --- build comparison table ---
 
 rows = [
@@ -37,6 +45,8 @@ rows = [
     ("docker-compose CORE", "core", compose_core_version),
     ("docker-compose BACKEND", "backend", compose_backend_version),
 ]
+if uv_version:
+    rows.append(("uv.lock", "core", uv_version))
 for i, pkg_ver in enumerate(server_pkg_versions):
     rows.append((f"server.json packages[{i}]", "core", pkg_ver))
 
