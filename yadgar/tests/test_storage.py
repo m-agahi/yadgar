@@ -909,6 +909,95 @@ class TestBatchWritesByteChunking:
             "warn" in r.levelname.lower() or r.levelno >= logging.WARNING for r in caplog.records
         )
 
+    def test_batch_writes_no_413_when_framing_overhead_exceeds_estimate(self, monkeypatch):
+        """batch_writes must not raise 413 when framing overhead (LET params, BEGIN/COMMIT,
+        semicolons) makes the real HTTP body larger than _chunk_by_bytes estimated.
+
+        Regression test for the underestimate bug: _chunk_by_bytes measured only
+        JSON-serialised param values, ignoring the `LET $p{i}_{k} = ` prefix (~18 chars
+        per param), `;\n` separators, and BEGIN/COMMIT TRANSACTION wrappers.  With many
+        params per statement the real wire body could be 2-3x the estimate, causing 413.
+
+        Strategy: use a tight limit mock that raises 413 on any body > limit and
+        many-param statements where framing overhead is large relative to content.
+        With the underestimating chunker, some chunks will exceed the limit → 413 raised.
+        With the real-body-measuring fix, chunks are always small enough → no exception.
+        """
+        import httpx
+
+        from yadgar.config import Settings
+
+        # Tight byte cap: 1 KB.  Each statement has 8 params with ~20-byte values.
+        # Per-stmt estimate: sql (~60 B) + 8 × ~22 B values ≈ 236 B.
+        # Estimated chunk size: floor(1024/236) = 4 statements per chunk.
+        # Actual body for 4 statements (4 × 8 = 32 LETs + BEGIN/COMMIT + separators):
+        #   32 × ("LET $p{i}_key{k} = \"..20..\";\n" ≈ 38 chars each) ≈ 1216 B
+        #   + BEGIN TRANSACTION;\n (19 B) + COMMIT TRANSACTION; (20 B)
+        #   + 4 × sql ≈ 240 B  → total ≈ 1495 B >> 1024 → 413 under old code.
+        limit = 1024
+
+        monkeypatch.setattr(
+            "yadgar.config.get_settings",
+            lambda: Settings(MAX_BATCH_STATEMENTS=500, MAX_BATCH_BYTES=limit),
+        )
+
+        engine, _ = self._make_storage_with_mock_http(monkeypatch)
+
+        post_calls: list[bytes] = []
+
+        def smart_post(path, *, content, headers=None, **kwargs):
+            post_calls.append(content)
+            if len(content) > limit:
+                request = httpx.Request("POST", "http://fake-surreal:8000/sql")
+                response = httpx.Response(413, request=request)
+                raise httpx.HTTPStatusError(
+                    f"413: body={len(content)} > {limit}",
+                    request=request,
+                    response=response,
+                )
+            from unittest.mock import MagicMock
+
+            mock_resp = MagicMock()
+            mock_resp.json.return_value = []
+            mock_resp.raise_for_status.return_value = None
+            return mock_resp
+
+        engine._http.post.side_effect = smart_post
+
+        # 20 statements, each with 8 params carrying ~20-byte content.
+        # Framing overhead per statement: 8 × ~38 B (LET prefix) ≈ 304 B.
+        # That alone exceeds the estimate for grouped chunks.
+        val = "x" * 20
+        stmts = [
+            (
+                "UPDATE type::record('memory', $id) SET "
+                "f0=$f0, f1=$f1, f2=$f2, f3=$f3, f4=$f4, f5=$f5, f6=$f6, f7=$f7",
+                {
+                    "id": i,
+                    "f0": val,
+                    "f1": val,
+                    "f2": val,
+                    "f3": val,
+                    "f4": val,
+                    "f5": val,
+                    "f6": val,
+                    "f7": val,
+                },
+            )
+            for i in range(20)
+        ]
+
+        # Must not raise — the fix measures real body and splits until each chunk fits.
+        engine.batch_writes(stmts)
+
+        # Sanity: multiple requests were made (chunking happened)
+        assert len(post_calls) >= 2
+        # Every request must fit within the limit
+        for body in post_calls:
+            assert len(body) <= limit, (
+                f"A request body ({len(body)} B) exceeded the limit ({limit} B)"
+            )
+
 
 class TestActionLogPrune:
     """prune_processed_action_log removes old processed rows."""

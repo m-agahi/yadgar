@@ -790,3 +790,358 @@ def test_memify_derive_no_413_on_5000_statements(monkeypatch):
 
     # Sanity: at least one HTTP call was made
     assert mock_http.post.call_count >= 1
+
+
+# ── test_memify_prune_auto_abstracted ────────────────────────────────────────
+
+
+def test_memify_prune_auto_abstracted(tmp_path):
+    """_memify_prune deletes cold, unaccessed, old auto-abstracted memories (Fix 1).
+
+    Scenario:
+    - 1 old cold unaccessed auto-abstracted memory → should be pruned
+    - 1 user memory (no auto-abstracted tag)        → must survive
+    - 1 protected auto-abstracted memory             → must survive
+    - 1 recently-created auto-abstracted memory      → must survive (too young)
+    - 1 accessed auto-abstracted memory              → must survive (was accessed)
+    - 1 memory at age = MAX - 1 days                 → must survive (boundary: under age cap)
+    - 1 memory at age = MAX + 1 days                 → must be pruned (boundary: over age cap)
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from yadgar.config import Settings
+    from yadgar.curation import MemoryCurator
+    from yadgar.embeddings import EmbeddingEngine
+    from yadgar.storage import StorageEngine
+    from yadgar.thermodynamics import MemoryThermodynamics
+
+    storage = StorageEngine(str(tmp_path / "aa_prune.db"))
+    emb = EmbeddingEngine()
+    emb._unavailable = True
+    max_age = 30
+    settings = Settings(
+        DB_PATH=str(tmp_path / "aa_prune.db"),
+        AUTO_ABSTRACTED_MEMORY_MAX_AGE_DAYS=max_age,
+        COLD_THRESHOLD=0.02,
+    )
+    thermo = MemoryThermodynamics(storage, emb, settings)
+    curator = MemoryCurator(storage, emb, thermo, settings)
+
+    old_date = (datetime.now(UTC) - timedelta(days=45)).isoformat()
+    recent_date = (datetime.now(UTC) - timedelta(days=5)).isoformat()
+    boundary_under_date = (datetime.now(UTC) - timedelta(days=max_age - 1)).isoformat()
+    boundary_over_date = (datetime.now(UTC) - timedelta(days=max_age + 1)).isoformat()
+
+    # 1. Old, cold, unaccessed auto-abstracted memory — SHOULD be pruned
+    prunable_id = storage.insert_memory(
+        {
+            "content": "Recurring pattern across 5 observations: bash git diff cat",
+            "tags": ["semantic", "auto-abstracted"],
+            "directory_context": "system",
+            "heat": 0.01,  # below COLD_THRESHOLD (0.02)
+        }
+    )
+    storage._q(
+        "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 0",
+        {"id": prunable_id, "ts": old_date},
+    )
+
+    # 2. User memory (no auto-abstracted tag) — MUST survive
+    user_id = storage.insert_memory(
+        {
+            "content": "important user memory about architecture",
+            "tags": ["architecture"],
+            "directory_context": "/proj",
+            "heat": 0.01,
+        }
+    )
+    storage._q(
+        "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 0",
+        {"id": user_id, "ts": old_date},
+    )
+
+    # 3. Protected auto-abstracted memory — MUST survive
+    protected_id = storage.insert_memory(
+        {
+            "content": "Recurring pattern across 3 observations: deploy pipeline",
+            "tags": ["semantic", "auto-abstracted"],
+            "directory_context": "system",
+            "heat": 0.01,
+        }
+    )
+    storage._q(
+        "UPDATE type::record('memory', $id) SET "
+        "created_at = $ts, access_count = 0, is_protected = true",
+        {"id": protected_id, "ts": old_date},
+    )
+
+    # 4. Recent auto-abstracted memory — MUST survive (too young)
+    recent_id = storage.insert_memory(
+        {
+            "content": "Recurring pattern across 4 observations: test fixture setup",
+            "tags": ["semantic", "auto-abstracted"],
+            "directory_context": "system",
+            "heat": 0.01,
+        }
+    )
+    storage._q(
+        "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 0",
+        {"id": recent_id, "ts": recent_date},
+    )
+
+    # 5. Accessed auto-abstracted memory — MUST survive
+    accessed_id = storage.insert_memory(
+        {
+            "content": "Recurring pattern across 6 observations: authentication flow",
+            "tags": ["semantic", "auto-abstracted"],
+            "directory_context": "system",
+            "heat": 0.01,
+        }
+    )
+    storage._q(
+        "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 2",
+        {"id": accessed_id, "ts": old_date},
+    )
+
+    # 6. Boundary: age = MAX - 1 days — MUST survive (just under the cap)
+    boundary_under_id = storage.insert_memory(
+        {
+            "content": "Recurring pattern boundary: just under max age",
+            "tags": ["semantic", "auto-abstracted"],
+            "directory_context": "system",
+            "heat": 0.01,
+        }
+    )
+    storage._q(
+        "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 0",
+        {"id": boundary_under_id, "ts": boundary_under_date},
+    )
+
+    # 7. Boundary: age = MAX + 1 days — SHOULD be pruned (just over the cap)
+    boundary_over_id = storage.insert_memory(
+        {
+            "content": "Recurring pattern boundary: just over max age",
+            "tags": ["semantic", "auto-abstracted"],
+            "directory_context": "system",
+            "heat": 0.01,
+        }
+    )
+    storage._q(
+        "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 0",
+        {"id": boundary_over_id, "ts": boundary_over_date},
+    )
+
+    # 8. High-heat auto-abstracted memory (heat=0.8) — MUST be pruned
+    # Pass 3 has no heat gate: a fresh auto-abstracted memory that exceeds the age
+    # cap must be pruned regardless of how warm it is.
+    high_heat_date = (datetime.now(UTC) - timedelta(days=max_age + 5)).isoformat()
+    high_heat_id = storage.insert_memory(
+        {
+            "content": "Recurring pattern: high-heat fresh auto-abstracted, but old enough",
+            "tags": ["semantic", "auto-abstracted"],
+            "directory_context": "system",
+            "heat": 0.8,  # realistic fresh auto-abstracted heat — well above any threshold
+        }
+    )
+    storage._q(
+        "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 0",
+        {"id": high_heat_id, "ts": high_heat_date},
+    )
+
+    stats = {"pruned": 0}
+    curator._memify_prune(stats)
+
+    assert storage.get_memory(prunable_id) is None, (
+        "old cold unaccessed auto-abstracted memory should have been pruned"
+    )
+    assert storage.get_memory(user_id) is not None, "user memory must not be pruned"
+    assert storage.get_memory(protected_id) is not None, "protected memory must not be pruned"
+    assert storage.get_memory(recent_id) is not None, "recent auto-abstracted must not be pruned"
+    assert storage.get_memory(accessed_id) is not None, (
+        "accessed auto-abstracted must not be pruned"
+    )
+    assert storage.get_memory(boundary_under_id) is not None, (
+        "auto-abstracted at age MAX-1 must survive (boundary: under age cap)"
+    )
+    assert storage.get_memory(boundary_over_id) is None, (
+        "auto-abstracted at age MAX+1 must be pruned (boundary: over age cap)"
+    )
+    # high-heat auto-abstracted must still be pruned — Pass 3 has no heat gate
+    assert storage.get_memory(high_heat_id) is None, (
+        "high-heat auto-abstracted over age cap must be pruned — Pass 3 has no heat gate"
+    )
+    assert stats["pruned"] >= 3  # prunable_id + boundary_over_id + high_heat_id
+
+    storage.close()
+
+
+# ── test_memify_prune_dream_insights ─────────────────────────────────────────
+
+
+def test_memify_prune_dream_insights(tmp_path):
+    """_memify_prune age-caps dream insights regardless of heat or access_count (Fix 2).
+
+    Dream insights start at heat=0.5, decay to ~0.1, but COLD_THRESHOLD=0.02
+    means they sit above the threshold for weeks.  The age cap is hard — one
+    accidental recall must not let a dream insight escape forever.
+
+    Scenario:
+    - 1 old unaccessed dream+auto-generated memory with heat=0.1  → pruned
+    - 1 old dream insight with access_count>0                      → pruned (no escape)
+    - 1 recent dream+auto-generated memory                         → must survive
+    - 1 dream memory without auto-generated tag                    → must survive
+    - 1 protected dream+auto-generated memory (old)                → must survive
+    - 1 memory at age = MAX - 1 days                               → must survive (boundary)
+    - 1 memory at age = MAX + 1 days                               → must be pruned (boundary)
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from yadgar.config import Settings
+    from yadgar.curation import MemoryCurator
+    from yadgar.embeddings import EmbeddingEngine
+    from yadgar.storage import StorageEngine
+    from yadgar.thermodynamics import MemoryThermodynamics
+
+    storage = StorageEngine(str(tmp_path / "dream_prune.db"))
+    emb = EmbeddingEngine()
+    emb._unavailable = True
+    max_age = 21
+    settings = Settings(
+        DB_PATH=str(tmp_path / "dream_prune.db"),
+        DREAM_INSIGHT_MAX_AGE_DAYS=max_age,
+        COLD_THRESHOLD=0.05,  # 0.1 heat is above this — old pass would spare it
+    )
+    thermo = MemoryThermodynamics(storage, emb, settings)
+    curator = MemoryCurator(storage, emb, thermo, settings)
+
+    old_date = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+    recent_date = (datetime.now(UTC) - timedelta(days=10)).isoformat()
+    boundary_under_date = (datetime.now(UTC) - timedelta(days=max_age - 1)).isoformat()
+    boundary_over_date = (datetime.now(UTC) - timedelta(days=max_age + 1)).isoformat()
+
+    # 1. Old, heat=0.1 (above COLD_THRESHOLD), unaccessed dream insight → PRUNED
+    dream_prunable_id = storage.insert_memory(
+        {
+            "content": "Dream connection: authentication and caching may relate to session handling",
+            "tags": ["dream", "auto-generated"],
+            "directory_context": "system",
+            "heat": 0.1,  # above COLD_THRESHOLD (0.05) — old pass would NOT prune this
+        }
+    )
+    storage._q(
+        "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 0",
+        {"id": dream_prunable_id, "ts": old_date},
+    )
+
+    # 2. Old dream insight with accesses — MUST be PRUNED (hard age cap, no escape)
+    dream_accessed_id = storage.insert_memory(
+        {
+            "content": "Dream connection: deployment and testing relate to CI pipeline",
+            "tags": ["dream", "auto-generated"],
+            "directory_context": "system",
+            "heat": 0.1,
+        }
+    )
+    storage._q(
+        "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 3",
+        {"id": dream_accessed_id, "ts": old_date},
+    )
+
+    # 3. Recent dream insight — MUST survive (not old enough)
+    dream_recent_id = storage.insert_memory(
+        {
+            "content": "Dream connection: refactoring and architecture may relate",
+            "tags": ["dream", "auto-generated"],
+            "directory_context": "system",
+            "heat": 0.1,
+        }
+    )
+    storage._q(
+        "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 0",
+        {"id": dream_recent_id, "ts": recent_date},
+    )
+
+    # 4. Dream tag but NOT auto-generated — MUST survive (not targeted by this pass)
+    dream_manual_id = storage.insert_memory(
+        {
+            "content": "Dream insight: user manually recorded dream about project architecture",
+            "tags": ["dream"],
+            "directory_context": "system",
+            "heat": 0.1,
+        }
+    )
+    storage._q(
+        "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 0",
+        {"id": dream_manual_id, "ts": old_date},
+    )
+
+    # 5. Protected dream+auto-generated memory (old) — MUST survive
+    dream_protected_id = storage.insert_memory(
+        {
+            "content": "Dream connection: protected critical insight about system design",
+            "tags": ["dream", "auto-generated"],
+            "directory_context": "system",
+            "heat": 0.1,
+        }
+    )
+    storage._q(
+        "UPDATE type::record('memory', $id) SET "
+        "created_at = $ts, access_count = 0, is_protected = true",
+        {"id": dream_protected_id, "ts": old_date},
+    )
+
+    # 6. Boundary: age = MAX - 1 days — MUST survive (just under the cap)
+    dream_boundary_under_id = storage.insert_memory(
+        {
+            "content": "Dream connection: boundary under — should not be pruned yet",
+            "tags": ["dream", "auto-generated"],
+            "directory_context": "system",
+            "heat": 0.1,
+        }
+    )
+    storage._q(
+        "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 0",
+        {"id": dream_boundary_under_id, "ts": boundary_under_date},
+    )
+
+    # 7. Boundary: age = MAX + 1 days — SHOULD be pruned (just over the cap)
+    dream_boundary_over_id = storage.insert_memory(
+        {
+            "content": "Dream connection: boundary over — should be pruned",
+            "tags": ["dream", "auto-generated"],
+            "directory_context": "system",
+            "heat": 0.1,
+        }
+    )
+    storage._q(
+        "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 0",
+        {"id": dream_boundary_over_id, "ts": boundary_over_date},
+    )
+
+    stats = {"pruned": 0}
+    curator._memify_prune(stats)
+
+    assert storage.get_memory(dream_prunable_id) is None, (
+        "old high-heat unaccessed dream insight should be pruned by age cap"
+    )
+    assert storage.get_memory(dream_accessed_id) is None, (
+        "accessed dream insight must be pruned — hard age cap has no access_count escape"
+    )
+    assert storage.get_memory(dream_recent_id) is not None, (
+        "recent dream insight must not be pruned"
+    )
+    assert storage.get_memory(dream_manual_id) is not None, (
+        "non-auto-generated dream tag must not be pruned by this pass"
+    )
+    assert storage.get_memory(dream_protected_id) is not None, (
+        "protected dream insight must not be pruned"
+    )
+    assert storage.get_memory(dream_boundary_under_id) is not None, (
+        "dream insight at age MAX-1 must survive (boundary: under age cap)"
+    )
+    assert storage.get_memory(dream_boundary_over_id) is None, (
+        "dream insight at age MAX+1 must be pruned (boundary: over age cap)"
+    )
+    assert stats["pruned"] >= 3  # dream_prunable + dream_accessed + dream_boundary_over
+
+    storage.close()

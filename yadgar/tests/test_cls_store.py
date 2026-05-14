@@ -696,3 +696,175 @@ class TestClsPatternCandidateCap:
 
         assert called_with_limit, "get_memories_by_store_type was not called"
         assert called_with_limit[0] == cap, f"expected limit={cap}, got {called_with_limit[0]}"
+
+
+# ── Test: action-stream / auto-abstracted memories skipped by CLS promotion ──
+
+
+class TestActionStreamNotPromoted:
+    """find_recurring_patterns must skip memories tagged _action_stream or
+    auto-abstracted — they are noise that must not be promoted to semantic (Fix 3)."""
+
+    def test_action_stream_memories_not_clustered(self, tmp_path):
+        """Memories tagged _action_stream are excluded from CLS pattern detection.
+
+        Setup: 4 clean episodic memories from different sessions (forms a 4-count
+        pattern at min_occurrences=3) + 1 tagged _action_stream with DISTINCT
+        content.  Without the filter, the tagged memory would appear in results;
+        with the filter only the 4 clean memories form the pattern and the tagged
+        memory's content must be absent from all pattern members.
+
+        This test fails if the filter is removed (5 memories → 5-count pattern
+        including the tagged content).
+        """
+        import numpy as np
+
+        settings = Settings(
+            DB_PATH=str(tmp_path / "action_stream.db"),
+            CLUSTER_SIMILARITY_THRESHOLD=0.0,  # everything clusters
+            CURATION_SIMILARITY_THRESHOLD=0.5,
+        )
+        storage = StorageEngine(str(tmp_path / "action_stream.db"))
+        emb_mock = _make_mock_embeddings(similarity_value=1.0)
+        cls_store = DualStoreCLS(storage, emb_mock, settings)
+
+        vec = np.ones(384, dtype=np.float32).tobytes()
+        clean_content = "Recurring pattern: bash git diff cat"
+        tagged_content = "ACTION_STREAM_NOISE: raw shell commands logged here"
+
+        # Four clean episodic memories from different sessions — forms a 4-count pattern
+        for session in ("s-A", "s-B", "s-C", "s-D"):
+            ep_id = storage.insert_episode(
+                {"session_id": session, "directory": "/proj", "raw_content": clean_content}
+            )
+            storage.insert_memory(
+                {
+                    "content": clean_content,
+                    "embedding": vec,
+                    "tags": ["episodic"],
+                    "directory_context": "/proj",
+                    "heat": 0.8,
+                    "is_stale": False,
+                    "source_episode_id": ep_id,
+                    "embedding_model": "all-MiniLM-L6-v2",
+                }
+            )
+
+        # Fifth memory tagged _action_stream with distinct content — must be EXCLUDED
+        ep_id5 = storage.insert_episode(
+            {"session_id": "s-E", "directory": "/proj", "raw_content": tagged_content}
+        )
+        mid5 = storage.insert_memory(
+            {
+                "content": tagged_content,
+                "embedding": vec,
+                "tags": ["_action_stream"],
+                "directory_context": "/proj",
+                "heat": 0.8,
+                "is_stale": False,
+                "source_episode_id": ep_id5,
+                "embedding_model": "all-MiniLM-L6-v2",
+            }
+        )
+        storage._q(
+            "UPDATE type::record('memory', $id) SET store_type = 'episodic'",
+            {"id": mid5},
+        )
+
+        patterns = cls_store.find_recurring_patterns(min_occurrences=3)
+        qualifying = [p for p in patterns if p["occurrence_count"] >= 3]
+
+        # Pattern IS found from the 4 clean memories (non-vacuous)
+        assert len(qualifying) >= 1, (
+            "expected pattern from 4 clean episodic memories but none found"
+        )
+
+        # Tagged memory's distinct content must not appear in any pattern's members
+        for p in qualifying:
+            member_contents = [m["content"] for m in p["memories"]]
+            assert tagged_content not in member_contents, (
+                "_action_stream memory must not appear in CLS pattern members"
+            )
+
+        storage.close()
+
+    def test_auto_abstracted_memories_not_clustered(self, tmp_path):
+        """Memories tagged auto-abstracted are excluded from CLS pattern detection.
+
+        Already-promoted semantics re-entering the clustering loop would create
+        secondary noise.  Setup: 4 clean episodic memories from different sessions
+        (forms a 4-count pattern at min_occurrences=3) + 1 tagged auto-abstracted
+        with DISTINCT content.  Without the filter, the tagged memory would appear
+        in results; with the filter only the 4 clean memories form the pattern and
+        the tagged memory's content must be absent from all pattern members.
+        """
+        import numpy as np
+
+        settings = Settings(
+            DB_PATH=str(tmp_path / "auto_abs.db"),
+            CLUSTER_SIMILARITY_THRESHOLD=0.0,
+            CURATION_SIMILARITY_THRESHOLD=0.5,
+        )
+        storage = StorageEngine(str(tmp_path / "auto_abs.db"))
+        emb_mock = _make_mock_embeddings(similarity_value=1.0)
+        cls_store = DualStoreCLS(storage, emb_mock, settings)
+
+        vec = np.ones(384, dtype=np.float32).tobytes()
+        clean_content = "Recurring pattern: deploy pipeline setup"
+        tagged_content = "AUTO_ABSTRACTED_SCHEMA: Recurring across 5 obs: deploy pipeline setup"
+
+        # Four clean episodic memories from different sessions — forms a 4-count pattern
+        for session in ("s-A", "s-B", "s-C", "s-D"):
+            ep_id = storage.insert_episode(
+                {"session_id": session, "directory": "/proj", "raw_content": clean_content}
+            )
+            storage.insert_memory(
+                {
+                    "content": clean_content,
+                    "embedding": vec,
+                    "tags": ["episodic"],
+                    "directory_context": "/proj",
+                    "heat": 0.8,
+                    "is_stale": False,
+                    "source_episode_id": ep_id,
+                    "embedding_model": "all-MiniLM-L6-v2",
+                }
+            )
+
+        # Fifth memory tagged auto-abstracted with distinct content — must be EXCLUDED
+        ep_id5 = storage.insert_episode(
+            {"session_id": "s-E", "directory": "/proj", "raw_content": tagged_content}
+        )
+        mid5 = storage.insert_memory(
+            {
+                "content": tagged_content,
+                "embedding": vec,
+                "tags": ["semantic", "auto-abstracted"],
+                "directory_context": "/proj",
+                "heat": 0.5,
+                "is_stale": False,
+                "source_episode_id": ep_id5,
+                "embedding_model": "all-MiniLM-L6-v2",
+            }
+        )
+        storage._q(
+            "UPDATE type::record('memory', $id) SET store_type = 'episodic'",
+            {"id": mid5},
+        )
+
+        patterns = cls_store.find_recurring_patterns(min_occurrences=3)
+        qualifying = [p for p in patterns if p["occurrence_count"] >= 3]
+
+        # Pattern IS found from the 4 clean memories (non-vacuous)
+        assert len(qualifying) >= 1, (
+            "expected pattern from 4 clean episodic memories but none found"
+        )
+
+        # Tagged memory's distinct content must not appear in any pattern's members
+        for p in qualifying:
+            member_contents = [m["content"] for m in p["memories"]]
+            assert tagged_content not in member_contents, (
+                "auto-abstracted memory must not appear in CLS pattern members"
+            )
+
+        storage.close()

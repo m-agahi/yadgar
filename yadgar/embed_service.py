@@ -140,3 +140,51 @@ async def health(response: Response):
     if not db_ok or not engine_loaded:
         response.status_code = 503
     return payload
+
+
+@app.get("/admin/dbsize")
+async def admin_dbsize():
+    """Return a filesystem size breakdown of the SurrealDB data directory.
+
+    Walks /data/surreal_db using os.walk() and buckets files by subdirectory
+    (vlog/, sstables/, wal/).  Returns the same field structure as
+    StorageEngine.get_db_size() so the core container can use the response
+    directly without field remapping.
+    """
+    import os as _os
+    from pathlib import Path as _Path
+
+    db_path = _Path("/data/surreal_db")
+    known_subdirs = {"vlog", "sstables", "wal"}
+    size_by_dir: dict[str, int] = {k: 0 for k in known_subdirs}
+    other_size = 0
+
+    if not db_path.exists():
+        total = 0
+    else:
+        for dirpath, _dirs, filenames in _os.walk(db_path):
+            rel = _os.path.relpath(dirpath, db_path)
+            top = rel.split(_os.sep)[0] if rel != "." else ""
+            for fname in filenames:
+                try:
+                    fsize = _os.stat(_os.path.join(dirpath, fname)).st_size
+                except OSError:
+                    continue
+                if top in known_subdirs:
+                    size_by_dir[top] += fsize
+                else:
+                    other_size += fsize
+
+        total = sum(size_by_dir.values()) + other_size
+
+    vlog = size_by_dir["vlog"]
+    vlog_pct = int(vlog * 100 / total) if total > 0 else 0
+
+    return {
+        "db_size_bytes": total,
+        "vlog_size_bytes": vlog,
+        "sstables_size_bytes": size_by_dir["sstables"],
+        "wal_size_bytes": size_by_dir["wal"],
+        "other_size_bytes": other_size,
+        "vlog_pct_of_total": vlog_pct,
+    }

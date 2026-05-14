@@ -1393,6 +1393,9 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
     global _db_size_warn_last_logged_hour
 
     violations: list[str] = []
+    # warn_violations: non-repairable issues that are expected / low-severity.
+    # Logged at WARN (not CRITICAL) but still count toward ok=False.
+    warn_violations: list[str] = []
     fixed: list[str] = []
     counts: dict[str, int] = {}
     timed_out: list[str] = []
@@ -1504,7 +1507,9 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
         else:
             logger.warning("check_invariants: memory_similarity_link check failed: %s", exc)
 
-    # memory_transition dangling endpoints — NOT fixable (may encode important history)
+    # memory_transition dangling endpoints — NOT fixable (may encode important history).
+    # Logged at WARN (not CRITICAL) — expected accumulation during consolidation;
+    # tracked in v4.9 roadmap for proper pruning (see caused_by relationship pruning).
     try:
         dangling_mt = _count_q(
             "SELECT count() AS c FROM memory_transition "
@@ -1514,7 +1519,7 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
         )
         counts["memory_transition_dangling"] = dangling_mt
         if dangling_mt:
-            violations.append(
+            warn_violations.append(
                 f"{dangling_mt} memory_transition rows reference non-existent memory IDs"
             )
     except Exception as exc:
@@ -1771,14 +1776,17 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
         logger.warning("check_invariants: db_size telemetry failed: %s", exc)
         db_size = {}
 
-    # ok=False when any violations or timeouts exist
-    ok = len(violations) == 0 and len(timed_out) == 0
+    # ok=False when any violations, warn_violations, or timeouts exist
+    ok = len(violations) == 0 and len(warn_violations) == 0 and len(timed_out) == 0
     for v in violations:
         logger.critical("check_invariants: %s", v)
+    for v in warn_violations:
+        logger.warning("check_invariants: %s", v)
 
+    all_violations = violations + warn_violations
     result: dict = {
         "ok": ok,
-        "violations": violations,
+        "violations": all_violations,
         "fixed": fixed,
         "counts": counts,
     }
