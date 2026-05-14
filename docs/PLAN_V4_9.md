@@ -41,8 +41,8 @@ Behavior:
 New config keys (`yadgar/config.py`):
 
 - `VACUUM_AUTO_THRESHOLD_BYTES`, default `2_147_483_648` (2 GiB).
-- `VACUUM_AUTO_WINDOW_START`, default `"03:00"` (local time).
-- `VACUUM_AUTO_WINDOW_END`, default `"06:00"`.
+- `VACUUM_AUTO_WINDOW_START`, default `"19:00"` (local time).
+- `VACUUM_AUTO_WINDOW_END`, default `"23:00"`.
 - `VACUUM_AUTO_ENABLED`, default `True`.
 
 `ConsolidationScheduler` cycle (`yadgar/consolidation.py`) adds an end-of-cycle check:
@@ -60,9 +60,9 @@ if settings.VACUUM_AUTO_ENABLED:
 
 Single-fire per cycle. No retry loop. Cooldown: skip auto-trigger if `vacuum_now()` last ran < 6 hours ago (`last_vacuum_at` timestamp in `counter` table).
 
-Interaction with the weekly nix timer: orthogonal. Timer fires unconditionally on Sun 04:00. Threshold trigger fires any night between 03:00–06:00 if the DB blew past 2 GiB earlier than the weekly run could catch.
+Interaction with the weekly nix timer: orthogonal. Timer fires unconditionally on Sun 04:00. Threshold trigger fires any night between 19:00–23:00 if the DB blew past 2 GiB earlier than the weekly run could catch.
 
-User-active flag: skipped. v4.9 has no presence detection; the 03:00–06:00 window is the only guard. Document in MIGRATION_NOTES that users on different sleep schedules should override the window.
+User-active flag: skipped. v4.9 has no presence detection; the 19:00–23:00 window is the only guard. Document in MIGRATION_NOTES that users on different sleep schedules should override the window.
 
 ## 3. Fix `test_repeated_cooccurrence_increases_weight`
 
@@ -78,6 +78,8 @@ Investigation order:
 Add a regression-protection test: emit the same co-occurrence pair 5 times across 3 batches, assert final `weight == 5`. Cross-batch summing is the case the current test misses.
 
 ## 4. `memory_transition` dangling-endpoint pruning
+
+> **Shipped in v4.8.3** (commit a416386). Auto-repair confirmed firing on first run. No further work needed.
 
 `memory_transition` rows referencing deleted memory IDs currently log at WARN
 (downgraded from CRITICAL in v4.8.1 — they are non-repairable but not urgent).
@@ -114,11 +116,30 @@ Computed from `SELECT count(), array::sum(string::len(content)) FROM <table> GRO
 
 Surface in `memory_stats` output too. Tells the user which table is driving bloat *before* a vacuum.
 
+## 8. Test DB isolation
+
+Tests write to the live production DB when `YADGAR_DB_URL` is unset. Confirmed: fixture memories from `/tmp` and `/home/user/test` contexts are present in live DB — IDs 474310, 475178, 475392, 476503, 479923 ("90 day old fact", "fresh memory", "embedding leak test", etc.). These pollute `recall` results and inflate semantic-memory counts.
+
+Fix:
+1. `conftest.py` guard — raise at collection time if `YADGAR_DB_URL` is unset or resolves to the default production path.
+2. CI already sets `YADGAR_DB_URL` — add assertion that it differs from the user's production URL.
+3. After fix lands: purge artifact IDs 474310, 475178, 475392, 476503, 479923 from live DB via `forget`.
+
+Side-effect: pre-existing `test_cls_store::test_find_recurring_3_occurrences` failure is likely caused or masked by this isolation gap.
+
+## 9. Degenerate CLS pattern guard
+
+`DualStoreCLS.find_recurring_patterns` emits near-empty semantic memories such as `"Recurring pattern across 27 observations: frequently modified together"` — no subject, content extraction stripped too aggressively. 16 such memories visible in live DB (cluster_id 8, heat 0.1, `auto-abstracted` tag).
+
+Two fixes:
+1. Content minimum in `find_recurring_patterns`: skip patterns whose extracted body is < 20 characters or contains only stop-words with no identifiable noun/path/identifier token.
+2. Prune pass in `_memify_prune`: age cap for `semantic`+`auto-abstracted` memories whose content matches `^Recurring pattern.{0,60}frequently modified together$` with no real subject. Alternatively, bulk-delete via `forget` on the identified cluster.
+
 ## Test plan
 
 1. **`vacuum_now()` happy path** — mock `systemctl`, assert it invokes `--no-block` and returns `started=True` with `before_bytes` populated.
 2. **`vacuum_now()` refusals** — DB below threshold (no `force`), service already active, no service manager. Each returns the expected `skipped_reason`.
-3. **Threshold auto-trigger window** — feed `_in_window(now)` a clock at 02:59 and at 03:01 with the default config; assert only the latter fires.
+3. **Threshold auto-trigger window** — feed `_in_window(now)` a clock at 18:59 and at 19:01 with the default config; assert only the latter fires.
 4. **Threshold auto-trigger cooldown** — set `last_vacuum_at` to 1 hour ago, assert auto-trigger skips.
 5. **co_occurrence accumulation** — the regression test above (5 emits, 3 batches, `weight == 5`).
 6. **`memory_transition` pruning** — fixture with 10 rows, 4 pointing to deleted memories. Run `check_invariants`, assert 4 deleted, 6 remain.
@@ -133,7 +154,7 @@ Surface in `memory_stats` output too. Tells the user which table is driving bloa
 
 ## Order of work
 
-1. Fix `test_repeated_cooccurrence_increases_weight` first — small, decouples from vacuum work, unblocks CI on master.
+1. Fix `test_repeated_cooccurrence_increases_weight` + add test DB isolation guard (items 3 + 8) — both small, both unblock CI on master.
 2. `memory_transition` dangling-endpoint pruning + row ceiling.
 3. `caused_by` pruning — extend the v4.5.0 auto-repair set.
 4. Per-table size in `check_invariants`.
@@ -141,6 +162,8 @@ Surface in `memory_stats` output too. Tells the user which table is driving bloa
 6. Threshold auto-trigger in consolidation cycle.
 7. Bump `pyproject.toml:version` 4.8.1 → 4.9.0.
 7. Open PR.
+8. Test DB isolation (`conftest.py` guard + artifact purge).
+9. Degenerate CLS pattern guard.
 
 ## Deferred to v5.0+
 
