@@ -157,11 +157,15 @@ jobs:
           core_changed=false
           backend_changed=false
 
-          # Per-image file globs
-          if grep -qE '^(Dockerfile$|entrypoint\.sh$|yadgar/|pyproject\.toml$|\.forgejo/workflows/ci\.yaml$)' <<<"$changed"; then
+          # Per-image file globs. ci.yaml is deliberately NOT in either
+          # pattern — workflow edits change orchestration, not image content.
+          # If a ci.yaml change does require rebuilding (e.g. build-arg flip),
+          # bump the affected version field in pyproject.toml or
+          # server.json to force the rebuild explicitly.
+          if grep -qE '^(Dockerfile$|entrypoint\.sh$|yadgar/|pyproject\.toml$)' <<<"$changed"; then
             core_changed=true
           fi
-          if grep -qE '^(Dockerfile\.backend$|entrypoint-backend\.sh$|\.forgejo/workflows/ci\.yaml$)' <<<"$changed"; then
+          if grep -qE '^(Dockerfile\.backend$|entrypoint-backend\.sh$)' <<<"$changed"; then
             backend_changed=true
           fi
 
@@ -251,7 +255,7 @@ jobs:
             type=raw,value=${{ steps.get-backend-version.outputs.version }},enable={{is_default_branch}}
 
       - name: Build and push core image
-        if: needs.changes.outputs.core == 'true' || startsWith(github.ref, 'refs/tags/v')
+        if: needs.changes.outputs.core == 'true' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         uses: https://github.com/docker/build-push-action@v6
         with:
           context: .
@@ -267,7 +271,7 @@ jobs:
           cache-to: type=registry,ref=openfantasy/yadgar:buildcache,mode=max
 
       - name: Build and push backend image
-        if: needs.changes.outputs.backend == 'true' || startsWith(github.ref, 'refs/tags/v')
+        if: needs.changes.outputs.backend == 'true' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         uses: https://github.com/docker/build-push-action@v6
         with:
           context: .
