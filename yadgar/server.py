@@ -1507,9 +1507,7 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
         else:
             logger.warning("check_invariants: memory_similarity_link check failed: %s", exc)
 
-    # memory_transition dangling endpoints — NOT fixable (may encode important history).
-    # Logged at WARN (not CRITICAL) — expected accumulation during consolidation;
-    # tracked in v4.9 roadmap for proper pruning (see caused_by relationship pruning).
+    # memory_transition dangling — safe to delete: orphan rows have no valid endpoints
     try:
         dangling_mt = _count_q(
             "SELECT count() AS c FROM memory_transition "
@@ -1519,9 +1517,18 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
         )
         counts["memory_transition_dangling"] = dangling_mt
         if dangling_mt:
-            warn_violations.append(
-                f"{dangling_mt} memory_transition rows reference non-existent memory IDs"
+            storage._q(
+                "DELETE FROM memory_transition WHERE from_memory_id NOT IN "
+                "(SELECT VALUE meta::id(id) FROM memory) OR to_memory_id NOT IN "
+                "(SELECT VALUE meta::id(id) FROM memory)"
             )
+            fixed.append(
+                f"Deleted {dangling_mt} dangling memory_transition row(s) (both endpoints gone)"
+            )
+            logger.info(
+                "check_invariants: auto-fixed %d dangling memory_transition row(s)", dangling_mt
+            )
+            counts["memory_transition_dangling"] = 0
     except Exception as exc:
         if _is_timeout(exc):
             logger.warning(
@@ -1711,14 +1718,27 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
         else:
             logger.warning("check_invariants: msl ceiling check failed: %s", exc)
 
-    # ── 4. Engram slot distribution (non-fixable — structural anomaly) ───────
+    # ── 4. Engram slot distribution ───────────────────────────────────────────
     try:
         if mem_count > 0:
+            # Attempt rebalancing first if the allocator is available
+            if _engram is not None:
+                moved = _engram.rebalance_if_needed(threshold_pct=0.05)
+                if moved:
+                    fixed.append(
+                        f"Rebalanced engram slots: moved {moved} memories from over-occupied slots"
+                    )
+                    logger.info(
+                        "check_invariants: rebalanced %d memories from over-occupied engram slots",
+                        moved,
+                    )
+
+            # Re-check occupancy after any rebalancing
             slot_rows = storage._q(
                 "SELECT slot_index, count() AS n FROM memory "
                 "WHERE slot_index IS NOT NONE GROUP BY slot_index"
             )
-            threshold = int(mem_count * 0.05)
+            threshold = max(1, int(mem_count * 0.05))
             for row in slot_rows:
                 n = int(row.get("n", 0))
                 slot = row.get("slot_index")
