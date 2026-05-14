@@ -325,6 +325,10 @@ class Settings(BaseSettings):
     DERIVED_BELIEF_RETENTION_DAYS: int = 30
     PROSPECTIVE_MEMORY_RETENTION_DAYS: int = 30
 
+    # caused_by relationship ceiling — rows older than newest are pruned when this
+    # limit is exceeded.  Default 100_000.  Set to 0 to disable ceiling check.
+    MAX_CAUSED_BY_ROWS: int = 100_000
+
     # vacuum settings
     # Number of pre-vacuum DB snapshots to retain. Older ones are pruned by
     # scripts/cleanup-backups.sh after a successful vacuum.

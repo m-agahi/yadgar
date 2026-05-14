@@ -1,4 +1,5 @@
-"""Tests for check_invariants auto-repair: memory_transition and engram slot rebalancer.
+"""Tests for check_invariants auto-repair: memory_transition, engram slot rebalancer,
+caused_by dangling edges, and per-table size telemetry.
 
 TDD: tests written before implementation — they will fail until fixes land.
 """
@@ -212,4 +213,224 @@ def test_check_invariants_engram_rebalance_wired(tmp_path):
         f"check_invariants did not rebalance slot 0: "
         f"slot0 count={occupancy_after.get(0, 0)}, threshold={threshold}, "
         f"fixed={result.get('fixed', [])}, violations={result.get('violations', [])}"
+    )
+
+
+# ── Item 6: caused_by dangling edge pruning ───────────────────────────────────
+
+
+def _insert_entity(storage: StorageEngine, name: str) -> int:
+    """Insert a minimal entity and return its integer ID."""
+    return storage.insert_entity(
+        {
+            "name": name,
+            "type": "concept",
+            "description": f"test entity {name}",
+        }
+    )
+
+
+def _insert_caused_by(storage: StorageEngine, src_id: int, tgt_id: int) -> int:
+    """Insert a caused_by relationship and return its integer ID."""
+    return storage.insert_relationship(
+        {
+            "source_entity_id": src_id,
+            "target_entity_id": tgt_id,
+            "relationship_type": "caused_by",
+            "weight": 1.0,
+        }
+    )
+
+
+def test_caused_by_dangling_edges_auto_repaired():
+    """check_invariants must delete dangling caused_by rows and report them in 'fixed'.
+
+    Fixture: 10 caused_by relationships — 6 valid, 4 pointing to deleted entities.
+    After repair: 4 deleted, 6 remain.
+    """
+    storage = server._get_storage()
+
+    # Create 6 valid entities and 6 valid caused_by edges
+    valid_eids = [_insert_entity(storage, f"entity_valid_{i}") for i in range(6)]
+    for i in range(5):
+        _insert_caused_by(storage, valid_eids[i], valid_eids[i + 1])
+    # One self-loop to reach 6 valid rows
+    _insert_caused_by(storage, valid_eids[0], valid_eids[5])
+
+    # Create 4 entities, insert caused_by edges, then delete the entities to create dangles
+    dangling_eids = [_insert_entity(storage, f"entity_dangling_{i}") for i in range(4)]
+    for did in dangling_eids:
+        _insert_caused_by(storage, valid_eids[0], did)
+    # Delete the target entities to create dangling references
+    for did in dangling_eids:
+        storage._q("DELETE type::record('entity', $id)", {"id": did})
+
+    # Verify 10 caused_by rows exist before repair
+    before_count = storage._q(
+        "SELECT count() AS c FROM relationship WHERE relationship_type = 'caused_by' GROUP ALL"
+    )
+    before_n = int(before_count[0]["c"]) if before_count else 0
+    assert before_n == 10, f"setup failed: expected 10 caused_by rows, got {before_n}"
+
+    result = _run_check_invariants(storage)
+
+    # 4 dangling rows deleted, 6 remain
+    after_rows = storage._q("SELECT * FROM relationship WHERE relationship_type = 'caused_by'")
+    assert len(after_rows) == 6, f"expected 6 caused_by rows after repair, got {len(after_rows)}"
+
+    # Repair must be reported in 'fixed'
+    assert any("caused_by" in f for f in result["fixed"]), (
+        f"expected caused_by repair in 'fixed', got: {result['fixed']}"
+    )
+
+    # Must NOT appear in violations
+    all_violations = result.get("violations", []) + result.get("warn_violations", [])
+    cb_violations = [v for v in all_violations if "caused_by" in v]
+    assert len(cb_violations) == 0, (
+        f"dangling caused_by should NOT be in violations after auto-repair, got: {cb_violations}"
+    )
+
+
+# ── Item 7: per-table size breakdown ─────────────────────────────────────────
+
+
+def test_per_table_size_in_check_invariants():
+    """check_invariants must include per_table size breakdown in db_size.
+
+    per_table["memory"]["rows"] must match SELECT count() FROM memory.
+    """
+    storage = server._get_storage()
+
+    # Insert a few memories so the table is non-empty
+    import struct
+
+    embedding = struct.pack("<384f", *([0.0] * 384))
+    for i in range(3):
+        storage.insert_memory(
+            {
+                "content": f"per-table test memory {i}",
+                "embedding": embedding,
+                "tags": ["test"],
+                "directory_context": "/tmp/test_per_table",
+                "heat": 1.0,
+                "is_stale": False,
+                "embedding_model": "all-MiniLM-L6-v2",
+            }
+        )
+
+    result = _run_check_invariants(storage)
+
+    assert "db_size" in result, f"db_size missing from result: {list(result.keys())}"
+    db_size = result["db_size"]
+    assert "per_table" in db_size, f"per_table missing from db_size: {list(db_size.keys())}"
+
+    per_table = db_size["per_table"]
+    assert "memory" in per_table, f"memory missing from per_table: {list(per_table.keys())}"
+
+    # Row count must match a direct query
+    direct_count_rows = storage._q("SELECT count() AS c FROM memory GROUP ALL")
+    direct_count = int(direct_count_rows[0]["c"]) if direct_count_rows else 0
+    assert per_table["memory"]["rows"] == direct_count, (
+        f"per_table memory rows mismatch: got {per_table['memory']['rows']}, "
+        f"direct count={direct_count}"
+    )
+
+    # Each table entry must have at least 'rows'
+    for table, info in per_table.items():
+        assert "rows" in info, f"per_table[{table!r}] missing 'rows' key"
+
+
+def test_per_table_size_in_memory_stats(tmp_path, monkeypatch):
+    """memory_stats() must include per_table in its db_size block."""
+    db_dir = tmp_path / "surreal_db"
+    db_dir.mkdir(parents=True, exist_ok=True)
+    (db_dir / "vlog").mkdir()
+    (db_dir / "vlog" / "x.vlog").write_bytes(b"\x00" * 1024)
+
+    from yadgar import server as _s
+
+    monkeypatch.setattr(_s.settings, "DB_PATH", str(db_dir), raising=False)
+
+    stats = server.memory_stats()
+    assert "db_size" in stats, f"db_size missing from memory_stats: {list(stats.keys())}"
+    assert "per_table" in stats["db_size"], (
+        f"per_table missing from memory_stats db_size: {list(stats['db_size'].keys())}"
+    )
+
+
+# ── Fix H1: caused_by ceiling-prune removes oldest rows ──────────────────────
+
+
+def test_caused_by_row_count_ceiling_prunes_oldest(monkeypatch):
+    """check_invariants must prune the oldest caused_by rows when the ceiling is exceeded.
+
+    Strategy:
+    - Monkeypatch MAX_CAUSED_BY_ROWS to 5.
+    - Insert 7 caused_by relationships with distinct, increasing created_at timestamps.
+    - Run _run_check_invariants.
+    - Assert: count drops from 7 to 5 (2 oldest removed).
+    - 'fixed' must contain a string with "Pruned 2" and "caused_by".
+    """
+    import datetime
+
+    from yadgar import server as _s
+
+    monkeypatch.setattr(_s.settings, "MAX_CAUSED_BY_ROWS", 5, raising=True)
+
+    storage = server._get_storage()
+
+    # Two live entities to anchor all relationships
+    e1 = _insert_entity(storage, "ceiling_e1")
+    e2 = _insert_entity(storage, "ceiling_e2")
+
+    base_time = datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC)
+    # Insert 7 caused_by rows with distinct, increasing created_at so ordering is deterministic
+    for i in range(7):
+        ts = (base_time + datetime.timedelta(hours=i)).isoformat()
+        storage.insert_relationship(
+            {
+                "source_entity_id": e1,
+                "target_entity_id": e2,
+                "relationship_type": "caused_by",
+                "weight": 1.0,
+                "created_at": ts,
+            }
+        )
+
+    before = storage._q(
+        "SELECT count() AS c FROM relationship WHERE relationship_type = 'caused_by' GROUP ALL"
+    )
+    before_n = int(before[0]["c"]) if before else 0
+    assert before_n == 7, f"setup failed: expected 7 caused_by rows, got {before_n}"
+
+    result = _run_check_invariants(storage)
+
+    # 2 oldest pruned → 5 remain
+    after = storage._q(
+        "SELECT count() AS c FROM relationship WHERE relationship_type = 'caused_by' GROUP ALL"
+    )
+    after_n = int(after[0]["c"]) if after else 0
+    assert after_n == 5, f"expected 5 caused_by rows after ceiling prune, got {after_n}"
+
+    # 'fixed' must mention "Pruned 2" and "caused_by"
+    prune_msgs = [f for f in result.get("fixed", []) if "caused_by" in f.lower()]
+    assert prune_msgs, (
+        f"expected caused_by prune message in 'fixed', got: {result.get('fixed', [])}"
+    )
+    assert any("Pruned 2" in m for m in prune_msgs), (
+        f"expected 'Pruned 2' in fixed messages, got: {prune_msgs}"
+    )
+
+    # Verify the OLDEST 2 rows were pruned (the policy guarantee).
+    # base_time + 0h and +1h must be gone; +2h..+6h must remain.
+    remaining = storage._q(
+        "SELECT created_at FROM relationship WHERE relationship_type = 'caused_by'"
+    )
+    remaining_ts = sorted(str(r["created_at"]) for r in remaining)
+    expected_remaining = sorted(
+        (base_time + datetime.timedelta(hours=i)).isoformat() for i in range(2, 7)
+    )
+    assert remaining_ts == expected_remaining, (
+        f"oldest-semantics violated: expected {expected_remaining}, "
+        f"got {remaining_ts} — ORDER BY created_at ASC likely flipped"
     )
