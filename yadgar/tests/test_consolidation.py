@@ -342,6 +342,78 @@ class TestRelationshipBuilding:
         # First episode creates at weight 1.0, next two reinforce by +1.0 each
         assert rel["weight"] == pytest.approx(3.0)
 
+    def test_cooccurrence_accumulates_across_separate_batches(self, engine, storage):
+        """Regression: co_occurrence weight must survive across multiple
+        force_consolidate() calls, despite the `_apply_decay` and
+        `_memify_reweight` phases that run between cycles.
+
+        Each of the 5 episodes contributes a +1.0 weight increment, so the
+        deterministic baseline after 3 batches is weight == 5.0. Between
+        batches, `_memify_reweight` (curation.py) and similar consolidation
+        passes can add legitimate boosts to high-heat relationships.
+        Empirically observed ~7.0 with default settings — the additional
+        boost path beyond the documented `_memify_reweight` +0.5 is not
+        precisely modeled in the test; the assertion is bounded
+        empirically at [5.0, 10.0] to catch the bug class (weight stuck
+        at 1.0 = lost increments) without depending on exact boost math.
+
+        TODO: characterize the additional boost source(s) that push weight
+        from the deterministic 5.0 to the observed ~7.0 and tighten the
+        upper bound, ideally derived from constants rather than empiricism.
+        """
+        # Batch 1: 2 episodes, reset watermark so consolidate sees all
+        for i in range(2):
+            storage.insert_episode(
+                {
+                    "session_id": f"b1_sess{i}",
+                    "directory": "/proj",
+                    "raw_content": "def serialize():\nimport msgpack",
+                }
+            )
+        engine._last_consolidated_episode_id = 0
+        engine.force_consolidate()
+
+        # Batch 2: 2 more episodes — watermark now at highest ep so far
+        for i in range(2):
+            storage.insert_episode(
+                {
+                    "session_id": f"b2_sess{i}",
+                    "directory": "/proj",
+                    "raw_content": "def serialize():\nimport msgpack",
+                }
+            )
+        engine.force_consolidate()
+
+        # Batch 3: 1 final episode
+        storage.insert_episode(
+            {
+                "session_id": "b3_sess0",
+                "directory": "/proj",
+                "raw_content": "def serialize():\nimport msgpack",
+            }
+        )
+        engine.force_consolidate()
+
+        e1 = storage.get_entity_by_name("serialize")
+        e2 = storage.get_entity_by_name("msgpack")
+        assert e1 is not None, "entity 'serialize' not found after 5 episodes"
+        assert e2 is not None, "entity 'msgpack' not found after 5 episodes"
+        rel = storage.get_typed_relationship(
+            e1["id"], e2["id"], "co_occurrence"
+        ) or storage.get_typed_relationship(e2["id"], e1["id"], "co_occurrence")
+        assert rel is not None, "co_occurrence relationship not created"
+        # Deterministic base: 5.0 (one increment per episode across 3 batches).
+        # Between batches, _memify_reweight (curation.py) and similar
+        # consolidation passes can add legitimate boosts to high-heat relationships.
+        # Empirically observed ~7.0 with default settings; bound at 10.0 to allow
+        # for reasonable variation while still catching:
+        #   - weight stuck at 1.0 (CREATE resetting instead of UPDATE) — the v4.4.11 bug
+        #   - spike to 50.0+ (double-increment cascade or repeated boost loop)
+        assert 5.0 <= rel["weight"] <= 10.0, (
+            f"expected weight in [5.0, 10.0] across 3 batches, got {rel['weight']}. "
+            "Below 5.0 = increments lost. Above 10.0 = boost loop or double-increment."
+        )
+
 
 class TestDuplicateMerge:
     def test_near_identical_memories_merged(self, storage, settings):

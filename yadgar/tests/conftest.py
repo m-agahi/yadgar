@@ -5,8 +5,68 @@ import os
 import socket
 import subprocess
 import time
+import urllib.parse
 
 import pytest
+
+# ---------------------------------------------------------------------------
+# Production-DB isolation guard
+#
+# Prevent tests from accidentally writing to a live production SurrealDB.
+# Fires at collection time (pytest_configure) when YADGAR_DB_URL parses to
+# a production-looking endpoint and YADGAR_TEST is not set to a truthy value.
+#
+# Heuristic: parse YADGAR_DB_URL with urllib.parse.urlsplit; treat the URL
+# as production iff hostname (case-insensitive) is one of the forbidden
+# hosts AND port == 8000 (the default production daemon port).
+#
+# Forbidden hosts: 127.0.0.1, localhost, 0.0.0.0, ::1, yadgar-backend.
+#
+# Bypass: set YADGAR_TEST to one of {"1", "true", "yes", "on"} (case-
+# insensitive). Any other value (including empty) is treated as not-set.
+#
+# On trip, the guard calls pytest.exit(..., returncode=78) — sysexits.h
+# EX_CONFIG, signalling a configuration error distinct from test failure (1)
+# or pytest's own usage error (2).
+#
+# How CI avoids the guard: the CI runner starts with YADGAR_DB_URL unset;
+# the session-scoped `surreal_server` fixture sets it to a random free port
+# after collection completes, so the guard never fires.
+#
+# How to run locally against a test URL: set YADGAR_TEST=1 (or true/yes/on)
+# alongside any YADGAR_DB_URL, or leave YADGAR_DB_URL unset (the fixture
+# will start its own SurrealDB instance).
+# ---------------------------------------------------------------------------
+
+_FORBIDDEN_HOSTS = frozenset({"127.0.0.1", "localhost", "0.0.0.0", "::1", "yadgar-backend"})
+_FORBIDDEN_PORT = 8000
+_YADGAR_TEST_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _is_production_url(db_url: str) -> bool:
+    if not db_url:
+        return False
+    try:
+        parsed = urllib.parse.urlsplit(db_url)
+        host = (parsed.hostname or "").lower()
+        port = parsed.port  # lazy property; raises ValueError on out-of-range ports
+    except ValueError:
+        return False
+    return host in _FORBIDDEN_HOSTS and port == _FORBIDDEN_PORT
+
+
+def pytest_configure(config):
+    db_url = os.environ.get("YADGAR_DB_URL", "")
+    yadgar_test = os.environ.get("YADGAR_TEST", "").lower()
+    if _is_production_url(db_url) and yadgar_test not in _YADGAR_TEST_TRUTHY:
+        pytest.exit(
+            f"YADGAR_DB_URL={db_url!r} resolves to a production endpoint "
+            f"(host in {sorted(_FORBIDDEN_HOSTS)}, port {_FORBIDDEN_PORT}). "
+            "Refusing to run tests against the live DB. "
+            "Set YADGAR_TEST=1 (or true/yes/on) to override, or unset "
+            "YADGAR_DB_URL to let the test suite start its own isolated SurrealDB.",
+            returncode=78,
+        )
 
 
 def _find_free_port() -> int:
