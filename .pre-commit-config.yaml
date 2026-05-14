@@ -17,6 +17,13 @@ repos:
         files: ^pyproject\.toml$
         pass_filenames: false
 
+      - id: sync-uv-lock
+        name: Sync uv.lock
+        language: system
+        entry: python3 scripts/sync_uv_lock.py
+        files: ^pyproject\.toml$
+        pass_filenames: false
+
       - id: gitleaks
         name: Detect secrets and credentials
         language: system
@@ -27,7 +34,7 @@ repos:
         name: Check version consistency
         language: system
         entry: python3 scripts/check_versions.py
-        files: ^(pyproject\.toml|server\.json|docker-compose\.yml)$
+        files: ^(pyproject\.toml|server\.json|docker-compose\.yml|uv\.lock)$
         pass_filenames: false
 
   - repo: local
