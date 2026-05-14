@@ -127,6 +127,37 @@ class EngramAllocator:
             now = self._storage._now_iso()
             self._storage.update_engram_slot(neighbor, new_exc, now)
 
+    def rebalance_if_needed(self, threshold_pct: float = 0.05) -> int:
+        """Redistribute memories from over-occupied slots to least-occupied ones.
+
+        Returns count of memories reassigned. Only moves enough to bring each
+        over-occupied slot down to the threshold.
+        """
+        occupancy = self._storage.get_slot_occupancy()  # {slot_index: count}
+        total = sum(occupancy.values())
+        if total == 0:
+            return 0
+        threshold = max(1, int(total * threshold_pct))
+        moved = 0
+        for slot_idx in sorted(occupancy, key=lambda s: -occupancy[s]):
+            count = occupancy[slot_idx]
+            if count <= threshold:
+                break
+            excess = count - threshold
+            # Get IDs of memories to reassign (pick the excess ones)
+            mem_ids = self._storage.get_memory_ids_in_slot(slot_idx, limit=excess)
+            for mem_id in mem_ids:
+                # Find least-occupied slot (excluding current)
+                target = min(
+                    (s for s in range(self._num_slots) if s != slot_idx),
+                    key=lambda s: occupancy.get(s, 0),
+                )
+                self._storage.assign_memory_slot(mem_id, target)
+                occupancy[slot_idx] -= 1
+                occupancy[target] = occupancy.get(target, 0) + 1
+                moved += 1
+        return moved
+
     def get_slot_statistics(self) -> dict:
         """Return slot occupancy and excitability statistics."""
         occupancy = self._storage.get_slot_occupancy()

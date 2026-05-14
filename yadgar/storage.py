@@ -2629,6 +2629,14 @@ class StorageEngine:
                 result[si] = cnt
         return result
 
+    def get_memory_ids_in_slot(self, slot_index: int, limit: int = 100) -> list[int]:
+        """Return memory IDs assigned to a given engram slot, up to limit."""
+        rows = self._q(
+            "SELECT VALUE meta::id(id) FROM memory WHERE slot_index = $slot LIMIT $lim",
+            {"slot": slot_index, "lim": limit},
+        )
+        return [int(r) for r in (rows or [])]
+
     # ------------------------------------------------------------------ Checkpoints
 
     def insert_checkpoint(self, data: dict) -> int:
