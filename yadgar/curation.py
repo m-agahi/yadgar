@@ -434,6 +434,79 @@ class MemoryCurator:
             self._storage.delete_memory(mem["id"])
             stats["pruned"] += 1
 
+        # --- Pass 3: CLS-promoted auto-abstracted semantics ---
+        # Action-stream noise and file co-occurrence patterns start at heat=0.8
+        # and decay ~0.9995/hour — reaching COLD_THRESHOLD takes 300+ days, so
+        # the 30-day age cap would never fire with a heat gate.  Rely on age +
+        # access_count only; no heat check.
+        auto_abstracted_max_age = self._settings.AUTO_ABSTRACTED_MEMORY_MAX_AGE_DAYS
+        if auto_abstracted_max_age > 0:
+            aa_age_cutoff = (
+                datetime.now(UTC) - timedelta(days=auto_abstracted_max_age)
+            ).isoformat()
+            for mem in candidates:
+                tags = mem.get("tags", [])
+                if isinstance(tags, str):
+                    tags = json.loads(tags)
+                if "auto-abstracted" not in tags:
+                    continue
+                if mem.get("is_protected"):
+                    continue
+                if (mem.get("access_count") or 0) != 0:
+                    continue
+                created_at = mem.get("created_at") or ""
+                if created_at > aa_age_cutoff:
+                    continue  # too recent — spare it
+                self._storage.delete_memory(mem["id"])
+                stats["pruned"] += 1
+
+        # --- Pass 4: dream insight age cap ---
+        # Dream insights start at heat=0.5 and decay to ~0.1 within days, but
+        # COLD_THRESHOLD=0.02 means they linger for weeks.  Hard cap by age
+        # regardless of heat or access_count — one accidental recall must not
+        # let a dream insight escape the age cap forever.
+        dream_max_age = self._settings.DREAM_INSIGHT_MAX_AGE_DAYS
+        if dream_max_age > 0:
+            dream_age_cutoff = (datetime.now(UTC) - timedelta(days=dream_max_age)).isoformat()
+            for mem in candidates:
+                tags = mem.get("tags", [])
+                if isinstance(tags, str):
+                    tags = json.loads(tags)
+                if "dream" not in tags or "auto-generated" not in tags:
+                    continue
+                if mem.get("is_protected"):
+                    continue
+                created_at = mem.get("created_at") or ""
+                if created_at > dream_age_cutoff:
+                    continue  # too recent — spare it
+                self._storage.delete_memory(mem["id"])
+                stats["pruned"] += 1
+
+        # --- Pass 5: _action_stream episodics age cap ---
+        # Action log summaries (tool-call batches) are tagged _action_stream and
+        # created at heat=0.4.  Pass 1 prunes at heat<0.01 — that takes ~300 days.
+        # One access (access_count=1) blocks Pass 1 forever, so these pile up
+        # indefinitely.  Prune unconditionally after ACTION_STREAM_MAX_AGE_DAYS
+        # unless accessed (access_count > 0 means something found them useful).
+        action_stream_max_age = self._settings.ACTION_STREAM_MAX_AGE_DAYS
+        if action_stream_max_age > 0:
+            as_age_cutoff = (datetime.now(UTC) - timedelta(days=action_stream_max_age)).isoformat()
+            for mem in candidates:
+                tags = mem.get("tags", [])
+                if isinstance(tags, str):
+                    tags = json.loads(tags)
+                if "_action_stream" not in tags:
+                    continue
+                if mem.get("is_protected"):
+                    continue
+                if (mem.get("access_count") or 0) > 0:
+                    continue  # was accessed — something found it useful
+                created_at = mem.get("created_at") or ""
+                if created_at > as_age_cutoff:
+                    continue  # too recent — spare it
+                self._storage.delete_memory(mem["id"])
+                stats["pruned"] += 1
+
     def _memify_strengthen(self, stats: dict) -> None:
         """Boost importance for memories accessed > 5 times with confidence > 0.8."""
         candidates = self._storage.get_memories_by_heat(min_heat=0.0, limit=10000)

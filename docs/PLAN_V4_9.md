@@ -77,7 +77,20 @@ Investigation order:
 
 Add a regression-protection test: emit the same co-occurrence pair 5 times across 3 batches, assert final `weight == 5`. Cross-batch summing is the case the current test misses.
 
-## 4. `caused_by` relationship pruning
+## 4. `memory_transition` dangling-endpoint pruning
+
+`memory_transition` rows referencing deleted memory IDs currently log at WARN
+(downgraded from CRITICAL in v4.8.1 — they are non-repairable but not urgent).
+
+Add auto-repair in v4.9: detect dangling endpoints using the same set-difference
+pattern as the existing `memory_similarity_link` check, and DELETE matching rows
+in the repair pass.  Log count in `fixed.memory_transition`.
+
+Add a row-count ceiling: `memory_transition` should not exceed
+`MAX_MEMORY_TRANSITION_ROWS` (new setting, default 200_000).  Beyond that,
+prune oldest by `created_at`.
+
+## 6. `caused_by` relationship pruning
 
 Extend `check_invariants` auto-repair to include `caused_by` edges (already in the same RELATE family as `wiki_crossref`, `memory_similarity_link`).
 
@@ -85,7 +98,7 @@ Dangling-edge detection: `SELECT id, in, out FROM caused_by WHERE in IS NONE OR 
 
 Add to the row-count ceiling check: `caused_by` should not exceed `MAX_CAUSED_BY_ROWS` (new setting, default 100_000). Beyond that, prune oldest by `created_at`.
 
-## 5. Per-table size estimate in telemetry
+## 7. Per-table size estimate in telemetry
 
 Extend the v4.8 `db_size` block in `check_invariants` with a per-table breakdown:
 
@@ -108,8 +121,9 @@ Surface in `memory_stats` output too. Tells the user which table is driving bloa
 3. **Threshold auto-trigger window** — feed `_in_window(now)` a clock at 02:59 and at 03:01 with the default config; assert only the latter fires.
 4. **Threshold auto-trigger cooldown** — set `last_vacuum_at` to 1 hour ago, assert auto-trigger skips.
 5. **co_occurrence accumulation** — the regression test above (5 emits, 3 batches, `weight == 5`).
-6. **caused_by pruning** — fixture with 10 caused_by edges, 4 pointing to deleted memories. Run `check_invariants`, assert 4 deleted, 6 remain.
-7. **Per-table size** — assert `per_table["memory"]["rows"]` matches `SELECT count() FROM memory`.
+6. **`memory_transition` pruning** — fixture with 10 rows, 4 pointing to deleted memories. Run `check_invariants`, assert 4 deleted, 6 remain.
+7. **caused_by pruning** — fixture with 10 caused_by edges, 4 pointing to deleted memories. Run `check_invariants`, assert 4 deleted, 6 remain.
+8. **Per-table size** — assert `per_table["memory"]["rows"]` matches `SELECT count() FROM memory`.
 
 ## Open decisions
 
@@ -120,11 +134,12 @@ Surface in `memory_stats` output too. Tells the user which table is driving bloa
 ## Order of work
 
 1. Fix `test_repeated_cooccurrence_increases_weight` first — small, decouples from vacuum work, unblocks CI on master.
-2. `caused_by` pruning — extend the v4.5.0 auto-repair set.
-3. Per-table size in `check_invariants`.
-4. `vacuum_now()` MCP tool.
-5. Threshold auto-trigger in consolidation cycle.
-6. Bump `pyproject.toml:version` 4.8.0 → 4.9.0.
+2. `memory_transition` dangling-endpoint pruning + row ceiling.
+3. `caused_by` pruning — extend the v4.5.0 auto-repair set.
+4. Per-table size in `check_invariants`.
+5. `vacuum_now()` MCP tool.
+6. Threshold auto-trigger in consolidation cycle.
+7. Bump `pyproject.toml:version` 4.8.1 → 4.9.0.
 7. Open PR.
 
 ## Deferred to v5.0+

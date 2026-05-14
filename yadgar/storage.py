@@ -595,6 +595,61 @@ class StorageEngine:
             return raw
         return []
 
+    @staticmethod
+    def _build_chunk_body(chunk: list[tuple[str, dict | None]], json_mod: object) -> bytes:
+        """Build the actual HTTP body for a single BEGIN…COMMIT transaction chunk.
+
+        Returns the UTF-8 encoded body exactly as it would be sent to SurrealDB,
+        so callers can measure its real size before POSTing.
+        """
+        parts = ["BEGIN TRANSACTION"]
+        for i, (sql, params) in enumerate(chunk):
+            if params:
+                for k, v in params.items():
+                    parts.append(f"LET $p{i}_{k} = {json_mod.dumps(v, ensure_ascii=False)}")
+                for k in params:
+                    sql = re.sub(rf"\${re.escape(k)}\b", f"$p{i}_{k}", sql)
+            parts.append(sql.rstrip(";"))
+        parts.append("COMMIT TRANSACTION")
+        return (";\n".join(parts) + ";").encode()
+
+    def _send_chunk(
+        self,
+        chunk: list[tuple[str, dict | None]],
+        max_bytes: int,
+        json_mod: object,
+    ) -> None:
+        """Build the real HTTP body for *chunk* and POST it.
+
+        If the real body exceeds *max_bytes* and the chunk has more than one
+        statement, split it in half and recurse.  A single-statement chunk is
+        always attempted (with a WARN) so we never silently drop work.
+        """
+        body = self._build_chunk_body(chunk, json_mod)
+        if len(body) > max_bytes:
+            if len(chunk) == 1:
+                _log.warning(
+                    "batch_writes: single statement real body %d bytes exceeds "
+                    "MAX_BATCH_BYTES=%d; attempting alone — expect possible 413",
+                    len(body),
+                    max_bytes,
+                )
+                # Fall through and attempt the request anyway.
+            else:
+                mid = len(chunk) // 2
+                self._send_chunk(chunk[:mid], max_bytes, json_mod)
+                self._send_chunk(chunk[mid:], max_bytes, json_mod)
+                return
+
+        resp = self._http.post("/sql", content=body, headers={"Content-Type": "text/plain"})
+        resp.raise_for_status()
+        results = resp.json()
+        for entry in results:
+            if entry.get("status") == "ERR":
+                raise RuntimeError(
+                    f"SurrealDB batch error: {entry.get('detail') or entry.get('result') or entry}"
+                )
+
     def batch_writes(self, statements: list[tuple[str, dict | None]]) -> None:
         """Execute multiple write statements against SurrealDB.
 
@@ -604,6 +659,12 @@ class StorageEngine:
         becomes its own BEGIN…COMMIT transaction so we never build a single
         unbounded SQL string that can crash SurrealDB's recursive serialiser or
         exceed the HTTP body limit (HTTP 413 Payload Too Large).
+
+        The byte cap is enforced by measuring the *real* HTTP body string after
+        all parameter substitution and framing — not an estimate.  If a chunk's
+        real body exceeds MAX_BATCH_BYTES it is split in half recursively until
+        every piece fits (or until a single statement remains, which is attempted
+        alone with a WARN).
 
         Each chunk is atomic in itself; a failure in one chunk does NOT roll back
         earlier chunks — callers that require strict all-or-nothing must keep
@@ -627,35 +688,14 @@ class StorageEngine:
 
         import json as _json
 
-        # Split by statement count first, then apply byte cap within each
-        # count-chunk.  _chunk_by_bytes handles oversized single statements
-        # gracefully (yields them alone with a WARN).
+        # First pass: split by statement count.  _chunk_by_bytes provides a
+        # cheap pre-split so we don't build enormous bodies before measuring;
+        # _send_chunk then measures the real body and recursively halves if
+        # needed.
         for count_chunk_start in range(0, len(statements), chunk_size):
             count_chunk = statements[count_chunk_start : count_chunk_start + chunk_size]
             for chunk in _chunk_by_bytes(count_chunk, max_bytes):
-                parts = ["BEGIN TRANSACTION"]
-                for i, (sql, params) in enumerate(chunk):
-                    if params:
-                        for k, v in params.items():
-                            parts.append(f"LET $p{i}_{k} = {_json.dumps(v, ensure_ascii=False)}")
-                        # Rewrite $param_name → $p{i}_param_name using word-boundary regex
-                        # to avoid corrupting longer tokens that share a prefix.
-                        for k in params:
-                            sql = re.sub(rf"\${re.escape(k)}\b", f"$p{i}_{k}", sql)
-                    parts.append(sql.rstrip(";"))
-                parts.append("COMMIT TRANSACTION")
-                body = ";\n".join(parts) + ";"
-
-                resp = self._http.post(
-                    "/sql", content=body.encode(), headers={"Content-Type": "text/plain"}
-                )
-                resp.raise_for_status()
-                results = resp.json()
-                for entry in results:
-                    if entry.get("status") == "ERR":
-                        raise RuntimeError(
-                            f"SurrealDB batch error: {entry.get('detail') or entry.get('result') or entry}"
-                        )
+                self._send_chunk(chunk, max_bytes, _json)
 
     def _enrich_content_for_fts(self, content: str) -> str:
         """Enrich content with split identifier tokens for better FTS matching."""
@@ -1893,15 +1933,61 @@ class StorageEngine:
     def get_db_size(self) -> dict:
         """Return a breakdown of the SurrealDB directory size in bytes.
 
-        Walks DB_PATH using os.walk() + stat() — no subprocess.  Subdirs of
-        interest: vlog/, sstables/, wal/.  Anything else (LOCK, manifest, etc.)
-        goes into other_size_bytes.
-        """
-        import os as _os
+        In server mode (YADGAR_DB_URL set), delegates to the backend's
+        GET /admin/dbsize endpoint — the local db_path_resolved doesn't exist
+        on the core container side.
 
+        In embedded mode, walks DB_PATH using os.walk() + stat() — no subprocess.
+        Subdirs of interest: vlog/, sstables/, wal/.  Anything else (LOCK,
+        manifest, etc.) goes into other_size_bytes.
+        """
         from yadgar.config import get_settings as _get_settings
 
-        db_path = _get_settings().db_path_resolved
+        settings = _get_settings()
+        threshold = settings.DB_SIZE_WARNING_BYTES
+
+        if self._db_url is not None:
+            # Server mode: ask the backend container for the filesystem walk.
+            # The embed service (FastAPI) shares the same container as SurrealDB
+            # but listens on port 8001.  /admin/dbsize is served by that app.
+            # Derive the embed-service URL from YADGAR_DB_URL (port 8000 → 8001).
+            # If we cannot derive the embed URL (no :8000 and no explicit override),
+            # fall through to the local filesystem walk below.
+            import httpx as _httpx
+
+            db_url = self._db_url.rstrip("/")
+            explicit_embed_url = os.environ.get("YADGAR_BACKEND_EMBED_URL")
+            if explicit_embed_url:
+                embed_url: str | None = explicit_embed_url
+            elif ":8000" in db_url:
+                embed_url = db_url.replace(":8000", ":8001")
+            else:
+                embed_url = None
+
+            if embed_url is not None:
+                try:
+                    resp = _httpx.get(f"{embed_url}/admin/dbsize", timeout=5.0)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    total = data.get("db_size_bytes", 0)
+                    data["size_warning"] = total > threshold
+                    return data
+                except Exception as exc:
+                    _log.warning("get_db_size: backend /admin/dbsize request failed: %s", exc)
+                    return {
+                        "db_size_bytes": 0,
+                        "vlog_size_bytes": 0,
+                        "sstables_size_bytes": 0,
+                        "wal_size_bytes": 0,
+                        "other_size_bytes": 0,
+                        "vlog_pct_of_total": 0,
+                        "size_warning": False,
+                    }
+            # embed URL not derivable — fall through to local filesystem walk
+
+        import os as _os
+
+        db_path = settings.db_path_resolved
 
         known_subdirs = {"vlog", "sstables", "wal"}
         size_by_dir: dict[str, int] = {k: 0 for k in known_subdirs}
@@ -1928,7 +2014,6 @@ class StorageEngine:
 
         vlog = size_by_dir["vlog"]
         vlog_pct = int(vlog * 100 / total) if total > 0 else 0
-        threshold = _get_settings().DB_SIZE_WARNING_BYTES
 
         return {
             "db_size_bytes": total,

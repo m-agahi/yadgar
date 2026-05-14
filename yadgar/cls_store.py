@@ -145,6 +145,16 @@ class DualStoreCLS:
         valid_mems: list[dict] = []
         unit_vecs: list[np.ndarray] = []
         for mem in memories:
+            # Don't promote action-stream noise or already-abstracted semantics
+            # to semantic — they are garbage at the episodic level.
+            mem_tags = mem.get("tags") or []
+            if isinstance(mem_tags, str):
+                import json as _json
+
+                mem_tags = _json.loads(mem_tags)
+            if "_action_stream" in mem_tags or "auto-abstracted" in mem_tags:
+                continue
+
             emb = mem.get("embedding")
             if not emb:
                 continue

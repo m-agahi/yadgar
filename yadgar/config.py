@@ -295,10 +295,27 @@ class Settings(BaseSettings):
     # episodic memory scan to at most this many most-recently-accessed memories.
     CLS_PATTERN_MAX_CANDIDATES: int = 2000
 
+    # action-stream memory retention — _memify_prune Pass 5 deletes unaccessed
+    # memories tagged "_action_stream" that are older than this many days.
+    # These summaries start at heat=0.4, too warm for Pass 1 (heat<0.01).
+    # Set to 0 to disable the action-stream age cap.
+    ACTION_STREAM_MAX_AGE_DAYS: int = 14
+
     # auto-generated memory retention — _memify_prune deletes cold unaccessed
     # memories tagged "auto-generated" that are older than this many days.
     # Set to 0 to disable the auto-generated prune pass.
     AUTO_GENERATED_MEMORY_MAX_AGE_DAYS: int = 30
+
+    # auto-abstracted memory retention — _memify_prune deletes cold unaccessed
+    # memories tagged "auto-abstracted" (CLS semantic promotions, action-stream
+    # pattern noise) that are older than this many days.
+    # Set to 0 to disable the auto-abstracted prune pass.
+    AUTO_ABSTRACTED_MEMORY_MAX_AGE_DAYS: int = 30
+
+    # dream insight retention — _memify_prune deletes unaccessed dream memories
+    # older than this many days regardless of heat level.
+    # Set to 0 to disable the dream insight age cap.
+    DREAM_INSIGHT_MAX_AGE_DAYS: int = 21
 
     # Table retention windows — rows older than these thresholds are pruned
     # each consolidation cycle.  Set to 0 to disable for a specific table.
