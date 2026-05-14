@@ -1,9 +1,6 @@
 """Reranker: cross-encoder, NLI, heuristic, MMR, and multi-passage reranking."""
 
-import gc
 import logging
-import os
-import time
 from collections import defaultdict
 
 from yadgar.retrieval.query_analysis import (
@@ -15,47 +12,26 @@ from yadgar.storage import _FTS_STOP_WORDS
 
 logger = logging.getLogger(__name__)
 
-try:
-    import sentence_transformers  # noqa: F401
-except ImportError:
-    logger.warning("Reranker disabled: install yadgar[ml] to enable")
-
 
 class Reranker:
     """Holds all reranker state and methods, extracted from Retriever.
 
-    Owns lazy-loaded model handles (_gte_reranker, _nli_model, etc.) so
-    that Retriever stays focused on signal orchestration.
+    ML scoring is delegated to an MLClient (LocalMLClient or RemoteMLClient),
+    so no sentence_transformers import occurs in this module.
     """
 
-    def __init__(self, settings, storage) -> None:
+    def __init__(self, settings, storage, ml_client=None) -> None:
         self._settings = settings
         self._storage = storage
-        self._gte_reranker = None  # Lazy-loaded GTE-Reranker
-        self._nli_model = None  # Lazy-loaded NLI model
-        self._flashrank_ranker = None  # Lazy-loaded FlashRank ranker
-        self._cross_encoder = None  # Lazy-loaded sentence-transformers CrossEncoder
-        self._last_reranker_used: float = 0.0  # monotonic timestamp of last reranker call
+        if ml_client is None:
+            from yadgar.ml_client import LocalMLClient
+
+            ml_client = LocalMLClient(settings)
+        self._ml = ml_client
 
     def unload_if_idle(self, idle_seconds: float = 600.0) -> None:
         """Unload all reranker models if unused for `idle_seconds`. Frees ~500MB RSS."""
-        if self._last_reranker_used == 0.0:
-            return  # Never used — nothing to unload
-        if time.monotonic() - self._last_reranker_used < idle_seconds:
-            return
-        unloaded = []
-        if self._gte_reranker not in (None, False):
-            self._gte_reranker = None
-            unloaded.append("GTE-Reranker")
-        if self._nli_model not in (None, False):
-            self._nli_model = None
-            unloaded.append("NLI")
-        if self._cross_encoder is not None:
-            self._cross_encoder = None
-            unloaded.append("FlashRank-CE")
-        if unloaded:
-            gc.collect()
-            logger.info("Idle reranker unload (%.0fs idle): %s", idle_seconds, ", ".join(unloaded))
+        self._ml.unload_if_idle(idle_seconds)
 
     def heuristic_rerank(
         self,
@@ -214,12 +190,11 @@ class Reranker:
         query: str,
         top_k: int | None = None,
     ) -> list[dict]:
-        """Rerank memories using GTE-Reranker or FlashRank cross-encoder.
+        """Rerank memories using the ML client cross-encoder.
 
-        Tries GTE-Reranker-ModernBERT first (better zero-shot OOD generalization),
-        falls back to FlashRank (ONNX, faster on CPU), then sentence-transformers.
+        Delegates model scoring to self._ml (LocalMLClient or RemoteMLClient).
+        Keeps all bookkeeping (normalization, weighting, sorting) here.
         """
-        self._last_reranker_used = time.monotonic()
         if top_k is None:
             top_k = self._settings.CROSS_ENCODER_TOP_K
 
@@ -229,161 +204,56 @@ class Reranker:
         query_analysis = analyze_query(query, self._settings)
         open_domain_mode = query_analysis.get("is_open_domain_like", False)
 
-        # Try GTE-Reranker first (better zero-shot OOD generalization)
-        gte_failed = False
-        if getattr(self._settings, "GTE_RERANKER_ENABLED", False):
-            try:
-                if self._gte_reranker is None:
-                    from sentence_transformers import CrossEncoder as STCrossEncoder
+        # Build expanded text list: one entry per memory, plus implied-fact variants
+        # in open_domain_mode (mirrors the original FlashRank variant expansion).
+        expanded_texts: list[str] = []
+        variant_to_memory: dict[int, int] = {}
+        for i, mem in enumerate(memories):
+            base_text = mem.get("content", "")
+            variant_to_memory[len(expanded_texts)] = i
+            expanded_texts.append(base_text)
+            if open_domain_mode:
+                implied_facts = _derive_implied_fact_passages(base_text)
+                if implied_facts:
+                    variant_to_memory[len(expanded_texts)] = i
+                    expanded_texts.append(" ".join(implied_facts))
 
-                    self._gte_reranker = STCrossEncoder(
-                        self._settings.GTE_RERANKER_MODEL,
-                        max_length=self._settings.GTE_RERANKER_MAX_LENGTH,
-                    )
-                    logger.info("Loaded GTE-Reranker: %s", self._settings.GTE_RERANKER_MODEL)
-
-                if self._gte_reranker is not False:
-                    pairs = [(query, m.get("content", "")[:512]) for m in memories]
-                    scores = self._gte_reranker.predict(pairs)
-
-                    raw_scores = [float(s) for s in scores]
-                    max_score = max(raw_scores)
-                    min_score = min(raw_scores)
-                    score_range = max_score - min_score
-
-                    ce_weight = getattr(self._settings, "CROSS_ENCODER_WEIGHT", 0.6)
-                    ret_weight = 1.0 - ce_weight
-                    for i, mem in enumerate(memories):
-                        ce_norm = (
-                            (raw_scores[i] - min_score) / score_range if score_range > 0 else 0.5
-                        )
-
-                        content = mem.get("content", "")
-                        content_len = len(content)
-                        if content_len < 80:
-                            ce_norm *= 0.5
-                        elif content_len < 150:
-                            ce_norm *= 0.8
-
-                        retrieval_score = mem.get("_retrieval_score", 0.0)
-                        mem["_cross_encoder_score"] = round(ce_norm, 4)
-                        mem["_retrieval_score"] = round(
-                            ret_weight * retrieval_score + ce_weight * ce_norm, 4
-                        )
-
-                    memories.sort(key=lambda m: m["_retrieval_score"], reverse=True)
-                    return memories[:top_k]
-            except Exception as e:
-                logger.warning("GTE-Reranker failed, falling back: %s", e)
-                self._gte_reranker = False  # Prevent retry
-                gte_failed = True
-
-        # If GTE was enabled but failed, respect fallback setting
-        if gte_failed and not getattr(self._settings, "GTE_RERANKER_FALLBACK_TO_FLASHRANK", True):
+        try:
+            all_scores = self._ml.score_cross_encoder(query, expanded_texts)
+        except Exception as e:
+            logger.warning("cross_encoder_rerank: ML client failed: %s", e)
             return memories[:top_k]
 
-        # Try FlashRank (ONNX cross-encoder fallback)
-        try:
-            from flashrank import Ranker, RerankRequest
-
-            if self._flashrank_ranker is None:
-                self._flashrank_ranker = Ranker(
-                    model_name="ms-marco-MiniLM-L-12-v2",
-                    cache_dir=os.path.expanduser("~/.cache/flashrank"),
+        # Aggregate: take max score per memory across all its variants
+        memory_raw_scores: dict[int, float] = defaultdict(float)
+        for j, score in enumerate(all_scores):
+            mem_idx = variant_to_memory.get(j)
+            if mem_idx is not None:
+                memory_raw_scores[mem_idx] = max(
+                    memory_raw_scores.get(mem_idx, float("-inf")), score
                 )
 
-            passages = []
-            variant_to_memory: dict[int, int] = {}
-            for i, mem in enumerate(memories):
-                base_text = mem.get("content", "")
-                passages.append({"id": len(passages), "text": base_text})
-                variant_to_memory[len(passages) - 1] = i
+        raw_scores = [memory_raw_scores.get(i, 0.0) for i in range(len(memories))]
 
-                if open_domain_mode:
-                    implied_facts = _derive_implied_fact_passages(base_text)
-                    if implied_facts:
-                        passages.append({"id": len(passages), "text": " ".join(implied_facts)})
-                        variant_to_memory[len(passages) - 1] = i
-
-            rerank_req = RerankRequest(query=query, passages=passages)
-            results = self._flashrank_ranker.rerank(rerank_req)
-
-            # Map flashrank scores back to memories
-            memory_raw_scores: dict[int, float] = defaultdict(float)
-            for result in results:
-                mem_idx = variant_to_memory.get(result["id"])
-                if mem_idx is not None:
-                    memory_raw_scores[mem_idx] = max(
-                        memory_raw_scores.get(mem_idx, float("-inf")),
-                        result["score"],
-                    )
-
-            raw_scores = list(memory_raw_scores.values())
-            max_score = max(raw_scores) if raw_scores else 1.0
-            min_score = min(raw_scores) if raw_scores else 0.0
-            score_range = max_score - min_score
-
-            ce_weight = getattr(self._settings, "CROSS_ENCODER_WEIGHT", 0.6)
-            ret_weight = 1.0 - ce_weight
-            for i, mem in enumerate(memories):
-                raw = memory_raw_scores.get(i, 0.0)
-                ce_norm = (raw - min_score) / score_range if score_range > 0 else 0.5
-
-                # Penalize short/generic passages that CE over-scores.
-                # Short passages (<80 chars) get filler chat messages like
-                # "Sounds great!" that CE erroneously ranks highly.
-                content = mem.get("content", "")
-                content_len = len(content)
-                if content_len < 80:
-                    ce_norm *= 0.5  # heavy penalty for very short
-                elif content_len < 150:
-                    ce_norm *= 0.8  # mild penalty
-
-                retrieval_score = mem.get("_retrieval_score", 0.0)
-                mem["_cross_encoder_score"] = round(ce_norm, 4)
-                mem["_retrieval_score"] = round(
-                    ret_weight * retrieval_score + ce_weight * ce_norm, 4
-                )
-
-            memories.sort(key=lambda m: m["_retrieval_score"], reverse=True)
+        if not raw_scores or all(s == 0.0 for s in raw_scores):
             return memories[:top_k]
 
-        except ImportError:
-            pass
-        except Exception:
-            logger.debug("FlashRank reranking failed, trying sentence-transformers")
-
-        # Fallback: sentence-transformers CrossEncoder
-        try:
-            from sentence_transformers import CrossEncoder
-        except ImportError:
-            logger.warning("No reranker available; skipping cross-encoder reranking")
-            return memories
-
-        if self._cross_encoder is None:
-            try:
-                self._cross_encoder = CrossEncoder(self._settings.CROSS_ENCODER_MODEL)
-            except Exception:
-                self._cross_encoder = None
-                return memories
-
-        pairs = [(query, mem.get("content", "")) for mem in memories]
-        try:
-            ce_scores = self._cross_encoder.predict(pairs, show_progress_bar=False)
-        except Exception:
-            return memories
-
-        min_ce = float(min(ce_scores))
-        max_ce = float(max(ce_scores))
-        ce_range = max_ce - min_ce
-        if ce_range > 0:
-            normalized_ce = [(float(s) - min_ce) / ce_range for s in ce_scores]
-        else:
-            normalized_ce = [1.0] * len(ce_scores)
+        max_score = max(raw_scores)
+        min_score = min(raw_scores)
+        score_range = max_score - min_score
 
         ce_weight = getattr(self._settings, "CROSS_ENCODER_WEIGHT", 0.6)
         ret_weight = 1.0 - ce_weight
-        for mem, ce_norm in zip(memories, normalized_ce, strict=False):
+        for i, mem in enumerate(memories):
+            ce_norm = (raw_scores[i] - min_score) / score_range if score_range > 0 else 0.5
+
+            content = mem.get("content", "")
+            content_len = len(content)
+            if content_len < 80:
+                ce_norm *= 0.5
+            elif content_len < 150:
+                ce_norm *= 0.8
+
             retrieval_score = mem.get("_retrieval_score", 0.0)
             mem["_cross_encoder_score"] = round(ce_norm, 4)
             mem["_retrieval_score"] = round(ret_weight * retrieval_score + ce_weight * ce_norm, 4)
@@ -396,35 +266,19 @@ class Reranker:
         if not getattr(self._settings, "NLI_RERANKING_ENABLED", False):
             return memories
 
+        hypothesis = _question_to_statement(query)
+        texts = [m.get("content", "")[:512] for m in memories]
+
         try:
-            if self._nli_model is None:
-                from sentence_transformers import CrossEncoder
-
-                self._nli_model = CrossEncoder(self._settings.NLI_MODEL)
-                logger.info("Loaded NLI model: %s", self._settings.NLI_MODEL)
-
-            hypothesis = _question_to_statement(query)
-            pairs = [(m["content"][:512], hypothesis) for m in memories]
-            scores = self._nli_model.predict(
-                pairs
-            )  # Shape: (n, 3) for [contradiction, neutral, entailment]
-
-            for i, mem in enumerate(memories):
-                if hasattr(scores[i], "__len__") and len(scores[i]) == 3:
-                    # Softmax to get probabilities
-                    import numpy as np
-
-                    exp_scores = np.exp(scores[i] - np.max(scores[i]))
-                    probs = exp_scores / exp_scores.sum()
-                    mem["_nli_entailment_score"] = float(probs[2])  # Index 2 = entailment
-                else:
-                    mem["_nli_entailment_score"] = float(scores[i])
-
+            raw_scores = self._ml.score_nli(hypothesis, texts)
         except Exception as e:
             logger.warning("NLI reranking failed: %s", e)
-            self._nli_model = False
             for mem in memories:
                 mem["_nli_entailment_score"] = 0.0
+            return memories
+
+        for i, mem in enumerate(memories):
+            mem["_nli_entailment_score"] = float(raw_scores[i])
 
         return memories
 
@@ -495,21 +349,11 @@ class Reranker:
         return memories[:top_k]
 
     def score_single_pair(self, query: str, document: str) -> float:
-        """Score a single query-document pair using the active CE model."""
+        """Score a single query-document pair using the ML client."""
         try:
-            if self._gte_reranker and self._gte_reranker is not False:
-                scores = self._gte_reranker.predict([(query, document[:512])])
-                return float(scores[0]) if hasattr(scores, "__len__") else float(scores)
-            # Fallback to FlashRank
-            if self._flashrank_ranker:
-                from flashrank import RerankRequest
-
-                req = RerankRequest(query=query, passages=[{"text": document[:512]}])
-                result = self._flashrank_ranker.rerank(req)
-                return result[0]["score"] if result else 0.0
+            return self._ml.score_pair(query, document)
         except Exception:
-            pass
-        return 0.0
+            return 0.0
 
     def mmr_rerank(
         self,

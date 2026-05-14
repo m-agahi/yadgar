@@ -61,6 +61,7 @@ class Retriever:
         embeddings: EmbeddingEngine,
         knowledge_graph: KnowledgeGraph,
         settings: Settings,
+        ml_client=None,
     ) -> None:
         self._storage = storage
         self._embeddings = embeddings
@@ -70,7 +71,7 @@ class Retriever:
         self._rules_engine = None  # Set externally via set_rules_engine()
         self._metacognition = None  # Set externally via set_metacognition()
         self._comet_expander = None  # Lazy-loaded COMET query expander
-        self._reranker = Reranker(settings, storage)
+        self._reranker = Reranker(settings, storage, ml_client=ml_client)
 
     def set_engram(self, engram) -> None:
         """Attach an EngramAllocator for temporal linking in recall results."""
@@ -996,8 +997,8 @@ class Retriever:
 
     @property
     def _gte_reranker(self):
-        """Delegate to Reranker._gte_reranker (kept for backward compatibility)."""
-        return self._reranker._gte_reranker
+        """Delegate to Reranker ML client's _gte_reranker (kept for backward compatibility)."""
+        return self._reranker._ml._gte_reranker
 
     def _get_top_cooccurring_entities(self, content: str, limit: int = 5) -> list[str]:
         """Find entities that co-occur with entities mentioned in this content."""

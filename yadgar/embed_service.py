@@ -1,6 +1,7 @@
 """Embedding microservice — runs in the backend container.
 
 Serves POST /embed for the core container to call.
+Serves POST /rerank for ML scoring (cross-encoder, NLI, pair) via LocalMLClient.
 GET /health returns 200 only when SurrealDB is also reachable (true readiness signal).
 """
 
@@ -20,11 +21,15 @@ from pydantic import BaseModel, field_validator
 
 if TYPE_CHECKING:
     from yadgar.embeddings import EmbeddingEngine
+    from yadgar.ml_client import LocalMLClient
 
 logger = logging.getLogger(__name__)
 
 _engine: EmbeddingEngine | None = None
 _engine_lock = threading.Lock()
+
+_reranker: LocalMLClient | None = None
+_reranker_lock = threading.Lock()
 
 
 def _get_engine():
@@ -38,6 +43,18 @@ def _get_engine():
                 _engine = EmbeddingEngine(model)
                 _engine._ensure_model()
     return _engine
+
+
+def _get_reranker() -> LocalMLClient:
+    global _reranker
+    if _reranker is None:
+        with _reranker_lock:
+            if _reranker is None:
+                from yadgar.config import get_settings
+                from yadgar.ml_client import LocalMLClient
+
+                _reranker = LocalMLClient(get_settings())
+    return _reranker
 
 
 class EmbedRequest(BaseModel):
@@ -59,6 +76,26 @@ class EmbedResponse(BaseModel):
     embeddings: list[list[float] | None]
     model: str
     dim: int
+
+
+class RerankRequest(BaseModel):
+    query: str
+    texts: list[str]
+    mode: str = "ce"  # "ce" | "nli" | "pair"
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, v: str) -> str:
+        if v not in ("ce", "nli", "pair"):
+            raise ValueError(f"mode must be 'ce', 'nli', or 'pair'; got {v!r}")
+        return v
+
+
+class RerankResponse(BaseModel):
+    scores: list[float]
+    mode: str
 
 
 @asynccontextmanager
@@ -116,6 +153,26 @@ async def embed(req: EmbedRequest):
         model=engine.model_name,
         dim=engine.get_dimensions(),
     )
+
+
+@app.post("/rerank", response_model=RerankResponse)
+async def rerank(req: RerankRequest) -> RerankResponse:
+    """Score texts using the local ML client (cross-encoder, NLI, or pair mode)."""
+    ml = _get_reranker()
+
+    def _score() -> list[float]:
+        if req.mode == "nli":
+            # LocalMLClient.score_nli already returns entailment probabilities as floats
+            return ml.score_nli(req.query, req.texts)
+        elif req.mode == "pair":
+            if not req.texts:
+                return []
+            return [ml.score_pair(req.query, req.texts[0])]
+        else:  # "ce" default
+            return ml.score_cross_encoder(req.query, req.texts)
+
+    scores = await asyncio.to_thread(_score)
+    return RerankResponse(scores=scores, mode=req.mode)
 
 
 @app.get("/health")
