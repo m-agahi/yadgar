@@ -715,3 +715,78 @@ def test_memify_prune_auto_generated(tmp_path):
     assert stats["pruned"] >= 1
 
     storage.close()
+
+
+# ── test_memify_derive_no_413_on_5000_statements ─────────────────────────
+
+
+def test_memify_derive_no_413_on_5000_statements(monkeypatch):
+    """_memify_derive must not raise HTTPStatusError when the batch is large.
+
+    Regression test for the 413 Payload Too Large crash: every consolidation
+    cycle crashed because a single derive statement's large content param blew
+    past SurrealDB's HTTP body limit.  batch_writes must chunk by serialised
+    byte size so no single request exceeds MAX_BATCH_BYTES.
+
+    Strategy: build a batch of 5000 statements directly and call batch_writes
+    on a mocked _http that raises 413 on bodies > 1.2 × MAX_BATCH_BYTES.
+    Assert no exception escapes — the chunking keeps each request under the cap.
+    """
+    from unittest.mock import MagicMock
+
+    import httpx
+
+    from yadgar.config import Settings
+    from yadgar.storage import StorageEngine
+
+    max_batch_bytes = 1_000_000  # 1 MB
+
+    monkeypatch.setattr(
+        "yadgar.config.get_settings",
+        lambda: Settings(MAX_BATCH_STATEMENTS=500, MAX_BATCH_BYTES=max_batch_bytes),
+    )
+
+    # Build a storage engine with a smart mock HTTP client
+    engine = StorageEngine.__new__(StorageEngine)
+    engine._db_url = "http://fake-surreal:8000"
+    engine._embedding_dim = 384
+    engine._db_path = ":memory:"
+
+    threshold = int(max_batch_bytes * 1.2)
+
+    def smart_post(path, *, content, headers=None, **kwargs):
+        """Raise HTTPStatusError(413) if body exceeds threshold."""
+        if len(content) > threshold:
+            request = httpx.Request("POST", "http://fake-surreal:8000/sql")
+            response = httpx.Response(413, request=request)
+            raise httpx.HTTPStatusError(
+                f"413 Payload Too Large: body={len(content)} > {threshold}",
+                request=request,
+                response=response,
+            )
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = []
+        mock_resp.raise_for_status.return_value = None
+        return mock_resp
+
+    mock_http = MagicMock()
+    mock_http.post.side_effect = smart_post
+    engine._http = mock_http
+
+    # Build 5000 statements with a large-ish content field to simulate the
+    # real _memify_derive payload (each statement carries a content param of
+    # ~300 bytes, plus SQL template + param overhead ~ similar to real derive).
+    content_payload = "a" * 300  # ~300 bytes per statement
+    stmts = [
+        (
+            "CREATE type::record('memory', $id) SET content = $content, heat = 0.5",
+            {"id": i, "content": content_payload},
+        )
+        for i in range(5000)
+    ]
+
+    # Must not raise — chunking keeps each HTTP body under the 1.2 MB threshold
+    engine.batch_writes(stmts)
+
+    # Sanity: at least one HTTP call was made
+    assert mock_http.post.call_count >= 1

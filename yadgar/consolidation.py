@@ -114,6 +114,7 @@ class ConsolidationScheduler:
         self._cls = DualStoreCLS(storage, embeddings, settings)
         self._last_sleep_cycle: datetime | None = None
         self._last_consolidation_date: date | None = None
+        self._last_cycle_completed_at: datetime = datetime.fromtimestamp(0, UTC)
 
         self.last_activity: datetime = datetime.now(UTC)
         self.is_running: bool = False
@@ -163,7 +164,11 @@ class ConsolidationScheduler:
         self.last_activity = datetime.now(UTC)
 
     def force_consolidate(self) -> dict:
-        """Run a consolidation cycle immediately. Returns the cycle stats."""
+        """Run a consolidation cycle immediately. Returns the cycle stats.
+
+        Ignores CONSOLIDATION_COOLDOWN_SECONDS — an explicit user/MCP request
+        beats throttling.
+        """
         return self._consolidation_cycle()
 
     # -- Daemon loop --
@@ -175,15 +180,32 @@ class ConsolidationScheduler:
                 break
             now = datetime.now(UTC)
             today = now.date()
-            # Idle-triggered consolidation: process new episodes when system is idle
-            idle_seconds = (now - self.last_activity).total_seconds()
-            if idle_seconds >= self._settings.IDLE_THRESHOLD_SECONDS:
-                new_episodes = self._storage.get_episodes_since(self._last_consolidated_episode_id)
-                if new_episodes:
-                    try:
-                        self._consolidation_cycle()
-                    except Exception:
-                        logger.exception("Idle consolidation cycle failed")
+
+            # Cooldown gate for idle-triggered cycles. last_activity is only reset
+            # by external API hits, so after a cycle completes idle_seconds is still
+            # >= IDLE_THRESHOLD_SECONDS and the next wake-up would immediately fire
+            # again. _last_cycle_completed_at prevents that.
+            cooldown = self._settings.CONSOLIDATION_COOLDOWN_SECONDS
+            since_last_cycle = (now - self._last_cycle_completed_at).total_seconds()
+            if cooldown > 0 and since_last_cycle < cooldown:
+                # Still within cooldown window — skip idle check, fall through to
+                # the daily 18:30 UTC block which is time-gated independently.
+                pass
+            else:
+                # Idle-triggered consolidation: process new episodes when system is idle
+                idle_seconds = (now - self.last_activity).total_seconds()
+                if idle_seconds >= self._settings.IDLE_THRESHOLD_SECONDS:
+                    new_episodes = self._storage.get_episodes_since(
+                        self._last_consolidated_episode_id
+                    )
+                    if new_episodes:
+                        try:
+                            self._consolidation_cycle()
+                        except Exception:
+                            logger.exception("Idle consolidation cycle failed")
+                        finally:
+                            self._last_cycle_completed_at = datetime.now(UTC)
+
             # Run once per day at 18:30 UTC (18:30–18:31 window)
             if now.hour == 18 and now.minute == 30 and self._last_consolidation_date != today:
                 try:
@@ -191,6 +213,8 @@ class ConsolidationScheduler:
                     self._last_consolidation_date = today
                 except Exception:
                     logger.exception("Consolidation cycle failed")
+                finally:
+                    self._last_cycle_completed_at = datetime.now(UTC)
                 self._maybe_sleep_cycle()
 
     def _maybe_sleep_cycle(self) -> None:

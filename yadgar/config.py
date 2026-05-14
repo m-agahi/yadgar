@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     MAX_EPISODE_TOKENS: int = 50000
     OVERLAP_TOKENS: int = 2000
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
-    DAEMON_CHECK_INTERVAL: int = 30
+    DAEMON_CHECK_INTERVAL: float = 30
     DB_PATH: str = "~/.yadgar/surreal_db"
 
     # v2 settings
@@ -255,6 +255,28 @@ class Settings(BaseSettings):
     # on large batches (e.g. full-table heat decay).
     MAX_BATCH_STATEMENTS: int = 500
 
+    # batch_writes byte cap — each transaction is also capped at this many
+    # serialised bytes to prevent HTTP 413 Payload Too Large responses from
+    # SurrealDB.  The estimate accounts for JSON-serialised parameter values
+    # (which dominate when content fields are large).  Default 1 MB is well
+    # below SurrealDB's compiled-in body limit so there is comfortable slack
+    # for framing overhead.  Whichever limit fires first (statements or bytes)
+    # starts a new chunk.
+    MAX_BATCH_BYTES: int = 1_000_000
+
+    # Consolidation cooldown — idle-triggered cycles fire at most once per this
+    # many seconds, preventing back-to-back runs when last_activity stays stale
+    # after a cycle completes.  Set to 0 to restore legacy back-to-back behaviour.
+    CONSOLIDATION_COOLDOWN_SECONDS: int = 1800
+
+    # check_invariants per-table query timeout in seconds.  On timeout the table
+    # is skipped (logged at WARN) and the remaining tables still run.
+    CHECK_INVARIANTS_QUERY_TIMEOUT_SECONDS: int = 60
+
+    # DB-size telemetry — warn when total surreal_db/ size exceeds this threshold.
+    # Default 1 GiB.  The warning fires at most once per hour.
+    DB_SIZE_WARNING_BYTES: int = 1_073_741_824
+
     # action_log retention — processed rows older than this are pruned each
     # consolidation cycle to prevent unbounded table growth.
     ACTION_LOG_RETENTION_DAYS: int = 7
@@ -285,6 +307,11 @@ class Settings(BaseSettings):
     MEMORY_CLUSTER_RETENTION_DAYS: int = 30
     DERIVED_BELIEF_RETENTION_DAYS: int = 30
     PROSPECTIVE_MEMORY_RETENTION_DAYS: int = 30
+
+    # vacuum settings
+    # Number of pre-vacuum DB snapshots to retain. Older ones are pruned by
+    # scripts/cleanup-backups.sh after a successful vacuum.
+    VACUUM_SNAPSHOT_RETENTION: int = 3
 
     model_config = {"env_prefix": "YADGAR_"}
 

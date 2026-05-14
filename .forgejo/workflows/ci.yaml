@@ -18,6 +18,13 @@ on:
       - "server.json"
   workflow_dispatch:
 
+# Cancel superseded test runs on a fresh push to the same ref. Saves
+# runner-hours on rapid push storms (otherwise a 5-min test job blocks
+# the queue while the next commit's job waits, all on stale code).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -52,8 +59,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /root/.cache/huggingface
-          key: hf-models-v1-${{ hashFiles('pyproject.toml') }}
-          restore-keys: hf-models-v1-
+          # Static key — model weights don't change with pyproject bumps.
+          # Restore-keys give us LRU fallback if the act_cache evicts us.
+          key: hf-models-v2
+          restore-keys: |
+            hf-models-v
+            hf-models-
 
       - name: Cache SurrealDB binary
         id: cache-surreal
@@ -73,13 +84,17 @@ jobs:
           chmod +x /usr/local/bin/surreal
 
       - name: Install dependencies
-        run: pip install --no-cache-dir -e ".[test,ml]"
+        # No --no-cache-dir: the actions/cache step above mounts a persistent
+        # pip cache at /root/.cache/pip; bypassing it re-downloads torch +
+        # sentence-transformers (~1 GB) on every run.
+        run: pip install -e ".[test,ml]"
 
       - name: Run tests
-        # --reruns: the suite shares a session-scoped SurrealDB across xdist
-        # workers; a few server-globals tests flake on worker ordering. Retry
-        # twice before counting a failure. (Plugin comes from the [test] extra.)
-        run: python -m pytest yadgar/tests/ -q --tb=short --reruns 2 --reruns-delay 2
+        # -n auto parallelises across CPU cores via pytest-xdist (already
+        # in the [test] extra). --reruns: the suite shares a session-scoped
+        # SurrealDB across xdist workers; a few server-globals tests flake on
+        # worker ordering. Retry twice before counting a failure.
+        run: python -m pytest yadgar/tests/ -q --tb=short -n auto --reruns 2 --reruns-delay 2
 
   publish:
     needs: test
@@ -109,39 +124,74 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request'
     outputs:
-      docker: ${{ steps.check.outputs.docker }}
+      core:    ${{ steps.check.outputs.core }}
+      backend: ${{ steps.check.outputs.backend }}
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 2
 
-      - name: Check for Docker changes
+      - name: Detect per-image changes
         id: check
+        # Tags always rebuild both (release moment).
+        # Otherwise: per-image file globs + server.json version-field diff.
+        # workflow_dispatch falls through with both=false unless the ref is a
+        # tag — manual dispatch users can force via re-tagging if they want.
         run: |
-          if git rev-parse HEAD~1 >/dev/null 2>&1 && \
-             ! git diff --name-only HEAD~1 HEAD | grep -qE '^(Dockerfile|Dockerfile\.backend|entrypoint.*\.sh|yadgar/|pyproject\.toml|\.forgejo/workflows/ci\.yaml)'; then
-            echo "docker=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "docker=true" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "core=true"    >> "$GITHUB_OUTPUT"
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          if ! git rev-parse HEAD~1 >/dev/null 2>&1; then
+            # First commit on a fresh checkout — build both, safe default
+            echo "core=true"    >> "$GITHUB_OUTPUT"
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed=$(git diff --name-only HEAD~1 HEAD)
+
+          core_changed=false
+          backend_changed=false
+
+          # Per-image file globs
+          if grep -qE '^(Dockerfile$|entrypoint\.sh$|yadgar/|pyproject\.toml$|\.forgejo/workflows/ci\.yaml$)' <<<"$changed"; then
+            core_changed=true
+          fi
+          if grep -qE '^(Dockerfile\.backend$|entrypoint-backend\.sh$|\.forgejo/workflows/ci\.yaml$)' <<<"$changed"; then
+            backend_changed=true
+          fi
+
+          # server.json — only the relevant version field counts
+          if grep -q '^server\.json$' <<<"$changed"; then
+            old_core=$(git show HEAD~1:server.json | python3 -c "import json,sys; print(json.load(sys.stdin)['version'])")
+            new_core=$(python3 -c "import json; print(json.load(open('server.json'))['version'])")
+            [[ "$old_core" != "$new_core" ]] && core_changed=true
+            old_be=$(git show HEAD~1:server.json | python3 -c "import json,sys; print(json.load(sys.stdin)['backend_version'])")
+            new_be=$(python3 -c "import json; print(json.load(open('server.json'))['backend_version'])")
+            [[ "$old_be" != "$new_be" ]] && backend_changed=true
+          fi
+
+          echo "core=$core_changed"       >> "$GITHUB_OUTPUT"
+          echo "backend=$backend_changed" >> "$GITHUB_OUTPUT"
+          echo "core_changed=$core_changed backend_changed=$backend_changed"
 
   build:
     needs: [changes]
     runs-on: ubuntu-latest
     # The self-hosted runner host has no `docker` binary — run inside docker:cli
     # (alpine), then apk-install the bits the JS actions / scripts need.
-    # Mirrors the recipe of the (removed) build.yml, which always worked here.
     container:
       image: docker:cli
-    # Runs on: version tags (always), direct pushes to master (only when
-    # Docker-relevant files changed), and manual workflow_dispatch (always).
-    # Never on PRs. Does NOT re-run tests — that content was gated on the PR;
-    # the `test` job no longer runs on master pushes.
+    # Skip the whole job if neither image needs rebuilding (saves Build Cloud
+    # minutes). Tags always rebuild both via the changes job.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' &&
-       (startsWith(github.ref, 'refs/tags/v') || needs.changes.outputs.docker == 'true'))
+       (needs.changes.outputs.core == 'true' || needs.changes.outputs.backend == 'true'))
     steps:
       - name: Install minimal tools
         # docker:cli already has the docker CLI. bash for heredocs, python3 for
@@ -201,6 +251,7 @@ jobs:
             type=raw,value=${{ steps.get-backend-version.outputs.version }},enable={{is_default_branch}}
 
       - name: Build and push core image
+        if: needs.changes.outputs.core == 'true' || startsWith(github.ref, 'refs/tags/v')
         uses: https://github.com/docker/build-push-action@v6
         with:
           context: .
@@ -216,6 +267,7 @@ jobs:
           cache-to: type=registry,ref=openfantasy/yadgar:buildcache,mode=max
 
       - name: Build and push backend image
+        if: needs.changes.outputs.backend == 'true' || startsWith(github.ref, 'refs/tags/v')
         uses: https://github.com/docker/build-push-action@v6
         with:
           context: .
