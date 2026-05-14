@@ -131,3 +131,30 @@ class ServiceController:
 
 class ManualModeError(RuntimeError):
     """Raised when ServiceController is in manual mode and cannot auto-act."""
+
+
+# ---------------------------------------------------------------------------
+# Vacuum service fire helper (used by vacuum_now() MCP tool and
+# ConsolidationScheduler auto-trigger)
+# ---------------------------------------------------------------------------
+
+
+def _fire_vacuum_service() -> None:
+    """Start yadgar-vacuum.service non-blocking via systemctl --user.
+
+    Raises RuntimeError if the subprocess call fails (non-zero exit) or if
+    systemctl is not available on this system.
+    """
+    cmd = ["systemctl", "--user", "start", "--no-block", "yadgar-vacuum.service"]
+    try:
+        result = subprocess.run(cmd, capture_output=True)
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "systemctl not available — cannot fire yadgar-vacuum.service; "
+            "run 'yadgar vacuum' manually or use docker compose"
+        ) from exc
+    if result.returncode != 0:
+        stderr = result.stderr.decode(errors="replace").strip()
+        raise RuntimeError(
+            f"systemctl --user start --no-block yadgar-vacuum.service failed: {stderr}"
+        )
