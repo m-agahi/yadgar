@@ -2874,17 +2874,22 @@ def init_engines(
     _settings = get_settings()
     _storage = StorageEngine(db_path or _settings.DB_PATH)
     if os.environ.get("YADGAR_EMBED_URL"):
+        from yadgar.ml_client import RemoteMLClient
         from yadgar.remote_embeddings import RemoteEmbeddingEngine
 
         _embeddings = RemoteEmbeddingEngine(embedding_model or _settings.EMBEDDING_MODEL)
+        _ml_client = RemoteMLClient(os.environ["YADGAR_EMBED_URL"])
     else:
+        from yadgar.ml_client import LocalMLClient
+
         _embeddings = EmbeddingEngine(embedding_model or _settings.EMBEDDING_MODEL)
+        _ml_client = LocalMLClient(_settings)
     _buffer = ActionLogger(_storage, _settings)
     _buffer.start_session()
     _thermo = MemoryThermodynamics(_storage, _embeddings, _settings)
     _kg = KnowledgeGraph(_storage, _settings)
     _cognitive_map = CognitiveMap(_storage, _settings)
-    _retriever = Retriever(_storage, _embeddings, _kg, _settings)
+    _retriever = Retriever(_storage, _embeddings, _kg, _settings, ml_client=_ml_client)
     _curator = MemoryCurator(_storage, _embeddings, _thermo, _settings)
     _consolidation = ConsolidationScheduler(_storage, _embeddings, _settings)
     _staleness = StalenessDetector(_storage, _settings)
