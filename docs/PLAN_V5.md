@@ -263,9 +263,51 @@ Dropped after 2026-05-11 review: memorize/wiki_add < 50 ms (wire-bound), `~` ope
 - Delete `requirements.txt` — repo uses `uv`, file is stale (missing `scipy`, `httpx`, `ruamel.yaml`) and used by nothing in build or CI.
 - Bump `ruff target-version "py311" → "py314"` in `pyproject.toml` (yadgar requires Python ≥ 3.14).
 
----
+### 21. Release-readiness CI check + RELEASE.md runbook
 
-## Execution order
+Background: v4.9 release shipped without a version bump in any of the 4 feature PRs (#57, #58, #59, #60). Bump deferred to a separate chore PR (#61) per plan, but the manual step is easy to forget. Need a forcing function.
+
+Two pieces:
+
+**21a. CI check** (`.forgejo/workflows/release-check.yaml` or extend `validate.yaml`):
+
+```yaml
+- name: Verify version bump on release-flagged PRs
+  run: |
+    LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+    PYPROJECT_VER=$(grep -E '^version = ' pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+    if [ "v${PYPROJECT_VER}" = "${LATEST_TAG}" ]; then
+      # Same version → only allowed if PR has 'no-release' label OR touches no yadgar/ code
+      if git diff --name-only origin/master...HEAD | grep -qE '^yadgar/'; then
+        echo "::error::pyproject.toml version (${PYPROJECT_VER}) matches latest tag (${LATEST_TAG}). Bump or add 'no-release' label."
+        exit 1
+      fi
+    fi
+```
+
+Triggers on every PR. Mitigate false positives via `no-release` label on PRs that intentionally don't bump.
+
+**21b. `docs/RELEASE.md` runbook** — single-source checklist:
+
+```markdown
+# Release Checklist
+
+1. All v{X.Y.0} PRs merged to master
+2. `chore: bump core version` PR:
+   - `pyproject.toml` version
+   - `docker-compose.yml` CORE_VERSION default
+   - `server.json` (auto-synced by pre-commit)
+   - `uv.lock` (auto-synced)
+   - Decide backend_version: bump iff embed_service.py / Dockerfile.backend changed
+3. Merge bump PR
+4. `git tag v{X.Y.0} && git push origin v{X.Y.0}`
+5. Update `nix/modules/home/yadgar.nix` core_version + backend_version
+6. `home-manager switch`
+7. Append release entry to `yadgar-roadmap-future-improvements` wiki
+8. Verify deployed: `recall("yadgar version")` returns new version
+```
+
+Reference this from CONTRIBUTING.md and PR template.
 
 Single version bump, but ship as five sequential commits on the same branch so each is independently reviewable and any can be reverted without unwinding the rest:
 
