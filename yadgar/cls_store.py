@@ -47,6 +47,140 @@ _SEMANTIC_TAGS = frozenset(
     }
 )
 
+# Prefix pattern emitted by abstract_to_schema — stripped before subject check
+_RECURRING_PREFIX_RE = re.compile(
+    r"^Recurring pattern(?: across \d+ observations)?:\s*", re.IGNORECASE
+)
+
+# Tags suffix appended by abstract_to_schema — stripped before subject check
+_TAGS_SUFFIX_RE = re.compile(r"\s*\[tags:[^\]]*\]\s*$", re.IGNORECASE)
+
+# File-extension indicator (path/to/file.py, config.json, readme.md, …)
+_FILE_EXTENSION_RE = re.compile(r"\b\w[\w./]*\.\w{2,6}\b")
+
+# Stop-words that carry no identifier signal — superset of abstract_to_schema's list
+_SUBJECT_STOP_WORDS = frozenset(
+    {
+        "the",
+        "and",
+        "for",
+        "with",
+        "that",
+        "this",
+        "from",
+        "was",
+        "were",
+        "are",
+        "has",
+        "had",
+        "have",
+        "been",
+        "will",
+        "would",
+        "could",
+        "should",
+        "can",
+        "may",
+        "might",
+        "its",
+        "but",
+        "not",
+        "all",
+        "any",
+        "each",
+        "also",
+        "into",
+        "than",
+        "then",
+        "when",
+        "which",
+        "who",
+        "how",
+        "what",
+        "where",
+        "there",
+        "here",
+        "does",
+        "frequently",
+        "modified",
+        "together",
+        "often",
+        "always",
+        "never",
+        "sometimes",
+        "usually",
+        "across",
+        "between",
+        "observations",
+        "recurring",
+        "pattern",
+        # Yadgar-internal noise: entity-namespace words that appear in
+        # _memify_derive placeholders but carry no project-code signal
+        "memory",
+        "entity",
+        "used",
+        "using",
+        "uses",
+    }
+)
+
+
+# Canonical degenerate body — exact known-bad pattern from _memify_derive clusters
+_DEGENERATE_BODY_RE = re.compile(r"^frequently\s+modified\s+together$", re.IGNORECASE)
+
+# Unicode-aware token: any run of 2+ Unicode letters (covers ASCII, Cyrillic,
+# Arabic, CJK, Greek, etc.).  [^\W\d_] means: not (non-word | digit | underscore)
+# i.e. any Unicode letter character.
+_MEANINGFUL_TOKEN_RE = re.compile(r"[^\W\d_]{2,}", re.UNICODE)
+
+
+def _has_meaningful_token(text: str) -> bool:
+    """Return True when *text* contains at least one meaningful token.
+
+    Unicode-aware: matches any 2+ consecutive Unicode letter characters
+    (ASCII identifiers, Cyrillic, Arabic, CJK, Greek, Japanese, etc.)
+    that is not a pure stop-word.
+
+    Accepts when text is at least 20 chars long AND at least one token is
+    a Unicode letter run of >=2 chars that is NOT in _SUBJECT_STOP_WORDS.
+    """
+    if len(text) < 20:
+        return False
+    tokens = _MEANINGFUL_TOKEN_RE.findall(text.lower())
+    return any(t not in _SUBJECT_STOP_WORDS for t in tokens)
+
+
+# Backward-compat alias — existing code and tests that import _has_ascii_identifier_token
+# still work; the implementation is now Unicode-aware.
+_has_ascii_identifier_token = _has_meaningful_token
+
+
+def _is_degenerate_auto_abstracted(content: str) -> bool:
+    """Return True when *content* is a degenerate auto-abstracted memory.
+
+    Two conditions trigger degenerate detection (OR):
+    1. Body (after stripping the Recurring prefix and [tags:…] suffix) exactly
+       matches the known-bad "_memify_derive cluster" pattern.
+    2. Body fails _has_meaningful_token (Unicode-aware) AND is at least 20 chars.
+       ONLY fires when the Recurring prefix was actually present.
+
+    Conservative: only deletes when we are highly confident the content is noise.
+    """
+    content = content[:4096]  # cap to bound regex backtracking
+    body, n_prefix = _RECURRING_PREFIX_RE.subn("", content)
+    body = _TAGS_SUFFIX_RE.sub("", body).strip()
+
+    # Condition 1: exact match of the canonical degenerate body
+    if _DEGENERATE_BODY_RE.match(body):
+        return True
+
+    # Condition 2: only fires when the Recurring-pattern prefix was present
+    if n_prefix > 0 and len(body) >= 20 and not _has_meaningful_token(body):
+        return True
+
+    return False
+
+
 # Specific-content indicators (file paths, line numbers, error traces)
 _SPECIFIC_INDICATORS = re.compile(
     r"(?:"
@@ -426,6 +560,16 @@ class DualStoreCLS:
             # b. Abstract to schema
             schema = self.abstract_to_schema(cluster_mems)
             if not schema:
+                continue
+
+            # b2. Guard: skip degenerate schemas with no meaningful subject.
+            # abstract_to_schema can produce noise like
+            # "Recurring pattern across N observations: frequently modified together"
+            # when the cluster is composed of _memify_derive placeholders.
+            if _is_degenerate_auto_abstracted(schema):
+                logger.debug(
+                    "Skipping degenerate CLS pattern (no meaningful subject): %r", schema[:80]
+                )
                 continue
 
             # c. Check if we already have a similar semantic memory

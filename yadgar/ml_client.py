@@ -123,6 +123,10 @@ class LocalMLClient:
                 "LocalMLClient: FlashRank failed, trying sentence-transformers CrossEncoder"
             )
 
+        # Respect explicit disable before loading the heavy CrossEncoder fallback.
+        if settings is not None and not getattr(settings, "CROSS_ENCODER_ENABLED", True):
+            return [0.0] * len(texts)
+
         # --- sentence-transformers CrossEncoder (final fallback) ---
         try:
             from sentence_transformers import CrossEncoder
