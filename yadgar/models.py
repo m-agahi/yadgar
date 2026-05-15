@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 class Episode(BaseModel):
     id: int | None = None
     session_id: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     directory: str
     raw_content: str
     overlap_start: int | None = None
@@ -18,8 +18,8 @@ class Entity(BaseModel):
     id: int | None = None
     name: str
     type: Literal["file", "function", "variable", "dependency", "decision", "error", "solution"]
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    last_accessed: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    last_accessed: datetime = Field(default_factory=lambda: datetime.now(UTC))
     heat: float = 1.0
     archived: bool = False
     # v2 fields
@@ -33,11 +33,11 @@ class Relationship(BaseModel):
     target_entity_id: int
     relationship_type: str  # co_occurrence, imports, calls, debugged_with, decided_to_use, caused_by, resolved_by, preceded_by, derived_from
     weight: float = 1.0
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    last_reinforced: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    last_reinforced: datetime = Field(default_factory=lambda: datetime.now(UTC))
     # v2 fields
     event_time: datetime | None = None
-    record_time: datetime = Field(default_factory=datetime.utcnow)
+    record_time: datetime = Field(default_factory=lambda: datetime.now(UTC))
     is_causal: bool = False
     confidence: float = 1.0
 
@@ -49,8 +49,8 @@ class Memory(BaseModel):
     tags: list[str] = Field(default_factory=list)
     source_episode_id: int | None = None
     directory_context: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    last_accessed: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    last_accessed: datetime = Field(default_factory=lambda: datetime.now(UTC))
     heat: float = 1.0
     is_stale: bool = False
     file_hash: str | None = None
@@ -87,7 +87,7 @@ class Memory(BaseModel):
 
 class ConsolidationLog(BaseModel):
     id: int | None = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     memories_added: int = 0
     memories_updated: int = 0
     memories_archived: int = 0
@@ -99,7 +99,7 @@ class FileHash(BaseModel):
     id: int | None = None
     filepath: str
     hash: str
-    last_checked: datetime = Field(default_factory=datetime.utcnow)
+    last_checked: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class MemoryStats(BaseModel):
@@ -122,8 +122,8 @@ class MemoryCluster(BaseModel):
     summary: str = ""
     centroid_embedding: bytes | None = None
     member_count: int = 0
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    last_updated: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    last_updated: datetime = Field(default_factory=lambda: datetime.now(UTC))
     heat: float = 1.0
 
 
@@ -134,7 +134,7 @@ class ProspectiveMemory(BaseModel):
     trigger_type: Literal["directory_match", "keyword_match", "entity_match", "time_based"]
     target_directory: str | None = None
     is_active: bool = True
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     triggered_at: datetime | None = None
     triggered_count: int = 0
 
@@ -147,7 +147,7 @@ class NarrativeEntry(BaseModel):
     period_end: datetime
     key_decisions: list[str] = Field(default_factory=list)
     key_events: list[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     heat: float = 1.0
 
 
@@ -159,8 +159,8 @@ class AstrocyteProcess(BaseModel):
     memory_ids: list[int] = Field(default_factory=list)
     entity_ids: list[int] = Field(default_factory=list)
     heat: float = 1.0
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    last_active: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    last_active: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 # -- v3 frontier models --
@@ -176,7 +176,7 @@ class MemoryRule(BaseModel):
     condition: str  # e.g. "language == typescript", "tag contains architecture"
     action: str  # e.g. "filter", "boost:0.3", "penalty:0.2"
     priority: int = 0  # higher = applied first
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     is_active: bool = True
 
 
@@ -185,7 +185,7 @@ class MemoryArchive(BaseModel):
     original_memory_id: int
     content: str
     embedding: bytes | None = None
-    archived_at: datetime = Field(default_factory=datetime.utcnow)
+    archived_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     mismatch_score: float = 0.0
     archive_reason: str = ""  # "reconsolidation", "compression", "extinction"
 
@@ -195,7 +195,7 @@ class MemoryTransition(BaseModel):
     from_memory_id: int
     to_memory_id: int
     count: int = 1
-    last_transition: datetime = Field(default_factory=datetime.utcnow)
+    last_transition: datetime = Field(default_factory=lambda: datetime.now(UTC))
     session_id: str = ""
 
 
@@ -205,7 +205,7 @@ class CausalDAGEdge(BaseModel):
     target_entity_id: int
     algorithm: str = "pc"  # "pc", "ges", "heuristic"
     confidence: float = 1.0
-    discovered_at: datetime = Field(default_factory=datetime.utcnow)
+    discovered_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     is_validated: bool = False
 
 
@@ -224,5 +224,5 @@ class Checkpoint(BaseModel):
     active_errors: list[str] = Field(default_factory=list)
     custom_context: str = ""
     epoch: int = 0  # compaction epoch counter
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     is_active: bool = True  # only latest checkpoint is active

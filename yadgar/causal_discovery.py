@@ -139,6 +139,8 @@ class CausalDiscovery:
 
         if z is None:
             # Unconditional: Pearson correlation test
+            if np.std(x) < 1e-10 or np.std(y) < 1e-10:
+                return True  # constant variable -> independence ill-defined
             r = np.corrcoef(x, y)[0, 1]
             if np.isnan(r):
                 return True  # constant variable -> treat as independent
@@ -348,14 +350,16 @@ class CausalDiscovery:
                     continue
                 if directed[i][j]:
                     # Compute edge confidence from correlation strength
-                    r = abs(np.corrcoef(data[:, i], data[:, j])[0, 1])
+                    with np.errstate(divide="ignore", invalid="ignore"):
+                        r = abs(np.corrcoef(data[:, i], data[:, j])[0, 1])
                     conf = float(r) if not np.isnan(r) else 0.5
                     directed_edges.append((variable_names[i], variable_names[j], round(conf, 4)))
                 elif not directed[j][i]:
                     edge_key = (min(i, j), max(i, j))
                     if edge_key not in seen_undirected:
                         seen_undirected.add(edge_key)
-                        r = abs(np.corrcoef(data[:, i], data[:, j])[0, 1])
+                        with np.errstate(divide="ignore", invalid="ignore"):
+                            r = abs(np.corrcoef(data[:, i], data[:, j])[0, 1])
                         conf = float(r) if not np.isnan(r) else 0.5
                         undirected_edges.append(
                             (variable_names[i], variable_names[j], round(conf, 4))

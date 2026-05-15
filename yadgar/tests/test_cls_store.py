@@ -868,3 +868,248 @@ class TestActionStreamNotPromoted:
             )
 
         storage.close()
+
+
+# ── v4.9 item 9: Degenerate CLS pattern guard ─────────────────────────────────
+
+
+class TestHasAsciiIdentifierToken:
+    """Unit tests for _has_ascii_identifier_token helper (Fix 1)."""
+
+    def test_rejects_bare_frequently_modified_together(self):
+        """'frequently modified together' has no identifier → rejected."""
+        from yadgar.cls_store import _has_ascii_identifier_token
+
+        assert _has_ascii_identifier_token("frequently modified together") is False
+
+    def test_rejects_short_body(self):
+        """Body shorter than 20 chars is rejected regardless of content."""
+        from yadgar.cls_store import _has_ascii_identifier_token
+
+        assert _has_ascii_identifier_token("short body") is False
+
+    def test_accepts_python_path(self):
+        """Body containing a .py file path is accepted."""
+        from yadgar.cls_store import _has_ascii_identifier_token
+
+        assert (
+            _has_ascii_identifier_token(
+                "urllib.request and yadgar/cls_store.py frequently modified together"
+            )
+            is True
+        )
+
+    def test_accepts_json_extension(self):
+        """Body containing a .json file is accepted."""
+        from yadgar.cls_store import _has_ascii_identifier_token
+
+        assert (
+            _has_ascii_identifier_token(
+                "pyproject.json and config.json frequently modified together"
+            )
+            is True
+        )
+
+    def test_accepts_long_python_identifier(self):
+        """Body with a Python identifier longer than 3 chars is accepted."""
+        from yadgar.cls_store import _has_ascii_identifier_token
+
+        assert (
+            _has_ascii_identifier_token("consolidation_cycle and embedding_engine used frequently")
+            is True
+        )
+
+    def test_rejects_stop_words_only(self):
+        """Pure stop-word body rejected."""
+        from yadgar.cls_store import _has_ascii_identifier_token
+
+        assert (
+            _has_ascii_identifier_token("and the for with that this from was were frequently")
+            is False
+        )
+
+
+class TestIsDegenerateAutoAbstracted:
+    """Unit tests for _is_degenerate_auto_abstracted (PR #60 audit fixes)."""
+
+    def test_tags_suffix_variant_detected(self):
+        """Realistic emission shape with [tags: ...] suffix IS degenerate."""
+        from yadgar.cls_store import _is_degenerate_auto_abstracted
+
+        content = (
+            "Recurring pattern across 27 observations: frequently modified together"
+            " [tags: episodic, auto-abstracted]"
+        )
+        assert _is_degenerate_auto_abstracted(content) is True, (
+            "degenerate body with [tags:...] suffix must be detected"
+        )
+
+    def test_non_recurring_prefix_non_latin_not_degenerate(self):
+        """Body without Recurring prefix and without ASCII identifiers must NOT be degenerate.
+
+        Guards against multilingual data loss: pure Cyrillic content has no
+        ASCII identifier tokens, so _has_ascii_identifier_token returns False.
+        Condition 2 must only fire when the Recurring prefix was present.
+        """
+        from yadgar.cls_store import _is_degenerate_auto_abstracted
+
+        content = "Часто изменяется вместе с другим файлом в проекте"
+        assert _is_degenerate_auto_abstracted(content) is False, (
+            "non-Latin content without Recurring prefix must NOT be marked degenerate"
+        )
+
+    def test_non_recurring_prefix_arabic_not_degenerate(self):
+        """Arabic script content without Recurring prefix must not be degenerate."""
+        from yadgar.cls_store import _is_degenerate_auto_abstracted
+
+        content = "يتم تعديله بشكل متكرر مع ملفات أخرى في المشروع"
+        assert _is_degenerate_auto_abstracted(content) is False, (
+            "Arabic content without Recurring prefix must NOT be marked degenerate"
+        )
+
+    def test_recurring_prefix_non_latin_body_NOT_degenerate(self):
+        """Recurring prefix + non-Latin body must NOT be flagged as degenerate.
+
+        abstract_to_schema always prepends 'Recurring pattern across N observations:'
+        so in production every auto-abstracted memory has this prefix. Condition 2
+        must not delete Russian/Arabic/Japanese/Greek/etc content just because it
+        lacks ASCII identifier tokens — Unicode letter runs are meaningful tokens too.
+        """
+        from yadgar.cls_store import _is_degenerate_auto_abstracted
+
+        content = (
+            "Recurring pattern across 5 observations: часто изменяется вместе с другими файлами"
+        )
+        assert _is_degenerate_auto_abstracted(content) is False, (
+            "Recurring prefix + Cyrillic body must NOT be marked degenerate — "
+            "Unicode tokens are meaningful subjects"
+        )
+
+    def test_recurring_prefix_arabic_body_NOT_degenerate(self):
+        """Recurring prefix + Arabic body must NOT be flagged as degenerate."""
+        from yadgar.cls_store import _is_degenerate_auto_abstracted
+
+        content = "Recurring pattern across 3 observations: يتم تعديله بشكل متكرر مع ملفات أخرى"
+        assert _is_degenerate_auto_abstracted(content) is False, (
+            "Recurring prefix + Arabic body must NOT be marked degenerate"
+        )
+
+    def test_recurring_prefix_japanese_body_NOT_degenerate(self):
+        """Recurring prefix + Japanese body must NOT be flagged as degenerate."""
+        from yadgar.cls_store import _is_degenerate_auto_abstracted
+
+        content = "Recurring pattern across 4 observations: 頻繁に変更されるモジュール"
+        assert _is_degenerate_auto_abstracted(content) is False, (
+            "Recurring prefix + Japanese body must NOT be marked degenerate"
+        )
+
+
+class TestDegeneratePatternNotEmitted:
+    """consolidation_cycle must not emit memories whose extracted body fails
+    _has_ascii_identifier_token (ASCII-only; non-Latin guarded at call site) — Fix 1."""
+
+    def test_degenerate_content_not_emitted(self, tmp_path):
+        """Cluster of 'memory:X and memory:Y are frequently modified together' strings
+        must NOT produce a semantic memory — body after prefix is just
+        'frequently modified together' which fails the subject check."""
+        import numpy as np
+
+        settings = Settings(
+            DB_PATH=str(tmp_path / "degen.db"),
+            CLUSTER_SIMILARITY_THRESHOLD=0.0,
+            CURATION_SIMILARITY_THRESHOLD=0.5,
+        )
+        storage = StorageEngine(str(tmp_path / "degen.db"))
+        emb_mock = _make_mock_embeddings(similarity_value=1.0)
+        cls_store = DualStoreCLS(storage, emb_mock, settings)
+
+        # Insert 3 memories that would produce the degenerate pattern
+        vec = np.ones(384, dtype=np.float32).tobytes()
+        degenerate_contents = [
+            "memory:101 and memory:102 are frequently modified together",
+            "memory:103 and memory:104 are frequently modified together",
+            "memory:105 and memory:106 are frequently modified together",
+        ]
+        for i, content in enumerate(degenerate_contents):
+            session = f"degen-session-{i}"
+            ep_id = storage.insert_episode(
+                {"session_id": session, "directory": "/proj", "raw_content": content}
+            )
+            mid = storage.insert_memory(
+                {
+                    "content": content,
+                    "embedding": vec,
+                    "tags": ["episodic"],
+                    "directory_context": "/proj",
+                    "heat": 0.8,
+                    "is_stale": False,
+                    "source_episode_id": ep_id,
+                    "embedding_model": "all-MiniLM-L6-v2",
+                }
+            )
+            storage._q(
+                "UPDATE type::record('memory', $id) SET store_type = 'episodic'",
+                {"id": mid},
+            )
+
+        before_semantic = storage.count_memories_by_store_type("semantic")
+        cls_store.consolidation_cycle()
+        after_semantic = storage.count_memories_by_store_type("semantic")
+
+        # No new semantic memory should have been emitted
+        assert after_semantic == before_semantic, (
+            f"Degenerate pattern promoted: {after_semantic - before_semantic} new semantic memories created"
+        )
+        storage.close()
+
+    def test_meaningful_pattern_still_emitted(self, tmp_path):
+        """Cluster with a real subject (e.g. urllib.request) IS promoted — no false negatives."""
+        import numpy as np
+
+        settings = Settings(
+            DB_PATH=str(tmp_path / "real.db"),
+            CLUSTER_SIMILARITY_THRESHOLD=0.0,
+            CURATION_SIMILARITY_THRESHOLD=0.5,
+        )
+        storage = StorageEngine(str(tmp_path / "real.db"))
+        emb_mock = _make_mock_embeddings(similarity_value=1.0)
+        cls_store = DualStoreCLS(storage, emb_mock, settings)
+
+        vec = np.ones(384, dtype=np.float32).tobytes()
+        # Content with meaningful subject: urllib.request appears in all memories
+        real_contents = [
+            "urllib.request module used for HTTP calls in yadgar/retrieval/core.py",
+            "urllib.request used in retrieval pipeline via yadgar/retrieval/core.py helper",
+            "HTTP calls routed through urllib.request in yadgar/retrieval/core.py",
+        ]
+        for i, content in enumerate(real_contents):
+            session = f"real-session-{i}"
+            ep_id = storage.insert_episode(
+                {"session_id": session, "directory": "/proj", "raw_content": content}
+            )
+            mid = storage.insert_memory(
+                {
+                    "content": content,
+                    "embedding": vec,
+                    "tags": ["episodic"],
+                    "directory_context": "/proj",
+                    "heat": 0.8,
+                    "is_stale": False,
+                    "source_episode_id": ep_id,
+                    "embedding_model": "all-MiniLM-L6-v2",
+                }
+            )
+            storage._q(
+                "UPDATE type::record('memory', $id) SET store_type = 'episodic'",
+                {"id": mid},
+            )
+
+        before_semantic = storage.count_memories_by_store_type("semantic")
+        cls_store.consolidation_cycle()
+        after_semantic = storage.count_memories_by_store_type("semantic")
+
+        # A real pattern should be promoted
+        assert after_semantic > before_semantic, (
+            "Expected at least one semantic memory promoted for meaningful pattern"
+        )
+        storage.close()

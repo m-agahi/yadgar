@@ -5,6 +5,7 @@ import logging
 import re
 import time
 
+from yadgar.cls_store import _is_degenerate_auto_abstracted
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.storage import StorageEngine
@@ -504,6 +505,32 @@ class MemoryCurator:
                 created_at = mem.get("created_at") or ""
                 if created_at > as_age_cutoff:
                     continue  # too recent — spare it
+                self._storage.delete_memory(mem["id"])
+                stats["pruned"] += 1
+
+        # --- Pass 6: degenerate auto-abstracted semantics ---
+        # CLS consolidation_cycle can emit "Recurring pattern across N observations:
+        # frequently modified together" when clusters are built from _memify_derive
+        # placeholders.  These memories have no subject and are pure noise.
+        # Delete unconditionally (regardless of age / heat) — they were never
+        # meaningful.  Protected memories and accessed memories are respected.
+        for mem in candidates:
+            tags = mem.get("tags", [])
+            if isinstance(tags, str):
+                tags = json.loads(tags)
+            if "auto-abstracted" not in tags:
+                continue
+            if mem.get("is_protected"):
+                continue
+            if (mem.get("access_count") or 0) > 0:
+                continue  # user accessed it; treat as legitimate
+            content = mem.get("content") or ""
+            if _is_degenerate_auto_abstracted(content):
+                logger.info(
+                    "Pruning degenerate auto-abstracted memory %d: %r",
+                    mem["id"],
+                    content[:80],
+                )
                 self._storage.delete_memory(mem["id"])
                 stats["pruned"] += 1
 

@@ -1144,4 +1144,209 @@ def test_memify_prune_dream_insights(tmp_path):
     )
     assert stats["pruned"] >= 3  # dream_prunable + dream_accessed + dream_boundary_over
 
-    storage.close()
+
+# ── v4.9 item 9 — Pass 6: degenerate auto-abstracted prune ──────────────────
+
+
+class TestMemifyPruneDegenerateAutoAbstracted:
+    """_memify_prune Pass 6 must delete auto-abstracted memories whose content
+    matches the degenerate shape (no meaningful subject after the Recurring prefix).
+
+    Fixture: 3 degenerate + 2 legitimate auto-abstracted memories.
+    After _memify_prune: 3 degenerate deleted, 2 legitimate survive.
+    """
+
+    def _insert_memory(
+        self,
+        storage: StorageEngine,
+        content: str,
+        tags: list,
+        store_type: str = "semantic",
+        is_protected: bool = False,
+    ) -> int:
+        mid = storage.insert_memory(
+            {
+                "content": content,
+                "tags": tags,
+                "directory_context": "/proj",
+                "heat": 0.1,
+                "is_stale": False,
+                "embedding_model": "test",
+            }
+        )
+        storage._q(
+            "UPDATE type::record('memory', $id) SET store_type = $st, is_protected = $ip, access_count = 0",
+            {"id": mid, "st": store_type, "ip": is_protected},
+        )
+        return mid
+
+    def test_pass6_deletes_degenerate_keeps_legitimate(self, storage, settings, embeddings, thermo):
+        """3 degenerate auto-abstracted + 2 legitimate → 3 deleted, 2 survive."""
+        curator = MemoryCurator(storage, embeddings, thermo, settings)
+
+        # 3 degenerate memories — body after prefix has no meaningful subject
+        degen1 = self._insert_memory(
+            storage,
+            "Recurring pattern across 27 observations: frequently modified together",
+            ["semantic", "auto-abstracted"],
+        )
+        degen2 = self._insert_memory(
+            storage,
+            "Recurring pattern across 5 observations: frequently modified together",
+            ["semantic", "auto-abstracted"],
+        )
+        degen3 = self._insert_memory(
+            storage,
+            "Recurring pattern: frequently modified together",
+            ["semantic", "auto-abstracted"],
+        )
+
+        # 2 legitimate auto-abstracted memories — meaningful subjects
+        legit1 = self._insert_memory(
+            storage,
+            "Recurring pattern across 12 observations: urllib.request used in retrieval/core.py",
+            ["semantic", "auto-abstracted"],
+        )
+        legit2 = self._insert_memory(
+            storage,
+            "Recurring pattern across 8 observations: consolidation_cycle triggers vacuum on large DB",
+            ["semantic", "auto-abstracted"],
+        )
+
+        stats = {"pruned": 0}
+        curator._memify_prune(stats)
+
+        assert storage.get_memory(degen1) is None, "degen1 must be pruned"
+        assert storage.get_memory(degen2) is None, "degen2 must be pruned"
+        assert storage.get_memory(degen3) is None, "degen3 must be pruned"
+        assert storage.get_memory(legit1) is not None, "legit1 must survive"
+        assert storage.get_memory(legit2) is not None, "legit2 must survive"
+        assert stats["pruned"] >= 3
+
+    def test_pass6_respects_protected(self, storage, settings, embeddings, thermo):
+        """Protected degenerate memories must not be deleted."""
+        curator = MemoryCurator(storage, embeddings, thermo, settings)
+
+        protected_degen = self._insert_memory(
+            storage,
+            "Recurring pattern across 27 observations: frequently modified together",
+            ["semantic", "auto-abstracted"],
+            is_protected=True,
+        )
+
+        stats = {"pruned": 0}
+        curator._memify_prune(stats)
+
+        assert storage.get_memory(protected_degen) is not None, (
+            "Protected degenerate must not be pruned"
+        )
+
+    def test_pass6_keeps_non_recurring_auto_abstracted(self, storage, settings, embeddings, thermo):
+        """Pass 6 must NOT delete auto-abstracted memories whose body doesn't
+        have the Recurring-pattern prefix. Guards against multilingual data loss.
+
+        Pure non-Latin memory (no ASCII identifiers) would fail
+        _has_ascii_identifier_token, but lacks the Recurring prefix so it must
+        never be considered degenerate.
+        """
+        curator = MemoryCurator(storage, embeddings, thermo, settings)
+
+        # Pure Cyrillic, no Recurring prefix, no ASCII identifiers —
+        # buggy condition 2 would wrongly delete this
+        cyrillic_id = self._insert_memory(
+            storage,
+            "Часто изменяется вместе с другим файлом в проекте",
+            ["semantic", "auto-abstracted"],
+        )
+
+        stats = {"pruned": 0}
+        curator._memify_prune(stats)
+
+        assert storage.get_memory(cyrillic_id) is not None, (
+            "non-Latin content without Recurring prefix must NOT be pruned"
+        )
+
+    def test_pass6_detects_tags_suffix_degenerate(self, storage, settings, embeddings, thermo):
+        """Degenerate memory with [tags: ...] suffix appended by abstract_to_schema
+        must be detected and pruned. Verifies _TAGS_SUFFIX_RE stripping works end-to-end.
+        """
+        curator = MemoryCurator(storage, embeddings, thermo, settings)
+
+        tags_suffix_degen = self._insert_memory(
+            storage,
+            "Recurring pattern across 27 observations: frequently modified together"
+            " [tags: episodic, auto-abstracted]",
+            ["semantic", "auto-abstracted"],
+        )
+
+        stats = {"pruned": 0}
+        curator._memify_prune(stats)
+
+        assert storage.get_memory(tags_suffix_degen) is None, (
+            "degenerate memory with [tags:...] suffix must be pruned"
+        )
+
+    def test_pass6_access_count_guard(self, storage, settings, embeddings, thermo):
+        """Pass 6 must skip memories that have been accessed (access_count > 0).
+        Even if body is degenerate, a user-accessed memory is treated as legitimate.
+        """
+        curator = MemoryCurator(storage, embeddings, thermo, settings)
+
+        accessed_degen_id = self._insert_memory(
+            storage,
+            "Recurring pattern across 27 observations: frequently modified together",
+            ["semantic", "auto-abstracted"],
+        )
+        # Set access_count > 0
+        storage._q(
+            "UPDATE type::record('memory', $id) SET access_count = 3",
+            {"id": accessed_degen_id},
+        )
+
+        stats = {"pruned": 0}
+        curator._memify_prune(stats)
+
+        assert storage.get_memory(accessed_degen_id) is not None, (
+            "accessed degenerate memory must not be pruned by Pass 6"
+        )
+
+    def test_pass6_keeps_cyrillic_with_recurring_prefix(
+        self, storage, settings, embeddings, thermo
+    ):
+        """Production case: abstract_to_schema always adds Recurring prefix.
+
+        Cyrillic body with Recurring prefix must survive Pass 6.  This was the
+        real bug: condition 2 fired on any non-ASCII body with the prefix,
+        silently deleting Russian/Arabic/Japanese/Greek content.
+        """
+        curator = MemoryCurator(storage, embeddings, thermo, settings)
+
+        mid = self._insert_memory(
+            storage,
+            "Recurring pattern across 5 observations: Часто изменяется модуль storage вместе с config",
+            ["semantic", "auto-abstracted"],
+        )
+
+        stats = {"pruned": 0}
+        curator._memify_prune(stats)
+
+        assert storage.get_memory(mid) is not None, (
+            "Cyrillic auto-abstracted memory with Recurring prefix must survive Pass 6"
+        )
+
+    def test_pass6_keeps_arabic_with_recurring_prefix(self, storage, settings, embeddings, thermo):
+        """Arabic body with Recurring prefix must survive Pass 6 (audit pass 2 CRITICAL)."""
+        curator = MemoryCurator(storage, embeddings, thermo, settings)
+
+        mid = self._insert_memory(
+            storage,
+            "Recurring pattern across 3 observations: يتم تعديله بشكل متكرر مع ملفات أخرى في المشروع",
+            ["semantic", "auto-abstracted"],
+        )
+
+        stats = {"pruned": 0}
+        curator._memify_prune(stats)
+
+        assert storage.get_memory(mid) is not None, (
+            "Arabic auto-abstracted memory with Recurring prefix must survive Pass 6"
+        )

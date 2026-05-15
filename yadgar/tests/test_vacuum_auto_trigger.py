@@ -153,6 +153,11 @@ class TestAutoTriggerWindow:
                 "yadgar.server._run_check_invariants",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
             ),
+            patch.object(
+                consolidation_mod._subprocess,
+                "check_output",
+                side_effect=subprocess.CalledProcessError(3, "systemctl"),
+            ),
         ):
             inside_time = datetime(2026, 5, 14, 19, 1, 0)
             with patch.object(consolidation_mod, "_now_local", return_value=inside_time):
@@ -231,6 +236,11 @@ class TestAutoTriggerCooldown:
                 "yadgar.server._run_check_invariants",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
             ),
+            patch.object(
+                consolidation_mod._subprocess,
+                "check_output",
+                side_effect=subprocess.CalledProcessError(3, "systemctl"),
+            ),
         ):
             inside_time = datetime(2026, 5, 14, 21, 0, 0)
             with patch.object(consolidation_mod, "_now_local", return_value=inside_time):
@@ -248,6 +258,11 @@ class TestAutoTriggerCooldown:
             patch(
                 "yadgar.server._run_check_invariants",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
+            ),
+            patch.object(
+                consolidation_mod._subprocess,
+                "check_output",
+                side_effect=subprocess.CalledProcessError(3, "systemctl"),
             ),
         ):
             inside_time = datetime(2026, 5, 14, 21, 0, 0)
