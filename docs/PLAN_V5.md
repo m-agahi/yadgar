@@ -4,9 +4,11 @@
 
 Local review on 2026-05-09 (`.local-review/review-20260509-215742.md`, 25 tickets in `.local-review/tickets/`) found 5 critical, 24 high, 17 medium, and 9 low/info findings. Headline risk: any web page the user visits can read or mutate the full memory graph because the MCP API has wildcard CORS, no auth, and SurrealDB ships with hardcoded `root:root` across every install path. Several non-atomic operations and race conditions can corrupt or silently drop data. 26 None-dereference sites will crash at runtime.
 
-v4.x shipped through 4.4.10 (perf, async memorize, DLQ, three-tier DB users with 1Password). v5 is one breaking release that closes the review backlog end-to-end and ships the observability we never had. Version bump: `4.4.10 → 5.0.0`.
+v4.x shipped through 4.9.0 (perf, async memorize, DLQ, three-tier DB users with 1Password). v5 is one breaking release that closes the review backlog end-to-end and ships the observability we never had. Version bump: `4.9.0 → 5.0.0`.
 
 Single release because the security work is breaking (auth model, default-deny CORS, env-var-required credentials) and the rest doesn't merit a second tag.
+
+Project brief / bootstrap / branch-tagging / repo-wiki regen / hook pipe / mega-function decomposition were planned as v5.1 — now consolidated into v5.0 per user request 2026-05-15.
 
 ---
 
@@ -25,6 +27,7 @@ Remove every `root:root` literal. Locations from review (C1):
 - `scripts/migrate_v235_to_v204.py:50-54,73`
 - `scripts/test_server_compat.py:23-27,45`
 - `yadgar/storage.py:243-249` (soft warning → hard error)
+- `entrypoint-backend.sh:65-73` — curl -u exposes DB credentials in /proc/<pid>/cmdline. Switch to --netrc-file or Authorization: header. (LR-2026-05-15 T-0020-curl)
 
 Mechanism:
 - Bash: `${SURREAL_PASS:?SURREAL_PASS is required}` — startup fails if unset.
@@ -45,6 +48,9 @@ Mechanism:
 - **Client-side mechanism:** Claude Code hook config (`~/.claude/settings.json`) gains a per-hook `env` block with `YADGAR_MCP_AUTH_TOKEN`. `install_hooks` injects the current token value when writing settings.json. Hook scripts read the env var and add `Authorization: Bearer $YADGAR_MCP_AUTH_TOKEN`. MCP transport: same env-var lookup. Token rotation = rerun `install_hooks` after refreshing the 1Password entry.
 - `/health` and `/metrics` stay unauthenticated **on loopback only** (Prometheus scrapers don't carry per-request tokens). Bind both to 127.0.0.1; external scrapes need a reverse proxy.
 
+- `static/index.html:947,979` — stored XSS via syntaxHL(JSON.stringify(...)) → innerHTML. Wrap with esc() before HL, or replace with textContent. CRITICAL combined with wildcard CORS — any browser tab can exfiltrate full memory store. (LR-2026-05-15 T-0002)
+- `embed_service.py:189` — /admin/dbsize has no auth; /embed accepts unbounded 128 × 32 768 char payload. Add bearer-token to /admin/*, per-IP rate limit, bind to 127.0.0.1. (LR-2026-05-15 T-0010-embed)
+
 Bind defaults: `YADGAR_HOST=127.0.0.1` everywhere — `scripts/setup.sh:243`, `yadgar/viz_server.py:35`, `entrypoint-backend.sh:11-13`. Loopback unless user opts into LAN exposure with explicit env.
 
 ### 3. install_hooks: no shell injection
@@ -56,6 +62,8 @@ Fix: ship the hook logic as a real script (`yadgar/scripts/hook_runner.py`), ref
 ### 4. Path-traversal & file-hash oracle
 
 `yadgar/server.py:774-782`: `memorize(context=<path>)` resolves and hashes any file the daemon can read; hash is then queryable via `/api/graph`. Combined with wildcard CORS, a visited web page can fingerprint `~/.ssh/id_rsa` (C4). Also: `p.read_bytes()` on unbounded file OOMs the daemon.
+
+- `server.py:3109` — dlq_requeue filename allows null bytes + Unicode separators. Strip/reject NUL and validate filename. (LR-2026-05-15 T-0020-dlq)
 
 Fix:
 - Whitelist: only hash files under directories registered as project roots via `seed_project`.
@@ -69,6 +77,8 @@ Fix:
 `yadgar/storage.py:471-479` (`_q` retry, Q3): retry policy currently re-runs CREATE/UPDATE/DELETE on any exception, including successful-write-then-read-error → double-inserts. Restrict retry to read-only statements (`SELECT`, `INFO FOR`, `SHOW`).
 
 `yadgar/storage.py:516-526` (`batch_writes`, Q7): regex param-name rewrite over raw SQL corrupts user content containing `$id`/`$content`. Rewrite as a proper tokenizer or use SurrealDB's native param binding per statement.
+
+- `secrets.py` — missing pattern coverage for AWS secret keys, GCP service-account JSON, Stripe, Slack, OpenAI, Anthropic API keys. Add regex per provider. (LR-2026-05-15 T-0019)
 
 ### 6. Atomicity for destructive operations
 
@@ -100,6 +110,12 @@ Fix: bearer-token auth (point 2 covers this), per-source rate limit (token-bucke
 
 ### 10. Logic bugs + dead code
 
+- `causal_discovery.py:323` — Meek R2 uses directed[j][z] instead of directed[z][j]; orients collider siblings as causal chains. CRITICAL — corrupts all persisted causal DAGs. (LR-2026-05-15 T-0001)
+- `causal_discovery.py:93` — build_event_matrix substring match (entity_name in content) yields false co-occurrences ("x" matches "exec"). Replace with re.search(r'\b' + re.escape(name) + r'\b', content). (LR-2026-05-15 T-0004)
+- `ml_client.py:71-99` — GTE reranker silently falls back to FlashRank after first failure even when GTE_RERANKER_FALLBACK_TO_FLASHRANK=False. Track _gte_load_failed on instance; gate subsequent attempts. (LR-2026-05-15 T-0006)
+- `sleep_compute.py:393` — lambda closure captures dir_counts by reference in loop → wrong dict on delayed evaluation. Use default-arg capture: lambda dc=dir_counts: dc[...]. (LR-2026-05-15 T-0015)
+- `consolidation.py:250` — daily 18:30 UTC cycle missed when DAEMON_CHECK_INTERVAL > 60s because check uses exact-minute equality. Switch to (now.hour, now.minute) >= (18, 30) with a "fired today" guard. (LR-2026-05-15 T-0016)
+- `rules_engine.py:86` — _parse_action accepts NaN/inf boost/penalty silently. Add math.isfinite() validation; raise ValueError on non-finite. (LR-2026-05-15 T-0018)
 - `yadgar/thermodynamics.py:140` (Q12): `hours_elapsed = max(0.0, hours_elapsed)` — Hypothesis-confirmed.
 - `yadgar/thermodynamics.py:185` (Q18): same `max(0.0, hours)` clamp in `apply_session_coherence` — fuzz edge case.
 - `yadgar/thermodynamics.py:84`: `compute_importance` can never reach exactly 1.0 (IEEE 754 ordering). `return round(min(score, 1.0), 10)`.
@@ -193,16 +209,40 @@ find /data -name 'wiki_*.jsonl' -mtime +14 -delete
 
 ## Features
 
-### 17. Fetch by integer ID — new MCP tools
+### 17. Fetch + update by integer ID — four new MCP tools
 
-`storage.get_memory(memory_id: int)` and `storage.get_wiki_page(page_id: int)` already exist but no MCP tool wraps them. `wiki_read(slug)` is slug-only.
+`storage.get_memory(memory_id: int)` / `get_wiki_page(page_id: int)` already exist but no MCP tool wraps them. `wiki_read(slug)` is slug-only. No MCP path exists for updating a memory or wiki by ID — currently you'd have to `forget` + `memorize` (losing access_count / heat / created_at) or `wiki_add` (which keys by slug, not ID).
 
-Add two tools in `yadgar/server.py`:
+Add four tools in `yadgar/server.py`:
 
-- **`memory_get(memory_id: int) -> dict | None`** — strip embedding bytes from response, otherwise pass-through.
-- **`wiki_get(page_id: int) -> dict | None`** — strip embedding bytes, include `slug`, `title`, `category`, `tags`, `content`, `confidence`, `source_memory_ids`, `created_at`, `updated_at`.
+```python
+@_tool  # not power=True — read-only by ID, safe in minimal profile
+def memory_get(memory_id: int) -> dict | None:
+    """Fetch memory by ID. Strips embedding bytes from response."""
 
-Both `power=True` (matches existing `wiki_read` classification).
+@_tool  # not power=True
+def wiki_get(page_id: int) -> dict | None:
+    """Fetch wiki page by ID. Strips embedding bytes."""
+
+@_tool(power=True)  # mutates store
+def memory_update(memory_id: int, fields: dict) -> dict:
+    """Patch selected memory fields. Allowed keys: content, tags,
+    is_protected, is_stale. NOT allowed: heat (use anchor/forget),
+    embedding (use reembed_all), id/created_at (immutable).
+    Returns the updated memory dict.
+    """
+
+@_tool(power=True)  # mutates store
+def wiki_update(page_id: int, fields: dict) -> dict:
+    """Patch selected wiki fields. Allowed keys: content, tags, category,
+    confidence. NOT allowed: slug (use delete + add), id/created_at.
+    Returns the updated wiki dict.
+    """
+```
+
+`memory_get` + `wiki_get` are NOT `power=True` — they're read-only by ID, safe to expose in minimal profile (matches `recall` / `wiki_query`).
+
+`memory_update` + `wiki_update` ARE `power=True` — they mutate. Field allowlist prevents tampering with immutable / derived fields. Updates preserve `access_count`, `heat`, `created_at`, `embedding`.
 
 ID sources the model will chase: `wiki_crossref.from_id`/`to_id` rows surfaced by graph queries, `source_memory_ids` arrays inside wiki pages, DLQ `.error.json` sidecars, action-batch log entries, consolidation phase markers, and `_retrieval_score` debug output from `recall`.
 
@@ -215,8 +255,9 @@ ID sources the model will chase: `wiki_crossref.from_id`/`to_id` rows surfaced b
 - **`yadgar/enrichment.py:375-396` vs `:471-492`** — 21-line duplicate. Extract `_apply_enrichment_source(src, term, ...)` helper.
 - **`yadgar/causal_discovery.py:236-249` vs `:258-271`** — 13-line duplicate traversal. Extract `_traverse_oriented_edges(...)` helper.
 - `yadgar/seed.py:347-356` — two `if/elif` branches do identical dict-append. Merge with `or` (SonarQube S1871).
+- `staleness.py:37,42` — on_created and on_modified have identical bodies (copy-paste, one branch silently no-ops). Merge to single handler. (LR-2026-05-15 T-0017-staleness)
 
-**Mega-function decomposition deferred to v5.1.** `retrieval/core.py:305` (cognitive complexity **330**) and `causal_discovery.py:187` (complexity **146**) need characterization tests written first — current coverage is 0%, and a pipeline-stage rewrite bundled with breaking auth changes makes the PR un-reviewable and rollback ugly. v5.1 ships: (1) characterization test suite snapshotting current outputs, (2) decomposition, (3) parity check against snapshots. The other 72 functions over cognitive complexity 15 stay opportunistic — fix when touching the code.
+Mega-function decomposition lives in §29 — characterization tests gate the commit.
 
 ---
 
@@ -226,6 +267,7 @@ ID sources the model will chase: `wiki_crossref.from_id`/`to_id` rows surfaced b
 
 - `python-multipart 0.0.26 → 0.0.27` — CVE-2026-42561 (HIGH, prod runtime via FastAPI/Starlette transitive).
 - `pytest 9.0.2 → 9.0.3` — CVE-2025-71176 (MEDIUM, dev/CI only).
+- `urllib3 2.6.3 → ≥2.7.0` — two HIGH CVEs (CVE-2026-44431, CVE-2026-44432). Run uv lock --upgrade-package urllib3. (LR-2026-05-15 T-0009-urllib3)
 
 ```bash
 # python-multipart is transitive — add a direct floor in pyproject.toml so the bump sticks:
@@ -262,6 +304,7 @@ Dropped after 2026-05-11 review: memorize/wiki_add < 50 ms (wire-bound), `~` ope
 - (Skip base-image digest pinning per user decision 2026-05-11.)
 - Delete `requirements.txt` — repo uses `uv`, file is stale (missing `scipy`, `httpx`, `ruamel.yaml`) and used by nothing in build or CI.
 - Bump `ruff target-version "py311" → "py314"` in `pyproject.toml` (yadgar requires Python ≥ 3.14).
+- `docker-compose.yml` — add security_opt: ["no-new-privileges:true"] and read_only: true to both services; pin apt packages by version in Dockerfile + Dockerfile.backend. (LR-2026-05-15 T-0022)
 
 ### 21. Release-readiness CI check + RELEASE.md runbook
 
@@ -309,13 +352,523 @@ Triggers on every PR. Mitigate false positives via `no-release` label on PRs tha
 
 Reference this from CONTRIBUTING.md and PR template.
 
-Single version bump, but ship as five sequential commits on the same branch so each is independently reviewable and any can be reverted without unwinding the rest:
+---
+
+## Project bootstrap & state
+
+### 22. `project_brief` — layered bootstrap
+
+Rename `get_project_context(directory: str) -> dict` to `project_brief(directory: str, mode: str = "catalog") -> dict`. Old name kept as deprecated alias for one release.
+
+### Project-root resolution (git-first)
+
+Use git as the source of truth:
+
+```python
+def _resolve_project_root(directory: str) -> str:
+    """Find project root. Prefer git's view; fall back to caller's dir."""
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", directory, "rev-parse", "--show-toplevel"],
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        ).decode().strip()
+        if out:
+            return out
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return directory  # not in git; treat caller's dir as root
+```
+
+Returned as `_resolved_directory` in response. All downstream lookups (init memory, anchors, hot memories, wiki) use the resolved root, so a call from a subdirectory finds the project-level data.
+
+**Why git-only:** the previous heuristic (`.git` + `pyproject.toml` + `package.json` + `Cargo.toml` + `go.mod`) misses terraform repos, nix repos, shell-script collections, doc repos. `git rev-parse --show-toplevel` works for any git repo regardless of language/build-tool. Non-git directories are rare; treating them as their own root is fine.
+
+**Submodules:** returns the submodule root (immediate parent), not the super-project. Usually correct.
+
+**Fallback for non-git dirs with explicit markers:** if a real use case emerges (rare), add a secondary fallback that walks up looking for `[pyproject.toml, flake.nix, package.json, Cargo.toml, go.mod, default.nix]`. Not in v5 scope until needed.
+
+### Mode `catalog` (default, ~500 tokens)
+
+```json
+{
+  "_resolved_directory": "/home/max/git/yadgar",
+  "_mode": "catalog",
+  "project": "yadgar",
+  "tech": "Python 3.14, SurrealDB v3, MCP, sentence-transformers",
+  "branch": "master",
+  "branch_state": "clean",
+  "in_flight": "v5 ready to implement (PLAN_V5.md committed 15bbf22)",
+
+  "init_memory": {
+    "memory_id": 12345,
+    "content": "<the _project_init memory's content, verbatim, ≤2000 chars>"
+  },
+
+  "anchors": [
+    {"id": 15, "tag": "_anchor", "hook": "Codeberg PR via Forgejo + 1Password PAT"},
+    {"id": 33, "tag": "_anchor", "hook": "Never query SurrealDB directly"},
+    {"id": 50, "tag": "_anchor", "hook": "nix-update applies nix config changes"}
+  ],
+
+  "signals": {
+    "stale_wiki_count": 3,
+    "uncommitted_files": 0,
+    "active_pr_age_days": null,
+    "active_work_present": true,
+    "active_work_age_hours": 4
+  },
+
+  "_render": "# yadgar — catalog\n\n**Branch**: master (clean) ..."
+}
+```
+
+Notes:
+- `init_memory` returns the full content of the `_project_init` memory (≤2000 chars enforced at write time). This is the project's table of contents.
+- `anchors` returns 5 short hooks (id + tag + ~50-char hook). No content body.
+- No hot-memory array in catalog mode — read via `recall()` when needed.
+- `_active_work` content NOT inlined in catalog; only flagged in `signals.active_work_present`. Read with `recall('_active_work', max_results=1)` or `mode="full"`.
+
+### Mode `full` (opt-in, ~1050 tokens)
+
+Adds:
+- `_active_work.content` — the in-flight markdown, inlined
+- `recent_memories[5]` — filtered top-5 hot memories, 200 chars each, `_auto` / `_action_stream` tags excluded, anchors-first then `_active_work` then heat-sorted
+- `snapshot.last_commits[5]` — recent git log
+- `signals.stale_wiki[]` — slug list capped at 8 (full detail instead of just count)
+- `_render` rendered with full content
+
+### Token budget (estimated)
+
+| Block | Catalog | Full |
+|---|---:|---:|
+| init_memory | 500 | 500 |
+| anchors (5 × ~50 char hooks) | 70 | 70 |
+| _active_work content | — | 300 |
+| recent_memories (5 × 200 char) | — | 250 |
+| git snapshot | 50 | 150 |
+| signals | 50 | 100 |
+| _render wrapper | 50 | 100 |
+| **TOTAL** | **~520** | **~1050** |
+
+### Layer compute cost
+
+Cached 60s within a session. Cold call ~110 ms (catalog) / ~200 ms (full). Subprocess git calls (`rev-parse`, `status`, `log`, `symbolic-ref`) cached per `int(time.time() // 60)` bucket.
+
+---
+
+### 23. `_project_init` memory pattern
+
+One memory per `directory_context`, tagged `_project_init`, `is_protected=True`, heat pinned at 1.0. Content is markdown ≤2000 chars (hard cap, server-enforced).
+
+### Content shape (convention, not enforced)
+
+```markdown
+# <project> init
+
+## Architecture wikis
+- [[slug1]]
+- [[slug2]]
+- ...max 5
+
+## Conventions (HARD rules)
+- One line each, no prose
+- ...max 5
+
+## Key memory IDs
+- 15 — short hook (under 60 chars)
+- 33 — ...
+- ...max 8
+
+## Lookup tips
+- BEFORE grep, try recall(query) or wiki_query(query)
+- For module docs: wiki_read('mod-<file>')
+- For function docs: wiki_read('fn:<file>::<func>')
+
+## Active
+- See _active_work memory
+```
+
+### New MCP tool — `bootstrap_project`
+
+```python
+@_tool(power=True)
+def bootstrap_project(directory: str, content: str) -> dict:
+    """Replace this directory's `_project_init` memory atomically.
+
+    Content is markdown, MUST be <= 2000 chars (~500 tokens). Tool rejects
+    with ValueError on overflow. Convention: pointers and short hooks only,
+    no prose explanations. project_brief() surfaces the content verbatim
+    at the top of the catalog response.
+
+    Returns: {"replaced": bool, "memory_id": int, "char_count": int}
+    """
+    if len(content) > 2000:
+        raise ValueError(
+            f"content is {len(content)} chars, exceeds 2000 cap. "
+            f"Trim with pointers + short hooks only — see tool docs for shape."
+        )
+    # delete-before-insert atomicity, same pattern as update_active_work
+```
+
+### Bootstrap path (B2 — combined options b + c)
+
+- **(b) `seed_project` drafts starter.** When `seed_project(directory)` runs, the existing dir-scan logic now also drafts a starter `_project_init` from `README.md` + top-level docs + detected architecture markers. Drafted memory is created; user reviews and refines via `bootstrap_project` later.
+- **(c) Stop-hook prompts when absent.** If `project_brief.init_memory` is null after N>5 sessions in a directory (tracked via simple counter memory), the stop hook injects a prompt: "no `_project_init` exists for this directory; propose one based on session context, call `bootstrap_project(directory, content)` to commit."
+
+### Anchors integration (B3 — separate, init points to them)
+
+Anchors stay as individual memories with `_anchor` tag. `_project_init` content references them by ID in its TOC section. `project_brief` surfaces both — init memory first (TOC), then anchors list. No duplication.
+
+### Initial seed targets (B5)
+
+After v5 ships, manually create `_project_init` for:
+- `/home/max/git/yadgar`
+- `/home/max/git/ccpm`
+- `/home/max/git/nix`
+- `/home/max/quinyx/meridian`
+- `/home/max/quinyx/qwfm`
+- `/home/max/quinyx/qwfm/tools/serverless/cloudfront-authorization-at-edge`
+
+---
+
+### 24. `_active_work` memory pattern
+
+Single per-directory memory tagged `_active_work`. Auto-replaced (delete-before-insert) on each refresh. Content format: markdown. Example:
+
+```markdown
+**Branch:** docs/plans-cleanup-and-v5
+**Open PR:** none
+**Updated:** 2026-05-11T13:50:00Z
+
+## Next steps
+- Implement `project_brief()` layered output in `yadgar/server.py`
+- Add `_active_work` test fixture
+- Wire `wiki_refresh_stale()` to dispatch background Agent
+
+## Recent context
+- v5 plan committed (15bbf22); v5.1 plan in progress.
+```
+
+### New MCP tool — `update_active_work`
+
+```python
+@_tool(power=True)
+def update_active_work(directory: str, content: str) -> dict:
+    """Replace this directory's `_active_work` memory atomically.
+
+    Deletes any existing `_active_work` memory(ies) for the directory,
+    then inserts a new one with the provided content. No char cap (this
+    is in-flight scratch, expected to churn).
+
+    Returns: {"replaced": bool, "previous_count": int, "memory_id": int}
+    """
+```
+
+### Staleness check in stop hook
+
+Hook injects:
+
+```
+- _active_work memory is {missing|stale_24h}.
+  → Synthesize current state from session: branch, open PR (if any),
+    next 1–2 steps from recent conversation. Call
+    `update_active_work(directory="...", content="...")` with markdown.
+  → Tool atomically replaces any prior _active_work for this directory.
+```
+
+---
+
+## Branch tagging
+
+### 25. Branch tagging schema migration
+
+### Schema
+
+```
+memory.branch         : str | null   -- captured at write time; null for pre-v5 entries or non-git contexts
+wiki_page.branch      : str | null   -- same
+```
+
+**Migration (two-step):**
+
+1. Schema: nullable column added on `memory` and `wiki_page`.
+2. Backfill: in a single transaction:
+   ```sql
+   BEGIN TRANSACTION;
+   UPDATE memory SET branch = 'master' WHERE branch IS NULL;
+   UPDATE wiki_page SET branch = 'master' WHERE branch IS NULL;
+   COMMIT TRANSACTION;
+   ```
+
+   All pre-v5 data is treated as canonical (`master`-tagged). Wrong for memories written on a feature branch pre-v5, but the cost is a weaker 1.5× boost on the actual feature branch — not data loss. Acceptable.
+
+### Write path — auto-capture
+
+`yadgar/server.py` helper:
+
+```python
+@lru_cache(maxsize=128)
+def _detect_branch_cached(directory: str, _ts_bucket: int) -> str | None:
+    """Cached per 30s. Returns None for detached HEAD or non-git."""
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", directory, "rev-parse", "--abbrev-ref", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        ).decode().strip()
+        return out if out and out != "HEAD" else None
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+
+def _detect_branch(directory: str) -> str | None:
+    return _detect_branch_cached(directory, int(time.time() // 30))
+```
+
+Hook into `memorize`, `anchor`, `checkpoint`, `wiki_add` — one line each. `_project_init` and `_active_work` writes always set `branch = None` (project-level state, not branch-specific).
+
+### Retrieval
+
+Default filter on `project_brief`, `recall`, `wiki_read`, `wiki_query`:
+
+```
+branch IN (current_branch, default_branch, NULL)
+```
+
+Where `default_branch` is auto-detected via `git symbolic-ref refs/remotes/origin/HEAD`. Feature-branch entries weighted 1.5× over default-branch entries in heat-blended ranking when both surface.
+
+### `wiki_read(slug)` resolution
+
+1. Try `WHERE slug = ? AND branch = current_branch` — if exists, return.
+2. Else try `WHERE slug = ? AND branch IN (default_branch, NULL)` — return canonical/legacy.
+3. Else None.
+
+---
+
+## Wiki freshness
+
+### 26. `wiki_refresh_stale` — background regen dispatch
+
+### New MCP tool
+
+```python
+@_tool(power=True)
+def wiki_refresh_stale(
+    directory: str,
+    slugs: list[str] | None = None,
+    force_branch: bool = False,
+) -> dict:
+    """Detect stale repo-wiki pages and regenerate them.
+
+    Stale = `.local-review/wiki/*.md` frontmatter `hash` ≠ SHA256(source_file).
+    Refuses on non-default-branch unless force_branch=True.
+
+    Returns:
+        {"detected": [...], "branch": "master", "skipped_reason": null}
+    """
+```
+
+The tool **only detects + reports** — actual regen is done by spawning a background Agent that runs the `/repo-wiki update` skill. The skill auto-runs `export-yadgar` for changed pages, which queues `wiki_add` operations that the drainer applies to the `wiki_page` table.
+
+### Regen chain (explicit — two wikis exist)
+
+1. Stop-hook prompts session every 25 messages
+2. Session calls `wiki_refresh_stale(directory)` → reports drift
+3. Session dispatches background Agent: `Agent(subagent_type="general-purpose", run_in_background=True, prompt="run /repo-wiki update for these slugs: [...]")`
+4. Agent runs the skill (cold-start downloads `repo-indexer` from Codeberg releases per SKILL.md, ~30s on first run; cached thereafter)
+5. Skill regenerates `.local-review/wiki/*.md` (on-disk markdown)
+6. Skill auto-runs `export-yadgar` → drops `wiki_add` operations in `~/.yadgar/queue/`
+7. Yadgar queue drainer picks up → updates `wiki_page` table in SurrealDB
+
+### Master-only enforcement
+
+```python
+branch = _detect_branch(directory)
+default = _default_branch(directory)
+if branch not in (default, "master", "main") and not force_branch:
+    return {
+        "detected": [],
+        "branch": branch,
+        "skipped_reason": "not_default_branch",
+    }
+```
+
+**Scope clarification:** master-only enforcement applies ONLY to `wiki_refresh_stale` (which regenerates `mod:*`-style code-derived wikis via the `/repo-wiki` skill). It does NOT apply to:
+- Branch-tagged wikis added manually via `wiki_add`
+- Branch wikis from feature branches (those get cleaned via `wiki_cleanup_merged_branches`, below)
+
+Reasoning: regenerating skill-derived wikis on a feature branch creates branch-tagged entries that no default-branch session ever sees → LLM cost wasted. Manually-authored branch wikis are user intent and stay.
+
+### Companion MCP tool — `wiki_cleanup_merged_branches`
+
+```python
+@_tool(power=True)
+def wiki_cleanup_merged_branches(directory: str, dry_run: bool = True) -> dict:
+    """List wiki_page rows whose `branch` is no longer in `git branch -a`.
+
+    Run from within a git repo. `dry_run=True` (default) returns the candidate
+    list without deleting. `dry_run=False` deletes the listed pages.
+
+    Returns:
+        {
+            "candidates": [{"id": int, "slug": str, "branch": str}, ...],
+            "deleted_count": int,
+            "dry_run": bool,
+        }
+    """
+```
+
+Implementation:
+1. `git -C directory branch -a --format='%(refname:short)'` → live branch set (strip remote/ prefix)
+2. `SELECT id, slug, branch FROM wiki_page WHERE branch IS NOT NONE AND branch NOT IN ['master', 'main']`
+3. Filter rows whose branch is not in the live set
+4. If `dry_run=False`: `DELETE wiki_page WHERE id IN (candidate_ids)`
+
+No wiki heat decay (intentionally not adopted). Cleanup is explicit + user-controlled.
+
+### Queue drainer validation (format drift protection — Option Z)
+
+The `/repo-wiki` skill writes `.local-review/wiki/*.md`, `export-yadgar` parses them into `wiki_add` operations dropped in `~/.yadgar/queue/`, and yadgar's queue drainer applies them. Format drift between the skill's output and yadgar's current schema is a real risk — fields the skill doesn't know about (e.g. v5 `branch` column, v4.9 degenerate-content filter) can produce silently-broken wiki entries.
+
+**Mitigation: drainer becomes the format gatekeeper.**
+
+1. **Set fields the skill cannot know:**
+   - `branch = _detect_branch(directory)` if absent
+   - `confidence = "medium"` if absent
+   - Apply current tag taxonomy normalisation
+
+2. **Reject degenerate content (reuses v4.9 guard):**
+   ```python
+   from yadgar.cls_store import _is_degenerate_auto_abstracted
+   if _is_degenerate_auto_abstracted(op["content"]):
+       _dlq.put(op, reason="degenerate_content")
+       continue
+   ```
+
+3. **Validate required fields:** `slug`, `title`, `content`, `category`. Missing → DLQ with `reason="missing_required_field"`.
+
+4. **Schema-version gate:**
+   ```yaml
+   ---
+   wiki_schema_version: 2     # written by export-yadgar, read by drainer
+   slug: ...
+   ---
+   ```
+   Drainer requires `wiki_schema_version >= MIN_SUPPORTED_WIKI_SCHEMA_VERSION` (current: 2). Lower → DLQ with `reason="schema_version_too_old"`. Forces skill updates when yadgar schema bumps.
+
+**v6 escalation trigger:** if DLQ accumulates > 5 entries/week from this path in production, escalate to in-daemon regen (Option Y — yadgar owns regen end-to-end, no queue round-trip). Document this trigger in the v5 release notes so it gets monitored.
+
+---
+
+## Hooks
+
+### 27. Stop-hook expansion (dumb pipe)
+
+`~/.claude/hooks/yadgar-stop-memory-checkpoint.py` fires every 25 messages (unchanged interval). Currently emits a static checkpoint prompt. Replace with:
+
+```python
+PROMPT = """Yadgar checkpoint. Evaluate signals and decide actions.
+
+1. Call `project_brief(directory)` and check `signals`:
+   - `stale_wiki_count > 0` AND branch is master/main/default → consider repo-wiki regen
+   - `active_work_present == False` OR `active_work_age_hours > 24` → refresh _active_work
+   - `init_memory == None` after >5 sessions in this dir → create one
+
+2. If repo-wiki regen warranted, dispatch background Agent:
+   Agent(
+     subagent_type="general-purpose",
+     run_in_background=True,
+     description="repo-wiki regen on default branch",
+     prompt="cd into the project, run /repo-wiki:repo-wiki update, "
+            "verify export-yadgar fires, report regenerated slug list."
+   )
+
+3. If _active_work needs refresh, call update_active_work(directory, content).
+
+4. If init_memory missing and you have enough session context, propose one
+   and call bootstrap_project(directory, content) (≤2000 chars).
+
+5. Otherwise: capture any key decisions via memorize/wiki_add.
+
+Then look at your last message — if mid-thought, repeat the question so
+conversation continues naturally.
+"""
+```
+
+Hook is pure Python: prints this prompt, exits. No signal detection in the hook itself. No Anthropic API call from the hook. Session evaluates everything via tool calls.
+
+### Compound trigger condition (lives in the prompt)
+
+```
+(branch in [default_branch, "master", "main"])
+AND
+(signals.stale_wiki_count > 0 OR session_edits_to_project_modules > 5)
+```
+
+Session computes `session_edits_to_project_modules` from action-batch log if needed.
+
+### Open question — prompt tightening
+
+The signal-evaluation prompt is the first version. False-positive rate (sessions dispatching repo-wiki Agent when not actually needed) is unknown.
+
+**Monitoring plan (first 2 weeks after v5 ships):**
+- Track `repo_wiki_regen_dispatches_per_week` counter (new Prometheus metric)
+- Track `false_positive_dispatch_count` — dispatches where the Agent returned "no slugs regenerated" or "wiki already current"
+- If false-positive rate > 1/week sustained → rephrase prompt to tighten threshold (e.g. require `stale_wiki_count >= 3` instead of `>= 1`, or add a "last successful regen was >24h ago" gate)
+
+---
+
+### 28. SessionStart hook pipe integration
+
+`yadgar-session-start-context.py` after v5:
+
+```python
+import json, urllib.request, os
+DIR = os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
+url = f"http://127.0.0.1:8765/hooks/session-context?directory={DIR}&mode=catalog"
+try:
+    resp = json.loads(urllib.request.urlopen(url, timeout=2).read())
+    print(resp.get("text", ""))   # the `_render` markdown
+except Exception:
+    pass
+```
+
+Server-side `/hooks/session-context` endpoint calls `project_brief(directory, mode=catalog)` and returns `{"text": resp["_render"]}`. Hook is a thin pipe; all curation lives server-side. PostCompact hook uses the same endpoint.
+
+---
+
+## Refactor — decomposition
+
+### 29. Mega-function decomposition
+
+Before decomposing, write characterization test suite that snapshots current outputs:
+
+- `yadgar/tests/test_retrieval_core_characterization.py` — pin behaviour of `retrieval/core.py:305` (cognitive complexity 330). Fixed-seed corpus of 200 memories, query set of 25 queries spanning fast/balanced/full profiles. Snapshot ranked output IDs + scores per query. Asserts no drift across the decomposition.
+- `yadgar/tests/test_causal_discovery_characterization.py` — pin `causal_discovery.py:187` (complexity 146). Fixed-seed adjacency matrices through R1–R4 orientation rules. Snapshot orientation output.
+
+Then decompose:
+- `retrieval/core.py:305` → pipeline stages `candidate_fetch → score_fusion → rerank → filter → trim`. Each stage as a separate function with explicit input/output shapes.
+- `causal_discovery.py:187` → R1, R2, R3, R4 each as own method on the discovery class.
+
+Verification: characterization test suite must pass post-decomposition with **zero drift** in ranked-ID lists. Score floats compared with `math.isclose(rel_tol=1e-9)`.
+
+---
+
+## Execution order
+
+Single version bump, but ship as sequential commits on the same branch so each is independently reviewable and any can be reverted without unwinding the rest:
 
 1. **Credentials + auth** (§1, §2, §3, §7). Breaking — ship first behind feature flag `YADGAR_REQUIRE_AUTH=1` initially, flip to default-on at end of commit. This includes the install_hooks rewrite (§3) and the systemd EnvironmentFile + 1Password integration for `YADGAR_MCP_AUTH_TOKEN`.
 2. **Bugs + None-dereference + atomicity** (§4-§8, §9-§13, plus §6 RMW TX wraps). No public API change; pure correctness.
 3. **Resource hygiene + perf** (§12, §14). Bare-except logging, LRU bounds, migration lock, engram cast, shutdown idempotency, predictive_coding cache, _merge_duplicates numpy.
 4. **Observability + features** (§15, §16, §17). Additive only — `/metrics`, JSON logs, wiki backup loop, `memory_get` / `wiki_get`.
 5. **Refactor + CVE + container + roadmap leftovers** (§18, §19, §20, Roadmap leftovers, plus `pyproject.toml` version bump to 5.0.0).
+6. **Characterization tests** (§29). Pin behaviour of `retrieval/core.py:305` and `causal_discovery.py:187` before any decomposition. Independent commit; must be green.
+7. **Schema migration** (§25). Add `branch` column to `memory` + `wiki_page`. Nullable, no backfill. Independent commit; no behaviour change yet.
+8. **`project_brief` + `_project_init` + `_active_work`** (§22, §23, §24). New MCP surface: `bootstrap_project`, `update_active_work`. Old `get_project_context` retained as deprecated alias.
+9. **`wiki_refresh_stale` + stop-hook expansion + SessionStart pipe** (§26, §27, §28). Hook side. New `/hooks/session-context` endpoint.
+10. **Branch-tag auto-capture + retrieval filter** (§25 write paths). Wire into `memorize`/`anchor`/`checkpoint`/`wiki_add`. Retrieval filter active.
+11. **Mega-function decomposition** (§29). Characterization tests gate the commit.
 
 CI must be green after each commit. The breaking commit (1) is the only one users need to read `MIGRATION_NOTES.md` for.
 
@@ -324,8 +877,8 @@ CI must be green after each commit. The breaking commit (1) is the only one user
 | File | Change |
 |------|--------|
 | `Dockerfile.backend`, `entrypoint-backend.sh`, `scripts/setup.sh`, `scripts/migrate_*.py`, `scripts/test_server_compat.py` | Remove `root:root` defaults; fail-closed env-var pattern; EnvironmentFile pattern |
-| `yadgar/storage.py` | Hard error on missing creds; int-cast record IDs; restrict `_q` retry; tokenize `batch_writes`; TX for `recreate_vector_table` + Q15 RMW sites; `_bytes_to_floats` validation; migration lock; `init_engram_slots` cast |
-| `yadgar/server.py` | Bearer auth middleware; default-deny CORS; `install_hooks` → real script; path-hash whitelist + size cap; auto-capture sanitization; `asyncio.to_thread`, `AsyncClient`, locks (Q1/Q2/Q5/Q6); atomic settings.json (Q14); shutdown idempotency (Q16); double-checked init fix; LRU module dicts; new `memory_get` + `wiki_get` MCP tools; `wiki_list` DB-side filter |
+| `yadgar/storage.py` | Hard error on missing creds; int-cast record IDs; restrict `_q` retry; tokenize `batch_writes`; TX for `recreate_vector_table` + Q15 RMW sites; `_bytes_to_floats` validation; migration lock; `init_engram_slots` cast; add `branch` column to `memory` + `wiki_page` schemas (nullable); branch filter in retrieval queries; `search_memories_by_tag(tag, directory_context)` helper |
+| `yadgar/server.py` | Bearer auth middleware; default-deny CORS; `install_hooks` → real script; path-hash whitelist + size cap; auto-capture sanitization; `asyncio.to_thread`, `AsyncClient`, locks (Q1/Q2/Q5/Q6); atomic settings.json (Q14); shutdown idempotency (Q16); double-checked init fix; LRU module dicts; new `memory_get` + `wiki_get` MCP tools; `wiki_list` DB-side filter; rename `get_project_context → project_brief`, layered output, two modes; `bootstrap_project`, `update_active_work`, `wiki_refresh_stale` MCP tools; deprecated alias for `get_project_context`; new endpoint `/hooks/session-context` |
 | `yadgar/scripts/hook_runner.py` (new) | install_hooks payload as real script |
 | `yadgar/viz_server.py` | Default `host=127.0.0.1` |
 | `yadgar/enrichment.py` | HTTPS + `urllib.parse.quote`; 9 None-dereference guards; extract duplicate enrichment-source helper |
@@ -337,9 +890,11 @@ CI must be green after each commit. The breaking commit (1) is the only one user
 | `yadgar/knowledge_graph.py`, `yadgar/predictive_coding.py`, `yadgar/retrieval/reranking.py` | Dead-code fixes (Q9/Q10/Q8) |
 | `yadgar/predictive_coding.py`, `yadgar/consolidation.py` | Perf hotspots (D3) |
 | `yadgar/retrieval/core.py` | Decompose complexity-330 function into pipeline stages |
-| `yadgar/seed.py` | Re-seed atomicity (Q17); merge identical if/elif (S1871) |
-| `yadgar/config.py` | Log YAML config errors instead of swallowing |
+| `yadgar/seed.py` | Re-seed atomicity (Q17); merge identical if/elif (S1871); draft starter `_project_init` from README + top-level docs |
+| `yadgar/config.py` | Log YAML config errors instead of swallowing; new: `PROJECT_INIT_CAP_CHARS: int = 2000`, `BRIEF_MODE_DEFAULT: str = "catalog"`, `WIKI_STALE_GRACE_DAYS: int = 7` |
 | `yadgar/hooks/post-tool-capture.py` | Remove dead `_db_locked` TOCTOU helper |
+| `yadgar/hooks/yadgar-stop-memory-checkpoint.py` | Expand to inject signal-evaluation prompt (no Python detection, no API call) |
+| `yadgar/hooks/yadgar-session-start-context.py` | Pipe `project_brief._render` markdown |
 | `yadgar/metrics.py` (new) | Prometheus collectors |
 | `yadgar/log_config.py` (or extend existing) | JSON formatter, request-id middleware |
 | `entrypoint-backend.sh` | Wiki snapshot loop |
@@ -349,12 +904,20 @@ CI must be green after each commit. The breaking commit (1) is the only one user
 | `yadgar/tests/test_memory_behavior.py`, `test_frontier_integration.py` | `_engines` teardown audit |
 | `yadgar/tests/test_memorize_latency.py` (new) | `< 5 ms` in-process assertion |
 | `yadgar/tests/test_security_headers.py`, `test_credentials_required.py`, `test_install_hooks_injection.py`, `test_path_traversal.py`, `test_recreate_vector_table_atomicity.py`, `test_thermodynamics_negative_time.py`, `test_async_handlers_no_block.py`, `test_metrics_endpoint.py`, `test_wiki_backup.py`, `test_memory_get_wiki_get.py`, `test_rules_engine_hard_fail_closed.py`, `test_bytes_to_floats_validation.py`, `test_none_dereference_guards.py` (new) | Coverage for every security/correctness item |
+| `yadgar/tests/test_project_brief.py` (new) | Catalog vs full mode; walk-up resolution; init_memory inlining; signals computation |
+| `yadgar/tests/test_bootstrap_project.py` (new) | 2000-char cap enforcement; atomic replace; reject overflow |
+| `yadgar/tests/test_update_active_work.py` (new) | Atomic replace; previous_count returned |
+| `yadgar/tests/test_branch_tagging.py` (new) | Auto-capture on memorize/anchor/checkpoint/wiki_add; retrieval filter; wiki_read resolution order |
+| `yadgar/tests/test_wiki_refresh_stale.py` (new) | Master-only enforcement; force_branch override; hash drift detection |
+| `yadgar/tests/test_retrieval_core_characterization.py` (new) | Pin retrieval/core.py:305 behaviour pre-decomposition |
+| `yadgar/tests/test_causal_discovery_characterization.py` (new) | Pin causal_discovery.py:187 behaviour pre-decomposition |
+| `yadgar/tests/test_stop_hook_prompt.py` (new) | Hook emits the expected prompt; no other side effects |
 | `.forgejo/workflows/build.yml` | Cache prune step; HF cache key includes model name |
-| `pyproject.toml` | Bump `4.4.10 → 5.0.0`; add `prometheus-client`; `pytest>=9.0.3`; `ruff target-version = "py314"` |
+| `pyproject.toml` | Bump `4.9.0 → 5.0.0`; add `prometheus-client`; `pytest>=9.0.3`; `ruff target-version = "py314"` |
 | `uv.lock` | `python-multipart 0.0.26 → 0.0.27` |
 | `requirements.txt` | Remove or regenerate (out of date) |
-| `docs/configuration.md` | Document `YADGAR_DB_PASS`, `YADGAR_AUTH_TOKEN`, `YADGAR_ALLOWED_ORIGINS`, `YADGAR_HOST`, `YADGAR_METRICS_ENABLED`, `YADGAR_LOG_FORMAT`, `YADGAR_MAX_HASH_BYTES` |
-| `MIGRATION_NOTES.md` | Operator steps: generate creds, point hooks at new auth token, update systemd unit, bump container images |
+| `docs/configuration.md` | Document `YADGAR_DB_PASS`, `YADGAR_AUTH_TOKEN`, `YADGAR_ALLOWED_ORIGINS`, `YADGAR_HOST`, `YADGAR_METRICS_ENABLED`, `YADGAR_LOG_FORMAT`, `YADGAR_MAX_HASH_BYTES`, `PROJECT_INIT_CAP_CHARS`, `BRIEF_MODE_DEFAULT`, `WIKI_STALE_GRACE_DAYS`, `project_brief` two-mode response |
+| `MIGRATION_NOTES.md` | Operator steps: generate creds, point hooks at new auth token, update systemd unit, bump container images; steps to seed `_project_init` for the 6 initial projects |
 
 ---
 
@@ -392,9 +955,50 @@ CI must be green after each commit. The breaking commit (1) is the only one user
 ### CI
 18. Workflow re-runs green; HF model cache invalidates when `EMBEDDING_MODEL` literal changes.
 
+### Project bootstrap
+19. **Walk-up resolution.** `project_brief("/home/max/git/yadgar/yadgar/tests")` returns `_resolved_directory = "/home/max/git/yadgar"`.
+20. **Mode split.** Catalog response ≤ 700 tokens; full response ≤ 1200 tokens (measured via tiktoken).
+21. **Cap enforcement.** `bootstrap_project(directory, content="x"*2001)` raises `ValueError`.
+22. **Atomic replace.** Call `bootstrap_project` then `bootstrap_project` again with different content; assert exactly one `_project_init` memory exists for the directory after.
+23. **Deprecated alias.** `get_project_context(directory)` still works, returns the same shape as `project_brief(directory, mode="catalog")`, emits a `DeprecationWarning`.
+
+### Branch tagging
+24. **Branch tag auto-capture.** `memorize(content="x", context="/some/git/repo/dir", tags=[])` writes a row with `branch = <current branch>`.
+25. **Retrieval filter.** From feature branch, recall returns feature-branch entries + default-branch entries; from default branch, only default + null surface.
+26. **Wiki resolution order.** Branch-specific page preferred over default-branch page over null-branch page when slug collides.
+27. **`wiki_refresh_stale` master gate.** From feature branch returns `skipped_reason="not_default_branch"`. With `force_branch=True`, proceeds.
+
+### Hooks
+28. **Hook prompt emission.** `yadgar-stop-memory-checkpoint.py` invoked → stdout matches expected fixture; exit code 0; no network calls.
+
+### Decomposition
+29. **Characterization parity.** Pre-decomp snapshot vs post-decomp run shows identical ranked-ID lists and scores (`math.isclose(rel_tol=1e-9)`).
+30. **End-to-end repo-wiki regen.** Edit a yadgar source file, trigger stop hook, watch dispatched Agent regen wiki, watch queue drain into `wiki_page` table. Assert frontmatter hash updated.
+
 ---
 
-## Out of scope (deferred to v5.1 or never)
+## 30. Test coverage — untested production modules
+
+11 modules have no test file. Local-review T-0023 (HIGH). Priority for v5:
+
+**P0 (security-critical):**
+- `secrets.py` — pattern coverage tests, false-positive/negative table, per-provider fixtures
+- `causal_discovery.py` — Meek rules R1/R2/R3/R4 with fixed-seed adjacency matrices (also gates the §29 decomposition characterization tests)
+- `rules_engine.py` — fuzz `_parse_action` with hypothesis (NaN/inf/string/dict; assert ValueError on non-finite)
+
+**P1 (correctness-critical):**
+- `consolidation.py` — daily-cycle window logic (T-0016); add timeline test with mocked clock
+- `ml_client.py` — GTE → FlashRank → CrossEncoder fallback chain (T-0006); assert flag-respect after first failure
+- `embed_service.py` — /admin/dbsize auth gate test; /embed payload-size limit test
+
+**P2 (coverage debt, non-critical):**
+- `viz_server.py`, `graph_api.py`, `narrative.py`, `thermodynamics.py`, `enrichment.py`, `astrocyte_pool.py`, `remote_embeddings.py`, `restoration.py`, `predictive_coding.py`
+
+Tests live in `yadgar/tests/test_<module>.py`. Use `YADGAR_TEST=1` env. Pass `-W error` after these land — no warnings tolerated.
+
+---
+
+## Out of scope (deferred to v6 or never)
 
 - **server.py / storage.py module split** — 2596 + 2954 LoC; real debt but no behaviour change. Decompose alongside touching code; full split deferred until maintenance pain forces it.
 - **Remaining 72 cognitive-complexity-15+ functions** — fix opportunistically.
@@ -404,3 +1008,15 @@ CI must be green after each commit. The breaking commit (1) is the only one user
 - **`llm.nix` backup DST fix** — already in `TODO.md`; nix-repo concern.
 - **CRDT multi-agent sync, dual-vectors, prospective-memory wiring** — speculative, no consumer.
 - **DLQ web UI, per-op retry policy, auto-requeue on schema migration** — speculative until concrete data appears.
+- **Branch deletion cleanup** — memories with deleted branches stay until heat decay.
+- **Rebase invalidation** — heat decay + manual `forget()` handles edge cases.
+- **Auto-promotion on merge** — branch-tagged entries don't auto-rewrite when feature branch merges.
+- **Cross-branch dedup** — same memory on two branches creates two rows; acceptable.
+- **Auto-tagging strategy for `_session_context`** — retired; replaced by `_project_init` table-of-contents pattern; no auto-tag needed.
+- **LLM-driven semantic comparison from inside the stop hook** — cost + risk.
+- **Auto-regen on every save** (file-watcher reactive regen) — stick with stop-hook cadence.
+- **Per-language project-snapshot integration** — currently only git is generic; package-manifest detection is broad.
+- **Web UI for editing `_project_init` / `_active_work` memories.**
+- **Cross-project session context** — today: one directory at a time.
+- **Action-stream → narrative compression in the checkpoint hook** — already happens during sleep cycles.
+- **`BRIEF_NUDGES_ENABLED` first-session nudges** from the original v4.5 plan — defer until needed.
