@@ -116,7 +116,16 @@ class TestPermanentFailureDLQ:
 
     def test_sidecar_written_on_dlq_move(self, tmp_path):
         fq, drainer = _make_drainer(tmp_path, max_permanent_attempts=1, backoff_base_s=0.0)
-        fq.enqueue("wiki_add", {"title": "T", "content": "C"})
+        fq.enqueue(
+            "wiki_add",
+            {
+                "wiki_schema_version": 2,
+                "slug": "t",
+                "title": "T",
+                "content": "C",
+                "category": "reference",
+            },
+        )
 
         err = Exception("Client error '400 Bad Request' some detail")
         with patch.object(drainer, "_apply", side_effect=err):

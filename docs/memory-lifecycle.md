@@ -133,3 +133,17 @@ Key settings that control the lifecycle:
 | `ACTION_STREAM_ENABLED` | true | Enable auto-capture of tool actions |
 
 See `docs/configuration.md` for the full reference.
+
+## Project State Memories (v5.0)
+
+Two per-directory memory patterns surface project-level context that doesn't fit episodic or semantic stores:
+
+**`_project_init`** — single memory per directory tagged `_project_init`. Markdown table of contents pointing at wiki slugs, key memory IDs, conventions, lookup tips. Created via `bootstrap_project(directory, content)` (MCP tool, `power=True`). Server-side hard cap `PROJECT_INIT_CAP_CHARS = 2000` — overflow raises `ValueError`, no silent truncation. Idempotent replacement: existing entry is deleted before insert.
+
+**`_active_work`** — single memory per directory tagged `_active_work`. No char cap. In-flight state Claude can read on session resume. Created via `update_active_work(directory, content)` (MCP tool, `power=True`). Atomic delete-then-insert in a single transaction; returns `previous_content` (or `None`) alongside the new memory dict.
+
+Both are `is_protected=True` (never decay) and intentionally leave the `branch` column unset — project-level state is not branch-scoped.
+
+`project_brief(directory, mode)` surfaces these on session start. In `catalog` mode (default, ~500 tokens), only their presence is reported. In `full` mode (~1050 tokens), full content is inlined alongside top anchors, hot memories, and key wiki pages.
+
+`seed_project(directory)` drafts a starter `_project_init` from the project's README and top-level docs after a successful seed.

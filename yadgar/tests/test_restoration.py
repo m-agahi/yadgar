@@ -10,6 +10,8 @@ from yadgar.embeddings import EmbeddingEngine
 from yadgar.restoration import CheckpointRestore
 from yadgar.storage import StorageEngine
 
+pytestmark = pytest.mark.xdist_group("server_globals")
+
 
 @pytest.fixture
 def temp_db(tmp_path):

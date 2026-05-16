@@ -14,6 +14,7 @@ Usage (inside container):
     python3 /scripts/migrate_v235_to_v204.py
 """
 
+import os as _os
 import subprocess
 import time
 import urllib.request
@@ -40,6 +41,14 @@ TABLES = [
     "wiki_crossref",
 ]
 
+_SURREAL_USER = _os.environ.get("SURREAL_USER") or _os.environ.get("YADGAR_DB_USER")
+_SURREAL_PASS = _os.environ.get("SURREAL_PASS") or _os.environ.get("YADGAR_DB_PASS")
+if not _SURREAL_USER or not _SURREAL_PASS:
+    raise RuntimeError(
+        "SURREAL_USER/SURREAL_PASS (or YADGAR_DB_USER/YADGAR_DB_PASS) must be set. "
+        "Example: SURREAL_USER=root SURREAL_PASS=<secret> python3 migrate_v235_to_v204.py"
+    )
+
 
 def start_server(binary, path, port):
     proc = subprocess.Popen(
@@ -50,9 +59,9 @@ def start_server(binary, path, port):
             "--bind",
             f"127.0.0.1:{port}",
             "--user",
-            "root",
+            _SURREAL_USER,
             "--pass",
-            "root",
+            _SURREAL_PASS,
             f"surrealkv://{path}",
         ],
         stdout=subprocess.DEVNULL,
@@ -74,7 +83,7 @@ def connect(port):
     from surrealdb import Surreal
 
     db = Surreal(f"ws://127.0.0.1:{port}")
-    db.signin({"username": "root", "password": "root"})
+    db.signin({"username": _SURREAL_USER, "password": _SURREAL_PASS})
     db.use("yadgar", "main")
     return db
 

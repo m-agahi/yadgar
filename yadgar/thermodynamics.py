@@ -115,7 +115,8 @@ class MemoryThermodynamics:
         if _CODE_BLOCK_RE.search(content) or _FILE_PATH_RE.search(content):
             score += 0.1
 
-        return min(score, 1.0)
+        # Q84: round so IEEE 754 arithmetic can reach exactly 1.0
+        return round(min(score, 1.0), 10)
 
     # -- c. Emotional Valence --
 
@@ -196,6 +197,8 @@ class MemoryThermodynamics:
         # Clamp factor to valid range
         effective_factor = max(0.0, min(effective_factor, 1.0))
 
+        # Q12: clamp negative elapsed time — negative hours_elapsed amplifies heat
+        hours_elapsed = max(0.0, hours_elapsed)
         new_heat = memory["heat"] * (effective_factor**hours_elapsed)
         return new_heat
 
@@ -251,13 +254,15 @@ class MemoryThermodynamics:
 
             now = datetime.now(UTC)
             hours = (now - mem_dt).total_seconds() / 3600.0
+            # Q18: clamp negative hours (future timestamps / clock skew)
+            hours = max(0.0, hours)
             window = self._settings.SESSION_COHERENCE_WINDOW_HOURS
 
             if hours < window:
                 freshness = 1.0 - (hours / window)
                 bonus = self._settings.SESSION_COHERENCE_BONUS * freshness
                 return min(heat + bonus, 1.0)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as _e:
             pass
 
         return heat

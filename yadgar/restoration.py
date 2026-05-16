@@ -96,11 +96,20 @@ class CheckpointRestore:
             "status": "created",
         }
 
-    def anchor_memory(self, content: str, context: str, tags: list[str], reason: str = "") -> int:
+    def anchor_memory(
+        self,
+        content: str,
+        context: str,
+        tags: list[str],
+        reason: str = "",
+        branch: str | None = None,
+    ) -> int:
         """Store a memory with maximum protection — survives compaction restoration.
 
         Anchored memories get heat=1.0, is_protected=True, importance=1.0.
         They are ALWAYS included in restoration regardless of other scoring.
+
+        branch: auto-captured at write time via _detect_branch; None for non-git contexts.
         """
         embedding = self._embeddings.encode(content)
         memory_id = self._storage.insert_memory(
@@ -113,7 +122,8 @@ class CheckpointRestore:
                 "is_stale": False,
                 "file_hash": None,
                 "embedding_model": self._embeddings.get_model_name(),
-            }
+            },
+            branch=branch,
         )
         # Set protection and importance flags
         self._storage.protect_memory(

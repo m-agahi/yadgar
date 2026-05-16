@@ -304,6 +304,19 @@ class QueueDrainer(threading.Thread):
                         self._attempts.pop(fname, None)
                     continue
 
+                # §26 Option Z — wiki_add validation before apply
+                if op_type == "wiki_add":
+                    reject_reason = self._validate_wiki_add(data)
+                    if reject_reason:
+                        attempt.count = self._max_permanent  # treat as permanent failure
+                        attempt.last_error = reject_reason
+                        attempt.classification = "permanent"
+                        attempt.first_failed_at = now
+                        self._move_to_dlq(path, attempt, op_type)
+                        self._attempts.pop(fname, None)
+                        logger.warning("wiki_add rejected (DLQ): %s — %s", fname, reject_reason)
+                        continue
+
                 try:
                     self._apply(data)
                     self._attempts.pop(fname, None)
@@ -414,6 +427,57 @@ class QueueDrainer(threading.Thread):
             attempt.last_error[:200],
         )
 
+    # ── §26 Option Z ─────────────────────────────────────────────────────────
+
+    _MIN_WIKI_SCHEMA_VERSION: int = 2
+    _WIKI_REQUIRED_FIELDS: tuple[str, ...] = ("slug", "title", "content", "category")
+
+    def _validate_wiki_add(self, record: dict) -> str | None:
+        """Validate a wiki_add queue record (§26 Option Z).
+
+        Returns a rejection reason string if the record should go to DLQ,
+        or None if it passes all checks.
+        """
+        p = record.get("payload", {})
+
+        # 1. Schema-version gate
+        schema_ver = p.get("wiki_schema_version")
+        if schema_ver is None or int(schema_ver) < self._MIN_WIKI_SCHEMA_VERSION:
+            return (
+                f"schema_version_too_old: got {schema_ver!r}, "
+                f"require >= {self._MIN_WIKI_SCHEMA_VERSION}"
+            )
+
+        # 2. Required fields
+        for field in self._WIKI_REQUIRED_FIELDS:
+            if not p.get(field):
+                return f"missing_required_field: {field}"
+
+        # 3. Degenerate content filter (v4.9 guard)
+        try:
+            from yadgar.cls_store import _is_degenerate_auto_abstracted
+
+            if _is_degenerate_auto_abstracted(p.get("content", "")):
+                return "degenerate_content"
+        except Exception as _e:
+            logger.debug("_validate_wiki_add: degenerate check failed: %s", _e)
+
+        return None
+
+    def _fill_wiki_add_defaults(self, payload: dict) -> dict:
+        """Fill fields that the export-yadgar skill cannot know (§26 Option Z).
+
+        - branch: set to 'master' if absent (Stage 10 will source from git).
+        - confidence: set to 'medium' if absent.
+        """
+        if "branch" not in payload or payload.get("branch") is None:
+            payload["branch"] = "master"
+        if not payload.get("confidence"):
+            payload["confidence"] = "medium"
+        return payload
+
+    # ── end §26 ──────────────────────────────────────────────────────────────
+
     def _apply(self, record: dict) -> None:
         """Replay a queued write by re-invoking the tool function.
 
@@ -447,6 +511,10 @@ class QueueDrainer(threading.Thread):
                 context=p["context"],
                 reason=p.get("reason", ""),
             )
+            # Branch in anchor payload (p.get("branch")) is captured at enqueue
+            # time; the anchor() sync path re-detects branch via _detect_branch.
+            # For long-running queues, the payload branch provides the enqueue-
+            # time value but the sync path detection takes precedence.
         elif op == "checkpoint":
             from yadgar.server import checkpoint as _checkpoint
 
@@ -463,6 +531,9 @@ class QueueDrainer(threading.Thread):
         elif op == "wiki_add":
             from yadgar.server import wiki_add as _wiki_add
 
+            # §26 Option Z — fill fields the skill cannot know before calling wiki_add
+            p = self._fill_wiki_add_defaults(dict(p))
+
             _wiki_add(
                 title=p["title"],
                 content=p["content"],
@@ -471,6 +542,7 @@ class QueueDrainer(threading.Thread):
                 source_memory_ids=p.get("source_memory_ids"),
                 confidence=p.get("confidence", "medium"),
                 append=p.get("append", False),
+                branch=p.get("branch"),
             )
         else:
             logger.debug("Unknown queue op %r — skipping", op)

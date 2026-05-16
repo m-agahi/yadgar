@@ -198,6 +198,10 @@ class Reranker:
         if top_k is None:
             top_k = self._settings.CROSS_ENCODER_TOP_K
 
+        # §13 skip: gate behind enabled flag — ML model is optional
+        if not getattr(self._settings, "CROSS_ENCODER_ENABLED", True):
+            return memories[:top_k] if memories else []
+
         if not memories or not query:
             return memories[:top_k] if memories else []
 
@@ -464,8 +468,7 @@ class Reranker:
         mean_s = sum(scores) / len(scores)
         std_s = (sum((s - mean_s) ** 2 for s in scores) / len(scores)) ** 0.5
 
-        # Top-1 z-score: how far above mean is the best result?
-        (scores[0] - mean_s) / std_s if std_s > 1e-9 else 0.0
+        # Q8: deleted dead z-score (computed but never used — z_gap is the wired signal)
 
         # Score gap between top-1 and top-2
         raw_gap = scores[0] - scores[1]

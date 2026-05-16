@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Test if surrealdb-python 2.0.0 can write to a SurrealDB server binary at /surreal_test."""
 
+import os
 import subprocess
 import sys
 import time
@@ -10,6 +11,16 @@ BINARY = sys.argv[1] if len(sys.argv) > 1 else "/usr/local/bin/surreal"
 DB_PATH = "/tmp/compat_test_db"
 PORT = 19001
 
+# Credentials from environment — no hardcoded defaults.
+_USER = os.environ.get("SURREAL_USER") or os.environ.get("YADGAR_DB_USER")
+_PASS = os.environ.get("SURREAL_PASS") or os.environ.get("YADGAR_DB_PASS")
+if not _USER or not _PASS:
+    print(
+        "ERROR: set SURREAL_USER + SURREAL_PASS (or YADGAR_DB_USER + YADGAR_DB_PASS)",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
 proc = subprocess.Popen(
     [
         BINARY,
@@ -18,9 +29,9 @@ proc = subprocess.Popen(
         "--bind",
         f"127.0.0.1:{PORT}",
         "--user",
-        "root",
+        _USER,
         "--pass",
-        "root",
+        _PASS,
         f"surrealkv://{DB_PATH}",
     ],
     stdout=subprocess.DEVNULL,
@@ -42,7 +53,7 @@ try:
     from surrealdb import Surreal
 
     db = Surreal(f"ws://127.0.0.1:{PORT}")
-    db.signin({"username": "root", "password": "root"})
+    db.signin({"username": _USER, "password": _PASS})
     db.use("test", "test")
     r = db.query("CREATE memory:1 SET content = 'hello'")
     print("write:", r)

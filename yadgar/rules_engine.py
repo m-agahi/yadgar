@@ -108,12 +108,20 @@ def _parse_action(action: str) -> tuple[str, float]:
     "boost:0.3" -> ("boost", 0.3)
     "penalty:0.2" -> ("penalty", 0.2)
     """
+    import math
+
     if action == "filter":
         return "filter", 0.0
     if action.startswith("boost:"):
-        return "boost", float(action.split(":", 1)[1])
+        val = float(action.split(":", 1)[1])
+        if not math.isfinite(val):
+            raise ValueError(f"boost value must be finite, got {val!r}")
+        return "boost", val
     if action.startswith("penalty:"):
-        return "penalty", float(action.split(":", 1)[1])
+        val = float(action.split(":", 1)[1])
+        if not math.isfinite(val):
+            raise ValueError(f"penalty value must be finite, got {val!r}")
+        return "penalty", val
     raise ValueError(f"Invalid action: {action!r}")
 
 
@@ -298,8 +306,9 @@ class RulesEngine:
         try:
             field, operator, value = _parse_condition(condition)
         except ValueError:
-            logger.warning("Failed to parse condition: %s", condition)
-            return True  # Unparseable conditions pass by default
+            # Q19: fail-closed — unparseable hard-rule conditions must NOT silently pass
+            logger.warning("Failed to parse condition (fail-closed): %s", condition)
+            return False
 
         field_value = _get_field_value(memory, field)
 
@@ -319,7 +328,7 @@ class RulesEngine:
                     float(field_value) if not isinstance(field_value, (int, float)) else field_value
                 )
                 num_value = float(value)
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as _e:
                 return False
 
             if operator == ">":
@@ -337,7 +346,7 @@ class RulesEngine:
             if field in NUMERIC_FIELDS:
                 try:
                     return float(field_value) == float(value)
-                except (ValueError, TypeError):
+                except (ValueError, TypeError) as _e:
                     pass
             return str(field_value).lower() == str(value).lower()
 
@@ -345,7 +354,7 @@ class RulesEngine:
             if field in NUMERIC_FIELDS:
                 try:
                     return float(field_value) != float(value)
-                except (ValueError, TypeError):
+                except (ValueError, TypeError) as _e:
                     pass
             return str(field_value).lower() != str(value).lower()
 

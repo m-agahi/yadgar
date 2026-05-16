@@ -16,7 +16,8 @@ from typing import TYPE_CHECKING
 
 import httpx
 import numpy as np
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, field_validator
 
 if TYPE_CHECKING:
@@ -24,6 +25,27 @@ if TYPE_CHECKING:
     from yadgar.ml_client import LocalMLClient
 
 logger = logging.getLogger(__name__)
+
+_http_bearer = HTTPBearer(auto_error=False)
+
+
+async def _require_admin_token(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
+) -> None:
+    """Dependency: verify bearer token for /admin/* routes.
+
+    Token read from YADGAR_MCP_AUTH_TOKEN. If the env var is unset,
+    /admin routes are locked out entirely (fail-secure).
+    """
+    expected = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    allow_root = os.environ.get("YADGAR_ALLOW_ROOT", "0").lower() in ("1", "true", "yes")
+    if allow_root:
+        return  # test escape hatch
+    if not expected:
+        raise HTTPException(status_code=503, detail="Admin token not configured")
+    if credentials is None or credentials.credentials != expected:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
 
 _engine: EmbeddingEngine | None = None
 _engine_lock = threading.Lock()
@@ -200,7 +222,7 @@ async def health(response: Response):
 
 
 @app.get("/admin/dbsize")
-async def admin_dbsize():
+async def admin_dbsize(_: None = Depends(_require_admin_token)):
     """Return a filesystem size breakdown of the SurrealDB data directory.
 
     Walks /data/surreal_db using os.walk() and buckets files by subdirectory

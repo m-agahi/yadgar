@@ -1,29 +1,53 @@
 #!/usr/bin/env python3
-"""Yadgar stop hook — periodic memory checkpoint.
+"""Yadgar stop hook — periodic signal-evaluation checkpoint (§27).
 
-Fires every INTERVAL human messages and prompts Claude to call memorize()
-with key decisions/context from the session, then continue the conversation.
+Fires every INTERVAL human messages and prompts Claude to evaluate signals
+via project_brief() and take action (wiki regen, active_work refresh, etc.).
 
-Installed globally to ~/.claude/hooks/ so it fires in every session
-regardless of project directory.
+This hook is a DUMB PIPE — no Python signal detection, no API calls.
+All evaluation happens in the Claude session via tool calls.
+
+State: ~/.yadgar/stop-hook-state.json (keyed by session_id, atomic writes).
 
 Output: JSON to stdout.
-  {"decision": "block", "reason": "..."} — prompt Claude to write memories
+  {"decision": "block", "reason": "..."} — inject signal-eval prompt
   {}                                      — allow stop normally
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
 INTERVAL = 25  # human messages between checkpoints
 
-_PROMPT = (
-    "Yadgar checkpoint: call `memorize()` once or twice for key decisions or learnings. "
-    "If anything wiki-worthy was discussed (architecture, concepts, decisions), call `wiki_add()` too. "
-    "Then look at your last message — if you asked a question or were mid-thought, "
-    "repeat it so the conversation can continue naturally."
-)
+_PROMPT = """\
+Yadgar checkpoint. Evaluate signals and decide actions.
+
+1. Call `project_brief(directory)` and check `signals`:
+   - `stale_wiki_count > 0` AND branch is master/main/default → consider repo-wiki regen
+   - `active_work_present == False` OR `active_work_age_hours > 24` → refresh _active_work
+   - `init_memory == None` after >5 sessions in this dir → create one
+
+2. If repo-wiki regen warranted, dispatch background Agent:
+   Agent(
+     subagent_type="general-purpose",
+     run_in_background=True,
+     description="repo-wiki regen on default branch",
+     prompt="cd into the project, run /repo-wiki:repo-wiki update, "
+            "verify export-yadgar fires, report regenerated slug list."
+   )
+
+3. If _active_work needs refresh, call update_active_work(directory, content).
+
+4. If init_memory missing and you have enough session context, propose one
+   and call bootstrap_project(directory, content) (<=2000 chars).
+
+5. Otherwise: capture any key decisions via memorize/wiki_add.
+
+Then look at your last message — if mid-thought, repeat the question so
+conversation continues naturally.
+"""
 
 
 def _count_human_messages(transcript_path: str) -> int:
@@ -72,7 +96,36 @@ def _count_human_messages(transcript_path: str) -> int:
     return count
 
 
-def main():
+def _state_file_path() -> Path:
+    """Return path to stop-hook-state.json under ~/.yadgar/."""
+    home = Path(os.environ.get("HOME", Path.home()))
+    return home / ".yadgar" / "stop-hook-state.json"
+
+
+def _load_state() -> dict:
+    """Load the global stop-hook state dict. Returns {} on any error."""
+    sf = _state_file_path()
+    if not sf.exists():
+        return {}
+    try:
+        return json.loads(sf.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_state(state: dict) -> None:
+    """Atomically write state dict to stop-hook-state.json (tmp + os.replace)."""
+    sf = _state_file_path()
+    try:
+        sf.parent.mkdir(parents=True, exist_ok=True)
+        tmp = sf.parent / (sf.name + ".tmp")
+        tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        os.replace(str(tmp), str(sf))
+    except Exception:
+        pass
+
+
+def main() -> None:
     try:
         data = json.loads(sys.stdin.read() or "{}")
     except Exception:
@@ -82,7 +135,7 @@ def main():
     transcript_path = data.get("transcript_path", "")
     stop_hook_active = str(data.get("stop_hook_active", "false")).lower() in ("true", "1", "yes")
 
-    # Infinite-loop guard: Claude already wrote memories this turn — allow stop
+    # Infinite-loop guard: Claude already ran a checkpoint this turn — allow stop
     if stop_hook_active:
         print("{}")
         return
@@ -92,29 +145,20 @@ def main():
         print("{}")
         return
 
-    # Load per-session state
-    safe_id = "".join(c if c.isalnum() or c in "-_" else "_" for c in session_id)
-    state_file = Path(f"/tmp/yadgar_stop_{safe_id}.json")
-    state: dict = {}
-    if state_file.exists():
-        try:
-            state = json.loads(state_file.read_text())
-        except Exception:
-            state = {}
+    state = _load_state()
+    session_state: dict = state.get(session_id, {})
+    last_save: int = session_state.get("last_save", 0)
 
-    last_save: int = state.get("last_save", 0)
     current_count = _count_human_messages(transcript_path)
 
     if current_count - last_save < INTERVAL:
         print("{}")
         return
 
-    # Checkpoint time — update state and block
-    state["last_save"] = current_count
-    try:
-        state_file.write_text(json.dumps(state))
-    except Exception:
-        pass
+    # Checkpoint time — update state atomically and block
+    session_state["last_save"] = current_count
+    state[session_id] = session_state
+    _save_state(state)
 
     print(json.dumps({"decision": "block", "reason": _PROMPT}))
 

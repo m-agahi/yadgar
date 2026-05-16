@@ -138,6 +138,9 @@ class CognitiveMap:
             self.compute_sr_matrix()
 
         M = self._sr_matrix
+        # §13: SR matrix must be set after compute_sr_matrix — None means programming error
+        if M is None:
+            raise RuntimeError("CognitiveMap: SR matrix not initialized after compute_sr_matrix")
         if M.size == 0:
             return {}
 

@@ -9,30 +9,10 @@ HTTP-only: writes via daemon HTTP endpoint. No direct surrealkv
 access — the host path differs from the container path (/data/...).
 """
 
-import fcntl
 import json
 import os
 import sys
 from pathlib import Path
-
-
-def _db_locked(db_path: Path) -> bool:
-    """Check if the MCP server holds the surrealkv DB lock.
-    surrealkv doesn't support concurrent access — hooks must skip
-    direct DB operations when the MCP server owns the connection.
-    """
-    lock_path = db_path.parent / "yadgar.lock"
-    if not lock_path.exists():
-        return False
-    try:
-        lf = open(lock_path)
-        fcntl.flock(lf, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        fcntl.flock(lf, fcntl.LOCK_UN)
-        lf.close()
-        return False  # Lock was free — no server running
-    except OSError:
-        return True  # Lock held by MCP server
-
 
 # Tool name prefixes that are self-referential — never capture
 _SKIP_PREFIXES = (
@@ -61,7 +41,7 @@ _SUMMARY_FIELDS = (
 def main():
     try:
         data = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
+    except (json.JSONDecodeError, ValueError) as _e:
         return
 
     tool_name = data.get("tool_name", "unknown")

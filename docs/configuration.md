@@ -56,6 +56,7 @@ The YAML file is optional. If it doesn't exist, all defaults apply. Values you d
 | `write_gate_threshold` | `YADGAR_WRITE_GATE_THRESHOLD` | float | `0.0` | Minimum novelty score to store a memory (0.0 = store everything) |
 | `write_gate_continuity_discount` | `YADGAR_WRITE_GATE_CONTINUITY_DISCOUNT` | float | `0.15` | Threshold reduction for task-continuous content |
 | `write_gate_continuity_window` | `YADGAR_WRITE_GATE_CONTINUITY_WINDOW` | int | `10` | Recent store window size for continuity detection |
+| `predictive_coding_entity_ttl_seconds` | `YADGAR_PREDICTIVE_CODING_ENTITY_TTL_SECONDS` | int | `300` | TTL (seconds) for the entity-set cache inside WriteGate. Avoids a `get_all_entities()` DB call on every write-gate evaluation. Set to `0` to disable caching. Invalidated immediately on entity add/delete via `invalidate_entity_cache()`. |
 | `compression_gist_age_hours` | `YADGAR_COMPRESSION_GIST_AGE_HOURS` | float | `168.0` | Hours before gist-compressing old memories (default = 7 days) |
 | `compression_tag_age_hours` | `YADGAR_COMPRESSION_TAG_AGE_HOURS` | float | `720.0` | Hours before tag-compressing very old memories (default = 30 days) |
 | `decision_auto_protect` | `YADGAR_DECISION_AUTO_PROTECT` | bool | `true` | Auto-protect detected decisions from decay |
@@ -280,6 +281,93 @@ The YAML file is optional. If it doesn't exist, all defaults apply. Values you d
 
 ---
 
+## Observability (v5.0)
+
+| Key | Env var | Type | Default | Description |
+|---|---|---|---|---|
+| `metrics_enabled` | `YADGAR_METRICS_ENABLED` | bool | `true` | Expose `/metrics` Prometheus endpoint. Set to `false` / `0` to return 404 on `/metrics`. The endpoint is always unauthenticated (exempt from bearer-auth) — bind Yadgar to loopback (default) so only local scrapers can reach it. |
+| `log_format` | `YADGAR_LOG_FORMAT` | str | `"human"` | Log format. `"human"` = human-readable `%(asctime)s %(name)s %(levelname)s %(message)s`. `"json"` = one JSON object per line with `timestamp`, `level`, `logger`, `message`, and any `extra=` fields (`request_id`, `tool_name`, `duration_ms`, `status`, `trace_id`). |
+
+---
+
+## Security (v5.0)
+
+| Key | Env var | Type | Default | Description |
+|---|---|---|---|---|
+| `require_auth` | `YADGAR_REQUIRE_AUTH` | bool | `false` | Enforce bearer-token auth on `/api/*` and `/hooks/*` routes. When false, middleware is a no-op (logs WARN on startup). Flip to `true` after minting `YADGAR_MCP_AUTH_TOKEN`. |
+| `mcp_auth_token` | `YADGAR_MCP_AUTH_TOKEN` | str | `""` | Bearer token for authenticated routes. Must be set when `REQUIRE_AUTH=true`. Generate via `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` or 1Password. |
+| `allowed_origins` | `YADGAR_ALLOWED_ORIGINS` | str | `"http://127.0.0.1:8765,http://localhost:8765"` | Comma-separated CORS allowed origins. Default: loopback only. Wildcard (`*`) is never allowed. |
+| `host` | `YADGAR_HOST` | str | `127.0.0.1` | Bind address for the MCP HTTP server. Default is loopback-only; set to `0.0.0.0` explicitly if you need LAN exposure (not recommended without auth + TLS). |
+| `max_hash_bytes` | `YADGAR_MAX_HASH_BYTES` | int | `10485760` | Maximum file size (bytes) for path-based memorize hashing. Files exceeding this threshold are skipped. Default: 10 MiB. |
+| `auto_capture_rate_limit` | `YADGAR_AUTO_CAPTURE_RATE_LIMIT` | int | `30` | Max requests per directory per minute to `/hooks/auto-capture`. Prevents log-flooding from misbehaving hooks. |
+
+**Database credentials** (set in `/etc/yadgar/secrets.env`, loaded via `EnvironmentFile=` in systemd):
+
+| Env var | Required | Description |
+|---------|----------|-------------|
+| `YADGAR_DB_USER` | Yes (server mode) | SurrealDB username for the core container. |
+| `YADGAR_DB_PASS` | Yes (server mode) | SurrealDB password. Raises `KeyError` at startup if unset (unless `YADGAR_ALLOW_ROOT=1`). |
+| `YADGAR_ALLOW_ROOT` | No | Set to `1` in test/CI environments to bypass the DB credential requirement. **Never set in production.** |
+
+See `MIGRATION_NOTES.md` for the step-by-step deployment procedure.
+
+---
+
+## Database Schema
+
+These fields exist on the SurrealDB tables but have no corresponding env var or config key — they are written by storage helpers and read by queries.
+
+### `memory` table
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `branch` | `option<string>` | `NONE` | Git branch captured at write time. `NONE` for pre-v5 rows before backfill or non-git contexts. After migration 004 all pre-v5 rows are set to `'master'`. Write path active from Stage 10 onwards. |
+
+### `wiki_page` table
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `branch` | `option<string>` | `NONE` | Git branch captured at write time. Same semantics as `memory.branch`. |
+
+---
+
+## §25 Branch tagging (v5.0 Stage 10)
+
+### Write-path auto-capture
+
+Every write call (`memorize`, `anchor`, `checkpoint`, `wiki_add`) auto-captures the current git branch via `_detect_branch(directory)` before enqueueing. The branch is stored in the `branch` field on `memory` and `wiki_page` rows. Non-git directories and detached HEAD states result in `branch = NONE`.
+
+`_detect_branch` is LRU-cached with a **30-second TTL** (time-bucket trick via `functools.lru_cache`). The 30-second window is hardcoded — there is no env-var to tune it.
+
+`_get_default_branch` is LRU-cached with a **5-minute TTL** (same mechanism). Also hardcoded.
+
+Auto-capture failure is non-fatal: if git detection raises for any reason, the memory is still stored with `branch = NONE`.
+
+### Retrieval filter
+
+`recall()` and `wiki_query()` apply a branch filter post-retrieval:
+
+```
+branch IN (current_branch, default_branch, NONE)
+```
+
+Memories/pages on unrelated branches are excluded. When `current_branch` is `None` (non-git working directory), the filter degenerates to `branch IN (default_branch, NONE)`.
+
+**1.5× score boost**: results where `branch == current_branch` have their `_retrieval_score` multiplied by 1.5, then the result list is re-sorted. This surfaces feature-branch context ahead of default-branch context.
+
+### `wiki_read` resolution order
+
+`wiki_read(slug)` resolves the slug in order:
+
+1. `branch = current_branch` (exact match)
+2. `branch = default_branch` (exact match)
+3. `branch IS NONE` (legacy/canonical)
+4. Not found → error dict
+
+Default branch is detected via `git symbolic-ref refs/remotes/origin/HEAD`, falling back to `"master"`.
+
+---
+
 ## Docker configuration
 
 When running in Docker, inject settings via environment variables — no image rebuild needed:
@@ -300,3 +388,182 @@ services:
 ```
 
 The config file at `/root/.yadgar/config.yaml` inside the container is read at startup. Environment variables override it.
+
+---
+
+## §22 project_brief — layered bootstrap (v5.0)
+
+### New config values (`yadgar/config.py`)
+
+| Key | Env var | Default | Description |
+|-----|---------|---------|-------------|
+| `PROJECT_INIT_CAP_CHARS` | `YADGAR_PROJECT_INIT_CAP_CHARS` | `2000` | Hard character cap for `_project_init` memory content. Server raises `ValueError` on overflow — no silent truncation. |
+| `BRIEF_MODE_DEFAULT` | `YADGAR_BRIEF_MODE_DEFAULT` | `"catalog"` | Default mode for `project_brief`. Options: `"catalog"` or `"full"`. |
+
+### New MCP tools
+
+#### `project_brief(directory, mode="catalog") → dict`
+
+Replaces `get_project_context`. Returns a structured project context snapshot.
+
+**mode="catalog"** (default, ~500 tokens):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `_resolved_directory` | str | Git-resolved project root (walks up via `git rev-parse --show-toplevel`). |
+| `_mode` | str | `"catalog"` |
+| `project` | str | Project name (last path component of resolved root). |
+| `tech` | list[str] | Detected tech stack (stub: `[]` until scan is wired). |
+| `branch` | str\|None | Current git branch (`git rev-parse --abbrev-ref HEAD`). |
+| `init_memory_present` | bool | Whether a `_project_init` memory exists for this directory. |
+| `active_work_present` | bool | Whether an `_active_work` memory exists for this directory. |
+| `top_anchors` | list[dict] | Up to 5 most-accessed `_anchor` memories: `{id, title, tags, access_count}`. |
+| `recent_episode_count` | int | Count of episodic memories created in last 24h for this directory. |
+| `stale_wiki_count` | int | Count of wiki pages with hash drift (Stage 9 detail — `0` for now). |
+
+**mode="full"** (opt-in, ~1050 tokens): everything from catalog, plus:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `init_memory` | str\|None | Full `_project_init` content if present. |
+| `active_work` | str\|None | Full `_active_work` content if present. |
+| `hot_memories` | list[dict] | Top 10 memories by heat: `{id, content[:200], heat, tags}`. |
+| `key_wiki_pages` | list[dict] | 5 most recently updated wiki pages: `{slug, title, access_count}`. |
+
+#### `bootstrap_project(directory, content) → dict` — `power=True`
+
+Create or replace the `_project_init` memory for a directory atomically.
+
+- **Hard cap**: content must be ≤ `PROJECT_INIT_CAP_CHARS` (2000) characters. Raises `ValueError` on overflow.
+- **Idempotent**: deletes all existing `_project_init` memories for this directory before inserting the new one.
+- **Tag set**: `["_project_init", "_anchor"]`, `store_type=semantic`, `is_protected=True`.
+- Returns the new memory dict.
+
+#### `update_active_work(directory, content) → dict` — `power=True`
+
+Replace the `_active_work` memory for a directory atomically (delete-then-insert in one TX).
+
+- **No char cap** — markdown of any size is accepted.
+- **Tag set**: `["_active_work"]`, `store_type=episodic`, `is_protected=True`.
+- Returns `{previous_content: str | None, new_memory: dict}`.
+
+### Deprecated alias
+
+`get_project_context(directory)` is retained for one release as a backward-compatible alias for `project_brief(directory, mode="catalog")`. It emits `DeprecationWarning` on every call and will be removed in a future version.
+
+---
+
+## §26 wiki_refresh_stale + wiki_cleanup_merged_branches (v5.0)
+
+### New MCP tools
+
+#### `wiki_refresh_stale(directory, slugs=None, force_branch=False) → dict` — `power=True`
+
+Detect stale repo-wiki pages (`.local-review/wiki/*.md`) and signal for regeneration.
+
+**Stale detection**: reads YAML frontmatter `hash` field and `source_files` list. Computes fresh SHA256 over all listed source files; if the hash differs, the page is stale.
+
+**Master-only enforcement**: refuses on non-default branches unless `force_branch=True`. Detects default branch via `git symbolic-ref refs/remotes/origin/HEAD`.
+
+**Queue file**: when drift is found, writes a JSON file to `.local-review/wiki/refresh-queue/<timestamp>.json` listing the stale slugs. Actual regeneration is done by a background Agent running `/repo-wiki update`.
+
+**Never raises** — all errors are caught; returns `{"stale": [], "error": "..."}` on internal failure.
+
+Returns:
+```json
+{
+  "stale": ["mod-server", "mod-storage"],
+  "dispatched_agent_id": null,
+  "branch": "master",
+  "skipped_reason": null
+}
+```
+
+`skipped_reason` is `"not_default_branch"` when enforcement kicks in.
+
+#### `wiki_cleanup_merged_branches(directory, dry_run=True) → dict` — `power=True`
+
+List (and optionally delete) `wiki_page` rows whose `branch` is no longer in `git branch -a`.
+
+Pages with `branch IN (master, main, NULL)` are never candidates.
+
+`dry_run=True` (default): returns candidates without deleting.
+`dry_run=False`: deletes the listed pages and returns `deleted_count`.
+
+Returns:
+```json
+{
+  "candidates": [{"id": 42, "slug": "old-feat-page", "branch": "feat/merged-long-ago"}],
+  "deleted_count": 0,
+  "dry_run": true
+}
+```
+
+### Queue drainer validation (Option Z)
+
+The queue drainer applies the following checks to every `wiki_add` operation before inserting it into the DB:
+
+| Check | Failure action |
+|-------|---------------|
+| `wiki_schema_version >= 2` | DLQ with `reason="schema_version_too_old"` |
+| Required fields: `slug`, `title`, `content`, `category` | DLQ with `reason="missing_required_field: <field>"` |
+| Content passes v4.9 degenerate filter | DLQ with `reason="degenerate_content"` |
+| `branch` field absent | Filled with `"master"` (Stage 10 will source from git) |
+| `confidence` field absent | Filled with `"medium"` |
+
+Frontmatter shape expected by `wiki_refresh_stale`:
+```yaml
+---
+wiki_schema_version: 2
+slug: mod-server
+title: Server module
+hash: <sha256-hex>
+source_files:
+  - yadgar/server.py
+---
+```
+
+---
+
+## §27 Stop-hook expansion (v5.0)
+
+`yadgar/hooks/stop-memory-checkpoint.py` now fires a signal-evaluation prompt instead of a simple checkpoint prompt every 25 human messages.
+
+**State file**: `~/.yadgar/stop-hook-state.json` — keyed by `session_id`, written atomically via `tmp + os.replace`.
+
+**Prompt contents**: instructs the running session to call `project_brief()`, evaluate `signals.stale_wiki_count`, `active_work_present`, `init_memory` presence, and take action (repo-wiki regen, `update_active_work`, `bootstrap_project`, or `memorize/wiki_add`).
+
+The hook is a **dumb pipe** — no Python signal detection, no Anthropic API calls. All evaluation happens via tool calls in the Claude session.
+
+---
+
+## §28 SessionStart hook pipe (v5.0)
+
+### Hook: `yadgar/hooks/session-start-context.py`
+
+Calls `GET /hooks/session-context?directory=<cwd>` with bearer token from `YADGAR_MCP_AUTH_TOKEN` env var. Prints the `text` field (rendered markdown) to stdout for injection into the session context.
+
+Silently skips on daemon-down or any error.
+
+### Endpoint: `GET /hooks/session-context`
+
+**Auth-required** (bearer token via `YADGAR_MCP_AUTH_TOKEN`).
+
+| Query param | Description |
+|-------------|-------------|
+| `directory` | Project directory (defaults to cwd) |
+| `mode` | Brief mode: `"catalog"` (default) or `"full"` |
+
+Calls `project_brief(directory, mode=mode)` and returns the `_render` markdown field:
+
+```json
+{"text": "# yadgar — catalog\n\n**Branch:** master\n..."}
+```
+
+Returns `{"text": ""}` gracefully on any error (storage down, DB unavailable).
+
+The `_render` field is a markdown string suitable for direct injection into a Claude session. Contents:
+- Project name, branch, mode
+- Signals (stale_wiki_count, init_memory, active_work presence)
+- Top anchors list
+- In `full` mode: init_memory content, active_work content

@@ -13,6 +13,8 @@ from yadgar.embeddings import EmbeddingEngine
 from yadgar.storage import StorageEngine
 from yadgar.thermodynamics import MemoryThermodynamics
 
+pytestmark = pytest.mark.xdist_group("server_globals")
+
 # Detect whether the embedding model can be loaded
 _engine = EmbeddingEngine()
 try:
@@ -622,8 +624,8 @@ def test_consolidation_cycle_emits_all_phase_complete_markers(tmp_path, caplog):
 
     log_text = "\n".join(r.message for r in caplog.records)
     for phase in unconditional_phases:
-        assert f"phase: {phase} starting" in log_text, f"missing 'phase: {phase} starting'"
-        assert f"phase: {phase} complete" in log_text, f"missing 'phase: {phase} complete'"
+        assert f"phase_start: {phase}" in log_text, f"missing 'phase_start: {phase}'"
+        assert f"phase_end: {phase}" in log_text, f"missing 'phase_end: {phase}'"
 
     storage.close()
 

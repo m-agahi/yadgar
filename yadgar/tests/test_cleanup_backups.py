@@ -50,7 +50,7 @@ def make_snapshot(
                 check=True,
                 capture_output=True,
             )
-        except (subprocess.CalledProcessError, FileNotFoundError):
+        except (subprocess.CalledProcessError, FileNotFoundError) as _e:
             # fallocate unavailable — fall back to dd (slow but correct)
             subprocess.run(
                 ["dd", "if=/dev/zero", f"of={filler}", "bs=1M", f"count={int(size_gib * 1024)}"],

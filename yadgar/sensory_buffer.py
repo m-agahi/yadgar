@@ -97,6 +97,9 @@ class ActionLogger:
         return "Recent actions:\n" + "\n".join(lines)
 
     def _rotate_episode(self) -> None:
+        # §13: current_episode must be set before _rotate_episode is called
+        if self.current_episode is None:
+            raise RuntimeError("ActionLogger: _rotate_episode called with current_episode=None")
         old_content = self.current_episode["raw_content"]
         old_directory = self.current_episode["directory"]
 

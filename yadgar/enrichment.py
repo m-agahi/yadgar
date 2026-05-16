@@ -4,7 +4,6 @@ Generates implied facts, commonsense inferences, and synthetic queries
 at storage time to bridge the cue-trigger semantic disconnect.
 """
 
-import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -14,6 +13,30 @@ import numpy as np
 from yadgar.config import Settings
 
 logger = logging.getLogger(__name__)
+
+
+def _load_seq2seq_model(
+    model_name: str,
+) -> tuple[object, object, str] | None:
+    """Load a HuggingFace seq2seq model + tokenizer onto the best available device.
+
+    Returns (model, tokenizer, device) on success, or None on ImportError /
+    any load failure.  Callers are responsible for setting _unavailable=True
+    when None is returned.
+    """
+    try:
+        import torch
+        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModelForSeq2SeqLM.from_pretrained(model_name).to(device)
+        model.eval()
+        return model, tokenizer, device
+    except (ImportError, Exception) as exc:  # noqa: BLE001
+        logger.warning("seq2seq model %r unavailable: %s", model_name, exc)
+        return None
+
 
 _STOP_WORDS = frozenset(
     {
@@ -303,7 +326,7 @@ class ConceptNetExpander:
                         end = edge.end.label if hasattr(edge.end, "label") else str(edge.end)
                         results.append(end.replace(" ", "_"))
             return results
-        except (ImportError, Exception):
+        except (ImportError, Exception) as _e:
             self._lite_available = False
             return []
 
@@ -314,22 +337,27 @@ class ConceptNetExpander:
         if self._http_available is not True:
             return []
         try:
-            import urllib.error
-            import urllib.request
+            import urllib.parse
+
+            import httpx
 
             results = []
+            # §8: URL-encode term to prevent injection; use HTTPS; httpx only.
+            safe_term = urllib.parse.quote(term, safe="")
             for rel in relations:
-                url = f"http://api.conceptnet.io/query?node=/c/en/{term}&rel=/r/{rel}&limit=10"
+                url = (
+                    f"https://api.conceptnet.io/query?node=/c/en/{safe_term}&rel=/r/{rel}&limit=10"
+                )
                 try:
-                    req = urllib.request.Request(url, headers={"Accept": "application/json"})
-                    with urllib.request.urlopen(req, timeout=5) as resp:
-                        data = json.loads(resp.read().decode())
+                    resp = httpx.get(url, headers={"Accept": "application/json"}, timeout=5.0)
+                    resp.raise_for_status()
+                    data = resp.json()
                     for edge in data.get("edges", []):
                         if edge.get("weight", 0) >= min_weight:
                             end = edge.get("end", {}).get("label", "")
                             if end:
                                 results.append(end.replace(" ", "_"))
-                except (urllib.error.URLError, TimeoutError, OSError):
+                except (httpx.RequestError, httpx.HTTPStatusError, TimeoutError, OSError) as _e:
                     continue
             self._http_available = True if results else None
             return results
@@ -383,19 +411,12 @@ class CometInferencer:
             return True
         if self._unavailable:
             return False
-        try:
-            import torch
-            from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
-
-            self._device = "cuda" if torch.cuda.is_available() else "cpu"
-            self._tokenizer = AutoTokenizer.from_pretrained(model_name)
-            self._model = AutoModelForSeq2SeqLM.from_pretrained(model_name).to(self._device)
-            self._model.eval()
-            return True
-        except (ImportError, Exception) as e:
-            logger.warning("COMET model unavailable: %s", e)
+        result = _load_seq2seq_model(model_name)
+        if result is None:
             self._unavailable = True
             return False
+        self._model, self._tokenizer, self._device = result
+        return True
 
     def _extract_predicates(self, content: str) -> list[str]:
         """Extract sentences with named subjects and verbs."""
@@ -479,19 +500,12 @@ class Doc2QueryExpander:
             return True
         if self._unavailable:
             return False
-        try:
-            import torch
-            from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
-
-            self._device = "cuda" if torch.cuda.is_available() else "cpu"
-            self._tokenizer = AutoTokenizer.from_pretrained(model_name)
-            self._model = AutoModelForSeq2SeqLM.from_pretrained(model_name).to(self._device)
-            self._model.eval()
-            return True
-        except (ImportError, Exception) as e:
-            logger.warning("Doc2Query model unavailable: %s", e)
+        result = _load_seq2seq_model(model_name)
+        if result is None:
             self._unavailable = True
             return False
+        self._model, self._tokenizer, self._device = result
+        return True
 
     def _token_overlap(self, a: str, b: str) -> float:
         """Compute token overlap ratio between two strings."""

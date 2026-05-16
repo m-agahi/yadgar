@@ -349,78 +349,126 @@ class Retriever:
                 candidate_k * getattr(self._settings, "OPEN_DOMAIN_CANDIDATE_MULTIPLIER", 1.5)
             )
 
-        # 1. FTS5 keyword search with actual BM25 scores
-        #    Boost: duplicate entities 2x and content words 1x in FTS query
-        if enabled_signals is None or "fts" in enabled_signals:
-            try:
-                fts_searches = [(query, 1.0)]
-                if open_domain_subqueries:
-                    for subquery in open_domain_subqueries:
-                        fts_searches.append((subquery, 0.8))
+        # 1 + 1b + 1c. FTS, entity-FTS, and COMET expansion scores
+        self._collect_fts_scores(
+            query,
+            scores,
+            enabled_signals,
+            open_domain_subqueries,
+            open_domain_mode,
+            candidate_k,
+            min_heat,
+        )
 
-                for fts_query, strength in fts_searches:
-                    fts_scored = self._storage.search_memories_fts_scored(
-                        _build_boosted_fts_query(fts_query),
-                        min_heat=min_heat,
-                        limit=candidate_k,
+        # 2. Vector similarity via SurrealDB KNN
+        vector_memory_ids, query_embedding = self._collect_vector_scores(
+            query, scores, enabled_signals, open_domain_subqueries, candidate_k, min_heat
+        )
+
+        # 3. PPR graph retrieval
+        self._collect_ppr_scores(query, scores, enabled_signals, candidate_k)
+
+        # 4. Spreading activation from top vector results
+        self._collect_spreading_scores(scores, enabled_signals, vector_memory_ids)
+
+        # 5. Temporal retrieval boost
+        w_temporal = self._collect_temporal_scores(query, scores, min_heat, candidate_k)
+
+        # Fusion: confidence gating + WRRF/convex combination
+        fused, fused_scores = self._fuse_scores(scores, w_temporal, open_domain_mode)
+
+        # Build result memories + CE diversity injection
+        result_memories, seen_ids, use_cross_encoder = self._build_initial_results(
+            fused, fused_scores, scores, profile, open_domain_mode, max_results, min_heat
+        )
+
+        # Post-fusion reranking pipeline
+        return self._apply_rerank_pipeline(
+            result_memories,
+            seen_ids,
+            query,
+            query_analysis,
+            query_embedding,
+            profile,
+            profile_name,
+            open_domain_mode,
+            use_cross_encoder,
+            max_results,
+        )
+
+    # -- Signal collection helpers --
+
+    def _collect_fts_scores(
+        self,
+        query: str,
+        scores: dict,
+        enabled_signals,
+        open_domain_subqueries: list,
+        open_domain_mode: bool,
+        candidate_k: int,
+        min_heat: float,
+    ) -> None:
+        """Collect FTS BM25 scores (including entity-FTS and COMET expansion) into scores."""
+        if enabled_signals is not None and "fts" not in enabled_signals:
+            return
+
+        # 1. FTS5 keyword search with actual BM25 scores
+        try:
+            fts_searches = [(query, 1.0)]
+            if open_domain_subqueries:
+                for subquery in open_domain_subqueries:
+                    fts_searches.append((subquery, 0.8))
+
+            for fts_query, strength in fts_searches:
+                fts_scored = self._storage.search_memories_fts_scored(
+                    _build_boosted_fts_query(fts_query),
+                    min_heat=min_heat,
+                    limit=candidate_k,
+                )
+                if not fts_scored:
+                    continue
+                bm25_vals = [s for _, s in fts_scored]
+                bm25_min, bm25_max = min(bm25_vals), max(bm25_vals)
+                bm25_range = bm25_max - bm25_min
+                for mid, bm25_score in fts_scored:
+                    normalized = (bm25_score - bm25_min) / bm25_range if bm25_range > 1e-9 else 0.5
+                    scores[mid]["fts"] = max(
+                        scores[mid].get("fts", 0.0),
+                        normalized * strength,
                     )
-                    if not fts_scored:
-                        continue
-                    # SurrealDB returns negative BM25 scores — use min-max normalization
-                    bm25_vals = [s for _, s in fts_scored]
-                    bm25_min, bm25_max = min(bm25_vals), max(bm25_vals)
-                    bm25_range = bm25_max - bm25_min
-                    for mid, bm25_score in fts_scored:
-                        normalized = (
-                            (bm25_score - bm25_min) / bm25_range if bm25_range > 1e-9 else 0.5
-                        )
-                        scores[mid]["fts"] = max(
-                            scores[mid].get("fts", 0.0),
-                            normalized * strength,
-                        )
-            except Exception:
-                pass
+        except Exception:
+            pass
 
         # 1b. Entity-focused FTS: search for just person names to ensure
         #     all memories about mentioned people reach the CE pool.
-        #     Critical for open_domain questions where inference depends on
-        #     knowing all facts about a person, not just keyword matches.
-        if enabled_signals is None or "fts" in enabled_signals:
-            try:
-                entity_names = [
-                    w.strip(".,;:!?()[]{}\"'")
-                    for w in query.split()
-                    if w[0:1].isupper()
-                    and len(w.strip(".,;:!?()[]{}\"'")) >= 2
-                    and w.strip(".,;:!?()[]{}\"'").lower() not in _QUERY_STOP_WORDS
-                ]
-                if entity_names:
-                    # Just space-separate; _preprocess_fts_query will OR them
-                    entity_query = " ".join(entity_names)
-                    entity_hits = self._storage.search_memories_fts_scored(
-                        entity_query, min_heat=min_heat, limit=candidate_k
-                    )
-                    if entity_hits:
-                        # SurrealDB returns negative BM25 scores — use min-max normalization
-                        ent_vals = [s for _, s in entity_hits]
-                        ent_min, ent_max = min(ent_vals), max(ent_vals)
-                        ent_range = ent_max - ent_min
-                        for mid, ent_score in entity_hits:
-                            normalized = (
-                                (ent_score - ent_min) / ent_range if ent_range > 1e-9 else 0.5
-                            )
-                            # Use max to not overwrite a better FTS score
-                            scores[mid]["fts"] = max(
-                                scores[mid].get("fts", 0.0),
-                                normalized * (0.7 if open_domain_mode else 0.5),
-                            )
-            except Exception:
-                pass
+        try:
+            entity_names = [
+                w.strip(".,;:!?()[]{}\"'")
+                for w in query.split()
+                if w[0:1].isupper()
+                and len(w.strip(".,;:!?()[]{}\"'")) >= 2
+                and w.strip(".,;:!?()[]{}\"'").lower() not in _QUERY_STOP_WORDS
+            ]
+            if entity_names:
+                entity_query = " ".join(entity_names)
+                entity_hits = self._storage.search_memories_fts_scored(
+                    entity_query, min_heat=min_heat, limit=candidate_k
+                )
+                if entity_hits:
+                    ent_vals = [s for _, s in entity_hits]
+                    ent_min, ent_max = min(ent_vals), max(ent_vals)
+                    ent_range = ent_max - ent_min
+                    for mid, ent_score in entity_hits:
+                        normalized = (ent_score - ent_min) / ent_range if ent_range > 1e-9 else 0.5
+                        scores[mid]["fts"] = max(
+                            scores[mid].get("fts", 0.0),
+                            normalized * (0.7 if open_domain_mode else 0.5),
+                        )
+        except Exception:
+            pass
 
-        # 1c. COMET query expansion: generate commonsense inferences from query
-        #     to bridge the cue-trigger semantic disconnect for open_domain queries.
-        #     E.g., "Would Caroline be considered religious?" → xWant: "go to church"
-        if open_domain_mode and (enabled_signals is None or "fts" in enabled_signals):
+        # 1c. COMET query expansion
+        if open_domain_mode:
             comet_terms = self._comet_expand_query(query)
             if comet_terms:
                 try:
@@ -431,7 +479,6 @@ class Retriever:
                         limit=candidate_k,
                     )
                     if comet_hits:
-                        # SurrealDB returns negative BM25 scores — use min-max normalization
                         comet_vals = [s for _, s in comet_hits]
                         comet_min, comet_max = min(comet_vals), max(comet_vals)
                         comet_range = comet_max - comet_min
@@ -443,111 +490,152 @@ class Retriever:
                             )
                             scores[mid]["fts"] = max(
                                 scores[mid].get("fts", 0.0),
-                                normalized * 0.6,  # Lower weight than direct FTS match
+                                normalized * 0.6,
                             )
                 except Exception:
                     pass
 
-        # 2. Vector similarity via SurrealDB KNN
-        #    Dual vector search: search with both original AND HyDE-expanded queries
-        #    to maximize recall. Union candidates, keep max similarity per memory.
+    def _collect_vector_scores(
+        self,
+        query: str,
+        scores: dict,
+        enabled_signals,
+        open_domain_subqueries: list,
+        candidate_k: int,
+        min_heat: float,
+    ) -> tuple[list[int], object]:
+        """Collect vector KNN scores into scores. Returns (vector_memory_ids, query_embedding)."""
         vector_memory_ids: list[int] = []
         query_embedding = None
-        if enabled_signals is None or "vector" in enabled_signals:
-            vector_searches = [(query, 1.0)]
+        if enabled_signals is not None and "vector" not in enabled_signals:
+            return vector_memory_ids, query_embedding
 
-            if self._settings.QUERY_EXPANSION_ENABLED:
-                expanded_query = _pseudo_hyde_expand(query)
-                if expanded_query and expanded_query != query:
-                    vector_searches.append((expanded_query, 0.95))
+        vector_searches = [(query, 1.0)]
 
-            if open_domain_subqueries:
-                for subquery in open_domain_subqueries[:2]:
-                    vector_searches.append((subquery, 0.85))
+        if self._settings.QUERY_EXPANSION_ENABLED:
+            expanded_query = _pseudo_hyde_expand(query)
+            if expanded_query and expanded_query != query:
+                vector_searches.append((expanded_query, 0.95))
 
-            seen_vector_queries: set[str] = set()
-            for vector_query, strength in vector_searches:
-                lowered = vector_query.lower()
-                if lowered in seen_vector_queries:
-                    continue
-                seen_vector_queries.add(lowered)
+        if open_domain_subqueries:
+            for subquery in open_domain_subqueries[:2]:
+                vector_searches.append((subquery, 0.85))
 
-                encoded = self._embeddings.encode_query(vector_query)
-                if encoded is None:
-                    continue
-                if vector_query == query:
-                    query_embedding = encoded
+        seen_vector_queries: set[str] = set()
+        for vector_query, strength in vector_searches:
+            lowered = vector_query.lower()
+            if lowered in seen_vector_queries:
+                continue
+            seen_vector_queries.add(lowered)
 
-                vec_hits = self._storage.search_vectors(
-                    encoded, top_k=candidate_k, min_heat=min_heat
+            encoded = self._embeddings.encode_query(vector_query)
+            if encoded is None:
+                continue
+            if vector_query == query:
+                query_embedding = encoded
+
+            vec_hits = self._storage.search_vectors(encoded, top_k=candidate_k, min_heat=min_heat)
+            for mid, distance in vec_hits:
+                similarity = (1.0 / (1.0 + distance)) * strength
+                scores[mid]["vector"] = max(scores[mid].get("vector", 0.0), similarity)
+                if mid not in vector_memory_ids:
+                    vector_memory_ids.append(mid)
+
+        return vector_memory_ids, query_embedding
+
+    def _collect_ppr_scores(
+        self,
+        query: str,
+        scores: dict,
+        enabled_signals,
+        candidate_k: int,
+    ) -> None:
+        """Collect PPR graph retrieval scores into scores."""
+        if enabled_signals is not None and "ppr" not in enabled_signals:
+            return
+        ppr_results = self.ppr_retrieve(query, top_k=candidate_k)
+        if ppr_results:
+            max_ppr = max(s for _, s in ppr_results) if ppr_results else 1.0
+            for mid, ppr_score in ppr_results:
+                normalized = ppr_score / max_ppr if max_ppr > 0 else 0.0
+                scores[mid]["ppr"] = normalized
+
+    def _collect_spreading_scores(
+        self,
+        scores: dict,
+        enabled_signals,
+        vector_memory_ids: list[int],
+    ) -> None:
+        """Collect spreading activation scores from top vector seeds into scores."""
+        if enabled_signals is not None and "spreading" not in enabled_signals:
+            return
+        top_vector_seeds = vector_memory_ids[:5]
+        if top_vector_seeds:
+            spread_results = self.spreading_activation(
+                top_vector_seeds, spread_factor=0.5, max_depth=2
+            )
+            if spread_results:
+                max_spread = max(s for _, s in spread_results) if spread_results else 1.0
+                for mid, spread_score in spread_results:
+                    normalized = spread_score / max_spread if max_spread > 0 else 0.0
+                    scores[mid]["spread"] = normalized
+
+    def _collect_temporal_scores(
+        self,
+        query: str,
+        scores: dict,
+        min_heat: float,
+        candidate_k: int,
+    ) -> float:
+        """Collect temporal retrieval scores into scores. Returns w_temporal weight (0.0 if unused)."""
+        w_temporal = 0.0
+        if not getattr(self._settings, "TEMPORAL_RETRIEVAL_ENABLED", False):
+            return w_temporal
+        temporal_info = parse_temporal_expression(query)
+        if not temporal_info["has_temporal"]:
+            return w_temporal
+        try:
+            # A) Content-based temporal matching (FTS on dates in content)
+            temporal_memories = self._storage.search_memories_by_content_date(
+                date_hints=temporal_info["date_hints"],
+                month_hints=temporal_info["month_hints"],
+                session_hints=temporal_info["session_hints"],
+                min_heat=min_heat,
+                limit=candidate_k,
+            )
+            if temporal_memories:
+                for i, mem in enumerate(temporal_memories):
+                    if mem.get("id") is not None:
+                        scores[mem["id"]]["temporal"] = 1.0 / (1 + i)
+                w_temporal = 0.8
+
+            # B) Timestamp-based temporal matching (created_at proximity)
+            if temporal_info["month_hints"]:
+                month_matches = self._storage.search_memories_by_month(
+                    temporal_info["month_hints"],
+                    min_heat=min_heat,
+                    limit=candidate_k,
                 )
-                for mid, distance in vec_hits:
-                    similarity = (1.0 / (1.0 + distance)) * strength
-                    scores[mid]["vector"] = max(scores[mid].get("vector", 0.0), similarity)
-                    if mid not in vector_memory_ids:
-                        vector_memory_ids.append(mid)
+                if month_matches:
+                    for mid in month_matches:
+                        if scores[mid]["temporal"] == 0.0:
+                            scores[mid]["temporal"] = 0.5
+                    if w_temporal == 0.0:
+                        w_temporal = 0.6
+        except Exception:
+            logger.debug("Temporal retrieval failed, skipping signal")
+        return w_temporal
 
-        # 3. PPR graph retrieval
-        if enabled_signals is None or "ppr" in enabled_signals:
-            ppr_results = self.ppr_retrieve(query, top_k=candidate_k)
-            if ppr_results:
-                max_ppr = max(s for _, s in ppr_results) if ppr_results else 1.0
-                for mid, ppr_score in ppr_results:
-                    # Normalize PPR scores to 0-1 range
-                    normalized = ppr_score / max_ppr if max_ppr > 0 else 0.0
-                    scores[mid]["ppr"] = normalized
+    def _fuse_scores(
+        self,
+        scores: dict,
+        w_temporal: float,
+        open_domain_mode: bool,
+    ) -> tuple[list, dict]:
+        """Build signal weights, apply confidence gating, and fuse scores.
 
-        # 4. Spreading activation from top vector results
-        if enabled_signals is None or "spreading" in enabled_signals:
-            top_vector_seeds = vector_memory_ids[:5]
-            if top_vector_seeds:
-                spread_results = self.spreading_activation(
-                    top_vector_seeds, spread_factor=0.5, max_depth=2
-                )
-                if spread_results:
-                    max_spread = max(s for _, s in spread_results) if spread_results else 1.0
-                    for mid, spread_score in spread_results:
-                        normalized = spread_score / max_spread if max_spread > 0 else 0.0
-                        scores[mid]["spread"] = normalized
-
-        # 5. Temporal retrieval boost — temporal_retrieval signal
-        if getattr(self._settings, "TEMPORAL_RETRIEVAL_ENABLED", False):
-            temporal_info = parse_temporal_expression(query)
-            if temporal_info["has_temporal"]:
-                try:
-                    # A) Content-based temporal matching (FTS on dates in content)
-                    temporal_memories = self._storage.search_memories_by_content_date(
-                        date_hints=temporal_info["date_hints"],
-                        month_hints=temporal_info["month_hints"],
-                        session_hints=temporal_info["session_hints"],
-                        min_heat=min_heat,
-                        limit=candidate_k,
-                    )
-                    if temporal_memories:
-                        for i, mem in enumerate(temporal_memories):
-                            if mem.get("id") is not None:
-                                scores[mem["id"]]["temporal"] = 1.0 / (1 + i)
-                        w_temporal = 0.8
-
-                    # B) Timestamp-based temporal matching (created_at proximity)
-                    if temporal_info["month_hints"]:
-                        month_matches = self._storage.search_memories_by_month(
-                            temporal_info["month_hints"],
-                            min_heat=min_heat,
-                            limit=candidate_k,
-                        )
-                        if month_matches:
-                            for mid in month_matches:
-                                # Add temporal score (lower than FTS match)
-                                if scores[mid]["temporal"] == 0.0:
-                                    scores[mid]["temporal"] = 0.5
-                            if w_temporal == 0.0:
-                                w_temporal = 0.6
-                except Exception:
-                    logger.debug("Temporal retrieval failed, skipping signal")
-
-        # Score-weighted fusion: use actual signal scores (not rank-based)
-        # Each memory's final score = Σ (w_i * score_i) for each signal
+        Returns (fused_sorted_list, fused_scores_dict).
+        """
         signal_weights = {
             "vector": self._settings.WRRF_VECTOR_WEIGHT,
             "fts": self._settings.WRRF_FTS_WEIGHT,
@@ -581,11 +669,9 @@ class Retriever:
                 if confidence < threshold:
                     signal_weights[sig] = 0.0
 
-        # --- Fusion: convex combination vs WRRF (existing) ---
         fusion_method = getattr(self._settings, "FUSION_METHOD", "wrrf")
 
         if fusion_method == "convex":
-            # Build signal_scores: signal_name -> {memory_id: raw_score}
             signal_scores_for_convex: dict[str, dict[int, float]] = {}
             for sig in signal_weights:
                 sig_dict = {mid: s[sig] for mid, s in scores.items() if s[sig] > 0}
@@ -594,7 +680,7 @@ class Retriever:
             fused = _convex_fuse(signal_scores_for_convex, signal_weights)
             fused_scores = dict(fused)
         else:
-            # Existing WRRF-style normalized weighted sum
+            # WRRF-style normalized weighted sum
             signal_names = list(
                 {sig for mid, sigs in scores.items() for sig, v in sigs.items() if v > 0}
             )
@@ -648,7 +734,22 @@ class Retriever:
 
             fused = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
 
-        # Build result memories — pull more candidates for reranker
+        return fused, fused_scores
+
+    def _build_initial_results(
+        self,
+        fused: list,
+        fused_scores: dict,
+        scores: dict,
+        profile: dict,
+        open_domain_mode: bool,
+        max_results: int,
+        min_heat: float,
+    ) -> tuple[list[dict], set[int], bool]:
+        """Build result_memories from fused scores and inject CE diversity candidates.
+
+        Returns (result_memories, seen_ids, use_cross_encoder).
+        """
         rerank_pool = max(
             max_results,
             self._settings.RERANKER_TOP_K,
@@ -666,9 +767,6 @@ class Retriever:
             if len(result_memories) >= rerank_pool:
                 break
 
-        # Inject top signal-specific results for CE pool diversity
-        # This ensures CE sees the best FTS/vector candidates even if
-        # they didn't rank in the fused top-K
         use_cross_encoder = profile["cross_encoder"] and getattr(
             self._settings, "CROSS_ENCODER_ENABLED", False
         )
@@ -691,9 +789,24 @@ class Retriever:
                             result_memories.append(mem)
                             seen_ids.add(mid)
 
+        return result_memories, seen_ids, use_cross_encoder
+
+    def _apply_rerank_pipeline(
+        self,
+        result_memories: list[dict],
+        seen_ids: set[int],
+        query: str,
+        query_analysis: dict,
+        query_embedding,
+        profile: dict,
+        profile_name: str,
+        open_domain_mode: bool,
+        use_cross_encoder: bool,
+        max_results: int,
+    ) -> list[dict]:
+        """Apply full post-fusion reranking pipeline and return final result list."""
         # Heuristic reranker (skipped for 'fast' profile)
         if self._settings.RERANKER_ENABLED and profile_name != "fast":
-            # When CE follows, don't clip yet — let CE see the full pool
             heuristic_k = max_results
             if use_cross_encoder:
                 heuristic_k = None  # Uses RERANKER_TOP_K (50)
@@ -723,17 +836,14 @@ class Retriever:
                     result_memories.append(r)
                     seen_ids.add(rid)
 
-        # Cross-encoder reranker (FlashRank ONNX — fast CPU inference)
-        # Feed the raw query directly — CE performs best with the original question.
-        # CE query augmentation (concatenating HyDE expansion) was tested and HURTS MRR.
+        # Cross-encoder reranker
         if use_cross_encoder:
             result_memories = self._reranker.cross_encoder_rerank(result_memories, query)
 
-        # NLI entailment scoring: complementary signal to CE for open-domain queries
+        # NLI entailment scoring
         use_nli = profile["nli"] or getattr(self._settings, "NLI_RERANKING_ENABLED", False)
         if use_nli and (not self._settings.NLI_ONLY_FOR_OPEN_DOMAIN or open_domain_mode):
             result_memories = self._reranker.nli_rerank(query, result_memories)
-            # Blend NLI with CE score
             nli_weight = self._settings.NLI_WEIGHT
             for mem in result_memories:
                 ce = mem.get("_cross_encoder_score", 0)
@@ -741,7 +851,7 @@ class Retriever:
                 mem["_retrieval_score"] = (1 - nli_weight) * ce + nli_weight * nli
             result_memories.sort(key=lambda m: m.get("_retrieval_score", 0), reverse=True)
 
-        # Multi-passage evidence aggregation: boost scattered evidence clusters
+        # Multi-passage evidence aggregation
         if getattr(self._settings, "MULTI_PASSAGE_RERANKING_ENABLED", False):
             result_memories = self._reranker.multi_passage_rerank(
                 query, result_memories, max_results
@@ -766,7 +876,7 @@ class Retriever:
             )
             result_memories = result_memories[: max_results * 2]
 
-        # MMR diversity reranking — avoid all top-K from same conversation segment
+        # MMR diversity reranking
         if getattr(self._settings, "ADVERSARIAL_DIVERSITY_ENFORCEMENT", False):
             result_memories = self._reranker.mmr_rerank(
                 result_memories,
@@ -790,16 +900,14 @@ class Retriever:
                     adv_info["score_gap"],
                 )
 
-        # Apply neuro-symbolic rules (hard filter + soft re-rank) as final step
+        # Apply neuro-symbolic rules
         if self._rules_engine is not None and result_memories:
-            # Infer directory from first memory or use empty string
             directory = ""
             for mem in result_memories:
                 if mem.get("directory_context"):
                     directory = mem["directory_context"]
                     break
             result_memories = self._rules_engine.apply_rules(result_memories, directory)
-            # Re-trim to max_results after filtering
             result_memories = result_memories[:max_results]
 
         # Enrich with temporal links from engram allocation

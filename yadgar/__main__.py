@@ -26,12 +26,16 @@ Active modules:
   * ProspectiveMemory      (future-oriented triggers)
   * StalenessDetector      (file-change watchdog)
 
-Core tools: memorize, recall, forget, get_project_context, checkpoint,
-            restore, anchor, wiki_query, wiki_add, memory_stats
+Core tools: memorize, recall, forget, get_project_context (deprecated alias:
+            project_brief), checkpoint, restore, anchor, wiki_query, wiki_add,
+            memory_stats
 Power tools: add_rule, get_rules, wiki_read, wiki_list, wiki_delete,
              wiki_approve, wiki_discard, wiki_drafts, consolidate_now,
              reembed_all, validate_memory, seed_project, install_hooks,
              sync_instructions
+v5 tools:   memory_get, wiki_get, memory_update, wiki_update,
+             bootstrap_project, update_active_work, wiki_refresh_stale,
+             wiki_cleanup_merged_branches
 
 MCP Resources: memory://stats, memory://hot, memory://stale,
                memory://processes
@@ -134,6 +138,7 @@ def cmd_context(args):
     db_path = str(Path(args.db_path or settings.DB_PATH).expanduser())
     directory = args.directory
 
+    storage = None
     try:
         storage = StorageEngine(db_path)
         hot = (
@@ -154,9 +159,12 @@ def cmd_context(args):
             )
             or []
         )
-        storage.close()
     except Exception:
         return
+    finally:
+        # Q21: always release SurrealKV lock so daemon can reopen
+        if storage is not None:
+            storage.close()
 
     if not hot and not anchored:
         return
@@ -195,7 +203,11 @@ def cmd_stats(args):
     if args.project:
         http_url += "?" + urllib.parse.urlencode({"project": args.project})
     try:
-        resp = urllib.request.urlopen(http_url, timeout=2)
+        # §8: Validate scheme before urlopen to prevent file:// SSRF.
+        _parsed = urllib.parse.urlparse(http_url)
+        if _parsed.scheme not in {"http", "https"}:
+            raise ValueError(f"Disallowed scheme in URL: {_parsed.scheme!r}")
+        resp = urllib.request.urlopen(http_url, timeout=2)  # noqa: S310
         data = json.loads(resp.read().decode())
         if args.format == "json":
             print(json.dumps(data, indent=2))
@@ -236,7 +248,7 @@ def cmd_stats(args):
         """Extract a single aggregate value from a GROUP ALL result."""
         try:
             return results[0][0][key] if results and results[0] else default
-        except (IndexError, KeyError, TypeError):
+        except (IndexError, KeyError, TypeError) as _e:
             return default
 
     def _count(results):
@@ -802,8 +814,10 @@ def cmd_rules_import(args):
 
 
 def cmd_setup(args):
-    """First-run setup: check Docker, create config dir, print MCP snippet."""
+    """First-run setup: check Docker, create config dir, generate credentials,
+    print MCP snippet + secrets.env template."""
     import json
+    import secrets as _secrets
 
     from yadgar import __version__
     from yadgar.daemon import YadgarDaemon
@@ -834,30 +848,66 @@ def cmd_setup(args):
     else:
         print(f"Config:         {config_path}")
 
+    # ── Credential bootstrap (v5.0) ──
+    # Generate strong defaults; operator copies template to secrets.env.
+    secrets_path = yadgar_dir / "secrets.env"
+    if secrets_path.exists():
+        print(f"Secrets:        {secrets_path} (exists — keeping)")
+    else:
+        token = _secrets.token_urlsafe(32)
+        db_pass = _secrets.token_urlsafe(24)
+        rw_pass = _secrets.token_urlsafe(24)
+        ro_pass = _secrets.token_urlsafe(24)
+        secrets_path.write_text(
+            "# Yadgar v5 secrets — do NOT commit. chmod 600 enforced below.\n"
+            "# For HTTP/Docker mode the daemon reads these via EnvironmentFile.\n"
+            "\n"
+            "# MCP bearer token (required when YADGAR_REQUIRE_AUTH=1, the v5 default)\n"
+            f"YADGAR_MCP_AUTH_TOKEN={token}\n"
+            "\n"
+            "# SurrealDB root (required by backend container)\n"
+            "SURREAL_USER=root\n"
+            f"SURREAL_PASS={db_pass}\n"
+            "\n"
+            "# Three-tier DB users (optional; backend provisions on first start)\n"
+            "YADGAR_RW_USER=yadgar\n"
+            f"YADGAR_RW_PASS={rw_pass}\n"
+            "YADGAR_RO_USER=viewer\n"
+            f"YADGAR_RO_PASS={ro_pass}\n"
+        )
+        try:
+            secrets_path.chmod(0o600)
+        except OSError:
+            pass
+        print(f"Secrets written: {secrets_path} (chmod 600)")
+
     print()
     print("=== Yadgar v" + __version__ + " — setup complete ===")
     print()
 
     if check["ok"]:
-        # Docker-mode MCP config (streamable-http)
+        # Docker-mode MCP config (streamable-http). Token resolved at
+        # daemon-configure-mcp time so this snippet is illustrative.
         mcp_config = {
             "mcpServers": {
                 "yadgar": {
                     "type": "streamable-http",
                     "url": "http://localhost:8765/mcp",
+                    "headers": {"Authorization": "Bearer ${YADGAR_MCP_AUTH_TOKEN}"},
                 }
             }
         }
-        print("Start the server:")
-        print("  yadgar daemon start")
+        print("Next steps:")
+        print(f"  1. set -a && . {secrets_path} && set +a")
+        print("  2. yadgar daemon start")
+        print("  3. yadgar daemon configure-mcp   # writes ~/.claude.json with bearer header")
+        print("  4. Restart Claude Code.")
         print()
-        print("Add to ~/.claude.json:")
+        print("Or merge manually into ~/.claude.json:")
         print()
         print(json.dumps(mcp_config, indent=2))
-        print()
-        print("Restart Claude Code and you're ready.")
     else:
-        # Fallback: stdio mode (no Docker)
+        # Fallback: stdio mode (no Docker). Auth middleware bypassed.
         mcp_config = {
             "mcpServers": {
                 "yadgar": {
@@ -868,15 +918,13 @@ def cmd_setup(args):
             }
         }
         print("Docker unavailable — using stdio mode (one process per Claude session).")
+        print("Stdio bypasses the HTTP auth middleware so no token is needed.")
         print()
         print("Add to ~/.claude.json (merge with existing mcpServers):")
         print()
         print(json.dumps(mcp_config, indent=2))
         print()
-        print("Next steps:")
-        print("  1. Restart Claude Code — Yadgar tools will appear automatically")
-        print("  2. In Claude: get_project_context('/your/project')")
-        print("  3. In Claude: memorize('First memory', '/your/project', ['setup'])")
+        print("Restart Claude Code — Yadgar tools appear automatically.")
 
 
 def cmd_viz(args):
@@ -1270,21 +1318,21 @@ def cli():
         # Opt-in INFO/DEBUG logging for diagnostics. Default: "warn".
         # Set YADGAR_CORE_LOG_LEVEL=info in the container env to surface
         # consolidation phase markers, etc.
+        # Set YADGAR_LOG_FORMAT=json for structured JSON logs (§15).
         from yadgar.config import get_settings as _get_settings
 
-        _log_level = _get_settings().CORE_LOG_LEVEL
+        _cfg = _get_settings()
+        _log_level = _cfg.CORE_LOG_LEVEL
+        _log_format = _cfg.LOG_FORMAT
         if _log_level and _log_level.upper() != "WARN" and _log_level.upper() != "WARNING":
-            import logging as _logging
+            from yadgar.log_config import configure_logging as _configure_logging
 
-            _yadgar_logger = _logging.getLogger("yadgar")
-            _yadgar_logger.setLevel(getattr(_logging, _log_level.upper(), _logging.WARNING))
-            if not _yadgar_logger.handlers:
-                _handler = _logging.StreamHandler()
-                _handler.setFormatter(
-                    _logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s")
-                )
-                _yadgar_logger.addHandler(_handler)
-                _yadgar_logger.propagate = False
+            _configure_logging(log_format=_log_format, level=_log_level)
+        elif _log_format and _log_format.lower() == "json":
+            # JSON format requested even at default WARN level
+            from yadgar.log_config import configure_logging as _configure_logging
+
+            _configure_logging(log_format="json", level="WARNING")
 
         if not args.quiet and args.transport != "stdio":
             print(STARTUP_BANNER, file=sys.stderr)

@@ -343,16 +343,7 @@ def scan_project(directory: str) -> dict:
                     )
 
             # Check CI/CD
-            if rel_dir in (".github/workflows", ".github", ".gitlab"):
-                content = _read_file_safe(filepath)
-                if content:
-                    ci_cd.append(
-                        {
-                            "path": os.path.join(rel_dir, fname) if rel_dir else fname,
-                            "content": content,
-                        }
-                    )
-            elif fname in _CI_FILES:
+            if rel_dir in (".github/workflows", ".github", ".gitlab") or fname in _CI_FILES:
                 content = _read_file_safe(filepath)
                 if content:
                     ci_cd.append(
@@ -819,8 +810,13 @@ def generate_memories(scan_data: dict) -> list[dict]:
     return memories
 
 
-def _delete_existing_seed_memories(storage, directory: str) -> int:
+def _delete_existing_seed_memories(
+    storage, directory: str, exclude_ids: list[int] | None = None
+) -> int:
     """Delete existing _seed tagged memories for this directory before re-seeding.
+
+    §6 Q17: exclude_ids lets callers preserve newly-inserted memories so the
+    delete step only removes OLD seed memories, not the fresh ones.
 
     Returns count of deleted memories.
     """
@@ -831,7 +827,12 @@ def _delete_existing_seed_memories(storage, directory: str) -> int:
     if not rows:
         return 0
 
-    ids = [storage._extract_id(r.get("id")) for r in rows]
+    exclude_set: set[int] = set(exclude_ids or [])
+    ids = [
+        storage._extract_id(r.get("id"))
+        for r in rows
+        if storage._extract_id(r.get("id")) not in exclude_set
+    ]
     for mid in ids:
         # Delete SR transitions referencing this memory
         storage._q(
@@ -842,6 +843,64 @@ def _delete_existing_seed_memories(storage, directory: str) -> int:
         storage._q("DELETE type::record('memory', $id)", {"id": mid})
 
     return len(ids)
+
+
+_PROJECT_INIT_CAP = 2000  # Must match config.PROJECT_INIT_CAP_CHARS
+
+
+def _draft_project_init(scan_data: dict) -> str:
+    """Compose a starter _project_init markdown skeleton from scan data.
+
+    Content is capped at _PROJECT_INIT_CAP chars (same as server-side cap).
+    """
+    project_name = scan_data.get("project_name", "")
+    root = scan_data.get("root", "")
+    configs = scan_data.get("configs", [])
+    docs = scan_data.get("docs", [])
+    stats = scan_data.get("stats", {})
+
+    # --- stack detection ---
+    stack = _detect_stack(configs, stats)
+
+    # --- readme snippet ---
+    readme_snippet = ""
+    for doc in docs:
+        name = doc.get("name", "").lower()
+        if "readme" in name:
+            snippet = doc.get("content", "")[:300]
+            if snippet:
+                readme_snippet = f"\n## README snippet\n{snippet}\n"
+            break
+
+    # --- top-level doc list ---
+    doc_names = [d.get("name", "") for d in docs if d.get("name")]
+    doc_list = ", ".join(doc_names[:10]) if doc_names else "(none)"
+
+    lines = [
+        f"# {project_name} — Project Init",
+        "",
+        f"**Root:** `{root}`",
+        f"**Stack:** {stack}",
+        "",
+        "## Key wiki pages",
+        "(populate after seeding wiki pages)",
+        "",
+        "## Key memory IDs",
+        "(populate after anchoring key decisions)",
+        "",
+        "## Conventions",
+        "- (add project conventions here)",
+        "",
+        "## Top-level docs",
+        f"{doc_list}",
+        readme_snippet.strip(),
+        "",
+        "## Lookup tips",
+        "- Use recall('_anchor') for key decisions",
+        "- Use wiki_query() for architecture docs",
+    ]
+    content = "\n".join(lines)
+    return content[:_PROJECT_INIT_CAP]
 
 
 def seed_project(
@@ -902,11 +961,9 @@ def seed_project(
     replaced = 0
 
     try:
-        # Delete existing seed memories for this directory (replace, don't append)
-        deleted = _delete_existing_seed_memories(storage, scan_data["root"])
-        if deleted:
-            logger.info("Cleared %d existing seed memories for %s", deleted, scan_data["root"])
-            replaced = deleted
+        # §6 Q17: Build new memories FIRST; delete old ones only after successful insert.
+        # Old code deleted first → a crash mid-insert left the DB with no seed memories.
+        new_memory_ids: list[int] = []
 
         for mem in memories:
             content = mem["content"]
@@ -927,7 +984,7 @@ def seed_project(
             # Use modest surprise boost so seeded memories don't all max out
             initial_heat = min(base_heat + surprise * 0.1, 1.0)
 
-            # Insert directly (no curator dedup since we already cleared old seeds)
+            # Insert directly (no curator dedup since we will clear old seeds after)
             memory_id = storage.insert_memory(
                 {
                     "content": content,
@@ -940,6 +997,7 @@ def seed_project(
                     "embedding_model": embeddings.get_model_name(),
                 }
             )
+            new_memory_ids.append(memory_id)
 
             # Set thermodynamic scores
             storage.update_memory_scores(
@@ -951,6 +1009,22 @@ def seed_project(
 
             created += 1
             logger.info("Seed memory [created]: %s", content[:80])
+
+        # All new memories inserted successfully — now safe to delete old seed memories.
+        deleted = _delete_existing_seed_memories(
+            storage, scan_data["root"], exclude_ids=new_memory_ids
+        )
+        if deleted:
+            logger.info("Cleared %d old seed memories for %s", deleted, scan_data["root"])
+            replaced = deleted
+
+        # §23: Draft a starter _project_init memory from README + top-level docs.
+        init_content = _draft_project_init(scan_data)
+        try:
+            storage.upsert_project_init(scan_data["root"], init_content)
+            logger.info("Drafted _project_init for %s", scan_data["root"])
+        except Exception:
+            logger.warning("Failed to draft _project_init for %s", scan_data["root"], exc_info=True)
 
     finally:
         if own_storage:

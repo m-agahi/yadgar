@@ -1,0 +1,185 @@
+[
+  {
+    "seed": 42,
+    "variable_names": [
+      "X",
+      "Y",
+      "Z"
+    ],
+    "result": {
+      "nodes": [
+        "X",
+        "Y",
+        "Z"
+      ],
+      "directed_edges": [],
+      "undirected_edges": [
+        [
+          "X",
+          "Y",
+          0.9939
+        ],
+        [
+          "Y",
+          "Z",
+          0.9875
+        ]
+      ],
+      "separating_sets": {
+        "X|Z": [
+          "Y"
+        ]
+      }
+    }
+  },
+  {
+    "seed": 7,
+    "variable_names": [
+      "A",
+      "B",
+      "C"
+    ],
+    "result": {
+      "nodes": [
+        "A",
+        "B",
+        "C"
+      ],
+      "directed_edges": [
+        [
+          "A",
+          "C",
+          0.6167
+        ],
+        [
+          "B",
+          "C",
+          0.6992
+        ]
+      ],
+      "undirected_edges": [],
+      "separating_sets": {
+        "A|B": []
+      }
+    }
+  },
+  {
+    "seed": 99,
+    "variable_names": [
+      "P",
+      "Q",
+      "R",
+      "S"
+    ],
+    "result": {
+      "nodes": [
+        "P",
+        "Q",
+        "R",
+        "S"
+      ],
+      "directed_edges": [],
+      "undirected_edges": [],
+      "separating_sets": {
+        "P|Q": [],
+        "P|R": [],
+        "P|S": [],
+        "Q|R": [],
+        "Q|S": [],
+        "R|S": []
+      }
+    }
+  },
+  {
+    "seed": 13,
+    "variable_names": [
+      "U",
+      "V",
+      "W",
+      "T"
+    ],
+    "result": {
+      "nodes": [
+        "U",
+        "V",
+        "W",
+        "T"
+      ],
+      "directed_edges": [],
+      "undirected_edges": [
+        [
+          "U",
+          "V",
+          0.9723
+        ],
+        [
+          "W",
+          "T",
+          0.9132
+        ]
+      ],
+      "separating_sets": {
+        "U|W": [],
+        "U|T": [],
+        "V|W": [],
+        "V|T": []
+      }
+    }
+  },
+  {
+    "seed": 2024,
+    "variable_names": [
+      "N1",
+      "N2",
+      "N3",
+      "N4",
+      "N5"
+    ],
+    "result": {
+      "nodes": [
+        "N1",
+        "N2",
+        "N3",
+        "N4",
+        "N5"
+      ],
+      "directed_edges": [],
+      "undirected_edges": [
+        [
+          "N1",
+          "N3",
+          0.8564
+        ],
+        [
+          "N2",
+          "N5",
+          0.9522
+        ],
+        [
+          "N3",
+          "N4",
+          0.957
+        ]
+      ],
+      "separating_sets": {
+        "N1|N2": [],
+        "N1|N5": [],
+        "N1|N4": [
+          "N3"
+        ],
+        "N2|N3": [
+          "N4"
+        ],
+        "N2|N4": [
+          "N3"
+        ],
+        "N3|N5": [
+          "N4"
+        ],
+        "N4|N5": [
+          "N3"
+        ]
+      }
+    }
+  }
+]

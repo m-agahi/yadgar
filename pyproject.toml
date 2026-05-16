@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "4.9.0"
+version = "5.0.0"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "MIT"
@@ -44,6 +44,11 @@ dependencies = [
     "httpx>=0.27",
     "networkx>=3.0",
     "ruamel.yaml>=0.18.0",
+    "prometheus-client>=0.20.0",
+    # CVE-2026-42561 (HIGH): floor so transitive resolution doesn't backslide
+    "python-multipart>=0.0.27",
+    # CVE-2026-44431, CVE-2026-44432 (HIGH)
+    "urllib3>=2.7.0",
 ]
 
 [project.scripts]
@@ -58,7 +63,7 @@ Issues = "https://codeberg.org/maxagahi/yadgar/issues"
 packages = ["yadgar"]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py314"
 line-length = 100
 exclude = ["benchmarks/"]
 
@@ -79,7 +84,8 @@ ml = [
     "hf-xet<1.4",
 ]
 test = [
-    "pytest>=8.0",
+    # CVE-2025-71176 (MEDIUM)
+    "pytest>=9.0.3",
     "pytest-xdist>=3.0",
     "pytest-timeout>=2.3",
     "pytest-rerunfailures>=14",

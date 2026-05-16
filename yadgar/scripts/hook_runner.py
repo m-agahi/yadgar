@@ -1,0 +1,240 @@
+#!/usr/bin/env python3
+"""Yadgar hook runner — executes hook logic for a given hook type.
+
+This script is installed as a real file and referenced by ABSOLUTE PATH
+in ~/.claude/settings.json. The project directory (or other context) is
+passed as argv[1], never shell-interpolated.
+
+Usage:
+    hook_runner.py <hook_type> [project_directory]
+
+hook_type:
+    post-tool-capture       — PostToolUse handler
+    session-start-context   — SessionStart handler
+    post-compact-rehydrate  — SessionStart (compact) handler
+    pre-compact-drain       — PreCompact handler
+    prompt-recall           — UserPromptSubmit handler
+    db-lockdown-check       — PreToolUse (Bash guard)
+
+By referencing this script by absolute path and passing context as argv[1],
+we avoid all shell metacharacter injection risks present in the previous
+inline `python3 -c "..."` approach.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import urllib.parse
+import urllib.request
+
+_PORT = os.environ.get("YADGAR_PORT", "8765")
+_AUTH_TOKEN = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+
+
+def _auth_headers() -> dict:
+    """Return Authorization header dict if token is set."""
+    if _AUTH_TOKEN:
+        return {"Authorization": f"Bearer {_AUTH_TOKEN}"}
+    return {}
+
+
+def _http_get(path: str, params: dict | None = None, timeout: float = 2.0) -> dict | None:
+    url = f"http://127.0.0.1:{_PORT}{path}"
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    try:
+        req = urllib.request.Request(url, headers=_auth_headers())
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        return json.loads(resp.read().decode())
+    except Exception:
+        return None
+
+
+def _http_post(path: str, payload: dict, timeout: float = 1.0) -> dict | None:
+    url = f"http://127.0.0.1:{_PORT}{path}"
+    data = json.dumps(payload).encode()
+    headers = {"Content-Type": "application/json", **_auth_headers()}
+    try:
+        req = urllib.request.Request(url, data=data, headers=headers)
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        return json.loads(resp.read().decode())
+    except Exception:
+        return None
+
+
+def hook_post_tool_capture() -> None:
+    """PostToolUse — capture tool action into action_log."""
+    try:
+        data = json.load(sys.stdin)
+    except (json.JSONDecodeError, ValueError) as _e:
+        return
+
+    tool_name = data.get("tool_name", "unknown")
+    cwd = data.get("cwd", "")
+    session_id = data.get("session_id", "")
+
+    _SKIP_PREFIXES = (
+        "mcp__yadgar__",
+        "mcp__plugin_claude-code-home-manager_yadgar__",
+        "mcp__plugin_oh-my-claudecode_t__",
+    )
+    for prefix in _SKIP_PREFIXES:
+        if tool_name.startswith(prefix):
+            return
+
+    _CAPTURE_TOOLS = frozenset({"Write", "Edit", "Bash", "NotebookEdit", "Agent"})
+    if tool_name not in _CAPTURE_TOOLS:
+        return
+
+    _SUMMARY_FIELDS = (
+        "command",
+        "content",
+        "query",
+        "file_path",
+        "pattern",
+        "prompt",
+        "old_string",
+        "skill",
+        "description",
+    )
+    tool_input = data.get("tool_input", {})
+    summary = ""
+    if isinstance(tool_input, dict):
+        for field in _SUMMARY_FIELDS:
+            val = tool_input.get(field)
+            if val:
+                summary = str(val)[:200]
+                break
+        if not summary:
+            summary = str(tool_input)[:200]
+    else:
+        summary = str(tool_input)[:200]
+
+    _http_post(
+        "/hooks/auto-capture",
+        {
+            "tool_name": tool_name,
+            "summary": summary,
+            "directory": cwd,
+            "session_id": session_id,
+        },
+    )
+
+
+def hook_session_start_context() -> None:
+    """SessionStart — inject project context into Claude's conversation."""
+    try:
+        data = json.load(sys.stdin)
+        cwd = data.get("cwd", os.getcwd())
+    except Exception:
+        cwd = os.getcwd()
+
+    result = _http_get("/hooks/session-context", {"directory": cwd})
+    if result:
+        text = result.get("text", "")
+        if text:
+            print(text)
+
+
+def hook_post_compact_rehydrate() -> None:
+    """SessionStart (compact) — full restore after context compaction."""
+    try:
+        data = json.load(sys.stdin)
+        directory = data.get("cwd", os.getcwd())
+    except Exception:
+        directory = os.getcwd()
+
+    result = _http_get("/hooks/post-compact", {"directory": directory})
+    if result:
+        text = result.get("text", result.get("context", ""))
+        if text:
+            print(text)
+
+
+def hook_pre_compact_drain() -> None:
+    """PreCompact — drain context before compaction."""
+    try:
+        data = json.load(sys.stdin)
+    except Exception:
+        data = {}
+    _http_post("/hooks/pre-compact", data)
+
+
+def hook_prompt_recall() -> None:
+    """UserPromptSubmit — auto-recall relevant memories."""
+    try:
+        data = json.load(sys.stdin)
+    except (json.JSONDecodeError, ValueError) as _e:
+        return
+
+    prompt = data.get("prompt", "") or data.get("user_prompt", "")
+    if not prompt or len(str(prompt).strip()) < 2:
+        return
+
+    directory = data.get("cwd", "") or os.getcwd()
+    result = _http_get(
+        "/hooks/prompt-recall",
+        {"query": str(prompt).strip(), "directory": directory},
+        timeout=0.5,
+    )
+    if result:
+        text = result.get("text", "")
+        if text:
+            print(text)
+
+
+def hook_db_lockdown_check() -> None:
+    """PreToolUse (Bash) — block direct docker exec into yadgar containers."""
+    try:
+        data = json.load(sys.stdin)
+    except (json.JSONDecodeError, ValueError) as _e:
+        print(json.dumps({"decision": "allow"}))
+        return
+
+    cmd = data.get("tool_input", {}).get("command", "")
+    if "docker exec yadgar-backend" in cmd or "docker exec yadgar-db" in cmd:
+        print(
+            json.dumps(
+                {
+                    "decision": "block",
+                    "reason": (
+                        "Direct docker exec into yadgar DB/backend containers is blocked "
+                        "to prevent data corruption. Use yadgar MCP tools instead."
+                    ),
+                }
+            )
+        )
+    else:
+        print(json.dumps({"decision": "allow"}))
+
+
+_HOOKS = {
+    "post-tool-capture": hook_post_tool_capture,
+    "session-start-context": hook_session_start_context,
+    "post-compact-rehydrate": hook_post_compact_rehydrate,
+    "pre-compact-drain": hook_pre_compact_drain,
+    "prompt-recall": hook_prompt_recall,
+    "db-lockdown-check": hook_db_lockdown_check,
+}
+
+
+def main() -> None:
+    if len(sys.argv) < 2:
+        print(f"Usage: {sys.argv[0]} <hook_type> [project_directory]", file=sys.stderr)
+        print(f"Available hook types: {', '.join(_HOOKS)}", file=sys.stderr)
+        sys.exit(1)
+
+    hook_type = sys.argv[1]
+    handler = _HOOKS.get(hook_type)
+    if handler is None:
+        print(f"Unknown hook type: {hook_type!r}", file=sys.stderr)
+        print(f"Available: {', '.join(_HOOKS)}", file=sys.stderr)
+        sys.exit(1)
+
+    handler()
+
+
+if __name__ == "__main__":
+    main()
