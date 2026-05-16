@@ -16,6 +16,7 @@ import logging
 import re
 from collections import Counter, deque
 from datetime import UTC, datetime
+from typing import Any
 
 import numpy as np
 
@@ -61,6 +62,36 @@ class WriteGate:
         self._threshold = settings.WRITE_GATE_THRESHOLD
         # Task continuity tracking — recent stores form a "working context"
         self._recent_stores: deque[dict] = deque(maxlen=settings.WRITE_GATE_CONTINUITY_WINDOW)
+        # Entity-set cache — avoids O(N·M) get_all_entities() on every write-gate eval.
+        # _entity_cache: the cached list; _entity_cache_ts: monotonic time of last fetch.
+        self._entity_cache: list[dict[str, Any]] | None = None
+        self._entity_cache_ts: float = 0.0
+
+    # ── Entity Cache ─────────────────────────────────────────────────────
+
+    def _get_cached_entities(self) -> list[dict[str, Any]]:
+        """Return all entities, using a TTL cache to avoid redundant DB fetches.
+
+        Cache lifetime is controlled by PREDICTIVE_CODING_ENTITY_TTL_SECONDS.
+        When TTL is 0 the cache is disabled (always fetches).
+        """
+        import time
+
+        ttl = self._settings.PREDICTIVE_CODING_ENTITY_TTL_SECONDS
+        now = time.monotonic()
+        if self._entity_cache is None or ttl == 0 or (now - self._entity_cache_ts) >= ttl:
+            self._entity_cache = self._storage.get_all_entities(min_heat=0.0, include_archived=True)
+            self._entity_cache_ts = now
+        return self._entity_cache
+
+    def invalidate_entity_cache(self) -> None:
+        """Invalidate the entity-set cache.
+
+        Call after inserting or deleting entities so the next write-gate
+        evaluation fetches a fresh set.
+        """
+        self._entity_cache = None
+        self._entity_cache_ts = 0.0
 
     # ── Task Continuity ──────────────────────────────────────────────────
 
@@ -229,24 +260,24 @@ class WriteGate:
         for name, _type, _rel_ctx in extracted:
             entity_names_to_check.add(name)
 
-        # Method 2: Check which existing entities appear in the content text
-        all_entities = self._storage.get_all_entities(min_heat=0.0, include_archived=True)
-        for entity in all_entities:
+        # Method 2: Check which existing entities appear in the content text.
+        # Use TTL-cached entity list to avoid O(N) DB round-trip on every call.
+        for entity in self._get_cached_entities():
             if entity["name"] in content and len(entity["name"]) > 1:
                 entity_names_to_check.add(entity["name"])
 
         if not entity_names_to_check:
             return 0.7  # No entities to check = surprising
 
-        # Find most recent memory about any overlapping entity
+        # Find most recent memory about any overlapping entity.
+        # Pre-filter by directory_context so the iteration is O(D) not O(N·M).
         now = datetime.now(UTC)
         most_recent_dt = None
 
-        all_memories = self._storage.get_all_memories_for_decay()
-        active_memories = [m for m in all_memories if m.get("heat", 0) > 0]
+        dir_memories = self._storage.get_memories_for_directory(directory, min_heat=0.0)
 
         for name in entity_names_to_check:
-            for mem in active_memories:
+            for mem in dir_memories:
                 if name in mem.get("content", ""):
                     try:
                         mem_dt = datetime.fromisoformat(mem["created_at"])
@@ -254,7 +285,7 @@ class WriteGate:
                             mem_dt = mem_dt.replace(tzinfo=UTC)
                         if most_recent_dt is None or mem_dt > most_recent_dt:
                             most_recent_dt = mem_dt
-                    except (ValueError, TypeError):
+                    except (ValueError, TypeError) as _e:
                         pass
 
         if most_recent_dt is None:
@@ -290,11 +321,12 @@ class WriteGate:
         if not new_rel_contexts:
             return 0.2  # No relationship signals
 
-        # Check which relationship types already exist — ONE bulk fetch instead of O(N²) HTTP calls.
+        # Check which relationship types already exist — use TTL-cached entity list.
         existing_rel_types = set()
-        all_entities = self._storage.get_all_entities(min_heat=0.0, include_archived=True)
         content_entity_names = {name for name, _, _ in extracted}
-        content_entities = [e for e in all_entities if e["name"] in content_entity_names]
+        content_entities = [
+            e for e in self._get_cached_entities() if e["name"] in content_entity_names
+        ]
         if content_entities:
             content_entity_ids = [e["id"] for e in content_entities]
             rels = self._storage.get_relationships_among_entities(content_entity_ids)
@@ -329,10 +361,11 @@ class WriteGate:
         if self._settings.WRITE_GATE_THRESHOLD <= 0.0:
             return True, 0.0, "gate_disabled"
 
-        content.lower()
+        # Q10: assign content_lower and use for case-insensitive checks
+        content_lower = content.lower()
 
         # Check bypass conditions FIRST
-        if _ERROR_BYPASS_RE.search(content):
+        if _ERROR_BYPASS_RE.search(content_lower):
             surprisal = self.compute_surprisal(content, directory, tags)
             logger.debug(
                 "Write gate BYPASS (error keywords): surprisal=%.3f dir=%s",
@@ -341,7 +374,7 @@ class WriteGate:
             )
             return (True, surprisal, "bypass_error_keywords")
 
-        if _DECISION_BYPASS_RE.search(content):
+        if _DECISION_BYPASS_RE.search(content_lower):
             surprisal = self.compute_surprisal(content, directory, tags)
             logger.debug(
                 "Write gate BYPASS (decision keywords): surprisal=%.3f dir=%s",
@@ -463,25 +496,24 @@ class WriteGate:
 
                 try:
                     tags = json.loads(tags)
-                except (ValueError, TypeError):
+                except (ValueError, TypeError) as _e:
                     tags = []
             for tag in tags:
                 tag_counter[tag] += 1
         common_tags = [tag for tag, _ in tag_counter.most_common(10)]
 
-        # Entity count and recent topics
+        # Entity count and recent topics — use TTL-cached entity list (fetched once).
+        all_entities = self._get_cached_entities()
         entity_names = set()
         for m in memories:
             content = m.get("content", "")
-            entities = self._storage.get_all_entities(min_heat=0.0, include_archived=True)
-            for e in entities:
+            for e in all_entities:
                 if e["name"] in content:
                     entity_names.add(e["name"])
 
         # Recent topics: entities from most recent memories
         recent_memories = sorted(memories, key=lambda m: m.get("created_at", ""), reverse=True)[:10]
         recent_entity_names = set()
-        all_entities = self._storage.get_all_entities(min_heat=0.0, include_archived=True)
         for m in recent_memories:
             content = m.get("content", "")
             for e in all_entities:

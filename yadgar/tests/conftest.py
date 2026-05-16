@@ -10,6 +10,19 @@ import urllib.parse
 import pytest
 
 # ---------------------------------------------------------------------------
+# Credentials escape hatch — set before any module-level import of yadgar.
+#
+# v5.0 hardens credentials: storage.py raises KeyError when YADGAR_DB_PASS
+# is unset unless YADGAR_ALLOW_ROOT=1. Set both here so the full test suite
+# continues to work against the isolated test SurrealDB started by the
+# surreal_server fixture (which uses root:root for simplicity).
+# ---------------------------------------------------------------------------
+if "YADGAR_ALLOW_ROOT" not in os.environ:
+    os.environ["YADGAR_ALLOW_ROOT"] = "1"
+os.environ.setdefault("YADGAR_DB_PASS", "root")
+os.environ.setdefault("YADGAR_DB_USER", "root")
+
+# ---------------------------------------------------------------------------
 # Production-DB isolation guard
 #
 # Prevent tests from accidentally writing to a live production SurrealDB.
@@ -118,13 +131,23 @@ def surreal_server(tmp_path_factory):
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    # Track PID so workers can identify the process in case of cleanup races.
+    pid_file = db / "surreal.pid"
+    pid_file.write_text(str(proc.pid))
+
     os.environ["YADGAR_DB_URL"] = f"http://127.0.0.1:{port}"
     try:
         _wait_for_health(port)
         yield
     finally:
+        # Explicit kill: terminate first, escalate to SIGKILL if needed.
         proc.terminate()
-        proc.wait(timeout=5)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=2)
+        pid_file.unlink(missing_ok=True)
         os.environ.pop("YADGAR_DB_URL", None)
 
 

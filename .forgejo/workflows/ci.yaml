@@ -59,12 +59,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /root/.cache/huggingface
-          # Static key — model weights don't change with pyproject bumps.
-          # Restore-keys give us LRU fallback if the act_cache evicts us.
-          key: hf-models-v2
+          # Key includes model name literal so cache invalidates on EMBEDDING_MODEL change.
+          # Bump the v-number when upgrading the model (roadmap: HF model cache key fix).
+          key: hf-models-v2-all-MiniLM-L6-v2
           restore-keys: |
+            hf-models-v2-
             hf-models-v
-            hf-models-
 
       - name: Cache SurrealDB binary
         id: cache-surreal
@@ -268,7 +268,7 @@ jobs:
           # Registry-based BuildKit cache on dockerhub. Reused across runs on
           # the same builder; survives runner restarts unlike actions/cache.
           cache-from: type=registry,ref=openfantasy/yadgar:buildcache
-          cache-to: type=registry,ref=openfantasy/yadgar:buildcache,mode=max
+          cache-to: type=registry,ref=openfantasy/yadgar:buildcache,mode=min
 
       - name: Build and push backend image
         if: needs.changes.outputs.backend == 'true' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
@@ -281,4 +281,4 @@ jobs:
           tags: ${{ steps.meta-backend.outputs.tags }}
           labels: ${{ steps.meta-backend.outputs.labels }}
           cache-from: type=registry,ref=openfantasy/yadgar-backend:buildcache
-          cache-to: type=registry,ref=openfantasy/yadgar-backend:buildcache,mode=max
+          cache-to: type=registry,ref=openfantasy/yadgar-backend:buildcache,mode=min

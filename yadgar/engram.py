@@ -192,7 +192,7 @@ class EngramAllocator:
             last_dt = datetime.fromisoformat(last_activated)
             if last_dt.tzinfo is None:
                 last_dt = last_dt.replace(tzinfo=UTC)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as _e:
             return 0.0
         now = datetime.now(UTC)
         elapsed_hours = (now - last_dt).total_seconds() / 3600.0

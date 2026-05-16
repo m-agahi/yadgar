@@ -116,7 +116,7 @@ class MetaCognition:
                     if isinstance(created, str):
                         try:
                             created = datetime.fromisoformat(created)
-                        except (ValueError, TypeError):
+                        except (ValueError, TypeError) as _e:
                             continue
                     if created.tzinfo is None:
                         created = created.replace(tzinfo=UTC)
@@ -435,7 +435,7 @@ class MetaCognition:
             if isinstance(created, str):
                 try:
                     created = datetime.fromisoformat(created)
-                except (ValueError, TypeError):
+                except (ValueError, TypeError) as _e:
                     created = None
             timestamps.append(created)
 

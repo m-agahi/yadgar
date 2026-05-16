@@ -191,6 +191,8 @@ class EmbeddingEngine:
         self._ensure_model()
         if self._unavailable:
             return None
+        if self._model is None:
+            raise RuntimeError("EmbeddingEngine: model not initialized — call _ensure_model first")
         vec = self._model.encode(text)
         arr = np.asarray(vec, dtype=np.float32)
         native_dim = len(arr)
@@ -254,6 +256,8 @@ class EmbeddingEngine:
         self._ensure_model()
         if self._unavailable:
             return None
+        if self._model is None:
+            raise RuntimeError("EmbeddingEngine: model not initialized — call _ensure_model first")
         vec = self._model.encode(text)
         arr = self._normalize(np.asarray(vec, dtype=np.float32))
         result = arr.tobytes()
@@ -268,6 +272,8 @@ class EmbeddingEngine:
         self._ensure_model()
         if self._unavailable:
             return [None] * len(texts)
+        if self._model is None:
+            raise RuntimeError("EmbeddingEngine: model not initialized — call _ensure_model first")
         vecs = self._model.encode(texts)
         results = []
         for v in vecs:

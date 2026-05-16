@@ -48,6 +48,7 @@ class LocalMLClient:
     def __init__(self, settings) -> None:
         self._settings = settings
         self._gte_reranker = None  # Lazy-loaded GTE-Reranker (STCrossEncoder)
+        self._gte_load_failed = False  # T-0006: track permanent GTE failure
         self._nli_model = None  # Lazy-loaded NLI CrossEncoder
         self._flashrank_ranker = None  # Lazy-loaded FlashRank Ranker
         self._cross_encoder = None  # Lazy-loaded sentence-transformers CrossEncoder (fallback)
@@ -68,8 +69,13 @@ class LocalMLClient:
         settings = self._settings
 
         # --- GTE-Reranker (best zero-shot OOD) ---
+        # T-0006: gate subsequent attempts after permanent failure
         gte_failed = False
-        if settings is not None and getattr(settings, "GTE_RERANKER_ENABLED", False):
+        if (
+            settings is not None
+            and getattr(settings, "GTE_RERANKER_ENABLED", False)
+            and not self._gte_load_failed
+        ):
             try:
                 if self._gte_reranker is None:
                     from sentence_transformers import CrossEncoder as STCrossEncoder
@@ -89,6 +95,7 @@ class LocalMLClient:
             except Exception as e:
                 logger.warning("LocalMLClient: GTE-Reranker failed, falling back: %s", e)
                 self._gte_reranker = False
+                self._gte_load_failed = True  # T-0006: mark permanent failure
                 gte_failed = True
 
         if (

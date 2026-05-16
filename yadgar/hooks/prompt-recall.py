@@ -184,7 +184,7 @@ def main():
 
     try:
         data = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
+    except (json.JSONDecodeError, ValueError) as _e:
         return
 
     query = _extract_query(data)

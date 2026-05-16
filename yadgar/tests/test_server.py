@@ -197,32 +197,43 @@ def test_validate_memory_not_found():
 # ── get_project_context ────────────────────────────────────────────────
 
 
-def test_get_project_context_filters_by_directory(flush_queue):
+def test_get_project_context_returns_catalog_shape(flush_queue):
+    # §22: get_project_context is now a deprecated alias for project_brief(mode="catalog").
+    # Verify the returned shape is catalog (not old "memories" shape).
+    import warnings
+
     server.memorize("project A memory", "/projects/a", ["a"])
-    server.memorize("project B memory", "/projects/b", ["b"])
     flush_queue()
 
-    result = server.get_project_context("/projects/a")
-    assert "memories" in result
-    assert all(r["directory_context"] == "/projects/a" for r in result["memories"])
+    with warnings.catch_warnings():
+        warnings.simplefilter("always")
+        result = server.get_project_context("/projects/a")
+    assert "_mode" in result
+    assert result["_mode"] == "catalog"
+    assert "init_memory_present" in result
+    assert "active_work_present" in result
+    assert "top_anchors" in result
 
 
-def test_get_project_context_filters_by_heat():
-    r = memorize_sync("cold memory", "/projects/c", ["test"])
-    server._get_storage().update_memory_heat(r["id"], 0.005)
+def test_get_project_context_emits_deprecation(flush_queue):
+    # §22: deprecated alias must emit DeprecationWarning.
+    import warnings
 
-    result = server.get_project_context("/projects/c")
-    assert len(result["memories"]) == 0  # 0.005 < PROJECT_CONTEXT_MIN_HEAT (0.01)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        server.get_project_context("/projects/x")
+    dep = [x for x in w if issubclass(x.category, DeprecationWarning)]
+    assert len(dep) >= 1
 
 
-def test_get_project_context_returns_hot(flush_queue):
+def test_project_brief_returns_hot_memories_in_full_mode(flush_queue):
     server.memorize("hot memory", "/projects/d", ["test"])  # heat=1.0
     flush_queue()
 
-    result = server.get_project_context("/projects/d")
-    assert len(result["memories"]) == 1
-    assert result["memories"][0]["content"] == "hot memory"
-    assert "embedding" not in result["memories"][0]
+    result = server.project_brief("/projects/d", mode="full")
+    assert "hot_memories" in result
+    contents = [m["content"] for m in result["hot_memories"]]
+    assert any("hot memory" in c for c in contents)
 
 
 # ── consolidate_now ────────────────────────────────────────────────────

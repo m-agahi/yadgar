@@ -14,7 +14,7 @@ volumes:
 
 services:
   backend:
-    image: openfantasy/yadgar-backend:${BACKEND_VERSION:-4.8.3}
+    image: openfantasy/yadgar-backend:${BACKEND_VERSION:-5.0.0}
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -30,6 +30,11 @@ services:
       SURREAL_USER: root
       SURREAL_PASS: root
       YADGAR_BACKEND_LOG_LEVEL: ${YADGAR_BACKEND_LOG_LEVEL:-warn}
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
+    tmpfs:
+      - /tmp
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=2)"]
       interval: 10s
@@ -38,7 +43,7 @@ services:
       start_period: 60s  # model load can take a while
 
   core:
-    image: openfantasy/yadgar:${CORE_VERSION:-4.9.0}
+    image: openfantasy/yadgar:${CORE_VERSION:-5.0.0}
     build:
       context: .
       dockerfile: Dockerfile
@@ -47,7 +52,7 @@ services:
     networks:
       - yadgar-net
     ports:
-      - "8765:8765"
+      - "127.0.0.1:8765:8765"
     volumes:
       - .:/app                             # source mount for editable install
       - yadgar-queue-data:/data            # persistent file queue + archive
@@ -57,6 +62,11 @@ services:
       YADGAR_HOST: "0.0.0.0"
       YADGAR_PORT: "8765"
       YADGAR_DATA_DIR: "/data"
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
+    tmpfs:
+      - /tmp
     depends_on:
       backend:
         condition: service_healthy

@@ -194,8 +194,7 @@ class KnowledgeGraph:
         # Function calls -> "calls" relationship context
         for m in _CALL_RE.finditer(content):
             fname = m.group(1)
-            if fname in defined_funcs and fname != m.group(1):
-                continue
+            # Q9: removed always-false branch (fname == m.group(1) then != check)
             # Only mark as call if it's not a definition itself at this position
             # and is a known defined function being called elsewhere
             if fname in defined_funcs:

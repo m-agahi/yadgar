@@ -10,6 +10,8 @@ from yadgar.consolidation import ConsolidationScheduler
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.storage import StorageEngine
 
+pytestmark = pytest.mark.xdist_group("server_globals")
+
 
 @pytest.fixture
 def storage(tmp_path):

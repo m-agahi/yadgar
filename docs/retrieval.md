@@ -174,3 +174,39 @@ When `INDEX_ENRICHMENT_ENABLED=true`, memories are expanded at storage time:
 | Logic enrichment | Formal logic patterns extracted from content |
 
 Enriched text is appended to the embedding input, improving retrieval of memories via related terms not literally present in the content.
+
+## Branch-Aware Filter and Boost (v5.0)
+
+`recall()` and `wiki_query()` filter results by git branch after fetch:
+
+```
+allowed = {default_branch, None}
+if current_branch is not None:
+    allowed.add(current_branch)
+results = [r for r in results if r["branch"] in allowed]
+```
+
+Results where `branch == current_branch` then receive a 1.5× multiplier on `_retrieval_score` and the list is re-sorted descending. Non-git contexts (`current_branch is None`) skip the boost; the filter degenerates to `{default_branch, None}`.
+
+The branch is captured at write time by `memorize`, `anchor`, `checkpoint`, and `wiki_add` via the `_detect_branch(directory)` helper (30s LRU cache). `bootstrap_project` and `update_active_work` intentionally leave the branch unset — project-level state is not branch-scoped.
+
+`wiki_read(slug)` performs a three-step resolution: exact slug on current branch → on default branch → on `branch IS NONE`. First hit wins.
+
+Known v5.x follow-up: filter is applied in Python after the SurrealQL fetch. Moving the filter into the `WHERE` clause eliminates the over-fetch buffer and is tracked for a future minor.
+
+## Pipeline Stages (v5.0)
+
+`recall()` is a thin orchestrator over named pipeline-stage helpers:
+
+| Stage | Purpose |
+|---|---|
+| `_collect_fts_scores` | FTS BM25 + entity-FTS + COMET expansion |
+| `_collect_vector_scores` | KNN vector search; returns `(vector_memory_ids, query_embedding)` |
+| `_collect_ppr_scores` | Personalized PageRank from vector seeds |
+| `_collect_spreading_scores` | Spreading activation from top vector seeds |
+| `_collect_temporal_scores` | Temporal signal weighting |
+| `_fuse_scores` | Confidence gating + WRRF / convex fusion |
+| `_build_initial_results` | Assemble result list + cross-encoder diversity injection |
+| `_apply_rerank_pipeline` | Heuristic → comparison → CE → NLI → multi-passage → profile/belief merge → MMR → trim → adversarial → rules engine → engram links → metacognition |
+
+Behavior is pinned by `yadgar/tests/test_retrieval_core_characterization.py` (10 queries × 5 results, scored to `math.isclose(rel_tol=1e-9)`). Regenerate fixtures via `YADGAR_REGEN_FIXTURES=1` after intentional behavior changes.

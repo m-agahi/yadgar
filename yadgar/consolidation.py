@@ -246,8 +246,9 @@ class ConsolidationScheduler:
                         finally:
                             self._last_cycle_completed_at = datetime.now(UTC)
 
-            # Run once per day at 18:30 UTC (18:30–18:31 window)
-            if now.hour == 18 and now.minute == 30 and self._last_consolidation_date != today:
+            # Run once per day at or after 18:30 UTC
+            # T-0016: use >= so a long DAEMON_CHECK_INTERVAL can't skip the window
+            if (now.hour, now.minute) >= (18, 30) and self._last_consolidation_date != today:
                 try:
                     self._consolidation_cycle()
                     self._last_consolidation_date = today
@@ -340,14 +341,16 @@ class ConsolidationScheduler:
         }
 
         _t = time.monotonic()
-        logger.info("phase: apply_decay starting")
+        logger.info("phase_start: apply_decay")
         self._apply_decay(stats)
-        logger.info("phase: apply_decay complete in %dms", int((time.monotonic() - _t) * 1000))
+        logger.info("phase_end: apply_decay duration_ms=%d", int((time.monotonic() - _t) * 1000))
 
         _t = time.monotonic()
-        logger.info("phase: process_episodes starting")
+        logger.info("phase_start: process_episodes")
         self._process_new_episodes(stats)
-        logger.info("phase: process_episodes complete in %dms", int((time.monotonic() - _t) * 1000))
+        logger.info(
+            "phase_end: process_episodes duration_ms=%d", int((time.monotonic() - _t) * 1000)
+        )
 
         # Prune old episodes to keep the table bounded and _check_temporal_order fast
         try:
@@ -359,25 +362,29 @@ class ConsolidationScheduler:
             logger.debug("Episode prune failed (non-fatal)", exc_info=True)
 
         _t = time.monotonic()
-        logger.info("phase: merge_duplicates starting")
+        logger.info("phase_start: merge_duplicates")
         self._merge_duplicates(stats)
-        logger.info("phase: merge_duplicates complete in %dms", int((time.monotonic() - _t) * 1000))
+        logger.info(
+            "phase_end: merge_duplicates duration_ms=%d", int((time.monotonic() - _t) * 1000)
+        )
 
         # Semantic similarity linking — create relationships between similar memories
         try:
             _t = time.monotonic()
-            logger.info("phase: link_similar starting")
+            logger.info("phase_start: link_similar")
             self._link_similar_memories(stats)
-            logger.info("phase: link_similar complete in %dms", int((time.monotonic() - _t) * 1000))
+            logger.info(
+                "phase_end: link_similar duration_ms=%d", int((time.monotonic() - _t) * 1000)
+            )
         except Exception:
             logger.exception("Similarity linking failed")
 
         try:
             _t = time.monotonic()
-            logger.info("phase: detect_causality starting")
+            logger.info("phase_start: detect_causality")
             self._graph.detect_causality()
             logger.info(
-                "phase: detect_causality complete in %dms", int((time.monotonic() - _t) * 1000)
+                "phase_end: detect_causality duration_ms=%d", int((time.monotonic() - _t) * 1000)
             )
         except Exception:
             logger.exception("Causal detection failed")
@@ -388,12 +395,12 @@ class ConsolidationScheduler:
             if self._events_since_last_discovery >= 50:
                 try:
                     _t = time.monotonic()
-                    logger.info("phase: causal_discovery starting")
+                    logger.info("phase_start: causal_discovery")
                     dag = self._causal_discovery.discover_dag()
                     stats["causal_dag_edges"] = dag.get("metadata", {}).get("directed_count", 0)
                     self._events_since_last_discovery = 0
                     logger.info(
-                        "phase: causal_discovery complete in %dms",
+                        "phase_end: causal_discovery duration_ms=%d",
                         int((time.monotonic() - _t) * 1000),
                     )
                 except Exception:
@@ -402,26 +409,26 @@ class ConsolidationScheduler:
         # Run memify self-improvement cycle
         try:
             _t = time.monotonic()
-            logger.info("phase: memify starting")
+            logger.info("phase_start: memify")
             memify_stats = self._curator.memify_cycle()
             stats["memify_pruned"] = memify_stats.get("pruned", 0)
             stats["memify_strengthened"] = memify_stats.get("strengthened", 0)
             stats["memify_reweighted"] = memify_stats.get("reweighted", 0)
             stats["memify_derived"] = memify_stats.get("derived", 0)
-            logger.info("phase: memify complete in %dms", int((time.monotonic() - _t) * 1000))
+            logger.info("phase_end: memify duration_ms=%d", int((time.monotonic() - _t) * 1000))
         except Exception:
             logger.exception("Memify cycle failed")
 
         # Run CLS dual-store consolidation (Go-CLS: episodic → semantic)
         try:
             _t = time.monotonic()
-            logger.info("phase: cls_consolidation starting")
+            logger.info("phase_start: cls_consolidation")
             cls_stats = self._cls.consolidation_cycle()
             stats["cls_patterns_found"] = cls_stats.get("patterns_found", 0)
             stats["cls_promoted"] = cls_stats.get("promoted", 0)
             stats["cls_skipped_inconsistent"] = cls_stats.get("skipped_inconsistent", 0)
             logger.info(
-                "phase: cls_consolidation complete in %dms", int((time.monotonic() - _t) * 1000)
+                "phase_end: cls_consolidation duration_ms=%d", int((time.monotonic() - _t) * 1000)
             )
         except Exception:
             logger.exception("CLS consolidation cycle failed")
@@ -431,11 +438,11 @@ class ConsolidationScheduler:
         # Process action_log entries into real memories
         try:
             _t = time.monotonic()
-            logger.info("phase: action_log starting")
+            logger.info("phase_start: action_log")
             action_stats = self._process_action_log()
             stats["actions_processed"] = action_stats.get("processed", 0)
             stats["action_memories_created"] = action_stats.get("memories_created", 0)
-            logger.info("phase: action_log complete in %dms", int((time.monotonic() - _t) * 1000))
+            logger.info("phase_end: action_log duration_ms=%d", int((time.monotonic() - _t) * 1000))
         except Exception:
             logger.exception("Action log processing failed")
 
@@ -489,7 +496,7 @@ class ConsolidationScheduler:
                 logger.debug("auto-vacuum check failed (non-fatal)", exc_info=True)
 
         _t = time.monotonic()
-        logger.info("phase: insert_consolidation_log starting")
+        logger.info("phase_start: insert_consolidation_log")
         duration_ms = int((time.monotonic() - start) * 1000)
         self._storage.insert_consolidation_log(
             {
@@ -498,14 +505,15 @@ class ConsolidationScheduler:
             }
         )
         logger.info(
-            "phase: insert_consolidation_log complete in %dms", int((time.monotonic() - _t) * 1000)
+            "phase_end: insert_consolidation_log duration_ms=%d",
+            int((time.monotonic() - _t) * 1000),
         )
         logger.info("Consolidation complete in %dms: %s", duration_ms, stats)
 
         # Post-consolidation MTREE health probe: bulk embedding writes during
         # consolidation are the primary trigger for SurrealDB 2.6.x index
         # corruption. Detect and auto-recover while the damage is still fresh.
-        logger.info("phase: mtree_probe starting")
+        logger.info("phase_start: mtree_probe")
         _t = time.monotonic()
         if not self._storage.probe_vector_indexes():
             logger.warning("MTREE index corruption detected after consolidation — rebuilding")
@@ -516,7 +524,7 @@ class ConsolidationScheduler:
                     "MTREE index rebuild failed; vector search will be degraded "
                     "until the container is restarted"
                 )
-        logger.info("phase: mtree_probe complete in %dms", int((time.monotonic() - _t) * 1000))
+        logger.info("phase_end: mtree_probe duration_ms=%d", int((time.monotonic() - _t) * 1000))
 
         return stats
 
@@ -1010,7 +1018,7 @@ class ConsolidationScheduler:
             try:
                 dt = datetime.fromisoformat(timestamp)
                 bucket = dt.strftime("%Y-%m-%d-%H") + f"-{dt.minute // 30}"
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as _e:
                 bucket = "unknown"
             key = f"{directory}|{bucket}"
             if key not in groups:

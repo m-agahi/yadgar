@@ -78,6 +78,16 @@ def main() -> None:
     print(f"==> Export complete: {sum(len(v) for v in all_data.values())} total records\n")
 
     # ── Step 2: Start a fresh SurrealDB server on NEW_PATH ───────────────────
+    import os
+
+    _surreal_user = os.environ.get("SURREAL_USER") or os.environ.get("YADGAR_DB_USER")
+    _surreal_pass = os.environ.get("SURREAL_PASS") or os.environ.get("YADGAR_DB_PASS")
+    if not _surreal_user or not _surreal_pass:
+        raise RuntimeError(
+            "SURREAL_USER/SURREAL_PASS (or YADGAR_DB_USER/YADGAR_DB_PASS) must be set. "
+            "Example: SURREAL_USER=root SURREAL_PASS=<secret> python3 migrate_to_server.py"
+        )
+
     print(f"==> Starting SurrealDB server on {NEW_PATH}…")
     proc = subprocess.Popen(
         [
@@ -87,9 +97,9 @@ def main() -> None:
             "--bind",
             "127.0.0.1:18000",
             "--user",
-            "root",
+            _surreal_user,
             "--pass",
-            "root",
+            _surreal_pass,
             f"surrealkv://{NEW_PATH}",
         ],
         stdout=subprocess.DEVNULL,
@@ -102,7 +112,7 @@ def main() -> None:
         # ── Step 3: Import into server ────────────────────────────────────────
         print("==> Importing into SurrealDB server…")
         dst = Surreal(SERVER_URL)
-        dst.signin({"username": "root", "password": "root"})
+        dst.signin({"username": _surreal_user, "password": _surreal_pass})
         dst.use("yadgar", "main")
 
         for table, records in all_data.items():

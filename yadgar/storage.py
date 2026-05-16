@@ -149,6 +149,7 @@ _MEMORY_UPDATABLE_FIELDS = frozenset(
         "file_hash",
         "provenance_agent",
         "vector_clock",
+        "branch",
     }
 )
 
@@ -170,7 +171,7 @@ _RELATIONSHIP_UPDATABLE_FIELDS = frozenset(
 # Add new migrations at the END of this list only — never reorder or edit existing ones.
 
 
-def _migration_001_hnsw_indexes(storage: "StorageEngine") -> None:
+def _migration_001_hnsw_indexes(storage: StorageEngine) -> None:
     """Migrate MTREE vector indexes to HNSW (SurrealDB v3 upgrade)."""
     dim = storage._embedding_dim
     # Drop old MTREE indexes (IF EXISTS so it's safe even if already gone)
@@ -195,7 +196,7 @@ def _migration_001_hnsw_indexes(storage: "StorageEngine") -> None:
     """)
 
 
-def _migration_002_relationship_indexes(storage: "StorageEngine") -> None:
+def _migration_002_relationship_indexes(storage: StorageEngine) -> None:
     """Add indexes on relationship.source_entity_id / target_entity_id (perf v4.4.1)."""
     storage._q("""
         DEFINE INDEX IF NOT EXISTS rel_source_target_idx
@@ -207,13 +208,31 @@ def _migration_002_relationship_indexes(storage: "StorageEngine") -> None:
     """)
 
 
-def _migration_003_memory_similarity_link_table(storage: "StorageEngine") -> None:
+def _migration_003_memory_similarity_link_table(storage: StorageEngine) -> None:
     """Add memory_similarity_link table to stop entity-table bloat (perf v4.4.2)."""
     storage._q("DEFINE TABLE IF NOT EXISTS memory_similarity_link TYPE ANY SCHEMALESS;")
     storage._q("""
         DEFINE INDEX IF NOT EXISTS memory_sim_link_pair_idx
             ON memory_similarity_link FIELDS source_memory_id, target_memory_id UNIQUE;
     """)
+
+
+def _migration_004_branch_field(storage: StorageEngine) -> None:
+    """Add nullable branch column to memory + wiki_page; backfill pre-v5 rows.
+
+    DDL: DEFINE FIELD IF NOT EXISTS is idempotent — safe to call twice.
+    Backfill: single transaction — partial state impossible on TX failure.
+    Pre-v5 rows (branch IS NONE) are tagged 'master' as the canonical default.
+    """
+    storage._q("DEFINE FIELD IF NOT EXISTS branch ON TABLE memory TYPE option<string>;")
+    storage._q("DEFINE FIELD IF NOT EXISTS branch ON TABLE wiki_page TYPE option<string>;")
+    # Backfill pre-v5 rows inside a single transaction
+    storage._q(
+        "BEGIN TRANSACTION;\n"
+        "UPDATE memory SET branch = 'master' WHERE branch IS NONE;\n"
+        "UPDATE wiki_page SET branch = 'master' WHERE branch IS NONE;\n"
+        "COMMIT TRANSACTION"
+    )
 
 
 _MIGRATIONS: list[dict] = [
@@ -223,6 +242,7 @@ _MIGRATIONS: list[dict] = [
         "version": "003_memory_similarity_link_table",
         "fn": _migration_003_memory_similarity_link_table,
     },
+    {"version": "004_branch_field", "fn": _migration_004_branch_field},
 ]
 
 
@@ -286,13 +306,22 @@ class StorageEngine:
             _logging.getLogger("httpx").setLevel(_logging.WARNING)
             _logging.getLogger("httpcore").setLevel(_logging.WARNING)
 
-            _user = os.environ.get("YADGAR_DB_USER", "root")
-            _pass = os.environ.get("YADGAR_DB_PASS", "root")
-            if _user == "root" or _pass == "root":
-                _log.warning(
-                    "Using default 'root' credentials for SurrealDB — set YADGAR_DB_USER and"
-                    " YADGAR_DB_PASS to the yadgar-rw user for production"
-                )
+            _allow_root = os.environ.get("YADGAR_ALLOW_ROOT", "0").lower() in (
+                "1",
+                "true",
+                "yes",
+            )
+            if _allow_root:
+                _user = os.environ.get("YADGAR_DB_USER", "root")
+                _pass = os.environ.get("YADGAR_DB_PASS", "root")
+                if _user == "root" or _pass == "root":
+                    _log.warning(
+                        "YADGAR_ALLOW_ROOT=1: using root credentials — "
+                        "for production set YADGAR_DB_USER / YADGAR_DB_PASS"
+                    )
+            else:
+                _user = os.environ["YADGAR_DB_USER"]
+                _pass = os.environ["YADGAR_DB_PASS"]
             _auth = base64.b64encode(f"{_user}:{_pass}".encode()).decode()
             self._http = httpx.Client(
                 base_url=self._db_url,
@@ -394,7 +423,7 @@ class StorageEngine:
         try:
             self._embedded_db.close()
         except Exception:
-            pass
+            _log.warning("Failed to close embedded DB before backup restore", exc_info=True)
 
         from surrealdb import Surreal
 
@@ -412,8 +441,13 @@ class StorageEngine:
 
     # ------------------------------------------------------------------ helpers
 
-    def _bytes_to_floats(self, data: bytes) -> list[float]:
+    def _bytes_to_floats(self, data: bytes, expected_dim: int | None = None) -> list[float]:
+        # Q20: validate alignment and optional dimension match
+        if len(data) % 4 != 0:
+            raise ValueError(f"_bytes_to_floats: data length {len(data)} is not divisible by 4")
         n = len(data) // 4
+        if expected_dim is not None and n != expected_dim:
+            raise ValueError(f"_bytes_to_floats: got {n} floats but expected_dim={expected_dim}")
         return list(struct.unpack(f"<{n}f", data))
 
     def _floats_to_bytes(self, floats: list[float]) -> bytes:
@@ -570,13 +604,19 @@ class StorageEngine:
             # Last entry is the actual query result (LET entries precede it).
             raw = results[-1].get("result") if results else None
         else:
-            # Embedded mode: delegate to the surrealkv SDK with retry.
-            for attempt in range(2):
+            # Embedded mode: delegate to the surrealkv SDK.
+            # §5 Q3: Only retry read-only statements to prevent double-writes.
+            _surql_upper = surql.lstrip().upper()
+            _is_readonly = any(
+                _surql_upper.startswith(kw) for kw in ("SELECT", "INFO FOR", "INFO", "SHOW")
+            )
+            _max_attempts = 2 if _is_readonly else 1
+            for attempt in range(_max_attempts):
                 try:
                     raw = self._embedded_db.query(surql, params or {})
                     break
                 except Exception as exc:
-                    if attempt == 0:
+                    if attempt == 0 and _is_readonly:
                         _log.debug("Embedded DB error (%s), retrying…", exc)
                         continue
                     raise
@@ -601,14 +641,60 @@ class StorageEngine:
 
         Returns the UTF-8 encoded body exactly as it would be sent to SurrealDB,
         so callers can measure its real size before POSTing.
+
+        §5 Q7: param names are prefixed per-statement using a tokeniser-safe
+        word-boundary replacement so '$id' inside a SQL string literal is never
+        accidentally rewritten.  Each $k is replaced only when it appears as a
+        standalone token (word boundary on both sides, not inside quotes).
         """
         parts = ["BEGIN TRANSACTION"]
         for i, (sql, params) in enumerate(chunk):
             if params:
                 for k, v in params.items():
                     parts.append(f"LET $p{i}_{k} = {json_mod.dumps(v, ensure_ascii=False)}")
-                for k in params:
-                    sql = re.sub(rf"\${re.escape(k)}\b", f"$p{i}_{k}", sql)
+                # Tokeniser-safe rewrite: only replace $k that are SQL param tokens
+                # (preceded by $, followed by non-identifier char or end-of-string),
+                # not inside single-quoted or double-quoted string literals.
+                # Strategy: split on quote boundaries, only rewrite outside quotes.
+                new_sql_parts: list[str] = []
+                # Simple state machine: track whether we're inside a single-quoted string.
+                # Double-quoted identifiers are not used in SurrealQL params.
+                in_quote = False
+                quote_char = ""
+                current: list[str] = []
+                sql_iter = sql
+                pos = 0
+                while pos < len(sql_iter):
+                    ch = sql_iter[pos]
+                    if not in_quote and ch in ("'", '"'):
+                        # Flush pending non-quoted segment and rewrite params in it
+                        segment = "".join(current)
+                        for k in params:
+                            segment = re.sub(
+                                rf"\${re.escape(k)}(?=[^A-Za-z0-9_]|$)", f"$p{i}_{k}", segment
+                            )
+                        new_sql_parts.append(segment)
+                        current = [ch]
+                        in_quote = True
+                        quote_char = ch
+                    elif in_quote and ch == quote_char and (pos == 0 or sql_iter[pos - 1] != "\\"):
+                        current.append(ch)
+                        new_sql_parts.append("".join(current))
+                        current = []
+                        in_quote = False
+                        quote_char = ""
+                    else:
+                        current.append(ch)
+                    pos += 1
+                # Flush remainder
+                segment = "".join(current)
+                if not in_quote:
+                    for k in params:
+                        segment = re.sub(
+                            rf"\${re.escape(k)}(?=[^A-Za-z0-9_]|$)", f"$p{i}_{k}", segment
+                        )
+                new_sql_parts.append(segment)
+                sql = "".join(new_sql_parts)
             parts.append(sql.rstrip(";"))
         parts.append("COMMIT TRANSACTION")
         return (";\n".join(parts) + ";").encode()
@@ -751,6 +837,20 @@ class StorageEngine:
         if not self._db_url:
             return  # embedded mode: no migrations needed
 
+        # Serialize concurrent daemon starts — flock for duration of migrations
+        # Use ~/.yadgar as lock directory regardless of DB mode
+        lock_dir = Path("~/.yadgar").expanduser()
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / ".migration.lock"
+        with open(lock_path, "w") as _lock_fh:
+            fcntl.flock(_lock_fh, fcntl.LOCK_EX)
+            try:
+                self._run_migrations_locked()
+            finally:
+                fcntl.flock(_lock_fh, fcntl.LOCK_UN)
+
+    def _run_migrations_locked(self) -> None:
+        """Run migrations while holding the migration lock."""
         self._q("DEFINE TABLE IF NOT EXISTS schema_version SCHEMALESS;")
 
         for migration in _MIGRATIONS:
@@ -978,13 +1078,15 @@ class StorageEngine:
 
     # ------------------------------------------------------------------ Memories
 
-    def insert_memory(self, memory: dict, embeddings_engine=None, settings=None) -> int:
+    def insert_memory(
+        self, memory: dict, embeddings_engine=None, settings=None, branch: str | None = None
+    ) -> int:
         now = self._now_iso()
         mid = self._next_id("memory")
         embedding = memory.get("embedding")
         emb_floats = self._bytes_to_floats(embedding) if embedding else None
 
-        self._q(
+        sql = (
             "CREATE type::record('memory', $id) SET "
             "content = $content, embedding = $embedding, tags = $tags, "
             "source_episode_id = $source_episode_id, "
@@ -997,33 +1099,37 @@ class StorageEngine:
             "compression_level = $compression_level, sr_x = $sr_x, sr_y = $sr_y, "
             "reconsolidation_count = $reconsolidation_count, "
             "provenance_agent = $provenance_agent, vector_clock = $vector_clock, "
-            "is_protected = $is_protected",
-            {
-                "id": mid,
-                "content": memory["content"],
-                "embedding": emb_floats,
-                "tags": memory.get("tags", []),
-                "source_episode_id": memory.get("source_episode_id"),
-                "directory_context": memory["directory_context"],
-                "created_at": memory.get("created_at", now),
-                "last_accessed": memory.get("last_accessed", now),
-                "heat": memory.get("heat", 1.0),
-                "is_stale": bool(memory.get("is_stale", False)),
-                "file_hash": memory.get("file_hash"),
-                "embedding_model": memory.get("embedding_model"),
-                "plasticity": memory.get("plasticity", 1.0),
-                "stability": memory.get("stability", 0.0),
-                "excitability": memory.get("excitability", 1.0),
-                "store_type": memory.get("store_type", "episodic"),
-                "compression_level": memory.get("compression_level", 0),
-                "sr_x": memory.get("sr_x", 0.0),
-                "sr_y": memory.get("sr_y", 0.0),
-                "reconsolidation_count": memory.get("reconsolidation_count", 0),
-                "provenance_agent": memory.get("provenance_agent", "default"),
-                "vector_clock": memory.get("vector_clock", "{}"),
-                "is_protected": bool(memory.get("is_protected", False)),
-            },
+            "is_protected = $is_protected"
         )
+        params: dict = {
+            "id": mid,
+            "content": memory["content"],
+            "embedding": emb_floats,
+            "tags": memory.get("tags", []),
+            "source_episode_id": memory.get("source_episode_id"),
+            "directory_context": memory["directory_context"],
+            "created_at": memory.get("created_at", now),
+            "last_accessed": memory.get("last_accessed", now),
+            "heat": memory.get("heat", 1.0),
+            "is_stale": bool(memory.get("is_stale", False)),
+            "file_hash": memory.get("file_hash"),
+            "embedding_model": memory.get("embedding_model"),
+            "plasticity": memory.get("plasticity", 1.0),
+            "stability": memory.get("stability", 0.0),
+            "excitability": memory.get("excitability", 1.0),
+            "store_type": memory.get("store_type", "episodic"),
+            "compression_level": memory.get("compression_level", 0),
+            "sr_x": memory.get("sr_x", 0.0),
+            "sr_y": memory.get("sr_y", 0.0),
+            "reconsolidation_count": memory.get("reconsolidation_count", 0),
+            "provenance_agent": memory.get("provenance_agent", "default"),
+            "vector_clock": memory.get("vector_clock", "{}"),
+            "is_protected": bool(memory.get("is_protected", False)),
+        }
+        if branch is not None:
+            sql += ", branch = $branch"
+            params["branch"] = branch
+        self._q(sql, params)
 
         # Enrichment pipeline
         enrichment_data = {}
@@ -1154,14 +1260,14 @@ class StorageEngine:
         try:
             self.delete_vector(memory_id)
         except Exception:
-            pass
+            _log.warning("delete_vector failed for memory %s", memory_id, exc_info=True)
         try:
             self._q(
                 "UPDATE type::record('memory', $id) SET implicit_embedding = NONE",
                 {"id": memory_id},
             )
         except Exception:
-            pass
+            _log.warning("clear implicit_embedding failed for memory %s", memory_id, exc_info=True)
         self._q(
             "DELETE type::record('memory', $id)",
             {"id": memory_id},
@@ -1445,19 +1551,44 @@ class StorageEngine:
                 pass
 
     def recreate_vector_table(self, new_dim: int):
-        """Drop and recreate the vector index with new dimensions; clear all embeddings."""
-        self._q("REMOVE INDEX IF EXISTS memory_embedding_idx ON memory")
-        self._q("UPDATE memory SET embedding = NONE")
-        if self._db_url:
+        """Drop and recreate the vector index with new dimensions; clear all embeddings.
+
+        §6 C5: Wraps DROP INDEX → UPDATE embedding=NONE → REDEFINE INDEX in a
+        transaction.  Pre-flight: copies existing embeddings to a sidecar table
+        (memory_embedding_backup) so recovery is possible even if the TX fails.
+        """
+        # Pre-flight: back up existing embeddings to sidecar table.
+        try:
+            self._q("DEFINE TABLE IF NOT EXISTS memory_embedding_backup SCHEMALESS")
+            self._q("DELETE FROM memory_embedding_backup")
             self._q(
+                "INSERT INTO memory_embedding_backup "
+                "(SELECT id, embedding FROM memory WHERE embedding IS NOT NONE)"
+            )
+            _log.info("recreate_vector_table: embedding backup written to memory_embedding_backup")
+        except Exception as exc:
+            _log.warning("recreate_vector_table: backup failed (%s) — proceeding anyway", exc)
+
+        # DDL statements (REMOVE INDEX, DEFINE INDEX) are not transactional in
+        # SurrealDB — wrapping in BEGIN/COMMIT causes the query to fail.
+        # Recovery is handled via the pre-flight sidecar backup above.
+        if self._db_url:
+            index_def = (
                 f"DEFINE INDEX memory_embedding_idx ON memory FIELDS embedding "
                 f"HNSW DIMENSION {new_dim} DIST COSINE TYPE F32 EFC 150 M 12"
             )
         else:
-            self._q(
+            index_def = (
                 f"DEFINE INDEX memory_embedding_idx ON memory FIELDS embedding "
                 f"MTREE DIMENSION {new_dim} DIST COSINE TYPE F32"
             )
+        try:
+            self._q("REMOVE INDEX IF EXISTS memory_embedding_idx ON memory")
+            self._q("UPDATE memory SET embedding = NONE")
+            self._q(index_def)
+        except Exception:
+            _log.error("recreate_vector_table failed; embeddings may be in memory_embedding_backup")
+            raise
         self._embedding_dim = new_dim
 
     def probe_vector_indexes(self) -> bool:
@@ -1842,6 +1973,7 @@ class StorageEngine:
     # ------------------------------------------------------------------ File Hashes
 
     def upsert_file_hash(self, filepath: str, hash_value: str):
+        """§6 Q15: read-modify-write wrapped per-call to avoid duplicate rows under concurrency."""
         now = self._now_iso()
         rows = self._q(
             "SELECT id FROM file_hash WHERE filepath = $fp LIMIT 1",
@@ -1850,14 +1982,18 @@ class StorageEngine:
         if rows:
             fid = self._extract_id(rows[0]["id"])
             self._q(
-                "UPDATE type::record('file_hash', $id) SET hash = $hash, last_checked = $now",
+                "BEGIN TRANSACTION;\n"
+                "UPDATE type::record('file_hash', $id) SET hash = $hash, last_checked = $now;\n"
+                "COMMIT TRANSACTION",
                 {"id": fid, "hash": hash_value, "now": now},
             )
         else:
             fid = self._next_id("file_hash")
             self._q(
+                "BEGIN TRANSACTION;\n"
                 "CREATE type::record('file_hash', $id) SET "
-                "filepath = $fp, hash = $hash, last_checked = $now",
+                "filepath = $fp, hash = $hash, last_checked = $now;\n"
+                "COMMIT TRANSACTION",
                 {"id": fid, "fp": filepath, "hash": hash_value, "now": now},
             )
 
@@ -2568,7 +2704,8 @@ class StorageEngine:
 
         now = self._now_iso()
         rows = self._q("SELECT VALUE slot_index FROM engram_slot")
-        existing = {r for r in rows if isinstance(r, int)}
+        # Cast to int — SurrealDB may return floats (e.g. 0.0) instead of ints
+        existing = {int(r) for r in rows if r is not None}
         missing = [i for i in range(num_slots) if i not in existing]
         if not missing:
             return
@@ -2640,18 +2777,24 @@ class StorageEngine:
     # ------------------------------------------------------------------ Checkpoints
 
     def insert_checkpoint(self, data: dict) -> int:
-        """Insert a new checkpoint, deactivating all previous ones."""
+        """Insert a new checkpoint, deactivating all previous ones.
+
+        §6 Q15: Wrapped in a TX so deactivate+insert are atomic.
+        """
         now = self._now_iso()
-        self._q("UPDATE checkpoint SET is_active = false WHERE is_active = true")
         cid = self._next_id("checkpoint")
+        # Wrap deactivate + insert in a single transaction (atomic RMW).
         self._q(
+            "BEGIN TRANSACTION;\n"
+            "UPDATE checkpoint SET is_active = false WHERE is_active = true;\n"
             "CREATE type::record('checkpoint', $id) SET "
             "session_id = $session_id, directory_context = $dir, "
             "current_task = $task, files_being_edited = $files, "
             "key_decisions = $decisions, open_questions = $questions, "
             "next_steps = $steps, active_errors = $errors, "
             "custom_context = $custom, epoch = $epoch, "
-            "created_at = $now, is_active = true",
+            "created_at = $now, is_active = true;\n"
+            "COMMIT TRANSACTION",
             {
                 "id": cid,
                 "session_id": data.get("session_id", "default"),
@@ -2725,10 +2868,13 @@ class StorageEngine:
                 evidence = json.loads(evidence)
             if memory_id is not None and memory_id not in evidence:
                 evidence.append(memory_id)
+            # §6 Q15: wrap update in TX
             self._q(
+                "BEGIN TRANSACTION;\n"
                 "UPDATE type::record('user_profile', $id) SET "
                 "attribute_value = $av, confidence = $conf, "
-                "evidence_memory_ids = $evids, updated_at = $now",
+                "evidence_memory_ids = $evids, updated_at = $now;\n"
+                "COMMIT TRANSACTION",
                 {
                     "id": pid,
                     "av": attribute_value,
@@ -2741,12 +2887,15 @@ class StorageEngine:
 
         evidence = [memory_id] if memory_id is not None else []
         pid = self._next_id("user_profile")
+        # §6 Q15: wrap create in TX
         self._q(
+            "BEGIN TRANSACTION;\n"
             "CREATE type::record('user_profile', $id) SET "
             "entity_name = $en, attribute_type = $at, attribute_key = $ak, "
             "attribute_value = $av, evidence_memory_ids = $evids, "
             "confidence = $conf, created_at = $now, updated_at = $now, "
-            "directory_context = $dc",
+            "directory_context = $dc;\n"
+            "COMMIT TRANSACTION",
             {
                 "id": pid,
                 "en": entity_name,
@@ -2944,11 +3093,13 @@ class StorageEngine:
             pname = f"v{i}"
             set_parts.append(f"{k} = ${pname}")
             params[pname] = v
-        self._q(f"UPDATE memory:{memory_id} SET {', '.join(set_parts)}", params)
+        mid = int(memory_id)  # §5: cast to int to prevent record-ID injection
+        self._q(f"UPDATE memory:{mid} SET {', '.join(set_parts)}", params)
 
     def update_memory_last_accessed(self, memory_id: int, timestamp: str):
+        mid = int(memory_id)  # §5: cast to int
         self._q(
-            f"UPDATE memory:{memory_id} SET last_accessed = $ts",
+            f"UPDATE memory:{mid} SET last_accessed = $ts",
             {"ts": timestamp},
         )
 
@@ -3135,34 +3286,38 @@ class StorageEngine:
 
     # ------------------------------------------------------------------ Wiki Pages
 
-    def insert_wiki_page(self, page: dict) -> int:
+    def insert_wiki_page(self, page: dict, branch: str | None = None) -> int:
         """Insert a new wiki page, return its integer ID."""
         now = self._now_iso()
         pid = self._next_id("wiki_page")
         embedding = page.get("embedding")
         emb_floats = self._bytes_to_floats(embedding) if isinstance(embedding, bytes) else embedding
-        self._q(
+        sql = (
             "CREATE type::record('wiki_page', $id) SET "
             "title = $title, slug = $slug, content = $content, "
             "category = $category, tags = $tags, links = $links, "
             "confidence = $confidence, embedding = $embedding, "
             "source_memory_ids = $source_memory_ids, "
-            "created_at = $created_at, updated_at = $updated_at",
-            {
-                "id": pid,
-                "title": page.get("title", ""),
-                "slug": page["slug"],
-                "content": page.get("content", ""),
-                "category": page.get("category"),
-                "tags": page.get("tags", []),
-                "links": page.get("links", []),
-                "confidence": page.get("confidence", 1.0),
-                "embedding": emb_floats,
-                "source_memory_ids": page.get("source_memory_ids", []),
-                "created_at": page.get("created_at", now),
-                "updated_at": page.get("updated_at", now),
-            },
+            "created_at = $created_at, updated_at = $updated_at"
         )
+        params: dict = {
+            "id": pid,
+            "title": page.get("title", ""),
+            "slug": page["slug"],
+            "content": page.get("content", ""),
+            "category": page.get("category"),
+            "tags": page.get("tags", []),
+            "links": page.get("links", []),
+            "confidence": page.get("confidence", 1.0),
+            "embedding": emb_floats,
+            "source_memory_ids": page.get("source_memory_ids", []),
+            "created_at": page.get("created_at", now),
+            "updated_at": page.get("updated_at", now),
+        }
+        if branch is not None:
+            sql += ", branch = $branch"
+            params["branch"] = branch
+        self._q(sql, params)
         return pid
 
     def update_wiki_page(self, page_id: int, updates: dict) -> bool:
@@ -3200,6 +3355,44 @@ class StorageEngine:
         )
         return self._row_to_dict(rows[0]) if rows else None
 
+    def get_wiki_page_by_slug_and_branch(
+        self,
+        slug: str,
+        current_branch: str | None,
+        default_branch: str,
+    ) -> dict | None:
+        """§25 Branch-aware wiki page resolution.
+
+        Resolution order:
+        1. Exact slug match on current_branch (when not None).
+        2. Exact slug match on default_branch.
+        3. Exact slug match with branch IS NONE (legacy/canonical).
+        4. Returns None if not found.
+        """
+        # Step 1: current branch (skip when current is None — non-git context)
+        if current_branch is not None:
+            rows = self._q(
+                "SELECT * FROM wiki_page WHERE slug = $slug AND branch = $branch LIMIT 1",
+                {"slug": slug, "branch": current_branch},
+            )
+            if rows:
+                return self._row_to_dict(rows[0])
+
+        # Step 2: default branch
+        rows = self._q(
+            "SELECT * FROM wiki_page WHERE slug = $slug AND branch = $branch LIMIT 1",
+            {"slug": slug, "branch": default_branch},
+        )
+        if rows:
+            return self._row_to_dict(rows[0])
+
+        # Step 3: NONE branch (legacy/canonical)
+        rows = self._q(
+            "SELECT * FROM wiki_page WHERE slug = $slug AND branch IS NONE LIMIT 1",
+            {"slug": slug},
+        )
+        return self._row_to_dict(rows[0]) if rows else None
+
     def delete_wiki_page(self, page_id: int) -> bool:
         """Delete a wiki page by ID. Return True if deleted."""
         pid = int(page_id)
@@ -3223,15 +3416,31 @@ class StorageEngine:
         )
         return True
 
-    def list_wiki_pages(self, category: str | None = None) -> list[dict]:
-        """List all wiki pages, optionally filtered by category."""
+    def list_wiki_pages(
+        self,
+        category: str | None = None,
+        slug_prefix: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict]:
+        """List wiki pages, optionally filtered and limited at the DB layer."""
+        conditions: list[str] = []
+        params: dict = {}
+
         if category:
-            rows = self._q(
-                "SELECT * FROM wiki_page WHERE category = $cat ORDER BY updated_at DESC",
-                {"cat": category},
-            )
-        else:
-            rows = self._q("SELECT * FROM wiki_page ORDER BY updated_at DESC")
+            conditions.append("category = $cat")
+            params["cat"] = category
+
+        if slug_prefix:
+            conditions.append("string::starts_with(slug, $slug_prefix)")
+            params["slug_prefix"] = slug_prefix
+
+        where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        limit_clause = "LIMIT $lim" if (limit is not None and limit > 0) else ""
+        if limit_clause:
+            params["lim"] = limit
+
+        sql = f"SELECT * FROM wiki_page {where_clause} ORDER BY updated_at DESC {limit_clause}".strip()
+        rows = self._q(sql, params) if params else self._q(sql)
         return self._rows_to_dicts(rows)
 
     # ------------------------------------------------------------------ Wiki Search
@@ -3285,16 +3494,34 @@ class StorageEngine:
     # ------------------------------------------------------------------ Wiki Cross-References
 
     def replace_wiki_crossrefs(self, from_slug: str, to_slugs: list[str]) -> None:
-        """Atomic replace: delete all existing crossrefs FROM this slug, insert new ones."""
-        self._q(
-            "DELETE FROM wiki_crossref WHERE from_slug = $slug",
-            {"slug": from_slug},
-        )
-        for to_slug in to_slugs:
-            self._q(
-                "CREATE wiki_crossref SET from_slug = $from, to_slug = $to",
-                {"from": from_slug, "to": to_slug},
+        """Atomic replace: delete all existing crossrefs FROM this slug, insert new ones.
+
+        §6 Q15: TX wraps the delete+inserts so a partial failure can't leave an
+        empty crossref table (was possible before when the CREATE loop crashed).
+        """
+        import json as _json
+
+        # Build atomic TX: DELETE existing + CREATE all new crossrefs.
+        stmts = ["BEGIN TRANSACTION"]
+        params: dict = {"slug": from_slug}
+        stmts.append("DELETE FROM wiki_crossref WHERE from_slug = $slug")
+        for idx, to_slug in enumerate(to_slugs):
+            pk = f"to_{idx}"
+            params[pk] = to_slug
+            stmts.append(f"CREATE wiki_crossref SET from_slug = $slug, to_slug = ${pk}")
+        stmts.append("COMMIT TRANSACTION")
+
+        if self._db_url:
+            # Server mode: build LET preamble + body
+            lets = [f"LET ${k} = {_json.dumps(v, ensure_ascii=False)}" for k, v in params.items()]
+            body = ";\n".join(lets + stmts) + ";"
+            resp = self._http.post(
+                "/sql", content=body.encode(), headers={"Content-Type": "text/plain"}
             )
+            resp.raise_for_status()
+        else:
+            # Embedded mode: execute as single compound statement.
+            self._embedded_db.query(";\n".join(stmts) + ";", params)
 
     def get_wiki_backlinks(self, slug: str) -> list[str]:
         """Get all slugs that link TO this slug."""
@@ -3361,6 +3588,112 @@ class StorageEngine:
             {"id": did},
         )
         return True
+
+    # ------------------------------------------------------------------ _project_init / _active_work atomic helpers
+
+    def upsert_project_init(self, directory: str, content: str) -> dict:
+        """Atomic delete-then-insert for _project_init memory.
+
+        Deletes all existing _project_init memories for the directory, then
+        inserts a new one tagged [_project_init, _anchor] as semantic+protected.
+        Returns the new memory dict (without embedding).
+        """
+        now = self._now_iso()
+        mid = self._next_id("memory")
+        # Delete all existing _project_init memories for this directory, then
+        # create the new one in a single transaction.
+        self._q(
+            "BEGIN TRANSACTION;\n"
+            "DELETE FROM memory WHERE directory_context = $dir "
+            "AND '_project_init' INSIDE tags;\n"
+            "CREATE type::record('memory', $id) SET "
+            "content = $content, embedding = NONE, tags = $tags, "
+            "source_episode_id = NONE, directory_context = $dir, "
+            "created_at = $now, last_accessed = $now, "
+            "heat = $heat, is_stale = false, file_hash = NONE, "
+            "embedding_model = NONE, plasticity = 1.0, stability = 0.0, "
+            "excitability = 1.0, store_type = $store_type, "
+            "compression_level = 0, sr_x = 0.0, sr_y = 0.0, "
+            "reconsolidation_count = 0, provenance_agent = $agent, "
+            "vector_clock = '{}', is_protected = true;\n"
+            "COMMIT TRANSACTION",
+            {
+                "id": mid,
+                "content": content,
+                "tags": ["_project_init", "_anchor"],
+                "dir": directory,
+                "now": now,
+                "heat": 1.0,
+                "store_type": "semantic",
+                "agent": "default",
+            },
+        )
+        return {
+            "id": mid,
+            "content": content,
+            "tags": ["_project_init", "_anchor"],
+            "directory_context": directory,
+            "heat": 1.0,
+            "is_protected": True,
+            "store_type": "semantic",
+            "created_at": now,
+        }
+
+    def upsert_active_work(self, directory: str, content: str) -> dict:
+        """Atomic delete-then-insert for _active_work memory.
+
+        Returns dict with keys: previous_content (str | None), new_memory (dict).
+        """
+        now = self._now_iso()
+        mid = self._next_id("memory")
+        # Fetch existing content before replacing
+        existing = self._q(
+            "SELECT content FROM memory WHERE directory_context = $dir "
+            "AND '_active_work' INSIDE tags LIMIT 1",
+            {"dir": directory},
+        )
+        previous_content: str | None = None
+        if existing:
+            previous_content = existing[0].get("content")
+
+        # Atomic delete-then-insert
+        self._q(
+            "BEGIN TRANSACTION;\n"
+            "DELETE FROM memory WHERE directory_context = $dir "
+            "AND '_active_work' INSIDE tags;\n"
+            "CREATE type::record('memory', $id) SET "
+            "content = $content, embedding = NONE, tags = $tags, "
+            "source_episode_id = NONE, directory_context = $dir, "
+            "created_at = $now, last_accessed = $now, "
+            "heat = $heat, is_stale = false, file_hash = NONE, "
+            "embedding_model = NONE, plasticity = 1.0, stability = 0.0, "
+            "excitability = 1.0, store_type = $store_type, "
+            "compression_level = 0, sr_x = 0.0, sr_y = 0.0, "
+            "reconsolidation_count = 0, provenance_agent = $agent, "
+            "vector_clock = '{}', is_protected = true;\n"
+            "COMMIT TRANSACTION",
+            {
+                "id": mid,
+                "content": content,
+                "tags": ["_active_work"],
+                "dir": directory,
+                "now": now,
+                "heat": 1.0,
+                "store_type": "episodic",
+                "agent": "default",
+            },
+        )
+        new_memory = {
+            "id": mid,
+            "content": content,
+            "tags": ["_active_work"],
+            "directory_context": directory,
+            "heat": 1.0,
+            "is_protected": True,
+            "store_type": "episodic",
+            "created_at": now,
+        }
+        return {"previous_content": previous_content, "new_memory": new_memory}
 
     # ------------------------------------------------------------------ Context manager
 

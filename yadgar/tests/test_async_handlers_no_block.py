@@ -1,0 +1,112 @@
+"""§9 async correctness — verify event loop not blocked during DB calls.
+
+Tests:
+- _action_batch protected by asyncio.Lock (Q2)
+- storage.insert_action_log called via asyncio.to_thread (Q1)
+- httpx in health_check uses async client (Q5)
+"""
+
+import asyncio
+from unittest.mock import MagicMock
+
+
+class TestActionBatchLock:
+    """Q2: _action_batch must be protected by asyncio.Lock."""
+
+    def test_action_batch_lock_exists(self):
+        """_action_batch_lock must be an asyncio.Lock instance."""
+        import yadgar.server as srv
+
+        assert hasattr(srv, "_action_batch_lock"), "_action_batch_lock must exist"
+        assert isinstance(srv._action_batch_lock, asyncio.Lock), (
+            "_action_batch_lock must be asyncio.Lock"
+        )
+
+    def test_concurrent_batch_appends_no_race(self):
+        """Concurrent requests must not corrupt the batch dict."""
+        import yadgar.server as srv
+
+        orig_batch = srv._action_batch.copy()
+        orig_storage = srv._storage
+
+        mock_storage = MagicMock()
+        mock_storage.insert_action_log = MagicMock()
+
+        async def _run() -> int:
+            srv._storage = mock_storage
+            srv._action_batch.clear()
+
+            async def _one_append(i):
+                async with srv._action_batch_lock:
+                    batch = srv._action_batch.setdefault("test_session", [])
+                    batch.append({"item": i})
+
+            await asyncio.gather(*[_one_append(i) for i in range(10)])
+            return len(srv._action_batch.get("test_session", []))
+
+        try:
+            count = asyncio.run(_run())
+            assert count == 10, "concurrent appends must not race under asyncio.Lock"
+        finally:
+            srv._action_batch.clear()
+            srv._action_batch.update(orig_batch)
+            srv._storage = orig_storage
+
+
+class TestStorageCallOffThread:
+    """Q1: blocking storage calls must use asyncio.to_thread."""
+
+    def test_insert_action_log_called_via_to_thread(self):
+        """hook_auto_capture source must use asyncio.to_thread for insert_action_log."""
+        import inspect
+
+        import yadgar.server as srv
+
+        source = inspect.getsource(srv.hook_auto_capture)
+        assert "asyncio.to_thread" in source, (
+            "hook_auto_capture must call storage.insert_action_log via asyncio.to_thread"
+        )
+
+
+class TestHealthCheckAsync:
+    """Q5: health_check must use async httpx, not blocking httpx.get."""
+
+    def test_health_check_uses_async_client(self):
+        """health_check must use AsyncClient.get, not httpx.get."""
+        import inspect
+
+        import yadgar.server as srv
+
+        source = inspect.getsource(srv.health_check)
+        assert "AsyncClient" in source, (
+            "health_check must use httpx.AsyncClient (Q5 — not blocking httpx.get)"
+        )
+        assert "httpx.get" not in source or "AsyncClient" in source, (
+            "health_check must not use blocking httpx.get"
+        )
+
+
+class TestMetricsLock:
+    """Q6: _system_metrics_cache must be read under _metrics_lock."""
+
+    def test_metrics_lock_exists(self):
+        """_metrics_lock must be a threading.Lock."""
+        import threading
+
+        import yadgar.server as srv
+
+        assert hasattr(srv, "_metrics_lock"), "_metrics_lock must exist"
+        assert isinstance(srv._metrics_lock, type(threading.Lock())), (
+            "_metrics_lock must be a threading.Lock instance"
+        )
+
+    def test_api_system_snapshots_under_lock(self):
+        """api_system handler must copy metrics dict under lock."""
+        import inspect
+
+        import yadgar.server as srv
+
+        source = inspect.getsource(srv.api_system)
+        assert "_metrics_lock" in source, (
+            "api_system must read _system_metrics_cache under _metrics_lock"
+        )

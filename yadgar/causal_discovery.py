@@ -8,6 +8,7 @@ inference libraries required.
 
 import logging
 import math
+import re
 from collections import deque
 from datetime import UTC, datetime, timedelta
 from itertools import combinations
@@ -20,6 +21,62 @@ from yadgar.knowledge_graph import KnowledgeGraph
 from yadgar.storage import StorageEngine
 
 logger = logging.getLogger(__name__)
+
+
+def _traverse_oriented_edges(
+    start_id: int,
+    start_name: str,
+    storage: StorageEngine,
+    direction: str,
+    max_depth: int,
+) -> list[dict]:
+    """BFS traversal over oriented causal edges.
+
+    direction='upstream'  → follow edges where current entity is TARGET
+                           (returns causes of start entity).
+    direction='downstream' → follow edges where current entity is SOURCE
+                            (returns effects of start entity).
+
+    Returns a list of dicts with keys: entity, confidence, depth, path.
+    Sorted by (depth ASC, confidence DESC).
+    """
+    visited: set[int] = {start_id}
+    results: list[dict] = []
+    queue: deque[tuple[int, str, int, list[str]]] = deque()
+    queue.append((start_id, start_name, 0, [start_name]))
+
+    while queue:
+        current_id, current_name, depth, path = queue.popleft()
+        if depth >= max_depth:
+            continue
+
+        edges = storage.get_causal_edges_for_entity(current_id)
+        if direction == "upstream":
+            edges = [e for e in edges if e["target_entity_id"] == current_id]
+            neighbor_key = "source_entity_id"
+        else:
+            edges = [e for e in edges if e["source_entity_id"] == current_id]
+            neighbor_key = "target_entity_id"
+
+        for edge in edges:
+            neighbor_id = edge[neighbor_key]
+            if neighbor_id not in visited:
+                visited.add(neighbor_id)
+                neighbor_entity = storage.get_entity_by_id(neighbor_id)
+                neighbor_name = neighbor_entity["name"] if neighbor_entity else str(neighbor_id)
+                new_path = path + [neighbor_name]
+                results.append(
+                    {
+                        "entity": neighbor_name,
+                        "confidence": edge["confidence"],
+                        "depth": depth + 1,
+                        "path": new_path,
+                    }
+                )
+                queue.append((neighbor_id, neighbor_name, depth + 1, new_path))
+
+    results.sort(key=lambda r: (r["depth"], -r["confidence"]))
+    return results
 
 
 class CausalDiscovery:
@@ -90,7 +147,7 @@ class CausalDiscovery:
             ep_entities: list[str] = []
             for ent in all_entities:
                 name = ent["name"]
-                if name in content:
+                if re.search(r"\b" + re.escape(name) + r"\b", content):
                     ep_entities.append(name)
                     if name not in entity_name_set:
                         entity_name_set.add(name)
@@ -110,7 +167,9 @@ class CausalDiscovery:
             # Find which time bucket this episode falls into
             try:
                 ep_time = datetime.fromisoformat(ep_ts)
-            except (ValueError, TypeError):
+                if ep_time.tzinfo is None:
+                    ep_time = ep_time.replace(tzinfo=UTC)
+            except (ValueError, TypeError) as _e:
                 continue
             bucket_idx = int(
                 (ep_time - cutoff.replace(minute=0, second=0, microsecond=0)).total_seconds() / 3600
@@ -185,6 +244,65 @@ class CausalDiscovery:
             p_value = 2.0 * stats.t.sf(abs(t_stat), df=dof)
 
         return bool(p_value > alpha)
+
+    def _meek_r1(
+        self,
+        i: int,
+        j: int,
+        n_vars: int,
+        adjacency: list[list[bool]],
+        directed: list[list[bool]],
+    ) -> bool:
+        """Meek R1 (non-collider): if X->i and i-j and X not adj j, orient i->j.
+
+        Returns True if the edge was oriented.
+        """
+        for x in range(n_vars):
+            if directed[x][i] and not adjacency[x][j]:
+                directed[i][j] = True
+                return True
+        return False
+
+    def _meek_r2(
+        self,
+        i: int,
+        j: int,
+        n_vars: int,
+        adjacency: list[list[bool]],
+        directed: list[list[bool]],
+    ) -> bool:
+        """Meek R2 (acyclicity): if i->z->j and i-j undirected, orient i->j.
+
+        Returns True if the edge was oriented.
+        """
+        for z in range(n_vars):
+            if directed[i][z] and directed[z][j]:
+                directed[i][j] = True
+                return True
+        return False
+
+    def _meek_r3(
+        self,
+        i: int,
+        j: int,
+        n_vars: int,
+        adjacency: list[list[bool]],
+        directed: list[list[bool]],
+    ) -> bool:
+        """Meek R3 (non-adjacent): if i-z1, i-z2, z1->j, z2->j, z1 not adj z2, orient i->j.
+
+        Returns True if the edge was oriented.
+        """
+        z_to_y = [
+            z for z in range(n_vars) if z != i and z != j and adjacency[i][z] and directed[z][j]
+        ]
+        valid_pairs = any(
+            not adjacency[z1][z2] for idx1, z1 in enumerate(z_to_y) for z2 in z_to_y[idx1 + 1 :]
+        )
+        if len(z_to_y) >= 2 and valid_pairs:
+            directed[i][j] = True
+            return True
+        return False
 
     def pc_algorithm(
         self,
@@ -308,35 +426,21 @@ class CausalDiscovery:
                         continue  # already oriented
 
                     # R1: If X -> Y and Y - Z and not X - Z, orient Y -> Z
-                    for x in range(n_vars):
-                        if directed[x][i] and not adjacency[x][j]:
-                            directed[i][j] = True
-                            changed = True
-                            break
-
-                    if directed[i][j]:
+                    if self._meek_r1(i, j, n_vars, adjacency, directed):
+                        changed = True
                         continue
 
-                    # R2: If X -> Z and Y -> Z and X - Y, orient X -> Y
-                    # (i - j): if there exists z such that i -> z and j -> z
-                    for z in range(n_vars):
-                        if directed[i][z] and directed[j][z]:
-                            directed[i][j] = True
-                            changed = True
-                            break
-
-                    if directed[i][j]:
+                    # R2: Acyclicity. If i -> z -> j and i - j (undirected),
+                    # orient i -> j to avoid a directed cycle.
+                    # Fix: use directed[z][j] (path z->j), not directed[j][z].
+                    if self._meek_r2(i, j, n_vars, adjacency, directed):
+                        changed = True
                         continue
 
                     # R3: If X - Y and X - Z1 and X - Z2 and Z1 -> Y and Z2 -> Y
-                    # orient X -> Y
-                    z_to_y = [
-                        z
-                        for z in range(n_vars)
-                        if z != i and z != j and adjacency[i][z] and directed[z][j]
-                    ]
-                    if len(z_to_y) >= 2:
-                        directed[i][j] = True
+                    # and Z1, Z2 are NOT adjacent to each other, orient X -> Y.
+                    # Precondition: not adjacency[z1][z2] required to avoid cycles.
+                    if self._meek_r3(i, j, n_vars, adjacency, directed):
                         changed = True
 
         # Build result
@@ -466,42 +570,9 @@ class CausalDiscovery:
         target = self._storage.get_entity_by_name(effect_entity)
         if not target:
             return []
-
-        visited: set[int] = {target["id"]}
-        results: list[dict] = []
-        # Queue: (entity_id, entity_name, depth, path)
-        queue: deque[tuple[int, str, int, list[str]]] = deque()
-        queue.append((target["id"], effect_entity, 0, [effect_entity]))
-
-        while queue:
-            current_id, current_name, depth, path = queue.popleft()
-            if depth >= max_depth:
-                continue
-
-            # Find edges where current entity is the TARGET (upstream causes)
-            edges = self._storage.get_causal_edges_for_entity(current_id)
-            edges = [e for e in edges if e["target_entity_id"] == current_id]
-
-            for edge in edges:
-                src_id = edge["source_entity_id"]
-                if src_id not in visited:
-                    visited.add(src_id)
-                    src_entity = self._storage.get_entity_by_id(src_id)
-                    src_name = src_entity["name"] if src_entity else str(src_id)
-                    new_path = path + [src_name]
-                    results.append(
-                        {
-                            "entity": src_name,
-                            "confidence": edge["confidence"],
-                            "depth": depth + 1,
-                            "path": new_path,
-                        }
-                    )
-                    queue.append((src_id, src_name, depth + 1, new_path))
-
-        # Sort by depth (closest causes first), then by confidence
-        results.sort(key=lambda r: (r["depth"], -r["confidence"]))
-        return results
+        return _traverse_oriented_edges(
+            target["id"], effect_entity, self._storage, "upstream", max_depth
+        )
 
     def query_effects(self, cause_entity: str, max_depth: int = 3) -> list[dict]:
         """Find effects by traversing the DAG downstream.
@@ -512,40 +583,9 @@ class CausalDiscovery:
         source = self._storage.get_entity_by_name(cause_entity)
         if not source:
             return []
-
-        visited: set[int] = {source["id"]}
-        results: list[dict] = []
-        queue: deque[tuple[int, str, int, list[str]]] = deque()
-        queue.append((source["id"], cause_entity, 0, [cause_entity]))
-
-        while queue:
-            current_id, current_name, depth, path = queue.popleft()
-            if depth >= max_depth:
-                continue
-
-            # Find edges where current entity is the SOURCE (downstream effects)
-            edges = self._storage.get_causal_edges_for_entity(current_id)
-            edges = [e for e in edges if e["source_entity_id"] == current_id]
-
-            for edge in edges:
-                tgt_id = edge["target_entity_id"]
-                if tgt_id not in visited:
-                    visited.add(tgt_id)
-                    tgt_entity = self._storage.get_entity_by_id(tgt_id)
-                    tgt_name = tgt_entity["name"] if tgt_entity else str(tgt_id)
-                    new_path = path + [tgt_name]
-                    results.append(
-                        {
-                            "entity": tgt_name,
-                            "confidence": edge["confidence"],
-                            "depth": depth + 1,
-                            "path": new_path,
-                        }
-                    )
-                    queue.append((tgt_id, tgt_name, depth + 1, new_path))
-
-        results.sort(key=lambda r: (r["depth"], -r["confidence"]))
-        return results
+        return _traverse_oriented_edges(
+            source["id"], cause_entity, self._storage, "downstream", max_depth
+        )
 
     def get_causal_chain(self, entity: str) -> dict:
         """Return both causes and effects for an entity."""

@@ -1,0 +1,26 @@
+name: release-check
+on:
+  pull_request:
+    branches: [master]
+
+jobs:
+  verify-version-bump:
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.14-slim
+    steps:
+      - name: Install runtime deps (nodejs for actions, git, ca-certs)
+        run: apt-get update -qq && apt-get install -y --no-install-recommends nodejs git ca-certificates
+      - uses: https://data.forgejo.org/actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Verify version bump on release-flagged PRs
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          PYPROJECT_VER=$(grep -E '^version = ' pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          if [ "v${PYPROJECT_VER}" = "${LATEST_TAG}" ]; then
+            if git diff --name-only origin/master...HEAD | grep -qE '^yadgar/'; then
+              echo "::error::pyproject.toml version (${PYPROJECT_VER}) matches latest tag (${LATEST_TAG}). Bump or add 'no-release' label."
+              exit 1
+            fi
+          fi

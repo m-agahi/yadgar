@@ -2,7 +2,10 @@
 FROM python:3.14-slim AS prod
 WORKDIR /app
 COPY . /app
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+# curl pinned to bookworm repo (checked 2026-05-15); update after base-image rebuild
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    "curl=7.88.1-10+deb12u12" && \
+    rm -rf /var/lib/apt/lists/*
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install /app
 COPY entrypoint.sh /entrypoint.sh
@@ -17,8 +20,10 @@ ENV PYTHONUNBUFFERED=1 \
 RUN useradd -r -m -u 1001 -s /sbin/nologin yadgar
 USER 1001
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
+    CMD curl -f http://localhost:8765/health || exit 1
 CMD ["/entrypoint.sh"]
-LABEL version="4.8.2"
+LABEL version="5.0.0"
 
 # ── dev ───────────────────────────────────────────────────────────────────────
 FROM prod AS dev

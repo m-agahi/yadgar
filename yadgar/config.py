@@ -27,7 +27,9 @@ class YamlConfigSource(PydanticBaseSettingsSource):
             if isinstance(raw, dict):
                 self._data = {k.upper(): v for k, v in raw.items() if v is not None}
         except Exception:
-            pass  # silently skip bad config
+            import logging
+
+            logging.getLogger(__name__).warning("YAML config load failed", exc_info=True)
 
     def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
         val = self._data.get(field_name)
@@ -98,6 +100,9 @@ class Settings(BaseSettings):
     # logging
     CORE_LOG_LEVEL: str = "warn"
     BACKEND_LOG_LEVEL: str = "warn"
+    # v5.0 observability
+    METRICS_ENABLED: bool = True  # YADGAR_METRICS_ENABLED — expose /metrics endpoint
+    LOG_FORMAT: str = "human"  # YADGAR_LOG_FORMAT — "human" or "json"
 
     # v4: Hippocampal Replay settings
     REPLAY_MAX_RESTORE_MEMORIES: int = 8  # Max memories to include in restoration
@@ -344,6 +349,38 @@ class Settings(BaseSettings):
     VACUUM_AUTO_WINDOW_END: str = "23:00"
     # Set to False to disable threshold auto-trigger.
     VACUUM_AUTO_ENABLED: bool = True
+
+    # v5.0 perf settings
+    # TTL for the entity-set cache in WriteGate._compute_temporal_novelty and
+    # _compute_structural_novelty.  Avoids a get_all_entities() DB call on every
+    # write-gate evaluation.  Cache is also invalidated explicitly on entity
+    # add/delete via WriteGate.invalidate_entity_cache().
+    # Default: 300 seconds (5 minutes). Set to 0 to disable caching.
+    PREDICTIVE_CODING_ENTITY_TTL_SECONDS: int = 300
+
+    # v5.0 security settings
+    # Bearer-token auth for /api/* and /hooks/* routes.
+    # When False: middleware is a no-op; logs WARN at startup.
+    # When True (default): all /api/* and /hooks/* requests require a valid bearer token.
+    # Override to False during initial deployment before YADGAR_MCP_AUTH_TOKEN is provisioned.
+    REQUIRE_AUTH: bool = True
+    # The bearer token clients must present in the Authorization header.
+    # Must be set when REQUIRE_AUTH=True; ignored when False.
+    MCP_AUTH_TOKEN: str = ""
+    # Allowed CORS origins for the MCP HTTP transport.
+    # Comma-separated list. Defaults to loopback only.
+    ALLOWED_ORIGINS: str = "http://127.0.0.1:8765,http://localhost:8765"
+    # Maximum file size (bytes) for path-based memorize hashing.
+    # Files exceeding this threshold are skipped entirely.
+    MAX_HASH_BYTES: int = 10_485_760  # 10 MiB
+    # Auto-capture rate limit: max requests per directory key per minute.
+    AUTO_CAPTURE_RATE_LIMIT: int = 30
+
+    # §22 project_brief — layered bootstrap
+    # Hard character cap for _project_init memory content.
+    PROJECT_INIT_CAP_CHARS: int = 2000
+    # Default mode for project_brief. Options: "catalog" | "full".
+    BRIEF_MODE_DEFAULT: str = "catalog"
 
     model_config = {"env_prefix": "YADGAR_"}
 

@@ -944,11 +944,11 @@ async function refreshDebug() {
 
   if (debugTab === 'nodes') {
     urlEl.textContent = '(in-memory allNodes array)';
-    el.innerHTML = syntaxHL(JSON.stringify(allNodes.slice(0, 50).map(n => ({
+    el.innerHTML = syntaxHL(esc(JSON.stringify(allNodes.slice(0, 50).map(n => ({
       id: n.id, type: n.type, heat: n.heat, label: n.label,
       entity_type: n.entity_type, __deg: n.__deg,
       directory: n.directory, tags: n.tags,
-    })), null, 2));
+    })), null, 2)));
     stEl.textContent = `${allNodes.length} total nodes (showing ≤50)`;
     return;
   }
@@ -976,12 +976,23 @@ async function refreshDebug() {
       };
     }
 
-    el.innerHTML = syntaxHL(JSON.stringify(display, null, 2));
+    el.innerHTML = syntaxHL(esc(JSON.stringify(display, null, 2)));
     stEl.textContent = `HTTP ${r.status} · ${ms}ms · ${JSON.stringify(raw).length} bytes`;
   } catch (err) {
     el.textContent = `Error: ${err.message}`;
     stEl.textContent = '';
   }
+}
+
+// esc() — HTML-escape untrusted strings before inserting into innerHTML.
+// Prevents stored XSS when memory content contains <script> or similar.
+function esc(str) {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function syntaxHL(json) {

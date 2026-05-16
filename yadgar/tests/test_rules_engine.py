@@ -13,6 +13,8 @@ from yadgar.rules_engine import (
 )
 from yadgar.storage import StorageEngine
 
+pytestmark = pytest.mark.xdist_group("server_globals")
+
 
 @pytest.fixture
 def settings(tmp_path):
@@ -729,3 +731,84 @@ class TestEdgeCases:
         result = engine.apply_rules([mem], "/project")
         # Both boosts apply: 0.5 + 0.1 + 0.1 = 0.7
         assert result[0]["_retrieval_score"] == pytest.approx(0.7, abs=0.01)
+
+
+# ── §30 P0 additions — boost/penalty validation + evaluate_condition fail-closed ──
+
+
+class TestParseActionNaNInfValidation:
+    """_parse_action must reject NaN/inf boost/penalty values (T-0018)."""
+
+    def test_nan_boost_raises(self):
+
+        with pytest.raises(ValueError, match="finite|nan|inf"):
+            _parse_action(f"boost:{float('nan')}")
+
+    def test_inf_boost_raises(self):
+        with pytest.raises(ValueError, match="finite|nan|inf"):
+            _parse_action(f"boost:{float('inf')}")
+
+    def test_neg_inf_penalty_raises(self):
+        with pytest.raises(ValueError, match="finite|nan|inf"):
+            _parse_action(f"penalty:{float('-inf')}")
+
+    def test_inf_penalty_raises(self):
+        with pytest.raises(ValueError, match="finite|nan|inf"):
+            _parse_action(f"penalty:{float('inf')}")
+
+    def test_valid_boost_ok(self):
+        action_type, val = _parse_action("boost:0.5")
+        assert action_type == "boost"
+        assert val == pytest.approx(0.5)
+
+    def test_valid_penalty_ok(self):
+        action_type, val = _parse_action("penalty:0.1")
+        assert action_type == "penalty"
+        assert val == pytest.approx(0.1)
+
+    def test_zero_boost_ok(self):
+        action_type, val = _parse_action("boost:0.0")
+        assert action_type == "boost"
+        assert val == pytest.approx(0.0)
+
+
+class TestEvaluateConditionFailClosed:
+    """evaluate_condition must return False (not True) on parse error (Q19).
+
+    'Hard rules fail closed' — a condition that can't be parsed must NOT
+    silently pass all memories through.
+    """
+
+    def test_unparseable_condition_returns_false(self, engine):
+        """Unparseable condition → False (fail closed)."""
+        mem = _make_memory_dict(1, "test content", score=0.5)
+        result = engine.evaluate_condition("this is not a valid condition string", mem)
+        assert result is False, "evaluate_condition must return False on parse error, not True"
+
+    def test_empty_condition_returns_false(self, engine):
+        """Empty string → False (fail closed)."""
+        mem = _make_memory_dict(1, "test", score=0.5)
+        result = engine.evaluate_condition("", mem)
+        assert result is False
+
+    def test_valid_condition_still_works(self, engine):
+        """Valid parseable conditions must still evaluate correctly."""
+        mem = _make_memory_dict(1, "test", importance=0.8, score=0.5)
+        assert engine.evaluate_condition("importance > 0.5", mem) is True
+        assert engine.evaluate_condition("importance > 0.9", mem) is False
+
+    def test_hard_rule_with_bad_condition_add_rule_raises(self, engine):
+        """add_rule with unparseable condition must raise ValueError (validates at add time)."""
+        with pytest.raises(ValueError, match="Cannot parse|parse"):
+            engine.add_rule("hard", "global", "not_a_valid condition!!!", "filter", 10)
+
+    def test_evaluate_condition_fail_closed_does_not_pass_all(self, engine):
+        """evaluate_condition returns False (not True) for unparseable condition.
+
+        This means callers applying hard rules with corrupt stored conditions
+        will filter memories, not pass them through.
+        """
+        mem = _make_memory_dict(1, "a", score=0.5)
+        # Directly call evaluate_condition with a bad condition string
+        result = engine.evaluate_condition("not_a_valid condition!!!", mem)
+        assert result is False, "evaluate_condition must return False for unparseable condition"

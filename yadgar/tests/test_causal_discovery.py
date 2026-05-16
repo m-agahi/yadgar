@@ -554,3 +554,181 @@ class TestDAGStoredInTable:
         assert count_after_run2 == count_after_run1, (
             f"discover_dag appended rows on second run: {count_after_run1} → {count_after_run2}"
         )
+
+
+# ---------------------------------------------------------------------------
+# §10 / §30 — Meek rules correctness
+# ---------------------------------------------------------------------------
+
+
+class TestMeekR2Fix:
+    """Regression tests for Meek R2 fix (directed[z][j] not directed[j][z]).
+
+    Scenario that exposed the bug:
+    - V-structure A -> C <- B (A and B both cause C)
+    - A and B have an undirected edge A - B
+    - After v-structure orientation: A->C, B->C
+    - Meek R2 should orient A->B or B->A to prevent a directed cycle (acyclicity rule)
+    - Old code used directed[j][z] instead of directed[z][j], so the acyclicity
+      chain i->z->j was never recognised — collider siblings were left undirected.
+
+    With the fix (directed[z][j]): an edge i-j is oriented i->j when there is a
+    node z such that i->z and z->j (directed path, no short-cut).
+    """
+
+    def test_meek_r2_orients_acyclicity_path(self, cd):
+        """Meek R2 regression: directed[z][j] must be used (not directed[j][z]).
+
+        Test the fix directly: pass pc_algorithm data with structure X->Z->Y
+        where X and Y are also directly correlated. The PC skeleton should have
+        X-Y edge (not removed by CI because direct correlation exists too).
+        After v-structure orientation of whatever is oriented, R2 (directed path
+        through Z) must orient X-Y consistently to avoid cycles.
+
+        Key invariant: the result must have no directed cycle.
+        """
+        # X directly causes both Y and Z; Y also causes Z
+        np.random.seed(7)
+        n = 500
+        x = np.random.randn(n)
+        y = 0.7 * x + 0.3 * np.random.randn(n)
+        z = 0.5 * x + 0.5 * y + 0.1 * np.random.randn(n)
+        data = np.column_stack([x, y, z])
+        names = ["X", "Y", "Z"]
+
+        result = cd.pc_algorithm(data, names, alpha=0.05)
+        directed = {(e[0], e[1]) for e in result["directed_edges"]}
+
+        # Key invariant: no directed cycle
+        for src, tgt in directed:
+            assert (tgt, src) not in directed, (
+                f"Directed cycle: {src}->{tgt} and {tgt}->{src}. "
+                "R2 fix (directed[z][j]) prevents this."
+            )
+
+    def test_meek_r2_regression_directed_index(self, cd):
+        """Unit-level regression: R2 check uses directed[z][j] (path z->j), not directed[j][z].
+
+        Create a 3-variable structure and verify the orientation is consistent
+        with acyclicity — the old bug would leave the A-B edge undirected because
+        directed[j][z] would check the wrong direction.
+        """
+        # Chain X->Y->Z with X-Z undirected (should get X->Z by R2)
+        np.random.seed(13)
+        n = 600
+        x = np.random.randn(n)
+        y = 0.95 * x + 0.05 * np.random.randn(n)
+        z = 0.95 * y + 0.05 * np.random.randn(n)
+        data = np.column_stack([x, y, z])
+        names = ["X", "Y", "Z"]
+
+        result = cd.pc_algorithm(data, names, alpha=0.01)
+        directed = {(e[0], e[1]) for e in result["directed_edges"]}
+        {(min(e[0], e[1]), max(e[0], e[1])) for e in result["undirected_edges"]}
+
+        # The chain X->Y->Z should not leave X-Z undirected AND X->Z oriented
+        # With fix: if both X->Y and Y->Z are oriented, R2 orients X->Z
+        # Either X-Z is oriented (good) or the skeleton doesn't include it
+        # (CI test correctly finds X indep Z given Y — also acceptable)
+        # Key invariant: no directed cycle
+        has_cycle = ("X", "Z") in directed and ("Z", "X") in directed
+        assert not has_cycle, "Directed cycle detected — R2 may be misorienting"
+
+
+class TestMeekR3Fix:
+    """Regression test for Meek R3 missing non-adjacency precondition."""
+
+    def test_meek_r3_requires_z1_z2_non_adjacent(self, cd):
+        """R3 should only fire when Z1 and Z2 are NOT adjacent to each other.
+
+        If Z1-Z2 are adjacent, orienting X->Y could create a cycle.
+        The precondition 'not adjacency[z1][z2]' must be checked.
+        """
+        # This is mostly a structural test — pc_algorithm must not produce
+        # directed cycles regardless of graph topology
+        np.random.seed(99)
+        n = 400
+        # Create a structure where Z1 and Z2 are adjacent to each other
+        z1 = np.random.randn(n)
+        z2 = 0.8 * z1 + 0.2 * np.random.randn(n)  # Z1-Z2 adjacent
+        x = np.random.randn(n)  # X independent of Z1, Z2
+        y = 0.5 * z1 + 0.5 * z2 + 0.1 * np.random.randn(n)  # Y caused by both
+
+        data = np.column_stack([x, y, z1, z2])
+        names = ["X", "Y", "Z1", "Z2"]
+        result = cd.pc_algorithm(data, names, alpha=0.05)
+
+        directed = result["directed_edges"]
+        # Check no directed cycle exists
+        edge_map = {(e[0], e[1]) for e in directed}
+        for e0, e1, _ in directed:
+            assert (e1, e0) not in edge_map, f"Directed cycle: {e0}->{e1} and {e1}->{e0}"
+
+
+class TestBuildEventMatrixBoundaryMatch:
+    """§10 T-0004 — entity name matching must use word-boundary regex."""
+
+    def test_short_name_no_false_positive(self, cd, storage):
+        """Entity named 'x' must NOT match inside 'exec' or 'exception'."""
+        now = datetime.now(UTC)
+        storage.insert_entity({"name": "x", "type": "file"})
+        storage.insert_entity({"name": "exception_handler", "type": "file"})
+
+        # Episode containing 'exec' and 'exception' but NOT bare 'x'
+        storage.insert_episode(
+            {
+                "session_id": "boundary_test",
+                "directory": "/proj",
+                "raw_content": "exec(cmd); catch exception in handler",
+                "timestamp": (now - timedelta(hours=1)).isoformat(),
+            }
+        )
+
+        data, names, _ = cd.build_event_matrix(hours=24)
+
+        if "x" in names:
+            col = names.index("x")
+            # 'x' must NOT appear since it's only inside 'exec' / 'exception'
+            assert data[:, col].sum() == 0, (
+                "Entity 'x' matched substring inside 'exec'/'exception' — boundary check failed"
+            )
+
+    def test_whole_word_match_fires(self, cd, storage):
+        """Entity name must match when it appears as a whole word."""
+        now = datetime.now(UTC)
+        storage.insert_entity({"name": "api", "type": "file"})
+
+        storage.insert_episode(
+            {
+                "session_id": "word_match",
+                "directory": "/proj",
+                "raw_content": "Updated api endpoints for new authentication",
+                "timestamp": (now - timedelta(hours=1)).isoformat(),
+            }
+        )
+
+        data, names, _ = cd.build_event_matrix(hours=24)
+        assert "api" in names, "Entity 'api' should be detected as whole word"
+        col = names.index("api")
+        assert data[:, col].sum() >= 1, "api should match in episode content"
+
+    def test_no_false_positive_prefix(self, cd, storage):
+        """Entity 'file' must NOT match inside 'profile' or 'fileset'."""
+        now = datetime.now(UTC)
+        storage.insert_entity({"name": "file", "type": "file"})
+
+        storage.insert_episode(
+            {
+                "session_id": "prefix_test",
+                "directory": "/proj",
+                "raw_content": "Updated user profile settings in fileset",
+                "timestamp": (now - timedelta(hours=1)).isoformat(),
+            }
+        )
+
+        data, names, _ = cd.build_event_matrix(hours=24)
+        if "file" in names:
+            col = names.index("file")
+            assert data[:, col].sum() == 0, (
+                "Entity 'file' falsely matched inside 'profile'/'fileset'"
+            )

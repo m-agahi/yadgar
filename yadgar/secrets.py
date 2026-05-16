@@ -36,6 +36,36 @@ _SECRET_PATTERNS: list[tuple[re.Pattern, str]] = [
         ),
         "Database connection string",
     ),
+    # §5 T-0019: GCP service-account JSON (contains "type": "service_account")
+    (
+        re.compile(r'"type"\s*:\s*"service_account"'),
+        "GCP service account credential",
+    ),
+    # §5 T-0019: Stripe live secret key
+    (
+        re.compile(r"sk_live_[A-Za-z0-9]{24,}"),
+        "Stripe secret key",
+    ),
+    # §5 T-0019: Slack tokens (xoxb-, xoxa-, xoxp-, xoxs-)
+    (
+        re.compile(r"xox[bpas]-[0-9A-Za-z\-]{10,}"),
+        "Slack token",
+    ),
+    # §5 T-0019: Anthropic API key — must appear before OpenAI (more specific prefix)
+    (
+        re.compile(r"sk-ant-[A-Za-z0-9\-_]{32,}"),
+        "Anthropic API key",
+    ),
+    # §5 T-0019: OpenAI API key — covers both legacy sk-... and sk-proj-... format
+    (
+        re.compile(r"sk-(?:proj-)?[A-Za-z0-9_-]{30,}"),
+        "OpenAI API key",
+    ),
+    # §5 T-0019: AWS secret access key (40 chars base64-like; broad, comes after specifics)
+    (
+        re.compile(r"(?<![A-Za-z0-9/+])[A-Za-z0-9/+]{40}(?![A-Za-z0-9/+])"),
+        "AWS secret key",
+    ),
     # Generic catch-all — must be last so specific patterns fire first.
     (
         re.compile(

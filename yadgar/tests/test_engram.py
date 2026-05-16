@@ -9,6 +9,8 @@ from yadgar.embeddings import EmbeddingEngine
 from yadgar.engram import EngramAllocator
 from yadgar.storage import StorageEngine
 
+pytestmark = pytest.mark.xdist_group("server_globals")
+
 
 @pytest.fixture
 def settings(tmp_path):

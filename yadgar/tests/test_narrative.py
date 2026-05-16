@@ -10,6 +10,8 @@ from yadgar.knowledge_graph import KnowledgeGraph
 from yadgar.narrative import NarrativeEngine
 from yadgar.storage import StorageEngine
 
+pytestmark = pytest.mark.xdist_group("server_globals")
+
 
 @pytest.fixture
 def storage(tmp_path):

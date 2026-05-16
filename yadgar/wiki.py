@@ -40,6 +40,7 @@ class WikiStore:
         tags: list[str] | None = None,
         source_memory_ids: list[int] | None = None,
         confidence: str = "medium",
+        branch: str | None = None,
     ) -> dict:
         """Create or update a wiki page. Upserts by slug."""
         slug = self._slugify(title)
@@ -98,15 +99,30 @@ class WikiStore:
             "created_at": now,
             "updated_at": now,
         }
-        page_id = self._storage.insert_wiki_page(page)
+        page_id = self._storage.insert_wiki_page(page, branch=branch)
         page["id"] = page_id
         self._sync_crossrefs(slug, links)
         self._link_memories(slug, source_memory_ids)
         return page
 
     def read(self, slug: str) -> dict | None:
-        """Read a wiki page by slug."""
+        """Read a wiki page by slug (legacy — no branch resolution)."""
         return self._storage.get_wiki_page_by_slug(slug)
+
+    def read_by_branch(
+        self,
+        slug: str,
+        current_branch: str | None,
+        default_branch: str,
+    ) -> dict | None:
+        """Read a wiki page with §25 branch resolution order.
+
+        1. Exact slug match on current_branch.
+        2. Exact slug match on default_branch.
+        3. Exact slug match with branch IS NONE (legacy/canonical).
+        4. Returns None if not found.
+        """
+        return self._storage.get_wiki_page_by_slug_and_branch(slug, current_branch, default_branch)
 
     def query(
         self,
@@ -183,9 +199,16 @@ class WikiStore:
         self._storage.replace_wiki_crossrefs(slug, [])
         return self._storage.delete_wiki_page(page["id"])
 
-    def list_pages(self, category: str | None = None) -> list[dict]:
-        """List all wiki pages, optionally filtered by category."""
-        return self._storage.list_wiki_pages(category=category)
+    def list_pages(
+        self,
+        category: str | None = None,
+        slug_prefix: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict]:
+        """List wiki pages, optionally filtered by category/slug_prefix and limited."""
+        return self._storage.list_wiki_pages(
+            category=category, slug_prefix=slug_prefix, limit=limit
+        )
 
     def ingest(
         self,
@@ -298,7 +321,7 @@ class WikiStore:
                                 "message": f"Not updated in over {WIKI_STALE_DAYS} days",
                             }
                         )
-                except (ValueError, TypeError):
+                except (ValueError, TypeError) as _e:
                     pass
 
             # Low confidence

@@ -390,7 +390,8 @@ class SleepComputeEngine:
                 for m in cluster_mems:
                     d = m.get("directory_context", "unknown")
                     dir_counts[d] = dir_counts.get(d, 0) + 1
-                dominant_dir = max(dir_counts, key=lambda k: dir_counts[k])
+                # T-0015: default-arg capture prevents closure capturing stale reference
+                dominant_dir = max(dir_counts, key=lambda k, dc=dir_counts: dc[k])
             else:
                 dominant_dir = "unknown"
             dir_groups.setdefault(dominant_dir, []).append(cluster)

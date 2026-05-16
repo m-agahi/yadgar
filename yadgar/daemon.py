@@ -15,9 +15,19 @@ import platform
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+
+
+def _safe_urlopen(url: str, **kwargs):
+    """§8: urlopen wrapper that rejects non-http/https schemes."""
+    scheme = urllib.parse.urlparse(url).scheme
+    if scheme not in {"http", "https"}:
+        raise ValueError(f"Disallowed URL scheme: {scheme!r}")
+    return urllib.request.urlopen(url, **kwargs)  # noqa: S310
+
 
 DEFAULT_PORT = 8765
 DEFAULT_DEV_PORT = 8766
@@ -64,12 +74,12 @@ def _host_memory_bytes() -> int:
                 check=True,
             )
             return int(r.stdout.strip())
-        except (subprocess.CalledProcessError, ValueError, FileNotFoundError):
+        except (subprocess.CalledProcessError, ValueError, FileNotFoundError) as _e:
             pass
     # POSIX fallback
     try:
         return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
-    except (ValueError, OSError):
+    except (ValueError, OSError) as _e:
         return 8 * 1024 * 1024 * 1024  # assume 8 GB
 
 
@@ -386,7 +396,7 @@ class YadgarDaemon:
                 "backend_container": backend_name,
             }
         try:
-            resp = urllib.request.urlopen(f"http://127.0.0.1:{profile.port}/health", timeout=2)
+            resp = _safe_urlopen(f"http://127.0.0.1:{profile.port}/health", timeout=2)
             health = json.loads(resp.read().decode())
             return {
                 "running": True,
@@ -424,10 +434,14 @@ class YadgarDaemon:
 
         old = config.get("mcpServers", {}).get("yadgar", {})
         mcp_servers = config.get("mcpServers", {})
-        mcp_servers["yadgar"] = {
+        entry: dict = {
             "type": "streamable-http",
             "url": f"http://127.0.0.1:{profile.port}/mcp",
         }
+        token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "").strip()
+        if token:
+            entry["headers"] = {"Authorization": f"Bearer {token}"}
+        mcp_servers["yadgar"] = entry
         config["mcpServers"] = mcp_servers
         config_path.write_text(json.dumps(config, indent=2))
 
@@ -462,6 +476,7 @@ After=docker.service
 
 [Service]
 Type=simple
+EnvironmentFile=/etc/yadgar/secrets.env
 ExecStartPre=-docker network create --driver bridge {_NETWORK_NAME}
 ExecStartPre=-docker stop {backend_name}
 ExecStartPre=-docker rm {backend_name}
@@ -473,6 +488,12 @@ ExecStart=docker run --rm \\
     --memory-swap {mem_mb}m \\
     -v {backend_volume}:/data \\
     -p {DEFAULT_BACKEND_EMBED_PORT}:8001 \\
+    -e SURREAL_USER=${{SURREAL_USER}} \\
+    -e SURREAL_PASS=${{SURREAL_PASS}} \\
+    -e YADGAR_RW_USER=${{YADGAR_RW_USER:-}} \\
+    -e YADGAR_RW_PASS=${{YADGAR_RW_PASS:-}} \\
+    -e YADGAR_RO_USER=${{YADGAR_RO_USER:-}} \\
+    -e YADGAR_RO_PASS=${{YADGAR_RO_PASS:-}} \\
 {hf_mount}    {backend_image}
 ExecStop=docker stop {backend_name}
 Restart=on-failure
@@ -492,6 +513,7 @@ After=docker.service yadgar-db{suffix}.service
 
 [Service]
 Type=simple
+EnvironmentFile=/etc/yadgar/secrets.env
 ExecStartPre=-docker stop {profile.container_name}
 ExecStartPre=-docker rm {profile.container_name}
 ExecStart=docker run --rm \\
@@ -505,6 +527,9 @@ ExecStart=docker run --rm \\
     -e YADGAR_DB_URL=http://{backend_name}:8000 \\
     -e YADGAR_EMBED_URL=http://{backend_name}:8001 \\
     -e YADGAR_DATA_DIR=/data \\
+    -e YADGAR_MCP_AUTH_TOKEN=${{YADGAR_MCP_AUTH_TOKEN}} \\
+    -e YADGAR_DB_USER=${{YADGAR_DB_USER:-${{SURREAL_USER}}}} \\
+    -e YADGAR_DB_PASS=${{YADGAR_DB_PASS:-${{SURREAL_PASS}}}} \\
     {profile.image_name}
 ExecStop=docker stop {profile.container_name}
 Restart=on-failure
@@ -682,7 +707,7 @@ WantedBy=default.target
 
     def _health_ok(self, port: int) -> bool:
         try:
-            urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=1)
+            _safe_urlopen(f"http://127.0.0.1:{port}/health", timeout=1)
             return True
         except Exception:
             return False

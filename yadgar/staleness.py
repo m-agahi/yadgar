@@ -16,7 +16,7 @@ IGNORE_EXTENSIONS = {".pyc", ".pyo", ".so", ".o", ".dylib"}
 
 
 class _FileChangeHandler(FileSystemEventHandler):
-    def __init__(self, detector: "StalenessDetector"):
+    def __init__(self, detector: StalenessDetector):
         super().__init__()
         self._detector = detector
 
@@ -29,15 +29,17 @@ class _FileChangeHandler(FileSystemEventHandler):
             return True
         return False
 
-    def on_modified(self, event):
+    def _handle_event(self, event) -> None:
+        """Single handler for both on_modified and on_created (T-0017-staleness)."""
         if event.is_directory or self._should_ignore(event.src_path):
             return
         self._detector._handle_file_change(event.src_path)
 
+    def on_modified(self, event):
+        self._handle_event(event)
+
     def on_created(self, event):
-        if event.is_directory or self._should_ignore(event.src_path):
-            return
-        self._detector._handle_file_change(event.src_path)
+        self._handle_event(event)
 
     def on_deleted(self, event):
         if event.is_directory or self._should_ignore(event.src_path):

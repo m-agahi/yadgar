@@ -337,7 +337,7 @@ class GraphAPI:
         if hasattr(raw, "id") and hasattr(raw, "table_name"):
             try:
                 return int(raw.id)
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as _e:
                 return None
         s = str(raw)
         if ":" in s:
@@ -345,7 +345,7 @@ class GraphAPI:
         s = s.strip("'\"")
         try:
             return int(s)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as _e:
             return None
 
 
@@ -365,7 +365,7 @@ def sample_system_metrics(pid: int, db_path: str) -> dict:
 
     try:
         clk_tck = os.sysconf("SC_CLK_TCK")
-    except (AttributeError, ValueError):
+    except (AttributeError, ValueError) as _e:
         clk_tck = 100
 
     # CPU% (two-sample delta)

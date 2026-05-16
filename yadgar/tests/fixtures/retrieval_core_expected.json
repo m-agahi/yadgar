@@ -1,0 +1,172 @@
+[
+  {
+    "query": "FastAPI async server",
+    "ordered_contents": [
+      "FastAPI REST server with uvicorn and async handlers",
+      "Cosine similarity measures angle between embedding vectors",
+      "Meek orientation rules propagate edge directions in CPDAG",
+      "Sentence transformers encode text to dense embeddings",
+      "SurrealDB surrealkv storage engine with WAL journaling"
+    ],
+    "scores": [
+      0.9475,
+      0.6564,
+      0.5767,
+      0.5667,
+      0.5443
+    ]
+  },
+  {
+    "query": "embedding similarity search",
+    "ordered_contents": [
+      "Cosine similarity measures angle between embedding vectors",
+      "Vector similarity search with HNSW index for fast ANN",
+      "Prometheus metrics endpoint for latency and error rate",
+      "Python asyncio event loop for concurrent I/O operations",
+      "Heat decay function reduces memory salience over time"
+    ],
+    "scores": [
+      0.88,
+      0.7749,
+      0.6801,
+      0.6789,
+      0.6759
+    ]
+  },
+  {
+    "query": "SurrealDB storage",
+    "ordered_contents": [
+      "SurrealDB surrealkv storage engine with WAL journaling",
+      "BM25 keyword search ranks documents by term frequency",
+      "SQLite WAL mode improves concurrent read throughput",
+      "ONNX runtime runs cross-encoder models on CPU efficiently",
+      "Cosine similarity measures angle between embedding vectors"
+    ],
+    "scores": [
+      0.8719,
+      0.85,
+      0.7249,
+      0.6507,
+      0.6068
+    ]
+  },
+  {
+    "query": "causal discovery algorithm",
+    "ordered_contents": [
+      "systemd service unit with EnvironmentFile for secrets",
+      "Docker container with read-only filesystem and no-new-privileges",
+      "BM25 keyword search ranks documents by term frequency",
+      "PC algorithm discovers causal DAG from observational data",
+      "Sentence transformers encode text to dense embeddings"
+    ],
+    "scores": [
+      0.85,
+      0.7204,
+      0.6752,
+      0.6275,
+      0.6182
+    ]
+  },
+  {
+    "query": "memory consolidation heat",
+    "ordered_contents": [
+      "Hippocampal replay consolidates short-term to long-term memory",
+      "pytest fixtures and parametrize for unit test suites",
+      "Meek orientation rules propagate edge directions in CPDAG",
+      "Sentence transformers encode text to dense embeddings",
+      "ONNX runtime runs cross-encoder models on CPU efficiently"
+    ],
+    "scores": [
+      0.865,
+      0.7771,
+      0.7651,
+      0.75,
+      0.7431
+    ]
+  },
+  {
+    "query": "Python test framework",
+    "ordered_contents": [
+      "Forgejo CI workflow with matrix strategy for Python versions",
+      "SurrealDB surrealkv storage engine with WAL journaling",
+      "pytest fixtures and parametrize for unit test suites",
+      "FastAPI REST server with uvicorn and async handlers",
+      "Docker container with read-only filesystem and no-new-privileges"
+    ],
+    "scores": [
+      0.9873,
+      0.85,
+      0.7933,
+      0.7823,
+      0.7671
+    ]
+  },
+  {
+    "query": "Docker container security",
+    "ordered_contents": [
+      "Docker container with read-only filesystem and no-new-privileges",
+      "Python asyncio event loop for concurrent I/O operations",
+      "BM25 keyword search ranks documents by term frequency",
+      "Cosine similarity measures angle between embedding vectors",
+      "systemd service unit with EnvironmentFile for secrets"
+    ],
+    "scores": [
+      1.16,
+      0.4956,
+      0.466,
+      0.4563,
+      0.4355
+    ]
+  },
+  {
+    "query": "BM25 keyword retrieval",
+    "ordered_contents": [
+      "BM25 keyword search ranks documents by term frequency",
+      "Heat decay function reduces memory salience over time",
+      "Meek orientation rules propagate edge directions in CPDAG",
+      "pytest fixtures and parametrize for unit test suites",
+      "Python asyncio event loop for concurrent I/O operations"
+    ],
+    "scores": [
+      1.16,
+      0.6241,
+      0.5573,
+      0.44,
+      0.4152
+    ]
+  },
+  {
+    "query": "Prometheus monitoring metrics",
+    "ordered_contents": [
+      "Prometheus metrics endpoint for latency and error rate",
+      "FastAPI REST server with uvicorn and async handlers",
+      "Heat decay function reduces memory salience over time",
+      "Hippocampal replay consolidates short-term to long-term memory",
+      "BM25 keyword search ranks documents by term frequency"
+    ],
+    "scores": [
+      1.145,
+      0.7342,
+      0.722,
+      0.6591,
+      0.5715
+    ]
+  },
+  {
+    "query": "Meek rules orientation",
+    "ordered_contents": [
+      "Meek orientation rules propagate edge directions in CPDAG",
+      "SurrealDB surrealkv storage engine with WAL journaling",
+      "Engram slot allocator assigns memories to fixed capacity slots",
+      "pytest fixtures and parametrize for unit test suites",
+      "Pydantic data validation for request and response schemas"
+    ],
+    "scores": [
+      1.16,
+      0.6429,
+      0.5804,
+      0.5472,
+      0.5103
+    ]
+  }
+]

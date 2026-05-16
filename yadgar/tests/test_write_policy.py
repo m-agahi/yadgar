@@ -6,6 +6,8 @@ from yadgar.config import Settings
 from yadgar.rules_engine import RulesEngine, _parse_write_action
 from yadgar.storage import StorageEngine
 
+pytestmark = pytest.mark.xdist_group("server_globals")
+
 
 @pytest.fixture
 def settings(tmp_path):

@@ -155,3 +155,48 @@ SurrealDB tables:
 ## Docker Deployment
 
 The included `Dockerfile` and `docker-compose.yml` run yadgar in HTTP mode. The SurrealDB data directory is mounted as `/data` (volume `yadgar-data`). Configuration can be injected via environment variables (`YADGAR_*`) without rebuilding the image, or by mounting a `config.yaml` at `/root/.yadgar/config.yaml`.
+
+## Branch-Aware Retrieval (v5.0)
+
+Every `memory` and `wiki_page` row carries an optional `branch` column captured at write time via `git -C <directory> rev-parse --abbrev-ref HEAD` (30-second LRU cache). Pre-v5 rows backfill to `'master'` in transactional migration #004.
+
+Default branch is resolved via `git symbolic-ref refs/remotes/origin/HEAD` (5-minute LRU cache).
+
+`recall()` and `wiki_query()` filter `branch IN (current, default, NULL)` post-fetch. Results where `branch == current` get a 1.5× score boost and re-sort. Non-git directories degenerate to `branch IN (default, NULL)` with no boost.
+
+`wiki_read(slug)` resolves via three-step lookup: exact slug on current branch → on default branch → on `branch IS NONE` (legacy). `wiki_cleanup_merged_branches(directory, dry_run)` removes wikis whose branch is gone.
+
+## Retrieval Pipeline Decomposition (v5.0)
+
+`retrieval/core.py::recall()` decomposed from a 517-line function into a thin orchestrator over eight named pipeline stages:
+
+1. `_collect_fts_scores` — FTS BM25 + entity-FTS + COMET expansion
+2. `_collect_vector_scores` — KNN vector search; returns `(vector_memory_ids, query_embedding)`
+3. `_collect_ppr_scores` — Personalized PageRank from seeds
+4. `_collect_spreading_scores` — spreading activation
+5. `_collect_temporal_scores` — temporal signal
+6. `_fuse_scores` — confidence gating + WRRF / convex fusion
+7. `_build_initial_results` — assemble results + CE diversity injection
+8. `_apply_rerank_pipeline` — heuristic → comparison → CE → NLI → multi-passage → profile/belief merge → MMR → trim → adversarial → rules engine → engram links → metacognition
+
+`causal_discovery.py::pc_algorithm` similarly decomposed: Meek R1, R2, R3 each extracted as methods. Behavior pinned by characterization tests in `yadgar/tests/test_retrieval_core_characterization.py` and `yadgar/tests/test_causal_discovery_characterization.py`.
+
+## Security (v5.0)
+
+Bearer-token middleware (`yadgar/auth_middleware.py`) wraps `/api/*`, `/hooks/*`, and `/mcp` routes. `/health` and `/metrics` are exempt on loopback. Token comparison uses `hmac.compare_digest` for timing-safety.
+
+Default-deny CORS — loopback origins only (`http://127.0.0.1:*`, `http://localhost:*`) unless `YADGAR_ALLOWED_ORIGINS` overrides.
+
+`install_hooks` ships as a real Python script at `yadgar/scripts/hook_runner.py`; the path goes through `shlex.quote` before insertion into `settings.json`, eliminating the shell-injection vector.
+
+`yadgar/sanitize.py` strips ANSI escapes, C0/C1 control chars, and Unicode bidi-override characters (U+202E, U+202D, U+2066–U+2069, U+200F) from auto-capture payloads before action-log insert. Per-source token-bucket rate limiter (`yadgar/rate_limit.py`) bounded to 1000 keys via `OrderedDict`.
+
+Secret patterns block storage of AWS, GCP service-account JSON, Stripe (`sk_live_`), Slack (`xoxb-`/`xoxa-`/`xoxp-`), OpenAI (legacy + `sk-proj-`), Anthropic, JWT, GitHub PATs, private keys, DB connection URIs. Always-on, not user-configurable.
+
+## Observability (v5.0)
+
+`/metrics` Prometheus endpoint (gated by `YADGAR_METRICS_ENABLED`, loopback-only by bind). Collectors: consolidation phase durations, queue depths (`queue/` `archive/` `dlq/`), DB query p50/p95, embedding cache hit ratio, request counts by route, action-batch size.
+
+Structured JSON logs via `YADGAR_LOG_FORMAT=json`. `RequestLoggingMiddleware` (in `yadgar/log_config.py`) emits one INFO line per request with `request_id`, `tool_name`, `duration_ms`, `status`, `trace_id` (from `x-request-id` header).
+
+Consolidation phase markers use `phase_start: <name>` / `phase_end: <name> duration_ms=N`. Wiki snapshot loop in `entrypoint-backend.sh` writes `/data/wiki_*.jsonl` every 6 hours with 14-day retention.

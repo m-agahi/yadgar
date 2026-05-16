@@ -24,11 +24,15 @@ CORE_VERSION="4.7.0"
 BACKEND_VERSION="4.7.0"
 LOG_LEVEL=""
 ROOT_USER="root"
-ROOT_PASS="root"
+ROOT_PASS=""  # required — provide via --root-pass or SECRETS_ENV_FILE
 RW_USER=""
 RW_PASS=""
 RO_USER=""
 RO_PASS=""
+# Path to the secrets env file written to disk (chmod 600, root-owned).
+# All credentials are written here and referenced via EnvironmentFile=
+# in the systemd units — passwords never appear in /proc/<pid>/cmdline.
+SECRETS_ENV_FILE="/etc/yadgar/secrets.env"
 BACKEND_IMAGE="openfantasy/yadgar-backend:${BACKEND_VERSION}"
 CORE_IMAGE="openfantasy/yadgar:${CORE_VERSION}"
 BACKEND_CONTAINER="yadgar-backend"
@@ -63,6 +67,14 @@ while [[ $# -gt 0 ]]; do
         *) echo "Unknown argument: $1" >&2; exit 1 ;;
     esac
 done
+
+# ── Validate required credentials ────────────────────────────────────────────
+# ROOT_PASS is required — fail fast rather than start with default root:root.
+if [[ -z "${ROOT_PASS}" ]]; then
+    echo "ERROR: --root-pass is required. Provide a strong password for the SurrealDB root user." >&2
+    echo "  Example: $(basename "$0") --root-pass \"\$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))'\")" >&2
+    exit 1
+fi
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -195,14 +207,33 @@ HF_MOUNT=""
 LOG_LEVEL_ENV=""
 [[ -n "${LOG_LEVEL}" ]] && LOG_LEVEL_ENV="-e YADGAR_LOG_LEVEL=${LOG_LEVEL} \\"$'\n    '
 
-RW_ENV=""
-[[ -n "${RW_USER}" ]] && RW_ENV="-e YADGAR_RW_USER=${RW_USER} \\"$'\n    '"-e YADGAR_RW_PASS=${RW_PASS} \\"$'\n    '
-
-RO_ENV=""
-[[ -n "${RO_USER}" ]] && RO_ENV="-e YADGAR_RO_USER=${RO_USER} \\"$'\n    '"-e YADGAR_RO_PASS=${RO_PASS} \\"$'\n    '
-
-DB_USER_ENV=""
-[[ -n "${RW_USER}" ]] && DB_USER_ENV="-e YADGAR_DB_USER=${RW_USER} \\"$'\n    '"-e YADGAR_DB_PASS=${RW_PASS} \\"$'\n    '
+# Write /etc/yadgar/secrets.env (chmod 600, root-owned).
+# All credentials are stored here; systemd units load via EnvironmentFile=
+# so passwords never appear in /proc/<pid>/cmdline.
+step "Writing secrets env file"
+SECRETS_DIR="$(dirname "${SECRETS_ENV_FILE}")"
+if [[ ! -d "${SECRETS_DIR}" ]]; then
+    if ! sudo mkdir -p "${SECRETS_DIR}" 2>/dev/null; then
+        info "Cannot sudo mkdir ${SECRETS_DIR} — writing to ${HOME}/.yadgar/secrets.env instead"
+        SECRETS_ENV_FILE="${HOME}/.yadgar/secrets.env"
+        mkdir -p "$(dirname "${SECRETS_ENV_FILE}")"
+    fi
+fi
+umask 177  # ensure file is created 600
+cat > "${SECRETS_ENV_FILE}" <<SECRETS
+# Yadgar secrets — chmod 600 root-owned — never commit or log
+SURREAL_USER=${ROOT_USER}
+SURREAL_PASS=${ROOT_PASS}
+YADGAR_RW_USER=${RW_USER}
+YADGAR_RW_PASS=${RW_PASS}
+YADGAR_RO_USER=${RO_USER}
+YADGAR_RO_PASS=${RO_PASS}
+YADGAR_DB_USER=${RW_USER:-${ROOT_USER}}
+YADGAR_DB_PASS=${RW_PASS:-${ROOT_PASS}}
+SECRETS
+umask 022
+chmod 600 "${SECRETS_ENV_FILE}"
+ok "Secrets written → ${SECRETS_ENV_FILE} (mode 600)"
 
 cat > "${SERVICE_DIR}/yadgar-backend.service" <<EOF
 [Unit]
@@ -211,6 +242,7 @@ After=network.target
 
 [Service]
 Environment=DOCKER_HOST=unix:///run/podman/podman.sock
+EnvironmentFile=${SECRETS_ENV_FILE}
 ExecStartPre=-${DOCKER} stop ${BACKEND_CONTAINER}
 ExecStartPre=-${DOCKER} rm ${BACKEND_CONTAINER}
 ExecStartPre=-${DOCKER} network create ${NETWORK}
@@ -218,9 +250,13 @@ ExecStart=${DOCKER} run --name ${BACKEND_CONTAINER} --rm --user root \\
     --network ${NETWORK} \\
     -p 127.0.0.1:8001:8001 \\
     -v ${YADGAR_DIR}:/data \\
-    ${HF_MOUNT}-e SURREAL_USER=${ROOT_USER} \\
-    -e SURREAL_PASS=${ROOT_PASS} \\
-    ${RW_ENV}${RO_ENV}--memory 4g --cpus 2 --stop-timeout 30 \\
+    ${HF_MOUNT}-e SURREAL_USER=\${SURREAL_USER} \\
+    -e SURREAL_PASS=\${SURREAL_PASS} \\
+    -e YADGAR_RW_USER=\${YADGAR_RW_USER} \\
+    -e YADGAR_RW_PASS=\${YADGAR_RW_PASS} \\
+    -e YADGAR_RO_USER=\${YADGAR_RO_USER} \\
+    -e YADGAR_RO_PASS=\${YADGAR_RO_PASS} \\
+    --memory 4g --cpus 2 --stop-timeout 30 \\
     ${BACKEND_IMAGE}
 ExecStop=${DOCKER} stop ${BACKEND_CONTAINER}
 Restart=on-failure
@@ -239,6 +275,7 @@ Requires=yadgar-backend.service
 
 [Service]
 Environment=DOCKER_HOST=unix:///run/podman/podman.sock
+EnvironmentFile=${SECRETS_ENV_FILE}
 ExecStartPre=-${DOCKER} stop ${CORE_CONTAINER}
 ExecStartPre=-${DOCKER} rm ${CORE_CONTAINER}
 ExecStart=${DOCKER} run --name ${CORE_CONTAINER} --rm --user root \\
@@ -248,10 +285,12 @@ ExecStart=${DOCKER} run --name ${CORE_CONTAINER} --rm --user root \\
     -v ${YADGAR_DIR}:/data \\
     -e YADGAR_DB_URL=http://${BACKEND_CONTAINER}:8000 \\
     -e YADGAR_EMBED_URL=http://${BACKEND_CONTAINER}:8001 \\
-    -e YADGAR_HOST=0.0.0.0 \\
+    -e YADGAR_HOST=127.0.0.1 \\
     -e YADGAR_PORT=8765 \\
     -e YADGAR_DATA_DIR=/data \\
-    ${DB_USER_ENV}${LOG_LEVEL_ENV}--memory 1g --cpus 1 --stop-timeout 30 \\
+    -e YADGAR_DB_USER=\${YADGAR_DB_USER} \\
+    -e YADGAR_DB_PASS=\${YADGAR_DB_PASS} \\
+    ${LOG_LEVEL_ENV}--memory 1g --cpus 1 --stop-timeout 30 \\
     ${CORE_IMAGE}
 ExecStop=${DOCKER} stop ${CORE_CONTAINER}
 Restart=on-failure

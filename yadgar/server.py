@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import json
 import logging
 import os
 import re
+import shlex
 import signal
+import subprocess
 import sys
 import threading
 import time
-from collections import deque
+import warnings
+from collections import OrderedDict, deque
 from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -38,11 +42,13 @@ from yadgar.metacognition import MetaCognition
 from yadgar.narrative import NarrativeEngine
 from yadgar.predictive_coding import WriteGate
 from yadgar.prospective import ProspectiveMemoryEngine
+from yadgar.rate_limit import TokenBucketRateLimiter
 
 # SurrealDB is the sole storage backend (StorageEngine in storage.py)
 from yadgar.restoration import CheckpointRestore
 from yadgar.retrieval import Retriever
 from yadgar.rules_engine import RulesEngine
+from yadgar.sanitize import sanitize_log_field
 from yadgar.secrets import check_secrets
 from yadgar.sensory_buffer import ActionLogger
 from yadgar.sleep_compute import SleepComputeEngine
@@ -91,6 +97,7 @@ _file_queue: FileQueue | None = None
 _queue_drainer: QueueDrainer | None = None
 _queue_lock = threading.Lock()
 _event_lock = threading.Lock()
+_metrics_lock = threading.Lock()  # §9 Q6: guard _system_metrics_cache
 
 # ── Hook state ─────────────────────────────────────────────────────────────
 # Only capture state-modifying tool calls (skip Read, Glob, Grep, etc.)
@@ -111,7 +118,17 @@ _PER_TABLE_FIELDS: dict[str, str | None] = {
     "entity": None,
 }
 # Batch buffer: session_id → list of pending action dicts (flush at 5)
-_action_batch: dict[str, list] = {}
+# Bounded to 1000 sessions to prevent unbounded growth
+_action_batch: OrderedDict[str, list] = OrderedDict()
+# §9 Q2: Lock protecting _action_batch — async handler, concurrent requests
+_action_batch_lock = asyncio.Lock()
+# §4: Project roots registered via seed_project — file hash whitelist.
+_project_roots: set[str] = set()
+
+# §7 Auto-capture rate limiter (token-bucket, keyed on directory)
+_auto_capture_limiter = TokenBucketRateLimiter(
+    max_per_minute=int(os.environ.get("YADGAR_AUTO_CAPTURE_RATE_LIMIT", "30"))
+)
 
 
 def _q_with_timeout(
@@ -138,9 +155,9 @@ def _q_with_timeout(
     return storage._q(surql, params)
 
 
-# Throttle timestamps: directory → monotonic time
-_last_session_context: dict[str, float] = {}
-_last_prompt_recall: dict[str, float] = {}
+# Throttle timestamps: directory → monotonic time (bounded to prevent unbounded growth)
+_last_session_context: OrderedDict[str, float] = OrderedDict()
+_last_prompt_recall: OrderedDict[str, float] = OrderedDict()
 
 # ── Visualization event queue ──────────────────────────────────────────────
 # Ring buffer of the last 500 events; SSE clients poll with a sequence cursor.
@@ -169,8 +186,18 @@ def _push_event(event: dict) -> None:
         _event_queue.append({"seq": _event_seq, **event})
 
 
-# Session state for transition tracking
-_last_recalled_ids: dict[str, int] = {}  # session_id → last recalled memory_id
+# Session state for transition tracking (bounded to prevent unbounded growth)
+_last_recalled_ids: OrderedDict[str, int] = OrderedDict()  # session_id → last recalled memory_id
+_DICT_MAX_SIZE = 1000  # max entries for all bounded dicts
+_shutdown_done: bool = False  # Q16: idempotency guard for shutdown()
+
+
+def _bounded_set(d: OrderedDict, key, value, max_size: int = _DICT_MAX_SIZE) -> None:
+    """Insert key→value, evicting oldest entry if dict exceeds max_size."""
+    d[key] = value
+    if len(d) > max_size:
+        d.popitem(last=False)  # remove LRU (first inserted)
+
 
 # Transport type used by the running server
 _active_transport: str = "sse"
@@ -193,16 +220,36 @@ mcp_server = FastMCP(
 )
 
 
-# ── CORS: allow the viz server (port 42069) to fetch the API (port 8765) ─────
+# ── CORS: default-deny; configurable via YADGAR_ALLOWED_ORIGINS ───────────────
+def _get_allowed_origins() -> list[str]:
+    """Read allowed origins from config. Default: loopback only."""
+    raw = os.environ.get("YADGAR_ALLOWED_ORIGINS", "")
+    if raw:
+        return [o.strip() for o in raw.split(",") if o.strip()]
+    return [
+        f"http://127.0.0.1:{settings.PORT}",
+        f"http://localhost:{settings.PORT}",
+        "http://127.0.0.1:42069",
+        "http://localhost:42069",
+    ]
+
+
 def _cors_wrapped_http_app(self):
     from starlette.middleware.cors import CORSMiddleware
 
-    return CORSMiddleware(
-        app=_orig_streamable_http_app(self),
-        allow_origins=["*"],
+    from yadgar.auth_middleware import BearerAuthMiddleware
+    from yadgar.log_config import RequestLoggingMiddleware
+
+    # Stack: BearerAuth (outermost) → RequestLogging → CORS → MCP
+    inner = _orig_streamable_http_app(self)
+    cors_app = CORSMiddleware(
+        app=inner,
+        allow_origins=_get_allowed_origins(),
         allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["*"],
+        allow_headers=["Authorization", "Content-Type"],
     )
+    logged_app = RequestLoggingMiddleware(cors_app)
+    return BearerAuthMiddleware(logged_app)
 
 
 _orig_streamable_http_app = mcp_server.streamable_http_app.__func__
@@ -246,19 +293,21 @@ async def health_check(request: Request) -> JSONResponse:
     db_ok = None
     embed_ok = None
 
-    if db_url:
-        try:
-            r = httpx.get(f"{db_url}/health", timeout=2.0)
-            db_ok = r.status_code == 200
-        except Exception:
-            db_ok = False
+    # §9 Q5: Use async httpx client to avoid blocking the event loop.
+    async with httpx.AsyncClient(timeout=2.0) as _aclient:
+        if db_url:
+            try:
+                r = await _aclient.get(f"{db_url}/health")
+                db_ok = r.status_code == 200
+            except Exception:
+                db_ok = False
 
-    if embed_url:
-        try:
-            r = httpx.get(f"{embed_url}/health", timeout=2.0)
-            embed_ok = r.status_code == 200
-        except Exception:
-            embed_ok = False
+        if embed_url:
+            try:
+                r = await _aclient.get(f"{embed_url}/health")
+                embed_ok = r.status_code == 200
+            except Exception:
+                embed_ok = False
 
     payload: dict = {
         "status": "ok",
@@ -275,6 +324,18 @@ async def health_check(request: Request) -> JSONResponse:
         payload["status"] = "degraded"
 
     return JSONResponse(payload)
+
+
+@mcp_server.custom_route("/metrics", methods=["GET"])
+async def metrics_endpoint(request: Request):
+    """Prometheus metrics endpoint (§15).
+
+    Exempt from bearer-token auth (loopback Prometheus scrapers don't carry tokens).
+    Returns 404 when YADGAR_METRICS_ENABLED=False / 0.
+    """
+    from yadgar.metrics import metrics_handler
+
+    return await metrics_handler(request)
 
 
 @mcp_server.custom_route("/hooks/pre-compact", methods=["POST"])
@@ -338,7 +399,13 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
 
     from datetime import datetime
 
-    tool_name = body.get("tool_name", "unknown")
+    tool_name = sanitize_log_field(body.get("tool_name", "unknown"), max_len=200)
+
+    # §7: per-directory rate limit before any further processing
+    _raw_dir = body.get("directory", "")
+    _dir_key = sanitize_log_field(_raw_dir, max_len=500) if _raw_dir else ""
+    if not _auto_capture_limiter.allow(_dir_key or "_default"):
+        return JSONResponse({"status": "rate_limited"}, status_code=429)
 
     # Skip self-referential Yadgar tools
     for prefix in _SKIP_TOOL_PREFIXES:
@@ -349,34 +416,41 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
     if tool_name not in _CAPTURE_TOOLS:
         return JSONResponse({"status": "skipped", "reason": "read_only_tool"})
 
-    session_id = body.get("session_id", "default")
+    session_id = sanitize_log_field(body.get("session_id", "default"), max_len=100)
     action = {
         "tool_name": tool_name,
-        "summary": body.get("summary", "")[:200],
-        "directory": body.get("directory", ""),
+        "summary": sanitize_log_field(body.get("summary", ""), max_len=500),
+        "directory": _dir_key,
         "session_id": session_id,
     }
 
-    # Batch: accumulate 5 actions, then flush as one combined entry
-    batch = _action_batch.setdefault(session_id, [])
-    batch.append(action)
-    if len(batch) < 5:
-        return JSONResponse({"status": "batched", "pending": len(batch)})
+    # §9 Q2: Protect _action_batch under asyncio.Lock to prevent data races.
+    # §9 Q1: Wrap blocking storage call in asyncio.to_thread.
+    async with _action_batch_lock:
+        if session_id not in _action_batch:
+            _bounded_set(_action_batch, session_id, [])
+        batch = _action_batch[session_id]
+        batch.append(action)
+        if len(batch) < 5:
+            return JSONResponse({"status": "batched", "pending": len(batch)})
 
-    # Flush batch → one combined action_log entry
-    # Take local snapshot then clear so concurrent appends go to the new list
-    to_flush = list(batch)
-    _action_batch[session_id] = []
+        # Flush batch → one combined action_log entry.
+        # Swap under the lock so concurrent appends go to the new list.
+        to_flush = list(batch)
+        _action_batch[session_id] = []
+
     combined_tools = ",".join(a["tool_name"] for a in to_flush)
     combined_summary = " | ".join(a["summary"] for a in to_flush if a["summary"])
     directory = to_flush[-1]["directory"]
+    ts = datetime.now(UTC).isoformat()
 
-    storage.insert_action_log(
+    await asyncio.to_thread(
+        storage.insert_action_log,
         tool_name=f"batch[{combined_tools}]",
         tool_input_summary=combined_summary[:500],
         directory=directory,
         session_id=session_id,
-        timestamp=datetime.now(UTC).isoformat(),
+        timestamp=ts,
     )
 
     if _consolidation is not None:
@@ -387,85 +461,29 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
 
 @mcp_server.custom_route("/hooks/session-context", methods=["GET"])
 async def hook_session_context(request: Request) -> JSONResponse:
-    """Return session context markdown for session-start hook (daemon mode).
+    """Return project_brief markdown for session-start hook (§28 pipe).
 
-    Query params: directory (optional, defaults to cwd)
+    Calls project_brief(directory, mode="catalog") and pipes the _render
+    markdown field to the hook's stdin. All curation lives server-side.
+
+    Query params:
+        directory: project directory (optional, defaults to cwd)
+        mode: brief mode (optional, defaults to "catalog")
     Returns: {"text": "...markdown..."}
     """
     directory = request.query_params.get("directory", os.getcwd())
-    storage = _storage
-    if storage is None:
-        return JSONResponse({"text": ""})
+    mode = request.query_params.get("mode", "catalog")
+
+    # Record timestamp for prompt-recall throttling (bounded dict)
+    _bounded_set(_last_session_context, directory, time.monotonic())
 
     try:
-        cp_res = storage._q(
-            "SELECT current_task, key_decisions FROM checkpoint "
-            "WHERE is_active = true ORDER BY created_at DESC LIMIT 1"
-        )
-        checkpoint = cp_res[0] if cp_res else None
-
-        hot = storage._q(
-            "SELECT content, heat FROM memory "
-            "WHERE directory_context = $dir AND heat >= 0 "
-            "ORDER BY heat DESC LIMIT 10",
-            {"dir": directory},
-        )
-
-        anchored = storage._q(
-            "SELECT content FROM memory "
-            "WHERE is_protected = true AND heat > 0 "
-            "AND tags CONTAINSANY ['_anchor'] "
-            "ORDER BY created_at DESC LIMIT 4"
-        )
-
-        total_res = storage._q(
-            "SELECT count() AS n FROM memory "
-            "WHERE directory_context = $dir AND is_stale = false GROUP ALL",
-            {"dir": directory},
-        )
-        total_count = total_res[0].get("n", 0) if total_res else 0
-
-        wiki_pages = storage._q(
-            "SELECT title, content FROM wiki_page ORDER BY updated_at DESC LIMIT 5"
-        )
-    except Exception as e:
-        logger.debug("session-context hook error: %s", e)
+        brief = project_brief(directory, mode=mode)
+        render = brief.get("_render", "")
+        return JSONResponse({"text": render})
+    except Exception as _e:
+        logger.debug("session-context hook error: %s", _e)
         return JSONResponse({"text": ""})
-
-    if not hot and not anchored:
-        return JSONResponse({"text": ""})
-
-    # Record timestamp for prompt-recall throttling
-    _last_session_context[directory] = time.monotonic()
-
-    lines = ["# Yadgar — Session Context\n"]
-    if checkpoint and checkpoint.get("current_task"):
-        task = checkpoint["current_task"]
-        if not str(task).startswith("[auto-captured"):
-            lines.append(f"**Last task:** {task}\n")
-    if anchored:
-        lines.append("## Critical Facts")
-        for row in anchored:
-            lines.append(f"- {row['content'][:200]}")
-        lines.append("")
-    if hot:
-        shown = len(hot)
-        lines.append(f"## Project Context (showing {shown} of {total_count} memories)")
-        for row in hot:
-            content = row["content"]
-            if len(content) > 200:
-                content = content[:200] + "..."
-            lines.append(f"- [{row['heat']:.1f}] {content}")
-        lines.append("")
-    if wiki_pages:
-        lines.append("## Wiki")
-        for page in wiki_pages:
-            snippet = page.get("content", "")[:120].replace("\n", " ")
-            lines.append(f"- **{page['title']}**: {snippet}...")
-        lines.append("")
-    lines.append(f"*Context for: {directory}*")
-
-    return JSONResponse({"text": "\n".join(lines)})
 
 
 @mcp_server.custom_route("/hooks/prompt-recall", methods=["GET"])
@@ -526,7 +544,7 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
     if dlq_text:
         lines = [dlq_text, ""] + lines
 
-    _last_prompt_recall[directory] = time.monotonic()
+    _bounded_set(_last_prompt_recall, directory, time.monotonic())
     return JSONResponse({"text": "\n".join(lines)})
 
 
@@ -544,7 +562,7 @@ def _build_dlq_alert_text() -> str:
                 meta["_file"] = sidecar.name[: -len(".error.json")]
                 alerts.append(meta)
             except Exception:
-                pass
+                logger.warning("DLQ alert: failed to parse sidecar %s", sidecar, exc_info=True)
         if not alerts:
             return ""
         lines = [f"# Yadgar DLQ Alert — {len(alerts)} item(s) stuck\n"]
@@ -576,11 +594,11 @@ async def api_graph(request: Request) -> JSONResponse:
         return JSONResponse({"nodes": [], "edges": []}, status_code=503)
     try:
         max_mem = int(request.query_params.get("max_memories", 500))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as _e:
         max_mem = 500
     try:
         top_k = int(request.query_params.get("top_k", 8))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as _e:
         top_k = 8
     data = await asyncio.to_thread(GraphAPI(_storage).get_full_graph, max_mem, top_k)
     return JSONResponse(data, headers=_CORS)
@@ -615,7 +633,7 @@ async def api_graph_neighborhood(request: Request) -> JSONResponse:
     node_id = request.path_params.get("node_id", "")
     try:
         hops = int(request.query_params.get("hops", 2))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as _e:
         hops = 2
     data = await asyncio.to_thread(GraphAPI(_storage).get_neighborhood, node_id, hops)
     return JSONResponse(data, headers=_CORS)
@@ -624,7 +642,10 @@ async def api_graph_neighborhood(request: Request) -> JSONResponse:
 @mcp_server.custom_route("/api/system", methods=["GET"])
 async def api_system(request: Request) -> JSONResponse:
     """Return current system and process metrics."""
-    return JSONResponse(_system_metrics_cache, headers=_CORS)
+    # §9 Q6: snapshot under lock before serialising to avoid torn reads.
+    with _metrics_lock:
+        snapshot = dict(_system_metrics_cache)
+    return JSONResponse(snapshot, headers=_CORS)
 
 
 @mcp_server.custom_route("/api/metrics/heat-histogram", methods=["GET"])
@@ -634,7 +655,7 @@ async def api_heat_histogram(request: Request) -> JSONResponse:
         return JSONResponse({"buckets": [], "total": 0}, status_code=503)
     try:
         n_bins = max(1, min(50, int(request.query_params.get("bins", 10))))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as _e:
         n_bins = 10
 
     def _compute() -> dict:
@@ -663,7 +684,7 @@ async def api_consolidation_log(request: Request) -> JSONResponse:
         return JSONResponse([], status_code=503)
     try:
         limit = max(1, min(200, int(request.query_params.get("limit", 30))))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as _e:
         limit = 30
 
     def _fetch() -> list:
@@ -709,7 +730,7 @@ async def _make_event_stream(request: Request):
     """
     try:
         last_seq = int(request.query_params.get("since", 0))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as _e:
         last_seq = 0
 
     last_sys_push = 0.0
@@ -728,10 +749,12 @@ async def _make_event_stream(request: Request):
             for e in new_events:
                 last_seq = e["seq"]
                 yield f"data: {json.dumps(e)}\n\n"
-            # Push system metrics every 5 s
+            # Push system metrics every 5 s — snapshot under lock.
             if now - last_sys_push >= 5.0 and _system_metrics_cache:
                 last_sys_push = now
-                payload = json.dumps({"event": "system_metrics", "data": _system_metrics_cache})
+                with _metrics_lock:
+                    _metrics_snap = dict(_system_metrics_cache)
+                payload = json.dumps({"event": "system_metrics", "data": _metrics_snap})
                 yield f"data: {payload}\n\n"
         except (ConnectionResetError, BrokenPipeError, OSError) as exc:
             # Transport write failed — client dropped between the disconnect
@@ -769,7 +792,9 @@ def _get_storage() -> StorageEngine:
 
 
 def _get_embeddings() -> EmbeddingEngine:
-    assert _embeddings is not None, "EmbeddingEngine not initialized"
+    # §13: raise RuntimeError (not AssertionError — assert can be stripped with -O)
+    if _embeddings is None:
+        raise RuntimeError("EmbeddingEngine not initialized")
     return _embeddings
 
 
@@ -831,9 +856,11 @@ def _get_file_queue():
                 from yadgar.file_queue import FileQueue, QueueDrainer
 
                 base = Path(os.environ.get("YADGAR_DATA_DIR", settings.DATA_DIR))
-                _file_queue = FileQueue(base, wiki_prefix=settings.WIKI_SLUG_PREFIX)
-                _queue_drainer = QueueDrainer(
-                    _file_queue,
+                # Build FileQueue first, then drainer, then start() — assign _file_queue
+                # only after start() succeeds so a failed start leaves _file_queue=None.
+                fq = FileQueue(base, wiki_prefix=settings.WIKI_SLUG_PREFIX)
+                drainer = QueueDrainer(
+                    fq,
                     _get_storage,
                     drain_interval=float(settings.QUEUE_DRAIN_INTERVAL),
                     max_permanent_attempts=settings.QUEUE_MAX_PERMANENT_ATTEMPTS,
@@ -842,19 +869,62 @@ def _get_file_queue():
                     backoff_max_s=float(settings.QUEUE_BACKOFF_MAX_S),
                     dlq_retention_days=settings.QUEUE_DLQ_RETENTION_DAYS,
                 )
-                _queue_drainer.start()
+                drainer.start()  # may raise — do NOT assign globals before this
+                _queue_drainer = drainer
+                _file_queue = fq
     return _file_queue
 
 
 def _file_hash(filepath: str) -> str | None:
-    """Compute SHA-256 hash of a file if it exists and is a regular file."""
+    """Compute SHA-256 hash of a file if it is under a registered project root.
+
+    §4 security requirements:
+    - Only hashes files under directories registered via seed_project.
+    - Skips files larger than YADGAR_MAX_HASH_BYTES (default 10 MiB).
+    - Streams in 64 KiB chunks — never reads the full file into memory.
+    """
     try:
         p = Path(filepath).expanduser().resolve()
     except Exception:
         return None
     if not p.is_file():
         return None
-    return hashlib.sha256(p.read_bytes()).hexdigest()
+
+    # Whitelist: only hash files under a registered project root.
+    str_path = str(p)
+    if _project_roots:
+        allowed = any(
+            str_path == root or str_path.startswith(root + os.sep) for root in _project_roots
+        )
+        if not allowed:
+            logger.debug("_file_hash: %s outside registered project roots — skipped", str_path)
+            return None
+
+    # Size cap — skip files larger than YADGAR_MAX_HASH_BYTES.
+    from yadgar.config import get_settings as _get_settings
+
+    max_bytes = _get_settings().MAX_HASH_BYTES
+    try:
+        if p.stat().st_size > max_bytes:
+            logger.debug(
+                "_file_hash: %s exceeds MAX_HASH_BYTES (%d) — skipped", str_path, max_bytes
+            )
+            return None
+    except OSError:
+        return None
+
+    # Stream-hash in 64 KiB chunks — no read_bytes().
+    h = hashlib.sha256()
+    try:
+        with p.open("rb") as fh:
+            while True:
+                chunk = fh.read(65536)
+                if not chunk:
+                    break
+                h.update(chunk)
+    except OSError:
+        return None
+    return h.hexdigest()
 
 
 # ── MCP Tools ──────────────────────────────────────────────────────────
@@ -901,6 +971,14 @@ def memorize(
     if _has_unpaired_surrogate(content):
         return {"stored": False, "reason": "invalid_unicode_surrogates"}
 
+    # Capture branch at API boundary — must happen before any enqueue so
+    # the drainer replays with the branch value from write time.
+    _branch = None
+    try:
+        _branch = _detect_branch(context)
+    except Exception:
+        pass  # non-fatal — memory inserts with branch=NONE
+
     # Async path: enqueue and return immediately (skip during drain replay)
     if not is_draining():
         try:
@@ -911,6 +989,7 @@ def memorize(
                     "context": context,
                     "tags": list(tags),
                     "is_protected": is_protected,
+                    "branch": _branch,
                 },
             )
             from pathlib import Path as _Path
@@ -1001,9 +1080,13 @@ def memorize(
                     "is_stale": False,
                     "file_hash": fhash,
                     "embedding_model": embeddings.get_model_name(),
-                }
+                },
+                branch=_branch,
             )
             curation_action = "created"
+        elif _branch is not None:
+            # Curator inserted the memory — backfill branch via update
+            storage.update_memory_fields(memory_id, branch=_branch)
     else:
         # Fallback: direct insert (no curator or no embedding)
         memory_id = storage.insert_memory(
@@ -1016,7 +1099,8 @@ def memorize(
                 "is_stale": False,
                 "file_hash": fhash,
                 "embedding_model": embeddings.get_model_name(),
-            }
+            },
+            branch=_branch,
         )
 
         if contextual_prefix:
@@ -1252,7 +1336,7 @@ def recall(query: str, max_results: int = 5, min_heat: float = 0.0) -> list[dict
     # Use HippoRetriever for unified 4-signal recall
     retriever = _retriever
     if retriever is not None:
-        merged = retriever.recall(query, max_results=max_results, min_heat=min_heat)
+        merged = retriever.recall(query, max_results=max_results * 3, min_heat=min_heat)
     else:
         # Fallback to basic FTS + vector if retriever not initialized
         embeddings = _get_embeddings()
@@ -1285,9 +1369,37 @@ def recall(query: str, max_results: int = 5, min_heat: float = 0.0) -> list[dict
             key=lambda m: m["heat"] * m.get("confidence", 1.0),
             reverse=True,
         )
-        merged = merged[:max_results]
+        merged = merged[: max_results * 3]
         for m in merged:
             m.pop("embedding", None)
+
+    # §25 Branch filter + current-branch 1.5x score boost.
+    # Fetch branch context from cwd — recall has no explicit directory param.
+    try:
+        _cwd = os.getcwd()
+        _current_branch = _detect_branch(_cwd)
+        _default_branch = _get_default_branch(_cwd)
+    except Exception:
+        _current_branch = None
+        _default_branch = "master"
+
+    # Filter: keep memories in (current, default, NONE). When current is None
+    # (non-git), degenerate to (default, NONE).
+    _allowed_branches: set[str | None] = {_default_branch, None}
+    if _current_branch is not None:
+        _allowed_branches.add(_current_branch)
+
+    merged = [m for m in merged if m.get("branch") in _allowed_branches]
+
+    # Apply 1.5x boost to _retrieval_score for current-branch results, re-sort.
+    if _current_branch is not None:
+        for m in merged:
+            if m.get("branch") == _current_branch:
+                base = m.get("_retrieval_score", m.get("heat", 0.0))
+                m["_retrieval_score"] = base * 1.5
+        merged.sort(key=lambda m: m.get("_retrieval_score", 0.0), reverse=True)
+
+    merged = merged[:max_results]
 
     # Boost heat, update last_accessed, and record metamemory access
     now = storage._now_iso()
@@ -1312,7 +1424,7 @@ def recall(query: str, max_results: int = 5, min_heat: float = 0.0) -> list[dict
                 _cognitive_map.incremental_update(prev_id, top_id)
             except Exception:
                 logger.debug("SR transition recording failed")
-        _last_recalled_ids[session_key] = top_id
+        _bounded_set(_last_recalled_ids, session_key, top_id)
 
     # Reconsolidation disabled: memories are never rewritten on retrieval.
     # Content integrity must be preserved exactly as stored.
@@ -1334,6 +1446,8 @@ def recall(query: str, max_results: int = 5, min_heat: float = 0.0) -> list[dict
         try:
             wiki_results = _wiki.query(query, max_results=5)
             qualifying = [wr for wr in wiki_results if wr.get("_retrieval_score", 0.0) > 0.3]
+            # §25 branch filter: exclude wiki pages outside allowed branches
+            qualifying = [wr for wr in qualifying if wr.get("branch") in _allowed_branches]
             for wr in qualifying:
                 wr["_source"] = "wiki"
                 wr.pop("embedding", None)
@@ -1344,7 +1458,7 @@ def recall(query: str, max_results: int = 5, min_heat: float = 0.0) -> list[dict
                     reverse=True,
                 )[:max_results]
         except Exception:
-            pass  # Wiki blending is best-effort
+            logger.warning("Wiki blending failed for query %r", query[:80], exc_info=True)
 
     # Strip binary fields from response (not JSON-serializable)
     for m in merged:
@@ -1855,7 +1969,7 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
             suffix = name.split(":", 1)[1] if ":" in name else ""
             try:
                 mid = int(suffix)
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as _e:
                 continue
             if mid not in mem_ids_set:
                 eid = row.get("eid")
@@ -2063,53 +2177,619 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
     return result
 
 
+def _resolve_project_root(directory: str) -> str:
+    """Resolve the git project root for a directory (walk-up via git rev-parse).
+
+    Falls back to the given directory if not inside a git repo or git is unavailable.
+    """
+    try:
+        out = (
+            subprocess.check_output(
+                ["git", "-C", directory, "rev-parse", "--show-toplevel"],
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+            )
+            .decode()
+            .strip()
+        )
+        if out:
+            return out
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as _e:
+        pass
+    return directory
+
+
+def _get_current_branch(directory: str) -> str | None:
+    """Return current git branch for the given directory, or None if not in a repo."""
+    try:
+        out = (
+            subprocess.check_output(
+                ["git", "-C", directory, "rev-parse", "--abbrev-ref", "HEAD"],
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+            )
+            .decode()
+            .strip()
+        )
+        if out and out != "HEAD":
+            return out
+        return out or None
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as _e:
+        return None
+
+
+@_tool()
+def project_brief(directory: str, mode: str = "catalog") -> dict:
+    """Return a layered project context snapshot.
+
+    mode="catalog" (~500 tokens): signals, anchors, presence flags.
+    mode="full" (~1050 tokens): catalog + inlined init_memory, active_work,
+    hot_memories, and key_wiki_pages.
+    """
+    resolved = _resolve_project_root(directory)
+    storage = _get_storage()
+    get_settings()
+
+    branch = _get_current_branch(resolved)
+
+    # Project name: last path component of resolved root
+    project = Path(resolved).name
+
+    # Tech: stub — would require scan; return empty list
+    tech: list[str] = []
+
+    # --- presence flags ---
+    init_rows = storage._q(
+        "SELECT id, content FROM memory WHERE directory_context = $dir "
+        "AND '_project_init' INSIDE tags LIMIT 1",
+        {"dir": resolved},
+    )
+    active_rows = storage._q(
+        "SELECT id, content FROM memory WHERE directory_context = $dir "
+        "AND '_active_work' INSIDE tags LIMIT 1",
+        {"dir": resolved},
+    )
+    init_memory_present = len(init_rows) > 0
+    active_work_present = len(active_rows) > 0
+
+    # --- top_anchors: 5 most-accessed _anchor memories ---
+    anchor_rows = storage._q(
+        "SELECT id, content, tags, heat, access_count FROM memory "
+        "WHERE '_anchor' INSIDE tags AND heat > 0 "
+        "ORDER BY heat DESC LIMIT 5",
+    )
+    top_anchors = []
+    for row in anchor_rows:
+        mid = storage._extract_id(row.get("id"))
+        content_snippet = (row.get("content") or "")[:80]
+        top_anchors.append(
+            {
+                "id": mid,
+                "title": content_snippet,
+                "tags": row.get("tags", []),
+                "access_count": row.get("access_count") or 0,
+            }
+        )
+
+    # --- recent_episode_count: episodes in last 24h ---
+    from datetime import datetime, timedelta
+
+    cutoff = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
+    ep_rows = storage._q(
+        "SELECT id FROM memory WHERE directory_context = $dir "
+        "AND store_type = 'episodic' AND created_at >= $cutoff",
+        {"dir": resolved, "cutoff": cutoff},
+    )
+    recent_episode_count = len(ep_rows)
+
+    # stale_wiki_count: Stage 9 detail — pass 0 for now
+    stale_wiki_count = 0
+
+    result: dict = {
+        "_resolved_directory": resolved,
+        "_mode": mode,
+        "project": project,
+        "tech": tech,
+        "branch": branch,
+        "init_memory_present": init_memory_present,
+        "active_work_present": active_work_present,
+        "top_anchors": top_anchors,
+        "recent_episode_count": recent_episode_count,
+        "stale_wiki_count": stale_wiki_count,
+    }
+
+    if mode == "full":
+        # Inline init_memory content
+        init_memory_content = None
+        if init_rows:
+            init_memory_content = init_rows[0].get("content")
+        result["init_memory"] = init_memory_content
+
+        # Inline active_work content
+        active_work_content = None
+        if active_rows:
+            active_work_content = active_rows[0].get("content")
+        result["active_work"] = active_work_content
+
+        # hot_memories: top 10 by heat for this directory
+        hot_rows = storage._q(
+            "SELECT id, content, heat, tags FROM memory "
+            "WHERE directory_context = $dir AND heat > 0 "
+            "ORDER BY heat DESC LIMIT 10",
+            {"dir": resolved},
+        )
+        hot_memories = []
+        for row in hot_rows:
+            hot_memories.append(
+                {
+                    "id": storage._extract_id(row.get("id")),
+                    "content": (row.get("content") or "")[:200],
+                    "heat": row.get("heat", 0),
+                    "tags": row.get("tags", []),
+                }
+            )
+        result["hot_memories"] = hot_memories
+
+        # key_wiki_pages: 5 most recently updated wiki pages
+        wiki_pages = storage.list_wiki_pages(limit=5)
+        key_wiki_pages = [
+            {
+                "slug": p.get("slug", ""),
+                "title": p.get("title", ""),
+                "access_count": p.get("access_count") or 0,
+            }
+            for p in wiki_pages
+        ]
+        result["key_wiki_pages"] = key_wiki_pages
+
+    # §28 — add _render markdown for the session-context hook pipe
+    result["_render"] = _render_project_brief(result)
+
+    return result
+
+
+def _render_project_brief(brief: dict) -> str:
+    """Render a project_brief dict as markdown for hook injection (§28)."""
+    project = brief.get("project", "unknown")
+    branch = brief.get("branch") or "unknown"
+    mode = brief.get("_mode", "catalog")
+
+    lines: list[str] = [f"# {project} — {mode}\n"]
+    lines.append(f"**Branch:** {branch}\n")
+
+    stale = brief.get("stale_wiki_count", 0)
+    init_present = brief.get("init_memory_present", False)
+    active_present = brief.get("active_work_present", False)
+
+    signals = []
+    if stale > 0:
+        signals.append(f"stale_wiki_count={stale}")
+    if not init_present:
+        signals.append("init_memory=absent")
+    if not active_present:
+        signals.append("active_work=absent")
+    if signals:
+        lines.append(f"**Signals:** {', '.join(signals)}\n")
+
+    anchors = brief.get("top_anchors", [])
+    if anchors:
+        lines.append("## Anchors")
+        for a in anchors[:5]:
+            lines.append(f"- [{a.get('id')}] {(a.get('title') or '')[:80]}")
+        lines.append("")
+
+    if mode == "full":
+        init_content = brief.get("init_memory")
+        if init_content:
+            lines.append("## Init Memory")
+            lines.append(str(init_content)[:600])
+            lines.append("")
+        active_content = brief.get("active_work")
+        if active_content:
+            lines.append("## Active Work")
+            lines.append(str(active_content)[:400])
+            lines.append("")
+
+    lines.append(f"*Directory: {brief.get('_resolved_directory', '')}*")
+    return "\n".join(lines)
+
+
 @_tool()
 def get_project_context(directory: str) -> dict:
-    """Return all hot memories for a directory, sorted by heat descending.
+    """[DEPRECATED] Use project_brief(directory, mode='catalog') instead.
 
-    Also checks if Hippocampal Replay hooks are installed for this project
-    and includes a suggestion if they're missing.
+    Retained as a backward-compatible alias for one release.
+    Will be removed in a future version.
+    """
+    warnings.warn(
+        "get_project_context() is deprecated; use project_brief(directory, mode='catalog') instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return project_brief(directory, mode="catalog")
+
+
+@_tool(power=True)
+def bootstrap_project(directory: str, content: str) -> dict:
+    """Replace this directory's _project_init memory atomically.
+
+    Content must be concise markdown: wiki slugs, key memory IDs, conventions,
+    lookup tips. Hard cap: 2000 chars. Raises ValueError on overflow.
+
+    Idempotent: deletes any existing _project_init memory for this directory
+    before inserting the new one.
+    """
+    cfg = get_settings()
+    cap = cfg.PROJECT_INIT_CAP_CHARS
+    if len(content) > cap:
+        raise ValueError(f"project_init content exceeds {cap} char cap (got {len(content)} chars)")
+    resolved = _resolve_project_root(directory)
+    storage = _get_storage()
+    return storage.upsert_project_init(resolved, content)
+
+
+@_tool(power=True)
+def update_active_work(directory: str, content: str) -> dict:
+    """Replace this directory's _active_work memory atomically.
+
+    Deletes any existing _active_work memory(ies) for the directory,
+    then inserts the new one in a single transaction.
+
+    Returns: {previous_content: str | None, new_memory: dict}
+    """
+    resolved = _resolve_project_root(directory)
+    storage = _get_storage()
+    return storage.upsert_active_work(resolved, content)
+
+
+@functools.lru_cache(maxsize=128)
+def _detect_branch_cached(directory: str, _ts_bucket: int) -> str | None:
+    """Cached per 30s bucket. Returns None for detached HEAD or non-git.
+
+    Do not call directly — use _detect_branch(directory) which injects the
+    correct time bucket.
+    """
+    try:
+        out = (
+            subprocess.check_output(
+                ["git", "-C", directory, "rev-parse", "--abbrev-ref", "HEAD"],
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+            )
+            .decode()
+            .strip()
+        )
+        return out if out and out != "HEAD" else None
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as _e:
+        return None
+
+
+def _detect_branch(directory: str) -> str | None:
+    """Return the current git branch for directory, or None on non-git/error.
+
+    LRU-cached with a 30-second TTL via time-bucket trick.
+    Never raises — all errors return None.
+    """
+    try:
+        return _detect_branch_cached(directory, int(time.time() // 30))
+    except Exception:
+        return None
+
+
+@functools.lru_cache(maxsize=128)
+def _get_default_branch_cached(directory: str, _ts_bucket: int) -> str:
+    """Cached per 5-minute bucket. Falls back to 'master'."""
+    try:
+        out = (
+            subprocess.check_output(
+                ["git", "-C", directory, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+            )
+            .decode()
+            .strip()
+        )
+        # Returns e.g. "origin/master" — strip the remote prefix
+        if out:
+            return out.split("/", 1)[-1] if "/" in out else out
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as _e:
+        pass
+    return "master"
+
+
+def _get_default_branch(directory: str) -> str:
+    """Return the repo default branch name (e.g. 'master' or 'main').
+
+    Uses git symbolic-ref refs/remotes/origin/HEAD to detect the configured
+    default. Falls back to 'master' if the repo has no remote or the command
+    fails. LRU-cached with a 5-minute TTL.
+    """
+    return _get_default_branch_cached(directory, int(time.time() // 300))
+
+
+@_tool(power=True)
+def wiki_refresh_stale(
+    directory: str,
+    slugs: list[str] | None = None,
+    force_branch: bool = False,
+) -> dict:
+    """Detect stale repo-wiki pages and signal for regeneration (§26).
+
+    Stale = .local-review/wiki/*.md frontmatter `hash` ≠ SHA256(source_files).
+    Writes a JSON file under .local-review/wiki/refresh-queue/<timestamp>.json
+    listing the stale slugs; actual regen is done by the operator or a
+    background Agent.
+
+    Master-only: refuses on non-default branch unless force_branch=True.
+
+    Returns:
+        {
+            "stale": [<slug>, ...],
+            "dispatched_agent_id": None,
+            "branch": <current branch>,
+            "skipped_reason": null | "not_default_branch",
+        }
+
+    NEVER raises — all errors are caught and reported in the return dict.
+    """
+    try:
+        return _wiki_refresh_stale_impl(directory, slugs=slugs, force_branch=force_branch)
+    except Exception as _e:
+        logger.warning("wiki_refresh_stale internal error (best-effort): %s", _e)
+        return {
+            "stale": [],
+            "dispatched_agent_id": None,
+            "branch": None,
+            "skipped_reason": None,
+            "error": str(_e),
+        }
+
+
+def _wiki_refresh_stale_impl(
+    directory: str,
+    slugs: list[str] | None,
+    force_branch: bool,
+) -> dict:
+    """Inner implementation — may raise; caller wraps in try/except."""
+    import hashlib as _hashlib
+
+    try:
+        import yaml as _yaml  # type: ignore[import]
+    except ImportError:
+        _yaml = None
+
+    # Use directory directly for file I/O so tests can control it easily.
+    # Branch detection still runs git from the same directory.
+    dir_path = Path(directory)
+    branch = _get_current_branch(directory)
+    default = _get_default_branch(directory)
+
+    # Master-only enforcement
+    if not force_branch and branch not in (default, "master", "main"):
+        return {
+            "stale": [],
+            "dispatched_agent_id": None,
+            "branch": branch,
+            "skipped_reason": "not_default_branch",
+        }
+
+    wiki_dir = dir_path / ".local-review" / "wiki"
+    if not wiki_dir.exists():
+        return {
+            "stale": [],
+            "dispatched_agent_id": None,
+            "branch": branch,
+            "skipped_reason": None,
+        }
+
+    stale: list[str] = []
+
+    target_files = list(wiki_dir.glob("*.md"))
+    for md_file in target_files:
+        try:
+            raw = md_file.read_text(encoding="utf-8", errors="ignore")
+        except OSError as _e:
+            logger.debug("wiki_refresh_stale: cannot read %s: %s", md_file, _e)
+            continue
+
+        # Parse YAML frontmatter
+        fm = _parse_frontmatter(raw, _yaml)
+        if fm is None:
+            continue
+
+        page_slug = fm.get("slug") or md_file.stem
+        if slugs is not None and page_slug not in slugs:
+            continue
+
+        stored_hash = fm.get("hash", "")
+        source_files_raw = fm.get("source_files") or []
+        if isinstance(source_files_raw, str):
+            source_files_list = [source_files_raw]
+        else:
+            source_files_list = list(source_files_raw)
+
+        # Compute fresh hash over all source files
+        computed = _compute_source_hash(source_files_list, _hashlib)
+        if computed != stored_hash:
+            stale.append(page_slug)
+
+    # Write refresh-queue file if there is drift
+    if stale:
+        queue_dir = dir_path / ".local-review" / "wiki" / "refresh-queue"
+        try:
+            queue_dir.mkdir(parents=True, exist_ok=True)
+            ts = int(time.time() * 1000)
+            queue_file = queue_dir / f"{ts}.json"
+            tmp_file = queue_dir / f"{ts}.json.tmp"
+            payload = {
+                "stale_slugs": stale,
+                "branch": branch,
+                "directory": str(dir_path),
+                "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }
+            tmp_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            tmp_file.rename(queue_file)
+        except OSError as _e:
+            logger.warning("wiki_refresh_stale: failed to write refresh-queue: %s", _e)
+
+    return {
+        "stale": stale,
+        "dispatched_agent_id": None,
+        "branch": branch,
+        "skipped_reason": None,
+    }
+
+
+def _parse_frontmatter(raw: str, yaml_mod) -> dict | None:
+    """Parse YAML frontmatter from a markdown file. Returns None if no frontmatter."""
+    if not raw.startswith("---"):
+        return None
+    end = raw.find("\n---", 3)
+    if end == -1:
+        return None
+    fm_text = raw[3:end].strip()
+    if yaml_mod is not None:
+        try:
+            data = yaml_mod.safe_load(fm_text)
+            if isinstance(data, dict):
+                return data
+        except Exception as _e:
+            logger.debug("wiki_refresh_stale: YAML parse error: %s", _e)
+            return None
+    # Fallback: very minimal key: value parser
+    result: dict = {}
+    for line in fm_text.splitlines():
+        if ":" in line:
+            k, _, v = line.partition(":")
+            result[k.strip()] = v.strip()
+    return result if result else None
+
+
+def _compute_source_hash(source_files: list[str], hashlib_mod) -> str:
+    """Compute SHA256 over all source file contents, concatenated in order.
+
+    Missing files contribute an empty byte string (the page is stale).
+    """
+    h = hashlib_mod.sha256()
+    any_content = False
+    for path_str in source_files:
+        try:
+            data = Path(path_str).read_bytes()
+            h.update(data)
+            any_content = True
+        except (OSError, FileNotFoundError) as _e:
+            # Missing source file → hash will differ from stored hash
+            return ""
+    if not any_content:
+        return ""
+    return h.hexdigest()
+
+
+@_tool(power=True)
+def wiki_cleanup_merged_branches(directory: str, dry_run: bool = True) -> dict:
+    """List wiki_page rows whose branch is no longer in git branch -a (§26).
+
+    Run from within a git repo. dry_run=True (default) returns the candidate
+    list without deleting. dry_run=False deletes the listed pages.
+
+    Pages with branch in (master, main, None) are never candidates.
+
+    Returns:
+        {
+            "candidates": [{"id": int, "slug": str, "branch": str}, ...],
+            "deleted_count": int,
+            "dry_run": bool,
+        }
     """
     storage = _get_storage()
-    memories = storage.get_memories_for_directory(
-        directory, min_heat=settings.PROJECT_CONTEXT_MIN_HEAT
-    )
-    for m in memories:
-        m.pop("embedding", None)
+    resolved = _resolve_project_root(directory)
 
-    total_count = len(memories)
-    limit = 15
-    memories = memories[:limit]
+    # Get live branch set
+    try:
+        raw = subprocess.check_output(
+            ["git", "-C", resolved, "branch", "-a", "--format=%(refname:short)"],
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        ).decode()
+        live_branches: set[str] = set()
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            # Strip remote prefix: "remotes/origin/feat/x" → "feat/x",
+            # "origin/feat/x" → "feat/x"
+            for prefix in ("remotes/origin/", "origin/"):
+                if line.startswith(prefix):
+                    line = line[len(prefix) :]
+                    break
+            live_branches.add(line)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as _e:
+        logger.warning("wiki_cleanup_merged_branches: git branch failed: %s", _e)
+        return {
+            "error": "git branch enumeration failed; cleanup aborted",
+            "deleted": [],
+            "deleted_count": 0,
+            "candidates": [],
+            "dry_run": dry_run,
+        }
 
-    # Check if hooks are installed for this project
-    hooks_installed = False
-    project_dir = Path(directory)
-    # Walk up to find .claude/settings.json
-    for parent in [project_dir] + list(project_dir.parents):
-        hooks_settings = parent / ".claude" / "settings.json"
-        if hooks_settings.exists():
+    # Query wiki_page rows with a branch set, excluding canonical branches
+    try:
+        rows = storage._q(
+            "SELECT id, slug, branch FROM wiki_page "
+            "WHERE branch IS NOT NONE "
+            "AND branch != 'master' AND branch != 'main'"
+        )
+    except Exception as _e:
+        logger.warning("wiki_cleanup_merged_branches: DB query failed: %s", _e)
+        rows = []
+
+    candidates = []
+    for row in rows:
+        row_branch = row.get("branch") or ""
+        if row_branch in live_branches:
+            continue
+        # Store both integer id (for delete_wiki_page) and raw id string (fallback)
+        try:
+            int_id = storage._extract_id(row.get("id"))
+        except (ValueError, TypeError) as _e:
+            int_id = None
+        raw_id = row.get("id")
+        candidates.append(
+            {
+                "id": int_id,
+                "_raw_id": raw_id,
+                "slug": row.get("slug", ""),
+                "branch": row_branch,
+            }
+        )
+
+    deleted_count = 0
+    if not dry_run and candidates:
+        for candidate in candidates:
             try:
-                data = json.loads(hooks_settings.read_text())
-                hooks = data.get("hooks", {})
-                has_pre = "PreCompact" in hooks
-                has_post = any(h.get("matcher") == "compact" for h in hooks.get("SessionStart", []))
-                hooks_installed = has_pre and has_post
-            except Exception:
-                pass
-            break
+                slug = candidate.get("slug", "")
+                if candidate["id"] is not None:
+                    storage.delete_wiki_page(candidate["id"])
+                    deleted_count += 1
+                elif slug:
+                    # Fallback for auto-generated (non-integer) IDs: delete by slug
+                    storage._q(
+                        "DELETE wiki_page WHERE slug = $slug",
+                        {"slug": slug},
+                    )
+                    deleted_count += 1
+            except Exception as _e:
+                logger.warning("wiki_cleanup_merged_branches: delete of page failed: %s", _e)
 
-    result = {"memories": memories, "total": total_count, "showing": len(memories)}
-    if total_count > limit:
-        result["_context_hint"] = (
-            f"Showing {limit} of {total_count} memories. Use recall() for specific queries."
-        )
-    if not hooks_installed:
-        result["_hint"] = (
-            "Hippocampal Replay hooks are not installed for this project. "
-            "Run `install_hooks` with this project directory to enable automatic "
-            "context drain/restore on compaction. This is a one-time setup."
-        )
-    return result
+    # Strip internal fields from returned candidates
+    return_candidates = [{k: v for k, v in c.items() if not k.startswith("_")} for c in candidates]
+
+    return {
+        "candidates": return_candidates,
+        "deleted_count": deleted_count,
+        "dry_run": dry_run,
+    }
 
 
 @_tool(power=True)
@@ -2321,6 +3001,13 @@ def checkpoint(
             if isinstance(_item, str) and _has_unpaired_surrogate(_item):
                 return {"stored": False, "reason": "invalid_unicode_surrogates"}
 
+    # Capture branch at API boundary for payload tagging and future filter use.
+    _branch = None
+    try:
+        _branch = _detect_branch(directory)
+    except Exception:
+        pass  # non-fatal — checkpoint proceeds without branch context
+
     # Async path: enqueue and return immediately (skip during drain replay)
     if not is_draining():
         try:
@@ -2335,6 +3022,7 @@ def checkpoint(
                     "next_steps": next_steps,
                     "active_errors": active_errors,
                     "custom_context": custom_context,
+                    "branch": _branch,
                 },
             )
             return {"queued": True, "directory": directory}
@@ -2397,12 +3085,19 @@ def anchor(content: str, context: str, reason: str = "") -> dict:
         if _has_unpaired_surrogate(_field):
             return {"stored": False, "reason": "invalid_unicode_surrogates"}
 
+    # Capture branch at API boundary — enqueue-time value used by drainer.
+    _branch = None
+    try:
+        _branch = _detect_branch(context)
+    except Exception:
+        pass  # non-fatal — anchor inserts with branch=NONE
+
     # Async path: enqueue and return immediately (skip during drain replay)
     if not is_draining():
         try:
             _get_file_queue().enqueue(
                 "anchor",
-                {"content": content, "context": context, "reason": reason},
+                {"content": content, "context": context, "reason": reason, "branch": _branch},
             )
             return {"queued": True, "status": "anchored", "is_protected": True, "reason": reason}
         except Exception as _fq_exc:
@@ -2413,7 +3108,7 @@ def anchor(content: str, context: str, reason: str = "") -> dict:
     tags = ["_anchor"]
     if reason:
         tags.append(f"anchor:{reason}")
-    memory_id = replay.anchor_memory(content, context, tags, reason)
+    memory_id = replay.anchor_memory(content, context, tags, reason, branch=_branch)
     return {
         "memory_id": memory_id,
         "status": "anchored",
@@ -2491,11 +3186,40 @@ def install_hooks(project_directory: str = "", scope: str = "project") -> dict:
         shutil.copy2(stop_hook_src, stop_hook_dst)
         stop_hook_dst.chmod(0o755)
 
-    pre_compact_dst = hooks_dir / "pre-compact-drain.sh"
-    post_compact_dst = hooks_dir / "post-compact-rehydrate.sh"
-    post_tool_dst = hooks_dir / "post-tool-capture.py"
-    session_ctx_dst = hooks_dir / "session-start-context.py"
-    prompt_recall_dst = hooks_dir / "prompt-recall.py"
+    # hook_runner.py — the real script that all hooks delegate to.
+    # Installed at an absolute path; project_directory passed as argv[1]
+    # so no shell interpolation occurs.
+    hook_runner_src = Path(__file__).parent / "scripts" / "hook_runner.py"
+    hook_runner_dst = hooks_dir / "hook_runner.py"
+    if hook_runner_src.exists():
+        shutil.copy2(hook_runner_src, hook_runner_dst)
+        hook_runner_dst.chmod(0o755)
+
+    # Absolute path string — safe to embed in JSON command field because
+    # it is passed as argv[0] to execve, not shell-interpolated.
+    _runner = str(hook_runner_dst)
+
+    # Auth env block: if YADGAR_MCP_AUTH_TOKEN is set, inject it into every hook
+    # so hook scripts can authenticate to the daemon.
+    _auth_token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    _env_block: dict = {}
+    if _auth_token:
+        _env_block = {"YADGAR_MCP_AUTH_TOKEN": _auth_token}
+
+    def _hook_entry(hook_type: str, matcher: str = "") -> dict:
+        """Build a hook config entry using hook_runner.py."""
+        entry: dict = {
+            "matcher": matcher,
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": f"python3 {shlex.quote(_runner)} {hook_type}",
+                }
+            ],
+        }
+        if _env_block:
+            entry["hooks"][0]["env"] = _env_block
+        return entry
 
     # Write hooks configuration to the target settings file
     settings_path = settings_target_dir / "settings.json"
@@ -2509,101 +3233,40 @@ def install_hooks(project_directory: str = "", scope: str = "project") -> dict:
     hooks_config = settings_data.get("hooks", {})
 
     # PreCompact hook — drain context before compaction
-    hooks_config["PreCompact"] = [
-        {
-            "matcher": "",
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": f'"{pre_compact_dst}"',
-                }
-            ],
-        }
-    ]
+    hooks_config["PreCompact"] = [_hook_entry("pre-compact-drain")]
 
     # SessionStart hooks — context on every session + full restore on compact
-    session_hooks = []
-
-    # All sessions: inject lightweight context
-    session_hooks.append(
-        {
-            "matcher": "",
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": f'python3 "{session_ctx_dst}"',
-                }
-            ],
-        }
-    )
-
-    # After compaction: full restore with working memory, anchored, SR predictions
-    session_hooks.append(
-        {
-            "matcher": "compact",
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": f'"{post_compact_dst}"',
-                }
-            ],
-        }
-    )
-
-    hooks_config["SessionStart"] = session_hooks
+    hooks_config["SessionStart"] = [
+        _hook_entry("session-start-context"),
+        _hook_entry("post-compact-rehydrate", matcher="compact"),
+    ]
 
     # PostToolUse hook — capture every tool action into action_log
-    hooks_config["PostToolUse"] = [
-        {
-            "matcher": "",
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": f'python3 "{post_tool_dst}"',
-                }
-            ],
-        }
-    ]
+    hooks_config["PostToolUse"] = [_hook_entry("post-tool-capture")]
 
     # UserPromptSubmit hook — auto-recall relevant memories on every user turn
-    hooks_config["UserPromptSubmit"] = [
-        {
-            "matcher": "",
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": f'python3 "{prompt_recall_dst}"',
-                }
-            ],
-        }
-    ]
+    hooks_config["UserPromptSubmit"] = [_hook_entry("prompt-recall")]
 
     # PreToolUse hook — block direct docker exec into yadgar containers
-    _db_lockdown_cmd = (
-        'python3 -c "'
-        "import sys, json\n"
-        "data = json.load(sys.stdin)\n"
-        "cmd = data.get('tool_input', {}).get('command', '')\n"
-        "if 'docker exec yadgar-backend' in cmd or 'docker exec yadgar-db' in cmd:\n"
-        "    print(json.dumps({'decision': 'block', 'reason': 'Direct docker exec into yadgar DB/backend containers is blocked to prevent data corruption. Use yadgar MCP tools instead.'}))\n"
-        "    sys.exit(0)\n"
-        "print(json.dumps({'decision': 'allow'}))\n"
-        '"'
-    )
-    hooks_config["PreToolUse"] = [
-        {
-            "matcher": "Bash",
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": _db_lockdown_cmd,
-                }
-            ],
-        }
-    ]
+    hooks_config["PreToolUse"] = [_hook_entry("db-lockdown-check", matcher="Bash")]
 
     settings_data["hooks"] = hooks_config
-    settings_path.write_text(json.dumps(settings_data, indent=2))
+    # Atomic write: write to tmp file, then os.replace to avoid corrupt settings.json
+    import tempfile
+
+    tmp_fd, tmp_path_str = tempfile.mkstemp(
+        dir=settings_target_dir, prefix=".settings_tmp_", suffix=".json"
+    )
+    try:
+        with os.fdopen(tmp_fd, "w") as f:
+            f.write(json.dumps(settings_data, indent=2))
+        os.replace(tmp_path_str, settings_path)
+    except Exception:
+        try:
+            os.unlink(tmp_path_str)
+        except Exception:
+            pass
+        raise
 
     # Register Stop hook in global ~/.claude/settings.json
     # (always global, regardless of scope — Stop must fire in every session)
@@ -2628,7 +3291,22 @@ def install_hooks(project_directory: str = "", scope: str = "project") -> dict:
         }
     ]
     global_settings["hooks"] = global_hooks
-    global_settings_path.write_text(json.dumps(global_settings, indent=2))
+    # Atomic write for global settings too
+    import tempfile
+
+    tmp_fd2, tmp_path_str2 = tempfile.mkstemp(
+        dir=global_claude_dir, prefix=".global_settings_tmp_", suffix=".json"
+    )
+    try:
+        with os.fdopen(tmp_fd2, "w") as f:
+            f.write(json.dumps(global_settings, indent=2))
+        os.replace(tmp_path_str2, global_settings_path)
+    except Exception:
+        try:
+            os.unlink(tmp_path_str2)
+        except Exception:
+            pass
+        raise
 
     return {
         "status": "installed",
@@ -2731,7 +3409,22 @@ def sync_instructions(claude_md_path: str = "") -> dict:
     else:
         new_content = "# Global Rules\n\n" + yadgar_section + "\n"
 
-    md_path.write_text(new_content)
+    # Q14: atomic write — tmp + os.replace so a crash can't truncate CLAUDE.md
+    import tempfile
+
+    tmp_fd, tmp_path_str = tempfile.mkstemp(
+        dir=md_path.parent, prefix=".claude_md_tmp_", suffix=".md"
+    )
+    try:
+        with os.fdopen(tmp_fd, "w") as f:
+            f.write(new_content)
+        os.replace(tmp_path_str, md_path)
+    except Exception:
+        try:
+            os.unlink(tmp_path_str)
+        except Exception:
+            pass
+        raise
 
     return {
         "status": "synced",
@@ -2815,6 +3508,9 @@ def seed_project(directory: str, dry_run: bool = False) -> dict:
         thermo=_thermo,
         curator=_curator,
     )
+    # §4: Register this directory as a known project root for file-hash whitelist.
+    if not dry_run:
+        _project_roots.add(resolved)
     return result
 
 
@@ -2830,6 +3526,7 @@ def wiki_add(
     source_memory_ids: list[int] | None = None,
     confidence: str = "medium",
     append: bool = False,
+    branch: str | None = None,
 ) -> dict:
     """Create or update a wiki page. Content can include [[slug]] cross-references.
 
@@ -2862,24 +3559,35 @@ def wiki_add(
         if _has_unpaired_surrogate(_field):
             return {"stored": False, "reason": "invalid_unicode_surrogates"}
 
+    # Auto-capture branch if not explicitly provided by caller.
+    # Use cwd as the detection directory — wiki pages are not directory-scoped.
+    if branch is None:
+        try:
+            branch = _detect_branch(os.getcwd())
+        except Exception:
+            pass  # non-fatal — wiki inserts with branch=NONE
+
     # Async path: enqueue and return immediately (skip during drain replay)
     if not is_draining():
         try:
+            import re as _re
+
+            slug = (_re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "untitled")[:64]
             _get_file_queue().enqueue(
                 "wiki_add",
                 {
+                    "wiki_schema_version": 2,
+                    "slug": slug,
                     "title": title,
                     "content": content,
-                    "category": category,
+                    "category": category or "reference",
                     "tags": tags,
                     "source_memory_ids": source_memory_ids,
                     "confidence": confidence,
                     "append": append,
+                    "branch": branch,
                 },
             )
-            import re as _re
-
-            slug = (_re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "untitled")[:64]
             return {"stored": True, "queued": True, "slug": slug, "title": title}
         except Exception as _fq_exc:
             logger.warning("File queue enqueue failed, falling back to sync write: %s", _fq_exc)
@@ -2888,7 +3596,9 @@ def wiki_add(
     if append:
         result = _wiki.ingest(content, title, tags, source_memory_ids)
     else:
-        result = _wiki.add(title, content, category, tags or [], source_memory_ids, confidence)
+        result = _wiki.add(
+            title, content, category, tags or [], source_memory_ids, confidence, branch=branch
+        )
     result.pop("embedding", None)
     event_type = "wiki_updated" if result.get("_merged") else "wiki_added"
     _push_event(
@@ -2922,7 +3632,33 @@ def wiki_query(
     Returns matching pages with relevance scores. Use tags and category to filter.
     """
     assert _wiki is not None, "WikiStore not initialized"
-    results = _wiki.query(query, tags, category, max_results)
+    # Fetch extra results before branch filter so we still return max_results after pruning.
+    results = _wiki.query(query, tags, category, max_results * 3)
+
+    # §25 Branch filter + current-branch 1.5x score boost.
+    try:
+        _cwd = os.getcwd()
+        _current_branch = _detect_branch(_cwd)
+        _default_branch = _get_default_branch(_cwd)
+    except Exception:
+        _current_branch = None
+        _default_branch = "master"
+
+    _allowed_branches: set[str | None] = {_default_branch, None}
+    if _current_branch is not None:
+        _allowed_branches.add(_current_branch)
+
+    results = [r for r in results if r.get("branch") in _allowed_branches]
+
+    if _current_branch is not None:
+        for r in results:
+            if r.get("branch") == _current_branch:
+                base = r.get("_retrieval_score", 0.0)
+                r["_retrieval_score"] = base * 1.5
+        results.sort(key=lambda r: r.get("_retrieval_score", 0.0), reverse=True)
+
+    results = results[:max_results]
+
     for r in results:
         r.pop("embedding", None)
     return results
@@ -2930,9 +3666,26 @@ def wiki_query(
 
 @_tool(power=True)
 def wiki_read(slug: str) -> dict:
-    """Read a specific wiki page by slug."""
+    """Read a specific wiki page by slug.
+
+    §25 Resolution order:
+    1. Exact slug match on current branch.
+    2. Exact slug match on default branch.
+    3. Exact slug match with branch IS NONE (legacy/canonical).
+    4. Not found → error dict.
+    """
     assert _wiki is not None, "WikiStore not initialized"
-    page = _wiki.read(slug)
+
+    # Detect current and default branch for resolution order.
+    try:
+        _cwd = os.getcwd()
+        _current_branch = _detect_branch(_cwd)
+        _default_branch = _get_default_branch(_cwd)
+    except Exception:
+        _current_branch = None
+        _default_branch = "master"
+
+    page = _wiki.read_by_branch(slug, _current_branch, _default_branch)
     if page is None:
         return {"error": f"Wiki page '{slug}' not found"}
     page.pop("embedding", None)
@@ -2965,12 +3718,9 @@ def wiki_list(
     Categories: architecture, decision, pattern, debugging, reference, convention, fact, analysis.
     """
     assert _wiki is not None, "WikiStore not initialized"
-    pages = _wiki.list_pages(category)
-    if slug_prefix:
-        pages = [p for p in pages if p.get("slug", "").startswith(slug_prefix)]
-    # Clamp limit: 0/-1/None means "no cap"; otherwise apply
-    if limit is not None and limit > 0:
-        pages = pages[:limit]
+    # Push LIMIT, category, and slug_prefix filters to the DB layer
+    db_limit = limit if (limit is not None and limit > 0) else None
+    pages = _wiki.list_pages(category=category, slug_prefix=slug_prefix, limit=db_limit)
     out = []
     for p in pages:
         out.append(
@@ -3106,7 +3856,9 @@ def dlq_requeue(filename: str) -> dict:
 
     filename: exact filename from dlq_inspect() (e.g. "0001778139482800_<uuid>.json")
     """
-    if "/" in filename or "\\" in filename or filename.startswith("."):
+    # §4: Reject null bytes, Unicode separators, path traversal chars.
+    _FORBIDDEN_IN_FILENAME = ("/", "\\", "\x00", " ", " ", "", "")
+    if filename.startswith(".") or any(c in filename for c in _FORBIDDEN_IN_FILENAME):
         return {"requeued": False, "error": "Invalid filename — must be a plain filename"}
     fq = _get_file_queue()
     src = fq.dlq_dir / filename
@@ -3129,6 +3881,111 @@ def dlq_requeue(filename: str) -> dict:
         "file": filename,
         "message": "Item will be retried on next drain pass",
     }
+
+
+# ── §17 Fetch + update by integer ID ──────────────────────────────────
+
+# Allowed fields for MCP-level memory_update (subset of _MEMORY_UPDATABLE_FIELDS)
+_MEMORY_UPDATE_ALLOWED: frozenset[str] = frozenset({"content", "tags", "is_protected", "is_stale"})
+
+# Allowed fields for MCP-level wiki_update
+_WIKI_UPDATE_ALLOWED: frozenset[str] = frozenset({"content", "tags", "category", "confidence"})
+
+
+@_tool()
+def memory_get(memory_id: int) -> dict | None:
+    """Fetch a memory record by integer ID.
+
+    Returns the memory dict, or None if not found.
+    Embedding bytes are stripped from the response.
+    """
+    result = _storage.get_memory(int(memory_id))
+    if result is None:
+        return None
+    # Strip raw embedding bytes — not useful over MCP and wastes bandwidth
+    result.pop("embedding", None)
+    result.pop("centroid_embedding", None)
+    result.pop("implicit_embedding", None)
+    return result
+
+
+@_tool()
+def wiki_get(page_id: int) -> dict | None:
+    """Fetch a wiki page by integer ID.
+
+    Returns the wiki page dict, or None if not found.
+    Embedding bytes are stripped from the response.
+    """
+    result = _storage.get_wiki_page(int(page_id))
+    if result is None:
+        return None
+    # Strip raw embedding bytes
+    result.pop("embedding", None)
+    return result
+
+
+@_tool(power=True)
+def memory_update(memory_id: int, fields: dict) -> dict:
+    """Patch selected fields on a memory record.
+
+    Allowed keys: content, tags, is_protected, is_stale.
+    Rejected keys: heat, embedding, id, created_at (and any unknown key).
+
+    Returns the updated memory dict.
+    Raises ValueError on disallowed or unknown keys.
+    """
+    unknown = set(fields) - _MEMORY_UPDATE_ALLOWED
+    if unknown:
+        raise ValueError(
+            f"Disallowed field(s) for memory_update: {sorted(unknown)}. "
+            f"Allowed: {sorted(_MEMORY_UPDATE_ALLOWED)}"
+        )
+    if not fields:
+        result = _storage.get_memory(int(memory_id))
+        if result is None:
+            raise ValueError(f"Memory {memory_id} not found")
+        result.pop("embedding", None)
+        result.pop("centroid_embedding", None)
+        result.pop("implicit_embedding", None)
+        return result
+    _storage.update_memory_fields(int(memory_id), **fields)
+    updated = _storage.get_memory(int(memory_id))
+    if updated is None:
+        raise ValueError(f"Memory {memory_id} not found after update")
+    updated.pop("embedding", None)
+    updated.pop("centroid_embedding", None)
+    updated.pop("implicit_embedding", None)
+    return updated
+
+
+@_tool(power=True)
+def wiki_update(page_id: int, fields: dict) -> dict:
+    """Patch selected fields on a wiki page record.
+
+    Allowed keys: content, tags, category, confidence.
+    Rejected keys: slug, id, created_at (and any unknown key).
+
+    Returns the updated wiki page dict.
+    Raises ValueError on disallowed or unknown keys.
+    """
+    unknown = set(fields) - _WIKI_UPDATE_ALLOWED
+    if unknown:
+        raise ValueError(
+            f"Disallowed field(s) for wiki_update: {sorted(unknown)}. "
+            f"Allowed: {sorted(_WIKI_UPDATE_ALLOWED)}"
+        )
+    if not fields:
+        result = _storage.get_wiki_page(int(page_id))
+        if result is None:
+            raise ValueError(f"Wiki page {page_id} not found")
+        result.pop("embedding", None)
+        return result
+    _storage.update_wiki_page(int(page_id), fields)
+    updated = _storage.get_wiki_page(int(page_id))
+    if updated is None:
+        raise ValueError(f"Wiki page {page_id} not found after update")
+    updated.pop("embedding", None)
+    return updated
 
 
 # ── Default rules ──────────────────────────────────────────────────────
@@ -3167,7 +4024,10 @@ def init_engines(
     global _storage, _embeddings, _buffer, _consolidation, _staleness, _thermo, _retriever, _curator
     global _prospective, _narrative, _sleep, _pool, _kg, _write_gate, _engram
     global _rules_engine, _cls, _cognitive_map, _causal, _metacognition
-    global _replay, _wiki
+    global _replay, _wiki, _shutdown_done
+
+    # Q16: reset shutdown flag so a re-initialized server can shut down cleanly
+    _shutdown_done = False
 
     _settings = get_settings()
     _storage = StorageEngine(db_path or _settings.DB_PATH)
@@ -3233,7 +4093,9 @@ def init_engines(
                 time.sleep(5)
                 try:
                     result = sample_system_metrics(pid, db_path)
-                    _system_metrics_cache.update(result)
+                    # §9 Q6: update under lock to prevent torn reads.
+                    with _metrics_lock:
+                        _system_metrics_cache.update(result)
                 except Exception:
                     pass
 
@@ -3280,11 +4142,15 @@ def init_engines(
 
 
 def shutdown():
-    """Gracefully shut down all engines."""
+    """Gracefully shut down all engines. Idempotent — safe to call twice (Q16)."""
     global _storage, _embeddings, _buffer, _consolidation, _staleness, _thermo, _retriever, _curator
     global _prospective, _narrative, _sleep, _pool, _kg, _write_gate, _engram
     global _rules_engine, _cls, _cognitive_map, _causal, _metacognition
-    global _replay, _wiki, _file_queue, _queue_drainer
+    global _replay, _wiki, _file_queue, _queue_drainer, _shutdown_done
+
+    if _shutdown_done:
+        return
+    _shutdown_done = True
 
     if _queue_drainer is not None:
         _queue_drainer.stop()
