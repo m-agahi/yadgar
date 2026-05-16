@@ -22,8 +22,6 @@ from yadgar.storage import StorageEngine
 from yadgar.tests.conftest import memorize_sync
 from yadgar.thermodynamics import MemoryThermodynamics
 
-pytestmark = pytest.mark.xdist_group("server_globals")
-
 # ── Fixtures ──────────────────────────────────────────────────────────
 
 

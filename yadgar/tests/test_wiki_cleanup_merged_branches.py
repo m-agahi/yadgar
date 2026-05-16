@@ -17,8 +17,6 @@ import pytest
 
 from yadgar import server
 
-pytestmark = pytest.mark.xdist_group("server_globals")
-
 
 @pytest.fixture(autouse=True)
 def _engines(tmp_path):
@@ -53,9 +51,12 @@ def test_dry_run_deleted_count_zero(tmp_path):
 # ── orphaned-branch identification ───────────────────────────────────────────
 
 
-def test_no_candidates_when_no_branch_pages(tmp_path, flush_queue):
+def test_no_candidates_when_no_branch_pages(tmp_path, flush_queue, monkeypatch):
     """No candidates when no wiki_page rows have a branch set."""
-    # Add a wiki page with no branch (canonical)
+    # Force _detect_branch to None so wiki_add stores a canonical page (no branch)
+    # — otherwise the runner's actual git branch leaks into the wiki entry.
+    monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
+
     server.wiki_add(
         title="Canonical Page",
         content="Content",

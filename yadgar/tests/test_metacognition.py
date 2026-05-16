@@ -10,8 +10,6 @@ from yadgar.knowledge_graph import KnowledgeGraph
 from yadgar.metacognition import MetaCognition
 from yadgar.storage import StorageEngine
 
-pytestmark = pytest.mark.xdist_group("server_globals")
-
 # ── Fixtures ──────────────────────────────────────────────────────────
 
 

@@ -430,6 +430,9 @@ class RulesEngine:
             action_type, pattern, replacement = _parse_write_action(rule["action"])
             if action_type == "redact" and pattern:
                 try:
+                    # TODO(review-20260516, H-6): re.sub with caller-supplied pattern — ReDoS
+                    # possible on write hot-path; add pattern length cap and AST check for nested
+                    # unbounded quantifiers, or switch to google-re2 for bounded execution.
                     modified = re.sub(pattern, replacement, modified)
                     was_redacted = True
                     mem = {**mem, "content": modified}

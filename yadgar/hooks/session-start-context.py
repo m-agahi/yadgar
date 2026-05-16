@@ -28,7 +28,11 @@ def main():
         import urllib.request as _req
 
         _url = f"http://127.0.0.1:{_port}/hooks/session-context?directory={_parse.quote(cwd)}"
-        _resp = _req.urlopen(_url, timeout=2)
+        _token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+        _req_obj = _req.Request(_url)
+        if _token:
+            _req_obj.add_header("Authorization", f"Bearer {_token}")
+        _resp = _req.urlopen(_req_obj, timeout=2)
         _text = json.loads(_resp.read().decode()).get("text", "")
         if _text:
             print(_text)

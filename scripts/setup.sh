@@ -160,8 +160,8 @@ if [[ -n "${DB_FILE}" ]]; then
         -v "${YADGAR_DIR}:/data" \
         -p "127.0.0.1:8000:8000" \
         -p "127.0.0.1:8001:8001" \
-        -e SURREAL_USER=root \
-        -e SURREAL_PASS=root \
+        -e "SURREAL_USER=${ROOT_USER}" \
+        -e "SURREAL_PASS=${ROOT_PASS}" \
         "${BACKEND_IMAGE}"
 
     # Wait for SurrealDB HTTP port (8000)

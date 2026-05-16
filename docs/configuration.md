@@ -294,7 +294,7 @@ The YAML file is optional. If it doesn't exist, all defaults apply. Values you d
 
 | Key | Env var | Type | Default | Description |
 |---|---|---|---|---|
-| `require_auth` | `YADGAR_REQUIRE_AUTH` | bool | `false` | Enforce bearer-token auth on `/api/*` and `/hooks/*` routes. When false, middleware is a no-op (logs WARN on startup). Flip to `true` after minting `YADGAR_MCP_AUTH_TOKEN`. |
+| `require_auth` | `YADGAR_REQUIRE_AUTH` | bool | `true` | Enforce bearer-token auth on `/api/*` and `/hooks/*` routes. When false, middleware is a no-op (logs WARN on startup). Flip to `true` after minting `YADGAR_MCP_AUTH_TOKEN`. |
 | `mcp_auth_token` | `YADGAR_MCP_AUTH_TOKEN` | str | `""` | Bearer token for authenticated routes. Must be set when `REQUIRE_AUTH=true`. Generate via `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` or 1Password. |
 | `allowed_origins` | `YADGAR_ALLOWED_ORIGINS` | str | `"http://127.0.0.1:8765,http://localhost:8765"` | Comma-separated CORS allowed origins. Default: loopback only. Wildcard (`*`) is never allowed. |
 | `host` | `YADGAR_HOST` | str | `127.0.0.1` | Bind address for the MCP HTTP server. Default is loopback-only; set to `0.0.0.0` explicitly if you need LAN exposure (not recommended without auth + TLS). |

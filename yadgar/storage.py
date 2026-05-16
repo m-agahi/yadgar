@@ -583,6 +583,9 @@ class StorageEngine:
             # Server mode: POST to /sql with LET preamble for params.
             # ensure_ascii=False so emoji and other non-ASCII pass as UTF-8; SurrealDB v3
             # rejects \uD800–\uDFFF surrogate pairs that json.dumps emits with ensure_ascii=True.
+            # TODO(review-20260516, H-4): roll-your-own JSON escaping via LET $k = json.dumps
+            # bypasses SurrealDB's native {"sql": ..., "vars": ...} bind facility. Migrate all
+            # _q callers to POST {"sql": stmt, "vars": params} to eliminate this pattern.
             if params:
                 lets = [
                     f"LET ${k} = {_json.dumps(v, ensure_ascii=False)};" for k, v in params.items()
@@ -2687,6 +2690,8 @@ class StorageEngine:
         cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
         where = f"{age_field} < $cutoff"
         if extra_where:
+            # TODO(review-20260516, H-5): extra_where interpolated raw into SurrealQL; replace
+            # with a structured filter dict and _ALLOWED_AGE_FIELDS allowlist to prevent injection
             where = f"{where} AND {extra_where}"
         count_rows = self._q(
             f"SELECT count() AS c FROM {table} WHERE {where} GROUP ALL",
@@ -2713,6 +2718,7 @@ class StorageEngine:
         _CHUNK = 500
         for start in range(0, len(records), _CHUNK):
             chunk = records[start : start + _CHUNK]
+            # TODO(review-20260516, H-4): raw INSERT with json.dumps bypasses bind facility
             self._q(f"INSERT INTO engram_slot {_json.dumps(chunk)}")
 
     def get_engram_slot(self, slot_index: int) -> dict | None:

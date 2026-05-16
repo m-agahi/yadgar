@@ -9,8 +9,6 @@ import pytest
 from yadgar import server
 from yadgar.tests.conftest import memorize_sync
 
-pytestmark = pytest.mark.xdist_group("server_globals")
-
 
 @pytest.fixture(autouse=True)
 def _engines(tmp_path):
@@ -200,13 +198,10 @@ def test_validate_memory_not_found():
 def test_get_project_context_returns_catalog_shape(flush_queue):
     # §22: get_project_context is now a deprecated alias for project_brief(mode="catalog").
     # Verify the returned shape is catalog (not old "memories" shape).
-    import warnings
-
     server.memorize("project A memory", "/projects/a", ["a"])
     flush_queue()
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("always")
+    with pytest.warns(DeprecationWarning):
         result = server.get_project_context("/projects/a")
     assert "_mode" in result
     assert result["_mode"] == "catalog"
@@ -217,13 +212,8 @@ def test_get_project_context_returns_catalog_shape(flush_queue):
 
 def test_get_project_context_emits_deprecation(flush_queue):
     # §22: deprecated alias must emit DeprecationWarning.
-    import warnings
-
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
+    with pytest.warns(DeprecationWarning):
         server.get_project_context("/projects/x")
-    dep = [x for x in w if issubclass(x.category, DeprecationWarning)]
-    assert len(dep) >= 1
 
 
 def test_project_brief_returns_hot_memories_in_full_mode(flush_queue):

@@ -12,9 +12,6 @@ from yadgar.engram import EngramAllocator
 from yadgar.server import _run_check_invariants
 from yadgar.storage import StorageEngine
 
-pytestmark = pytest.mark.xdist_group("server_globals")
-
-
 # ── Shared fixture ────────────────────────────────────────────────────────────
 
 

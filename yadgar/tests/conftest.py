@@ -173,34 +173,102 @@ def _isolate_file_queue(tmp_path, monkeypatch):
     monkeypatch.setattr(_s, "_queue_drainer", None)
 
 
-@pytest.fixture(autouse=True)
-def _isolate_surrealdb(monkeypatch):
-    """Give each test its own SurrealDB database to prevent state leakage.
+@pytest.fixture(scope="session", autouse=True)
+def _isolate_surrealdb(surreal_server):
+    """Route every StorageEngine to its own SurrealDB database, derived from
+    the storage path, by patching _init_schema to swap the surreal-db header
+    before any schema work runs.
 
-    In server mode all StorageEngine instances connect to the same SurrealDB
-    process. Without isolation, data inserted by one test leaks into the next.
+    Session-scoped so the patch is active before module-scoped fixtures (e.g.
+    test_frontier_integration's _engines) create engines.  v4.9 used a
+    function-scoped monkeypatch; module-scoped fixtures fired before it
+    applied, leaking writes into the shared "main" database.
 
-    Strategy: derive a deterministic database name from the storage path so that:
-    - two engines opened on the same path share one database (intended sharing)
-    - engines opened on different tmp_path values get separate databases
+    Patching _init_schema (rather than __init__) means the header is correct
+    on the *first* schema call instead of being re-applied after — avoids
+    doubling up on _run_migrations()'s global flock under xdist parallelism.
 
     In embedded mode (no YADGAR_DB_URL), this fixture is a no-op.
     """
     if not os.environ.get("YADGAR_DB_URL"):
+        yield
         return
 
     from yadgar import storage as _sm
 
-    original_init = _sm.StorageEngine.__init__
+    original_init_schema = _sm.StorageEngine._init_schema
 
-    def _patched_init(self, db_path, **kwargs):
-        original_init(self, db_path, **kwargs)
+    def _patched_init_schema(self):
         if self._db_url and hasattr(self, "_http"):
-            path_hash = hashlib.md5(str(db_path).encode()).hexdigest()[:12]
+            path_hash = hashlib.md5(str(self._db_path).encode()).hexdigest()[:12]
             self._http.headers["surreal-db"] = f"t{path_hash}"
-            self._init_schema()  # create tables/indexes in the isolated DB
+        original_init_schema(self)
 
-    monkeypatch.setattr(_sm.StorageEngine, "__init__", _patched_init)
+    _sm.StorageEngine._init_schema = _patched_init_schema
+    try:
+        yield
+    finally:
+        _sm.StorageEngine._init_schema = original_init_schema
+
+
+@pytest.fixture(autouse=True)
+def _reset_server_state():
+    """Clear server.py module-level mutable state between tests.
+
+    Module-scoped _engines fixtures call server.init_engines() which populates
+    server globals that accumulate across tests in the same module.  Clearing
+    them at function teardown prevents leakage between tests within a module
+    and between modules that happen to land on the same xdist worker.
+    """
+    yield
+    try:
+        from yadgar import server as _s
+
+        _s._action_batch.clear()
+        _s._project_roots.clear()
+        _s._last_session_context.clear()
+        _s._last_prompt_recall.clear()
+        _s._last_recalled_ids.clear()
+        _s._event_queue.clear()
+        _s._detect_branch_cached.cache_clear()
+        _s._get_default_branch_cached.cache_clear()
+    except Exception:
+        pass
+
+
+_WIPE_TABLES = (
+    "memory",
+    "wiki_page",
+    "wiki_draft",
+    "entity",
+    "relationship",
+    "memory_rule",
+)
+
+
+@pytest.fixture(autouse=True)
+def _wipe_surrealdb_data():
+    """Delete all rows from data tables after each test (server-mode only).
+
+    Keeps the per-file namespace warm (schema stays) but prevents data written
+    by one test from leaking into the next test on the same xdist worker.
+    """
+    yield
+    if not os.environ.get("YADGAR_DB_URL"):
+        return
+    try:
+        from yadgar import server as _s
+
+        storage = _s._storage
+        if storage is None:
+            return
+        for table in _WIPE_TABLES:
+            try:
+                storage._q(f"DELETE {table};")
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 
 @pytest.fixture(scope="session")

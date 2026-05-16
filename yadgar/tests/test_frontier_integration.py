@@ -14,8 +14,6 @@ from yadgar.cognitive_map import CognitiveMap
 from yadgar.metacognition import MetaCognition
 from yadgar.tests.conftest import memorize_sync
 
-pytestmark = pytest.mark.xdist_group("server_globals")
-
 # ── Fixtures ───────────────────────────────────────────────────────────
 
 

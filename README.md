@@ -9,6 +9,8 @@
 
 </div>
 
+[Changelog](docs/CHANGELOG.md) · [Roadmap](#roadmap) · [Architecture](docs/architecture.md)
+
 *Yadgar* (یادگار) is Persian for "memento, keepsake." It's a persistent memory engine for Claude Code: tell it what matters, and it survives across sessions — decaying what you stop touching, promoting what repeats, filtering recall to the git branch you're on, and pairing every memory with a curated wiki that searches through the same pipeline.
 
 ## Features
@@ -302,12 +304,12 @@ Full notes: [docs/architecture.md](docs/architecture.md).
 - [Configuration](docs/configuration.md) — every setting
 - [Release runbook](docs/RELEASE.md) — version bump → tag → nix
 - [Migration notes](MIGRATION_NOTES.md) — operator steps for breaking changes
-- [V5 integration model](docs/V5_INTEGRATION.md) — long-lived feature-branch workflow
+- [Claude workflow](docs/claude-workflow.md) — long-lived feature-branch workflow
 
 ## Roadmap
 
-- **v6 — Nightly LLM curator.** A local agent (Ollama, deepseek-r1 + qwen3:8b two-tier routing) runs every night to detect staleness, annotate contradictions, find semantic correlations beyond co-occurrence, propose merges and forgets, and dedupe wiki pages. Two-phase consolidation: tier 1 (existing) plus tier 2 (LLM, skips if Ollama offline). Plan: [docs/PLAN_V6.md](docs/PLAN_V6.md).
-- **v7 — Real-time synthesis.** `recall(synthesize=True)` and `wiki_query(synthesize=True)` append a synthesized answer alongside raw records. New `ask()` tool returns synthesis-only output for conversational callers. Depends on a sub-10s local synthesis model. Plan: [docs/PLAN_V7.md](docs/PLAN_V7.md).
+- **v6 — Nightly LLM curator.** A local agent (Ollama, deepseek-r1 + qwen3:8b two-tier routing) runs every night to detect staleness, annotate contradictions, find semantic correlations beyond co-occurrence, propose merges and forgets, and dedupe wiki pages. Two-phase consolidation: tier 1 (existing) plus tier 2 (LLM, skips if Ollama offline). Plan: [docs/roadmap/v6.md](docs/roadmap/v6.md).
+- **v7 — Real-time synthesis.** `recall(synthesize=True)` and `wiki_query(synthesize=True)` append a synthesized answer alongside raw records. New `ask()` tool returns synthesis-only output for conversational callers. Depends on a sub-10s local synthesis model. Plan: [docs/roadmap/v7.md](docs/roadmap/v7.md).
 - **v5.x backlog.** xdist isolation leak hunt, branch-cleanup automation, viz UI refactor, mega-function decomposition pass 2.
 
 ## Contributing

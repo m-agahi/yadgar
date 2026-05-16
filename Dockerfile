@@ -1,10 +1,10 @@
 # ── core (prod) ────────────────────────────────────────────────────────────────
-FROM python:3.14-slim AS prod
+FROM python:3.14-slim-trixie AS prod
 WORKDIR /app
 COPY . /app
-# curl pinned to bookworm repo (checked 2026-05-15); update after base-image rebuild
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    "curl=7.88.1-10+deb12u12" && \
+# curl is needed for HEALTHCHECK. Unpinned — base image is pinned to trixie
+# so apt resolves to a single deterministic version per build.
+RUN apt-get update && apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/*
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install /app

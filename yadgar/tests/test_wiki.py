@@ -17,8 +17,6 @@ import pytest
 
 from yadgar import server
 
-pytestmark = pytest.mark.xdist_group("server_globals")
-
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
 

@@ -82,15 +82,17 @@ consolidation.py (ConsolidationScheduler)
 
 Fires after `IDLE_THRESHOLD_SECONDS` of no activity:
 
-1. **Decay** — heat reduced per-memory using `DECAY_FACTOR^hours_elapsed` with modifiers for importance, emotional valence, confidence
-2. **Archiving** — memories below `COLD_THRESHOLD` (or `ACTION_STREAM_COLD_THRESHOLD` for action-stream entries) set to `heat=0.0`
-3. **Prune** — action-stream memories that cooled, have low confidence, and were never recalled are permanently deleted
-4. **Entity extraction** — new episodes parsed for file paths, function names, imports, errors
-5. **Relationship building** — co-occurring entities in same episode get `co_occurrence` edges
-6. **Duplicate merging** — pairs with similarity > `CURATION_SIMILARITY_THRESHOLD` merged (higher-heat survives)
-7. **CLS promotion** — episodic patterns promoted to semantic memory
-8. **Dream replay** — random memory pairs examined for latent relationships
-9. **Wiki proposals** — notable clusters drafted as wiki pages for human review
+1. **Decay** (`apply_decay`) — heat reduced per-memory using `DECAY_FACTOR^hours_elapsed` with modifiers for importance, emotional valence, confidence
+2. **Episode processing** (`process_episodes`) — new episodes parsed for file paths, function names, imports, errors; co-occurring entities get `co_occurrence` edges
+3. **Duplicate merging** (`merge_duplicates`) — pairs with similarity > `CURATION_SIMILARITY_THRESHOLD` merged (higher-heat survives)
+4. **Link similar** (`link_similar`) — near-duplicate links added to knowledge graph
+5. **Causal detection** (`detect_causality`) — causal edge inference from co-occurrence patterns
+6. **Memify** — `_memify_prune` self-improvement cycle: prune/strengthen/reweight/derive
+7. **CLS consolidation** (`cls_consolidation`) — episodic patterns promoted to semantic memory
+8. **Action log** — unprocessed action-log entries summarised into real memories
+9. **Consolidation log** — timestamped run record inserted
+
+Dream replay runs separately in `_maybe_sleep_cycle()` — triggered at most once every 6 hours, after the daily consolidation cycle completes. It examines random memory pairs for latent relationships and drives narrative summarisation.
 
 ## Module Responsibilities
 
@@ -136,11 +138,11 @@ SurrealDB tables:
 
 | Table | Contents |
 |---|---|
-| `memories` | Core memory records: content, embedding, heat, confidence, tags, directory_context |
+| `memory` | Core memory records: content, embedding, heat, confidence, tags, directory_context, `branch: option<string>` (auto-captured from `git rev-parse --abbrev-ref HEAD` on `memorize`/`anchor`/`checkpoint`/`wiki_add`) |
 | `episodes` | Raw tool-action log chunks before consolidation |
 | `entities` | Extracted code/file/concept entities with heat |
 | `relationships` | Edges between entities (co_occurrence, causal, etc.) |
-| `wiki_pages` | User-approved wiki pages (markdown) |
+| `wiki_page` | User-approved wiki pages (markdown), `branch: option<string>` (same auto-capture as `memory`) |
 | `wiki_drafts` | Pending drafts awaiting approval |
 | `checkpoints` | Saved working state snapshots |
 | `profiles` | Structured user attribute records |
@@ -189,7 +191,7 @@ Default-deny CORS — loopback origins only (`http://127.0.0.1:*`, `http://local
 
 `install_hooks` ships as a real Python script at `yadgar/scripts/hook_runner.py`; the path goes through `shlex.quote` before insertion into `settings.json`, eliminating the shell-injection vector.
 
-`yadgar/sanitize.py` strips ANSI escapes, C0/C1 control chars, and Unicode bidi-override characters (U+202E, U+202D, U+2066–U+2069, U+200F) from auto-capture payloads before action-log insert. Per-source token-bucket rate limiter (`yadgar/rate_limit.py`) bounded to 1000 keys via `OrderedDict`.
+`yadgar/sanitize.py` strips ANSI escapes, C0/C1 control chars, and Unicode bidi-override characters (U+200B–U+200F, U+202A–U+202E, U+2066–U+2069, U+FEFF) from auto-capture payloads before action-log insert. Per-source token-bucket rate limiter (`yadgar/rate_limit.py`) bounded to 1000 keys via `OrderedDict`.
 
 Secret patterns block storage of AWS, GCP service-account JSON, Stripe (`sk_live_`), Slack (`xoxb-`/`xoxa-`/`xoxp-`), OpenAI (legacy + `sk-proj-`), Anthropic, JWT, GitHub PATs, private keys, DB connection URIs. Always-on, not user-configurable.
 

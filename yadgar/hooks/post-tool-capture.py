@@ -87,10 +87,14 @@ def main():
                 "session_id": session_id,
             }
         ).encode()
+        _headers = {"Content-Type": "application/json"}
+        _token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+        if _token:
+            _headers["Authorization"] = f"Bearer {_token}"
         _r = _req.Request(
             f"http://127.0.0.1:{_port}/hooks/auto-capture",
             data=_payload,
-            headers={"Content-Type": "application/json"},
+            headers=_headers,
         )
         _req.urlopen(_r, timeout=1)
         return

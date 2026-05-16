@@ -201,3 +201,47 @@ Each pain point above maps to a fix in this model:
 | CI burn on every intermediate push | CI only on `[ci]` commits + final PR |
 | Stale-diff audits | All diffs computed vs feature-branch tip |
 | Hard-to-track integration state | Single integration branch, one history |
+
+## Doc-update gate (before opening final PR)
+
+Run before `gh pr create` / API equivalent:
+
+1. Diff README + every canonical doc (`architecture`, `configuration`,
+   `memory-lifecycle`, `retrieval`) vs the actual feature / behaviour
+   change list. If the PR touches `yadgar/**` but no doc changed,
+   PR is incomplete.
+2. Verify `docs/CHANGELOG.md` has an entry for the new version.
+3. Update `docs/roadmap/v*.md` for the shipping version with
+   "shipped" status if it carries a plan doc.
+4. Reviewers fail PRs that ship features without doc updates.
+
+## Branch cleanup (after PR is open)
+
+AFTER the PR exists on origin (review window provided), delete each
+sub-branch that fed it:
+
+    git push origin --delete feat/vX.Y-NN-<topic>
+
+Skip the PR's own head branch until merged + deployed + verified —
+that branch is your rollback path. Pre-existing
+`feat/v5.0-NN-<topic>` branches from v5 integration may be cleaned
+in batch after v5.0.1 ships.
+
+## Benchmarks (LoCoMo / LongMemEval)
+
+`benchmarks/` holds reproducible scripts that drove yadgar's initial
+performance claims:
+
+- `run_locomo_jscore.py` — LoCoMo with Jaccard scoring
+- `run_locomo_ablation.py` — LoCoMo ablation study
+- `run_longmemeval.py` — LongMemEval suite
+- `run_benchmark_gpu.py` — GPU-accelerated runner
+- `test_e_locomo.py` — LoCoMo end-to-end test
+
+Run on:
+- Every major version bump (5.0 → 5.1 etc) — compare against the
+  prior baseline, commit the JSON output to `benchmarks/results/`.
+- After any retrieval-pipeline change (Stage 11-style decomposition,
+  branch-tagging, rerank threshold tuning).
+
+See `benchmarks/README.md` for setup and current baseline numbers.

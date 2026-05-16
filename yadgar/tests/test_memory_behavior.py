@@ -20,8 +20,6 @@ import pytest
 from yadgar import server
 from yadgar.tests.conftest import memorize_sync
 
-pytestmark = pytest.mark.xdist_group("server_globals")
-
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
 

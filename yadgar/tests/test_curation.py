@@ -13,8 +13,6 @@ from yadgar.embeddings import EmbeddingEngine
 from yadgar.storage import StorageEngine
 from yadgar.thermodynamics import MemoryThermodynamics
 
-pytestmark = pytest.mark.xdist_group("server_globals")
-
 # Detect whether the embedding model can be loaded
 _engine = EmbeddingEngine()
 try:

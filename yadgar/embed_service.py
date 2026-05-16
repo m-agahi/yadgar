@@ -139,7 +139,7 @@ app = FastAPI(title="yadgar-embed", version="1.0", lifespan=lifespan)
 
 
 @app.post("/embed", response_model=EmbedResponse)
-async def embed(req: EmbedRequest):
+async def embed(req: EmbedRequest, _: None = Depends(_require_admin_token)):
     import time as _time
 
     t0 = _time.monotonic()
@@ -178,7 +178,7 @@ async def embed(req: EmbedRequest):
 
 
 @app.post("/rerank", response_model=RerankResponse)
-async def rerank(req: RerankRequest) -> RerankResponse:
+async def rerank(req: RerankRequest, _: None = Depends(_require_admin_token)) -> RerankResponse:
     """Score texts using the local ML client (cross-encoder, NLI, or pair mode)."""
     ml = _get_reranker()
 

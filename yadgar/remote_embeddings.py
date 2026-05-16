@@ -28,7 +28,9 @@ class RemoteEmbeddingEngine:
         self._model = True  # sentinel: "available" for compatibility checks
         self._query_cache: OrderedDict[str, bytes] = OrderedDict()
         embed_url = os.environ.get("YADGAR_EMBED_URL", "http://127.0.0.1:8001")
-        self._client = httpx.Client(base_url=embed_url, timeout=30.0)
+        _token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+        _headers = {"Authorization": f"Bearer {_token}"} if _token else {}
+        self._client = httpx.Client(base_url=embed_url, timeout=30.0, headers=_headers)
 
     def _ensure_model(self) -> None:
         pass  # no-op: model lives in the backend container

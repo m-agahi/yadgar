@@ -174,7 +174,7 @@ class TestStreamableHttpApp:
     def test_sse_app_is_starlette(self):
         from starlette.applications import Starlette
 
-        app = server.mcp_server.sse_app()
+        app = _unwrap_starlette(server.mcp_server.sse_app())
         assert isinstance(app, Starlette)
 
     def test_streamable_http_mcp_endpoint_exists(self):
@@ -185,7 +185,7 @@ class TestStreamableHttpApp:
 
     def test_health_endpoint_on_both_transports(self):
         """Health endpoint is available on both SSE and Streamable HTTP apps."""
-        sse_app = server.mcp_server.sse_app()
+        sse_app = _unwrap_starlette(server.mcp_server.sse_app())
         http_app = _unwrap_starlette(server.mcp_server.streamable_http_app())
 
         sse_paths = [route.path for route in sse_app.routes]

@@ -2,8 +2,6 @@ import pytest
 
 from yadgar.storage import _FTS_STOP_WORDS, StorageEngine
 
-pytestmark = pytest.mark.xdist_group("server_globals")
-
 
 @pytest.fixture
 def storage(tmp_path):

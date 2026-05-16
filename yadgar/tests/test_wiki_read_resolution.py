@@ -17,8 +17,6 @@ import pytest
 
 from yadgar import server
 
-pytestmark = pytest.mark.xdist_group("server_globals")
-
 
 @pytest.fixture(autouse=True)
 def _engines(tmp_path):

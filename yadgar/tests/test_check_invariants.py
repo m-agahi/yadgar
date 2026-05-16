@@ -10,8 +10,6 @@ import pytest
 from yadgar import server
 from yadgar.server import _run_check_invariants
 
-pytestmark = pytest.mark.xdist_group("server_globals")
-
 
 @pytest.fixture(autouse=True)
 def _engines(tmp_path):
