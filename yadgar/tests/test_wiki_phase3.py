@@ -15,8 +15,6 @@ from yadgar.server import _is_episodic_query
 from yadgar.storage import StorageEngine
 from yadgar.tests.conftest import memorize_sync
 
-pytestmark = pytest.mark.xdist_group("server_globals")
-
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
 

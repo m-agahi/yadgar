@@ -75,12 +75,16 @@ if [[ -n "${YADGAR_RW_USER}" && -n "${YADGAR_RW_PASS}" && -n "${YADGAR_RO_USER}"
     echo "Bootstrapping yadgar-rw and yadgar-ro users..."
     # Use Authorization header to avoid credentials leaking via /proc/<pid>/cmdline
     _b64_creds="$(printf '%s:%s' "${SURREAL_USER}" "${SURREAL_PASS}" | base64 -w0)"
+    # Post with Content-Type: application/json so SurrealDB resolves $rw_user etc.
+    # via the vars map — prevents unbound-variable bug (C-2).
     _bootstrap_sql="DEFINE USER IF NOT EXISTS \$rw_user ON ROOT PASSWORD \$rw_pass ROLES OWNER; DEFINE USER IF NOT EXISTS \$ro_user ON ROOT PASSWORD \$ro_pass ROLES VIEWER;"
+    _bootstrap_body="$(printf '{"sql":"%s","vars":{"rw_user":"%s","rw_pass":"%s","ro_user":"%s","ro_pass":"%s"}}' \
+        "${_bootstrap_sql}" "${YADGAR_RW_USER}" "${YADGAR_RW_PASS}" "${YADGAR_RO_USER}" "${YADGAR_RO_PASS}")"
     if curl -sf \
         -H "Authorization: Basic ${_b64_creds}" \
         -H "Surreal-NS: yadgar" -H "Surreal-DB: main" \
-        -H "Content-Type: text/plain" \
-        -X POST --data "${_bootstrap_sql}" \
+        -H "Content-Type: application/json" \
+        -X POST --data "${_bootstrap_body}" \
         http://127.0.0.1:8000/sql >/dev/null; then
         echo "User bootstrap complete (yadgar-rw ROOT OWNER, yadgar-ro ROOT VIEWER)"
     else
@@ -113,7 +117,7 @@ _wiki_backup_loop() {
         sleep 21600  # 6 hours
         if [[ "${YADGAR_ALLOW_ROOT:-0}" == "1" ]] || \
            { [[ -n "${SURREAL_USER}" ]] && [[ -n "${SURREAL_PASS}" ]]; }; then
-            _b64_creds="$(printf '%s:%s' "${SURREAL_USER:-root}" "${SURREAL_PASS:-root}" | base64 -w0)"
+            _b64_creds="$(printf '%s:%s' "${SURREAL_USER:?SURREAL_USER must be set}" "${SURREAL_PASS:?SURREAL_PASS must be set}" | base64 -w0)"
             _snap_file="/data/wiki_$(date +%Y%m%d_%H%M%S).jsonl"
             if curl -sf \
                 -H "Authorization: Basic ${_b64_creds}" \

@@ -244,10 +244,14 @@ class RemoteMLClient:
     """
 
     def __init__(self, base_url: str) -> None:
+        import os
+
         import httpx
 
         self._base_url = base_url
-        self._client = httpx.Client(base_url=base_url, timeout=30.0)
+        _token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+        _headers = {"Authorization": f"Bearer {_token}"} if _token else {}
+        self._client = httpx.Client(base_url=base_url, timeout=30.0, headers=_headers)
 
     def score_cross_encoder(self, query: str, texts: list[str]) -> list[float]:
         try:

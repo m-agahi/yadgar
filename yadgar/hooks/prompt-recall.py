@@ -202,10 +202,13 @@ def main():
         import urllib.request as _req
 
         _params = _parse.urlencode({"query": query, "directory": directory})
-        _resp = _req.urlopen(
+        _token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+        _req_obj = _req.Request(
             f"http://127.0.0.1:{_port}/hooks/prompt-recall?{_params}",
-            timeout=TIME_BUDGET,
         )
+        if _token:
+            _req_obj.add_header("Authorization", f"Bearer {_token}")
+        _resp = _req.urlopen(_req_obj, timeout=TIME_BUDGET)
         _text = json.loads(_resp.read().decode()).get("text", "")
         if _text:
             print(_text)

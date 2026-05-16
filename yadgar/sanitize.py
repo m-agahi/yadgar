@@ -19,10 +19,11 @@ _ANSI_RE = re.compile(
     r")"
 )
 
-# Control characters to strip: everything in C0/C1 except TAB (\x09),
-# LF (\x0a), and CR (\x0d) — those are allowed structural whitespace.
+# Control characters to strip: everything in C0/C1 except TAB (\x09).
+# CR (\x0d) and LF (\x0a) are also stripped — they enable log-forging /
+# prompt-injection by splitting synthetic log lines (H-3).
 _CTRL_RE = re.compile(
-    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]"  # C0 minus \t\n\r
+    r"[\x00-\x08\x0a-\x1f\x7f]"  # C0 minus \t (includes \n \r \x0b \x0c)
     r"|[\x80-\x9f]"  # C1 control range
 )
 

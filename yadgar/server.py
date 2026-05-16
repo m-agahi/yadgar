@@ -252,8 +252,25 @@ def _cors_wrapped_http_app(self):
     return BearerAuthMiddleware(logged_app)
 
 
+def _auth_wrapped_sse_app(self, mount_path=None):
+    """Wrap SSE transport with BearerAuthMiddleware + RequestLogging (C-1).
+
+    SSE is the default transport; without this wrapper REQUIRE_AUTH=1 has
+    no effect on the SSE path.
+    """
+    from yadgar.auth_middleware import BearerAuthMiddleware
+    from yadgar.log_config import RequestLoggingMiddleware
+
+    inner = _orig_sse_app(self, mount_path)
+    logged_app = RequestLoggingMiddleware(inner)
+    return BearerAuthMiddleware(logged_app)
+
+
 _orig_streamable_http_app = mcp_server.streamable_http_app.__func__
 mcp_server.streamable_http_app = _cors_wrapped_http_app.__get__(mcp_server, type(mcp_server))
+
+_orig_sse_app = mcp_server.sse_app.__func__
+mcp_server.sse_app = _auth_wrapped_sse_app.__get__(mcp_server, type(mcp_server))
 
 # ── Tool profile (read at import time — decorators execute on module load) ────
 # YADGAR_PROFILE=minimal  →  10 core tools only
@@ -2177,6 +2194,35 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
     return result
 
 
+def _git_safe_env() -> dict:
+    """Return an env dict that prevents .git/config code-execution attacks (H-10).
+
+    A malicious .git/config in a user-supplied directory can set
+    core.fsmonitor or core.sshCommand to execute arbitrary commands on
+    the next git invocation.  Passing GIT_CONFIG_NOSYSTEM + pointing
+    GIT_CONFIG_GLOBAL at /dev/null plus disabling network protocols
+    eliminates all git-config-driven execution paths.
+    """
+    return {
+        **os.environ,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_SYSTEM": "/dev/null",
+    }
+
+
+# Extra argv to pass to every git invocation — disable network protocols
+# so a crafted .git/config cannot trigger remote fetch/clone helpers.
+_GIT_SAFE_ARGS = [
+    "-c",
+    "protocol.allow=never",
+    "-c",
+    "protocol.file.allow=never",
+    "-c",
+    "uploadpack.allowFilter=false",
+]
+
+
 def _resolve_project_root(directory: str) -> str:
     """Resolve the git project root for a directory (walk-up via git rev-parse).
 
@@ -2185,9 +2231,10 @@ def _resolve_project_root(directory: str) -> str:
     try:
         out = (
             subprocess.check_output(
-                ["git", "-C", directory, "rev-parse", "--show-toplevel"],
+                ["git", *_GIT_SAFE_ARGS, "-C", directory, "rev-parse", "--show-toplevel"],
                 stderr=subprocess.DEVNULL,
                 timeout=2,
+                env=_git_safe_env(),
             )
             .decode()
             .strip()
@@ -2204,9 +2251,10 @@ def _get_current_branch(directory: str) -> str | None:
     try:
         out = (
             subprocess.check_output(
-                ["git", "-C", directory, "rev-parse", "--abbrev-ref", "HEAD"],
+                ["git", *_GIT_SAFE_ARGS, "-C", directory, "rev-parse", "--abbrev-ref", "HEAD"],
                 stderr=subprocess.DEVNULL,
                 timeout=2,
+                env=_git_safe_env(),
             )
             .decode()
             .strip()
@@ -2452,9 +2500,10 @@ def _detect_branch_cached(directory: str, _ts_bucket: int) -> str | None:
     try:
         out = (
             subprocess.check_output(
-                ["git", "-C", directory, "rev-parse", "--abbrev-ref", "HEAD"],
+                ["git", *_GIT_SAFE_ARGS, "-C", directory, "rev-parse", "--abbrev-ref", "HEAD"],
                 stderr=subprocess.DEVNULL,
                 timeout=2,
+                env=_git_safe_env(),
             )
             .decode()
             .strip()
@@ -2482,9 +2531,18 @@ def _get_default_branch_cached(directory: str, _ts_bucket: int) -> str:
     try:
         out = (
             subprocess.check_output(
-                ["git", "-C", directory, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+                [
+                    "git",
+                    *_GIT_SAFE_ARGS,
+                    "-C",
+                    directory,
+                    "symbolic-ref",
+                    "--short",
+                    "refs/remotes/origin/HEAD",
+                ],
                 stderr=subprocess.DEVNULL,
                 timeout=2,
+                env=_git_safe_env(),
             )
             .decode()
             .strip()
@@ -2707,9 +2765,10 @@ def wiki_cleanup_merged_branches(directory: str, dry_run: bool = True) -> dict:
     # Get live branch set
     try:
         raw = subprocess.check_output(
-            ["git", "-C", resolved, "branch", "-a", "--format=%(refname:short)"],
+            ["git", *_GIT_SAFE_ARGS, "-C", resolved, "branch", "-a", "--format=%(refname:short)"],
             stderr=subprocess.DEVNULL,
             timeout=5,
+            env=_git_safe_env(),
         ).decode()
         live_branches: set[str] = set()
         for line in raw.splitlines():
@@ -4223,6 +4282,16 @@ def main(
         _pid_path.write_text(str(os.getpid()))
     except Exception:
         pass
+
+    # H-7: Fail fast if REQUIRE_AUTH=True but no token configured.
+    # A server that requires auth but has no token is silently broken — every
+    # request would get 503 "Admin token not configured" rather than a useful error.
+    _auth_settings = get_settings()
+    if _auth_settings.REQUIRE_AUTH and not _auth_settings.MCP_AUTH_TOKEN:
+        raise RuntimeError(
+            "REQUIRE_AUTH=1 requires YADGAR_MCP_AUTH_TOKEN to be set. "
+            "Source /etc/yadgar/secrets.env or run `yadgar setup`."
+        )
 
     # Don't auto-watch cwd — in daemon/systemd mode cwd is $HOME, which would
     # recursively watch everything including the DB files, causing a watchdog storm.

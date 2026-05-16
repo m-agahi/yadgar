@@ -18,16 +18,23 @@ How a memory is born, lives, decays, and eventually disappears.
 Every consolidation cycle, each non-protected memory's heat is updated:
 
 ```
-effective_factor = 1.0 - (1.0 - DECAY_FACTOR) / (1.0 + confidence * 0.1)
+# Step 1 — emotional-valence modifier (applied first)
+emotional_modifier = 1.0 + abs(emotional_valence) * EMOTIONAL_DECAY_RESISTANCE
+effective_factor = 1.0 - (1.0 - DECAY_FACTOR) * (1.0 / emotional_modifier)
+
+# Step 2 — confidence modifier (applied to already-modified factor)
+confidence_modifier = 1.0 + confidence * 0.1
+effective_factor = 1.0 - (1.0 - effective_factor) * (1.0 / confidence_modifier)
+
 new_heat = current_heat * (effective_factor ^ hours_since_last_access)
 ```
 
 With defaults (`DECAY_FACTOR=0.9995`):
 - A memory accessed once per day: heat ≈ 0.988 per day, persists for years
 - A normal memory (born at heat=1.0) not accessed: hits `COLD_THRESHOLD` (0.02) in ~**11 months**
-- An action-stream memory (born at heat=0.4) not accessed: hits `ACTION_STREAM_COLD_THRESHOLD` (0.1) in ~**4 months**
+- An action-stream memory (born at heat=0.4) not accessed: hits `ACTION_STREAM_COLD_THRESHOLD` (0.1) in ~**2–3 weeks**
 
-The difference between the two types is not dramatic in absolute time — both take months — but action-stream memories are archived roughly 3× faster because they start lower (0.4 vs 1.0) and have a higher floor (0.1 vs 0.02). Before 4.2.0, `COLD_THRESHOLD=0.0` meant nothing was ever archived; action-stream memories effectively lived forever.
+Action-stream memories are archived dramatically faster than normal memories — weeks vs months — because they start lower (0.4 vs 1.0) and have a higher floor (0.1 vs 0.02). Before 4.2.0, `COLD_THRESHOLD=0.0` meant nothing was ever archived; action-stream memories effectively lived forever.
 
 ### Modifiers
 

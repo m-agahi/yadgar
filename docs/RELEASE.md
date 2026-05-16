@@ -1,6 +1,7 @@
 # Release Checklist
 
 1. All v{X.Y.0} feature PRs merged to master
+   - Verify `.forgejo/workflows/release-check.yaml` passes — this CI step fails the PR if `pyproject.toml` version matches the latest git tag while `yadgar/**` files changed. Bypass with `no-release` label.
 2. `chore: bump core version` PR:
    - `pyproject.toml` version
    - `docker-compose.yml` CORE_VERSION default

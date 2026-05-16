@@ -15,9 +15,6 @@ from unittest.mock import patch
 import pytest
 from starlette.testclient import TestClient
 
-pytestmark = pytest.mark.xdist_group("server_globals")
-
-
 # ---------------------------------------------------------------------------
 # Test app setup
 # ---------------------------------------------------------------------------

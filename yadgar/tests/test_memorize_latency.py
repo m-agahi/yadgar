@@ -15,8 +15,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-pytestmark = pytest.mark.xdist_group("server_globals")
-
 
 @pytest.fixture(autouse=True, scope="module")
 def _engines(tmp_path_factory):

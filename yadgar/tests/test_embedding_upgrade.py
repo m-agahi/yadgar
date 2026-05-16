@@ -6,8 +6,6 @@ import pytest
 from yadgar.embeddings import MODEL_DIMENSIONS, EmbeddingEngine
 from yadgar.storage import StorageEngine
 
-pytestmark = pytest.mark.xdist_group("server_globals")
-
 # Detect whether the model can actually be loaded
 _engine = EmbeddingEngine()
 try:

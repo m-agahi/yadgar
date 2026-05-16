@@ -13,8 +13,6 @@ from yadgar.rules_engine import (
 )
 from yadgar.storage import StorageEngine
 
-pytestmark = pytest.mark.xdist_group("server_globals")
-
 
 @pytest.fixture
 def settings(tmp_path):

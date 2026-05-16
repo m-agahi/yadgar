@@ -239,37 +239,28 @@ def _dir_bytes(path: Path) -> int:
 
 
 def _run_cleanup_script(yadgar_home: Path, pattern: str, keep_n: int) -> None:
-    """Run scripts/cleanup-backups.sh to prune old pre-vacuum snapshots.
+    """Prune old pre-vacuum snapshots, keeping only the `keep_n` most recent.
 
-    The script path is resolved from YADGAR_CLEANUP_SCRIPT env var (for
-    tests) or the canonical scripts/ location next to the yadgar package.
+    Inline Python implementation (C-3): replaces the broken subprocess call to
+    cleanup-backups.sh, which only accepted --dry-run and rejected positional args.
+
+    Files matching `pattern` inside `yadgar_home` are sorted by mtime (newest
+    first); any beyond the first `keep_n` are deleted.
     """
-    import subprocess
+    import glob
 
-    script = os.environ.get("YADGAR_CLEANUP_SCRIPT")
-    if not script:
-        # Find cleanup-backups.sh relative to this file's package root
-        pkg_root = Path(__file__).parent.parent
-        candidate = pkg_root / "scripts" / "cleanup-backups.sh"
-        if candidate.exists():
-            script = str(candidate)
-
-    if not script or not Path(script).exists():
-        print(
-            "[vacuum] cleanup-backups.sh not found — skipping snapshot pruning",
-            file=sys.stderr,
-        )
-        return
-
-    try:
-        subprocess.run(
-            [script, str(yadgar_home), pattern, str(keep_n)],
-            check=True,
-            capture_output=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        stderr = exc.stderr.decode(errors="replace").strip()
-        print(f"[vacuum] cleanup script returned non-zero: {stderr}", file=sys.stderr)
+    glob_pattern = str(yadgar_home / pattern)
+    candidates = sorted(glob.glob(glob_pattern), key=os.path.getmtime, reverse=True)
+    to_delete = candidates[keep_n:]
+    for path in to_delete:
+        try:
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+            else:
+                os.remove(path)
+            print(f"[vacuum] pruned snapshot: {path}", file=sys.stderr)
+        except OSError as exc:
+            print(f"[vacuum] failed to prune {path}: {exc}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
