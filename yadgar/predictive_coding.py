@@ -11,6 +11,7 @@ References:
   - Barron et al. (Progress in Neurobiology, 2020): Hippocampus as prediction error generator
   - Titans (Google, arXiv:2501.00663): Surprise metric drives memory retention in ML
 """
+# Module size justified: single-responsibility write gate — all sections (cache, continuity, surprisal, boundary, model) feed should_store(); shared _recent_stores/_entity_cache state prevents split.
 
 import logging
 import re

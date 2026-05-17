@@ -1,0 +1,264 @@
+"""Operational/bookkeeping table CRUD.
+
+_OpsMixin provides:
+  - Consolidation log insert
+  - Memory stats (aggregate queries)
+  - Engram slot init/query/update/assign
+  - Checkpoint insert/query/update/epoch helpers
+  - prune_old_rows generic pruner
+"""
+
+import logging
+
+_log = logging.getLogger(__name__)
+
+
+class _OpsMixin:
+    """Operational tables (consolidation_log, stats, engram_slot, checkpoint, prune) —
+    mixed into StorageEngine."""
+
+    # ------------------------------------------------------------------ Consolidation Log
+
+    def insert_consolidation_log(self, log: dict) -> int:
+        cid = self._next_id("consolidation_log")
+        self._q(
+            "CREATE type::record('consolidation_log', $id) SET "
+            "timestamp = $timestamp, memories_added = $added, "
+            "memories_updated = $updated, memories_archived = $archived, "
+            "memories_deleted = $deleted, duration_ms = $duration_ms",
+            {
+                "id": cid,
+                "timestamp": log.get("timestamp", self._now_iso()),
+                "added": log.get("memories_added", 0),
+                "updated": log.get("memories_updated", 0),
+                "archived": log.get("memories_archived", 0),
+                "deleted": log.get("memories_deleted", 0),
+                "duration_ms": log.get("duration_ms", 0),
+            },
+        )
+        return cid
+
+    # ------------------------------------------------------------------ Stats
+
+    def get_memory_stats(self) -> dict:
+        total_rows = self._q("SELECT count() AS c FROM memory GROUP ALL")
+        total = int(total_rows[0]["c"]) if total_rows else 0
+
+        active_rows = self._q(
+            "SELECT count() AS c FROM memory WHERE is_stale = false AND heat >= 0.05 GROUP ALL"
+        )
+        active = int(active_rows[0]["c"]) if active_rows else 0
+
+        archived_rows = self._q("SELECT count() AS c FROM memory WHERE heat < 0.05 GROUP ALL")
+        archived = int(archived_rows[0]["c"]) if archived_rows else 0
+
+        stale_rows = self._q("SELECT count() AS c FROM memory WHERE is_stale = true GROUP ALL")
+        stale = int(stale_rows[0]["c"]) if stale_rows else 0
+
+        heat_rows = self._q("SELECT math::mean(heat) AS avg FROM memory GROUP ALL")
+        avg_heat = (
+            float(heat_rows[0]["avg"]) if heat_rows and heat_rows[0].get("avg") is not None else 0.0
+        )
+
+        log_rows = self._q("SELECT * FROM consolidation_log ORDER BY timestamp DESC LIMIT 1")
+        last_consolidation = log_rows[0]["timestamp"] if log_rows else None
+
+        return {
+            "total_memories": total,
+            "active_count": active,
+            "archived_count": archived,
+            "stale_count": stale,
+            "avg_heat": avg_heat,
+            "last_consolidation": last_consolidation,
+        }
+
+    # ------------------------------------------------------------------ prune_old_rows
+
+    def prune_old_rows(
+        self,
+        table: str,
+        older_than_days: int,
+        age_field: str = "created_at",
+        extra_where: str | None = None,
+    ) -> int:
+        """Delete rows from `table` whose `age_field` is older than `older_than_days`.
+
+        `extra_where` may contain additional AND conditions (e.g. ``is_active = false``).
+        Only the listed tables may be pruned — rejects unknown tables to prevent SQL injection.
+
+        Returns the approximate number of rows deleted (counted before the DELETE).
+        """
+        from datetime import UTC, datetime, timedelta
+
+        _allowed_tables = frozenset(
+            {
+                "narrative_entry",
+                "astrocyte_process",
+                "memory_cluster",
+                "derived_belief",
+                "prospective_memory",
+            }
+        )
+        if table not in _allowed_tables:
+            raise ValueError(f"prune_old_rows: table '{table}' is not in the allowed set")
+        if older_than_days <= 0:
+            return 0
+
+        cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
+        where = f"{age_field} < $cutoff"
+        if extra_where:
+            # TODO(review-20260516, H-5): extra_where interpolated raw into SurrealQL; replace
+            # with a structured filter dict and _ALLOWED_AGE_FIELDS allowlist to prevent injection
+            where = f"{where} AND {extra_where}"
+        count_rows = self._q(
+            f"SELECT count() AS c FROM {table} WHERE {where} GROUP ALL",
+            {"cutoff": cutoff},
+        )
+        n = int(count_rows[0]["c"]) if count_rows and count_rows[0].get("c") else 0
+        self._q(f"DELETE FROM {table} WHERE {where}", {"cutoff": cutoff})
+        return n
+
+    # ------------------------------------------------------------------ Engram Slots
+
+    def init_engram_slots(self, num_slots: int):
+        """Ensure all slot indices exist in the engram_slot table."""
+        import json as _json
+
+        now = self._now_iso()
+        rows = self._q("SELECT VALUE slot_index FROM engram_slot")
+        # Cast to int — SurrealDB may return floats (e.g. 0.0) instead of ints
+        existing = {int(r) for r in rows if r is not None}
+        missing = [i for i in range(num_slots) if i not in existing]
+        if not missing:
+            return
+        records = [{"slot_index": i, "excitability": 0.0, "last_activated": now} for i in missing]
+        _CHUNK = 500
+        for start in range(0, len(records), _CHUNK):
+            chunk = records[start : start + _CHUNK]
+            # TODO(review-20260516, H-4): raw INSERT with json.dumps bypasses bind facility
+            self._q(f"INSERT INTO engram_slot {_json.dumps(chunk)}")
+
+    def get_engram_slot(self, slot_index: int) -> dict | None:
+        rows = self._q(
+            "SELECT * FROM engram_slot WHERE slot_index = $si LIMIT 1",
+            {"si": slot_index},
+        )
+        # Engram slots use SurrealDB auto-generated string IDs; skip _row_to_dict
+        # which would try to coerce the ID to int and fail.
+        return dict(rows[0]) if rows else None
+
+    def get_all_engram_slots(self) -> list[dict]:
+        rows = self._q("SELECT * FROM engram_slot ORDER BY slot_index")
+        # Engram slots use SurrealDB auto-generated string IDs; skip _row_to_dict
+        # which would try to coerce the ID to int and fail.
+        return [dict(r) for r in rows]
+
+    def update_engram_slot(self, slot_index: int, excitability: float, last_activated: str):
+        self._q(
+            "UPDATE engram_slot SET excitability = $exc, last_activated = $la "
+            "WHERE slot_index = $si",
+            {"si": slot_index, "exc": excitability, "la": last_activated},
+        )
+
+    def assign_memory_slot(self, memory_id: int, slot_index: int):
+        now = self._now_iso()
+        self._q(
+            "UPDATE type::record('memory', $id) SET "
+            "slot_index = $si, excitability = 1.0, last_excitability_update = $now",
+            {"id": memory_id, "si": slot_index, "now": now},
+        )
+
+    def get_memories_in_slot(self, slot_index: int) -> list[dict]:
+        rows = self._q(
+            "SELECT * FROM memory WHERE slot_index = $si AND heat > 0 ORDER BY created_at",
+            {"si": slot_index},
+        )
+        return self._rows_to_dicts(rows)
+
+    def get_slot_occupancy(self) -> dict:
+        """Return {slot_index: count} for all occupied slots."""
+        rows = self._q(
+            "SELECT slot_index, count() AS cnt FROM memory "
+            "WHERE slot_index IS NOT NONE GROUP BY slot_index"
+        )
+        result = {}
+        for row in rows:
+            si = row.get("slot_index")
+            cnt = int(row.get("cnt", 0))
+            if si is not None:
+                result[si] = cnt
+        return result
+
+    def get_memory_ids_in_slot(self, slot_index: int, limit: int = 100) -> list[int]:
+        """Return memory IDs assigned to a given engram slot, up to limit."""
+        rows = self._q(
+            "SELECT VALUE meta::id(id) FROM memory WHERE slot_index = $slot LIMIT $lim",
+            {"slot": slot_index, "lim": limit},
+        )
+        return [int(r) for r in (rows or [])]
+
+    # ------------------------------------------------------------------ Checkpoints
+
+    def insert_checkpoint(self, data: dict) -> int:
+        """Insert a new checkpoint, deactivating all previous ones.
+
+        §6 Q15: Wrapped in a TX so deactivate+insert are atomic.
+        """
+        now = self._now_iso()
+        cid = self._next_id("checkpoint")
+        # Wrap deactivate + insert in a single transaction (atomic RMW).
+        self._q(
+            "BEGIN TRANSACTION;\n"
+            "UPDATE checkpoint SET is_active = false WHERE is_active = true;\n"
+            "CREATE type::record('checkpoint', $id) SET "
+            "session_id = $session_id, directory_context = $dir, "
+            "current_task = $task, files_being_edited = $files, "
+            "key_decisions = $decisions, open_questions = $questions, "
+            "next_steps = $steps, active_errors = $errors, "
+            "custom_context = $custom, epoch = $epoch, "
+            "created_at = $now, is_active = true;\n"
+            "COMMIT TRANSACTION",
+            {
+                "id": cid,
+                "session_id": data.get("session_id", "default"),
+                "dir": data["directory_context"],
+                "task": data.get("current_task", ""),
+                "files": data.get("files_being_edited", []),
+                "decisions": data.get("key_decisions", []),
+                "questions": data.get("open_questions", []),
+                "steps": data.get("next_steps", []),
+                "errors": data.get("active_errors", []),
+                "custom": data.get("custom_context", ""),
+                "epoch": data.get("epoch", 0),
+                "now": now,
+            },
+        )
+        return cid
+
+    def get_active_checkpoint(self) -> dict | None:
+        """Get the most recent active checkpoint."""
+        rows = self._q(
+            "SELECT * FROM checkpoint WHERE is_active = true ORDER BY created_at DESC LIMIT 1"
+        )
+        if not rows:
+            return None
+        return self._row_to_dict(rows[0])
+
+    def get_current_epoch(self) -> int:
+        """Get the current compaction epoch number."""
+        rows = self._q("SELECT math::max(epoch) AS max_epoch FROM checkpoint GROUP ALL")
+        if rows and rows[0].get("max_epoch") is not None:
+            return int(rows[0]["max_epoch"])
+        return 0
+
+    def increment_epoch(self) -> int:
+        """Increment and return the new epoch number."""
+        current = self.get_current_epoch()
+        return current + 1
+
+    def update_checkpoint_epoch(self, checkpoint_id: int, epoch: int):
+        """Update the epoch field on an existing checkpoint."""
+        self._q(
+            "UPDATE type::record('checkpoint', $id) SET epoch = $epoch",
+            {"id": checkpoint_id, "epoch": epoch},
+        )

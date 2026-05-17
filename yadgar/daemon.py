@@ -8,6 +8,7 @@ Two profiles — prod and dev — can run simultaneously on separate ports
 (8765 and 8766) with separate named volumes so dev experiments don't
 pollute prod data.
 """
+# Module size justified: single-responsibility container lifecycle manager — all methods share YadgarDaemon state (self.port, self.db_path).
 
 import json
 import os

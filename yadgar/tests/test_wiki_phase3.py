@@ -29,7 +29,7 @@ def _engines(tmp_path):
 
 
 def _storage() -> StorageEngine:
-    return server._storage
+    return server._get_storage()
 
 
 def _wiki():

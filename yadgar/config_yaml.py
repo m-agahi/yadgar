@@ -3,6 +3,7 @@
 Config file location: ~/.yadgar/config.yaml
 Priority: env vars > YAML file > defaults
 """
+# Module size justified: single-responsibility config loader — large LoC is schema data (FIELD_META), not logic.
 
 import os
 import subprocess

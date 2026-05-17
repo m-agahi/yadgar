@@ -376,6 +376,12 @@ class Settings(BaseSettings):
     # Auto-capture rate limit: max requests per directory key per minute.
     AUTO_CAPTURE_RATE_LIMIT: int = 30
 
+    # §25 branch-aware retrieval
+    # Convex-combination boost weight for current-branch memories.
+    # boosted = score + (1 - score) * BRANCH_BOOST_WEIGHT
+    # Keeps final scores in [0, 1]; 0.2 ≈ soft 1.2x at score=0.5.
+    BRANCH_BOOST_WEIGHT: float = 0.2
+
     # §22 project_brief — layered bootstrap
     # Hard character cap for _project_init memory content.
     PROJECT_INIT_CAP_CHARS: int = 2000

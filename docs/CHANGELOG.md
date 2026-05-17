@@ -7,6 +7,36 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.1.0] - 2026-05-17
+> Module decomposition + ops fixes + retrieval polish. 17 sub-branches integrated; FastMCP API, CLI, and storage public APIs preserved byte-identical via re-exports.
+
+### Fixed
+- `Storage.get_db_size()` server-mode path now sends `Authorization: Bearer <token>` to `/admin/dbsize`. v5.0.0 added bearer-auth to the endpoint but the client never passed the token, so `memory_stats.db_size` returned hardcoded zeros and silently disabled the `vacuum_now()` threshold gate + `DB_SIZE_WARNING_BYTES` nag. (v5.1 A1)
+- Causal-discovery dispatch: `_consolidation_cycle` now accumulates `action_memories_created + cls_promoted + memify_derived` into `_events_since_last_discovery` AFTER the memory-producing phases. Gate was previously dead because `stats["memories_added"]` was never wired, so `pc_algorithm` never fired and `memory_stats.causal_edges` stayed 0. (v5.1 C1)
+- Companion nix-module fix for `yadgar-vacuum.service` ExecStart: prefix CMD with `yadgar`, add `--yes`, pass `YADGAR_DB_USER/PASS` + `YADGAR_MCP_AUTH_TOKEN`. Service had been failing exit 127 since v4.8.3 — never ran successfully on schedule. Lands in the nix repo, not the yadgar container. (v5.1 A2)
+
+### Changed
+- Branch retrieval filter pushed from Python post-fetch into the SurrealQL `WHERE` clause; cuts wasted-row work on the hot recall path. (v5.1 C2)
+- `_detect_branch` LRU cache bucket jittered per directory (`hash(directory) % 30`); removes the every-30s thundering-herd against `git symbolic-ref`. (v5.1 C3)
+- Branch-match boost replaced hard `* 1.5` with convex combination `score + (1 - score) * BRANCH_BOOST_WEIGHT` (default 0.2); final scores stay in [0,1]. Boost-base also clamped to 1.0 to prevent inversion when WRRF emits scores > 1.0. (v5.1 C4)
+- Temporal retrieval (`search_memories_by_content_date`, `search_memories_by_month`) accepts `branch_filter`; plugs an other-branch leak when `TEMPORAL_RETRIEVAL_ENABLED=True`. (v5.1 C4 follow-up)
+- `RulesEngine.get_applicable_rules(directory)` now cached per-directory in an instance-level dict; first call issues 3 DB queries (global + directory + file scopes), subsequent calls bypass. `add_rule`/`delete_rule` clear the cache atomically. Removes the 3-queries-per-`memorize` overhead blocking the <5ms async-path target. (v5.1 C5)
+
+### Refactored — module decomposition (v5.1 B)
+- `yadgar/storage.py` (3742 LoC) → `yadgar/storage/` subpackage with 16 mixin modules.
+- `yadgar/server.py` (4353 LoC) → `yadgar/server/` subpackage: `_app`, `_state`, `_helpers`, `lifecycle`, `http` + `tools/{memorize, recall, wiki, project, misc}` + `tools/admin_*`. FastMCP `_tool` registry preserved.
+- `yadgar/__main__.py` (1354 LoC) → 136-LoC shim + `yadgar/cli/<subcommand>.py` per-command modules. `python -m yadgar <cmd> --help` byte-identical.
+- `yadgar/retrieval/core.py` (1129 LoC) → 406-LoC + sibling mixins (`scoring`, `graph_helpers`, `quality`); extended `fusion`/`reranking`. `yadgar/retrieval/reranking.py` (701) → 205 assembly + 6 per-strategy mixins.
+- `yadgar/consolidation.py` (1084 LoC) → `consolidation/` subpackage: `heat_decay`, `cls`, `causal`, `cleanup`, `orchestrator`. v5.1 C1 dispatch + v5.0 phase markers preserved.
+- `yadgar/seed.py` (1041) → `seed/{_scan, _analysis, _generate}`.
+- `yadgar/curation.py` (727) → `curation/{ingestion, prune_passes, strengthen, contradiction}`.
+- `yadgar/causal_discovery.py` (602) → `causal_discovery/{pc, meek, independence, dag_io}` — finishes v5.0 partial split.
+- `yadgar/vacuum.py` (555), `yadgar/file_queue.py` (548), `yadgar/sleep_compute.py` (522), `yadgar/cls_store.py` (776), `yadgar/enrichment.py` (690), `yadgar/metacognition.py` (579), `yadgar/server/tools/admin.py` (1103) — all split per audit-tier roadmap.
+- Files left intact with `# Module size justified` annotations: `config_yaml.py`, `daemon.py`, `predictive_coding.py`, `server/tools/project.py`, `storage/client.py`, `server/tools/misc.py`, `cli/stats.py`, `server/http.py`, `server/tools/admin_invariants.py`. Each is single-responsibility per audit.
+
+### Known follow-ups (v5.1.x / v5.2)
+- 26 complexity-15+ functions remain (down from 70+ pre-B). Per roadmap each ships as its own PR with a characterization test. Largest: `_run_check_invariants` (85, justified), `memorize` (56), `cmd_stats` (42), `_memify_prune` (40), `_format_restoration` (37), `pc_algorithm` (37).
+
 ## [5.0.1] - 2026-05-16
 > Snapshot 2026-05-16: 1 509 memories (550 active · 959 archived) · avg heat 0.164 · anchor/wiki/CLS counts require direct DB access
 

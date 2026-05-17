@@ -237,3 +237,153 @@ echo "YADGAR_REQUIRE_AUTH=0" | sudo tee -a /etc/yadgar/secrets.env
 systemctl --user restart yadgar.service
 # Once resolved, remove the override line and restart again.
 ~~~
+
+---
+
+## v5.0.1 — durable MCP token wiring in nix module
+
+**Context:** v5.0.1 deploy crashlooped 74× — H-7 startup validator demands
+`YADGAR_MCP_AUTH_TOKEN` when `REQUIRE_AUTH=1` (default). Nix module did not
+wire token at all (op-inject template missing it, ExecStart missing `-e`).
+
+**Also:** Claude Code v2.1.x silently ignores the `headers` field on HTTP MCP
+servers loaded via `programs.mcp` (the home-manager plugin path that produces
+`~/.config/mcp/mcp.json` entries labelled `plugin:claude-code-home-manager:*`).
+It tries OAuth discovery instead, which 404s. The fix is to register Yadgar
+directly in `~/.claude.json` under `mcpServers` (where `headers` *is*
+honoured) and drop `programs.mcp.servers.yadgar` from the nix module.
+
+**Current state:** ephemeral fix in place — manual `YADGAR_MCP_AUTH_TOKEN=`
+line in `~/.config/yadgar/secrets.env` + systemd drop-in at
+`~/.config/systemd/user/yadgar.service.d/mcp-token.conf` that re-defines
+ExecStart with `-e YADGAR_MCP_AUTH_TOKEN` appended. Server is up on v5.0.1.
+
+**Risk if not fixed:** next `nix-update` regenerates secrets.env via op-inject
+template (which lacks token line) → wipes the manual line. Container restart
+crashes again.
+
+**1Password item** (already created by user, 2026-05-16):
+`Private/yadgar-mcp`, field `password`, length 32.
+
+### Patch `~/git/nix/modules/home/yadgar.nix`
+
+**1. Op-inject template — add token line (file ~line 158, inside `writeText`):**
+
+~~~nix
+${pkgs.writeText "yadgar-secrets.env.tpl" ''
+  SURREAL_USER=op://Private/yadgar-root/username
+  SURREAL_PASS=op://Private/yadgar-root/password
+  YADGAR_RW_USER=op://Private/yadgar-rw/username
+  YADGAR_RW_PASS=op://Private/yadgar-rw/password
+  YADGAR_RO_USER=op://Private/yadgar-ro/username
+  YADGAR_RO_PASS=op://Private/yadgar-ro/password
+  YADGAR_DB_USER=op://Private/yadgar-rw/username
+  YADGAR_DB_PASS=op://Private/yadgar-rw/password
+  YADGAR_MCP_AUTH_TOKEN=op://Private/yadgar-mcp/password
+''}
+~~~
+
+**2. systemd.user.services.yadgar ExecStart — add token passthrough:**
+
+After `-e YADGAR_DB_PASS`, insert `-e YADGAR_MCP_AUTH_TOKEN` (no value — read
+from EnvironmentFile).
+
+### Apply
+
+~~~bash
+cd ~/git/nix
+# edit modules/home/yadgar.nix per above
+nix-update
+~~~
+
+### Cleanup ephemeral fix (only after `nix-update` succeeds and health is OK)
+
+~~~bash
+rm ~/.config/systemd/user/yadgar.service.d/mcp-token.conf
+rmdir ~/.config/systemd/user/yadgar.service.d 2>/dev/null || true
+systemctl --user daemon-reload
+systemctl --user restart yadgar
+curl -sf http://127.0.0.1:8765/health   # expect status=ok, version=5.0.1
+~~~
+
+### Verify token survives op-inject
+
+~~~bash
+grep YADGAR_MCP_AUTH_TOKEN ~/.config/yadgar/secrets.env | cut -d= -f1
+# Expect: YADGAR_MCP_AUTH_TOKEN
+~~~
+
+### Rollback
+
+If `nix-update` fails or secrets.env loses the token, restore manually:
+
+~~~bash
+TOK=$(op item get yadgar-mcp --vault Private --fields password --format json | jq -r '.value')
+grep -v '^YADGAR_MCP_AUTH_TOKEN=' ~/.config/yadgar/secrets.env > /tmp/se.new
+printf 'YADGAR_MCP_AUTH_TOKEN=%s\n' "$TOK" >> /tmp/se.new
+mv /tmp/se.new ~/.config/yadgar/secrets.env
+chmod 600 ~/.config/yadgar/secrets.env
+systemctl --user restart yadgar
+~~~
+
+## v5.1 — yadgar-vacuum.service ExecStart fix (A2)
+
+The systemd unit has been failing exit 127 on every scheduled trigger
+since v4.8.3. Root cause: ExecStart passed `vacuum --service-mode=systemd`
+as the container CMD; the image entrypoint is not the bare `yadgar`
+binary, so crun tried to exec a binary literally named `vacuum` and
+failed `executable file not found in $PATH`.
+
+Companion fix to v5.1 A1 (`storage.get_db_size()` bearer-token client,
+commit `bc22f0b`). The vacuum subprocess calls `get_db_size()` internally
+during phase logging, so it now also requires `YADGAR_MCP_AUTH_TOKEN`
+in its container env. The SurrealDB export+reimport phases require
+`YADGAR_DB_USER/PASS` (already in `secrets.env`).
+
+Nix module edit is committed at `~/git/nix` (master, commit `7068449`)
+but not applied — the user runs `nix-update`.
+
+### Apply
+
+~~~bash
+cd ~/git/nix
+nix-update
+~~~
+
+### Validate
+
+~~~bash
+# Trigger manually — should now exit 0 + log before/after byte counts
+systemctl --user start yadgar-vacuum.service
+journalctl --user -u yadgar-vacuum.service -n 80 --no-pager
+
+# Confirm next scheduled trigger
+systemctl --user list-timers yadgar-vacuum.timer --no-pager
+~~~
+
+### Expected log markers on success
+
+- `vacuum.py` phase markers: `export → strip → snapshot → swap → import`
+- `before_bytes=NNN, after_bytes=MMM` with a measurable reduction
+- exit 0, container `--rm` cleaned up
+
+### Rollback
+
+If the vacuum service fails for a new reason post-apply:
+
+~~~bash
+# Revert the nix commit
+cd ~/git/nix && git revert 7068449 && nix-update
+
+# Or: stop the timer until the underlying issue is resolved
+systemctl --user stop yadgar-vacuum.timer
+systemctl --user disable yadgar-vacuum.timer
+~~~
+
+A1 client-side fix is on branch `v5.1/a1-dbsize-instrumentation` in the
+yadgar repo (commit `bc22f0b`). It does NOT need migration — it will
+land via the next yadgar image release (`5.1.0`). Until then, the
+vacuum service runs against the `5.0.1` image, where `get_db_size()`
+inside vacuum still returns 0 in log output (cosmetic — the export+
+import phases use `YADGAR_DB_USER/PASS` not the bearer token, so the
+core compaction logic works).

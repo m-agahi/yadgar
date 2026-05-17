@@ -10,48 +10,22 @@ import networkx as nx
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.retrieval.entities import _QUERY_STOP_WORDS, _extract_query_entities
-from yadgar.retrieval.fusion import PROFILES, _convex_fuse
+from yadgar.retrieval.entities import _extract_query_entities
+from yadgar.retrieval.fusion import PROFILES, _FusionMixin
+from yadgar.retrieval.graph_helpers import _GraphHelpersMixin
+from yadgar.retrieval.quality import _QualityMixin
 from yadgar.retrieval.query_analysis import (
-    _build_boosted_fts_query,
     _build_open_domain_subqueries,
-    _pseudo_hyde_expand,
     analyze_query,
 )
-from yadgar.retrieval.reranking import Reranker
-from yadgar.retrieval.temporal import parse_temporal_expression
-from yadgar.storage import StorageEngine
-
-# Lazy import to avoid circular dependency
-_RulesEngine = None
-
-
-def _get_rules_engine_class():
-    global _RulesEngine
-    if _RulesEngine is None:
-        from yadgar.rules_engine import RulesEngine
-
-        _RulesEngine = RulesEngine
-    return _RulesEngine
-
-
-# Lazy import to avoid circular dependency
-_EngramAllocator = None
-
-
-def _get_engram_class():
-    global _EngramAllocator
-    if _EngramAllocator is None:
-        from yadgar.engram import EngramAllocator
-
-        _EngramAllocator = EngramAllocator
-    return _EngramAllocator
-
+from yadgar.retrieval.reranking import Reranker, _RerankingMixin
+from yadgar.retrieval.scoring import _ScoringMixin
+from yadgar.storage import BranchFilter, StorageEngine
 
 logger = logging.getLogger(__name__)
 
 
-class Retriever:
+class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin, _QualityMixin):
     """HippoRAG-style retrieval combining PPR, spreading activation,
     vector similarity, and FTS5 keyword search."""
 
@@ -303,14 +277,40 @@ class Retriever:
 
     # -- d. Unified Recall --
 
-    def recall(self, query: str, max_results: int = 5, min_heat: float = 0.1) -> list[dict]:
+    def recall(
+        self,
+        query: str,
+        max_results: int = 5,
+        min_heat: float = 0.1,
+        current_branch: str | None = None,
+        default_branch: str | None = None,
+    ) -> list[dict]:
         """Combine retrieval signals via Weighted Reciprocal Rank Fusion (WRRF).
 
         Each signal produces a ranked list of memory IDs. Scores are fused as:
           WRRF_score(d) = Σ_i [ w_i / (k + rank_i(d)) ]
         where k = WRRF_K (default 60) and w_i are per-signal weights from settings.
         An optional heuristic reranker refines the final ordering.
+
+        Args:
+            current_branch: Active git branch, or None for non-git/unknown contexts.
+                When set (along with default_branch), candidate queries are filtered
+                to (NULL | default | current) branch in SurrealQL — avoids fetching
+                rows that will be discarded (C2).
+            default_branch: Repository default branch (e.g. 'master', 'main').
+                Must be provided alongside current_branch to enable filtering.
+                When None (default), no branch filter is applied — all rows pass.
         """
+        # Build branch filter for storage-level predicate injection (C2).
+        # Only created when default_branch is explicitly provided by caller.
+        # Without it, behavior is backward-compatible: no filtering.
+        branch_filter: BranchFilter | None = None
+        if default_branch is not None:
+            branch_filter = BranchFilter(
+                current_branch=current_branch,
+                default_branch=default_branch,
+            )
+
         # Determine active retrieval profile
         profile_name = getattr(self._settings, "RETRIEVAL_PROFILE", "balanced")
         profile = PROFILES.get(profile_name, PROFILES["balanced"])
@@ -358,11 +358,18 @@ class Retriever:
             open_domain_mode,
             candidate_k,
             min_heat,
+            branch_filter=branch_filter,
         )
 
         # 2. Vector similarity via SurrealDB KNN
         vector_memory_ids, query_embedding = self._collect_vector_scores(
-            query, scores, enabled_signals, open_domain_subqueries, candidate_k, min_heat
+            query,
+            scores,
+            enabled_signals,
+            open_domain_subqueries,
+            candidate_k,
+            min_heat,
+            branch_filter=branch_filter,
         )
 
         # 3. PPR graph retrieval
@@ -372,7 +379,9 @@ class Retriever:
         self._collect_spreading_scores(scores, enabled_signals, vector_memory_ids)
 
         # 5. Temporal retrieval boost
-        w_temporal = self._collect_temporal_scores(query, scores, min_heat, candidate_k)
+        w_temporal = self._collect_temporal_scores(
+            query, scores, min_heat, candidate_k, branch_filter=branch_filter
+        )
 
         # Fusion: confidence gating + WRRF/convex combination
         fused, fused_scores = self._fuse_scores(scores, w_temporal, open_domain_mode)
@@ -395,735 +404,3 @@ class Retriever:
             use_cross_encoder,
             max_results,
         )
-
-    # -- Signal collection helpers --
-
-    def _collect_fts_scores(
-        self,
-        query: str,
-        scores: dict,
-        enabled_signals,
-        open_domain_subqueries: list,
-        open_domain_mode: bool,
-        candidate_k: int,
-        min_heat: float,
-    ) -> None:
-        """Collect FTS BM25 scores (including entity-FTS and COMET expansion) into scores."""
-        if enabled_signals is not None and "fts" not in enabled_signals:
-            return
-
-        # 1. FTS5 keyword search with actual BM25 scores
-        try:
-            fts_searches = [(query, 1.0)]
-            if open_domain_subqueries:
-                for subquery in open_domain_subqueries:
-                    fts_searches.append((subquery, 0.8))
-
-            for fts_query, strength in fts_searches:
-                fts_scored = self._storage.search_memories_fts_scored(
-                    _build_boosted_fts_query(fts_query),
-                    min_heat=min_heat,
-                    limit=candidate_k,
-                )
-                if not fts_scored:
-                    continue
-                bm25_vals = [s for _, s in fts_scored]
-                bm25_min, bm25_max = min(bm25_vals), max(bm25_vals)
-                bm25_range = bm25_max - bm25_min
-                for mid, bm25_score in fts_scored:
-                    normalized = (bm25_score - bm25_min) / bm25_range if bm25_range > 1e-9 else 0.5
-                    scores[mid]["fts"] = max(
-                        scores[mid].get("fts", 0.0),
-                        normalized * strength,
-                    )
-        except Exception:
-            pass
-
-        # 1b. Entity-focused FTS: search for just person names to ensure
-        #     all memories about mentioned people reach the CE pool.
-        try:
-            entity_names = [
-                w.strip(".,;:!?()[]{}\"'")
-                for w in query.split()
-                if w[0:1].isupper()
-                and len(w.strip(".,;:!?()[]{}\"'")) >= 2
-                and w.strip(".,;:!?()[]{}\"'").lower() not in _QUERY_STOP_WORDS
-            ]
-            if entity_names:
-                entity_query = " ".join(entity_names)
-                entity_hits = self._storage.search_memories_fts_scored(
-                    entity_query, min_heat=min_heat, limit=candidate_k
-                )
-                if entity_hits:
-                    ent_vals = [s for _, s in entity_hits]
-                    ent_min, ent_max = min(ent_vals), max(ent_vals)
-                    ent_range = ent_max - ent_min
-                    for mid, ent_score in entity_hits:
-                        normalized = (ent_score - ent_min) / ent_range if ent_range > 1e-9 else 0.5
-                        scores[mid]["fts"] = max(
-                            scores[mid].get("fts", 0.0),
-                            normalized * (0.7 if open_domain_mode else 0.5),
-                        )
-        except Exception:
-            pass
-
-        # 1c. COMET query expansion
-        if open_domain_mode:
-            comet_terms = self._comet_expand_query(query)
-            if comet_terms:
-                try:
-                    comet_query = " ".join(comet_terms[:6])
-                    comet_hits = self._storage.search_memories_fts_scored(
-                        comet_query,
-                        min_heat=min_heat,
-                        limit=candidate_k,
-                    )
-                    if comet_hits:
-                        comet_vals = [s for _, s in comet_hits]
-                        comet_min, comet_max = min(comet_vals), max(comet_vals)
-                        comet_range = comet_max - comet_min
-                        for mid, comet_score in comet_hits:
-                            normalized = (
-                                (comet_score - comet_min) / comet_range
-                                if comet_range > 1e-9
-                                else 0.5
-                            )
-                            scores[mid]["fts"] = max(
-                                scores[mid].get("fts", 0.0),
-                                normalized * 0.6,
-                            )
-                except Exception:
-                    pass
-
-    def _collect_vector_scores(
-        self,
-        query: str,
-        scores: dict,
-        enabled_signals,
-        open_domain_subqueries: list,
-        candidate_k: int,
-        min_heat: float,
-    ) -> tuple[list[int], object]:
-        """Collect vector KNN scores into scores. Returns (vector_memory_ids, query_embedding)."""
-        vector_memory_ids: list[int] = []
-        query_embedding = None
-        if enabled_signals is not None and "vector" not in enabled_signals:
-            return vector_memory_ids, query_embedding
-
-        vector_searches = [(query, 1.0)]
-
-        if self._settings.QUERY_EXPANSION_ENABLED:
-            expanded_query = _pseudo_hyde_expand(query)
-            if expanded_query and expanded_query != query:
-                vector_searches.append((expanded_query, 0.95))
-
-        if open_domain_subqueries:
-            for subquery in open_domain_subqueries[:2]:
-                vector_searches.append((subquery, 0.85))
-
-        seen_vector_queries: set[str] = set()
-        for vector_query, strength in vector_searches:
-            lowered = vector_query.lower()
-            if lowered in seen_vector_queries:
-                continue
-            seen_vector_queries.add(lowered)
-
-            encoded = self._embeddings.encode_query(vector_query)
-            if encoded is None:
-                continue
-            if vector_query == query:
-                query_embedding = encoded
-
-            vec_hits = self._storage.search_vectors(encoded, top_k=candidate_k, min_heat=min_heat)
-            for mid, distance in vec_hits:
-                similarity = (1.0 / (1.0 + distance)) * strength
-                scores[mid]["vector"] = max(scores[mid].get("vector", 0.0), similarity)
-                if mid not in vector_memory_ids:
-                    vector_memory_ids.append(mid)
-
-        return vector_memory_ids, query_embedding
-
-    def _collect_ppr_scores(
-        self,
-        query: str,
-        scores: dict,
-        enabled_signals,
-        candidate_k: int,
-    ) -> None:
-        """Collect PPR graph retrieval scores into scores."""
-        if enabled_signals is not None and "ppr" not in enabled_signals:
-            return
-        ppr_results = self.ppr_retrieve(query, top_k=candidate_k)
-        if ppr_results:
-            max_ppr = max(s for _, s in ppr_results) if ppr_results else 1.0
-            for mid, ppr_score in ppr_results:
-                normalized = ppr_score / max_ppr if max_ppr > 0 else 0.0
-                scores[mid]["ppr"] = normalized
-
-    def _collect_spreading_scores(
-        self,
-        scores: dict,
-        enabled_signals,
-        vector_memory_ids: list[int],
-    ) -> None:
-        """Collect spreading activation scores from top vector seeds into scores."""
-        if enabled_signals is not None and "spreading" not in enabled_signals:
-            return
-        top_vector_seeds = vector_memory_ids[:5]
-        if top_vector_seeds:
-            spread_results = self.spreading_activation(
-                top_vector_seeds, spread_factor=0.5, max_depth=2
-            )
-            if spread_results:
-                max_spread = max(s for _, s in spread_results) if spread_results else 1.0
-                for mid, spread_score in spread_results:
-                    normalized = spread_score / max_spread if max_spread > 0 else 0.0
-                    scores[mid]["spread"] = normalized
-
-    def _collect_temporal_scores(
-        self,
-        query: str,
-        scores: dict,
-        min_heat: float,
-        candidate_k: int,
-    ) -> float:
-        """Collect temporal retrieval scores into scores. Returns w_temporal weight (0.0 if unused)."""
-        w_temporal = 0.0
-        if not getattr(self._settings, "TEMPORAL_RETRIEVAL_ENABLED", False):
-            return w_temporal
-        temporal_info = parse_temporal_expression(query)
-        if not temporal_info["has_temporal"]:
-            return w_temporal
-        try:
-            # A) Content-based temporal matching (FTS on dates in content)
-            temporal_memories = self._storage.search_memories_by_content_date(
-                date_hints=temporal_info["date_hints"],
-                month_hints=temporal_info["month_hints"],
-                session_hints=temporal_info["session_hints"],
-                min_heat=min_heat,
-                limit=candidate_k,
-            )
-            if temporal_memories:
-                for i, mem in enumerate(temporal_memories):
-                    if mem.get("id") is not None:
-                        scores[mem["id"]]["temporal"] = 1.0 / (1 + i)
-                w_temporal = 0.8
-
-            # B) Timestamp-based temporal matching (created_at proximity)
-            if temporal_info["month_hints"]:
-                month_matches = self._storage.search_memories_by_month(
-                    temporal_info["month_hints"],
-                    min_heat=min_heat,
-                    limit=candidate_k,
-                )
-                if month_matches:
-                    for mid in month_matches:
-                        if scores[mid]["temporal"] == 0.0:
-                            scores[mid]["temporal"] = 0.5
-                    if w_temporal == 0.0:
-                        w_temporal = 0.6
-        except Exception:
-            logger.debug("Temporal retrieval failed, skipping signal")
-        return w_temporal
-
-    def _fuse_scores(
-        self,
-        scores: dict,
-        w_temporal: float,
-        open_domain_mode: bool,
-    ) -> tuple[list, dict]:
-        """Build signal weights, apply confidence gating, and fuse scores.
-
-        Returns (fused_sorted_list, fused_scores_dict).
-        """
-        signal_weights = {
-            "vector": self._settings.WRRF_VECTOR_WEIGHT,
-            "fts": self._settings.WRRF_FTS_WEIGHT,
-            "ppr": self._settings.WRRF_PPR_WEIGHT,
-            "spread": self._settings.WRRF_SPREADING_WEIGHT,
-        }
-        if w_temporal > 0:
-            signal_weights["temporal"] = w_temporal
-        if open_domain_mode:
-            signal_weights["fts"] *= getattr(self._settings, "OPEN_DOMAIN_FTS_BOOST", 1.6)
-
-        # Apply confidence gating
-        if getattr(self._settings, "CONFIDENCE_GATING_ENABLED", False):
-            _conf_name_map = {"spread": "spreading"}
-            thresholds = {
-                "vector": getattr(self._settings, "CONFIDENCE_THRESHOLD_VECTOR", 0.1),
-                "fts": getattr(self._settings, "CONFIDENCE_THRESHOLD_FTS", 0.1),
-                "ppr": getattr(self._settings, "CONFIDENCE_THRESHOLD_PPR", 0.1),
-                "spread": getattr(self._settings, "CONFIDENCE_THRESHOLD_SPREADING", 0.1),
-                "temporal": getattr(self._settings, "CONFIDENCE_THRESHOLD_TEMPORAL", 0.1),
-            }
-            for sig in list(signal_weights.keys()):
-                ranked = sorted(
-                    [(mid, s[sig]) for mid, s in scores.items() if s[sig] > 0],
-                    key=lambda x: x[1],
-                    reverse=True,
-                )
-                conf_name = _conf_name_map.get(sig, sig)
-                confidence = self._reranker.compute_signal_confidence(conf_name, ranked)
-                threshold = thresholds.get(sig, 0.1)
-                if confidence < threshold:
-                    signal_weights[sig] = 0.0
-
-        fusion_method = getattr(self._settings, "FUSION_METHOD", "wrrf")
-
-        if fusion_method == "convex":
-            signal_scores_for_convex: dict[str, dict[int, float]] = {}
-            for sig in signal_weights:
-                sig_dict = {mid: s[sig] for mid, s in scores.items() if s[sig] > 0}
-                if sig_dict:
-                    signal_scores_for_convex[sig] = sig_dict
-            fused = _convex_fuse(signal_scores_for_convex, signal_weights)
-            fused_scores = dict(fused)
-        else:
-            # WRRF-style normalized weighted sum
-            signal_names = list(
-                {sig for mid, sigs in scores.items() for sig, v in sigs.items() if v > 0}
-            )
-            normalized: dict[int, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-            fusion_norm = getattr(self._settings, "FUSION_NORM", "zscore")
-
-            for sig in signal_names:
-                sig_vals = [(mid, s[sig]) for mid, s in scores.items() if s[sig] > 0]
-                if not sig_vals:
-                    continue
-                vals = [v for _, v in sig_vals]
-
-                if fusion_norm == "minmax":
-                    min_v = min(vals)
-                    max_v = max(vals)
-                    rng = max_v - min_v
-                    for mid, v in sig_vals:
-                        normalized[mid][sig] = (v - min_v) / rng if rng > 1e-9 else 0.5
-                elif fusion_norm == "raw":
-                    for mid, v in sig_vals:
-                        normalized[mid][sig] = v
-                else:  # zscore (default)
-                    mean_v = sum(vals) / len(vals)
-                    std_v = (sum((v - mean_v) ** 2 for v in vals) / len(vals)) ** 0.5
-                    if std_v > 1e-9:
-                        z_scores = [(mid, (v - mean_v) / std_v) for mid, v in sig_vals]
-                        z_vals = [z for _, z in z_scores]
-                        z_min, z_max = min(z_vals), max(z_vals)
-                        z_rng = z_max - z_min
-                        for mid, z in z_scores:
-                            normalized[mid][sig] = (z - z_min) / z_rng if z_rng > 1e-9 else 0.5
-                    else:
-                        for mid, _v in sig_vals:
-                            normalized[mid][sig] = 0.5
-
-            combmnz = getattr(self._settings, "COMBMNZ_ENABLED", False)
-
-            fused_scores = {}
-            for mid, norm_sigs in normalized.items():
-                total = 0.0
-                signal_count = 0
-                for signal, norm_score in norm_sigs.items():
-                    w = signal_weights.get(signal, 0.0)
-                    if w > 0:
-                        total += w * norm_score
-                        signal_count += 1
-                if total > 0:
-                    if combmnz and signal_count > 1:
-                        total *= signal_count
-                    fused_scores[mid] = total
-
-            fused = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
-
-        return fused, fused_scores
-
-    def _build_initial_results(
-        self,
-        fused: list,
-        fused_scores: dict,
-        scores: dict,
-        profile: dict,
-        open_domain_mode: bool,
-        max_results: int,
-        min_heat: float,
-    ) -> tuple[list[dict], set[int], bool]:
-        """Build result_memories from fused scores and inject CE diversity candidates.
-
-        Returns (result_memories, seen_ids, use_cross_encoder).
-        """
-        rerank_pool = max(
-            max_results,
-            self._settings.RERANKER_TOP_K,
-            getattr(self._settings, "CROSS_ENCODER_TOP_K", 0),
-        )
-        result_memories: list[dict] = []
-        seen_ids: set[int] = set()
-        for mid, total_score in fused:
-            mem = self._storage.get_memory(mid)
-            if mem and mem.get("id") is not None and mem["heat"] >= min_heat:
-                mem["_retrieval_score"] = round(total_score, 4)
-                mem.pop("embedding", None)
-                result_memories.append(mem)
-                seen_ids.add(mid)
-            if len(result_memories) >= rerank_pool:
-                break
-
-        use_cross_encoder = profile["cross_encoder"] and getattr(
-            self._settings, "CROSS_ENCODER_ENABLED", False
-        )
-        if use_cross_encoder:
-            diversity_k = getattr(self._settings, "CE_DIVERSITY_INJECT_K", 10)
-            if open_domain_mode:
-                diversity_k = max(diversity_k, 15)
-            for sig in ["fts", "vector"]:
-                top_sig = sorted(
-                    [(mid, s[sig]) for mid, s in scores.items() if s[sig] > 0],
-                    key=lambda x: x[1],
-                    reverse=True,
-                )[:diversity_k]
-                for mid, _ in top_sig:
-                    if mid not in seen_ids:
-                        mem = self._storage.get_memory(mid)
-                        if mem and mem.get("id") is not None and mem["heat"] >= min_heat:
-                            mem["_retrieval_score"] = round(fused_scores.get(mid, 0.0), 4)
-                            mem.pop("embedding", None)
-                            result_memories.append(mem)
-                            seen_ids.add(mid)
-
-        return result_memories, seen_ids, use_cross_encoder
-
-    def _apply_rerank_pipeline(
-        self,
-        result_memories: list[dict],
-        seen_ids: set[int],
-        query: str,
-        query_analysis: dict,
-        query_embedding,
-        profile: dict,
-        profile_name: str,
-        open_domain_mode: bool,
-        use_cross_encoder: bool,
-        max_results: int,
-    ) -> list[dict]:
-        """Apply full post-fusion reranking pipeline and return final result list."""
-        # Heuristic reranker (skipped for 'fast' profile)
-        if self._settings.RERANKER_ENABLED and profile_name != "fast":
-            heuristic_k = max_results
-            if use_cross_encoder:
-                heuristic_k = None  # Uses RERANKER_TOP_K (50)
-            result_memories = self._reranker.heuristic_rerank(
-                result_memories, query, top_k=heuristic_k
-            )
-
-        # Comparison dual search: merge extra candidates for "A or B?" queries
-        comparison_options = query_analysis.get("comparison_options", [])
-        if getattr(self._settings, "COMPARISON_DUAL_SEARCH_ENABLED", False) and comparison_options:
-            subject = (
-                query_analysis.get("named_entities", [None])[0]
-                if query_analysis.get("named_entities")
-                else None
-            )
-            comp_results = self._comparison_dual_search(
-                query,
-                comparison_options,
-                subject,
-                max_results,
-            )
-            for r in comp_results:
-                rid = r.get("id", -1)
-                if rid not in seen_ids:
-                    r.setdefault("_retrieval_score", 0.0)
-                    r.pop("embedding", None)
-                    result_memories.append(r)
-                    seen_ids.add(rid)
-
-        # Cross-encoder reranker
-        if use_cross_encoder:
-            result_memories = self._reranker.cross_encoder_rerank(result_memories, query)
-
-        # NLI entailment scoring
-        use_nli = profile["nli"] or getattr(self._settings, "NLI_RERANKING_ENABLED", False)
-        if use_nli and (not self._settings.NLI_ONLY_FOR_OPEN_DOMAIN or open_domain_mode):
-            result_memories = self._reranker.nli_rerank(query, result_memories)
-            nli_weight = self._settings.NLI_WEIGHT
-            for mem in result_memories:
-                ce = mem.get("_cross_encoder_score", 0)
-                nli = mem.get("_nli_entailment_score", 0)
-                mem["_retrieval_score"] = (1 - nli_weight) * ce + nli_weight * nli
-            result_memories.sort(key=lambda m: m.get("_retrieval_score", 0), reverse=True)
-
-        # Multi-passage evidence aggregation
-        if getattr(self._settings, "MULTI_PASSAGE_RERANKING_ENABLED", False):
-            result_memories = self._reranker.multi_passage_rerank(
-                query, result_memories, max_results
-            )
-
-        # Profile and belief search: merge structured knowledge after CE reranking
-        directory = ""
-        for mem in result_memories:
-            if mem.get("directory_context"):
-                directory = mem["directory_context"]
-                break
-        profile_belief_results = self._search_profiles_and_beliefs(
-            query,
-            directory,
-            max_results,
-        )
-        if profile_belief_results:
-            result_memories.extend(profile_belief_results)
-            result_memories.sort(
-                key=lambda m: m.get("_retrieval_score", 0),
-                reverse=True,
-            )
-            result_memories = result_memories[: max_results * 2]
-
-        # MMR diversity reranking
-        if getattr(self._settings, "ADVERSARIAL_DIVERSITY_ENFORCEMENT", False):
-            result_memories = self._reranker.mmr_rerank(
-                result_memories,
-                query_embedding,
-                top_k=max_results,
-                lambda_param=0.7,
-            )
-
-        # Trim to max_results after reranking
-        result_memories = result_memories[:max_results]
-
-        # Adversarial detection
-        if self._settings.ADVERSARIAL_DETECTION_ENABLED and result_memories:
-            adv_info = self._reranker.detect_adversarial(result_memories)
-            for mem in result_memories:
-                mem["_retrieval_confidence"] = adv_info["confidence"]
-            if adv_info["is_uncertain"]:
-                logger.debug(
-                    "Low retrieval confidence (%.3f), score_gap=%.3f",
-                    adv_info["confidence"],
-                    adv_info["score_gap"],
-                )
-
-        # Apply neuro-symbolic rules
-        if self._rules_engine is not None and result_memories:
-            directory = ""
-            for mem in result_memories:
-                if mem.get("directory_context"):
-                    directory = mem["directory_context"]
-                    break
-            result_memories = self._rules_engine.apply_rules(result_memories, directory)
-            result_memories = result_memories[:max_results]
-
-        # Enrich with temporal links from engram allocation
-        if self._engram is not None:
-            for mem in result_memories:
-                try:
-                    linked = self._engram.get_temporally_linked(mem["id"])
-                    if linked:
-                        mem["temporal_links"] = linked
-                except Exception:
-                    pass
-
-        # Apply cognitive load management via metacognition
-        if self._metacognition is not None and result_memories:
-            try:
-                result_memories = self._metacognition.manage_context(result_memories)
-            except Exception:
-                logger.debug("Metacognition manage_context failed, returning unoptimized")
-
-        return result_memories
-
-    # -- Internal helpers --
-
-    def _comparison_dual_search(
-        self,
-        query: str,
-        options: list[str],
-        subject: str | None,
-        max_results: int,
-    ) -> list[dict]:
-        """Dual-search for comparison queries like 'A or B?'"""
-        all_results: list[dict] = []
-
-        for option in options[:2]:  # Max 2 options
-            sub_query = f"{subject} {option}" if subject else option
-            # Vector search
-            encoded = self._embeddings.encode_query(sub_query)
-            vec_results: list[dict] = []
-            if encoded is not None:
-                vec_hits = self._storage.search_vectors(
-                    encoded,
-                    top_k=self._settings.COMPARISON_TOP_K_PER_OPTION,
-                    min_heat=0.1,
-                )
-                for mid, _distance in vec_hits:
-                    mem = self._storage.get_memory(mid)
-                    if mem:
-                        mem.pop("embedding", None)
-                        vec_results.append(mem)
-            # Also do FTS
-            fts_results = self._storage.search_memories_fts(
-                sub_query,
-                limit=self._settings.COMPARISON_TOP_K_PER_OPTION,
-            )
-            # Merge
-            seen: set[int] = set()
-            merged: list[dict] = []
-            for r in vec_results + fts_results:
-                mid = r.get("id", r.get("memory_id", -1))
-                if mid not in seen:
-                    seen.add(mid)
-                    r["_comparison_option"] = option
-                    merged.append(r)
-            all_results.extend(merged)
-
-        # Deduplicate
-        seen_final: set[int] = set()
-        unique: list[dict] = []
-        for r in all_results:
-            mid = r.get("id", r.get("memory_id", -1))
-            if mid not in seen_final:
-                seen_final.add(mid)
-                unique.append(r)
-
-        return unique[: max_results * 2]
-
-    def _search_profiles_and_beliefs(
-        self,
-        query: str,
-        directory: str | None,
-        max_results: int,
-    ) -> list[dict]:
-        """Search structured profiles and derived beliefs."""
-        extra_results: list[dict] = []
-
-        # Search profiles
-        if getattr(self._settings, "PROFILE_EXTRACTION_ENABLED", False):
-            try:
-                profiles = self._storage.search_profiles_fts(query, limit=max_results)
-                for p in profiles:
-                    extra_results.append(
-                        {
-                            "id": -p.get("id", 0),  # Negative to distinguish from memories
-                            "content": f"{p['entity_name']}: {p['attribute_type']} = {p['attribute_value']}",
-                            "_source": "profile",
-                            "_retrieval_score": self._settings.PROFILE_SEARCH_WEIGHT,
-                        }
-                    )
-            except Exception:
-                pass
-
-        # Search beliefs
-        if getattr(self._settings, "DERIVED_BELIEFS_ENABLED", False):
-            try:
-                beliefs = self._storage.search_beliefs_fts(query, limit=max_results)
-                boost = self._settings.BELIEF_HIGH_CONFIDENCE_BOOST
-                for b in beliefs:
-                    score = (
-                        b.get("confidence", 0.5) * boost
-                        if b.get("confidence", 0) > 0.7
-                        else b.get("confidence", 0.5)
-                    )
-                    extra_results.append(
-                        {
-                            "id": -b.get("id", 0) - 100000,  # Negative offset to distinguish
-                            "content": b["content"],
-                            "_source": "belief",
-                            "_retrieval_score": score,
-                        }
-                    )
-            except Exception:
-                pass
-
-        return extra_results
-
-    def _build_networkx_graph(
-        self, seed_entity_ids: list[int], max_hops: int | None = None
-    ) -> nx.DiGraph:
-        """Build a networkx DiGraph around the seed entities."""
-        if max_hops is None:
-            max_hops = self._settings.GRAPH_MAX_HOPS
-        G = nx.DiGraph()
-        visited: set[int] = set()
-        frontier = list(seed_entity_ids)
-
-        for _ in range(max_hops):
-            next_frontier: list[int] = []
-            for eid in frontier:
-                if eid in visited:
-                    continue
-                visited.add(eid)
-                G.add_node(eid)
-                neighbors = self._graph._get_adjacent(eid, None)
-                for n in neighbors:
-                    nid = n["entity_id"]
-                    weight = n["weight"]
-                    if weight < self._settings.GRAPH_MIN_EDGE_WEIGHT:
-                        continue
-                    G.add_node(nid)
-                    G.add_edge(eid, nid, weight=weight)
-                    G.add_edge(nid, eid, weight=weight)
-                    if nid not in visited:
-                        next_frontier.append(nid)
-            frontier = next_frontier
-
-        return G
-
-    def _find_memories_for_entity(self, entity_name: str) -> list[int]:
-        """Find memory IDs whose content contains the entity name."""
-        return self._storage.find_memory_ids_by_entity_name(entity_name)
-
-    def _find_entities_in_content(self, content: str) -> set[int]:
-        """Find entity IDs that appear in the given content."""
-        entity_ids: set[int] = set()
-        # Get all active entities and check which ones appear in the content
-        entities = self._storage.get_all_entities(min_heat=0.0, include_archived=True)
-        for entity in entities:
-            if entity["name"] in content:
-                entity_ids.add(entity["id"])
-        return entity_ids
-
-    def _compute_signal_confidence(
-        self,
-        signal_name: str,
-        ranked_list: list[tuple[int, float]],
-    ) -> float:
-        """Delegate to Reranker.compute_signal_confidence (kept for backward compatibility)."""
-        return self._reranker.compute_signal_confidence(signal_name, ranked_list)
-
-    def _detect_adversarial(self, result_memories: list[dict]) -> dict:
-        """Delegate to Reranker.detect_adversarial (kept for backward compatibility)."""
-        return self._reranker.detect_adversarial(result_memories)
-
-    def _cluster_memories(self, memories: list[dict]) -> list[list[dict]]:
-        """Delegate to Reranker.cluster_memories (kept for backward compatibility)."""
-        return self._reranker.cluster_memories(memories)
-
-    def _score_single_pair(self, query: str, document: str) -> float:
-        """Delegate to Reranker.score_single_pair (kept for backward compatibility)."""
-        return self._reranker.score_single_pair(query, document)
-
-    def _multi_passage_rerank(self, query: str, memories: list[dict], top_k: int) -> list[dict]:
-        """Delegate to Reranker.multi_passage_rerank (kept for backward compatibility)."""
-        return self._reranker.multi_passage_rerank(query, memories, top_k)
-
-    @property
-    def _gte_reranker(self):
-        """Delegate to Reranker ML client's _gte_reranker (kept for backward compatibility)."""
-        return self._reranker._ml._gte_reranker
-
-    def _get_top_cooccurring_entities(self, content: str, limit: int = 5) -> list[str]:
-        """Find entities that co-occur with entities mentioned in this content."""
-        # Find entities mentioned in the content
-        content_entities = self._find_entities_in_content(content)
-        if not content_entities:
-            return []
-
-        # Count co-occurrence partners
-        partner_counts: dict[str, float] = defaultdict(float)
-        for eid in content_entities:
-            neighbors = self._graph._get_adjacent(eid, None)
-            for n in neighbors:
-                entity_row = self._storage.get_entity_by_id(n["entity_id"])
-                if entity_row and n["entity_id"] not in content_entities:
-                    partner_counts[entity_row["name"]] += n["weight"]
-
-        # Sort by weight and return top
-        sorted_partners = sorted(partner_counts.items(), key=lambda x: x[1], reverse=True)
-        return [name for name, _ in sorted_partners[:limit]]
