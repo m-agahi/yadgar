@@ -149,12 +149,16 @@ def test_health_accessible_without_token_when_auth_enabled(monkeypatch):
 
 
 def test_cors_not_wildcard():
-    """CORS must not be * in server.py _cors_wrapped_http_app."""
+    """CORS must not be * in server/_app.py _cors_wrapped_http_app.
+
+    After the v5.1 server split, CORS config lives in server/_app.py.
+    """
     from pathlib import Path
 
-    server_src = (Path(__file__).parent.parent / "server.py").read_text()
+    # After v5.1 server split, CORS config lives in server/_app.py
+    server_src = (Path(__file__).parent.parent / "server" / "_app.py").read_text()
     assert 'allow_origins=["*"]' not in server_src, (
-        "server.py must not set wildcard CORS allow_origins"
+        "server/_app.py must not set wildcard CORS allow_origins"
     )
 
 
@@ -227,6 +231,12 @@ def test_startup_ok_with_require_auth_and_token(monkeypatch):
     import yadgar.config as _cfg
 
     importlib.reload(_cfg)
+    # Clear the lru_cache on ALL references to get_settings so lifecycle.py
+    # picks up the fresh env after the server split (v5.1 fix).
+    _cfg.get_settings.cache_clear()
+    from yadgar.server import lifecycle as _lifecycle
+
+    _lifecycle.get_settings.cache_clear()
 
     import yadgar.server as _srv
 

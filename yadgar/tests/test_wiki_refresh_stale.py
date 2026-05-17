@@ -256,7 +256,7 @@ def test_refresh_queue_file_written_on_drift(tmp_path):
     assert len(files) == 1, "exactly one refresh-queue file expected"
 
     data = json.loads(files[0].read_text())
-    assert "mod-server" in data.get("stale_slugs", [])
+    assert "mod-server" in data.get("stale", [])
 
 
 def test_refresh_queue_not_written_when_no_drift(tmp_path):

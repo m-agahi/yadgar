@@ -39,7 +39,9 @@ def _mem(content: str, **kwargs) -> dict:
 class TestMemoryGet:
     def test_memory_get_returns_dict_by_id(self):
         """memory_get returns a dict when ID exists."""
-        mem_id = server._storage.insert_memory(_mem("hello from memory_get test", tags=["test"]))
+        mem_id = server._get_storage().insert_memory(
+            _mem("hello from memory_get test", tags=["test"])
+        )
         result = server.memory_get(mem_id)
         assert result is not None
         assert isinstance(result, dict)
@@ -52,7 +54,7 @@ class TestMemoryGet:
 
     def test_memory_get_strips_embedding_bytes(self):
         """memory_get must not return raw embedding bytes in the response."""
-        mem_id = server._storage.insert_memory(_mem("embedding strip test"))
+        mem_id = server._get_storage().insert_memory(_mem("embedding strip test"))
         result = server.memory_get(mem_id)
         assert result is not None
         # embedding should be absent or not be bytes
@@ -63,8 +65,8 @@ class TestMemoryGet:
 
     def test_memory_get_returns_correct_id(self):
         """memory_get returns the right record by ID."""
-        id_a = server._storage.insert_memory(_mem("memory A"))
-        id_b = server._storage.insert_memory(_mem("memory B"))
+        id_a = server._get_storage().insert_memory(_mem("memory A"))
+        id_b = server._get_storage().insert_memory(_mem("memory B"))
         result_a = server.memory_get(id_a)
         result_b = server.memory_get(id_b)
         assert result_a is not None
@@ -76,7 +78,7 @@ class TestMemoryGet:
 class TestWikiGet:
     def test_wiki_get_returns_dict_by_id(self):
         """wiki_get returns a dict when page ID exists."""
-        page_id = server._storage.insert_wiki_page(
+        page_id = server._get_storage().insert_wiki_page(
             {
                 "slug": "test-wiki-get",
                 "title": "Test Wiki Get",
@@ -100,7 +102,7 @@ class TestWikiGet:
 
     def test_wiki_get_strips_embedding_bytes(self):
         """wiki_get must not return raw embedding bytes in the response."""
-        page_id = server._storage.insert_wiki_page(
+        page_id = server._get_storage().insert_wiki_page(
             {
                 "slug": "test-embed-strip",
                 "title": "Embed Strip Test",
@@ -120,7 +122,7 @@ class TestWikiGet:
 
     def test_wiki_get_returns_correct_id(self):
         """wiki_get returns the right page by ID."""
-        id_a = server._storage.insert_wiki_page(
+        id_a = server._get_storage().insert_wiki_page(
             {
                 "slug": "page-a",
                 "title": "Page A",
@@ -131,7 +133,7 @@ class TestWikiGet:
                 "confidence": 0.8,
             }
         )
-        id_b = server._storage.insert_wiki_page(
+        id_b = server._get_storage().insert_wiki_page(
             {
                 "slug": "page-b",
                 "title": "Page B",

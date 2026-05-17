@@ -1,0 +1,179 @@
+"""FileQueue — atomic file-based write queue."""
+
+from __future__ import annotations
+
+import json
+import logging
+import time
+import uuid
+from datetime import UTC, datetime
+from pathlib import Path
+
+_QUEUE_DIR = "queue"
+_ARCHIVE_DIR = "archive"
+_DLQ_DIR = "dlq"
+_ARCHIVE_MAX_AGE = 30 * 86400  # 30 days in seconds
+
+logger = logging.getLogger(__name__)
+
+
+def _json_default(obj):
+    """JSON serializer for objects not serializable by default json."""
+    if hasattr(obj, "tolist"):
+        return obj.tolist()
+    return str(obj)
+
+
+def _today_str() -> str:
+    """Return today's date as YYYY-MM-DD in UTC."""
+    return datetime.now(tz=UTC).strftime("%Y-%m-%d")
+
+
+class FileQueue:
+    """Atomic file-based write queue."""
+
+    def __init__(self, base_dir: str | Path | None = None, wiki_prefix: str = "") -> None:
+        base = Path(base_dir or Path.home() / ".yadgar")
+        self.queue_dir = base / _QUEUE_DIR
+        self.archive_dir = base / _ARCHIVE_DIR
+        self.wiki_dir = base / _ARCHIVE_DIR / "wiki"
+        self.dlq_dir = base / _DLQ_DIR
+        self.wiki_prefix = wiki_prefix.strip("-").strip() if wiki_prefix else ""
+        self.queue_dir.mkdir(parents=True, exist_ok=True)
+        self.archive_dir.mkdir(parents=True, exist_ok=True)
+        self.wiki_dir.mkdir(parents=True, exist_ok=True)
+        self.dlq_dir.mkdir(parents=True, exist_ok=True)
+
+    def _memories_archive_dir(self) -> Path:
+        """Return today's memories archive dir, creating it if needed."""
+        d = self.archive_dir / "memories" / _today_str()
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def enqueue(self, op_type: str, payload: dict) -> str:
+        """Write a queued operation atomically. Returns the queue file path."""
+        record_id = str(uuid.uuid4())
+        data = {
+            "op": op_type,
+            "id": record_id,
+            "payload": payload,
+            "ts": time.time(),
+        }
+        fname = f"{int(time.time() * 1000):016d}_{record_id}.json"
+        tmp = self.queue_dir / (fname + ".tmp")
+        target = self.queue_dir / fname
+        tmp.write_text(json.dumps(data, ensure_ascii=False, default=_json_default))
+        tmp.rename(target)  # atomic on POSIX
+        return str(target)
+
+    def pending(self) -> list[Path]:
+        """Return queue files sorted oldest-first."""
+        return sorted(self.queue_dir.glob("*.json"))
+
+    def archive(self, path: Path) -> None:
+        """Move a confirmed queue file to archive/memories/YYYY-MM-DD/."""
+        dest = self._memories_archive_dir() / path.name
+        try:
+            path.rename(dest)
+        except OSError:
+            path.unlink(missing_ok=True)
+
+    def cleanup_archive(self) -> int:
+        """Delete archive files older than _ARCHIVE_MAX_AGE. Returns count deleted."""
+        cutoff = time.time() - _ARCHIVE_MAX_AGE
+        deleted = 0
+        # Walk memories/ and wiki/ dated subdirectories
+        for subdir in (self.archive_dir / "memories", self.wiki_dir):
+            if not subdir.exists():
+                continue
+            for date_dir in subdir.iterdir():
+                if not date_dir.is_dir():
+                    continue
+                for f in date_dir.iterdir():
+                    try:
+                        if f.stat().st_mtime < cutoff:
+                            f.unlink(missing_ok=True)
+                            deleted += 1
+                    except OSError:
+                        pass
+                # Remove empty date dirs
+                try:
+                    date_dir.rmdir()
+                except OSError:
+                    pass
+        # Also clean up any legacy flat archive files (migration)
+        for f in self.archive_dir.glob("*.json"):
+            try:
+                if f.stat().st_mtime < cutoff:
+                    f.unlink(missing_ok=True)
+                    deleted += 1
+            except OSError:
+                pass
+        return deleted
+
+    def cleanup_dlq(self, max_age_days: int = 90) -> int:
+        """Delete DLQ entries older than max_age_days. Returns count of main files deleted.
+
+        DLQ items represent unrecovered data — logs prominently before each deletion.
+        The .events.log audit trail is never pruned.
+        """
+        if not self.dlq_dir.exists():
+            return 0
+        cutoff = time.time() - (max_age_days * 86400)
+        deleted = 0
+        for f in sorted(self.dlq_dir.glob("*.json")):
+            if f.name.endswith(".error.json") or f.name.startswith("."):
+                continue
+            try:
+                if f.stat().st_mtime < cutoff:
+                    logger.warning(
+                        "DLQ expiry: deleting %s (>%d days old). "
+                        "Data is permanently discarded — run dlq_requeue before this deadline to recover.",
+                        f.name,
+                        max_age_days,
+                    )
+                    f.unlink(missing_ok=True)
+                    (self.dlq_dir / (f.name + ".error.json")).unlink(missing_ok=True)
+                    deleted += 1
+            except OSError:
+                pass
+        return deleted
+
+    def _wiki_date_dir(self) -> Path:
+        """Return today's wiki archive dir, creating it if needed."""
+        d = self.wiki_dir / _today_str()
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def write_wiki(self, slug: str, content: str) -> None:
+        """Persist a wiki page as a date-stamped .md in archive/wiki/YYYY-MM-DD/."""
+        import re
+
+        safe = re.sub(r"[^a-zA-Z0-9_\-]", "_", slug)
+        if self.wiki_prefix:
+            safe = f"{self.wiki_prefix}-{safe}"
+        date_dir = self._wiki_date_dir()
+        wiki_path = date_dir / (safe + ".md")
+        # Verify resolved path stays inside wiki_dir (defense-in-depth)
+        if not str(wiki_path.resolve()).startswith(str(self.wiki_dir.resolve())):
+            raise ValueError(f"Slug {slug!r} resolves outside wiki directory")
+        tmp = date_dir / (safe + ".md.tmp")
+        tmp.write_text(content, encoding="utf-8")
+        tmp.rename(wiki_path)
+
+    def delete_wiki(self, slug: str) -> None:
+        """Remove .md mirror(s) for a deleted wiki page across all dated dirs."""
+        import re
+
+        safe = re.sub(r"[^a-zA-Z0-9_\-]", "_", slug)
+        if self.wiki_prefix:
+            safe = f"{self.wiki_prefix}-{safe}"
+        if not self.wiki_dir.exists():
+            return
+        for date_dir in self.wiki_dir.iterdir():
+            if not date_dir.is_dir():
+                continue
+            wiki_path = date_dir / (safe + ".md")
+            if not str(wiki_path.resolve()).startswith(str(self.wiki_dir.resolve())):
+                continue
+            wiki_path.unlink(missing_ok=True)

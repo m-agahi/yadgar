@@ -155,6 +155,7 @@ class RulesEngine:
     def __init__(self, storage: StorageEngine, settings: Settings) -> None:
         self._storage = storage
         self._settings = settings
+        self._applicable_rules_cache: dict[str, list[dict]] = {}
 
     def add_rule(
         self,
@@ -217,6 +218,7 @@ class RulesEngine:
                 "is_active": True,
             }
         )
+        self._applicable_rules_cache.clear()
         return rule_id
 
     def get_applicable_rules(self, directory: str) -> list[dict]:
@@ -228,7 +230,15 @@ class RulesEngine:
         - scope == "file" AND scope_value matches directory as a glob pattern
 
         Sorted by priority descending (highest first).
+
+        Results are cached per directory for the lifetime of this process.
+        The cache is invalidated whenever rules are mutated (add_rule,
+        delete_rule).  Use this method in hot paths; skip it only when
+        freshness is required immediately after a rule mutation.
         """
+        if directory in self._applicable_rules_cache:
+            return self._applicable_rules_cache[directory]
+
         # Get global rules
         global_rules = self._storage.get_rules_for_scope("global")
 
@@ -250,6 +260,7 @@ class RulesEngine:
         # Combine and sort by priority descending
         all_rules = global_rules + dir_rules + file_rules
         all_rules.sort(key=lambda r: r.get("priority", 0), reverse=True)
+        self._applicable_rules_cache[directory] = all_rules
         return all_rules
 
     def apply_rules(self, memories: list[dict], directory: str) -> list[dict]:
@@ -384,6 +395,7 @@ class RulesEngine:
         if self._storage.get_rule(rule_id) is None:
             return False
         self._storage.update_rule(rule_id, {"is_active": False})
+        self._applicable_rules_cache.clear()
         return True
 
     def get_all_rules(self) -> list[dict]:

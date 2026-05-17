@@ -1,0 +1,199 @@
+"""Vector search storage mixin — embedding CRUD and HNSW/MTREE index management."""
+
+import logging
+
+_log = logging.getLogger(__name__)
+
+
+class _VectorMixin:
+    """Vector and implicit-vector embedding ops — mixed into StorageEngine."""
+
+    # ------------------------------------------------------------------ Vector Search
+
+    def insert_vector(self, memory_id: int, embedding: bytes):
+        """Update the embedding field on the memory record."""
+        floats = self._bytes_to_floats(embedding)
+        self._q(
+            "UPDATE type::record('memory', $id) SET embedding = $emb",
+            {"id": memory_id, "emb": floats},
+        )
+
+    def delete_vector(self, memory_id: int):
+        """Clear the embedding field on the memory record."""
+        self._q(
+            "UPDATE type::record('memory', $id) SET embedding = NONE",
+            {"id": memory_id},
+        )
+
+    def update_vector(self, memory_id: int, embedding: bytes):
+        """Update embedding (same as insert in SurrealDB — field update)."""
+        self.insert_vector(memory_id, embedding)
+
+    def insert_implicit_vector(self, memory_id: int, embedding: bytes):
+        """Store implicit embedding on the memory record."""
+        floats = self._bytes_to_floats(embedding)
+        self._q(
+            "UPDATE type::record('memory', $id) SET implicit_embedding = $emb",
+            {"id": memory_id, "emb": floats},
+        )
+
+    def search_vectors(
+        self,
+        query_embedding: bytes,
+        top_k: int = 10,
+        min_heat: float = 0.1,
+        branch_filter=None,
+    ) -> list[tuple[int, float]]:
+        """KNN search via HNSW index, filtered by min_heat.
+
+        Returns list of (memory_id, distance) tuples sorted by ascending distance.
+        SurrealDB v3: KNN operator requires <|K, EF|> — single-param <|K|> is broken.
+
+        When branch_filter is provided, restricts results to memories whose
+        branch is NULL, equals default_branch, or equals current_branch (when
+        current_branch is not None).
+        """
+        from yadgar.storage.branch import _build_branch_clause
+
+        fetch_k = min(top_k * 4, 4096)
+        floats = self._bytes_to_floats(query_embedding)
+        branch_clause, branch_params = _build_branch_clause(branch_filter)
+        branch_and = f" AND {branch_clause}" if branch_clause else ""
+        params = {"qv": floats}
+        params.update(branch_params)
+        rows = self._q(
+            f"SELECT id, heat, vector::similarity::cosine(embedding, $qv) AS sim "
+            f"FROM memory WHERE embedding <|{fetch_k}, 40|> $qv{branch_and} "
+            f"ORDER BY sim DESC",
+            params,
+        )
+        results = []
+        for row in rows:
+            if float(row.get("heat", 0)) < min_heat:
+                continue
+            mid = self._extract_id(row.get("id"))
+            # Convert similarity to distance
+            dist = 1.0 - float(row.get("sim", 0.0))
+            results.append((mid, dist))
+            if len(results) >= top_k:
+                break
+        return results
+
+    def search_implicit_vectors(
+        self,
+        query_embedding: bytes,
+        top_k: int = 10,
+    ) -> list[tuple[int, float]]:
+        """KNN search over implicit embedding vectors.
+
+        Returns list of (memory_id, distance) tuples sorted by ascending distance.
+        """
+        fetch_k = min(top_k * 4, 4096)
+        floats = self._bytes_to_floats(query_embedding)
+        rows = self._q(
+            f"SELECT id, vector::similarity::cosine(implicit_embedding, $qv) AS sim "
+            f"FROM memory WHERE implicit_embedding <|{fetch_k}, 40|> $qv "
+            f"ORDER BY sim DESC",
+            {"qv": floats},
+        )
+        results = []
+        for row in rows:
+            mid = self._extract_id(row.get("id"))
+            dist = 1.0 - float(row.get("sim", 0.0))
+            results.append((mid, dist))
+            if len(results) >= top_k:
+                break
+        return results
+
+    def get_memories_needing_reembedding(self, current_model: str) -> list[dict]:
+        rows = self._q(
+            "SELECT * FROM memory WHERE embedding IS NOT NONE "
+            "AND (embedding_model IS NONE OR embedding_model != $model)",
+            {"model": current_model},
+        )
+        return self._rows_to_dicts(rows)
+
+    def update_memory_embedding(self, memory_id: int, embedding: bytes, embedding_model: str):
+        floats = self._bytes_to_floats(embedding)
+        self._q(
+            "UPDATE type::record('memory', $id) SET embedding = $emb, embedding_model = $model",
+            {"id": memory_id, "emb": floats, "model": embedding_model},
+        )
+        # update_vector is a no-op distinction in SurrealDB (already done above)
+        try:
+            self.update_vector(memory_id, embedding)
+        except Exception:
+            try:
+                self.insert_vector(memory_id, embedding)
+            except Exception:
+                pass
+
+    def recreate_vector_table(self, new_dim: int):
+        """Drop and recreate the vector index with new dimensions; clear all embeddings.
+
+        §6 C5: Wraps DROP INDEX → UPDATE embedding=NONE → REDEFINE INDEX in a
+        transaction.  Pre-flight: copies existing embeddings to a sidecar table
+        (memory_embedding_backup) so recovery is possible even if the TX fails.
+        """
+        # Pre-flight: back up existing embeddings to sidecar table.
+        try:
+            self._q("DEFINE TABLE IF NOT EXISTS memory_embedding_backup SCHEMALESS")
+            self._q("DELETE FROM memory_embedding_backup")
+            self._q(
+                "INSERT INTO memory_embedding_backup "
+                "(SELECT id, embedding FROM memory WHERE embedding IS NOT NONE)"
+            )
+            _log.info("recreate_vector_table: embedding backup written to memory_embedding_backup")
+        except Exception as exc:
+            _log.warning("recreate_vector_table: backup failed (%s) — proceeding anyway", exc)
+
+        # DDL statements (REMOVE INDEX, DEFINE INDEX) are not transactional in
+        # SurrealDB — wrapping in BEGIN/COMMIT causes the query to fail.
+        # Recovery is handled via the pre-flight sidecar backup above.
+        if self._db_url:
+            index_def = (
+                f"DEFINE INDEX memory_embedding_idx ON memory FIELDS embedding "
+                f"HNSW DIMENSION {new_dim} DIST COSINE TYPE F32 EFC 150 M 12"
+            )
+        else:
+            index_def = (
+                f"DEFINE INDEX memory_embedding_idx ON memory FIELDS embedding "
+                f"MTREE DIMENSION {new_dim} DIST COSINE TYPE F32"
+            )
+        try:
+            self._q("REMOVE INDEX IF EXISTS memory_embedding_idx ON memory")
+            self._q("UPDATE memory SET embedding = NONE")
+            self._q(index_def)
+        except Exception:
+            _log.error("recreate_vector_table failed; embeddings may be in memory_embedding_backup")
+            raise
+        self._embedding_dim = new_dim
+
+    def probe_vector_indexes(self) -> bool:
+        """Quick KNN probe — returns False if either MTREE index is corrupted."""
+        count = self._q("SELECT count() AS c FROM memory GROUP ALL")
+        if not count or int(count[0]["c"]) == 0:
+            return True  # empty table, nothing to corrupt
+        try:
+            zero = [0.0] * self._embedding_dim
+            self._q(
+                "SELECT id FROM memory WHERE embedding <|1, 40|> $qv LIMIT 1",
+                {"qv": zero},
+            )
+            self._q(
+                "SELECT id FROM memory WHERE implicit_embedding <|1, 40|> $qv LIMIT 1",
+                {"qv": zero},
+            )
+            return True
+        except Exception:
+            return False
+
+    def rebuild_vector_indexes(self) -> bool:
+        """Rebuild both MTREE indexes from stored embeddings. Returns True on success."""
+        try:
+            self._q("REBUILD INDEX memory_embedding_idx ON memory")
+            self._q("REBUILD INDEX memory_implicit_idx ON memory")
+            return True
+        except Exception:
+            _log.critical("MTREE index rebuild failed — container restart required")
+            return False

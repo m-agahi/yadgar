@@ -26,7 +26,7 @@ def _engines(tmp_path):
 
 class TestMemoryUpdate:
     def _insert_memory(self, content="initial content"):
-        return server._storage.insert_memory(
+        return server._get_storage().insert_memory(
             {
                 "content": content,
                 "tags": ["original-tag"],
@@ -128,7 +128,7 @@ class TestMemoryUpdate:
 
 class TestWikiUpdate:
     def _insert_wiki(self, slug="test-wiki-update", content="initial content"):
-        return server._storage.insert_wiki_page(
+        return server._get_storage().insert_wiki_page(
             {
                 "slug": slug,
                 "title": "Test Wiki Update",

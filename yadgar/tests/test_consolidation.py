@@ -923,6 +923,11 @@ class TestConsolidationCooldown:
         emb = EmbeddingEngine()
         emb._unavailable = True
         sched = ConsolidationScheduler(storage, emb, settings)
+        # Mark today's daily consolidation as already done so the 18:30 UTC
+        # time-gated path doesn't fire and interfere with cooldown assertions.
+        from datetime import UTC, datetime
+
+        sched._last_consolidation_date = datetime.now(UTC).date()
         return sched, storage
 
     def test_cooldown_blocks_immediate_refire(self, tmp_path):

@@ -1072,7 +1072,7 @@ class TestRememberProspectiveTrigger:
         flush_queue()
 
         # Check that a prospective trigger was created
-        active = server._storage.get_active_prospective_memories()
+        active = server._get_storage().get_active_prospective_memories()
         assert len(active) >= 1
         assert any(
             "validation" in pm["content"].lower() or "email" in pm["content"].lower()
