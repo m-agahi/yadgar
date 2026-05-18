@@ -80,9 +80,9 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _handle_proxy(self) -> None:
         """Proxy /api/* to the daemon backend with bearer token injected."""
-        from yadgar.config import settings  # read at request time — supports late env setup
+        from yadgar.config import get_settings  # read at request time — supports late env setup
 
-        token: str = settings.MCP_AUTH_TOKEN
+        token: str = get_settings().MCP_AUTH_TOKEN
 
         # Build upstream URL: daemon_url + raw path (includes query string).
         upstream = self._daemon_url.rstrip("/") + self.path
