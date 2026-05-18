@@ -8,7 +8,7 @@
     "source": "codeberg"
   },
   "version": "5.1.5",
-  "backend_version": "5.0.1",
+  "backend_version": "5.0.2",
   "packages": [
     {
       "registryType": "pypi",
