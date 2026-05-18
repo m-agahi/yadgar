@@ -7,6 +7,23 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.1.4] - 2026-05-18
+> Vacuum properly recovers yadgar-rw / yadgar-ro after `/import`.
+
+### Fixed
+- **B1 `/import` wipes ROOT-level user definitions.** v5.1.3 V6 stripped `DEFINE USER` from the export based on a wrong hypothesis — online research confirmed SurrealDB exports redact users by default (surrealist#630), so the strip was a no-op. Empirically, after `/import` runs, `yadgar-rw` and `yadgar-ro` are gone. The `root` user survives only because the SurrealDB server re-bootstraps it from `SURREAL_USER/PASS` env on every start. DDL-defined non-root users are not durable across `/import` regardless of payload content.
+  **Fix:** `cmd_vacuum_impl` now calls `_redefine_users_post_import(backend_url)` after `/import` returns 200, BEFORE starting yadgar core. Issues `DEFINE USER … ON ROOT PASSWORD … ROLES OWNER/VIEWER;` via root `/sql` with the JSON `vars` map pattern (mirroring `entrypoint-backend.sh`, avoiding SurrealQL parsing `yadgar-rw` as subtraction). Uses `YADGAR_RW_USER/PASS` + `YADGAR_RO_USER/PASS` from env; raises `RuntimeError` if either password is missing.
+
+### Changed
+- **B2 integration test hardened.** `test_vacuum_e2e_happy_path` now polls `_wait_for_yadgar_rw_auth` BEFORE vacuum (fails loudly if backend bootstrap incomplete) and UNCONDITIONALLY asserts post-vacuum auth (no `if rw_pre_ok:` conditional-skip). This is what should have caught v5.1.3 V6 broken before deploy.
+- **B3 strip docstring** clarifies the strip step is defensive (in case a future SurrealDB version exports users); the real recovery mechanism is the B1 re-DEFINE.
+
+### Known follow-ups (v5.x backlog)
+- Vacuum health-check timeout (60s) for yadgar core restart — embedding-model warmup on cold starts can exceed it. V5 (v5.1.3) makes the resulting `WARNING` message accurate but real slow-starts would still surface as failures. Consider 180s timeout OR `/health` returning 200 before embedding warmup completes.
+
+### Companion nix changes
+None required. Image rebuild + `yadger_core_version` 5.1.3 → 5.1.4 bump only.
+
 ## [5.1.3] - 2026-05-18
 > Vacuum hardening — fixes two bugs surfaced during v5.1.2 deploy.
 

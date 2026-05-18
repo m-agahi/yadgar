@@ -477,10 +477,11 @@ class TestCharacterization:
             with patch("yadgar.vacuum.ServiceController") as MockSVC:
                 with patch("yadgar.vacuum._wait_for_health", return_value=True):
                     with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
-                        mock_svc = MagicMock()
-                        MockSVC.return_value = mock_svc
+                        with patch("yadgar.vacuum._redefine_users_post_import"):
+                            mock_svc = MagicMock()
+                            MockSVC.return_value = mock_svc
 
-                        result = cmd_vacuum_impl(args)
+                            result = cmd_vacuum_impl(args)
 
         # Must succeed
         assert result == 0, "cmd_vacuum_impl should return 0 on success"
@@ -534,11 +535,12 @@ class TestCharacterization:
             with patch("yadgar.vacuum.ServiceController"):
                 with patch("yadgar.vacuum._wait_for_health", return_value=True):
                     with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
-                        # Should not raise — exit_code 0 means no sys.exit call
-                        try:
-                            main_mod.cmd_vacuum(args)
-                        except SystemExit as e:
-                            pytest.fail(f"cmd_vacuum raised SystemExit({e.code}) unexpectedly")
+                        with patch("yadgar.vacuum._redefine_users_post_import"):
+                            # Should not raise — exit_code 0 means no sys.exit call
+                            try:
+                                main_mod.cmd_vacuum(args)
+                            except SystemExit as e:
+                                pytest.fail(f"cmd_vacuum raised SystemExit({e.code}) unexpectedly")
 
 
 # ---------------------------------------------------------------------------
@@ -599,7 +601,8 @@ class TestRelatePreservation:
             with patch("yadgar.vacuum.ServiceController"):
                 with patch("yadgar.vacuum._wait_for_health", return_value=True):
                     with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
-                        cmd_vacuum_impl(args)
+                        with patch("yadgar.vacuum._redefine_users_post_import"):
+                            cmd_vacuum_impl(args)
 
         filtered = list(yadgar_home.glob("vacuum_export_*.filtered.surql"))
         assert filtered
@@ -781,8 +784,9 @@ class TestFailureInjection:
             with patch("yadgar.vacuum.ServiceController") as MockSVC:
                 with patch("yadgar.vacuum._wait_for_health", return_value=True):
                     with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
-                        MockSVC.return_value = MagicMock()
-                        exit_code = cmd_vacuum_impl(args)
+                        with patch("yadgar.vacuum._redefine_users_post_import"):
+                            MockSVC.return_value = MagicMock()
+                            exit_code = cmd_vacuum_impl(args)
 
         assert exit_code == 0, f"Expected 0 on success, got {exit_code}"
 
@@ -949,3 +953,145 @@ class TestWaitForYadgarHealth:
             assert not url.endswith("/healthz"), (
                 f"_wait_for_yadgar_health polled {url!r} — must NOT end in /healthz"
             )
+
+
+# ---------------------------------------------------------------------------
+# B1 — _redefine_users_post_import
+# ---------------------------------------------------------------------------
+
+
+class TestRedefineUsersPostImport:
+    """Unit tests for _redefine_users_post_import (v5.1.4 B1).
+
+    SurrealDB /import wipes non-root user definitions.  This helper re-creates
+    yadgar-rw and yadgar-ro via DEFINE USER after every successful /import.
+    """
+
+    def test_issues_define_user_sql_for_rw_and_ro(self, monkeypatch):
+        """Helper posts DEFINE USER for both rw and ro users with correct roles."""
+        import json as _json
+
+        monkeypatch.setenv("YADGAR_RW_USER", "yadgar-rw")
+        monkeypatch.setenv("YADGAR_RW_PASS", "rw-secret")
+        monkeypatch.setenv("YADGAR_RO_USER", "yadgar-ro")
+        monkeypatch.setenv("YADGAR_RO_PASS", "ro-secret")
+
+        posted_bodies: list[dict] = []
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+
+        mock_client = MagicMock()
+        mock_client.__enter__ = lambda s: s
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.post.return_value = mock_resp
+
+        with patch("yadgar.vacuum._build_http_client", return_value=mock_client):
+
+            def _capture_post(path, content=None, headers=None, **kwargs):
+                posted_bodies.append(_json.loads(content))
+                return mock_resp
+
+            mock_client.post.side_effect = _capture_post
+
+            from yadgar.vacuum import _redefine_users_post_import
+
+            _redefine_users_post_import("http://127.0.0.1:8080")
+
+        assert posted_bodies, "No POST was issued"
+        body = posted_bodies[0]
+
+        # SQL must contain DEFINE USER for both users
+        sql = body["sql"]
+        assert "DEFINE USER" in sql
+        assert "ROLES OWNER" in sql
+        assert "ROLES VIEWER" in sql
+
+        # Usernames and passwords passed through vars, NOT interpolated in SQL
+        vars_ = body["vars"]
+        assert vars_["rw_user"] == "yadgar-rw"
+        assert vars_["ro_user"] == "yadgar-ro"
+        assert vars_["rw_pass"] == "rw-secret"
+        assert vars_["ro_pass"] == "ro-secret"
+
+        # SQL must use $rw_user, $ro_user placeholders (not literal usernames)
+        assert "$rw_user" in sql
+        assert "$ro_user" in sql
+        assert "$rw_pass" in sql
+        assert "$ro_pass" in sql
+        assert "yadgar-rw" not in sql
+        assert "yadgar-ro" not in sql
+
+    def test_passes_passwords_via_json_vars_unescaped(self, monkeypatch):
+        """Password containing single-quote is passed as-is in vars (no escaping needed).
+
+        Replaces the spec's test_escapes_single_quotes test — the JSON vars
+        approach means there is no SQL escaping path at all.  The literal
+        password value (including quotes) is transmitted in the vars map.
+        """
+        import json as _json
+
+        monkeypatch.setenv("YADGAR_RW_USER", "yadgar-rw")
+        monkeypatch.setenv("YADGAR_RW_PASS", "abc'def")
+        monkeypatch.setenv("YADGAR_RO_USER", "yadgar-ro")
+        monkeypatch.setenv("YADGAR_RO_PASS", "ro-secret")
+
+        posted_bodies: list[dict] = []
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+
+        mock_client = MagicMock()
+        mock_client.__enter__ = lambda s: s
+        mock_client.__exit__ = MagicMock(return_value=False)
+
+        def _capture_post(path, content=None, headers=None, **kwargs):
+            posted_bodies.append(_json.loads(content))
+            return mock_resp
+
+        mock_client.post.side_effect = _capture_post
+
+        with patch("yadgar.vacuum._build_http_client", return_value=mock_client):
+            from yadgar.vacuum import _redefine_users_post_import
+
+            _redefine_users_post_import("http://127.0.0.1:8080")
+
+        assert posted_bodies
+        body = posted_bodies[0]
+        # The literal password (with quote) must appear verbatim in vars
+        assert body["vars"]["rw_pass"] == "abc'def"
+        # The SQL must NOT contain the literal password value
+        assert "abc'def" not in body["sql"]
+        assert "$rw_pass" in body["sql"]
+
+    def test_raises_if_passwords_missing(self, monkeypatch):
+        """RuntimeError raised when YADGAR_RW_PASS or YADGAR_RO_PASS unset."""
+        monkeypatch.delenv("YADGAR_RW_PASS", raising=False)
+        monkeypatch.delenv("YADGAR_RO_PASS", raising=False)
+        monkeypatch.setenv("YADGAR_RW_USER", "yadgar-rw")
+        monkeypatch.setenv("YADGAR_RO_USER", "yadgar-ro")
+
+        from yadgar.vacuum import _redefine_users_post_import
+
+        with pytest.raises(RuntimeError, match="YADGAR_RW_PASS"):
+            _redefine_users_post_import("http://127.0.0.1:8080")
+
+    def test_raises_on_http_500(self, monkeypatch):
+        """RuntimeError raised when the /sql call returns a non-200 status."""
+        monkeypatch.setenv("YADGAR_RW_USER", "yadgar-rw")
+        monkeypatch.setenv("YADGAR_RW_PASS", "rw-secret")
+        monkeypatch.setenv("YADGAR_RO_USER", "yadgar-ro")
+        monkeypatch.setenv("YADGAR_RO_PASS", "ro-secret")
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        mock_resp.text = "Internal Server Error"
+
+        mock_client = MagicMock()
+        mock_client.__enter__ = lambda s: s
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.post.return_value = mock_resp
+
+        with patch("yadgar.vacuum._build_http_client", return_value=mock_client):
+            from yadgar.vacuum import _redefine_users_post_import
+
+            with pytest.raises(RuntimeError, match="HTTP 500"):
+                _redefine_users_post_import("http://127.0.0.1:8080")

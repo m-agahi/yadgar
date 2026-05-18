@@ -116,6 +116,7 @@ def live_backend_container(tmp_path_factory):
         "surreal_user": "root",
         "surreal_pass": "root",
         "rw_pass": "test123",  # matches YADGAR_RW_PASS env var above
+        "ro_pass": "test123",  # matches YADGAR_RO_PASS env var above
         "container_name": container_name,
         "container_cmd": docker_cmd,
     }

@@ -85,7 +85,17 @@ _REMOVE_USER_RE = re.compile(
 
 
 def strip_export_for_vacuum(surql: str) -> str:
-    """Remove infrastructure state from a SurrealDB /export response.
+    """Strip infrastructure state (action_log + user/access definitions) from a
+    SurrealDB export.
+
+    Why strip user definitions even though current SurrealDB versions don't
+    export them (v2.x redacts users — surrealist#630): defensive in case a
+    future SurrealDB version starts including them. If they ARE present,
+    stripping prevents stale-hash overwrite of the freshly-bootstrapped users.
+
+    Note: the primary user-recovery mechanism is NOT this strip — it's the
+    post-import re-DEFINE USER step in cmd_vacuum_impl (v5.1.4 B1). /import
+    wipes ROOT-level user definitions regardless of payload content.
 
     Strips:
     - action_log table schema and data (breaks re-import).

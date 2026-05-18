@@ -192,6 +192,37 @@ def _wait_container_health(container_name: str, docker_cmd: str, timeout: float 
         time.sleep(0.5)
 
 
+def _wait_for_yadgar_rw_auth(
+    backend_url: str,
+    rw_user: str,
+    rw_pass: str,
+    timeout: float = 60.0,
+) -> None:
+    """Poll basic-auth GET /sql 'INFO FOR DB;' as rw_user until 200 or timeout.
+
+    Raises pytest.fail() on timeout — a non-200 after the timeout window means
+    the fixture is broken (user never bootstrapped), not that B1 is broken.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            resp = httpx.post(
+                f"{backend_url}/sql",
+                content="SELECT 1;",
+                headers=_sql_headers(user=rw_user, password=rw_pass),
+                timeout=5.0,
+            )
+            if resp.status_code == 200:
+                return
+        except Exception:
+            pass
+        time.sleep(1.0)
+    pytest.fail(
+        f"pre-vacuum {rw_user} bootstrap never succeeded — fixture broken "
+        f"(no 200 from {backend_url}/sql within {timeout:.0f}s)"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Test: happy path
 # ---------------------------------------------------------------------------
@@ -219,19 +250,10 @@ def test_vacuum_e2e_happy_path(live_backend_container):
     # Populate ~100 memories so the DB has real on-disk data.
     _populate_memories(backend_url, count=100)
 
-    # v5.1.2 regression probe: check yadgar-rw auth BEFORE vacuum.
-    # Some container image versions have a bootstrap race and never create the user;
-    # we only assert post-vacuum auth if pre-vacuum auth already works.
+    # v5.1.4 B2: wait for yadgar-rw bootstrap BEFORE vacuum.
+    # If the user never appears the fixture is broken — fail loudly, don't skip.
     rw_pass = info.get("rw_pass", "test123")
-    rw_pre_ok = (
-        httpx.post(
-            f"{backend_url}/sql",
-            content="SELECT 1;",
-            headers=_sql_headers(user="yadgar-rw", password=rw_pass),
-            timeout=5.0,
-        ).status_code
-        == 200
-    )
+    _wait_for_yadgar_rw_auth(backend_url, "yadgar-rw", rw_pass, timeout=60.0)
 
     # Capture before_bytes via embed service
     _get_db_size_bytes(embed_url)
@@ -261,10 +283,16 @@ def test_vacuum_e2e_happy_path(live_backend_container):
     )
 
     # Set credentials so V1 SURREAL_USER path is exercised.
+    # Also set rw/ro user env vars so B1 (_redefine_users_post_import) can
+    # re-create yadgar-rw + yadgar-ro after /import (v5.1.4 B1).
     env_patch = {
         "SURREAL_USER": "root",
         "SURREAL_PASS": "root",
         "YADGAR_MCP_AUTH_TOKEN": "test-token",
+        "YADGAR_RW_USER": "yadgar-rw",
+        "YADGAR_RW_PASS": rw_pass,
+        "YADGAR_RO_USER": "yadgar-ro",
+        "YADGAR_RO_PASS": info.get("ro_pass", rw_pass),
     }
 
     from yadgar.vacuum import cmd_vacuum_impl
@@ -324,22 +352,22 @@ def test_vacuum_e2e_happy_path(live_backend_container):
     count = _count_memories(backend_url)
     assert count >= 100, f"Memory rows after vacuum: {count} (expected >= 100) — data was lost"
 
-    # v5.1.2 regression: DEFINE USER in export overwrote freshly-bootstrapped users
-    # with stale hashes, causing 401 after restart.  Only assert if yadgar-rw worked
-    # before vacuum — some images have a bootstrap race and never create the user.
-    if rw_pre_ok:
-        rw_resp = httpx.post(
-            f"{backend_url}/sql",
-            content="SELECT 1;",
-            headers=_sql_headers(user="yadgar-rw", password=rw_pass),
-            timeout=10.0,
-        )
-        assert rw_resp.status_code == 200, (
-            f"yadgar-rw auth failed after vacuum (HTTP {rw_resp.status_code}): "
-            f"{rw_resp.text[:200]}\n"
-            "This indicates DEFINE USER in the export overwrote the freshly-bootstrapped "
-            "user — strip_export_for_vacuum did not remove it."
-        )
+    # v5.1.4 B1 regression: /import wipes non-root user definitions.
+    # _redefine_users_post_import must re-create yadgar-rw after every vacuum.
+    # This assertion is UNCONDITIONAL — we verified pre-vacuum auth above so
+    # the user definitely existed; if it's gone now, B1 is broken.
+    rw_resp = httpx.post(
+        f"{backend_url}/sql",
+        content="SELECT 1;",
+        headers=_sql_headers(user="yadgar-rw", password=rw_pass),
+        timeout=10.0,
+    )
+    assert rw_resp.status_code == 200, (
+        f"yadgar-rw auth failed after vacuum (HTTP {rw_resp.status_code}): "
+        f"{rw_resp.text[:200]}\n"
+        "SurrealDB /import wipes non-root users; _redefine_users_post_import "
+        "must re-create them (v5.1.4 B1)."
+    )
 
 
 # ---------------------------------------------------------------------------
