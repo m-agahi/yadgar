@@ -192,6 +192,63 @@ class TestVizProxyEnvFlag:
         assert _proxy_enabled() is True
 
 
+class TestHandleProxyLazyImport:
+    """v5.1.6 Bug 1: _handle_proxy lazy import must use get_settings(), not settings.
+
+    This test exercises the lazy-import path inside _handle_proxy so any future
+    regression of the ImportError would be caught at test time, not first request.
+    """
+
+    def test_handle_proxy_reads_token_via_get_settings(self) -> None:
+        """_handle_proxy must not raise ImportError when called.
+
+        On v5.1.5 this failed with:
+            ImportError: cannot import name 'settings' from 'yadgar.config'
+        because only get_settings() is exported, not a bare `settings` name.
+
+        The fix is ``from yadgar.config import get_settings`` + ``get_settings().MCP_AUTH_TOKEN``.
+        """
+        import io
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock, patch
+
+        fake_settings = SimpleNamespace(MCP_AUTH_TOKEN="lazy-import-test-token")
+
+        from yadgar.viz_server import _Handler
+
+        handler = _Handler.__new__(_Handler)
+        handler.command = "GET"
+        handler.path = "/api/graph"
+        handler.headers = {}
+        handler.rfile = io.BytesIO(b"")
+        handler._daemon_url = "http://127.0.0.1:8765"
+        handler.log_message = lambda *a, **kw: None
+        handler.address_string = lambda: "127.0.0.1"
+
+        captured_token: list[str] = []
+
+        def _fake_proxy_request(method, upstream_url, headers, body, token, **kw):  # noqa: ANN001
+            captured_token.append(token)
+            return httpx.Response(200, content=b"{}", headers={"content-type": "application/json"})
+
+        # send_response / send_header / end_headers / wfile are noops
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+        handler.wfile = MagicMock()
+
+        with (
+            patch("yadgar.config.get_settings", return_value=fake_settings),
+            patch("yadgar.viz_server._proxy_request", side_effect=_fake_proxy_request),
+        ):
+            # Must NOT raise ImportError — that's the regression we're guarding
+            handler._handle_proxy()
+
+        assert captured_token == ["lazy-import-test-token"], (
+            "_handle_proxy did not read MCP_AUTH_TOKEN via get_settings()"
+        )
+
+
 class TestRunVizServerSignature:
     def test_host_kwarg_present(self) -> None:
         """run_viz_server must still accept host= kwarg (regression guard)."""
