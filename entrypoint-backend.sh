@@ -71,20 +71,23 @@ done
 # the JWT /signin flow, which yadgar's StorageEngine does not implement. The
 # tradeoff: these users have full-server access rather than DB-scoped access.
 # If finer-grained isolation is needed, migrate StorageEngine to JWT auth.
-if [[ -n "${YADGAR_RW_USER}" && -n "${YADGAR_RW_PASS}" && -n "${YADGAR_RO_USER}" && -n "${YADGAR_RO_PASS}" ]]; then
+if [[ -n "${YADGAR_RW_USER:-}" && -n "${YADGAR_RW_PASS:-}" && -n "${YADGAR_RO_USER:-}" && -n "${YADGAR_RO_PASS:-}" ]]; then
     echo "Bootstrapping yadgar-rw and yadgar-ro users..."
-    # Use Authorization header to avoid credentials leaking via /proc/<pid>/cmdline
-    _b64_creds="$(printf '%s:%s' "${SURREAL_USER}" "${SURREAL_PASS}" | base64 -w0)"
-    # Post with Content-Type: application/json so SurrealDB resolves $rw_user etc.
-    # via the vars map — prevents unbound-variable bug (C-2).
-    _bootstrap_sql="DEFINE USER IF NOT EXISTS \$rw_user ON ROOT PASSWORD \$rw_pass ROLES OWNER; DEFINE USER IF NOT EXISTS \$ro_user ON ROOT PASSWORD \$ro_pass ROLES VIEWER;"
-    _bootstrap_body="$(printf '{"sql":"%s","vars":{"rw_user":"%s","rw_pass":"%s","ro_user":"%s","ro_pass":"%s"}}' \
-        "${_bootstrap_sql}" "${YADGAR_RW_USER}" "${YADGAR_RW_PASS}" "${YADGAR_RO_USER}" "${YADGAR_RO_PASS}")"
+    # Use Authorization header to avoid credentials leaking via /proc/<pid>/cmdline.
+    _b64_creds="$(printf '%s:%s' "${SURREAL_USER:-root}" "${SURREAL_PASS:-root}" | base64 -w0)"
+    # SurrealDB v3 HTTP /sql does NOT execute SQL in a JSON body — it treats the
+    # body as a literal JSON value and returns it via implicit RETURN (silent no-op).
+    # Only Content-Type: text/plain bodies are parsed as SurrealQL.
+    #
+    # Passwords are embedded as single-quoted SurrealQL string literals.
+    # SQL-escape any literal single-quote by doubling it (SQL standard: ' -> '').
+    _rw_pass_esc="${YADGAR_RW_PASS//\'/''}"
+    _ro_pass_esc="${YADGAR_RO_PASS//\'/''}"
+    _bootstrap_sql="DEFINE USER IF NOT EXISTS \`${YADGAR_RW_USER}\` ON ROOT PASSWORD '${_rw_pass_esc}' ROLES OWNER; DEFINE USER IF NOT EXISTS \`${YADGAR_RO_USER}\` ON ROOT PASSWORD '${_ro_pass_esc}' ROLES VIEWER;"
     if curl -sf \
         -H "Authorization: Basic ${_b64_creds}" \
-        -H "Surreal-NS: yadgar" -H "Surreal-DB: main" \
-        -H "Content-Type: application/json" \
-        -X POST --data "${_bootstrap_body}" \
+        -H "Content-Type: text/plain" \
+        -X POST --data "${_bootstrap_sql}" \
         http://127.0.0.1:8000/sql >/dev/null; then
         echo "User bootstrap complete (yadgar-rw ROOT OWNER, yadgar-ro ROOT VIEWER)"
     else
