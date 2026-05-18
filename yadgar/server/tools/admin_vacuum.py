@@ -62,7 +62,14 @@ def vacuum_now(force: bool = False) -> dict:
             "started": False,
             "service_unit": "yadgar-vacuum.service",
             "before_bytes": before_bytes,
-            "skipped_reason": "no_supported_service_manager",
+            "skipped_reason": "requires_host_systemctl",
+            "host_command": "systemctl --user start yadgar-vacuum.service",
+            "fallback_host_command": "yadgar vacuum --service-mode=systemd --yes",
+            "detail": (
+                "yadgar runs inside a container with no host systemd visibility. "
+                "Trigger from host shell."
+            ),
+            # Backward compat: keep old field so existing callers don't break
             "shell_command": _shell_cmd,
         }
 
@@ -86,7 +93,14 @@ def vacuum_now(force: bool = False) -> dict:
             "started": False,
             "service_unit": "yadgar-vacuum.service",
             "before_bytes": before_bytes,
-            "skipped_reason": "no_supported_service_manager",
+            "skipped_reason": "requires_host_systemctl",
+            "host_command": "systemctl --user start yadgar-vacuum.service",
+            "fallback_host_command": "yadgar vacuum --service-mode=systemd --yes",
+            "detail": (
+                "yadgar runs inside a container with no host systemd visibility. "
+                "Trigger from host shell."
+            ),
+            # Backward compat: keep old field so existing callers don't break
             "shell_command": "yadgar vacuum --service-mode=manual",
         }
     except _subprocess.CalledProcessError:

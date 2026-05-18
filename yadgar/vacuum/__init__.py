@@ -53,11 +53,24 @@ __all__ = [
 
 
 def _build_http_client(backend_url: str) -> httpx.Client:
-    """Build an httpx.Client with SurrealDB root credentials."""
+    """Build an httpx.Client with SurrealDB root credentials.
+
+    Credential precedence (vacuum is an admin operation, needs root IAM):
+      1. SURREAL_USER / SURREAL_PASS  (preferred — same creds used by entrypoint)
+      2. YADGAR_DB_USER / YADGAR_DB_PASS  (backward compat)
+      3. root / root  (built-in SurrealDB default)
+    """
     import base64
 
-    user = os.environ.get("YADGAR_DB_USER", "root")
-    password = os.environ.get("YADGAR_DB_PASS", "root")
+    if os.environ.get("SURREAL_USER"):
+        user = os.environ["SURREAL_USER"]
+        password = os.environ.get("SURREAL_PASS", "root")
+    elif os.environ.get("YADGAR_DB_USER"):
+        user = os.environ["YADGAR_DB_USER"]
+        password = os.environ.get("YADGAR_DB_PASS", "root")
+    else:
+        user = "root"
+        password = "root"
     auth = base64.b64encode(f"{user}:{password}".encode()).decode()
     return httpx.Client(
         base_url=backend_url,
@@ -146,50 +159,130 @@ def _log_consolidation_row(row: dict) -> None:
 def _vacuum_restart_and_import(
     backend_url: str,
     filtered_path: Path,
+    db_path: Path,
     bloated_path: Path,
     svc: ServiceController,
 ) -> bool:
-    """Phase 3: start backend, POST /import.
+    """Phase 3: rename live DB to .bloated, start backend, POST /import.
+
+    Safe-swap pattern:
+      1. Rename surreal_db → .bloated-<ts>  (backend will start on empty dir).
+      2. Start backend; wait for /health.
+      3. POST /import.
+      4. If /import OK → return True.
+      5. If /import fails → stop backend, rename .bloated-<ts> → surreal_db
+         (atomic restore), restart backend, return False.
 
     Returns:
-        True on success, False on failure (bloated dir must be kept).
+        True on success, False on failure (original DB restored).
     """
+    # Step 1: rename live DB so backend starts on an empty directory
+    print(f"[vacuum] phase 3: renaming {db_path} → {bloated_path} ...", flush=True)
+    db_path.rename(bloated_path)
+
+    # Step 2: start backend
     print("[vacuum] phase 3: starting yadgar-backend ...", flush=True)
     svc.start_backend()
 
     print(f"[vacuum] waiting for {backend_url}/health ...", flush=True)
     if not _wait_for_health(backend_url, timeout_s=120.0):
         print(
-            f"[vacuum] ERROR: yadgar-backend did not become healthy after 120 s.\n"
-            f"Bloated dir retained: {bloated_path}\n"
-            "Start yadgar-backend manually and re-run `yadgar vacuum`.",
+            "[vacuum] ERROR: yadgar-backend did not become healthy after 120 s.\n"
+            "Attempting DB restore ...",
             file=sys.stderr,
         )
+        _restore_db(bloated_path, db_path, svc, backend_url)
         return False
 
+    # Step 2b: Bootstrap the namespace/database on the fresh empty DB.
+    # SurrealDB's /import endpoint requires the target namespace to exist —
+    # it does NOT auto-create it from the headers.  The export does not include
+    # DEFINE NAMESPACE / DEFINE DATABASE, so we must create them here.
+    print("[vacuum] bootstrapping namespace 'yadgar' on fresh DB ...", flush=True)
+    try:
+        ns_client = _build_http_client(backend_url)
+        # Use root-level headers (no ns/db) so DEFINE NAMESPACE succeeds.
+        ns_resp = ns_client.post(
+            "/sql",
+            content="DEFINE NAMESPACE IF NOT EXISTS yadgar; USE NS yadgar; DEFINE DATABASE IF NOT EXISTS main;",
+            headers={"Content-Type": "text/plain"},
+        )
+        ns_client.close()
+        if ns_resp.status_code != 200:
+            print(
+                f"[vacuum] WARNING: namespace bootstrap returned HTTP {ns_resp.status_code}: "
+                f"{ns_resp.text[:200]}",
+                file=sys.stderr,
+            )
+    except Exception as exc:
+        print(f"[vacuum] WARNING: namespace bootstrap failed: {exc}", file=sys.stderr)
+
+    # Step 3: POST /import
     surql_content = filtered_path.read_bytes()
     print(
         f"[vacuum] POST {backend_url}/import ({len(surql_content):,} bytes) ...",
         flush=True,
     )
+
+    # /import requires root IAM — use admin credentials
+    client = _build_http_client(backend_url)
+    import_headers = {
+        "Content-Type": "text/plain",
+        **dict(client.headers),
+    }
+    client.close()
+
     resp = httpx.post(
         f"{backend_url}/import",
         content=surql_content,
-        headers={"Content-Type": "text/plain"},
+        headers=import_headers,
         timeout=300.0,
     )
+
     if resp.status_code != 200:
         print(
             f"[vacuum] ERROR: /import returned HTTP {resp.status_code}:\n"
             f"{resp.text[:1000]}\n\n"
-            f"Bloated dir retained: {bloated_path}\n"
-            "yadgar NOT started.",
+            "Attempting DB restore ...",
             file=sys.stderr,
         )
+        _restore_db(bloated_path, db_path, svc, backend_url)
         return False
 
     print("[vacuum] import successful.", flush=True)
     return True
+
+
+def _restore_db(
+    bloated_path: Path,
+    db_path: Path,
+    svc: ServiceController,
+    backend_url: str,
+) -> None:
+    """Stop backend, rename .bloated back to surreal_db, restart backend.
+
+    Called on /import failure to leave yadgar running against the original DB.
+    Errors here are logged but not re-raised — caller already returns non-zero.
+    """
+    try:
+        print(
+            f"[vacuum] restore: stopping backend and renaming {bloated_path} → {db_path} ...",
+            file=sys.stderr,
+        )
+        svc.stop_backend()
+        # SurrealDB may have created a fresh empty db_path on startup before
+        # /import ran.  Remove it so we can rename .bloated back atomically.
+        if db_path.exists():
+            shutil.rmtree(str(db_path))
+        bloated_path.rename(db_path)
+        svc.start_backend()
+        print("[vacuum] restore: backend restarted on original DB.", file=sys.stderr)
+    except Exception as exc:
+        print(
+            f"[vacuum] CRITICAL: restore failed: {exc}\n"
+            f"Manual recovery needed: rename {bloated_path} → {db_path}",
+            file=sys.stderr,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +426,7 @@ def cmd_vacuum_impl(args) -> int:  # type: ignore[no-untyped-def]
         return 1
 
     # -- Phase 3: Restart + Reimport --
-    import_ok = _vacuum_restart_and_import(backend_url, filtered_path, bloated_path, svc)
+    import_ok = _vacuum_restart_and_import(backend_url, filtered_path, db_path, bloated_path, svc)
     if not import_ok:
         return 1
 

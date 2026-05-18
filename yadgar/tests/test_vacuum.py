@@ -470,14 +470,19 @@ class TestRelatePreservation:
 
 
 class TestFailureInjection:
-    """When /import returns 500, bloated dir must be RETAINED and exit != 0."""
+    """V2 safe-swap semantics: /import failure must restore original DB."""
 
-    def test_import_500_retains_bloated_dir(
+    def test_import_500_restores_original_db(
         self, tmp_path, monkeypatch, yadgar_home, cleanup_script
     ):
+        """NEW SAFE BEHAVIOR: /import 500 → surreal_db restored, no .bloated-* leftover."""
         import httpx
 
         from yadgar.vacuum import cmd_vacuum_impl
+
+        # Write a sentinel file so we can confirm original contents after restore
+        sentinel = yadgar_home / "surreal_db" / "sentinel.txt"
+        sentinel.write_bytes(b"original")
 
         fake_surql = "-- TABLE DATA: memory ----\nUPSERT memory:1 CONTENT {};\n"
         mock_export = MagicMock(status_code=200, text=fake_surql)
@@ -502,6 +507,7 @@ class TestFailureInjection:
         )
 
         started_services = []
+        stopped_services = []
 
         with patch("yadgar.vacuum._log_consolidation_row"):
             with patch("yadgar.vacuum.ServiceController") as MockSVC:
@@ -513,6 +519,9 @@ class TestFailureInjection:
                     mock_svc.start_yadgar.side_effect = lambda: started_services.append(
                         "start_yadgar"
                     )
+                    mock_svc.stop_backend.side_effect = lambda: stopped_services.append(
+                        "stop_backend"
+                    )
                     MockSVC.return_value = mock_svc
 
                     exit_code = cmd_vacuum_impl(args)
@@ -520,11 +529,232 @@ class TestFailureInjection:
         # Non-zero exit on import failure
         assert exit_code != 0, "Expected non-zero exit on /import HTTP 500"
 
-        # Bloated dir must be retained
+        # surreal_db must exist with original contents (sentinel preserved)
+        db_path = yadgar_home / "surreal_db"
+        assert db_path.exists(), "surreal_db must be restored on /import failure"
+        assert (db_path / "sentinel.txt").read_bytes() == b"original", (
+            "surreal_db must contain original data after restore"
+        )
+
+        # No .bloated-* or .bloated-*.tmp leftovers
         bloated_dirs = list(yadgar_home.glob("surreal_db.bloated-*"))
-        assert bloated_dirs, "Bloated dir must be retained when /import fails"
+        assert not bloated_dirs, (
+            f"No .bloated-* dirs should remain after restore, found: {bloated_dirs}"
+        )
 
         # yadgar (MCP layer) must NOT be started after import failure
         assert "start_yadgar" not in started_services, (
             "yadgar service must NOT be started after import failure"
         )
+
+    def test_import_403_restores_original_db(
+        self, tmp_path, monkeypatch, yadgar_home, cleanup_script
+    ):
+        """HTTP 403 (original root-creds bug) also triggers DB restore."""
+        import httpx
+
+        from yadgar.vacuum import cmd_vacuum_impl
+
+        sentinel = yadgar_home / "surreal_db" / "sentinel.txt"
+        sentinel.write_bytes(b"original")
+
+        fake_surql = "-- TABLE DATA: memory ----\nUPSERT memory:1 CONTENT {};\n"
+        mock_export = MagicMock(status_code=200, text=fake_surql)
+        mock_import = MagicMock(status_code=403, text="Not enough permissions")
+        mock_health = MagicMock(status_code=200)
+
+        def mock_get(url, **kwargs):
+            if "/export" in url:
+                return mock_export
+            return mock_health
+
+        def mock_post(url, **kwargs):
+            return mock_import
+
+        monkeypatch.setattr(httpx, "get", mock_get)
+        monkeypatch.setattr(httpx, "post", mock_post)
+
+        args = _vacuum_args(
+            backend_url="http://127.0.0.1:8080",
+            service_mode="manual",
+            db_path=str(yadgar_home / "surreal_db"),
+        )
+
+        with patch("yadgar.vacuum._log_consolidation_row"):
+            with patch("yadgar.vacuum.ServiceController") as MockSVC:
+                with patch("yadgar.vacuum._wait_for_health", return_value=True):
+                    MockSVC.return_value = MagicMock()
+                    exit_code = cmd_vacuum_impl(args)
+
+        assert exit_code != 0
+        db_path = yadgar_home / "surreal_db"
+        assert db_path.exists(), "surreal_db must be restored on 403"
+        assert (db_path / "sentinel.txt").read_bytes() == b"original"
+
+    def test_import_success_leaves_no_surreal_db_at_bloated_path(
+        self, tmp_path, monkeypatch, yadgar_home, cleanup_script
+    ):
+        """SUCCESS path: .bloated-<ts> exists, surreal_db populated, no .tmp leftovers."""
+        import httpx
+
+        from yadgar.vacuum import cmd_vacuum_impl
+
+        sentinel = yadgar_home / "surreal_db" / "sentinel.txt"
+        sentinel.write_bytes(b"original")
+
+        fake_surql = "-- TABLE DATA: memory ----\nUPSERT memory:1 CONTENT {};\n"
+        mock_export = MagicMock(status_code=200, text=fake_surql)
+        mock_import = MagicMock(status_code=200, text="OK")
+        mock_health = MagicMock(status_code=200)
+        mock_invariants = MagicMock(status_code=200, json=MagicMock(return_value={"ok": True}))
+
+        def mock_get(url, **kwargs):
+            if "/export" in url:
+                return mock_export
+            return mock_health
+
+        def mock_post(url, **kwargs):
+            if "/import" in url:
+                return mock_import
+            if "/api/check_invariants" in url:
+                return mock_invariants
+            return MagicMock(status_code=200, text="")
+
+        monkeypatch.setattr(httpx, "get", mock_get)
+        monkeypatch.setattr(httpx, "post", mock_post)
+
+        args = _vacuum_args(
+            backend_url="http://127.0.0.1:8080",
+            service_mode="manual",
+            db_path=str(yadgar_home / "surreal_db"),
+        )
+
+        with patch("yadgar.vacuum._log_consolidation_row"):
+            with patch("yadgar.vacuum.ServiceController") as MockSVC:
+                with patch("yadgar.vacuum._wait_for_health", return_value=True):
+                    with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
+                        MockSVC.return_value = MagicMock()
+                        exit_code = cmd_vacuum_impl(args)
+
+        assert exit_code == 0, f"Expected 0 on success, got {exit_code}"
+
+        # No .tmp leftovers
+        tmp_dirs = list(yadgar_home.glob("surreal_db.bloated-*.tmp"))
+        assert not tmp_dirs, f"No .tmp dirs should remain after success: {tmp_dirs}"
+
+
+# ---------------------------------------------------------------------------
+# V1 — Admin creds precedence: SURREAL_USER/PASS > YADGAR_DB_USER/PASS > root/root
+# ---------------------------------------------------------------------------
+
+
+class TestAdminCreds:
+    """_build_http_client and _surreal_headers use SURREAL_USER/PASS first."""
+
+    def _decode_auth(self, headers: dict) -> tuple[str, str]:
+        import base64
+
+        raw = headers.get("Authorization", "")
+        assert raw.startswith("Basic "), f"Expected Basic auth, got: {raw!r}"
+        decoded = base64.b64decode(raw[len("Basic ") :]).decode()
+        user, _, password = decoded.partition(":")
+        return user, password
+
+    # _build_http_client tests -------------------------------------------
+
+    def test_build_http_client_surreal_wins_over_yadgar(self, monkeypatch):
+        """SURREAL_USER set, YADGAR_DB_USER set → SURREAL_USER wins."""
+        monkeypatch.setenv("SURREAL_USER", "surreal_admin")
+        monkeypatch.setenv("SURREAL_PASS", "surreal_secret")
+        monkeypatch.setenv("YADGAR_DB_USER", "yadgar_rw")
+        monkeypatch.setenv("YADGAR_DB_PASS", "yadgar_secret")
+
+        from yadgar.vacuum import _build_http_client
+
+        client = _build_http_client("http://127.0.0.1:8080")
+        auth_header = dict(client.headers).get("authorization", "")
+        import base64
+
+        decoded = base64.b64decode(auth_header[len("Basic ") :]).decode()
+        user, _, _ = decoded.partition(":")
+        assert user == "surreal_admin", f"Expected surreal_admin, got {user!r}"
+        client.close()
+
+    def test_build_http_client_falls_back_to_yadgar(self, monkeypatch):
+        """SURREAL_USER unset, YADGAR_DB_USER set → YADGAR_DB_USER used."""
+        monkeypatch.delenv("SURREAL_USER", raising=False)
+        monkeypatch.delenv("SURREAL_PASS", raising=False)
+        monkeypatch.setenv("YADGAR_DB_USER", "yadgar_rw")
+        monkeypatch.setenv("YADGAR_DB_PASS", "yadgar_secret")
+
+        from yadgar.vacuum import _build_http_client
+
+        client = _build_http_client("http://127.0.0.1:8080")
+        auth_header = dict(client.headers).get("authorization", "")
+        import base64
+
+        decoded = base64.b64decode(auth_header[len("Basic ") :]).decode()
+        user, _, _ = decoded.partition(":")
+        assert user == "yadgar_rw", f"Expected yadgar_rw, got {user!r}"
+        client.close()
+
+    def test_build_http_client_defaults_root(self, monkeypatch):
+        """Both unset → root/root default."""
+        monkeypatch.delenv("SURREAL_USER", raising=False)
+        monkeypatch.delenv("SURREAL_PASS", raising=False)
+        monkeypatch.delenv("YADGAR_DB_USER", raising=False)
+        monkeypatch.delenv("YADGAR_DB_PASS", raising=False)
+
+        from yadgar.vacuum import _build_http_client
+
+        client = _build_http_client("http://127.0.0.1:8080")
+        auth_header = dict(client.headers).get("authorization", "")
+        import base64
+
+        decoded = base64.b64decode(auth_header[len("Basic ") :]).decode()
+        user, _, password = decoded.partition(":")
+        assert user == "root", f"Expected root, got {user!r}"
+        assert password == "root", f"Expected root password, got {password!r}"
+        client.close()
+
+    # _surreal_headers tests ---------------------------------------------
+
+    def test_surreal_headers_surreal_wins_over_yadgar(self, monkeypatch):
+        """SURREAL_USER set → _surreal_headers uses SURREAL_USER."""
+        monkeypatch.setenv("SURREAL_USER", "surreal_admin")
+        monkeypatch.setenv("SURREAL_PASS", "surreal_secret")
+        monkeypatch.setenv("YADGAR_DB_USER", "yadgar_rw")
+        monkeypatch.setenv("YADGAR_DB_PASS", "yadgar_secret")
+
+        from yadgar.vacuum.phases import _surreal_headers
+
+        headers = _surreal_headers()
+        user, _ = self._decode_auth(headers)
+        assert user == "surreal_admin", f"Expected surreal_admin, got {user!r}"
+
+    def test_surreal_headers_falls_back_to_yadgar(self, monkeypatch):
+        """SURREAL_USER unset → _surreal_headers falls back to YADGAR_DB_USER."""
+        monkeypatch.delenv("SURREAL_USER", raising=False)
+        monkeypatch.delenv("SURREAL_PASS", raising=False)
+        monkeypatch.setenv("YADGAR_DB_USER", "yadgar_rw")
+        monkeypatch.setenv("YADGAR_DB_PASS", "yadgar_secret")
+
+        from yadgar.vacuum.phases import _surreal_headers
+
+        headers = _surreal_headers()
+        user, _ = self._decode_auth(headers)
+        assert user == "yadgar_rw", f"Expected yadgar_rw, got {user!r}"
+
+    def test_surreal_headers_defaults_root(self, monkeypatch):
+        """Both unset → root/root default in _surreal_headers."""
+        monkeypatch.delenv("SURREAL_USER", raising=False)
+        monkeypatch.delenv("SURREAL_PASS", raising=False)
+        monkeypatch.delenv("YADGAR_DB_USER", raising=False)
+        monkeypatch.delenv("YADGAR_DB_PASS", raising=False)
+
+        from yadgar.vacuum.phases import _surreal_headers
+
+        headers = _surreal_headers()
+        user, password = self._decode_auth(headers)
+        assert user == "root", f"Expected root, got {user!r}"
+        assert password == "root", f"Expected root password, got {password!r}"

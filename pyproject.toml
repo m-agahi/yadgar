@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.1.1"
+version = "5.1.2"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "MIT"
@@ -99,7 +99,8 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["yadgar/tests"]
-addopts = "--timeout=120 -n 4 --dist loadgroup --maxprocesses=4"
+addopts = "--timeout=120 -n 4 --dist loadgroup --maxprocesses=4 -m 'not integration'"
 markers = [
     "xdist_group: group tests that share server module-level globals into one worker",
+    "integration: requires docker/podman + spins up live containers (slow, opt-in)",
 ]

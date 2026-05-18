@@ -162,7 +162,7 @@ class TestVacuumNowRefusals:
         assert result["skipped_reason"] == "vacuum_already_running"
 
     def test_no_service_manager(self):
-        """Manual mode → skipped_reason=no_supported_service_manager + shell command."""
+        """Manual mode → requires_host_systemctl + actionable fields (V4)."""
         from yadgar import server as srv
 
         storage = _make_storage(db_size_bytes=500 * 1024 * 1024)
@@ -174,12 +174,22 @@ class TestVacuumNowRefusals:
             result = srv.vacuum_now(force=False)
 
         assert result["started"] is False
-        assert result["skipped_reason"] == "no_supported_service_manager"
+        assert result["skipped_reason"] == "requires_host_systemctl"
+        # Preferred host command
+        assert "host_command" in result
+        assert "yadgar-vacuum.service" in result["host_command"]
+        # Fallback direct invocation
+        assert "fallback_host_command" in result
+        assert "yadgar vacuum" in result["fallback_host_command"]
+        # Detail message
+        assert "detail" in result
+        assert "host" in result["detail"].lower()
+        # Backward compat: old shell_command field still present
         assert "shell_command" in result
         assert "yadgar vacuum" in result["shell_command"]
 
     def test_docker_mode_skips_without_systemctl(self):
-        """Docker mode → skipped_reason=no_supported_service_manager + docker shell command."""
+        """Docker mode → requires_host_systemctl + actionable fields (V4)."""
         from yadgar import server as srv
 
         storage = _make_storage(db_size_bytes=500 * 1024 * 1024)
@@ -191,12 +201,16 @@ class TestVacuumNowRefusals:
             result = srv.vacuum_now(force=False)
 
         assert result["started"] is False
-        assert result["skipped_reason"] == "no_supported_service_manager"
+        assert result["skipped_reason"] == "requires_host_systemctl"
+        assert "host_command" in result
+        assert "yadgar-vacuum.service" in result["host_command"]
+        assert "fallback_host_command" in result
+        assert "detail" in result
+        # Backward compat: old shell_command still present
         assert "shell_command" in result
-        assert "docker" in result["shell_command"]
 
     def test_file_not_found_on_is_active_skips(self):
-        """systemctl not found during is-active check → skipped, no crash."""
+        """systemctl not found during is-active → requires_host_systemctl (V4)."""
         from yadgar import server as srv
 
         storage = _make_storage(db_size_bytes=500 * 1024 * 1024)
@@ -209,7 +223,12 @@ class TestVacuumNowRefusals:
             result = srv.vacuum_now(force=False)
 
         assert result["started"] is False
-        assert result["skipped_reason"] == "no_supported_service_manager"
+        assert result["skipped_reason"] == "requires_host_systemctl"
+        assert "host_command" in result
+        assert "yadgar-vacuum.service" in result["host_command"]
+        assert "fallback_host_command" in result
+        assert "detail" in result
+        # Backward compat: old shell_command still present
         assert "shell_command" in result
 
 
