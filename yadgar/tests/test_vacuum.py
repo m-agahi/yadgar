@@ -76,6 +76,154 @@ class TestStripActionLog:
 
         return strip_action_log
 
+
+# ---------------------------------------------------------------------------
+# Tests for strip_export_for_vacuum (user/access stripping)
+# ---------------------------------------------------------------------------
+
+
+class TestStripExportForVacuum:
+    """Unit tests for the extended strip_export_for_vacuum() function.
+
+    Covers stripping of DEFINE USER / DEFINE ACCESS / REMOVE USER statements
+    that represent infrastructure state owned by the backend entrypoint, not
+    user data.  These must not survive into the /import payload or they will
+    overwrite the freshly-bootstrapped users with stale password hashes.
+
+    Also inherits the original TestStripActionLog test methods via _import_strip,
+    which now routes to strip_action_log (an alias for strip_export_for_vacuum).
+    """
+
+    def _strip(self):
+        from yadgar.vacuum.strip import strip_export_for_vacuum
+
+        return strip_export_for_vacuum
+
+    def _import_strip(self):
+        """Back-compat alias — same function now, used by the old test methods below."""
+        from yadgar.vacuum import strip_action_log
+
+        return strip_action_log
+
+    def test_strip_removes_define_user_on_root(self):
+        """DEFINE USER ... ON ROOT ... stripped from export."""
+        strip = self._strip()
+        surql = (
+            "DEFINE TABLE memory TYPE ANY SCHEMALESS PERMISSIONS NONE;\n"
+            "DEFINE USER yadgar-rw ON ROOT PASSWORD '$argon2id$v=19$m=4096$...' ROLES OWNER;\n"
+            "DEFINE USER yadgar-ro ON ROOT PASSWORD '$argon2id$v=19$m=4096$...' ROLES VIEWER;\n"
+            "INSERT INTO memory { content: 'hi', heat: 1.0 };\n"
+        )
+        out = strip(surql)
+        assert "DEFINE USER yadgar-rw ON ROOT" not in out
+        assert "DEFINE USER yadgar-ro ON ROOT" not in out
+        assert "DEFINE TABLE memory" in out
+        assert "INSERT INTO memory" in out
+
+    def test_strip_removes_define_user_on_namespace(self):
+        """DEFINE USER ... ON NAMESPACE ... (and NS alias) stripped."""
+        strip = self._strip()
+        surql = (
+            "DEFINE USER ns_user ON NAMESPACE yadgar PASSWORD 'x' ROLES OWNER;\n"
+            "DEFINE USER ns_user2 ON NS yadgar PASSWORD 'y' ROLES VIEWER;\n"
+            "INSERT INTO memory { content: 'safe' };\n"
+        )
+        out = strip(surql)
+        assert "DEFINE USER ns_user ON NAMESPACE" not in out
+        assert "DEFINE USER ns_user2 ON NS" not in out
+        assert "INSERT INTO memory" in out
+
+    def test_strip_removes_define_access(self):
+        """DEFINE ACCESS ... stripped (SurrealDB v2+ user/token syntax)."""
+        strip = self._strip()
+        surql = (
+            "DEFINE TABLE wiki_page TYPE ANY SCHEMALESS PERMISSIONS NONE;\n"
+            "DEFINE ACCESS yadgar_api ON DATABASE TYPE JWT ALGORITHM HS256 KEY 'secret';\n"
+            "INSERT INTO wiki_page { title: 'Home' };\n"
+        )
+        out = strip(surql)
+        assert "DEFINE ACCESS yadgar_api" not in out
+        assert "DEFINE TABLE wiki_page" in out
+        assert "INSERT INTO wiki_page" in out
+
+    def test_strip_removes_remove_user(self):
+        """REMOVE USER ... stripped (defensive, also infra state)."""
+        strip = self._strip()
+        surql = "REMOVE USER old_user ON ROOT;\nINSERT INTO memory { content: 'keep me' };\n"
+        out = strip(surql)
+        assert "REMOVE USER old_user" not in out
+        assert "INSERT INTO memory" in out
+
+    def test_strip_preserves_table_definitions(self):
+        """DEFINE TABLE, DEFINE INDEX, DEFINE FIELD survive user stripping."""
+        strip = self._strip()
+        surql = (
+            "DEFINE TABLE memory TYPE ANY SCHEMALESS PERMISSIONS NONE;\n"
+            "DEFINE INDEX memory_heat ON TABLE memory COLUMNS heat;\n"
+            "DEFINE FIELD content ON TABLE memory TYPE string;\n"
+            "DEFINE USER yadgar-rw ON ROOT PASSWORD 'hash' ROLES OWNER;\n"
+        )
+        out = strip(surql)
+        assert "DEFINE TABLE memory" in out
+        assert "DEFINE INDEX memory_heat" in out
+        assert "DEFINE FIELD content" in out
+        assert "DEFINE USER yadgar-rw ON ROOT" not in out
+
+    def test_strip_preserves_memory_data(self):
+        """INSERT memory rows with arbitrary content are not touched."""
+        strip = self._strip()
+        surql = (
+            "DEFINE USER yadgar-rw ON ROOT PASSWORD '$argon2id$...' ROLES OWNER;\n"
+            "INSERT INTO memory {\n"
+            "  content: 'You can DEFINE USER ON ROOT to create a root-level user.',\n"
+            "  heat: 0.8\n"
+            "};\n"
+        )
+        out = strip(surql)
+        # The memory content mentions DEFINE USER but must NOT be stripped.
+        assert "You can DEFINE USER ON ROOT" in out
+        # The actual DEFINE USER statement must be stripped.
+        assert "DEFINE USER yadgar-rw ON ROOT PASSWORD" not in out
+
+    def test_strip_no_false_positive_on_mid_line_define_user(self):
+        """DEFINE USER mid-line (inside a string value) is not stripped.
+
+        The ^ anchor in MULTILINE mode ensures only start-of-line statements
+        are matched.  Content inside INSERT rows that mentions DEFINE USER
+        must survive.
+        """
+        strip = self._strip()
+        surql = "INSERT INTO memory { content: 'DEFINE USER foo ON ROOT ...' };\n"
+        out = strip(surql)
+        # Must be preserved — it's data, not a SQL statement
+        assert "DEFINE USER foo ON ROOT" in out
+
+    def test_strip_preserves_existing_action_log_strip(self):
+        """Original action_log stripping still works after function rename."""
+        strip = self._strip()
+        surql = (
+            "DEFINE TABLE action_log SCHEMAFULL;\n"
+            "-- TABLE DATA: action_log ----\n"
+            "UPSERT action_log:1 CONTENT {cmd: 'bad'};\n"
+            "\n"
+            "INSERT INTO memory { content: 'safe' };\n"
+        )
+        out = strip(surql)
+        assert "action_log:1" not in out
+        assert "DEFINE TABLE action_log" not in out
+        assert "INSERT INTO memory" in out
+
+    def test_strip_action_log_alias_still_works(self):
+        """strip_action_log remains a back-compat alias for strip_export_for_vacuum."""
+        from yadgar.vacuum.strip import strip_action_log, strip_export_for_vacuum
+
+        surql = (
+            "DEFINE USER yadgar-rw ON ROOT PASSWORD 'hash' ROLES OWNER;\n"
+            "INSERT INTO memory { content: 'data' };\n"
+        )
+        # Both functions must produce identical output
+        assert strip_action_log(surql) == strip_export_for_vacuum(surql)
+
     def test_removes_data_block(self):
         strip = self._import_strip()
         surql = (
@@ -758,3 +906,46 @@ class TestAdminCreds:
         user, password = self._decode_auth(headers)
         assert user == "root", f"Expected root, got {user!r}"
         assert password == "root", f"Expected root password, got {password!r}"
+
+
+# ---------------------------------------------------------------------------
+# Regression: _wait_for_yadgar_health must poll /health, not /healthz
+# ---------------------------------------------------------------------------
+
+
+class TestWaitForYadgarHealth:
+    """`_wait_for_yadgar_health` must request /health (not /healthz).
+
+    v5.1.2 deployed with a typo: the URL was constructed as `<url>/healthz`.
+    yadgar exposes `/health` (no z).  This caused the 60 s poll to never
+    receive a 200, so vacuum exited with status 2 even on fully successful
+    runs.
+    """
+
+    def test_polls_health_not_healthz(self, monkeypatch):
+        """_wait_for_yadgar_health must call <url>/health, not <url>/healthz."""
+        import httpx
+
+        polled_urls: list[str] = []
+
+        def fake_get(url, **kwargs):
+            polled_urls.append(url)
+            m = MagicMock()
+            m.status_code = 200
+            return m
+
+        monkeypatch.setattr(httpx, "get", fake_get)
+
+        from yadgar.vacuum import _wait_for_yadgar_health
+
+        result = _wait_for_yadgar_health("http://127.0.0.1:8765", timeout_s=5.0)
+
+        assert result is True
+        assert polled_urls, "httpx.get was never called"
+        for url in polled_urls:
+            assert url.endswith("/health"), (
+                f"_wait_for_yadgar_health polled {url!r} — must end in /health not /healthz"
+            )
+            assert not url.endswith("/healthz"), (
+                f"_wait_for_yadgar_health polled {url!r} — must NOT end in /healthz"
+            )

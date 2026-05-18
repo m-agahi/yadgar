@@ -16,7 +16,7 @@ from pathlib import Path
 import httpx
 
 from yadgar.ops import ServiceController
-from yadgar.vacuum.strip import strip_action_log
+from yadgar.vacuum.strip import strip_export_for_vacuum as strip_action_log
 
 
 def _dir_bytes(path: Path) -> int:

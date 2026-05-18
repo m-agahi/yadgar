@@ -219,6 +219,20 @@ def test_vacuum_e2e_happy_path(live_backend_container):
     # Populate ~100 memories so the DB has real on-disk data.
     _populate_memories(backend_url, count=100)
 
+    # v5.1.2 regression probe: check yadgar-rw auth BEFORE vacuum.
+    # Some container image versions have a bootstrap race and never create the user;
+    # we only assert post-vacuum auth if pre-vacuum auth already works.
+    rw_pass = info.get("rw_pass", "test123")
+    rw_pre_ok = (
+        httpx.post(
+            f"{backend_url}/sql",
+            content="SELECT 1;",
+            headers=_sql_headers(user="yadgar-rw", password=rw_pass),
+            timeout=5.0,
+        ).status_code
+        == 200
+    )
+
     # Capture before_bytes via embed service
     _get_db_size_bytes(embed_url)
     # Even if embed endpoint not yet populated, we proceed — we'll check
@@ -309,6 +323,23 @@ def test_vacuum_e2e_happy_path(live_backend_container):
     # The content must still be queryable — container was restarted by the controller.
     count = _count_memories(backend_url)
     assert count >= 100, f"Memory rows after vacuum: {count} (expected >= 100) — data was lost"
+
+    # v5.1.2 regression: DEFINE USER in export overwrote freshly-bootstrapped users
+    # with stale hashes, causing 401 after restart.  Only assert if yadgar-rw worked
+    # before vacuum — some images have a bootstrap race and never create the user.
+    if rw_pre_ok:
+        rw_resp = httpx.post(
+            f"{backend_url}/sql",
+            content="SELECT 1;",
+            headers=_sql_headers(user="yadgar-rw", password=rw_pass),
+            timeout=10.0,
+        )
+        assert rw_resp.status_code == 200, (
+            f"yadgar-rw auth failed after vacuum (HTTP {rw_resp.status_code}): "
+            f"{rw_resp.text[:200]}\n"
+            "This indicates DEFINE USER in the export overwrote the freshly-bootstrapped "
+            "user — strip_export_for_vacuum did not remove it."
+        )
 
 
 # ---------------------------------------------------------------------------

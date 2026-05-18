@@ -3,7 +3,7 @@
 Mirrors the verified manual procedure from 2026-05-12:
 
   1. Preflight: confirm surreal_db/ exists, backend reachable.
-  2. Phase 1 — Export: GET /export, pipe through strip_action_log().
+  2. Phase 1 — Export: GET /export, pipe through strip_export_for_vacuum().
   3. Phase 2 — Snapshot + Drop: cp -r surreal_db pre-vacuum snapshot,
                stop daemons, mv surreal_db → surreal_db.bloated-<ts>.
   4. Phase 3 — Restart + Reimport: start yadgar-backend, wait for /health,
@@ -34,11 +34,12 @@ from yadgar.vacuum.phases import (
     _vacuum_export,
     _vacuum_snapshot_and_drop,
 )
-from yadgar.vacuum.strip import strip_action_log
+from yadgar.vacuum.strip import strip_action_log, strip_export_for_vacuum
 
 __all__ = [
     "cmd_vacuum_impl",
     "strip_action_log",
+    "strip_export_for_vacuum",
     "_run_cleanup_script",
     "ServiceController",
     "_wait_for_health",
@@ -107,11 +108,11 @@ def _wait_for_yadgar_health(
     timeout_s: float = 60.0,
     poll_interval: float = 1.0,
 ) -> bool:
-    """Poll GET <url>/healthz until 200 or timeout. Returns True on success."""
+    """Poll GET <url>/health until 200 or timeout. Returns True on success."""
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         try:
-            r = httpx.get(f"{url}/healthz", timeout=2.0)
+            r = httpx.get(f"{url}/health", timeout=2.0)
             if r.status_code == 200:
                 return True
         except Exception:
@@ -308,7 +309,7 @@ def _vacuum_finalize(
     print("[vacuum] starting yadgar ...", flush=True)
     svc.start_yadgar()
 
-    print(f"[vacuum] waiting for {yadgar_url}/healthz ...", flush=True)
+    print(f"[vacuum] waiting for {yadgar_url}/health ...", flush=True)
     if not _wait_for_yadgar_health(yadgar_url, timeout_s=60.0):
         print(
             f"[vacuum] WARNING: yadgar did not become healthy. "
