@@ -56,6 +56,15 @@ class ServiceController:
         else:
             self._manual_instructions("stop")
 
+    def stop_backend(self) -> None:
+        """Stop yadgar-backend only (used by restore path in vacuum phase 3)."""
+        if self.mode == "systemd":
+            self._systemctl("stop", "yadgar-backend")
+        elif self.mode == "docker":
+            self._docker_compose("stop", "yadgar-backend")
+        else:
+            self._manual_instructions("stop-backend")
+
     def start_backend(self) -> None:
         """Start yadgar-backend only."""
         if self.mode == "systemd":
@@ -108,6 +117,12 @@ class ServiceController:
             print(
                 "  systemctl --user stop yadgar yadgar-backend\n"
                 "  # OR: docker compose stop yadgar yadgar-backend\n",
+                file=sys.stderr,
+            )
+        elif step == "stop-backend":
+            print(
+                "  systemctl --user stop yadgar-backend\n"
+                "  # OR: docker compose stop yadgar-backend\n",
                 file=sys.stderr,
             )
         elif step == "start-backend":

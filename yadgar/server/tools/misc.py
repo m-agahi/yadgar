@@ -15,7 +15,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import shlex
 from pathlib import Path
 
 import yadgar.server._state as _st
@@ -201,195 +200,31 @@ def install_hooks(project_directory: str = "", scope: str = "project") -> dict:
            and PreToolUse hooks to ~/.claude/settings.json and scripts to ~/.claude/hooks/.
            Stop hook is always global regardless of scope.
     """
-    import shutil
+    from yadgar.install_hooks_lib import install_hooks_impl, is_running_in_container
 
-    if scope not in ("project", "global"):
+    # Refuse when running inside a container: the container's filesystem is
+    # throwaway and $HOME resolves to /root, not the host user's home dir.
+    if is_running_in_container():
         return {
-            "status": "error",
-            "reason": f"Invalid scope '{scope}': must be 'project' or 'global'",
+            "status": "refused",
+            "reason": "running_in_container",
+            "detail": (
+                "install_hooks must run on the host (the container's filesystem is throwaway). "
+                "Run `yadgar install-hooks --scope=global` on the host machine, or POST "
+                "/hooks/install-bootstrap for the settings.json snippet to write manually."
+            ),
+            "host_command": "yadgar install-hooks --scope=global",
+            "host_command_fallback": (
+                "# manual: read host_command_fallback_response from POST /hooks/install-bootstrap"
+            ),
         }
 
-    project_dir = Path(project_directory) if project_directory else Path.cwd()
-
-    # Global paths (Stop hook always here; all hooks go here when scope=global)
-    global_claude_dir = Path.home() / ".claude"
-    global_hooks_dir = global_claude_dir / "hooks"
-    global_hooks_dir.mkdir(parents=True, exist_ok=True)
-
-    # Determine where hook scripts and settings are written based on scope
-    if scope == "global":
-        hooks_dir = global_hooks_dir
-        settings_target_dir = global_claude_dir
-    else:
-        claude_dir = project_dir / ".claude"
-        hooks_dir = claude_dir / "hooks"
-        hooks_dir.mkdir(parents=True, exist_ok=True)
-        settings_target_dir = claude_dir
-
-    # Copy hook scripts from package
-    package_hooks = Path(__file__).parent.parent.parent / "hooks"
-
-    hook_files = {
-        "pre-compact-drain.sh": 0o755,
-        "post-compact-rehydrate.sh": 0o755,
-        "post-tool-capture.py": 0o755,
-        "session-start-context.py": 0o755,
-        "prompt-recall.py": 0o755,
-    }
-
-    for filename, mode in hook_files.items():
-        src = package_hooks / filename
-        dst = hooks_dir / filename
-        if src.exists():
-            shutil.copy2(src, dst)
-            dst.chmod(mode)
-
-    # Stop hook — always installed globally so it fires in every session
-    stop_hook_src = package_hooks / "stop-memory-checkpoint.py"
-    stop_hook_dst = global_hooks_dir / "yadgar-stop-memory-checkpoint.py"
-    if stop_hook_src.exists():
-        shutil.copy2(stop_hook_src, stop_hook_dst)
-        stop_hook_dst.chmod(0o755)
-
-    # hook_runner.py — the real script that all hooks delegate to.
-    # Installed at an absolute path; project_directory passed as argv[1]
-    # so no shell interpolation occurs.
-    hook_runner_src = Path(__file__).parent.parent.parent / "scripts" / "hook_runner.py"
-    hook_runner_dst = hooks_dir / "hook_runner.py"
-    if hook_runner_src.exists():
-        shutil.copy2(hook_runner_src, hook_runner_dst)
-        hook_runner_dst.chmod(0o755)
-
-    # Absolute path string — safe to embed in JSON command field because
-    # it is passed as argv[0] to execve, not shell-interpolated.
-    _runner = str(hook_runner_dst)
-
-    # Auth env block: if YADGAR_MCP_AUTH_TOKEN is set, inject it into every hook
-    # so hook scripts can authenticate to the daemon.
-    _auth_token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
-    _env_block: dict = {}
-    if _auth_token:
-        _env_block = {"YADGAR_MCP_AUTH_TOKEN": _auth_token}
-
-    def _hook_entry(hook_type: str, matcher: str = "") -> dict:
-        """Build a hook config entry using hook_runner.py."""
-        entry: dict = {
-            "matcher": matcher,
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": f"python3 {shlex.quote(_runner)} {hook_type}",
-                }
-            ],
-        }
-        if _env_block:
-            entry["hooks"][0]["env"] = _env_block
-        return entry
-
-    # Write hooks configuration to the target settings file
-    settings_path = settings_target_dir / "settings.json"
-    settings_data: dict = {}
-    if settings_path.exists():
-        try:
-            settings_data = json.loads(settings_path.read_text())
-        except Exception:
-            settings_data = {}
-
-    hooks_config = settings_data.get("hooks", {})
-
-    # PreCompact hook — drain context before compaction
-    hooks_config["PreCompact"] = [_hook_entry("pre-compact-drain")]
-
-    # SessionStart hooks — context on every session + full restore on compact
-    hooks_config["SessionStart"] = [
-        _hook_entry("session-start-context"),
-        _hook_entry("post-compact-rehydrate", matcher="compact"),
-    ]
-
-    # PostToolUse hook — capture every tool action into action_log
-    hooks_config["PostToolUse"] = [_hook_entry("post-tool-capture")]
-
-    # UserPromptSubmit hook — auto-recall relevant memories on every user turn
-    hooks_config["UserPromptSubmit"] = [_hook_entry("prompt-recall")]
-
-    # PreToolUse hook — block direct docker exec into yadgar containers
-    hooks_config["PreToolUse"] = [_hook_entry("db-lockdown-check", matcher="Bash")]
-
-    settings_data["hooks"] = hooks_config
-    # Atomic write: write to tmp file, then os.replace to avoid corrupt settings.json
-    import tempfile
-
-    tmp_fd, tmp_path_str = tempfile.mkstemp(
-        dir=settings_target_dir, prefix=".settings_tmp_", suffix=".json"
+    return install_hooks_impl(
+        home_dir=Path.home(),
+        scope=scope,
+        project_directory=project_directory or None,
+        dry_run=False,
     )
-    try:
-        with os.fdopen(tmp_fd, "w") as f:
-            f.write(json.dumps(settings_data, indent=2))
-        os.replace(tmp_path_str, settings_path)
-    except Exception:
-        try:
-            os.unlink(tmp_path_str)
-        except Exception:
-            pass
-        raise
-
-    # Register Stop hook in global ~/.claude/settings.json
-    # (always global, regardless of scope — Stop must fire in every session)
-    global_settings_path = global_claude_dir / "settings.json"
-    global_settings: dict = {}
-    if global_settings_path.exists():
-        try:
-            global_settings = json.loads(global_settings_path.read_text())
-        except Exception:
-            global_settings = {}
-
-    global_hooks = global_settings.get("hooks", {})
-    global_hooks["Stop"] = [
-        {
-            "matcher": "",
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": f'python3 "{stop_hook_dst}"',
-                }
-            ],
-        }
-    ]
-    global_settings["hooks"] = global_hooks
-    # Atomic write for global settings too
-    import tempfile
-
-    tmp_fd2, tmp_path_str2 = tempfile.mkstemp(
-        dir=global_claude_dir, prefix=".global_settings_tmp_", suffix=".json"
-    )
-    try:
-        with os.fdopen(tmp_fd2, "w") as f:
-            f.write(json.dumps(global_settings, indent=2))
-        os.replace(tmp_path_str2, global_settings_path)
-    except Exception:
-        try:
-            os.unlink(tmp_path_str2)
-        except Exception:
-            pass
-        raise
-
-    return {
-        "status": "installed",
-        "scope": scope,
-        "project_directory": str(project_dir),
-        "hooks_directory": str(hooks_dir),
-        "hooks_installed": [
-            "PreCompact (drain)",
-            "SessionStart (context)",
-            "SessionStart (compact restore)",
-            "PostToolUse (auto-capture)",
-            "UserPromptSubmit (auto-recall)",
-            "PreToolUse (DB lockdown)",
-            "Stop (memory checkpoint — global)",
-        ],
-        "settings_file": str(settings_path),
-        "global_settings_file": str(global_settings_path),
-    }
 
 
 @_tool(power=True)

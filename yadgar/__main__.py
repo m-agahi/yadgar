@@ -67,6 +67,7 @@ def cli():
         context,
         daemon,
         drain,
+        install_hooks,
         restore,
         rules,
         seed,
@@ -88,6 +89,7 @@ def cli():
     viz.register(subparsers)
     setup.register(subparsers)
     daemon.register(subparsers)
+    install_hooks.register(subparsers)
 
     args = parser.parse_args()
 

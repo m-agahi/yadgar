@@ -7,6 +7,28 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.1.2] - 2026-05-18
+> Vacuum proper-fix + install_hooks containerization + end-to-end integration test.
+
+### Fixed
+- **V1 vacuum admin creds.** `yadgar/vacuum/_build_http_client` and `_surreal_headers` now read `SURREAL_USER`/`SURREAL_PASS` first (root, for SurrealDB IAM admin endpoints), fall back to `YADGAR_DB_USER`/`YADGAR_DB_PASS`, then `root`/`root` default. The previous v5.1.0 + v5.1.1 behavior used the yadgar-rw role for `/import` which got HTTP 403 "Not enough permissions". Removes the need for the nix bash-wrapper workaround on `yadgar-vacuum.service` ExecStart.
+- **V2 vacuum fail-safe phase ordering.** Phase 2 no longer renames `surreal_db` → `.bloated-<ts>` before `/import` succeeds. New order: snapshot (copy), stop backend, rename to `.bloated-<ts>.tmp`, restart backend, POST `/import`. On 200: rename `.tmp` → final `.bloated-<ts>`. On non-200: restore original via `shutil.rmtree(surreal_db) + rename .tmp → surreal_db`, restart backend, exit non-zero. The previous v5.1.0 + v5.1.1 path renamed eagerly — when `/import` failed (as it did on every v5.1.1 deploy with the 403), the live DB was the fresh-empty one and yadgar required manual operator rollback.
+- **vacuum/_restore_db EEXIST.** When SurrealDB pre-creates `surreal_db/` before `/import` fails, the restore rename hit `EEXIST`. Fixed by `shutil.rmtree(db_path)` before rename. Caught by V3.
+- **vacuum/_import namespace bootstrap.** `/import` was silently returning HTTP 200 but importing nothing because the `yadgar` namespace did not exist on the fresh DB. Vacuum now bootstraps ns/db via `/sql` before calling `/import`. Caught by V3.
+
+### Changed
+- **V4 `vacuum_now()` MCP tool returns actionable structured response** when no service manager is reachable (the normal case when called from inside the daemon container). New fields: `skipped_reason="requires_host_systemctl"`, `host_command="systemctl --user start yadgar-vacuum.service"`, `fallback_host_command="yadgar vacuum --service-mode=systemd --yes"`, `detail` explaining the host-vs-container split. Preserves the legacy `shell_command` field for backward compat.
+- **H1 `install_hooks` containerization.** Tool now detects container mode (`YADGAR_IN_CONTAINER=1` env — explicit opt-in) and refuses with a structured response pointing to the host-side path, instead of silently writing to the container's `/root/.claude/settings.json` (the long-running deployment bug for non-nix users where hook scripts ended up with no bearer token → 401 → `Hook JSON output validation failed`). New `yadgar install-hooks` CLI subcommand (host-side via pipx) writes to the invoking user's `$HOME/.claude/settings.json`. Shared install logic lives in `yadgar/install_hooks_lib.py`. The `/.dockerenv` probe was dropped after CI regression — Forgejo Actions runner containers have that file present, causing 4 test_server.py tests to receive `refused` instead of `installed`. The nix module and docker-compose set `YADGAR_IN_CONTAINER=1` explicitly on the yadgar core service ExecStart; CI must not set it.
+
+### Added
+- **V3 end-to-end vacuum integration test.** `yadgar/tests/integration/test_vacuum_e2e.py` spawns a real `yadgar-backend` container, populates ~100 memories, runs `yadgar vacuum` as a host subprocess, asserts `before_bytes > after_bytes` + DB intact. Second test forces `/import` to 403 via read-only creds and asserts V2's restore-on-failure path keeps the original DB usable. New pytest marker `integration` (opt-in; default test run skips via `addopts='-m "not integration"'`). Caught the two additional bugs landed in V2 (EEXIST + namespace bootstrap).
+
+### Companion nix changes (out-of-repo, already on master ~/git/nix)
+- `b7eb004` `--db-path /data/surreal_db` workaround on yadgar-vacuum.service — REVERTABLE after v5.1.2 image deploys (env-default in V1 covers it).
+- `1f2f1a6` `--backend-url http://yadgar-backend:8000` workaround — REVERTABLE after v5.1.2.
+- v5.1.1 bash-wrapper mapping `YADGAR_DB_USER=$SURREAL_USER` on the vacuum ExecStart — REVERTABLE after v5.1.2.
+- Keep: `BindsTo=yadgar-backend.service` (`2773e4c`), backend `-p 127.0.0.1:8000:8000` exposure, host pipx vacuum invocation (`f45e7ec`), backend `-e YADGAR_MCP_AUTH_TOKEN` passthrough (`61bf5f5`), `claude-code.nix` token injection (`16dd962`).
+
 ## [5.1.1] - 2026-05-17
 > Hotfix follow-up to v5.1.0 — ops bugs surfaced during deploy.
 

@@ -53,13 +53,24 @@ def _run_cleanup_script(yadgar_home: Path, pattern: str, keep_n: int) -> None:
 
 def _surreal_headers() -> dict[str, str]:
     """SurrealDB v2+ /export rejects with HTTP 400 'Specify a namespace' without
-    these headers, and basic-auth without YADGAR_DB_USER/PASS. Module-level
-    httpx.get keeps test monkeypatches working (cf. test_vacuum.py).
+    these headers. Vacuum is an admin operation — use root credentials.
+
+    Credential precedence:
+      1. SURREAL_USER / SURREAL_PASS  (preferred — root IAM, used by entrypoint)
+      2. YADGAR_DB_USER / YADGAR_DB_PASS  (backward compat)
+      3. root / root  (built-in SurrealDB default)
     """
     import base64
 
-    user = os.environ.get("YADGAR_DB_USER", "root")
-    password = os.environ.get("YADGAR_DB_PASS", "root")
+    if os.environ.get("SURREAL_USER"):
+        user = os.environ["SURREAL_USER"]
+        password = os.environ.get("SURREAL_PASS", "root")
+    elif os.environ.get("YADGAR_DB_USER"):
+        user = os.environ["YADGAR_DB_USER"]
+        password = os.environ.get("YADGAR_DB_PASS", "root")
+    else:
+        user = "root"
+        password = "root"
     auth = base64.b64encode(f"{user}:{password}".encode()).decode()
     return {
         "Authorization": f"Basic {auth}",
@@ -107,10 +118,15 @@ def _vacuum_snapshot_and_drop(
     svc: ServiceController,
     before_bytes: int,
 ) -> tuple[Path, Path]:
-    """Phase 2: snapshot, stop daemons, mv to .bloated.
+    """Phase 2: snapshot and stop daemons (live DB kept intact until /import succeeds).
+
+    The rename of surreal_db → .bloated-<ts> is deferred to phase 3 so that a
+    failed /import can atomically restore the original DB without operator
+    intervention.
 
     Returns:
-        (snapshot_path, bloated_path)
+        (snapshot_path, bloated_path)  — bloated_path is the *intended* rename
+        target; the actual rename is performed by _vacuum_restart_and_import.
     """
     ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     snapshot_path = yadgar_home / f"surreal_db.pre-vacuum-{ts}"
@@ -126,7 +142,6 @@ def _vacuum_snapshot_and_drop(
     print("[vacuum] stopping daemons ...", flush=True)
     svc.stop()
 
-    print(f"[vacuum] renaming {db_path} → {bloated_path} ...", flush=True)
-    db_path.rename(bloated_path)
+    # NOTE: surreal_db is NOT renamed here. Phase 3 handles rename + rollback.
 
     return snapshot_path, bloated_path
