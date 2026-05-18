@@ -369,6 +369,41 @@ def test_vacuum_e2e_happy_path(live_backend_container):
         "must re-create them (v5.1.4 B1)."
     )
 
+    # v5.1.5 raw-SQL fix: verify via INFO FOR ROOT that both yadgar-rw and
+    # yadgar-ro appear as named users — not just that auth pings succeed.
+    # The auth ping above passes via root creds if the users are gone; this
+    # check uses root to inspect the server-level user catalog directly.
+    info_resp = httpx.post(
+        f"{backend_url}/sql",
+        content="INFO FOR ROOT;",
+        headers=_sql_headers(),  # root creds, no ns/db needed
+        timeout=10.0,
+    )
+    assert info_resp.status_code == 200, (
+        f"INFO FOR ROOT returned HTTP {info_resp.status_code}: {info_resp.text[:200]}"
+    )
+    try:
+        info_data = info_resp.json()
+        users_map = info_data[0]["result"]["users"]
+    except (IndexError, KeyError, TypeError) as exc:
+        pytest.fail(
+            f"Could not parse INFO FOR ROOT response: {exc}\nRaw response: {info_resp.text[:500]}"
+        )
+    rw_user_name = env_patch["YADGAR_RW_USER"]
+    ro_user_name = env_patch["YADGAR_RO_USER"]
+    assert rw_user_name in users_map, (
+        f"'{rw_user_name}' not in INFO FOR ROOT users after vacuum.\n"
+        f"Users present: {list(users_map.keys())}\n"
+        "SurrealDB /import wipes non-root users; _redefine_users_post_import "
+        "must use raw SurrealQL POST (v5.1.5 fix) — JSON-vars body is a silent no-op."
+    )
+    assert ro_user_name in users_map, (
+        f"'{ro_user_name}' not in INFO FOR ROOT users after vacuum.\n"
+        f"Users present: {list(users_map.keys())}\n"
+        "SurrealDB /import wipes non-root users; _redefine_users_post_import "
+        "must use raw SurrealQL POST (v5.1.5 fix) — JSON-vars body is a silent no-op."
+    )
+
 
 # ---------------------------------------------------------------------------
 # Test: /import failure restores original DB (V2 restore path)

@@ -167,9 +167,14 @@ def _redefine_users_post_import(backend_url: str) -> None:
     on every server start.  Non-root users defined via DEFINE USER must be
     explicitly re-created here so yadgar core can authenticate after vacuum.
 
-    Uses the JSON /sql body with a ``vars`` map to pass usernames and passwords
-    safely — hyphenated identifiers (``yadgar-rw``) would parse as subtraction
-    in raw SQL; the vars map avoids this entirely.
+    Uses raw SurrealQL with Content-Type: text/plain.  The SurrealDB v3 HTTP
+    ``/sql`` endpoint does NOT execute SQL sent in a JSON body — it treats the
+    body as a literal JSON value and returns it via implicit RETURN, silently
+    no-opping.  Only a plain-text body is parsed as SurrealQL.
+
+    Passwords are embedded as single-quoted SurrealQL string literals.  Any
+    literal single-quote in a password is SQL-escaped by doubling (``'`` →
+    ``''``) before interpolation.
 
     Raises:
         RuntimeError: if YADGAR_RW_PASS or YADGAR_RO_PASS are missing, or if
@@ -187,33 +192,26 @@ def _redefine_users_post_import(backend_url: str) -> None:
             "non-root user definitions; vacuum must re-create them."
         )
 
-    # Use the same JSON vars pattern as entrypoint-backend.sh to avoid raw SQL
-    # injection and to handle hyphenated usernames correctly.
-    import json
+    # SQL-escape passwords: double any single-quote characters so the literal
+    # is safe inside a SurrealQL single-quoted string (SQL-standard escaping).
+    rw_pass_esc = rw_pass.replace("'", "''")
+    ro_pass_esc = ro_pass.replace("'", "''")
 
-    body = json.dumps(
-        {
-            "sql": (
-                "DEFINE USER IF NOT EXISTS $rw_user ON ROOT "
-                "PASSWORD $rw_pass ROLES OWNER; "
-                "DEFINE USER IF NOT EXISTS $ro_user ON ROOT "
-                "PASSWORD $ro_pass ROLES VIEWER;"
-            ),
-            "vars": {
-                "rw_user": rw_user,
-                "rw_pass": rw_pass,
-                "ro_user": ro_user,
-                "ro_pass": ro_pass,
-            },
-        }
+    # Usernames are backtick-quoted so hyphenated names (e.g. yadgar-rw) are
+    # treated as identifiers, not subtraction expressions.
+    sql = (
+        f"DEFINE USER IF NOT EXISTS `{rw_user}` ON ROOT "
+        f"PASSWORD '{rw_pass_esc}' ROLES OWNER; "
+        f"DEFINE USER IF NOT EXISTS `{ro_user}` ON ROOT "
+        f"PASSWORD '{ro_pass_esc}' ROLES VIEWER;"
     )
 
     print("[vacuum] re-defining yadgar-rw + yadgar-ro on imported DB ...", flush=True)
     with _build_http_client(backend_url) as client:
         resp = client.post(
             "/sql",
-            content=body.encode(),
-            headers={"Content-Type": "application/json"},
+            content=sql.encode(),
+            headers={"Content-Type": "text/plain"},
         )
         if resp.status_code != 200:
             raise RuntimeError(

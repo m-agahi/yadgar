@@ -968,15 +968,18 @@ class TestRedefineUsersPostImport:
     """
 
     def test_issues_define_user_sql_for_rw_and_ro(self, monkeypatch):
-        """Helper posts DEFINE USER for both rw and ro users with correct roles."""
-        import json as _json
+        """Helper posts raw SurrealQL DEFINE USER for both rw and ro users.
 
+        v5.1.5 fix: SurrealDB v3 /sql silently no-ops when the body is JSON.
+        Only Content-Type: text/plain is parsed as SurrealQL.  This test
+        verifies the fix — raw SQL body, correct roles, backtick-quoted names.
+        """
         monkeypatch.setenv("YADGAR_RW_USER", "yadgar-rw")
         monkeypatch.setenv("YADGAR_RW_PASS", "rw-secret")
         monkeypatch.setenv("YADGAR_RO_USER", "yadgar-ro")
         monkeypatch.setenv("YADGAR_RO_PASS", "ro-secret")
 
-        posted_bodies: list[dict] = []
+        posted_calls: list[dict] = []
         mock_resp = MagicMock()
         mock_resp.status_code = 200
 
@@ -988,7 +991,13 @@ class TestRedefineUsersPostImport:
         with patch("yadgar.vacuum._build_http_client", return_value=mock_client):
 
             def _capture_post(path, content=None, headers=None, **kwargs):
-                posted_bodies.append(_json.loads(content))
+                posted_calls.append(
+                    {
+                        "path": path,
+                        "content": content.decode() if isinstance(content, bytes) else content,
+                        "headers": headers or {},
+                    }
+                )
                 return mock_resp
 
             mock_client.post.side_effect = _capture_post
@@ -997,45 +1006,40 @@ class TestRedefineUsersPostImport:
 
             _redefine_users_post_import("http://127.0.0.1:8080")
 
-        assert posted_bodies, "No POST was issued"
-        body = posted_bodies[0]
+        assert posted_calls, "No POST was issued"
+        call = posted_calls[0]
+        sql = call["content"]
 
-        # SQL must contain DEFINE USER for both users
-        sql = body["sql"]
+        # Must be plain-text, not JSON
+        assert call["headers"].get("Content-Type") == "text/plain", (
+            "Must use Content-Type: text/plain — JSON body is a silent no-op in SurrealDB v3"
+        )
+
+        # SQL must contain DEFINE USER for both users with correct roles
         assert "DEFINE USER" in sql
         assert "ROLES OWNER" in sql
         assert "ROLES VIEWER" in sql
 
-        # Usernames and passwords passed through vars, NOT interpolated in SQL
-        vars_ = body["vars"]
-        assert vars_["rw_user"] == "yadgar-rw"
-        assert vars_["ro_user"] == "yadgar-ro"
-        assert vars_["rw_pass"] == "rw-secret"
-        assert vars_["ro_pass"] == "ro-secret"
+        # Usernames must be backtick-quoted identifiers in the SQL body
+        assert "`yadgar-rw`" in sql
+        assert "`yadgar-ro`" in sql
 
-        # SQL must use $rw_user, $ro_user placeholders (not literal usernames)
-        assert "$rw_user" in sql
-        assert "$ro_user" in sql
-        assert "$rw_pass" in sql
-        assert "$ro_pass" in sql
-        assert "yadgar-rw" not in sql
-        assert "yadgar-ro" not in sql
+        # Passwords must be embedded as SurrealQL string literals
+        assert "'rw-secret'" in sql
+        assert "'ro-secret'" in sql
 
-    def test_passes_passwords_via_json_vars_unescaped(self, monkeypatch):
-        """Password containing single-quote is passed as-is in vars (no escaping needed).
+    def test_escapes_single_quotes_in_passwords(self, monkeypatch):
+        """Password containing single-quote is SQL-escaped by doubling ('' rule).
 
-        Replaces the spec's test_escapes_single_quotes test — the JSON vars
-        approach means there is no SQL escaping path at all.  The literal
-        password value (including quotes) is transmitted in the vars map.
+        v5.1.5 raw-SQL approach: passwords are embedded in SurrealQL single-quoted
+        string literals.  A literal ' in the password becomes '' (SQL standard).
         """
-        import json as _json
-
         monkeypatch.setenv("YADGAR_RW_USER", "yadgar-rw")
         monkeypatch.setenv("YADGAR_RW_PASS", "abc'def")
         monkeypatch.setenv("YADGAR_RO_USER", "yadgar-ro")
         monkeypatch.setenv("YADGAR_RO_PASS", "ro-secret")
 
-        posted_bodies: list[dict] = []
+        posted_calls: list[dict] = []
         mock_resp = MagicMock()
         mock_resp.status_code = 200
 
@@ -1044,7 +1048,9 @@ class TestRedefineUsersPostImport:
         mock_client.__exit__ = MagicMock(return_value=False)
 
         def _capture_post(path, content=None, headers=None, **kwargs):
-            posted_bodies.append(_json.loads(content))
+            posted_calls.append(
+                {"content": content.decode() if isinstance(content, bytes) else content}
+            )
             return mock_resp
 
         mock_client.post.side_effect = _capture_post
@@ -1054,13 +1060,12 @@ class TestRedefineUsersPostImport:
 
             _redefine_users_post_import("http://127.0.0.1:8080")
 
-        assert posted_bodies
-        body = posted_bodies[0]
-        # The literal password (with quote) must appear verbatim in vars
-        assert body["vars"]["rw_pass"] == "abc'def"
-        # The SQL must NOT contain the literal password value
-        assert "abc'def" not in body["sql"]
-        assert "$rw_pass" in body["sql"]
+        assert posted_calls
+        sql = posted_calls[0]["content"]
+        # Single-quote in password must be doubled (SQL-standard escaping)
+        assert "abc''def" in sql, f"Expected doubled quote in SQL, got: {sql!r}"
+        # The unescaped form must NOT appear outside the doubled form
+        assert "abc'def" not in sql.replace("abc''def", "")
 
     def test_raises_if_passwords_missing(self, monkeypatch):
         """RuntimeError raised when YADGAR_RW_PASS or YADGAR_RO_PASS unset."""

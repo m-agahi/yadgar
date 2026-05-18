@@ -453,7 +453,7 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
         crossorigin="anonymous"></script>
 <script>
 // ── Config ─────────────────────────────────────────────────────────────────
-const DAEMON = 'http://127.0.0.1:8765';
+const DAEMON = '';  // empty = same-origin; viz_server proxies /api/* to the daemon
 const EDGE_COLOR = { semantic: '#1f6feb', temporal: '#6e40c9', transition: '#3fb950', wiki_crossref: '#d2a8ff', memory_wiki: '#ffa657' };
 const WIKI_CAT_COLOR = {
   architecture: '#58a6ff', decision: '#ffa657', pattern: '#3fb950',
