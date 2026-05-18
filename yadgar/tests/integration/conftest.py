@@ -95,7 +95,7 @@ def live_backend_container(tmp_path_factory):
         "YADGAR_RO_PASS=test123",
         "-e",
         "YADGAR_MCP_AUTH_TOKEN=test-token",
-        "openfantasy/yadgar-backend:5.0.1",
+        "openfantasy/yadgar-backend:5.0.2",
     ]
 
     result = subprocess.run(cmd, capture_output=True, text=True)

@@ -956,6 +956,68 @@ class TestWaitForYadgarHealth:
 
 
 # ---------------------------------------------------------------------------
+# v5.1.6 Bug 2 — _wait_for_yadgar_health timeout must be 180s, not 60s
+# ---------------------------------------------------------------------------
+
+
+class TestWaitForYadgarHealthTimeout:
+    """v5.1.6 B2: yadgar cold-start (embedding model load) takes ~70-90s.
+
+    The old 60s default caused vacuum to abort with exit-code 2 even on
+    successful runs.  The timeout must be at least 180s (3x empirical max).
+
+    Two checks:
+    1. The default parameter value of _wait_for_yadgar_health is 180s.
+    2. The call site in cmd_vacuum passes timeout_s=180.0 (not 60.0).
+    """
+
+    def test_default_timeout_is_180s(self) -> None:
+        """_wait_for_yadgar_health default timeout_s must be 180.0, not 60.0."""
+        import inspect
+
+        from yadgar.vacuum import _wait_for_yadgar_health
+
+        sig = inspect.signature(_wait_for_yadgar_health)
+        default = sig.parameters["timeout_s"].default
+        assert default == 180.0, (
+            f"_wait_for_yadgar_health default timeout_s is {default!r}; "
+            "expected 180.0 (yadgar cold-start can take 70-90s on real hardware)"
+        )
+
+    def test_callsite_passes_180s(self) -> None:
+        """The call in _vacuum_finalize must pass timeout_s=180.0, not 60.0."""
+        import ast
+        import inspect
+
+        from yadgar import vacuum
+
+        source = inspect.getsource(vacuum)
+        tree = ast.parse(source)
+
+        # Find all Call nodes for _wait_for_yadgar_health
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = getattr(func, "id", None) or getattr(func, "attr", None)
+            if name != "_wait_for_yadgar_health":
+                continue
+            for kw in node.keywords:
+                if kw.arg == "timeout_s":
+                    val = kw.value
+                    if isinstance(val, ast.Constant):
+                        assert val.value == 180.0, (
+                            f"_wait_for_yadgar_health called with timeout_s={val.value!r}; "
+                            "expected 180.0"
+                        )
+                    return  # found the call
+
+        pytest.fail(
+            "_wait_for_yadgar_health call with explicit timeout_s not found in vacuum source"
+        )
+
+
+# ---------------------------------------------------------------------------
 # B1 — _redefine_users_post_import
 # ---------------------------------------------------------------------------
 

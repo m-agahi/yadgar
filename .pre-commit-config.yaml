@@ -37,6 +37,13 @@ repos:
         files: ^(pyproject\.toml|server\.json|docker-compose\.yml|uv\.lock)$
         pass_filenames: false
 
+      - id: check-backend-bump
+        name: Enforce backend_version bump on backend build input changes
+        language: system
+        entry: python3 scripts/check_backend_bump.py
+        files: ^(entrypoint-backend\.sh|Dockerfile\.backend|backend/.*)$
+        pass_filenames: false
+
   - repo: local
     hooks:
       - id: ruff

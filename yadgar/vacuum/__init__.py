@@ -106,7 +106,7 @@ def _wait_for_health(
 
 def _wait_for_yadgar_health(
     url: str,
-    timeout_s: float = 60.0,
+    timeout_s: float = 180.0,
     poll_interval: float = 1.0,
 ) -> bool:
     """Poll GET <url>/health until 200 or timeout. Returns True on success."""
@@ -385,7 +385,7 @@ def _vacuum_finalize(
     svc.start_yadgar()
 
     print(f"[vacuum] waiting for {yadgar_url}/health ...", flush=True)
-    if not _wait_for_yadgar_health(yadgar_url, timeout_s=60.0):
+    if not _wait_for_yadgar_health(yadgar_url, timeout_s=180.0):
         print(
             f"[vacuum] WARNING: yadgar did not become healthy. "
             f"Bloated dir retained: {bloated_path}",
