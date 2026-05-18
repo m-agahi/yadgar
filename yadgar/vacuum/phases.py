@@ -51,6 +51,24 @@ def _run_cleanup_script(yadgar_home: Path, pattern: str, keep_n: int) -> None:
             print(f"[vacuum] failed to prune {path}: {exc}", file=sys.stderr)
 
 
+def _surreal_headers() -> dict[str, str]:
+    """SurrealDB v2+ /export rejects with HTTP 400 'Specify a namespace' without
+    these headers, and basic-auth without YADGAR_DB_USER/PASS. Module-level
+    httpx.get keeps test monkeypatches working (cf. test_vacuum.py).
+    """
+    import base64
+
+    user = os.environ.get("YADGAR_DB_USER", "root")
+    password = os.environ.get("YADGAR_DB_PASS", "root")
+    auth = base64.b64encode(f"{user}:{password}".encode()).decode()
+    return {
+        "Authorization": f"Basic {auth}",
+        "surreal-ns": "yadgar",
+        "surreal-db": "main",
+        "Accept": "application/json",
+    }
+
+
 def _vacuum_export(backend_url: str, yadgar_home: Path) -> tuple[Path, Path]:
     """Phase 1: GET /export, strip action_log, write .surql files.
 
@@ -64,7 +82,11 @@ def _vacuum_export(backend_url: str, yadgar_home: Path) -> tuple[Path, Path]:
     filtered_path = yadgar_home / f"vacuum_export_{ts}.filtered.surql"
 
     print(f"[vacuum] phase 1: GET {backend_url}/export ...", flush=True)
-    resp = httpx.get(f"{backend_url}/export", timeout=300.0)
+    resp = httpx.get(
+        f"{backend_url}/export",
+        headers=_surreal_headers(),
+        timeout=300.0,
+    )
     if resp.status_code != 200:
         raise RuntimeError(f"Export failed: HTTP {resp.status_code}\n{resp.text[:500]}")
 

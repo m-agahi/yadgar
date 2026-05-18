@@ -876,7 +876,7 @@ class TestBatchWritesByteChunking:
 
         assert mock_http.post.call_count >= 3
 
-    def test_oversized_single_statement_is_attempted_alone(self, monkeypatch, caplog):
+    def test_oversized_single_statement_is_attempted_alone(self, monkeypatch):
         """A single statement whose own size exceeds MAX_BATCH_BYTES is still attempted
         (not silently dropped) and emits a WARN log."""
         import logging
@@ -899,14 +899,37 @@ class TestBatchWritesByteChunking:
             )
         ]
 
-        with caplog.at_level(logging.WARNING, logger="yadgar.storage"):
+        # pytest caplog attaches at root, but yadgar/log_config.py sets
+        # `yadgar.propagate = False`, so records from yadgar.storage.* never
+        # reach root → caplog stays empty regardless of `logger=` filter
+        # (the `logger=` arg adjusts level on a logger but doesn't move the
+        # capture handler). Attach our own list-handler at yadgar.storage so
+        # propagation goes UP one level and lands in records[] before
+        # propagate=False at yadgar stops the chain.
+        records: list[logging.LogRecord] = []
+
+        class _ListHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        list_handler = _ListHandler(level=logging.WARNING)
+        target = logging.getLogger("yadgar.storage")
+        prior_level = target.level
+        target.setLevel(logging.WARNING)
+        target.addHandler(list_handler)
+        try:
             engine.batch_writes(stmts)
+        finally:
+            target.removeHandler(list_handler)
+            target.setLevel(prior_level)
 
         # Exactly one HTTP request — not dropped
         assert mock_http.post.call_count == 1
-        # A WARN was emitted
+        # A WARN was emitted by yadgar.storage or yadgar.storage.client
         assert any(
-            "warn" in r.levelname.lower() or r.levelno >= logging.WARNING for r in caplog.records
+            r.levelno >= logging.WARNING and r.name.startswith("yadgar.storage") for r in records
+        ), (
+            f"no WARN from yadgar.storage* in {[(r.name, r.levelname, r.getMessage()) for r in records]}"
         )
 
     def test_batch_writes_no_413_when_framing_overhead_exceeds_estimate(self, monkeypatch):

@@ -260,15 +260,19 @@ def init_engines(
 
         threading.Thread(target=_reranker_idle_thread, daemon=True).start()
 
-        # Auto-start viz server alongside the daemon
+        # Auto-start viz server alongside the daemon.
+        # Bind same interface as MCP server (settings.HOST). Default loopback
+        # for security; containers override via YADGAR_HOST=0.0.0.0 so the
+        # host-side docker port mapping (-p 127.0.0.1:42069:42069) works.
         _viz_port = getattr(_settings, "VIZ_PORT", 42069)
+        _viz_host = getattr(_settings, "HOST", "127.0.0.1")
 
-        def _viz_thread(port: int = _viz_port) -> None:
+        def _viz_thread(host: str = _viz_host, port: int = _viz_port) -> None:
             try:
                 from yadgar.viz_server import run_viz_server
 
-                logger.info("Viz server starting on http://127.0.0.1:%d", port)
-                run_viz_server(port=port)
+                logger.info("Viz server starting on http://%s:%d", host, port)
+                run_viz_server(host=host, port=port)
             except OSError as exc:
                 logger.warning("Viz server could not bind port %d: %s", port, exc)
             except Exception as exc:
