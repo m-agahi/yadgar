@@ -7,6 +7,21 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.1.1] - 2026-05-17
+> Hotfix follow-up to v5.1.0 — ops bugs surfaced during deploy.
+
+### Fixed
+- **viz_server bind interface.** `yadgar/server/lifecycle.py` auto-started the viz thread without passing `host=`, so viz_server defaulted to container `127.0.0.1`. Host docker port mapping `-p 127.0.0.1:42069:42069` then couldn't forward — viz UI unreachable. Fix: pass `settings.HOST` (already `0.0.0.0` in container via `YADGAR_HOST` env var). Security default `127.0.0.1` preserved for non-container runs.
+- **vacuum CLI env-aware defaults.** `cli/vacuum.py` `--db-path` defaulted to `~/.yadgar/surreal_db` (= `/home/yadgar/.yadgar/surreal_db` inside container) and `--backend-url` defaulted to `http://127.0.0.1:8080` (wrong port; backend is on 8000). Fix: argparse defaults now read `YADGAR_DATA_DIR` (+ `/surreal_db`) and `YADGAR_DB_URL` — matching the pattern `YADGAR_DB_USER/PASS` already follow. Removes the need for the nix module to repeat those flags on the systemd ExecStart.
+- **vacuum export missing SurrealDB namespace + auth.** `vacuum/phases._vacuum_export` issued a bare `httpx.get(/export)` without `surreal-ns`/`surreal-db` headers or basic-auth. SurrealDB v2+ rejects with HTTP 400 "Specify a namespace". Fix: use the existing `_build_http_client(backend_url)` from `vacuum/__init__.py` which sets the headers and auth. Drops unused `import httpx` in `phases.py`.
+
+### Known follow-ups (v5.2)
+- **Integration test gap for vacuum** (P1). No end-to-end test exercises vacuum against a live yadgar-backend. All three bugs above were silent for v5.0 + v5.1 because unit tests mocked the HTTP/CLI layer. A `pytest -m integration` test that spins up the backend container, runs `yadgar vacuum --service-mode=manual`, and asserts `before_bytes > after_bytes` would have caught every one of them.
+- **`install_hooks` MCP tool is broken for containerized deployments** (P1). The tool runs inside the yadgar docker container and writes `/root/.claude/settings.json` (container's `$HOME`) instead of the host's `~/.claude/settings.json`. Result for non-nix users: hooks never get the bearer token; PostToolUse/UserPromptSubmit hook scripts read empty `YADGAR_MCP_AUTH_TOKEN`, build bare bearer headers, get HTTP 401 from the daemon, exit non-zero with non-JSON stderr → Claude Code reports `Hook JSON output validation failed`. Nix users worked around by injecting the token via home-manager activation (see `~/git/nix/modules/home/claude-code.nix` `claudeCodeSettings`). Real fix options: (a) `yadgar install-hooks` host-side CLI installed via pipx editable; (b) HTTP endpoint that returns the settings.json snippet for the host to write; (c) detect container mode and emit a clear "run on host" error.
+
+### Companion nix changes (already deployed)
+- `~/git/nix/modules/home/yadgar.nix` master commits `61bf5f5` (backend `-e YADGAR_MCP_AUTH_TOKEN` passthrough — required because the storage client A1 fix sends the bearer but the backend endpoint had no token to compare against), `b7eb004` (vacuum `--db-path /data/surreal_db`), `1f2f1a6` (vacuum `--backend-url http://yadgar-backend:8000`). The latter two can be reverted once a v5.1.1 image is deployed because the CLI now reads the env vars directly.
+
 ## [5.1.0] - 2026-05-17
 > Module decomposition + ops fixes + retrieval polish. 17 sub-branches integrated; FastMCP API, CLI, and storage public APIs preserved byte-identical via re-exports.
 

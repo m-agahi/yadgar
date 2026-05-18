@@ -206,18 +206,33 @@ def __getattr__(name: str):
 
 
 class _ServerModule(_types.ModuleType):
-    """ModuleType subclass that forwards attribute writes to _state."""
+    """ModuleType subclass that forwards attribute writes to _state.
+
+    Single source of truth = _state. We do NOT cache in server.__dict__
+    because lifecycle.init_engines / shutdown assign directly to _state
+    (e.g. `_st._storage = StorageEngine(...)`), bypassing this forwarder.
+    Caching here would let server.__dict__ drift stale, and PEP 562
+    __getattr__ only fires on a miss in __dict__ — so a stale cached
+    entry would shadow the live _state value.
+
+    Writes mirror to _state when it owns the attribute. Reads go through
+    __getattr__ → _state (skip __dict__ entirely). monkeypatch.setattr
+    on yadgar.server works because pytest reads via __getattr__ first
+    and then writes via this forwarder, both consistent with _state.
+    """
 
     def __setattr__(self, name: str, value) -> None:
-        # Always update the module's own __dict__ first.
-        self.__dict__[name] = value
-        # Forward to _state if it owns this attribute. Use __dict__ write
-        # directly to bypass any __setattr__ on _state — a prior version
-        # used setattr() which recursed infinitely under some test setups.
         import yadgar.server._state as _st  # noqa: PLC0415
 
         if _st is not self and name in _st.__dict__:
+            # Forward to _state — bypass _state's own __setattr__ (if any)
+            # to avoid the recursion bug from the original v5.1.0 fix.
             _st.__dict__[name] = value
+        else:
+            # Symbol not owned by _state — fall back to plain module behavior
+            # so things like `_sys.modules[__name__].__class__ = _ServerModule`
+            # at import time, or test attrs not in _state, still work.
+            super().__setattr__(name, value)
 
 
 _sys.modules[__name__].__class__ = _ServerModule
