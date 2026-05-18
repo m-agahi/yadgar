@@ -7,6 +7,25 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.1.3] - 2026-05-18
+> Vacuum hardening — fixes two bugs surfaced during v5.1.2 deploy.
+
+### Fixed
+- **V5 `_wait_for_yadgar_health` polls `/healthz`** — yadgar exposes `/health` (no z). The 60s poll never returned 200, vacuum exited with `WARNING: yadgar did not become healthy. Bloated dir retained: ...` and `status=2/INVALIDARGUMENT` even on successful runs (phases 1-3 completed). One-char rename in `yadgar/vacuum/__init__.py:114`. Regression test `TestWaitForYadgarHealth::test_polls_health_not_healthz` pins the URL.
+- **V6 `/import` wipes `DEFINE USER` statements**. v5.1.2 vacuum saved 92% on first deploy (1161 MB → 92 MB) but yadgar core then crashloop-401'd because the import payload included `DEFINE USER yadgar-rw ON ROOT PASSWORD '<old_hash>' ROLES OWNER;` from the source DB — overwriting the freshly-bootstrapped users from `yadgar-backend`'s entrypoint (whose hashes matched `secrets.env`). Operator recovery required curling `DEFINE USER yadgar-rw … ROLES OWNER;` as root.
+  **Fix:** extend `yadgar/vacuum/strip.py` with `strip_export_for_vacuum()` that also strips `DEFINE USER … ON {ROOT,NS,DB}`, `DEFINE ACCESS …`, `REMOVE USER …` at SQL-statement granularity (start-of-line anchored, must not eat memory content mentioning "DEFINE USER" in body text). `strip_action_log` retained as back-compat alias.
+- **vacuum/_vacuum_export action_log strip regex** was over-greedy — replaced `\Z` terminator with blank-line terminator so the stripped section doesn't accidentally swallow subsequent statements.
+
+### Changed
+- Test infrastructure: `yadgar/tests/integration/test_vacuum_e2e.py` extended with post-vacuum yadgar-rw auth assertion (regression-prevention for V6). Fires when the pre-vacuum probe succeeds. **Caveat:** the upstream `openfantasy/yadgar-backend:5.0.1` entrypoint has a bootstrap race that occasionally leaves `yadgar-rw` un-auth-ready before the test exercises it — the assertion conditionally skips in that path. Tracked as v5.2 fixture-hardening (poll for user-ready before vacuum, fail loudly if absent).
+
+### Known follow-ups (v5.x backlog)
+- Vacuum health-check timeout for yadgar core restart is 60s. Embedding-model warmup on cold starts can exceed that. V5 makes the resulting message accurate (no longer a `/healthz` 404), but real slow-starts would surface as actual failures. Consider bumping the timeout to 180s or making `/health` return 200 as soon as the HTTP server binds (before embedding warmup completes).
+- Integration test conditional-skip on yadgar-rw bootstrap race — fixture should wait for user-ready, not gate the assertion on a probe result.
+
+### Companion nix changes
+None required. Image rebuild + `yadger_core_version` 5.1.2 → 5.1.3 bump only.
+
 ## [5.1.2] - 2026-05-18
 > Vacuum proper-fix + install_hooks containerization + end-to-end integration test.
 
