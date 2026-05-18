@@ -45,6 +45,7 @@ __all__ = [
     "_wait_for_health",
     "_wait_for_yadgar_health",
     "_log_consolidation_row",
+    "_redefine_users_post_import",
 ]
 
 
@@ -153,6 +154,75 @@ def _log_consolidation_row(row: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Post-import user re-bootstrap
+# ---------------------------------------------------------------------------
+
+
+def _redefine_users_post_import(backend_url: str) -> None:
+    """Re-create yadgar-rw and yadgar-ro on the freshly-imported DB.
+
+    SurrealDB /import wipes ROOT-level user definitions regardless of what the
+    export contains (users are infrastructure state, not data).  The root user
+    survives only because SurrealDB re-bootstraps it from SURREAL_USER/PASS env
+    on every server start.  Non-root users defined via DEFINE USER must be
+    explicitly re-created here so yadgar core can authenticate after vacuum.
+
+    Uses the JSON /sql body with a ``vars`` map to pass usernames and passwords
+    safely — hyphenated identifiers (``yadgar-rw``) would parse as subtraction
+    in raw SQL; the vars map avoids this entirely.
+
+    Raises:
+        RuntimeError: if YADGAR_RW_PASS or YADGAR_RO_PASS are missing, or if
+            the SurrealDB /sql request returns a non-200 status.
+    """
+    rw_user = os.environ.get("YADGAR_RW_USER", "yadgar-rw")
+    rw_pass = os.environ.get("YADGAR_RW_PASS")
+    ro_user = os.environ.get("YADGAR_RO_USER", "yadgar-ro")
+    ro_pass = os.environ.get("YADGAR_RO_PASS")
+
+    if not rw_pass or not ro_pass:
+        raise RuntimeError(
+            "YADGAR_RW_PASS / YADGAR_RO_PASS env vars are required for vacuum "
+            "post-import user re-bootstrap. SurrealDB /import does not preserve "
+            "non-root user definitions; vacuum must re-create them."
+        )
+
+    # Use the same JSON vars pattern as entrypoint-backend.sh to avoid raw SQL
+    # injection and to handle hyphenated usernames correctly.
+    import json
+
+    body = json.dumps(
+        {
+            "sql": (
+                "DEFINE USER IF NOT EXISTS $rw_user ON ROOT "
+                "PASSWORD $rw_pass ROLES OWNER; "
+                "DEFINE USER IF NOT EXISTS $ro_user ON ROOT "
+                "PASSWORD $ro_pass ROLES VIEWER;"
+            ),
+            "vars": {
+                "rw_user": rw_user,
+                "rw_pass": rw_pass,
+                "ro_user": ro_user,
+                "ro_pass": ro_pass,
+            },
+        }
+    )
+
+    print("[vacuum] re-defining yadgar-rw + yadgar-ro on imported DB ...", flush=True)
+    with _build_http_client(backend_url) as client:
+        resp = client.post(
+            "/sql",
+            content=body.encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(
+                f"Failed to re-define users post-import: HTTP {resp.status_code}\n{resp.text[:500]}"
+            )
+    print("[vacuum] users re-defined.", flush=True)
+
+
+# ---------------------------------------------------------------------------
 # Phase 3: restart + reimport (calls _wait_for_health — must live here)
 # ---------------------------------------------------------------------------
 
@@ -251,6 +321,13 @@ def _vacuum_restart_and_import(
         return False
 
     print("[vacuum] import successful.", flush=True)
+
+    # Re-define yadgar-rw and yadgar-ro after /import.
+    # SurrealDB /import wipes ROOT-level user definitions regardless of payload
+    # content (users are infra state, not data).  Re-create them here so yadgar
+    # core can authenticate against the freshly-imported DB.
+    _redefine_users_post_import(backend_url)
+
     return True
 
 
