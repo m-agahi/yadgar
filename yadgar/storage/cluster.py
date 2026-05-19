@@ -101,11 +101,12 @@ class _ClusterMixin:
         # C3: citation_source_memory_id tracks which memory triggered this link.
         # Use caller-supplied origin or fall back to the lower-id endpoint (canonical).
         citation_src = origin_memory_id if origin_memory_id is not None else src
+        # C1: bi-temporal validity. valid_from = now(), valid_until = NULL.
         self._q(
             "CREATE type::record('memory_similarity_link', $id) SET "
             "source_memory_id = $src, target_memory_id = $tgt, "
             "weight = $weight, created_at = $created_at, updated_at = $updated_at, "
-            "citation_source_memory_id = $csm",
+            "citation_source_memory_id = $csm, valid_from = $vf",
             {
                 "id": lid,
                 "src": src,
@@ -114,6 +115,7 @@ class _ClusterMixin:
                 "created_at": now,
                 "updated_at": now,
                 "csm": citation_src,
+                "vf": now,
             },
         )
         return lid

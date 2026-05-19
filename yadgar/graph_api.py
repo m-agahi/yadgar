@@ -16,11 +16,20 @@ class GraphAPI:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def get_full_graph(self, max_memories: int = 500, top_k: int = 8) -> dict:
+    def get_full_graph(
+        self,
+        max_memories: int = 500,
+        top_k: int = 8,
+        include_invalidated: bool = False,
+    ) -> dict:
         """Return full graph: memory nodes with semantic, temporal, and transition edges.
 
         Memory nodes: id="mem:{id}", type="memory"
         Edge types: "semantic", "temporal", "transition"
+
+        include_invalidated (C1): when False (default), KG edges whose valid_until is
+        set and in the past are excluded. Pass True to include all rows regardless of
+        bi-temporal validity.
         """
         nodes: list[dict] = []
         edges: list[dict] = []
@@ -177,8 +186,9 @@ class GraphAPI:
                     )
 
         # ── Causal edges (C3: include source_memory_id for citation tracing) ──
+        # C1: filter out invalidated edges by default.
         try:
-            causal_edges_raw = self._s.get_all_causal_edges()
+            causal_edges_raw = self._s.get_all_causal_edges(include_invalidated=include_invalidated)
         except Exception:
             causal_edges_raw = []
 
