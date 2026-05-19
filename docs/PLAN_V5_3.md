@@ -17,16 +17,16 @@ Workflow: bundled-release per `yadgar-bundled-release-integration-model`. `feat/
 - **A3** — `SubagentStop` hook script (`yadgar/hooks/subagent-stop.py`) + `/hooks/subagent-stop` endpoint. Reads agent transcript final report → extracts `## Yadgar findings` → queues memorize with `provenance_agent=<subagent_type>`.
 - **A4** — Agent-prompt versioning. Wiki category `agent-prompt`. Slugs `agent-prompt-<task-pattern>-vN`. New MCP tools: `agent_prompt_get(pattern)`, `agent_prompt_save(pattern, content)`.
 
-## v5.3.1 — Claude Code 2026 Hook Adoption (P1)
+## v5.3.1 — Claude Code 2026 Hook Adoption (P1) — REVISED 2026-05-19
 
-Depends on H1-H4 schema verification (claude-code-guide research dispatch in parallel with v5.3.0).
+Hook-schema research (claude-code-guide) corrected initial assumptions. Source: https://code.claude.com/docs/en/hooks.md.
 
-- **H1** — `InstructionsLoaded` hook. Recall on CLAUDE.md load.
-- **H2** — `PostCompact` hook. Re-inject anchored memories after compaction.
-- **H3** — `TeammateIdle` hook. Flush yadgar writes for idle teammate.
-- **H4** — `TaskCreated` + `TaskCompleted` hooks. Capture agent dispatch lifecycle.
+- **H1** — `InstructionsLoaded` hook ✓ confirmed. Fires session-start + lazy CLAUDE.md/rules load. Use `load_reason` matcher. Inject recall on CLAUDE.md load.
+- **H2** — `PostCompact` hook: **REVISED**. Fires AFTER compaction completes, READ-ONLY (cannot inject). Originally planned "re-inject anchored memories after compaction" was based on wrong assumption. Repurpose: snapshot compaction event into action_log. **Or drop** as low value.
+- **H3** — `TeammateIdle` hook: **DEFERRED**. Exists per docs but payload schema unknown + TypeScript Agent SDK only per docs (Python SDK support unclear). Empirical test required before wiring.
+- **H4** — **REPLACED** with `SubagentStart` hook. `TaskCreated`/`TaskCompleted` do NOT exist as Claude Code CLI hooks. `SubagentStart` captures dispatch metadata; can recall context for the subagent's task description and pass to downstream.
 
-All deployed via extended `yadgar install-hooks` subcommand.
+All deployed via extended `yadgar install-hooks` subcommand. See global anchor on CLAUDE CODE 2026 HOOK EVENT SCHEMAS for verified facts.
 
 ## v5.3.2 — Memory Quality (Competitor Parity, P2)
 
