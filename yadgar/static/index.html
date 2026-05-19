@@ -305,7 +305,7 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
   <button class="btn" onclick="loadGraph()">↺ Reload</button>
   <button class="btn" onclick="fitGraph()">⊞ Fit</button>
   <button class="btn" onclick="resetLayout()">⟳ Reset</button>
-  <button class="btn" id="mode-btn" onclick="toggleMode()">3D</button>
+  <button class="btn" id="mode-btn" onclick="toggleMode()">2D</button>
   <button class="btn" id="stats-btn" onclick="openStats()">📊 Stats</button>
   <button class="btn" id="debug-btn" onclick="openDebug()">⚙ Debug</button>
   <span id="status-dot"></span>
@@ -477,8 +477,8 @@ let debugTab = 'graph';
 const sparkCpu = Array(60).fill(0);
 const sparkDb  = Array(60).fill(0);
 let sparkDbMax = 1;
-// V4: 2D/3D mode. Default '2d' (current renderer). Persisted in localStorage.
-let _graphMode = localStorage.getItem('yadgar-graph-mode') || '2d';
+// V4: 2D/3D mode. Default '3d'. Persisted in localStorage.
+let _graphMode = localStorage.getItem('yadgar-graph-mode') || '3d';
 
 // ── Colour helpers ──────────────────────────────────────────────────────────
 function heatColor(h) {
