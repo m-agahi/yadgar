@@ -104,6 +104,8 @@ def install_hooks_impl(
         "session-start-context.py": 0o755,
         "prompt-recall.py": 0o755,
         "subagent-stop.py": 0o755,
+        "instructions-loaded.py": 0o755,
+        "subagent-start.py": 0o755,
     }
 
     if not dry_run:
@@ -195,6 +197,56 @@ def install_hooks_impl(
         _existing_subagent_stop.append(_subagent_stop_hook_entry)
     hooks_config["SubagentStop"] = _existing_subagent_stop
 
+    # InstructionsLoaded — append-if-absent semantics.
+    # Fires recall on CLAUDE.md load (session_start / compact only — throttled in script).
+    _il_src = package_hooks / "instructions-loaded.py"
+    _il_dst = hooks_dir / "yadgar-instructions-loaded.py"
+    if not dry_run and _il_src.exists():
+        shutil.copy2(_il_src, _il_dst)
+        _il_dst.chmod(0o755)
+
+    _il_cmd = f'python3 "{_il_dst}"'
+    _existing_il = hooks_config.get("InstructionsLoaded", [])
+    _il_already_registered = any(
+        entry.get("hooks", [{}])[0].get("command", "") == _il_cmd
+        for entry in _existing_il
+        if isinstance(entry, dict) and entry.get("hooks")
+    )
+    if not _il_already_registered:
+        _il_hook_entry: dict = {
+            "matcher": "",
+            "hooks": [{"type": "command", "command": _il_cmd}],
+        }
+        if _env_block:
+            _il_hook_entry["hooks"][0]["env"] = _env_block
+        _existing_il.append(_il_hook_entry)
+    hooks_config["InstructionsLoaded"] = _existing_il
+
+    # SubagentStart — append-if-absent semantics.
+    # No matcher needed — fires on all subagent dispatches.
+    _ss_src = package_hooks / "subagent-start.py"
+    _ss_dst = hooks_dir / "yadgar-subagent-start.py"
+    if not dry_run and _ss_src.exists():
+        shutil.copy2(_ss_src, _ss_dst)
+        _ss_dst.chmod(0o755)
+
+    _ss_cmd = f'python3 "{_ss_dst}"'
+    _existing_ss = hooks_config.get("SubagentStart", [])
+    _ss_already_registered = any(
+        entry.get("hooks", [{}])[0].get("command", "") == _ss_cmd
+        for entry in _existing_ss
+        if isinstance(entry, dict) and entry.get("hooks")
+    )
+    if not _ss_already_registered:
+        _ss_hook_entry: dict = {
+            "matcher": "",
+            "hooks": [{"type": "command", "command": _ss_cmd}],
+        }
+        if _env_block:
+            _ss_hook_entry["hooks"][0]["env"] = _env_block
+        _existing_ss.append(_ss_hook_entry)
+    hooks_config["SubagentStart"] = _existing_ss
+
     settings_data["hooks"] = hooks_config
 
     _stop_entry = [
@@ -265,6 +317,8 @@ def install_hooks_impl(
             "PreToolUse (DB lockdown)",
             "Stop (memory checkpoint — global)",
             "SubagentStop (findings capture — append-if-absent)",
+            "InstructionsLoaded (recall on CLAUDE.md load — append-if-absent)",
+            "SubagentStart (context injection at dispatch — append-if-absent)",
         ],
         "settings_file": str(settings_path),
         "global_settings_file": global_settings_file,

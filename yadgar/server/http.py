@@ -404,6 +404,131 @@ async def hook_subagent_stop(request: Request) -> JSONResponse:
     return JSONResponse(response)
 
 
+@mcp_server.custom_route("/hooks/instructions-loaded", methods=["GET"])
+async def hook_instructions_loaded(request: Request) -> JSONResponse:
+    """InstructionsLoaded hook endpoint — inject recalled context on CLAUDE.md load.
+
+    Called by yadgar/hooks/instructions-loaded.py when Claude Code loads a
+    CLAUDE.md file at session_start or compact. Returns a lightweight recall
+    (~3 results) derived from the filename and load_reason.
+
+    Query params:
+        file_path:   path of the loaded instructions file
+        load_reason: "session_start" | "compact"
+    Returns: {"text": "<markdown to inject>"}
+    """
+    file_path = request.query_params.get("file_path", "")
+    load_reason = request.query_params.get("load_reason", "")
+
+    retriever = _st._retriever
+    if retriever is None:
+        return JSONResponse({"text": ""})
+
+    # Build a query from the filename + load_reason for relevant memories
+    import pathlib as _pathlib
+
+    filename = _pathlib.Path(file_path).name if file_path else "CLAUDE.md"
+    query = f"{filename} {load_reason} instructions context".strip()
+
+    try:
+        results = await asyncio.to_thread(retriever.recall, query, max_results=3, min_heat=0.0)
+    except Exception as _e:
+        logger.debug("instructions-loaded hook recall error: %s", _e)
+        return JSONResponse({"text": ""})
+
+    if not results:
+        return JSONResponse({"text": ""})
+
+    max_chars = 2000
+    lines = ["# Yadgar — Instructions Context\n"]
+    total_chars = 0
+    for m in results:
+        content = m.get("content", "")
+        if total_chars + len(content) > max_chars:
+            remaining = max_chars - total_chars
+            if remaining > 50:
+                content = content[:remaining] + "..."
+            else:
+                break
+        lines.append(f"- {content}")
+        total_chars += len(content)
+
+    return JSONResponse({"text": "\n".join(lines)})
+
+
+@mcp_server.custom_route("/hooks/subagent-start", methods=["POST"])
+async def hook_subagent_start(request: Request) -> JSONResponse:
+    """SubagentStart hook endpoint — inject recalled context into subagent.
+
+    Called by yadgar/hooks/subagent-start.py when Claude Code starts a subagent.
+    Reads agent_type + cwd from query params and task description from body.
+    Calls recall(task_description) and returns relevant memories + anchors to
+    inject into the subagent's context at dispatch time.
+
+    This reduces orchestrator burden: the main thread need not prepend context
+    manually; the hook injects it automatically.
+
+    Query params:
+        agent_type: "general-purpose" | "Explore" | ...
+        cwd:        project directory
+    Body (JSON):
+        {
+            "description": "task description",
+            "cwd": "/path/to/project"   (fallback if query param absent)
+        }
+    Returns: {"text": "<markdown to inject>"}
+    """
+    agent_type = sanitize_log_field(
+        request.query_params.get("agent_type", "general-purpose"), max_len=64
+    )
+    cwd = sanitize_log_field(request.query_params.get("cwd", os.getcwd()), max_len=500)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    description = sanitize_log_field(str(body.get("description", "")), max_len=2000)
+    if not cwd:
+        cwd = sanitize_log_field(str(body.get("cwd", os.getcwd())), max_len=500)
+
+    retriever = _st._retriever
+    if retriever is None:
+        return JSONResponse({"text": ""})
+
+    # Use description as primary query; fall back to agent_type if empty
+    query = description.strip() or f"agent {agent_type}"
+
+    try:
+        results = await asyncio.to_thread(retriever.recall, query, max_results=5, min_heat=0.0)
+    except Exception as _e:
+        logger.debug("subagent-start hook recall error: %s", _e)
+        return JSONResponse({"text": ""})
+
+    if not results:
+        return JSONResponse({"text": ""})
+
+    max_chars = 3000
+    lines = [f"# Yadgar — Subagent Context [{agent_type}]\n"]
+    total_chars = 0
+    for m in results:
+        content = m.get("content", "")
+        if total_chars + len(content) > max_chars:
+            remaining = max_chars - total_chars
+            if remaining > 50:
+                content = content[:remaining] + "..."
+            else:
+                break
+        mem_dir = m.get("directory_context", "")
+        import pathlib as _pl
+
+        proj = f" [{_pl.Path(mem_dir).name}]" if mem_dir and mem_dir != cwd else ""
+        lines.append(f"- {content}{proj}")
+        total_chars += len(content)
+
+    return JSONResponse({"text": "\n".join(lines)})
+
+
 # ── Graph / Visualization API ──────────────────────────────────────────────
 
 
