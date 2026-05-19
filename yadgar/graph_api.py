@@ -390,8 +390,18 @@ _prev_cpu_ticks: int = 0
 _prev_cpu_time: float = 0.0
 
 
-def sample_system_metrics(pid: int, db_path: str) -> dict:
-    """Sample system metrics from /proc and update the in-process cache."""
+def sample_system_metrics(pid: int, db_path: str, storage: object = None) -> dict:
+    """Sample system metrics from /proc and update the in-process cache.
+
+    Args:
+        pid: PID of the daemon process (for /proc reads).
+        db_path: Local filesystem path to the SurrealDB directory.
+        storage: Optional StorageEngine instance.  When provided *and* the
+            storage is in server mode (YADGAR_DB_URL is set), db_size_mb is
+            obtained via ``storage.get_db_size()`` which proxies to the embed
+            service's /admin/dbsize endpoint — the local path doesn't exist in
+            that topology and would always return 0.
+    """
     global _metrics_cache, _metrics_sampled_at, _prev_cpu_ticks, _prev_cpu_time
 
     result: dict = dict(_metrics_cache)  # start with last known values
@@ -461,16 +471,30 @@ def sample_system_metrics(pid: int, db_path: str) -> dict:
         result.setdefault("load_avg_5m", 0.0)
         result.setdefault("load_avg_15m", 0.0)
 
-    # DB directory size
-    try:
-        db_dir = Path(db_path).expanduser()
-        if db_dir.is_dir():
-            size_bytes = sum(f.stat().st_size for f in db_dir.rglob("*") if f.is_file())
-            result["db_size_mb"] = round(size_bytes / 1024 / 1024, 1)
-        else:
-            result["db_size_mb"] = 0.0
-    except Exception:
-        result.setdefault("db_size_mb", 0.0)
+    # DB directory size — use storage.get_db_size() in server mode so we hit the
+    # embed-service proxy rather than walking a path that doesn't exist locally.
+    _db_size_set = False
+    if storage is not None:
+        _db_url = getattr(storage, "_db_url", None)
+        if _db_url is not None:
+            try:
+                size_data = storage.get_db_size()
+                size_bytes = size_data.get("db_size_bytes", 0)
+                result["db_size_mb"] = round(size_bytes / 1024 / 1024, 1)
+                _db_size_set = True
+            except Exception:
+                pass
+
+    if not _db_size_set:
+        try:
+            db_dir = Path(db_path).expanduser()
+            if db_dir.is_dir():
+                size_bytes = sum(f.stat().st_size for f in db_dir.rglob("*") if f.is_file())
+                result["db_size_mb"] = round(size_bytes / 1024 / 1024, 1)
+            else:
+                result["db_size_mb"] = 0.0
+        except Exception:
+            result.setdefault("db_size_mb", 0.0)
 
     result["sampled_at"] = time.time()
     _metrics_cache = result

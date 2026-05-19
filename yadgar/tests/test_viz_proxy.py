@@ -249,6 +249,41 @@ class TestHandleProxyLazyImport:
         )
 
 
+class TestProxyTimeout:
+    """V6: default client must use 60s read timeout, not httpx default 5s."""
+
+    def test_default_client_factory_uses_60s_timeout(self) -> None:
+        """When no client_factory is provided, proxy uses 60s read timeout."""
+        import inspect
+
+        from yadgar import viz_server
+
+        # Re-read the source to verify the lambda sets Timeout(60.0, …)
+        src = inspect.getsource(viz_server._proxy_request)
+        assert "60.0" in src, "Expected 60s timeout in _proxy_request default client"
+
+    def test_custom_client_factory_still_works(self) -> None:
+        """Explicit client_factory override is not broken by the timeout default."""
+        called: list[bool] = []
+
+        def _fake(method: str, url: str, **kwargs: Any) -> httpx.Response:
+            called.append(True)
+            return httpx.Response(200, content=b"{}", headers={"content-type": "application/json"})
+
+        from yadgar.viz_server import _proxy_request
+
+        result = _proxy_request(
+            method="GET",
+            upstream_url="http://127.0.0.1:8765/api/graph",
+            headers={},
+            body=b"",
+            token="tok",
+            client_factory=lambda: _FakeClient(_fake),
+        )
+        assert result.status_code == 200
+        assert called
+
+
 class TestRunVizServerSignature:
     def test_host_kwarg_present(self) -> None:
         """run_viz_server must still accept host= kwarg (regression guard)."""

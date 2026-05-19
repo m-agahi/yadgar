@@ -232,14 +232,18 @@ def init_engines(
         _pid = os.getpid()
         _db_path = _settings.DB_PATH
 
-        def _metrics_thread(pid: int = _pid, db_path: str = _db_path) -> None:
+        _storage_ref = _st._storage  # capture for closure
+
+        def _metrics_thread(
+            pid: int = _pid, db_path: str = _db_path, storage: object = _storage_ref
+        ) -> None:
             from yadgar.graph_api import sample_system_metrics
 
-            sample_system_metrics(pid, db_path)  # prime CPU delta baseline
+            sample_system_metrics(pid, db_path, storage)  # prime CPU delta baseline
             while True:
                 time.sleep(5)
                 try:
-                    result = sample_system_metrics(pid, db_path)
+                    result = sample_system_metrics(pid, db_path, storage)
                     # §9 Q6: update under lock to prevent torn reads.
                     with _st._metrics_lock:
                         _st._system_metrics_cache.update(result)

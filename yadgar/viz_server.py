@@ -60,7 +60,11 @@ def _proxy_request(
         proxy_headers["Authorization"] = f"Bearer {token}"
 
     if client_factory is None:
-        client_factory = httpx.Client  # type: ignore[assignment]
+        # Default: generous timeout for large /api/graph payloads (2k+ nodes
+        # with semantic-edge cosine compute can exceed the httpx default 5s).
+        client_factory = lambda: httpx.Client(  # type: ignore[assignment]  # noqa: E731
+            timeout=httpx.Timeout(60.0, connect=5.0)
+        )
 
     with client_factory() as client:
         resp = client.request(
