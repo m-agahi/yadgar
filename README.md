@@ -296,6 +296,25 @@ Full notes: [docs/architecture.md](docs/architecture.md).
 
 </details>
 
+## Subagent Integration
+
+Yadgar v5.3.0+ ships a `SubagentStop` hook that automatically captures memory
+findings from Claude Code subagents. When a subagent completes, its final report
+is scanned for a `## Yadgar findings` section; each bullet is persisted as a memory
+with `provenance_agent` set to the agent type.
+
+To opt your subagents into the Yadgar protocol, paste the contents of
+[`docs/CLAUDE_SUBAGENT_CONTRACT.md`](docs/CLAUDE_SUBAGENT_CONTRACT.md) into your
+`~/.claude/CLAUDE.md`. Then run:
+
+```sh
+yadgar install-hooks --scope global
+```
+
+This registers the `SubagentStop` hook in `~/.claude/settings.json` (append-if-absent
+— existing hooks are preserved). The contract is opt-in: Yadgar works without it,
+subagents just won't auto-write their findings.
+
 ## Documentation
 
 - [Architecture](docs/architecture.md) — component map, branch-aware retrieval, security, observability
@@ -305,6 +324,7 @@ Full notes: [docs/architecture.md](docs/architecture.md).
 - [Release runbook](docs/RELEASE.md) — version bump → tag → nix
 - [Migration notes](MIGRATION_NOTES.md) — operator steps for breaking changes
 - [Claude workflow](docs/claude-workflow.md) — long-lived feature-branch workflow
+- [Subagent contract](docs/CLAUDE_SUBAGENT_CONTRACT.md) — paste snippet + SubagentStop hook setup
 
 ## Roadmap
 
