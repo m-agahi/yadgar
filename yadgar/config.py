@@ -394,6 +394,26 @@ class Settings(BaseSettings):
     # Set to 0.0 to disable boost and revert to pure exponential decay (back-compat).
     RECALL_BOOST: float = 0.05
 
+    # Q2 — Postmortem/incident tag retrieval boost (v5.3.5)
+    # When the recall query contains an action verb (deploy, push, merge, etc.) AND
+    # a candidate memory has tag _postmortem or _incident, its score is boosted via
+    # the same convex formula as branch boost:
+    #   boosted = score + (1 - score) * POSTMORTEM_BOOST_FACTOR
+    # Set to 0.0 to disable (back-compat).
+    POSTMORTEM_BOOST_FACTOR: float = 0.3
+    POSTMORTEM_BOOST_KEYWORDS: tuple = (
+        "deploy",
+        "push",
+        "merge",
+        "restart",
+        "vacuum",
+        "rollback",
+        "upgrade",
+        "migrate",
+        "bump",
+        "release",
+    )
+
     model_config = {"env_prefix": "YADGAR_"}
 
     @field_validator("VACUUM_AUTO_WINDOW_START", "VACUUM_AUTO_WINDOW_END")

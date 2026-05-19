@@ -252,6 +252,13 @@ class EmbeddingEngine:
         """Encode text to a float32 byte blob."""
         if text in self._query_cache:
             self._query_cache.move_to_end(text)
+            try:
+                from yadgar.metrics import yadgar_cache_hit_total, yadgar_embedding_cache_hits_total
+
+                yadgar_embedding_cache_hits_total.inc()
+                yadgar_cache_hit_total.labels(cache="embedding").inc()
+            except Exception:
+                pass
             return self._query_cache[text]
         self._ensure_model()
         if self._unavailable:
@@ -265,6 +272,13 @@ class EmbeddingEngine:
         self._query_cache.move_to_end(text)
         if len(self._query_cache) > _CACHE_MAX:
             self._query_cache.popitem(last=False)
+        try:
+            from yadgar.metrics import yadgar_cache_miss_total, yadgar_embedding_cache_misses_total
+
+            yadgar_embedding_cache_misses_total.inc()
+            yadgar_cache_miss_total.labels(cache="embedding").inc()
+        except Exception:
+            pass
         return result
 
     def encode_batch(self, texts: list[str]) -> list[bytes | None]:

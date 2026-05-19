@@ -121,6 +121,24 @@ def recall(query: str, max_results: int = 5, min_heat: float = 0.0) -> list[dict
                 m["_retrieval_score"] = base + (1.0 - base) * _boost_weight
         merged.sort(key=lambda m: m.get("_retrieval_score", 0.0), reverse=True)
 
+    # Q2 — Postmortem/incident tag retrieval boost (v5.3.5).
+    # When the query contains an action verb AND a candidate has tag _postmortem
+    # or _incident, boost via convex combination (same formula as branch boost).
+    # boosted = score + (1 - score) * POSTMORTEM_BOOST_FACTOR
+    _pm_boost_factor = getattr(settings, "POSTMORTEM_BOOST_FACTOR", 0.3)
+    _pm_keywords = getattr(settings, "POSTMORTEM_BOOST_KEYWORDS", ())
+    if _pm_boost_factor > 0.0 and _pm_keywords:
+        _query_lower = query.lower()
+        _has_action_verb = any(kw in _query_lower for kw in _pm_keywords)
+        if _has_action_verb:
+            _pm_tags = {"_postmortem", "_incident"}
+            for m in merged:
+                _mem_tags = set(m.get("tags", []))
+                if _mem_tags & _pm_tags:
+                    base = min(m.get("_retrieval_score", m.get("heat", 0.0)), 1.0)
+                    m["_retrieval_score"] = base + (1.0 - base) * _pm_boost_factor
+            merged.sort(key=lambda m: m.get("_retrieval_score", 0.0), reverse=True)
+
     merged = merged[:max_results]
 
     # Boost heat, update last_accessed, and record metamemory access
