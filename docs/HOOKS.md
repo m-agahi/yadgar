@@ -77,6 +77,12 @@ Replace `/HOOKS_DIR/` with the directory where you copied the hook scripts
         "hooks": [{ "type": "command", "command": "python3 '/HOOKS_DIR/yadgar-subagent-start.py'" }]
       }
     ],
+    "FileChanged": [
+      {
+        "matcher": "",
+        "hooks": [{ "type": "command", "command": "python3 '/HOOKS_DIR/yadgar-file-changed.py'" }]
+      }
+    ],
     "Stop": [
       {
         "matcher": "",
@@ -102,6 +108,7 @@ Replace `/HOOKS_DIR/` with the directory where you copied the hook scripts
 | `SubagentStop` | `yadgar-subagent-stop.py` | Extract `## Yadgar findings` bullets from agent reports |
 | `InstructionsLoaded` | `yadgar-instructions-loaded.py` | Inject recalled context when CLAUDE.md loads (v5.3.2) |
 | `SubagentStart` | `yadgar-subagent-start.py` | Pre-populate subagent context via recall at dispatch (v5.3.2) |
+| `FileChanged` | `yadgar-file-changed.py` | Mirror team_inbox JSONL → action_log; memorize PLAN_*.md changes (v5.3.6) |
 | `Stop` | `yadgar-stop-memory-checkpoint.py` | Persist session checkpoint on Claude Code exit |
 
 ---
@@ -142,6 +149,41 @@ presence of `agent_id`) from a real Claude Code run and update if needed.
 - `agent_type` — used for context header and daemon query param
 - `cwd` — project directory
 - `description` (fallback: `prompt`) — used as recall query
+
+---
+
+## FileChanged hook (v5.3.6)
+
+Fires when a watched file changes on disk. Registered with empty matcher (fires
+on all changes); the hook script filters to two use cases:
+
+### M1 — Agent Teams JSONL inbox mirror
+
+Watches `~/.claude/team_inbox/**/*.jsonl`. When a peer agent appends a message,
+the hook reads new lines since last call (position-tracked in daemon memory) and
+writes one `action_log` entry per JSONL line with `tool=team_message` and tags
+`["team-message", "from-subagent"]`. Gives the curator full visibility into
+inter-agent communication.
+
+**Payload fields used:**
+- `file_path` — path to changed JSONL file
+- `file_action` — only `created` / `modified` are processed; `deleted` is skipped
+
+### Q4 — PLAN_*.md auto-memorize
+
+Watches `**/docs/PLAN_*.md`. When a plan file is modified, reads its content
+and calls `memorize()` with tags `["_plan", "plan-file"]`. Hash-deduped:
+identical content on repeat calls is skipped.
+
+**Payload fields used:**
+- `file_path` — path to changed markdown file
+- `file_action` — only `created` / `modified` are processed
+
+### Matcher note
+
+`FileChanged` uses literal filename matching per Claude Code 2026 docs (no
+regex or glob). The empty matcher `""` is used — script-side `re` patterns
+handle the team_inbox and docs/PLAN_* filtering.
 
 ---
 

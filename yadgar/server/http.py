@@ -404,6 +404,221 @@ async def hook_subagent_stop(request: Request) -> JSONResponse:
     return JSONResponse(response)
 
 
+@mcp_server.custom_route("/hooks/file-changed", methods=["POST"])
+async def hook_file_changed(request: Request) -> JSONResponse:
+    """FileChanged hook endpoint — mirrors team_inbox JSONL and PLAN_*.md changes.
+
+    Called by yadgar/hooks/file-changed.py when Claude Code fires FileChanged.
+
+    Query params:
+        path: URL-encoded absolute path of the changed file (from hook script)
+    Body (JSON):
+        {
+            "file_path": "/absolute/path/to/file",
+            "file_action": "created" | "modified"
+        }
+
+    Dispatch:
+      - team_inbox/**/*.jsonl → read new JSONL lines, write action_log per message
+      - docs/PLAN_*.md        → read file content, memorize with _plan tag
+      - other paths           → 200 OK no-op (forward-compat)
+    """
+    import re as _re
+    import urllib.parse as _urlparse
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    # Accept path from query param OR body (hook script sends both)
+    file_path = request.query_params.get("path", "") or body.get("file_path", "")
+    if file_path:
+        try:
+            file_path = _urlparse.unquote(file_path)
+        except Exception:
+            pass
+    body.get("file_action", "modified")
+
+    if not file_path:
+        return JSONResponse({"status": "error", "message": "missing file_path"}, status_code=400)
+
+    storage = _st._storage
+    if storage is None:
+        return JSONResponse(
+            {"status": "error", "message": "Storage not initialized"}, status_code=503
+        )
+
+    # ── team_inbox filter ───────────────────────────────────────────────────
+    _TEAM_INBOX_RE = _re.compile(
+        r"[/\\]\.claude[/\\]team_inbox[/\\]([^/\\]+)[/\\]([^/\\]+)[/\\]([^/\\]+)\.jsonl$"
+    )
+    _PLAN_FILE_RE = _re.compile(r"[/\\]docs[/\\](PLAN_[^/\\]*\.md)$")
+
+    inbox_match = _TEAM_INBOX_RE.search(file_path)
+    plan_match = _PLAN_FILE_RE.search(file_path)
+
+    if inbox_match:
+        return await _handle_team_inbox(file_path, inbox_match, storage)
+    elif plan_match:
+        return await _handle_plan_file(file_path, plan_match, storage)
+    else:
+        # Unknown path — no-op, forward-compat
+        return JSONResponse({"status": "skipped", "reason": "path_not_watched"})
+
+
+async def _handle_team_inbox(file_path: str, match, storage) -> JSONResponse:
+    """Read new JSONL lines from a team_inbox file and write action_log entries."""
+    import asyncio as _asyncio
+    from datetime import UTC, datetime
+
+    project_id = match.group(1)
+    team_name = match.group(2)
+    agent_name = match.group(3)
+
+    from pathlib import Path as _Path
+
+    p = _Path(file_path)
+    if not p.exists():
+        return JSONResponse({"status": "skipped", "reason": "file_not_found"})
+
+    # Track file position to only read NEW lines since last call
+    current_pos = _st._team_inbox_positions.get(file_path, 0)
+
+    new_lines = []
+    try:
+        with p.open("r", encoding="utf-8", errors="ignore") as fh:
+            fh.seek(current_pos)
+            new_lines = fh.readlines()
+            new_pos = fh.tell()
+    except Exception as _e:
+        logger.debug("team_inbox read error %s: %s", file_path, _e)
+        return JSONResponse({"status": "error", "message": str(_e)[:100]}, status_code=500)
+
+    # Update position — cap dict to 10_000 entries
+    _st._team_inbox_positions[file_path] = new_pos
+    if len(_st._team_inbox_positions) > 10_000:
+        # Evict oldest entry
+        _st._team_inbox_positions.popitem(last=False)
+
+    stored = 0
+    skipped = 0
+    ts = datetime.now(UTC).isoformat()
+
+    for raw_line in new_lines:
+        raw_line = raw_line.strip()
+        if not raw_line:
+            continue
+        try:
+            msg = json.loads(raw_line)
+        except json.JSONDecodeError:
+            logger.warning("team_inbox malformed JSONL in %s — skipping line", file_path)
+            skipped += 1
+            continue
+
+        msg.get("subagent_type") or msg.get("agent_type") or "unknown"
+        content_snippet = str(msg.get("content") or msg.get("text") or msg.get("message") or "")
+        summary = content_snippet[:200] if content_snippet else f"team_message from {agent_name}"
+
+        try:
+            await _asyncio.to_thread(
+                storage.insert_action_log,
+                tool_name="team_message",
+                tool_input_summary=sanitize_log_field(summary, max_len=500),
+                directory=sanitize_log_field(file_path, max_len=500),
+                session_id=sanitize_log_field(
+                    f"team:{project_id}/{team_name}/{agent_name}", max_len=100
+                ),
+                timestamp=ts,
+            )
+            stored += 1
+        except Exception as _e:
+            logger.debug("team_inbox action_log insert failed: %s", _e)
+            skipped += 1
+
+    return JSONResponse(
+        {
+            "status": "ok",
+            "stored": stored,
+            "skipped": skipped,
+            "new_lines": len(new_lines),
+        }
+    )
+
+
+async def _handle_plan_file(file_path: str, match, storage) -> JSONResponse:
+    """Read PLAN_*.md content and memorize with _plan tag (hash-dedup)."""
+    import asyncio as _asyncio
+    import hashlib as _hashlib
+    from pathlib import Path as _Path
+
+    p = _Path(file_path)
+    if not p.exists():
+        return JSONResponse({"status": "skipped", "reason": "file_not_found"})
+
+    try:
+        content = p.read_text(encoding="utf-8", errors="ignore")
+    except Exception as _e:
+        logger.debug("PLAN file read error %s: %s", file_path, _e)
+        return JSONResponse({"status": "error", "message": str(_e)[:100]}, status_code=500)
+
+    if not content.strip():
+        return JSONResponse({"status": "skipped", "reason": "empty_file"})
+
+    # Hash-dedup — skip if content unchanged since last memorize
+    file_hash = _hashlib.sha256(content.encode("utf-8", errors="ignore")).hexdigest()
+    if _st._plan_file_hashes.get(file_path) == file_hash:
+        return JSONResponse({"status": "skipped", "reason": "unchanged"})
+
+    _st._plan_file_hashes[file_path] = file_hash
+
+    # Attempt to capture current git commit ref for provenance
+    git_ref = ""
+    try:
+        import subprocess as _sp
+
+        result = _sp.run(
+            ["git", "-C", str(p.parent.parent), "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if result.returncode == 0:
+            git_ref = result.stdout.strip()
+    except Exception:
+        pass
+
+    filename = match.group(1)
+    snippet = content[:800].strip()
+    memo_content = (
+        f"PLAN file {filename} (git:{git_ref}):\n{snippet}"
+        if git_ref
+        else f"PLAN file {filename}:\n{snippet}"
+    )
+
+    import sys as _sys
+
+    _srv = _sys.modules.get("yadgar.server")
+    _memorize = getattr(_srv, "memorize", None) if _srv else None
+    if _memorize is None:
+        from yadgar.server.tools.memorize import memorize as _memorize  # noqa: PLC0415
+
+    try:
+        result = await _asyncio.to_thread(
+            _memorize,
+            content=memo_content,
+            context=str(p.parent),
+            tags=["_plan", "plan-file"],
+            is_protected=False,
+        )
+        return JSONResponse(
+            {"status": "ok", "memorized": True, "file": filename, "git_ref": git_ref}
+        )
+    except Exception as _e:
+        logger.debug("PLAN memorize failed for %s: %s", file_path, _e)
+        return JSONResponse({"status": "error", "message": str(_e)[:100]}, status_code=500)
+
+
 @mcp_server.custom_route("/hooks/instructions-loaded", methods=["GET"])
 async def hook_instructions_loaded(request: Request) -> JSONResponse:
     """InstructionsLoaded hook endpoint — inject recalled context on CLAUDE.md load.
