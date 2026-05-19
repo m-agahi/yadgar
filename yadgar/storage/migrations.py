@@ -74,6 +74,25 @@ def _migration_003_memory_similarity_link_table(storage) -> None:
     """)
 
 
+def _migration_005_provenance_agent_field(storage) -> None:
+    """Add provenance_agent column to memory with default 'default'; backfill NULLs.
+
+    DDL: DEFINE FIELD IF NOT EXISTS is idempotent — safe to call twice.
+    Backfill: only updates rows where provenance_agent IS NONE (not set),
+    preserving existing non-null values.
+    """
+    storage._q(
+        "DEFINE FIELD IF NOT EXISTS provenance_agent ON TABLE memory TYPE string DEFAULT 'default';"
+    )
+    # Backfill pre-v5.3 rows that have no provenance_agent value
+    storage._q(
+        "BEGIN TRANSACTION;\n"
+        "UPDATE memory SET provenance_agent = 'default' "
+        "WHERE provenance_agent IS NONE;\n"
+        "COMMIT TRANSACTION"
+    )
+
+
 def _migration_004_branch_field(storage) -> None:
     """Add nullable branch column to memory + wiki_page; backfill pre-v5 rows.
 
@@ -100,6 +119,10 @@ _MIGRATIONS: list[dict] = [
         "fn": _migration_003_memory_similarity_link_table,
     },
     {"version": "004_branch_field", "fn": _migration_004_branch_field},
+    {
+        "version": "005_provenance_agent_field",
+        "fn": _migration_005_provenance_agent_field,
+    },
 ]
 
 

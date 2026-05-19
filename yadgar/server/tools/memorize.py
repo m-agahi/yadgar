@@ -36,6 +36,7 @@ def memorize(
     context: str,
     tags: list[str],
     is_protected: bool = False,
+    provenance_agent: str | None = None,
 ) -> dict:
     """Store a new memory with embedding.
 
@@ -49,9 +50,22 @@ def memorize(
       decisions, permanent constraints). Equivalent to calling anchor() but inline.
     - Alternatively, include "_anchor" in tags for the same effect.
     - Without either flag, memories decay naturally based on heat and last-access time.
+
+    provenance_agent: identifies the agent or subagent type that stored this memory.
+      Defaults to "default". Must be ASCII alphanumeric/hyphen/underscore, ≤64 chars.
+      Used for provenance tracking across multi-agent workflows.
     """
     if len(content) > 32_768:
         return {"stored": False, "reason": "content_too_large", "max_bytes": 32_768}
+
+    # Validate and normalise provenance_agent before any further processing
+    _provenance_agent: str = provenance_agent if provenance_agent is not None else "default"
+    try:
+        from yadgar.storage.memory import _validate_provenance_agent
+
+        _validate_provenance_agent(_provenance_agent)
+    except ValueError as _ve:
+        return {"stored": False, "reason": f"invalid_provenance_agent: {_ve}"}
 
     # Secret detection — always on, fires before anything else
     sec_blocked, sec_reason, sec_pattern = check_secrets(content)
@@ -92,6 +106,7 @@ def memorize(
                     "tags": list(tags),
                     "is_protected": is_protected,
                     "branch": _branch,
+                    "provenance_agent": _provenance_agent,
                 },
             )
             from pathlib import Path as _Path
@@ -182,6 +197,7 @@ def memorize(
                     "is_stale": False,
                     "file_hash": fhash,
                     "embedding_model": embeddings.get_model_name(),
+                    "provenance_agent": _provenance_agent,
                 },
                 branch=_branch,
             )
@@ -201,6 +217,7 @@ def memorize(
                 "is_stale": False,
                 "file_hash": fhash,
                 "embedding_model": embeddings.get_model_name(),
+                "provenance_agent": _provenance_agent,
             },
             branch=_branch,
         )
@@ -376,15 +393,18 @@ def memorize(
     )
 
     memory.setdefault("file_hash", None)
-    # Stamp CRDT provenance on newly created memories
+    # Stamp CRDT vector_clock on newly created memories.
+    # provenance_agent is set by the caller via the explicit arg (defaults to "default").
+    # CRDT_AGENT_ID is used only for vector_clock tracking — it no longer overwrites
+    # provenance_agent so that per-call provenance is preserved (v5.3.0 A1).
     if curation_action == "created":
-        _agent = settings.CRDT_AGENT_ID
-        _clock = json.dumps({_agent: 1})
+        _crdt_agent = settings.CRDT_AGENT_ID
+        _clock = json.dumps({_crdt_agent: 1})
         storage._q(
             "UPDATE type::record('memory', $id) SET provenance_agent = $a, vector_clock = $c",
-            {"id": memory_id, "a": _agent, "c": _clock},
+            {"id": memory_id, "a": _provenance_agent, "c": _clock},
         )
-        memory["provenance_agent"] = _agent
+        memory["provenance_agent"] = _provenance_agent
         memory["vector_clock"] = _clock
     memory["curation_action"] = curation_action
     if gate_result is not None:
