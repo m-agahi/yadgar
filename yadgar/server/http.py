@@ -939,6 +939,66 @@ async def api_graph_events(request: Request) -> StreamingResponse:
     )
 
 
+@mcp_server.custom_route("/api/viz/search", methods=["GET"])
+async def api_viz_search(request: Request) -> JSONResponse:
+    """Semantic search for viz graph: return node IDs matching query.
+
+    GET /api/viz/search?q=<query>
+
+    Dispatches recall() + wiki_query() (capped at 5 each) and returns
+    matching node IDs so the frontend can pin/highlight them in the graph.
+
+    Response: {"node_ids": ["mem:42", "wiki:7", ...], "query": "<q>"}
+    """
+    q = (request.query_params.get("q") or "").strip()
+    if not q:
+        return JSONResponse({"node_ids": [], "query": ""}, headers=_CORS)
+
+    node_ids: list[str] = []
+
+    # Memory recall
+    retriever = _st._retriever
+    if retriever is not None:
+        try:
+            mem_results = await asyncio.to_thread(retriever.recall, q, max_results=5, min_heat=0.0)
+            for r in mem_results or []:
+                raw_id = r.get("id")
+                if raw_id is not None:
+                    try:
+                        node_ids.append(f"mem:{int(raw_id)}")
+                    except TypeError, ValueError:
+                        pass
+        except Exception as _exc:
+            logger.debug("viz_search recall error: %s", _exc)
+
+    # Wiki query
+    wiki = _st._wiki
+    if wiki is not None:
+        try:
+            wiki_results = await asyncio.to_thread(wiki.query, q, None, None, 5)
+            for wp in wiki_results or []:
+                raw_id = wp.get("id")
+                if raw_id is not None:
+                    # id may be a RecordID — extract numeric part
+                    from yadgar.graph_api import GraphAPI  # noqa: PLC0415
+
+                    nid = GraphAPI._extract_id(raw_id)
+                    if nid is not None:
+                        node_ids.append(f"wiki:{nid}")
+        except Exception as _exc:
+            logger.debug("viz_search wiki_query error: %s", _exc)
+
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique_ids: list[str] = []
+    for nid in node_ids:
+        if nid not in seen:
+            seen.add(nid)
+            unique_ids.append(nid)
+
+    return JSONResponse({"node_ids": unique_ids, "query": q}, headers=_CORS)
+
+
 @mcp_server.custom_route("/graph", methods=["GET"])
 async def graph_view(request: Request) -> FileResponse:
     """3D memory force graph visualization."""
