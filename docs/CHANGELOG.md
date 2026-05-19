@@ -7,6 +7,11 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.1.8] - 2026-05-19
+
+### Removed
+- `get_project_context` deprecated alias removed (deprecated in v5.0.0; window long-expired). Use `project_brief(directory, mode='catalog')` instead.
+
 ## [5.1.4] - 2026-05-18
 > Vacuum properly recovers yadgar-rw / yadgar-ro after `/import`.
 

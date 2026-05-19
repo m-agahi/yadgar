@@ -85,7 +85,7 @@ Normal memories are never automatically deleted. Use `forget(memory_id)` for man
 
 ## Access and Reinforcement
 
-When a memory is returned by `recall()` or `get_project_context()`:
+When a memory is returned by `recall()` or `project_brief()`:
 
 1. `last_accessed` timestamp updated
 2. `access_count` incremented

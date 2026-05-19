@@ -11,7 +11,7 @@ Claude Code (MCP client)
         ▼
 ┌───────────────────────────────────────────────────────┐
 │                    server.py (MCP server)              │
-│   memorize / recall / get_project_context / anchor /  │
+│   memorize / recall / project_brief / anchor /        │
 │   checkpoint / restore / wiki_* / forget / seed /...  │
 └────────┬──────────────────────────────────────────────┘
          │
