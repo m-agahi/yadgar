@@ -135,7 +135,18 @@ def _detect_branch(directory: str) -> str | None:
     Never raises — all errors return None.
     """
     try:
-        return _detect_branch_cached(directory, int((time.time() + (hash(directory) % 30)) // 30))
+        _before = _detect_branch_cached.cache_info().hits
+        result = _detect_branch_cached(directory, int((time.time() + (hash(directory) % 30)) // 30))
+        try:
+            from yadgar.metrics import yadgar_cache_hit_total, yadgar_cache_miss_total
+
+            if _detect_branch_cached.cache_info().hits > _before:
+                yadgar_cache_hit_total.labels(cache="branch_detect").inc()
+            else:
+                yadgar_cache_miss_total.labels(cache="branch_detect").inc()
+        except Exception:
+            pass
+        return result
     except Exception:
         return None
 
@@ -177,7 +188,18 @@ def _get_default_branch(directory: str) -> str:
     default. Falls back to 'master' if the repo has no remote or the command
     fails. LRU-cached with a 5-minute TTL.
     """
-    return _get_default_branch_cached(directory, int(time.time() // 300))
+    _before = _get_default_branch_cached.cache_info().hits
+    result = _get_default_branch_cached(directory, int(time.time() // 300))
+    try:
+        from yadgar.metrics import yadgar_cache_hit_total, yadgar_cache_miss_total
+
+        if _get_default_branch_cached.cache_info().hits > _before:
+            yadgar_cache_hit_total.labels(cache="default_branch").inc()
+        else:
+            yadgar_cache_miss_total.labels(cache="default_branch").inc()
+    except Exception:
+        pass
+    return result
 
 
 # ── Project tools ──────────────────────────────────────────────────────
