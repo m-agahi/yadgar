@@ -3,6 +3,21 @@
 import fnmatch
 import logging
 import re
+
+# S3 (H-6): import the third-party `regex` library for use in write-path redact calls.
+# `regex` is a drop-in replacement for stdlib `re` and supports a timeout= kwarg that
+# raises regex.TimeoutError when a catastrophic-backtracking pattern exceeds the budget.
+# Option A (regex library) chosen over:
+#   B - AST pre-flight checker (incomplete; misses all patterns in practice)
+#   C - subprocess per-call (prohibitive overhead on the write hot-path)
+try:
+    import regex as _regex_lib
+
+    _REGEX_TIMEOUT_S = 1.0  # wall-clock seconds per redact call
+except ImportError:  # pragma: no cover — only hits if package missing from env
+    _regex_lib = None  # type: ignore[assignment]
+    _REGEX_TIMEOUT_S = 0.0
+
 from typing import Any
 
 from yadgar.config import Settings
@@ -442,14 +457,30 @@ class RulesEngine:
             action_type, pattern, replacement = _parse_write_action(rule["action"])
             if action_type == "redact" and pattern:
                 try:
-                    # TODO(review-20260516, H-6): re.sub with caller-supplied pattern — ReDoS
-                    # possible on write hot-path; add pattern length cap and AST check for nested
-                    # unbounded quantifiers, or switch to google-re2 for bounded execution.
-                    modified = re.sub(pattern, replacement, modified)
+                    if _regex_lib is not None:
+                        # S3 (H-6): use third-party `regex` library with a hard timeout.
+                        # regex.TimeoutError is raised when CPU time exceeds _REGEX_TIMEOUT_S,
+                        # preventing catastrophic-backtracking (ReDoS) patterns from hanging
+                        # the write hot-path indefinitely.
+                        modified = _regex_lib.sub(
+                            pattern, replacement, modified, timeout=_REGEX_TIMEOUT_S
+                        )
+                    else:
+                        # Fallback: stdlib re (no timeout) — only if regex pkg is absent.
+                        modified = re.sub(pattern, replacement, modified)
                     was_redacted = True
                     mem = {**mem, "content": modified}
                 except re.error as exc:
                     logger.warning("Bad redact pattern %r: %s", pattern, exc)
+                except Exception as exc:
+                    # Catches regex.TimeoutError and any other runtime error from the
+                    # `regex` library. Log and continue without applying this redact rule.
+                    logger.warning(
+                        "Redact pattern %r timed out or errored (%s: %s) — skipping rule",
+                        pattern,
+                        type(exc).__name__,
+                        exc,
+                    )
 
         return False, "", modified if was_redacted else None
 
