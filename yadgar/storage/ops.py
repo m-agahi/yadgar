@@ -9,8 +9,21 @@ _OpsMixin provides:
 """
 
 import logging
+import re as _re
 
 _log = logging.getLogger(__name__)
+
+# S1a (H-5): allowlist for extra_where clauses in prune_old_rows.
+# Permits only simple "column = literal_value" fragments where:
+#   - column: alphanumeric + underscore
+#   - operator: =, !=, <, <=, >, >= (no keyword operators that could be injected)
+#   - literal: boolean keywords (true/false/none/null), quoted strings, or numbers.
+# Semicolons, comments (--), and parentheses are rejected outright.
+# Callers (consolidation/cleanup.py) only ever pass "is_active = false" style clauses.
+_EXTRA_WHERE_PATTERN = _re.compile(
+    r"^[a-zA-Z_][a-zA-Z0-9_]*\s*(?:=|!=|<=?|>=?)\s*(?:true|false|none|null|-?\d+(?:\.\d+)?|'[^']*')$",
+    _re.IGNORECASE,
+)
 
 
 class _OpsMixin:
@@ -107,8 +120,14 @@ class _OpsMixin:
         cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
         where = f"{age_field} < $cutoff"
         if extra_where:
-            # TODO(review-20260516, H-5): extra_where interpolated raw into SurrealQL; replace
-            # with a structured filter dict and _ALLOWED_AGE_FIELDS allowlist to prevent injection
+            # S1a (H-5): validate extra_where against a strict allowlist before interpolation.
+            # Permits only "column op literal" forms (see _EXTRA_WHERE_PATTERN above).
+            # Semicolons, comments, subqueries, and compound expressions are rejected.
+            if not _EXTRA_WHERE_PATTERN.match(extra_where.strip()):
+                raise ValueError(
+                    f"prune_old_rows: extra_where {extra_where!r} is not an allowed clause. "
+                    "Only simple 'column op literal' expressions are permitted."
+                )
             where = f"{where} AND {extra_where}"
         count_rows = self._q(
             f"SELECT count() AS c FROM {table} WHERE {where} GROUP ALL",
@@ -122,8 +141,6 @@ class _OpsMixin:
 
     def init_engram_slots(self, num_slots: int):
         """Ensure all slot indices exist in the engram_slot table."""
-        import json as _json
-
         now = self._now_iso()
         rows = self._q("SELECT VALUE slot_index FROM engram_slot")
         # Cast to int — SurrealDB may return floats (e.g. 0.0) instead of ints
@@ -135,8 +152,11 @@ class _OpsMixin:
         _CHUNK = 500
         for start in range(0, len(records), _CHUNK):
             chunk = records[start : start + _CHUNK]
-            # TODO(review-20260516, H-4): raw INSERT with json.dumps bypasses bind facility
-            self._q(f"INSERT INTO engram_slot {_json.dumps(chunk)}")
+            # S1b (H-4): use bind parameter ($data) instead of raw json.dumps interpolation.
+            # The LET-preamble mechanism in _q serialises the value safely with ensure_ascii=False,
+            # preventing any dollar-token or quote-escape in surrounding context from corrupting
+            # the INSERT statement.
+            self._q("INSERT INTO engram_slot $data", {"data": chunk})
 
     def get_engram_slot(self, slot_index: int) -> dict | None:
         rows = self._q(

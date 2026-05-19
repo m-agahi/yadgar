@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.1.9"
+version = "5.2.0"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "MIT"
@@ -49,6 +49,11 @@ dependencies = [
     "python-multipart>=0.0.27",
     # CVE-2026-44431, CVE-2026-44432 (HIGH)
     "urllib3>=2.7.0",
+    # S3 (H-6): stdlib `re` has no timeout — catastrophic-backtracking (ReDoS) patterns
+    # in caller-supplied rules_engine.py regexes would hang indefinitely. The third-party
+    # `regex` library is a drop-in stdlib replacement that adds a timeout= kwarg.
+    # Option A chosen over AST-checker (incomplete) or subprocess (per-call overhead).
+    "regex>=2024.1.0",
 ]
 
 [project.scripts]

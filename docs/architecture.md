@@ -98,9 +98,10 @@ Dream replay runs separately in `_maybe_sleep_cycle()` — triggered at most onc
 
 | Module | Responsibility |
 |---|---|
-| `server.py` | MCP tool handlers, session management, action-stream capture |
-| `storage.py` | All SurrealDB reads/writes; schema ownership |
-| `consolidation.py` | Background daemon loop, coordinates all consolidation stages |
+| `server/` | MCP tool handlers, session management, action-stream capture (subpackage: `tools/`, `middleware/`, `transport/`) |
+| `storage/` | All SurrealDB reads/writes; schema ownership (subpackage: `ops.py`, `client.py`, `schema.py`) |
+| `consolidation/` | Background daemon loop, coordinates all consolidation stages (subpackage: `scheduler.py`, `phases/`) |
+| `retrieval/` | Multi-signal search, fusion, reranking pipeline (subpackage: `core.py`, `wrrf.py`, `routing.py`, `temporal.py`, `adversarial.py`) |
 | `thermodynamics.py` | Heat decay formula with importance/valence/confidence modifiers |
 | `curation.py` | Duplicate detection, merge, `_memify_prune` for action-stream cleanup |
 | `embeddings.py` | Sentence-transformer wrapper, LRU embedding cache |
@@ -156,7 +157,16 @@ SurrealDB tables:
 
 ## Docker Deployment
 
-The included `Dockerfile` and `docker-compose.yml` run yadgar in HTTP mode. The SurrealDB data directory is mounted as `/data` (volume `yadgar-data`). Configuration can be injected via environment variables (`YADGAR_*`) without rebuilding the image, or by mounting a `config.yaml` at `/root/.yadgar/config.yaml`.
+The included `Dockerfile` and `docker-compose.yml` run yadgar as two containers:
+
+- **`yadgar-backend`** (`Dockerfile.backend`): SurrealDB + embedding microservice (`embed_service.py`). Exposes port 8001 (embed) on loopback only.
+- **`yadgar-core`** (`Dockerfile`): MCP server in streamable-HTTP mode. Connects to `yadgar-backend` for DB and embeddings. Exposes port 8765.
+
+`yadgar-core` waits for `yadgar-backend` healthcheck before starting (`depends_on: condition: service_healthy`).
+
+On non-Docker hosts, `yadgar-vacuum.service` (systemd oneshot, v4.8+) runs `yadgar vacuum --service-mode=systemd` on a weekly timer (`yadgar-vacuum.timer`). It is not a Docker service — it runs on the host and connects to the MCP daemon over HTTP.
+
+Configuration can be injected via environment variables (`YADGAR_*`) without rebuilding the image, or by mounting a `config.yaml` at `/root/.yadgar/config.yaml`.
 
 ## Branch-Aware Retrieval (v5.0)
 
@@ -164,7 +174,7 @@ Every `memory` and `wiki_page` row carries an optional `branch` column captured 
 
 Default branch is resolved via `git symbolic-ref refs/remotes/origin/HEAD` (5-minute LRU cache).
 
-`recall()` and `wiki_query()` filter `branch IN (current, default, NULL)` post-fetch. Results where `branch == current` get a 1.5× score boost and re-sort. Non-git directories degenerate to `branch IN (default, NULL)` with no boost.
+`recall()` and `wiki_query()` filter `branch IN (current, default, NULL)` post-fetch. Results where `branch == current` get a convex-combination boost (`score + (1 - score) * 0.2`) and re-sort. Non-git directories degenerate to `branch IN (default, NULL)` with no boost.
 
 `wiki_read(slug)` resolves via three-step lookup: exact slug on current branch → on default branch → on `branch IS NONE` (legacy). `wiki_cleanup_merged_branches(directory, dry_run)` removes wikis whose branch is gone.
 
