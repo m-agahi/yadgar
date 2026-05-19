@@ -959,7 +959,7 @@ class TestAllMCPTools:
             "remember",
             "recall",
             "forget",
-            "get_project_context",
+            "project_brief",
             "memory_stats",
             "checkpoint",
             "restore",

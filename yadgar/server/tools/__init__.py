@@ -19,7 +19,6 @@ from yadgar.server.tools.memorize import memorize, remember
 from yadgar.server.tools.recall import recall
 from yadgar.server.tools.project import (
     project_brief,
-    get_project_context,
     bootstrap_project,
     update_active_work,
     wiki_refresh_stale,
@@ -84,7 +83,6 @@ __all__ = [
     "remember",
     "recall",
     "project_brief",
-    "get_project_context",
     "bootstrap_project",
     "update_active_work",
     "wiki_refresh_stale",

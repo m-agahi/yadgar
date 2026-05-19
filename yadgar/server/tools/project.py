@@ -15,7 +15,6 @@ import logging
 import os
 import subprocess
 import time
-import warnings
 from datetime import UTC
 from pathlib import Path
 
@@ -207,12 +206,76 @@ def _render_project_brief(brief: dict) -> str:
     if signals:
         lines.append(f"**Signals:** {', '.join(signals)}\n")
 
-    anchors = brief.get("top_anchors", [])
-    if anchors:
-        lines.append("## Anchors")
-        for a in anchors[:5]:
-            lines.append(f"- [{a.get('id')}] {(a.get('title') or '')[:80]}")
+    # F4: empty-state nudges
+    if not init_present:
+        lines.append(
+            "*Suggestion: call `bootstrap_project(directory, ...)` to seed project context.*"
+        )
+    if not active_present:
+        lines.append(
+            "*Suggestion: call `update_active_work(directory, ...)` once you start a session.*"
+        )
+    if not init_present or not active_present:
         lines.append("")
+
+    # F5: Global Anchors section (all, up to 20)
+    global_anchors = brief.get("top_anchors_global", [])
+    lines.append("## Global Anchors")
+    if global_anchors:
+        for a in global_anchors:
+            lines.append(f"- [{a.get('id')}] {(a.get('title') or '')[:80]}")
+    else:
+        lines.append("*(none)*")
+    lines.append("")
+
+    # F5: Project Anchors section (all, up to 20)
+    project_anchors = brief.get("top_anchors_project", [])
+    lines.append("## Project Anchors")
+    if project_anchors:
+        for a in project_anchors:
+            lines.append(f"- [{a.get('id')}] {(a.get('title') or '')[:80]}")
+    else:
+        lines.append("*(none)*")
+    lines.append("")
+
+    # F5: Checkpoint section
+    checkpoint = brief.get("checkpoint")
+    if checkpoint:
+        lines.append("## Checkpoint")
+        current_task = checkpoint.get("current_task", "")
+        if current_task:
+            lines.append(f"**Task:** {current_task}")
+        key_decisions = checkpoint.get("key_decisions") or []
+        if key_decisions:
+            lines.append("**Decisions:**")
+            for d in key_decisions[:3]:
+                lines.append(f"- {d}")
+        next_steps = checkpoint.get("next_steps") or []
+        if next_steps:
+            lines.append("**Next:**")
+            for s in next_steps[:3]:
+                lines.append(f"- {s}")
+        lines.append("")
+
+    # F5: Hot Memories section
+    hot_memories = brief.get("hot_memories", [])
+    lines.append("## Hot Memories")
+    if hot_memories:
+        for m in hot_memories[:3]:
+            lines.append(f"- {(m.get('content') or '')[:100]}")
+    else:
+        lines.append("*(none)*")
+    lines.append("")
+
+    # F5: Wiki Keys section
+    key_wiki_pages = brief.get("key_wiki_pages", [])
+    lines.append("## Wiki Keys")
+    if key_wiki_pages:
+        for p in key_wiki_pages[:3]:
+            lines.append(f"- {p.get('slug', '')}")
+    else:
+        lines.append("*(none)*")
+    lines.append("")
 
     if mode == "full":
         init_content = brief.get("init_memory")
@@ -244,6 +307,27 @@ def project_brief(directory: str, mode: str = "catalog") -> dict:
 
     branch = _get_current_branch(resolved)
 
+    # F3: branch fallback — if yadgar state returns nothing but .git exists,
+    # try `git branch --show-current` (works on git ≥ 2.22)
+    if not branch:
+        git_dir = Path(resolved) / ".git"
+        if git_dir.exists():
+            try:
+                out = (
+                    subprocess.run(
+                        ["git", "-C", resolved, "branch", "--show-current"],
+                        capture_output=True,
+                        timeout=2.0,
+                        env=_git_safe_env(),
+                    )
+                    .stdout.decode()
+                    .strip()
+                )
+                if out:
+                    branch = out
+            except subprocess.TimeoutExpired, FileNotFoundError, OSError:
+                pass
+
     # Project name: last path component of resolved root
     project = Path(resolved).name
 
@@ -264,17 +348,19 @@ def project_brief(directory: str, mode: str = "catalog") -> dict:
     init_memory_present = len(init_rows) > 0
     active_work_present = len(active_rows) > 0
 
-    # --- top_anchors: 5 most-accessed _anchor memories ---
-    anchor_rows = storage._q(
+    # --- top_anchors: scope-split into global + project buckets (F1) ---
+    # Global anchors: directory_context in ('', 'global', 'system') — no heat filter
+    global_anchor_rows = storage._q(
         "SELECT id, content, tags, heat, access_count FROM memory "
-        "WHERE '_anchor' INSIDE tags AND heat > 0 "
-        "ORDER BY heat DESC LIMIT 5",
+        "WHERE '_anchor' INSIDE tags "
+        "AND (directory_context = '' OR directory_context = 'global' OR directory_context = 'system') "
+        "ORDER BY heat DESC LIMIT 20",
     )
-    top_anchors = []
-    for row in anchor_rows:
+    top_anchors_global = []
+    for row in global_anchor_rows:
         mid = storage._extract_id(row.get("id"))
         content_snippet = (row.get("content") or "")[:80]
-        top_anchors.append(
+        top_anchors_global.append(
             {
                 "id": mid,
                 "title": content_snippet,
@@ -282,6 +368,35 @@ def project_brief(directory: str, mode: str = "catalog") -> dict:
                 "access_count": row.get("access_count") or 0,
             }
         )
+
+    # Project anchors: directory_context matches resolved project dir
+    project_anchor_rows = storage._q(
+        "SELECT id, content, tags, heat, access_count FROM memory "
+        "WHERE '_anchor' INSIDE tags "
+        "AND directory_context = $dir "
+        "ORDER BY heat DESC LIMIT 20",
+        {"dir": resolved},
+    )
+    top_anchors_project = []
+    for row in project_anchor_rows:
+        mid = storage._extract_id(row.get("id"))
+        content_snippet = (row.get("content") or "")[:80]
+        top_anchors_project.append(
+            {
+                "id": mid,
+                "title": content_snippet,
+                "tags": row.get("tags", []),
+                "access_count": row.get("access_count") or 0,
+            }
+        )
+
+    # Legacy union field (back-compat) — dedup by id
+    seen_ids: set = set()
+    top_anchors = []
+    for a in top_anchors_global + top_anchors_project:
+        if a["id"] not in seen_ids:
+            seen_ids.add(a["id"])
+            top_anchors.append(a)
 
     # --- recent_episode_count: episodes in last 24h ---
     from datetime import datetime, timedelta
@@ -297,6 +412,51 @@ def project_brief(directory: str, mode: str = "catalog") -> dict:
     # stale_wiki_count: Stage 9 detail — pass 0 for now
     stale_wiki_count = 0
 
+    # --- catalog: hot_memories top 3 (F2) ---
+    hot_rows = storage._q(
+        "SELECT id, content, heat, tags FROM memory "
+        "WHERE directory_context = $dir AND heat > 0 "
+        "ORDER BY heat DESC LIMIT 3",
+        {"dir": resolved},
+    )
+    hot_memories_catalog = []
+    for row in hot_rows:
+        hot_memories_catalog.append(
+            {
+                "id": storage._extract_id(row.get("id")),
+                "content": (row.get("content") or "")[:100],
+                "heat": row.get("heat", 0),
+                "tags": row.get("tags", []),
+            }
+        )
+
+    # --- catalog: key_wiki_pages top 3 (F2) ---
+    wiki_pages_catalog = storage.list_wiki_pages(limit=3)
+    key_wiki_pages_catalog = [
+        {
+            "slug": p.get("slug", ""),
+            "title": p.get("title", ""),
+            "access_count": p.get("access_count") or 0,
+        }
+        for p in wiki_pages_catalog
+    ]
+
+    # --- catalog: checkpoint for this directory (F2) ---
+    checkpoint_rows = storage._q(
+        "SELECT * FROM checkpoint "
+        "WHERE directory_context = $dir AND is_active = true "
+        "ORDER BY created_at DESC LIMIT 1",
+        {"dir": resolved},
+    )
+    checkpoint_catalog: dict | None = None
+    if checkpoint_rows:
+        cp = checkpoint_rows[0]
+        checkpoint_catalog = {
+            "current_task": cp.get("current_task", ""),
+            "key_decisions": (cp.get("key_decisions") or [])[:3],
+            "next_steps": (cp.get("next_steps") or [])[:3],
+        }
+
     result: dict = {
         "_resolved_directory": resolved,
         "_mode": mode,
@@ -306,8 +466,13 @@ def project_brief(directory: str, mode: str = "catalog") -> dict:
         "init_memory_present": init_memory_present,
         "active_work_present": active_work_present,
         "top_anchors": top_anchors,
+        "top_anchors_global": top_anchors_global,
+        "top_anchors_project": top_anchors_project,
         "recent_episode_count": recent_episode_count,
         "stale_wiki_count": stale_wiki_count,
+        "hot_memories": hot_memories_catalog,
+        "key_wiki_pages": key_wiki_pages_catalog,
+        "checkpoint": checkpoint_catalog,
     }
 
     if mode == "full":
@@ -323,16 +488,16 @@ def project_brief(directory: str, mode: str = "catalog") -> dict:
             active_work_content = active_rows[0].get("content")
         result["active_work"] = active_work_content
 
-        # hot_memories: top 10 by heat for this directory
-        hot_rows = storage._q(
+        # full mode: expand hot_memories to top 10, 200-char snippets
+        hot_rows_full = storage._q(
             "SELECT id, content, heat, tags FROM memory "
             "WHERE directory_context = $dir AND heat > 0 "
             "ORDER BY heat DESC LIMIT 10",
             {"dir": resolved},
         )
-        hot_memories = []
-        for row in hot_rows:
-            hot_memories.append(
+        hot_memories_full = []
+        for row in hot_rows_full:
+            hot_memories_full.append(
                 {
                     "id": storage._extract_id(row.get("id")),
                     "content": (row.get("content") or "")[:200],
@@ -340,39 +505,23 @@ def project_brief(directory: str, mode: str = "catalog") -> dict:
                     "tags": row.get("tags", []),
                 }
             )
-        result["hot_memories"] = hot_memories
+        result["hot_memories"] = hot_memories_full
 
-        # key_wiki_pages: 5 most recently updated wiki pages
-        wiki_pages = storage.list_wiki_pages(limit=5)
-        key_wiki_pages = [
+        # full mode: expand key_wiki_pages to 5
+        wiki_pages_full = storage.list_wiki_pages(limit=5)
+        result["key_wiki_pages"] = [
             {
                 "slug": p.get("slug", ""),
                 "title": p.get("title", ""),
                 "access_count": p.get("access_count") or 0,
             }
-            for p in wiki_pages
+            for p in wiki_pages_full
         ]
-        result["key_wiki_pages"] = key_wiki_pages
 
     # §28 — add _render markdown for the session-context hook pipe
     result["_render"] = _render_project_brief(result)
 
     return result
-
-
-@_tool()
-def get_project_context(directory: str) -> dict:
-    """[DEPRECATED] Use project_brief(directory, mode='catalog') instead.
-
-    Retained as a backward-compatible alias for one release.
-    Will be removed in a future version.
-    """
-    warnings.warn(
-        "get_project_context() is deprecated; use project_brief(directory, mode='catalog') instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return project_brief(directory, mode="catalog")
 
 
 @_tool(power=True)

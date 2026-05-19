@@ -192,30 +192,6 @@ def test_validate_memory_not_found():
     assert "not found" in resp["reason"]
 
 
-# ── get_project_context ────────────────────────────────────────────────
-
-
-def test_get_project_context_returns_catalog_shape(flush_queue):
-    # §22: get_project_context is now a deprecated alias for project_brief(mode="catalog").
-    # Verify the returned shape is catalog (not old "memories" shape).
-    server.memorize("project A memory", "/projects/a", ["a"])
-    flush_queue()
-
-    with pytest.warns(DeprecationWarning):
-        result = server.get_project_context("/projects/a")
-    assert "_mode" in result
-    assert result["_mode"] == "catalog"
-    assert "init_memory_present" in result
-    assert "active_work_present" in result
-    assert "top_anchors" in result
-
-
-def test_get_project_context_emits_deprecation(flush_queue):
-    # §22: deprecated alias must emit DeprecationWarning.
-    with pytest.warns(DeprecationWarning):
-        server.get_project_context("/projects/x")
-
-
 def test_project_brief_returns_hot_memories_in_full_mode(flush_queue):
     server.memorize("hot memory", "/projects/d", ["test"])  # heat=1.0
     flush_queue()
@@ -301,7 +277,7 @@ def test_mcp_server_has_tools():
         "recall",
         "forget",
         "validate_memory",
-        "get_project_context",
+        "project_brief",
         "consolidate_now",
         "memory_stats",
         "check_invariants",
