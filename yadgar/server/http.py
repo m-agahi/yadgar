@@ -939,6 +939,40 @@ async def api_graph_events(request: Request) -> StreamingResponse:
     )
 
 
+@mcp_server.custom_route("/api/wiki/read", methods=["GET"])
+async def api_wiki_read(request: Request) -> JSONResponse:
+    """Read a single wiki page by slug for the viz detail panel.
+
+    GET /api/wiki/read?slug=<slug>
+
+    Returns {slug, title, content, category, tags, updated_at} or 404.
+    """
+    slug = (request.query_params.get("slug") or "").strip()
+    if not slug:
+        return JSONResponse({"error": "slug required"}, status_code=400, headers=_CORS)
+    wiki = _st._wiki
+    if wiki is None:
+        return JSONResponse({"error": "wiki not initialized"}, status_code=503, headers=_CORS)
+    try:
+        page = await asyncio.to_thread(wiki.read, slug)
+    except Exception as _exc:
+        logger.debug("api_wiki_read error for slug=%s: %s", slug, _exc)
+        return JSONResponse({"error": str(_exc)}, status_code=500, headers=_CORS)
+    if page is None:
+        return JSONResponse({"error": "not found"}, status_code=404, headers=_CORS)
+    return JSONResponse(
+        {
+            "slug": page.get("slug", slug),
+            "title": page.get("title", ""),
+            "content": page.get("content", ""),
+            "category": page.get("category", ""),
+            "tags": page.get("tags") or [],
+            "updated_at": str(page.get("updated_at") or ""),
+        },
+        headers=_CORS,
+    )
+
+
 @mcp_server.custom_route("/api/viz/search", methods=["GET"])
 async def api_viz_search(request: Request) -> JSONResponse:
     """Semantic search for viz graph: return node IDs matching query.

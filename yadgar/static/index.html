@@ -736,12 +736,28 @@ function showDetail(node) {
       <div class="det-val" style="color:#8b949e">${esc(node.id)}</div>
     </div>`);
 
+    // Placeholder for async content fetch
+    rows.push(`<div class="det-sec" id="wiki-content-sec">
+      <div class="det-lbl">Content</div>
+      <div class="det-val" id="wiki-content-body" style="color:#8b949e;font-style:italic">Loading…</div>
+    </div>`);
+
     document.getElementById('det-body').innerHTML = rows.join('');
+
+    // Async fetch full wiki content via wiki_read endpoint
+    if (node.slug) {
+      _fetchWikiContent(node.slug);
+    } else {
+      const el = document.getElementById('wiki-content-body');
+      if (el) el.textContent = '(no slug)';
+    }
     return;
   }
 
-  document.getElementById('det-type').textContent = 'MEMORY';
-  document.getElementById('det-title').textContent = (node.content||'').slice(0, 100);
+  // V3: universal fallback — handles 'memory', 'entity', and any future types
+  const typeLabel = (node.type || 'unknown').toUpperCase();
+  document.getElementById('det-type').textContent = typeLabel;
+  document.getElementById('det-title').textContent = (node.content || node.label || node.id || '').slice(0, 100);
 
   const heat = node.heat || 0;
   const fill = document.getElementById('det-heat-fill');
@@ -805,6 +821,31 @@ function showDetail(node) {
 
 function closeDetail() { document.getElementById('right').classList.remove('open'); }
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── Wiki content fetch (V2) ───────────────────────────────────────────────────
+async function _fetchWikiContent(slug) {
+  const el = document.getElementById('wiki-content-body');
+  if (!el) return;
+  try {
+    const r = await fetch(`${DAEMON}/api/wiki/read?slug=${encodeURIComponent(slug)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    // wiki_read returns {content, ...} or may wrap in result
+    const content = d.content || d.result?.content || '';
+    if (content) {
+      el.style.fontStyle = '';
+      el.style.color = '';
+      el.textContent = content.length > 800 ? content.slice(0, 800) + '…' : content;
+    } else {
+      el.textContent = '(no content)';
+    }
+  } catch (err) {
+    if (el) {
+      el.style.fontStyle = '';
+      el.textContent = `(fetch failed: ${err.message})`;
+    }
+  }
+}
 
 // ── Semantic search (V1) ──────────────────────────────────────────────────────
 let _searchPinnedIds = new Set();
