@@ -14,6 +14,8 @@ class _HeatDecayMixin:
         decay = self._settings.DECAY_FACTOR
         cold = self._settings.COLD_THRESHOLD
         action_stream_cold = self._settings.ACTION_STREAM_COLD_THRESHOLD
+        # C2: recall-frequency-modulated decay (MemoryBank parity)
+        recall_boost = self._settings.RECALL_BOOST
 
         mem_batch: list[tuple[str, dict | None]] = []
         for mem in self._storage.get_all_memories_for_decay():
@@ -21,7 +23,12 @@ class _HeatDecayMixin:
                 continue
             last = datetime.fromisoformat(mem["last_accessed"])
             hours = (now - last).total_seconds() / 3600.0
+            # Base decay — uses importance/valence/confidence modifiers
             new_heat = self._thermo.compute_decay(mem, hours)
+            # C2: add per-cycle recall boost; reset counter atomically in same UPDATE
+            access_since_decay = int(mem.get("access_count_since_decay", 0))
+            if recall_boost > 0.0 and access_since_decay > 0:
+                new_heat = min(new_heat + access_since_decay * recall_boost, 1.0)
             tags = mem.get("tags") or []
             if isinstance(tags, str):
                 import json
@@ -31,14 +38,18 @@ class _HeatDecayMixin:
             if new_heat < effective_cold:
                 new_heat = 0.0
                 stats["memories_archived"] += 1
-            if abs(new_heat - mem["heat"]) > 1e-9:
+            if abs(new_heat - mem["heat"]) > 1e-9 or access_since_decay > 0:
+                # Always reset access_count_since_decay to 0 if it was non-zero,
+                # even when heat didn't change (so the cycle-counter stays clean).
                 mem_batch.append(
                     (
-                        "UPDATE type::record('memory', $id) SET heat = $heat",
+                        "UPDATE type::record('memory', $id) SET "
+                        "heat = $heat, access_count_since_decay = 0",
                         {"id": mem["id"], "heat": new_heat},
                     )
                 )
-                stats["memories_updated"] += 1
+                if abs(new_heat - mem["heat"]) > 1e-9:
+                    stats["memories_updated"] += 1
 
         if mem_batch:
             self._storage.batch_writes(mem_batch)

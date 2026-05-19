@@ -214,31 +214,41 @@ class _EntityMixin:
         record_time: str | None = None,
         is_causal: int = 0,
         confidence: float = 1.0,
+        source_memory_id: int | None = None,
     ) -> int:
-        """Insert a relationship with bi-temporal and causal metadata."""
+        """Insert a relationship with bi-temporal and causal metadata.
+
+        source_memory_id (C3): optional citation — the memory that triggered this
+        entity-entity link. Omitted from SET when None (SurrealDB option<int>
+        rejects explicit NULL on a DEFINE FIELD column).
+        """
         now = self._now_iso()
         rid = self._next_id("relationship")
-        self._q(
+        params: dict = {
+            "id": rid,
+            "src": source_entity_id,
+            "tgt": target_entity_id,
+            "rt": relationship_type,
+            "w": weight,
+            "cat": record_time or now,
+            "lr": record_time or now,
+            "et": event_time or now,
+            "rct": record_time or now,
+            "ic": bool(is_causal),
+            "conf": confidence,
+        }
+        sql = (
             "CREATE type::record('relationship', $id) SET "
             "source_entity_id = $src, target_entity_id = $tgt, "
             "relationship_type = $rt, weight = $w, "
             "created_at = $cat, last_reinforced = $lr, "
             "event_time = $et, record_time = $rct, "
-            "is_causal = $ic, confidence = $conf",
-            {
-                "id": rid,
-                "src": source_entity_id,
-                "tgt": target_entity_id,
-                "rt": relationship_type,
-                "w": weight,
-                "cat": record_time or now,
-                "lr": record_time or now,
-                "et": event_time or now,
-                "rct": record_time or now,
-                "ic": bool(is_causal),
-                "conf": confidence,
-            },
+            "is_causal = $ic, confidence = $conf"
         )
+        if source_memory_id is not None:
+            sql += ", source_memory_id = $smid"
+            params["smid"] = source_memory_id
+        self._q(sql, params)
         return rid
 
     def reinforce_relationship(self, rel_id: int, weight_increase: float = 1.0):
