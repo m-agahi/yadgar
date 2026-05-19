@@ -83,11 +83,41 @@ def _tool(power: bool = False):
     """Register a function as an MCP tool.
 
     power=True tools are omitted when YADGAR_PROFILE=minimal.
+    Wraps each registered tool to record estimated token output in
+    yadgar_tool_token_estimate_total{tool=<name>}.
     """
+    import functools
+    import json
+
+    def _estimate_tokens(result) -> int:
+        """Rough token estimate: len(str(result)) / 4."""
+        try:
+            if isinstance(result, (str, bytes)):
+                text = (
+                    result if isinstance(result, str) else result.decode("utf-8", errors="replace")
+                )
+            else:
+                text = json.dumps(result, default=str)
+            return max(1, len(text) // 4)
+        except Exception:
+            return 0
 
     def decorator(func):
         if power and _PROFILE == "minimal":
             return func  # skip registration; function still callable internally
-        return mcp_server.tool()(func)
+
+        @functools.wraps(func)
+        def _instrumented(*args, **kwargs):
+            result = func(*args, **kwargs)
+            try:
+                from yadgar.metrics import yadgar_tool_token_estimate_total
+
+                est = _estimate_tokens(result)
+                yadgar_tool_token_estimate_total.labels(tool=func.__name__).inc(est)
+            except Exception:
+                pass
+            return result
+
+        return mcp_server.tool()(_instrumented)
 
     return decorator
