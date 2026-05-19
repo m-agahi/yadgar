@@ -545,3 +545,30 @@ def test_render_token_count_under_limit(flush_queue):
     word_count = len(rendered.split())
     # 1500 token budget ~ 1500-1800 words; we keep a conservative upper bound
     assert word_count < 1800, f"Rendered catalog too large: {word_count} words"
+
+
+# ── F6 (v5.1.9): branch_hint kwarg ────────────────────────────────────────────
+
+
+def test_branch_hint_used_when_passed():
+    """F6: when branch_hint is provided, result['branch'] equals the hint."""
+    result = server.project_brief("/tmp/myproject", branch_hint="feat/from-host")
+    assert result["branch"] == "feat/from-host"
+
+
+def test_branch_hint_overrides_get_current_branch(monkeypatch):
+    """F6: branch_hint takes priority over _get_current_branch return value."""
+    from yadgar.server.tools import project as proj_mod
+
+    monkeypatch.setattr(proj_mod, "_get_current_branch", lambda _d: "container-branch")
+    result = server.project_brief("/tmp/myproject", branch_hint="host-branch")
+    assert result["branch"] == "host-branch"
+
+
+def test_branch_hint_absent_falls_back_to_get_current_branch(monkeypatch):
+    """F6: without branch_hint, falls back to _get_current_branch; None → None in dict."""
+    from yadgar.server.tools import project as proj_mod
+
+    monkeypatch.setattr(proj_mod, "_get_current_branch", lambda _d: None)
+    result = server.project_brief("/tmp/myproject")
+    assert result["branch"] is None

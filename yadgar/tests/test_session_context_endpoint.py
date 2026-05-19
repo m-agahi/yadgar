@@ -144,7 +144,7 @@ def test_session_context_uses_directory_param(tmp_path):
 
     captured_dir = {}
 
-    def _fake_brief(directory, mode="catalog"):
+    def _fake_brief(directory, mode="catalog", branch_hint=None):
         captured_dir["dir"] = directory
         return {
             "_render": f"# Project at {directory}",
