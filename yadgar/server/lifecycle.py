@@ -373,7 +373,11 @@ def main(
     # H-7: Fail fast if REQUIRE_AUTH=True but no token configured.
     # A server that requires auth but has no token is silently broken — every
     # request would get 503 "Admin token not configured" rather than a useful error.
-    _auth_settings = get_settings()
+    # Use Settings() directly (bypass lru_cache) so the check always reflects the
+    # current environment — important for tests that reload yadgar.config.
+    from yadgar.config import Settings as _Settings  # noqa: PLC0415
+
+    _auth_settings = _Settings()
     if _auth_settings.REQUIRE_AUTH and not _auth_settings.MCP_AUTH_TOKEN:
         raise RuntimeError(
             "REQUIRE_AUTH=1 requires YADGAR_MCP_AUTH_TOKEN to be set. "

@@ -11,6 +11,9 @@ Collectors:
 - yadgar_embedding_cache_hits_total Counter     — embedding cache hits
 - yadgar_embedding_cache_misses_total Counter   — embedding cache misses
 - yadgar_action_batch_size         Histogram    — action-batch size
+- yadgar_tool_token_estimate_total{tool}  Counter — estimated tokens returned per tool call
+- yadgar_cache_hit_total{cache}    Counter — cache hits by cache name
+- yadgar_cache_miss_total{cache}   Counter — cache misses by cache name
 """
 
 from __future__ import annotations
@@ -88,6 +91,31 @@ yadgar_action_batch_size = Histogram(
     "yadgar_action_batch_size",
     "Number of actions processed per consolidation action-log batch",
     buckets=(1, 5, 10, 25, 50, 100, 200, 500),
+    registry=_registry,
+)
+
+# ── v5.3.5 Q1 — Token-budget + cache-hit metrics ─────────────────────
+
+# Estimated tokens returned per tool call (len(result_text) / 4 approximation)
+yadgar_tool_token_estimate_total = Counter(
+    "yadgar_tool_token_estimate_total",
+    "Estimated tokens returned per MCP tool call (len/4 approximation)",
+    ["tool"],
+    registry=_registry,
+)
+
+# Generic cache hit/miss counters keyed by cache name
+yadgar_cache_hit_total = Counter(
+    "yadgar_cache_hit_total",
+    "Total cache hits by cache name",
+    ["cache"],
+    registry=_registry,
+)
+
+yadgar_cache_miss_total = Counter(
+    "yadgar_cache_miss_total",
+    "Total cache misses by cache name",
+    ["cache"],
     registry=_registry,
 )
 

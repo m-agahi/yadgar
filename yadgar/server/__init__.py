@@ -166,6 +166,7 @@ from yadgar.server.tools import (  # noqa: F401
     resource_stale,
     agent_prompt_get,
     agent_prompt_save,
+    wiki_coverage,
 )
 
 # ── 7. Project helpers (tests import _detect_branch etc. indirectly) ──
