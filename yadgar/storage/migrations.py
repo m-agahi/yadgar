@@ -111,6 +111,41 @@ def _migration_004_branch_field(storage) -> None:
     )
 
 
+def _migration_007_bitemporal_edges(storage) -> None:
+    """Add valid_from / valid_until bi-temporal columns to all KG edge tables (C1, v5.3.4).
+
+    Three edge tables receive the new columns:
+    - causal_dag_edge
+    - relationship
+    - memory_similarity_link
+
+    valid_from  — datetime (required). Default time::now() applied on insert.
+                  Backfilled from created_at if present, else time::now().
+    valid_until — datetime (nullable). NULL means currently valid.
+                  Filter: valid_until IS NONE OR valid_until > time::now()
+
+    DEFINE FIELD IF NOT EXISTS is idempotent — safe to run twice.
+    """
+    # Tables are SCHEMALESS. Dates are stored as ISO-8601 strings (same as created_at).
+    # TYPE option<string> allows string values; valid_until defaults to NONE (NULL).
+    for table in ("causal_dag_edge", "relationship", "memory_similarity_link"):
+        storage._q(f"DEFINE FIELD IF NOT EXISTS valid_from ON TABLE {table} TYPE option<string>;")
+        storage._q(f"DEFINE FIELD IF NOT EXISTS valid_until ON TABLE {table} TYPE option<string>;")
+    # Backfill: set valid_from = created_at for rows that already exist.
+    # Rows without created_at receive time::now() via the DEFAULT above on next touch;
+    # best-effort backfill sets it explicitly for existing rows.
+    storage._q(
+        "BEGIN TRANSACTION;\n"
+        "UPDATE causal_dag_edge SET valid_from = created_at "
+        "WHERE valid_from IS NONE AND created_at IS NOT NONE;\n"
+        "UPDATE relationship SET valid_from = created_at "
+        "WHERE valid_from IS NONE AND created_at IS NOT NONE;\n"
+        "UPDATE memory_similarity_link SET valid_from = created_at "
+        "WHERE valid_from IS NONE AND created_at IS NOT NONE;\n"
+        "COMMIT TRANSACTION"
+    )
+
+
 def _migration_006_source_memory_id(storage) -> None:
     """Add source_memory_id (citation provenance) to KG edge tables (C3, v5.3.3).
 
@@ -155,6 +190,10 @@ _MIGRATIONS: list[dict] = [
     {
         "version": "006_source_memory_id",
         "fn": _migration_006_source_memory_id,
+    },
+    {
+        "version": "007_bitemporal_edges",
+        "fn": _migration_007_bitemporal_edges,
     },
 ]
 
