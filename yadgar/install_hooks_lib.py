@@ -106,6 +106,7 @@ def install_hooks_impl(
         "subagent-stop.py": 0o755,
         "instructions-loaded.py": 0o755,
         "subagent-start.py": 0o755,
+        "file-changed.py": 0o755,
     }
 
     if not dry_run:
@@ -247,6 +248,34 @@ def install_hooks_impl(
         _existing_ss.append(_ss_hook_entry)
     hooks_config["SubagentStart"] = _existing_ss
 
+    # FileChanged — append-if-absent semantics.
+    # Matcher is empty (fires on all file changes); the hook script filters
+    # to team_inbox/**/*.jsonl and docs/PLAN_*.md only.
+    # NOTE: FileChanged matcher uses literal filenames only (no regex/glob per
+    # Claude Code 2026 docs). We use empty matcher + script-side filtering.
+    _fc_src = package_hooks / "file-changed.py"
+    _fc_dst = hooks_dir / "yadgar-file-changed.py"
+    if not dry_run and _fc_src.exists():
+        shutil.copy2(_fc_src, _fc_dst)
+        _fc_dst.chmod(0o755)
+
+    _fc_cmd = f'python3 "{_fc_dst}"'
+    _existing_fc = hooks_config.get("FileChanged", [])
+    _fc_already_registered = any(
+        entry.get("hooks", [{}])[0].get("command", "") == _fc_cmd
+        for entry in _existing_fc
+        if isinstance(entry, dict) and entry.get("hooks")
+    )
+    if not _fc_already_registered:
+        _fc_hook_entry: dict = {
+            "matcher": "",
+            "hooks": [{"type": "command", "command": _fc_cmd}],
+        }
+        if _env_block:
+            _fc_hook_entry["hooks"][0]["env"] = _env_block
+        _existing_fc.append(_fc_hook_entry)
+    hooks_config["FileChanged"] = _existing_fc
+
     settings_data["hooks"] = hooks_config
 
     _stop_entry = [
@@ -319,6 +348,7 @@ def install_hooks_impl(
             "SubagentStop (findings capture — append-if-absent)",
             "InstructionsLoaded (recall on CLAUDE.md load — append-if-absent)",
             "SubagentStart (context injection at dispatch — append-if-absent)",
+            "FileChanged (team_inbox + PLAN_*.md — append-if-absent)",
         ],
         "settings_file": str(settings_path),
         "global_settings_file": global_settings_file,
