@@ -126,3 +126,14 @@ _start_time: float = 0.0
 # WARN was emitted.  -1 means "never logged".  Reset to -1 at midnight by
 # the consolidation cycle.  Guarded by the GIL (int write is atomic enough).
 _db_size_warn_last_logged_hour: int = -1
+
+# ── FileChanged hook state ──────────────────────────────────────────────────
+# Team-inbox JSONL file positions: path → byte offset of last read.
+# Tracks how far we've read each file so re-reads only ingest NEW lines.
+# NOTE: resets to 0 on daemon restart; old lines are re-ingested once then
+# tracked. Bounded to 10 000 entries (one per watched file is realistic).
+_team_inbox_positions: OrderedDict[str, int] = OrderedDict()
+
+# PLAN_*.md hash dedup: path → sha256 hex of last memorized content.
+# Prevents duplicate memorize calls when hook fires without real content change.
+_plan_file_hashes: dict[str, str] = {}

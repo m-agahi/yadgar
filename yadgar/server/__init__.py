@@ -103,6 +103,7 @@ from yadgar.server.http import (  # noqa: F401
     hook_post_compact,
     hook_auto_capture,
     hook_subagent_stop,
+    hook_file_changed,
     hook_session_context,
     hook_prompt_recall,
     api_graph,
@@ -167,6 +168,7 @@ from yadgar.server.tools import (  # noqa: F401
     agent_prompt_get,
     agent_prompt_save,
     wiki_coverage,
+    agent_dispatch_prelude,
 )
 
 # ── 7. Project helpers (tests import _detect_branch etc. indirectly) ──
