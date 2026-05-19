@@ -23,21 +23,29 @@ class _CausalMixin:
     def insert_causal_edge(self, edge: dict) -> int:
         now = self._now_iso()
         eid = self._next_id("causal_dag_edge")
-        self._q(
+        # C3: optional source_memory_id for citation tracing (Zep parity).
+        # Only include the field in the SET clause when a value is provided —
+        # SurrealDB option<int> coercion rejects explicit NULL values.
+        source_memory_id = edge.get("source_memory_id")
+        params: dict = {
+            "id": eid,
+            "src": edge["source_entity_id"],
+            "tgt": edge["target_entity_id"],
+            "algo": edge.get("algorithm", "pc"),
+            "conf": edge.get("confidence", 1.0),
+            "discovered_at": edge.get("discovered_at", now),
+            "is_validated": bool(edge.get("is_validated", False)),
+        }
+        sql = (
             "CREATE type::record('causal_dag_edge', $id) SET "
             "source_entity_id = $src, target_entity_id = $tgt, "
             "algorithm = $algo, confidence = $conf, "
-            "discovered_at = $discovered_at, is_validated = $is_validated",
-            {
-                "id": eid,
-                "src": edge["source_entity_id"],
-                "tgt": edge["target_entity_id"],
-                "algo": edge.get("algorithm", "pc"),
-                "conf": edge.get("confidence", 1.0),
-                "discovered_at": edge.get("discovered_at", now),
-                "is_validated": bool(edge.get("is_validated", False)),
-            },
+            "discovered_at = $discovered_at, is_validated = $is_validated"
         )
+        if source_memory_id is not None:
+            sql += ", source_memory_id = $smid"
+            params["smid"] = source_memory_id
+        self._q(sql, params)
         return eid
 
     def get_causal_edges_for_entity(self, entity_id: int) -> list[dict]:
