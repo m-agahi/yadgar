@@ -27,6 +27,8 @@ class _CausalMixin:
         # Only include the field in the SET clause when a value is provided —
         # SurrealDB option<int> coercion rejects explicit NULL values.
         source_memory_id = edge.get("source_memory_id")
+        # C1: bi-temporal validity. valid_from defaults to now(); caller may override.
+        valid_from = edge.get("valid_from", now)
         params: dict = {
             "id": eid,
             "src": edge["source_entity_id"],
@@ -35,12 +37,14 @@ class _CausalMixin:
             "conf": edge.get("confidence", 1.0),
             "discovered_at": edge.get("discovered_at", now),
             "is_validated": bool(edge.get("is_validated", False)),
+            "vf": valid_from,
         }
         sql = (
             "CREATE type::record('causal_dag_edge', $id) SET "
             "source_entity_id = $src, target_entity_id = $tgt, "
             "algorithm = $algo, confidence = $conf, "
-            "discovered_at = $discovered_at, is_validated = $is_validated"
+            "discovered_at = $discovered_at, is_validated = $is_validated, "
+            "valid_from = $vf"
         )
         if source_memory_id is not None:
             sql += ", source_memory_id = $smid"
@@ -56,8 +60,18 @@ class _CausalMixin:
         )
         return self._rows_to_dicts(rows)
 
-    def get_all_causal_edges(self) -> list[dict]:
-        rows = self._q("SELECT * FROM causal_dag_edge ORDER BY confidence DESC")
+    def get_all_causal_edges(self, include_invalidated: bool = False) -> list[dict]:
+        """Return causal DAG edges.
+
+        include_invalidated (C1): when False (default), excludes rows whose
+        valid_until is set and non-null (i.e. closed/superseded edges).
+        """
+        if include_invalidated:
+            rows = self._q("SELECT * FROM causal_dag_edge ORDER BY confidence DESC")
+        else:
+            rows = self._q(
+                "SELECT * FROM causal_dag_edge WHERE valid_until IS NONE ORDER BY confidence DESC"
+            )
         return self._rows_to_dicts(rows)
 
     def clear_causal_dag_edges(self, algorithm: str | None = None) -> int:
