@@ -59,6 +59,9 @@ from yadgar.storage.migrations import (
 from yadgar.storage.migrations import (
     _migration_004_branch_field as _migration_004_branch_field,
 )
+from yadgar.storage.migrations import (
+    _migration_006_source_memory_id as _migration_006_source_memory_id,
+)
 from yadgar.storage.migrations import _MigrationsMixin
 from yadgar.storage.narrative import _NarrativeMixin
 from yadgar.storage.ops import _OpsMixin
