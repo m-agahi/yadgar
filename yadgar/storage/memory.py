@@ -34,8 +34,34 @@ Clusters + similarity links → storage/cluster.py (_ClusterMixin)
 """
 
 import logging
+import re as _re
 
 _log = logging.getLogger(__name__)
+
+# S1 allowlist for provenance_agent values: ascii alphanumeric, hyphens, underscores.
+# Rejects semicolons, quotes, spaces and other SQL-significant characters.
+_PROVENANCE_AGENT_RE = _re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _validate_provenance_agent(value: str) -> str:
+    """Validate and return provenance_agent value.
+
+    Rules:
+    - Non-empty string
+    - ASCII alphanumeric + hyphens + underscores only (no SQL-injection chars)
+    - Length ≤ 64 characters
+
+    Raises ValueError on invalid input. Returns the value unchanged on success.
+    """
+    if not value or not isinstance(value, str):
+        raise ValueError(f"provenance_agent must be a non-empty string, got {value!r}")
+    if not _PROVENANCE_AGENT_RE.match(value):
+        raise ValueError(
+            f"provenance_agent {value!r} is invalid: must be ≤64 chars, "
+            "ASCII alphanumeric/hyphen/underscore only"
+        )
+    return value
+
 
 # Imported here so memory methods can reference these constants directly.
 # The same constants are defined in client.py and re-exported from __init__.py;

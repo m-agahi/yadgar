@@ -13,6 +13,7 @@ import yadgar.server.tools.recall  # noqa: F401 — side-effects: tool registrat
 import yadgar.server.tools.admin  # noqa: F401 — side-effects: tool registration
 import yadgar.server.tools.wiki  # noqa: F401 — side-effects: tool registration
 import yadgar.server.tools.misc  # noqa: F401 — side-effects: tool registration
+import yadgar.server.tools.agent_prompts  # noqa: F401 — side-effects: none (pure functions)
 
 # Re-export everything that tests or external code import directly
 from yadgar.server.tools.memorize import memorize, remember
@@ -77,6 +78,10 @@ from yadgar.server.tools.misc import (
     resource_stale,
     resource_processes,
 )
+from yadgar.server.tools.agent_prompts import (
+    agent_prompt_get,
+    agent_prompt_save,
+)
 
 __all__ = [
     "memorize",
@@ -122,6 +127,8 @@ __all__ = [
     "resource_hot",
     "resource_stale",
     "resource_processes",
+    "agent_prompt_get",
+    "agent_prompt_save",
     # Private helpers re-exported for test access
     "_detect_branch",
     "_detect_branch_cached",
