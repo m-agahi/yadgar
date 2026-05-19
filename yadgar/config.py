@@ -388,6 +388,12 @@ class Settings(BaseSettings):
     # Default mode for project_brief. Options: "catalog" | "full".
     BRIEF_MODE_DEFAULT: str = "catalog"
 
+    # C2 — Recall-frequency-modulated decay (MemoryBank parity, v5.3.3)
+    # Per-access heat boost applied during each consolidation decay cycle.
+    # Formula: new_heat = min(compute_decay(mem, hours) + access_count_since_decay * RECALL_BOOST, 1.0)
+    # Set to 0.0 to disable boost and revert to pure exponential decay (back-compat).
+    RECALL_BOOST: float = 0.05
+
     model_config = {"env_prefix": "YADGAR_"}
 
     @field_validator("VACUUM_AUTO_WINDOW_START", "VACUUM_AUTO_WINDOW_END")

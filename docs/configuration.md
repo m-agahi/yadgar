@@ -84,6 +84,7 @@ The YAML file is optional. If it doesn't exist, all defaults apply. Values you d
 | `emotional_decay_resistance` | `YADGAR_EMOTIONAL_DECAY_RESISTANCE` | float | `0.5` | How much emotional salience slows decay (0–1) |
 | `synaptic_window_minutes` | `YADGAR_SYNAPTIC_WINDOW_MINUTES` | int | `30` | Time window for synaptic boost propagation |
 | `synaptic_boost` | `YADGAR_SYNAPTIC_BOOST` | float | `0.2` | Heat boost propagated from nearby high-importance memories |
+| `recall_boost` | `YADGAR_RECALL_BOOST` | float | `0.05` | Per-access heat boost added during each decay cycle: `new_heat = min(decay(mem) + access_count_since_decay * RECALL_BOOST, 1.0)`. Frequently-accessed memories decay slower (MemoryBank/Ebbinghaus parity). Set to `0.0` to disable and revert to pure exponential decay. |
 
 ---
 

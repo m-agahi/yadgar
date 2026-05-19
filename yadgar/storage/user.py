@@ -50,16 +50,21 @@ class _UserMixin:
         access_count: int,
         useful_count: int,
         confidence: float,
+        access_count_since_decay: int | None = None,
     ):
+        params: dict = {
+            "id": memory_id,
+            "ac": access_count,
+            "uc": useful_count,
+            "conf": confidence,
+        }
+        set_clause = "access_count = $ac, useful_count = $uc, confidence = $conf"
+        if access_count_since_decay is not None:
+            set_clause += ", access_count_since_decay = $acd"
+            params["acd"] = access_count_since_decay
         self._q(
-            "UPDATE type::record('memory', $id) SET "
-            "access_count = $ac, useful_count = $uc, confidence = $conf",
-            {
-                "id": memory_id,
-                "ac": access_count,
-                "uc": useful_count,
-                "conf": confidence,
-            },
+            f"UPDATE type::record('memory', $id) SET {set_clause}",
+            params,
         )
 
     def get_memories_in_time_window(self, center_time: str, window_minutes: int) -> list[dict]:
