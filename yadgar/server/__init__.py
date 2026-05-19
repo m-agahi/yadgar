@@ -125,7 +125,6 @@ from yadgar.server.tools import (  # noqa: F401
     remember,
     recall,
     project_brief,
-    get_project_context,
     bootstrap_project,
     update_active_work,
     wiki_refresh_stale,
