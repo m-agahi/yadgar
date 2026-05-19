@@ -837,9 +837,8 @@ def cmd_config_set(args) -> None:
 
     with open(path, "w") as f:
         y.dump(data, f)
-    # TODO(review-20260516, H-9): config.yaml written without chmod 600 — credentials
-    # potentially world-readable. Add os.chmod(path, 0o600) after write and
-    # path.parent.mkdir(parents=True, mode=0o700, exist_ok=True) before open().
+    # S2 (H-9): restrict config.yaml to owner read/write only — it may contain credentials.
+    os.chmod(path, 0o600)
 
     print(f"Set {key} = {value!r}")
     print(f"Config: {path}")
