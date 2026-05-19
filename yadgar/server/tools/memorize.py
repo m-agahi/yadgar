@@ -167,6 +167,62 @@ def memorize(
         valence = 0.0
         initial_heat = 1.0
 
+    # C4: LLM conflict resolution (Mem0 parity, Ollama-only, env-gated).
+    # Runs before insert. On error always degrades to ADD (fail-soft).
+    import os as _os
+
+    if _os.environ.get("YADGAR_CONFLICT_RESOLVER", "off").lower() == "on":
+        try:
+            from yadgar.conflict_resolver import resolve_conflict
+
+            _cr_candidate = {"content": content, "tags": list(tags), "context": context}
+            _cr_result = resolve_conflict(_cr_candidate)
+            _cr_op = _cr_result.get("op", "ADD")
+            _cr_target_id = _cr_result.get("target_id")
+            _cr_reason = _cr_result.get("reason", "")
+            logger.info(
+                "conflict_resolver: op=%s target_id=%s reason=%r",
+                _cr_op,
+                _cr_target_id,
+                _cr_reason,
+            )
+            if _cr_op == "NOOP":
+                return {
+                    "stored": False,
+                    "reason": "conflict_resolver_noop",
+                    "cr_reason": _cr_reason,
+                }
+            if _cr_op == "UPDATE" and _cr_target_id is not None:
+                try:
+                    storage.update_memory_fields(
+                        _cr_target_id,
+                        content=content,
+                        tags=list(tags),
+                    )
+                    return {
+                        "stored": True,
+                        "action": "conflict_resolver_update",
+                        "memory_id": _cr_target_id,
+                        "cr_reason": _cr_reason,
+                    }
+                except Exception as _cr_exc:
+                    logger.warning(
+                        "conflict_resolver UPDATE failed (%s), falling back to ADD", _cr_exc
+                    )
+            if _cr_op == "DELETE" and _cr_target_id is not None:
+                try:
+                    storage.delete_memory(_cr_target_id)
+                except Exception as _cr_exc:
+                    logger.warning("conflict_resolver DELETE failed (%s), skipping", _cr_exc)
+                return {
+                    "stored": False,
+                    "reason": "conflict_resolver_delete",
+                    "cr_reason": _cr_reason,
+                }
+            # ADD (or fallthrough from failed UPDATE): proceed with normal insert below
+        except Exception as _cr_outer_exc:
+            logger.warning("conflict_resolver outer error (%s) — degrading to ADD", _cr_outer_exc)
+
     # Use curator for intelligent ingestion (merge/link/create)
     curator = _st._curator
     if curator is not None and embedding is not None:
