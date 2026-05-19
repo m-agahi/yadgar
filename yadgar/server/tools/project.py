@@ -15,7 +15,6 @@ import logging
 import os
 import subprocess
 import time
-import warnings
 from datetime import UTC
 from pathlib import Path
 
@@ -523,21 +522,6 @@ def project_brief(directory: str, mode: str = "catalog") -> dict:
     result["_render"] = _render_project_brief(result)
 
     return result
-
-
-@_tool()
-def get_project_context(directory: str) -> dict:
-    """[DEPRECATED] Use project_brief(directory, mode='catalog') instead.
-
-    Retained as a backward-compatible alias for one release.
-    Will be removed in a future version.
-    """
-    warnings.warn(
-        "get_project_context() is deprecated; use project_brief(directory, mode='catalog') instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return project_brief(directory, mode="catalog")
 
 
 @_tool(power=True)

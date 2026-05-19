@@ -23,9 +23,8 @@ Active modules:
   * ProspectiveMemory      (future-oriented triggers)
   * StalenessDetector      (file-change watchdog)
 
-Core tools: memorize, recall, forget, get_project_context (deprecated alias:
-            project_brief), checkpoint, restore, anchor, wiki_query, wiki_add,
-            memory_stats
+Core tools: memorize, recall, forget, project_brief, checkpoint, restore,
+            anchor, wiki_query, wiki_add, memory_stats
 Power tools: add_rule, get_rules, wiki_read, wiki_list, wiki_delete,
              wiki_approve, wiki_discard, wiki_drafts, consolidate_now,
              reembed_all, validate_memory, seed_project, install_hooks,
