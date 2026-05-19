@@ -88,14 +88,24 @@ class _ClusterMixin:
         )
         return self._row_to_dict(rows[0]) if rows else None
 
-    def insert_memory_similarity_link(self, mid_a: int, mid_b: int, weight: float) -> int:
+    def insert_memory_similarity_link(
+        self,
+        mid_a: int,
+        mid_b: int,
+        weight: float,
+        origin_memory_id: int | None = None,
+    ) -> int:
         src, tgt = (mid_a, mid_b) if mid_a < mid_b else (mid_b, mid_a)
         now = self._now_iso()
         lid = self._next_id("memory_similarity_link")
+        # C3: citation_source_memory_id tracks which memory triggered this link.
+        # Use caller-supplied origin or fall back to the lower-id endpoint (canonical).
+        citation_src = origin_memory_id if origin_memory_id is not None else src
         self._q(
             "CREATE type::record('memory_similarity_link', $id) SET "
             "source_memory_id = $src, target_memory_id = $tgt, "
-            "weight = $weight, created_at = $created_at, updated_at = $updated_at",
+            "weight = $weight, created_at = $created_at, updated_at = $updated_at, "
+            "citation_source_memory_id = $csm",
             {
                 "id": lid,
                 "src": src,
@@ -103,6 +113,7 @@ class _ClusterMixin:
                 "weight": weight,
                 "created_at": now,
                 "updated_at": now,
+                "csm": citation_src,
             },
         )
         return lid

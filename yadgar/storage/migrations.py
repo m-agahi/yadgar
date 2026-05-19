@@ -111,6 +111,35 @@ def _migration_004_branch_field(storage) -> None:
     )
 
 
+def _migration_006_source_memory_id(storage) -> None:
+    """Add source_memory_id (citation provenance) to KG edge tables (C3, v5.3.3).
+
+    Three edge tables receive the new column:
+    - causal_dag_edge: source_memory_id → the memory that triggered causal discovery.
+    - relationship: source_memory_id → the memory that triggered entity linking.
+    - memory_similarity_link: citation_source_memory_id → the originating memory
+      (field is named 'citation_source_memory_id' because 'source_memory_id' and
+      'target_memory_id' are already the primary endpoint keys on this table).
+
+    All columns are optional (nullable). Existing rows have NULL — back-compat.
+    DEFINE FIELD IF NOT EXISTS is idempotent — safe to run twice.
+    """
+    # causal_dag_edge: source_memory_id
+    storage._q(
+        "DEFINE FIELD IF NOT EXISTS source_memory_id ON TABLE causal_dag_edge TYPE option<int>;"
+    )
+    # relationship: source_memory_id
+    storage._q(
+        "DEFINE FIELD IF NOT EXISTS source_memory_id ON TABLE relationship TYPE option<int>;"
+    )
+    # memory_similarity_link: citation_source_memory_id
+    # (source_memory_id / target_memory_id are already the edge endpoint fields)
+    storage._q(
+        "DEFINE FIELD IF NOT EXISTS citation_source_memory_id "
+        "ON TABLE memory_similarity_link TYPE option<int>;"
+    )
+
+
 _MIGRATIONS: list[dict] = [
     {"version": "001_hnsw_indexes", "fn": _migration_001_hnsw_indexes},
     {"version": "002_relationship_indexes", "fn": _migration_002_relationship_indexes},
@@ -122,6 +151,10 @@ _MIGRATIONS: list[dict] = [
     {
         "version": "005_provenance_agent_field",
         "fn": _migration_005_provenance_agent_field,
+    },
+    {
+        "version": "006_source_memory_id",
+        "fn": _migration_006_source_memory_id,
     },
 ]
 

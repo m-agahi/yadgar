@@ -205,7 +205,12 @@ class MemoryThermodynamics:
     # -- f. Metamemory --
 
     def record_access(self, memory_id: int, was_useful: bool) -> None:
-        """Track memory access and usefulness for metamemory."""
+        """Track memory access and usefulness for metamemory.
+
+        Also increments access_count_since_decay — a per-cycle counter reset
+        to 0 by the heat-decay pass. Used by C2 recall-modulated decay to slow
+        decay for frequently-accessed memories (MemoryBank parity).
+        """
         mem = self._storage.get_memory(memory_id)
         if mem is None:
             return
@@ -219,7 +224,16 @@ class MemoryThermodynamics:
         else:
             confidence = mem.get("confidence", 1.0)
 
-        self._storage.update_memory_metamemory(memory_id, access_count, useful_count, confidence)
+        # C2: also increment per-cycle access counter (reset by decay pass)
+        access_count_since_decay = mem.get("access_count_since_decay", 0) + 1
+
+        self._storage.update_memory_metamemory(
+            memory_id,
+            access_count,
+            useful_count,
+            confidence,
+            access_count_since_decay=access_count_since_decay,
+        )
 
     def get_reliability(self, memory_id: int) -> float:
         """Return the confidence score for a memory.

@@ -309,11 +309,14 @@ class _CLSMixin:
         for mid_a, mid_b, weight in pending_inserts:
             src, tgt = (mid_a, mid_b) if mid_a < mid_b else (mid_b, mid_a)
             lid = self._storage._next_id("memory_similarity_link")
+            # C3: citation_source_memory_id = lower-id endpoint (canonical choice for
+            # co-occurrence links derived from two memories with equal provenance).
             batch.append(
                 (
                     "CREATE type::record('memory_similarity_link', $id) SET "
                     "source_memory_id = $src, target_memory_id = $tgt, "
-                    "weight = $weight, created_at = $created_at, updated_at = $updated_at",
+                    "weight = $weight, created_at = $created_at, updated_at = $updated_at, "
+                    "citation_source_memory_id = $csm",
                     {
                         "id": lid,
                         "src": src,
@@ -321,6 +324,7 @@ class _CLSMixin:
                         "weight": weight,
                         "created_at": now,
                         "updated_at": now,
+                        "csm": src,  # lower-id memory as canonical citation source
                     },
                 )
             )
