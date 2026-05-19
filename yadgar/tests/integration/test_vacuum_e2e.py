@@ -430,6 +430,11 @@ def test_vacuum_e2e_import_failure_restores_original(live_backend_container):
     sentinel = "VACUUM_RESTORE_SENTINEL_V2"
     _populate_memories(backend_url, count=50, sentinel=sentinel)
 
+    # v5.2.0 S4: same bootstrap-race guard as the happy-path test.
+    # If yadgar-rw is not yet authenticated, the fixture is broken — fail loudly.
+    rw_pass = info.get("rw_pass", "test123")
+    _wait_for_yadgar_rw_auth(backend_url, "yadgar-rw", rw_pass, timeout=60.0)
+
     db_path = data_dir / "surreal_db"
 
     ControllerClass = _make_docker_service_controller(container_name, docker_cmd)
