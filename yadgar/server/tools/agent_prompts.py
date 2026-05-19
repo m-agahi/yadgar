@@ -20,6 +20,8 @@ from __future__ import annotations
 import logging
 import re
 
+from yadgar.server._app import _tool
+
 logger = logging.getLogger(__name__)
 
 # Slug prefix all agent-prompt pages share
@@ -58,6 +60,7 @@ def _next_version(storage, pattern: str) -> int:
     return max_v + 1
 
 
+@_tool()
 def agent_prompt_save(
     pattern: str,
     content: str,
@@ -108,6 +111,7 @@ def agent_prompt_save(
     }
 
 
+@_tool()
 def agent_prompt_get(
     pattern: str,
     storage=None,
