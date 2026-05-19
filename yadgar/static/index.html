@@ -305,6 +305,7 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
   <button class="btn" onclick="loadGraph()">↺ Reload</button>
   <button class="btn" onclick="fitGraph()">⊞ Fit</button>
   <button class="btn" onclick="resetLayout()">⟳ Reset</button>
+  <button class="btn" id="mode-btn" onclick="toggleMode()">3D</button>
   <button class="btn" id="stats-btn" onclick="openStats()">📊 Stats</button>
   <button class="btn" id="debug-btn" onclick="openDebug()">⚙ Debug</button>
   <span id="status-dot"></span>
@@ -452,6 +453,8 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
 <script src="https://unpkg.com/force-graph@1.51.4/dist/force-graph.min.js"
         integrity="sha384-Hm6GpQcTNI5VqGgGS7lLxTGtEFcxu/kOVV0B7ozIZRu9blWVvigv5httJQZ2qZmY"
         crossorigin="anonymous"></script>
+<script src="https://unpkg.com/three@0.158.0/build/three.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/3d-force-graph@1.73.0/dist/3d-force-graph.min.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"
         integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ"
         crossorigin="anonymous"></script>
@@ -474,6 +477,8 @@ let debugTab = 'graph';
 const sparkCpu = Array(60).fill(0);
 const sparkDb  = Array(60).fill(0);
 let sparkDbMax = 1;
+// V4: 2D/3D mode. Default '2d' (current renderer). Persisted in localStorage.
+let _graphMode = localStorage.getItem('yadgar-graph-mode') || '2d';
 
 // ── Colour helpers ──────────────────────────────────────────────────────────
 function heatColor(h) {
@@ -482,57 +487,116 @@ function heatColor(h) {
 }
 
 // ── Graph initialisation ────────────────────────────────────────────────────
-function initGraph() {
-  const wrap = document.getElementById('canvas-wrap');
-  graph = ForceGraph()(wrap)
-    .backgroundColor('#0d1117')
-    .nodeId('id')
-    .linkSource('source')
-    .linkTarget('target')
-    .nodeLabel(n => n.type === 'wiki'
-      ? `[wiki:${n.category}] ${n.label}`
-      : `[heat=${(n.heat||0).toFixed(3)}] ${(n.content || n.label || '').slice(0, 120)}`)
-    .linkColor(l => EDGE_COLOR[l.type] || '#484f58')
-    .linkWidth(l => l.type === 'transition' ? Math.min(4, 1 + Math.log2(l.count || 1)) : l.type === 'semantic' ? 1 : l.type === 'wiki_crossref' ? 1 : 1.5)
-    .linkDirectionalArrowLength(l => (l.type === 'transition' || l.type === 'memory_wiki' || l.type === 'wiki_crossref') ? 5 : 0)
-    .linkDirectionalArrowRelPos(1)
-    .nodeCanvasObject(drawNode)
-    .nodeCanvasObjectMode(() => 'replace')
-    .nodePointerAreaPaint((node, color, ctx) => {
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(node.x, node.y, 8, 0, 2 * Math.PI);
-      ctx.fill();
-    })
-    .onNodeClick(showDetail)
-    .onBackgroundClick(closeDetail)
-    .onNodeDrag((node) => {
-      graph.enableZoomInteraction(false);
-      // Pin all other nodes so they don't drift
-      for (const n of graph.graphData().nodes) {
-        if (n !== node) { n.fx = n.x; n.fy = n.y; }
-      }
-    })
-    .onNodeDragEnd((node) => {
-      graph.enableZoomInteraction(true);
-      // Keep dragged node pinned at its new position too
-      node.fx = node.x;
-      node.fy = node.y;
-    })
-    .onEngineStop(() => {
-      // After layout settles, pin everything so forces can't push nodes around
-      for (const n of graph.graphData().nodes) {
-        if (n.fx == null) { n.fx = n.x; n.fy = n.y; }
-      }
-    });
+function _nodeLabel(n) {
+  return n.type === 'wiki'
+    ? `[wiki:${n.category}] ${n.label}`
+    : `[heat=${(n.heat||0).toFixed(3)}] ${(n.content || n.label || '').slice(0, 120)}`;
+}
 
-  // Softer repulsion — default -30 spreads clusters too far
-  graph.d3Force('charge').strength(-12);
-  graph.d3Force('link').distance(30);
+function _linkColor(l) { return EDGE_COLOR[l.type] || '#484f58'; }
+function _linkWidth(l) { return l.type === 'transition' ? Math.min(4, 1 + Math.log2(l.count || 1)) : l.type === 'semantic' ? 1 : l.type === 'wiki_crossref' ? 1 : 1.5; }
+function _arrowLen(l) { return (l.type === 'transition' || l.type === 'memory_wiki' || l.type === 'wiki_crossref') ? 5 : 0; }
+
+function initGraph(mode) {
+  if (!mode) mode = _graphMode;
+  const wrap = document.getElementById('canvas-wrap');
+  // Clear previous graph instance
+  if (graph) {
+    try { graph._destructor && graph._destructor(); } catch(_) {}
+    wrap.innerHTML = '';
+    graph = null;
+  }
+
+  // Update mode button label
+  const modeBtn = document.getElementById('mode-btn');
+  if (modeBtn) modeBtn.textContent = mode === '3d' ? '2D' : '3D';
+
+  if (mode === '3d') {
+    // 3D mode using 3d-force-graph + Three.js
+    graph = ForceGraph3D()(wrap)
+      .backgroundColor('#0d1117')
+      .nodeId('id')
+      .linkSource('source')
+      .linkTarget('target')
+      .nodeLabel(_nodeLabel)
+      .linkColor(_linkColor)
+      .linkWidth(_linkWidth)
+      .linkDirectionalArrowLength(_arrowLen)
+      .linkDirectionalArrowRelPos(1)
+      .nodeVisibility(n => n.__visible !== false)
+      .linkVisibility(l => {
+        const s = l.source?.id ?? l.source, t = l.target?.id ?? l.target;
+        const vis = new Set(allNodes.filter(n => n.__visible !== false).map(n => n.id));
+        return vis.has(s) && vis.has(t);
+      })
+      .onNodeClick(showDetail)
+      .onBackgroundClick(closeDetail);
+  } else {
+    // 2D mode (force-graph canvas) — default
+    graph = ForceGraph()(wrap)
+      .backgroundColor('#0d1117')
+      .nodeId('id')
+      .linkSource('source')
+      .linkTarget('target')
+      .nodeLabel(_nodeLabel)
+      .linkColor(_linkColor)
+      .linkWidth(_linkWidth)
+      .linkDirectionalArrowLength(_arrowLen)
+      .linkDirectionalArrowRelPos(1)
+      .nodeCanvasObject(drawNode)
+      .nodeCanvasObjectMode(() => 'replace')
+      .nodePointerAreaPaint((node, color, ctx) => {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, 8, 0, 2 * Math.PI);
+        ctx.fill();
+      })
+      .onNodeClick(showDetail)
+      .onBackgroundClick(closeDetail)
+      .onNodeDrag((node) => {
+        graph.enableZoomInteraction(false);
+        // Pin all other nodes so they don't drift
+        for (const n of graph.graphData().nodes) {
+          if (n !== node) { n.fx = n.x; n.fy = n.y; }
+        }
+      })
+      .onNodeDragEnd((node) => {
+        graph.enableZoomInteraction(true);
+        // Keep dragged node pinned at its new position too
+        node.fx = node.x;
+        node.fy = node.y;
+      })
+      .onEngineStop(() => {
+        // After layout settles, pin everything so forces can't push nodes around
+        for (const n of graph.graphData().nodes) {
+          if (n.fx == null) { n.fx = n.x; n.fy = n.y; }
+        }
+      });
+
+    // Softer repulsion — default -30 spreads clusters too far
+    graph.d3Force('charge').strength(-12);
+    graph.d3Force('link').distance(30);
+  }
 
   window.addEventListener('resize', () => {
     graph.width(wrap.clientWidth).height(wrap.clientHeight);
   });
+}
+
+// ── 2D/3D mode toggle (V4) ────────────────────────────────────────────────────
+function toggleMode() {
+  _graphMode = _graphMode === '2d' ? '3d' : '2d';
+  localStorage.setItem('yadgar-graph-mode', _graphMode);
+  // Re-initialise graph, then reload data
+  initGraph(_graphMode);
+  if (allNodes.length > 0) {
+    // Re-apply existing data to new renderer
+    graph.graphData({ nodes: allNodes, links: allLinks });
+    applyFilters();
+    status(`Switched to ${_graphMode.toUpperCase()} mode · ${allNodes.length} nodes`, 'ok');
+  } else {
+    loadGraph();
+  }
 }
 
 function drawNode(node, ctx, scale) {
@@ -664,18 +728,19 @@ function applyFilters() {
     if (n.__visible) { vis.add(n.id); visCount++; }
   }
 
+  const linkVisFn = l => {
+    const s = l.source?.id ?? l.source, t = l.target?.id ?? l.target;
+    if (!vis.has(s) || !vis.has(t)) return false;
+    if (l.type === 'semantic'   && !showSem) return false;
+    if (l.type === 'temporal'   && !showTmp) return false;
+    if (l.type === 'transition' && !showTrn) return false;
+    if (l.type === 'wiki_crossref' && !showXref) return false;
+    if (l.type === 'memory_wiki' && !showMemWiki) return false;
+    return true;
+  };
   graph
     .nodeVisibility(n => n.__visible)
-    .linkVisibility(l => {
-      const s = l.source?.id ?? l.source, t = l.target?.id ?? l.target;
-      if (!vis.has(s) || !vis.has(t)) return false;
-      if (l.type === 'semantic'   && !showSem) return false;
-      if (l.type === 'temporal'   && !showTmp) return false;
-      if (l.type === 'transition' && !showTrn) return false;
-      if (l.type === 'wiki_crossref' && !showXref) return false;
-      if (l.type === 'memory_wiki' && !showMemWiki) return false;
-      return true;
-    });
+    .linkVisibility(linkVisFn);
 
   document.getElementById('s-vis').textContent = visCount;
 }
@@ -1257,7 +1322,7 @@ function renderConsolChart(rows) {
 }
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
-initGraph();
+initGraph(_graphMode);
 loadGraph();
 connectSSE();
 </script>
