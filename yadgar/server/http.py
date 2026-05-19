@@ -323,6 +323,87 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
     return JSONResponse({"text": "\n".join(lines)})
 
 
+@mcp_server.custom_route("/hooks/subagent-stop", methods=["POST"])
+async def hook_subagent_stop(request: Request) -> JSONResponse:
+    """SubagentStop hook endpoint — memorize Yadgar findings from subagent reports.
+
+    Called by yadgar/hooks/subagent-stop.py when a Claude Code subagent completes.
+
+    Accepts JSON body:
+        {
+            "agent_type": "general-purpose",
+            "cwd": "/path/to/project",
+            "findings": ["bullet text 1", "bullet text 2", ...]
+        }
+
+    Each finding is stored as a memory with:
+        - provenance_agent = agent_type
+        - tags = ["from-subagent", "agent-type:<agent_type>"]
+        - context = cwd
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"status": "error", "message": "Invalid JSON"}, status_code=400)
+
+    agent_type = sanitize_log_field(str(body.get("agent_type", "general-purpose")), max_len=64)
+    cwd = sanitize_log_field(str(body.get("cwd", os.getcwd())), max_len=500)
+    findings = body.get("findings", [])
+
+    if not isinstance(findings, list):
+        return JSONResponse(
+            {"status": "error", "message": "findings must be a list"}, status_code=400
+        )
+
+    # Validate agent_type before use as provenance_agent
+    import re as _re
+
+    _AGENT_TYPE_RE = _re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+    if not agent_type or not _AGENT_TYPE_RE.match(agent_type):
+        agent_type = "general-purpose"
+
+    if not findings:
+        return JSONResponse({"status": "ok", "stored": 0})
+
+    # Import memorize at call time to avoid circular import at module load
+    import sys as _sys
+
+    _srv = _sys.modules.get("yadgar.server")
+    _memorize = getattr(_srv, "memorize", None) if _srv else None
+    if _memorize is None:
+        from yadgar.server.tools.memorize import memorize as _memorize  # noqa: PLC0415
+
+    tags = ["from-subagent", f"agent-type:{agent_type}"]
+    stored = 0
+    errors = []
+
+    for finding in findings:
+        if not isinstance(finding, str) or not finding.strip():
+            continue
+        finding_clean = sanitize_log_field(finding.strip(), max_len=32_768)
+        if not finding_clean:
+            continue
+        try:
+            result = await asyncio.to_thread(
+                _memorize,
+                content=finding_clean,
+                context=cwd,
+                tags=tags,
+                is_protected=False,
+                provenance_agent=agent_type,
+            )
+            if result.get("stored", True):  # queued=True counts as stored
+                stored += 1
+        except Exception as _e:
+            logger.debug("subagent-stop memorize failed: %s", _e)
+            errors.append(str(_e)[:100])
+
+    response: dict = {"status": "ok", "stored": stored, "agent_type": agent_type}
+    if errors:
+        response["errors"] = errors
+    return JSONResponse(response)
+
+
 # ── Graph / Visualization API ──────────────────────────────────────────────
 
 
