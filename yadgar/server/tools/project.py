@@ -294,39 +294,28 @@ def _render_project_brief(brief: dict) -> str:
 
 
 @_tool()
-def project_brief(directory: str, mode: str = "catalog") -> dict:
+def project_brief(directory: str, mode: str = "catalog", branch_hint: str | None = None) -> dict:
     """Return a layered project context snapshot.
 
     mode="catalog" (~500 tokens): signals, anchors, presence flags.
     mode="full" (~1050 tokens): catalog + inlined init_memory, active_work,
     hot_memories, and key_wiki_pages.
+    branch_hint: optional branch name supplied by the host-side hook (v5.1.9).
+      When present, used directly — host has git visibility; container does not.
+      When absent, falls back to _get_current_branch(resolved).
     """
     resolved = _resolve_project_root(directory)
     storage = _get_storage()
     get_settings()
 
-    branch = _get_current_branch(resolved)
-
-    # F3: branch fallback — if yadgar state returns nothing but .git exists,
-    # try `git branch --show-current` (works on git ≥ 2.22)
-    if not branch:
-        git_dir = Path(resolved) / ".git"
-        if git_dir.exists():
-            try:
-                out = (
-                    subprocess.run(
-                        ["git", "-C", resolved, "branch", "--show-current"],
-                        capture_output=True,
-                        timeout=2.0,
-                        env=_git_safe_env(),
-                    )
-                    .stdout.decode()
-                    .strip()
-                )
-                if out:
-                    branch = out
-            except subprocess.TimeoutExpired, FileNotFoundError, OSError:
-                pass
+    # v5.1.9 F3: prefer host-supplied branch_hint (computed on host by SessionStart
+    # hook before calling this endpoint).  Fall back to in-process git query.
+    # The previous in-container subprocess fallback (v5.1.8 F3) is dropped: the
+    # container cannot see host .git, so it always returned None — dead code.
+    if branch_hint:
+        branch: str | None = branch_hint
+    else:
+        branch = _get_current_branch(resolved)
 
     # Project name: last path component of resolved root
     project = Path(resolved).name
