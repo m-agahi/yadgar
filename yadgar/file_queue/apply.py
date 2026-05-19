@@ -36,6 +36,7 @@ class _ApplyMixin:
                 context=p["context"],
                 tags=p.get("tags", []),
                 is_protected=p.get("is_protected", False),
+                provenance_agent=p.get("provenance_agent"),
             )
         elif op == "anchor":
             from yadgar.server import anchor as _anchor
