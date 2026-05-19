@@ -176,6 +176,29 @@ class GraphAPI:
                         }
                     )
 
+        # ── Causal edges (C3: include source_memory_id for citation tracing) ──
+        try:
+            causal_edges_raw = self._s.get_all_causal_edges()
+        except Exception:
+            causal_edges_raw = []
+
+        for ce in causal_edges_raw:
+            src_eid = self._extract_id(ce.get("source_entity_id"))
+            tgt_eid = self._extract_id(ce.get("target_entity_id"))
+            if src_eid is None or tgt_eid is None:
+                continue
+            edge: dict = {
+                "source": f"entity:{src_eid}",
+                "target": f"entity:{tgt_eid}",
+                "type": "causal",
+                "confidence": float(ce.get("confidence") or 0.0),
+                "algorithm": ce.get("algorithm") or "",
+            }
+            smid = ce.get("source_memory_id")
+            if smid is not None:
+                edge["source_memory_id"] = int(smid)
+            edges.append(edge)
+
         return {"nodes": nodes, "edges": edges}
 
     def get_graph_stats(self) -> dict:
