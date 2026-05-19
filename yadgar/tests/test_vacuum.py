@@ -1162,3 +1162,176 @@ class TestRedefineUsersPostImport:
 
             with pytest.raises(RuntimeError, match="HTTP 500"):
                 _redefine_users_post_import("http://127.0.0.1:8080")
+
+
+# ---------------------------------------------------------------------------
+# v5.1.7 F1 — check_invariants POST must include bearer token
+# ---------------------------------------------------------------------------
+
+
+class TestCheckInvariantsBearer:
+    """v5.1.7: /api/check_invariants POST must include Authorization: Bearer header.
+
+    Root cause: vacuum/__init__.py:398 called httpx.post without a bearer token.
+    v5.0.0 added bearer-auth on /api/* — so the call returned 401 Unauthorized,
+    exit code 2 false-failure, bloated dir retained.
+    """
+
+    def test_check_invariants_passes_bearer(self, monkeypatch):
+        """When YADGAR_MCP_AUTH_TOKEN is set, POST /api/check_invariants includes bearer."""
+        import httpx
+
+        monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", "test-token-abc123")
+
+        captured_calls: list[dict] = []
+
+        def fake_post(url, **kwargs):
+            captured_calls.append({"url": url, "headers": kwargs.get("headers", {})})
+            m = MagicMock()
+            m.status_code = 200
+            m.json.return_value = {"ok": True}
+            return m
+
+        monkeypatch.setattr(httpx, "post", fake_post)
+
+        # Drive cmd_vacuum_impl through phase 4 (check_invariants)
+        import types as _types
+
+        from yadgar.vacuum import cmd_vacuum_impl
+
+        monkeypatch._pytest_tmpdir if hasattr(monkeypatch, "_pytest_tmpdir") else None
+        # Use pytest tmp_path indirectly via the yadgar_home fixture approach —
+        # we set YADGAR_HOME to a valid dir so preflight passes.
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            from pathlib import Path
+
+            p = Path(td)
+            db = p / "surreal_db"
+            for sub in ("vlog", "sstables", "wal"):
+                (db / sub).mkdir(parents=True)
+            (db / "vlog" / "00001.vlog").write_bytes(b"x" * 1000)
+
+            monkeypatch.setenv("YADGAR_HOME", td)
+
+            # Stub cleanup script
+            script = p / "cleanup-backups.sh"
+            script.write_text("#!/bin/sh\nexit 0\n")
+            script.chmod(0o755)
+            monkeypatch.setenv("YADGAR_CLEANUP_SCRIPT", str(script))
+
+            args = _types.SimpleNamespace(
+                backend_url="http://127.0.0.1:8080",
+                service_mode="manual",
+                db_path=str(db),
+                yes=True,
+            )
+
+            fake_surql = "-- TABLE DATA: memory ----\nUPSERT memory:1 CONTENT {};\n"
+
+            def fake_get(url, **kwargs):
+                m = MagicMock()
+                m.status_code = 200
+                m.text = fake_surql if "/export" in url else ""
+                return m
+
+            monkeypatch.setattr(httpx, "get", fake_get)
+
+            with patch("yadgar.vacuum._log_consolidation_row"):
+                with patch("yadgar.vacuum.ServiceController"):
+                    with patch("yadgar.vacuum._wait_for_health", return_value=True):
+                        with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
+                            with patch("yadgar.vacuum._redefine_users_post_import"):
+                                cmd_vacuum_impl(args)
+
+        # Find the check_invariants call
+        ci_calls = [c for c in captured_calls if "/api/check_invariants" in c["url"]]
+        assert ci_calls, "check_invariants was never called"
+
+        headers = ci_calls[0]["headers"]
+        assert "Authorization" in headers, (
+            f"check_invariants POST missing Authorization header; got headers={headers!r}"
+        )
+        assert headers["Authorization"] == "Bearer test-token-abc123", (
+            f"Wrong Authorization value: {headers['Authorization']!r}"
+        )
+
+    def test_check_invariants_env_missing_warns(self, monkeypatch, capsys):
+        """When YADGAR_MCP_AUTH_TOKEN is unset, check_invariants POST has no bearer header
+        and a WARNING is printed to stderr."""
+        import types as _types
+
+        import httpx
+
+        monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
+
+        captured_calls: list[dict] = []
+
+        def fake_post(url, **kwargs):
+            captured_calls.append({"url": url, "headers": kwargs.get("headers", {})})
+            m = MagicMock()
+            m.status_code = 200
+            m.json.return_value = {"ok": True}
+            return m
+
+        monkeypatch.setattr(httpx, "post", fake_post)
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            from pathlib import Path
+
+            p = Path(td)
+            db = p / "surreal_db"
+            for sub in ("vlog", "sstables", "wal"):
+                (db / sub).mkdir(parents=True)
+            (db / "vlog" / "00001.vlog").write_bytes(b"x" * 1000)
+
+            monkeypatch.setenv("YADGAR_HOME", td)
+
+            script = p / "cleanup-backups.sh"
+            script.write_text("#!/bin/sh\nexit 0\n")
+            script.chmod(0o755)
+            monkeypatch.setenv("YADGAR_CLEANUP_SCRIPT", str(script))
+
+            fake_surql = "-- TABLE DATA: memory ----\nUPSERT memory:1 CONTENT {};\n"
+
+            def fake_get(url, **kwargs):
+                m = MagicMock()
+                m.status_code = 200
+                m.text = fake_surql if "/export" in url else ""
+                return m
+
+            monkeypatch.setattr(httpx, "get", fake_get)
+
+            args = _types.SimpleNamespace(
+                backend_url="http://127.0.0.1:8080",
+                service_mode="manual",
+                db_path=str(db),
+                yes=True,
+            )
+
+            from yadgar.vacuum import cmd_vacuum_impl
+
+            with patch("yadgar.vacuum._log_consolidation_row"):
+                with patch("yadgar.vacuum.ServiceController"):
+                    with patch("yadgar.vacuum._wait_for_health", return_value=True):
+                        with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
+                            with patch("yadgar.vacuum._redefine_users_post_import"):
+                                cmd_vacuum_impl(args)
+
+        ci_calls = [c for c in captured_calls if "/api/check_invariants" in c["url"]]
+        assert ci_calls, "check_invariants was never called"
+
+        headers = ci_calls[0]["headers"]
+        # No Authorization header when token missing
+        assert "Authorization" not in headers, (
+            f"Expected no Authorization header when token unset; got headers={headers!r}"
+        )
+
+        # Warning printed to stderr
+        captured = capsys.readouterr()
+        assert "WARNING" in captured.err and "YADGAR_MCP_AUTH_TOKEN" in captured.err, (
+            f"Expected WARNING about YADGAR_MCP_AUTH_TOKEN in stderr; got: {captured.err!r}"
+        )

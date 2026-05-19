@@ -394,9 +394,18 @@ def _vacuum_finalize(
         return False
 
     # Run check_invariants
+    _ci_token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    if not _ci_token:
+        print(
+            "[vacuum] WARNING: YADGAR_MCP_AUTH_TOKEN not set — "
+            "check_invariants POST will have no bearer token and may return 401.",
+            file=sys.stderr,
+        )
+    _ci_headers = {"Authorization": f"Bearer {_ci_token}"} if _ci_token else {}
     try:
         ci_resp = httpx.post(
             f"{yadgar_url}/api/check_invariants",
+            headers=_ci_headers,
             timeout=120.0,
         )
         if ci_resp.status_code == 200 and ci_resp.json().get("ok"):
