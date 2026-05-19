@@ -233,10 +233,14 @@ async def hook_session_context(request: Request) -> JSONResponse:
     Query params:
         directory: project directory (optional, defaults to cwd)
         mode: brief mode (optional, defaults to "catalog")
+        branch: host-side git branch hint (optional, v5.1.9 F2); passed to
+            project_brief as branch_hint= so the container doesn't need git
+            access.
     Returns: {"text": "...markdown..."}
     """
     directory = request.query_params.get("directory", os.getcwd())
     mode = request.query_params.get("mode", "catalog")
+    branch_hint = request.query_params.get("branch", "") or None
 
     # Record timestamp for prompt-recall throttling (bounded dict)
     _bounded_set(_st._last_session_context, directory, time.monotonic())
@@ -249,7 +253,7 @@ async def hook_session_context(request: Request) -> JSONResponse:
         _pb = getattr(_srv, "project_brief", None) if _srv else None
         if _pb is None:
             from yadgar.server.tools.project import project_brief as _pb  # noqa: PLC0415
-        brief = _pb(directory, mode=mode)
+        brief = _pb(directory, mode=mode, branch_hint=branch_hint)
         render = brief.get("_render", "")
         return JSONResponse({"text": render})
     except Exception as _e:
