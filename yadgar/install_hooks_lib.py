@@ -103,6 +103,7 @@ def install_hooks_impl(
         "post-tool-capture.py": 0o755,
         "session-start-context.py": 0o755,
         "prompt-recall.py": 0o755,
+        "subagent-stop.py": 0o755,
     }
 
     if not dry_run:
@@ -167,6 +168,33 @@ def install_hooks_impl(
     hooks_config["PostToolUse"] = [_hook_entry("post-tool-capture")]
     hooks_config["UserPromptSubmit"] = [_hook_entry("prompt-recall")]
     hooks_config["PreToolUse"] = [_hook_entry("db-lockdown-check", matcher="Bash")]
+
+    # SubagentStop — append-if-absent semantics.
+    # We only add the yadgar entry if no entry with our command substring exists.
+    # This preserves user-defined SubagentStop hooks and avoids duplicates on re-runs.
+    _subagent_stop_src = package_hooks / "subagent-stop.py"
+    _subagent_stop_dst = hooks_dir / "yadgar-subagent-stop.py"
+    if not dry_run and _subagent_stop_src.exists():
+        shutil.copy2(_subagent_stop_src, _subagent_stop_dst)
+        _subagent_stop_dst.chmod(0o755)
+
+    _subagent_stop_cmd = f'python3 "{_subagent_stop_dst}"'
+    _existing_subagent_stop = hooks_config.get("SubagentStop", [])
+    _already_registered = any(
+        entry.get("hooks", [{}])[0].get("command", "") == _subagent_stop_cmd
+        for entry in _existing_subagent_stop
+        if isinstance(entry, dict) and entry.get("hooks")
+    )
+    if not _already_registered:
+        _subagent_stop_hook_entry: dict = {
+            "matcher": "",
+            "hooks": [{"type": "command", "command": _subagent_stop_cmd}],
+        }
+        if _env_block:
+            _subagent_stop_hook_entry["hooks"][0]["env"] = _env_block
+        _existing_subagent_stop.append(_subagent_stop_hook_entry)
+    hooks_config["SubagentStop"] = _existing_subagent_stop
+
     settings_data["hooks"] = hooks_config
 
     _stop_entry = [
@@ -236,6 +264,7 @@ def install_hooks_impl(
             "UserPromptSubmit (auto-recall)",
             "PreToolUse (DB lockdown)",
             "Stop (memory checkpoint — global)",
+            "SubagentStop (findings capture — append-if-absent)",
         ],
         "settings_file": str(settings_path),
         "global_settings_file": global_settings_file,
