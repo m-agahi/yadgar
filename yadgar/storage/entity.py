@@ -83,11 +83,13 @@ class _EntityMixin:
     def insert_relationship(self, relationship: dict) -> int:
         now = self._now_iso()
         rid = self._next_id("relationship")
+        # C1: bi-temporal validity — valid_from = now(), valid_until = NULL.
         self._q(
             "CREATE type::record('relationship', $id) SET "
             "source_entity_id = $src, target_entity_id = $tgt, "
             "relationship_type = $rtype, weight = $weight, "
-            "created_at = $created_at, last_reinforced = $last_reinforced",
+            "created_at = $created_at, last_reinforced = $last_reinforced, "
+            "valid_from = $vf",
             {
                 "id": rid,
                 "src": relationship["source_entity_id"],
@@ -96,6 +98,7 @@ class _EntityMixin:
                 "weight": relationship.get("weight", 1.0),
                 "created_at": relationship.get("created_at", now),
                 "last_reinforced": relationship.get("last_reinforced", now),
+                "vf": relationship.get("valid_from", now),
             },
         )
         return rid
@@ -224,6 +227,7 @@ class _EntityMixin:
         """
         now = self._now_iso()
         rid = self._next_id("relationship")
+        # C1: bi-temporal validity. valid_from defaults to now().
         params: dict = {
             "id": rid,
             "src": source_entity_id,
@@ -236,6 +240,7 @@ class _EntityMixin:
             "rct": record_time or now,
             "ic": bool(is_causal),
             "conf": confidence,
+            "vf": now,
         }
         sql = (
             "CREATE type::record('relationship', $id) SET "
@@ -243,7 +248,8 @@ class _EntityMixin:
             "relationship_type = $rt, weight = $w, "
             "created_at = $cat, last_reinforced = $lr, "
             "event_time = $et, record_time = $rct, "
-            "is_causal = $ic, confidence = $conf"
+            "is_causal = $ic, confidence = $conf, "
+            "valid_from = $vf"
         )
         if source_memory_id is not None:
             sql += ", source_memory_id = $smid"
