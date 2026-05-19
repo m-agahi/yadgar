@@ -47,6 +47,16 @@ All deployed via extended `yadgar install-hooks` subcommand. See global anchor o
 - **M1** — Adopt Anthropic Agent Teams JSONL inbox (`team_inbox/<projectId>/<teamName>/<agentName>.jsonl`). Yadgar shadow-watches via `FileChanged` hook → mirrors peer messages into action_log. Solves goal-d.
 - **M2** — Subagent dispatch helper that injects yadgar protocol + retrieves latest `agent-prompt-<pattern>` (from A4) into agent's initial prompt.
 
+## v5.3.7 — Viz UX (P5) — added 2026-05-19
+
+User-reported frontend issues at `http://localhost:42069/`.
+
+- **V1** — Semantic search box. Sticky input at top of UI. On submit, calls server endpoint (`/api/viz/search?q=...`) which dispatches `recall(q)` + `wiki_query(q)` (capped, ~5 each). Returns node IDs. UI pins matched nodes (color/size/center) and de-emphasizes the rest. Clear button restores full graph.
+- **V2** — Wiki node click → content panel. Currently click handler on wiki-typed nodes is broken (does nothing). Fix click delegation in `yadgar/static/index.html` so wiki nodes open the same side-panel that memory nodes use. Reuse `wiki_read(slug)` for fetch.
+- **V3** — Click handler coverage audit. Not every node type fires the panel. Iterate node types (`memory`, `wiki`, `entity`, `episode`, `cluster`, etc.) — confirm each has a click → panel binding. Add missing ones. Test plan: visual smoke + console error check.
+
+Files: `yadgar/viz_server.py` (new search endpoint), `yadgar/static/index.html` (handler fixes), maybe `yadgar/server/tools/*.py` (search backend wiring). No DB migration.
+
 ## Deferred to v6
 
 - A-MEM backward-propagating evolution.
