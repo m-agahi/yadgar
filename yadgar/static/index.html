@@ -33,10 +33,11 @@ body {
   color: #c9d1d9;
   padding: 3px 8px;
   font-size: 11px;
-  width: 180px;
+  width: 220px;
   outline: none;
 }
 #search:focus { border-color: #58a6ff; }
+#search-btn.searching { background: #1f3a5c; border-color: #58a6ff; color: #58a6ff; }
 .btn {
   padding: 3px 10px;
   background: #21262d;
@@ -298,7 +299,9 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
 <div id="topbar">
   <h1>YADGAR</h1>
   <span style="color:#8b949e;font-size:10px">Knowledge Graph</span>
-  <input id="search" type="search" placeholder="Search nodes…">
+  <input id="search" type="search" placeholder="Semantic search…" style="width:220px">
+  <button class="btn" id="search-btn" onclick="runSearch()">⌕ Search</button>
+  <button class="btn" id="search-clear-btn" onclick="clearSearch()" style="display:none">✕ Clear</button>
   <button class="btn" onclick="loadGraph()">↺ Reload</button>
   <button class="btn" onclick="fitGraph()">⊞ Fit</button>
   <button class="btn" onclick="resetLayout()">⟳ Reset</button>
@@ -438,6 +441,7 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
     <button class="dtab active" onclick="switchTab('graph')">GET /api/graph</button>
     <button class="dtab" onclick="switchTab('stats')">GET /api/graph/stats</button>
     <button class="dtab" onclick="switchTab('system')">GET /api/system</button>
+    <button class="dtab" onclick="switchTab('search')">GET /api/viz/search</button>
     <button class="dtab" onclick="switchTab('nodes')">Nodes table</button>
   </div>
   <div id="debug-body">
@@ -532,9 +536,12 @@ function initGraph() {
 }
 
 function drawNode(node, ctx, scale) {
+  const dimAlpha = node.__dimmed ? 0.18 : 1.0;
+  ctx.globalAlpha = dimAlpha;
+
   if (node.type === 'wiki') {
     // Hexagon
-    const r = 8;
+    const r = node.__pinned ? 11 : 8;
     const color = WIKI_CAT_COLOR[node.category] || '#8b949e';
     ctx.beginPath();
     for (let i = 0; i < 6; i++) {
@@ -546,9 +553,9 @@ function drawNode(node, ctx, scale) {
     ctx.closePath();
     ctx.fillStyle = color;
     ctx.fill();
-    if (node.__match) {
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1.5 / scale;
+    if (node.__match || node.__pinned) {
+      ctx.strokeStyle = node.__pinned ? '#ffd700' : '#ffffff';
+      ctx.lineWidth = (node.__pinned ? 2.5 : 1.5) / scale;
       ctx.stroke();
     }
     if (scale > 3 && node.label) {
@@ -558,20 +565,21 @@ function drawNode(node, ctx, scale) {
       ctx.textAlign = 'center';
       ctx.fillText(node.label.slice(0, 28), node.x, node.y + r + sz * 1.2);
     }
+    ctx.globalAlpha = 1.0;
     return;
   }
   // Memory node
   const heat = node.heat || 0;
-  const r = 6;
+  const r = node.__pinned ? 9 : 6;
 
   ctx.beginPath();
   ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
   ctx.fillStyle = heatColor(heat);
   ctx.fill();
 
-  if (node.__match) {
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 1.5 / scale;
+  if (node.__match || node.__pinned) {
+    ctx.strokeStyle = node.__pinned ? '#ffd700' : '#ffffff';
+    ctx.lineWidth = (node.__pinned ? 2.5 : 1.5) / scale;
     ctx.stroke();
   }
 
@@ -582,6 +590,7 @@ function drawNode(node, ctx, scale) {
     ctx.textAlign = 'center';
     ctx.fillText(node.label.slice(0, 28), node.x, node.y + r + sz * 1.2);
   }
+  ctx.globalAlpha = 1.0;
 }
 
 // ── Data loading ────────────────────────────────────────────────────────────
@@ -797,6 +806,66 @@ function showDetail(node) {
 function closeDetail() { document.getElementById('right').classList.remove('open'); }
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
+// ── Semantic search (V1) ──────────────────────────────────────────────────────
+let _searchPinnedIds = new Set();
+
+async function runSearch() {
+  const q = document.getElementById('search').value.trim();
+  if (!q) return;
+  const btn = document.getElementById('search-btn');
+  btn.classList.add('searching');
+  btn.textContent = '…';
+  try {
+    const r = await fetch(`${DAEMON}/api/viz/search?q=${encodeURIComponent(q)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    _searchPinnedIds = new Set(d.node_ids || []);
+    _applySearchHighlight();
+    document.getElementById('search-clear-btn').style.display = '';
+    status(`Search: ${_searchPinnedIds.size} match(es) for "${q}"`, 'ok');
+  } catch (e) {
+    status(`Search error: ${e.message}`, 'err');
+  } finally {
+    btn.classList.remove('searching');
+    btn.textContent = '⌕ Search';
+  }
+}
+
+function clearSearch() {
+  _searchPinnedIds.clear();
+  document.getElementById('search').value = '';
+  document.getElementById('search-clear-btn').style.display = 'none';
+  _applySearchHighlight();
+  applyFilters();
+  status('Search cleared', 'ok');
+}
+
+function _applySearchHighlight() {
+  if (!graph) return;
+  const hasPins = _searchPinnedIds.size > 0;
+  for (const n of allNodes) {
+    n.__pinned = _searchPinnedIds.has(n.id);
+    // De-emphasise non-matched nodes when a search is active
+    n.__dimmed = hasPins && !n.__pinned;
+  }
+  // Trigger redraw
+  graph.nodeCanvasObject(drawNode).nodeCanvasObjectMode(() => 'replace');
+  if (hasPins) {
+    // Center on matched nodes
+    const matched = allNodes.filter(n => n.__pinned);
+    if (matched.length > 0) {
+      const xs = matched.map(n => n.x).filter(x => x != null);
+      const ys = matched.map(n => n.y).filter(y => y != null);
+      if (xs.length > 0) {
+        const cx = xs.reduce((a,b) => a+b, 0) / xs.length;
+        const cy = ys.reduce((a,b) => a+b, 0) / ys.length;
+        graph.centerAt(cx, cy, 600);
+        graph.zoom(2.5, 600);
+      }
+    }
+  }
+}
+
 // ── System metrics ───────────────────────────────────────────────────────────
 function updateSys(m) {
   if (!m) return;
@@ -929,7 +998,7 @@ function closeDebug() {
 function switchTab(tab) {
   debugTab = tab;
   document.querySelectorAll('.dtab').forEach((el, i) => {
-    const tabs = ['graph','stats','system','nodes'];
+    const tabs = ['graph','stats','system','search','nodes'];
     el.classList.toggle('active', tabs[i] === tab);
   });
   refreshDebug();
@@ -953,7 +1022,7 @@ async function refreshDebug() {
     return;
   }
 
-  const paths = { graph: '/api/graph', stats: '/api/graph/stats', system: '/api/system' };
+  const paths = { graph: '/api/graph', stats: '/api/graph/stats', system: '/api/system', search: '/api/viz/search?q=test' };
   const url = DAEMON + paths[debugTab];
   urlEl.textContent = url;
 
@@ -1018,7 +1087,9 @@ document.getElementById('heat-slider').addEventListener('input', e => {
   applyFilters();
 });
 
-document.getElementById('search').addEventListener('input', applyFilters);
+document.getElementById('search').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); runSearch(); }
+});
 
 // Close overlays on Escape
 document.addEventListener('keydown', e => {
