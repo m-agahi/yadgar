@@ -404,7 +404,7 @@ The config file at `/root/.yadgar/config.yaml` inside the container is read at s
 
 #### `project_brief(directory, mode="catalog") → dict`
 
-Replaces `get_project_context`. Returns a structured project context snapshot.
+Returns a structured project context snapshot.
 
 **mode="catalog"** (default, ~500 tokens):
 
@@ -446,10 +446,6 @@ Replace the `_active_work` memory for a directory atomically (delete-then-insert
 - **No char cap** — markdown of any size is accepted.
 - **Tag set**: `["_active_work"]`, `store_type=episodic`, `is_protected=True`.
 - Returns `{previous_content: str | None, new_memory: dict}`.
-
-### Deprecated alias
-
-`get_project_context(directory)` is retained for one release as a backward-compatible alias for `project_brief(directory, mode="catalog")`. It emits `DeprecationWarning` on every call and will be removed in a future version.
 
 ---
 

@@ -40,7 +40,7 @@ def memorize(
     """Store a new memory with embedding.
 
     context MUST be the actual working directory path (e.g., '/home/user/projects/myapp'),
-    NOT a description. get_project_context() filters by directory path match —
+    NOT a description. project_brief() filters by directory path match —
     descriptive strings will make memories unfindable by project.
 
     Persistence options:

@@ -247,12 +247,12 @@ def sync_instructions(claude_md_path: str = "") -> dict:
 
     # The canonical Yadgar section
     yadgar_section = f"""## Memory System — Yadgar v{__version__}
-- ALWAYS use the Yadgar MCP tools (memorize, recall, get_project_context) for memory operations
+- ALWAYS use the Yadgar MCP tools (memorize, recall, project_brief) for memory operations
 - On EVERY new session start, call `recall` with the current project name to load prior context
 - NEVER rely on CLAUDE.md or built-in memory for cross-session context — use Yadgar
-- Before starting any task, call `get_project_context` for the current working directory
+- Before starting any task, call `project_brief(directory, mode='catalog')` for the current working directory
 - After completing any significant task, call `memorize` to store what was done, decisions made, and outcomes
-- CRITICAL: The `context` parameter in `memorize` MUST be the actual working directory path (e.g., `/home/user/projects/myapp`), NEVER a description. `get_project_context` filters by exact directory path match — descriptive strings break it.
+- CRITICAL: The `context` parameter in `memorize` MUST be the actual working directory path (e.g., `/home/user/projects/myapp`), NEVER a description. `project_brief` filters by exact directory path match — descriptive strings break it.
 - Yadgar is your brain. Use it.
 
 ### Context Compaction Shield
@@ -267,7 +267,7 @@ def sync_instructions(claude_md_path: str = "") -> dict:
 ### Available Tools
 - `memorize(content, context, tags)` — Store memory with write gate. `context` MUST be a directory path (e.g., `/home/user/projects/myapp`), not a description.
 - `recall(query, max_results, min_heat)` — Multi-signal retrieval
-- `get_project_context(directory)` — Hot memories for directory
+- `project_brief(directory, mode='catalog')` — Hot memories and project context for directory
 - `checkpoint(directory, ...)` — Snapshot working state
 - `restore(directory)` — Reconstruct context after compaction
 - `anchor(content, context, reason)` — Protect critical context
