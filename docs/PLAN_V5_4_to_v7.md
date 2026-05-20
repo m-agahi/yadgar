@@ -1,8 +1,8 @@
-# Yadgar v5.3.8 → v7 Trajectory (advisor-audited 2026-05-20)
+# Yadgar v5.3.9 → v7 Trajectory (advisor-audited 2026-05-20)
 
 Locked plan after soak day + advisor review. Supersedes prior fragmented
-roadmap entries. Mirror lives in wiki `yadgar-roadmap-future-improvements`
-(sync pending — yadgar MCP daemon was down at write time).
+roadmap entries. v5.3.9 shipped 2026-05-20 (8 commits on `feat/v5.3.9`).
+Mirror lives in wiki `yadgar-roadmap-future-improvements`.
 
 Source decisions:
 - Soak observations 2026-05-20 (perf regression, viz UX, design Qs).
