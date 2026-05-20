@@ -21,15 +21,19 @@ from yadgar.server._app import _tool
 
 logger = logging.getLogger(__name__)
 
-# Fixed-cost contract section (always present, ~400 chars)
+# Fixed-cost contract section (always present, ~500 chars)
 _YADGAR_CONTRACT = """\
 ## Yadgar subagent contract
 
 Before substantive work:
 1. `recall("…relevant topic…")` — surface hot memories, anchors, prior findings.
-2. Report findings in a `## Yadgar findings` section using bullet points.
+2. Observed state always wins over recalled state (update if contradicted).
 3. Do NOT call `memorize()` or write to memory — the orchestrator does this.
-4. Observed state always wins over recalled state (update if contradicted).
+
+REQUIRED: your final message MUST end with this section (even if empty):
+
+## Yadgar findings
+- <fact/anchor/insight> or "none"
 """.strip()
 
 # Budget: contract + recall hint ≈ 600 chars. Leave ~1 400 chars for prompt body.
