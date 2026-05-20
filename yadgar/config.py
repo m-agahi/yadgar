@@ -420,6 +420,11 @@ class Settings(BaseSettings):
         "release",
     )
 
+    # N2 — ASGI graceful shutdown timeout (v5.3.9)
+    # Caps uvicorn's wait for in-flight requests to drain on SIGTERM.
+    # 0 = unlimited (uvicorn default); ≥1 = abandon after this many seconds.
+    ASGI_SHUTDOWN_TIMEOUT_SEC: int = 5
+
     model_config = {"env_prefix": "YADGAR_"}
 
     @field_validator("VACUUM_AUTO_WINDOW_START", "VACUUM_AUTO_WINDOW_END")
