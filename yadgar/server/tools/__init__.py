@@ -84,8 +84,8 @@ from yadgar.server.tools.agent_prompts import (
     agent_prompt_get,
     agent_prompt_save,
 )
-from yadgar.server.tools.wiki_coverage import wiki_coverage
 from yadgar.server.tools.dispatch_helper import agent_dispatch_prelude
+from yadgar.server.tools.wiki_coverage import wiki_coverage
 
 __all__ = [
     "memorize",
@@ -133,6 +133,7 @@ __all__ = [
     "resource_processes",
     "agent_prompt_get",
     "agent_prompt_save",
+    "agent_dispatch_prelude",
     "wiki_coverage",
     "agent_dispatch_prelude",
     # Private helpers re-exported for test access

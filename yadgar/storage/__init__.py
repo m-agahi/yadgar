@@ -200,6 +200,11 @@ class StorageEngine(
                 _user = os.environ["YADGAR_DB_USER"]
                 _pass = os.environ["YADGAR_DB_PASS"]
             _auth = base64.b64encode(f"{_user}:{_pass}".encode()).decode()
+            from yadgar.config import get_settings as _get_settings
+
+            _settings = _get_settings()
+            _http_timeout_sec = float(_settings.BACKEND_HTTP_TIMEOUT_SEC)
+            _mig_timeout_sec = float(_settings.MIGRATION_HTTP_TIMEOUT_SEC)
             self._http = httpx.Client(
                 base_url=self._db_url,
                 headers={
@@ -208,9 +213,15 @@ class StorageEngine(
                     "surreal-db": "main",
                     "Accept": "application/json",
                 },
-                timeout=30.0,
+                timeout=httpx.Timeout(
+                    connect=2.0, read=_mig_timeout_sec, write=_mig_timeout_sec, pool=5.0
+                ),
             )
             self._init_schema()
+            # Reconfigure to operational timeout post-migration (httpx.Timeout is mutable)
+            self._http.timeout = httpx.Timeout(
+                connect=2.0, read=_http_timeout_sec, write=_http_timeout_sec, pool=5.0
+            )
             atexit.register(self.close)
             return
 
