@@ -7,8 +7,30 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.3.9] - 2026-05-20
+
+Crash hotfix. Soak day 2026-05-20 surfaced a backend OOM cascade that took core down twice. v5.3.9 hardens the request path and durability boundary against backend transient failures, plus catches up on pre-existing operational debt.
+
+### Added
+- `YADGAR_BACKEND_HTTP_TIMEOUT_SEC` (default 5s) bounds all operational backend HTTP calls (ML rerank, dbsize, storage). (N1)
+- `YADGAR_BACKEND_IMPORT_TIMEOUT_SEC` (default 300s) for vacuum `/import` and `/export`. (N1)
+- `YADGAR_MIGRATION_HTTP_TIMEOUT_SEC` (default 30s) for `StorageEngine` schema setup calls. Separate from operational timeout to absorb migration-lock contention. (N1-fixup)
+- `YADGAR_ASGI_SHUTDOWN_TIMEOUT_SEC` (default 5s) caps Uvicorn graceful shutdown — core no longer hangs 30s on stuck in-flight requests during backend-induced cascade. (N2)
+- `docs/ARCHITECTURE_INVARIANTS.md` — codifies invariants I1–I15 + candidate plans P1–P12. Mirrored in wiki `yadgar-architectural-invariants`.
+- `docs/PLAN_V5_4_to_v7.md` — locked v5.3.9 → v7 trajectory (advisor-audited).
+- CHANGELOG backfilled for v5.1.5 through v5.3.7 (12 versions previously missing).
+
 ### Fixed
-- N1-fixup: separate migration HTTP timeout from operational timeout. Schema migration calls during `StorageEngine.__init__` now use `MIGRATION_HTTP_TIMEOUT_SEC` (default 30s, env `YADGAR_MIGRATION_HTTP_TIMEOUT_SEC`) while operational calls retain `BACKEND_HTTP_TIMEOUT_SEC` (5s). Eliminates xdist test flakiness where migration lock contention caused `_init_schema` to exceed the fixture's 5s budget. Also adds `func_only=True` to `@pytest.mark.timeout` on `test_rules_engine_redos.py` — the 5s budget is for the regex check, not fixture setup.
+- **SubagentStop wallpaper** — lenient parser accepts heading variants (`## Yadgar Findings`, `## findings (Yadgar)`, `## Yadgar findings [agent:X]`, etc.) and the `agent_dispatch_prelude` contract now mandates the `## Yadgar findings` template at the end of every subagent message. Pre-fix capture rate was 1.6% (14/851).
+- **N1** Backend HTTP timeouts bounded — see Added. Prevents thread starvation when backend goes unreachable.
+- **N1-fixup** Separate migration HTTP timeout (see Added). Restores xdist test stability — `test_rules_engine_redos.py` was 9/10 fail under `-n 4`, now 10/10 pass. Also `func_only=True` on `@pytest.mark.timeout` for those tests so the 5s budget covers the regex check, not fixture setup.
+- **N2** ASGI graceful shutdown ≤5s budget — see Added.
+- SRI integrity hashes added to two unpinned CDN scripts in `yadgar/static/index.html` (three.js + 3d-force-graph).
+
+### Operator action (host-side, manual)
+
+- **systemd cascade decouple** — `BindsTo=yadgar-backend.service` on `yadgar.service` is the cascade-failure root cause from the 2026-05-20 backend OOM. Edit `~/git/nix/modules/home/yadgar.nix` to replace `BindsTo` + `Requires` with `Wants=yadgar-backend.service`. Verification command in `MIGRATION_NOTES.md`.
+- **DLQ flush** — 16 stale `wiki_add` entries from 2026-05-18 with `schema_version_too_old`. Drop after deploy.
 
 ## [5.3.7] - 2026-05-20
 
