@@ -341,6 +341,9 @@ class Settings(BaseSettings):
     BACKEND_HTTP_TIMEOUT_SEC: int = 5
     # Long timeout for the vacuum /import POST and /export GET (bulk data ops).
     BACKEND_IMPORT_TIMEOUT_SEC: int = 300
+    # Separate timeout for schema migration HTTP calls during StorageEngine.__init__.
+    # Migrations can be slower than operational reads (lock contention, backfill queries).
+    MIGRATION_HTTP_TIMEOUT_SEC: int = 30
 
     # vacuum settings
     # Number of pre-vacuum DB snapshots to retain. Older ones are pruned by
