@@ -42,7 +42,7 @@ def engine(storage, settings):
     return RulesEngine(storage, settings)
 
 
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(5, func_only=True)
 def test_redos_pattern_times_out(engine):
     """A catastrophic-backtracking pattern must not hang the engine.
 
@@ -70,7 +70,7 @@ def test_redos_pattern_times_out(engine):
     assert not blocked
 
 
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(5, func_only=True)
 def test_safe_pattern_still_works(engine):
     """A non-evil pattern continues to work correctly after adding timeout support."""
     engine.add_rule(

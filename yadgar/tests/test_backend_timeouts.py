@@ -246,3 +246,43 @@ class TestVacuumPreflightTimeout:
         finally:
             server.close()
             cfg.get_settings.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# Tests: migration vs operational HTTP timeout separation (N1-fixup)
+# ---------------------------------------------------------------------------
+
+
+class TestMigrationTimeout:
+    """Migration HTTP timeout must be MIGRATION_HTTP_TIMEOUT_SEC (30), not BACKEND_HTTP_TIMEOUT_SEC (5)."""
+
+    def test_migration_uses_separate_longer_timeout(self, monkeypatch):
+        """During _init_schema, _http uses migration timeout (30s); after init, uses operational (5s)."""
+        import unittest.mock as mock
+
+        import yadgar.config as cfg
+
+        monkeypatch.setenv("YADGAR_DB_URL", "http://127.0.0.1:9999")
+        monkeypatch.setenv("YADGAR_ALLOW_ROOT", "1")
+        cfg.get_settings.cache_clear()
+
+        captured = {}
+
+        def spy_init_schema(self):
+            captured["mid_init_read"] = self._http.timeout.read
+
+        try:
+            from yadgar.storage import StorageEngine
+
+            with mock.patch.object(StorageEngine, "_init_schema", spy_init_schema):
+                engine = StorageEngine(db_path="/tmp/test_yadgar_db_mig")
+
+            assert captured.get("mid_init_read") == pytest.approx(30.0), (
+                f"migration timeout should be 30.0, got {captured.get('mid_init_read')}"
+            )
+            assert engine._http.timeout.read == pytest.approx(5.0), (
+                f"operational timeout should be 5.0 post-init, got {engine._http.timeout.read}"
+            )
+        finally:
+            cfg.get_settings.cache_clear()
+            monkeypatch.delenv("YADGAR_DB_URL", raising=False)

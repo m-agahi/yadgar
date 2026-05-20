@@ -7,6 +7,9 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+### Fixed
+- N1-fixup: separate migration HTTP timeout from operational timeout. Schema migration calls during `StorageEngine.__init__` now use `MIGRATION_HTTP_TIMEOUT_SEC` (default 30s, env `YADGAR_MIGRATION_HTTP_TIMEOUT_SEC`) while operational calls retain `BACKEND_HTTP_TIMEOUT_SEC` (5s). Eliminates xdist test flakiness where migration lock contention caused `_init_schema` to exceed the fixture's 5s budget. Also adds `func_only=True` to `@pytest.mark.timeout` on `test_rules_engine_redos.py` — the 5s budget is for the regex check, not fixture setup.
+
 ## [5.3.7] - 2026-05-20
 
 ### Added
