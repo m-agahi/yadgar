@@ -336,6 +336,12 @@ class Settings(BaseSettings):
     # limit is exceeded.  Default 100_000.  Set to 0 to disable ceiling check.
     MAX_CAUSED_BY_ROWS: int = 100_000
 
+    # v5.3.9 N1: backend HTTP timeouts
+    # Short timeout for all non-import backend calls (health, /sql, /rerank, /admin/dbsize).
+    BACKEND_HTTP_TIMEOUT_SEC: int = 5
+    # Long timeout for the vacuum /import POST and /export GET (bulk data ops).
+    BACKEND_IMPORT_TIMEOUT_SEC: int = 300
+
     # vacuum settings
     # Number of pre-vacuum DB snapshots to retain. Older ones are pruned by
     # scripts/cleanup-backups.sh after a successful vacuum.
