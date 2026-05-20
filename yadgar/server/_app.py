@@ -79,6 +79,73 @@ _orig_sse_app = mcp_server.sse_app.__func__
 mcp_server.sse_app = _auth_wrapped_sse_app.__get__(mcp_server, type(mcp_server))
 
 
+def _patch_uvicorn_shutdown_timeout() -> None:
+    """Inject timeout_graceful_shutdown into both uvicorn-backed transports.
+
+    FastMCP builds its own uvicorn.Config without exposing a hook; we replace
+    run_sse_async / run_streamable_http_async on the *instance* so the timeout
+    from YADGAR_ASGI_SHUTDOWN_TIMEOUT_SEC is always forwarded.
+
+    Called once at module import time (bottom of this file) so the patch is
+    in place before lifecycle.py calls mcp_server.run(transport=...).
+
+    I12-note: this is shutdown-path only; zero impact on normal request latency.
+    I9-note: <10 LOC of new logic, all in shutdown path.
+    """
+    import logging as _logging
+
+    import uvicorn as _uvicorn
+
+    _patch_logger = _logging.getLogger(__name__)
+    _timeout = settings.ASGI_SHUTDOWN_TIMEOUT_SEC
+
+    async def _sse_async_patched(self, mount_path=None) -> None:  # pragma: no cover
+        starlette_app = self.sse_app(mount_path)
+        config = _uvicorn.Config(
+            starlette_app,
+            host=self.settings.host,
+            port=self.settings.port,
+            log_level=self.settings.log_level.lower(),
+            timeout_graceful_shutdown=_timeout,
+            timeout_keep_alive=2,
+        )
+        server = _uvicorn.Server(config)
+        try:
+            await server.serve()
+        finally:
+            if server.should_exit:
+                _patch_logger.info(
+                    "ASGI shutdown complete (timeout_graceful_shutdown=%ss)", _timeout
+                )
+
+    async def _streamable_http_async_patched(self) -> None:  # pragma: no cover
+        starlette_app = self.streamable_http_app()
+        config = _uvicorn.Config(
+            starlette_app,
+            host=self.settings.host,
+            port=self.settings.port,
+            log_level=self.settings.log_level.lower(),
+            timeout_graceful_shutdown=_timeout,
+            timeout_keep_alive=2,
+        )
+        server = _uvicorn.Server(config)
+        try:
+            await server.serve()
+        finally:
+            if server.should_exit:
+                _patch_logger.info(
+                    "ASGI shutdown complete (timeout_graceful_shutdown=%ss)", _timeout
+                )
+
+    mcp_server.run_sse_async = _sse_async_patched.__get__(mcp_server, type(mcp_server))
+    mcp_server.run_streamable_http_async = _streamable_http_async_patched.__get__(
+        mcp_server, type(mcp_server)
+    )
+
+
+_patch_uvicorn_shutdown_timeout()
+
+
 def _tool(power: bool = False):
     """Register a function as an MCP tool.
 
