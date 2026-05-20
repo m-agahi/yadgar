@@ -301,11 +301,14 @@ def _vacuum_restart_and_import(
     }
     client.close()
 
+    from yadgar.config import get_settings as _get_settings
+
+    _import_timeout = float(_get_settings().BACKEND_IMPORT_TIMEOUT_SEC)
     resp = httpx.post(
         f"{backend_url}/import",
         content=surql_content,
         headers=import_headers,
-        timeout=300.0,
+        timeout=_import_timeout,
     )
 
     if resp.status_code != 200:
@@ -473,8 +476,12 @@ def cmd_vacuum_impl(args) -> int:  # type: ignore[no-untyped-def]
         return 1
 
     # Confirm backend is alive
+    _http_timeout = float(settings.BACKEND_HTTP_TIMEOUT_SEC)
     try:
-        r = httpx.get(f"{backend_url}/health", timeout=5.0)
+        r = httpx.get(
+            f"{backend_url}/health",
+            timeout=httpx.Timeout(connect=2.0, read=_http_timeout, write=_http_timeout, pool=5.0),
+        )
         if r.status_code != 200:
             raise RuntimeError(f"HTTP {r.status_code}")
     except Exception as exc:

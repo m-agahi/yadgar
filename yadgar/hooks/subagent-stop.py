@@ -39,18 +39,25 @@ except ImportError:
     _PORT = os.environ.get("YADGAR_PORT", "8765")
     _AUTH_TOKEN = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
 
-    _FINDINGS_SECTION_RE = re.compile(
-        r"##\s+Yadgar\s+findings(?:\s+\[.*?\])?\s*\n(.*?)(?=\n##\s|\Z)",
-        re.DOTALL | re.IGNORECASE,
-    )
+    _HEADING_RE = re.compile(r"^(#{1,6})\s+([^\n]+)$", re.MULTILINE)
+    _NEXT_HEADING_RE = re.compile(r"\n#{1,6}\s+")
     _BULLET_RE = re.compile(r"^\s*-\s+(.+)$", re.MULTILINE)
 
     def _extract_findings(text):
-        match = _FINDINGS_SECTION_RE.search(text)
-        if not match:
+        # Lenient: any heading containing both 'yadgar' and 'find' (case-insensitive)
+        section_body = None
+        for hm in _HEADING_RE.finditer(text):
+            heading_text = hm.group(2).lower()
+            if "yadgar" in heading_text and "find" in heading_text:
+                start = hm.end()
+                rest = text[start:]
+                end_m = _NEXT_HEADING_RE.search(rest)
+                section_body = rest[: end_m.start()] if end_m else rest
+                break
+        if section_body is None:
             return []
         bullets = []
-        for m in _BULLET_RE.finditer(match.group(1)):
+        for m in _BULLET_RE.finditer(section_body):
             v = m.group(1).strip()
             if v.startswith("<!--") or v.lower() == "none":
                 continue

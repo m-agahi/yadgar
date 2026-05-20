@@ -336,6 +336,15 @@ class Settings(BaseSettings):
     # limit is exceeded.  Default 100_000.  Set to 0 to disable ceiling check.
     MAX_CAUSED_BY_ROWS: int = 100_000
 
+    # v5.3.9 N1: backend HTTP timeouts
+    # Short timeout for all non-import backend calls (health, /sql, /rerank, /admin/dbsize).
+    BACKEND_HTTP_TIMEOUT_SEC: int = 5
+    # Long timeout for the vacuum /import POST and /export GET (bulk data ops).
+    BACKEND_IMPORT_TIMEOUT_SEC: int = 300
+    # Separate timeout for schema migration HTTP calls during StorageEngine.__init__.
+    # Migrations can be slower than operational reads (lock contention, backfill queries).
+    MIGRATION_HTTP_TIMEOUT_SEC: int = 30
+
     # vacuum settings
     # Number of pre-vacuum DB snapshots to retain. Older ones are pruned by
     # scripts/cleanup-backups.sh after a successful vacuum.
@@ -413,6 +422,11 @@ class Settings(BaseSettings):
         "bump",
         "release",
     )
+
+    # N2 — ASGI graceful shutdown timeout (v5.3.9)
+    # Caps uvicorn's wait for in-flight requests to drain on SIGTERM.
+    # 0 = unlimited (uvicorn default); ≥1 = abandon after this many seconds.
+    ASGI_SHUTDOWN_TIMEOUT_SEC: int = 5
 
     model_config = {"env_prefix": "YADGAR_"}
 

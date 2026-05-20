@@ -248,10 +248,14 @@ class RemoteMLClient:
 
         import httpx
 
+        from yadgar.config import get_settings as _get_settings
+
         self._base_url = base_url
         _token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
         _headers = {"Authorization": f"Bearer {_token}"} if _token else {}
-        self._client = httpx.Client(base_url=base_url, timeout=30.0, headers=_headers)
+        _timeout_sec = float(_get_settings().BACKEND_HTTP_TIMEOUT_SEC)
+        _timeout = httpx.Timeout(connect=2.0, read=_timeout_sec, write=_timeout_sec, pool=5.0)
+        self._client = httpx.Client(base_url=base_url, timeout=_timeout, headers=_headers)
 
     def score_cross_encoder(self, query: str, texts: list[str]) -> list[float]:
         try:
@@ -259,7 +263,12 @@ class RemoteMLClient:
             r.raise_for_status()
             return r.json()["scores"]
         except Exception as e:
-            logger.warning("RemoteMLClient: /rerank ce failed: %s", e)
+            import httpx as _httpx
+
+            if isinstance(e, _httpx.TimeoutException):
+                logger.warning("backend timeout: RemoteMLClient /rerank ce timed out: %s", e)
+            else:
+                logger.warning("RemoteMLClient: /rerank ce failed: %s", e)
             return [0.0] * len(texts)
 
     def score_nli(self, query: str, texts: list[str]) -> list[float]:
@@ -268,7 +277,12 @@ class RemoteMLClient:
             r.raise_for_status()
             return r.json()["scores"]
         except Exception as e:
-            logger.warning("RemoteMLClient: /rerank nli failed: %s", e)
+            import httpx as _httpx
+
+            if isinstance(e, _httpx.TimeoutException):
+                logger.warning("backend timeout: RemoteMLClient /rerank nli timed out: %s", e)
+            else:
+                logger.warning("RemoteMLClient: /rerank nli failed: %s", e)
             return [0.0] * len(texts)
 
     def score_pair(self, query: str, text: str) -> float:
@@ -277,7 +291,12 @@ class RemoteMLClient:
             r.raise_for_status()
             return r.json()["scores"][0]
         except Exception as e:
-            logger.warning("RemoteMLClient: /rerank pair failed: %s", e)
+            import httpx as _httpx
+
+            if isinstance(e, _httpx.TimeoutException):
+                logger.warning("backend timeout: RemoteMLClient /rerank pair timed out: %s", e)
+            else:
+                logger.warning("RemoteMLClient: /rerank pair failed: %s", e)
             return 0.0
 
     def unload_if_idle(self, idle_seconds: float = 600.0) -> None:

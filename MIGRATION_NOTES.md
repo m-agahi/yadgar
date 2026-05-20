@@ -1,5 +1,122 @@
 # Migration Notes
 
+## v5.3.9 — Crash hotfix (2026-05-20)
+
+These commands run **manually** during v5.3.9 deploy. Per HARD RULE — No Apply / Import, the repo cannot apply them.
+
+### 1. systemd cascade decouple (CRITICAL — fixes 2026-05-20 OOM cascade)
+
+**Root cause:** `~/.config/systemd/user/yadgar.service` has `BindsTo=yadgar-backend.service` + `Requires=yadgar-backend.service`. When backend OOMKilled at 19:57:53, `BindsTo` forced core to stop. Core didn't auto-restart because the SIGKILL exit (143) bypassed `Restart=on-failure` semantics.
+
+**Fix lives in `~/git/nix/modules/home/yadgar.nix`** (the systemd unit for the user yadgar service):
+
+```nix
+# Before
+systemd.user.services.yadgar = {
+  Unit = {
+    After = "yadgar-backend.service";
+    BindsTo = "yadgar-backend.service";     # ← remove
+    Requires = "yadgar-backend.service";    # ← remove (or weaken to Wants)
+  };
+};
+
+# After
+systemd.user.services.yadgar = {
+  Unit = {
+    After = "yadgar-backend.service";
+    Wants = "yadgar-backend.service";       # loose dependency, ordering only
+  };
+};
+```
+
+Result: backend death no longer forces core stop. Core rides out backend restarts (degraded reads via v5.4 N4 circuit breaker).
+
+**Apply** (user runs manually):
+
+```bash
+cd ~/git/nix
+git checkout -b fix/yadgar-systemd-decouple master
+# edit modules/home/yadgar.nix per the diff above
+git add modules/home/yadgar.nix
+git commit -m "fix(yadgar): decouple core from backend lifetime — remove BindsTo+Requires (v5.3.9 N0)"
+home-manager switch
+systemctl --user daemon-reload
+
+# Verify
+systemctl --user cat yadgar.service | grep -E "BindsTo|Requires|Wants"
+# Expected: Wants=yadgar-backend.service. No BindsTo, no Requires.
+```
+
+**Verification test:**
+
+```bash
+systemctl --user stop yadgar-backend
+sleep 5
+systemctl --user is-active yadgar  # should print "active"
+systemctl --user start yadgar-backend
+```
+
+If `yadgar` shows `inactive`/`failed` after stopping backend → fix didn't apply correctly.
+
+### 2. DLQ cleanup — 16 stale wiki_add entries
+
+16 `wiki_add` entries stuck in DLQ since 2026-05-18 with `schema_version_too_old: got None, require >= 2`. Pre-v5.0 payloads from before schema migration #004 enforced `wiki_schema_version=2`.
+
+**Decision:** explicit drop (entries 3 days old; content likely re-captured by subsequent writes).
+
+```bash
+# List
+yadgar dlq-list
+
+# Drop matching entries
+yadgar dlq-drop --filter 'op_type=wiki_add,last_error~schema_version_too_old'
+```
+
+If `yadgar dlq-drop` doesn't exist yet, fall back: list filenames via MCP `dlq_inspect`, remove from `~/.yadgar/dlq/` manually.
+
+### 3. Image versions
+
+- Core: build `docker.io/openfantasy/yadgar:5.3.9` locally (amd64). Do NOT push per WORKFLOW RULE 2026-05-19.
+- Backend: `docker.io/openfantasy/yadgar-backend:5.0.2` (unchanged).
+- Nix bump: `modules/home/yadgar.nix` → `yadger_core_version = "5.3.9"` (alongside the BindsTo decouple).
+
+### 4. Acid test
+
+```bash
+# Smoke
+curl -sS -H "Authorization: Bearer $YADGAR_TOKEN" http://127.0.0.1:8765/health
+# Expected: 200
+
+# Cascade
+systemctl --user stop yadgar-backend
+sleep 5
+systemctl --user is-active yadgar          # active
+# Recall fails fast (≤5s timeout per N1, not 30s)
+time curl -sS -H "Authorization: Bearer $YADGAR_TOKEN" \
+  -X POST http://127.0.0.1:8765/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"recall","arguments":{"query":"test"}}}' \
+  | head -c 200
+# Expected: ≤10s, error indicating backend unavailable
+
+systemctl --user start yadgar-backend
+sleep 10
+# Recall succeeds again
+```
+
+### 5. Rollback
+
+```bash
+cd ~/git/nix
+git revert <commit-from-§1>
+home-manager switch
+systemctl --user restart yadgar yadgar-backend
+```
+
+Pin yadgar core image tag to v5.3.7 in nix until rollback resolved.
+
+---
+
 ## v4.8 backup retention
 
 Replace the old "keep 7 newest by mtime" policy with three-cap retention

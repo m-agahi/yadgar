@@ -10,6 +10,7 @@ All functions are pure / side-effect-free except _post_findings and main().
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sys
@@ -19,9 +20,16 @@ import urllib.request
 _PORT = os.environ.get("YADGAR_PORT", "8765")
 _AUTH_TOKEN = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
 
-# Pattern to find the ## Yadgar findings section in a report.
-# Matches the section heading (with optional [agent: ...] tag) and captures
-# everything until the next ## heading or end-of-string.
+logger = logging.getLogger(__name__)
+
+# Lenient heading matcher — any H1–H6 whose text contains both "yadgar" and
+# "find" (matches: "## Yadgar findings", "### Yadgar Findings",
+# "## Findings (Yadgar)", "## yadgar-findings", "## FINDINGS — YADGAR", etc.)
+_HEADING_RE = re.compile(r"^(#{1,6})\s+([^\n]+)$", re.MULTILINE)
+# Any ## heading (used to find end of findings section)
+_NEXT_HEADING_RE = re.compile(r"\n#{1,6}\s+")
+
+# Legacy strict pattern kept for reference — superseded by _extract_findings logic
 _FINDINGS_SECTION_RE = re.compile(
     r"##\s+Yadgar\s+findings(?:\s+\[.*?\])?\s*\n(.*?)(?=\n##\s|\Z)",
     re.DOTALL | re.IGNORECASE,
@@ -38,16 +46,30 @@ def _auth_headers() -> dict:
 
 
 def _extract_findings(text: str) -> list[str]:
-    """Return list of bullet texts from the '## Yadgar findings' section.
+    """Return list of bullet texts from the Yadgar findings section.
+
+    Lenient parser — accepts any heading (H1–H6) whose text contains both
+    'yadgar' and 'find' (case-insensitive). Handles:
+      ## Yadgar findings, ### Yadgar Findings, ## Findings (Yadgar),
+      ## yadgar-findings, ## FINDINGS — YADGAR, etc.
 
     Returns empty list if the section is absent or contains no bullets.
     Skips comment lines (<!-- ... -->) and the literal bullet "none".
     """
-    match = _FINDINGS_SECTION_RE.search(text)
-    if not match:
+    section_body: str | None = None
+    for hm in _HEADING_RE.finditer(text):
+        heading_text = hm.group(2).lower()
+        if "yadgar" in heading_text and "find" in heading_text:
+            # Slice from end of this heading line to next heading or EOF
+            start = hm.end()
+            rest = text[start:]
+            end_m = _NEXT_HEADING_RE.search(rest)
+            section_body = rest[: end_m.start()] if end_m else rest
+            break
+
+    if section_body is None:
         return []
 
-    section_body = match.group(1)
     bullets = []
     for m in _BULLET_RE.finditer(section_body):
         text_val = m.group(1).strip()
@@ -151,13 +173,32 @@ def main() -> None:
     if not agent_type:
         agent_type = "general-purpose"
 
+    transcript_path = data.get("transcript_path", "")
+
+    # I12: log structured outcome so capture rate is observable across sessions.
     # Get the agent's final report text
     report_text = _get_report_text(data)
     if not report_text:
+        logger.debug(
+            "subagent_stop outcome=transcript_missing agent_type=%s transcript_path=%r",
+            agent_type,
+            transcript_path,
+        )
         return
 
-    # Parse findings from ## Yadgar findings section
+    # Parse findings from Yadgar findings section (lenient heading matcher)
     findings = _extract_findings(report_text)
+    heading_matched = bool(findings)
+
+    logger.debug(
+        "subagent_stop outcome=%s agent_type=%s report_len=%d heading_matched=%s bullets=%d",
+        "captured" if heading_matched else "not_matched",
+        agent_type,
+        len(report_text),
+        heading_matched,
+        len(findings),
+    )
+
     if not findings:
         return
 
