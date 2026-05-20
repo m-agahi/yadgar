@@ -7,10 +7,116 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.3.7] - 2026-05-20
+
+### Added
+- Semantic search box in viz UI — `/api/viz/search` endpoint + frontend search/clear controls with result pinning and pan-to-match. (V1)
+- 2D/3D mode toggle in viz UI — localStorage-persisted, default 3D. (V4)
+
+### Fixed
+- Wiki node click now loads full content panel via `/api/wiki/read`. (V2)
+- `db_size_mb` in server mode now returns the real value instead of zeros. (V5)
+- Viz proxy read timeout raised to 60 s, fixing `/api/graph` 502 errors on large graphs. (V6)
+- Click handler audit: universal fallback handler covers `memory`, `entity`, and future node types. (V3)
+
+## [5.3.6] - 2026-05-20
+
+### Added
+- `FileChanged` hook: mirrors team-inbox writes and auto-memorizes `PLAN_*.md` files on save. (M1, Q4)
+- `agent_dispatch_prelude` MCP tool — structured subagent dispatch helper with context injection. (M2)
+
+## [5.3.5] - 2026-05-20
+
+### Added
+- `wiki_coverage()` MCP tool — reports wiki coverage percentage per module. (Q3)
+- Token-estimate and cache-hit/miss counters in metrics. (Q1)
+- Postmortem/incident tag score boost on action-verb queries. (Q2)
+
+### Fixed
+- `lru_cache` bypass in `main()` H-7 check; fixes `test_startup_fails_with_require_auth`. (Q5a)
+
+## [5.3.4] - 2026-05-20
+
+### Added
+- Bi-temporal fact windows: `valid_from`/`valid_until` on KG edges — Zep parity. (C1, migration #007)
+- LLM conflict-resolution ops on write: detect and resolve contradictory memories via LLM — Mem0 parity. (C4)
+
+## [5.3.3] - 2026-05-20
+
+### Added
+- Citation tracing: KG edge provenance via `source_memory_id` — Zep parity. (C3, migration #006)
+- Recall-frequency-modulated decay: memories recalled often decay slower — MemoryBank parity. (C2)
+
+### Fixed
+- `source_memory_id` write path added to `insert_typed_relationship`. (C3 bug)
+
+## [5.3.2] - 2026-05-20
+
+### Added
+- `/hooks/instructions-loaded` and `/hooks/subagent-start` endpoints with `install-hooks` registration. (H1, SS)
+- `HOOKS.md` documentation with ready-to-paste `settings.json` snippets.
+
+## [5.3.1] - 2026-05-20
+
+### Fixed
+- `@_tool()` decorators missing from `agent_prompt_get`/`agent_prompt_save` — tools were not exposed via MCP after v5.3.0.
+
+## [5.3.0] - 2026-05-20
+
+### Added
+- `provenance_agent` argument to `memorize` — tracks which subagent wrote a memory. (A1, migration #005)
+- `SubagentStop` hook script, endpoint, and `install-hooks` extension. (A3)
+- Agent-prompt versioning tools (`agent_prompt_get`/`agent_prompt_save`) with docs. (A4)
+- `CLAUDE_SUBAGENT_CONTRACT.md` template and README subagent section. (A2)
+
+### Fixed
+- `provenance_agent` forwarded through file-queue drainer replay path.
+
+## [5.2.0] - 2026-05-19
+
+### Fixed
+- SurrealQL injection: parameterized all raw string interpolations in `storage/ops.py`. (S1, H-4/H-5)
+- `config.yaml` written with `0o600` permissions. (S2, H-9)
+- ReDoS sandboxing: regex operations wrapped with timeout via `regex` library. (S3, H-6)
+- Vacuum integration test: bootstrap-race wait applied to import-failure path. (S4)
+
+### Docs
+- `ARCHITECTURE_INVARIANTS.md` corrected module table, branch-boost description, and 2-container model. (S5)
+
+## [5.1.9] - 2026-05-19
+
+### Added
+- Host-side branch hint injected into `SessionStart` hook context; eliminates branch-detection latency on session open.
+
 ## [5.1.8] - 2026-05-19
 
+### Added
+- `project_brief` anchor scope split, catalog enrichment with `_active_work` blending, branch fallback, and renderer restructure. (F1–F5)
+- Docker image bloat fixed: added `.venv-test`, `.venv*`, `.claude/worktrees`, `result` to `.dockerignore`. (F7)
+
 ### Removed
-- `get_project_context` deprecated alias removed (deprecated in v5.0.0; window long-expired). Use `project_brief(directory, mode='catalog')` instead.
+- `get_project_context` deprecated alias removed (deprecated in v5.0.0; window long-expired). Use `project_brief(directory, mode='catalog')` instead. (F9)
+
+## [5.1.7] - 2026-05-19
+
+### Fixed
+- Vacuum `check_invariants` POST now passes bearer token; previously exited with code 2 (false-failure) on every vacuum run.
+
+## [5.1.6] - 2026-05-19
+
+### Added
+- `check-backend-bump` pre-commit hook: rejects commits that touch backend build inputs without bumping `backend_version`.
+
+### Fixed
+- `viz_server` broken `settings` import replaced with `get_settings()`. (B1)
+- Vacuum health-check timeout raised from 60 s to 180 s to accommodate cold embedding-model warmup. (B2)
+- `backend_version` bumped 5.0.1 → 5.0.2. (B3)
+
+## [5.1.5] - 2026-05-19
+
+### Fixed
+- Vacuum re-DEFINE of `yadgar-rw`/`yadgar-ro` now actually executes post-import (v5.1.4 fix was merged but the re-DEFINE call was missing from the impl path).
+- Viz bearer proxy: viz_server forwards `Authorization` header to the MCP daemon, fixing 401s when `YADGAR_MCP_AUTH_TOKEN` is set.
 
 ## [5.1.4] - 2026-05-18
 > Vacuum properly recovers yadgar-rw / yadgar-ro after `/import`.
@@ -418,7 +524,21 @@ None required. Image rebuild + `yadger_core_version` 5.1.2 → 5.1.3 bump only.
 ### Fixed
 - Forked from Zikkaron; all Zikkaron-specific DB schemas and modules replaced with SurrealDB-only backend.
 
-[unreleased]: https://codeberg.org/maxagahi/yadgar/compare/v5.0.1...HEAD
+[unreleased]: https://codeberg.org/maxagahi/yadgar/compare/v5.3.7...HEAD
+[5.3.7]: https://codeberg.org/maxagahi/yadgar/compare/v5.3.6...v5.3.7
+[5.3.6]: https://codeberg.org/maxagahi/yadgar/compare/v5.3.5...v5.3.6
+[5.3.5]: https://codeberg.org/maxagahi/yadgar/compare/v5.3.4...v5.3.5
+[5.3.4]: https://codeberg.org/maxagahi/yadgar/compare/v5.3.3...v5.3.4
+[5.3.3]: https://codeberg.org/maxagahi/yadgar/compare/v5.3.2...v5.3.3
+[5.3.2]: https://codeberg.org/maxagahi/yadgar/compare/v5.3.1...v5.3.2
+[5.3.1]: https://codeberg.org/maxagahi/yadgar/compare/v5.3.0...v5.3.1
+[5.3.0]: https://codeberg.org/maxagahi/yadgar/compare/v5.2.0...v5.3.0
+[5.2.0]: https://codeberg.org/maxagahi/yadgar/compare/v5.1.9...v5.2.0
+[5.1.9]: https://codeberg.org/maxagahi/yadgar/compare/v5.1.8...v5.1.9
+[5.1.8]: https://codeberg.org/maxagahi/yadgar/compare/v5.1.7...v5.1.8
+[5.1.7]: https://codeberg.org/maxagahi/yadgar/compare/v5.1.6...v5.1.7
+[5.1.6]: https://codeberg.org/maxagahi/yadgar/compare/v5.1.5...v5.1.6
+[5.1.5]: https://codeberg.org/maxagahi/yadgar/compare/v5.0.1...v5.1.5
 [5.0.1]: https://codeberg.org/maxagahi/yadgar/compare/v5.0.0...v5.0.1
 [5.0.0]: https://codeberg.org/maxagahi/yadgar/compare/v4.9.0...v5.0.0
 [4.9.0]: https://codeberg.org/maxagahi/yadgar/compare/v4.8.3...v4.9.0
