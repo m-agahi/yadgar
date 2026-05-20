@@ -55,7 +55,13 @@ class _DbSizeMixin:
                 try:
                     _auth_token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
                     _headers = {"Authorization": f"Bearer {_auth_token}"} if _auth_token else {}
-                    resp = _httpx.get(f"{embed_url}/admin/dbsize", headers=_headers, timeout=5.0)
+                    _timeout_sec = float(settings.BACKEND_HTTP_TIMEOUT_SEC)
+                    _timeout = _httpx.Timeout(
+                        connect=2.0, read=_timeout_sec, write=_timeout_sec, pool=5.0
+                    )
+                    resp = _httpx.get(
+                        f"{embed_url}/admin/dbsize", headers=_headers, timeout=_timeout
+                    )
                     resp.raise_for_status()
                     data = resp.json()
                     total = data.get("db_size_bytes", 0)
@@ -67,6 +73,17 @@ class _DbSizeMixin:
                         exc,
                         exc.response.status_code,
                     )
+                    return {
+                        "db_size_bytes": 0,
+                        "vlog_size_bytes": 0,
+                        "sstables_size_bytes": 0,
+                        "wal_size_bytes": 0,
+                        "other_size_bytes": 0,
+                        "vlog_pct_of_total": 0,
+                        "size_warning": False,
+                    }
+                except _httpx.TimeoutException as exc:
+                    _log.warning("backend timeout: get_db_size /admin/dbsize timed out: %s", exc)
                     return {
                         "db_size_bytes": 0,
                         "vlog_size_bytes": 0,

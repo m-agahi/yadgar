@@ -92,11 +92,14 @@ def _vacuum_export(backend_url: str, yadgar_home: Path) -> tuple[Path, Path]:
     raw_path = yadgar_home / f"vacuum_export_{ts}.surql"
     filtered_path = yadgar_home / f"vacuum_export_{ts}.filtered.surql"
 
+    from yadgar.config import get_settings as _get_settings
+
+    _import_timeout = float(_get_settings().BACKEND_IMPORT_TIMEOUT_SEC)
     print(f"[vacuum] phase 1: GET {backend_url}/export ...", flush=True)
     resp = httpx.get(
         f"{backend_url}/export",
         headers=_surreal_headers(),
-        timeout=300.0,
+        timeout=_import_timeout,
     )
     if resp.status_code != 200:
         raise RuntimeError(f"Export failed: HTTP {resp.status_code}\n{resp.text[:500]}")
