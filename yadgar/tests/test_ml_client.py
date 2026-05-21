@@ -113,8 +113,8 @@ class TestRemoteMLClientUnload:
 
 
 class TestRemoteMLClientHTTPError:
-    def test_remote_score_ce_http_error_returns_zeros(self):
-        """HTTPStatusError degrades gracefully — returns zeros, doesn't raise."""
+    def test_remote_score_ce_http_error_returns_none(self):
+        """HTTPStatusError degrades gracefully — returns None, doesn't raise (N4: circuit breaker)."""
         import httpx
 
         with patch("httpx.Client") as mock_client_cls:
@@ -132,7 +132,7 @@ class TestRemoteMLClientHTTPError:
             client = RemoteMLClient("http://localhost:8001")
             scores = client.score_cross_encoder("query", ["text1", "text2"])
 
-        assert scores == [0.0, 0.0]
+        assert scores is None
 
 
 # ── LocalMLClient tests ──────────────────────────────────────────────

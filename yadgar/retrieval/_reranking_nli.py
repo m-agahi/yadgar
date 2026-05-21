@@ -28,6 +28,13 @@ class _NLIMixin:
                 mem["_nli_entailment_score"] = 0.0
             return memories
 
+        # N4: circuit breaker open → skip NLI scoring
+        if raw_scores is None:
+            logger.warning("NLI reranking: circuit breaker open — skipping NLI stage")
+            for mem in memories:
+                mem["_nli_entailment_score"] = 0.0
+            return memories
+
         for i, mem in enumerate(memories):
             mem["_nli_entailment_score"] = float(raw_scores[i])
 
