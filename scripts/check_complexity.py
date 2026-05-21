@@ -47,6 +47,10 @@ _SCRIPTS_DIR = str(Path(__file__).parent)
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
+# Repo root — used to produce portable (repo-relative) baseline keys.
+# scripts/ is one level below repo root, so parent.parent gives repo root.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
 from complexity_audit import (  # noqa: E402
     CLASS_ATTRS_SOFT,
     CLASS_DEPTH_HARD,
@@ -82,6 +86,20 @@ _NOQA_COHESIVE_RE = re.compile(
     r"#\s*noqa:\s*C901\s*[-–—:]\s*cohesive\s*[-–—:]\s*.+",
     re.IGNORECASE,
 )
+
+
+def _rel_path(filepath: str) -> str:
+    """Return filepath relative to repo root, for portable baseline keys.
+
+    Falls back to the absolute path if filepath is outside the repo (e.g. tmp
+    paths created in tests). This ensures test paths don't pollute the baseline
+    and that baseline keys are machine-independent.
+    """
+    try:
+        return str(Path(filepath).resolve().relative_to(_REPO_ROOT))
+    except ValueError:
+        # Path outside repo — use absolute as-is (tests with tmp_path land here)
+        return str(Path(filepath).resolve())
 
 
 def _has_noqa_cohesive(source_lines: list[str], lineno: int) -> bool:
@@ -151,15 +169,17 @@ def load_baseline(baseline_path: str) -> dict:
 
 
 def _baseline_key(filepath: str, entity_name: str, lineno: int = 0) -> str:
-    """Key for baseline entries: <filepath>::<name>@<lineno>.
+    """Key for baseline entries: <rel_filepath>::<name>@<lineno>.
 
-    lineno disambiguates overloaded names in the same file (e.g. multiple
-    score_cross_encoder methods across Protocol + concrete classes).
-    If lineno=0, the entry is file-level (key = filepath::__file__).
+    filepath is normalised to a repo-relative path so the baseline is portable
+    across machines and CI environments.  lineno disambiguates overloaded names
+    in the same file (e.g. multiple score_cross_encoder methods across Protocol
+    + concrete classes). If lineno=0, the entry is file-level (key = rel::__file__).
     """
+    rel = _rel_path(filepath)
     if lineno == 0:
-        return f"{filepath}::{entity_name}"
-    return f"{filepath}::{entity_name}@{lineno}"
+        return f"{rel}::{entity_name}"
+    return f"{rel}::{entity_name}@{lineno}"
 
 
 def update_baseline(filepaths: list[str], baseline_path: str) -> None:
