@@ -428,6 +428,15 @@ class Settings(BaseSettings):
     # 0 = unlimited (uvicorn default); ≥1 = abandon after this many seconds.
     ASGI_SHUTDOWN_TIMEOUT_SEC: int = 5
 
+    # N4 — Backend ML circuit breaker (v5.3.10 hotfix)
+    # When /rerank repeatedly times out or errors, the breaker opens to stop
+    # saturating the backend.  Off = zero overhead per I3.
+    CIRCUIT_BREAKER_ENABLED: bool = True
+    # Open OPEN state after this many consecutive per-endpoint failures.
+    CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = 3
+    # Stay OPEN for this many seconds before allowing a single probe attempt.
+    CIRCUIT_BREAKER_OPEN_DURATION_SEC: int = 60
+
     model_config = {"env_prefix": "YADGAR_"}
 
     @field_validator("VACUUM_AUTO_WINDOW_START", "VACUUM_AUTO_WINDOW_END")
