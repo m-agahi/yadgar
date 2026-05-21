@@ -118,10 +118,26 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         self._attempts.pop(filename, None)
 
     def _drain_once(self) -> int:
+        _cycle_t0 = time.monotonic()
         files = self._queue.pending()
         processed = 0
         now = time.time()
         logger.info("Queue drain pass: %d pending files", len(files))
+
+        # P11: update queue/dlq depth gauges
+        try:
+            from yadgar.metrics import yadgar_dlq_size, yadgar_queue_depth  # noqa: PLC0415
+
+            yadgar_queue_depth.labels(queue="queue").set(len(files))
+            dlq_count = sum(
+                1
+                for _f in self._queue.dlq_dir.iterdir()
+                if _f.suffix == ".json" and not _f.name.endswith(".error.json")
+            )
+            yadgar_dlq_size.set(dlq_count)
+            yadgar_queue_depth.labels(queue="dlq").set(dlq_count)
+        except Exception:
+            pass
 
         if files:
             for path in files:
@@ -160,6 +176,14 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
                         continue
 
                 try:
+                    # P11: observe drainer lag (enqueue_ts -> drain start)
+                    try:
+                        from yadgar.metrics import yadgar_drainer_lag_ms  # noqa: PLC0415
+
+                        enqueue_ts = data.get("ts", now)
+                        yadgar_drainer_lag_ms.observe((now - enqueue_ts) * 1000)
+                    except Exception:
+                        pass
                     self._apply(data)
                     self._attempts.pop(fname, None)
                     self._queue.archive(path)
@@ -186,6 +210,14 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
                         self._attempts.pop(fname, None)
 
         logger.info("Queue drain pass complete: %d processed", processed)
+
+        # P11: observe drain cycle duration
+        try:
+            from yadgar.metrics import yadgar_drain_cycle_duration_ms  # noqa: PLC0415
+
+            yadgar_drain_cycle_duration_ms.observe((time.monotonic() - _cycle_t0) * 1000)
+        except Exception:
+            pass
 
         # Periodic archive + DLQ cleanup (roughly once per hour)
         self._drain_count += 1
