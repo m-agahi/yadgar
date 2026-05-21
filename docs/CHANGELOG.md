@@ -7,6 +7,21 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.4.0] - 2026-05-21
+
+First v5.4 minor — three quick wins (B bundle per locked trajectory). Single tag-able release before P11 Observability v1 starts. P11 + heavier items ship as later v5.4.x patches.
+
+### Added
+- **W1.** `wiki_add` accepts `branch_hint: str | None` arg (mirrors `memorize` per v5.1.9). New resolution: explicit `branch` wins → `branch_hint` next → both omitted → `branch IS NULL` (canonical slot). Removes the `_detect_branch(os.getcwd())` fallback that always returned the daemon's CWD branch (`master`) regardless of caller. Fixes the long-standing meridian-style wiki-routing bug where uploads from non-daemon projects landed unsearchable.
+- **P7.** `YADGAR_REINJECT_ON_WRITE` env (default `0` / OFF). When OFF, the write-time reinjection block in `memorize` is skipped entirely (saves ~50ms p50 per write). When ON, prior behavior preserved.
+
+### Changed
+- **P4.** Conflict-resolver env gate (`YADGAR_CONFLICT_RESOLVER`) hoisted to module-import time per invariant I3. When OFF, no `httpx.Client` constructed, no Ollama URL resolved, no module-level deps imported. Flag state frozen at import (I3 contract). When ON, client is built lazily on first call.
+
+### Internal
+- 12 new tests across 3 files (P4: 4, P7: 4, W1: 4) — all pass.
+- Patterns Library entry CB-1 (circuit breaker) from v5.3.10 carries forward — no changes to ml_client.py in this minor.
+
 ## [5.3.10] - 2026-05-21
 
 Hotfix bundle on top of v5.3.9. Two surgical fixes after v5.3.9 deploy surfaced a CPU busy-loop and a viz regression.
