@@ -170,6 +170,41 @@ Hard caps allow NO override. If hit, the decomposition design must prove I5 pres
 
 ---
 
+## Patterns Library
+
+Validated mechanisms shipped in yadgar. Patterns differ from invariants: invariants describe WHAT must hold; patterns describe HOW a shipped mechanism works. Any plan adding similar capability MUST follow these patterns OR explicitly justify deviation in the PR description (per I10).
+
+### CB-1. Circuit breaker on external dependencies
+
+Shipped: v5.3.10 (N4) — `RemoteMLClient` `/rerank` endpoints.
+
+**State machine:** per-endpoint `CLOSED → OPEN → HALF_OPEN`. Open after `YADGAR_CIRCUIT_BREAKER_FAILURE_THRESHOLD` consecutive failures (default 3). Stay open `YADGAR_CIRCUIT_BREAKER_OPEN_DURATION_SEC` (default 60s). Single probe on cooldown end → success closes, failure re-opens.
+
+**Applies to:** HTTP/RPC to a slower-than-request-path service whose failure shouldn't propagate as latency to the caller. Current users: `/rerank/ce`, `/rerank/nli`, `/rerank/pair`. Future targets: LLM clients (Ollama), external embedding services, any backend endpoint added that isn't correctness-critical.
+
+**Does NOT apply to:** SurrealDB queries (fast + correctness-critical — failure must propagate). Health probes (those ARE the probe).
+
+**Caller contract:** when `score_X()` returns `None`, caller MUST degrade gracefully (skip stage, return pre-rerank order, never crash). See `yadgar/retrieval/_reranking_cross_encoder.py` + `_reranking_nli.py` for the canonical None-guard pattern.
+
+**Code:** `yadgar/ml_client.py::_CircuitBreaker` + per-endpoint instances on `RemoteMLClient`.
+**Tests:** `yadgar/tests/test_circuit_breaker.py` (7 tests).
+**Env:** `YADGAR_CIRCUIT_BREAKER_ENABLED` (default 1), `_FAILURE_THRESHOLD` (3), `_OPEN_DURATION_SEC` (60).
+
+**Why this matters (don't break):** v5.3.9 `BindsTo → Wants` decoupled core from backend lifecycle. Without CB-1, core busy-loops retrying against a struggling backend (the v5.3.10 CPU incident). CB-1 is the architectural pair to the decouple — removing it re-introduces the CPU regression.
+
+**Banned regressions:**
+- Removing the breaker without equivalent fault-isolation (rate limiter, bulkhead, exponential backoff).
+- Disabling per-endpoint isolation (one breaker for all endpoints — a slow CE would block NLI/pair).
+- Bypassing the breaker in "retry harder" patches.
+
+### Pattern slots (planned, not yet shipped)
+
+- **CB-2** — bulkhead / connection-pool isolation. Trigger: if backend connection-pool exhaustion surfaces in v5.4 P11 metrics.
+- **CB-3** — rate limiter on hook firing. Trigger: v5.3.10 root cause was hook volume driving rerank load; if hook traffic keeps stressing backend even with CB-1, add upstream throttle.
+- **DOC-1** — branch-routing canonical-NULL pattern. Trigger: once W1 ships (`wiki_add` `branch_hint` arg), document the symmetric "branch=None means canonical" rule for `wiki_read` callers.
+
+---
+
 ## Current violations (as of v5.3.7, snapshot 2026-05-20)
 
 | Site | Invariant | Notes |
@@ -339,6 +374,7 @@ Every metric uses `prometheus_client.Histogram` or `Gauge`, surfaced at `/metric
 - 2026-05-20: I12 added (measure before optimize) after read-cache proposal lacked profile data.
 - 2026-05-20: P11 added (Observability v1) unifying P5 + P10; ordered FIRST in v5.4 per I12.
 - 2026-05-20: I13 added (bounded complexity, hard+soft caps) + P12 (complexity audit). P12 ordered PRE-P1 — informs memorize-split scope. Advisor unavailable at decision time; numbers (15 cyclomatic / 150 LOC hard / 80 LOC soft) refined as audit data lands.
+- 2026-05-21: Patterns Library section added (introductory CB-1 for circuit breaker shipped v5.3.10). Patterns ≠ invariants; both must be checked by future planning.
 
 ---
 
