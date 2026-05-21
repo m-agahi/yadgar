@@ -87,7 +87,7 @@ Hard caps NO override. If hit, decomposition design must prove I5 preservation.
 
 **Critical anti-pattern (per v5.1 incident):** decomposition creating implicit shared state OR moving work across thread/async boundaries is WORSE than the mega-function. Decomposing without preserving topology = banned.
 
-**Enforcement:** pre-commit `ruff check --select=C901 --max-complexity=15`; custom `check-complexity` hook; soft warns, hard blocks. Existing violations in `docs/complexity-audit.md` (P12).
+**Enforcement:** pre-commit `ruff check --select=C901 --max-complexity=15` (cyclomatic hard cap) + `PLR0913 max-args=8` (params hard cap); custom `check-complexity` hook covers LOC / nesting / file-LOC / public-symbols / class-methods / class-attrs / inheritance-depth; soft warns (exit 0), hard blocks (exit 1). Existing violations in `docs/complexity-audit.md` (P12). Baseline file: `.complexity-baseline.json` (8539 entries) records pre-existing violations so the hook only blocks NEW or WORSENED violations. Regenerate: `python scripts/check_complexity.py --update-baseline --all-files`.
 
 ### I14. Structured logging contract (SCOPED)
 
