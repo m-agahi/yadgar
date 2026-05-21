@@ -44,6 +44,14 @@ repos:
         files: ^(entrypoint-backend\.sh|Dockerfile\.backend|backend/.*)$
         pass_filenames: false
 
+      - id: check-complexity
+        name: Enforce I13 complexity caps (LOC / nesting / class / file)
+        language: system
+        entry: python3 scripts/check_complexity.py
+        types: [python]
+        exclude: "^benchmarks/"
+        pass_filenames: true
+
   - repo: local
     hooks:
       - id: ruff
