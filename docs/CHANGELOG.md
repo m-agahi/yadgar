@@ -7,6 +7,23 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.3.10] - 2026-05-21
+
+Hotfix bundle on top of v5.3.9. Two surgical fixes after v5.3.9 deploy surfaced a CPU busy-loop and a viz regression.
+
+### Added
+- **N4 circuit breaker on `RemoteMLClient`** — per-endpoint state machine (`ce`, `nli`, `pair`) with `CLOSED → OPEN → HALF_OPEN` transitions. After `YADGAR_CIRCUIT_BREAKER_FAILURE_THRESHOLD` (default 3) consecutive timeouts/errors on a `/rerank/<endpoint>`, the breaker OPENs and short-circuits subsequent calls to `None` for `YADGAR_CIRCUIT_BREAKER_OPEN_DURATION_SEC` (default 60s). Per-endpoint isolation so a slow CE doesn't disable NLI/pair. Gated by `YADGAR_CIRCUIT_BREAKER_ENABLED` (default 1). Forward-ported from v5.4 scope.
+- Disconnected-cluster sidebar nav in viz UI — BFS flood-fill identifies connected components of size ≥3 with no edge to the main cluster, lists them in a collapsible left panel with inferred labels, click flies the camera to the cluster centroid. Works in 2D + 3D. No DB changes.
+- Zoom-to-fit-all on viz initial load (defensive) — surfaces periphery wikis on first render.
+
+### Fixed
+- **CPU fan continuous spinning post-v5.3.9 deploy** — v5.3.9 `BindsTo → Wants` removed the cascade-kill safety valve. Backend `/rerank` load spikes caused core to busy-loop retrying against a struggling backend instead of dying with it. N4 breaker breaks the loop: 3 consecutive failures → breaker opens → skip rerank 60s → backend recovers headroom. Recall degrades gracefully to BM25+HNSW results when breaker is open.
+- **Meridian wiki pages invisible in viz** — 127 pages uploaded 2026-05-20 evening landed in DB but had zero edges to the main cluster. Force-directed layout ejected them to the periphery, invisible at default zoom. Sidebar nav + zoom-to-fit-all now surface them.
+
+### Internal
+- New env vars: `YADGAR_CIRCUIT_BREAKER_ENABLED` (1), `YADGAR_CIRCUIT_BREAKER_FAILURE_THRESHOLD` (3), `YADGAR_CIRCUIT_BREAKER_OPEN_DURATION_SEC` (60).
+- 7 new circuit-breaker tests + 2 updated existing tests (zero-return → None semantics).
+
 ## [5.3.9] - 2026-05-20
 
 Crash hotfix. Soak day 2026-05-20 surfaced a backend OOM cascade that took core down twice. v5.3.9 hardens the request path and durability boundary against backend transient failures, plus catches up on pre-existing operational debt.

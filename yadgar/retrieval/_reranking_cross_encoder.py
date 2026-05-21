@@ -61,6 +61,13 @@ class _CrossEncoderMixin:
             logger.warning("cross_encoder_rerank: ML client failed: %s", e)
             return memories[:top_k]
 
+        # N4: circuit breaker open → skip rerank, return BM25+HNSW results as-is
+        if all_scores is None:
+            logger.warning(
+                "cross_encoder_rerank: circuit breaker open — returning pre-rerank order"
+            )
+            return memories[:top_k]
+
         # Aggregate: take max score per memory across all its variants
         memory_raw_scores: dict[int, float] = defaultdict(float)
         for j, score in enumerate(all_scores):
@@ -101,7 +108,9 @@ class _CrossEncoderMixin:
     def score_single_pair(self, query: str, document: str) -> float:
         """Score a single query-document pair using the ML client."""
         try:
-            return self._ml.score_pair(query, document)
+            result = self._ml.score_pair(query, document)
+            # N4: circuit breaker open returns None — treat as 0.0 (graceful degrade)
+            return result if result is not None else 0.0
         except Exception:
             return 0.0
 
