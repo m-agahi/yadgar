@@ -428,6 +428,12 @@ class Settings(BaseSettings):
     # 0 = unlimited (uvicorn default); ≥1 = abandon after this many seconds.
     ASGI_SHUTDOWN_TIMEOUT_SEC: int = 5
 
+    # v5.4 P7 — Write-time reinjection gate (default OFF per I1/I9)
+    # When OFF, the retriever.recall() block in memorize() is skipped entirely,
+    # saving 30–50ms of sync vector search per write.  Enable only if write-time
+    # related-context surface is explicitly needed.
+    REINJECT_ON_WRITE: bool = False
+
     # N4 — Backend ML circuit breaker (v5.3.10 hotfix)
     # When /rerank repeatedly times out or errors, the breaker opens to stop
     # saturating the backend.  Off = zero overhead per I3.

@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
+_reinject_skip_logged: bool = False  # I12: log once per process when reinjection is gated off
+
 
 @_tool()
 def memorize(
@@ -386,8 +388,15 @@ def memorize(
         buffer.capture_action("memorize", context, summary, curation_action)
 
     # 6. Related context reinjection: surface what you already know
+    # P7: gated by YADGAR_REINJECT_ON_WRITE (default OFF) per I1/I9 — skips
+    # sync vector search on write path when disabled.
+    global _reinject_skip_logged
     related_context = []
-    if settings.REINJECTION_ENABLED and _st._retriever is not None:
+    if not settings.REINJECT_ON_WRITE:
+        if not _reinject_skip_logged:
+            logger.debug("reinjection on write is disabled (YADGAR_REINJECT_ON_WRITE=0)")
+            _reinject_skip_logged = True
+    elif settings.REINJECTION_ENABLED and _st._retriever is not None:
         try:
             related = _st._retriever.recall(
                 content[:300],
