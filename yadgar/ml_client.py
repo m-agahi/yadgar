@@ -12,25 +12,139 @@ from __future__ import annotations
 import logging
 import os
 import time
+from collections.abc import Callable
 from typing import Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# N4 — Per-endpoint circuit breaker (v5.3.10 hotfix)
+# ---------------------------------------------------------------------------
+
+_STATE_CLOSED = "closed"
+_STATE_OPEN = "open"
+_STATE_HALF_OPEN = "half_open"
+
+
+class _CircuitBreaker:
+    """Per-endpoint open/closed/half-open state.
+
+    States:
+      CLOSED    — normal operation, calls go through
+      OPEN      — fast-fail; calls return None without HTTP
+      HALF_OPEN — single probe attempt; success → CLOSED, failure → OPEN
+
+    Transitions:
+      CLOSED → OPEN    when consecutive_failures >= failure_threshold
+      OPEN → HALF_OPEN after open_duration_sec seconds
+      HALF_OPEN → CLOSED  on probe success
+      HALF_OPEN → OPEN    on probe failure
+
+    All clock reads go through _time_fn so tests can inject a fake clock.
+    """
+
+    def __init__(
+        self,
+        endpoint: str,
+        failure_threshold: int,
+        open_duration_sec: float,
+        time_fn: Callable[[], float] | None = None,
+    ) -> None:
+        self._endpoint = endpoint
+        self._failure_threshold = failure_threshold
+        self._open_duration_sec = open_duration_sec
+        self._time_fn: Callable[[], float] = time_fn or time.monotonic
+        self._state: str = _STATE_CLOSED
+        self._open_at: float = 0.0
+        self.consecutive_failures: int = 0
+
+    # ------------------------------------------------------------------ #
+    # Public state queries                                                  #
+    # ------------------------------------------------------------------ #
+
+    def is_open(self, _now: float | None = None) -> bool:
+        """Return True if in OPEN state (not yet past cooldown)."""
+        if self._state == _STATE_OPEN:
+            now = _now if _now is not None else self._time_fn()
+            if now - self._open_at >= self._open_duration_sec:
+                # Cooldown expired — move to half-open
+                self._state = _STATE_HALF_OPEN
+                logger.info(
+                    "circuit breaker %s → HALF_OPEN (cooldown expired after %.0fs)",
+                    self._endpoint,
+                    self._open_duration_sec,
+                )
+                return False
+            return True
+        return False
+
+    def is_half_open(self, _now: float | None = None) -> bool:
+        """Return True if in HALF_OPEN state (probe allowed)."""
+        # Calling is_open() first handles OPEN→HALF_OPEN transition.
+        self.is_open(_now=_now)
+        return self._state == _STATE_HALF_OPEN
+
+    def is_closed(self) -> bool:
+        return self._state == _STATE_CLOSED
+
+    def cooldown_remaining(self, _now: float | None = None) -> float:
+        if self._state != _STATE_OPEN:
+            return 0.0
+        now = _now if _now is not None else self._time_fn()
+        return max(0.0, self._open_duration_sec - (now - self._open_at))
+
+    # ------------------------------------------------------------------ #
+    # State mutators                                                        #
+    # ------------------------------------------------------------------ #
+
+    def record_success(self) -> None:
+        if self._state in (_STATE_HALF_OPEN, _STATE_OPEN):
+            logger.info(
+                "circuit breaker %s → CLOSED (probe succeeded)",
+                self._endpoint,
+            )
+        self._state = _STATE_CLOSED
+        self.consecutive_failures = 0
+
+    def record_failure(self, _now: float | None = None) -> None:
+        self.consecutive_failures += 1
+        if self._state == _STATE_HALF_OPEN:
+            # Probe failed — reopen immediately
+            self._open(reason="probe failed", _now=_now)
+        elif self._state == _STATE_CLOSED and self.consecutive_failures >= self._failure_threshold:
+            self._open(reason=f"{self.consecutive_failures} consecutive failures", _now=_now)
+
+    def _open(self, reason: str, _now: float | None = None) -> None:
+        now = _now if _now is not None else self._time_fn()
+        self._state = _STATE_OPEN
+        self._open_at = now
+        logger.warning(
+            "circuit breaker %s → OPEN (%s); cooldown %.0fs",
+            self._endpoint,
+            reason,
+            self._open_duration_sec,
+        )
+
+
+# ---------------------------------------------------------------------------
+# MLClient protocol
+# ---------------------------------------------------------------------------
 
 
 @runtime_checkable
 class MLClient(Protocol):
     """Protocol for ML scoring clients."""
 
-    def score_cross_encoder(self, query: str, texts: list[str]) -> list[float]:
-        """Score query-text pairs using a cross-encoder. Returns raw scores."""
+    def score_cross_encoder(self, query: str, texts: list[str]) -> list[float] | None:
+        """Score query-text pairs using a cross-encoder. Returns raw scores or None on circuit-open."""
         ...
 
-    def score_nli(self, query: str, texts: list[str]) -> list[float]:
-        """Score query-text pairs using NLI entailment. Returns raw scores."""
+    def score_nli(self, query: str, texts: list[str]) -> list[float] | None:
+        """Score query-text pairs using NLI entailment. Returns raw scores or None on circuit-open."""
         ...
 
-    def score_pair(self, query: str, text: str) -> float:
-        """Score a single query-text pair. Returns raw score."""
+    def score_pair(self, query: str, text: str) -> float | None:
+        """Score a single query-text pair. Returns raw score or None on circuit-open."""
         ...
 
     def unload_if_idle(self, idle_seconds: float = 600.0) -> None:
@@ -240,64 +354,152 @@ class RemoteMLClient:
     """Delegates to backend /rerank endpoint via HTTP.
 
     Used in the Docker core container where sentence_transformers must NOT load.
-    On HTTP error, logs a warning and returns zeros so recall degrades gracefully.
+    On HTTP error or open circuit breaker, returns None so callers skip rerank.
+
+    N4: per-endpoint circuit breakers prevent repeated saturation of a struggling
+    backend (e.g. post-v5.3.9 BindsTo→Wants decouple, where cascade-kill was removed).
     """
 
     def __init__(self, base_url: str) -> None:
-        import os
-
         import httpx
 
         from yadgar.config import get_settings as _get_settings
 
+        settings = _get_settings()
+
         self._base_url = base_url
         _token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
         _headers = {"Authorization": f"Bearer {_token}"} if _token else {}
-        _timeout_sec = float(_get_settings().BACKEND_HTTP_TIMEOUT_SEC)
+        _timeout_sec = float(settings.BACKEND_HTTP_TIMEOUT_SEC)
         _timeout = httpx.Timeout(connect=2.0, read=_timeout_sec, write=_timeout_sec, pool=5.0)
         self._client = httpx.Client(base_url=base_url, timeout=_timeout, headers=_headers)
 
-    def score_cross_encoder(self, query: str, texts: list[str]) -> list[float]:
+        # I3: check flag at construction — zero overhead when disabled
+        self._breaker_enabled: bool = bool(settings.CIRCUIT_BREAKER_ENABLED)
+        if self._breaker_enabled:
+            _threshold = int(settings.CIRCUIT_BREAKER_FAILURE_THRESHOLD)
+            _duration = float(settings.CIRCUIT_BREAKER_OPEN_DURATION_SEC)
+            self._breakers: dict[str, _CircuitBreaker] | None = {
+                mode: _CircuitBreaker(f"/rerank/{mode}", _threshold, _duration)
+                for mode in ("ce", "nli", "pair")
+            }
+        else:
+            self._breakers = None
+
+    def _now(self) -> float:
+        """Clock accessor — overridden by tests via self._fake_now."""
+        return getattr(self, "_fake_now", time.monotonic())
+
+    def score_cross_encoder(self, query: str, texts: list[str]) -> list[float] | None:
+        if self._breaker_enabled:
+            breaker = self._breakers["ce"]  # type: ignore[index]
+            now = self._now()
+            if breaker.is_open(_now=now) and not breaker.is_half_open(_now=now):
+                logger.warning(
+                    "/rerank/ce circuit OPEN — skipping (cooldown %.0fs remaining)",
+                    breaker.cooldown_remaining(_now=now),
+                )
+                return None
         try:
             r = self._client.post("/rerank", json={"query": query, "texts": texts, "mode": "ce"})
             r.raise_for_status()
-            return r.json()["scores"]
+            result = r.json()["scores"]
+            if self._breaker_enabled:
+                self._breakers["ce"].record_success()  # type: ignore[index]
+            return result
         except Exception as e:
             import httpx as _httpx
 
-            if isinstance(e, _httpx.TimeoutException):
-                logger.warning("backend timeout: RemoteMLClient /rerank ce timed out: %s", e)
+            if isinstance(
+                e, (_httpx.TimeoutException, _httpx.ConnectError, _httpx.HTTPStatusError)
+            ):
+                if self._breaker_enabled:
+                    b = self._breakers["ce"]  # type: ignore[index]
+                    b.record_failure(_now=self._now())
+                    logger.warning(
+                        "/rerank/ce failure (%d consecutive): %s",
+                        b.consecutive_failures,
+                        e,
+                    )
+                else:
+                    logger.warning("backend timeout: RemoteMLClient /rerank ce timed out: %s", e)
             else:
                 logger.warning("RemoteMLClient: /rerank ce failed: %s", e)
-            return [0.0] * len(texts)
+            return None
 
-    def score_nli(self, query: str, texts: list[str]) -> list[float]:
+    def score_nli(self, query: str, texts: list[str]) -> list[float] | None:
+        if self._breaker_enabled:
+            breaker = self._breakers["nli"]  # type: ignore[index]
+            now = self._now()
+            if breaker.is_open(_now=now) and not breaker.is_half_open(_now=now):
+                logger.warning(
+                    "/rerank/nli circuit OPEN — skipping (cooldown %.0fs remaining)",
+                    breaker.cooldown_remaining(_now=now),
+                )
+                return None
         try:
             r = self._client.post("/rerank", json={"query": query, "texts": texts, "mode": "nli"})
             r.raise_for_status()
-            return r.json()["scores"]
+            result = r.json()["scores"]
+            if self._breaker_enabled:
+                self._breakers["nli"].record_success()  # type: ignore[index]
+            return result
         except Exception as e:
             import httpx as _httpx
 
-            if isinstance(e, _httpx.TimeoutException):
-                logger.warning("backend timeout: RemoteMLClient /rerank nli timed out: %s", e)
+            if isinstance(
+                e, (_httpx.TimeoutException, _httpx.ConnectError, _httpx.HTTPStatusError)
+            ):
+                if self._breaker_enabled:
+                    b = self._breakers["nli"]  # type: ignore[index]
+                    b.record_failure(_now=self._now())
+                    logger.warning(
+                        "/rerank/nli failure (%d consecutive): %s",
+                        b.consecutive_failures,
+                        e,
+                    )
+                else:
+                    logger.warning("backend timeout: RemoteMLClient /rerank nli timed out: %s", e)
             else:
                 logger.warning("RemoteMLClient: /rerank nli failed: %s", e)
-            return [0.0] * len(texts)
+            return None
 
-    def score_pair(self, query: str, text: str) -> float:
+    def score_pair(self, query: str, text: str) -> float | None:
+        if self._breaker_enabled:
+            breaker = self._breakers["pair"]  # type: ignore[index]
+            now = self._now()
+            if breaker.is_open(_now=now) and not breaker.is_half_open(_now=now):
+                logger.warning(
+                    "/rerank/pair circuit OPEN — skipping (cooldown %.0fs remaining)",
+                    breaker.cooldown_remaining(_now=now),
+                )
+                return None
         try:
             r = self._client.post("/rerank", json={"query": query, "texts": [text], "mode": "pair"})
             r.raise_for_status()
-            return r.json()["scores"][0]
+            result = r.json()["scores"][0]
+            if self._breaker_enabled:
+                self._breakers["pair"].record_success()  # type: ignore[index]
+            return result
         except Exception as e:
             import httpx as _httpx
 
-            if isinstance(e, _httpx.TimeoutException):
-                logger.warning("backend timeout: RemoteMLClient /rerank pair timed out: %s", e)
+            if isinstance(
+                e, (_httpx.TimeoutException, _httpx.ConnectError, _httpx.HTTPStatusError)
+            ):
+                if self._breaker_enabled:
+                    b = self._breakers["pair"]  # type: ignore[index]
+                    b.record_failure(_now=self._now())
+                    logger.warning(
+                        "/rerank/pair failure (%d consecutive): %s",
+                        b.consecutive_failures,
+                        e,
+                    )
+                else:
+                    logger.warning("backend timeout: RemoteMLClient /rerank pair timed out: %s", e)
             else:
                 logger.warning("RemoteMLClient: /rerank pair failed: %s", e)
-            return 0.0
+            return None
 
     def unload_if_idle(self, idle_seconds: float = 600.0) -> None:
         pass  # backend manages its own lifecycle

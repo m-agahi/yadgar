@@ -78,7 +78,7 @@ class TestRemoteMLClientTimeout:
     """RemoteMLClient must respect BACKEND_HTTP_TIMEOUT_SEC."""
 
     def test_score_cross_encoder_times_out(self, monkeypatch):
-        """score_cross_encoder returns zeros quickly when backend is slow."""
+        """score_cross_encoder returns None quickly when backend is slow (N4: circuit breaker)."""
         import yadgar.config as cfg
 
         monkeypatch.setenv("YADGAR_BACKEND_HTTP_TIMEOUT_SEC", "2")
@@ -92,15 +92,15 @@ class TestRemoteMLClientTimeout:
             start = time.monotonic()
             result = client.score_cross_encoder("q", ["text"])
             elapsed = time.monotonic() - start
-            # Function catches exceptions and returns zeros — confirm it returned fast
+            # Function catches exceptions and returns None — confirm it returned fast
             assert elapsed < 6.0, f"score_cross_encoder hung {elapsed:.1f}s (expected <6s)"
-            assert result == [0.0]
+            assert result is None
         finally:
             server.close()
             cfg.get_settings.cache_clear()
 
     def test_score_nli_times_out(self, monkeypatch):
-        """score_nli returns zeros quickly when backend is slow."""
+        """score_nli returns None quickly when backend is slow (N4: circuit breaker)."""
         import yadgar.config as cfg
 
         monkeypatch.setenv("YADGAR_BACKEND_HTTP_TIMEOUT_SEC", "2")
@@ -115,7 +115,7 @@ class TestRemoteMLClientTimeout:
             result = client.score_nli("q", ["text"])
             elapsed = time.monotonic() - start
             assert elapsed < 6.0, f"score_nli hung {elapsed:.1f}s (expected <6s)"
-            assert result == [0.0]
+            assert result is None
         finally:
             server.close()
             cfg.get_settings.cache_clear()
