@@ -3,8 +3,9 @@
 Authoritative source: this file (`docs/ARCHITECTURE_INVARIANTS.md`).
 Mirrored in wiki: `yadgar-architectural-invariants`.
 Anchored memory: project-scoped, `/home/max/git/yadgar`.
+Version-execution-order lives in the `yadgar-roadmap-future-improvements` wiki.
 
-Last updated: 2026-05-20 (post-v5.3.7 soak findings).
+Last updated: 2026-05-21 late evening (Workflow integration added + V1 viz daemon-health panel added — v5.5).
 
 ---
 
@@ -12,7 +13,9 @@ Last updated: 2026-05-20 (post-v5.3.7 soak findings).
 
 Any planning for yadgar (vX.Y feature scope, refactor proposal, hotfix) MUST satisfy every invariant below. A plan that violates one is rejected and re-scoped. Override path: edit this file + propose a migration. No silent overrides.
 
-This document was created because v5.1 module decomposition (commit `7c29a33`, 2026-05-17) silently moved drainer-deferred work into the memorize request path, and v5.3.4 (`263bfa3`) added more inline sync I/O. Result: writes feel non-async despite a working queue. The invariants below codify the lessons.
+Created because v5.1 module decomposition (commit `7c29a33`, 2026-05-17) silently moved drainer-deferred work into the memorize request path, and v5.3.4 (`263bfa3`) added more inline sync I/O. Result: writes feel non-async despite a working queue. Invariants below codify the lessons.
+
+Later triggered by 2026-05-20 backend OOM cascade — surfaced systemd `BindsTo=` coupling as a hidden cascade-failure mode. v5.3.9 hotfix.
 
 ---
 
@@ -20,153 +23,89 @@ This document was created because v5.1 module decomposition (commit `7c29a33`, 2
 
 ### I1. Request path is THIN
 
-MCP tool handlers (`memorize`, `recall`, `wiki_query`, `wiki_add`, etc.) return in O(10ms) p99 from the client's perspective.
-
-Allowed in request path:
-- input validation, secrets gate
-- `WriteGate` surprisal check (cheap)
-- `FileQueue.enqueue` + return ack
-
-NOT allowed in request path:
-- `embeddings.encode` or any sync ML call
-- vector search (`storage.search_vectors`)
-- LLM call of any kind (Ollama, OpenAI, etc.)
-- KG entity extraction
-- multi-hop graph traversal
-- `curator.curate_on_remember` (merge / find-similar)
-- `EngramAllocator.allocate`, `AstrocytePool.assign_memory`, `ProspectiveMemory.*`
-- `thermo.apply_session_coherence` DB writes beyond inline atomic counters
-- `retriever.recall` reinjection
+MCP tool handlers return in O(10ms) p99. Allowed: validation, secrets gate, WriteGate, `FileQueue.enqueue` + ack. NOT allowed: encode, vector search, LLM, KG extraction, multi-hop traversal, curator, engram, astrocyte, prospective, thermo DB writes (beyond inline atomic counters), reinjection.
 
 ### I2. Drainer is the SINGLE catch-up lane
 
-`QueueDrainer._drain_once` owns the LEAN write fan-out:
-- `StorageEngine.insert_memory`
-- `EmbeddingEngine.encode_document_enriched`
-- `StorageEngine.insert_vector`
-- `KnowledgeGraph.extract_entities_typed`
-- `FileQueue.archive`
-
-NOT drainer's job:
-- `curator.curate_on_remember`
-- `EngramAllocator.allocate`
-- `AstrocytePool.assign_memory`
-- `retriever.recall` (reinjection)
-- `LLM conflict resolver`
-
-Those run on a SEPARATE deferred pass (`ConsolidationScheduler` cycle, or a new low-priority background loop). Drainer must not compete for the DB connection pool with request-path read tools.
+`QueueDrainer._drain_once` owns LEAN fan-out: `insert_memory`, `encode_document_enriched`, `insert_vector`, `extract_entities_typed`, `archive`. NOT drainer's job: curator, engram, astrocyte, reinjection, conflict resolver. Those run on a SEPARATE deferred pass (`ConsolidationScheduler`). Drainer must not compete with request-path reads for the DB connection pool.
 
 ### I3. Opt-in features short-circuit BEFORE expensive setup
 
-Any env-flag-gated feature (e.g. `YADGAR_CONFLICT_RESOLVER`) must check the flag in an O(1) path BEFORE module import, client construction, or DB query. Off = zero overhead. No "build the client, then check the flag".
+Env-gated feature checks happen in O(1) BEFORE module import, client construction, or DB query. Off = zero overhead.
 
 ### I4. ML compute is `asyncio.to_thread` or drainer-thread ONLY
 
-`SentenceTransformer.encode` is pure sync and blocks the event loop. Every call in an async context must be `await asyncio.to_thread(model.encode, ...)`. Drainer thread (sync) may call directly. Never inline in a coroutine.
+`SentenceTransformer.encode` blocks the event loop. Async contexts must use `await asyncio.to_thread(...)`. Drainer thread may call directly. Never inline in a coroutine.
 
 ### I5. Module decomposition NEVER moves work across boundaries
 
-When splitting a module, preserve the sync / async / queue topology of every call. Decomposition is structural; it must not change WHEN or WHERE work runs.
-
-The v5.1 decomp (`7c29a33`) inlined drainer-only ops into the memorize tool — banned pattern. Future refactors prove they did not regress topology by listing every moved call and its before/after thread/context.
+Splitting a module must preserve sync/async/queue topology of every call. Decomposition is structural; it must not change WHEN or WHERE work runs. v5.1 decomp violated this — banned pattern. Future refactors prove no topology regression by listing every moved call.
 
 ### I6. No double-pay
 
-A write executes heavy ops once. If the inline fallback path runs curator/engram/astrocyte, drainer replay must not re-run them. If drainer runs them, the inline path must not. Use idempotency markers (memory record flags) to detect prior application.
+Heavy ops run once per write. Inline fallback + drainer replay must not both run curator/engram/astrocyte. Use idempotency markers (e.g. `consolidation_state` field).
 
 ### I7. Queue is the durability boundary
 
-`FileQueue` atomic-rename = durability contract. The sync fallback path is a CRASH RISK unless it enqueues first and then processes. Never process-then-enqueue. Crash mid-process loses the write.
-
-Sequence on fallback: `enqueue → mark in-progress → process → archive`. Crash before archive = drainer picks up on next start. Crash before enqueue = data loss.
+`FileQueue` atomic-rename = durability contract. Sync fallback must enqueue FIRST, then process. Never process-then-enqueue. **Verified 2026-05-20 crash: zero new DLQ entries from crash window.**
 
 ### I8. Backpressure must be observable
 
-`/metrics` and `memory_stats` MUST surface:
-- `yadgar_queue_depth` (gauge)
-- `yadgar_drainer_lag_ms` (histogram)
-- `yadgar_dlq_size` (gauge)
-- `yadgar_drain_cycle_duration_ms` (histogram)
-
-Alert thresholds defined in `docs/configuration.md`. Any new write-path code MUST consider impact on these numbers before merge.
+`/metrics` + `memory_stats` MUST surface queue_depth, drainer_lag_ms, dlq_size, drain_cycle_duration_ms. Alerts in `docs/configuration.md`.
 
 ### I9. New write-path code budget ≤5ms p50
 
-Hard latency budget. Code that exceeds it moves to drainer or consolidation. Measured via existing perf tests; new tests added per feature.
+Hard latency budget. Exceeds → moves to drainer or consolidation.
 
 ### I10. Overrides are explicit
 
-Future plans that want to override an invariant must:
-1. Edit this file with the override + reasoning + migration plan.
-2. Reference the override commit in the planning PR description.
-3. Get explicit user approval — invariant overrides are not a sub-decision.
-
-No silent drift. If an invariant is wrong, prove it wrong here first.
+Override path: edit this file with override + reasoning + migration, reference commit in PR, get user approval. No silent drift.
 
 ### I11. Heavy stable artifacts live in backend, not core
 
-ML models, datasets, large reference data — anything multi-hundred-MB that changes monthly-or-slower — belongs in the **backend image** (or is fetched into a runtime volume). NEVER bake into the **core image**.
-
-**Why:** core rebuilds on every code change. Stable artifacts in core = every deploy re-ships the model = slow pulls, bloated registry, cache misses for every developer.
-
-**Rule of thumb:** if rebuilding the artifact has a different release cadence than rebuilding code, it does NOT belong in the core image.
-
-**Check:** `docker history docker.io/openfantasy/yadgar:VER` — large layers should only be Python deps (`pip install`). No `COPY models/`, no `RUN download_model` step in the core Dockerfile. Those go in `Dockerfile.backend` or a runtime-mounted volume.
-
-**Violation history:** models were baked into core (~pre-v5.x), bloated it >2GB, had to be manually extracted. Backend currently at 6.78GB (v5.4 F0 scope) — fix it there, not by smuggling into core.
+ML models, datasets, large reference data (multi-hundred-MB, monthly-or-slower cadence) belong in backend image or runtime-mounted volume. NEVER bake into core image. Check `docker history docker.io/openfantasy/yadgar:VER`. Backend currently 6.78GB (v5.4 F0 scope). **Note 2026-05-20 crash:** backend image bloat is real but NOT the OOM cause — OOM was load-induced spike during /rerank (768MB idle baseline). F0 + F5-fix are separate work.
 
 ### I12. Measure before optimize
 
-Any perf claim, cache layer, threadpool, batching, async refactor, or "we should be faster here" change MUST be preceded by stage-level profiling data with p50/p95/p99 timing. No "I think this is slow because of X" — instrument first, decide second.
-
-**Required artifacts before a perf-PR ships:**
-- Profile output (or `/metrics` histogram) showing which stage is hot
-- Before / after numbers in the PR description
-- Test that asserts no regression on the measured stage
-
-**Why:** most yadgar "slowness" is sync ML in async contexts (see I4), not DB. Adding caches / threadpools without profiling = guessing. Soak observation 2026-05-20 (read-cache discussion) — cache layer was proposed but profile data was missing, so cache design was deferred until measurement.
-
-**Check:** PR adds a cache, threadpool, or batching → ask for the profile. No profile → not ready. PR claims "X is slow" → ask which stage and how measured.
-
-Paired with I8 (backpressure observable): I8 requires runtime metrics; I12 requires using them before optimizing.
+Any perf claim, cache, threadpool, batching, async refactor MUST be preceded by stage-level profiling p50/p95/p99 data. PR artifacts: profile output / `/metrics` histogram showing hot stage, before/after numbers, regression test. Paired with I8. Validated 2026-05-20: F5 was nearly scoped as "F0 fixes OOM" without data; docker stats baseline disproved that assumption.
 
 ### I13. Bounded file + function complexity
 
 Hard + soft caps so diffs stay reviewable AND decomposition doesn't drift into I5 violations.
 
-**Function caps (per function):**
-- Cyclomatic complexity ≤ 15 (hard) / ≤ 10 (soft)
-- LOC ≤ 150 (hard) / ≤ 80 (soft)
-- Parameter count ≤ 8 (hard) / ≤ 5 (soft)
-- Nesting depth ≤ 4 (hard)
+**Function caps:** cyclomatic ≤15 hard / ≤10 soft; LOC ≤150 hard / ≤80 soft; params ≤8 hard / ≤5 soft; nesting ≤4 hard.
 
-**File caps:**
-- LOC ≤ 1000 (hard) / ≤ 500 (soft)
-- Public symbols ≤ 30 (soft)
+**File caps:** LOC ≤1000 hard / ≤500 soft; public symbols ≤30 soft.
 
-**Class caps:**
-- Methods ≤ 30 (soft)
-- Instance attributes ≤ 15 (soft)
-- Inheritance depth ≤ 3 (hard)
+**Class caps:** methods ≤30 soft; instance attrs ≤15 soft; inheritance depth ≤3 hard.
 
-**Test files exempt** from LOC + parameter caps. Cyclomatic + nesting still enforced.
+**Test files exempt** from LOC + params. Cyclomatic + nesting still enforced.
 
-**Justified-cohesion override** for soft caps. ALL three must hold:
-1. Every branch is part of a single cohesive flow
-2. Decomposition would force shared mutable state across helpers, OR move work across thread/async boundaries (forbidden by I5), OR lose error-handling context
-3. Override documented inline: `# noqa: C901 – cohesive: <reason>` + one-line comment
+**Justified-cohesion override** (soft caps only): single cohesive flow + decomposition would create shared mutable state / cross thread-async boundary / lose error-handling context + documented inline `# noqa: C901 – cohesive: <reason>`.
 
-Hard caps allow NO override. If hit, the decomposition design must prove I5 preservation explicitly.
+Hard caps NO override. If hit, decomposition design must prove I5 preservation.
 
-**Critical anti-pattern (per v5.1 incident):** decomposition that creates implicit shared state across helpers OR moves work across thread/async boundaries is WORSE than the mega-function. The v5.1 module decomp (commit `7c29a33`) violated I5 while "fixing" complexity. **Decomposing without preserving topology = banned.**
+**Critical anti-pattern (per v5.1 incident):** decomposition creating implicit shared state OR moving work across thread/async boundaries is WORSE than the mega-function. Decomposing without preserving topology = banned.
 
-**Enforcement:**
-- pre-commit `ruff check --select=C901 --max-complexity=15` (cyclomatic + max-args)
-- Add custom `check-complexity` pre-commit hook (sibling to existing `sync-version` + `check-backend-bump`) for LOC + nesting + file-size
-- Soft caps warn; hard caps block commit
-- Existing violations catalogued in `docs/complexity-audit.md` (P12)
+**Enforcement:** pre-commit `ruff check --select=C901 --max-complexity=15`; custom `check-complexity` hook; soft warns, hard blocks. Existing violations in `docs/complexity-audit.md` (P12).
 
-**Why:** unreviewable diffs hide bugs. But over-decomposition (v5.1) moves work around without simplifying. Caps + I5 together = readable AND correct.
+### I14. Structured logging contract (SCOPED)
+
+Every log entry = JSON with `ts, level, component, action, outcome, latency_ms?, error?`. NEVER log memory `content` (PII risk), tokens/passwords, user-supplied strings as metric labels. Log at boundaries (request in/out, drainer cycle, DB op), NOT inside hot loops. **trace_id propagation across MCP → core → drainer → backend is a SEPARATE v5.5 P-item, NOT in scope of I14.** Ratchet: new code conforms; old conforms when touched; full conformance by v5.6.
+
+### I15. Boundary-property fuzz tests (SCOPED)
+
+Every input validator + parser + migration MUST have a Hypothesis property test covering pathological inputs (unicode surrogate pairs, empty, oversized, malformed JSON, SQL-injection-ish strings, race ordering for queue replay). Scope: parsers (SurrealQL builder, queue payload deserialization, hook payload parse), validators (memorize/recall/wiki_query inputs), migrations (#004–#007), queue+DLQ replay. Runs in CI; failure blocks merge.
+
+### Deferred (codify only when violations surface)
+
+- **I16 migration reversibility** — better as documented rollback procedure (restore-from-backup OR forward-fix script) verified by integration test.
+- **I17 hooks ≤100ms** — number is a guess until Claude Code's actual hook timeout is confirmed.
+- **I18 idempotent retry** — already implicit in queue+job_id; codifying adds no enforcement.
+
+### Recast as PR-template checklist (NOT invariant)
+
+- **I19 forward-context awareness** — every planning PR lists known upcoming requirements as considerations. Soft enough that an invariant adds no enforcement; PR template gets the outcome.
 
 ---
 
@@ -205,183 +144,251 @@ Shipped: v5.3.10 (N4) — `RemoteMLClient` `/rerank` endpoints.
 
 ---
 
-## Current violations (as of v5.3.7, snapshot 2026-05-20)
+## Workflow integration
 
-| Site | Invariant | Notes |
-|---|---|---|
-| `yadgar/server/tools/memorize.py:154` `embeddings.encode` | I1, I4 | sync ML in fallback request path |
-| `yadgar/server/tools/memorize.py:229` `curator.curate_on_remember` | I1, I2 | curator inlined v5.1 (commit 7c29a33) |
-| `yadgar/server/tools/memorize.py:310` `pool.assign_memory` | I1, I2 | astrocyte inlined v5.1 |
-| `yadgar/server/tools/memorize.py:321/331` `prospective.*` | I1, I2 | prospective inlined v5.1 |
-| `yadgar/server/tools/memorize.py:337` `engram.allocate` | I1, I2 | engram inlined v5.1 |
-| `yadgar/server/tools/memorize.py:366` `thermo.apply_session_coherence` | I1 | DB write per request |
-| `yadgar/server/tools/memorize.py:392` `retriever.recall` reinjection | I1, I2 | recall inside memorize |
-| `yadgar/conflict_resolver.py:149` `httpx.post` | I3, I4 | sync 30s timeout if YADGAR_CONFLICT_RESOLVER=on |
-| Drainer `_apply()` semantics | I2, I6 | drainer replays the full memorize tool, not lean inserts → drainer cycle pays full cost; if it falls behind, fallback hits sync path |
+External plugins installed in the Claude Code harness that affect how yadgar work is performed. NOT invariants — tooling rules. Live here so planning checks pick them up in the same pass.
+
+### W-RL. ralph-loop (`/ralph-loop`, `/cancel-ralph`)
+
+**What:** iterative self-referential loop. `/ralph-loop "<task>" [--max-iterations N] [--completion-promise "<text>"]` runs the prompt repeatedly in the SAME session via a Stop hook that intercepts exit. Main thread sees its own previous file edits + git history each iteration.
+
+**Hard constraint — orchestrator interaction:** Ralph re-feeds the **main thread**, not a subagent. The Orchestrator Mode HARD RULE (delegate ≥2 reads / investigation verbs / ≥3 files) still applies inside every iteration. Permitted shapes:
+
+1. **Delegated body:** each iteration's substantive work IS an `Agent(...)` dispatch; main thread only synthesizes the agent's report and decides whether to continue. Investigation-shaped tasks MUST use this shape.
+2. **Non-investigatory check:** iteration body is a one-shot tool call (single bash health check, single metric read, single test invocation) + a decision. Polling, soak-watch, retry-until-green.
+
+**Forbidden shapes:**
+- `/ralph-loop "audit X across the codebase"` — investigation in main thread. Use shape (1).
+- `/ralph-loop "refactor module Y until tests pass"` — ≥2 file edits per iteration in main thread. Use shape (1) (delegate refactor; main thread runs tests).
+
+**When to use in yadgar:**
+- Soak validation: poll `/metrics` + decide whether to stop.
+- Consolidation-cycle verification: check `memory_stats` after a write burst, iterate until stable.
+- Deployment smoke loops: check daemon health post-`nix-update`.
+
+**When NOT to use:**
+- Anything resembling P1-style refactor work — planned bundle, not a loop.
+- Multi-step investigations — single Agent dispatches, not iterations.
+
+**Safety:** ALWAYS pass `--max-iterations` (cap: 20). ALWAYS pass `--completion-promise "<exact-phrase>"` matching the success criterion. State file: `.claude/.ralph-loop.local.md`.
+
+### W-FD. frontend-design (skill, auto-fires on frontend prompts)
+
+**What:** skill that injects design-quality guidance (typography, color, motion, composition) when the user asks to build web components / pages / UI. Auto-triggers from prompt content.
+
+**Scope in yadgar:** ONLY `yadgar/viz_server.py` and `ui/` (the viz frontend). Yadgar is 95% backend Python — most "build a dashboard" requests refer to Grafana JSON (`docs/observability/`), which is config, NOT a frontend build. Skill should NOT fire for Grafana work.
+
+**When to use:**
+- Touching `ui/` components, pages, layout (viz graph, memory browser, controls).
+- Designing new viz panels rendered by `viz_server.py`.
+
+**When NOT to use:**
+- Grafana dashboard JSON edits.
+- Markdown / docs work with ASCII tables or diagrams.
+- Server-rendered HTML in non-`ui/` paths.
+
+**Interaction with orchestrator rule:** frontend change spanning ≥2 files → `Agent(subagent_type="general-purpose", model="sonnet")`. Skills load in subagents, so design guidance still applies.
+
+**Follow-up (not done yet):** consider `mcp__yadgar__agent_prompt_save(pattern="dispatch-viz-ui", ...)` to inject a viz-specific prelude into subagent dispatches that touch `ui/`. Skip until first viz-UI work surfaces a concrete prompt pattern.
+
+### W-SG. security-guidance (PreToolUse hook, passive)
+
+**What:** PreToolUse hook (`security_reminder_hook.py`) runs before every Edit / Write / MultiEdit. Detects security-sensitive patterns (currently: `.github/workflows/*.yml` template-injection risks, plus XSS / unsafe-code patterns). Logs to `/tmp/security-warnings-log.txt`. **Non-blocking — informational warnings only.**
+
+**Operational rule:** hook fires automatically — no opt-in. On warning:
+
+1. Read warning text + linked guidance.
+2. Apply safe pattern (e.g. `env: VAR: ${{ ... }}` then `run: echo "$VAR"` for GHA template injection).
+3. Do NOT silence the hook. Do NOT bypass via raw Bash + heredoc to avoid Edit/Write tools.
+4. If wrong for the specific case, document why in commit message — but still apply safe pattern unless impossible.
+
+**Yadgar surfaces likely to trigger:**
+- `.gitea/workflows/*.yml` (Forgejo CI — analogous to GHA, same injection risks).
+- `entrypoint-backend.sh` and other shell scripts with env-var interpolation.
+- Any new dockerfile `RUN` lines with `${VAR}` expansion of user-controlled inputs.
+
+**No carve-out for orchestrator mode:** hook fires on main thread AND subagents (PreToolUse is per-tool, not per-context). Subagents must respect it identically.
 
 ---
 
-## Candidate plans to resolve current violations (v5.3.8 hotfix or v5.4 perf scope)
+## Current violations (snapshot v5.3.7, 2026-05-20 evening)
 
-Ordered by leverage. Pick a subset per release.
+| Site | Invariant | Notes |
+|---|---|---|
+| `memorize.py:154` `embeddings.encode` | I1, I4 | sync ML in fallback request path |
+| `memorize.py:229` `curator.curate_on_remember` | I1, I2 | inlined v5.1 (7c29a33) |
+| `memorize.py:310` `pool.assign_memory` | I1, I2 | astrocyte inlined v5.1 |
+| `memorize.py:321/331` `prospective.*` | I1, I2 | inlined v5.1 |
+| `memorize.py:337` `engram.allocate` | I1, I2 | inlined v5.1 |
+| `memorize.py:366` `thermo.apply_session_coherence` | I1 | DB write per request |
+| `memorize.py:392` `retriever.recall` reinjection | I1, I2 | recall inside memorize |
+| `conflict_resolver.py:149` `httpx.post` | I3, I4 | sync 30s timeout if env on |
+| Drainer `_apply()` | I2, I6 | replays full tool, not lean inserts |
+| Backend image 6.78GB | I11 | v5.4 F0 — separate from OOM root cause |
+| Backend embed_service OOM under /rerank load | I8 | no liveness/memory metrics; load spike not observable pre-crash. v5.4 P11 (N3 gauges) + F5 report |
+| No read-path metrics + no per-stage write metrics | I8, I12 | blocks all perf optimization — P11 prerequisite |
+| 26+ high-complexity functions (anchor 116496) | I13 | full catalog via P12 |
+| systemd `BindsTo=yadgar-backend.service` on `yadgar.service` | (cascade-failure) | NOT an invariant violation per se but operationally fatal; fix in v5.3.9 (decouple) |
+| Default httpx timeouts on backend calls | (resilience) | unbounded → thread starvation during backend failure; v5.3.9 N1 (5s timeout) |
+| ASGI graceful shutdown holds 30s | (resilience) | drainer + ML client retries block exit; v5.3.9 N2 (≤5s budget) |
 
-### P1. Split memorize into thin-enqueue + heavy-drain helpers
+---
 
-Refactor `yadgar/server/tools/memorize.py` into:
-- `_memorize_enqueue(payload)` — request path, ~50 lines: validation + secrets + WriteGate + enqueue + ack.
-- `_memorize_apply_lean(payload)` — drainer path, ~150 lines: insert_memory + encode + insert_vector + extract_entities + archive. THIS is what `FileQueue._apply` calls.
-- `_memorize_apply_consolidation(memory_id)` — deferred pass: curator merge, engram allocate, astrocyte assign, reinjection, postmortem boost.
+## Candidate plans
 
-Drainer cycle now finishes in O(20ms) per item. Consolidation runs every N seconds or at queue-idle.
+Full v5.3.9 / v5.4 / v5.5 execution order + exit criteria in the `yadgar-roadmap-future-improvements` wiki and `docs/PLAN_V5_4_to_v7.md`.
 
-### P2. Move deferred ops to ConsolidationScheduler
+### P1. Split memorize into thin-enqueue + heavy-drain + consolidation
 
-The existing `ConsolidationScheduler` (30min cycle) already does periodic work. Add a fast-tier sub-cycle (5–15s) that picks up memories where `last_consolidated IS NONE` and runs curator/engram/astrocyte/reinjection.
+- `_memorize_enqueue` (~50 LOC, request path)
+- `_memorize_apply_lean` (~150 LOC, drainer)
+- `_memorize_apply_consolidation` (deferred: curator, engram, astrocyte, reinjection, postmortem boost)
 
-Pro: re-uses existing scheduler. Con: longer staleness window for "recently written" memories (mitigated by tier-1 fast cycle).
+**Lands v5.5.** Informed by v5.4 P12 audit.
+
+### P2. Deferred ops → ConsolidationScheduler
+
+Fast-tier sub-cycle (5–15s) picks memories where `last_consolidated IS NONE`. Re-uses existing infra. **Lands v5.5.**
 
 ### P3. Wrap sync ML in `asyncio.to_thread`
 
-For any path that runs in an async context (FastAPI handlers, hooks endpoint, etc.), every `model.encode(...)` becomes `await asyncio.to_thread(model.encode, ...)`. Drainer stays sync.
-
-Quick win; 0 architectural change. Survey: `grep -n "\.encode(" yadgar/ -r`.
+Survey `grep -n "\.encode(" yadgar/ -r`. Every async-context call → `await asyncio.to_thread(model.encode, ...)`. **Lands v5.5** (data-driven via v5.4 P11).
 
 ### P4. C4 conflict resolver gate hoist
 
-`yadgar/conflict_resolver.py`: check `YADGAR_CONFLICT_RESOLVER` env at module import time. If off, the class is a no-op stub. No httpx.Client built, no Ollama URL resolved.
+Check `YADGAR_CONFLICT_RESOLVER` at module import. **Lands v5.4.**
 
-### P5. Backpressure metrics surfacing
-
-Add `yadgar_queue_depth`, `yadgar_drainer_lag_ms`, `yadgar_dlq_size`, `yadgar_drain_cycle_duration_ms` to `/metrics`. Expose in `memory_stats` MCP tool output. Wire alert thresholds in `docs/configuration.md`.
-
-Required by I8 — currently we're flying blind on drainer health.
+### P5. (folded into P11)
 
 ### P6. Drainer concurrency
 
-If SurrealDB connection pool allows, multiple drainer workers (`YADGAR_DRAINER_WORKERS`, default 1). Each worker pulls from queue; SurrealDB sequencing handled at the DB layer.
-
-Risk: write-order semantics, contention. Bench before shipping.
+`YADGAR_DRAINER_WORKERS` env. **Optional v5.5 bench.**
 
 ### P7. Reinjection becomes opt-in
 
-`YADGAR_REINJECT_ON_WRITE=on` (default OFF). Most users likely never asked for write-time reinjection. Cheap to drop from hot path.
+`YADGAR_REINJECT_ON_WRITE` default OFF. **Lands v5.4.**
 
 ### P8. Idempotency markers for I6
 
-Add `consolidation_state` field on memory record (NULL / drainer-done / consolidation-done). Drainer sets `drainer-done`; consolidation pass sets `consolidation-done` and skips already-done. Required if both inline-fallback and drainer-replay paths exist.
+`consolidation_state` field (NULL / drainer-done / consolidation-done). **Lands v5.5** (couples with P1/P2).
 
 ### P9. Image partitioning audit for I11
 
-During v5.4 F0 (backend image bloat fix), enforce I11: every layer over ~100MB justified or moved. Add `docker history` check to release-readiness CI. Confirm no model weights / large data in core image.
+During v5.4 F0, every layer >100MB justified or moved. Add `docker history` check to release-readiness CI. **Lands v5.4.**
 
-### P10. Read-path stage timing for I12 (folded into P11)
+### P10. (folded into P11)
 
-Originally proposed standalone; now subsumed by P11 below.
+### P11. Observability v1 — UNIFIED metrics framework
+
+Subsumes P5 + P10 + N3. Single bundle. **FIRST PR in v5.4** — prerequisite per I12.
+
+**Write path:** queue_depth, dlq_size, drainer_lag_ms, drain_cycle_duration_ms, drain_stage_ms{stage}, writegate_outcome{outcome}.
+
+**Read path:** recall_duration_ms, recall_result_count, recall_stage_ms{stage} for embed_query/bm25/hnsw/ppr/spreading_activation/cross_encoder/nli/contextual_prefix/rerank_final. Same shape for wiki_query.
+
+**Embedding:** encode_duration_ms{model}, encode_queue_depth, encode_cache_hit_rate.
+
+**KG / curator / engram:** entity_extract_duration_ms, curator_duration_ms + curator_merge_outcome{merged/linked/noop}, engram_allocate_duration_ms, astrocyte_assign_duration_ms.
+
+**LLM (C4):** llm_call_duration_ms{provider,model,purpose}, llm_decision{outcome}.
+
+**MCP + auth:** mcp_request_duration_ms{tool}, mcp_auth_check_duration_ms, mcp_request_count{tool,status}.
+
+**Database:** surrealdb_query_duration_ms{op}, surrealdb_connection_pool_wait_ms, surrealdb_pool_active.
+
+**Process:** process_rss_bytes, _cpu_percent, _open_fds, python_gc_duration_ms{generation}.
+
+**Subagents:** subagent_dispatch_count{agent_type}, subagent_capture_rate.
+
+**Viz:** viz_api_graph_duration_ms, viz_sse_clients, viz_dbsize_sample_duration_ms.
+
+**N3 backend liveness (new, crash-driven):** `yadgar_backend_reachable{endpoint=ce/nli/pair/dbsize/storage}` (gauge); `yadgar_backend_memory_pressure` if exposed by backend.
+
+Ships with: Grafana dashboard JSON + alert rules YAML in `docs/observability/`. Decorator helper `yadgar/observability/timing.py`. Backward-compatible.
 
 ### P12. Complexity audit — one-time catalog (PRE-P1)
 
-NOT auto-decompose. Catalog only.
+NOT auto-decompose. Output `docs/complexity-audit.md` table with file:line + cyclomatic/LOC/params/nesting + hard/soft violation + decomposition risk per I5 + proposed action.
 
-**Pass output:** `docs/complexity-audit.md` table with columns:
-- `file:line` function/file
-- Current cyclomatic, LOC, params, nesting (vs I13 caps)
-- Hard-cap or soft-cap violation
-- Decomposition risk per I5 (HIGH = crosses thread/async boundary or shares mutable state; MEDIUM = parameter-passing rewrite; LOW = mechanical split)
-- Proposed action: `decompose-low-risk` / `decompose-with-topology-proof` / `justify-cohesion (noqa)` / `defer`
+Risk-tiered: LOW → v5.5/v5.6 small PRs (~5 funcs/PR with test parity); MEDIUM → per-PR explicit topology proof per I5; HIGH → P11-gated; cohesion → one-line noqa annotation.
 
-**Risk-tiered scheduling:**
-- LOW risk → decompose in v5.4/v5.5 bundles, ~5 functions per PR, each with before/after test parity
-- MEDIUM risk → per-PR explicit topology proof (every moved call's before/after thread/context per I5)
-- HIGH risk → don't touch without metrics evidence it matters (P11-gated)
-- `justify-cohesion` → one-line PR adds `# noqa: C901 – cohesive: <reason>` annotation
+**Lands v5.4** (PRE-P1 means before memorize split in v5.5).
 
-**Ordering: PRE-P1.** Reason — informs how big the memorize-split (P1) needs to be + which functions can move safely. Audit is cheap, informative, doesn't need observability data (P12 input = static analysis, not runtime).
+### V1. Viz daemon health panel — both daemons surfaced (added 2026-05-21 evening)
 
-**Tools:** existing `ruff` + custom AST script for LOC/nesting/file-size. Output committed to repo + referenced from `docs/ARCHITECTURE_INVARIANTS.md` current-violations table.
+Post-v5.3.9 `BindsTo → Wants` decouple, core + backend run as independent daemons. Viz currently shows neither. Add a sidebar / overlay in `yadgar/viz_server.py` UI that polls `/metrics` for both and renders per-daemon health.
 
-### P11. Observability v1 — UNIFIED metrics framework (PRE-REQUISITE for all perf PRs)
+**Per-daemon (core + backend):**
+- `process_rss_bytes`, `process_cpu_percent`, `process_open_fds`
+- Uptime (compute from `process_start_time_seconds` if exposed, else from first-seen)
+- Recent restart indicator (systemd `ActiveEnterTimestamp` via journal probe, OR detect from uptime reset)
+- `python_gc_duration_ms{generation}` p95
 
-Subsumes P5 + P10. SINGLE bundle, FIRST v5.4 PR. Without it, I12 (measure before optimize) cannot be enforced — all subsequent perf work is blind.
+**Core-only:**
+- `queue_depth`, `dlq_size`, `drainer_lag_ms` p95, `drain_cycle_duration_ms` p95
+- `encode_queue_depth` (if `asyncio.to_thread` queue ships per P3)
+- `mcp_request_duration_ms{tool}` top-5 slowest tools
 
-Every metric uses `prometheus_client.Histogram` or `Gauge`, surfaced at `/metrics`, also via `memory_stats`.
+**Backend-only:**
+- Rerank queue depth (if exposed — sub-task: backend may not expose `/metrics` yet; gate V1 on backend-metrics-endpoint sub-task)
+- Model-loaded state per reranker (CE / NLI / pair)
+- GPU memory if applicable
+- `embed_service_status` (memory pressure post-F5 investigation)
 
-**Write path:**
-- `yadgar_queue_depth`, `yadgar_dlq_size` (gauge)
-- `yadgar_drainer_lag_ms`, `yadgar_drain_cycle_duration_ms` (histogram)
-- `yadgar_drain_stage_ms{stage}` (histogram, labels: `insert`, `encode`, `vector`, `entities`, `archive`)
-- `yadgar_writegate_outcome{outcome}` (counter)
+**Cross-daemon (already in P11):**
+- `backend_reachable{endpoint=ce/nli/pair/dbsize/storage}` (N3 gauge)
+- Per-endpoint circuit breaker state (CLOSED / OPEN / HALF_OPEN) — CB-1 currently surfaces only via logs; need a gauge
+- Recent rerank failure count (last 1m, 5m, 15m)
 
-**Read path:**
-- `yadgar_recall_duration_ms`, `yadgar_recall_result_count` (histogram)
-- `yadgar_recall_stage_ms{stage}` (histogram, labels: `embed_query`, `bm25`, `hnsw`, `ppr`, `spreading_activation`, `cross_encoder`, `nli`, `contextual_prefix`, `rerank_final`)
-- `yadgar_wiki_query_duration_ms` + `_stage_ms{stage}` (same shape)
+**Sub-tasks:**
+- **V1a.** Backend `/metrics` endpoint — add `prometheus_client` to backend image + expose port. Required prerequisite.
+- **V1b.** Circuit breaker state gauge — extend CB-1 to emit `yadgar_circuit_breaker_state{endpoint}` (0=CLOSED / 1=HALF_OPEN / 2=OPEN).
+- **V1c.** Viz daemon panel UI — sidebar component in `yadgar/viz_server.py` (or `ui/` if frontend split lands). SSE-driven (reuse existing viz SSE channel, see `viz_sse_clients` metric).
+- **V1d.** Refresh cadence: 5s default. Configurable via `YADGAR_VIZ_HEALTH_REFRESH_SEC`.
 
-**Embedding:**
-- `yadgar_encode_duration_ms{model}` (histogram)
-- `yadgar_encode_queue_depth` (gauge, if to_thread queue added)
-- `yadgar_encode_cache_hit_rate` (gauge, if query-embedding cache shipped)
+**Lands v5.5.** Gated by V1a (backend metrics endpoint). Touches both daemons (image change in core for SSE channel addition, image change in backend for `/metrics`). Frontend changes invoke W-FD skill per Workflow integration section.
 
-**KG / curator / engram:**
-- `yadgar_entity_extract_duration_ms`, `yadgar_curator_duration_ms`, `yadgar_engram_allocate_duration_ms`, `yadgar_astrocyte_assign_duration_ms` (histogram)
-- `yadgar_curator_merge_outcome{outcome}` (counter: `merged`, `linked`, `noop`)
+**Why:** P11 ships metrics to Grafana but Grafana is ops-side. Viz is the in-session UX — when a user is browsing memory graph and something feels slow, daemon health belongs ONE PANE AWAY, not "open Grafana, find the right dashboard". Same principle as P11 surfacing metrics through `memory_stats` MCP tool — multiple surfaces for the same data.
 
-**LLM (C4 conflict resolver):**
-- `yadgar_llm_call_duration_ms{provider,model,purpose}` (histogram)
-- `yadgar_llm_decision{outcome}` (counter: `add`, `update`, `delete`, `noop`, `error`)
+### Crash-driven items (added 2026-05-20 evening)
 
-**MCP transport + auth:**
-- `yadgar_mcp_request_duration_ms{tool}` (histogram)
-- `yadgar_mcp_auth_check_duration_ms` (histogram)
-- `yadgar_mcp_request_count{tool,status}` (counter)
-
-**Database:**
-- `yadgar_surrealdb_query_duration_ms{op}` (histogram)
-- `yadgar_surrealdb_connection_pool_wait_ms` (histogram)
-- `yadgar_surrealdb_pool_active` (gauge)
-
-**Process:**
-- `yadgar_process_rss_bytes`, `yadgar_process_cpu_percent`, `yadgar_process_open_fds` (gauge)
-- `yadgar_python_gc_duration_ms{generation}` (histogram)
-
-**Subagents:**
-- `yadgar_subagent_dispatch_count{agent_type}` (counter)
-- `yadgar_subagent_capture_rate` (gauge — findings parse success / dispatched)
-
-**Viz:**
-- `yadgar_viz_api_graph_duration_ms` (histogram)
-- `yadgar_viz_sse_clients` (gauge)
-- `yadgar_viz_dbsize_sample_duration_ms` (histogram)
-
-**Ships with:** Grafana dashboard JSON + alert rules YAML committed to `docs/observability/`. Decorator helper in `yadgar/observability/timing.py` for per-stage histograms. Backward-compatible: missing metrics return 0, no client breakage.
-
-**Cost:** ~20 instrumentation sites, <1µs/observe overhead, ~30 lines per stage via decorator. Negligible runtime cost.
-
-**Unblocks:**
-- I12 enforceable (no perf PR without profile data)
-- P3 asyncio.to_thread can prove before/after
-- P1+P2 memorize split can prove drainer cycle ≤ 20ms target
-- v5.5 cache decisions (Q2 B vs A) data-driven
-- regression detection via alert thresholds
-
-**Ordering:** ships FIRST in v5.4, before P1/P2/P3 etc. Reason: I12 says measure first.
+- **N1.** 5s HTTP timeouts on backend calls (ML client, drainer, dbsize, storage). **Lands v5.3.9** (urgent crash-prevention).
+- **N2.** ASGI graceful shutdown ≤5s budget. **Lands v5.3.9.**
+- **N3.** Backend liveness gauges — folded into P11.
+- **N4.** ~~Circuit breaker on backend client~~ — shipped in v5.3.10 (see CB-1 in Patterns Library).
+- **F0.** Backend image bloat 6.78GB → ≤1.6GB. **Lands v5.4.**
+- **F1/F2.** Async embed load + pre-pull. **Lands v5.5.**
+- **F3.** Blue-green backend swap. **RE-PRIORITIZED to v5.5 P1** — crash justified systemd refactor.
+- **F5.** Backend OOM root-cause INVESTIGATION REPORT in v5.4 (1-pager). FIX in v5.5 (lazy-load rerankers OR cap concurrent batch OR cgroup bump). F0 + F5 are separate concerns.
+- **systemd cascade decouple.** `BindsTo=yadgar-backend.service` → `Wants=`. **Lands v5.3.9.** Lives in nix repo, NOT this repo. Document via MIGRATION_NOTES.md per HARD RULE.
 
 ---
 
 ## Decision log
 
-- 2026-05-20: file created. Triggered by user-reported write-speed regression during v5.3.7 soak. No invariants overridden yet.
-- 2026-05-20: I11 added (image partitioning) after recall of past model-in-core bloat incident.
-- 2026-05-20: I12 added (measure before optimize) after read-cache proposal lacked profile data.
-- 2026-05-20: P11 added (Observability v1) unifying P5 + P10; ordered FIRST in v5.4 per I12.
-- 2026-05-20: I13 added (bounded complexity, hard+soft caps) + P12 (complexity audit). P12 ordered PRE-P1 — informs memorize-split scope. Advisor unavailable at decision time; numbers (15 cyclomatic / 150 LOC hard / 80 LOC soft) refined as audit data lands.
+- 2026-05-20: created. Triggered by write-speed regression during v5.3.7 soak. No invariants overridden yet.
+- 2026-05-20: I11 added (image partitioning).
+- 2026-05-20: I12 added (measure before optimize).
+- 2026-05-20: P11 added (Observability v1) unifying P5 + P10; FIRST in v5.4 per I12.
+- 2026-05-20: I13 added (bounded complexity) + P12 (complexity audit); P12 ordered PRE-P1.
+- 2026-05-20: I14 added (structured logging, scoped — trace_id propagation moved to v5.5 separate P-item).
+- 2026-05-20: I15 added (boundary-property fuzz tests, scoped).
+- 2026-05-20: I16/I17/I18 DEFERRED (codify when violations surface). I19 recast as PR-template checklist (not invariant).
+- 2026-05-20 evening: backend OOM cascade. N1/N2 + systemd-cascade-fix MOVED to v5.3.9 hotfix. F3 RE-PRIORITIZED to v5.5 P1. F5 reframed as v5.4 report + v5.5 fix. F0 vs OOM separated. N4 circuit breaker proper-designed in v5.4. v5.3.8 → v5.3.9.
+- 2026-05-20: cap numbers (15 cyclomatic / 150 LOC hard / 80 LOC soft) provisional. P12 audit data may trigger I13 review per I10 (if >20% violations).
 - 2026-05-21: Patterns Library section added (introductory CB-1 for circuit breaker shipped v5.3.10). Patterns ≠ invariants; both must be checked by future planning.
+- 2026-05-21 evening: Workflow integration section added for `ralph-loop`, `frontend-design`, `security-guidance` plugins installed 2026-05-21. Not invariants — workflow tooling. Section scoped per-plugin with explicit orchestrator-rule carve-out for ralph-loop.
+- 2026-05-21 late evening: V1 viz daemon health panel added — surfaces both core + backend daemon stats (RSS/CPU/FDs + queue/breaker/model-load) in viz UI. Targets v5.5. Sub-tasks V1a (backend /metrics endpoint) + V1b (CB state gauge) + V1c (sidebar UI) + V1d (refresh cadence env).
 
 ---
 
 ## Cross-references
 
-- Wiki: `yadgar-architectural-invariants` (mirror of this file).
-- Wiki: `yadgar-write-pipeline-surprise-gated` (original write-flow spec).
-- Wiki: `yadgar-roadmap-future-improvements` (current roadmap, v5.4/v5.5 trajectory).
-- Anchor: project-scoped memory at `/home/max/git/yadgar` tagged `_architectural-invariants`.
-- Source memories: v5.1 commit `7c29a33` (regression), v5.3.4 commit `263bfa3` (C4 inline), soak observation 2026-05-20 (mem id 493702).
+- Wiki mirror: `yadgar-architectural-invariants`.
+- Locked trajectory: `docs/PLAN_V5_4_to_v7.md`.
+- Roadmap wiki: `yadgar-roadmap-future-improvements`.
+- Original write-flow spec wiki: `yadgar-write-pipeline-surprise-gated`.
+- Stabilize-strategy (frozen) wiki: `yadgar-v5-stabilize-strategy-tldr-gap-analysis`.
+- Soak observation memories (3 entries for 2026-05-20).
+- Regression commits: `7c29a33` (v5.1 module decomp), `263bfa3` (v5.3.4 C4 conflict resolver inline).
+- Crash forensics: journalctl 2026-05-20 19:57:53 (backend OOMKill) → 20:01:14 (manual restart).
