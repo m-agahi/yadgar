@@ -56,6 +56,11 @@ Renamed v5.3.8 → v5.3.9. Adds urgent crash-prevention from soak observation #3
 - CHANGELOG complete.
 - SubagentStop capture rate > 0 from a 5-dispatch smoke test.
 
+## v5.3.10 — CPU busy-loop + viz disconnect hotfix (SHIPPED)
+
+- v5.3.10 hotfix shipped: N4 circuit breaker + viz disconnected-cluster nav. N4 forward-ported from v5.4 due to ops urgency (CPU busy-loop post-v5.3.9 deploy).
+- N4 circuit breaker establishes Pattern CB-1 in `docs/ARCHITECTURE_INVARIANTS.md`. See CB-1 for the architectural rationale and banned regressions.
+
 ## v5.3.8 — SUPERSEDED by v5.3.9
 
 (See v5.3.9 above. v5.3.8 was the pre-crash carried-cleanup bundle. Crash on 2026-05-20 evening forced renaming + adding 3 crash-prevention items + DLQ cleanup.)
@@ -137,7 +142,7 @@ Verifications done; scope corrected:
 What remains in v5.4 for backend resilience:
 
 8. **N3. Backend liveness gauges** (folds into P11): `yadgar_backend_reachable{endpoint=ce/nli/pair/dbsize/storage}` (gauge), `yadgar_backend_memory_pressure` if backend exposes it.
-9. **N4. Circuit breaker on backend client.** N consecutive 5xx / timeout → mark unhealthy → rapid-fail until probe success. Proper design: probe interval, half-open behavior, per-endpoint isolation.
+9. ~~N4. Circuit breaker~~ — shipped in v5.3.10 (see CB-1 in Patterns Library).
 10. **F5. Backend OOM root-cause investigation report.** Identify spike trigger via instrumented `/rerank` load test. Outcome: a 1-page report drives the fix design. Likely candidates: (a) lazy-load rerankers (CE/NLI/pair load on first call, evict after idle window), (b) cap concurrent inference batch size, (c) bump cgroup to 6G as workaround (per I12, only if (a)+(b) prove insufficient). Fix lands in v5.5 (F3 blue-green addresses the cascade angle separately).
 
 ### Workflow integration (side-bundles in v5.4)
