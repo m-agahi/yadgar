@@ -25,6 +25,7 @@ def wiki_add(
     confidence: str = "medium",
     append: bool = False,
     branch: str | None = None,
+    branch_hint: str | None = None,
 ) -> dict:
     """Create or update a wiki page. Content can include [[slug]] cross-references.
 
@@ -34,6 +35,14 @@ def wiki_add(
 
     Categories: architecture, decision, pattern, debugging, reference, convention, fact, analysis.
     Confidence: high, medium, low.
+
+    Branch resolution (evaluated in priority order):
+    1. branch (non-empty string) — caller knows the branch explicitly; used as-is.
+    2. branch_hint (non-empty string) — host-side hook passed the caller's branch;
+       used when branch is None/empty (mirrors memorize branch_hint, v5.4 W1).
+    3. Both omitted / None — page stored with branch IS NULL, the canonical slot
+       resolved by wiki_read step 3. DO NOT fall back to _detect_branch(os.getcwd());
+       the daemon CWD is not the caller's repo and would always resolve to "master".
     """
     assert _st._wiki is not None, "WikiStore not initialized"
 
@@ -57,15 +66,10 @@ def wiki_add(
         if _has_unpaired_surrogate(_field):
             return {"stored": False, "reason": "invalid_unicode_surrogates"}
 
-    # Auto-capture branch if not explicitly provided by caller.
-    # Use cwd as the detection directory — wiki pages are not directory-scoped.
-    if branch is None:
-        try:
-            import yadgar.server as _srv
-
-            branch = _srv._detect_branch(os.getcwd())
-        except Exception:
-            pass  # non-fatal — wiki inserts with branch=NONE
+    # Branch resolution — O(1), no subprocess. See docstring for priority order.
+    if not branch and branch_hint:
+        branch = branch_hint
+    # If both are falsy (None / ""), branch stays None → canonical NULL slot.
 
     # Async path: enqueue and return immediately (skip during drain replay)
     if not is_draining():
