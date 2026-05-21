@@ -19,6 +19,9 @@ settings = get_settings()
 @_tool()
 def recall(query: str, max_results: int = 5, min_heat: float = 0.0) -> list[dict]:
     """Semantic + keyword search filtered by heat. Boosts accessed memories."""
+    import time as _time  # noqa: PLC0415
+
+    _recall_t0 = _time.monotonic()
     storage = _get_storage()
 
     # Record activity on consolidation engine
@@ -203,5 +206,17 @@ def recall(query: str, max_results: int = 5, min_heat: float = 0.0) -> list[dict
     # Strip binary fields from response (not JSON-serializable)
     for m in merged:
         m.pop("embedding", None)
+
+    # P11: observe recall duration + result count
+    try:
+        from yadgar.metrics import (  # noqa: PLC0415
+            yadgar_recall_duration_ms,
+            yadgar_recall_result_count,
+        )
+
+        yadgar_recall_duration_ms.observe((_time.monotonic() - _recall_t0) * 1000)
+        yadgar_recall_result_count.observe(len(merged))
+    except Exception:
+        pass
 
     return merged

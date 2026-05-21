@@ -205,6 +205,81 @@ def memory_stats() -> dict:
     except Exception:
         pass  # non-fatal: stats are best-effort
 
+    # P11 — metrics summary block (I8: backpressure must be observable via memory_stats)
+    try:
+        from yadgar.metrics import (  # noqa: PLC0415
+            yadgar_drainer_lag_ms,
+            yadgar_recall_duration_ms,
+        )
+
+        def _p95(hist) -> float:
+            """Extract approximate p95 from a Histogram sample."""
+            try:
+                samples = list(hist.collect()[0].samples)
+                count = next((s.value for s in samples if s.name.endswith("_count")), 0.0)
+                if count == 0:
+                    return 0.0
+                target = count * 0.95
+                bucket_samples = [s for s in samples if s.name.endswith("_bucket")]
+                bucket_samples.sort(key=lambda s: s.labels.get("le", "0"))
+                cumulative = 0.0
+                for s in bucket_samples:
+                    le_val = s.labels.get("le", "+Inf")
+                    if le_val == "+Inf":
+                        break
+                    cumulative = s.value
+                    if cumulative >= target:
+                        return float(le_val)
+                return 0.0
+            except Exception:
+                return 0.0
+
+        # Queue depth from filesystem gauge (last scraped value)
+        try:
+            _qd_samples = list(yadgar_drainer_lag_ms.collect()[0].samples)
+            _queue_depth_val = 0
+            # Read from queue_depth gauge directly
+            from yadgar.metrics import yadgar_queue_depth  # noqa: PLC0415
+
+            _qd_gauge_samples = list(yadgar_queue_depth.collect()[0].samples)
+            for _s in _qd_gauge_samples:
+                if _s.labels.get("queue") == "queue":
+                    _queue_depth_val = int(_s.value)
+                    break
+        except Exception:
+            _queue_depth_val = 0
+
+        # Circuit breaker states (read-only, non-fatal)
+        _cb_states: dict[str, int] = {}
+        try:
+            from yadgar.ml_client import RemoteMLClient  # noqa: PLC0415
+
+            _ml = getattr(_st, "_ml_client", None)
+            if isinstance(_ml, RemoteMLClient):
+                _state_map = {"closed": 0, "half_open": 1, "open": 2}
+                for _ep in ("ce", "nli", "pair"):
+                    _cb = getattr(_ml, f"_cb_{_ep}", None)
+                    if _cb is not None:
+                        _cb_states[_ep] = _state_map.get(_cb._state, 0)
+        except Exception:
+            pass
+
+        stats["metrics"] = {
+            "queue_depth": _queue_depth_val,
+            "drainer_lag_p95_ms": _p95(yadgar_drainer_lag_ms),
+            "recall_p95_ms": _p95(yadgar_recall_duration_ms),
+            "circuit_breaker_states": _cb_states,
+        }
+    except Exception:
+        # If prometheus_client missing or any error: still return a stub so
+        # callers can check the key without crashing (I3 backward compat)
+        stats["metrics"] = {
+            "queue_depth": 0,
+            "drainer_lag_p95_ms": 0.0,
+            "recall_p95_ms": 0.0,
+            "circuit_breaker_states": {},
+        }
+
     return stats
 
 

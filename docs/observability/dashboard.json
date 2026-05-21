@@ -1,0 +1,198 @@
+{
+  "uid": "yadgar-v1",
+  "title": "Yadgar Observability v1",
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Row 1 — Write path health",
+      "type": "row",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 }
+    },
+    {
+      "id": 2,
+      "title": "Queue depth",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 1, "w": 6, "h": 4 },
+      "targets": [
+        { "expr": "yadgar_queue_depth{queue=\"queue\"}", "legendFormat": "queue" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "DLQ size",
+      "type": "stat",
+      "gridPos": { "x": 6, "y": 1, "w": 6, "h": 4 },
+      "targets": [
+        { "expr": "yadgar_dlq_size", "legendFormat": "dlq" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Drainer lag p95 (ms)",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 1, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(yadgar_drainer_lag_ms_bucket[5m]))",
+          "legendFormat": "p95"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Drain cycle p95 (ms)",
+      "type": "stat",
+      "gridPos": { "x": 18, "y": 1, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(yadgar_drain_cycle_duration_ms_bucket[5m]))",
+          "legendFormat": "p95"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Row 2 — Drain stages",
+      "type": "row",
+      "gridPos": { "x": 0, "y": 5, "w": 24, "h": 1 }
+    },
+    {
+      "id": 11,
+      "title": "Drain stage durations p95 (ms)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 6, "w": 24, "h": 6 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (stage, le) (rate(yadgar_drain_stage_ms_bucket[5m])))",
+          "legendFormat": "{{stage}}"
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "title": "Row 3 — Read path",
+      "type": "row",
+      "gridPos": { "x": 0, "y": 12, "w": 24, "h": 1 }
+    },
+    {
+      "id": 21,
+      "title": "Recall p95 (ms)",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 13, "w": 12, "h": 4 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(yadgar_recall_duration_ms_bucket[5m]))",
+          "legendFormat": "p95"
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "title": "Recall stage durations p95 (ms)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 17, "w": 24, "h": 6 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (stage, le) (rate(yadgar_recall_stage_ms_bucket[5m])))",
+          "legendFormat": "{{stage}}"
+        }
+      ]
+    },
+    {
+      "id": 30,
+      "title": "Row 4 — Embedding + MCP",
+      "type": "row",
+      "gridPos": { "x": 0, "y": 23, "w": 24, "h": 1 }
+    },
+    {
+      "id": 31,
+      "title": "Encode p95 by model (ms)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 24, "w": 12, "h": 5 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (model, le) (rate(yadgar_encode_duration_ms_bucket[5m])))",
+          "legendFormat": "{{model}}"
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "title": "MCP request p95 by tool (ms)",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 24, "w": 12, "h": 5 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (tool, le) (rate(yadgar_mcp_request_duration_ms_bucket[5m])))",
+          "legendFormat": "{{tool}}"
+        }
+      ]
+    },
+    {
+      "id": 40,
+      "title": "Row 5 — Backend liveness + circuit breaker",
+      "type": "row",
+      "gridPos": { "x": 0, "y": 29, "w": 24, "h": 1 }
+    },
+    {
+      "id": 41,
+      "title": "Backend reachable",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 30, "w": 12, "h": 4 },
+      "targets": [
+        { "expr": "yadgar_backend_reachable", "legendFormat": "{{endpoint}}" }
+      ],
+      "options": { "thresholds": { "steps": [{"value": 0, "color": "red"}, {"value": 1, "color": "green"}] } }
+    },
+    {
+      "id": 42,
+      "title": "Circuit breaker state (0=closed 1=half_open 2=open)",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 30, "w": 12, "h": 4 },
+      "targets": [
+        { "expr": "yadgar_circuit_breaker_state", "legendFormat": "{{endpoint}}" }
+      ],
+      "options": { "thresholds": { "steps": [{"value": 0, "color": "green"}, {"value": 1, "color": "yellow"}, {"value": 2, "color": "red"}] } }
+    },
+    {
+      "id": 50,
+      "title": "Row 6 — Process",
+      "type": "row",
+      "gridPos": { "x": 0, "y": 34, "w": 24, "h": 1 }
+    },
+    {
+      "id": 51,
+      "title": "Process RSS (bytes)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 35, "w": 8, "h": 5 },
+      "targets": [
+        { "expr": "yadgar_process_rss_bytes", "legendFormat": "rss" }
+      ]
+    },
+    {
+      "id": 52,
+      "title": "Process CPU %",
+      "type": "timeseries",
+      "gridPos": { "x": 8, "y": 35, "w": 8, "h": 5 },
+      "targets": [
+        { "expr": "yadgar_process_cpu_percent", "legendFormat": "cpu" }
+      ]
+    },
+    {
+      "id": 53,
+      "title": "GC duration p95 by generation (ms)",
+      "type": "timeseries",
+      "gridPos": { "x": 16, "y": 35, "w": 8, "h": 5 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (generation, le) (rate(yadgar_python_gc_duration_ms_bucket[5m])))",
+          "legendFormat": "gen{{generation}}"
+        }
+      ]
+    }
+  ]
+}
