@@ -92,6 +92,30 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
 .stat-lbl { color: #8b949e; }
 .stat-val { color: #c9d1d9; font-weight: bold; }
 
+/* ── Disconnected clusters panel ───────────────────────── */
+#cluster-panel { display: flex; flex-direction: column; gap: 4px; }
+#cluster-panel-toggle {
+  cursor: pointer; display: flex; justify-content: space-between;
+  align-items: center; user-select: none;
+}
+#cluster-panel-toggle:hover { color: #58a6ff; }
+#cluster-list { display: flex; flex-direction: column; gap: 3px; margin-top: 2px; }
+#cluster-list.collapsed { display: none; }
+.cluster-item {
+  padding: 3px 6px;
+  background: #21262d;
+  border: 1px solid #30363d;
+  cursor: pointer;
+  border-radius: 2px;
+  color: #c9d1d9;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cluster-item:hover { background: #30363d; border-color: #58a6ff; color: #58a6ff; }
+#cluster-none { color: #8b949e; font-size: 11px; }
+
 /* ── Canvas ────────────────────────────────────────────── */
 #canvas-wrap { flex: 1; position: relative; min-width: 0; }
 
@@ -340,6 +364,14 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
       <div class="stat-row"><span class="stat-lbl">Transitions</span><span class="stat-val" id="s-trn">—</span></div>
       <div class="stat-row"><span class="stat-lbl">Wiki</span><span class="stat-val" id="s-wiki">—</span></div>
       <div class="stat-row"><span class="stat-lbl">Visible</span><span class="stat-val" id="s-vis">—</span></div>
+    </div>
+    <div id="cluster-panel">
+      <div class="sec-title" id="cluster-panel-toggle" onclick="toggleClusterPanel()">
+        Disconnected Clusters <span id="cluster-chevron">▼</span>
+      </div>
+      <div id="cluster-list">
+        <span id="cluster-none" style="display:none">None detected</span>
+      </div>
     </div>
   </div>
 
@@ -677,6 +709,9 @@ async function loadGraph() {
     calcDegrees();
     graph.graphData({ nodes: allNodes, links: allLinks });
     applyFilters();
+    detectAndRenderClusters();
+    // B: zoom-to-fit ALL nodes (including disconnected) on load
+    graph.zoomToFit(600, 50);
     status(`${allNodes.length} nodes · ${allLinks.length} edges`, 'ok');
   } catch (e) { status(`⚠ ${e.message}`, 'err'); }
 
@@ -702,6 +737,114 @@ function calcDegrees() {
     deg[t] = (deg[t]||0) + 1;
   }
   for (const n of allNodes) n.__deg = deg[n.id] || 0;
+}
+
+// ── Disconnected cluster detection (BFS, v5.3.10) ───────────────────────────
+let _clusterPanelOpen = true;
+
+function toggleClusterPanel() {
+  _clusterPanelOpen = !_clusterPanelOpen;
+  document.getElementById('cluster-list').classList.toggle('collapsed', !_clusterPanelOpen);
+  document.getElementById('cluster-chevron').textContent = _clusterPanelOpen ? '▼' : '▶';
+}
+
+function _inferClusterLabel(nodes) {
+  // Most-common tags[0]; fallback to directory_context prefix
+  const freq = {};
+  for (const n of nodes) {
+    const tag = n.tags?.[0] || (n.directory_context || '').split('/').filter(Boolean)[0];
+    if (tag) freq[tag] = (freq[tag] || 0) + 1;
+  }
+  const best = Object.entries(freq).sort((a,b) => b[1]-a[1])[0];
+  return best ? best[0] : 'unlabeled';
+}
+
+function detectAndRenderClusters() {
+  if (!allNodes.length) return;
+
+  // Build adjacency map using resolved IDs
+  const adj = {};
+  for (const n of allNodes) adj[n.id] = new Set();
+  for (const l of allLinks) {
+    const s = l.source?.id ?? l.source;
+    const t = l.target?.id ?? l.target;
+    if (adj[s] && adj[t]) { adj[s].add(t); adj[t].add(s); }
+  }
+
+  // BFS flood-fill to find connected components
+  const visited = new Set();
+  const components = [];
+  for (const n of allNodes) {
+    if (visited.has(n.id)) continue;
+    const comp = [];
+    const queue = [n.id];
+    visited.add(n.id);
+    while (queue.length) {
+      const cur = queue.shift();
+      comp.push(cur);
+      for (const nb of (adj[cur] || [])) {
+        if (!visited.has(nb)) { visited.add(nb); queue.push(nb); }
+      }
+    }
+    components.push(comp);
+  }
+
+  // Largest component = main graph; rest are disconnected
+  components.sort((a,b) => b.length - a.length);
+  const orphans = components.slice(1).filter(c => c.length >= 3);
+
+  console.log('[yadgar-viz] cluster detection: total components=' + components.length +
+    ', main=' + (components[0]?.length ?? 0) +
+    ', disconnected(≥3)=' + orphans.length +
+    (orphans.length ? ', sizes=' + orphans.map(c=>c.length).join(',') : ''));
+
+  // Build node lookup for centroid calculation
+  const nodeById = {};
+  for (const n of allNodes) nodeById[n.id] = n;
+
+  // Render sidebar
+  const list = document.getElementById('cluster-list');
+  const none = document.getElementById('cluster-none');
+  // Remove old cluster items (keep #cluster-none)
+  for (const el of Array.from(list.querySelectorAll('.cluster-item'))) el.remove();
+
+  if (!orphans.length) {
+    none.style.display = '';
+    return;
+  }
+  none.style.display = 'none';
+
+  for (const comp of orphans) {
+    const compNodes = comp.map(id => nodeById[id]).filter(Boolean);
+    const label = _inferClusterLabel(compNodes);
+    const item = document.createElement('div');
+    item.className = 'cluster-item';
+    item.title = `${label} — ${comp.length} nodes`;
+    item.textContent = `${label} (${comp.length})`;
+    item.addEventListener('click', () => _flyToCluster(compNodes));
+    list.appendChild(item);
+  }
+}
+
+function _flyToCluster(nodes) {
+  if (!graph || !nodes.length) return;
+  const xs = nodes.map(n => n.x).filter(v => v != null);
+  const ys = nodes.map(n => n.y).filter(v => v != null);
+  const zs = nodes.map(n => n.z).filter(v => v != null);
+  if (!xs.length) return;
+  const cx = xs.reduce((a,b) => a+b, 0) / xs.length;
+  const cy = ys.reduce((a,b) => a+b, 0) / ys.length;
+  const cz = zs.length ? zs.reduce((a,b) => a+b, 0) / zs.length : 0;
+  if (_graphMode === '3d') {
+    // 3d-force-graph: cameraPosition({x,y,z}, lookAt, ms)
+    const dist = Math.max(200, Math.sqrt(nodes.length) * 40);
+    graph.cameraPosition({ x: cx, y: cy, z: cz + dist }, { x: cx, y: cy, z: cz }, 800);
+  } else {
+    // force-graph 2D: centerAt(x, y, ms) + zoom(k, ms)
+    const k = Math.max(1.5, Math.min(6, 300 / Math.sqrt(nodes.length + 1)));
+    graph.centerAt(cx, cy, 800);
+    graph.zoom(k, 800);
+  }
 }
 
 // ── Filters ─────────────────────────────────────────────────────────────────
