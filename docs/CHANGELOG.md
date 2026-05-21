@@ -12,7 +12,7 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 Hotfix bundle on top of v5.3.9. Two surgical fixes after v5.3.9 deploy surfaced a CPU busy-loop and a viz regression.
 
 ### Added
-- **N4 circuit breaker on `RemoteMLClient`** — per-endpoint state machine (`ce`, `nli`, `pair`) with `CLOSED → OPEN → HALF_OPEN` transitions. After `YADGAR_CIRCUIT_BREAKER_FAILURE_THRESHOLD` (default 3) consecutive timeouts/errors on a `/rerank/<endpoint>`, the breaker OPENs and short-circuits subsequent calls to `None` for `YADGAR_CIRCUIT_BREAKER_OPEN_DURATION_SEC` (default 60s). Per-endpoint isolation so a slow CE doesn't disable NLI/pair. Gated by `YADGAR_CIRCUIT_BREAKER_ENABLED` (default 1). Forward-ported from v5.4 scope.
+- **N4 circuit breaker on `RemoteMLClient`** — per-endpoint state machine (`ce`, `nli`, `pair`) with `CLOSED → OPEN → HALF_OPEN` transitions. After `YADGAR_CIRCUIT_BREAKER_FAILURE_THRESHOLD` (default 3) consecutive timeouts/errors on a `/rerank/<endpoint>`, the breaker OPENs and short-circuits subsequent calls to `None` for `YADGAR_CIRCUIT_BREAKER_OPEN_DURATION_SEC` (default 60s). Per-endpoint isolation so a slow CE doesn't disable NLI/pair. Gated by `YADGAR_CIRCUIT_BREAKER_ENABLED` (default 1). Forward-ported from v5.4 scope. Establishes Pattern CB-1 in `docs/ARCHITECTURE_INVARIANTS.md`.
 - Disconnected-cluster sidebar nav in viz UI — BFS flood-fill identifies connected components of size ≥3 with no edge to the main cluster, lists them in a collapsible left panel with inferred labels, click flies the camera to the cluster centroid. Works in 2D + 3D. No DB changes.
 - Zoom-to-fit-all on viz initial load (defensive) — surfaces periphery wikis on first render.
 
