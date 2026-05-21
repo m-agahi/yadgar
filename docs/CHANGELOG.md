@@ -7,6 +7,34 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.4.1] - 2026-05-21
+
+P11 Observability v1 — unified metrics framework. Per invariant I12 (measure before optimize), this is the prerequisite for all further v5.4.x perf work (P12 audit, F0 image bloat, F5 OOM report, I14 logging, eventual memorize split in v5.5).
+
+### Added
+- **`yadgar/observability/`** subpackage with `stage_timer` + `request_timer` decorators. Backward-compatible: no-op when `prometheus_client` is absent.
+- **37 metric families declared** at `/metrics` (Prometheus format) covering write path (queue depth, drainer lag, drain stages, writegate outcome), read path (recall / wiki_query duration + per-stage histograms), embedding, KG / curator / engram / astrocyte, LLM C4 calls, MCP transport + auth, SurrealDB queries + pool, process (RSS, CPU, FDs, GC), subagents, viz, backend liveness, **and `yadgar_circuit_breaker_state{endpoint}` reading directly from CB-1 (Pattern Library).**
+- **Grafana dashboard** at `docs/observability/dashboard.json` (UID `yadgar-v1`, 6 rows).
+- **Alert rules** at `docs/observability/alerts.yaml` — 5 starter rules: `YadgarDrainerLagHigh`, `YadgarDlqGrowing`, `YadgarRecallSlow`, `YadgarBackendUnreachable`, `YadgarCircuitBreakerStuck`.
+- **`memory_stats` MCP tool extended** with a `metrics` block surfacing `queue_depth`, `drainer_lag_p95_ms`, `recall_p95_ms`, `circuit_breaker_states`.
+
+### Internal
+- 6 new observability tests (decorator emit, no-op fallback, /metrics endpoint format, breaker-state metric, memory_stats surfacing).
+- Observe overhead measured: p50 0.67µs, p95 0.70µs per `Histogram.observe` — within I9 budget.
+
+### Deferred (registered but not yet populated, await touching the underlying code)
+
+These metric families are declared + exported at `/metrics` but populate as empty / zero until their underlying functions are instrumented. Per invariant I5 (decomposition preserves topology), they wait for the targeted P-items rather than risky in-place rewrites:
+
+- `yadgar_recall_stage_ms{stage}` 9 sub-stages — await v5.5 P1 memorize split / P3 asyncio.to_thread wrap.
+- `yadgar_wiki_query_stage_ms{stage}` 9 sub-stages — same.
+- `yadgar_encode_duration_ms{model}` actual observations — await P3.
+- `yadgar_surrealdb_query_duration_ms{op}` — needs storage-layer wrapper, separate v5.4.x PR.
+- `yadgar_mcp_auth_check_duration_ms` — middleware-level, separate v5.4.x PR.
+- All KG / curator / engram / LLM / subagent / viz observations — declared, populate as their respective modules get touched.
+
+This is the v1 framework. Subsequent v5.4.x ships populate observation sites as code paths are touched.
+
 ## [5.4.0] - 2026-05-21
 
 First v5.4 minor — three quick wins (B bundle per locked trajectory). Single tag-able release before P11 Observability v1 starts. P11 + heavier items ship as later v5.4.x patches.

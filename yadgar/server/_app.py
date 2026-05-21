@@ -175,9 +175,29 @@ def _tool(power: bool = False):
 
         @functools.wraps(func)
         def _instrumented(*args, **kwargs):
-            result = func(*args, **kwargs)
+            import time as _time
+
+            _t0 = _time.monotonic()
+            _status = "ok"
             try:
-                from yadgar.metrics import yadgar_tool_token_estimate_total
+                result = func(*args, **kwargs)
+            except Exception:
+                _status = "error"
+                raise
+            finally:
+                try:
+                    from yadgar.metrics import (  # noqa: PLC0415
+                        yadgar_mcp_request_count,
+                        yadgar_mcp_request_duration_ms,
+                    )
+
+                    _elapsed_ms = (_time.monotonic() - _t0) * 1000
+                    yadgar_mcp_request_duration_ms.labels(tool=func.__name__).observe(_elapsed_ms)
+                    yadgar_mcp_request_count.labels(tool=func.__name__, status=_status).inc()
+                except Exception:
+                    pass
+            try:
+                from yadgar.metrics import yadgar_tool_token_estimate_total  # noqa: PLC0415
 
                 est = _estimate_tokens(result)
                 yadgar_tool_token_estimate_total.labels(tool=func.__name__).inc(est)

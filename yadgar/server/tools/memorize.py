@@ -72,6 +72,12 @@ def memorize(
     # Secret detection — always on, fires before anything else
     sec_blocked, sec_reason, sec_pattern = check_secrets(content)
     if sec_blocked:
+        try:
+            from yadgar.metrics import yadgar_writegate_outcome  # noqa: PLC0415
+
+            yadgar_writegate_outcome.labels(outcome="rejected_secret").inc()
+        except Exception:
+            pass
         return {"stored": False, "reason": sec_reason, "pattern_matched": sec_pattern}
 
     # Write-path policy rules — may block or redact content
@@ -131,6 +137,12 @@ def memorize(
             "gate_reason": reason,
         }
         if not should_store:
+            try:
+                from yadgar.metrics import yadgar_writegate_outcome  # noqa: PLC0415
+
+                yadgar_writegate_outcome.labels(outcome="skipped_low_surprise").inc()
+            except Exception:
+                pass
             return {
                 "stored": False,
                 "surprisal": round(surprisal, 4),
@@ -495,6 +507,14 @@ def memorize(
             _get_file_queue().archive(Path(_fq_path))
         except Exception as _fq_exc:
             logger.debug("File queue archive failed (non-fatal): %s", _fq_exc)
+
+    # P11: record stored outcome
+    try:
+        from yadgar.metrics import yadgar_writegate_outcome  # noqa: PLC0415
+
+        yadgar_writegate_outcome.labels(outcome="stored").inc()
+    except Exception:
+        pass
 
     return memory
 

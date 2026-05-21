@@ -1,0 +1,58 @@
+groups:
+  - name: yadgar
+    rules:
+
+      - alert: YadgarDrainerLagHigh
+        expr: histogram_quantile(0.95, rate(yadgar_drainer_lag_ms_bucket[5m])) > 5000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Yadgar drainer lag p95 > 5s"
+          description: >
+            The drainer is taking > 5s (p95) to pick up queue entries.
+            Check queue depth, DB latency, and drainer thread health.
+
+      - alert: YadgarDlqGrowing
+        expr: yadgar_dlq_size > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Yadgar DLQ size > 10"
+          description: >
+            More than 10 items stuck in the dead-letter queue for > 5 minutes.
+            Run dlq_inspect and dlq_requeue to recover, or investigate the root cause.
+
+      - alert: YadgarRecallSlow
+        expr: histogram_quantile(0.95, rate(yadgar_recall_duration_ms_bucket[5m])) > 5000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Yadgar recall p95 > 5s"
+          description: >
+            recall() is taking > 5s at p95. Likely causes: slow vector search,
+            backend reranker latency, or DB query degradation.
+
+      - alert: YadgarBackendUnreachable
+        expr: yadgar_backend_reachable == 0
+        for: 60s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Yadgar backend endpoint unreachable: {{ $labels.endpoint }}"
+          description: >
+            Backend endpoint {{ $labels.endpoint }} has been unreachable for > 60s.
+            Check yadgar-backend container health and network connectivity.
+
+      - alert: YadgarCircuitBreakerStuck
+        expr: yadgar_circuit_breaker_state == 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Yadgar circuit breaker stuck OPEN: {{ $labels.endpoint }}"
+          description: >
+            Circuit breaker for endpoint {{ $labels.endpoint }} has been OPEN for > 5 min.
+            Backend is likely still failing. Check backend logs and consider restarting.
