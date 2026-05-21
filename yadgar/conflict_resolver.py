@@ -17,6 +17,10 @@ Environment variables:
   YADGAR_OLLAMA_URL         default http://localhost:11434
   YADGAR_OLLAMA_MODEL       default qwen3:8b
   YADGAR_CONFLICT_K         top-K similar to retrieve; default 5
+
+I3 gate: YADGAR_CONFLICT_RESOLVER is read ONCE at module import.
+Changing the env after import has no effect. When OFF (default), no httpx.Client
+is ever constructed and resolve_conflict() returns in O(1).
 """
 
 from __future__ import annotations
@@ -26,9 +30,20 @@ import logging
 import os
 from typing import Any
 
-import httpx
-
 _log = logging.getLogger(__name__)
+
+# ── I3 gate: captured at import time, immutable thereafter ────────────────────
+
+_ENABLED: bool = os.environ.get("YADGAR_CONFLICT_RESOLVER", "off").lower() == "on"
+_log.info(
+    "conflict_resolver: YADGAR_CONFLICT_RESOLVER=%s (enabled=%s)",
+    "on" if _ENABLED else "off",
+    _ENABLED,
+)
+
+# Lazy httpx.Client — constructed on first call only when _ENABLED is True.
+# Module-level so it is reused across calls (connection pooling).
+_client: Any = None  # httpx.Client | None
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -55,6 +70,16 @@ Rules:
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
+
+
+def _get_client() -> Any:
+    """Return the module-level httpx.Client, constructing it lazily on first call."""
+    import httpx  # deferred — only imported when _ENABLED is True
+
+    global _client
+    if _client is None:
+        _client = httpx.Client()
+    return _client
 
 
 def _fetch_similar(candidate: dict, k: int) -> list[dict]:
@@ -130,13 +155,15 @@ def resolve_conflict(candidate: dict) -> dict[str, Any]:
         {"op": "ADD"|"UPDATE"|"DELETE"|"NOOP", "target_id": int|None, "reason": str}
 
     Fail-soft rules:
-    - Disabled (env unset or != 'on') → NOOP immediately (skip duplicate).
+    - Disabled (_ENABLED=False, captured at import) → NOOP immediately (skip duplicate).
     - Ollama error / timeout → ADD (optimistic insert).
     - Non-JSON or unknown op → ADD.
     """
-    enabled = os.environ.get("YADGAR_CONFLICT_RESOLVER", "off").lower() == "on"
-    if not enabled:
+    # I3: gate is the import-time constant — not re-read from env on every call.
+    if not _ENABLED:
         return {"op": "NOOP", "target_id": None, "reason": "conflict resolver disabled"}
+
+    import httpx  # deferred — only reached when _ENABLED is True
 
     ollama_url = os.environ.get("YADGAR_OLLAMA_URL", "http://localhost:11434")
     model = os.environ.get("YADGAR_OLLAMA_MODEL", "qwen3:8b")
@@ -145,8 +172,9 @@ def resolve_conflict(candidate: dict) -> dict[str, Any]:
     similar = _fetch_similar(candidate, k)
     prompt = _build_prompt(candidate, similar)
 
+    client = _get_client()
     try:
-        resp = httpx.post(
+        resp = client.post(
             f"{ollama_url}/api/generate",
             json={"model": model, "prompt": prompt, "format": "json", "stream": False},
             timeout=30.0,

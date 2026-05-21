@@ -241,12 +241,15 @@ class TestWikiAddBranchCapture:
     """wiki_add() passes branch to wiki store when called in sync path."""
 
     def test_wiki_add_sets_branch(self, monkeypatch):
+        # v5.4 W1: _detect_branch fallback removed from wiki_add.
+        # Callers must supply branch or branch_hint explicitly.
+        # Use branch_hint to simulate what the host-side hook now provides.
         monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "feat/wiki-branch")
         result = server.wiki_add(
             title="Branch Test Wiki Page",
             content="wiki content for branch test",
             category="reference",
+            branch_hint="feat/wiki-branch",
         )
         assert "slug" in result, f"wiki_add failed: {result}"
         slug = result["slug"]
@@ -331,8 +334,11 @@ class TestQueuePayloadBranch:
                 )
 
     def test_wiki_add_queue_payload_contains_branch(self, monkeypatch):
-        """When not draining, wiki_add enqueues branch in payload."""
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "feat/wiki-queue")
+        """When not draining, wiki_add enqueues branch in payload.
+
+        v5.4 W1: branch_hint (supplied by host hook) is resolved to branch
+        before enqueue — no _detect_branch fallback.
+        """
         captured_payloads = []
         fq = server._get_file_queue()
         monkeypatch.setattr(
@@ -343,6 +349,7 @@ class TestQueuePayloadBranch:
         server.wiki_add(
             title="Wiki Queue Branch Test",
             content="wiki content for queue test",
+            branch_hint="feat/wiki-queue",
         )
         for op, payload in captured_payloads:
             if op == "wiki_add":
