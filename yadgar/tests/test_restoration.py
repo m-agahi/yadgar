@@ -7,7 +7,7 @@ import pytest
 
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
-from yadgar.restoration import CheckpointRestore
+from yadgar.restoration import CheckpointContext, CheckpointRestore
 from yadgar.storage import StorageEngine
 
 
@@ -34,20 +34,20 @@ def engines(temp_db):
 class TestCheckpoints:
     def test_create_checkpoint(self, engines):
         storage, embeddings, replay = engines
-        result = replay.create_checkpoint(
-            directory="/test/project",
+        ctx = CheckpointContext(
             current_task="Implementing feature X",
             files_being_edited=["src/main.py", "src/utils.py"],
             key_decisions=["Use async for IO"],
             next_steps=["Write tests"],
         )
+        result = replay.create_checkpoint("/test/project", ctx)
         assert result["status"] == "created"
         assert result["checkpoint_id"] > 0
 
     def test_checkpoint_supersedes(self, engines):
         storage, embeddings, replay = engines
-        replay.create_checkpoint(directory="/test", current_task="Task 1")
-        replay.create_checkpoint(directory="/test", current_task="Task 2")
+        replay.create_checkpoint("/test", CheckpointContext(current_task="Task 1"))
+        replay.create_checkpoint("/test", CheckpointContext(current_task="Task 2"))
 
         active = storage.get_active_checkpoint()
         assert active is not None
@@ -61,7 +61,7 @@ class TestCheckpoints:
         storage, embeddings, replay = engines
         assert storage.get_current_epoch() == 0
 
-        replay.create_checkpoint(directory="/test", current_task="T1")
+        replay.create_checkpoint("/test", CheckpointContext(current_task="T1"))
         assert storage.get_current_epoch() == 0
 
         new_epoch = storage.increment_epoch()
@@ -112,7 +112,7 @@ class TestPreCompactDrain:
 
     def test_drain_preserves_existing_checkpoint(self, engines):
         storage, embeddings, replay = engines
-        replay.create_checkpoint(directory="/test", current_task="My task")
+        replay.create_checkpoint("/test", CheckpointContext(current_task="My task"))
         result = replay.pre_compact_drain("/test")
 
         # Should update existing, not create new auto
@@ -130,9 +130,11 @@ class TestRestore:
     def test_restore_with_checkpoint(self, engines):
         storage, embeddings, replay = engines
         replay.create_checkpoint(
-            directory="/test",
-            current_task="Building feature X",
-            files_being_edited=["main.py"],
+            "/test",
+            CheckpointContext(
+                current_task="Building feature X",
+                files_being_edited=["main.py"],
+            ),
         )
         result = replay.restore("/test")
         assert result["checkpoint"] is not None
@@ -155,9 +157,11 @@ class TestRestore:
 
         # Simulate a session
         replay.create_checkpoint(
-            directory="/test",
-            current_task="Refactoring auth module",
-            key_decisions=["Switch to JWT"],
+            "/test",
+            CheckpointContext(
+                current_task="Refactoring auth module",
+                key_decisions=["Switch to JWT"],
+            ),
         )
         replay.anchor_memory(
             content="API key stored in .env",
@@ -243,5 +247,5 @@ class TestAutoCheckpoint:
             replay.record_tool_call()
         assert replay.should_auto_checkpoint()
 
-        replay.create_checkpoint(directory="/test", current_task="T")
+        replay.create_checkpoint("/test", CheckpointContext(current_task="T"))
         assert not replay.should_auto_checkpoint()

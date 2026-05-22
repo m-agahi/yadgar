@@ -17,6 +17,7 @@ import argparse
 import numpy as np
 import pytest
 
+from yadgar.restoration import CheckpointContext
 from yadgar.storage import RelationshipMeta, StorageEngine
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -149,7 +150,7 @@ def replay_engine(tmp_path):
 def test_create_checkpoint_returns_dict(replay_engine):
     """create_checkpoint returns a dict with checkpoint_id, epoch, status."""
     replay, _ = replay_engine
-    result = replay.create_checkpoint(directory="/tmp/proj")
+    result = replay.create_checkpoint("/tmp/proj")
     assert isinstance(result, dict)
     assert "checkpoint_id" in result
     assert result["status"] == "created"
@@ -157,10 +158,9 @@ def test_create_checkpoint_returns_dict(replay_engine):
 
 
 def test_create_checkpoint_full_params(replay_engine):
-    """All optional params accepted without error; checkpoint_id is positive int."""
+    """All optional params via CheckpointContext accepted without error."""
     replay, _ = replay_engine
-    result = replay.create_checkpoint(
-        directory="/tmp/proj",
+    ctx = CheckpointContext(
         current_task="do the thing",
         files_being_edited=["a.py", "b.py"],
         key_decisions=["use dataclass"],
@@ -168,8 +168,8 @@ def test_create_checkpoint_full_params(replay_engine):
         next_steps=["run tests"],
         active_errors=["none yet"],
         custom_context="extra context",
-        session_id="test-session",
     )
+    result = replay.create_checkpoint("/tmp/proj", ctx, session_id="test-session")
     assert result["checkpoint_id"] > 0
     assert result["status"] == "created"
 
@@ -179,7 +179,7 @@ def test_create_checkpoint_resets_tool_count(replay_engine):
     replay, _ = replay_engine
     replay.record_tool_call()
     replay.record_tool_call()
-    replay.create_checkpoint(directory="/tmp")
+    replay.create_checkpoint("/tmp")
     # After checkpoint, tool_call_count should reset
     assert not replay.should_auto_checkpoint()
 
