@@ -3,6 +3,7 @@
 Serves POST /embed for the core container to call.
 Serves POST /rerank for ML scoring (cross-encoder, NLI, pair) via LocalMLClient.
 GET /health returns 200 only when SurrealDB is also reachable (true readiness signal).
+GET /metrics exposes Prometheus metrics (unauthenticated — V1a, v5.5.0).
 """
 
 from __future__ import annotations
@@ -16,9 +17,28 @@ from typing import TYPE_CHECKING
 
 import httpx
 import numpy as np
-from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, field_validator
+
+from yadgar.embed_service_metrics import (
+    metrics_handler as _metrics_handler,
+)
+from yadgar.embed_service_metrics import (
+    model_loaded as _model_loaded,
+)
+from yadgar.embed_service_metrics import (
+    rerank_503_total as _rerank_503_total,
+)
+from yadgar.embed_service_metrics import (
+    rerank_duration_seconds as _rerank_duration_seconds,
+)
+from yadgar.embed_service_metrics import (
+    rerank_requests_total as _rerank_requests_total,
+)
+from yadgar.embed_service_metrics import (
+    rerank_semaphore_held as _rerank_semaphore_held,
+)
 
 if TYPE_CHECKING:
     from yadgar.embeddings import EmbeddingEngine
@@ -99,6 +119,9 @@ def _get_reranker() -> LocalMLClient:
                 from yadgar.ml_client import LocalMLClient
 
                 _reranker = LocalMLClient(get_settings())
+                # Mark all reranker model variants as loaded (lazy-load on first use)
+                for _mode in ("ce", "nli", "pair"):
+                    _model_loaded.labels(model=_mode).set(1)
     return _reranker
 
 
@@ -155,13 +178,26 @@ async def lifespan(app: FastAPI):
     # Load model eagerly so /health reflects true readiness
     try:
         await asyncio.to_thread(_get_engine)
+        _model_loaded.labels(model="embedding").set(1)
         logger.info("Embedding model loaded")
     except Exception as exc:
+        _model_loaded.labels(model="embedding").set(0)
         logger.error("Failed to load embedding model: %s", exc)
     yield
 
 
 app = FastAPI(title="yadgar-embed", version="1.0", lifespan=lifespan)
+
+
+@app.get("/metrics")
+async def metrics(request: Request):
+    """Prometheus metrics endpoint (V1a, v5.5.0).
+
+    Unauthenticated — Prometheus scrapers operate on loopback without bearer
+    tokens.  Matches core /metrics pattern (yadgar/server/http.py §15).
+    Always on: overhead is negligible (<1µs per observe); no sensitive data.
+    """
+    return await _metrics_handler(request)
 
 
 @app.post("/embed", response_model=EmbedResponse)
@@ -210,12 +246,23 @@ async def rerank(req: RerankRequest, _: None = Depends(_require_admin_token)) ->
     F5-A: acquire per-mode semaphore before dispatching to inference thread.
     If semaphore is unavailable within RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC,
     return 503 immediately so circuit-breaker probes fast-fail without burning CPU.
+
+    Metrics instrumented (V1a, v5.5.0):
+    - rerank_requests_total incremented on every call
+    - rerank_503_total incremented on semaphore-busy 503
+    - rerank_duration_seconds observed on successful inference (post-acquire)
+    - rerank_semaphore_held tracks acquired slot count
     """
+    import time as _time
+
+    _rerank_requests_total.labels(mode=req.mode).inc()
+
     sem = _rerank_semaphores[req.mode]
     timeout = _rerank_acquire_timeout()
     try:
         await asyncio.wait_for(sem.acquire(), timeout=timeout)
     except TimeoutError:
+        _rerank_503_total.labels(mode=req.mode).inc()
         logger.warning(
             "semaphore_busy",
             extra={
@@ -229,6 +276,7 @@ async def rerank(req: RerankRequest, _: None = Depends(_require_admin_token)) ->
         )
         raise HTTPException(status_code=503, detail="inference slot unavailable") from None
 
+    _rerank_semaphore_held.labels(mode=req.mode).inc()
     ml = _get_reranker()
 
     def _score() -> list[float]:
@@ -241,9 +289,13 @@ async def rerank(req: RerankRequest, _: None = Depends(_require_admin_token)) ->
         else:  # "ce" default
             return ml.score_cross_encoder(req.query, req.texts)
 
+    t0 = _time.monotonic()
     try:
         scores = await asyncio.to_thread(_score)
     finally:
+        elapsed = _time.monotonic() - t0
+        _rerank_duration_seconds.labels(mode=req.mode).observe(elapsed)
+        _rerank_semaphore_held.labels(mode=req.mode).dec()
         sem.release()
 
     return RerankResponse(scores=scores, mode=req.mode)
