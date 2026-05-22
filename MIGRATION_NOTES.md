@@ -624,6 +624,11 @@ pre-commit run check-image-size-core --hook-stage manual
 **Manual invocation (no pre-commit):**
 
 ```bash
+# Resolves version from server.json automatically:
+python scripts/check_image_size.py --image-type backend
+python scripts/check_image_size.py --image-type core
+
+# Or pass a specific image ref directly:
 python scripts/check_image_size.py \
   --image docker.io/openfantasy/yadgar-backend:5.0.3
 

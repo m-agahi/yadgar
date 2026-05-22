@@ -6,6 +6,10 @@ Usage::
     python scripts/check_image_size.py --image docker.io/openfantasy/yadgar-backend:5.0.3
     python scripts/check_image_size.py --image docker.io/openfantasy/yadgar:5.4.2 --max-size-gb 0.8
 
+    # Used by pre-commit hooks (resolves version from server.json automatically):
+    python scripts/check_image_size.py --image-type backend
+    python scripts/check_image_size.py --image-type core
+
 Exit codes:
     0  — image is within cap (warnings may be printed for large individual layers)
     1  — image exceeds the size cap
@@ -21,9 +25,11 @@ Requires podman or docker to be available on PATH (podman tried first).
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Constants — public so tests can import them.
@@ -198,6 +204,38 @@ def format_report(image: str, result: ImageSizeResult) -> str:
 
 
 # ---------------------------------------------------------------------------
+# server.json helper (used by --image-type)
+# ---------------------------------------------------------------------------
+
+_REGISTRY_PREFIX = "docker.io/openfantasy"
+
+
+def _resolve_image_from_type(image_type: str) -> str:
+    """Resolve full image ref from image_type (backend|core) using server.json.
+
+    Reads server.json from the repo root (two levels up from scripts/).
+    Cyclomatic complexity: 3.
+    """
+    server_json = Path(__file__).parent.parent / "server.json"
+    try:
+        data = json.loads(server_json.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Cannot read server.json: {exc}") from exc
+
+    if image_type == "backend":
+        version = data.get("backend_version")
+        if not version:
+            raise RuntimeError("server.json missing 'backend_version' field")
+        return f"{_REGISTRY_PREFIX}/yadgar-backend:{version}"
+
+    # core
+    version = data.get("version")
+    if not version:
+        raise RuntimeError("server.json missing 'version' field")
+    return f"{_REGISTRY_PREFIX}/yadgar:{version}"
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
@@ -206,7 +244,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Check container image total size against a release-readiness cap."
     )
-    p.add_argument("--image", required=True, help="Full image reference (must be pulled locally).")
+    grp = p.add_mutually_exclusive_group(required=True)
+    grp.add_argument(
+        "--image",
+        help="Full image reference (must be pulled locally).",
+    )
+    grp.add_argument(
+        "--image-type",
+        choices=["backend", "core"],
+        help="Resolve image ref from server.json (backend→yadgar-backend:VER, core→yadgar:VER).",
+    )
     p.add_argument(
         "--max-size-gb",
         type=float,
@@ -227,12 +274,21 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    auto_cap_gb, auto_warn_mb = detect_caps(args.image)
+    if args.image_type is not None:
+        try:
+            image = _resolve_image_from_type(args.image_type)
+        except RuntimeError as exc:
+            print(f"[check-image-size] ERROR: {exc}", file=sys.stderr)
+            return 1
+    else:
+        image = args.image
+
+    auto_cap_gb, auto_warn_mb = detect_caps(image)
     cap_gb = args.max_size_gb if args.max_size_gb is not None else auto_cap_gb
     warn_mb = args.warn_layer_mb if args.warn_layer_mb is not None else auto_warn_mb
 
     try:
-        layers = run_history(args.image)
+        layers = run_history(image)
     except RuntimeError as exc:
         print(f"[check-image-size] ERROR: {exc}", file=sys.stderr)
         return 1
@@ -240,7 +296,7 @@ def main(argv: list[str] | None = None) -> int:
     total = sum(s for s, _ in layers)
     result = evaluate(layers, total, cap_gb=cap_gb, warn_layer_mb=warn_mb)
 
-    report = format_report(args.image, result)
+    report = format_report(image, result)
     out = sys.stderr if result.over_budget else sys.stdout
     print(report, file=out)
 

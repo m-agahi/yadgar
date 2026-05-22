@@ -29,6 +29,7 @@ from check_image_size import (  # noqa: E402
     DEFAULT_BACKEND_CAP_GB,
     DEFAULT_CORE_CAP_GB,
     DEFAULT_WARN_LAYER_MB,
+    _resolve_image_from_type,
     detect_caps,
     evaluate,
     parse_size,
@@ -274,3 +275,65 @@ class TestIntegrationSmoke:
         result = evaluate(layers, big_layer, cap_gb=1.0, warn_layer_mb=500.0)
         assert result.exit_code == 1
         assert result.over_budget is True
+
+
+# ---------------------------------------------------------------------------
+# _resolve_image_from_type
+# ---------------------------------------------------------------------------
+
+
+class TestResolveImageFromType:
+    def _fake_server_json(self, tmp_path, version: str, backend_version: str) -> Path:
+        p = tmp_path / "server.json"
+        p.write_text(
+            __import__("json").dumps({"version": version, "backend_version": backend_version})
+        )
+        return p
+
+    def test_backend_resolves_correct_tag(self, tmp_path) -> None:
+        server_json = self._fake_server_json(tmp_path, "5.4.2", "5.0.3")
+        with patch("check_image_size.Path") as mock_path_cls:
+            # Make Path(__file__).parent.parent / "server.json" return our fake path
+            mock_path_cls.return_value.parent.parent.__truediv__ = lambda self, key: server_json
+            # Simpler: patch the module-level constant directly
+            pass
+
+        # Patch the actual file lookup instead
+        import json
+
+        fake_data = json.dumps({"version": "5.4.2", "backend_version": "5.0.3"})
+        with patch(
+            "builtins.open", side_effect=lambda p, *a, **kw: __import__("io").StringIO(fake_data)
+        ):
+            with patch("pathlib.Path.read_text", return_value=fake_data):
+                result = _resolve_image_from_type("backend")
+        assert result == "docker.io/openfantasy/yadgar-backend:5.0.3"
+
+    def test_core_resolves_correct_tag(self, tmp_path) -> None:
+        import json
+
+        fake_data = json.dumps({"version": "5.4.2", "backend_version": "5.0.3"})
+        with patch("pathlib.Path.read_text", return_value=fake_data):
+            result = _resolve_image_from_type("core")
+        assert result == "docker.io/openfantasy/yadgar:5.4.2"
+
+    def test_missing_backend_version_raises(self) -> None:
+        import json
+
+        fake_data = json.dumps({"version": "5.4.2"})
+        with patch("pathlib.Path.read_text", return_value=fake_data):
+            with pytest.raises(RuntimeError, match="missing 'backend_version'"):
+                _resolve_image_from_type("backend")
+
+    def test_missing_version_raises(self) -> None:
+        import json
+
+        fake_data = json.dumps({"backend_version": "5.0.3"})
+        with patch("pathlib.Path.read_text", return_value=fake_data):
+            with pytest.raises(RuntimeError, match="missing 'version'"):
+                _resolve_image_from_type("core")
+
+    def test_unreadable_file_raises(self) -> None:
+        with patch("pathlib.Path.read_text", side_effect=OSError("not found")):
+            with pytest.raises(RuntimeError, match="Cannot read server.json"):
+                _resolve_image_from_type("backend")
