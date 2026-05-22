@@ -178,7 +178,7 @@ Shipped: v5.3.10 (N4) — `RemoteMLClient` `/rerank` endpoints.
 **Caller contract:** when `score_X()` returns `None`, caller MUST degrade gracefully (skip stage, return pre-rerank order, never crash). See `yadgar/retrieval/_reranking_cross_encoder.py` + `_reranking_nli.py` for the canonical None-guard pattern.
 
 **Code:** `yadgar/ml_client.py::_CircuitBreaker` + per-endpoint instances on `RemoteMLClient`.
-**Tests:** `yadgar/tests/test_circuit_breaker.py` (13 tests, includes v5.4.2 additions).
+**Tests:** `yadgar/tests/test_circuit_breaker.py` (18 tests, includes v5.4.2 + v5.5.3 gauge additions).
 **Env:** `YADGAR_CIRCUIT_BREAKER_ENABLED` (default 1), `_FAILURE_THRESHOLD` (3), `_OPEN_DURATION_SEC` (60).
 
 **Why this matters (don't break):** v5.3.9 `BindsTo → Wants` decoupled core from backend lifecycle. Without CB-1, core busy-loops retrying against a struggling backend (the v5.3.10 CPU incident). CB-1 is the architectural pair to the decouple — removing it re-introduces the CPU regression.
@@ -204,6 +204,10 @@ New env vars:
 Backoff curve (base=60s): 60 → 120 → 240 → 480 → 600 (capped). After 5 consecutive probe failures, backend gets 10 minutes before next probe. Self-heals on success.
 
 **CORRECTS prior verification claim:** v5.3.10 PR claimed CPU spin-up eliminated. Investigation 2026-05-22 shows rate-limited logging (≤1/min) ≠ elimination — probes still fired, still caused spikes. v5.4.2 is the actual fix.
+
+**v5.5.3 update — inline state gauge:**
+
+`yadgar_circuit_breaker_state{endpoint}` (already declared in `yadgar/metrics.py`) now updates inline on every state transition instead of polling. Four sites: `__init__` (→0 CLOSED), `_open()` (→2 OPEN), `is_open()` cooldown-expired branch (→1 HALF_OPEN), `record_success()` (→0 CLOSED). DI: `_CircuitBreaker` accepts `metrics_module=None` kwarg; if None, lazily imports `yadgar.metrics` on first transition. Label is `self._endpoint` (e.g. `/rerank/ce`). Removed the broken `_collect_circuit_breaker_states()` polling function (used `_cb_ce` attr name — never existed on `RemoteMLClient`). 5 new tests in `test_circuit_breaker.py`.
 
 ### Pattern slots (planned, not yet shipped)
 
@@ -425,7 +429,7 @@ Post-v5.3.9 `BindsTo → Wants` decouple, core + backend run as independent daem
 
 **Sub-tasks:**
 - ~~**V1a.** Backend `/metrics` endpoint — add `prometheus_client` to backend image + expose port. Required prerequisite.~~ **SHIPPED v5.5.0.** `yadgar/embed_service_metrics.py` + GET `/metrics` on embed_service app. F5-A semaphore counters + model gauges + process metrics. Unauthenticated (matches core pattern). Backend bumped 5.0.3 → 5.1.0.
-- **V1b.** Circuit breaker state gauge — extend CB-1 to emit `yadgar_circuit_breaker_state{endpoint}` (0=CLOSED / 1=HALF_OPEN / 2=OPEN).
+- ~~**V1b.** Circuit breaker state gauge — extend CB-1 to emit `yadgar_circuit_breaker_state{endpoint}` (0=CLOSED / 1=HALF_OPEN / 2=OPEN).~~ **SHIPPED v5.5.3.** Inline updates from `_CircuitBreaker` transitions (`__init__`/`_open`/`is_open` cooldown branch/`record_success`). Removed pre-existing broken `_collect_circuit_breaker_states()` polling (looked for `_cb_ce`/`_cb_nli`/`_cb_pair` attrs that never existed).
 - **V1c.** Viz daemon panel UI — sidebar component in `yadgar/viz_server.py` (or `ui/` if frontend split lands). SSE-driven (reuse existing viz SSE channel, see `viz_sse_clients` metric).
 - **V1d.** Refresh cadence: 5s default. Configurable via `YADGAR_VIZ_HEALTH_REFRESH_SEC`.
 
@@ -477,6 +481,7 @@ Post-v5.3.9 `BindsTo → Wants` decouple, core + backend run as independent daem
 - 2026-05-21 late evening: V1 viz daemon health panel added — surfaces both core + backend daemon stats (RSS/CPU/FDs + queue/breaker/model-load) in viz UI. Targets v5.5. Sub-tasks V1a (backend /metrics endpoint) + V1b (CB state gauge) + V1c (sidebar UI) + V1d (refresh cadence env).
 - 2026-05-22: CB-1 probe-fixes + F5-A saturation fix shipped in v5.4.2. CORRECTS prior v5.3.10 verification claim (rate-limited logging ≠ elimination — probes still caused CPU spikes). Fix 1a (probe timeout 2s), Fix 1b (exponential backoff 60→600s), F5-A (semaphore N=1 per mode). Backend bump 5.0.2→5.0.3; core bump 5.4.1→5.4.2.
 - 2026-05-22: P9 image size ratchet shipped (v5.4.2). F0 (6.78 GB → 1.63 GB) preserved via release-readiness check. Caps: core ≤800 MB, backend ≤2 GB. Script: `scripts/check_image_size.py`. Hook stage: manual (post-build gate, not per-commit).
+- 2026-05-22: v5.5.3 V1b CB-1 state gauge shipped. `yadgar_circuit_breaker_state{endpoint}` now updated inline at all four state transition sites in `_CircuitBreaker`. Removes broken polling `_collect_circuit_breaker_states()`. Core 5.4.5 → 5.5.3; backend unchanged 5.0.3.
 - 2026-05-22: v5.4.3 hotfix shipped — I14 framework-logger coverage extended to root logger (uvicorn, mcp, fastmcp, httpx all now emit JSON). I13 b27d218 grandfathering gap closed: 31 pre-existing C901/PLR0913 violators added to pyproject.toml per-file-ignores; refactor target v5.4.4. Backend version unchanged (5.0.3).
 - 2026-05-22: v5.4.7 I14 ratchet cleanup shipped — `RequestLoggingMiddleware` migrated to I14 schema (component/action/outcome/latency_ms/http_status); `ContentRedactor` denylist tightened (two-tier exact+substring, `content_type`/`content_length` false-positive fixed). Both v5.6 I14 follow-ups RESOLVED. Backend version unchanged (5.0.3). BREAKING: `duration_ms` renamed to `latency_ms` in request logs.
 - 2026-05-22: v5.4.8 middleware visibility fix shipped — root cause: `CORE_LOG_LEVEL` defaults to "warn" → root handler at WARNING → `yadgar.requests` INFO records silently dropped. Fix: dedicated always-INFO handler on `yadgar.requests` (propagate=False) installed by `configure_logging()`. Secondary finding: `YADGAR_LOG_LEVEL` (used in bug report) is NOT a valid env var; correct var is `YADGAR_CORE_LOG_LEVEL`. Neither production deployment file sets it. Operator action: add `YADGAR_CORE_LOG_LEVEL=info` to `yadgar.service` / `docker-compose.yml` for full INFO on all `yadgar.*` loggers. Backend version unchanged (5.0.3).
