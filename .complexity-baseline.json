@@ -1135,7 +1135,7 @@
     "params": 1
   },
   "yadgar/config.py::__file__": {
-    "loc": 514
+    "loc": 504
   },
   "yadgar/config.py::__init__@12": {
     "cyclo": 1,
@@ -1161,6 +1161,12 @@
     "nesting": 1,
     "params": 2
   },
+  "yadgar/config.py::_validate_hhmm@468": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 1,
+    "params": 2
+  },
   "yadgar/config.py::_validate_hhmm@478": {
     "cyclo": 2,
     "loc": 4,
@@ -1168,6 +1174,12 @@
     "params": 2
   },
   "yadgar/config.py::_validate_log_format@474": {
+    "cyclo": 2,
+    "loc": 5,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/config.py::_validate_log_format@475": {
     "cyclo": 2,
     "loc": 5,
     "nesting": 1,
@@ -1186,6 +1198,12 @@
     "params": 1
   },
   "yadgar/config.py::db_path_resolved@497": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/config.py::db_path_resolved@498": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
@@ -1215,6 +1233,12 @@
     "nesting": 0,
     "params": 0
   },
+  "yadgar/config.py::get_settings@503": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 0
+  },
   "yadgar/config.py::get_settings@513": {
     "cyclo": 1,
     "loc": 2,
@@ -1228,6 +1252,12 @@
     "params": 6
   },
   "yadgar/config.py::settings_customise_sources@481": {
+    "cyclo": 1,
+    "loc": 14,
+    "nesting": 0,
+    "params": 6
+  },
+  "yadgar/config.py::settings_customise_sources@482": {
     "cyclo": 1,
     "loc": 14,
     "nesting": 0,
@@ -3573,6 +3603,11 @@
     "inh_depth": 0,
     "methods": 4
   },
+  "yadgar/log_config.py::RateLimitFilter@564": {
+    "attrs": 8,
+    "inh_depth": 0,
+    "methods": 4
+  },
   "yadgar/log_config.py::RequestLoggingMiddleware@106": {
     "attrs": 1,
     "inh_depth": 0,
@@ -3589,7 +3624,7 @@
     "methods": 2
   },
   "yadgar/log_config.py::RotatingJSONLFileHandler@481": {
-    "attrs": 4,
+    "attrs": 5,
     "inh_depth": 0,
     "methods": 4
   },
@@ -3612,7 +3647,7 @@
     "params": 4
   },
   "yadgar/log_config.py::__file__": {
-    "loc": 830
+    "loc": 902
   },
   "yadgar/log_config.py::__init__@117": {
     "cyclo": 1,
@@ -3638,11 +3673,23 @@
     "nesting": 0,
     "params": 5
   },
+  "yadgar/log_config.py::__init__@497": {
+    "cyclo": 1,
+    "loc": 22,
+    "nesting": 0,
+    "params": 6
+  },
   "yadgar/log_config.py::__init__@566": {
     "cyclo": 1,
     "loc": 15,
     "nesting": 0,
     "params": 4
+  },
+  "yadgar/log_config.py::__init__@574": {
+    "cyclo": 1,
+    "loc": 17,
+    "nesting": 0,
+    "params": 5
   },
   "yadgar/log_config.py::_append_extras@158": {
     "cyclo": 9,
@@ -3710,9 +3757,21 @@
     "nesting": 3,
     "params": 3
   },
+  "yadgar/log_config.py::_emit_summary@646": {
+    "cyclo": 3,
+    "loc": 22,
+    "nesting": 3,
+    "params": 3
+  },
   "yadgar/log_config.py::_ensure_metrics@515": {
     "cyclo": 3,
     "loc": 10,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/log_config.py::_ensure_metrics@520": {
+    "cyclo": 4,
+    "loc": 13,
     "nesting": 2,
     "params": 1
   },
@@ -3722,11 +3781,29 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/log_config.py::_ensure_metrics@592": {
+    "cyclo": 4,
+    "loc": 11,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/log_config.py::_install_file_handler@663": {
     "cyclo": 8,
     "loc": 49,
     "nesting": 1,
     "params": 2
+  },
+  "yadgar/log_config.py::_install_file_handler@694": {
+    "cyclo": 8,
+    "loc": 51,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/log_config.py::_install_rate_limiter@747": {
+    "cyclo": 12,
+    "loc": 34,
+    "nesting": 2,
+    "params": 1
   },
   "yadgar/log_config.py::_is_sensitive@117": {
     "cyclo": 3,
@@ -3770,6 +3847,12 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/log_config.py::_resolve_metrics_module@675": {
+    "cyclo": 3,
+    "loc": 17,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/log_config.py::_suppress_noisy_framework_loggers@342": {
     "cyclo": 4,
     "loc": 18,
@@ -3783,6 +3866,12 @@
     "params": 0
   },
   "yadgar/log_config.py::_suppress_noisy_framework_loggers@714": {
+    "cyclo": 4,
+    "loc": 18,
+    "nesting": 2,
+    "params": 0
+  },
+  "yadgar/log_config.py::_suppress_noisy_framework_loggers@783": {
     "cyclo": 4,
     "loc": 18,
     "nesting": 2,
@@ -3812,13 +3901,31 @@
     "nesting": 3,
     "params": 3
   },
+  "yadgar/log_config.py::configure_logging@803": {
+    "cyclo": 15,
+    "loc": 100,
+    "nesting": 3,
+    "params": 3
+  },
   "yadgar/log_config.py::doRollover@526": {
     "cyclo": 3,
     "loc": 8,
     "nesting": 3,
     "params": 1
   },
+  "yadgar/log_config.py::doRollover@534": {
+    "cyclo": 3,
+    "loc": 8,
+    "nesting": 3,
+    "params": 1
+  },
   "yadgar/log_config.py::emit@535": {
+    "cyclo": 5,
+    "loc": 12,
+    "nesting": 4,
+    "params": 2
+  },
+  "yadgar/log_config.py::emit@543": {
     "cyclo": 5,
     "loc": 12,
     "nesting": 4,
@@ -3837,6 +3944,12 @@
     "params": 2
   },
   "yadgar/log_config.py::filter@592": {
+    "cyclo": 8,
+    "loc": 41,
+    "nesting": 4,
+    "params": 2
+  },
+  "yadgar/log_config.py::filter@604": {
     "cyclo": 8,
     "loc": 41,
     "nesting": 4,
@@ -3995,7 +4108,7 @@
     "params": 2
   },
   "yadgar/metrics.py::__file__": {
-    "loc": 514
+    "loc": 497
   },
   "yadgar/metrics.py::_collect_circuit_breaker_states@422": {
     "cyclo": 5,
@@ -4015,7 +4128,19 @@
     "nesting": 2,
     "params": 0
   },
+  "yadgar/metrics.py::_collect_process_metrics@400": {
+    "cyclo": 4,
+    "loc": 23,
+    "nesting": 2,
+    "params": 0
+  },
   "yadgar/metrics.py::_collect_queue_depths@447": {
+    "cyclo": 6,
+    "loc": 18,
+    "nesting": 4,
+    "params": 0
+  },
+  "yadgar/metrics.py::_collect_queue_depths@455": {
     "cyclo": 6,
     "loc": 18,
     "nesting": 4,
@@ -4033,6 +4158,12 @@
     "nesting": 0,
     "params": 0
   },
+  "yadgar/metrics.py::_is_metrics_enabled@449": {
+    "cyclo": 1,
+    "loc": 4,
+    "nesting": 0,
+    "params": 0
+  },
   "yadgar/metrics.py::_is_metrics_enabled@465": {
     "cyclo": 1,
     "loc": 4,
@@ -4042,6 +4173,12 @@
   "yadgar/metrics.py::metrics_handler@467": {
     "cyclo": 2,
     "loc": 24,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/metrics.py::metrics_handler@475": {
+    "cyclo": 2,
+    "loc": 23,
     "nesting": 1,
     "params": 1
   },
@@ -4066,6 +4203,11 @@
     "inh_depth": 0,
     "methods": 5
   },
+  "yadgar/ml_client.py::LocalMLClient@205": {
+    "attrs": 7,
+    "inh_depth": 0,
+    "methods": 5
+  },
   "yadgar/ml_client.py::MLClient@135": {
     "attrs": 0,
     "inh_depth": 0,
@@ -4077,6 +4219,11 @@
     "methods": 4
   },
   "yadgar/ml_client.py::MLClient@163": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 4
+  },
+  "yadgar/ml_client.py::MLClient@185": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 4
@@ -4096,13 +4243,18 @@
     "inh_depth": 0,
     "methods": 6
   },
-  "yadgar/ml_client.py::_CircuitBreaker@29": {
-    "attrs": 11,
+  "yadgar/ml_client.py::RemoteMLClient@403": {
+    "attrs": 5,
     "inh_depth": 0,
-    "methods": 8
+    "methods": 6
+  },
+  "yadgar/ml_client.py::_CircuitBreaker@29": {
+    "attrs": 12,
+    "inh_depth": 0,
+    "methods": 9
   },
   "yadgar/ml_client.py::__file__": {
-    "loc": 562
+    "loc": 584
   },
   "yadgar/ml_client.py::__init__@162": {
     "cyclo": 1,
@@ -4117,6 +4269,12 @@
     "params": 2
   },
   "yadgar/ml_client.py::__init__@190": {
+    "cyclo": 1,
+    "loc": 8,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/ml_client.py::__init__@212": {
     "cyclo": 1,
     "loc": 8,
     "nesting": 0,
@@ -4140,6 +4298,12 @@
     "nesting": 1,
     "params": 2
   },
+  "yadgar/ml_client.py::__init__@413": {
+    "cyclo": 4,
+    "loc": 39,
+    "nesting": 1,
+    "params": 2
+  },
   "yadgar/ml_client.py::__init__@46": {
     "cyclo": 2,
     "loc": 14,
@@ -4148,9 +4312,9 @@
   },
   "yadgar/ml_client.py::__init__@54": {
     "cyclo": 2,
-    "loc": 20,
+    "loc": 24,
     "nesting": 0,
-    "params": 7
+    "params": 8
   },
   "yadgar/ml_client.py::_now@389": {
     "cyclo": 1,
@@ -4170,6 +4334,12 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/ml_client.py::_now@453": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/ml_client.py::_open@117": {
     "cyclo": 2,
     "loc": 10,
@@ -4182,7 +4352,25 @@
     "nesting": 0,
     "params": 3
   },
+  "yadgar/ml_client.py::_open@161": {
+    "cyclo": 2,
+    "loc": 16,
+    "nesting": 0,
+    "params": 3
+  },
+  "yadgar/ml_client.py::_set_gauge@83": {
+    "cyclo": 3,
+    "loc": 10,
+    "nesting": 2,
+    "params": 2
+  },
   "yadgar/ml_client.py::cooldown_remaining@104": {
+    "cyclo": 3,
+    "loc": 5,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/ml_client.py::cooldown_remaining@124": {
     "cyclo": 3,
     "loc": 5,
     "nesting": 1,
@@ -4200,11 +4388,23 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/ml_client.py::is_closed@121": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/ml_client.py::is_closed@87": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 1
+  },
+  "yadgar/ml_client.py::is_half_open@115": {
+    "cyclo": 1,
+    "loc": 5,
+    "nesting": 0,
+    "params": 2
   },
   "yadgar/ml_client.py::is_half_open@81": {
     "cyclo": 1,
@@ -4230,6 +4430,12 @@
     "nesting": 2,
     "params": 2
   },
+  "yadgar/ml_client.py::is_open@98": {
+    "cyclo": 4,
+    "loc": 16,
+    "nesting": 2,
+    "params": 2
+  },
   "yadgar/ml_client.py::record_failure@109": {
     "cyclo": 4,
     "loc": 7,
@@ -4237,6 +4443,12 @@
     "params": 2
   },
   "yadgar/ml_client.py::record_failure@126": {
+    "cyclo": 4,
+    "loc": 13,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/ml_client.py::record_failure@147": {
     "cyclo": 4,
     "loc": 13,
     "nesting": 2,
@@ -4251,6 +4463,12 @@
   "yadgar/ml_client.py::record_success@114": {
     "cyclo": 2,
     "loc": 11,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/ml_client.py::record_success@134": {
+    "cyclo": 2,
+    "loc": 12,
     "nesting": 1,
     "params": 1
   },
@@ -4278,6 +4496,12 @@
     "nesting": 3,
     "params": 3
   },
+  "yadgar/ml_client.py::score_cross_encoder@188": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 3
+  },
   "yadgar/ml_client.py::score_cross_encoder@194": {
     "cyclo": 28,
     "loc": 104,
@@ -4285,6 +4509,12 @@
     "params": 3
   },
   "yadgar/ml_client.py::score_cross_encoder@199": {
+    "cyclo": 28,
+    "loc": 104,
+    "nesting": 3,
+    "params": 3
+  },
+  "yadgar/ml_client.py::score_cross_encoder@221": {
     "cyclo": 28,
     "loc": 104,
     "nesting": 3,
@@ -4308,6 +4538,12 @@
     "nesting": 4,
     "params": 3
   },
+  "yadgar/ml_client.py::score_cross_encoder@457": {
+    "cyclo": 9,
+    "loc": 41,
+    "nesting": 4,
+    "params": 3
+  },
   "yadgar/ml_client.py::score_nli@142": {
     "cyclo": 1,
     "loc": 3,
@@ -4321,6 +4557,12 @@
     "params": 3
   },
   "yadgar/ml_client.py::score_nli@170": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 3
+  },
+  "yadgar/ml_client.py::score_nli@192": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
@@ -4344,6 +4586,12 @@
     "nesting": 3,
     "params": 3
   },
+  "yadgar/ml_client.py::score_nli@326": {
+    "cyclo": 9,
+    "loc": 43,
+    "nesting": 3,
+    "params": 3
+  },
   "yadgar/ml_client.py::score_nli@430": {
     "cyclo": 8,
     "loc": 36,
@@ -4357,6 +4605,12 @@
     "params": 3
   },
   "yadgar/ml_client.py::score_nli@477": {
+    "cyclo": 9,
+    "loc": 41,
+    "nesting": 4,
+    "params": 3
+  },
+  "yadgar/ml_client.py::score_nli@499": {
     "cyclo": 9,
     "loc": 41,
     "nesting": 4,
@@ -4380,6 +4634,12 @@
     "nesting": 0,
     "params": 3
   },
+  "yadgar/ml_client.py::score_pair@196": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 3
+  },
   "yadgar/ml_client.py::score_pair@320": {
     "cyclo": 2,
     "loc": 4,
@@ -4393,6 +4653,12 @@
     "params": 3
   },
   "yadgar/ml_client.py::score_pair@348": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 3
+  },
+  "yadgar/ml_client.py::score_pair@370": {
     "cyclo": 2,
     "loc": 4,
     "nesting": 0,
@@ -4416,6 +4682,12 @@
     "nesting": 4,
     "params": 3
   },
+  "yadgar/ml_client.py::score_pair@541": {
+    "cyclo": 9,
+    "loc": 41,
+    "nesting": 4,
+    "params": 3
+  },
   "yadgar/ml_client.py::unload_if_idle@150": {
     "cyclo": 1,
     "loc": 3,
@@ -4429,6 +4701,12 @@
     "params": 2
   },
   "yadgar/ml_client.py::unload_if_idle@178": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/ml_client.py::unload_if_idle@200": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
@@ -4452,6 +4730,12 @@
     "nesting": 1,
     "params": 2
   },
+  "yadgar/ml_client.py::unload_if_idle@375": {
+    "cyclo": 8,
+    "loc": 26,
+    "nesting": 1,
+    "params": 2
+  },
   "yadgar/ml_client.py::unload_if_idle@504": {
     "cyclo": 1,
     "loc": 2,
@@ -4465,6 +4749,12 @@
     "params": 2
   },
   "yadgar/ml_client.py::unload_if_idle@561": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/ml_client.py::unload_if_idle@583": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
@@ -11635,6 +11925,31 @@
     "inh_depth": 0,
     "methods": 6
   },
+  "yadgar/tests/test_circuit_breaker.py::TestGaugeInitializedToClosedOnConstruct@453": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
+  "yadgar/tests/test_circuit_breaker.py::TestGaugePerEndpointIndependent@549": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
+  "yadgar/tests/test_circuit_breaker.py::TestGaugeSetToClosedOnRecordSuccess@524": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
+  "yadgar/tests/test_circuit_breaker.py::TestGaugeSetToHalfOpenAfterCooldown@497": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
+  "yadgar/tests/test_circuit_breaker.py::TestGaugeSetToOpenOnThresholdFailures@473": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
   "yadgar/tests/test_circuit_breaker.py::TestPerEndpointIsolation@224": {
     "attrs": 0,
     "inh_depth": 0,
@@ -11646,7 +11961,7 @@
     "methods": 2
   },
   "yadgar/tests/test_circuit_breaker.py::__file__": {
-    "loc": 437
+    "loc": 593
   },
   "yadgar/tests/test_circuit_breaker.py::_advance_to_half_open@357": {
     "cyclo": 2,
@@ -11654,11 +11969,23 @@
     "nesting": 0,
     "params": 4
   },
+  "yadgar/tests/test_circuit_breaker.py::_labels@559": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 1,
+    "params": 1
+  },
   "yadgar/tests/test_circuit_breaker.py::_make_client@341": {
     "cyclo": 2,
     "loc": 15,
     "nesting": 1,
     "params": 3
+  },
+  "yadgar/tests/test_circuit_breaker.py::_make_mock_metrics@445": {
+    "cyclo": 1,
+    "loc": 6,
+    "nesting": 0,
+    "params": 0
   },
   "yadgar/tests/test_circuit_breaker.py::test_backoff_capped_at_max_open_duration@396": {
     "cyclo": 3,
@@ -11707,6 +12034,36 @@
     "loc": 14,
     "nesting": 0,
     "params": 2
+  },
+  "yadgar/tests/test_circuit_breaker.py::test_gauge_initialized_to_closed_on_construct@454": {
+    "cyclo": 1,
+    "loc": 17,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_circuit_breaker.py::test_gauge_per_endpoint_independent@550": {
+    "cyclo": 7,
+    "loc": 44,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/tests/test_circuit_breaker.py::test_gauge_set_to_closed_on_record_success@525": {
+    "cyclo": 3,
+    "loc": 22,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_circuit_breaker.py::test_gauge_set_to_half_open_after_cooldown@498": {
+    "cyclo": 3,
+    "loc": 24,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_circuit_breaker.py::test_gauge_set_to_open_on_threshold_failures@474": {
+    "cyclo": 4,
+    "loc": 21,
+    "nesting": 1,
+    "params": 1
   },
   "yadgar/tests/test_circuit_breaker.py::test_normal_call_uses_default_timeout@303": {
     "cyclo": 4,
@@ -16148,10 +16505,20 @@
     "nesting": 0,
     "params": 3
   },
+  "yadgar/tests/test_json_logs.py::Cap@204": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
   "yadgar/tests/test_json_logs.py::Cap@207": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 1
+  },
+  "yadgar/tests/test_json_logs.py::TestRequestLoggingMiddleware@167": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 12
   },
   "yadgar/tests/test_json_logs.py::TestRequestLoggingMiddleware@170": {
     "attrs": 0,
@@ -16159,7 +16526,13 @@
     "methods": 12
   },
   "yadgar/tests/test_json_logs.py::__file__": {
-    "loc": 336
+    "loc": 333
+  },
+  "yadgar/tests/test_json_logs.py::_install_capture_handler@200": {
+    "cyclo": 1,
+    "loc": 18,
+    "nesting": 0,
+    "params": 2
   },
   "yadgar/tests/test_json_logs.py::_install_capture_handler@203": {
     "cyclo": 1,
@@ -16173,11 +16546,23 @@
     "nesting": 0,
     "params": 0
   },
+  "yadgar/tests/test_json_logs.py::_make_scope@185": {
+    "cyclo": 2,
+    "loc": 8,
+    "nesting": 0,
+    "params": 4
+  },
   "yadgar/tests/test_json_logs.py::_make_scope@188": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 0,
     "params": 4
+  },
+  "yadgar/tests/test_json_logs.py::_make_simple_app@170": {
+    "cyclo": 1,
+    "loc": 14,
+    "nesting": 0,
+    "params": 3
   },
   "yadgar/tests/test_json_logs.py::_make_simple_app@173": {
     "cyclo": 1,
@@ -16185,11 +16570,23 @@
     "nesting": 0,
     "params": 3
   },
+  "yadgar/tests/test_json_logs.py::_receive_noop@197": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/tests/test_json_logs.py::_receive_noop@200": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 1
+  },
+  "yadgar/tests/test_json_logs.py::_send_noop@194": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 2
   },
   "yadgar/tests/test_json_logs.py::_send_noop@197": {
     "cyclo": 1,
@@ -16197,11 +16594,23 @@
     "nesting": 0,
     "params": 2
   },
+  "yadgar/tests/test_json_logs.py::app@173": {
+    "cyclo": 1,
+    "loc": 9,
+    "nesting": 0,
+    "params": 3
+  },
   "yadgar/tests/test_json_logs.py::app@176": {
     "cyclo": 1,
     "loc": 9,
     "nesting": 0,
     "params": 3
+  },
+  "yadgar/tests/test_json_logs.py::cleanup@214": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 0
   },
   "yadgar/tests/test_json_logs.py::cleanup@217": {
     "cyclo": 1,
@@ -16209,11 +16618,23 @@
     "nesting": 0,
     "params": 0
   },
+  "yadgar/tests/test_json_logs.py::emit@205": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 2
+  },
   "yadgar/tests/test_json_logs.py::emit@208": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 2
+  },
+  "yadgar/tests/test_json_logs.py::test_configure_human_logging_default@150": {
+    "cyclo": 4,
+    "loc": 15,
+    "nesting": 2,
+    "params": 1
   },
   "yadgar/tests/test_json_logs.py::test_configure_human_logging_default@153": {
     "cyclo": 4,
@@ -16222,9 +16643,9 @@
     "params": 1
   },
   "yadgar/tests/test_json_logs.py::test_configure_json_logging@137": {
-    "cyclo": 4,
-    "loc": 14,
-    "nesting": 1,
+    "cyclo": 3,
+    "loc": 11,
+    "nesting": 0,
     "params": 2
   },
   "yadgar/tests/test_json_logs.py::test_json_formatter_extra_fields@88": {
@@ -16269,9 +16690,27 @@
     "nesting": 1,
     "params": 1
   },
+  "yadgar/tests/test_json_logs.py::test_middleware_emits_request_log@219": {
+    "cyclo": 2,
+    "loc": 14,
+    "nesting": 1,
+    "params": 1
+  },
   "yadgar/tests/test_json_logs.py::test_middleware_emits_request_log@222": {
     "cyclo": 2,
     "loc": 14,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/tests/test_json_logs.py::test_middleware_latency_ms_is_nonnegative_int@302": {
+    "cyclo": 4,
+    "loc": 16,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/tests/test_json_logs.py::test_middleware_record_has_required_fields@234": {
+    "cyclo": 6,
+    "loc": 19,
     "nesting": 1,
     "params": 1
   },
@@ -16281,8 +16720,20 @@
     "nesting": 1,
     "params": 1
   },
+  "yadgar/tests/test_json_logs.py::test_middleware_skips_non_http_scope@319": {
+    "cyclo": 2,
+    "loc": 15,
+    "nesting": 1,
+    "params": 1
+  },
   "yadgar/tests/test_json_logs.py::test_middleware_skips_non_http_scope@322": {
     "cyclo": 2,
+    "loc": 15,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/tests/test_json_logs.py::test_middleware_status_code_captured@270": {
+    "cyclo": 3,
     "loc": 15,
     "nesting": 1,
     "params": 1
@@ -16293,7 +16744,19 @@
     "nesting": 1,
     "params": 1
   },
+  "yadgar/tests/test_json_logs.py::test_middleware_tool_name_is_method_path@286": {
+    "cyclo": 3,
+    "loc": 15,
+    "nesting": 1,
+    "params": 1
+  },
   "yadgar/tests/test_json_logs.py::test_middleware_tool_name_is_method_path@289": {
+    "cyclo": 3,
+    "loc": 15,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/tests/test_json_logs.py::test_middleware_trace_id_from_header@254": {
     "cyclo": 3,
     "loc": 15,
     "nesting": 1,
@@ -16522,6 +16985,220 @@
     "loc": 6,
     "nesting": 0,
     "params": 3
+  },
+  "yadgar/tests/test_log_rotation.py::CapturingHandler@150": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
+  "yadgar/tests/test_log_rotation.py::TestBackendEnvOverride@210": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 3
+  },
+  "yadgar/tests/test_log_rotation.py::TestBackendMetricDI@562": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 3
+  },
+  "yadgar/tests/test_log_rotation.py::TestConcurrentRotation@453": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
+  "yadgar/tests/test_log_rotation.py::TestDualSinkCoexistence@141": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
+  "yadgar/tests/test_log_rotation.py::TestGracefulFallback@174": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 2
+  },
+  "yadgar/tests/test_log_rotation.py::TestIdempotentHandlerInstall@272": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
+  "yadgar/tests/test_log_rotation.py::TestRateLimitFilter@338": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 3
+  },
+  "yadgar/tests/test_log_rotation.py::TestRateLimiterEndToEnd@515": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
+  "yadgar/tests/test_log_rotation.py::TestRotatingJSONLFileHandler@39": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 4
+  },
+  "yadgar/tests/test_log_rotation.py::TestRotationCounterMetric@294": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
+  "yadgar/tests/test_log_rotation.py::__file__": {
+    "loc": 670
+  },
+  "yadgar/tests/test_log_rotation.py::_emit_n@29": {
+    "cyclo": 2,
+    "loc": 3,
+    "nesting": 1,
+    "params": 3
+  },
+  "yadgar/tests/test_log_rotation.py::_get_dropped_counter@432": {
+    "cyclo": 6,
+    "loc": 14,
+    "nesting": 4,
+    "params": 1
+  },
+  "yadgar/tests/test_log_rotation.py::_get_rotation_counter@322": {
+    "cyclo": 3,
+    "loc": 9,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/tests/test_log_rotation.py::_get_size_gauge@662": {
+    "cyclo": 3,
+    "loc": 9,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/tests/test_log_rotation.py::emit@151": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_log_rotation.py::emit_records@474": {
+    "cyclo": 2,
+    "loc": 7,
+    "nesting": 1,
+    "params": 0
+  },
+  "yadgar/tests/test_log_rotation.py::test_backend_falls_back_to_shared_env@249": {
+    "cyclo": 3,
+    "loc": 16,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/tests/test_log_rotation.py::test_backend_reads_backend_prefix_first@211": {
+    "cyclo": 3,
+    "loc": 19,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/tests/test_log_rotation.py::test_backup_count_respected@87": {
+    "cyclo": 3,
+    "loc": 23,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/tests/test_log_rotation.py::test_burst_drops_excess@339": {
+    "cyclo": 5,
+    "loc": 33,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/tests/test_log_rotation.py::test_concurrent_rotation_all_lines_valid_json@454": {
+    "cyclo": 12,
+    "loc": 54,
+    "nesting": 3,
+    "params": 2
+  },
+  "yadgar/tests/test_log_rotation.py::test_configure_logging_installs_rate_limiter_and_drops@516": {
+    "cyclo": 7,
+    "loc": 39,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/tests/test_log_rotation.py::test_core_reads_core_prefix@231": {
+    "cyclo": 3,
+    "loc": 17,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/tests/test_log_rotation.py::test_double_configure_no_duplicate_file_handlers@273": {
+    "cyclo": 4,
+    "loc": 14,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/tests/test_log_rotation.py::test_dropped_metric_updates_for_backend_process@632": {
+    "cyclo": 4,
+    "loc": 28,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/tests/test_log_rotation.py::test_dual_sink_single_emit@142": {
+    "cyclo": 3,
+    "loc": 25,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_log_rotation.py::test_json_schema_preserved_in_file@111": {
+    "cyclo": 4,
+    "loc": 23,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/tests/test_log_rotation.py::test_opt_out_empty_path_no_file_handler@193": {
+    "cyclo": 4,
+    "loc": 10,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/tests/test_log_rotation.py::test_rate_limiter_drop_counter_increments@373": {
+    "cyclo": 4,
+    "loc": 28,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/tests/test_log_rotation.py::test_rate_limiter_summary_line_on_drop@402": {
+    "cyclo": 4,
+    "loc": 28,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/tests/test_log_rotation.py::test_rotation_counter_incremented@295": {
+    "cyclo": 3,
+    "loc": 25,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/tests/test_log_rotation.py::test_rotation_metric_updates_for_backend_process@599": {
+    "cyclo": 4,
+    "loc": 32,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/tests/test_log_rotation.py::test_rotation_triggers_at_configured_size@64": {
+    "cyclo": 4,
+    "loc": 22,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/tests/test_log_rotation.py::test_size_metric_updates_for_backend_process@565": {
+    "cyclo": 3,
+    "loc": 33,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_log_rotation.py::test_unwritable_path_no_raise@175": {
+    "cyclo": 7,
+    "loc": 17,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/tests/test_log_rotation.py::test_writes_valid_jsonl@40": {
+    "cyclo": 6,
+    "loc": 23,
+    "nesting": 1,
+    "params": 2
   },
   "yadgar/tests/test_memorize_async.py::__file__": {
     "loc": 158
@@ -23581,6 +24258,11 @@
     "inh_depth": 0,
     "methods": 6
   },
+  "yadgar/tests/test_structured_logging.py::TestContentRedactorDenylistV547@488": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 20
+  },
   "yadgar/tests/test_structured_logging.py::TestFrameworkLoggerCoverage@309": {
     "attrs": 0,
     "inh_depth": 0,
@@ -23596,14 +24278,65 @@
     "inh_depth": 0,
     "methods": 8
   },
+  "yadgar/tests/test_structured_logging.py::TestOutcomeFromStatus@645": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 12
+  },
+  "yadgar/tests/test_structured_logging.py::TestRequestLogVisibilityAtWarningLevel@826": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 5
+  },
+  "yadgar/tests/test_structured_logging.py::TestRequestLoggingMiddlewareI14@712": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 12
+  },
   "yadgar/tests/test_structured_logging.py::__file__": {
-    "loc": 480
+    "loc": 934
   },
   "yadgar/tests/test_structured_logging.py::_make_record@21": {
     "cyclo": 3,
     "loc": 20,
     "nesting": 2,
     "params": 4
+  },
+  "yadgar/tests/test_structured_logging.py::_redact@497": {
+    "cyclo": 1,
+    "loc": 7,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_structured_logging.py::_run_middleware@731": {
+    "cyclo": 2,
+    "loc": 49,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_structured_logging.py::fake_app@753": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 3
+  },
+  "yadgar/tests/test_structured_logging.py::receive@764": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 0
+  },
+  "yadgar/tests/test_structured_logging.py::run@756": {
+    "cyclo": 1,
+    "loc": 16,
+    "nesting": 0,
+    "params": 0
+  },
+  "yadgar/tests/test_structured_logging.py::send@767": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 1
   },
   "yadgar/tests/test_structured_logging.py::setup_method@239": {
     "cyclo": 2,
@@ -23620,6 +24353,18 @@
   "yadgar/tests/test_structured_logging.py::setup_method@314": {
     "cyclo": 2,
     "loc": 18,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::setup_method@715": {
+    "cyclo": 2,
+    "loc": 7,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::setup_method@835": {
+    "cyclo": 2,
+    "loc": 11,
     "nesting": 0,
     "params": 1
   },
@@ -23647,6 +24392,198 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/tests/test_structured_logging.py::teardown_method@723": {
+    "cyclo": 2,
+    "loc": 7,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::teardown_method@847": {
+    "cyclo": 2,
+    "loc": 11,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_200_ok@648": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_201_ok@653": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_301_ok@658": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_399_ok@663": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_400_error@668": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_404_error@673": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_422_error@678": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_500_error@683": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_503_error@688": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_access_token_still_redacted@587": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_api_key_foo_still_redacted@577": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_api_key_still_redacted@572": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_auth_exact_still_redacted@528": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_auth_token_provider_not_redacted@602": {
+    "cyclo": 2,
+    "loc": 13,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_authorization_header_compound_still_redacted@560": {
+    "cyclo": 2,
+    "loc": 6,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_authorization_header_still_redacted@550": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_authorization_header_still_redacted_capitalized@555": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_bearer_exact_still_redacted@543": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_cancelled_degraded@699": {
+    "cyclo": 2,
+    "loc": 5,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_client_secret_still_redacted@582": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_content_exact_still_redacted@523": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_content_length_not_redacted@514": {
+    "cyclo": 2,
+    "loc": 6,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_content_type_not_redacted@507": {
+    "cyclo": 2,
+    "loc": 6,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_emits_action_field@785": {
+    "cyclo": 2,
+    "loc": 3,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_emits_component_field@781": {
+    "cyclo": 2,
+    "loc": 3,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_emits_http_status_not_bare_status@799": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_emits_latency_ms_not_duration_ms@793": {
+    "cyclo": 3,
+    "loc": 5,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_emits_outcome_ok_for_200@789": {
+    "cyclo": 2,
+    "loc": 3,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_emits_request_id@804": {
+    "cyclo": 2,
+    "loc": 3,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_emits_tool_name@808": {
+    "cyclo": 2,
+    "loc": 3,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/tests/test_structured_logging.py::test_emits_valid_json@49": {
     "cyclo": 2,
     "loc": 9,
@@ -23669,6 +24606,12 @@
     "cyclo": 4,
     "loc": 27,
     "nesting": 1,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_formatter_last_resort_guard_respects_new_denylist@616": {
+    "cyclo": 3,
+    "loc": 22,
+    "nesting": 0,
     "params": 1
   },
   "yadgar/tests/test_structured_logging.py::test_human_format_no_json_on_root@414": {
@@ -23743,9 +24686,33 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/tests/test_structured_logging.py::test_outcome_404_is_error@812": {
+    "cyclo": 2,
+    "loc": 3,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_outcome_500_is_error@816": {
+    "cyclo": 2,
+    "loc": 3,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_password_still_redacted@567": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/tests/test_structured_logging.py::test_preserves_non_sensitive_keys@197": {
     "cyclo": 4,
     "loc": 11,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_private_key_still_redacted@597": {
+    "cyclo": 2,
+    "loc": 4,
     "nesting": 0,
     "params": 1
   },
@@ -23759,6 +24726,18 @@
     "cyclo": 5,
     "loc": 11,
     "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_refresh_token_still_redacted@592": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_request_info_reaches_handler_at_warning_root_level@859": {
+    "cyclo": 5,
+    "loc": 49,
+    "nesting": 1,
     "params": 1
   },
   "yadgar/tests/test_structured_logging.py::test_required_fields_present@59": {
@@ -23791,6 +24770,12 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/tests/test_structured_logging.py::test_secret_exact_still_redacted@538": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/tests/test_structured_logging.py::test_strips_content_key@156": {
     "cyclo": 3,
     "loc": 9,
@@ -23812,6 +24797,12 @@
   "yadgar/tests/test_structured_logging.py::test_strips_token_key@176": {
     "cyclo": 3,
     "loc": 9,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_suppression_list_does_not_include_yadgar_requests@909": {
+    "cyclo": 2,
+    "loc": 13,
     "nesting": 0,
     "params": 1
   },
@@ -23845,10 +24836,22 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/tests/test_structured_logging.py::test_token_exact_still_redacted@533": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/tests/test_structured_logging.py::test_traceback_truncated@113": {
     "cyclo": 4,
     "loc": 19,
     "nesting": 2,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_unknown_fallback_error@705": {
+    "cyclo": 2,
+    "loc": 5,
+    "nesting": 0,
     "params": 1
   },
   "yadgar/tests/test_structured_logging.py::test_uvicorn_access_emits_json@347": {
@@ -23872,6 +24875,18 @@
   "yadgar/tests/test_structured_logging.py::test_yadgar_logger_propagates_to_root@416": {
     "cyclo": 2,
     "loc": 11,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_yadgar_requests_handler_not_duplicated_on_reconfigure@923": {
+    "cyclo": 2,
+    "loc": 12,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_structured_logging.py::test_zero_error@693": {
+    "cyclo": 2,
+    "loc": 5,
     "nesting": 0,
     "params": 1
   },
