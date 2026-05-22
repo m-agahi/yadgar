@@ -237,46 +237,244 @@ class TestContentRedactor:
 
 class TestConfigureLogging:
     def setup_method(self):
-        # Reset root yadgar logger before each test
-        logger = logging.getLogger("yadgar")
+        # Reset root and yadgar loggers before each test (v5.4.3: handler lives on root)
+        import logging as _logging
+
+        from yadgar.log_config import JSONLogFormatter
+
+        root = _logging.getLogger()
+        root.handlers = [h for h in root.handlers if not isinstance(h.formatter, JSONLogFormatter)]
+        logger = _logging.getLogger("yadgar")
+        logger.handlers.clear()
+        logger.propagate = True
+
+    def teardown_method(self):
+        import logging as _logging
+
+        from yadgar.log_config import JSONLogFormatter
+
+        root = _logging.getLogger()
+        root.handlers = [h for h in root.handlers if not isinstance(h.formatter, JSONLogFormatter)]
+        logger = _logging.getLogger("yadgar")
         logger.handlers.clear()
         logger.propagate = True
 
     def test_json_mode_installs_json_formatter(self):
+        """v5.4.3: JSONLogFormatter lives on root logger, not yadgar logger."""
         from yadgar.log_config import JSONLogFormatter, configure_logging
 
         configure_logging(level="DEBUG", log_format="json")
-        logger = logging.getLogger("yadgar")
-        formatters = [h.formatter for h in logger.handlers]
+        # Check root logger (v5.4.3 root-logger approach)
+        root = logging.getLogger()
+        formatters = [h.formatter for h in root.handlers]
         assert any(isinstance(f, JSONLogFormatter) for f in formatters)
 
     def test_text_mode_uses_standard_formatter(self):
         from yadgar.log_config import JSONLogFormatter, configure_logging
 
         configure_logging(level="DEBUG", log_format="text")
-        logger = logging.getLogger("yadgar")
-        # JSONLogFormatter must NOT be used in text mode
-        for h in logger.handlers:
+        root = logging.getLogger()
+        # JSONLogFormatter must NOT be present on root in text mode
+        for h in root.handlers:
             assert not isinstance(h.formatter, JSONLogFormatter), (
-                "text mode must not use JSONLogFormatter"
+                "text mode must not use JSONLogFormatter on root"
             )
 
     def test_idempotent_no_duplicate_handlers(self):
-        from yadgar.log_config import configure_logging
+        """v5.4.3: idempotency guard is on root logger."""
+        from yadgar.log_config import JSONLogFormatter, configure_logging
 
         configure_logging(level="INFO", log_format="json")
         configure_logging(level="INFO", log_format="json")
-        logger = logging.getLogger("yadgar")
-        # Should not accumulate duplicate handlers on second call
-        assert len(logger.handlers) <= 1
+        root = logging.getLogger()
+        json_handlers = [h for h in root.handlers if isinstance(h.formatter, JSONLogFormatter)]
+        assert len(json_handlers) <= 1
 
     def test_redactor_installed_in_json_mode(self):
-        from yadgar.log_config import ContentRedactor, configure_logging
+        """v5.4.3: ContentRedactor is on root handler, not yadgar logger."""
+        from yadgar.log_config import ContentRedactor, JSONLogFormatter, configure_logging
 
         configure_logging(level="DEBUG", log_format="json")
-        logger = logging.getLogger("yadgar")
-        # Redactor may be on handler or logger filters
-        all_filters = list(logger.filters)
-        for h in logger.handlers:
-            all_filters.extend(h.filters)
-        assert any(isinstance(f, ContentRedactor) for f in all_filters)
+        root = logging.getLogger()
+        json_handler = next(
+            (h for h in root.handlers if isinstance(h.formatter, JSONLogFormatter)), None
+        )
+        assert json_handler is not None
+        assert any(isinstance(f, ContentRedactor) for f in json_handler.filters)
+
+
+# ---------------------------------------------------------------------------
+# Framework logger coverage (v5.4.3) — I14 extended to root logger
+# ---------------------------------------------------------------------------
+
+
+class TestFrameworkLoggerCoverage:
+    """Root-logger approach: configure_logging() must cover all framework namespaces."""
+
+    def setup_method(self):
+        """Reset root and yadgar loggers; remove handlers added by previous tests."""
+        import logging
+
+        root = logging.getLogger()
+        # Remove any JSONLogFormatter handlers from root installed by prior test
+        root.handlers = [
+            h
+            for h in root.handlers
+            if not isinstance(
+                h.formatter,
+                __import__("yadgar.log_config", fromlist=["JSONLogFormatter"]).JSONLogFormatter,
+            )
+        ]
+        # Reset yadgar logger
+        yadgar_log = logging.getLogger("yadgar")
+        yadgar_log.handlers.clear()
+        yadgar_log.propagate = True
+
+    def teardown_method(self):
+        """Remove root handlers added by configure_logging to avoid polluting other tests."""
+        import logging
+
+        from yadgar.log_config import JSONLogFormatter
+
+        root = logging.getLogger()
+        root.handlers = [h for h in root.handlers if not isinstance(h.formatter, JSONLogFormatter)]
+        yadgar_log = logging.getLogger("yadgar")
+        yadgar_log.handlers.clear()
+        yadgar_log.propagate = True
+
+    def test_root_handler_installed_in_json_mode(self):
+        """configure_logging(json) must attach JSONLogFormatter handler to root logger."""
+        import logging
+
+        from yadgar.log_config import JSONLogFormatter, configure_logging
+
+        configure_logging(log_format="json", level="DEBUG")
+        root = logging.getLogger()
+        formatters = [h.formatter for h in root.handlers]
+        assert any(isinstance(f, JSONLogFormatter) for f in formatters), (
+            "root logger must have JSONLogFormatter handler after configure_logging(json)"
+        )
+
+    def test_uvicorn_access_emits_json(self):
+        """uvicorn.access child records must reach root JSON handler → produce valid JSON."""
+        import io
+        import logging
+
+        from yadgar.log_config import JSONLogFormatter, configure_logging
+
+        configure_logging(log_format="json", level="DEBUG")
+
+        # Capture what the root handler emits
+        stream = io.StringIO()
+        root = logging.getLogger()
+        json_handler = next(h for h in root.handlers if isinstance(h.formatter, JSONLogFormatter))
+        old_stream = json_handler.stream
+        json_handler.stream = stream
+
+        try:
+            uv_logger = logging.getLogger("uvicorn.access")
+            uv_logger.propagate = True  # default — should already be True
+            uv_logger.handlers = []  # no own handlers — propagate to root
+            uv_logger.warning("GET /health HTTP/1.1 200")
+            output = stream.getvalue().strip()
+        finally:
+            json_handler.stream = old_stream
+
+        assert output, "uvicorn.access log must reach root handler"
+        parsed = json.loads(output.splitlines()[-1])
+        assert parsed.get("level") == "WARNING"
+        assert "GET /health" in parsed.get("event", "")
+
+    def test_fastmcp_logger_emits_json(self):
+        """fastmcp.* child records must reach root JSON handler."""
+        import io
+        import logging
+
+        from yadgar.log_config import JSONLogFormatter, configure_logging
+
+        configure_logging(log_format="json", level="DEBUG")
+
+        stream = io.StringIO()
+        root = logging.getLogger()
+        json_handler = next(h for h in root.handlers if isinstance(h.formatter, JSONLogFormatter))
+        old_stream = json_handler.stream
+        json_handler.stream = stream
+
+        try:
+            fm_logger = logging.getLogger("fastmcp")
+            fm_logger.propagate = True
+            fm_logger.handlers = []
+            fm_logger.warning("Processing request of type ListResourcesRequest")
+            output = stream.getvalue().strip()
+        finally:
+            json_handler.stream = old_stream
+
+        assert output, "fastmcp log must reach root handler"
+        parsed = json.loads(output.splitlines()[-1])
+        assert "Processing request" in parsed.get("event", "")
+
+    def test_yadgar_logger_propagates_to_root(self):
+        """After configure_logging(json), yadgar logger must propagate=True to root."""
+        import logging
+
+        from yadgar.log_config import configure_logging
+
+        configure_logging(log_format="json", level="DEBUG")
+        yadgar_log = logging.getLogger("yadgar")
+        assert yadgar_log.propagate is True, (
+            "yadgar logger must propagate=True after v5.4.3 root-logger approach"
+        )
+
+    def test_human_format_no_json_on_root(self):
+        """YADGAR_LOG_FORMAT=human must not install JSONLogFormatter on root."""
+        import logging
+
+        from yadgar.log_config import JSONLogFormatter, configure_logging
+
+        configure_logging(log_format="human", level="DEBUG")
+        root = logging.getLogger()
+        formatters = [h.formatter for h in root.handlers]
+        assert not any(isinstance(f, JSONLogFormatter) for f in formatters), (
+            "human/text mode must not install JSONLogFormatter on root logger"
+        )
+
+    def test_text_format_no_json_on_root(self):
+        """YADGAR_LOG_FORMAT=text must not install JSONLogFormatter on root."""
+        import logging
+
+        from yadgar.log_config import JSONLogFormatter, configure_logging
+
+        configure_logging(log_format="text", level="DEBUG")
+        root = logging.getLogger()
+        formatters = [h.formatter for h in root.handlers]
+        assert not any(isinstance(f, JSONLogFormatter) for f in formatters), (
+            "text mode must not install JSONLogFormatter on root logger"
+        )
+
+    def test_idempotent_root_handler_no_duplicates(self):
+        """Calling configure_logging twice must not add duplicate root handlers."""
+        import logging
+
+        from yadgar.log_config import JSONLogFormatter, configure_logging
+
+        configure_logging(log_format="json", level="INFO")
+        configure_logging(log_format="json", level="INFO")
+        root = logging.getLogger()
+        json_handlers = [h for h in root.handlers if isinstance(h.formatter, JSONLogFormatter)]
+        assert len(json_handlers) <= 1, "root must not accumulate duplicate JSON handlers"
+
+    def test_root_redactor_installed(self):
+        """Root handler must have ContentRedactor filter attached."""
+        import logging
+
+        from yadgar.log_config import ContentRedactor, JSONLogFormatter, configure_logging
+
+        configure_logging(log_format="json", level="DEBUG")
+        root = logging.getLogger()
+        json_handler = next(
+            (h for h in root.handlers if isinstance(h.formatter, JSONLogFormatter)), None
+        )
+        assert json_handler is not None
+        assert any(isinstance(f, ContentRedactor) for f in json_handler.filters), (
+            "root JSON handler must have ContentRedactor filter"
+        )

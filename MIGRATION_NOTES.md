@@ -507,6 +507,56 @@ core compaction logic works).
 
 ---
 
+## v5.4.3 — I14 framework-logger coverage + ruff grandfathering (2026-05-22)
+
+### What changed
+
+- `configure_logging()` now covers ALL framework loggers (uvicorn, mcp, fastmcp, httpx, starlette) via root-logger approach. Core daemon plain-text log lines are gone.
+- 31 pre-existing C901/PLR0913 ruff violators grandfathered in `pyproject.toml` per-file-ignores (b27d218 gap). Refactor target: v5.4.4.
+- Backend version **unchanged** (5.0.3) — no backend rebuild needed.
+
+### 1. Rebuild core image (user runs manually)
+
+```bash
+podman build --arch amd64 -f Dockerfile -t docker.io/openfantasy/yadgar:5.4.3 .
+podman push docker.io/openfantasy/yadgar:5.4.3
+```
+
+### 2. Bump nix module
+
+In `modules/home/yadgar.nix` (or equivalent):
+```nix
+yadgar_core_version = "5.4.3";
+```
+
+### 3. Restart core
+
+```bash
+systemctl --user restart yadgar.service
+```
+
+### 4. Verify JSON logging covers framework lines
+
+```bash
+journalctl --user -u yadgar -n 50 --output=cat | python3 -c "
+import sys, json
+for line in sys.stdin:
+    line = line.strip()
+    if not line: continue
+    try: json.loads(line); print('OK:', line[:80])
+    except: print('NOT JSON:', line[:80])
+"
+```
+
+All lines (including uvicorn.access, mcp, fastmcp) should parse as JSON.
+
+### 5. New env var: YADGAR_LOG_FORMAT=human
+
+For local dev (non-JSON output from ALL loggers):
+```bash
+YADGAR_LOG_FORMAT=human python -m yadgar --transport streamable-http
+```
+
 ## v5.4.2 — CB-1 probe fixes + F5-A saturation fix (2026-05-22)
 
 ### 1. Image builds (user runs manually)

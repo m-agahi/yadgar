@@ -328,11 +328,46 @@ class RequestLoggingMiddleware:
             )
 
 
+def _configure_yadgar_logger(numeric_level: int, *, propagate: bool) -> None:
+    """Set level and propagate flag on the yadgar logger; clear its own handlers.
+
+    v5.4.3: yadgar propagates to root (propagate=True) — root handler covers output.
+    """
+    logger = logging.getLogger("yadgar")
+    logger.setLevel(numeric_level)
+    logger.handlers.clear()
+    logger.propagate = propagate
+
+
+def _suppress_noisy_framework_loggers() -> None:
+    """Raise threshold on chatty framework namespaces to WARNING.
+
+    These namespaces still propagate to root (JSON output intact).
+    Only INFO/DEBUG chatter is suppressed to reduce noise.
+    Covered: uvicorn.access (per-request lines), httpx/httpcore (outbound HTTP
+    debug), asyncio (event-loop internals).
+    """
+    noisy = (
+        "uvicorn.access",
+        "httpx",
+        "httpcore",
+        "asyncio",
+    )
+    for name in noisy:
+        ns_logger = logging.getLogger(name)
+        if ns_logger.level == logging.NOTSET or ns_logger.level < logging.WARNING:
+            ns_logger.setLevel(logging.WARNING)
+
+
 def configure_logging(
     log_format: str | None = None,
     level: str = "WARNING",
 ) -> None:
-    """Configure the 'yadgar' logger with the appropriate formatter.
+    """Configure structured logging for yadgar and all framework loggers.
+
+    v5.4.3: root-logger approach — attaches handler to root so uvicorn, mcp,
+    fastmcp, httpx, and any other framework loggers emit JSON automatically.
+    The yadgar logger propagates to root (propagate=True).
 
     I14: default format is 'json' for production (changed from 'human' in v5.4.2).
     See MIGRATION_NOTES.md for downstream impact on Loki/Grafana dashboards.
@@ -342,43 +377,53 @@ def configure_logging(
     level: logging level string (default 'WARNING').
 
     Idempotent: calling twice with the same format does not add duplicate handlers.
+
+    Framework namespaces covered (all propagate to root by default):
+        uvicorn, uvicorn.access, uvicorn.error, mcp, fastmcp, httpx, starlette
     """
     if log_format is None:
         log_format = os.environ.get("YADGAR_LOG_FORMAT", "json").lower()
 
-    logger = logging.getLogger("yadgar")
     numeric_level = getattr(logging, level.upper(), logging.WARNING)
-    logger.setLevel(numeric_level)
-
     use_json = log_format == "json"
 
-    # Idempotency guard: if a handler with the target formatter type already
-    # exists, update the level and return rather than stacking another handler.
-    for existing in logger.handlers:
+    root = logging.getLogger()
+
+    # Idempotency guard on root: if handler with target formatter type already
+    # exists, update its level and return without stacking another handler.
+    for existing in root.handlers:
         if use_json and isinstance(existing.formatter, JSONLogFormatter):
             existing.setLevel(numeric_level)
+            root.setLevel(numeric_level)
+            _configure_yadgar_logger(numeric_level, propagate=True)
             return
         if not use_json and not isinstance(existing.formatter, JSONLogFormatter):
             existing.setLevel(numeric_level)
+            root.setLevel(numeric_level)
+            _configure_yadgar_logger(numeric_level, propagate=True)
             return
 
-    # Clear existing handlers before installing a new one to avoid accumulation
-    # across repeated calls with different formats (e.g. test teardown).
-    logger.handlers.clear()
+    # Remove pre-installed handlers on root (stdlib default, uvicorn default)
+    # before installing ours to avoid duplicate/mixed output.
+    root.handlers.clear()
+    root.setLevel(numeric_level)
 
     if use_json:
         formatter: logging.Formatter = JSONLogFormatter()
         handler = logging.StreamHandler()
         handler.setFormatter(formatter)
         handler.setLevel(numeric_level)
-        # Install redactor as a handler-level filter
         handler.addFilter(ContentRedactor())
-        logger.addHandler(handler)
+        root.addHandler(handler)
     else:
         formatter = logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s")
         handler = logging.StreamHandler()
         handler.setFormatter(formatter)
         handler.setLevel(numeric_level)
-        logger.addHandler(handler)
+        root.addHandler(handler)
 
-    logger.propagate = False
+    # yadgar logger: propagate=True → records flow to root handler above.
+    _configure_yadgar_logger(numeric_level, propagate=True)
+
+    # Suppress DEBUG/INFO chatter from high-volume framework namespaces.
+    _suppress_noisy_framework_loggers()
