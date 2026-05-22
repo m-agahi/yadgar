@@ -108,6 +108,7 @@ def _patch_uvicorn_shutdown_timeout() -> None:
             log_level=self.settings.log_level.lower(),
             timeout_graceful_shutdown=_timeout,
             timeout_keep_alive=2,
+            log_config=None,
         )
         server = _uvicorn.Server(config)
         try:
@@ -127,6 +128,7 @@ def _patch_uvicorn_shutdown_timeout() -> None:
             log_level=self.settings.log_level.lower(),
             timeout_graceful_shutdown=_timeout,
             timeout_keep_alive=2,
+            log_config=None,
         )
         server = _uvicorn.Server(config)
         try:
