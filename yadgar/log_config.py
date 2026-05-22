@@ -302,6 +302,10 @@ class RequestLoggingMiddleware:
         tool_name = f"{method} {path}"
 
         status_code: list[int] = []
+        # Defensive init: covers BaseException paths (asyncio.CancelledError on
+        # shutdown of in-flight requests) where neither try-body nor except-Exception
+        # runs, leaving `status` unbound in `finally`. Pre-v5.4.5 bug.
+        status = "0"
 
         async def send_with_capture(message):
             if message["type"] == "http.response.start":
@@ -313,6 +317,9 @@ class RequestLoggingMiddleware:
             status = str(status_code[0]) if status_code else "0"
         except Exception:
             status = "500"
+            raise
+        except BaseException:
+            status = "cancelled"
             raise
         finally:
             duration_ms = int((time.monotonic() - start) * 1000)
