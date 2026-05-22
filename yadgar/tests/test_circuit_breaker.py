@@ -249,3 +249,189 @@ class TestPerEndpointIsolation:
         assert client._breakers["ce"].is_open(), "ce should be open"
         assert not client._breakers["nli"].is_open(), "nli should NOT be open"
         assert not client._breakers["pair"].is_open(), "pair should NOT be open"
+
+
+# ---------------------------------------------------------------------------
+# 8. Probe uses PROBE_TIMEOUT_SEC, not full client timeout (Fix 1a)
+# ---------------------------------------------------------------------------
+
+
+class TestProbeUsesShortTimeout:
+    def test_probe_timeout_used_on_half_open_probe(self, monkeypatch):
+        """When breaker is HALF_OPEN, score_cross_encoder must pass probe_timeout to httpx."""
+        import httpx
+
+        import yadgar.config as cfg
+
+        monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_ENABLED", "1")
+        monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "3")
+        monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_OPEN_DURATION_SEC", "60")
+        monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_PROBE_TIMEOUT_SEC", "2.0")
+        cfg.get_settings.cache_clear()
+
+        with patch("httpx.Client") as mock_cls:
+            mock_http = MagicMock()
+            mock_resp = MagicMock()
+            mock_resp.json.return_value = {"scores": [0.5]}
+            mock_resp.raise_for_status = MagicMock()
+            mock_http.post.return_value = mock_resp
+            mock_cls.return_value = mock_http
+
+            from yadgar.ml_client import RemoteMLClient
+
+            client = RemoteMLClient("http://localhost:8001")
+            breaker = client._breakers["ce"]
+
+            # Put in half-open
+            fake_open_time = 1_000_000.0
+            breaker._open(reason="test", _now=fake_open_time)
+            client._fake_now = fake_open_time + 61.0
+
+            client.score_cross_encoder("q", ["t"])
+
+        call_kwargs = mock_http.post.call_args
+        # probe call must pass a timeout kwarg
+        assert call_kwargs is not None, "post should have been called"
+        assert "timeout" in call_kwargs.kwargs, "probe must override timeout kwarg"
+        probe_timeout = call_kwargs.kwargs["timeout"]
+        # Should be an httpx.Timeout with read=2.0
+        assert isinstance(probe_timeout, httpx.Timeout), "timeout must be httpx.Timeout"
+        assert probe_timeout.read == 2.0, (
+            f"probe read timeout should be 2.0, got {probe_timeout.read}"
+        )
+
+    def test_normal_call_uses_default_timeout(self, monkeypatch):
+        """Normal (CLOSED) call must NOT pass probe timeout — uses client default."""
+        import yadgar.config as cfg
+
+        monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_ENABLED", "1")
+        monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "3")
+        monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_OPEN_DURATION_SEC", "60")
+        monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_PROBE_TIMEOUT_SEC", "2.0")
+        cfg.get_settings.cache_clear()
+
+        with patch("httpx.Client") as mock_cls:
+            mock_http = MagicMock()
+            mock_resp = MagicMock()
+            mock_resp.json.return_value = {"scores": [0.5]}
+            mock_resp.raise_for_status = MagicMock()
+            mock_http.post.return_value = mock_resp
+            mock_cls.return_value = mock_http
+
+            from yadgar.ml_client import RemoteMLClient
+
+            client = RemoteMLClient("http://localhost:8001")
+            # Breaker is CLOSED — normal call
+            client.score_cross_encoder("q", ["t"])
+
+        call_kwargs = mock_http.post.call_args
+        assert call_kwargs is not None
+        # Normal calls must NOT pass a timeout override
+        assert "timeout" not in call_kwargs.kwargs, (
+            "normal call must not override timeout (uses client default)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 9. Exponential backoff on consecutive probe failures (Fix 1b)
+# ---------------------------------------------------------------------------
+
+
+class TestExponentialBackoffOnProbeFailure:
+    def _make_client(self, monkeypatch, base_duration: float = 60.0):
+        import yadgar.config as cfg
+
+        monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_ENABLED", "1")
+        monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "3")
+        monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_OPEN_DURATION_SEC", str(base_duration))
+        monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_MAX_OPEN_DURATION_SEC", "600")
+        monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_BACKOFF_FACTOR", "2.0")
+        cfg.get_settings.cache_clear()
+
+        with patch("httpx.Client") as mock_cls:
+            mock_cls.return_value = MagicMock()
+            from yadgar.ml_client import RemoteMLClient
+
+            return RemoteMLClient("http://localhost:8001")
+
+    def _advance_to_half_open(self, breaker, t_open: float, duration: float) -> None:
+        """Transition breaker OPEN→HALF_OPEN by simulating cooldown expiry."""
+        assert breaker.is_half_open(_now=t_open + duration + 1.0), "should be half-open"
+
+    def test_first_probe_failure_doubles_cooldown(self, monkeypatch):
+        """After 1st probe failure, open_duration should double (60 → 120)."""
+        client = self._make_client(monkeypatch)
+        breaker = client._breakers["ce"]
+
+        t0 = 1_000_000.0
+        breaker._open(reason="initial", _now=t0)
+        # Advance time past cooldown to transition to HALF_OPEN
+        self._advance_to_half_open(breaker, t0, 60.0)
+        breaker.record_failure(_now=t0 + 61.0)  # now half-open, probe failed
+
+        assert breaker._open_duration_sec == 120.0, (
+            f"after 1 probe failure: expected 120s, got {breaker._open_duration_sec}"
+        )
+
+    def test_second_probe_failure_quadruples_cooldown(self, monkeypatch):
+        """After 2nd probe failure, cooldown should be base * factor^2 = 240."""
+        client = self._make_client(monkeypatch)
+        breaker = client._breakers["ce"]
+
+        t0 = 1_000_000.0
+        breaker._open(reason="initial", _now=t0)
+        # First probe failure: open(60s) → half_open → fail → open(120s)
+        self._advance_to_half_open(breaker, t0, 60.0)
+        breaker.record_failure(_now=t0 + 61.0)
+        assert breaker._open_duration_sec == 120.0
+
+        # Second probe failure: open(120s) → half_open → fail → open(240s)
+        self._advance_to_half_open(breaker, t0 + 61.0, 120.0)
+        breaker.record_failure(_now=t0 + 61.0 + 121.0)
+
+        assert breaker._open_duration_sec == 240.0, (
+            f"after 2 probe failures: expected 240s, got {breaker._open_duration_sec}"
+        )
+
+    def test_backoff_capped_at_max_open_duration(self, monkeypatch):
+        """Cooldown never exceeds MAX_OPEN_DURATION_SEC (600s)."""
+        client = self._make_client(monkeypatch, base_duration=300.0)
+        breaker = client._breakers["ce"]
+
+        t0 = 1_000_000.0
+        breaker._open(reason="initial", _now=t0)
+        # One probe failure: 300 * 2 = 600 → capped at 600
+        self._advance_to_half_open(breaker, t0, 300.0)
+        breaker.record_failure(_now=t0 + 301.0)
+        assert breaker._open_duration_sec == 600.0, (
+            f"should be capped at 600, got {breaker._open_duration_sec}"
+        )
+        # Another probe failure: would be 1200 → still capped at 600
+        self._advance_to_half_open(breaker, t0 + 301.0, 600.0)
+        breaker.record_failure(_now=t0 + 301.0 + 601.0)
+        assert breaker._open_duration_sec == 600.0, (
+            f"should still be capped at 600, got {breaker._open_duration_sec}"
+        )
+
+    def test_success_resets_probe_failure_count(self, monkeypatch):
+        """record_success resets probe failure count → next OPEN uses base duration."""
+        client = self._make_client(monkeypatch)
+        breaker = client._breakers["ce"]
+
+        t0 = 1_000_000.0
+        breaker._open(reason="initial", _now=t0)
+        self._advance_to_half_open(breaker, t0, 60.0)
+        breaker.record_failure(_now=t0 + 61.0)  # → 120s
+        assert breaker._open_duration_sec == 120.0
+
+        breaker.record_success()
+        assert breaker.consecutive_probe_failures == 0, "probe failure count should reset"
+        assert breaker._open_duration_sec == 60.0, "duration should reset to base after success"
+
+        # Re-open via closed-state failure threshold → should use base 60s again
+        breaker.record_failure(_now=t0 + 200.0)
+        breaker.record_failure(_now=t0 + 200.0)
+        breaker.record_failure(_now=t0 + 200.0)
+        assert breaker._open_duration_sec == 60.0, (
+            f"after reset + re-open: expected base 60s, got {breaker._open_duration_sec}"
+        )
