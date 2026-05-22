@@ -173,7 +173,11 @@ async def lifespan(app: FastAPI):
     _level = os.environ.get("YADGAR_BACKEND_LOG_LEVEL", "warn").upper()
     from yadgar.log_config import configure_logging as _configure_logging  # noqa: PLC0415
 
-    _configure_logging(log_format=os.environ.get("YADGAR_LOG_FORMAT", "json"), level=_level)
+    _configure_logging(
+        log_format=os.environ.get("YADGAR_LOG_FORMAT", "json"),
+        level=_level,
+        process="backend",
+    )
 
     # Load model eagerly so /health reflects true readiness
     try:
