@@ -694,3 +694,80 @@ Exit 0 = within cap (warnings for individual layers >500 MB). Exit 1 = over budg
 **Caps:** backend ≤2.0 GB, core ≤0.8 GB (auto-detected from image name; override with `--max-size-gb`).
 
 **Context:** F0 achieved 6.78 GB → 1.63 GB incidentally during v5.4.2 backend rebuild. This hook prevents regression on future dep bumps. See `docs/ARCHITECTURE_INVARIANTS.md` P9 section.
+
+---
+
+## v5.5.0 — V1a backend /metrics endpoint (2026-05-22)
+
+**What ships:** `yadgar/embed_service_metrics.py` + GET `/metrics` on `yadgar.embed_service:app`.
+Core version 5.4.5 → 5.5.0. Backend version 5.0.3 → 5.1.0.
+`prometheus_client` was already a main dep — no new package install needed.
+
+### 1. Build both images
+
+```bash
+# Backend (5.1.0) — embed_service_metrics.py is part of shared package
+podman build -f Dockerfile.backend -t openfantasy/yadgar-backend:5.1.0 .
+
+# Core (5.5.0)
+podman build -f Dockerfile -t openfantasy/yadgar:5.5.0 .
+```
+
+### 2. Nix bump — update both versions in nix config
+
+In `~/git/nix` (adjust paths to match your nix module):
+
+```bash
+# Bump yadgar version 5.4.5 → 5.5.0
+# Bump yadgar-backend version 5.0.3 → 5.1.0
+# Then:
+home-manager switch
+```
+
+### 3. Restart services
+
+```bash
+systemctl --user restart yadgar-backend.service
+systemctl --user restart yadgar.service
+```
+
+### 4. Verify /metrics endpoint
+
+```bash
+# Should return 200 with Prometheus text output
+curl -s http://127.0.0.1:8001/metrics | grep yadgar_embed
+
+# Expected families:
+# yadgar_embed_rerank_requests_total{mode="ce|nli|pair"}
+# yadgar_embed_rerank_503_total{mode="ce|nli|pair"}
+# yadgar_embed_rerank_duration_seconds{mode="ce|nli|pair"}
+# yadgar_embed_rerank_semaphore_held{mode="ce|nli|pair"}
+# yadgar_embed_model_loaded{model="ce|nli|pair|embedding"}
+# process_* (RSS, CPU seconds, open FDs)
+# python_info
+```
+
+### 5. Prometheus scraper config (example)
+
+`/metrics` is **unauthenticated** on port 8001 (loopback only — `127.0.0.1:8001:8001`).
+Prometheus scrapers on localhost need no bearer token.
+
+```yaml
+# prometheus.yml scrape config — add to scrape_configs:
+- job_name: yadgar-backend
+  static_configs:
+    - targets: ['127.0.0.1:8001']
+  metrics_path: /metrics
+  scrape_interval: 15s
+```
+
+**Security note:** port 8001 is bound to loopback (`127.0.0.1`) only, per `docker-compose.yml`.
+External hosts cannot reach it without an explicit port forward. No auth needed on loopback-only endpoints.
+
+### 6. Image size check (post-build)
+
+`prometheus_client` adds ~100 KB to the backend image. Backend should remain well under the 2.0 GB cap.
+
+```bash
+python scripts/check_image_size.py --image-type backend
+```
