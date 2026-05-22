@@ -5,7 +5,7 @@ Mirrored in wiki: `yadgar-architectural-invariants`.
 Anchored memory: project-scoped, `/home/max/git/yadgar`.
 Version-execution-order lives in the `yadgar-roadmap-future-improvements` wiki.
 
-Last updated: 2026-05-21 late evening (Workflow integration added + V1 viz daemon-health panel added — v5.5).
+Last updated: 2026-05-22 (v5.4.7 I14 ratchet cleanup — RequestLoggingMiddleware migrated + ContentRedactor denylist tightened).
 
 ---
 
@@ -108,8 +108,8 @@ Every log entry = JSON with `ts, level, component, action, outcome, latency_ms?,
 - Integration sites converted (ratchet): `ml_client._CircuitBreaker._open`, `embed_service.rerank` semaphore-busy 503, `file_queue.QueueDrainer._drain_once` cycle-end log, `server.tools.memorize.memorize` enqueue-fallback log.
 - `yadgar/embed_service.py`: `lifespan` now calls `configure_logging()` at backend boot.
 - Tests: `yadgar/tests/test_structured_logging.py` — 18 tests covering all I14 contracts.
-- Ratchet status: 4 call sites converted; full conformance target unchanged (v5.6). Known non-conformance: `RequestLoggingMiddleware` (pre-existing, not touched this round).
-- Known sharp edge: denylist uses substring match — `content_type`/`content_length` are redacted. Revisit at v5.6 conformance round.
+- Ratchet status: 4 call sites converted; full conformance target unchanged (v5.6). Known non-conformance: `RequestLoggingMiddleware` (pre-existing, not touched this round). **RESOLVED v5.4.7.**
+- Known sharp edge: denylist uses substring match — `content_type`/`content_length` are redacted. Revisit at v5.6 conformance round. **RESOLVED v5.4.7.**
 
 **v5.4.3 update — framework-logger coverage extended:**
 - Root-logger approach: `configure_logging()` now attaches `JSONLogFormatter` + `ContentRedactor` handler to the **root** logger (not just `yadgar`). All child loggers — `uvicorn`, `uvicorn.access`, `uvicorn.error`, `mcp`, `fastmcp`, `httpx`, `starlette`, and any future framework additions — propagate to root automatically.
@@ -118,6 +118,13 @@ Every log entry = JSON with `ts, level, component, action, outcome, latency_ms?,
 - Noisy namespaces capped at WARNING: `uvicorn.access`, `httpx`, `httpcore`, `asyncio` (suppress DEBUG/INFO chatter; WARNING+ still emits JSON).
 - `YADGAR_LOG_FORMAT=text` / `=human` still disables JSON everywhere (root gets text formatter instead).
 - Tests: `TestFrameworkLoggerCoverage` (8 tests) added to `test_structured_logging.py` — covers root handler install, uvicorn.access JSON emission, fastmcp JSON emission, yadgar propagation, human/text fallback, idempotency, redactor on root handler.
+
+**v5.4.7 update — I14 ratchet cleanup (shipped):**
+- `RequestLoggingMiddleware` migrated to I14 schema: emits `component="http_server"`, `action="request"`, `outcome` (via `_outcome_from_status`), `latency_ms` (renamed from `duration_ms`), `http_status` (renamed from `status`). Fields `request_id`, `tool_name`, `trace_id` retained. **BREAKING: dashboards reading `duration_ms` must update to `latency_ms`.** See `MIGRATION_NOTES.md`.
+- `ContentRedactor` denylist tightened: two-tier exact/substring model replaces flat substring match. `_EXACT_DENYLIST` = `{content, auth, token, secret, bearer}` (exact-only). `_SUBSTRING_DENYLIST` = `{password, api_key, authorization, access_token, refresh_token, client_secret, private_key}` (substring). `content_type`/`content_length` false-positive fixed.
+- `_outcome_from_status(status: str) -> str` helper added: `"cancelled"→"degraded"`, `2xx/3xx→"ok"`, all other (4xx/5xx/"0"/unknown)→`"error"`. Cyclo=3, LOC=8 — well within I13 caps.
+- Tests: 40 new tests across `TestContentRedactorDenylistV547`, `TestOutcomeFromStatus`, `TestRequestLoggingMiddlewareI14`. Total test file: 66 tests.
+- **v5.6 follow-ups RESOLVED:** `RequestLoggingMiddleware` non-conformance and `content_type`/`content_length` false-positive both closed in this PR.
 
 ### I15. Boundary-property fuzz tests (SCOPED)
 
@@ -452,6 +459,7 @@ Post-v5.3.9 `BindsTo → Wants` decouple, core + backend run as independent daem
 - 2026-05-22: CB-1 probe-fixes + F5-A saturation fix shipped in v5.4.2. CORRECTS prior v5.3.10 verification claim (rate-limited logging ≠ elimination — probes still caused CPU spikes). Fix 1a (probe timeout 2s), Fix 1b (exponential backoff 60→600s), F5-A (semaphore N=1 per mode). Backend bump 5.0.2→5.0.3; core bump 5.4.1→5.4.2.
 - 2026-05-22: P9 image size ratchet shipped (v5.4.2). F0 (6.78 GB → 1.63 GB) preserved via release-readiness check. Caps: core ≤800 MB, backend ≤2 GB. Script: `scripts/check_image_size.py`. Hook stage: manual (post-build gate, not per-commit).
 - 2026-05-22: v5.4.3 hotfix shipped — I14 framework-logger coverage extended to root logger (uvicorn, mcp, fastmcp, httpx all now emit JSON). I13 b27d218 grandfathering gap closed: 31 pre-existing C901/PLR0913 violators added to pyproject.toml per-file-ignores; refactor target v5.4.4. Backend version unchanged (5.0.3).
+- 2026-05-22: v5.4.7 I14 ratchet cleanup shipped — `RequestLoggingMiddleware` migrated to I14 schema (component/action/outcome/latency_ms/http_status); `ContentRedactor` denylist tightened (two-tier exact+substring, `content_type`/`content_length` false-positive fixed). Both v5.6 I14 follow-ups RESOLVED. Backend version unchanged (5.0.3). BREAKING: `duration_ms` renamed to `latency_ms` in request logs.
 
 ---
 
