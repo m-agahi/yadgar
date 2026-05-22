@@ -1,5 +1,55 @@
 # Migration Notes
 
+## v5.4.7 — I14 ratchet cleanup (2026-05-22)
+
+### What changed
+
+- `RequestLoggingMiddleware` migrated to I14 schema:
+  - `duration_ms` → `latency_ms` (**BREAKING RENAME** — update Loki/Grafana queries)
+  - `status` → `http_status`
+  - Added: `component="http_server"`, `action="request"`, `outcome` ("ok"/"error"/"degraded")
+  - Kept: `request_id`, `tool_name`, `trace_id`
+- `ContentRedactor` denylist tightened (two-tier):
+  - Exact-match only: `content`, `auth`, `token`, `secret`, `bearer`
+  - Substring match: `password`, `api_key`, `authorization`, `access_token`, `refresh_token`, `client_secret`, `private_key`
+  - `content_type`, `content_length` no longer falsely redacted
+- `_outcome_from_status` helper: `2xx/3xx→"ok"`, `"cancelled"→"degraded"`, all else→`"error"`
+- Backend version **unchanged** (5.0.3) — no backend rebuild needed.
+
+### Dashboard migration (BREAKING — action required)
+
+If you have Loki/Grafana queries reading `duration_ms` from `yadgar.requests` logs, update to `latency_ms`:
+
+```logql
+# Before
+{job="yadgar"} | json | __error__="" | duration_ms > 1000
+
+# After
+{job="yadgar"} | json | __error__="" | latency_ms > 1000
+```
+
+### 1. Rebuild core image (user runs manually)
+
+```bash
+podman build --arch amd64 -f Dockerfile -t docker.io/openfantasy/yadgar:5.4.7 .
+podman push docker.io/openfantasy/yadgar:5.4.7
+```
+
+### 2. Bump nix module
+
+In `modules/home/yadgar.nix` (or equivalent):
+```nix
+yadgar_core_version = "5.4.7";
+```
+
+### 3. Restart core
+
+```bash
+systemctl --user restart yadgar.service
+```
+
+---
+
 ## v5.4.6 — LOW-risk complexity refactor batch (2026-05-22)
 
 ### What changed
