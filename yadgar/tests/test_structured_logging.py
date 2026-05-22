@@ -816,3 +816,119 @@ class TestRequestLoggingMiddlewareI14:
     def test_outcome_500_is_error(self):
         parsed = self._run_middleware(500)
         assert parsed.get("outcome") == "error", "outcome must be 'error' for 500"
+
+
+# ---------------------------------------------------------------------------
+# v5.4.8 — RequestLoggingMiddleware visibility at WARNING root level
+# ---------------------------------------------------------------------------
+
+
+class TestRequestLogVisibilityAtWarningLevel:
+    """Regression: yadgar.requests INFO must flow even when root level=WARNING.
+
+    Root cause (v5.4.8): CORE_LOG_LEVEL defaults to 'warn' → configure_logging
+    sets root+handler+yadgar logger all to WARNING → yadgar.requests inherits
+    WARNING → INFO records silently dropped. Fix: dedicated always-INFO handler
+    on yadgar.requests with propagate=False.
+    """
+
+    def setup_method(self):
+        import logging
+
+        from yadgar.log_config import JSONLogFormatter
+
+        root = logging.getLogger()
+        root.handlers = [h for h in root.handlers if not isinstance(h.formatter, JSONLogFormatter)]
+        req_logger = logging.getLogger("yadgar.requests")
+        req_logger.handlers.clear()
+        req_logger.propagate = True
+        req_logger.setLevel(logging.NOTSET)
+
+    def teardown_method(self):
+        import logging
+
+        from yadgar.log_config import JSONLogFormatter
+
+        root = logging.getLogger()
+        root.handlers = [h for h in root.handlers if not isinstance(h.formatter, JSONLogFormatter)]
+        req_logger = logging.getLogger("yadgar.requests")
+        req_logger.handlers.clear()
+        req_logger.propagate = True
+        req_logger.setLevel(logging.NOTSET)
+
+    def test_request_info_reaches_handler_at_warning_root_level(self):
+        """yadgar.requests INFO must be visible even when configure_logging level=WARNING.
+
+        This is the production-default scenario: CORE_LOG_LEVEL=warn → level='WARNING'.
+        Pre-fix: INFO dropped. Post-fix: dedicated handler on yadgar.requests passes it.
+        """
+        import io
+        import logging
+
+        from yadgar.log_config import configure_logging
+
+        configure_logging(log_format="json", level="WARNING")
+
+        req_logger = logging.getLogger("yadgar.requests")
+        # Must have own handler (not just propagate to root at WARNING)
+        assert req_logger.handlers, (
+            "yadgar.requests must have dedicated handler after configure_logging(level='WARNING')"
+        )
+
+        # Capture output from the dedicated handler
+        stream = io.StringIO()
+        req_handler = req_logger.handlers[0]
+        old_stream = req_handler.stream
+        req_handler.stream = stream
+
+        try:
+            req_logger.info(
+                "request",
+                extra={
+                    "component": "http_server",
+                    "action": "request",
+                    "outcome": "ok",
+                    "latency_ms": 5,
+                    "http_status": "200",
+                    "request_id": "test-id",
+                    "tool_name": "GET /health",
+                    "trace_id": "",
+                },
+            )
+            output = stream.getvalue().strip()
+        finally:
+            req_handler.stream = old_stream
+
+        assert output, (
+            "yadgar.requests INFO must emit log line even when root level=WARNING (v5.4.8 fix)"
+        )
+        parsed = json.loads(output)
+        assert parsed.get("event") == "request"
+        assert parsed.get("component") == "http_server"
+
+    def test_suppression_list_does_not_include_yadgar_requests(self):
+        """_suppress_noisy_framework_loggers must not raise threshold on yadgar.requests."""
+        import logging
+
+        from yadgar.log_config import _suppress_noisy_framework_loggers
+
+        req_logger = logging.getLogger("yadgar.requests")
+        req_logger.setLevel(logging.INFO)
+        _suppress_noisy_framework_loggers()
+        # Level must remain INFO — suppression list must not touch yadgar.requests
+        assert req_logger.level == logging.INFO, (
+            "_suppress_noisy_framework_loggers must not raise yadgar.requests above INFO"
+        )
+
+    def test_yadgar_requests_handler_not_duplicated_on_reconfigure(self):
+        """Calling configure_logging twice must not stack handlers on yadgar.requests."""
+        import logging
+
+        from yadgar.log_config import configure_logging
+
+        configure_logging(log_format="json", level="WARNING")
+        configure_logging(log_format="json", level="WARNING")
+        req_logger = logging.getLogger("yadgar.requests")
+        assert len(req_logger.handlers) <= 1, (
+            "yadgar.requests must not accumulate duplicate handlers on reconfigure"
+        )
