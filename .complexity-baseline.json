@@ -1958,12 +1958,22 @@
     "inh_depth": 0,
     "methods": 1
   },
+  "yadgar/embed_service.py::EmbedRequest@128": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
   "yadgar/embed_service.py::EmbedRequest@82": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 1
   },
   "yadgar/embed_service.py::EmbedResponse@120": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 0
+  },
+  "yadgar/embed_service.py::EmbedResponse@143": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 0
@@ -1983,6 +1993,11 @@
     "inh_depth": 0,
     "methods": 1
   },
+  "yadgar/embed_service.py::RerankRequest@149": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
   "yadgar/embed_service.py::RerankResponse@118": {
     "attrs": 0,
     "inh_depth": 0,
@@ -1993,8 +2008,13 @@
     "inh_depth": 0,
     "methods": 0
   },
+  "yadgar/embed_service.py::RerankResponse@164": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 0
+  },
   "yadgar/embed_service.py::__file__": {
-    "loc": 321
+    "loc": 373
   },
   "yadgar/embed_service.py::_encode_all@150": {
     "cyclo": 5,
@@ -2014,6 +2034,18 @@
     "nesting": 3,
     "params": 0
   },
+  "yadgar/embed_service.py::_encode_all@212": {
+    "cyclo": 5,
+    "loc": 15,
+    "nesting": 3,
+    "params": 0
+  },
+  "yadgar/embed_service.py::_get_engine@100": {
+    "cyclo": 4,
+    "loc": 11,
+    "nesting": 3,
+    "params": 0
+  },
   "yadgar/embed_service.py::_get_engine@57": {
     "cyclo": 4,
     "loc": 11,
@@ -2024,6 +2056,12 @@
     "cyclo": 4,
     "loc": 11,
     "nesting": 3,
+    "params": 0
+  },
+  "yadgar/embed_service.py::_get_reranker@113": {
+    "cyclo": 5,
+    "loc": 13,
+    "nesting": 4,
     "params": 0
   },
   "yadgar/embed_service.py::_get_reranker@70": {
@@ -2044,6 +2082,12 @@
     "nesting": 0,
     "params": 0
   },
+  "yadgar/embed_service.py::_make_rerank_semaphores@59": {
+    "cyclo": 2,
+    "loc": 5,
+    "nesting": 0,
+    "params": 0
+  },
   "yadgar/embed_service.py::_require_admin_token@32": {
     "cyclo": 5,
     "loc": 16,
@@ -2056,7 +2100,19 @@
     "nesting": 1,
     "params": 1
   },
+  "yadgar/embed_service.py::_require_admin_token@75": {
+    "cyclo": 5,
+    "loc": 16,
+    "nesting": 1,
+    "params": 1
+  },
   "yadgar/embed_service.py::_rerank_acquire_timeout@49": {
+    "cyclo": 1,
+    "loc": 4,
+    "nesting": 0,
+    "params": 0
+  },
+  "yadgar/embed_service.py::_rerank_acquire_timeout@69": {
     "cyclo": 1,
     "loc": 4,
     "nesting": 0,
@@ -2080,6 +2136,12 @@
     "nesting": 3,
     "params": 0
   },
+  "yadgar/embed_service.py::_score@282": {
+    "cyclo": 4,
+    "loc": 9,
+    "nesting": 3,
+    "params": 0
+  },
   "yadgar/embed_service.py::admin_dbsize@225": {
     "cyclo": 9,
     "loc": 45,
@@ -2093,6 +2155,12 @@
     "params": 1
   },
   "yadgar/embed_service.py::admin_dbsize@277": {
+    "cyclo": 9,
+    "loc": 45,
+    "nesting": 5,
+    "params": 1
+  },
+  "yadgar/embed_service.py::admin_dbsize@329": {
     "cyclo": 9,
     "loc": 45,
     "nesting": 5,
@@ -2116,6 +2184,12 @@
     "nesting": 3,
     "params": 2
   },
+  "yadgar/embed_service.py::embed@204": {
+    "cyclo": 6,
+    "loc": 36,
+    "nesting": 3,
+    "params": 2
+  },
   "yadgar/embed_service.py::health@201": {
     "cyclo": 9,
     "loc": 21,
@@ -2134,6 +2208,12 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/embed_service.py::health@305": {
+    "cyclo": 9,
+    "loc": 21,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/embed_service.py::lifespan@124": {
     "cyclo": 2,
     "loc": 12,
@@ -2144,6 +2224,18 @@
     "cyclo": 2,
     "loc": 15,
     "nesting": 2,
+    "params": 1
+  },
+  "yadgar/embed_service.py::lifespan@170": {
+    "cyclo": 2,
+    "loc": 17,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/embed_service.py::metrics@193": {
+    "cyclo": 1,
+    "loc": 8,
+    "nesting": 0,
     "params": 1
   },
   "yadgar/embed_service.py::rerank@181": {
@@ -2164,6 +2256,12 @@
     "nesting": 3,
     "params": 2
   },
+  "yadgar/embed_service.py::rerank@243": {
+    "cyclo": 5,
+    "loc": 59,
+    "nesting": 3,
+    "params": 2
+  },
   "yadgar/embed_service.py::validate_mode@112": {
     "cyclo": 2,
     "loc": 4,
@@ -2176,7 +2274,19 @@
     "nesting": 1,
     "params": 2
   },
+  "yadgar/embed_service.py::validate_mode@158": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 1,
+    "params": 2
+  },
   "yadgar/embed_service.py::validate_texts@111": {
+    "cyclo": 4,
+    "loc": 7,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/embed_service.py::validate_texts@134": {
     "cyclo": 4,
     "loc": 7,
     "nesting": 2,
@@ -2187,6 +2297,15 @@
     "loc": 7,
     "nesting": 2,
     "params": 2
+  },
+  "yadgar/embed_service_metrics.py::__file__": {
+    "loc": 126
+  },
+  "yadgar/embed_service_metrics.py::metrics_handler@115": {
+    "cyclo": 1,
+    "loc": 12,
+    "nesting": 0,
+    "params": 1
   },
   "yadgar/embeddings.py::EmbeddingEngine@39": {
     "attrs": 4,
@@ -13160,6 +13279,112 @@
     "loc": 10,
     "nesting": 1,
     "params": 1
+  },
+  "yadgar/tests/test_embed_service_metrics.py::TestDurationHistogramObservation@239": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
+  "yadgar/tests/test_embed_service_metrics.py::TestMetricFamiliesPresent@138": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
+  "yadgar/tests/test_embed_service_metrics.py::TestMetricsEndpointBasics@92": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 5
+  },
+  "yadgar/tests/test_embed_service_metrics.py::TestRequestsCounterIncrements@154": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
+  "yadgar/tests/test_embed_service_metrics.py::TestSemaphoreBusy503Counter@189": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
+  "yadgar/tests/test_embed_service_metrics.py::__file__": {
+    "loc": 282
+  },
+  "yadgar/tests/test_embed_service_metrics.py::_counter_delta@81": {
+    "cyclo": 3,
+    "loc": 4,
+    "nesting": 0,
+    "params": 4
+  },
+  "yadgar/tests/test_embed_service_metrics.py::_make_client@38": {
+    "cyclo": 1,
+    "loc": 17,
+    "nesting": 0,
+    "params": 3
+  },
+  "yadgar/tests/test_embed_service_metrics.py::_parse_metric_families@57": {
+    "cyclo": 2,
+    "loc": 5,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_embed_service_metrics.py::_sample_value@64": {
+    "cyclo": 5,
+    "loc": 15,
+    "nesting": 2,
+    "params": 3
+  },
+  "yadgar/tests/test_embed_service_metrics.py::test_503_counter_increments_on_semaphore_timeout@190": {
+    "cyclo": 6,
+    "loc": 42,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/tests/test_embed_service_metrics.py::test_all_expected_families_present@139": {
+    "cyclo": 3,
+    "loc": 8,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_embed_service_metrics.py::test_duration_histogram_records_on_success@240": {
+    "cyclo": 7,
+    "loc": 43,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/tests/test_embed_service_metrics.py::test_metrics_content_type_is_text_plain@99": {
+    "cyclo": 2,
+    "loc": 7,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_embed_service_metrics.py::test_metrics_no_auth_required@107": {
+    "cyclo": 2,
+    "loc": 6,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_embed_service_metrics.py::test_metrics_parseable_by_prometheus_parser@114": {
+    "cyclo": 3,
+    "loc": 8,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_embed_service_metrics.py::test_metrics_prometheus_version_in_content_type@123": {
+    "cyclo": 2,
+    "loc": 8,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_embed_service_metrics.py::test_metrics_returns_200@93": {
+    "cyclo": 2,
+    "loc": 5,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_embed_service_metrics.py::test_requests_counter_increments_on_success@155": {
+    "cyclo": 5,
+    "loc": 27,
+    "nesting": 1,
+    "params": 2
   },
   "yadgar/tests/test_embed_service_semaphore.py::TestSemaphoreConcurrencyN@184": {
     "attrs": 0,
