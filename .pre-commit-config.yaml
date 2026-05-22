@@ -54,6 +54,24 @@ repos:
 
   - repo: local
     hooks:
+      - id: check-image-size-backend
+        name: Release-readiness — backend image size cap (2.0 GB)
+        language: system
+        entry: python3 scripts/check_image_size.py --image docker.io/openfantasy/yadgar-backend:$(python3 -c "import json; print(json.load(open('server.json'))['backend_version'])")
+        files: ^(Dockerfile\.backend|uv\.lock|pyproject\.toml)$
+        pass_filenames: false
+        stages: [manual]
+
+      - id: check-image-size-core
+        name: Release-readiness — core image size cap (0.8 GB)
+        language: system
+        entry: python3 scripts/check_image_size.py --image docker.io/openfantasy/yadgar:$(python3 -c "import json; print(json.load(open('server.json'))['version'])")
+        files: ^(Dockerfile|uv\.lock|pyproject\.toml)$
+        pass_filenames: false
+        stages: [manual]
+
+  - repo: local
+    hooks:
       - id: ruff
         name: Lint Python (ruff)
         language: system
