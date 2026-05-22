@@ -43,6 +43,7 @@ from yadgar.storage.client import (
 from yadgar.storage.client import _ClientMixin
 from yadgar.storage.cluster import _ClusterMixin
 from yadgar.storage.dbsize import _DbSizeMixin
+from yadgar.storage.entity import RelationshipMeta as RelationshipMeta
 from yadgar.storage.entity import _EntityMixin
 from yadgar.storage.episode import _EpisodeMixin
 from yadgar.storage.memory import _MemoryMixin
