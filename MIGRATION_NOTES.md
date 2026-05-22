@@ -1,5 +1,45 @@
 # Migration Notes
 
+## v5.6.0 — V1c viz daemon sidebar (2026-05-22)
+
+Core 5.5.3 → 5.6.0. Backend unchanged (5.1.2).
+
+### Changes
+
+- `yadgar/viz_daemon_health.py` — new module: background scraper + `/api/daemon-health` endpoint. Scrapes core metrics (local `generate_latest()`) + backend metrics (HTTP to `http://127.0.0.1:8001/metrics`) every 5s. Caches JSON. Always HTTP 200; `backend.unavailable=True` when unreachable.
+- `yadgar/server/http.py` — SSE channel extended: emits `daemon_health` event (JSON) every 5s from `_make_event_stream`. New route `/api/daemon-health` → `api_daemon_health_route`.
+- `yadgar/static/index.html` — 480px collapsible sidebar (`#dh-panel`) with Core + Backend cards: process/queue/log/CB/rerank/models. Toggle button in topbar. SSE `daemon_health` event handler wired. REST fallback `_dhFetchOnce()` on panel open.
+- Version: `5.5.3 → 5.6.0` in `pyproject.toml`, `server.json`, `docker-compose.yml`.
+- No new Python or JS dependencies.
+
+### Deploy (core only — backend unchanged)
+
+```bash
+# Build new core image
+podman build --arch amd64 -f Dockerfile -t docker.io/openfantasy/yadgar:5.6.0 .
+
+# Bump nix yadgar_core_version=5.6.0 + home-manager switch
+# (edit nix config to reference 5.6.0 image, then switch)
+systemctl --user restart yadgar
+```
+
+### Verify
+
+```bash
+# 1. Daemon health endpoint
+curl -sS http://127.0.0.1:8765/api/daemon-health | python3 -m json.tool | head -30
+# Expected: JSON with core.circuit_breakers, core.queue, backend.process keys
+
+# 2. Load viz UI in browser
+# http://localhost:42069/ → click "⬡ Daemons" button in topbar
+# Panel should open; core stats populate within 5s; backend may show "unreachable" if not running
+
+# 3. SSE stream carries daemon_health
+curl -sS -N http://127.0.0.1:8765/api/graph/events | grep daemon_health | head -1
+```
+
+---
+
 ## v5.5.3 — V1b CB-1 state gauge (2026-05-22)
 
 Core 5.5.2 → 5.5.3. Backend unchanged (5.1.2).
