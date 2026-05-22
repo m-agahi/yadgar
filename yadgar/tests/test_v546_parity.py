@@ -41,37 +41,22 @@ def _embedding(seed: int = 0, dim: int = 384) -> bytes:
 
 def test_insert_new_memory_returns_int_id(storage):
     """insert_new_memory returns a positive integer memory_id."""
-    from yadgar.curation.ingestion import insert_new_memory
+    from yadgar.curation.ingestion import NewMemorySpec, insert_new_memory
 
     emb = _embedding(1)
-    mid = insert_new_memory(
-        storage=storage,
-        content="parity test content",
-        context="/tmp/proj",
-        tags=["test"],
-        embedding=emb,
-        heat=0.8,
-        file_hash=None,
-        embedding_model=None,
-        contextual_prefix=None,
-        surprise=0.3,
-        importance=0.5,
-        valence=0.0,
-    )
+    spec = NewMemorySpec(tags=["test"], embedding=emb, heat=0.8, surprise=0.3)
+    mid = insert_new_memory(storage, "parity test content", "/tmp/proj", spec)
     assert isinstance(mid, int)
     assert mid > 0
 
 
 def test_insert_new_memory_content_retrievable(storage):
     """Content inserted by insert_new_memory is retrievable unchanged."""
-    from yadgar.curation.ingestion import insert_new_memory
+    from yadgar.curation.ingestion import NewMemorySpec, insert_new_memory
 
     emb = _embedding(2)
     content = "unique parity content for retrieval check"
-    mid = insert_new_memory(
-        storage=storage,
-        content=content,
-        context="/tmp/proj",
+    spec = NewMemorySpec(
         tags=["tag1", "tag2"],
         embedding=emb,
         heat=1.0,
@@ -82,6 +67,7 @@ def test_insert_new_memory_content_retrievable(storage):
         importance=0.7,
         valence=0.1,
     )
+    mid = insert_new_memory(storage, content, "/tmp/proj", spec)
     mem = storage.get_memory(mid)
     assert mem is not None
     assert mem["content"] == content
@@ -89,23 +75,18 @@ def test_insert_new_memory_content_retrievable(storage):
 
 def test_insert_new_memory_scores_stored(storage):
     """Surprise/importance/valence are persisted as scores."""
-    from yadgar.curation.ingestion import insert_new_memory
+    from yadgar.curation.ingestion import NewMemorySpec, insert_new_memory
 
     emb = _embedding(3)
-    mid = insert_new_memory(
-        storage=storage,
-        content="scores test",
-        context="/tmp",
+    spec = NewMemorySpec(
         tags=[],
         embedding=emb,
         heat=0.5,
-        file_hash=None,
-        embedding_model=None,
-        contextual_prefix=None,
         surprise=0.9,
         importance=0.8,
         valence=-0.2,
     )
+    mid = insert_new_memory(storage, "scores test", "/tmp", spec)
     scores = storage.get_memory_scores(mid)
     assert scores is not None
     assert abs(scores["surprise_score"] - 0.9) < 0.01
