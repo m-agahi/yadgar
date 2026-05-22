@@ -12,7 +12,6 @@ Tests:
 
 from __future__ import annotations
 
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -24,18 +23,15 @@ from starlette.testclient import TestClient
 # Fixtures: sample /metrics text for core and backend
 # ---------------------------------------------------------------------------
 
-_CORE_METRICS = """# HELP process_resident_memory_bytes RSS bytes.
-# TYPE process_resident_memory_bytes gauge
-process_resident_memory_bytes 52428800.0
-# HELP process_cpu_seconds_total CPU seconds.
-# TYPE process_cpu_seconds_total counter
-process_cpu_seconds_total 3.14
-# HELP process_open_fds Open file descriptors.
-# TYPE process_open_fds gauge
-process_open_fds 42.0
-# HELP process_start_time_seconds Process start time.
-# TYPE process_start_time_seconds gauge
-process_start_time_seconds 1748000000.0
+_CORE_METRICS = """# HELP yadgar_process_rss_bytes RSS bytes.
+# TYPE yadgar_process_rss_bytes gauge
+yadgar_process_rss_bytes 52428800.0
+# HELP yadgar_process_cpu_percent CPU percent.
+# TYPE yadgar_process_cpu_percent gauge
+yadgar_process_cpu_percent 2.0
+# HELP yadgar_process_open_fds Open file descriptors.
+# TYPE yadgar_process_open_fds gauge
+yadgar_process_open_fds 42.0
 # HELP yadgar_circuit_breaker_state CB state (0=CLOSED 1=HALF_OPEN 2=OPEN).
 # TYPE yadgar_circuit_breaker_state gauge
 yadgar_circuit_breaker_state{endpoint="/rerank/ce"} 0.0
@@ -130,27 +126,19 @@ class TestParseCorMetrics:
         result = parse_core_metrics(_CORE_METRICS, prev_cpu_s=None, prev_cpu_t=None)
         assert result["process"]["open_fds"] == 42
 
-    def test_uptime_computed(self) -> None:
+    def test_uptime_none_for_core(self) -> None:
+        """Core registry has no process_start_time_seconds; uptime_s is None."""
         from yadgar.viz_daemon_health import parse_core_metrics
 
         result = parse_core_metrics(_CORE_METRICS, prev_cpu_s=None, prev_cpu_t=None)
-        assert result["process"]["uptime_s"] > 0
+        assert result["process"]["uptime_s"] is None
 
-    def test_cpu_none_on_first_tick(self) -> None:
+    def test_cpu_from_gauge(self) -> None:
+        """Core uses yadgar_process_cpu_percent gauge — available on first tick."""
         from yadgar.viz_daemon_health import parse_core_metrics
 
         result = parse_core_metrics(_CORE_METRICS, prev_cpu_s=None, prev_cpu_t=None)
-        # First tick: no previous sample → cpu_pct is None
-        assert result["process"]["cpu_pct"] is None
-
-    def test_cpu_computed_on_second_tick(self) -> None:
-        from yadgar.viz_daemon_health import parse_core_metrics
-
-        prev_t = time.time() - 5.0
-        result = parse_core_metrics(_CORE_METRICS, prev_cpu_s=3.04, prev_cpu_t=prev_t)
-        # cpu_pct = (3.14 - 3.04) / 5 * 100 ≈ 2.0
-        assert result["process"]["cpu_pct"] is not None
-        assert 0.0 <= result["process"]["cpu_pct"] <= 100.0
+        assert result["process"]["cpu_pct"] == 2.0
 
     def test_circuit_breakers(self) -> None:
         from yadgar.viz_daemon_health import parse_core_metrics
@@ -395,3 +383,64 @@ class TestBackendUnavailable:
         text, error = asyncio.run(_run())
         assert text is None
         assert "503" in str(error)
+
+
+# ---------------------------------------------------------------------------
+# v5.6.1 bug-fix tests
+# ---------------------------------------------------------------------------
+
+
+class TestBackendUrlResolution:
+    """Bug 1: scraper uses YADGAR_EMBED_URL to reach backend /metrics."""
+
+    def test_backend_url_from_yadgar_embed_url_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """YADGAR_EMBED_URL=http://test-backend:9999 → scraper calls .../metrics."""
+
+        from yadgar.viz_daemon_health import _get_backend_metrics_url
+
+        monkeypatch.setenv("YADGAR_EMBED_URL", "http://test-backend:9999")
+        monkeypatch.delenv("YADGAR_BACKEND_METRICS_URL", raising=False)
+        assert _get_backend_metrics_url() == "http://test-backend:9999/metrics"
+
+    def test_backend_url_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No env vars → default http://yadgar-backend:8001/metrics."""
+        from yadgar.viz_daemon_health import _get_backend_metrics_url
+
+        monkeypatch.delenv("YADGAR_EMBED_URL", raising=False)
+        monkeypatch.delenv("YADGAR_BACKEND_METRICS_URL", raising=False)
+        assert _get_backend_metrics_url() == "http://yadgar-backend:8001/metrics"
+
+    def test_backend_metrics_url_override_takes_precedence(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """YADGAR_BACKEND_METRICS_URL overrides YADGAR_EMBED_URL."""
+        from yadgar.viz_daemon_health import _get_backend_metrics_url
+
+        monkeypatch.setenv("YADGAR_EMBED_URL", "http://ignored:9999")
+        monkeypatch.setenv("YADGAR_BACKEND_METRICS_URL", "http://override:1234/metrics")
+        assert _get_backend_metrics_url() == "http://override:1234/metrics"
+
+
+class TestCoreProcessMetrics:
+    """Bug 2 (option b): parser reads yadgar_process_* names for core."""
+
+    _CORE_WITH_YADGAR_PROCESS = """# HELP yadgar_process_rss_bytes RSS bytes.
+# TYPE yadgar_process_rss_bytes gauge
+yadgar_process_rss_bytes 65536000.0
+# HELP yadgar_process_open_fds Open FDs.
+# TYPE yadgar_process_open_fds gauge
+yadgar_process_open_fds 55.0
+# HELP yadgar_process_cpu_percent CPU percent.
+# TYPE yadgar_process_cpu_percent gauge
+yadgar_process_cpu_percent 12.5
+"""
+
+    def test_core_process_metrics_exposed(self) -> None:
+        """core /metrics has yadgar_process_* names; parser extracts to rss_bytes."""
+        from yadgar.viz_daemon_health import parse_core_metrics
+
+        result = parse_core_metrics(
+            self._CORE_WITH_YADGAR_PROCESS, prev_cpu_s=None, prev_cpu_t=None
+        )
+        assert result["process"]["rss_bytes"] == 65536000
+        assert result["process"]["open_fds"] == 55
