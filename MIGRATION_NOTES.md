@@ -583,3 +583,28 @@ curl -sS -H "Authorization: Bearer $YADGAR_TOKEN" http://127.0.0.1:8765/health
 # CB-1 backoff: check logs for "circuit breaker ... → OPEN ... backoff"
 journalctl --user -u yadgar -n 50 | grep -i "circuit breaker"
 ```
+
+### 6. I14 — Structured logging (new in v5.4.2)
+
+**Breaking: default log format changed `human` → `json`.**
+
+Log output is now I14-conformant JSON lines by default. If any Loki/Grafana dashboards or `journalctl | grep` scripts depend on the old plain-text format or old field names (`timestamp`, `logger`, `message`), update them.
+
+| Change | Detail |
+|---|---|
+| Old field `timestamp` | Now `ts` (ISO 8601 with `+00:00` timezone) |
+| Old field `message` | Now `event` |
+| Old field `logger` | Removed (use `component` extra field instead) |
+| New required caller fields | `component`, `action`, `outcome` in `extra={}` |
+
+**New env var:**
+
+| Env var | Default | Notes |
+|---|---|---|
+| `YADGAR_LOG_FORMAT` | `json` | `json` = I14 structured (Loki/Grafana ingest); `text` = human-readable for local dev |
+
+**Local dev:** set `YADGAR_LOG_FORMAT=text` in your `.env` or shell to restore human-readable logs.
+
+**Observability:** Loki / Grafana can now ingest yadgar logs as structured records. Parse on `ts`, `level`, `component`, `action`, `outcome` labels.
+
+**Redaction:** `ContentRedactor` strips any log field whose name contains (case-insensitive): `content`, `password`, `token`, `secret`, `auth`, `authorization`, `api_key`, `bearer`. Known sharp edge: substring match also redacts `content_type`/`content_length` if passed as extra fields. Full-conformance round (v5.6) will tighten the denylist.

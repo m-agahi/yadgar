@@ -145,9 +145,12 @@ class RerankResponse(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Configure log level from env var (set by docker-compose / entrypoint)
+    # I14: configure structured logging at backend boot.
+    # Format reads from YADGAR_LOG_FORMAT (default 'json' for production).
     _level = os.environ.get("YADGAR_BACKEND_LOG_LEVEL", "warn").upper()
-    logging.getLogger("yadgar").setLevel(getattr(logging, _level, logging.WARNING))
+    from yadgar.log_config import configure_logging as _configure_logging  # noqa: PLC0415
+
+    _configure_logging(log_format=os.environ.get("YADGAR_LOG_FORMAT", "json"), level=_level)
 
     # Load model eagerly so /health reflects true readiness
     try:
@@ -214,9 +217,15 @@ async def rerank(req: RerankRequest, _: None = Depends(_require_admin_token)) ->
         await asyncio.wait_for(sem.acquire(), timeout=timeout)
     except TimeoutError:
         logger.warning(
-            "rerank/%s semaphore busy (timeout=%.1fs) — returning 503",
-            req.mode,
-            timeout,
+            "semaphore_busy",
+            extra={
+                "component": "embed_service",
+                "action": "rerank_acquire",
+                "outcome": "error",
+                "rerank_mode": req.mode,
+                "timeout_s": timeout,
+                "http_status": 503,
+            },
         )
         raise HTTPException(status_code=503, detail="inference slot unavailable") from None
 

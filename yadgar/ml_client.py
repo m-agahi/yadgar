@@ -142,10 +142,15 @@ class _CircuitBreaker:
         self._state = _STATE_OPEN
         self._open_at = now
         logger.warning(
-            "circuit breaker %s → OPEN (%s); cooldown %.0fs",
-            self._endpoint,
-            reason,
-            self._open_duration_sec,
+            "breaker_open",
+            extra={
+                "component": "circuit_breaker",
+                "action": "breaker_open",
+                "outcome": "degraded",
+                "endpoint": self._endpoint,
+                "reason": reason,
+                "cooldown_s": round(self._open_duration_sec, 1),
+            },
         )
 
 

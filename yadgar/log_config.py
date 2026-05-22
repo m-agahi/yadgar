@@ -1,8 +1,25 @@
 """Structured logging configuration for Yadgar.
 
 Supports two log formats:
-- 'human' (default): standard Python %(asctime)s %(name)s %(levelname)s %(message)s
-- 'json': one JSON object per log line, with all LogRecord fields + any extra= fields.
+- 'json' (default for production): I14-conformant JSON, one line per record.
+- 'text' / 'human': standard Python %(asctime)s %(name)s %(levelname)s %(message)s
+
+I14 JSON schema (see docs/ARCHITECTURE_INVARIANTS.md §I14):
+    ts          — ISO 8601 timestamp with timezone
+    level       — DEBUG/INFO/WARNING/ERROR/CRITICAL
+    component   — module/subsystem identifier
+    action      — verb describing what's happening
+    outcome     — ok/error/skip/degraded
+    event       — the log message string (record.msg)
+    latency_ms? — optional float duration in ms
+    error?      — optional error string / exception class
+    traceback?  — truncated traceback (≤ TRACEBACK_MAX_CHARS chars)
+
+ContentRedactor:
+    Logging filter that strips sensitive keys from LogRecord extra fields.
+    Denylist (substring, case-insensitive): content, password, token, secret,
+    auth, authorization, api_key, bearer.
+    Also redacts the 'content' key from any dict-valued extra field (memory dicts).
 
 Usage:
     from yadgar.log_config import configure_logging
@@ -29,6 +46,157 @@ import logging
 import os
 import time
 import uuid
+from datetime import UTC, datetime
+
+# I14 — max chars for traceback in structured JSON (constant for test import)
+TRACEBACK_MAX_CHARS: int = 2000
+
+# I14 — denylist: substring match on field names (case-insensitive)
+_SENSITIVE_SUBSTRINGS: tuple[str, ...] = (
+    "content",
+    "password",
+    "token",
+    "secret",
+    "auth",
+    "authorization",
+    "api_key",
+    "bearer",
+)
+
+# Fields that are stdlib LogRecord internals — skip in I14 formatter
+_I14_SKIP_FIELDS = frozenset(
+    {
+        "args",
+        "exc_info",
+        "exc_text",
+        "filename",
+        "funcName",
+        "lineno",
+        "module",
+        "msecs",
+        "msg",
+        "pathname",
+        "process",
+        "processName",
+        "relativeCreated",
+        "stack_info",
+        "thread",
+        "threadName",
+        "levelname",
+        "levelno",
+        "name",
+        "created",
+        "asctime",
+        "taskName",
+    }
+)
+
+# Fields emitted explicitly by JSONLogFormatter — don't re-emit from __dict__
+_I14_EXPLICIT_FIELDS = frozenset({"ts", "level", "event", "traceback", "error"})
+
+
+def _is_sensitive(name: str) -> bool:
+    """Return True if field name contains any denylist substring (case-insensitive)."""
+    lower = name.lower()
+    return any(s in lower for s in _SENSITIVE_SUBSTRINGS)
+
+
+def _redact_dict(d: dict) -> dict:
+    """Return shallow copy of d with 'content' key removed (one-level deep)."""
+    return {k: v for k, v in d.items() if k != "content"}
+
+
+class ContentRedactor(logging.Filter):
+    """Logging filter that strips sensitive fields from LogRecord extra attributes.
+
+    Removes any LogRecord attribute whose name contains a denylist substring
+    (case-insensitive). Also removes the 'content' key from dict-valued extra
+    fields (e.g. memory dicts passed as extra={"memory": {...}}).
+
+    Does NOT remove attributes that were set by stdlib (levelname, msg, etc.).
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        sensitive_keys = [
+            k
+            for k in list(record.__dict__)
+            if not k.startswith("_") and k not in _I14_SKIP_FIELDS and _is_sensitive(k)
+        ]
+        for key in sensitive_keys:
+            # Replace with None rather than delattr — some formatters may iterate __dict__
+            setattr(record, key, None)
+
+        # One-level dict redaction: remove 'content' key inside dict extra values
+        for k, v in list(record.__dict__.items()):
+            if k.startswith("_") or k in _I14_SKIP_FIELDS:
+                continue
+            if isinstance(v, dict) and "content" in v:
+                setattr(record, k, _redact_dict(v))
+
+        return True  # always pass the record through
+
+
+class JSONLogFormatter(logging.Formatter):
+    """I14-conformant JSON log formatter.
+
+    Emits one compact JSON line per record with fields:
+        ts, level, component, action, outcome, event
+    plus optional: latency_ms, error, traceback, and any non-sensitive extra fields.
+
+    Backwards note: pre-I14 JsonFormatter emitted 'timestamp'/'logger'/'message'.
+    This formatter uses the I14 schema ('ts'/'event'). See MIGRATION_NOTES.md.
+    """
+
+    def _build_base(self, record: logging.LogRecord) -> dict:
+        ts = datetime.fromtimestamp(record.created, tz=UTC).isoformat(timespec="milliseconds")
+        return {
+            "ts": ts,
+            "level": record.levelname,
+            "event": record.getMessage(),
+        }
+
+    def _append_extras(self, payload: dict, record: logging.LogRecord) -> None:
+        for key, value in record.__dict__.items():
+            if key.startswith("_"):
+                continue
+            if key in _I14_SKIP_FIELDS or key in _I14_EXPLICIT_FIELDS:
+                continue
+            if value is None:
+                # Skip None — ContentRedactor sets sensitive keys to None
+                continue
+            # Last-resort guard: skip sensitive fields even if redactor not installed
+            if _is_sensitive(key):
+                continue
+            # One-level dict redaction: strip 'content' from dict values (memory dicts)
+            if isinstance(value, dict) and "content" in value:
+                value = _redact_dict(value)
+            payload[key] = value
+
+    def _append_traceback(self, payload: dict, record: logging.LogRecord) -> None:
+        if not record.exc_info:
+            return
+        tb_text = self.formatException(record.exc_info)
+        if len(tb_text) > TRACEBACK_MAX_CHARS:
+            tb_text = tb_text[:TRACEBACK_MAX_CHARS] + " … [truncated]"
+        payload["traceback"] = tb_text
+        exc_type = record.exc_info[0]
+        if exc_type is not None:
+            payload["error"] = exc_type.__name__
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload = self._build_base(record)
+        self._append_extras(payload, record)
+        self._append_traceback(payload, record)
+        try:
+            return json.dumps(payload, default=str)
+        except Exception:
+            return json.dumps(
+                {
+                    "ts": payload.get("ts", ""),
+                    "level": record.levelname,
+                    "event": record.getMessage(),
+                }
+            )
 
 
 class JsonFormatter(logging.Formatter):
@@ -166,26 +334,51 @@ def configure_logging(
 ) -> None:
     """Configure the 'yadgar' logger with the appropriate formatter.
 
-    log_format: 'json' | 'human' (default: read from YADGAR_LOG_FORMAT env,
-                then fall back to 'human').
+    I14: default format is 'json' for production (changed from 'human' in v5.4.2).
+    See MIGRATION_NOTES.md for downstream impact on Loki/Grafana dashboards.
+
+    log_format: 'json' | 'text' | 'human' (default: read from YADGAR_LOG_FORMAT
+                env, then fall back to 'json').
     level: logging level string (default 'WARNING').
+
+    Idempotent: calling twice with the same format does not add duplicate handlers.
     """
     if log_format is None:
-        log_format = os.environ.get("YADGAR_LOG_FORMAT", "human").lower()
+        log_format = os.environ.get("YADGAR_LOG_FORMAT", "json").lower()
 
     logger = logging.getLogger("yadgar")
     numeric_level = getattr(logging, level.upper(), logging.WARNING)
     logger.setLevel(numeric_level)
 
-    if log_format == "json":
-        formatter: logging.Formatter = JsonFormatter()
+    use_json = log_format == "json"
+
+    # Idempotency guard: if a handler with the target formatter type already
+    # exists, update the level and return rather than stacking another handler.
+    for existing in logger.handlers:
+        if use_json and isinstance(existing.formatter, JSONLogFormatter):
+            existing.setLevel(numeric_level)
+            return
+        if not use_json and not isinstance(existing.formatter, JSONLogFormatter):
+            existing.setLevel(numeric_level)
+            return
+
+    # Clear existing handlers before installing a new one to avoid accumulation
+    # across repeated calls with different formats (e.g. test teardown).
+    logger.handlers.clear()
+
+    if use_json:
+        formatter: logging.Formatter = JSONLogFormatter()
+        handler = logging.StreamHandler()
+        handler.setFormatter(formatter)
+        handler.setLevel(numeric_level)
+        # Install redactor as a handler-level filter
+        handler.addFilter(ContentRedactor())
+        logger.addHandler(handler)
     else:
         formatter = logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s")
+        handler = logging.StreamHandler()
+        handler.setFormatter(formatter)
+        handler.setLevel(numeric_level)
+        logger.addHandler(handler)
 
-    # Add a new StreamHandler only if there are no existing handlers
-    # that use our formatter type (avoids duplicate handlers in tests).
-    handler = logging.StreamHandler()
-    handler.setFormatter(formatter)
-    handler.setLevel(numeric_level)
-    logger.addHandler(handler)
     logger.propagate = False
