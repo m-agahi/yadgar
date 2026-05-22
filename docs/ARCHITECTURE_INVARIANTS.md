@@ -448,6 +448,7 @@ Post-v5.3.9 `BindsTo → Wants` decouple, core + backend run as independent daem
 - 2026-05-22: CB-1 probe-fixes + F5-A saturation fix shipped in v5.4.2. CORRECTS prior v5.3.10 verification claim (rate-limited logging ≠ elimination — probes still caused CPU spikes). Fix 1a (probe timeout 2s), Fix 1b (exponential backoff 60→600s), F5-A (semaphore N=1 per mode). Backend bump 5.0.2→5.0.3; core bump 5.4.1→5.4.2.
 - 2026-05-22: P9 image size ratchet shipped (v5.4.2). F0 (6.78 GB → 1.63 GB) preserved via release-readiness check. Caps: core ≤800 MB, backend ≤2 GB. Script: `scripts/check_image_size.py`. Hook stage: manual (post-build gate, not per-commit).
 - 2026-05-22: v5.4.3 hotfix shipped — I14 framework-logger coverage extended to root logger (uvicorn, mcp, fastmcp, httpx all now emit JSON). I13 b27d218 grandfathering gap closed: 31 pre-existing C901/PLR0913 violators added to pyproject.toml per-file-ignores; refactor target v5.4.4. Backend version unchanged (5.0.3).
+- 2026-05-22: v5.5.1 log rotation plan drafted (`docs/PLAN_v5_5_1_log_management.md`) — dual-sink (stdout+rotating file), 500 MB default cap, I3/I12/I13/I14 compliant. Awaiting human answers to 4 open questions before implementation dispatch.
 
 ---
 
