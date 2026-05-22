@@ -109,11 +109,11 @@ def cli():
         if _log_level and _log_level.upper() != "WARN" and _log_level.upper() != "WARNING":
             from yadgar.log_config import configure_logging as _configure_logging
 
-            _configure_logging(log_format=_log_format, level=_log_level)
+            _configure_logging(log_format=_log_format, level=_log_level, process="core")
         elif _log_format and _log_format.lower() == "json":
             from yadgar.log_config import configure_logging as _configure_logging
 
-            _configure_logging(log_format="json", level="WARNING")
+            _configure_logging(log_format="json", level="WARNING", process="core")
 
         if not args.quiet and args.transport != "stdio":
             print(STARTUP_BANNER, file=sys.stderr)

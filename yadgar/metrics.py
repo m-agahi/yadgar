@@ -419,6 +419,30 @@ def _collect_process_metrics() -> None:
         pass
 
 
+# ── v5.5.1 — Log system observability ────────────────────────────────────────
+
+yadgar_log_file_rotations_total = Counter(
+    "yadgar_log_file_rotations_total",
+    "Total rotating file handler doRollover() calls",
+    ["logger"],
+    registry=_registry,
+)
+
+yadgar_log_file_size_bytes = Gauge(
+    "yadgar_log_file_size_bytes",
+    "Current active log file size in bytes",
+    ["logger"],
+    registry=_registry,
+)
+
+yadgar_log_dropped_total = Counter(
+    "yadgar_log_dropped_total",
+    "Total log records dropped by rate limiter",
+    ["logger", "level", "reason"],
+    registry=_registry,
+)
+
+
 def _collect_circuit_breaker_states() -> None:
     """Read circuit breaker states from RemoteMLClient and update gauge. Non-fatal."""
     try:
