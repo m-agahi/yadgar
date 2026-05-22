@@ -65,6 +65,8 @@ Override path: edit this file with override + reasoning + migration, reference c
 
 ML models, datasets, large reference data (multi-hundred-MB, monthly-or-slower cadence) belong in backend image or runtime-mounted volume. NEVER bake into core image. Check `docker history docker.io/openfantasy/yadgar:VER`. Backend currently 6.78GB (v5.4 F0 scope). **Note 2026-05-20 crash:** backend image bloat is real but NOT the OOM cause — OOM was load-induced spike during /rerank (768MB idle baseline). F0 + F5-fix are separate work.
 
+**P9 ratchet (v5.4.2):** `scripts/check_image_size.py` enforces I11 size caps on every backend dep bump. Run after `podman build` via `pre-commit run check-image-size-backend --hook-stage manual`. Caps: backend ≤2.0 GB, core ≤0.8 GB. See P9 section below.
+
 ### I12. Measure before optimize
 
 Any perf claim, cache, threadpool, batching, async refactor MUST be preceded by stage-level profiling p50/p95/p99 data. PR artifacts: profile output / `/metrics` histogram showing hot stage, before/after numbers, regression test. Paired with I8. Validated 2026-05-20: F5 was nearly scoped as "F0 fixes OOM" without data; docker stats baseline disproved that assumption.
@@ -251,7 +253,7 @@ External plugins installed in the Claude Code harness that affect how yadgar wor
 | `memorize.py:392` `retriever.recall` reinjection | I1, I2 | recall inside memorize |
 | `conflict_resolver.py:149` `httpx.post` | I3, I4 | sync 30s timeout if env on |
 | Drainer `_apply()` | I2, I6 | replays full tool, not lean inserts |
-| Backend image 6.78GB | I11 | v5.4 F0 — separate from OOM root cause |
+| Backend image 1.63 GB (was 6.78 GB pre-v5.4.2) | I11 | F0 achieved incidentally during v5.4.2 backend rebuild (newer ML wheels). P9 ratchet (`scripts/check_image_size.py`, cap 2.0 GB) prevents regression. |
 | Backend embed_service OOM under /rerank load | I8 | **MITIGATED v5.4.2 F5-A** — concurrent-inference semaphore bounds rerank throughput; probes fast-fail 503 instead of queueing. Observability gap remains: no liveness/memory metrics yet (P11 N3 gauges pending). |
 | No read-path metrics + no per-stage write metrics | I8, I12 | blocks all perf optimization — P11 prerequisite |
 | 26+ high-complexity functions (anchor 116496) | I13 | full catalog via P12 |
@@ -302,6 +304,20 @@ Check `YADGAR_CONFLICT_RESOLVER` at module import. **Lands v5.4.**
 ### P9. Image partitioning audit for I11
 
 During v5.4 F0, every layer >100MB justified or moved. Add `docker history` check to release-readiness CI. **Lands v5.4.**
+
+**Shipped v5.4.2:**
+
+- **Script:** `scripts/check_image_size.py` — CLI checker using `podman history` (fallback: `docker history`). Parses size column (`1.36GB`, `119MB`, `19.5kB`) and sums layers.
+- **Caps:** backend image ≤2.0 GB (`--max-size-gb 2.0`); core image ≤0.8 GB (auto-detected from image name substring). Override via `--max-size-gb`.
+- **Layer warnings:** layers >500 MB (`--warn-layer-mb 500`) emit a warning to stdout; exit 0 (warning only). Total over cap → exit 1 + message to stderr.
+- **Hook stage:** `stages: [manual]` — does NOT run on every commit. Image must exist locally. Invoke after `podman build`:
+  ```
+  pre-commit run check-image-size-backend --hook-stage manual
+  pre-commit run check-image-size-core --hook-stage manual
+  ```
+- **Trigger files:** `Dockerfile.backend`, `Dockerfile`, `uv.lock`, `pyproject.toml` (build inputs that affect size).
+- **Tests:** `yadgar/tests/test_check_image_size.py` — 30 tests; `subprocess.run` mocked, no real container calls.
+- **I11 cross-reference:** ratchet preserves the 6.78 GB → 1.63 GB improvement achieved incidentally in v5.4.2 backend rebuild. Any future dep bump that pushes backend past 2 GB will be caught before release.
 
 ### P10. (folded into P11)
 
@@ -420,6 +436,7 @@ Post-v5.3.9 `BindsTo → Wants` decouple, core + backend run as independent daem
 - 2026-05-21 evening: Workflow integration section added for `ralph-loop`, `frontend-design`, `security-guidance` plugins installed 2026-05-21. Not invariants — workflow tooling. Section scoped per-plugin with explicit orchestrator-rule carve-out for ralph-loop.
 - 2026-05-21 late evening: V1 viz daemon health panel added — surfaces both core + backend daemon stats (RSS/CPU/FDs + queue/breaker/model-load) in viz UI. Targets v5.5. Sub-tasks V1a (backend /metrics endpoint) + V1b (CB state gauge) + V1c (sidebar UI) + V1d (refresh cadence env).
 - 2026-05-22: CB-1 probe-fixes + F5-A saturation fix shipped in v5.4.2. CORRECTS prior v5.3.10 verification claim (rate-limited logging ≠ elimination — probes still caused CPU spikes). Fix 1a (probe timeout 2s), Fix 1b (exponential backoff 60→600s), F5-A (semaphore N=1 per mode). Backend bump 5.0.2→5.0.3; core bump 5.4.1→5.4.2.
+- 2026-05-22: P9 image size ratchet shipped (v5.4.2). F0 (6.78 GB → 1.63 GB) preserved via release-readiness check. Caps: core ≤800 MB, backend ≤2 GB. Script: `scripts/check_image_size.py`. Hook stage: manual (post-build gate, not per-commit).
 
 ---
 

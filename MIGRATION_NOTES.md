@@ -608,3 +608,39 @@ Log output is now I14-conformant JSON lines by default. If any Loki/Grafana dash
 **Observability:** Loki / Grafana can now ingest yadgar logs as structured records. Parse on `ts`, `level`, `component`, `action`, `outcome` labels.
 
 **Redaction:** `ContentRedactor` strips any log field whose name contains (case-insensitive): `content`, `password`, `token`, `secret`, `auth`, `authorization`, `api_key`, `bearer`. Known sharp edge: substring match also redacts `content_type`/`content_length` if passed as extra fields. Full-conformance round (v5.6) will tighten the denylist.
+
+### 7. Release-readiness check — image size ratchet (P9, new in v5.4.2)
+
+**Optional but recommended** — run after each `podman build` to verify the backend image stays within the 2.0 GB cap.
+
+```bash
+# After building the backend image:
+pre-commit run check-image-size-backend --hook-stage manual
+
+# After building the core image:
+pre-commit run check-image-size-core --hook-stage manual
+```
+
+**Manual invocation (no pre-commit):**
+
+```bash
+# Resolves version from server.json automatically:
+python scripts/check_image_size.py --image-type backend
+python scripts/check_image_size.py --image-type core
+
+# Or pass a specific image ref directly:
+python scripts/check_image_size.py \
+  --image docker.io/openfantasy/yadgar-backend:5.0.3
+
+# Override cap if needed:
+python scripts/check_image_size.py \
+  --image docker.io/openfantasy/yadgar-backend:5.0.3 \
+  --max-size-gb 2.0 \
+  --warn-layer-mb 500
+```
+
+Exit 0 = within cap (warnings for individual layers >500 MB). Exit 1 = over budget.
+
+**Caps:** backend ≤2.0 GB, core ≤0.8 GB (auto-detected from image name; override with `--max-size-gb`).
+
+**Context:** F0 achieved 6.78 GB → 1.63 GB incidentally during v5.4.2 backend rebuild. This hook prevents regression on future dep bumps. See `docs/ARCHITECTURE_INVARIANTS.md` P9 section.
