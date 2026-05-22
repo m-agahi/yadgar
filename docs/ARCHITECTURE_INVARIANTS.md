@@ -89,7 +89,9 @@ Hard caps NO override. If hit, decomposition design must prove I5 preservation.
 
 **Critical anti-pattern (per v5.1 incident):** decomposition creating implicit shared state OR moving work across thread/async boundaries is WORSE than the mega-function. Decomposing without preserving topology = banned.
 
-**Enforcement:** pre-commit `ruff check --select=C901 --max-complexity=15` (cyclomatic hard cap) + `PLR0913 max-args=8` (params hard cap); custom `check-complexity` hook covers LOC / nesting / file-LOC / public-symbols / class-methods / class-attrs / inheritance-depth; soft warns (exit 0), hard blocks (exit 1). Existing violations in `docs/complexity-audit.md` (P12). Baseline file: `.complexity-baseline.json` (4462 entries) records pre-existing violations so the hook only blocks NEW or WORSENED violations. Regenerate: `python scripts/check_complexity.py --update-baseline --all-files`.
+**Enforcement:** pre-commit `ruff check --select=C901 --max-complexity=15` (cyclomatic hard cap) + `PLR0913 max-args=8` (params hard cap); custom `check-complexity` hook covers LOC / nesting / file-LOC / public-symbols / class-methods / class-attrs / inheritance-depth; soft warns (exit 0), hard blocks (exit 1). Existing violations in `docs/complexity-audit.md` (P12). Baseline file: `.complexity-baseline.json` (4667 entries) records pre-existing violations so the hook only blocks NEW or WORSENED violations. Regenerate: `python scripts/check_complexity.py --update-baseline --all-files`.
+
+**v5.4.3 grandfathering (b27d218 gap):** `pyproject.toml` `[tool.ruff.lint.per-file-ignores]` lists 31 pre-existing C901/PLR0913 violators that existed before b27d218 enabled ruff selectors without a grandfathering pass. Refactor target: v5.4.4. DO NOT add new entries — fix violations in new code.
 
 ### I14. Structured logging contract (SCOPED)
 
@@ -104,6 +106,14 @@ Every log entry = JSON with `ts, level, component, action, outcome, latency_ms?,
 - Tests: `yadgar/tests/test_structured_logging.py` — 18 tests covering all I14 contracts.
 - Ratchet status: 4 call sites converted; full conformance target unchanged (v5.6). Known non-conformance: `RequestLoggingMiddleware` (pre-existing, not touched this round).
 - Known sharp edge: denylist uses substring match — `content_type`/`content_length` are redacted. Revisit at v5.6 conformance round.
+
+**v5.4.3 update — framework-logger coverage extended:**
+- Root-logger approach: `configure_logging()` now attaches `JSONLogFormatter` + `ContentRedactor` handler to the **root** logger (not just `yadgar`). All child loggers — `uvicorn`, `uvicorn.access`, `uvicorn.error`, `mcp`, `fastmcp`, `httpx`, `starlette`, and any future framework additions — propagate to root automatically.
+- `yadgar` logger changed: `propagate=True` (was `False`), own handlers cleared; root handler covers output.
+- Two helper functions extracted: `_configure_yadgar_logger()`, `_suppress_noisy_framework_loggers()`.
+- Noisy namespaces capped at WARNING: `uvicorn.access`, `httpx`, `httpcore`, `asyncio` (suppress DEBUG/INFO chatter; WARNING+ still emits JSON).
+- `YADGAR_LOG_FORMAT=text` / `=human` still disables JSON everywhere (root gets text formatter instead).
+- Tests: `TestFrameworkLoggerCoverage` (8 tests) added to `test_structured_logging.py` — covers root handler install, uvicorn.access JSON emission, fastmcp JSON emission, yadgar propagation, human/text fallback, idempotency, redactor on root handler.
 
 ### I15. Boundary-property fuzz tests (SCOPED)
 
@@ -437,6 +447,7 @@ Post-v5.3.9 `BindsTo → Wants` decouple, core + backend run as independent daem
 - 2026-05-21 late evening: V1 viz daemon health panel added — surfaces both core + backend daemon stats (RSS/CPU/FDs + queue/breaker/model-load) in viz UI. Targets v5.5. Sub-tasks V1a (backend /metrics endpoint) + V1b (CB state gauge) + V1c (sidebar UI) + V1d (refresh cadence env).
 - 2026-05-22: CB-1 probe-fixes + F5-A saturation fix shipped in v5.4.2. CORRECTS prior v5.3.10 verification claim (rate-limited logging ≠ elimination — probes still caused CPU spikes). Fix 1a (probe timeout 2s), Fix 1b (exponential backoff 60→600s), F5-A (semaphore N=1 per mode). Backend bump 5.0.2→5.0.3; core bump 5.4.1→5.4.2.
 - 2026-05-22: P9 image size ratchet shipped (v5.4.2). F0 (6.78 GB → 1.63 GB) preserved via release-readiness check. Caps: core ≤800 MB, backend ≤2 GB. Script: `scripts/check_image_size.py`. Hook stage: manual (post-build gate, not per-commit).
+- 2026-05-22: v5.4.3 hotfix shipped — I14 framework-logger coverage extended to root logger (uvicorn, mcp, fastmcp, httpx all now emit JSON). I13 b27d218 grandfathering gap closed: 31 pre-existing C901/PLR0913 violators added to pyproject.toml per-file-ignores; refactor target v5.4.4. Backend version unchanged (5.0.3).
 
 ---
 
