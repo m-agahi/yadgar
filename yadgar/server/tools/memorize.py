@@ -33,7 +33,7 @@ _reinject_skip_logged: bool = False  # I12: log once per process when reinjectio
 
 
 @_tool()
-def memorize(
+def memorize(  # noqa: C901 — pre-existing complexity, tracked for P13 refactor
     content: str,
     context: str,
     tags: list[str],
@@ -121,7 +121,16 @@ def memorize(
 
             return {"stored": True, "queued": True, "queue_id": _Path(_fq_path).name}
         except Exception as _fq_exc:
-            logger.warning("File queue enqueue failed, falling back to sync: %s", _fq_exc)
+            logger.warning(
+                "enqueue_failed",
+                extra={
+                    "component": "memorize",
+                    "action": "enqueue",
+                    "outcome": "error",
+                    "error": type(_fq_exc).__name__,
+                    "fallback": "sync",
+                },
+            )
 
     # Sync path — only runs during drain replay (is_draining=True) or queue fallback
     storage = _get_storage()
