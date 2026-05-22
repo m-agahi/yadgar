@@ -5,7 +5,7 @@ Mirrored in wiki: `yadgar-architectural-invariants`.
 Anchored memory: project-scoped, `/home/max/git/yadgar`.
 Version-execution-order lives in the `yadgar-roadmap-future-improvements` wiki.
 
-Last updated: 2026-05-21 late evening (Workflow integration added + V1 viz daemon-health panel added — v5.5).
+Last updated: 2026-05-22 (V1a backend /metrics shipped — v5.5.0; V1b/V1c/V1d unblocked).
 
 ---
 
@@ -394,12 +394,12 @@ Post-v5.3.9 `BindsTo → Wants` decouple, core + backend run as independent daem
 - Recent rerank failure count (last 1m, 5m, 15m)
 
 **Sub-tasks:**
-- **V1a.** Backend `/metrics` endpoint — add `prometheus_client` to backend image + expose port. Required prerequisite.
+- ~~**V1a.** Backend `/metrics` endpoint — add `prometheus_client` to backend image + expose port. Required prerequisite.~~ **SHIPPED v5.5.0.** `yadgar/embed_service_metrics.py` + GET `/metrics` on embed_service app. F5-A semaphore counters + model gauges + process metrics. Unauthenticated (matches core pattern). Backend bumped 5.0.3 → 5.1.0.
 - **V1b.** Circuit breaker state gauge — extend CB-1 to emit `yadgar_circuit_breaker_state{endpoint}` (0=CLOSED / 1=HALF_OPEN / 2=OPEN).
 - **V1c.** Viz daemon panel UI — sidebar component in `yadgar/viz_server.py` (or `ui/` if frontend split lands). SSE-driven (reuse existing viz SSE channel, see `viz_sse_clients` metric).
 - **V1d.** Refresh cadence: 5s default. Configurable via `YADGAR_VIZ_HEALTH_REFRESH_SEC`.
 
-**Lands v5.5.** Gated by V1a (backend metrics endpoint). Touches both daemons (image change in core for SSE channel addition, image change in backend for `/metrics`). Frontend changes invoke W-FD skill per Workflow integration section.
+**V1b/V1c/V1d land v5.5.x** (V1a prerequisite now met). Touches both daemons (image change in core for SSE channel addition). Frontend changes invoke W-FD skill per Workflow integration section.
 
 **Why:** P11 ships metrics to Grafana but Grafana is ops-side. Viz is the in-session UX — when a user is browsing memory graph and something feels slow, daemon health belongs ONE PANE AWAY, not "open Grafana, find the right dashboard". Same principle as P11 surfacing metrics through `memory_stats` MCP tool — multiple surfaces for the same data.
 
@@ -448,6 +448,7 @@ Post-v5.3.9 `BindsTo → Wants` decouple, core + backend run as independent daem
 - 2026-05-22: CB-1 probe-fixes + F5-A saturation fix shipped in v5.4.2. CORRECTS prior v5.3.10 verification claim (rate-limited logging ≠ elimination — probes still caused CPU spikes). Fix 1a (probe timeout 2s), Fix 1b (exponential backoff 60→600s), F5-A (semaphore N=1 per mode). Backend bump 5.0.2→5.0.3; core bump 5.4.1→5.4.2.
 - 2026-05-22: P9 image size ratchet shipped (v5.4.2). F0 (6.78 GB → 1.63 GB) preserved via release-readiness check. Caps: core ≤800 MB, backend ≤2 GB. Script: `scripts/check_image_size.py`. Hook stage: manual (post-build gate, not per-commit).
 - 2026-05-22: v5.4.3 hotfix shipped — I14 framework-logger coverage extended to root logger (uvicorn, mcp, fastmcp, httpx all now emit JSON). I13 b27d218 grandfathering gap closed: 31 pre-existing C901/PLR0913 violators added to pyproject.toml per-file-ignores; refactor target v5.4.4. Backend version unchanged (5.0.3).
+- 2026-05-22: V1a backend /metrics endpoint shipped (v5.5.0). `yadgar/embed_service_metrics.py` new module with isolated CollectorRegistry. GET /metrics on embed_service app — unauthenticated (matches core pattern in yadgar/server/http.py §15; Prometheus scrapers can't carry bearer tokens). F5-A semaphore observability: `yadgar_embed_rerank_requests_total{mode}`, `yadgar_embed_rerank_503_total{mode}`, `yadgar_embed_rerank_duration_seconds{mode}`, `yadgar_embed_rerank_semaphore_held{mode}`. Model state: `yadgar_embed_model_loaded{model}`. Process: ProcessCollector + PlatformCollector. Always-on (no opt-in gate — I3 opt-in considered and rejected; no opt-in needed for a low-overhead, data-free endpoint). Backend bumped 5.0.3 → 5.1.0; core bumped 5.4.5 → 5.5.0. V1b/V1c/V1d unblocked.
 
 ---
 

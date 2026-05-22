@@ -171,6 +171,10 @@ What remains in v5.4 for backend resilience:
 
 Informed by v5.4's data. Memorize split lives HERE, not v5.4.
 
+### Shipped in v5.5
+
+- ~~**V1a. Backend /metrics endpoint.**~~ **SHIPPED v5.5.0.** `yadgar/embed_service_metrics.py` + GET `/metrics` on embed_service app. Unauthenticated. F5-A semaphore observability + model gauges + process metrics. Backend 5.0.3 → 5.1.0; core 5.4.5 → 5.5.0.
+
 ### Order
 
 1. **P3. asyncio.to_thread wrap.**
