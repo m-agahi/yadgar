@@ -89,9 +89,13 @@ Hard caps NO override. If hit, decomposition design must prove I5 preservation.
 
 **Critical anti-pattern (per v5.1 incident):** decomposition creating implicit shared state OR moving work across thread/async boundaries is WORSE than the mega-function. Decomposing without preserving topology = banned.
 
-**Enforcement:** pre-commit `ruff check --select=C901 --max-complexity=15` (cyclomatic hard cap) + `PLR0913 max-args=8` (params hard cap); custom `check-complexity` hook covers LOC / nesting / file-LOC / public-symbols / class-methods / class-attrs / inheritance-depth; soft warns (exit 0), hard blocks (exit 1). Existing violations in `docs/complexity-audit.md` (P12). Baseline file: `.complexity-baseline.json` (4667 entries) records pre-existing violations so the hook only blocks NEW or WORSENED violations. Regenerate: `python scripts/check_complexity.py --update-baseline --all-files`.
+**Enforcement:** pre-commit `ruff check --select=C901 --max-complexity=15` (cyclomatic hard cap) + `PLR0913 max-args=8` (params hard cap); custom `check-complexity` hook covers LOC / nesting / file-LOC / public-symbols / class-methods / class-attrs / inheritance-depth; soft warns (exit 0), hard blocks (exit 1). Existing violations in `docs/complexity-audit.md` (P12). Baseline file: `.complexity-baseline.json` (4819 entries) records pre-existing violations so the hook only blocks NEW or WORSENED violations. Regenerate: `python scripts/check_complexity.py --update-baseline --all-files`.
 
 **v5.4.3 grandfathering (b27d218 gap):** `pyproject.toml` `[tool.ruff.lint.per-file-ignores]` lists 31 pre-existing C901/PLR0913 violators that existed before b27d218 enabled ruff selectors without a grandfathering pass. Refactor target: v5.4.4. DO NOT add new entries — fix violations in new code.
+
+**v5.4.6 update — LOW-risk batch (P12 catalog):** 4 functions decomposed from LOW-risk subset. 2 files dropped from per-file-ignores (`curation/ingestion.py`, `storage/entity.py`); 1 partial (`restoration.py` PLR0913 removed, C901 remains). Remaining 29 per-file-ignore entries are scoped to MEDIUM/HIGH cyclomatic violations or MEDIUM PLR0913 (`curate_on_remember`). Dataclass pattern used for PLR0913 violations: `RelationshipMeta`, `NewMemorySpec`, `CheckpointContext`. Dispatch-dict pattern used for nesting violations: `cmd_config`. All helpers comply with I13 caps. Baseline regenerated (4667 → 4819 entries reflecting refactored + new test functions).
+
+**Decision log — 2026-05-22 — v5.4.6 LOW-risk refactor batch:** 4 functions / 2 files fully removed from per-file-ignores / 1 partial removal. No topology drift per I5 — all helpers remain in same module, same sync/async context. MEDIUM and HIGH violations deferred (topology proof required per I5 or metrics gate per I12).
 
 ### I14. Structured logging contract (SCOPED)
 
