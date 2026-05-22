@@ -117,7 +117,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         """Clear retry state for a file (called by dlq_requeue after moving back to queue)."""
         self._attempts.pop(filename, None)
 
-    def _drain_once(self) -> int:
+    def _drain_once(self) -> int:  # noqa: C901 — pre-existing complexity, tracked for P13 refactor
         _cycle_t0 = time.monotonic()
         files = self._queue.pending()
         processed = 0
@@ -209,13 +209,24 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
                         self._move_to_dlq(path, attempt, op_type)
                         self._attempts.pop(fname, None)
 
-        logger.info("Queue drain pass complete: %d processed", processed)
+        _cycle_ms = round((time.monotonic() - _cycle_t0) * 1000, 1)
+        logger.info(
+            "drain_cycle_complete",
+            extra={
+                "component": "drainer",
+                "action": "drain_cycle",
+                "outcome": "ok",
+                "processed": processed,
+                "pending": len(files),
+                "latency_ms": _cycle_ms,
+            },
+        )
 
         # P11: observe drain cycle duration
         try:
             from yadgar.metrics import yadgar_drain_cycle_duration_ms  # noqa: PLC0415
 
-            yadgar_drain_cycle_duration_ms.observe((time.monotonic() - _cycle_t0) * 1000)
+            yadgar_drain_cycle_duration_ms.observe(_cycle_ms)
         except Exception:
             pass
 
