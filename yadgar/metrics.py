@@ -403,11 +403,11 @@ def _collect_process_metrics() -> None:
         import resource
 
         usage = resource.getrusage(resource.RUSAGE_SELF)
-        # ru_maxrss: bytes on Linux, kilobytes on macOS — normalise to bytes
+        # ru_maxrss: KiB on Linux, bytes on macOS — normalise to bytes
         import platform
 
         rss = usage.ru_maxrss
-        if platform.system() != "Linux":
+        if platform.system() == "Linux":
             rss = rss * 1024
         yadgar_process_rss_bytes.set(rss)
     except Exception:
