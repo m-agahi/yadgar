@@ -398,6 +398,32 @@ def _configure_yadgar_logger(numeric_level: int, *, propagate: bool) -> None:
     logger.propagate = propagate
 
 
+def _configure_request_logger(formatter: logging.Formatter) -> None:
+    """Install a dedicated always-INFO handler on yadgar.requests (v5.4.8).
+
+    Root cause fix: CORE_LOG_LEVEL defaults to 'warn' → root handler at WARNING
+    → yadgar.requests (child of yadgar) inherits WARNING → INFO records dropped.
+
+    Solution: attach a dedicated StreamHandler at INFO on yadgar.requests with
+    propagate=False so request telemetry flows regardless of root log level.
+    Idempotent: no-op if a handler is already present.
+    """
+    req_logger = logging.getLogger("yadgar.requests")
+    if req_logger.handlers:
+        # Already configured — idempotency guard: update level only
+        for h in req_logger.handlers:
+            h.setLevel(logging.INFO)
+        req_logger.setLevel(logging.INFO)
+        return
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+    handler.addFilter(ContentRedactor())
+    handler.setLevel(logging.INFO)
+    req_logger.setLevel(logging.INFO)
+    req_logger.addHandler(handler)
+    req_logger.propagate = False
+
+
 def _suppress_noisy_framework_loggers() -> None:
     """Raise threshold on chatty framework namespaces to WARNING.
 
@@ -455,11 +481,13 @@ def configure_logging(
             existing.setLevel(numeric_level)
             root.setLevel(numeric_level)
             _configure_yadgar_logger(numeric_level, propagate=True)
+            _configure_request_logger(existing.formatter)
             return
         if not use_json and not isinstance(existing.formatter, JSONLogFormatter):
             existing.setLevel(numeric_level)
             root.setLevel(numeric_level)
             _configure_yadgar_logger(numeric_level, propagate=True)
+            _configure_request_logger(existing.formatter)
             return
 
     # Remove pre-installed handlers on root (stdlib default, uvicorn default)
@@ -483,6 +511,9 @@ def configure_logging(
 
     # yadgar logger: propagate=True → records flow to root handler above.
     _configure_yadgar_logger(numeric_level, propagate=True)
+
+    # v5.4.8: dedicated always-INFO handler on yadgar.requests — survives WARNING root.
+    _configure_request_logger(formatter)
 
     # Suppress DEBUG/INFO chatter from high-volume framework namespaces.
     _suppress_noisy_framework_loggers()
