@@ -5,7 +5,7 @@ Tests for _CircuitBreaker state machine and RemoteMLClient integration.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 # ---------------------------------------------------------------------------
 # 1. Breaker opens after failure threshold
@@ -435,3 +435,159 @@ class TestExponentialBackoffOnProbeFailure:
         assert breaker._open_duration_sec == 60.0, (
             f"after reset + re-open: expected base 60s, got {breaker._open_duration_sec}"
         )
+
+
+# ---------------------------------------------------------------------------
+# V1b — CB-1 state gauge (v5.5.3) — TDD: written before implementation
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_metrics():
+    """Return a MagicMock that mimics yadgar.metrics gauge interface."""
+    mock = MagicMock()
+    # .labels(...).set(n) should work on the mock
+    mock.yadgar_circuit_breaker_state.labels.return_value = MagicMock()
+    return mock
+
+
+class TestGaugeInitializedToClosedOnConstruct:
+    def test_gauge_initialized_to_closed_on_construct(self):
+        """Constructing _CircuitBreaker sets gauge to 0 (CLOSED)."""
+        from yadgar.ml_client import _CircuitBreaker
+
+        mock_metrics = _make_mock_metrics()
+        breaker = _CircuitBreaker(
+            "/rerank/ce",
+            failure_threshold=3,
+            open_duration_sec=60.0,
+            metrics_module=mock_metrics,
+        )
+
+        mock_metrics.yadgar_circuit_breaker_state.labels.assert_called_once_with(
+            endpoint="/rerank/ce"
+        )
+        mock_metrics.yadgar_circuit_breaker_state.labels.return_value.set.assert_called_once_with(0)
+        _ = breaker  # silence unused-var warning
+
+
+class TestGaugeSetToOpenOnThresholdFailures:
+    def test_gauge_set_to_open_on_threshold_failures(self):
+        """After 3 consecutive failures gauge == 2 (OPEN)."""
+        from yadgar.ml_client import _CircuitBreaker
+
+        mock_metrics = _make_mock_metrics()
+        breaker = _CircuitBreaker(
+            "/rerank/ce",
+            failure_threshold=3,
+            open_duration_sec=60.0,
+            metrics_module=mock_metrics,
+        )
+        mock_metrics.reset_mock()
+
+        for _ in range(3):
+            breaker.record_failure()
+
+        # Gauge must have been set to 2 (OPEN)
+        set_calls = mock_metrics.yadgar_circuit_breaker_state.labels.return_value.set.call_args_list
+        assert any(c == call(2) for c in set_calls), (
+            f"Expected set(2) for OPEN state, got: {set_calls}"
+        )
+
+
+class TestGaugeSetToHalfOpenAfterCooldown:
+    def test_gauge_set_to_half_open_after_cooldown(self):
+        """After cooldown expires and is_open() called, gauge == 1 (HALF_OPEN)."""
+        from yadgar.ml_client import _CircuitBreaker
+
+        mock_metrics = _make_mock_metrics()
+        breaker = _CircuitBreaker(
+            "/rerank/ce",
+            failure_threshold=3,
+            open_duration_sec=60.0,
+            metrics_module=mock_metrics,
+        )
+        mock_metrics.reset_mock()
+
+        t0 = 1_000_000.0
+        breaker._open(reason="test", _now=t0)
+        mock_metrics.reset_mock()
+
+        # Call is_open() with time past cooldown — triggers OPEN → HALF_OPEN
+        breaker.is_open(_now=t0 + 61.0)
+
+        set_calls = mock_metrics.yadgar_circuit_breaker_state.labels.return_value.set.call_args_list
+        assert any(c == call(1) for c in set_calls), (
+            f"Expected set(1) for HALF_OPEN state, got: {set_calls}"
+        )
+
+
+class TestGaugeSetToClosedOnRecordSuccess:
+    def test_gauge_set_to_closed_on_record_success(self):
+        """From OPEN state, record_success() sets gauge to 0 (CLOSED)."""
+        from yadgar.ml_client import _CircuitBreaker
+
+        mock_metrics = _make_mock_metrics()
+        breaker = _CircuitBreaker(
+            "/rerank/ce",
+            failure_threshold=3,
+            open_duration_sec=60.0,
+            metrics_module=mock_metrics,
+        )
+
+        t0 = 1_000_000.0
+        breaker._open(reason="test", _now=t0)
+        mock_metrics.reset_mock()
+
+        breaker.record_success()
+
+        set_calls = mock_metrics.yadgar_circuit_breaker_state.labels.return_value.set.call_args_list
+        assert any(c == call(0) for c in set_calls), (
+            f"Expected set(0) for CLOSED state, got: {set_calls}"
+        )
+
+
+class TestGaugePerEndpointIndependent:
+    def test_gauge_per_endpoint_independent(self):
+        """Two breakers with different endpoints update gauge independently."""
+        from yadgar.ml_client import _CircuitBreaker
+
+        mock_metrics = _make_mock_metrics()
+
+        # Separate label mock per endpoint
+        label_mocks: dict[str, MagicMock] = {}
+
+        def _labels(endpoint):
+            if endpoint not in label_mocks:
+                label_mocks[endpoint] = MagicMock()
+            return label_mocks[endpoint]
+
+        mock_metrics.yadgar_circuit_breaker_state.labels.side_effect = _labels
+
+        ce_breaker = _CircuitBreaker(
+            "/rerank/ce",
+            failure_threshold=3,
+            open_duration_sec=60.0,
+            metrics_module=mock_metrics,
+        )
+        nli_breaker = _CircuitBreaker(
+            "/rerank/nli",
+            failure_threshold=3,
+            open_duration_sec=60.0,
+            metrics_module=mock_metrics,
+        )
+
+        # Drive ce to OPEN
+        for _ in range(3):
+            ce_breaker.record_failure()
+
+        # nli gauge should only have been set to 0 (CLOSED at init), never to 2 (OPEN)
+        nli_set_calls = label_mocks["/rerank/nli"].set.call_args_list
+        assert all(c == call(0) for c in nli_set_calls), (
+            f"nli gauge should only see CLOSED(0), got: {nli_set_calls}"
+        )
+        # ce gauge must have been set to 2 (OPEN) at some point
+        ce_set_calls = label_mocks["/rerank/ce"].set.call_args_list
+        assert any(c == call(2) for c in ce_set_calls), (
+            f"ce gauge should see OPEN(2), got: {ce_set_calls}"
+        )
+        _ = nli_breaker  # prevent unused-var lint

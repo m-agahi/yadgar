@@ -1,5 +1,43 @@
 # Migration Notes
 
+## v5.5.3 — V1b CB-1 state gauge (2026-05-22)
+
+Core 5.4.5 → 5.5.3. Backend unchanged (5.0.3).
+
+### Changes
+
+- `yadgar_circuit_breaker_state{endpoint}` now updates inline on every CB state transition.
+- Removes dead polling function `_collect_circuit_breaker_states()` from `metrics.py`.
+- `_CircuitBreaker` accepts `metrics_module=None` DI kwarg (default: `yadgar.metrics`).
+- Label format: `endpoint="/rerank/ce"` (full path, matching CB log field). V1c panel must use this form.
+
+### Deploy steps (core only — no backend image change)
+
+```bash
+# 1. Build core image
+podman build -t openfantasy/yadgar:5.5.3 .
+
+# 2. Bump nix (core only)
+# In ~/git/nix — update core image tag 5.4.5 → 5.5.3, then:
+home-manager switch
+
+# 3. Restart core
+systemctl --user restart yadgar
+```
+
+### Verify
+
+```bash
+# Gauge should appear at 0 for all three endpoints after restart
+curl -s http://localhost:8765/metrics | grep yadgar_circuit_breaker_state
+# Expected:
+# yadgar_circuit_breaker_state{endpoint="/rerank/ce"} 0.0
+# yadgar_circuit_breaker_state{endpoint="/rerank/nli"} 0.0
+# yadgar_circuit_breaker_state{endpoint="/rerank/pair"} 0.0
+```
+
+---
+
 ## v5.3.9 — Crash hotfix (2026-05-20)
 
 These commands run **manually** during v5.3.9 deploy. Per HARD RULE — No Apply / Import, the repo cannot apply them.
