@@ -5,7 +5,7 @@ Mirrored in wiki: `yadgar-architectural-invariants`.
 Anchored memory: project-scoped, `/home/max/git/yadgar`.
 Version-execution-order lives in the `yadgar-roadmap-future-improvements` wiki.
 
-Last updated: 2026-05-22 (v5.4.7 I14 ratchet cleanup — RequestLoggingMiddleware migrated + ContentRedactor denylist tightened).
+Last updated: 2026-05-22 (v5.4.8 middleware visibility fix — dedicated yadgar.requests handler, root cause CORE_LOG_LEVEL default "warn").
 
 ---
 
@@ -125,6 +125,13 @@ Every log entry = JSON with `ts, level, component, action, outcome, latency_ms?,
 - `_outcome_from_status(status: str) -> str` helper added: `"cancelled"→"degraded"`, `2xx/3xx→"ok"`, all other (4xx/5xx/"0"/unknown)→`"error"`. Cyclo=3, LOC=8 — well within I13 caps.
 - Tests: 40 new tests across `TestContentRedactorDenylistV547`, `TestOutcomeFromStatus`, `TestRequestLoggingMiddlewareI14`. Total test file: 66 tests.
 - **v5.6 follow-ups RESOLVED:** `RequestLoggingMiddleware` non-conformance and `content_type`/`content_length` false-positive both closed in this PR.
+
+**v5.4.8 update — request-log visibility fix:**
+- Root cause: `CORE_LOG_LEVEL` defaults to `"warn"` → `configure_logging(level="WARNING")` set root + root handler + `yadgar` logger all to WARNING → `yadgar.requests` inherited WARNING → INFO records silently dropped. Env var `YADGAR_LOG_LEVEL` (from bug report) is NOT a valid Settings field; the correct var is `YADGAR_CORE_LOG_LEVEL`. Neither deployment file (`docker-compose.yml`, `yadgar.service`) set it → default "warn" was always active.
+- Fix: `_configure_request_logger(formatter)` — dedicated `StreamHandler` at `INFO` attached directly to `yadgar.requests` with `propagate=False`. Request telemetry now flows regardless of root log level. Idempotent: existing handler updated, not stacked.
+- Invariant: `yadgar.requests` MUST always have its own handler at `INFO` after `configure_logging()`. Root log level is irrelevant to request observability.
+- Tests: `TestRequestLogVisibilityAtWarningLevel` (3 tests) — `level="WARNING"` root proves INFO still flows; suppression list excludes `yadgar.requests`; idempotency guard on re-configure.
+- **Operator action required:** production deployment must set `YADGAR_CORE_LOG_LEVEL=info` in `yadgar.service` / `docker-compose.yml` for full INFO coverage from other yadgar.* loggers. `yadgar.requests` is now always visible regardless.
 
 ### I15. Boundary-property fuzz tests (SCOPED)
 
@@ -460,6 +467,7 @@ Post-v5.3.9 `BindsTo → Wants` decouple, core + backend run as independent daem
 - 2026-05-22: P9 image size ratchet shipped (v5.4.2). F0 (6.78 GB → 1.63 GB) preserved via release-readiness check. Caps: core ≤800 MB, backend ≤2 GB. Script: `scripts/check_image_size.py`. Hook stage: manual (post-build gate, not per-commit).
 - 2026-05-22: v5.4.3 hotfix shipped — I14 framework-logger coverage extended to root logger (uvicorn, mcp, fastmcp, httpx all now emit JSON). I13 b27d218 grandfathering gap closed: 31 pre-existing C901/PLR0913 violators added to pyproject.toml per-file-ignores; refactor target v5.4.4. Backend version unchanged (5.0.3).
 - 2026-05-22: v5.4.7 I14 ratchet cleanup shipped — `RequestLoggingMiddleware` migrated to I14 schema (component/action/outcome/latency_ms/http_status); `ContentRedactor` denylist tightened (two-tier exact+substring, `content_type`/`content_length` false-positive fixed). Both v5.6 I14 follow-ups RESOLVED. Backend version unchanged (5.0.3). BREAKING: `duration_ms` renamed to `latency_ms` in request logs.
+- 2026-05-22: v5.4.8 middleware visibility fix shipped — root cause: `CORE_LOG_LEVEL` defaults to "warn" → root handler at WARNING → `yadgar.requests` INFO records silently dropped. Fix: dedicated always-INFO handler on `yadgar.requests` (propagate=False) installed by `configure_logging()`. Secondary finding: `YADGAR_LOG_LEVEL` (used in bug report) is NOT a valid env var; correct var is `YADGAR_CORE_LOG_LEVEL`. Neither production deployment file sets it. Operator action: add `YADGAR_CORE_LOG_LEVEL=info` to `yadgar.service` / `docker-compose.yml` for full INFO on all `yadgar.*` loggers. Backend version unchanged (5.0.3).
 
 ---
 

@@ -1,5 +1,50 @@
 # Migration Notes
 
+## v5.4.8 — middleware request-log visibility fix (2026-05-22)
+
+### What changed
+
+- `configure_logging()` now installs a dedicated always-INFO `StreamHandler` on `yadgar.requests` (propagate=False). Request log lines now emit regardless of root log level.
+- Root cause was `CORE_LOG_LEVEL` defaulting to `"warn"` → root handler at WARNING → `yadgar.requests` INFO records silently dropped.
+- Secondary finding: `YADGAR_LOG_LEVEL` is NOT a valid Settings env var. The correct var is `YADGAR_CORE_LOG_LEVEL` (maps to `Settings.CORE_LOG_LEVEL`). Neither `yadgar.service` nor `docker-compose.yml` set it. Add it if full INFO visibility on all `yadgar.*` loggers is needed.
+- Backend version **unchanged** (5.0.3) — no backend rebuild needed.
+
+### Operator action (recommended)
+
+Add `YADGAR_CORE_LOG_LEVEL=info` to your deployment to enable INFO logging on all yadgar.* loggers (not just yadgar.requests):
+
+**systemd** (`~/.config/systemd/user/yadgar.service`):
+```ini
+Environment=YADGAR_CORE_LOG_LEVEL=info
+```
+
+**docker-compose** (`docker-compose.yml`, under `core.environment`):
+```yaml
+YADGAR_CORE_LOG_LEVEL: info
+```
+
+### 1. Rebuild core image (user runs manually)
+
+```bash
+podman build --arch amd64 -f Dockerfile -t docker.io/openfantasy/yadgar:5.4.8 .
+podman push docker.io/openfantasy/yadgar:5.4.8
+```
+
+### 2. Bump nix module
+
+In `modules/home/yadgar.nix` (or equivalent):
+```nix
+yadgar_core_version = "5.4.8";
+```
+
+### 3. Restart core
+
+```bash
+systemctl --user restart yadgar.service
+```
+
+---
+
 ## v5.4.7 — I14 ratchet cleanup (2026-05-22)
 
 ### What changed
