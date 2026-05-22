@@ -442,6 +442,21 @@ class Settings(BaseSettings):
     CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = 3
     # Stay OPEN for this many seconds before allowing a single probe attempt.
     CIRCUIT_BREAKER_OPEN_DURATION_SEC: int = 60
+    # v5.4.2 CB-1 probe fixes:
+    # Short HTTP timeout for HALF_OPEN probe calls (faster fail when backend saturated).
+    CIRCUIT_BREAKER_PROBE_TIMEOUT_SEC: float = 2.0
+    # Maximum cooldown ceiling for exponential backoff on repeated probe failures.
+    CIRCUIT_BREAKER_MAX_OPEN_DURATION_SEC: float = 600.0
+    # Backoff multiplier — each failed probe multiplies cooldown by this factor.
+    CIRCUIT_BREAKER_BACKOFF_FACTOR: float = 2.0
+
+    # v5.4.2 F5-A — Concurrent-inference semaphore for /rerank endpoints (backend)
+    # Max concurrent inference threads per rerank mode (ce/nli/pair).
+    # N=1 ensures probes fast-fail via TimeoutError instead of queueing behind a live inference.
+    RERANK_MAX_CONCURRENCY: int = 1
+    # Seconds to wait for semaphore before returning 503.
+    # Should be ≤ CIRCUIT_BREAKER_PROBE_TIMEOUT_SEC so probes always fail fast.
+    RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC: float = 2.0
 
     model_config = {"env_prefix": "YADGAR_"}
 

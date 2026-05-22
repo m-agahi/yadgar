@@ -28,6 +28,29 @@ logger = logging.getLogger(__name__)
 
 _http_bearer = HTTPBearer(auto_error=False)
 
+# ---------------------------------------------------------------------------
+# F5-A — Per-mode concurrent-inference semaphore (v5.4.2)
+# ---------------------------------------------------------------------------
+# Bounds concurrent /rerank inferences so HALF_OPEN probes fast-fail (503)
+# instead of queueing behind a saturated model thread.
+# Module-level so reload() recreates them with fresh env values in tests.
+
+
+def _make_rerank_semaphores() -> dict[str, asyncio.Semaphore]:
+    from yadgar.config import get_settings
+
+    _n = int(get_settings().RERANK_MAX_CONCURRENCY)
+    return {mode: asyncio.Semaphore(_n) for mode in ("ce", "nli", "pair")}
+
+
+_rerank_semaphores: dict[str, asyncio.Semaphore] = _make_rerank_semaphores()
+
+
+def _rerank_acquire_timeout() -> float:
+    from yadgar.config import get_settings
+
+    return float(get_settings().RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC)
+
 
 async def _require_admin_token(
     credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
@@ -179,12 +202,28 @@ async def embed(req: EmbedRequest, _: None = Depends(_require_admin_token)):
 
 @app.post("/rerank", response_model=RerankResponse)
 async def rerank(req: RerankRequest, _: None = Depends(_require_admin_token)) -> RerankResponse:
-    """Score texts using the local ML client (cross-encoder, NLI, or pair mode)."""
+    """Score texts using the local ML client (cross-encoder, NLI, or pair mode).
+
+    F5-A: acquire per-mode semaphore before dispatching to inference thread.
+    If semaphore is unavailable within RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC,
+    return 503 immediately so circuit-breaker probes fast-fail without burning CPU.
+    """
+    sem = _rerank_semaphores[req.mode]
+    timeout = _rerank_acquire_timeout()
+    try:
+        await asyncio.wait_for(sem.acquire(), timeout=timeout)
+    except TimeoutError:
+        logger.warning(
+            "rerank/%s semaphore busy (timeout=%.1fs) — returning 503",
+            req.mode,
+            timeout,
+        )
+        raise HTTPException(status_code=503, detail="inference slot unavailable") from None
+
     ml = _get_reranker()
 
     def _score() -> list[float]:
         if req.mode == "nli":
-            # LocalMLClient.score_nli already returns entailment probabilities as floats
             return ml.score_nli(req.query, req.texts)
         elif req.mode == "pair":
             if not req.texts:
@@ -193,7 +232,11 @@ async def rerank(req: RerankRequest, _: None = Depends(_require_admin_token)) ->
         else:  # "ce" default
             return ml.score_cross_encoder(req.query, req.texts)
 
-    scores = await asyncio.to_thread(_score)
+    try:
+        scores = await asyncio.to_thread(_score)
+    finally:
+        sem.release()
+
     return RerankResponse(scores=scores, mode=req.mode)
 
 
