@@ -135,19 +135,16 @@ def test_json_formatter_trace_id_propagation():
 
 
 def test_configure_json_logging(monkeypatch, tmp_path):
-    """configure_logging(format='json') installs JSON handler on yadgar logger."""
+    """configure_logging(format='json') installs JSON handler on root logger (v5.4.3+)."""
     monkeypatch.setenv("YADGAR_LOG_FORMAT", "json")
 
-    from yadgar.log_config import JsonFormatter, configure_logging
+    from yadgar.log_config import JSONLogFormatter, configure_logging
 
     configure_logging(log_format="json", level="INFO")
-    logger = logging.getLogger("yadgar")
-    # At least one handler should use JsonFormatter
-    json_handlers = [h for h in logger.handlers if isinstance(h.formatter, JsonFormatter)]
-    assert len(json_handlers) >= 1, "Expected at least one JSON handler on yadgar logger"
-    # Cleanup: remove handlers added by this test
-    for h in json_handlers:
-        logger.removeHandler(h)
+    # v5.4.3+: root-logger approach — JSONLogFormatter attached to root, yadgar propagates up.
+    root = logging.getLogger()
+    json_handlers = [h for h in root.handlers if isinstance(h.formatter, JSONLogFormatter)]
+    assert len(json_handlers) >= 1, "Expected at least one JSON handler on root logger"
 
 
 def test_configure_human_logging_default(monkeypatch):
@@ -249,8 +246,8 @@ class TestRequestLoggingMiddleware:
             r = records[0]
             assert hasattr(r, "request_id"), "Missing request_id"
             assert hasattr(r, "tool_name"), "Missing tool_name"
-            assert hasattr(r, "duration_ms"), "Missing duration_ms"
-            assert hasattr(r, "status"), "Missing status"
+            assert hasattr(r, "latency_ms"), "Missing latency_ms (was duration_ms pre-v5.4.7)"
+            assert hasattr(r, "http_status"), "Missing http_status (was status pre-v5.4.7)"
         finally:
             cleanup()
 
@@ -282,7 +279,7 @@ class TestRequestLoggingMiddleware:
             scope = self._make_scope("/missing")
             asyncio.run(mw(scope, self._receive_noop, self._send_noop))
             assert records
-            assert records[0].status == "404"
+            assert records[0].http_status == "404"
         finally:
             cleanup()
 
@@ -302,8 +299,8 @@ class TestRequestLoggingMiddleware:
         finally:
             cleanup()
 
-    def test_middleware_duration_ms_is_nonnegative_int(self):
-        """duration_ms is a non-negative integer."""
+    def test_middleware_latency_ms_is_nonnegative_int(self):
+        """latency_ms is a non-negative integer (was duration_ms pre-v5.4.7)."""
         import asyncio
 
         from yadgar.log_config import RequestLoggingMiddleware
@@ -314,8 +311,8 @@ class TestRequestLoggingMiddleware:
             scope = self._make_scope("/health")
             asyncio.run(mw(scope, self._receive_noop, self._send_noop))
             assert records
-            assert isinstance(records[0].duration_ms, int)
-            assert records[0].duration_ms >= 0
+            assert isinstance(records[0].latency_ms, int)
+            assert records[0].latency_ms >= 0
         finally:
             cleanup()
 
