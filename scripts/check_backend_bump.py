@@ -30,7 +30,9 @@ def _backend_version_from_json(text: str) -> str | None:
     try:
         data = json.loads(text)
         return data.get("backend_version")
-    except json.JSONDecodeError, AttributeError:
+    except json.JSONDecodeError:
+        return None
+    except AttributeError:
         return None
 
 
