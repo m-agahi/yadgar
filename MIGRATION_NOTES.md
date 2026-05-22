@@ -1,5 +1,33 @@
 # Migration Notes
 
+## v5.5.2 — backend log metric wiring fix (2026-05-22)
+
+### What changed
+
+- **Bug fix:** backend `yadgar_log_file_size_bytes`, `yadgar_log_file_rotations_total`, and `yadgar_log_dropped_total` metrics now update correctly in the backend's own Prometheus registry.
+- No new env vars, no public API changes, no schema changes.
+- Core version: **5.5.1 → 5.5.2**. Backend version: **5.1.1 → 5.1.2**.
+
+### Build + restart
+
+```bash
+# Core (5.5.2)
+podman build --arch amd64 -f Dockerfile -t docker.io/openfantasy/yadgar:5.5.2 .
+podman push docker.io/openfantasy/yadgar:5.5.2
+
+# Backend (5.1.2)
+podman build --arch amd64 -f Dockerfile.backend -t docker.io/openfantasy/yadgar-backend:5.1.2 .
+podman push docker.io/openfantasy/yadgar-backend:5.1.2
+```
+
+Update nix config — bump versions:
+- Core image tag: `5.5.1` → `5.5.2`
+- Backend image tag: `5.1.1` → `5.1.2`
+
+```bash
+systemctl --user restart yadgar yadgar-backend
+```
+
 ## v5.5.1 — log rotation + rate limiter (2026-05-22)
 
 ### What changed
