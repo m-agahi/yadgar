@@ -6,7 +6,7 @@ from collections import deque
 from datetime import UTC, datetime
 
 from yadgar.config import Settings
-from yadgar.storage import StorageEngine
+from yadgar.storage import RelationshipMeta, StorageEngine
 
 logger = logging.getLogger(__name__)
 
@@ -153,14 +153,16 @@ class KnowledgeGraph:
                 if src_e and tgt_e:
                     now = datetime.now(UTC).isoformat()
                     self._storage.insert_typed_relationship(
-                        source_entity_id=src_e["id"],
-                        target_entity_id=tgt_e["id"],
-                        relationship_type="caused_by",
-                        weight=1.0,
-                        event_time=now,
-                        record_time=now,
-                        is_causal=1,
-                        confidence=0.8,
+                        src_e["id"],
+                        tgt_e["id"],
+                        "caused_by",
+                        RelationshipMeta(
+                            weight=1.0,
+                            event_time=now,
+                            record_time=now,
+                            is_causal=1,
+                            confidence=0.8,
+                        ),
                     )
                     created += 1
         logger.debug("detect_causality: %d causal edges added", created)
@@ -354,14 +356,16 @@ class KnowledgeGraph:
         confidence: float,
     ) -> int:
         return self._storage.insert_typed_relationship(
-            source_entity_id=source_id,
-            target_entity_id=target_id,
-            relationship_type=rel_type,
-            weight=1.0,
-            event_time=event_time_iso,
-            record_time=record_time_iso,
-            is_causal=0,
-            confidence=confidence,
+            source_id,
+            target_id,
+            rel_type,
+            RelationshipMeta(
+                weight=1.0,
+                event_time=event_time_iso,
+                record_time=record_time_iso,
+                is_causal=0,
+                confidence=confidence,
+            ),
         )
 
     def _reinforce_typed_relationship(self, rel_id: int, now_iso: str) -> None:

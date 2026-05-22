@@ -1,5 +1,40 @@
 # Migration Notes
 
+## v5.4.6 — LOW-risk complexity refactor batch (2026-05-22)
+
+### What changed
+
+- 4 functions decomposed per P12 complexity audit (all LOW-risk):
+  - `insert_typed_relationship` — params 9→4 via `RelationshipMeta` dataclass
+  - `insert_new_memory` — params 12→4 via `NewMemorySpec` dataclass
+  - `create_checkpoint` — params 9→3 via `CheckpointContext` dataclass
+  - `cmd_config` — nesting 6→1, cyclo 7→3 via dispatch dict
+- `pyproject.toml` per-file-ignores: 2 files fully removed, 1 partial (PLR0913 only)
+- `.complexity-baseline.json` regenerated (4667 → 4819 entries)
+- Backend version **unchanged** (5.0.3) — no backend rebuild needed.
+
+### 1. Rebuild core image (user runs manually)
+
+```bash
+podman build --arch amd64 -f Dockerfile -t docker.io/openfantasy/yadgar:5.4.6 .
+podman push docker.io/openfantasy/yadgar:5.4.6
+```
+
+### 2. Bump nix module
+
+In `modules/home/yadgar.nix` (or equivalent):
+```nix
+yadgar_core_version = "5.4.6";
+```
+
+### 3. Restart core
+
+```bash
+systemctl --user restart yadgar.service
+```
+
+---
+
 ## v5.3.9 — Crash hotfix (2026-05-20)
 
 These commands run **manually** during v5.3.9 deploy. Per HARD RULE — No Apply / Import, the repo cannot apply them.

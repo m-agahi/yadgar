@@ -8,6 +8,7 @@ from yadgar.curation.contradiction import _ACTION_RE, _NEGATION_RE, detect_contr
 from yadgar.curation.ingestion import (
     _LINK_HIGH,
     _LINK_LOW,
+    NewMemorySpec,
     create_link,
     find_similar_memories,
     has_textual_overlap,
@@ -86,39 +87,27 @@ class MemoryCurator:
                 if existing and self._has_textual_overlap(content, existing["content"]):
                     return self._merge_memory(mem_id, content, tags, embedding, contextual_prefix)
 
+        spec = NewMemorySpec(
+            tags=tags,
+            embedding=embedding,
+            heat=initial_heat,
+            file_hash=file_hash,
+            embedding_model=embedding_model,
+            contextual_prefix=contextual_prefix,
+            surprise=surprise,
+            importance=importance,
+            valence=valence,
+        )
+
         # Check for moderate similarity -> link
         for mem_id, sim in similar:
             if _LINK_LOW <= sim < threshold:
-                new_id = self._insert_new_memory(
-                    content,
-                    context,
-                    tags,
-                    embedding,
-                    initial_heat,
-                    file_hash,
-                    embedding_model,
-                    contextual_prefix,
-                    surprise,
-                    importance,
-                    valence,
-                )
+                new_id = self._insert_new_memory(content, context, spec)
                 self._create_link(new_id, mem_id)
                 return {"action": "linked", "memory_id": new_id, "linked_to": mem_id}
 
         # No similar memory -> create new
-        new_id = self._insert_new_memory(
-            content,
-            context,
-            tags,
-            embedding,
-            initial_heat,
-            file_hash,
-            embedding_model,
-            contextual_prefix,
-            surprise,
-            importance,
-            valence,
-        )
+        new_id = self._insert_new_memory(content, context, spec)
         return {"action": "created", "memory_id": new_id}
 
     def _find_similar_memories(
@@ -155,31 +144,10 @@ class MemoryCurator:
         self,
         content: str,
         context: str,
-        tags: list[str],
-        embedding: bytes,
-        heat: float,
-        file_hash: str | None,
-        embedding_model: str | None,
-        contextual_prefix: str | None,
-        surprise: float,
-        importance: float,
-        valence: float,
+        spec: NewMemorySpec | None = None,
     ) -> int:
         """Insert a brand-new memory and set its scores."""
-        return insert_new_memory(
-            self._storage,
-            content,
-            context,
-            tags,
-            embedding,
-            heat,
-            file_hash,
-            embedding_model,
-            contextual_prefix,
-            surprise,
-            importance,
-            valence,
-        )
+        return insert_new_memory(self._storage, content, context, spec)
 
     def _create_link(self, new_id: int, existing_id: int) -> None:
         """Create a derived_from relationship between two memories via entities."""

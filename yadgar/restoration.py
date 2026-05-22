@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+from dataclasses import dataclass, field
 
 from yadgar.cognitive_map import CognitiveMap
 from yadgar.config import Settings
@@ -18,6 +19,23 @@ _MICRO_ERROR_RE = re.compile(r"\b(error|exception|traceback|failed|crash|bug)\b"
 _MICRO_DECISION_RE = re.compile(
     r"\b(decided|chose|switched|migrated|will use|going with|opted)\b", re.IGNORECASE
 )
+
+
+@dataclass
+class CheckpointContext:
+    """Optional context fields for create_checkpoint.
+
+    Bundles the 7 optional checkpoint payload params so the method signature
+    stays within the I13 PLR0913 cap (≤8 non-self args).
+    """
+
+    current_task: str = ""
+    files_being_edited: list[str] = field(default_factory=list)
+    key_decisions: list[str] = field(default_factory=list)
+    open_questions: list[str] = field(default_factory=list)
+    next_steps: list[str] = field(default_factory=list)
+    active_errors: list[str] = field(default_factory=list)
+    custom_context: str = ""
 
 
 class CheckpointRestore:
@@ -64,28 +82,28 @@ class CheckpointRestore:
     def create_checkpoint(
         self,
         directory: str,
-        current_task: str = "",
-        files_being_edited: list[str] | None = None,
-        key_decisions: list[str] | None = None,
-        open_questions: list[str] | None = None,
-        next_steps: list[str] | None = None,
-        active_errors: list[str] | None = None,
-        custom_context: str = "",
+        ctx: CheckpointContext | None = None,
         session_id: str = "default",
     ) -> dict:
-        """Create a working state checkpoint for post-compaction recovery."""
+        """Create a working state checkpoint for post-compaction recovery.
+
+        ctx bundles the optional payload fields: current_task,
+        files_being_edited, key_decisions, open_questions, next_steps,
+        active_errors, custom_context.
+        """
+        c = ctx or CheckpointContext()
         epoch = self._storage.get_current_epoch()
         checkpoint_id = self._storage.insert_checkpoint(
             {
                 "session_id": session_id,
                 "directory_context": directory,
-                "current_task": current_task,
-                "files_being_edited": files_being_edited or [],
-                "key_decisions": key_decisions or [],
-                "open_questions": open_questions or [],
-                "next_steps": next_steps or [],
-                "active_errors": active_errors or [],
-                "custom_context": custom_context,
+                "current_task": c.current_task,
+                "files_being_edited": c.files_being_edited,
+                "key_decisions": c.key_decisions,
+                "open_questions": c.open_questions,
+                "next_steps": c.next_steps,
+                "active_errors": c.active_errors,
+                "custom_context": c.custom_context,
                 "epoch": epoch,
             }
         )
@@ -177,11 +195,8 @@ class CheckpointRestore:
         full checkpoints.
         """
         summary = content[:150].replace("\n", " ")
-        return self.create_checkpoint(
-            directory=directory,
-            current_task=f"[micro:{reason}] {summary}",
-            session_id="micro-auto",
-        )
+        ctx = CheckpointContext(current_task=f"[micro:{reason}] {summary}")
+        return self.create_checkpoint(directory, ctx, session_id="micro-auto")
 
     def pre_compact_drain(self, directory: str) -> dict:
         """Emergency context capture before compaction.

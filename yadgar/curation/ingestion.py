@@ -2,6 +2,7 @@
 
 import json
 import logging
+from dataclasses import dataclass, field
 
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.storage import StorageEngine
@@ -11,6 +12,25 @@ logger = logging.getLogger(__name__)
 # Moderate similarity range for linking
 _LINK_LOW = 0.6
 _LINK_HIGH = 0.85
+
+
+@dataclass
+class NewMemorySpec:
+    """All inputs needed to create a new memory row.
+
+    Bundles the 9 per-write params into one object so insert_new_memory
+    stays within the I13 PLR0913 cap (≤8 non-self args per function).
+    """
+
+    tags: list[str] = field(default_factory=list)
+    embedding: bytes = b""
+    heat: float = 1.0
+    file_hash: str | None = None
+    embedding_model: str | None = None
+    contextual_prefix: str | None = None
+    surprise: float = 0.0
+    importance: float = 0.5
+    valence: float = 0.0
 
 
 def find_similar_memories(
@@ -107,38 +127,35 @@ def insert_new_memory(
     storage: StorageEngine,
     content: str,
     context: str,
-    tags: list[str],
-    embedding: bytes,
-    heat: float,
-    file_hash: str | None,
-    embedding_model: str | None,
-    contextual_prefix: str | None,
-    surprise: float,
-    importance: float,
-    valence: float,
+    spec: NewMemorySpec | None = None,
 ) -> int:
-    """Insert a brand-new memory and set its scores."""
+    """Insert a brand-new memory and set its scores.
+
+    spec bundles tags, embedding, heat, file_hash, embedding_model,
+    contextual_prefix, surprise, importance, and valence.
+    """
+    s = spec or NewMemorySpec()
     memory_id = storage.insert_memory(
         {
             "content": content,
-            "embedding": embedding,
-            "tags": tags,
+            "embedding": s.embedding,
+            "tags": s.tags,
             "directory_context": context,
-            "heat": heat,
+            "heat": s.heat,
             "is_stale": False,
-            "file_hash": file_hash,
-            "embedding_model": embedding_model,
+            "file_hash": s.file_hash,
+            "embedding_model": s.embedding_model,
         }
     )
 
-    if contextual_prefix:
-        storage.update_memory_fields(memory_id, contextual_prefix=contextual_prefix)
+    if s.contextual_prefix:
+        storage.update_memory_fields(memory_id, contextual_prefix=s.contextual_prefix)
 
     storage.update_memory_scores(
         memory_id,
-        surprise_score=surprise,
-        importance=importance,
-        emotional_valence=valence,
+        surprise_score=s.surprise,
+        importance=s.importance,
+        emotional_valence=s.valence,
     )
 
     return memory_id
