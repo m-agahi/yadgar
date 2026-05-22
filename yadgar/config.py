@@ -100,6 +100,7 @@ class Settings(BaseSettings):
     # logging
     CORE_LOG_LEVEL: str = "warn"
     BACKEND_LOG_LEVEL: str = "warn"
+
     # v5.0 observability
     METRICS_ENABLED: bool = True  # YADGAR_METRICS_ENABLED — expose /metrics endpoint
     # I14 (v5.4.2): default changed 'human' → 'json' for structured log ingest

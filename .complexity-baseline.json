@@ -1135,7 +1135,7 @@
     "params": 1
   },
   "yadgar/config.py::__file__": {
-    "loc": 503
+    "loc": 514
   },
   "yadgar/config.py::__init__@12": {
     "cyclo": 1,
@@ -1161,7 +1161,19 @@
     "nesting": 1,
     "params": 2
   },
+  "yadgar/config.py::_validate_hhmm@478": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 1,
+    "params": 2
+  },
   "yadgar/config.py::_validate_log_format@474": {
+    "cyclo": 2,
+    "loc": 5,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/config.py::_validate_log_format@485": {
     "cyclo": 2,
     "loc": 5,
     "nesting": 1,
@@ -1174,6 +1186,12 @@
     "params": 1
   },
   "yadgar/config.py::db_path_resolved@497": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/config.py::db_path_resolved@508": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
@@ -1197,6 +1215,12 @@
     "nesting": 0,
     "params": 0
   },
+  "yadgar/config.py::get_settings@513": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 0
+  },
   "yadgar/config.py::settings_customise_sources@456": {
     "cyclo": 1,
     "loc": 14,
@@ -1204,6 +1228,12 @@
     "params": 6
   },
   "yadgar/config.py::settings_customise_sources@481": {
+    "cyclo": 1,
+    "loc": 14,
+    "nesting": 0,
+    "params": 6
+  },
+  "yadgar/config.py::settings_customise_sources@492": {
     "cyclo": 1,
     "loc": 14,
     "nesting": 0,
@@ -2014,7 +2044,7 @@
     "methods": 0
   },
   "yadgar/embed_service.py::__file__": {
-    "loc": 373
+    "loc": 377
   },
   "yadgar/embed_service.py::_encode_all@150": {
     "cyclo": 5,
@@ -2035,6 +2065,12 @@
     "params": 0
   },
   "yadgar/embed_service.py::_encode_all@212": {
+    "cyclo": 5,
+    "loc": 15,
+    "nesting": 3,
+    "params": 0
+  },
+  "yadgar/embed_service.py::_encode_all@216": {
     "cyclo": 5,
     "loc": 15,
     "nesting": 3,
@@ -2142,6 +2178,12 @@
     "nesting": 3,
     "params": 0
   },
+  "yadgar/embed_service.py::_score@286": {
+    "cyclo": 4,
+    "loc": 9,
+    "nesting": 3,
+    "params": 0
+  },
   "yadgar/embed_service.py::admin_dbsize@225": {
     "cyclo": 9,
     "loc": 45,
@@ -2161,6 +2203,12 @@
     "params": 1
   },
   "yadgar/embed_service.py::admin_dbsize@329": {
+    "cyclo": 9,
+    "loc": 45,
+    "nesting": 5,
+    "params": 1
+  },
+  "yadgar/embed_service.py::admin_dbsize@333": {
     "cyclo": 9,
     "loc": 45,
     "nesting": 5,
@@ -2190,6 +2238,12 @@
     "nesting": 3,
     "params": 2
   },
+  "yadgar/embed_service.py::embed@208": {
+    "cyclo": 6,
+    "loc": 36,
+    "nesting": 3,
+    "params": 2
+  },
   "yadgar/embed_service.py::health@201": {
     "cyclo": 9,
     "loc": 21,
@@ -2214,6 +2268,12 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/embed_service.py::health@309": {
+    "cyclo": 9,
+    "loc": 21,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/embed_service.py::lifespan@124": {
     "cyclo": 2,
     "loc": 12,
@@ -2228,11 +2288,17 @@
   },
   "yadgar/embed_service.py::lifespan@170": {
     "cyclo": 2,
-    "loc": 17,
+    "loc": 21,
     "nesting": 2,
     "params": 1
   },
   "yadgar/embed_service.py::metrics@193": {
+    "cyclo": 1,
+    "loc": 8,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/embed_service.py::metrics@197": {
     "cyclo": 1,
     "loc": 8,
     "nesting": 0,
@@ -2257,6 +2323,12 @@
     "params": 2
   },
   "yadgar/embed_service.py::rerank@243": {
+    "cyclo": 5,
+    "loc": 59,
+    "nesting": 3,
+    "params": 2
+  },
+  "yadgar/embed_service.py::rerank@247": {
     "cyclo": 5,
     "loc": 59,
     "nesting": 3,
@@ -2299,9 +2371,15 @@
     "params": 2
   },
   "yadgar/embed_service_metrics.py::__file__": {
-    "loc": 126
+    "loc": 151
   },
   "yadgar/embed_service_metrics.py::metrics_handler@115": {
+    "cyclo": 1,
+    "loc": 12,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/embed_service_metrics.py::metrics_handler@140": {
     "cyclo": 1,
     "loc": 12,
     "nesting": 0,
@@ -3460,7 +3538,17 @@
     "inh_depth": 0,
     "methods": 1
   },
+  "yadgar/log_config.py::ContentRedactor@135": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
   "yadgar/log_config.py::JSONLogFormatter@139": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 4
+  },
+  "yadgar/log_config.py::JSONLogFormatter@165": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 4
@@ -3470,10 +3558,20 @@
     "inh_depth": 0,
     "methods": 1
   },
+  "yadgar/log_config.py::JsonFormatter@228": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
   "yadgar/log_config.py::JsonFormatter@34": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 1
+  },
+  "yadgar/log_config.py::RateLimitFilter@556": {
+    "attrs": 7,
+    "inh_depth": 0,
+    "methods": 4
   },
   "yadgar/log_config.py::RequestLoggingMiddleware@106": {
     "attrs": 1,
@@ -3484,6 +3582,16 @@
     "attrs": 1,
     "inh_depth": 0,
     "methods": 2
+  },
+  "yadgar/log_config.py::RequestLoggingMiddleware@321": {
+    "attrs": 1,
+    "inh_depth": 0,
+    "methods": 2
+  },
+  "yadgar/log_config.py::RotatingJSONLFileHandler@481": {
+    "attrs": 4,
+    "inh_depth": 0,
+    "methods": 4
   },
   "yadgar/log_config.py::__call__@120": {
     "cyclo": 5,
@@ -3497,8 +3605,14 @@
     "nesting": 2,
     "params": 4
   },
+  "yadgar/log_config.py::__call__@339": {
+    "cyclo": 6,
+    "loc": 51,
+    "nesting": 2,
+    "params": 4
+  },
   "yadgar/log_config.py::__file__": {
-    "loc": 436
+    "loc": 830
   },
   "yadgar/log_config.py::__init__@117": {
     "cyclo": 1,
@@ -3512,7 +3626,31 @@
     "nesting": 0,
     "params": 2
   },
+  "yadgar/log_config.py::__init__@336": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/log_config.py::__init__@494": {
+    "cyclo": 1,
+    "loc": 20,
+    "nesting": 0,
+    "params": 5
+  },
+  "yadgar/log_config.py::__init__@566": {
+    "cyclo": 1,
+    "loc": 15,
+    "nesting": 0,
+    "params": 4
+  },
   "yadgar/log_config.py::_append_extras@158": {
+    "cyclo": 9,
+    "loc": 16,
+    "nesting": 2,
+    "params": 3
+  },
+  "yadgar/log_config.py::_append_extras@184": {
     "cyclo": 9,
     "loc": 16,
     "nesting": 2,
@@ -3524,11 +3662,29 @@
     "nesting": 1,
     "params": 3
   },
+  "yadgar/log_config.py::_append_traceback@201": {
+    "cyclo": 4,
+    "loc": 10,
+    "nesting": 1,
+    "params": 3
+  },
   "yadgar/log_config.py::_build_base@150": {
     "cyclo": 1,
     "loc": 7,
     "nesting": 0,
     "params": 2
+  },
+  "yadgar/log_config.py::_build_base@176": {
+    "cyclo": 1,
+    "loc": 7,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/log_config.py::_configure_request_logger@403": {
+    "cyclo": 3,
+    "loc": 24,
+    "nesting": 2,
+    "params": 1
   },
   "yadgar/log_config.py::_configure_yadgar_logger@331": {
     "cyclo": 1,
@@ -3542,16 +3698,76 @@
     "nesting": 0,
     "params": 2
   },
+  "yadgar/log_config.py::_configure_yadgar_logger@392": {
+    "cyclo": 1,
+    "loc": 9,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/log_config.py::_emit_summary@634": {
+    "cyclo": 3,
+    "loc": 22,
+    "nesting": 3,
+    "params": 3
+  },
+  "yadgar/log_config.py::_ensure_metrics@515": {
+    "cyclo": 3,
+    "loc": 10,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/log_config.py::_ensure_metrics@582": {
+    "cyclo": 3,
+    "loc": 9,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/log_config.py::_install_file_handler@663": {
+    "cyclo": 8,
+    "loc": 49,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/log_config.py::_is_sensitive@117": {
+    "cyclo": 3,
+    "loc": 11,
+    "nesting": 1,
+    "params": 1
+  },
   "yadgar/log_config.py::_is_sensitive@98": {
     "cyclo": 2,
     "loc": 4,
     "nesting": 0,
     "params": 1
   },
+  "yadgar/log_config.py::_outcome_from_status@300": {
+    "cyclo": 4,
+    "loc": 19,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/log_config.py::_redact_dict@104": {
     "cyclo": 2,
     "loc": 3,
     "nesting": 0,
+    "params": 1
+  },
+  "yadgar/log_config.py::_redact_dict@130": {
+    "cyclo": 2,
+    "loc": 3,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/log_config.py::_resolve_log_env_int@463": {
+    "cyclo": 6,
+    "loc": 16,
+    "nesting": 4,
+    "params": 4
+  },
+  "yadgar/log_config.py::_resolve_log_file_path@441": {
+    "cyclo": 5,
+    "loc": 20,
+    "nesting": 2,
     "params": 1
   },
   "yadgar/log_config.py::_suppress_noisy_framework_loggers@342": {
@@ -3561,6 +3777,12 @@
     "params": 0
   },
   "yadgar/log_config.py::_suppress_noisy_framework_loggers@349": {
+    "cyclo": 4,
+    "loc": 18,
+    "nesting": 2,
+    "params": 0
+  },
+  "yadgar/log_config.py::_suppress_noisy_framework_loggers@714": {
     "cyclo": 4,
     "loc": 18,
     "nesting": 2,
@@ -3584,10 +3806,40 @@
     "nesting": 2,
     "params": 2
   },
+  "yadgar/log_config.py::configure_logging@734": {
+    "cyclo": 15,
+    "loc": 97,
+    "nesting": 3,
+    "params": 3
+  },
+  "yadgar/log_config.py::doRollover@526": {
+    "cyclo": 3,
+    "loc": 8,
+    "nesting": 3,
+    "params": 1
+  },
+  "yadgar/log_config.py::emit@535": {
+    "cyclo": 5,
+    "loc": 12,
+    "nesting": 4,
+    "params": 2
+  },
   "yadgar/log_config.py::filter@119": {
     "cyclo": 10,
     "loc": 18,
     "nesting": 2,
+    "params": 2
+  },
+  "yadgar/log_config.py::filter@145": {
+    "cyclo": 10,
+    "loc": 18,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/log_config.py::filter@592": {
+    "cyclo": 8,
+    "loc": 41,
+    "nesting": 4,
     "params": 2
   },
   "yadgar/log_config.py::format@186": {
@@ -3596,7 +3848,19 @@
     "nesting": 2,
     "params": 2
   },
+  "yadgar/log_config.py::format@212": {
+    "cyclo": 2,
+    "loc": 14,
+    "nesting": 2,
+    "params": 2
+  },
   "yadgar/log_config.py::format@232": {
+    "cyclo": 9,
+    "loc": 37,
+    "nesting": 3,
+    "params": 2
+  },
+  "yadgar/log_config.py::format@258": {
     "cyclo": 9,
     "loc": 37,
     "nesting": 3,
@@ -3621,6 +3885,12 @@
     "params": 1
   },
   "yadgar/log_config.py::send_with_capture@310": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/log_config.py::send_with_capture@361": {
     "cyclo": 2,
     "loc": 4,
     "nesting": 1,
@@ -3725,9 +3995,15 @@
     "params": 2
   },
   "yadgar/metrics.py::__file__": {
-    "loc": 490
+    "loc": 514
   },
   "yadgar/metrics.py::_collect_circuit_breaker_states@422": {
+    "cyclo": 5,
+    "loc": 17,
+    "nesting": 3,
+    "params": 0
+  },
+  "yadgar/metrics.py::_collect_circuit_breaker_states@446": {
     "cyclo": 5,
     "loc": 17,
     "nesting": 3,
@@ -3745,13 +4021,31 @@
     "nesting": 4,
     "params": 0
   },
+  "yadgar/metrics.py::_collect_queue_depths@471": {
+    "cyclo": 6,
+    "loc": 18,
+    "nesting": 4,
+    "params": 0
+  },
   "yadgar/metrics.py::_is_metrics_enabled@441": {
     "cyclo": 1,
     "loc": 4,
     "nesting": 0,
     "params": 0
   },
+  "yadgar/metrics.py::_is_metrics_enabled@465": {
+    "cyclo": 1,
+    "loc": 4,
+    "nesting": 0,
+    "params": 0
+  },
   "yadgar/metrics.py::metrics_handler@467": {
+    "cyclo": 2,
+    "loc": 24,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/metrics.py::metrics_handler@491": {
     "cyclo": 2,
     "loc": 24,
     "nesting": 1,

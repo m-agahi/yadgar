@@ -52,10 +52,12 @@ from __future__ import annotations
 
 import json
 import logging
+import logging.handlers
 import os
 import time
 import uuid
 from datetime import UTC, datetime
+from typing import Literal
 
 # I14 — max chars for traceback in structured JSON (constant for test import)
 TRACEBACK_MAX_CHARS: int = 2000
@@ -424,6 +426,326 @@ def _configure_request_logger(formatter: logging.Formatter) -> None:
     req_logger.propagate = False
 
 
+# ---------------------------------------------------------------------------
+# v5.5.1 — Rotating file handler (Sink B)
+# ---------------------------------------------------------------------------
+
+# Default log paths inside the container (both map through /data bind mount)
+_DEFAULT_CORE_LOG_PATH: str = "/data/logs/yadgar.log"
+_DEFAULT_BACKEND_LOG_PATH: str = "/data/logs/backend.log"
+
+# Gauge update interval: update log-file size metric at most once per second
+_LOG_SIZE_GAUGE_INTERVAL: float = 1.0
+
+
+def _resolve_log_file_path(process: Literal["core", "backend"] = "core") -> str:
+    """Option A env resolution: backend prefers YADGAR_BACKEND_LOG_FILE_PATH first.
+
+    Priority (backend): YADGAR_BACKEND_LOG_FILE_PATH → YADGAR_LOG_FILE_PATH → default
+    Priority (core):    YADGAR_LOG_FILE_PATH → default
+    Returns empty string if operator explicitly set the resolved var to "".
+    """
+    if process == "backend":
+        backend_specific = os.environ.get("YADGAR_BACKEND_LOG_FILE_PATH")
+        if backend_specific is not None:
+            return backend_specific
+        shared = os.environ.get("YADGAR_LOG_FILE_PATH")
+        if shared is not None:
+            return shared
+        return _DEFAULT_BACKEND_LOG_PATH
+    else:
+        shared = os.environ.get("YADGAR_LOG_FILE_PATH")
+        if shared is not None:
+            return shared
+        return _DEFAULT_CORE_LOG_PATH
+
+
+def _resolve_log_env_int(key: str, backend_key: str, default: int, process: str) -> int:
+    """Option A env resolution for int settings."""
+    if process == "backend":
+        val = os.environ.get(backend_key)
+        if val is not None:
+            try:
+                return int(val)
+            except ValueError:
+                pass
+    val = os.environ.get(key)
+    if val is not None:
+        try:
+            return int(val)
+        except ValueError:
+            pass
+    return default
+
+
+class RotatingJSONLFileHandler(logging.handlers.RotatingFileHandler):
+    """RotatingFileHandler that writes I14-conformant JSONL.
+
+    Uses JSONLogFormatter. Hooks doRollover to update the rotation counter
+    metric. Updates the file-size gauge on each emit (throttled to once/sec).
+
+    Args:
+        filename: Path to the active log file.
+        maxBytes: Rotate when file exceeds this size (default 100 MB).
+        backupCount: Number of backup files to keep (default 5).
+        logger_name: Label used for Prometheus metrics (default "core").
+    """
+
+    def __init__(
+        self,
+        filename: str,
+        maxBytes: int = 100_000_000,
+        backupCount: int = 5,
+        logger_name: str = "core",
+    ) -> None:
+        super().__init__(
+            filename,
+            maxBytes=maxBytes,
+            backupCount=backupCount,
+            encoding="utf-8",
+            delay=True,
+        )
+        self.setFormatter(JSONLogFormatter())
+        self.addFilter(ContentRedactor())
+        self._logger_name = logger_name
+        self._last_size_update: float = 0.0
+        self._rotation_counter = None  # lazy — avoid import cycle at module load
+        self._size_gauge = None
+
+    def _ensure_metrics(self) -> None:
+        if self._rotation_counter is not None:
+            return
+        try:
+            from yadgar import metrics as _m  # noqa: PLC0415
+
+            self._rotation_counter = _m.yadgar_log_file_rotations_total
+            self._size_gauge = _m.yadgar_log_file_size_bytes
+        except Exception:
+            pass
+
+    def doRollover(self) -> None:  # noqa: N802 (stdlib name)
+        super().doRollover()
+        self._ensure_metrics()
+        if self._rotation_counter is not None:
+            try:
+                self._rotation_counter.labels(logger=self._logger_name).inc()
+            except Exception:
+                pass
+
+    def emit(self, record: logging.LogRecord) -> None:
+        super().emit(record)
+        now = time.monotonic()
+        if now - self._last_size_update >= _LOG_SIZE_GAUGE_INTERVAL:
+            self._last_size_update = now
+            self._ensure_metrics()
+            if self._size_gauge is not None and self.baseFilename:
+                try:
+                    size = os.path.getsize(self.baseFilename)
+                    self._size_gauge.labels(logger=self._logger_name).set(size)
+                except OSError:
+                    pass
+
+
+# ---------------------------------------------------------------------------
+# v5.5.1 — Token-bucket rate limiter
+# ---------------------------------------------------------------------------
+
+_RATE_LIMIT_SUMMARY_INTERVAL: float = 60.0  # emit summary at most once per minute
+
+
+class RateLimitFilter(logging.Filter):
+    """Token-bucket rate limiter per (logger_name, level) tuple.
+
+    Drops records when the bucket is empty. Emits a "rate limited" summary
+    to the root logger (at WARNING) at most once per minute when drops occur.
+    The summary record is tagged _rate_limit_summary=True to prevent recursion.
+
+    Gate: no-op when YADGAR_LOG_RATE_LIMIT_ENABLED=0 / "" (default ON).
+    """
+
+    def __init__(
+        self,
+        rate: float = 10.0,
+        burst: int = 50,
+        name: str = "",
+    ) -> None:
+        super().__init__(name)
+        self._rate = rate
+        self._burst = burst
+        # Per (logger_name, levelno) → (tokens: float, last_time: float)
+        self._buckets: dict[tuple[str, int], list[float]] = {}
+        self._lock = __import__("threading").Lock()
+        self._last_summary_time: float = 0.0
+        self._drop_count_since_summary: int = 0
+        self._dropped_counter = None  # lazy
+
+    def _ensure_metrics(self) -> None:
+        if self._dropped_counter is not None:
+            return
+        try:
+            from yadgar import metrics as _m  # noqa: PLC0415
+
+            self._dropped_counter = getattr(_m, "yadgar_log_dropped_total", None)
+        except Exception:
+            pass
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Short-circuit for summary records to prevent recursion
+        if getattr(record, "_rate_limit_summary", False):
+            return True
+
+        key = (record.name, record.levelno)
+        now = time.monotonic()
+
+        with self._lock:
+            if key not in self._buckets:
+                self._buckets[key] = [float(self._burst), now]
+            bucket = self._buckets[key]
+            elapsed = now - bucket[1]
+            bucket[0] = min(float(self._burst), bucket[0] + elapsed * self._rate)
+            bucket[1] = now
+
+            if bucket[0] >= 1.0:
+                bucket[0] -= 1.0
+                return True
+
+            # Drop: update counter + track for summary
+            self._drop_count_since_summary += 1
+            self._ensure_metrics()
+            if self._dropped_counter is not None:
+                try:
+                    self._dropped_counter.labels(
+                        logger=record.name,
+                        level=record.levelname,
+                        reason="rate_limit",
+                    ).inc()
+                except Exception:
+                    pass
+
+            # Emit summary at most once per minute
+            if now - self._last_summary_time >= _RATE_LIMIT_SUMMARY_INTERVAL:
+                self._last_summary_time = now
+                count = self._drop_count_since_summary
+                self._drop_count_since_summary = 0
+                self._emit_summary(record.name, count)
+
+            return False
+
+    def _emit_summary(self, logger_name: str, count: int) -> None:
+        logging.getLogger(logger_name)
+        summary = logging.LogRecord(
+            name=logger_name,
+            level=logging.WARNING,
+            pathname="",
+            lineno=0,
+            msg=f"rate limited: {count} records suppressed in the last minute",
+            args=(),
+            exc_info=None,
+        )
+        summary._rate_limit_summary = True  # type: ignore[attr-defined]
+        summary.__dict__["component"] = "log_rate_limiter"
+        summary.__dict__["action"] = "rate_limit_summary"
+        summary.__dict__["outcome"] = "ok"
+        # Emit directly to the root logger's handlers, bypassing filters
+        root = logging.getLogger()
+        for handler in root.handlers:
+            try:
+                handler.emit(summary)
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# v5.5.1 — File handler install helper
+# ---------------------------------------------------------------------------
+
+
+def _install_file_handler(
+    formatter: logging.Formatter,
+    process: Literal["core", "backend"],
+) -> RotatingJSONLFileHandler | None:
+    """Resolve path and install RotatingJSONLFileHandler on root logger.
+
+    Returns the handler if installed, None if skipped.
+    Skips gracefully when path is empty (I3 opt-out) or dir unwritable.
+    Idempotent: no-op if a RotatingJSONLFileHandler is already on root.
+    """
+    root = logging.getLogger()
+    if any(isinstance(h, RotatingJSONLFileHandler) for h in root.handlers):
+        return None  # already installed
+
+    log_path = _resolve_log_file_path(process)
+    if not log_path:
+        return None  # explicit opt-out
+
+    log_dir = os.path.dirname(log_path)
+    if log_dir and not os.path.isdir(log_dir):
+        logging.getLogger().warning(
+            "log file handler skipped: directory not found or not writable: %s", log_dir
+        )
+        return None
+    if log_dir and not os.access(log_dir, os.W_OK):
+        logging.getLogger().warning("log file handler skipped: directory not writable: %s", log_dir)
+        return None
+
+    max_bytes = _resolve_log_env_int(
+        "YADGAR_LOG_FILE_MAX_BYTES",
+        "YADGAR_BACKEND_LOG_FILE_MAX_BYTES",
+        100_000_000,
+        process,
+    )
+    backup_count = _resolve_log_env_int(
+        "YADGAR_LOG_FILE_BACKUP_COUNT",
+        "YADGAR_BACKEND_LOG_FILE_BACKUP_COUNT",
+        5,
+        process,
+    )
+
+    handler = RotatingJSONLFileHandler(
+        log_path,
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        logger_name=process,
+    )
+    root.addHandler(handler)
+    return handler
+
+
+def _install_rate_limiter(process: Literal["core", "backend"]) -> None:
+    """Attach a shared RateLimitFilter to high-volume loggers when env-gated ON.
+
+    Gate: YADGAR_LOG_RATE_LIMIT_ENABLED must not be "0" or "" (default ON).
+    Idempotent: no-op if a RateLimitFilter is already on each target logger.
+    Targets: yadgar.requests, yadgar.circuit_breaker
+    """
+    enabled_raw = os.environ.get("YADGAR_LOG_RATE_LIMIT_ENABLED", "1")
+    if not enabled_raw or enabled_raw == "0":
+        return
+
+    rate_raw = os.environ.get("YADGAR_LOG_RATE_LIMIT_TOKENS_PER_SEC")
+    if process == "backend":
+        rate_raw = os.environ.get("YADGAR_BACKEND_LOG_RATE_LIMIT_TOKENS_PER_SEC", rate_raw)
+    try:
+        rate = float(rate_raw) if rate_raw is not None else 10.0
+    except ValueError:
+        rate = 10.0
+
+    burst_raw = os.environ.get("YADGAR_LOG_RATE_LIMIT_BURST")
+    if process == "backend":
+        burst_raw = os.environ.get("YADGAR_BACKEND_LOG_RATE_LIMIT_BURST", burst_raw)
+    try:
+        burst = int(burst_raw) if burst_raw is not None else 50
+    except ValueError:
+        burst = 50
+
+    filt = RateLimitFilter(rate=rate, burst=burst)
+    targets = ("yadgar.requests", "yadgar.circuit_breaker")
+    for name in targets:
+        lg = logging.getLogger(name)
+        if not any(isinstance(f, RateLimitFilter) for f in lg.filters):
+            lg.addFilter(filt)
+
+
 def _suppress_noisy_framework_loggers() -> None:
     """Raise threshold on chatty framework namespaces to WARNING.
 
@@ -447,6 +769,7 @@ def _suppress_noisy_framework_loggers() -> None:
 def configure_logging(
     log_format: str | None = None,
     level: str = "WARNING",
+    process: Literal["core", "backend"] = "core",
 ) -> None:
     """Configure structured logging for yadgar and all framework loggers.
 
@@ -454,12 +777,15 @@ def configure_logging(
     fastmcp, httpx, and any other framework loggers emit JSON automatically.
     The yadgar logger propagates to root (propagate=True).
 
-    I14: default format is 'json' for production (changed from 'human' in v5.4.2).
-    See MIGRATION_NOTES.md for downstream impact on Loki/Grafana dashboards.
+    v5.5.1: dual-sink — also installs RotatingJSONLFileHandler (Sink B) on root
+    when path is resolvable and dir is writable. Graceful fallback to stdout-only
+    if dir missing/unwritable (I3/I7). Rate limiter installed when
+    YADGAR_LOG_RATE_LIMIT_ENABLED is not explicitly "0" or "" (default ON).
 
     log_format: 'json' | 'text' | 'human' (default: read from YADGAR_LOG_FORMAT
                 env, then fall back to 'json').
     level: logging level string (default 'WARNING').
+    process: 'core' | 'backend' — selects env-var preference for Option A resolution.
 
     Idempotent: calling twice with the same format does not add duplicate handlers.
 
@@ -474,25 +800,42 @@ def configure_logging(
 
     root = logging.getLogger()
 
-    # Idempotency guard on root: if handler with target formatter type already
-    # exists, update its level and return without stacking another handler.
+    # Idempotency guard on root: if a StreamHandler (non-file) with the target
+    # formatter type already exists, update levels and skip re-adding stdout sink.
+    # Still attempt to add file handler if not yet present.
+    stdout_already_configured = False
     for existing in root.handlers:
+        if isinstance(existing, RotatingJSONLFileHandler):
+            continue  # file handler — ignore for stdout idempotency check
         if use_json and isinstance(existing.formatter, JSONLogFormatter):
             existing.setLevel(numeric_level)
-            root.setLevel(numeric_level)
-            _configure_yadgar_logger(numeric_level, propagate=True)
-            _configure_request_logger(existing.formatter)
-            return
+            stdout_already_configured = True
+            break
         if not use_json and not isinstance(existing.formatter, JSONLogFormatter):
             existing.setLevel(numeric_level)
-            root.setLevel(numeric_level)
-            _configure_yadgar_logger(numeric_level, propagate=True)
-            _configure_request_logger(existing.formatter)
-            return
+            stdout_already_configured = True
+            break
+
+    if stdout_already_configured:
+        root.setLevel(numeric_level)
+        _configure_yadgar_logger(numeric_level, propagate=True)
+        # Still attempt file handler install (idempotent internally)
+        for h in root.handlers:
+            if isinstance(h.formatter, JSONLogFormatter) and not isinstance(
+                h, RotatingJSONLFileHandler
+            ):
+                _configure_request_logger(h.formatter)
+                break
+        _install_file_handler(None, process)  # type: ignore[arg-type]
+        return
 
     # Remove pre-installed handlers on root (stdlib default, uvicorn default)
     # before installing ours to avoid duplicate/mixed output.
+    # Preserve existing RotatingJSONLFileHandler if already installed.
+    existing_file_handlers = [h for h in root.handlers if isinstance(h, RotatingJSONLFileHandler)]
     root.handlers.clear()
+    for fh in existing_file_handlers:
+        root.addHandler(fh)
     root.setLevel(numeric_level)
 
     if use_json:
@@ -517,3 +860,9 @@ def configure_logging(
 
     # Suppress DEBUG/INFO chatter from high-volume framework namespaces.
     _suppress_noisy_framework_loggers()
+
+    # v5.5.1: Sink B — rotating file handler (graceful fallback if unwritable)
+    _install_file_handler(formatter, process)
+
+    # v5.5.1: rate limiter — attach to high-volume loggers when env-gated ON
+    _install_rate_limiter(process)

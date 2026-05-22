@@ -108,6 +108,31 @@ for _m in ("ce", "nli", "pair", "embedding"):
 
 
 # ---------------------------------------------------------------------------
+# v5.5.1 — Log system observability (backend)
+# ---------------------------------------------------------------------------
+
+yadgar_log_file_rotations_total = Counter(
+    "yadgar_log_file_rotations_total",
+    "Total rotating file handler doRollover() calls",
+    ["logger"],
+    registry=_registry,
+)
+
+yadgar_log_file_size_bytes = Gauge(
+    "yadgar_log_file_size_bytes",
+    "Current active log file size in bytes",
+    ["logger"],
+    registry=_registry,
+)
+
+yadgar_log_dropped_total = Counter(
+    "yadgar_log_dropped_total",
+    "Total log records dropped by rate limiter",
+    ["logger", "level", "reason"],
+    registry=_registry,
+)
+
+# ---------------------------------------------------------------------------
 # ASGI handler
 # ---------------------------------------------------------------------------
 
