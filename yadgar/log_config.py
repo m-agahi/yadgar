@@ -489,6 +489,9 @@ class RotatingJSONLFileHandler(logging.handlers.RotatingFileHandler):
         maxBytes: Rotate when file exceeds this size (default 100 MB).
         backupCount: Number of backup files to keep (default 5).
         logger_name: Label used for Prometheus metrics (default "core").
+        metrics_module: Module supplying yadgar_log_* metrics. Defaults to
+            ``yadgar.metrics`` (core registry). Pass ``yadgar.embed_service_metrics``
+            for the backend process so updates land in the isolated registry.
     """
 
     def __init__(
@@ -497,6 +500,7 @@ class RotatingJSONLFileHandler(logging.handlers.RotatingFileHandler):
         maxBytes: int = 100_000_000,
         backupCount: int = 5,
         logger_name: str = "core",
+        metrics_module=None,
     ) -> None:
         super().__init__(
             filename,
@@ -511,13 +515,17 @@ class RotatingJSONLFileHandler(logging.handlers.RotatingFileHandler):
         self._last_size_update: float = 0.0
         self._rotation_counter = None  # lazy — avoid import cycle at module load
         self._size_gauge = None
+        self._metrics_module = metrics_module  # None → resolved lazily on first use
 
     def _ensure_metrics(self) -> None:
         if self._rotation_counter is not None:
             return
         try:
-            from yadgar import metrics as _m  # noqa: PLC0415
+            if self._metrics_module is None:
+                from yadgar import metrics as _m  # noqa: PLC0415
 
+                self._metrics_module = _m
+            _m = self._metrics_module
             self._rotation_counter = _m.yadgar_log_file_rotations_total
             self._size_gauge = _m.yadgar_log_file_size_bytes
         except Exception:
@@ -568,6 +576,7 @@ class RateLimitFilter(logging.Filter):
         rate: float = 10.0,
         burst: int = 50,
         name: str = "",
+        metrics_module=None,
     ) -> None:
         super().__init__(name)
         self._rate = rate
@@ -578,14 +587,17 @@ class RateLimitFilter(logging.Filter):
         self._last_summary_time: float = 0.0
         self._drop_count_since_summary: int = 0
         self._dropped_counter = None  # lazy
+        self._metrics_module = metrics_module  # None → resolved lazily on first use
 
     def _ensure_metrics(self) -> None:
         if self._dropped_counter is not None:
             return
         try:
-            from yadgar import metrics as _m  # noqa: PLC0415
+            if self._metrics_module is None:
+                from yadgar import metrics as _m  # noqa: PLC0415
 
-            self._dropped_counter = getattr(_m, "yadgar_log_dropped_total", None)
+                self._metrics_module = _m
+            self._dropped_counter = getattr(self._metrics_module, "yadgar_log_dropped_total", None)
         except Exception:
             pass
 
@@ -660,6 +672,25 @@ class RateLimitFilter(logging.Filter):
 # ---------------------------------------------------------------------------
 
 
+def _resolve_metrics_module(process: str):
+    """Return the metrics module for the given process kind.
+
+    Backend uses the isolated embed_service_metrics registry so its log_*
+    metric updates land in the registry exposed by backend's /metrics endpoint,
+    not in core's registry. Core (default) uses yadgar.metrics.
+    """
+    try:
+        if process == "backend":
+            from yadgar import embed_service_metrics as _esm  # noqa: PLC0415
+
+            return _esm
+        from yadgar import metrics as _m  # noqa: PLC0415
+
+        return _m
+    except Exception:
+        return None
+
+
 def _install_file_handler(
     formatter: logging.Formatter,
     process: Literal["core", "backend"],
@@ -701,11 +732,13 @@ def _install_file_handler(
         process,
     )
 
+    metrics_mod = _resolve_metrics_module(process)
     handler = RotatingJSONLFileHandler(
         log_path,
         maxBytes=max_bytes,
         backupCount=backup_count,
         logger_name=process,
+        metrics_module=metrics_mod,
     )
     root.addHandler(handler)
     return handler
@@ -738,7 +771,8 @@ def _install_rate_limiter(process: Literal["core", "backend"]) -> None:
     except ValueError:
         burst = 50
 
-    filt = RateLimitFilter(rate=rate, burst=burst)
+    metrics_mod = _resolve_metrics_module(process)
+    filt = RateLimitFilter(rate=rate, burst=burst, metrics_module=metrics_mod)
     targets = ("yadgar.requests", "yadgar.circuit_breaker")
     for name in targets:
         lg = logging.getLogger(name)
