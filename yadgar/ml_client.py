@@ -38,9 +38,17 @@ class _CircuitBreaker:
       CLOSED → OPEN    when consecutive_failures >= failure_threshold
       OPEN → HALF_OPEN after open_duration_sec seconds
       HALF_OPEN → CLOSED  on probe success
-      HALF_OPEN → OPEN    on probe failure
+      HALF_OPEN → OPEN    on probe failure (cooldown doubles up to max)
 
     All clock reads go through _time_fn so tests can inject a fake clock.
+
+    v5.4.2 additions:
+      - consecutive_probe_failures: tracks how many HALF_OPEN probes have failed
+        without any intervening success.  Used to compute exponential backoff.
+      - _base_open_duration_sec: the original config value; backoff multiplies
+        the *current* _open_duration_sec, not this, so callers can read the live
+        cooldown directly from _open_duration_sec.
+      - _max_open_duration_sec / _backoff_factor: cap + multiplier for backoff.
     """
 
     def __init__(
@@ -49,14 +57,20 @@ class _CircuitBreaker:
         failure_threshold: int,
         open_duration_sec: float,
         time_fn: Callable[[], float] | None = None,
+        max_open_duration_sec: float = 600.0,
+        backoff_factor: float = 2.0,
     ) -> None:
         self._endpoint = endpoint
         self._failure_threshold = failure_threshold
+        self._base_open_duration_sec = open_duration_sec
         self._open_duration_sec = open_duration_sec
+        self._max_open_duration_sec = max_open_duration_sec
+        self._backoff_factor = backoff_factor
         self._time_fn: Callable[[], float] = time_fn or time.monotonic
         self._state: str = _STATE_CLOSED
         self._open_at: float = 0.0
         self.consecutive_failures: int = 0
+        self.consecutive_probe_failures: int = 0
 
     # ------------------------------------------------------------------ #
     # Public state queries                                                  #
@@ -105,12 +119,21 @@ class _CircuitBreaker:
             )
         self._state = _STATE_CLOSED
         self.consecutive_failures = 0
+        # Reset exponential backoff so next OPEN starts from base duration
+        self.consecutive_probe_failures = 0
+        self._open_duration_sec = self._base_open_duration_sec
 
     def record_failure(self, _now: float | None = None) -> None:
         self.consecutive_failures += 1
         if self._state == _STATE_HALF_OPEN:
-            # Probe failed — reopen immediately
-            self._open(reason="probe failed", _now=_now)
+            # Probe failed — apply exponential backoff then reopen
+            self.consecutive_probe_failures += 1
+            new_duration = min(
+                self._open_duration_sec * self._backoff_factor,
+                self._max_open_duration_sec,
+            )
+            self._open_duration_sec = new_duration
+            self._open(reason="probe failed (backoff)", _now=_now)
         elif self._state == _STATE_CLOSED and self.consecutive_failures >= self._failure_threshold:
             self._open(reason=f"{self.consecutive_failures} consecutive failures", _now=_now)
 
@@ -374,13 +397,27 @@ class RemoteMLClient:
         _timeout = httpx.Timeout(connect=2.0, read=_timeout_sec, write=_timeout_sec, pool=5.0)
         self._client = httpx.Client(base_url=base_url, timeout=_timeout, headers=_headers)
 
+        # v5.4.2: probe-specific short timeout for HALF_OPEN probe calls
+        _probe_sec = float(settings.CIRCUIT_BREAKER_PROBE_TIMEOUT_SEC)
+        self._probe_timeout = httpx.Timeout(
+            connect=2.0, read=_probe_sec, write=_probe_sec, pool=5.0
+        )
+
         # I3: check flag at construction — zero overhead when disabled
         self._breaker_enabled: bool = bool(settings.CIRCUIT_BREAKER_ENABLED)
         if self._breaker_enabled:
             _threshold = int(settings.CIRCUIT_BREAKER_FAILURE_THRESHOLD)
             _duration = float(settings.CIRCUIT_BREAKER_OPEN_DURATION_SEC)
+            _max_duration = float(settings.CIRCUIT_BREAKER_MAX_OPEN_DURATION_SEC)
+            _backoff = float(settings.CIRCUIT_BREAKER_BACKOFF_FACTOR)
             self._breakers: dict[str, _CircuitBreaker] | None = {
-                mode: _CircuitBreaker(f"/rerank/{mode}", _threshold, _duration)
+                mode: _CircuitBreaker(
+                    f"/rerank/{mode}",
+                    _threshold,
+                    _duration,
+                    max_open_duration_sec=_max_duration,
+                    backoff_factor=_backoff,
+                )
                 for mode in ("ce", "nli", "pair")
             }
         else:
@@ -391,6 +428,7 @@ class RemoteMLClient:
         return getattr(self, "_fake_now", time.monotonic())
 
     def score_cross_encoder(self, query: str, texts: list[str]) -> list[float] | None:
+        _is_probe = False
         if self._breaker_enabled:
             breaker = self._breakers["ce"]  # type: ignore[index]
             now = self._now()
@@ -400,8 +438,12 @@ class RemoteMLClient:
                     breaker.cooldown_remaining(_now=now),
                 )
                 return None
+            _is_probe = breaker.is_half_open(_now=self._now())
         try:
-            r = self._client.post("/rerank", json={"query": query, "texts": texts, "mode": "ce"})
+            _kwargs = {"json": {"query": query, "texts": texts, "mode": "ce"}}
+            if _is_probe:
+                _kwargs["timeout"] = self._probe_timeout
+            r = self._client.post("/rerank", **_kwargs)
             r.raise_for_status()
             result = r.json()["scores"]
             if self._breaker_enabled:
@@ -428,6 +470,7 @@ class RemoteMLClient:
             return None
 
     def score_nli(self, query: str, texts: list[str]) -> list[float] | None:
+        _is_probe = False
         if self._breaker_enabled:
             breaker = self._breakers["nli"]  # type: ignore[index]
             now = self._now()
@@ -437,8 +480,12 @@ class RemoteMLClient:
                     breaker.cooldown_remaining(_now=now),
                 )
                 return None
+            _is_probe = breaker.is_half_open(_now=self._now())
         try:
-            r = self._client.post("/rerank", json={"query": query, "texts": texts, "mode": "nli"})
+            _kwargs = {"json": {"query": query, "texts": texts, "mode": "nli"}}
+            if _is_probe:
+                _kwargs["timeout"] = self._probe_timeout
+            r = self._client.post("/rerank", **_kwargs)
             r.raise_for_status()
             result = r.json()["scores"]
             if self._breaker_enabled:
@@ -465,6 +512,7 @@ class RemoteMLClient:
             return None
 
     def score_pair(self, query: str, text: str) -> float | None:
+        _is_probe = False
         if self._breaker_enabled:
             breaker = self._breakers["pair"]  # type: ignore[index]
             now = self._now()
@@ -474,8 +522,12 @@ class RemoteMLClient:
                     breaker.cooldown_remaining(_now=now),
                 )
                 return None
+            _is_probe = breaker.is_half_open(_now=self._now())
         try:
-            r = self._client.post("/rerank", json={"query": query, "texts": [text], "mode": "pair"})
+            _kwargs = {"json": {"query": query, "texts": [text], "mode": "pair"}}
+            if _is_probe:
+                _kwargs["timeout"] = self._probe_timeout
+            r = self._client.post("/rerank", **_kwargs)
             r.raise_for_status()
             result = r.json()["scores"][0]
             if self._breaker_enabled:

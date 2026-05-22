@@ -504,3 +504,82 @@ vacuum service runs against the `5.0.1` image, where `get_db_size()`
 inside vacuum still returns 0 in log output (cosmetic — the export+
 import phases use `YADGAR_DB_USER/PASS` not the bearer token, so the
 core compaction logic works).
+
+---
+
+## v5.4.2 — CB-1 probe fixes + F5-A saturation fix (2026-05-22)
+
+### 1. Image builds (user runs manually)
+
+```bash
+# Build core (5.4.2) — CB-1 changes are in core image
+cd ~/git/yadgar
+podman build -f Dockerfile -t docker.io/openfantasy/yadgar:5.4.2 .
+
+# Build backend (5.0.3) — F5-A semaphore is in backend image
+podman build -f Dockerfile.backend -t docker.io/openfantasy/yadgar-backend:5.0.3 .
+```
+
+### 2. Nix bump (in ~/git/nix)
+
+Update `modules/home/yadgar.nix`:
+
+```nix
+# Core image version
+yadgar_core_version = "5.4.2";  # was 5.4.1
+
+# Backend image version
+yadgar_backend_version = "5.0.3";  # was 5.0.2
+```
+
+Then apply:
+
+```bash
+cd ~/git/nix
+git checkout -b chore/v5.4.2-image-bump master
+# edit modules/home/yadgar.nix per above
+git add modules/home/yadgar.nix
+git commit -m "chore(yadgar): bump core 5.4.1→5.4.2 + backend 5.0.2→5.0.3"
+home-manager switch
+systemctl --user restart yadgar yadgar-backend
+```
+
+### 3. Optional: F5-C cgroup bump (if saturation persists after F5-A)
+
+If CPU fan spin-up resumes after the F5-A semaphore deploy, consider bumping backend container resources in `modules/home/yadgar.nix`:
+
+```nix
+# Before
+--cpus 2 --memory 4g
+
+# After (F5-C)
+--cpus 4 --memory 6g
+```
+
+F5-A (semaphore N=1) should be sufficient because it ensures probes fast-fail instead of piling on. F5-C is the escape hatch if the model's normal inference load (non-probe) still saturates 2 CPUs.
+
+### 4. New env vars (optional overrides)
+
+All have sensible defaults — no config change required for standard deploy.
+
+| Env var | Default | Notes |
+|---|---|---|
+| `YADGAR_CIRCUIT_BREAKER_PROBE_TIMEOUT_SEC` | 2.0 | Core — probe HTTP read timeout |
+| `YADGAR_CIRCUIT_BREAKER_MAX_OPEN_DURATION_SEC` | 600 | Core — backoff ceiling |
+| `YADGAR_CIRCUIT_BREAKER_BACKOFF_FACTOR` | 2.0 | Core — cooldown multiplier per failed probe |
+| `YADGAR_RERANK_MAX_CONCURRENCY` | 1 | Backend — semaphore slots per mode |
+| `YADGAR_RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC` | 2.0 | Backend — acquire wait before 503 |
+
+### 5. Verification
+
+```bash
+# Core health
+curl -sS -H "Authorization: Bearer $YADGAR_TOKEN" http://127.0.0.1:8765/health
+
+# Backend semaphore: confirm /rerank returns 503 when concurrency exceeded
+# (requires manually saturating the slot — normal usage is fine)
+# Expected normal behavior: /rerank returns 200 in <5s
+
+# CB-1 backoff: check logs for "circuit breaker ... → OPEN ... backoff"
+journalctl --user -u yadgar -n 50 | grep -i "circuit breaker"
+```
