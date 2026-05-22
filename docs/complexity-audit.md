@@ -133,12 +133,12 @@ Test files exempt from LOC + params caps; cyclomatic + nesting still enforced.
 | tests/test_vacuum.py:501 | `[test] test_cmd_vacuum_delegates_to_impl` | 8 | 43 | 5 | 7 | **HARD** `nesting=7>4` | LOW | decompose-low-risk |
 | storage/migrations.py:246 | `_init_schema` | 7 | 170 | 1 | 1 | **HARD** `LOC=170>150` | MEDIUM | decompose-with-topology-proof |
 | curation/__init__.py:58 | `curate_on_remember` | 7 | 65 | 12 | 3 | **HARD** `params=12>8` | MEDIUM | decompose-with-topology-proof |
-| cli/config.py:4 | `cmd_config` | 7 | 23 | 2 | 6 | **HARD** `nesting=6>4` | LOW | decompose-low-risk |
-| storage/entity.py:210 | `insert_typed_relationship` | 6 | 49 | 10 | 1 | **HARD** `params=10>8` | LOW | decompose-low-risk |
-| restoration.py:64 | `create_checkpoint` | 6 | 34 | 10 | 0 | **HARD** `params=10>8` | LOW | decompose-low-risk |
+| cli/config.py:4 | `cmd_config` | 3 | 10 | 2 | 1 | soft `nesting=1` | LOW | **shipped v5.4.6** — nesting 6→1, cyclo 7→3 via dispatch dict |
+| storage/entity.py:210 | `insert_typed_relationship` | 6 | 49 | 4 | 1 | soft `params=4` | LOW | **shipped v5.4.6** — params 9→4 via RelationshipMeta; file removed from per-file-ignores |
+| restoration.py:64 | `create_checkpoint` | 6 | 34 | 3 | 0 | soft `params=3` | LOW | **shipped v5.4.6** — params 9→3 via CheckpointContext; PLR0913 removed from per-file-ignores |
 | storage/narrative.py:153 | `insert_belief` | 3 | 35 | 9 | 0 | **HARD** `params=9>8` | LOW | decompose-low-risk |
-| curation/ingestion.py:106 | `insert_new_memory` | 2 | 39 | 12 | 1 | **HARD** `params=12>8` | LOW | decompose-low-risk |
-| curation/__init__.py:154 | `_insert_new_memory` | 1 | 29 | 12 | 0 | **HARD** `params=12>8` | LOW | decompose-low-risk |
+| curation/ingestion.py:106 | `insert_new_memory` | 2 | 22 | 4 | 1 | soft `params=4` | LOW | **shipped v5.4.6** — params 12→4 via NewMemorySpec; file removed from per-file-ignores |
+| curation/__init__.py:143 | `_insert_new_memory` | 1 | 8 | 3 | 0 | soft `params=3` | LOW | **shipped v5.4.6** — params 12→3 via NewMemorySpec delegation |
 | file_queue/__init__.py:73 | `__init__` | 1 | 26 | 9 | 0 | **HARD** `params=9>8` | LOW | decompose-low-risk |
 | cls_store/promotion.py:13 | `_promote_pattern` | 15 | 101 | 2 | 4 | **soft** `cyclo=15>10 LOC=101>80` | MEDIUM | decompose-low-risk |
 | server/http.py:145 | `hook_auto_capture` | 15 | 79 | 1 | 2 | **soft** `cyclo=15>10` | MEDIUM | decompose-low-risk |

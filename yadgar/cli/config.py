@@ -1,8 +1,8 @@
 """config subcommand — manage Yadgar configuration."""
 
 
-def cmd_config(args, config_parser):
-    """Dispatch config sub-subcommands."""
+def _config_dispatch_table() -> dict:
+    """Lazy import: build sub-command → handler mapping on first call."""
     from yadgar.config_yaml import (
         cmd_config_edit,
         cmd_config_get,
@@ -11,19 +11,24 @@ def cmd_config(args, config_parser):
         cmd_config_set,
     )
 
+    return {
+        "init": cmd_config_init,
+        "list": cmd_config_list,
+        "get": cmd_config_get,
+        "set": cmd_config_set,
+        "edit": cmd_config_edit,
+    }
+
+
+def cmd_config(args, config_parser):
+    """Dispatch config sub-subcommands."""
     sub = getattr(args, "config_command", None)
     if sub is None:
         config_parser.print_help()
-    elif sub == "init":
-        cmd_config_init(args)
-    elif sub == "list":
-        cmd_config_list(args)
-    elif sub == "get":
-        cmd_config_get(args)
-    elif sub == "set":
-        cmd_config_set(args)
-    elif sub == "edit":
-        cmd_config_edit(args)
+        return
+    handler = _config_dispatch_table().get(sub)
+    if handler is not None:
+        handler(args)
 
 
 def register(subparsers):
