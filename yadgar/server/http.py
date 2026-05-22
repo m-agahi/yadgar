@@ -3,14 +3,10 @@
 All @mcp_server.custom_route decorators live here — they fire at import time,
 so this module must be imported in server/__init__.py.
 
-# Module size justified: single-responsibility HTTP route registry. Every
-# function is a @mcp_server.custom_route handler — routes register as
-# side-effects at import time. Splitting into sub-modules (hooks, graph, SSE)
-# would require server/__init__.py to import each sub-module explicitly, and
-# any missed import would silently drop routes. Keeping all routes in one file
-# provides a complete, auditable list of HTTP endpoints and prevents that class
-# of registration bugs. The file has no domain logic — all work is delegated to
-# _state singletons and domain modules.
+File size justified: single-responsibility route registry. Every function is a
+@mcp_server.custom_route handler registering as a side-effect. Splitting would
+require server/__init__.py to import each sub-module explicitly; any missed import
+silently drops routes. No domain logic — all work delegated to _state + domain modules.
 """
 
 from __future__ import annotations
@@ -26,6 +22,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, StreamingResponse
 
 import yadgar.server._state as _st
+import yadgar.viz_daemon_health as _vdh  # noqa: F401 — V1c: SSE daemon_health push
 from yadgar import __version__
 from yadgar.graph_api import GraphAPI
 from yadgar.sanitize import sanitize_log_field
@@ -35,9 +32,6 @@ from yadgar.server._helpers import _bounded_set, _build_dlq_alert_text  # noqa: 
 logger = logging.getLogger(__name__)
 
 _CORS = {"Cache-Control": "no-cache"}
-
-
-# ── Custom HTTP Endpoints ─────────────────────────────────────────────
 
 
 @mcp_server.custom_route("/health", methods=["GET"])
@@ -744,9 +738,6 @@ async def hook_subagent_start(request: Request) -> JSONResponse:
     return JSONResponse({"text": "\n".join(lines)})
 
 
-# ── Graph / Visualization API ──────────────────────────────────────────────
-
-
 @mcp_server.custom_route("/api/graph", methods=["GET"])
 async def api_graph(request: Request) -> JSONResponse:
     """Return full knowledge graph (nodes + edges) for visualization."""
@@ -894,6 +885,7 @@ async def _make_event_stream(request: Request):
         last_seq = 0
 
     last_sys_push = 0.0
+    last_health_push = 0.0
     client_id = id(request)
 
     while True:
@@ -916,6 +908,10 @@ async def _make_event_stream(request: Request):
                     _metrics_snap = dict(_st._system_metrics_cache)
                 payload = json.dumps({"event": "system_metrics", "data": _metrics_snap})
                 yield f"data: {payload}\n\n"
+            # Push daemon health every 5 s — V1c.
+            if now - last_health_push >= 5.0 and _vdh._health_cache is not None:
+                last_health_push = now
+                yield f"data: {json.dumps({'event': 'daemon_health', 'data': _vdh._health_cache})}\n\n"
         except (ConnectionResetError, BrokenPipeError, OSError) as exc:
             # Transport write failed — client dropped between the disconnect
             # check and the actual socket write.  Log once at DEBUG and stop.
