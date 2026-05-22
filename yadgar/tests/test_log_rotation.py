@@ -552,3 +552,119 @@ class TestRateLimiterEndToEnd:
         assert dropped >= 1, (
             f"end-to-end: expected >=1 drop with burst=50 and 51 records, got {dropped}"
         )
+
+
+# ---------------------------------------------------------------------------
+# v5.5.2 — Backend registry DI (per-process metric wiring)
+# ---------------------------------------------------------------------------
+
+
+class TestBackendMetricDI:
+    """Backend process must update embed_service_metrics, NOT yadgar.metrics."""
+
+    def test_size_metric_updates_for_backend_process(self, tmp_path):
+        """File-size gauge on backend registry updates; core registry stays zero."""
+        import yadgar.embed_service_metrics as esm
+        import yadgar.metrics as m
+        from yadgar.log_config import RotatingJSONLFileHandler
+
+        log_file = tmp_path / "backend_size.log"
+        handler = RotatingJSONLFileHandler(
+            str(log_file),
+            maxBytes=1_000_000,
+            backupCount=3,
+            logger_name="backend",
+            metrics_module=esm,
+        )
+        logger = logging.getLogger("test_backend_size_metric")
+        logger.setLevel(logging.INFO)
+        logger.handlers = []
+        logger.addHandler(handler)
+        logger.propagate = False
+
+        # Baseline: both registries at zero for "backend" label
+        core_before = _get_size_gauge(m, "backend")
+
+        # Advance time to bypass throttle; emit a record
+        handler._last_size_update = 0.0
+        logger.info("backend write", extra={"component": "t", "action": "a", "outcome": "ok"})
+        handler.close()
+
+        backend_after = _get_size_gauge(esm, "backend")
+        core_after = _get_size_gauge(m, "backend")
+
+        assert backend_after > 0, "backend registry size gauge must be updated"
+        assert core_after == core_before, "core registry must NOT be updated by backend handler"
+
+    def test_rotation_metric_updates_for_backend_process(self, tmp_path):
+        """Rotation counter on backend registry increments; core registry stays zero."""
+        import yadgar.embed_service_metrics as esm
+        import yadgar.metrics as m
+        from yadgar.log_config import RotatingJSONLFileHandler
+
+        log_file = tmp_path / "backend_rot.log"
+        handler = RotatingJSONLFileHandler(
+            str(log_file),
+            maxBytes=200,
+            backupCount=3,
+            logger_name="backend",
+            metrics_module=esm,
+        )
+        logger = logging.getLogger("test_backend_rotation_metric")
+        logger.setLevel(logging.INFO)
+        logger.handlers = []
+        logger.addHandler(handler)
+        logger.propagate = False
+
+        core_before = _get_rotation_counter(m, "backend")
+        backend_before = _get_rotation_counter(esm, "backend")
+
+        for _ in range(50):
+            logger.info("x" * 40, extra={"component": "t", "action": "a", "outcome": "ok"})
+        handler.close()
+
+        backend_after = _get_rotation_counter(esm, "backend")
+        core_after = _get_rotation_counter(m, "backend")
+
+        assert backend_after > backend_before, "backend rotation counter must increment"
+        assert core_after == core_before, "core rotation counter must NOT increment for backend"
+
+    def test_dropped_metric_updates_for_backend_process(self):
+        """Drop counter on backend registry increments; core registry stays zero."""
+        import yadgar.embed_service_metrics as esm
+        import yadgar.metrics as m
+        from yadgar.log_config import RateLimitFilter
+
+        filt = RateLimitFilter(rate=1.0, burst=1, metrics_module=esm)
+
+        core_before = _get_dropped_counter(m)
+        backend_before = _get_dropped_counter(esm)
+
+        for i in range(6):
+            record = logging.LogRecord(
+                name="yadgar.requests",
+                level=logging.INFO,
+                pathname="",
+                lineno=0,
+                msg=f"msg {i}",
+                args=(),
+                exc_info=None,
+            )
+            filt.filter(record)
+
+        backend_after = _get_dropped_counter(esm)
+        core_after = _get_dropped_counter(m)
+
+        assert backend_after > backend_before, "backend drop counter must increment"
+        assert core_after == core_before, "core drop counter must NOT increment for backend"
+
+
+def _get_size_gauge(metrics_module, logger_name: str) -> float:
+    """Read current value of yadgar_log_file_size_bytes for logger_name."""
+    gauge = getattr(metrics_module, "yadgar_log_file_size_bytes", None)
+    if gauge is None:
+        return 0.0
+    try:
+        return gauge.labels(logger=logger_name)._value.get()
+    except Exception:
+        return 0.0
