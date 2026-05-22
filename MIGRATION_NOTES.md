@@ -1,5 +1,81 @@
 # Migration Notes
 
+## v5.5.1 — log rotation + rate limiter (2026-05-22)
+
+### What changed
+
+- **Dual-sink logging:** `configure_logging()` now installs a `RotatingJSONLFileHandler` (Sink B) alongside the existing stdout handler. Both sinks emit the same I14-conformant JSONL.
+- **Rotation defaults:** 100 MB max per file × 5 backups = **500 MB cap per daemon**. Core: `/data/logs/yadgar.log`. Backend: `/data/logs/backend.log`. Both paths map through the existing `-v ~/.yadgar:/data` bind mount.
+- **Rate limiter:** token-bucket filter at 10 records/sec burst 50 installed by default on all loggers. Drops increment `yadgar_log_dropped_total`. Disable via `YADGAR_LOG_RATE_LIMIT_ENABLED=0`.
+- **3 new metrics:** `yadgar_log_file_rotations_total{logger}`, `yadgar_log_file_size_bytes{logger}`, `yadgar_log_dropped_total{logger,level,reason}` — exposed on both core `/metrics` and backend `/metrics`.
+- Core version: **5.5.0 → 5.5.1**. Backend version: **5.1.0 → 5.1.1**.
+
+### Pre-deploy operator action (REQUIRED)
+
+```bash
+mkdir -p ~/.yadgar/logs
+```
+
+Without this, the log dir is missing → file handler skipped → graceful stdout-only fallback (no crash, just no file sink).
+
+### Env var reference
+
+All vars apply to both core and backend unless noted. Backend prefers `YADGAR_BACKEND_LOG_*` over `YADGAR_LOG_*`; falls back to shared var; then to hardcoded default.
+
+| Env var | Backend override | Default | Description |
+|---------|-----------------|---------|-------------|
+| `YADGAR_LOG_FILE_PATH` | `YADGAR_BACKEND_LOG_FILE_PATH` | `/data/logs/yadgar.log` (core) / `/data/logs/backend.log` (backend) | Active log file path. Set to `""` to disable file logging entirely. |
+| `YADGAR_LOG_FILE_MAX_BYTES` | `YADGAR_BACKEND_LOG_FILE_MAX_BYTES` | `100000000` (100 MB) | Rotate when file exceeds this size. |
+| `YADGAR_LOG_FILE_BACKUP_COUNT` | `YADGAR_BACKEND_LOG_FILE_BACKUP_COUNT` | `5` | Backup files to keep. Total cap = MAX_BYTES × BACKUP_COUNT. |
+| `YADGAR_LOG_RATE_LIMIT_ENABLED` | — | `1` (enabled) | Set `0` or `""` to disable rate limiter. |
+| `YADGAR_LOG_RATE_LIMIT_TOKENS_PER_SEC` | — | `10.0` | Token refill rate per (logger, level) bucket. |
+| `YADGAR_LOG_RATE_LIMIT_BURST` | — | `50` | Burst capacity (tokens at start). |
+
+### Disk budget
+
+| Scenario | Core | Backend | Total |
+|---------|------|---------|-------|
+| Default (500 MB cap each) | ≤500 MB | ≤500 MB | **≤1 GB** |
+| Reduced (3 × 50 MB each) | ≤150 MB | ≤150 MB | ≤300 MB |
+
+Journald still accumulates separately. Recommended defense-in-depth cap:
+
+```ini
+# ~/.config/systemd/user/journald.conf.d/yadgar.conf
+[Journal]
+SystemMaxUse=2G
+MaxRetentionSec=14day
+```
+
+### 1. Pre-deploy: create log directory
+
+```bash
+mkdir -p ~/.yadgar/logs
+```
+
+### 2. Rebuild images (user runs manually)
+
+```bash
+# Core 5.5.1
+podman build --arch amd64 -f Dockerfile -t docker.io/openfantasy/yadgar:5.5.1 .
+podman push docker.io/openfantasy/yadgar:5.5.1
+
+# Backend 5.1.1
+podman build --arch amd64 -f Dockerfile.backend -t docker.io/openfantasy/yadgar-backend:5.1.1 .
+podman push docker.io/openfantasy/yadgar-backend:5.1.1
+```
+
+### 3. Nix bump (operator)
+
+After images are pushed, bump version pins in `~/git/nix/modules/home/yadgar.nix`:
+- Core image tag: `5.5.0` → `5.5.1`
+- Backend image tag: `5.1.0` → `5.1.1`
+
+No new bind mounts needed — `/data/logs/` is under the existing `-v ~/.yadgar:/data` mount.
+Optionally add `systemd.user.tmpfiles.rules = [ "d %h/.yadgar/logs 0750 - - -" ]` to automate `mkdir -p` at activation.
+
+---
+
 ## v5.4.8 — middleware request-log visibility fix (2026-05-22)
 
 ### What changed
