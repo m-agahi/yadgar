@@ -388,10 +388,13 @@ yadgar_backend_reachable = Gauge(
 
 yadgar_circuit_breaker_state = Gauge(
     "yadgar_circuit_breaker_state",
-    "Circuit breaker state per endpoint (0=closed, 1=half_open, 2=open)",
+    "Circuit breaker state per endpoint (0=CLOSED, 1=HALF_OPEN, 2=OPEN)",
     ["endpoint"],
     registry=_registry,
 )
+
+# Mapping used by _CircuitBreaker to convert state strings to gauge values.
+_CB_STATE_VALUES: dict[str, int] = {"closed": 0, "half_open": 1, "open": 2}
 
 
 def _collect_process_metrics() -> None:
@@ -443,25 +446,6 @@ yadgar_log_dropped_total = Counter(
 )
 
 
-def _collect_circuit_breaker_states() -> None:
-    """Read circuit breaker states from RemoteMLClient and update gauge. Non-fatal."""
-    try:
-        import yadgar.server._state as _st  # noqa: PLC0415
-        from yadgar.ml_client import RemoteMLClient  # noqa: PLC0415
-
-        ml = getattr(_st, "_ml_client", None)
-        if not isinstance(ml, RemoteMLClient):
-            return
-        _state_map = {"closed": 0, "half_open": 1, "open": 2}
-        for ep_name in ("ce", "nli", "pair"):
-            cb = getattr(ml, f"_cb_{ep_name}", None)
-            if cb is not None:
-                val = _state_map.get(cb._state, 0)
-                yadgar_circuit_breaker_state.labels(endpoint=ep_name).set(val)
-    except Exception:
-        pass
-
-
 def _is_metrics_enabled() -> bool:
     """Return True when YADGAR_METRICS_ENABLED is truthy (default: True)."""
     val = os.environ.get("YADGAR_METRICS_ENABLED", "1")
@@ -504,7 +488,6 @@ async def metrics_handler(request: Request) -> Response:
     # Refresh dynamic gauges before scrape
     _collect_queue_depths()
     _collect_process_metrics()
-    _collect_circuit_breaker_states()
 
     output = generate_latest(_registry)
     return Response(

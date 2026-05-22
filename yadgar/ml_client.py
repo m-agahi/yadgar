@@ -59,6 +59,7 @@ class _CircuitBreaker:
         time_fn: Callable[[], float] | None = None,
         max_open_duration_sec: float = 600.0,
         backoff_factor: float = 2.0,
+        metrics_module=None,
     ) -> None:
         self._endpoint = endpoint
         self._failure_threshold = failure_threshold
@@ -71,6 +72,24 @@ class _CircuitBreaker:
         self._open_at: float = 0.0
         self.consecutive_failures: int = 0
         self.consecutive_probe_failures: int = 0
+        self._metrics = metrics_module  # None → lazy-import on first use
+        # Emit initial CLOSED state so viz sees the time-series from startup.
+        self._set_gauge(0)
+
+    # ------------------------------------------------------------------ #
+    # Internal helpers                                                      #
+    # ------------------------------------------------------------------ #
+
+    def _set_gauge(self, value: int) -> None:
+        """Update the circuit breaker state gauge. Non-fatal."""
+        try:
+            if self._metrics is None:
+                import yadgar.metrics as _m  # noqa: PLC0415
+
+                self._metrics = _m
+            self._metrics.yadgar_circuit_breaker_state.labels(endpoint=self._endpoint).set(value)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ #
     # Public state queries                                                  #
@@ -83,6 +102,7 @@ class _CircuitBreaker:
             if now - self._open_at >= self._open_duration_sec:
                 # Cooldown expired — move to half-open
                 self._state = _STATE_HALF_OPEN
+                self._set_gauge(1)
                 logger.info(
                     "circuit breaker %s → HALF_OPEN (cooldown expired after %.0fs)",
                     self._endpoint,
@@ -118,6 +138,7 @@ class _CircuitBreaker:
                 self._endpoint,
             )
         self._state = _STATE_CLOSED
+        self._set_gauge(0)
         self.consecutive_failures = 0
         # Reset exponential backoff so next OPEN starts from base duration
         self.consecutive_probe_failures = 0
@@ -141,6 +162,7 @@ class _CircuitBreaker:
         now = _now if _now is not None else self._time_fn()
         self._state = _STATE_OPEN
         self._open_at = now
+        self._set_gauge(2)
         logger.warning(
             "breaker_open",
             extra={
