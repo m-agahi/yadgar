@@ -221,6 +221,14 @@ Decision: server-side scraping (not browser direct-scrape). Viz UI proxies `/api
 
 **No new Python deps.** Uses existing `httpx` + `prometheus_client.parser`. No new JS frameworks — vanilla DOM only per W-FD.
 
+**v5.6.1 update — V1c bug fixes (SHIPPED 2026-05-22):**
+
+Two bugs found in live verification:
+
+1. **Backend URL** (`viz_daemon_health.py`): scraper used `http://127.0.0.1:8001/metrics` — resolves to self inside the core container. Fixed: `_get_backend_metrics_url()` reads `YADGAR_EMBED_URL` (set by nix container config to `http://yadgar-backend:8001`), strips trailing slash, appends `/metrics`. Explicit override via `YADGAR_BACKEND_METRICS_URL` env var (local dev). Hardcoded fallback `http://yadgar-backend:8001/metrics`.
+
+2. **Core process metrics** (`viz_daemon_health.py`): `parse_core_metrics` was calling `_parse_process()` which reads standard `process_resident_memory_bytes` / `process_open_fds` names — names used by prometheus_client's default `ProcessCollector`. Core uses an isolated `CollectorRegistry` with custom gauges: `yadgar_process_rss_bytes`, `yadgar_process_open_fds`, `yadgar_process_cpu_percent`. Fix: new `_parse_core_process()` reads `yadgar_process_*` names. `uptime_s` is now `None` for core (no `process_start_time_seconds` in registry); `cpu_pct` is read directly from gauge (not computed as rate). `_parse_process()` retained unchanged for backend.
+
 ### Pattern slots (planned, not yet shipped)
 
 - **CB-2** — bulkhead / connection-pool isolation. Trigger: if backend connection-pool exhaustion surfaces in v5.4 P11 metrics.

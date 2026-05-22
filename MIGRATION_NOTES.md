@@ -1,5 +1,33 @@
 # Migration Notes
 
+## v5.6.1 — V1c bug fixes (2026-05-22)
+
+Core 5.6.0 → 5.6.1. Backend unchanged (5.1.2).
+
+### Changes
+
+- `yadgar/viz_daemon_health.py` — Bug 1: backend URL now resolved via `_get_backend_metrics_url()` (`YADGAR_EMBED_URL` → `http://yadgar-backend:8001/metrics`; override via `YADGAR_BACKEND_METRICS_URL`). Bug 2: `parse_core_metrics` uses new `_parse_core_process()` that reads `yadgar_process_rss_bytes` / `yadgar_process_open_fds` / `yadgar_process_cpu_percent` from core's isolated registry.
+- `pyproject.toml`, `server.json`, `docker-compose.yml` — version 5.6.0 → 5.6.1.
+- No new deps, no schema changes, no env-var changes (existing `YADGAR_EMBED_URL` re-used).
+
+### Deploy (core only)
+
+```bash
+podman build --arch amd64 -f Dockerfile -t docker.io/openfantasy/yadgar:5.6.1 .
+podman push docker.io/openfantasy/yadgar:5.6.1
+# Bump nix yadgar_core_version=5.6.1 + home-manager switch
+systemctl --user restart yadgar
+```
+
+### Verify
+
+```bash
+curl -sS http://127.0.0.1:8765/api/daemon-health | python3 -m json.tool | head -20
+# Expected: core.process.rss_bytes non-null; backend reachable (not unavailable)
+```
+
+---
+
 ## v5.6.0 — V1c viz daemon sidebar (2026-05-22)
 
 Core 5.5.3 → 5.6.0. Backend unchanged (5.1.2).

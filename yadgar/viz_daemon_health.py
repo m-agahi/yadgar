@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -33,8 +34,26 @@ logger = logging.getLogger(__name__)
 
 # Hardcoded refresh cadence — V1d will make this configurable.
 _SCRAPE_INTERVAL_S: float = 5.0
-_BACKEND_METRICS_URL: str = "http://127.0.0.1:8001/metrics"
 _BACKEND_TIMEOUT_S: float = 3.0
+_BACKEND_DEFAULT_URL: str = "http://yadgar-backend:8001"
+
+
+def _get_backend_metrics_url() -> str:
+    """Resolve backend /metrics URL from env vars.
+
+    Priority:
+      1. YADGAR_BACKEND_METRICS_URL — explicit override (local dev, testing)
+      2. YADGAR_EMBED_URL — already set in container; append /metrics
+      3. Hardcoded default: http://yadgar-backend:8001/metrics
+    """
+    override = os.environ.get("YADGAR_BACKEND_METRICS_URL")
+    if override:
+        return override
+    embed_url = os.environ.get("YADGAR_EMBED_URL")
+    if embed_url:
+        return embed_url.rstrip("/") + "/metrics"
+    return _BACKEND_DEFAULT_URL + "/metrics"
+
 
 # Module-level cache — written by background scraper, read by endpoint handler.
 _health_cache: dict[str, Any] | None = None
@@ -155,7 +174,10 @@ def _histogram_p95(
 
 
 def _parse_process(families: dict, prev_cpu_s: float | None, prev_cpu_t: float | None) -> dict:
-    """Extract process-level fields from parsed metric families."""
+    """Extract process-level fields from standard prometheus process_* metrics.
+
+    Used for backend (prometheus_client default ProcessCollector).
+    """
     rss = _sample_value(families, "process_resident_memory_bytes")
     fds = _sample_value(families, "process_open_fds")
     start = _sample_value(families, "process_start_time_seconds")
@@ -166,6 +188,24 @@ def _parse_process(families: dict, prev_cpu_s: float | None, prev_cpu_t: float |
         "open_fds": int(fds) if fds is not None else None,
         "uptime_s": uptime,
         "cpu_pct": cpu,
+    }
+
+
+def _parse_core_process(families: dict) -> dict:
+    """Extract process-level fields from core's yadgar_process_* gauges.
+
+    Core uses an isolated CollectorRegistry with custom gauges (not the default
+    prometheus_client ProcessCollector), so metric names differ from backend.
+    cpu_pct is read directly from yadgar_process_cpu_percent gauge.
+    """
+    rss = _sample_value(families, "yadgar_process_rss_bytes")
+    fds = _sample_value(families, "yadgar_process_open_fds")
+    cpu = _sample_value(families, "yadgar_process_cpu_percent")
+    return {
+        "rss_bytes": int(rss) if rss is not None else None,
+        "open_fds": int(fds) if fds is not None else None,
+        "uptime_s": None,  # no process_start_time in core registry
+        "cpu_pct": round(float(cpu), 1) if cpu is not None else None,
     }
 
 
@@ -225,7 +265,7 @@ def parse_core_metrics(
     dlq = _sample_value(families, "yadgar_dlq_size")
     lag_p95 = _histogram_p95(families, "yadgar_drainer_lag_ms")
     return {
-        "process": _parse_process(families, prev_cpu_s, prev_cpu_t),
+        "process": _parse_core_process(families),
         "log": _parse_log(families),
         "circuit_breakers": cb,
         "queue": {
@@ -311,7 +351,7 @@ async def _scrape_once() -> None:
                 break
 
     # Backend: HTTP scrape.
-    backend_text, backend_err = await scrape_backend_metrics_text(_BACKEND_METRICS_URL)
+    backend_text, backend_err = await scrape_backend_metrics_text(_get_backend_metrics_url())
     if backend_err is not None:
         logger.debug("viz_daemon_health: backend scrape error: %s", backend_err)
         backend_data: dict = {"unavailable": True, "error": backend_err}
