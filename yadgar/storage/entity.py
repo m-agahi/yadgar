@@ -1,8 +1,25 @@
 """Entity and relationship storage mixin."""
 
 import logging
+from dataclasses import dataclass
 
 _log = logging.getLogger(__name__)
+
+
+@dataclass
+class RelationshipMeta:
+    """Optional metadata for insert_typed_relationship.
+
+    Bundles the 6 optional bi-temporal + causal params so the public
+    signature stays within the I13 param cap (≤8 non-self args).
+    """
+
+    weight: float = 1.0
+    event_time: str | None = None
+    record_time: str | None = None
+    is_causal: int = 0
+    confidence: float = 1.0
+    source_memory_id: int | None = None
 
 
 class _EntityMixin:
@@ -212,19 +229,27 @@ class _EntityMixin:
         source_entity_id: int,
         target_entity_id: int,
         relationship_type: str,
-        weight: float = 1.0,
-        event_time: str | None = None,
-        record_time: str | None = None,
-        is_causal: int = 0,
-        confidence: float = 1.0,
-        source_memory_id: int | None = None,
+        meta: RelationshipMeta | None = None,
     ) -> int:
         """Insert a relationship with bi-temporal and causal metadata.
 
-        source_memory_id (C3): optional citation — the memory that triggered this
+        meta.source_memory_id (C3): optional citation — the memory that triggered this
         entity-entity link. Omitted from SET when None (SurrealDB option<int>
         rejects explicit NULL on a DEFINE FIELD column).
         """
+        m = meta or RelationshipMeta()
+        return self._insert_typed_relationship_impl(
+            source_entity_id, target_entity_id, relationship_type, m
+        )
+
+    def _insert_typed_relationship_impl(
+        self,
+        source_entity_id: int,
+        target_entity_id: int,
+        relationship_type: str,
+        meta: RelationshipMeta,
+    ) -> int:
+        """Core insert — called with a resolved RelationshipMeta."""
         now = self._now_iso()
         rid = self._next_id("relationship")
         # C1: bi-temporal validity. valid_from defaults to now().
@@ -233,13 +258,13 @@ class _EntityMixin:
             "src": source_entity_id,
             "tgt": target_entity_id,
             "rt": relationship_type,
-            "w": weight,
-            "cat": record_time or now,
-            "lr": record_time or now,
-            "et": event_time or now,
-            "rct": record_time or now,
-            "ic": bool(is_causal),
-            "conf": confidence,
+            "w": meta.weight,
+            "cat": meta.record_time or now,
+            "lr": meta.record_time or now,
+            "et": meta.event_time or now,
+            "rct": meta.record_time or now,
+            "ic": bool(meta.is_causal),
+            "conf": meta.confidence,
             "vf": now,
         }
         sql = (
@@ -251,9 +276,9 @@ class _EntityMixin:
             "is_causal = $ic, confidence = $conf, "
             "valid_from = $vf"
         )
-        if source_memory_id is not None:
+        if meta.source_memory_id is not None:
             sql += ", source_memory_id = $smid"
-            params["smid"] = source_memory_id
+            params["smid"] = meta.source_memory_id
         self._q(sql, params)
         return rid
 
