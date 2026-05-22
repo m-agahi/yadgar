@@ -671,7 +671,19 @@
     "params": 1
   },
   "yadgar/cli/config.py::__file__": {
-    "loc": 49
+    "loc": 54
+  },
+  "yadgar/cli/config.py::_config_dispatch_table@4": {
+    "cyclo": 1,
+    "loc": 17,
+    "nesting": 0,
+    "params": 0
+  },
+  "yadgar/cli/config.py::cmd_config@23": {
+    "cyclo": 3,
+    "loc": 9,
+    "nesting": 1,
+    "params": 2
   },
   "yadgar/cli/config.py::cmd_config@4": {
     "cyclo": 7,
@@ -680,6 +692,12 @@
     "params": 2
   },
   "yadgar/cli/config.py::register@29": {
+    "cyclo": 1,
+    "loc": 21,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/cli/config.py::register@34": {
     "cyclo": 1,
     "loc": 21,
     "nesting": 0,
@@ -24101,7 +24119,7 @@
     "params": 1
   },
   "yadgar/tests/test_v546_parity.py::__file__": {
-    "loc": 220
+    "loc": 225
   },
   "yadgar/tests/test_v546_parity.py::_embedding@32": {
     "cyclo": 1,
@@ -24160,6 +24178,12 @@
   "yadgar/tests/test_v546_parity.py::test_cmd_config_dispatches_init@209": {
     "cyclo": 3,
     "loc": 12,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_v546_parity.py::test_cmd_config_dispatches_via_table@209": {
+    "cyclo": 3,
+    "loc": 17,
     "nesting": 0,
     "params": 1
   },

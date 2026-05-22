@@ -206,12 +206,15 @@ def test_cmd_config_none_prints_help(capsys):
     assert called == ["help"]
 
 
-def test_cmd_config_dispatches_init(monkeypatch):
-    """cmd_config with sub='init' calls cmd_config_init."""
+def test_cmd_config_dispatches_via_table(monkeypatch):
+    """cmd_config with a known sub routes to the correct handler via dispatch table."""
     import yadgar.cli.config as cfg_mod
 
     called = []
-    monkeypatch.setattr(cfg_mod, "cmd_config_init", lambda args: called.append(("init", args)))
+    dummy_handler = lambda args: called.append(("init", args))  # noqa: E731
+
+    # Patch the dispatch table builder to return our dummy
+    monkeypatch.setattr(cfg_mod, "_config_dispatch_table", lambda: {"init": dummy_handler})
 
     args = _make_config_args("init", force=False)
     parser = argparse.ArgumentParser()
