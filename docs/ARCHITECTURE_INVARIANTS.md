@@ -209,6 +209,18 @@ Backoff curve (base=60s): 60 → 120 → 240 → 480 → 600 (capped). After 5 c
 
 `yadgar_circuit_breaker_state{endpoint}` (already declared in `yadgar/metrics.py`) now updates inline on every state transition instead of polling. Four sites: `__init__` (→0 CLOSED), `_open()` (→2 OPEN), `is_open()` cooldown-expired branch (→1 HALF_OPEN), `record_success()` (→0 CLOSED). DI: `_CircuitBreaker` accepts `metrics_module=None` kwarg; if None, lazily imports `yadgar.metrics` on first transition. Label is `self._endpoint` (e.g. `/rerank/ce`). Removed the broken `_collect_circuit_breaker_states()` polling function (used `_cb_ce` attr name — never existed on `RemoteMLClient`). 5 new tests in `test_circuit_breaker.py`.
 
+**v5.6.0 update — V1c viz daemon sidebar (SHIPPED):**
+
+Aggregated daemon health panel surfaced in the viz UI. Two components:
+
+1. **Backend aggregator (`yadgar/viz_daemon_health.py`):** background scraper (5s cadence, `# TODO V1d` env-configurable marker) fetches core metrics via `generate_latest()` + backend metrics via `httpx.AsyncClient` GET to `http://127.0.0.1:8001/metrics`. Parses both via `prometheus_client.parser.text_string_to_metric_families`. Caches into `_health_cache`. Exposes `GET /api/daemon-health` (always 200; `backend.unavailable=True` when backend unreachable). SSE channel extended: `daemon_health` event emitted every 5s from `_make_event_stream` in `server/http.py`.
+
+2. **Frontend sidebar (`yadgar/static/index.html`):** 480px right drawer (`#dh-panel`) collapsible via toggle button in topbar. Two-column layout (Core left, Backend right): process (RSS/CPU/FDs/uptime), queue (depth/DLQ/lag-p95), log (size/rotations/dropped), circuit breakers (per-endpoint colored badge: green=CLOSED/amber=HALF_OPEN/red=OPEN), rerank (req ce/nli, err 503, inflight semaphore), models (loaded dot per model). DOM-only rendering — no innerHTML with unsandboxed content (W-SG compliance). SSE handler branch added for `daemon_health` event; `_dhFetchOnce()` REST fallback on panel open. Color palette: `--dh-ok #3fb950 / --dh-warn #e6a817 / --dh-degraded #f85149 / --dh-idle #8b949e`.
+
+Decision: server-side scraping (not browser direct-scrape). Viz UI proxies `/api/*` through `viz_server.py` to daemon — no CORS. Backend unreachability is non-fatal (sidebar shows "backend unreachable" banner, core metrics still live). V1d (env-configurable cadence) deferred.
+
+**No new Python deps.** Uses existing `httpx` + `prometheus_client.parser`. No new JS frameworks — vanilla DOM only per W-FD.
+
 ### Pattern slots (planned, not yet shipped)
 
 - **CB-2** — bulkhead / connection-pool isolation. Trigger: if backend connection-pool exhaustion surfaces in v5.4 P11 metrics.
