@@ -93,6 +93,16 @@ Hard caps NO override. If hit, decomposition design must prove I5 preservation.
 
 Every log entry = JSON with `ts, level, component, action, outcome, latency_ms?, error?`. NEVER log memory `content` (PII risk), tokens/passwords, user-supplied strings as metric labels. Log at boundaries (request in/out, drainer cycle, DB op), NOT inside hot loops. **trace_id propagation across MCP → core → drainer → backend is a SEPARATE v5.5 P-item, NOT in scope of I14.** Ratchet: new code conforms; old conforms when touched; full conformance by v5.6.
 
+**Shipped v5.4.2 prep:**
+- `yadgar/log_config.py`: `JSONLogFormatter` (I14 schema: `ts/level/event/component/action/outcome`), `ContentRedactor` (logging.Filter; strips sensitive fields by substring denylist + one-level dict redaction), `TRACEBACK_MAX_CHARS=2000` constant. `configure_logging()` updated: default format changed `human→json`, idempotent handler install, redactor wired as handler filter.
+- `yadgar/config.py`: `LOG_FORMAT: str = "json"` setting with `field_validator` enforcing `{"json","text","human"}`. Env var: `YADGAR_LOG_FORMAT`.
+- Env-gated: `YADGAR_LOG_FORMAT=text` for local dev human-readable output.
+- Integration sites converted (ratchet): `ml_client._CircuitBreaker._open`, `embed_service.rerank` semaphore-busy 503, `file_queue.QueueDrainer._drain_once` cycle-end log, `server.tools.memorize.memorize` enqueue-fallback log.
+- `yadgar/embed_service.py`: `lifespan` now calls `configure_logging()` at backend boot.
+- Tests: `yadgar/tests/test_structured_logging.py` — 18 tests covering all I14 contracts.
+- Ratchet status: 4 call sites converted; full conformance target unchanged (v5.6). Known non-conformance: `RequestLoggingMiddleware` (pre-existing, not touched this round).
+- Known sharp edge: denylist uses substring match — `content_type`/`content_length` are redacted. Revisit at v5.6 conformance round.
+
 ### I15. Boundary-property fuzz tests (SCOPED)
 
 Every input validator + parser + migration MUST have a Hypothesis property test covering pathological inputs (unicode surrogate pairs, empty, oversized, malformed JSON, SQL-injection-ish strings, race ordering for queue replay). Scope: parsers (SurrealQL builder, queue payload deserialization, hook payload parse), validators (memorize/recall/wiki_query inputs), migrations (#004–#007), queue+DLQ replay. Runs in CI; failure blocks merge.
@@ -402,6 +412,7 @@ Post-v5.3.9 `BindsTo → Wants` decouple, core + backend run as independent daem
 - 2026-05-20: I13 added (bounded complexity) + P12 (complexity audit); P12 ordered PRE-P1.
 - 2026-05-20: I14 added (structured logging, scoped — trace_id propagation moved to v5.5 separate P-item).
 - 2026-05-20: I15 added (boundary-property fuzz tests, scoped).
+- 2026-05-22: I14 implementation shipped (v5.4.2) — JSONLogFormatter + ContentRedactor + YADGAR_LOG_FORMAT env var + 4 integration sites converted (circuit_breaker, embed_service/rerank, drainer drain_cycle, memorize enqueue-fallback). Default log format changed human→json. Ratchet active; full conformance target v5.6.
 - 2026-05-20: I16/I17/I18 DEFERRED (codify when violations surface). I19 recast as PR-template checklist (not invariant).
 - 2026-05-20 evening: backend OOM cascade. N1/N2 + systemd-cascade-fix MOVED to v5.3.9 hotfix. F3 RE-PRIORITIZED to v5.5 P1. F5 reframed as v5.4 report + v5.5 fix. F0 vs OOM separated. N4 circuit breaker proper-designed in v5.4. v5.3.8 → v5.3.9.
 - 2026-05-20: cap numbers (15 cyclomatic / 150 LOC hard / 80 LOC soft) provisional. P12 audit data may trigger I13 review per I10 (if >20% violations).

@@ -102,7 +102,9 @@ class Settings(BaseSettings):
     BACKEND_LOG_LEVEL: str = "warn"
     # v5.0 observability
     METRICS_ENABLED: bool = True  # YADGAR_METRICS_ENABLED — expose /metrics endpoint
-    LOG_FORMAT: str = "human"  # YADGAR_LOG_FORMAT — "human" or "json"
+    # I14 (v5.4.2): default changed 'human' → 'json' for structured log ingest
+    # Set YADGAR_LOG_FORMAT=text for local dev human-readable output.
+    LOG_FORMAT: str = "json"  # YADGAR_LOG_FORMAT — "json" | "text" | "human"
 
     # v4: Hippocampal Replay settings
     REPLAY_MAX_RESTORE_MEMORIES: int = 8  # Max memories to include in restoration
@@ -466,6 +468,14 @@ class Settings(BaseSettings):
         if not re.match(r"^([01]\d|2[0-3]):([0-5]\d)$", v):
             raise ValueError(f"must be HH:MM (00:00-23:59), got {v!r}")
         return v
+
+    @field_validator("LOG_FORMAT")
+    @classmethod
+    def _validate_log_format(cls, v: str) -> str:
+        allowed = {"json", "text", "human"}
+        if v.lower() not in allowed:
+            raise ValueError(f"LOG_FORMAT must be one of {allowed}, got {v!r}")
+        return v.lower()
 
     @classmethod
     def settings_customise_sources(
