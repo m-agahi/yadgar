@@ -21,6 +21,7 @@ import yadgar.server._state as _st
 from yadgar import __version__
 from yadgar.config import get_settings
 from yadgar.file_queue import is_draining
+from yadgar.restoration import CheckpointContext
 from yadgar.server._app import _tool, mcp_server
 from yadgar.server._helpers import _has_unpaired_surrogate
 from yadgar.server.lifecycle import _get_consolidation, _get_file_queue, _get_replay, _get_storage
@@ -104,16 +105,16 @@ def checkpoint(
                 f"{custom_context}\n\n{action_summary}" if custom_context else action_summary
             )
 
-    return replay.create_checkpoint(
-        directory=directory,
+    ctx = CheckpointContext(
         current_task=current_task,
-        files_being_edited=files_being_edited,
-        key_decisions=key_decisions,
-        open_questions=open_questions,
-        next_steps=next_steps,
-        active_errors=active_errors,
+        files_being_edited=files_being_edited or [],
+        key_decisions=key_decisions or [],
+        open_questions=open_questions or [],
+        next_steps=next_steps or [],
+        active_errors=active_errors or [],
         custom_context=enriched_context,
     )
+    return replay.create_checkpoint(directory, ctx)
 
 
 @_tool()
