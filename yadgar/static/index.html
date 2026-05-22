@@ -316,6 +316,196 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
 .js { color: #a5d6ff; }  /* string value */
 .jn { color: #3fb950; }  /* number */
 .jb { color: #d29922; }  /* bool/null */
+
+/* ── V1c Daemon Health sidebar ─────────────────────────────────────────────── */
+:root {
+  --dh-ok:       #3fb950;  /* CB CLOSED / healthy */
+  --dh-warn:     #e6a817;  /* CB HALF_OPEN / recovering */
+  --dh-degraded: #f85149;  /* CB OPEN / error */
+  --dh-idle:     #8b949e;  /* unknown / null */
+}
+
+/* Collapsible toggle tab — sits on left edge of panel */
+#dh-toggle {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%) rotate(0deg);
+  z-index: 200;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  padding: 12px 6px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-right: none;
+  color: #58a6ff;
+  font-size: 10px;
+  letter-spacing: 2px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s, right 0.25s;
+}
+#dh-toggle:hover { background: #21262d; }
+#dh-panel.open ~ #dh-toggle,
+body.dh-open #dh-toggle { right: 480px; }
+
+/* Main drawer */
+#dh-panel {
+  position: fixed;
+  top: 0;
+  right: -480px;
+  width: 480px;
+  height: 100vh;
+  z-index: 199;
+  background: #0d1117;
+  border-left: 1px solid #30363d;
+  display: flex;
+  flex-direction: column;
+  transition: right 0.25s ease;
+  overflow: hidden;
+}
+#dh-panel.open { right: 0; }
+
+#dh-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  flex-shrink: 0;
+}
+#dh-header h2 { font-size: 12px; color: #58a6ff; letter-spacing: 2px; flex: 1; }
+#dh-scraped { font-size: 9px; color: #8b949e; }
+#dh-close {
+  cursor: pointer; color: #8b949e; font-size: 16px; line-height: 1; padding: 0 2px;
+}
+#dh-close:hover { color: #f0f0f0; }
+
+#dh-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Daemon columns — wide: side by side; narrow: stacked */
+#dh-cols {
+  display: flex;
+  gap: 8px;
+}
+.dh-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+@media (max-width: 560px) {
+  #dh-cols { flex-direction: column; }
+}
+
+/* Section card */
+.dh-card {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 7px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dh-card-title {
+  font-size: 9px;
+  color: #58a6ff;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  border-bottom: 1px solid #21262d;
+  padding-bottom: 3px;
+  margin-bottom: 2px;
+}
+.dh-col-head {
+  font-size: 10px;
+  color: #c9d1d9;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.dh-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1px 0;
+}
+.dh-lbl { color: #8b949e; font-size: 10px; }
+.dh-val { color: #c9d1d9; font-size: 10px; font-weight: bold; }
+.dh-val.ok  { color: var(--dh-ok); }
+.dh-val.warn { color: var(--dh-warn); }
+.dh-val.crit { color: var(--dh-degraded); }
+.dh-val.idle { color: var(--dh-idle); }
+
+/* CB state badges */
+.dh-cb-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 0;
+}
+.dh-cb-badge {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.dh-cb-badge.closed   { background: var(--dh-ok); }
+.dh-cb-badge.half     { background: var(--dh-warn); }
+.dh-cb-badge.open     { background: var(--dh-degraded); box-shadow: 0 0 4px var(--dh-degraded); }
+.dh-cb-badge.unknown  { background: var(--dh-idle); }
+.dh-cb-ep  { color: #8b949e; font-size: 10px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dh-cb-lbl { font-size: 9px; }
+.dh-cb-lbl.closed  { color: var(--dh-ok); }
+.dh-cb-lbl.half    { color: var(--dh-warn); }
+.dh-cb-lbl.open    { color: var(--dh-degraded); }
+.dh-cb-lbl.unknown { color: var(--dh-idle); }
+
+/* Model loaded dots */
+.dh-model-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+}
+.dh-model-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.dh-model-dot.loaded   { background: var(--dh-ok); }
+.dh-model-dot.unloaded { background: var(--dh-idle); }
+
+/* Waiting / no-data state */
+.dh-waiting {
+  color: var(--dh-warn);
+  font-size: 10px;
+  text-align: center;
+  padding: 6px 0;
+  animation: dh-blink 1.2s step-end infinite;
+}
+@keyframes dh-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+
+/* Unavailable banner */
+.dh-unavail {
+  color: var(--dh-idle);
+  font-size: 10px;
+  font-style: italic;
+  text-align: center;
+  padding: 6px 0;
+}
 </style>
 </head>
 <body>
@@ -332,6 +522,7 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
   <button class="btn" id="mode-btn" onclick="toggleMode()">2D</button>
   <button class="btn" id="stats-btn" onclick="openStats()">📊 Stats</button>
   <button class="btn" id="debug-btn" onclick="openDebug()">⚙ Debug</button>
+  <button class="btn" id="dh-btn" onclick="toggleDaemonPanel()">⬡ Daemons</button>
   <span id="status-dot"></span>
   <span id="status-text">Connecting…</span>
 </div>
@@ -481,6 +672,87 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
     <pre id="debug-json">Select a tab and click Refresh.</pre>
   </div>
 </div>
+
+<!-- V1c: Daemon Health sidebar (v5.6.0) -->
+<div id="dh-toggle" onclick="toggleDaemonPanel()" title="Toggle daemon health panel">DAEMONS</div>
+<div id="dh-panel">
+  <div id="dh-header">
+    <h2>DAEMON HEALTH</h2>
+    <span id="dh-scraped"></span>
+    <span id="dh-close" onclick="toggleDaemonPanel()">✕</span>
+  </div>
+  <div id="dh-body">
+    <!-- Waiting placeholder — replaced by updateDaemonHealth() -->
+    <div class="dh-waiting" id="dh-wait">awaiting telemetry…</div>
+
+    <div id="dh-cols" style="display:none">
+      <!-- Core daemon column -->
+      <div class="dh-col" id="dh-core-col">
+        <div class="dh-col-head">Core</div>
+
+        <div class="dh-card">
+          <div class="dh-card-title">Process</div>
+          <div class="dh-row"><span class="dh-lbl">RSS</span>    <span class="dh-val" id="dh-c-rss">—</span></div>
+          <div class="dh-row"><span class="dh-lbl">CPU%</span>   <span class="dh-val" id="dh-c-cpu">—</span></div>
+          <div class="dh-row"><span class="dh-lbl">FDs</span>    <span class="dh-val" id="dh-c-fds">—</span></div>
+          <div class="dh-row"><span class="dh-lbl">Uptime</span> <span class="dh-val" id="dh-c-up">—</span></div>
+        </div>
+
+        <div class="dh-card">
+          <div class="dh-card-title">Queue</div>
+          <div class="dh-row"><span class="dh-lbl">Depth</span>     <span class="dh-val" id="dh-c-qdepth">—</span></div>
+          <div class="dh-row"><span class="dh-lbl">DLQ</span>       <span class="dh-val" id="dh-c-dlq">—</span></div>
+          <div class="dh-row"><span class="dh-lbl">Lag p95</span>   <span class="dh-val" id="dh-c-lag">—</span></div>
+        </div>
+
+        <div class="dh-card">
+          <div class="dh-card-title">Log</div>
+          <div class="dh-row"><span class="dh-lbl">Size</span>      <span class="dh-val" id="dh-c-lsz">—</span></div>
+          <div class="dh-row"><span class="dh-lbl">Rotations</span><span class="dh-val" id="dh-c-lrot">—</span></div>
+          <div class="dh-row"><span class="dh-lbl">Dropped</span>   <span class="dh-val" id="dh-c-ldrop">—</span></div>
+        </div>
+
+        <div class="dh-card" id="dh-cb-card">
+          <div class="dh-card-title">Circuit Breakers</div>
+          <div id="dh-cb-list"><div class="dh-waiting">loading…</div></div>
+        </div>
+      </div>
+
+      <!-- Backend daemon column -->
+      <div class="dh-col" id="dh-back-col">
+        <div class="dh-col-head">Backend</div>
+
+        <div class="dh-card" id="dh-back-card">
+          <div class="dh-card-title">Process</div>
+          <div class="dh-row"><span class="dh-lbl">RSS</span>    <span class="dh-val" id="dh-b-rss">—</span></div>
+          <div class="dh-row"><span class="dh-lbl">CPU%</span>   <span class="dh-val" id="dh-b-cpu">—</span></div>
+          <div class="dh-row"><span class="dh-lbl">FDs</span>    <span class="dh-val" id="dh-b-fds">—</span></div>
+          <div class="dh-row"><span class="dh-lbl">Uptime</span> <span class="dh-val" id="dh-b-up">—</span></div>
+        </div>
+
+        <div class="dh-card">
+          <div class="dh-card-title">Rerank</div>
+          <div class="dh-row"><span class="dh-lbl">req ce</span>     <span class="dh-val" id="dh-b-rce">—</span></div>
+          <div class="dh-row"><span class="dh-lbl">req nli</span>    <span class="dh-val" id="dh-b-rnli">—</span></div>
+          <div class="dh-row"><span class="dh-lbl">err 503</span>    <span class="dh-val" id="dh-b-rerr">—</span></div>
+          <div class="dh-row"><span class="dh-lbl">inflight</span>  <span class="dh-val" id="dh-b-rsem">—</span></div>
+        </div>
+
+        <div class="dh-card">
+          <div class="dh-card-title">Log</div>
+          <div class="dh-row"><span class="dh-lbl">Size</span>      <span class="dh-val" id="dh-b-lsz">—</span></div>
+          <div class="dh-row"><span class="dh-lbl">Rotations</span><span class="dh-val" id="dh-b-lrot">—</span></div>
+          <div class="dh-row"><span class="dh-lbl">Dropped</span>   <span class="dh-val" id="dh-b-ldrop">—</span></div>
+        </div>
+
+        <div class="dh-card">
+          <div class="dh-card-title">Models</div>
+          <div id="dh-models-list"><div class="dh-waiting">loading…</div></div>
+        </div>
+      </div>
+    </div><!-- /#dh-cols -->
+  </div><!-- /#dh-body -->
+</div><!-- /#dh-panel -->
 
 <script src="https://unpkg.com/force-graph@1.51.4/dist/force-graph.min.js"
         integrity="sha384-Hm6GpQcTNI5VqGgGS7lLxTGtEFcxu/kOVV0B7ozIZRu9blWVvigv5httJQZ2qZmY"
@@ -1202,6 +1474,7 @@ function connectSSE() {
     try {
       const msg = JSON.parse(e.data);
       if (msg.event === 'system_metrics') { updateSys(msg.data); return; }
+      if (msg.event === 'daemon_health')  { updateDaemonHealth(msg.data); return; }
       if (msg.seq) lastSeq = msg.seq;
       if (msg.event === 'memory_added' && msg.node) {
         const n = msg.node;
@@ -1466,6 +1739,195 @@ function renderConsolChart(rows) {
       },
     },
   });
+}
+
+// ── V1c Daemon Health sidebar (v5.6.0) ──────────────────────────────────────
+let _dhOpen = false;
+
+function _fmtBytes(b) {
+  if (b == null) return '—';
+  if (b >= 1073741824) return (b / 1073741824).toFixed(1) + ' GB';
+  if (b >= 1048576)    return (b / 1048576).toFixed(1) + ' MB';
+  if (b >= 1024)       return Math.round(b / 1024) + ' KB';
+  return b + ' B';
+}
+
+function _fmtUptime(s) {
+  if (s == null) return '—';
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return h + 'h ' + m + 'm';
+  if (m > 0) return m + 'm ' + Math.floor(s % 60) + 's';
+  return Math.round(s) + 's';
+}
+
+function _dhSet(id, text, cls) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = String(text);
+  el.className = 'dh-val' + (cls ? ' ' + cls : '');
+}
+
+function _dhFlash(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.style.opacity = '0.4';
+  setTimeout(() => { if (el) el.style.opacity = '1'; }, 250);
+}
+
+function _cbClass(state) {
+  if (state === 0) return 'closed';
+  if (state === 1) return 'half';
+  if (state === 2) return 'open';
+  return 'unknown';
+}
+
+function _cbLabel(state) {
+  if (state === 0) return 'CLOSED';
+  if (state === 1) return 'HALF';
+  if (state === 2) return 'OPEN';
+  return '?';
+}
+
+function _mkEl(tag, cls, text) {
+  const el = document.createElement(tag);
+  if (cls) el.className = cls;
+  if (text != null) el.textContent = text;
+  return el;
+}
+
+function toggleDaemonPanel() {
+  _dhOpen = !_dhOpen;
+  document.getElementById('dh-panel').classList.toggle('open', _dhOpen);
+  document.getElementById('dh-btn').classList.toggle('active', _dhOpen);
+  if (_dhOpen) _dhFetchOnce();
+}
+
+function updateDaemonHealth(data) {
+  const wait = document.getElementById('dh-wait');
+  const cols  = document.getElementById('dh-cols');
+  if (!data) return;
+
+  if (wait)  wait.style.display = 'none';
+  if (cols)  cols.style.display = 'flex';
+
+  const ts = data.scraped_at || null;
+  const scraped = document.getElementById('dh-scraped');
+  if (scraped && ts) scraped.textContent = ts.replace('T', ' ').replace('Z', ' UTC');
+
+  // ── Core ──────────────────────────────────────────────────────────────────
+  const c = data.core || {};
+  const cp = c.process || {};
+  _dhSet('dh-c-rss', _fmtBytes(cp.rss_bytes));
+  _dhSet('dh-c-cpu', cp.cpu_pct != null ? cp.cpu_pct + '%' : '—',
+         cp.cpu_pct > 80 ? 'crit' : cp.cpu_pct > 50 ? 'warn' : null);
+  _dhSet('dh-c-fds', cp.open_fds != null ? cp.open_fds : '—');
+  _dhSet('dh-c-up', _fmtUptime(cp.uptime_s));
+
+  const cq = c.queue || {};
+  _dhSet('dh-c-qdepth', cq.depth != null ? cq.depth : '—', cq.depth > 100 ? 'warn' : null);
+  _dhSet('dh-c-dlq', cq.dlq_size != null ? cq.dlq_size : '—', cq.dlq_size > 0 ? 'warn' : null);
+  _dhSet('dh-c-lag', cq.drainer_lag_p95_ms != null ? cq.drainer_lag_p95_ms + ' ms' : '—');
+
+  const cl = c.log || {};
+  _dhSet('dh-c-lsz',  _fmtBytes(cl.file_size_bytes));
+  _dhSet('dh-c-lrot', cl.rotations_total != null ? cl.rotations_total : '—');
+  _dhSet('dh-c-ldrop', cl.dropped_total != null ? cl.dropped_total : '—',
+         cl.dropped_total > 0 ? 'warn' : null);
+
+  // CB list — built via DOM, no innerHTML
+  const cbEl = document.getElementById('dh-cb-list');
+  if (cbEl) {
+    cbEl.textContent = '';
+    const cbs = c.circuit_breakers || {};
+    const keys = Object.keys(cbs);
+    if (keys.length === 0) {
+      cbEl.appendChild(_mkEl('div', 'dh-waiting', 'none registered'));
+    } else {
+      keys.forEach(ep => {
+        const st = cbs[ep];
+        const cls = _cbClass(st);
+        const row = _mkEl('div', 'dh-cb-row');
+        const badge = _mkEl('span', 'dh-cb-badge ' + cls);
+        const epEl = _mkEl('span', 'dh-cb-ep', ep);
+        epEl.title = ep;
+        const lbl = _mkEl('span', 'dh-cb-lbl ' + cls, _cbLabel(st));
+        row.appendChild(badge); row.appendChild(epEl); row.appendChild(lbl);
+        cbEl.appendChild(row);
+      });
+    }
+  }
+
+  // ── Backend ───────────────────────────────────────────────────────────────
+  const b = data.backend || {};
+  if (b.unavailable) {
+    const backCard = document.getElementById('dh-back-card');
+    if (backCard) {
+      backCard.textContent = '';
+      backCard.appendChild(_mkEl('div', 'dh-card-title', 'Process'));
+      backCard.appendChild(_mkEl('div', 'dh-unavail', 'backend unreachable'));
+    }
+    ['dh-b-rce','dh-b-rnli','dh-b-rerr','dh-b-rsem',
+     'dh-b-lsz','dh-b-lrot','dh-b-ldrop'].forEach(id => _dhSet(id, '—', 'idle'));
+    const mdl = document.getElementById('dh-models-list');
+    if (mdl) { mdl.textContent = ''; mdl.appendChild(_mkEl('div', 'dh-unavail', 'backend unreachable')); }
+    return;
+  }
+
+  const bp = b.process || {};
+  _dhSet('dh-b-rss', _fmtBytes(bp.rss_bytes));
+  _dhSet('dh-b-cpu', bp.cpu_pct != null ? bp.cpu_pct + '%' : '—',
+         bp.cpu_pct > 80 ? 'crit' : bp.cpu_pct > 50 ? 'warn' : null);
+  _dhSet('dh-b-fds', bp.open_fds != null ? bp.open_fds : '—');
+  _dhSet('dh-b-up', _fmtUptime(bp.uptime_s));
+
+  const br = b.rerank || {};
+  const breq = br.requests_total || {};
+  const berr = br.errors_503 || {};
+  const bsem = br.semaphore_held || {};
+  const totalErr = Object.values(berr).reduce((a, v) => a + v, 0);
+  const totalSem = Object.values(bsem).reduce((a, v) => a + v, 0);
+  _dhSet('dh-b-rce',  breq.ce  != null ? breq.ce  : '—');
+  _dhSet('dh-b-rnli', breq.nli != null ? breq.nli : '—');
+  _dhSet('dh-b-rerr', totalErr > 0 ? totalErr : '0', totalErr > 0 ? 'warn' : null);
+  _dhSet('dh-b-rsem', totalSem > 0 ? totalSem : '0', totalSem > 0 ? 'ok' : null);
+
+  const bl = b.log || {};
+  _dhSet('dh-b-lsz',  _fmtBytes(bl.file_size_bytes));
+  _dhSet('dh-b-lrot', bl.rotations_total != null ? bl.rotations_total : '—');
+  _dhSet('dh-b-ldrop', bl.dropped_total != null ? bl.dropped_total : '—',
+         bl.dropped_total > 0 ? 'warn' : null);
+
+  // Models list — built via DOM
+  const mdlEl = document.getElementById('dh-models-list');
+  if (mdlEl) {
+    mdlEl.textContent = '';
+    const models = b.models || {};
+    const mkeys = Object.keys(models);
+    if (mkeys.length === 0) {
+      mdlEl.appendChild(_mkEl('div', 'dh-waiting', 'none reported'));
+    } else {
+      mkeys.forEach(m => {
+        const loaded = models[m] === 1;
+        const row = _mkEl('div', 'dh-model-row');
+        const dot = _mkEl('span', 'dh-model-dot ' + (loaded ? 'loaded' : 'unloaded'));
+        const lbl = _mkEl('span', 'dh-lbl', m);
+        const val = _mkEl('span', 'dh-val ' + (loaded ? 'ok' : 'idle'),
+                          loaded ? 'loaded' : 'unloaded');
+        row.appendChild(dot); row.appendChild(lbl); row.appendChild(val);
+        mdlEl.appendChild(row);
+      });
+    }
+  }
+
+  _dhFlash('dh-scraped');
+}
+
+async function _dhFetchOnce() {
+  try {
+    const r = await fetch(DAEMON + '/api/daemon-health');
+    if (r.ok) updateDaemonHealth(await r.json());
+  } catch (_) {}
 }
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
