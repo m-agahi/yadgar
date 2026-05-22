@@ -126,7 +126,7 @@ Shipped: v5.3.10 (N4) — `RemoteMLClient` `/rerank` endpoints.
 **Caller contract:** when `score_X()` returns `None`, caller MUST degrade gracefully (skip stage, return pre-rerank order, never crash). See `yadgar/retrieval/_reranking_cross_encoder.py` + `_reranking_nli.py` for the canonical None-guard pattern.
 
 **Code:** `yadgar/ml_client.py::_CircuitBreaker` + per-endpoint instances on `RemoteMLClient`.
-**Tests:** `yadgar/tests/test_circuit_breaker.py` (7 tests).
+**Tests:** `yadgar/tests/test_circuit_breaker.py` (13 tests, includes v5.4.2 additions).
 **Env:** `YADGAR_CIRCUIT_BREAKER_ENABLED` (default 1), `_FAILURE_THRESHOLD` (3), `_OPEN_DURATION_SEC` (60).
 
 **Why this matters (don't break):** v5.3.9 `BindsTo → Wants` decoupled core from backend lifecycle. Without CB-1, core busy-loops retrying against a struggling backend (the v5.3.10 CPU incident). CB-1 is the architectural pair to the decouple — removing it re-introduces the CPU regression.
@@ -135,6 +135,23 @@ Shipped: v5.3.10 (N4) — `RemoteMLClient` `/rerank` endpoints.
 - Removing the breaker without equivalent fault-isolation (rate limiter, bulkhead, exponential backoff).
 - Disabling per-endpoint isolation (one breaker for all endpoints — a slow CE would block NLI/pair).
 - Bypassing the breaker in "retry harder" patches.
+
+**v5.4.2 update — probe-specific timeout + exponential backoff:**
+
+Root-cause analysis (2026-05-22): v5.3.10 stopped the rapid-retry tight loop but probes themselves were driving CPU. Every HALF_OPEN probe fired real PyTorch CE inference on a saturated model thread, waited the full `BACKEND_HTTP_TIMEOUT_SEC` (5s), then re-opened at the same 60s cooldown. Result: ~1 CPU spike/min indefinitely.
+
+Fix 1a — probe-specific short timeout (`YADGAR_CIRCUIT_BREAKER_PROBE_TIMEOUT_SEC`, default 2.0s). When breaker is HALF_OPEN, probe call overrides httpx timeout to 2s instead of 5s. Implementation: `score_X` detects `is_half_open()` and passes `timeout=self._probe_timeout` to `client.post()`.
+
+Fix 1b — exponential backoff on HALF_OPEN failure. `_CircuitBreaker` now tracks `consecutive_probe_failures`. Each failed probe doubles `_open_duration_sec` (cap: `YADGAR_CIRCUIT_BREAKER_MAX_OPEN_DURATION_SEC`, default 600s). Multiplier: `YADGAR_CIRCUIT_BREAKER_BACKOFF_FACTOR` (default 2.0). `record_success()` resets both counter and duration to base. Does NOT affect `consecutive_failures` (CLOSED-state threshold counter).
+
+New env vars:
+- `YADGAR_CIRCUIT_BREAKER_PROBE_TIMEOUT_SEC` (default 2.0) — probe HTTP read timeout
+- `YADGAR_CIRCUIT_BREAKER_MAX_OPEN_DURATION_SEC` (default 600) — backoff ceiling
+- `YADGAR_CIRCUIT_BREAKER_BACKOFF_FACTOR` (default 2.0) — per-probe cooldown multiplier
+
+Backoff curve (base=60s): 60 → 120 → 240 → 480 → 600 (capped). After 5 consecutive probe failures, backend gets 10 minutes before next probe. Self-heals on success.
+
+**CORRECTS prior verification claim:** v5.3.10 PR claimed CPU spin-up eliminated. Investigation 2026-05-22 shows rate-limited logging (≤1/min) ≠ elimination — probes still fired, still caused spikes. v5.4.2 is the actual fix.
 
 ### Pattern slots (planned, not yet shipped)
 
@@ -225,7 +242,7 @@ External plugins installed in the Claude Code harness that affect how yadgar wor
 | `conflict_resolver.py:149` `httpx.post` | I3, I4 | sync 30s timeout if env on |
 | Drainer `_apply()` | I2, I6 | replays full tool, not lean inserts |
 | Backend image 6.78GB | I11 | v5.4 F0 — separate from OOM root cause |
-| Backend embed_service OOM under /rerank load | I8 | no liveness/memory metrics; load spike not observable pre-crash. v5.4 P11 (N3 gauges) + F5 report |
+| Backend embed_service OOM under /rerank load | I8 | **MITIGATED v5.4.2 F5-A** — concurrent-inference semaphore bounds rerank throughput; probes fast-fail 503 instead of queueing. Observability gap remains: no liveness/memory metrics yet (P11 N3 gauges pending). |
 | No read-path metrics + no per-stage write metrics | I8, I12 | blocks all perf optimization — P11 prerequisite |
 | 26+ high-complexity functions (anchor 116496) | I13 | full catalog via P12 |
 | systemd `BindsTo=yadgar-backend.service` on `yadgar.service` | (cascade-failure) | NOT an invariant violation per se but operationally fatal; fix in v5.3.9 (decouple) |
@@ -359,8 +376,20 @@ Post-v5.3.9 `BindsTo → Wants` decouple, core + backend run as independent daem
 - **F0.** Backend image bloat 6.78GB → ≤1.6GB. **Lands v5.4.**
 - **F1/F2.** Async embed load + pre-pull. **Lands v5.5.**
 - **F3.** Blue-green backend swap. **RE-PRIORITIZED to v5.5 P1** — crash justified systemd refactor.
-- **F5.** Backend OOM root-cause INVESTIGATION REPORT in v5.4 (1-pager). FIX in v5.5 (lazy-load rerankers OR cap concurrent batch OR cgroup bump). F0 + F5 are separate concerns.
+- **F5.** ~~Backend OOM root-cause INVESTIGATION REPORT in v5.4 (1-pager). FIX in v5.5.~~ **FIX SHIPPED v5.4.2 (F5-A concurrent-inference semaphore).** See "Shipped F5-A" below.
 - **systemd cascade decouple.** `BindsTo=yadgar-backend.service` → `Wants=`. **Lands v5.3.9.** Lives in nix repo, NOT this repo. Document via MIGRATION_NOTES.md per HARD RULE.
+
+### Shipped: F5-A concurrent-inference semaphore (v5.4.2)
+
+**Root cause confirmed (2026-05-22):** `embed_service` at 158% CPU, 37 consecutive `/rerank/ce` timeouts. Every HALF_OPEN probe fired real PyTorch CE inference on a saturated model thread with no concurrency control — unlimited concurrent inference requests queued behind each other. Probes couldn't fast-fail.
+
+**Fix:** per-mode `asyncio.Semaphore(N)` in `yadgar/embed_service.py`, N=1 default. `/rerank` handler acquires semaphore with `asyncio.wait_for(sem.acquire(), timeout=RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC)`. On timeout → 503 immediately. Circuit-breaker probe then fast-fails as timeout/5xx → re-OPEN without burning CPU on doomed inference.
+
+**Env:** `YADGAR_RERANK_MAX_CONCURRENCY` (default 1), `YADGAR_RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC` (default 2.0).
+**Tests:** `yadgar/tests/test_embed_service_semaphore.py` (4 tests).
+**Backend bump:** `server.json` `backend_version` 5.0.2 → 5.0.3.
+
+**If saturation persists post-F5-A:** consider F5-B (lazy-load/idle-eviction, ~80 LOC) and/or F5-C (cgroup bump `--cpus 2 → 4`, nix repo change, document in `MIGRATION_NOTES.md`).
 
 ---
 
@@ -379,6 +408,7 @@ Post-v5.3.9 `BindsTo → Wants` decouple, core + backend run as independent daem
 - 2026-05-21: Patterns Library section added (introductory CB-1 for circuit breaker shipped v5.3.10). Patterns ≠ invariants; both must be checked by future planning.
 - 2026-05-21 evening: Workflow integration section added for `ralph-loop`, `frontend-design`, `security-guidance` plugins installed 2026-05-21. Not invariants — workflow tooling. Section scoped per-plugin with explicit orchestrator-rule carve-out for ralph-loop.
 - 2026-05-21 late evening: V1 viz daemon health panel added — surfaces both core + backend daemon stats (RSS/CPU/FDs + queue/breaker/model-load) in viz UI. Targets v5.5. Sub-tasks V1a (backend /metrics endpoint) + V1b (CB state gauge) + V1c (sidebar UI) + V1d (refresh cadence env).
+- 2026-05-22: CB-1 probe-fixes + F5-A saturation fix shipped in v5.4.2. CORRECTS prior v5.3.10 verification claim (rate-limited logging ≠ elimination — probes still caused CPU spikes). Fix 1a (probe timeout 2s), Fix 1b (exponential backoff 60→600s), F5-A (semaphore N=1 per mode). Backend bump 5.0.2→5.0.3; core bump 5.4.1→5.4.2.
 
 ---
 
