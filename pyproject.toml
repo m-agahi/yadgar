@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.4.5"
+version = "5.6.3"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "MIT"
@@ -54,6 +54,11 @@ dependencies = [
     # `regex` library is a drop-in stdlib replacement that adds a timeout= kwarg.
     # Option A chosen over AST-checker (incomplete) or subprocess (per-call overhead).
     "regex>=2024.1.0",
+    # v5.6.3 — distributed tracing (I14-compliant span logs, W3C propagation)
+    "opentelemetry-api>=1.30,<2",
+    "opentelemetry-sdk>=1.30,<2",
+    "opentelemetry-instrumentation-fastapi>=0.51b0",
+    "opentelemetry-instrumentation-httpx>=0.51b0",
 ]
 
 [project.scripts]
