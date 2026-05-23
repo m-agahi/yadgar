@@ -187,6 +187,18 @@ Falls back to `contextlib.nullcontext()` when OTel is unavailable.
 - Adding a background thread that performs DB writes or HTTP calls without wrapping work in a span.
 - Relying on contextvars set on the spawning thread to propagate to the new thread.
 
+### I22 — Trust boundary: single-user single-host (v5.6.5)
+
+Bearer-token auth on yadgar APIs authenticates inside the host-user trust boundary, not across it. All listeners bind `127.0.0.1` per `docker-compose.yml`. Loopback HTTP is acceptable while traffic stays on a single host owned by a single user.
+
+**Why**: HTTPS-on-loopback only protects against the "other user on same host" case. Tokens leak via `/proc/<pid>/environ`, container inspect, shell history regardless of wire encryption. Single-user single-host = equivalent threat model whether HTTP or HTTPS.
+
+**How to apply**: Do NOT change port bindings to `0.0.0.0`. Do NOT proxy yadgar externally (nginx, traefik, tunnel) without first adding TLS termination + token rotation. Multi-host or shared deployments are out of scope until v6+.
+
+**Banned regressions:**
+- Changing any listener bind address from `127.0.0.1` to `0.0.0.0` or `::` without TLS + token rotation.
+- Exposing yadgar ports via reverse proxy or tunnel without per-connection TLS.
+
 ### Deferred (codify only when violations surface)
 
 - **I16 migration reversibility** — better as documented rollback procedure (restore-from-backup OR forward-fix script) verified by integration test.
