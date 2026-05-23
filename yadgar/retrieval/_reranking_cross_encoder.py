@@ -43,11 +43,16 @@ class _CrossEncoderMixin:
         query_analysis = analyze_query(query, self._settings)
         open_domain_mode = query_analysis.get("is_open_domain_like", False)
 
+        # v5.6.6 B: cap input candidates BEFORE expansion to bound CE inference time.
+        # On CPU, each pair is ~400ms; 50 memories × 2 variants = 46s burst.
+        # Slicing to top_k here limits to top_k×2 pairs max (base + one variant each).
+        memories_to_score = memories[:top_k]
+
         # Build expanded text list: one entry per memory, plus implied-fact variants
         # in open_domain_mode (mirrors the original FlashRank variant expansion).
         expanded_texts: list[str] = []
         variant_to_memory: dict[int, int] = {}
-        for i, mem in enumerate(memories):
+        for i, mem in enumerate(memories_to_score):
             base_text = mem.get("content", "")
             variant_to_memory[len(expanded_texts)] = i
             expanded_texts.append(base_text)
@@ -79,10 +84,10 @@ class _CrossEncoderMixin:
                     memory_raw_scores.get(mem_idx, float("-inf")), score
                 )
 
-        raw_scores = [memory_raw_scores.get(i, 0.0) for i in range(len(memories))]
+        raw_scores = [memory_raw_scores.get(i, 0.0) for i in range(len(memories_to_score))]
 
         if not raw_scores or all(s == 0.0 for s in raw_scores):
-            return memories[:top_k]
+            return memories_to_score[:top_k]
 
         max_score = max(raw_scores)
         min_score = min(raw_scores)
@@ -90,7 +95,7 @@ class _CrossEncoderMixin:
 
         ce_weight = getattr(self._settings, "CROSS_ENCODER_WEIGHT", 0.6)
         ret_weight = 1.0 - ce_weight
-        for i, mem in enumerate(memories):
+        for i, mem in enumerate(memories_to_score):
             ce_norm = (raw_scores[i] - min_score) / score_range if score_range > 0 else 0.5
 
             content = mem.get("content", "")
@@ -104,8 +109,8 @@ class _CrossEncoderMixin:
             mem["_cross_encoder_score"] = round(ce_norm, 4)
             mem["_retrieval_score"] = round(ret_weight * retrieval_score + ce_weight * ce_norm, 4)
 
-        memories.sort(key=lambda m: m["_retrieval_score"], reverse=True)
-        return memories[:top_k]
+        memories_to_score.sort(key=lambda m: m["_retrieval_score"], reverse=True)
+        return memories_to_score[:top_k]
 
     @trace_span("retrieval.score_pair")
     def score_single_pair(self, query: str, document: str) -> float:

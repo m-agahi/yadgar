@@ -16,16 +16,19 @@ PROFILES: dict[str, dict] = {
         "signals": ["vector", "fts"],
         "cross_encoder": False,
         "nli": False,
+        "multi_passage": False,
     },
     "balanced": {
         "signals": ["vector", "fts", "ppr", "spreading"],
         "cross_encoder": True,
         "nli": False,
+        "multi_passage": True,
     },
     "full": {
         "signals": ["vector", "fts", "ppr", "spreading"],
         "cross_encoder": True,
         "nli": True,
+        "multi_passage": True,
     },
 }
 

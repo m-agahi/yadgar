@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, call, patch
 
+import pytest
+
 # ---------------------------------------------------------------------------
 # 1. Breaker opens after failure threshold
 # ---------------------------------------------------------------------------
@@ -300,14 +302,19 @@ class TestProbeUsesShortTimeout:
             f"probe read timeout should be 2.0, got {probe_timeout.read}"
         )
 
-    def test_normal_call_uses_default_timeout(self, monkeypatch):
-        """Normal (CLOSED) call must NOT pass probe timeout — uses client default."""
+    def test_normal_call_uses_rerank_timeout(self, monkeypatch):
+        """Normal (CLOSED) call must pass _rerank_timeout, NOT _probe_timeout.
+
+        v5.6.6: all non-probe /rerank calls use RERANK_BACKEND_TIMEOUT_SEC (90s)
+        so CE inference (8-46s) doesn't trip the general 5s timeout.
+        """
         import yadgar.config as cfg
 
         monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_ENABLED", "1")
         monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "3")
         monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_OPEN_DURATION_SEC", "60")
         monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_PROBE_TIMEOUT_SEC", "2.0")
+        monkeypatch.setenv("YADGAR_RERANK_BACKEND_TIMEOUT_SEC", "90")
         cfg.get_settings.cache_clear()
 
         with patch("httpx.Client") as mock_cls:
@@ -326,10 +333,16 @@ class TestProbeUsesShortTimeout:
 
         call_kwargs = mock_http.post.call_args
         assert call_kwargs is not None
-        # Normal calls must NOT pass a timeout override
-        assert "timeout" not in call_kwargs.kwargs, (
-            "normal call must not override timeout (uses client default)"
+        # v5.6.6: normal calls pass _rerank_timeout (not probe, not None)
+        assert "timeout" in call_kwargs.kwargs, "normal call must pass explicit _rerank_timeout"
+        import httpx
+
+        t = call_kwargs.kwargs["timeout"]
+        assert isinstance(t, httpx.Timeout), f"timeout must be httpx.Timeout, got {type(t)}"
+        assert t.read == pytest.approx(90.0), (
+            f"normal call rerank timeout read should be 90.0, got {t.read}"
         )
+        assert t.read != pytest.approx(2.0), "normal call must NOT use probe timeout (2.0s)"
 
 
 # ---------------------------------------------------------------------------
