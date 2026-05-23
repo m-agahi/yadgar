@@ -394,6 +394,32 @@ def memory_update(memory_id: int, fields: dict) -> dict:
 
 
 @_tool(power=True)
+def vacuum_checkpoints(dry_run: bool = True) -> dict:
+    """Collapse stale checkpoints: keep latest per directory_context, delete rest.
+
+    Idempotent. Operators should run vacuum_checkpoints(dry_run=False) once after
+    upgrading to v5.6.5 to collapse rows accumulated under the old global-deactivate
+    scheme.
+
+    Args:
+        dry_run: if True (default), report stale count without deleting. Set to
+            False to perform the actual deletion.
+
+    Returns:
+        {
+            "stale_count": int,   # rows that would be / were deleted
+            "deleted": int,       # 0 if dry_run=True
+            "survivors": int,     # rows remaining after vacuum
+            "dry_run": bool,
+        }
+    """
+    from yadgar.storage.ops import vacuum_checkpoints as _vc  # noqa: PLC0415
+
+    storage = _get_storage()
+    return _vc(storage, dry_run=dry_run)
+
+
+@_tool(power=True)
 def wiki_update(page_id: int, fields: dict) -> dict:
     """Patch selected fields on a wiki page record.
 

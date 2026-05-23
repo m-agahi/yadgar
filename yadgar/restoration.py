@@ -27,6 +27,9 @@ class CheckpointContext:
 
     Bundles the 7 optional checkpoint payload params so the method signature
     stays within the I13 PLR0913 cap (≤8 non-self args).
+
+    resume_hint: if provided, stored verbatim; otherwise derived as
+        restore(directory="<directory>").
     """
 
     current_task: str = ""
@@ -36,6 +39,7 @@ class CheckpointContext:
     next_steps: list[str] = field(default_factory=list)
     active_errors: list[str] = field(default_factory=list)
     custom_context: str = ""
+    resume_hint: str = ""
 
 
 class CheckpointRestore:
@@ -104,6 +108,7 @@ class CheckpointRestore:
                 "next_steps": c.next_steps,
                 "active_errors": c.active_errors,
                 "custom_context": c.custom_context,
+                "resume_hint": c.resume_hint,
                 "epoch": epoch,
             }
         )
@@ -208,8 +213,8 @@ class CheckpointRestore:
         """
         new_epoch = self._storage.increment_epoch()
 
-        # Create an auto-checkpoint if no recent one exists
-        active = self._storage.get_active_checkpoint()
+        # Create an auto-checkpoint if no recent one exists (per-directory)
+        active = self._storage.get_active_checkpoint(directory)
         auto_created = False
         if active is None or active.get("epoch", 0) < new_epoch - 1:
             self._storage.insert_checkpoint(
@@ -245,8 +250,8 @@ class CheckpointRestore:
         """
         max_memories = self._settings.REPLAY_MAX_RESTORE_MEMORIES
 
-        # 1. Get latest checkpoint
-        checkpoint = self._storage.get_active_checkpoint()
+        # 1. Get latest checkpoint for this directory
+        checkpoint = self._storage.get_active_checkpoint(directory)
 
         # 2. Get anchored memories (always included)
         anchored = self._storage.get_anchored_memories(limit=max_memories)

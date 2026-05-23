@@ -249,6 +249,27 @@ async def hook_session_context(request: Request) -> JSONResponse:
             from yadgar.server.tools.project import project_brief as _pb  # noqa: PLC0415
         brief = _pb(directory, mode=mode, branch_hint=branch_hint)
         render = brief.get("_render", "")
+
+        # v5.6.5: append checkpoint resume hint so Claude sees the exact restore() call.
+        # DO NOT auto-call restore() — hint only. /clear is explicit user intent.
+        try:
+            from yadgar.server.lifecycle import _get_storage as _gs  # noqa: PLC0415
+
+            _storage = _gs()
+            _cp = _storage.get_active_checkpoint(directory)
+            if _cp:
+                _task = _cp.get("current_task", "")
+                _ts = _cp.get("created_at", "")
+                _hint = (
+                    f"\n[yadgar] Active checkpoint for {directory}:\n"
+                    f"  Task: {_task}\n"
+                    f"  Time: {_ts}\n"
+                    f'To resume: call `restore(directory="{directory}")`\n'
+                )
+                render = render + _hint
+        except Exception as _ce:
+            logger.debug("session-context checkpoint hint error: %s", _ce)
+
         return JSONResponse({"text": render})
     except Exception as _e:
         logger.debug("session-context hook error: %s", _e)
