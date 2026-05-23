@@ -6,6 +6,7 @@ Getters here provide typed access with assertions.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import signal
@@ -43,6 +44,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
+
+
+def _lifecycle_span(name: str):
+    """Context manager: OTel root span for lifecycle background threads.
+
+    Falls back to nullcontext when OTel is unavailable (I21).
+    """
+    try:
+        from opentelemetry import trace as _ot  # noqa: PLC0415
+
+        return _ot.get_tracer("yadgar.lifecycle").start_as_current_span(name)
+    except Exception:
+        return contextlib.nullcontext()
 
 
 # ── Getters ────────────────────────────────────────────────────────────
@@ -243,10 +257,11 @@ def init_engines(
             while True:
                 time.sleep(5)
                 try:
-                    result = sample_system_metrics(pid, db_path, storage)
-                    # §9 Q6: update under lock to prevent torn reads.
-                    with _st._metrics_lock:
-                        _st._system_metrics_cache.update(result)
+                    with _lifecycle_span("lifecycle.metrics_sample"):
+                        result = sample_system_metrics(pid, db_path, storage)
+                        # §9 Q6: update under lock to prevent torn reads.
+                        with _st._metrics_lock:
+                            _st._system_metrics_cache.update(result)
                 except Exception:
                     pass
 
@@ -257,8 +272,9 @@ def init_engines(
             while True:
                 time.sleep(60)
                 try:
-                    if _st._retriever is not None:
-                        _st._retriever.unload_rerankers_if_idle(idle_seconds=600.0)
+                    with _lifecycle_span("lifecycle.reranker_idle_check"):
+                        if _st._retriever is not None:
+                            _st._retriever.unload_rerankers_if_idle(idle_seconds=600.0)
                 except Exception:
                     pass
 

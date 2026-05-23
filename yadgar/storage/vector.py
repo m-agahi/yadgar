@@ -2,6 +2,8 @@
 
 import logging
 
+from yadgar.tracing import trace_span
+
 _log = logging.getLogger(__name__)
 
 
@@ -37,6 +39,7 @@ class _VectorMixin:
             {"id": memory_id, "emb": floats},
         )
 
+    @trace_span("storage.vector.search_vectors")
     def search_vectors(
         self,
         query_embedding: bytes,
@@ -79,6 +82,7 @@ class _VectorMixin:
                 break
         return results
 
+    @trace_span("storage.vector.search_implicit_vectors")
     def search_implicit_vectors(
         self,
         query_embedding: bytes,

@@ -251,8 +251,14 @@ class TestRequestLoggingMiddleware:
         finally:
             cleanup()
 
-    def test_middleware_trace_id_from_header(self):
-        """x-request-id header propagates as trace_id in log record."""
+    def test_middleware_trace_id_from_otel_context(self):
+        """v5.6.4: trace_id in log record comes from OTel context (not x-request-id header).
+
+        Before v5.6.4, the middleware explicitly set trace_id from the x-request-id header,
+        which overwrote the OTel-injected trace_id (Bug 4). Now the middleware omits trace_id
+        from extra={}; JSONLogFormatter._append_trace_context injects it automatically when
+        an OTel span is active. Without an active span, trace_id is absent from the record.
+        """
         import asyncio
 
         from yadgar.log_config import RequestLoggingMiddleware
@@ -263,7 +269,13 @@ class TestRequestLoggingMiddleware:
             scope = self._make_scope("/health", headers=[[b"x-request-id", b"my-trace-xyz"]])
             asyncio.run(mw(scope, self._receive_noop, self._send_noop))
             assert records
-            assert records[0].trace_id == "my-trace-xyz"
+            # v5.6.4: trace_id is NOT set from x-request-id header anymore.
+            # It comes from OTel context via JSONLogFormatter._append_trace_context.
+            # Without an active OTel span in this test, trace_id attribute is absent.
+            assert not hasattr(records[0], "trace_id") or records[0].trace_id is None, (
+                "trace_id should not be set from x-request-id header in v5.6.4 — "
+                "it comes from OTel context (JSONLogFormatter injects it automatically)"
+            )
         finally:
             cleanup()
 
