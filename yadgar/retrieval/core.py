@@ -284,6 +284,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
         min_heat: float = 0.1,
         current_branch: str | None = None,
         default_branch: str | None = None,
+        profile: str | None = None,
     ) -> list[dict]:
         """Combine retrieval signals via Weighted Reciprocal Rank Fusion (WRRF).
 
@@ -311,8 +312,14 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
                 default_branch=default_branch,
             )
 
-        # Determine active retrieval profile
-        profile_name = getattr(self._settings, "RETRIEVAL_PROFILE", "balanced")
+        # Determine active retrieval profile.
+        # Caller-supplied `profile` kwarg overrides RETRIEVAL_PROFILE setting.
+        # Hook handlers pass profile="fast" to skip CE/NLI/MP for lightweight context injection.
+        profile_name = (
+            profile
+            if profile is not None
+            else getattr(self._settings, "RETRIEVAL_PROFILE", "balanced")
+        )
         profile = PROFILES.get(profile_name, PROFILES["balanced"])
         profile_signals = set(profile["signals"])
 

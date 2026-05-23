@@ -75,13 +75,19 @@ class _SlowServer:
 
 
 class TestRemoteMLClientTimeout:
-    """RemoteMLClient must respect BACKEND_HTTP_TIMEOUT_SEC."""
+    """RemoteMLClient must respect RERANK_BACKEND_TIMEOUT_SEC for /rerank calls.
+
+    v5.6.6: /rerank calls use RERANK_BACKEND_TIMEOUT_SEC (dedicated, default 90s).
+    BACKEND_HTTP_TIMEOUT_SEC still governs /embed, /health, /admin/dbsize.
+    """
 
     def test_score_cross_encoder_times_out(self, monkeypatch):
         """score_cross_encoder returns None quickly when backend is slow (N4: circuit breaker)."""
         import yadgar.config as cfg
 
+        # v5.6.6: /rerank uses RERANK_BACKEND_TIMEOUT_SEC, not BACKEND_HTTP_TIMEOUT_SEC
         monkeypatch.setenv("YADGAR_BACKEND_HTTP_TIMEOUT_SEC", "2")
+        monkeypatch.setenv("YADGAR_RERANK_BACKEND_TIMEOUT_SEC", "2")
         cfg.get_settings.cache_clear()
 
         server = _SlowServer(delay_s=30.0)
@@ -103,7 +109,9 @@ class TestRemoteMLClientTimeout:
         """score_nli returns None quickly when backend is slow (N4: circuit breaker)."""
         import yadgar.config as cfg
 
+        # v5.6.6: /rerank uses RERANK_BACKEND_TIMEOUT_SEC, not BACKEND_HTTP_TIMEOUT_SEC
         monkeypatch.setenv("YADGAR_BACKEND_HTTP_TIMEOUT_SEC", "2")
+        monkeypatch.setenv("YADGAR_RERANK_BACKEND_TIMEOUT_SEC", "2")
         cfg.get_settings.cache_clear()
 
         server = _SlowServer(delay_s=30.0)
@@ -121,10 +129,11 @@ class TestRemoteMLClientTimeout:
             cfg.get_settings.cache_clear()
 
     def test_env_override_lowers_timeout(self, monkeypatch):
-        """Setting YADGAR_BACKEND_HTTP_TIMEOUT_SEC=1 fires sooner than default 5s."""
+        """Setting YADGAR_RERANK_BACKEND_TIMEOUT_SEC=1 fires sooner for /rerank."""
         import yadgar.config as cfg
 
         monkeypatch.setenv("YADGAR_BACKEND_HTTP_TIMEOUT_SEC", "1")
+        monkeypatch.setenv("YADGAR_RERANK_BACKEND_TIMEOUT_SEC", "1")
         cfg.get_settings.cache_clear()
 
         server = _SlowServer(delay_s=30.0)
