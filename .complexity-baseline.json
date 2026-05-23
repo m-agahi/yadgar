@@ -8642,7 +8642,13 @@
     "params": 1
   },
   "yadgar/server/tools/project.py::__file__": {
-    "loc": 864
+    "loc": 862
+  },
+  "yadgar/server/tools/project.py::_compute_source_hash@597": {
+    "cyclo": 4,
+    "loc": 18,
+    "nesting": 3,
+    "params": 2
   },
   "yadgar/server/tools/project.py::_compute_source_hash@599": {
     "cyclo": 4,
@@ -8686,6 +8692,12 @@
     "nesting": 0,
     "params": 0
   },
+  "yadgar/server/tools/project.py::_parse_frontmatter@572": {
+    "cyclo": 9,
+    "loc": 23,
+    "nesting": 3,
+    "params": 2
+  },
   "yadgar/server/tools/project.py::_parse_frontmatter@574": {
     "cyclo": 9,
     "loc": 23,
@@ -8704,11 +8716,23 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/server/tools/project.py::_wiki_refresh_stale_impl@617": {
+    "cyclo": 23,
+    "loc": 100,
+    "nesting": 3,
+    "params": 3
+  },
   "yadgar/server/tools/project.py::_wiki_refresh_stale_impl@619": {
     "cyclo": 23,
     "loc": 100,
     "nesting": 3,
     "params": 3
+  },
+  "yadgar/server/tools/project.py::bootstrap_project@537": {
+    "cyclo": 2,
+    "loc": 16,
+    "nesting": 1,
+    "params": 2
   },
   "yadgar/server/tools/project.py::bootstrap_project@539": {
     "cyclo": 2,
@@ -8718,9 +8742,15 @@
   },
   "yadgar/server/tools/project.py::project_brief@319": {
     "cyclo": 24,
-    "loc": 217,
+    "loc": 215,
     "nesting": 2,
     "params": 3
+  },
+  "yadgar/server/tools/project.py::update_active_work@556": {
+    "cyclo": 1,
+    "loc": 11,
+    "nesting": 0,
+    "params": 2
   },
   "yadgar/server/tools/project.py::update_active_work@558": {
     "cyclo": 1,
@@ -8728,11 +8758,23 @@
     "nesting": 0,
     "params": 2
   },
+  "yadgar/server/tools/project.py::wiki_cleanup_merged_branches@758": {
+    "cyclo": 19,
+    "loc": 105,
+    "nesting": 5,
+    "params": 2
+  },
   "yadgar/server/tools/project.py::wiki_cleanup_merged_branches@760": {
     "cyclo": 19,
     "loc": 105,
     "nesting": 5,
     "params": 2
+  },
+  "yadgar/server/tools/project.py::wiki_refresh_stale@720": {
+    "cyclo": 2,
+    "loc": 35,
+    "nesting": 2,
+    "params": 3
   },
   "yadgar/server/tools/project.py::wiki_refresh_stale@722": {
     "cyclo": 2,
