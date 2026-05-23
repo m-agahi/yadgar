@@ -43,7 +43,7 @@ Personal deployment — first commit 2026-04-20, ~33 days runtime as of 2026-05-
 - **~1.9k wiki pages** crystallized from working sessions
 - **~1.1k knowledge graph entities** with auto-discovered relationships
 - **~2.5k tool invocations** logged and replayable
-- **~1 GB persistent state** (surrealkv; vlog reclaimable via `vacuum_now()`)
+- **~80 MB persistent state** post-vacuum (surrealkv vlog reclaim: `vacuum_now()` recovered 91% of 962 MB on most recent run)
 
 ### Latency
 
