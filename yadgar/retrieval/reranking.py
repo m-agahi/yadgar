@@ -69,6 +69,11 @@ class _RerankingMixin:
         max_results: int,
     ) -> list[dict]:
         """Apply full post-fusion reranking pipeline and return final result list."""
+        # v5.6.6 E: HEAVY_RERANK_ENABLED=False kill switch — bypass CE/NLI/MP entirely.
+        # Useful for CPU-only hosts where every rerank call causes 8-46s saturation.
+        if not getattr(self._settings, "HEAVY_RERANK_ENABLED", True):
+            return result_memories[:max_results]
+
         # Heuristic reranker (skipped for 'fast' profile)
         if self._settings.RERANKER_ENABLED and profile_name != "fast":
             heuristic_k = max_results
@@ -105,7 +110,9 @@ class _RerankingMixin:
             result_memories = self._reranker.cross_encoder_rerank(result_memories, query)
 
         # NLI entailment scoring
-        use_nli = profile["nli"] or getattr(self._settings, "NLI_RERANKING_ENABLED", False)
+        # v5.6.6: profile["nli"] is the "this tier allows it" gate; setting is "globally enabled".
+        # Use AND semantics so fast/hook profile never triggers NLI even when setting is on.
+        use_nli = profile["nli"] and getattr(self._settings, "NLI_RERANKING_ENABLED", False)
         if use_nli and (not self._settings.NLI_ONLY_FOR_OPEN_DOMAIN or open_domain_mode):
             result_memories = self._reranker.nli_rerank(query, result_memories)
             nli_weight = self._settings.NLI_WEIGHT
@@ -116,7 +123,9 @@ class _RerankingMixin:
             result_memories.sort(key=lambda m: m.get("_retrieval_score", 0), reverse=True)
 
         # Multi-passage evidence aggregation
-        if getattr(self._settings, "MULTI_PASSAGE_RERANKING_ENABLED", False):
+        # Profile gate: "multi_passage" key added v5.6.6 — default True for backward compat.
+        _mp_allowed = profile.get("multi_passage", True)
+        if _mp_allowed and getattr(self._settings, "MULTI_PASSAGE_RERANKING_ENABLED", False):
             result_memories = self._reranker.multi_passage_rerank(
                 query, result_memories, max_results
             )

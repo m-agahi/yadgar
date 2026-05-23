@@ -448,6 +448,13 @@ class RemoteMLClient:
             connect=2.0, read=_probe_sec, write=_probe_sec, pool=5.0
         )
 
+        # v5.6.6 C: dedicated timeout for /rerank calls (CE inference 8-46s on CPU).
+        # Using general 5s timeout caused spurious CB-1 opens on every CE call.
+        _rerank_sec = float(settings.RERANK_BACKEND_TIMEOUT_SEC)
+        self._rerank_timeout = httpx.Timeout(
+            connect=2.0, read=_rerank_sec, write=_rerank_sec, pool=5.0
+        )
+
         # I3: check flag at construction — zero overhead when disabled
         self._breaker_enabled: bool = bool(settings.CIRCUIT_BREAKER_ENABLED)
         if self._breaker_enabled:
@@ -492,6 +499,8 @@ class RemoteMLClient:
                 _kwargs = {"json": {"query": query, "texts": texts, "mode": "ce"}}
                 if _is_probe:
                     _kwargs["timeout"] = self._probe_timeout
+                else:
+                    _kwargs["timeout"] = self._rerank_timeout
                 r = self._client.post("/rerank", **_kwargs)
                 r.raise_for_status()
                 result = r.json()["scores"]
@@ -540,6 +549,8 @@ class RemoteMLClient:
                 _kwargs = {"json": {"query": query, "texts": texts, "mode": "nli"}}
                 if _is_probe:
                     _kwargs["timeout"] = self._probe_timeout
+                else:
+                    _kwargs["timeout"] = self._rerank_timeout
                 r = self._client.post("/rerank", **_kwargs)
                 r.raise_for_status()
                 result = r.json()["scores"]
@@ -588,6 +599,8 @@ class RemoteMLClient:
                 _kwargs = {"json": {"query": query, "texts": [text], "mode": "pair"}}
                 if _is_probe:
                     _kwargs["timeout"] = self._probe_timeout
+                else:
+                    _kwargs["timeout"] = self._rerank_timeout
                 r = self._client.post("/rerank", **_kwargs)
                 r.raise_for_status()
                 result = r.json()["scores"][0]

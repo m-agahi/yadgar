@@ -304,7 +304,11 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
     try:
         import asyncio
 
-        results = await asyncio.to_thread(retriever.recall, query, max_results=5, min_heat=0.0)
+        # v5.6.6 A: use lightweight "fast" profile (BM25+HNSW only, no CE/NLI/MP).
+        # Hooks fire 50+ times/hour; full rerank pipeline causes 8-46s CPU bursts.
+        results = await asyncio.to_thread(
+            retriever.recall, query, max_results=5, min_heat=0.0, profile="fast"
+        )
     except Exception as e:
         logger.debug("prompt-recall hook error: %s", e)
         return JSONResponse({"text": ""})

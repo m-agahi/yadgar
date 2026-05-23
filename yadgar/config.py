@@ -233,7 +233,9 @@ class Settings(BaseSettings):
     GTE_RERANKER_FALLBACK_TO_FLASHRANK: bool = True
 
     # v23 NLI Entailment Scoring
-    NLI_RERANKING_ENABLED: bool = True
+    # v5.6.6: default changed True → False — NLI averages 55s/call on CPU, marginal
+    # quality gain over CE alone. Set YADGAR_NLI_RERANKING_ENABLED=true to re-enable.
+    NLI_RERANKING_ENABLED: bool = False
     NLI_MODEL: str = "cross-encoder/nli-deberta-v3-base"
     NLI_WEIGHT: float = 0.3
     NLI_ONLY_FOR_OPEN_DOMAIN: bool = True
@@ -340,8 +342,12 @@ class Settings(BaseSettings):
     MAX_CAUSED_BY_ROWS: int = 100_000
 
     # v5.3.9 N1: backend HTTP timeouts
-    # Short timeout for all non-import backend calls (health, /sql, /rerank, /admin/dbsize).
+    # Short timeout for all non-import backend calls (health, /sql, /admin/dbsize).
     BACKEND_HTTP_TIMEOUT_SEC: int = 5
+    # v5.6.6: dedicated timeout for /rerank endpoint calls.
+    # CE inference can take 8-46s on CPU; the general 5s timeout caused spurious
+    # CB-1 opens. Set to 0 to fall back to BACKEND_HTTP_TIMEOUT_SEC.
+    RERANK_BACKEND_TIMEOUT_SEC: int = 90
     # Long timeout for the vacuum /import POST and /export GET (bulk data ops).
     BACKEND_IMPORT_TIMEOUT_SEC: int = 300
     # Separate timeout for schema migration HTTP calls during StorageEngine.__init__.
@@ -430,6 +436,12 @@ class Settings(BaseSettings):
     # Caps uvicorn's wait for in-flight requests to drain on SIGTERM.
     # 0 = unlimited (uvicorn default); ≥1 = abandon after this many seconds.
     ASGI_SHUTDOWN_TIMEOUT_SEC: int = 5
+
+    # v5.6.6 — Heavy-rerank kill switch for CPU-only hosts
+    # When False: all CE/NLI/MP reranking is skipped; retrieval falls back to
+    # BM25+HNSW fusion only (same as RETRIEVAL_PROFILE=fast but always applied).
+    # Set YADGAR_HEAVY_RERANK_ENABLED=false to eliminate all CPU burst from reranking.
+    HEAVY_RERANK_ENABLED: bool = True
 
     # v5.4 P7 — Write-time reinjection gate (default OFF per I1/I9)
     # When OFF, the retriever.recall() block in memorize() is skipped entirely,
