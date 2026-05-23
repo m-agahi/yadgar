@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.storage import StorageEngine
+from yadgar.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ class NewMemorySpec:
     valence: float = 0.0
 
 
+@trace_span("curation.find_similar_memories")
 def find_similar_memories(
     storage: StorageEngine,
     embeddings: EmbeddingEngine,

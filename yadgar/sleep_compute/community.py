@@ -7,6 +7,8 @@ from collections import Counter
 
 import numpy as np
 
+from yadgar.tracing import trace_span
+
 # Entity-like patterns for identifying key sentences during compression
 _ENTITY_PATTERN_RE = re.compile(
     r"(?:[\w@.-]+/[\w@.-]+\.\w+"  # file paths
@@ -21,6 +23,7 @@ _ENTITY_PATTERN_RE = re.compile(
 class _CommunityMixin:
     """Community detection and cluster summarization operations."""
 
+    @trace_span("sleep.detect_communities")
     def detect_communities(self) -> list[dict]:
         """Build a networkx graph from entity relationships and detect communities."""
         import networkx as nx
@@ -118,6 +121,7 @@ class _CommunityMixin:
 
         return list(memory_ids)
 
+    @trace_span("sleep.generate_cluster_summaries")
     def generate_cluster_summaries(self) -> None:
         """Generate summaries and centroid embeddings for clusters with > 3 members."""
         clusters = self._storage.get_clusters_by_level(1)

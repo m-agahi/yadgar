@@ -179,6 +179,12 @@ async def lifespan(app: FastAPI):
         process="backend",
     )
 
+    # v5.6.3: distributed tracing for backend.
+    # setup_tracing initialises LogSpanProcessor + sets global TracerProvider.
+    from yadgar.tracing import setup_tracing as _setup_tracing  # noqa: PLC0415
+
+    _setup_tracing("yadgar-backend")
+
     # Load model eagerly so /health reflects true readiness
     try:
         await asyncio.to_thread(_get_engine)
@@ -191,6 +197,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="yadgar-embed", version="1.0", lifespan=lifespan)
+
+# v5.6.3: instrument FastAPI so all /rerank, /embed, /health routes get server spans.
+# Applied after app creation. InstrumentedRoutes get span names from route paths.
+try:
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor as _FAI  # noqa: PLC0415
+
+    _FAI.instrument_app(app)
+except Exception:
+    pass  # OTel not available — no-op
 
 
 @app.get("/metrics")
@@ -294,8 +309,34 @@ async def rerank(req: RerankRequest, _: None = Depends(_require_admin_token)) ->
             return ml.score_cross_encoder(req.query, req.texts)
 
     t0 = _time.monotonic()
+
+    # v5.6.3: child span showing pure inference time (excludes FastAPI overhead).
+    # Semaphore release is always in the finally block regardless of OTel availability.
+    def _make_inference_span():
+        """Return an OTel span context manager, or nullcontext if unavailable."""
+        try:
+            from opentelemetry import trace as _ot  # noqa: PLC0415
+
+            _model_name = os.environ.get("YADGAR_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+            _tracer = _ot.get_tracer("yadgar.embed_service")
+            _ctx = _tracer.start_as_current_span(f"backend.rerank.{req.mode}")
+            return _ctx, _model_name
+        except Exception:
+            import contextlib  # noqa: PLC0415
+
+            return contextlib.nullcontext(), None
+
+    _span_ctx, _model_name = _make_inference_span()
     try:
-        scores = await asyncio.to_thread(_score)
+        with _span_ctx as _span:
+            if _model_name is not None and _span is not None:
+                try:
+                    _span.set_attribute("rerank.mode", req.mode)
+                    _span.set_attribute("rerank.n_passages", len(req.texts))
+                    _span.set_attribute("model.name", _model_name)
+                except Exception:
+                    pass
+            scores = await asyncio.to_thread(_score)
     finally:
         elapsed = _time.monotonic() - t0
         _rerank_duration_seconds.labels(mode=req.mode).observe(elapsed)

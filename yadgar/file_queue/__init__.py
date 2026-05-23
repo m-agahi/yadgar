@@ -26,6 +26,7 @@ from yadgar.file_queue._locals import _drain_local
 from yadgar.file_queue.apply import _ApplyMixin
 from yadgar.file_queue.dlq import _DLQMixin
 from yadgar.file_queue.queue import FileQueue
+from yadgar.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         """Clear retry state for a file (called by dlq_requeue after moving back to queue)."""
         self._attempts.pop(filename, None)
 
+    @trace_span("drainer.drain_cycle")
     def _drain_once(self) -> int:  # noqa: C901 — pre-existing complexity, tracked for P13 refactor
         _cycle_t0 = time.monotonic()
         files = self._queue.pending()
