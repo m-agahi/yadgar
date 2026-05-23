@@ -454,9 +454,7 @@ def project_brief(directory: str, mode: str = "catalog", branch_hint: str | None
 
     # --- catalog: checkpoint for this directory (F2) ---
     checkpoint_rows = storage._q(
-        "SELECT * FROM checkpoint "
-        "WHERE directory_context = $dir AND is_active = true "
-        "ORDER BY created_at DESC LIMIT 1",
+        "SELECT * FROM checkpoint WHERE directory_context = $dir ORDER BY created_at DESC LIMIT 1",
         {"dir": resolved},
     )
     checkpoint_catalog: dict | None = None
