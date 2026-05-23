@@ -10,8 +10,21 @@ import os
 from mcp.server.fastmcp import FastMCP
 
 from yadgar.config import get_settings
+from yadgar.tracing import setup_tracing
 
 settings = get_settings()
+
+# ── Distributed tracing — v5.6.3 ─────────────────────────────────────────────
+# Initialise OTel TracerProvider + LogSpanProcessor early (module import time).
+# HTTPXClientInstrumentor is also activated here so all httpx calls in core
+# auto-inject W3C traceparent headers.
+setup_tracing("yadgar-core")
+try:
+    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor  # noqa: PLC0415
+
+    HTTPXClientInstrumentor().instrument()
+except Exception:
+    pass  # OTel not available — no-op
 
 # ── Tool profile (read at import time — decorators execute on module load) ────
 # YADGAR_PROFILE=minimal  →  10 core tools only
@@ -175,6 +188,12 @@ def _tool(power: bool = False):
         if power and _PROFILE == "minimal":
             return func  # skip registration; function still callable internally
 
+        # v5.6.3: wrap with trace_span so every tool call is traceable.
+        # trace_span is applied at decoration time (before mcp_server.tool() wraps it).
+        from yadgar.tracing import trace_span as _trace_span  # noqa: PLC0415
+
+        _traced_func = _trace_span(f"tool.{func.__name__}")(func)
+
         @functools.wraps(func)
         def _instrumented(*args, **kwargs):
             import time as _time
@@ -182,7 +201,7 @@ def _tool(power: bool = False):
             _t0 = _time.monotonic()
             _status = "ok"
             try:
-                result = func(*args, **kwargs)
+                result = _traced_func(*args, **kwargs)
             except Exception:
                 _status = "error"
                 raise

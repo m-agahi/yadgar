@@ -4,6 +4,8 @@ import logging
 
 import numpy as np
 
+from yadgar.tracing import trace_span
+
 logger = logging.getLogger(__name__)
 
 
@@ -12,6 +14,7 @@ class _ClusteringMixin:
 
     # ── Pattern Detection (Go-CLS) ───────────────────────────────────────
 
+    @trace_span("consolidation.cls.find_patterns")
     def find_recurring_patterns(
         self, directory: str = None, min_occurrences: int = 3
     ) -> list[dict]:

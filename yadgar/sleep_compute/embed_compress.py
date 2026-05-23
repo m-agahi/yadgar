@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime, timedelta
 
+from yadgar.tracing import trace_span
+
 # Sentence boundary splitter
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 
@@ -22,6 +24,7 @@ _ENTITY_PATTERN_RE = re.compile(
 class _EmbedCompressMixin:
     """Re-embedding and memory compression operations."""
 
+    @trace_span("sleep.reembed_stale")
     def reembed_stale(self) -> int:
         """Re-embed memories whose embedding_model differs from the current model."""
         current_model = self._embeddings.get_model_name()
@@ -45,6 +48,7 @@ class _EmbedCompressMixin:
 
         return count
 
+    @trace_span("sleep.compress_old_memories")
     def compress_old_memories(self, days_threshold: int = 30) -> int:
         """Compress old verbose memories by extracting key entity-bearing sentences."""
         cutoff = (datetime.now(UTC) - timedelta(days=days_threshold)).isoformat()

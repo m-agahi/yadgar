@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from yadgar.tracing import trace_span
+
 
 class _MultiPassageMixin:
     """Provides multi_passage_rerank for evidence aggregation across related memories.
@@ -10,6 +12,7 @@ class _MultiPassageMixin:
     self.cluster_memories).
     """
 
+    @trace_span("retrieval.multi_passage_rerank")
     def multi_passage_rerank(self, query: str, memories: list[dict], top_k: int) -> list[dict]:
         """Multi-passage evidence aggregation reranking.
 

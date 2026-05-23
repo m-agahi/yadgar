@@ -15,6 +15,24 @@ import time
 from collections.abc import Callable
 from typing import Protocol, runtime_checkable
 
+
+def _rpc_span(name: str, attributes: dict | None = None):
+    """Context manager: OTel span for RemoteMLClient RPC calls.
+
+    Falls back to a no-op context when OTel is unavailable.
+    """
+    try:
+        from opentelemetry import trace as _t  # noqa: PLC0415
+
+        tracer = _t.get_tracer("yadgar.ml_client")
+        ctx = tracer.start_as_current_span(name)
+        return ctx
+    except Exception:
+        import contextlib  # noqa: PLC0415
+
+        return contextlib.nullcontext()
+
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -433,130 +451,148 @@ class RemoteMLClient:
         return getattr(self, "_fake_now", time.monotonic())
 
     def score_cross_encoder(self, query: str, texts: list[str]) -> list[float] | None:
-        _is_probe = False
-        if self._breaker_enabled:
-            breaker = self._breakers["ce"]  # type: ignore[index]
-            now = self._now()
-            if breaker.is_open(_now=now) and not breaker.is_half_open(_now=now):
-                logger.warning(
-                    "/rerank/ce circuit OPEN — skipping (cooldown %.0fs remaining)",
-                    breaker.cooldown_remaining(_now=now),
-                )
-                return None
-            _is_probe = breaker.is_half_open(_now=self._now())
-        try:
-            _kwargs = {"json": {"query": query, "texts": texts, "mode": "ce"}}
-            if _is_probe:
-                _kwargs["timeout"] = self._probe_timeout
-            r = self._client.post("/rerank", **_kwargs)
-            r.raise_for_status()
-            result = r.json()["scores"]
+        with _rpc_span(
+            "rpc.rerank.ce",
+            {"rerank.mode": "ce", "rerank.n_passages": len(texts), "http.url": self._base_url},
+        ):
+            _is_probe = False
             if self._breaker_enabled:
-                self._breakers["ce"].record_success()  # type: ignore[index]
-            return result
-        except Exception as e:
-            import httpx as _httpx
-
-            if isinstance(
-                e, (_httpx.TimeoutException, _httpx.ConnectError, _httpx.HTTPStatusError)
-            ):
-                if self._breaker_enabled:
-                    b = self._breakers["ce"]  # type: ignore[index]
-                    b.record_failure(_now=self._now())
+                breaker = self._breakers["ce"]  # type: ignore[index]
+                now = self._now()
+                if breaker.is_open(_now=now) and not breaker.is_half_open(_now=now):
                     logger.warning(
-                        "/rerank/ce failure (%d consecutive): %s",
-                        b.consecutive_failures,
-                        e,
+                        "/rerank/ce circuit OPEN — skipping (cooldown %.0fs remaining)",
+                        breaker.cooldown_remaining(_now=now),
                     )
+                    return None
+                _is_probe = breaker.is_half_open(_now=self._now())
+            try:
+                _kwargs = {"json": {"query": query, "texts": texts, "mode": "ce"}}
+                if _is_probe:
+                    _kwargs["timeout"] = self._probe_timeout
+                r = self._client.post("/rerank", **_kwargs)
+                r.raise_for_status()
+                result = r.json()["scores"]
+                if self._breaker_enabled:
+                    self._breakers["ce"].record_success()  # type: ignore[index]
+                return result
+            except Exception as e:
+                import httpx as _httpx
+
+                if isinstance(
+                    e, (_httpx.TimeoutException, _httpx.ConnectError, _httpx.HTTPStatusError)
+                ):
+                    if self._breaker_enabled:
+                        b = self._breakers["ce"]  # type: ignore[index]
+                        b.record_failure(_now=self._now())
+                        logger.warning(
+                            "/rerank/ce failure (%d consecutive): %s",
+                            b.consecutive_failures,
+                            e,
+                        )
+                    else:
+                        logger.warning(
+                            "backend timeout: RemoteMLClient /rerank ce timed out: %s", e
+                        )
                 else:
-                    logger.warning("backend timeout: RemoteMLClient /rerank ce timed out: %s", e)
-            else:
-                logger.warning("RemoteMLClient: /rerank ce failed: %s", e)
-            return None
+                    logger.warning("RemoteMLClient: /rerank ce failed: %s", e)
+                return None
 
     def score_nli(self, query: str, texts: list[str]) -> list[float] | None:
-        _is_probe = False
-        if self._breaker_enabled:
-            breaker = self._breakers["nli"]  # type: ignore[index]
-            now = self._now()
-            if breaker.is_open(_now=now) and not breaker.is_half_open(_now=now):
-                logger.warning(
-                    "/rerank/nli circuit OPEN — skipping (cooldown %.0fs remaining)",
-                    breaker.cooldown_remaining(_now=now),
-                )
-                return None
-            _is_probe = breaker.is_half_open(_now=self._now())
-        try:
-            _kwargs = {"json": {"query": query, "texts": texts, "mode": "nli"}}
-            if _is_probe:
-                _kwargs["timeout"] = self._probe_timeout
-            r = self._client.post("/rerank", **_kwargs)
-            r.raise_for_status()
-            result = r.json()["scores"]
+        with _rpc_span(
+            "rpc.rerank.nli",
+            {"rerank.mode": "nli", "rerank.n_passages": len(texts), "http.url": self._base_url},
+        ):
+            _is_probe = False
             if self._breaker_enabled:
-                self._breakers["nli"].record_success()  # type: ignore[index]
-            return result
-        except Exception as e:
-            import httpx as _httpx
-
-            if isinstance(
-                e, (_httpx.TimeoutException, _httpx.ConnectError, _httpx.HTTPStatusError)
-            ):
-                if self._breaker_enabled:
-                    b = self._breakers["nli"]  # type: ignore[index]
-                    b.record_failure(_now=self._now())
+                breaker = self._breakers["nli"]  # type: ignore[index]
+                now = self._now()
+                if breaker.is_open(_now=now) and not breaker.is_half_open(_now=now):
                     logger.warning(
-                        "/rerank/nli failure (%d consecutive): %s",
-                        b.consecutive_failures,
-                        e,
+                        "/rerank/nli circuit OPEN — skipping (cooldown %.0fs remaining)",
+                        breaker.cooldown_remaining(_now=now),
                     )
+                    return None
+                _is_probe = breaker.is_half_open(_now=self._now())
+            try:
+                _kwargs = {"json": {"query": query, "texts": texts, "mode": "nli"}}
+                if _is_probe:
+                    _kwargs["timeout"] = self._probe_timeout
+                r = self._client.post("/rerank", **_kwargs)
+                r.raise_for_status()
+                result = r.json()["scores"]
+                if self._breaker_enabled:
+                    self._breakers["nli"].record_success()  # type: ignore[index]
+                return result
+            except Exception as e:
+                import httpx as _httpx
+
+                if isinstance(
+                    e, (_httpx.TimeoutException, _httpx.ConnectError, _httpx.HTTPStatusError)
+                ):
+                    if self._breaker_enabled:
+                        b = self._breakers["nli"]  # type: ignore[index]
+                        b.record_failure(_now=self._now())
+                        logger.warning(
+                            "/rerank/nli failure (%d consecutive): %s",
+                            b.consecutive_failures,
+                            e,
+                        )
+                    else:
+                        logger.warning(
+                            "backend timeout: RemoteMLClient /rerank nli timed out: %s", e
+                        )
                 else:
-                    logger.warning("backend timeout: RemoteMLClient /rerank nli timed out: %s", e)
-            else:
-                logger.warning("RemoteMLClient: /rerank nli failed: %s", e)
-            return None
+                    logger.warning("RemoteMLClient: /rerank nli failed: %s", e)
+                return None
 
     def score_pair(self, query: str, text: str) -> float | None:
-        _is_probe = False
-        if self._breaker_enabled:
-            breaker = self._breakers["pair"]  # type: ignore[index]
-            now = self._now()
-            if breaker.is_open(_now=now) and not breaker.is_half_open(_now=now):
-                logger.warning(
-                    "/rerank/pair circuit OPEN — skipping (cooldown %.0fs remaining)",
-                    breaker.cooldown_remaining(_now=now),
-                )
-                return None
-            _is_probe = breaker.is_half_open(_now=self._now())
-        try:
-            _kwargs = {"json": {"query": query, "texts": [text], "mode": "pair"}}
-            if _is_probe:
-                _kwargs["timeout"] = self._probe_timeout
-            r = self._client.post("/rerank", **_kwargs)
-            r.raise_for_status()
-            result = r.json()["scores"][0]
+        with _rpc_span(
+            "rpc.rerank.pair",
+            {"rerank.mode": "pair", "rerank.n_passages": 1, "http.url": self._base_url},
+        ):
+            _is_probe = False
             if self._breaker_enabled:
-                self._breakers["pair"].record_success()  # type: ignore[index]
-            return result
-        except Exception as e:
-            import httpx as _httpx
-
-            if isinstance(
-                e, (_httpx.TimeoutException, _httpx.ConnectError, _httpx.HTTPStatusError)
-            ):
-                if self._breaker_enabled:
-                    b = self._breakers["pair"]  # type: ignore[index]
-                    b.record_failure(_now=self._now())
+                breaker = self._breakers["pair"]  # type: ignore[index]
+                now = self._now()
+                if breaker.is_open(_now=now) and not breaker.is_half_open(_now=now):
                     logger.warning(
-                        "/rerank/pair failure (%d consecutive): %s",
-                        b.consecutive_failures,
-                        e,
+                        "/rerank/pair circuit OPEN — skipping (cooldown %.0fs remaining)",
+                        breaker.cooldown_remaining(_now=now),
                     )
+                    return None
+                _is_probe = breaker.is_half_open(_now=self._now())
+            try:
+                _kwargs = {"json": {"query": query, "texts": [text], "mode": "pair"}}
+                if _is_probe:
+                    _kwargs["timeout"] = self._probe_timeout
+                r = self._client.post("/rerank", **_kwargs)
+                r.raise_for_status()
+                result = r.json()["scores"][0]
+                if self._breaker_enabled:
+                    self._breakers["pair"].record_success()  # type: ignore[index]
+                return result
+            except Exception as e:
+                import httpx as _httpx
+
+                if isinstance(
+                    e, (_httpx.TimeoutException, _httpx.ConnectError, _httpx.HTTPStatusError)
+                ):
+                    if self._breaker_enabled:
+                        b = self._breakers["pair"]  # type: ignore[index]
+                        b.record_failure(_now=self._now())
+                        logger.warning(
+                            "/rerank/pair failure (%d consecutive): %s",
+                            b.consecutive_failures,
+                            e,
+                        )
+                    else:
+                        logger.warning(
+                            "backend timeout: RemoteMLClient /rerank pair timed out: %s", e
+                        )
                 else:
-                    logger.warning("backend timeout: RemoteMLClient /rerank pair timed out: %s", e)
-            else:
-                logger.warning("RemoteMLClient: /rerank pair failed: %s", e)
-            return None
+                    logger.warning("RemoteMLClient: /rerank pair failed: %s", e)
+                return None
 
     def unload_if_idle(self, idle_seconds: float = 600.0) -> None:
         pass  # backend manages its own lifecycle
