@@ -11,10 +11,11 @@ volumes:
   yadgar-db-data:
   yadgar-dev-data:
   yadgar-queue-data:
+  yadgar-backend-logs:
 
 services:
   backend:
-    image: openfantasy/yadgar-backend:${BACKEND_VERSION:-5.1.2}
+    image: openfantasy/yadgar-backend:${BACKEND_VERSION:-5.2.0}
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -24,7 +25,8 @@ services:
     ports:
       - "127.0.0.1:8001:8001"   # embed service (localhost only)
     volumes:
-      - yadgar-db-data:/data
+      - yadgar-db-data:/data:ro
+      - yadgar-backend-logs:/data/logs
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
     environment:
       SURREAL_USER: ${SURREAL_USER:?must set SURREAL_USER}
@@ -43,7 +45,7 @@ services:
       start_period: 60s  # model load can take a while
 
   core:
-    image: openfantasy/yadgar:${CORE_VERSION:-5.6.2}
+    image: openfantasy/yadgar:${CORE_VERSION:-5.6.3}
     build:
       context: .
       dockerfile: Dockerfile

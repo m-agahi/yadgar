@@ -30,6 +30,7 @@ from yadgar.cls_store.promotion import _PromotionMixin
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.storage import StorageEngine
+from yadgar.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ class DualStoreCLS(_ClusteringMixin, _PatternsMixin, _PromotionMixin):
 
     # ── Go-CLS Consolidation Cycle ────────────────────────────────────────
 
+    @trace_span("consolidation.cls.cycle")
     def consolidation_cycle(self) -> dict:
         """Run Go-CLS consolidation: promote recurring episodic patterns to semantic.
 

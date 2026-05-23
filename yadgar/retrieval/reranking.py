@@ -13,6 +13,7 @@ from yadgar.retrieval._reranking_heuristic import _HeuristicMixin
 from yadgar.retrieval._reranking_mmr import _MMRMixin
 from yadgar.retrieval._reranking_multi_passage import _MultiPassageMixin
 from yadgar.retrieval._reranking_nli import _NLIMixin
+from yadgar.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,7 @@ class _RerankingMixin:
     instance via MRO.
     """
 
+    @trace_span("retrieval.rerank")
     def _apply_rerank_pipeline(
         self,
         result_memories: list[dict],

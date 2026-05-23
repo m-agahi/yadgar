@@ -209,10 +209,29 @@ class JSONLogFormatter(logging.Formatter):
         if exc_type is not None:
             payload["error"] = exc_type.__name__
 
+    def _append_trace_context(self, payload: dict) -> None:
+        """Inject trace_id + span_id from active OTel span context (if any).
+
+        Called on every log format — adds fields only when an OTel span is
+        active so any log line can be correlated with its trace.
+        """
+        try:
+            from yadgar.tracing import get_current_span_id, get_current_trace_id  # noqa: PLC0415
+
+            tid = get_current_trace_id()
+            sid = get_current_span_id()
+            if tid is not None:
+                payload["trace_id"] = tid
+            if sid is not None:
+                payload["span_id"] = sid
+        except Exception:
+            pass  # tracing not available / not yet initialized — skip silently
+
     def format(self, record: logging.LogRecord) -> str:
         payload = self._build_base(record)
         self._append_extras(payload, record)
         self._append_traceback(payload, record)
+        self._append_trace_context(payload)
         try:
             return json.dumps(payload, default=str)
         except Exception:
