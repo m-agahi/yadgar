@@ -224,28 +224,33 @@ class _OpsMixin:
     # ------------------------------------------------------------------ Checkpoints
 
     def insert_checkpoint(self, data: dict) -> int:
-        """Insert a new checkpoint, deactivating all previous ones.
+        """Replace any existing checkpoint for this directory.
 
-        §6 Q15: Wrapped in a TX so deactivate+insert are atomic.
+        Old per-directory checkpoints are HARD-DELETED. Other directories untouched.
+        is_active=true is kept on every row for backward compat with callers that
+        still filter on it; get_active_checkpoint() now uses directory_context.
         """
         now = self._now_iso()
         cid = self._next_id("checkpoint")
-        # Wrap deactivate + insert in a single transaction (atomic RMW).
+        directory = data.get("directory_context", "")
+        resume_hint = data.get("resume_hint", "") or f'restore(directory="{directory}")'
+        # Hard-delete existing rows for this directory, then create new one.
         self._q(
             "BEGIN TRANSACTION;\n"
-            "UPDATE checkpoint SET is_active = false WHERE is_active = true;\n"
+            "DELETE FROM checkpoint WHERE directory_context = $dir;\n"
             "CREATE type::record('checkpoint', $id) SET "
             "session_id = $session_id, directory_context = $dir, "
             "current_task = $task, files_being_edited = $files, "
             "key_decisions = $decisions, open_questions = $questions, "
             "next_steps = $steps, active_errors = $errors, "
             "custom_context = $custom, epoch = $epoch, "
+            "resume_hint = $hint, "
             "created_at = $now, is_active = true;\n"
             "COMMIT TRANSACTION",
             {
                 "id": cid,
                 "session_id": data.get("session_id", "default"),
-                "dir": data["directory_context"],
+                "dir": directory,
                 "task": data.get("current_task", ""),
                 "files": data.get("files_being_edited", []),
                 "decisions": data.get("key_decisions", []),
@@ -254,16 +259,22 @@ class _OpsMixin:
                 "errors": data.get("active_errors", []),
                 "custom": data.get("custom_context", ""),
                 "epoch": data.get("epoch", 0),
+                "hint": resume_hint,
                 "now": now,
             },
         )
         return cid
 
-    def get_active_checkpoint(self) -> dict | None:
-        """Get the most recent active checkpoint."""
-        rows = self._q(
-            "SELECT * FROM checkpoint WHERE is_active = true ORDER BY created_at DESC LIMIT 1"
-        )
+    def get_active_checkpoint(self, directory: str = "") -> dict | None:
+        """Latest checkpoint for this directory. Empty directory = global most-recent."""
+        if directory:
+            rows = self._q(
+                "SELECT * FROM checkpoint WHERE directory_context = $dir "
+                "ORDER BY created_at DESC LIMIT 1",
+                {"dir": directory},
+            )
+        else:
+            rows = self._q("SELECT * FROM checkpoint ORDER BY created_at DESC LIMIT 1")
         if not rows:
             return None
         return self._row_to_dict(rows[0])
@@ -286,3 +297,62 @@ class _OpsMixin:
             "UPDATE type::record('checkpoint', $id) SET epoch = $epoch",
             {"id": checkpoint_id, "epoch": epoch},
         )
+
+
+# ── Module-level helpers ────────────────────────────────────────────────────
+
+
+def vacuum_checkpoints(storage, *, dry_run: bool = True) -> dict:
+    """Collapse stale checkpoints: keep latest per directory_context, delete rest.
+
+    Idempotent. Call with dry_run=False after v5.6.5 deploy to clean up rows
+    accumulated under the old global-deactivate scheme.
+
+    Returns:
+        {
+            "stale_count": int,   # rows that would be / were deleted
+            "deleted": int,       # 0 if dry_run=True
+            "survivors": int,     # rows remaining after vacuum
+            "dry_run": bool,
+        }
+    """
+    # Fetch all checkpoint rows (id + directory_context + created_at).
+    all_rows = storage._q("SELECT id, directory_context, created_at FROM checkpoint")
+    if not all_rows:
+        return {"stale_count": 0, "deleted": 0, "survivors": 0, "dry_run": dry_run}
+
+    # Group by directory_context; find winner (latest created_at) per group.
+    from collections import defaultdict
+
+    groups: dict[str, list[dict]] = defaultdict(list)
+    for row in all_rows:
+        groups[row.get("directory_context", "")].append(row)
+
+    stale_int_ids: list[int] = []
+    for _dir, rows in groups.items():
+        # Sort descending by created_at string (ISO-8601 sorts lexicographically).
+        rows.sort(key=lambda r: r.get("created_at", ""), reverse=True)
+        # Winner stays; everything else is stale.
+        for stale in rows[1:]:
+            raw_id = stale["id"]
+            # Normalise to int (raw row ids may be RecordID or "checkpoint:N" strings)
+            stale_int_ids.append(storage._extract_id(raw_id))
+
+    stale_count = len(stale_int_ids)
+    deleted = 0
+
+    if not dry_run:
+        for iid in stale_int_ids:
+            storage._q(
+                "DELETE type::record('checkpoint', $id)",
+                {"id": iid},
+            )
+            deleted += 1
+
+    survivors_count = len(all_rows) - deleted
+    return {
+        "stale_count": stale_count,
+        "deleted": deleted,
+        "survivors": survivors_count,
+        "dry_run": dry_run,
+    }
