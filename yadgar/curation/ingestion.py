@@ -5,6 +5,7 @@ import logging
 
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.storage import StorageEngine
+from yadgar.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +14,7 @@ _LINK_LOW = 0.6
 _LINK_HIGH = 0.85
 
 
+@trace_span("curation.find_similar_memories")
 def find_similar_memories(
     storage: StorageEngine,
     embeddings: EmbeddingEngine,

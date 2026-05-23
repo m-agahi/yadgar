@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import random
 
+from yadgar.tracing import trace_span
+
 
 class _DreamMixin:
     """Dream replay operations: discover unexpected cross-domain connections."""
 
+    @trace_span("sleep.dream_replay")
     def dream_replay(self) -> dict:
         """Select random pairs of unconnected memories and discover hidden connections.
 
@@ -105,6 +108,7 @@ class _DreamMixin:
             return existing["id"]
         return self._storage.insert_entity({"name": name, "type": "file"})
 
+    @trace_span("sleep.dream_insight")
     def _create_dream_insight(self, mem_a: dict, mem_b: dict) -> None:
         """Generate a synthetic dream insight memory."""
         summary_a = mem_a["content"][:100].strip()

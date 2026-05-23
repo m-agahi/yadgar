@@ -12,6 +12,7 @@ from yadgar.retrieval.entities import (
     _QUESTION_WORDS,
     _SAID_LINE_RE,
 )
+from yadgar.tracing import trace_span
 
 # -- Pseudo-HyDE query expansion --
 # Strip question syntax to convert queries into declarative pseudo-documents
@@ -391,6 +392,7 @@ def _derive_implied_fact_passages(content: str) -> list[str]:
     return hints[:4]
 
 
+@trace_span("retrieval.analyze_query")
 def analyze_query(query: str, settings) -> dict:
     """Analyze a query and classify it for signal routing.
 

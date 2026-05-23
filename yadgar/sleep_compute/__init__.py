@@ -7,6 +7,7 @@ import logging
 from yadgar.sleep_compute.community import _CommunityMixin
 from yadgar.sleep_compute.dream import _DreamMixin
 from yadgar.sleep_compute.embed_compress import _EmbedCompressMixin
+from yadgar.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ class SleepComputeEngine(_DreamMixin, _CommunityMixin, _EmbedCompressMixin):
         self._settings = settings
         self._narrative = NarrativeEngine(storage, knowledge_graph, settings)
 
+    @trace_span("sleep.cycle")
     def run_sleep_cycle(self) -> dict:
         """Orchestrate all sleep-time operations in order."""
         stats: dict = {}

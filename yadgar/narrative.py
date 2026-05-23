@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from yadgar.config import Settings
 from yadgar.knowledge_graph import KnowledgeGraph
 from yadgar.storage import StorageEngine
+from yadgar.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +131,7 @@ class NarrativeEngine:
 
         return "\n\n".join(parts)
 
+    @trace_span("sleep.narrate")
     def auto_narrate(self) -> dict:
         """Auto-generate narratives for active directories during sleep-time compute.
 

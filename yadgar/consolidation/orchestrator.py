@@ -4,6 +4,8 @@ import logging
 import time
 from datetime import UTC, datetime
 
+from yadgar.tracing import trace_span
+
 logger = logging.getLogger("yadgar.consolidation")
 
 
@@ -69,6 +71,7 @@ class _OrchestratorMixin:
         except Exception:
             logger.exception("Sleep cycle failed")
 
+    @trace_span("consolidation.cycle")
     def _consolidation_cycle(self) -> dict:
         start = time.monotonic()
         stats = {

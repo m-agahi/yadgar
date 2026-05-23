@@ -10,6 +10,7 @@ from yadgar.retrieval.query_analysis import (
     analyze_query,
 )
 from yadgar.storage import _FTS_STOP_WORDS
+from yadgar.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 class _CrossEncoderMixin:
     """Provides cross_encoder_rerank, score_single_pair, and cluster_memories."""
 
+    @trace_span("retrieval.cross_encoder_rerank")
     def cross_encoder_rerank(
         self,
         memories: list[dict],
@@ -105,6 +107,7 @@ class _CrossEncoderMixin:
         memories.sort(key=lambda m: m["_retrieval_score"], reverse=True)
         return memories[:top_k]
 
+    @trace_span("retrieval.score_pair")
     def score_single_pair(self, query: str, document: str) -> float:
         """Score a single query-document pair using the ML client."""
         try:
