@@ -21,7 +21,7 @@ from pathlib import Path
 
 INTERVAL = 25  # human messages between checkpoints
 
-_PROMPT = """\
+_PROMPT_TEMPLATE = """\
 Yadgar checkpoint. Evaluate signals and decide actions.
 
 1. Call `project_brief(directory)` and check `signals`:
@@ -44,6 +44,9 @@ Yadgar checkpoint. Evaluate signals and decide actions.
    and call bootstrap_project(directory, content) (<=2000 chars).
 
 5. Otherwise: capture any key decisions via memorize/wiki_add.
+
+[yadgar] Checkpoint saved for {directory}.
+If user does /clear or session ends, resume via: restore(directory="{directory}")
 
 Then look at your last message — if mid-thought, repeat the question so
 conversation continues naturally.
@@ -134,6 +137,7 @@ def main() -> None:
     session_id = data.get("session_id", "unknown")
     transcript_path = data.get("transcript_path", "")
     stop_hook_active = str(data.get("stop_hook_active", "false")).lower() in ("true", "1", "yes")
+    directory = data.get("cwd", os.getcwd())
 
     # Infinite-loop guard: Claude already ran a checkpoint this turn — allow stop
     if stop_hook_active:
@@ -160,7 +164,8 @@ def main() -> None:
     state[session_id] = session_state
     _save_state(state)
 
-    print(json.dumps({"decision": "block", "reason": _PROMPT}))
+    prompt = _PROMPT_TEMPLATE.format(directory=directory)
+    print(json.dumps({"decision": "block", "reason": prompt}))
 
 
 if __name__ == "__main__":
