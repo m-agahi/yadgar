@@ -149,6 +149,44 @@ Every log entry = JSON with `ts, level, component, action, outcome, latency_ms?,
 
 Every input validator + parser + migration MUST have a Hypothesis property test covering pathological inputs (unicode surrogate pairs, empty, oversized, malformed JSON, SQL-injection-ish strings, race ordering for queue replay). Scope: parsers (SurrealQL builder, queue payload deserialization, hook payload parse), validators (memorize/recall/wiki_query inputs), migrations (#004–#007), queue+DLQ replay. Runs in CI; failure blocks merge.
 
+### I19. File handler installed before tracing (v5.6.4)
+
+`configure_logging()` MUST be called before `setup_tracing()` in every process entry point (core app, backend lifespan, stdio main). The `RotatingJSONLFileHandler` (Sink B) attaches to the root logger; `LogSpanProcessor` emits via `logger.info()` which propagates to root. If tracing starts first, span logs reach no file handler and are silently dropped.
+
+**Enforcement:** `yadgar/server/_app.py` calls `configure_logging` at module import time (before `setup_tracing`). `yadgar/embed_service.py` calls them in lifespan order. Violations are detectable: `grep 'setup_tracing' ... | head` must appear after `configure_logging` in every call site.
+
+**Banned regressions:**
+- Moving `setup_tracing` before `configure_logging` in any entry point.
+- Calling `setup_tracing` at module level without a preceding `configure_logging`.
+
+### I20. FastAPI/Starlette apps instrumented with FastAPIInstrumentor (v5.6.4)
+
+Every Starlette/FastAPI application object created by yadgar MUST have `FastAPIInstrumentor.instrument_app(app)` called on it before it handles requests. This ensures HTTP spans appear in traces and `trace_id` propagates from inbound headers to all child spans.
+
+**Scope:** core MCP HTTP app (SSE + streamable-HTTP wrappers), viz server, any future Starlette app. Backend's FastAPI app is covered by `FastAPIInstrumentor()` (global) in `embed_service.py`.
+
+**Enforcement:** `yadgar/server/_app.py::_instrument_starlette_app` helper called in both wrapper factories. New Starlette app additions must call this helper or equivalent.
+
+**Banned regressions:**
+- Creating a Starlette/FastAPI app and serving it without `FastAPIInstrumentor`.
+
+### I21. Background threads create OTel root spans per work unit (v5.6.4)
+
+Every background thread that performs meaningful I/O (DB writes, HTTP calls, file ops) MUST wrap each work-unit iteration in `tracer.start_as_current_span(...)`. OTel contextvars do NOT propagate across `threading.Thread` boundaries; without an explicit span, all work inside the thread is invisible to traces.
+
+**Pattern:**
+```python
+with tracer.start_as_current_span("lifecycle.X"):
+    do_work()
+```
+Falls back to `contextlib.nullcontext()` when OTel is unavailable.
+
+**Scope:** `lifecycle._metrics_thread`, `lifecycle._reranker_idle_thread`, `QueueDrainer.run()`, consolidation daemon cycle (already has `@trace_span("consolidation.cycle")`).
+
+**Banned regressions:**
+- Adding a background thread that performs DB writes or HTTP calls without wrapping work in a span.
+- Relying on contextvars set on the spawning thread to propagate to the new thread.
+
 ### Deferred (codify only when violations surface)
 
 - **I16 migration reversibility** — better as documented rollback procedure (restore-from-backup OR forward-fix script) verified by integration test.
@@ -157,7 +195,7 @@ Every input validator + parser + migration MUST have a Hypothesis property test 
 
 ### Recast as PR-template checklist (NOT invariant)
 
-- **I19 forward-context awareness** — every planning PR lists known upcoming requirements as considerations. Soft enough that an invariant adds no enforcement; PR template gets the outcome.
+- **Forward-context awareness** — every planning PR lists known upcoming requirements as considerations. Soft enough that an invariant adds no enforcement; PR template gets the outcome.
 
 ---
 

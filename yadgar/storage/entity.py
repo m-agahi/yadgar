@@ -3,6 +3,8 @@
 import logging
 from dataclasses import dataclass
 
+from yadgar.tracing import trace_span
+
 _log = logging.getLogger(__name__)
 
 
@@ -27,6 +29,7 @@ class _EntityMixin:
 
     # ------------------------------------------------------------------ Entities
 
+    @trace_span("storage.entity.insert_entity")
     def insert_entity(self, entity: dict) -> int:
         now = self._now_iso()
         eid = self._next_id("entity")
@@ -46,6 +49,7 @@ class _EntityMixin:
         )
         return eid
 
+    @trace_span("storage.entity.get_entity_by_name")
     def get_entity_by_name(self, name: str) -> dict | None:
         rows = self._q(
             "SELECT * FROM entity WHERE name = $name LIMIT 1",
@@ -97,6 +101,7 @@ class _EntityMixin:
 
     # ------------------------------------------------------------------ Relationships
 
+    @trace_span("storage.entity.insert_relationship")
     def insert_relationship(self, relationship: dict) -> int:
         now = self._now_iso()
         rid = self._next_id("relationship")
@@ -120,6 +125,7 @@ class _EntityMixin:
         )
         return rid
 
+    @trace_span("storage.entity.get_relationship_between")
     def get_relationship_between(self, source_id: int, target_id: int) -> dict | None:
         rows = self._q(
             "SELECT * FROM relationship WHERE "
@@ -224,6 +230,7 @@ class _EntityMixin:
         params["id"] = rel_id
         self._q(f"UPDATE type::record('relationship', $id) SET {sets}", params)
 
+    @trace_span("storage.entity.insert_typed_relationship")
     def insert_typed_relationship(
         self,
         source_entity_id: int,

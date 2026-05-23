@@ -15,6 +15,7 @@ Directory layout under base_dir (default YADGAR_DATA_DIR or /data in Docker):
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re as _re
@@ -29,6 +30,17 @@ from yadgar.file_queue.queue import FileQueue
 from yadgar.tracing import trace_span
 
 logger = logging.getLogger(__name__)
+
+
+def _drainer_span():
+    """Context manager: OTel root span per drain iteration (I21)."""
+    try:
+        from opentelemetry import trace as _ot  # noqa: PLC0415
+
+        return _ot.get_tracer("yadgar.file_queue").start_as_current_span("drainer.cycle")
+    except Exception:
+        return contextlib.nullcontext()
+
 
 _DRAIN_INTERVAL = 30.0  # seconds between drain passes (configurable via QueueDrainer)
 _CLEANUP_EVERY = 120  # drain passes between archive cleanups (~1 hour at 30s interval)
@@ -101,7 +113,8 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
     def run(self) -> None:
         while not self._stop_event.is_set():
             try:
-                self._drain_once()
+                with _drainer_span():
+                    self._drain_once()
             except Exception as exc:
                 logger.warning("Queue drain error: %s", exc)
             self._stop_event.wait(timeout=self._drain_interval)

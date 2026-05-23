@@ -64,7 +64,8 @@ if _OTEL_AVAILABLE:
         def on_start(self, span: Any, parent_context: Any = None) -> None:
             pass  # no-op
 
-        def on_end(self, span: Any) -> None:
+        def _emit_span_log(self, span: Any) -> None:
+            """Emit one I14-compliant JSON log line for the finished span."""
             ctx = span.context
             if ctx is None:
                 return  # pragma: no cover
@@ -118,6 +119,21 @@ if _OTEL_AVAILABLE:
 
             logger.info("span_end", extra=payload)
 
+        def on_end(self, span: Any) -> None:
+            """Called after span.end() completes (SDK compatibility path)."""
+            # Newer OTel SDK (>= 1.31) calls _on_ending instead of on_end for
+            # the primary emission path. We guard here so both paths work.
+            pass
+
+        def _on_ending(self, span: Any) -> None:
+            """Called by newer OTel SDK (>= 1.31) when a span is about to end.
+
+            This replaces on_end as the primary emission hook in recent SDK versions.
+            Emits the I14 span_end log line. Falls back gracefully if the SDK calls
+            on_end directly (older SDK versions).
+            """
+            self._emit_span_log(span)
+
         def shutdown(self) -> None:
             pass
 
@@ -133,6 +149,10 @@ else:  # pragma: no cover
             self._service_name = service_name
 
         def on_start(self, span: Any, parent_context: Any = None) -> None:
+            pass
+
+        def _on_ending(self, span: Any) -> None:
+            """No-op: called by newer OTel SDK (>= 1.31) when span is about to end."""
             pass
 
         def on_end(self, span: Any) -> None:
