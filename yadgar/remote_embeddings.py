@@ -14,6 +14,7 @@ import httpx
 import numpy as np
 
 from yadgar.embeddings import MODEL_DIMENSIONS, MODEL_DOC_PREFIX, MODEL_QUERY_PREFIX
+from yadgar.tracing import trace_span
 
 _CACHE_MAX = 512
 logger = logging.getLogger(__name__)
@@ -49,6 +50,7 @@ class RemoteEmbeddingEngine:
             return True
         return stored_model != self.model_name
 
+    @trace_span("rpc.embed")
     def _call(self, texts: list[str], mode: str = "document") -> list[bytes | None]:
         if not texts:
             return []

@@ -5,6 +5,8 @@ import os
 import time
 from pathlib import Path
 
+from yadgar.tracing import trace_span
+
 logger = logging.getLogger(__name__)
 
 
@@ -16,6 +18,7 @@ class GraphAPI:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
+    @trace_span("graph_api.get_full_graph")
     def get_full_graph(
         self,
         max_memories: int = 500,
@@ -211,6 +214,7 @@ class GraphAPI:
 
         return {"nodes": nodes, "edges": edges}
 
+    @trace_span("graph_api.get_graph_stats")
     def get_graph_stats(self) -> dict:
         """Return graph statistics: memory count, edge type counts."""
         try:
@@ -252,6 +256,7 @@ class GraphAPI:
             "wiki_page_count": wiki_count,
         }
 
+    @trace_span("graph_api.get_neighborhood")
     def get_neighborhood(self, node_id: str, hops: int = 2) -> dict:
         """Return subgraph around a memory node."""
         nodes: list[dict] = []

@@ -14,6 +14,24 @@ from yadgar.tracing import setup_tracing
 
 settings = get_settings()
 
+# ── Bug 1 fix (v5.6.4): ensure configure_logging runs BEFORE setup_tracing ───
+# configure_logging installs the rotating file handler (Sink B) on the root logger.
+# setup_tracing installs LogSpanProcessor which emits via yadgar.tracing logger →
+# propagates to root. If setup_tracing runs first, spans emitted before configure_logging
+# has run land in a handlerless root and are silently lost.
+# Solution: call configure_logging here at _app import time (same time as setup_tracing).
+# Idempotent — safe to call again from __main__.py (level/format update only).
+try:
+    from yadgar.log_config import configure_logging as _configure_logging  # noqa: PLC0415
+
+    _log_format = os.environ.get("YADGAR_LOG_FORMAT", "json")
+    _log_level = os.environ.get(
+        "YADGAR_CORE_LOG_LEVEL", os.environ.get("CORE_LOG_LEVEL", "WARNING")
+    )
+    _configure_logging(log_format=_log_format, level=_log_level, process="core")
+except Exception:
+    pass  # Non-fatal: fall back to default root handlers
+
 # ── Distributed tracing — v5.6.3 ─────────────────────────────────────────────
 # Initialise OTel TracerProvider + LogSpanProcessor early (module import time).
 # HTTPXClientInstrumentor is also activated here so all httpx calls in core
@@ -53,6 +71,20 @@ def _get_allowed_origins() -> list[str]:
     ]
 
 
+def _instrument_starlette_app(app) -> None:
+    """Apply FastAPIInstrumentor to a Starlette/FastAPI app (v5.6.4 — Bug 2 fix).
+
+    FastAPIInstrumentor works on both FastAPI and raw Starlette apps.
+    Idempotent: no-op if already instrumented or OTel not available.
+    """
+    try:
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # noqa: PLC0415
+
+        FastAPIInstrumentor.instrument_app(app)
+    except Exception:
+        pass  # OTel not available or app already instrumented — no-op
+
+
 def _cors_wrapped_http_app(self):
     from starlette.middleware.cors import CORSMiddleware
 
@@ -61,6 +93,8 @@ def _cors_wrapped_http_app(self):
 
     # Stack: BearerAuth (outermost) → RequestLogging → CORS → MCP
     inner = _orig_streamable_http_app(self)
+    # v5.6.4 Bug 2: instrument the inner MCP app so HTTP requests produce server spans.
+    _instrument_starlette_app(inner)
     cors_app = CORSMiddleware(
         app=inner,
         allow_origins=_get_allowed_origins(),
@@ -81,6 +115,8 @@ def _auth_wrapped_sse_app(self, mount_path=None):
     from yadgar.log_config import RequestLoggingMiddleware
 
     inner = _orig_sse_app(self, mount_path)
+    # v5.6.4 Bug 2: instrument the inner SSE app for server spans.
+    _instrument_starlette_app(inner)
     logged_app = RequestLoggingMiddleware(inner)
     return BearerAuthMiddleware(logged_app)
 

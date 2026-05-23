@@ -11,6 +11,8 @@ _OpsMixin provides:
 import logging
 import re as _re
 
+from yadgar.tracing import trace_span
+
 _log = logging.getLogger(__name__)
 
 # S1a (H-5): allowlist for extra_where clauses in prune_old_rows.
@@ -32,6 +34,7 @@ class _OpsMixin:
 
     # ------------------------------------------------------------------ Consolidation Log
 
+    @trace_span("storage.ops.insert_consolidation_log")
     def insert_consolidation_log(self, log: dict) -> int:
         cid = self._next_id("consolidation_log")
         self._q(
@@ -53,6 +56,7 @@ class _OpsMixin:
 
     # ------------------------------------------------------------------ Stats
 
+    @trace_span("storage.ops.get_memory_stats")
     def get_memory_stats(self) -> dict:
         total_rows = self._q("SELECT count() AS c FROM memory GROUP ALL")
         total = int(total_rows[0]["c"]) if total_rows else 0

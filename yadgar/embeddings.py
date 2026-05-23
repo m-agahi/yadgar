@@ -7,6 +7,8 @@ from pathlib import Path
 
 import numpy as np
 
+from yadgar.tracing import trace_span
+
 _CACHE_MAX = 512
 
 logger = logging.getLogger(__name__)
@@ -181,6 +183,7 @@ class EmbeddingEngine:
             return True
         return stored_model != self.model_name
 
+    @trace_span("embeddings.encode_adaptive")
     def encode_adaptive(self, text: str, dimensions: int = None) -> bytes | None:
         """Encode text with Matryoshka adaptive dimensionality.
 
@@ -248,6 +251,7 @@ class EmbeddingEngine:
             arr = arr / norm
         return arr
 
+    @trace_span("embeddings.encode")
     def encode(self, text: str) -> bytes | None:
         """Encode text to a float32 byte blob."""
         if text in self._query_cache:
@@ -281,6 +285,7 @@ class EmbeddingEngine:
             pass
         return result
 
+    @trace_span("embeddings.encode_batch")
     def encode_batch(self, texts: list[str]) -> list[bytes | None]:
         """Batch encode texts for efficiency during consolidation."""
         self._ensure_model()
