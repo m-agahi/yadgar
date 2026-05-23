@@ -11,6 +11,8 @@ _WikiMixin provides:
 
 import logging
 
+from yadgar.tracing import trace_span
+
 _log = logging.getLogger(__name__)
 
 
@@ -19,6 +21,7 @@ class _WikiMixin:
 
     # ------------------------------------------------------------------ Wiki Pages
 
+    @trace_span("storage.wiki.insert_wiki_page")
     def insert_wiki_page(self, page: dict, branch: str | None = None) -> int:
         """Insert a new wiki page, return its integer ID."""
         now = self._now_iso()
@@ -53,6 +56,7 @@ class _WikiMixin:
         self._q(sql, params)
         return pid
 
+    @trace_span("storage.wiki.update_wiki_page")
     def update_wiki_page(self, page_id: int, updates: dict) -> bool:
         """Update fields on an existing wiki page. Return True if found."""
         if not updates:
@@ -74,12 +78,14 @@ class _WikiMixin:
         )
         return len(rows) > 0
 
+    @trace_span("storage.wiki.get_wiki_page")
     def get_wiki_page(self, page_id: int) -> dict | None:
         """Get a wiki page by ID."""
         pid = int(page_id)
         rows = self._q(f"SELECT * FROM wiki_page:{pid}")
         return self._row_to_dict(rows[0]) if rows else None
 
+    @trace_span("storage.wiki.get_wiki_page_by_slug")
     def get_wiki_page_by_slug(self, slug: str) -> dict | None:
         """Get a wiki page by slug."""
         rows = self._q(
@@ -126,6 +132,7 @@ class _WikiMixin:
         )
         return self._row_to_dict(rows[0]) if rows else None
 
+    @trace_span("storage.wiki.delete_wiki_page")
     def delete_wiki_page(self, page_id: int) -> bool:
         """Delete a wiki page by ID. Return True if deleted."""
         pid = int(page_id)
@@ -149,6 +156,7 @@ class _WikiMixin:
         )
         return True
 
+    @trace_span("storage.wiki.list_wiki_pages")
     def list_wiki_pages(
         self,
         category: str | None = None,
@@ -178,6 +186,7 @@ class _WikiMixin:
 
     # ------------------------------------------------------------------ Wiki Search
 
+    @trace_span("storage.wiki.search_wiki_fts")
     def search_wiki_fts(self, query: str, limit: int = 10) -> list[dict]:
         """BM25 full-text search on wiki page content."""
         fts_query = self._preprocess_fts_query(query)
@@ -187,6 +196,7 @@ class _WikiMixin:
         )
         return self._rows_to_dicts(rows)
 
+    @trace_span("storage.wiki.search_wiki_fts_scored")
     def search_wiki_fts_scored(self, query: str, limit: int = 10) -> list[tuple[int, float]]:
         """BM25 search returning (page_id, score) tuples."""
         fts_query = self._preprocess_fts_query(query)
@@ -203,6 +213,7 @@ class _WikiMixin:
             results.append((pid, score))
         return results
 
+    @trace_span("storage.wiki.search_wiki_vectors")
     def search_wiki_vectors(
         self, query_embedding: bytes, top_k: int = 5
     ) -> list[tuple[int, float]]:
@@ -271,6 +282,7 @@ class _WikiMixin:
 
     # ------------------------------------------------------------------ Wiki Drafts
 
+    @trace_span("storage.wiki.insert_wiki_draft")
     def insert_wiki_draft(self, draft: dict) -> int:
         """Insert a wiki draft. Returns draft ID."""
         now = self._now_iso()
@@ -294,6 +306,7 @@ class _WikiMixin:
         )
         return did
 
+    @trace_span("storage.wiki.get_wiki_draft_by_slug")
     def get_wiki_draft_by_slug(self, slug: str) -> dict | None:
         """Get a wiki draft by slug."""
         rows = self._q(
@@ -302,11 +315,13 @@ class _WikiMixin:
         )
         return self._row_to_dict(rows[0]) if rows else None
 
+    @trace_span("storage.wiki.list_wiki_drafts")
     def list_wiki_drafts(self) -> list[dict]:
         """List all wiki drafts ordered by creation time."""
         rows = self._q("SELECT * FROM wiki_draft ORDER BY created_at DESC")
         return self._rows_to_dicts(rows)
 
+    @trace_span("storage.wiki.delete_wiki_draft")
     def delete_wiki_draft(self, slug: str) -> bool:
         """Delete a wiki draft by slug. Return True if deleted."""
         rows = self._q(

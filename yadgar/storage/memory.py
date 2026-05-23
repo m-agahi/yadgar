@@ -36,6 +36,8 @@ Clusters + similarity links → storage/cluster.py (_ClusterMixin)
 import logging
 import re as _re
 
+from yadgar.tracing import trace_span
+
 _log = logging.getLogger(__name__)
 
 # S1 allowlist for provenance_agent values: ascii alphanumeric, hyphens, underscores.
@@ -84,6 +86,7 @@ class _MemoryMixin:
 
     # ------------------------------------------------------------------ Memories
 
+    @trace_span("storage.memory.insert_memory")
     def insert_memory(
         self, memory: dict, embeddings_engine=None, settings=None, branch: str | None = None
     ) -> int:
@@ -201,6 +204,7 @@ class _MemoryMixin:
 
         return mid
 
+    @trace_span("storage.memory.get_memory")
     def get_memory(self, memory_id: int) -> dict | None:
         # Use direct record ID syntax — more reliable than type::record() in surrealkv
         mid = int(memory_id)  # sanitize
@@ -215,6 +219,7 @@ class _MemoryMixin:
             result.setdefault("last_reconsolidated", None)
         return result
 
+    @trace_span("storage.memory.get_memories_by_heat")
     def get_memories_by_heat(self, min_heat: float, limit: int = 100) -> list[dict]:
         rows = self._q(
             "SELECT * FROM memory WHERE heat >= $min ORDER BY heat DESC LIMIT $lim",
@@ -234,6 +239,7 @@ class _MemoryMixin:
             {"id": memory_id, "stale": is_stale},
         )
 
+    @trace_span("storage.memory.delete_memory")
     def delete_memory(self, memory_id: int):
         # Delete FK dependents first
         self._q(
@@ -338,6 +344,7 @@ class _MemoryMixin:
         rows = self._q("SELECT * FROM memory WHERE embedding IS NONE AND heat > 0")
         return self._rows_to_dicts(rows)
 
+    @trace_span("storage.memory.search_memories_fts")
     def search_memories_fts(self, query: str, min_heat: float = 0.1, limit: int = 5) -> list[dict]:
         fts_query = self._preprocess_fts_query(query)
         rows = self._q(
@@ -347,6 +354,7 @@ class _MemoryMixin:
         )
         return self._rows_to_dicts(rows)
 
+    @trace_span("storage.memory.search_memories_fts_scored")
     def search_memories_fts_scored(
         self,
         query: str,

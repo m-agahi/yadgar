@@ -363,10 +363,6 @@ class RequestLoggingMiddleware:
         start = time.monotonic()
         request_id = str(uuid.uuid4())
 
-        # Extract trace_id from x-request-id header
-        headers: dict[bytes, bytes] = dict(scope.get("headers", []))
-        trace_id = headers.get(b"x-request-id", b"").decode("latin-1")
-
         method = scope.get("method", "")
         path = scope.get("path", "")
         tool_name = f"{method} {path}"
@@ -393,6 +389,11 @@ class RequestLoggingMiddleware:
             raise
         finally:
             duration_ms = int((time.monotonic() - start) * 1000)
+            # v5.6.4 Bug 4: trace_id from OTel context (via JSONLogFormatter auto-injection).
+            # Do NOT manually set trace_id in extra — JSONLogFormatter._append_trace_context
+            # injects it automatically from the active OTel span context at format time.
+            # Removing trace_id from extra prevents empty x-request-id header from
+            # overwriting the OTel-injected trace_id in the log line.
             _request_logger.info(
                 "request",
                 extra={
@@ -403,7 +404,6 @@ class RequestLoggingMiddleware:
                     "http_status": status,
                     "request_id": request_id,
                     "tool_name": tool_name,
-                    "trace_id": trace_id,
                 },
             )
 
