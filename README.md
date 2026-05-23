@@ -33,6 +33,41 @@ v5 ships bearer-token auth, branch-tagged retrieval, layered session bootstrap, 
 
 ---
 
+## Yadgar in production
+
+Personal deployment — first commit 2026-04-20, ~33 days runtime as of 2026-05-23.
+
+### Scale
+
+- **~2.7k memories** curated (episodic + semantic + archived)
+- **~1.9k wiki pages** crystallized from working sessions
+- **~1.1k knowledge graph entities** with auto-discovered relationships
+- **~2.5k tool invocations** logged and replayable
+- **~1 GB persistent state** (surrealkv; vlog reclaimable via `vacuum_now()`)
+
+### Latency
+
+*p50 = half of calls finish at or below this. p95 = 95th percentile (only 5% are slower). Measured from distributed tracing spans on real traffic.*
+
+- Hook-driven recall: **p50 ~2.3s, p95 ~2.7s** (down 20× from 4.7s/53s pre-v5.6.6 fix)
+- Vector search: **p50 21ms, p95 58ms**
+- Embedding RPC: **p50 2ms, p95 50ms**
+
+### Continuity
+
+- Checkpoint + `restore(directory="…")` to resume after `/clear` or `/compact`
+- Cross-session anchors surface critical decisions automatically
+- Wiki retrieval returns curated knowledge from prior sessions on the same domain
+- Continuous nightly consolidation: dream replay, CLS episodic→semantic promotion, causal discovery
+
+### Observability
+
+- Distributed tracing (OpenTelemetry) across both core + backend processes
+- Every memory operation produces a span with W3C `traceparent` propagation
+- 17 rapid releases (v5.4.2 → v5.6.6) shipped in 24 hours with zero data loss
+
+---
+
 ## For AI agents setting up Yadgar
 
 > Canonical setup spec. Read this section; skip the rest of the README.
