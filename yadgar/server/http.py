@@ -730,6 +730,14 @@ async def hook_subagent_start(request: Request) -> JSONResponse:
     if retriever is None:
         return JSONResponse({"text": ""})
 
+    # P11: count the dispatch now that we know the agent_type is valid.
+    try:
+        from yadgar.metrics import yadgar_subagent_dispatch_count  # noqa: PLC0415
+
+        yadgar_subagent_dispatch_count.labels(agent_type=agent_type).inc()
+    except Exception:
+        pass
+
     # Use description as primary query; fall back to agent_type if empty
     query = description.strip() or f"agent {agent_type}"
 
@@ -776,7 +784,15 @@ async def api_graph(request: Request) -> JSONResponse:
         top_k = int(request.query_params.get("top_k", 8))
     except (ValueError, TypeError) as _e:
         top_k = 8
+    _t0 = time.time()
     data = await asyncio.to_thread(GraphAPI(_st._storage).get_full_graph, max_mem, top_k)
+    _elapsed_ms = (time.time() - _t0) * 1000.0
+    try:
+        from yadgar.metrics import yadgar_viz_api_graph_duration_ms  # noqa: PLC0415
+
+        yadgar_viz_api_graph_duration_ms.observe(_elapsed_ms)
+    except Exception:
+        pass
     return JSONResponse(data, headers=_CORS)
 
 
@@ -913,42 +929,56 @@ async def _make_event_stream(request: Request):
     last_health_push = 0.0
     client_id = id(request)
 
-    while True:
-        # Exit cleanly if the client disconnected before we yield anything.
-        if await request.is_disconnected():
-            logger.debug("SSE client %s disconnected; closing stream", client_id)
-            return
+    # P11: SSE client gauge — inc on entry, dec on any exit path.
+    try:
+        from yadgar.metrics import yadgar_viz_sse_clients as _sse_g  # noqa: PLC0415
 
-        now = time.time()
+        _sse_g.inc()
+    except Exception:
+        _sse_g = None  # type: ignore[assignment]
+    try:
+        while True:
+            # Exit cleanly if the client disconnected before we yield anything.
+            if await request.is_disconnected():
+                logger.debug("SSE client %s disconnected; closing stream", client_id)
+                return
+
+            now = time.time()
+            try:
+                # Drain new graph events
+                new_events = [e for e in _st._event_queue if e["seq"] > last_seq]
+                for e in new_events:
+                    last_seq = e["seq"]
+                    yield f"data: {json.dumps(e)}\n\n"
+                # Push system metrics every 5 s — snapshot under lock.
+                if now - last_sys_push >= 5.0 and _st._system_metrics_cache:
+                    last_sys_push = now
+                    with _st._metrics_lock:
+                        _metrics_snap = dict(_st._system_metrics_cache)
+                    payload = json.dumps({"event": "system_metrics", "data": _metrics_snap})
+                    yield f"data: {payload}\n\n"
+                # Push daemon health every 5 s — V1c.
+                if now - last_health_push >= 5.0 and _vdh._health_cache is not None:
+                    last_health_push = now
+                    yield f"data: {json.dumps({'event': 'daemon_health', 'data': _vdh._health_cache})}\n\n"
+            except (ConnectionResetError, BrokenPipeError, OSError) as exc:
+                # Transport write failed — client dropped between the disconnect
+                # check and the actual socket write.  Log once at DEBUG and stop.
+                logger.debug(
+                    "SSE client %s send error (%s: %s); dropping connection",
+                    client_id,
+                    type(exc).__name__,
+                    exc,
+                )
+                return
+
+            await asyncio.sleep(0.5)
+    finally:
         try:
-            # Drain new graph events
-            new_events = [e for e in _st._event_queue if e["seq"] > last_seq]
-            for e in new_events:
-                last_seq = e["seq"]
-                yield f"data: {json.dumps(e)}\n\n"
-            # Push system metrics every 5 s — snapshot under lock.
-            if now - last_sys_push >= 5.0 and _st._system_metrics_cache:
-                last_sys_push = now
-                with _st._metrics_lock:
-                    _metrics_snap = dict(_st._system_metrics_cache)
-                payload = json.dumps({"event": "system_metrics", "data": _metrics_snap})
-                yield f"data: {payload}\n\n"
-            # Push daemon health every 5 s — V1c.
-            if now - last_health_push >= 5.0 and _vdh._health_cache is not None:
-                last_health_push = now
-                yield f"data: {json.dumps({'event': 'daemon_health', 'data': _vdh._health_cache})}\n\n"
-        except (ConnectionResetError, BrokenPipeError, OSError) as exc:
-            # Transport write failed — client dropped between the disconnect
-            # check and the actual socket write.  Log once at DEBUG and stop.
-            logger.debug(
-                "SSE client %s send error (%s: %s); dropping connection",
-                client_id,
-                type(exc).__name__,
-                exc,
-            )
-            return
-
-        await asyncio.sleep(0.5)
+            if _sse_g is not None:
+                _sse_g.dec()
+        except Exception:
+            pass
 
 
 @mcp_server.custom_route("/api/graph/events", methods=["GET"])

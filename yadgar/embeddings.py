@@ -2,6 +2,7 @@
 
 import logging
 import os
+import time
 from collections import OrderedDict
 from pathlib import Path
 
@@ -12,6 +13,16 @@ from yadgar.tracing import trace_span
 _CACHE_MAX = 512
 
 logger = logging.getLogger(__name__)
+
+# P11: yadgar_encode_queue_depth — no asyncio.Queue in this engine (encoding is
+# synchronous via _model.encode()).  Set to 0 once at import so dashboard panels
+# have a sample and don't render "no data".
+try:
+    from yadgar.metrics import yadgar_encode_queue_depth as _encode_queue_depth  # noqa: PLC0415
+
+    _encode_queue_depth.set(0)
+except Exception:
+    pass
 
 
 MODEL_DIMENSIONS = {
@@ -254,36 +265,54 @@ class EmbeddingEngine:
     @trace_span("embeddings.encode")
     def encode(self, text: str) -> bytes | None:
         """Encode text to a float32 byte blob."""
-        if text in self._query_cache:
-            self._query_cache.move_to_end(text)
-            try:
-                from yadgar.metrics import yadgar_cache_hit_total, yadgar_embedding_cache_hits_total
+        _t0 = time.monotonic()
+        try:
+            if text in self._query_cache:
+                self._query_cache.move_to_end(text)
+                try:
+                    from yadgar.metrics import (
+                        yadgar_cache_hit_total,
+                        yadgar_embedding_cache_hits_total,
+                    )
 
-                yadgar_embedding_cache_hits_total.inc()
-                yadgar_cache_hit_total.labels(cache="embedding").inc()
+                    yadgar_embedding_cache_hits_total.inc()
+                    yadgar_cache_hit_total.labels(cache="embedding").inc()
+                except Exception:
+                    pass
+                return self._query_cache[text]
+            self._ensure_model()
+            if self._unavailable:
+                return None
+            if self._model is None:
+                raise RuntimeError(
+                    "EmbeddingEngine: model not initialized — call _ensure_model first"
+                )
+            vec = self._model.encode(text)
+            arr = self._normalize(np.asarray(vec, dtype=np.float32))
+            result = arr.tobytes()
+            self._query_cache[text] = result
+            self._query_cache.move_to_end(text)
+            if len(self._query_cache) > _CACHE_MAX:
+                self._query_cache.popitem(last=False)
+            try:
+                from yadgar.metrics import (
+                    yadgar_cache_miss_total,
+                    yadgar_embedding_cache_misses_total,
+                )
+
+                yadgar_embedding_cache_misses_total.inc()
+                yadgar_cache_miss_total.labels(cache="embedding").inc()
             except Exception:
                 pass
-            return self._query_cache[text]
-        self._ensure_model()
-        if self._unavailable:
-            return None
-        if self._model is None:
-            raise RuntimeError("EmbeddingEngine: model not initialized — call _ensure_model first")
-        vec = self._model.encode(text)
-        arr = self._normalize(np.asarray(vec, dtype=np.float32))
-        result = arr.tobytes()
-        self._query_cache[text] = result
-        self._query_cache.move_to_end(text)
-        if len(self._query_cache) > _CACHE_MAX:
-            self._query_cache.popitem(last=False)
-        try:
-            from yadgar.metrics import yadgar_cache_miss_total, yadgar_embedding_cache_misses_total
+            return result
+        finally:
+            _elapsed_ms = (time.monotonic() - _t0) * 1000.0
+            try:
+                from yadgar.metrics import yadgar_encode_duration_ms  # noqa: PLC0415
 
-            yadgar_embedding_cache_misses_total.inc()
-            yadgar_cache_miss_total.labels(cache="embedding").inc()
-        except Exception:
-            pass
-        return result
+                yadgar_encode_duration_ms.labels(model=self.model_name).observe(_elapsed_ms)
+            except Exception:
+                pass
 
     @trace_span("embeddings.encode_batch")
     def encode_batch(self, texts: list[str]) -> list[bytes | None]:

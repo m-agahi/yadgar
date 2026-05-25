@@ -429,6 +429,16 @@ _prev_cpu_ticks: int = 0
 _prev_cpu_time: float = 0.0
 
 
+def _observe_dbsize_ms(elapsed_ms: float) -> None:
+    """Record dbsize sampling duration. Non-fatal; helper keeps cyclo of caller clean."""
+    try:
+        from yadgar.metrics import yadgar_viz_dbsize_sample_duration_ms  # noqa: PLC0415
+
+        yadgar_viz_dbsize_sample_duration_ms.observe(elapsed_ms)
+    except Exception:
+        pass
+
+
 def sample_system_metrics(pid: int, db_path: str, storage: object = None) -> dict:
     """Sample system metrics from /proc and update the in-process cache.
 
@@ -520,6 +530,7 @@ def sample_system_metrics(pid: int, db_path: str, storage: object = None) -> dic
     # DB directory size — use storage.get_db_size() in server mode so we hit the
     # embed-service proxy rather than walking a path that doesn't exist locally.
     _db_size_set = False
+    _dbsize_t0 = time.time()
     if storage is not None:
         _db_url = getattr(storage, "_db_url", None)
         if _db_url is not None:
@@ -541,6 +552,10 @@ def sample_system_metrics(pid: int, db_path: str, storage: object = None) -> dic
                 result["db_size_mb"] = 0.0
         except Exception:
             result.setdefault("db_size_mb", 0.0)
+
+    # P11: observe dbsize sampling duration (non-fatal; bare call avoids cyclo branch).
+    _dbsize_elapsed_ms = (time.time() - _dbsize_t0) * 1000.0
+    _observe_dbsize_ms(_dbsize_elapsed_ms)
 
     result["sampled_at"] = time.time()
     _metrics_cache = result

@@ -2,6 +2,7 @@
 
 import logging
 import re
+import time
 from collections import deque
 from datetime import UTC, datetime
 
@@ -171,6 +172,21 @@ class KnowledgeGraph:
     # -- d. Enhanced Entity Extraction --
 
     def extract_entities_typed(self, content: str, directory: str) -> list[tuple[str, str, str]]:
+        _t0 = time.monotonic()
+        try:
+            return self._extract_entities_typed_inner(content, directory)
+        finally:
+            _elapsed_ms = (time.monotonic() - _t0) * 1000.0
+            try:
+                from yadgar.metrics import yadgar_entity_extract_duration_ms  # noqa: PLC0415
+
+                yadgar_entity_extract_duration_ms.observe(_elapsed_ms)
+            except Exception:
+                pass
+
+    def _extract_entities_typed_inner(
+        self, content: str, directory: str
+    ) -> list[tuple[str, str, str]]:
         results: list[tuple[str, str, str]] = []
 
         # Import relationships: "from X import Y" -> (X, dependency, imports)
