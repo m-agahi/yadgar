@@ -445,6 +445,15 @@ yadgar_log_dropped_total = Counter(
     registry=_registry,
 )
 
+# ── v5.6.7 PR-J — Runtime config knob gauges ─────────────────────────────────
+
+yadgar_config_value = Gauge(
+    "yadgar_config_value",
+    "Numeric env-driven config values at runtime",
+    ["name"],
+    registry=_registry,
+)
+
 
 def _is_metrics_enabled() -> bool:
     """Return True when YADGAR_METRICS_ENABLED is truthy (default: True)."""
