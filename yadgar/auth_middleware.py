@@ -15,6 +15,7 @@ from __future__ import annotations
 import hmac
 import logging
 import os
+import time
 
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -78,6 +79,9 @@ class BearerAuthMiddleware:
             return
 
         # Auth enabled — require valid bearer token
+        # PR-B: time the auth check from here to decision (not exempt/disabled fast-paths).
+        _auth_t0 = time.perf_counter()
+
         token = _extract_bearer(scope)
         expected = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
 
@@ -87,6 +91,7 @@ class BearerAuthMiddleware:
                 "YADGAR_REQUIRE_AUTH=1 but YADGAR_MCP_AUTH_TOKEN is not set. "
                 "All authenticated routes will return 401."
             )
+            _observe_auth_duration(_auth_t0)
             response = JSONResponse(
                 {"error": "Server misconfiguration: auth token not set"},
                 status_code=503,
@@ -95,6 +100,7 @@ class BearerAuthMiddleware:
             return
 
         if not hmac.compare_digest(token.encode(), expected.encode()):
+            _observe_auth_duration(_auth_t0)
             response = JSONResponse(
                 {"error": "Unauthorized"},
                 status_code=401,
@@ -103,6 +109,7 @@ class BearerAuthMiddleware:
             await response(scope, receive, send)
             return
 
+        _observe_auth_duration(_auth_t0)
         await self.app(scope, receive, send)
 
 
@@ -126,3 +133,14 @@ def _extract_bearer(scope: Scope) -> str:
     if auth.lower().startswith("bearer "):
         return auth[7:].strip()
     return ""
+
+
+def _observe_auth_duration(t0: float) -> None:
+    """Observe elapsed ms since t0 into yadgar_mcp_auth_check_duration_ms. Non-fatal."""
+    try:
+        from yadgar.metrics import yadgar_mcp_auth_check_duration_ms  # noqa: PLC0415
+
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        yadgar_mcp_auth_check_duration_ms.observe(elapsed_ms)
+    except Exception:
+        pass
