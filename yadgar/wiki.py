@@ -2,9 +2,23 @@
 
 import logging
 import re
+import time as _time
 from datetime import UTC, datetime
 
+from yadgar.tracing import trace_span
+
 logger = logging.getLogger(__name__)
+
+
+def _wiki_observe_stage(stage: str, elapsed_ms: float) -> None:
+    """Observe a wiki query stage duration. No-op on import error."""
+    try:
+        from yadgar.metrics import yadgar_wiki_query_stage_ms  # noqa: PLC0415
+
+        yadgar_wiki_query_stage_ms.labels(stage=stage).observe(elapsed_ms)
+    except Exception:
+        pass
+
 
 WIKI_STALE_DAYS = 90
 
@@ -124,21 +138,11 @@ class WikiStore:
         """
         return self._storage.get_wiki_page_by_slug_and_branch(slug, current_branch, default_branch)
 
-    def query(
-        self,
-        query: str,
-        tags: list[str] | None = None,
-        category: str | None = None,
-        max_results: int = 5,
-    ) -> list[dict]:
-        """Hybrid search: FTS + vector, filtered by tags/category.
-
-        Combines BM25 keyword scores with cosine similarity scores using
-        min-max normalization and reciprocal rank fusion.
-        """
-        scores: dict[int, float] = {}
-
-        # 1. FTS search with BM25 scores
+    def _collect_wiki_fts_scores(
+        self, query: str, scores: dict[int, float], max_results: int
+    ) -> None:
+        """Collect BM25 FTS scores for wiki pages. Observes fts stage metric."""
+        _fts_t0 = _time.perf_counter()
         try:
             fts_results = self._storage.search_wiki_fts_scored(query, limit=max_results * 3)
             if fts_results:
@@ -151,20 +155,63 @@ class WikiStore:
                     scores[page_id] = scores.get(page_id, 0.0) + 0.4 * normalized
         except Exception:
             logger.debug("Wiki FTS search failed for query '%s'", query)
+        finally:
+            _wiki_observe_stage("fts", (_time.perf_counter() - _fts_t0) * 1000)
 
-        # 2. Vector similarity search
+    def _collect_wiki_vector_scores(
+        self, query: str, scores: dict[int, float], max_results: int
+    ) -> None:
+        """Collect vector similarity scores for wiki pages. Observes embed_query + hnsw stages."""
         try:
+            _embed_t0 = _time.perf_counter()
             query_embedding = self._embeddings.encode_query(query)
+            _wiki_observe_stage("embed_query", (_time.perf_counter() - _embed_t0) * 1000)
             if query_embedding is not None:
+                _hnsw_t0 = _time.perf_counter()
                 vec_results = self._storage.search_wiki_vectors(
                     query_embedding, top_k=max_results * 3
                 )
+                _wiki_observe_stage("hnsw", (_time.perf_counter() - _hnsw_t0) * 1000)
                 if vec_results:
                     for page_id, distance in vec_results:
                         similarity = 1.0 / (1.0 + distance)
                         scores[page_id] = scores.get(page_id, 0.0) + 0.6 * similarity
         except Exception:
             logger.debug("Wiki vector search failed for query '%s'", query)
+
+    @trace_span("wiki.query")
+    def query(
+        self,
+        query: str,
+        tags: list[str] | None = None,
+        category: str | None = None,
+        max_results: int = 5,
+    ) -> list[dict]:
+        """Hybrid search: FTS + vector, filtered by tags/category.
+
+        Combines BM25 keyword scores with cosine similarity scores using
+        min-max normalization and reciprocal rank fusion.
+        """
+        # P11: set dynamic span attributes on the active wiki.query span.
+        try:
+            from opentelemetry import trace as _otel_trace  # noqa: PLC0415
+
+            _span = _otel_trace.get_current_span()
+            if _span and _span.is_recording():
+                _span.set_attribute("query_len", len(query))
+                _span.set_attribute("tags", ",".join(tags) if tags else "")
+                _span.set_attribute("category", category or "")
+                _span.set_attribute("max_results", max_results)
+        except Exception:
+            pass
+
+        scores: dict[int, float] = {}
+
+        # 1. FTS search with BM25 scores
+        self._collect_wiki_fts_scores(query, scores, max_results)
+
+        # 2. Vector similarity search (embed_query + hnsw)
+        self._collect_wiki_vector_scores(query, scores, max_results)
 
         if not scores:
             return []

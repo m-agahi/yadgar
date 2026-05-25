@@ -5,6 +5,7 @@ pattern). _RerankingMixin is the thin pipeline orchestrator for Retriever's MRO.
 """
 
 import logging
+import time as _time
 
 # Per-strategy mixin classes (sibling private modules)
 from yadgar.retrieval._reranking_confidence import _ConfidenceMixin
@@ -16,6 +17,16 @@ from yadgar.retrieval._reranking_nli import _NLIMixin
 from yadgar.tracing import trace_span
 
 logger = logging.getLogger(__name__)
+
+
+def _observe_recall_stage(stage: str, elapsed_ms: float) -> None:
+    """Observe a recall stage duration. No-op on import error."""
+    try:
+        from yadgar.metrics import yadgar_recall_stage_ms  # noqa: PLC0415
+
+        yadgar_recall_stage_ms.labels(stage=stage).observe(elapsed_ms)
+    except Exception:
+        pass
 
 
 class Reranker(
@@ -69,9 +80,12 @@ class _RerankingMixin:
         max_results: int,
     ) -> list[dict]:
         """Apply full post-fusion reranking pipeline and return final result list."""
+        _rerank_t0 = _time.perf_counter()
+
         # v5.6.6 E: HEAVY_RERANK_ENABLED=False kill switch — bypass CE/NLI/MP entirely.
         # Useful for CPU-only hosts where every rerank call causes 8-46s saturation.
         if not getattr(self._settings, "HEAVY_RERANK_ENABLED", True):
+            _observe_recall_stage("rerank_final", (_time.perf_counter() - _rerank_t0) * 1000)
             return result_memories[:max_results]
 
         # Heuristic reranker (skipped for 'fast' profile)
@@ -107,13 +121,16 @@ class _RerankingMixin:
 
         # Cross-encoder reranker
         if use_cross_encoder:
+            _ce_t0 = _time.perf_counter()
             result_memories = self._reranker.cross_encoder_rerank(result_memories, query)
+            _observe_recall_stage("cross_encoder", (_time.perf_counter() - _ce_t0) * 1000)
 
         # NLI entailment scoring
         # v5.6.6: profile["nli"] is the "this tier allows it" gate; setting is "globally enabled".
         # Use AND semantics so fast/hook profile never triggers NLI even when setting is on.
         use_nli = profile["nli"] and getattr(self._settings, "NLI_RERANKING_ENABLED", False)
         if use_nli and (not self._settings.NLI_ONLY_FOR_OPEN_DOMAIN or open_domain_mode):
+            _nli_t0 = _time.perf_counter()
             result_memories = self._reranker.nli_rerank(query, result_memories)
             nli_weight = self._settings.NLI_WEIGHT
             for mem in result_memories:
@@ -121,6 +138,7 @@ class _RerankingMixin:
                 nli = mem.get("_nli_entailment_score", 0)
                 mem["_retrieval_score"] = (1 - nli_weight) * ce + nli_weight * nli
             result_memories.sort(key=lambda m: m.get("_retrieval_score", 0), reverse=True)
+            _observe_recall_stage("nli", (_time.perf_counter() - _nli_t0) * 1000)
 
         # Multi-passage evidence aggregation
         # Profile gate: "multi_passage" key added v5.6.6 — default True for backward compat.
@@ -199,6 +217,9 @@ class _RerankingMixin:
                 result_memories = self._metacognition.manage_context(result_memories)
             except Exception:
                 logger.debug("Metacognition manage_context failed, returning unoptimized")
+
+        # P11: observe rerank_final covering the full post-fusion pipeline duration.
+        _observe_recall_stage("rerank_final", (_time.perf_counter() - _rerank_t0) * 1000)
 
         return result_memories
 
