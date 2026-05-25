@@ -106,6 +106,31 @@ model_loaded = Gauge(
 for _m in ("ce", "nli", "pair", "embedding"):
     model_loaded.labels(model=_m).set(0)
 
+# ---------------------------------------------------------------------------
+# v5.6.7 PR-G — idle eviction telemetry
+# ---------------------------------------------------------------------------
+
+model_unload_total = Counter(
+    "yadgar_embed_model_unload_total",
+    "Total idle-eviction unloads per model (ce/nli). Emitted once per .set(0) on model_loaded.",
+    ["model"],
+    registry=_registry,
+)
+# Pre-initialise label-sets so they appear in /metrics from first scrape
+for _m in ("ce", "nli"):
+    model_unload_total.labels(model=_m)
+
+model_load_duration_seconds = Histogram(
+    "yadgar_embed_model_load_duration_seconds",
+    "Wall-clock duration of each model cold-load (first construction of the handle).",
+    ["model"],
+    # Buckets: 1ms to 30s — cold model loads on CPU range from ~50ms (CE) to ~3s (NLI deberta)
+    buckets=(0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0),
+    registry=_registry,
+)
+for _m in ("ce", "nli"):
+    model_load_duration_seconds.labels(model=_m)
+
 
 # ---------------------------------------------------------------------------
 # v5.5.1 — Log system observability (backend)
