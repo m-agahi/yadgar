@@ -413,6 +413,18 @@ def main(
         watch_directory=None,
     )
 
+    # v5.6.7 PR-J: emit startup config-dump log + seed config gauges
+    try:
+        from yadgar.config_registry import (  # noqa: PLC0415
+            _set_config_gauges,
+            emit_startup_config_log,
+        )
+
+        emit_startup_config_log()
+        _set_config_gauges()
+    except Exception:
+        logger.debug("startup config-dump failed (non-fatal)", exc_info=True)
+
     # Auto-sync CLAUDE.md on every startup so rules stay current
     try:
         from yadgar.server.tools.misc import sync_instructions
