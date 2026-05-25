@@ -182,6 +182,8 @@ class _CircuitBreaker:
         self._metrics = metrics_module  # None → lazy-import on first use
         # Emit initial CLOSED state so viz sees the time-series from startup.
         self._set_gauge(0)
+        # Emit initial reachable=1 — assume reachable until proven otherwise.
+        self._set_reachable(1)
 
     # ------------------------------------------------------------------ #
     # Internal helpers                                                      #
@@ -195,6 +197,17 @@ class _CircuitBreaker:
 
                 self._metrics = _m
             self._metrics.yadgar_circuit_breaker_state.labels(endpoint=self._endpoint).set(value)
+        except Exception:
+            pass
+
+    def _set_reachable(self, value: int) -> None:
+        """Update backend reachability gauge (1=reachable, 0=unreachable). Non-fatal."""
+        try:
+            if self._metrics is None:
+                import yadgar.metrics as _m  # noqa: PLC0415
+
+                self._metrics = _m
+            self._metrics.yadgar_backend_reachable.labels(endpoint=self._endpoint).set(value)
         except Exception:
             pass
 
@@ -246,6 +259,7 @@ class _CircuitBreaker:
             )
         self._state = _STATE_CLOSED
         self._set_gauge(0)
+        self._set_reachable(1)
         self.consecutive_failures = 0
         # Reset exponential backoff so next OPEN starts from base duration
         self.consecutive_probe_failures = 0
@@ -270,6 +284,7 @@ class _CircuitBreaker:
         self._state = _STATE_OPEN
         self._open_at = now
         self._set_gauge(2)
+        self._set_reachable(0)
         logger.warning(
             "breaker_open",
             extra={
