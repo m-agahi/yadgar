@@ -199,9 +199,9 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
                         yadgar_drainer_lag_ms.observe((now - enqueue_ts) * 1000)
                     except Exception:
                         pass
-                    self._apply(data)
+
+                    self._apply_with_stage_metrics(data, path)
                     self._attempts.pop(fname, None)
-                    self._queue.archive(path)
                     processed += 1
                 except Exception as exc:
                     err_str = str(exc)
@@ -273,3 +273,33 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         attempt.next_retry_at = now + min(
             self._backoff_max, self._backoff_base * (2.0 ** (attempt.count - 1))
         )
+
+    def _apply_with_stage_metrics(self, data: dict, path) -> None:
+        """Apply one queue item and archive it, timing each stage for PR-E metrics."""
+        # PR-E: time the insert stage
+        _insert_t0 = time.perf_counter()
+        try:
+            self._apply(data)
+        finally:
+            try:
+                from yadgar.metrics import yadgar_drain_stage_ms  # noqa: PLC0415
+
+                yadgar_drain_stage_ms.labels(stage="insert").observe(
+                    (time.perf_counter() - _insert_t0) * 1000
+                )
+            except Exception:
+                pass
+
+        # PR-E: time the archive stage
+        _archive_t0 = time.perf_counter()
+        try:
+            self._queue.archive(path)
+        finally:
+            try:
+                from yadgar.metrics import yadgar_drain_stage_ms  # noqa: PLC0415
+
+                yadgar_drain_stage_ms.labels(stage="archive").observe(
+                    (time.perf_counter() - _archive_t0) * 1000
+                )
+            except Exception:
+                pass

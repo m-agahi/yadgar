@@ -1539,17 +1539,34 @@
     "nesting": 4,
     "params": 2
   },
+  "yadgar/consolidation/cleanup.py::_CleanupMixin@19": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 3
+  },
   "yadgar/consolidation/cleanup.py::_CleanupMixin@9": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 3
   },
   "yadgar/consolidation/cleanup.py::__file__": {
-    "loc": 140
+    "loc": 153
+  },
+  "yadgar/consolidation/cleanup.py::_observe_action_batch@9": {
+    "cyclo": 2,
+    "loc": 8,
+    "nesting": 2,
+    "params": 1
   },
   "yadgar/consolidation/cleanup.py::_process_action_log@12": {
     "cyclo": 17,
     "loc": 90,
+    "nesting": 3,
+    "params": 1
+  },
+  "yadgar/consolidation/cleanup.py::_process_action_log@22": {
+    "cyclo": 17,
+    "loc": 93,
     "nesting": 3,
     "params": 1
   },
@@ -1559,7 +1576,19 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/consolidation/cleanup.py::_prune_old_episodes_safe@116": {
+    "cyclo": 3,
+    "loc": 9,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/consolidation/cleanup.py::_run_retention_tasks@113": {
+    "cyclo": 4,
+    "loc": 28,
+    "nesting": 3,
+    "params": 1
+  },
+  "yadgar/consolidation/cleanup.py::_run_retention_tasks@126": {
     "cyclo": 4,
     "loc": 28,
     "nesting": 3,
@@ -1619,10 +1648,10 @@
   "yadgar/consolidation/orchestrator.py::_OrchestratorMixin@12": {
     "attrs": 0,
     "inh_depth": 0,
-    "methods": 3
+    "methods": 4
   },
   "yadgar/consolidation/orchestrator.py::__file__": {
-    "loc": 226
+    "loc": 242
   },
   "yadgar/consolidation/orchestrator.py::_consolidation_cycle@72": {
     "cyclo": 12,
@@ -1631,8 +1660,8 @@
     "params": 1
   },
   "yadgar/consolidation/orchestrator.py::_consolidation_cycle@75": {
-    "cyclo": 12,
-    "loc": 152,
+    "cyclo": 7,
+    "loc": 119,
     "nesting": 3,
     "params": 1
   },
@@ -1660,6 +1689,12 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/consolidation/orchestrator.py::_run_post_cycle_tasks@195": {
+    "cyclo": 7,
+    "loc": 48,
+    "nesting": 3,
+    "params": 3
+  },
   "yadgar/curation/__init__.py::MemoryCurator@35": {
     "attrs": 4,
     "inh_depth": 0,
@@ -1675,8 +1710,13 @@
     "inh_depth": 0,
     "methods": 13
   },
+  "yadgar/curation/__init__.py::MemoryCurator@38": {
+    "attrs": 4,
+    "inh_depth": 0,
+    "methods": 13
+  },
   "yadgar/curation/__init__.py::__file__": {
-    "loc": 227
+    "loc": 251
   },
   "yadgar/curation/__init__.py::__init__@44": {
     "cyclo": 1,
@@ -1696,7 +1736,19 @@
     "nesting": 0,
     "params": 5
   },
+  "yadgar/curation/__init__.py::__init__@47": {
+    "cyclo": 1,
+    "loc": 11,
+    "nesting": 0,
+    "params": 5
+  },
   "yadgar/curation/__init__.py::_create_link@153": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 3
+  },
+  "yadgar/curation/__init__.py::_create_link@177": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
@@ -1732,6 +1784,12 @@
     "nesting": 0,
     "params": 3
   },
+  "yadgar/curation/__init__.py::_find_similar_memories@138": {
+    "cyclo": 1,
+    "loc": 5,
+    "nesting": 0,
+    "params": 3
+  },
   "yadgar/curation/__init__.py::_has_textual_overlap@121": {
     "cyclo": 1,
     "loc": 3,
@@ -1745,6 +1803,12 @@
     "params": 2
   },
   "yadgar/curation/__init__.py::_has_textual_overlap@132": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/curation/__init__.py::_has_textual_overlap@145": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
@@ -1768,7 +1832,19 @@
     "nesting": 0,
     "params": 12
   },
+  "yadgar/curation/__init__.py::_insert_new_memory@168": {
+    "cyclo": 1,
+    "loc": 8,
+    "nesting": 0,
+    "params": 4
+  },
   "yadgar/curation/__init__.py::_memify_derive@225": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/curation/__init__.py::_memify_derive@249": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
@@ -1792,6 +1868,12 @@
     "nesting": 0,
     "params": 2
   },
+  "yadgar/curation/__init__.py::_memify_prune@234": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 2
+  },
   "yadgar/curation/__init__.py::_memify_prune@240": {
     "cyclo": 1,
     "loc": 3,
@@ -1810,6 +1892,12 @@
     "nesting": 0,
     "params": 2
   },
+  "yadgar/curation/__init__.py::_memify_reweight@244": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 2
+  },
   "yadgar/curation/__init__.py::_memify_reweight@248": {
     "cyclo": 1,
     "loc": 3,
@@ -1823,6 +1911,12 @@
     "params": 2
   },
   "yadgar/curation/__init__.py::_memify_strengthen@215": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/curation/__init__.py::_memify_strengthen@239": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
@@ -1858,6 +1952,12 @@
     "nesting": 0,
     "params": 6
   },
+  "yadgar/curation/__init__.py::_merge_memory@149": {
+    "cyclo": 1,
+    "loc": 18,
+    "nesting": 0,
+    "params": 6
+  },
   "yadgar/curation/__init__.py::curate_on_remember@58": {
     "cyclo": 7,
     "loc": 65,
@@ -1876,7 +1976,19 @@
     "nesting": 3,
     "params": 12
   },
+  "yadgar/curation/__init__.py::curate_on_remember@61": {
+    "cyclo": 10,
+    "loc": 76,
+    "nesting": 4,
+    "params": 12
+  },
   "yadgar/curation/__init__.py::detect_contradictions@159": {
+    "cyclo": 2,
+    "loc": 10,
+    "nesting": 1,
+    "params": 3
+  },
+  "yadgar/curation/__init__.py::detect_contradictions@183": {
     "cyclo": 2,
     "loc": 10,
     "nesting": 1,
@@ -1895,6 +2007,12 @@
     "params": 3
   },
   "yadgar/curation/__init__.py::memify_cycle@172": {
+    "cyclo": 1,
+    "loc": 36,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/curation/__init__.py::memify_cycle@196": {
     "cyclo": 1,
     "loc": 36,
     "nesting": 0,
@@ -3184,7 +3302,7 @@
   "yadgar/file_queue/__init__.py::QueueDrainer@83": {
     "attrs": 11,
     "inh_depth": 0,
-    "methods": 7
+    "methods": 8
   },
   "yadgar/file_queue/__init__.py::_Attempt@49": {
     "attrs": 0,
@@ -3202,7 +3320,7 @@
     "methods": 0
   },
   "yadgar/file_queue/__init__.py::__file__": {
-    "loc": 275
+    "loc": 305
   },
   "yadgar/file_queue/__init__.py::__init__@73": {
     "cyclo": 1,
@@ -3221,6 +3339,12 @@
     "loc": 26,
     "nesting": 0,
     "params": 9
+  },
+  "yadgar/file_queue/__init__.py::_apply_with_stage_metrics@277": {
+    "cyclo": 3,
+    "loc": 29,
+    "nesting": 3,
+    "params": 3
   },
   "yadgar/file_queue/__init__.py::_classify_error@41": {
     "cyclo": 2,
@@ -17244,6 +17368,147 @@
     "loc": 9,
     "nesting": 0,
     "params": 4
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::TestActionBatchSizeMetric@270": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 2
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::TestAstrocyteAssignMetric@240": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::TestConsolidationDurationMetric@82": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::TestCuratorMetrics@155": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 3
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::TestDrainStageMsMetric@106": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 2
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::TestEngramAllocateMetric@210": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::__file__": {
+    "loc": 332
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::_count_from_samples@281": {
+    "cyclo": 3,
+    "loc": 5,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::_counter_total@72": {
+    "cyclo": 2,
+    "loc": 3,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::_hist_sum@53": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::_labeled_counter_value@65": {
+    "cyclo": 3,
+    "loc": 5,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::_labeled_hist_sum@58": {
+    "cyclo": 3,
+    "loc": 5,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::curator@157": {
+    "cyclo": 1,
+    "loc": 6,
+    "nesting": 0,
+    "params": 4
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::stub_embeddings@47": {
+    "cyclo": 1,
+    "loc": 4,
+    "nesting": 0,
+    "params": 0
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::test_allocate_increments_duration@211": {
+    "cyclo": 2,
+    "loc": 22,
+    "nesting": 0,
+    "params": 3
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::test_archive_stage_observed_after_drain@128": {
+    "cyclo": 3,
+    "loc": 20,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::test_assign_memory_increments_duration@241": {
+    "cyclo": 2,
+    "loc": 22,
+    "nesting": 0,
+    "params": 4
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::test_batch_size_observed_after_empty_action_log@271": {
+    "cyclo": 4,
+    "loc": 25,
+    "nesting": 2,
+    "params": 4
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::test_batch_size_value_matches_row_count@297": {
+    "cyclo": 4,
+    "loc": 36,
+    "nesting": 1,
+    "params": 4
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::test_duration_increments_on_curate@164": {
+    "cyclo": 2,
+    "loc": 18,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::test_full_cycle_increments_sum@83": {
+    "cyclo": 2,
+    "loc": 16,
+    "nesting": 0,
+    "params": 4
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::test_insert_stage_observed_after_drain@107": {
+    "cyclo": 3,
+    "loc": 20,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::test_outcome_counter_increments_on_curate@183": {
+    "cyclo": 2,
+    "loc": 20,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::tmp_settings@28": {
+    "cyclo": 1,
+    "loc": 9,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_consolidation_drainer_metrics.py::tmp_storage@40": {
+    "cyclo": 1,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
   },
   "yadgar/tests/test_credentials_required.py::__file__": {
     "loc": 103
