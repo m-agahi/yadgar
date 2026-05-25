@@ -354,6 +354,9 @@ yadgar_subagent_capture_rate = Gauge(
     "Subagent findings capture rate (captured / dispatched)",
     registry=_registry,
 )
+# Placeholder: no in-process capture tracking yet — set 0 so dashboard panels
+# have a sample rather than rendering "no data".
+yadgar_subagent_capture_rate.set(0)
 
 # ── P11 — Viz ─────────────────────────────────────────────────────────────────
 

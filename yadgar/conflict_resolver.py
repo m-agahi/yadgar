@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from typing import Any
 
 _log = logging.getLogger(__name__)
@@ -173,6 +174,8 @@ def resolve_conflict(candidate: dict) -> dict[str, Any]:
     prompt = _build_prompt(candidate, similar)
 
     client = _get_client()
+    _t0 = time.monotonic()
+    _result: dict[str, Any] | None = None
     try:
         resp = client.post(
             f"{ollama_url}/api/generate",
@@ -182,17 +185,34 @@ def resolve_conflict(candidate: dict) -> dict[str, Any]:
         resp.raise_for_status()
         body = resp.json()
         response_text = body.get("response", "{}")
-        result = _parse_ollama_response(response_text)
+        _result = _parse_ollama_response(response_text)
         _log.info(
             "conflict_resolver: op=%s target_id=%s reason=%r",
-            result["op"],
-            result["target_id"],
-            result["reason"],
+            _result["op"],
+            _result["target_id"],
+            _result["reason"],
         )
-        return result
+        return _result
     except httpx.TimeoutException as exc:
         _log.warning("conflict_resolver: Ollama timeout (%s) — degrading to ADD", exc)
-        return {"op": "ADD", "target_id": None, "reason": "ollama_timeout"}
+        _result = {"op": "ADD", "target_id": None, "reason": "ollama_timeout"}
+        return _result
     except Exception as exc:
         _log.warning("conflict_resolver: error (%s) — degrading to ADD", exc)
-        return {"op": "ADD", "target_id": None, "reason": f"resolver_error: {exc}"}
+        _result = {"op": "ADD", "target_id": None, "reason": f"resolver_error: {exc}"}
+        return _result
+    finally:
+        _elapsed_ms = (time.monotonic() - _t0) * 1000.0
+        try:
+            from yadgar.metrics import (  # noqa: PLC0415
+                yadgar_llm_call_duration_ms,
+                yadgar_llm_decision,
+            )
+
+            yadgar_llm_call_duration_ms.labels(
+                provider="ollama", model=model, purpose="conflict_resolver"
+            ).observe(_elapsed_ms)
+            if _result is not None:
+                yadgar_llm_decision.labels(outcome=_result["op"].lower()).inc()
+        except Exception:
+            pass

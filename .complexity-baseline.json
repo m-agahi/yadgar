@@ -2796,8 +2796,13 @@
     "inh_depth": 0,
     "methods": 18
   },
+  "yadgar/embeddings.py::EmbeddingEngine@52": {
+    "attrs": 4,
+    "inh_depth": 0,
+    "methods": 18
+  },
   "yadgar/embeddings.py::__file__": {
-    "loc": 322
+    "loc": 351
   },
   "yadgar/embeddings.py::__init__@47": {
     "cyclo": 1,
@@ -2810,6 +2815,18 @@
     "loc": 5,
     "nesting": 0,
     "params": 2
+  },
+  "yadgar/embeddings.py::__init__@60": {
+    "cyclo": 1,
+    "loc": 5,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/embeddings.py::_ensure_model@106": {
+    "cyclo": 13,
+    "loc": 69,
+    "nesting": 6,
+    "params": 1
   },
   "yadgar/embeddings.py::_ensure_model@93": {
     "cyclo": 13,
@@ -2835,6 +2852,12 @@
     "nesting": 4,
     "params": 1
   },
+  "yadgar/embeddings.py::_is_model_cached@66": {
+    "cyclo": 12,
+    "loc": 39,
+    "nesting": 4,
+    "params": 1
+  },
   "yadgar/embeddings.py::_normalize@244": {
     "cyclo": 2,
     "loc": 6,
@@ -2842,6 +2865,12 @@
     "params": 2
   },
   "yadgar/embeddings.py::_normalize@247": {
+    "cyclo": 2,
+    "loc": 6,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/embeddings.py::_normalize@258": {
     "cyclo": 2,
     "loc": 6,
     "nesting": 1,
@@ -2859,6 +2888,12 @@
     "nesting": 0,
     "params": 2
   },
+  "yadgar/embeddings.py::batch_reembed@218": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 2
+  },
   "yadgar/embeddings.py::dequantize@221": {
     "cyclo": 2,
     "loc": 7,
@@ -2866,6 +2901,12 @@
     "params": 2
   },
   "yadgar/embeddings.py::dequantize@224": {
+    "cyclo": 2,
+    "loc": 7,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/embeddings.py::dequantize@235": {
     "cyclo": 2,
     "loc": 7,
     "nesting": 1,
@@ -2883,6 +2924,12 @@
     "nesting": 3,
     "params": 2
   },
+  "yadgar/embeddings.py::encode@266": {
+    "cyclo": 8,
+    "loc": 50,
+    "nesting": 4,
+    "params": 2
+  },
   "yadgar/embeddings.py::encode_adaptive@184": {
     "cyclo": 5,
     "loc": 19,
@@ -2890,6 +2937,12 @@
     "params": 3
   },
   "yadgar/embeddings.py::encode_adaptive@187": {
+    "cyclo": 5,
+    "loc": 19,
+    "nesting": 1,
+    "params": 3
+  },
+  "yadgar/embeddings.py::encode_adaptive@198": {
     "cyclo": 5,
     "loc": 19,
     "nesting": 1,
@@ -2907,6 +2960,12 @@
     "nesting": 1,
     "params": 2
   },
+  "yadgar/embeddings.py::encode_batch@318": {
+    "cyclo": 4,
+    "loc": 13,
+    "nesting": 1,
+    "params": 2
+  },
   "yadgar/embeddings.py::encode_document@234": {
     "cyclo": 2,
     "loc": 4,
@@ -2914,6 +2973,12 @@
     "params": 2
   },
   "yadgar/embeddings.py::encode_document@237": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/embeddings.py::encode_document@248": {
     "cyclo": 2,
     "loc": 4,
     "nesting": 0,
@@ -2931,6 +2996,12 @@
     "nesting": 0,
     "params": 3
   },
+  "yadgar/embeddings.py::encode_document_enriched@253": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 3
+  },
   "yadgar/embeddings.py::encode_query@229": {
     "cyclo": 2,
     "loc": 4,
@@ -2938,6 +3009,12 @@
     "params": 2
   },
   "yadgar/embeddings.py::encode_query@232": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/embeddings.py::encode_query@243": {
     "cyclo": 2,
     "loc": 4,
     "nesting": 0,
@@ -2955,6 +3032,12 @@
     "nesting": 1,
     "params": 1
   },
+  "yadgar/embeddings.py::get_dimensions@180": {
+    "cyclo": 3,
+    "loc": 10,
+    "nesting": 1,
+    "params": 1
+  },
   "yadgar/embeddings.py::get_model_name@163": {
     "cyclo": 1,
     "loc": 3,
@@ -2962,6 +3045,12 @@
     "params": 1
   },
   "yadgar/embeddings.py::get_model_name@165": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/embeddings.py::get_model_name@176": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
@@ -2979,6 +3068,12 @@
     "nesting": 1,
     "params": 2
   },
+  "yadgar/embeddings.py::needs_reembedding@191": {
+    "cyclo": 2,
+    "loc": 5,
+    "nesting": 1,
+    "params": 2
+  },
   "yadgar/embeddings.py::quantize@209": {
     "cyclo": 3,
     "loc": 10,
@@ -2986,6 +3081,12 @@
     "params": 2
   },
   "yadgar/embeddings.py::quantize@212": {
+    "cyclo": 3,
+    "loc": 10,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/embeddings.py::quantize@223": {
     "cyclo": 3,
     "loc": 10,
     "nesting": 2,
@@ -3003,6 +3104,12 @@
     "nesting": 0,
     "params": 4
   },
+  "yadgar/embeddings.py::search@342": {
+    "cyclo": 2,
+    "loc": 10,
+    "nesting": 0,
+    "params": 4
+  },
   "yadgar/embeddings.py::similarity@298": {
     "cyclo": 2,
     "loc": 9,
@@ -3010,6 +3117,12 @@
     "params": 3
   },
   "yadgar/embeddings.py::similarity@303": {
+    "cyclo": 2,
+    "loc": 9,
+    "nesting": 1,
+    "params": 3
+  },
+  "yadgar/embeddings.py::similarity@332": {
     "cyclo": 2,
     "loc": 9,
     "nesting": 1,
@@ -3653,7 +3766,7 @@
     "methods": 7
   },
   "yadgar/graph_api.py::__file__": {
-    "loc": 566
+    "loc": 581
   },
   "yadgar/graph_api.py::__init__@14": {
     "cyclo": 1,
@@ -3733,6 +3846,12 @@
     "nesting": 3,
     "params": 2
   },
+  "yadgar/graph_api.py::_observe_dbsize_ms@432": {
+    "cyclo": 2,
+    "loc": 8,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/graph_api.py::get_full_graph@19": {
     "cyclo": 56,
     "loc": 194,
@@ -3805,6 +3924,12 @@
     "nesting": 3,
     "params": 3
   },
+  "yadgar/graph_api.py::run_metrics_sampler@572": {
+    "cyclo": 3,
+    "loc": 10,
+    "nesting": 3,
+    "params": 3
+  },
   "yadgar/graph_api.py::sample_system_metrics@393": {
     "cyclo": 24,
     "loc": 110,
@@ -3820,6 +3945,12 @@
   "yadgar/graph_api.py::sample_system_metrics@432": {
     "cyclo": 25,
     "loc": 123,
+    "nesting": 5,
+    "params": 3
+  },
+  "yadgar/graph_api.py::sample_system_metrics@442": {
+    "cyclo": 25,
+    "loc": 128,
     "nesting": 5,
     "params": 3
   },
@@ -8464,7 +8595,7 @@
     "loc": 139
   },
   "yadgar/server/http.py::__file__": {
-    "loc": 1061
+    "loc": 1091
   },
   "yadgar/server/http.py::_compute@812": {
     "cyclo": 6,
@@ -8490,6 +8621,12 @@
     "nesting": 1,
     "params": 0
   },
+  "yadgar/server/http.py::_compute@853": {
+    "cyclo": 6,
+    "loc": 14,
+    "nesting": 1,
+    "params": 0
+  },
   "yadgar/server/http.py::_fetch@841": {
     "cyclo": 9,
     "loc": 21,
@@ -8509,6 +8646,12 @@
     "params": 0
   },
   "yadgar/server/http.py::_fetch@866": {
+    "cyclo": 9,
+    "loc": 21,
+    "nesting": 0,
+    "params": 0
+  },
+  "yadgar/server/http.py::_fetch@882": {
     "cyclo": 9,
     "loc": 21,
     "nesting": 0,
@@ -8586,6 +8729,12 @@
     "nesting": 4,
     "params": 1
   },
+  "yadgar/server/http.py::_make_event_stream@908": {
+    "cyclo": 15,
+    "loc": 74,
+    "nesting": 5,
+    "params": 1
+  },
   "yadgar/server/http.py::api_consolidation_log@832": {
     "cyclo": 11,
     "loc": 33,
@@ -8605,6 +8754,12 @@
     "params": 1
   },
   "yadgar/server/http.py::api_consolidation_log@857": {
+    "cyclo": 11,
+    "loc": 33,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/server/http.py::api_consolidation_log@873": {
     "cyclo": 11,
     "loc": 33,
     "nesting": 2,
@@ -8634,6 +8789,12 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/server/http.py::api_graph@775": {
+    "cyclo": 5,
+    "loc": 22,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/server/http.py::api_graph_events@930": {
     "cyclo": 1,
     "loc": 6,
@@ -8653,6 +8814,12 @@
     "params": 1
   },
   "yadgar/server/http.py::api_graph_events@955": {
+    "cyclo": 1,
+    "loc": 6,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/server/http.py::api_graph_events@985": {
     "cyclo": 1,
     "loc": 6,
     "nesting": 0,
@@ -8682,6 +8849,12 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/server/http.py::api_graph_neighborhood@821": {
+    "cyclo": 3,
+    "loc": 11,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/server/http.py::api_graph_stats@771": {
     "cyclo": 2,
     "loc": 6,
@@ -8701,6 +8874,12 @@
     "params": 1
   },
   "yadgar/server/http.py::api_graph_stats@796": {
+    "cyclo": 2,
+    "loc": 6,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/server/http.py::api_graph_stats@812": {
     "cyclo": 2,
     "loc": 6,
     "nesting": 1,
@@ -8730,6 +8909,12 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/server/http.py::api_heat_histogram@844": {
+    "cyclo": 8,
+    "loc": 26,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/server/http.py::api_stats@759": {
     "cyclo": 3,
     "loc": 9,
@@ -8749,6 +8934,12 @@
     "params": 1
   },
   "yadgar/server/http.py::api_stats@784": {
+    "cyclo": 3,
+    "loc": 9,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/server/http.py::api_stats@800": {
     "cyclo": 3,
     "loc": 9,
     "nesting": 1,
@@ -8776,6 +8967,18 @@
     "cyclo": 2,
     "loc": 6,
     "nesting": 1,
+    "params": 1
+  },
+  "yadgar/server/http.py::api_system@835": {
+    "cyclo": 2,
+    "loc": 6,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/server/http.py::api_viz_search@1028": {
+    "cyclo": 17,
+    "loc": 57,
+    "nesting": 6,
     "params": 1
   },
   "yadgar/server/http.py::api_viz_search@973": {
@@ -8826,6 +9029,12 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/server/http.py::api_wiki_read@994": {
+    "cyclo": 8,
+    "loc": 31,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/server/http.py::graph_view@1033": {
     "cyclo": 1,
     "loc": 4,
@@ -8845,6 +9054,12 @@
     "params": 1
   },
   "yadgar/server/http.py::graph_view@1058": {
+    "cyclo": 1,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/server/http.py::graph_view@1088": {
     "cyclo": 1,
     "loc": 4,
     "nesting": 0,
@@ -8995,8 +9210,8 @@
     "params": 1
   },
   "yadgar/server/http.py::hook_subagent_start@694": {
-    "cyclo": 12,
-    "loc": 70,
+    "cyclo": 13,
+    "loc": 78,
     "nesting": 3,
     "params": 1
   },
