@@ -135,48 +135,64 @@ def wiki_query(
 
     Returns matching pages with relevance scores. Use tags and category to filter.
     """
-    assert _st._wiki is not None, "WikiStore not initialized"
-    # Fetch extra results before branch filter so we still return max_results after pruning.
-    results = _st._wiki.query(query, tags, category, max_results * 3)
+    import time as _time  # noqa: PLC0415
 
-    # §25 Branch filter + current-branch 1.5x score boost.
-    # Look up via yadgar.server so monkeypatches on "yadgar.server._detect_branch" etc. apply.
+    _wiki_query_t0 = _time.monotonic()
+    results: list[dict] = []
+
     try:
-        import sys as _sys  # noqa: PLC0415
+        assert _st._wiki is not None, "WikiStore not initialized"
+        # Fetch extra results before branch filter so we still return max_results after pruning.
+        results = _st._wiki.query(query, tags, category, max_results * 3)
 
-        _cwd = os.getcwd()
-        _srv = _sys.modules.get("yadgar.server")
-        _detect_branch = getattr(_srv, "_detect_branch", None) if _srv else None
-        _get_default_branch = getattr(_srv, "_get_default_branch", None) if _srv else None
-        if _detect_branch is None or _get_default_branch is None:
-            from yadgar.server.tools.project import (
-                _detect_branch,  # noqa: PLC0415
-                _get_default_branch,  # noqa: PLC0415
-            )
-        _current_branch = _detect_branch(_cwd)
-        _default_branch = _get_default_branch(_cwd)
-    except Exception:
-        _current_branch = None
-        _default_branch = "master"
+        # §25 Branch filter + current-branch 1.5x score boost.
+        # Look up via yadgar.server so monkeypatches on "yadgar.server._detect_branch" etc. apply.
+        try:
+            import sys as _sys  # noqa: PLC0415
 
-    _allowed_branches: set[str | None] = {_default_branch, None}
-    if _current_branch is not None:
-        _allowed_branches.add(_current_branch)
+            _cwd = os.getcwd()
+            _srv = _sys.modules.get("yadgar.server")
+            _detect_branch = getattr(_srv, "_detect_branch", None) if _srv else None
+            _get_default_branch = getattr(_srv, "_get_default_branch", None) if _srv else None
+            if _detect_branch is None or _get_default_branch is None:
+                from yadgar.server.tools.project import (
+                    _detect_branch,  # noqa: PLC0415
+                    _get_default_branch,  # noqa: PLC0415
+                )
+            _current_branch = _detect_branch(_cwd)
+            _default_branch = _get_default_branch(_cwd)
+        except Exception:
+            _current_branch = None
+            _default_branch = "master"
 
-    results = [r for r in results if r.get("branch") in _allowed_branches]
+        _allowed_branches: set[str | None] = {_default_branch, None}
+        if _current_branch is not None:
+            _allowed_branches.add(_current_branch)
 
-    if _current_branch is not None:
+        results = [r for r in results if r.get("branch") in _allowed_branches]
+
+        if _current_branch is not None:
+            for r in results:
+                if r.get("branch") == _current_branch:
+                    base = r.get("_retrieval_score", 0.0)
+                    r["_retrieval_score"] = base * 1.5
+            results.sort(key=lambda r: r.get("_retrieval_score", 0.0), reverse=True)
+
+        results = results[:max_results]
+
         for r in results:
-            if r.get("branch") == _current_branch:
-                base = r.get("_retrieval_score", 0.0)
-                r["_retrieval_score"] = base * 1.5
-        results.sort(key=lambda r: r.get("_retrieval_score", 0.0), reverse=True)
+            r.pop("embedding", None)
 
-    results = results[:max_results]
+        return results
 
-    for r in results:
-        r.pop("embedding", None)
-    return results
+    finally:
+        # P11: observe wiki_query total duration in finally so it fires on all paths.
+        try:
+            from yadgar.metrics import yadgar_wiki_query_duration_ms  # noqa: PLC0415
+
+            yadgar_wiki_query_duration_ms.observe((_time.monotonic() - _wiki_query_t0) * 1000)
+        except Exception:
+            pass
 
 
 @_tool(power=True)

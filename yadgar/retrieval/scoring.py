@@ -1,11 +1,23 @@
 """_ScoringMixin: signal-collection helpers extracted from Retriever.core."""
 
 import logging
+import time as _time
 
 from yadgar.retrieval.entities import _QUERY_STOP_WORDS
 from yadgar.retrieval.query_analysis import _build_boosted_fts_query, _pseudo_hyde_expand
 from yadgar.retrieval.temporal import parse_temporal_expression
 from yadgar.storage import BranchFilter
+
+
+def _observe_stage(stage: str, elapsed_ms: float) -> None:
+    """Observe a recall stage duration. No-op on import error."""
+    try:
+        from yadgar.metrics import yadgar_recall_stage_ms  # noqa: PLC0415
+
+        yadgar_recall_stage_ms.labels(stage=stage).observe(elapsed_ms)
+    except Exception:
+        pass
+
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +46,7 @@ class _ScoringMixin:
         """Collect FTS BM25 scores (including entity-FTS and COMET expansion) into scores."""
         if enabled_signals is not None and "fts" not in enabled_signals:
             return
+        _bm25_t0 = _time.perf_counter()
 
         # 1. FTS5 keyword search with actual BM25 scores
         try:
@@ -123,6 +136,8 @@ class _ScoringMixin:
                 except Exception:
                     pass
 
+        _observe_stage("bm25", (_time.perf_counter() - _bm25_t0) * 1000)
+
     def _collect_vector_scores(
         self,
         query: str,
@@ -151,29 +166,43 @@ class _ScoringMixin:
                 vector_searches.append((subquery, 0.85))
 
         seen_vector_queries: set[str] = set()
+        _embed_query_observed = False
+        _hnsw_total_ms = 0.0
         for vector_query, strength in vector_searches:
             lowered = vector_query.lower()
             if lowered in seen_vector_queries:
                 continue
             seen_vector_queries.add(lowered)
 
+            _enc_t0 = _time.perf_counter()
             encoded = self._embeddings.encode_query(vector_query)
+            _enc_elapsed = (_time.perf_counter() - _enc_t0) * 1000
+            if not _embed_query_observed:
+                # Observe once for the canonical query; subsequent queries use the
+                # same model so timing is dominated by the first call.
+                _observe_stage("embed_query", _enc_elapsed)
+                _embed_query_observed = True
             if encoded is None:
                 continue
             if vector_query == query:
                 query_embedding = encoded
 
+            _hnsw_t0 = _time.perf_counter()
             vec_hits = self._storage.search_vectors(
                 encoded,
                 top_k=candidate_k,
                 min_heat=min_heat,
                 branch_filter=branch_filter,
             )
+            _hnsw_total_ms += (_time.perf_counter() - _hnsw_t0) * 1000
             for mid, distance in vec_hits:
                 similarity = (1.0 / (1.0 + distance)) * strength
                 scores[mid]["vector"] = max(scores[mid].get("vector", 0.0), similarity)
                 if mid not in vector_memory_ids:
                     vector_memory_ids.append(mid)
+
+        if _hnsw_total_ms > 0:
+            _observe_stage("hnsw", _hnsw_total_ms)
 
         return vector_memory_ids, query_embedding
 
@@ -187,12 +216,14 @@ class _ScoringMixin:
         """Collect PPR graph retrieval scores into scores."""
         if enabled_signals is not None and "ppr" not in enabled_signals:
             return
+        _ppr_t0 = _time.perf_counter()
         ppr_results = self.ppr_retrieve(query, top_k=candidate_k)
         if ppr_results:
             max_ppr = max(s for _, s in ppr_results) if ppr_results else 1.0
             for mid, ppr_score in ppr_results:
                 normalized = ppr_score / max_ppr if max_ppr > 0 else 0.0
                 scores[mid]["ppr"] = normalized
+        _observe_stage("ppr", (_time.perf_counter() - _ppr_t0) * 1000)
 
     def _collect_spreading_scores(
         self,
@@ -203,6 +234,7 @@ class _ScoringMixin:
         """Collect spreading activation scores from top vector seeds into scores."""
         if enabled_signals is not None and "spreading" not in enabled_signals:
             return
+        _spread_t0 = _time.perf_counter()
         top_vector_seeds = vector_memory_ids[:5]
         if top_vector_seeds:
             spread_results = self.spreading_activation(
@@ -213,6 +245,7 @@ class _ScoringMixin:
                 for mid, spread_score in spread_results:
                     normalized = spread_score / max_spread if max_spread > 0 else 0.0
                     scores[mid]["spread"] = normalized
+        _observe_stage("spreading_activation", (_time.perf_counter() - _spread_t0) * 1000)
 
     def _collect_temporal_scores(
         self,

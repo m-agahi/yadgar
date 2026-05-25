@@ -21,6 +21,7 @@ from yadgar.retrieval.query_analysis import (
 from yadgar.retrieval.reranking import Reranker, _RerankingMixin
 from yadgar.retrieval.scoring import _ScoringMixin
 from yadgar.storage import BranchFilter, StorageEngine
+from yadgar.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -277,6 +278,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
 
     # -- d. Unified Recall --
 
+    @trace_span("retrieval.recall")
     def recall(
         self,
         query: str,
@@ -302,6 +304,19 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
                 Must be provided alongside current_branch to enable filtering.
                 When None (default), no branch filter is applied — all rows pass.
         """
+        # P11: set dynamic span attributes on the active retrieval.recall span.
+        try:
+            from opentelemetry import trace as _otel_trace  # noqa: PLC0415
+
+            _span = _otel_trace.get_current_span()
+            if _span and _span.is_recording():
+                _span.set_attribute("query_len", len(query))
+                _span.set_attribute("max_results", max_results)
+                _span.set_attribute("branch", current_branch or "")
+                _span.set_attribute("profile", profile or "")
+        except Exception:
+            pass
+
         # Build branch filter for storage-level predicate injection (C2).
         # Only created when default_branch is explicitly provided by caller.
         # Without it, behavior is backward-compatible: no filtering.
