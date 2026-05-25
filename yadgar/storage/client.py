@@ -22,6 +22,7 @@ import json
 import logging
 import re
 import struct
+import time
 
 _log = logging.getLogger(__name__)
 
@@ -163,6 +164,39 @@ _RELATIONSHIP_UPDATABLE_FIELDS = frozenset(
         "record_time",
     }
 )
+
+
+def _sql_op(surql: str) -> str:
+    """Extract the first SQL keyword from a SurrealQL statement for the op label.
+
+    Returns the uppercased first token (e.g. "SELECT", "CREATE", "UPSERT", "DELETE",
+    "UPDATE", "INFO", "BEGIN", "COMMIT") or "OTHER" if the statement is empty.
+    """
+    first = surql.lstrip().split(None, 1)[0].upper() if surql.strip() else "OTHER"
+    return first
+
+
+def _observe_query_metrics(surql: str, elapsed_s: float) -> None:
+    """Observe both DB-layer query histograms for a single query execution.
+
+    - yadgar_db_query_duration_seconds: no labels, seconds.
+    - yadgar_surrealdb_query_duration_ms: labelled op=<first keyword>, milliseconds.
+
+    Design note: duplicate naming (seconds vs ms) is a pre-existing wart preserved
+    intentionally; yadgar-roadmap-future-improvements tracks deprecating one of them.
+    """
+    try:
+        from yadgar.metrics import (
+            yadgar_db_query_duration_seconds,
+            yadgar_surrealdb_query_duration_ms,
+        )
+
+        op = _sql_op(surql)
+        yadgar_db_query_duration_seconds.observe(elapsed_s)
+        yadgar_surrealdb_query_duration_ms.labels(op=op).observe(elapsed_s * 1000.0)
+    except Exception:
+        # Never let metrics errors crash a query.
+        pass
 
 
 class _ClientMixin:
@@ -321,6 +355,7 @@ class _ClientMixin:
         """
         import json as _json
 
+        _t0 = time.perf_counter()
         if self._db_url:
             if params:
                 lets = [
@@ -343,8 +378,10 @@ class _ClientMixin:
                         f"SurrealDB error: {entry.get('detail') or entry.get('result') or entry}"
                     )
             raw = results[-1].get("result") if results else None
+            _observe_query_metrics(surql, time.perf_counter() - _t0)
         else:
             # Embedded mode: delegate to _q (no per-call timeout in the SDK).
+            # Metrics are observed inside _q.
             return self._q(surql, params)
 
         # Normalise to flat list of dicts (same as _q).
@@ -368,6 +405,7 @@ class _ClientMixin:
         """
         import json as _json
 
+        _t0 = time.perf_counter()
         if self._db_url:
             # Server mode: POST to /sql with LET preamble for params.
             # ensure_ascii=False so emoji and other non-ASCII pass as UTF-8; SurrealDB v3
@@ -412,6 +450,8 @@ class _ClientMixin:
                         _log.debug("Embedded DB error (%s), retrying…", exc)
                         continue
                     raise
+
+        _observe_query_metrics(surql, time.perf_counter() - _t0)
 
         # Normalise to flat list of dicts.
         if raw is None:

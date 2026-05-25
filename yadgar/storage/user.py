@@ -10,6 +10,8 @@ import json
 import logging
 from datetime import datetime
 
+from yadgar.tracing import trace_span
+
 _log = logging.getLogger(__name__)
 
 
@@ -162,6 +164,7 @@ class _UserMixin:
         )
         return pid
 
+    @trace_span("storage.user.search_profiles_fts")
     def search_profiles_fts(self, query: str, limit: int = 10) -> list[dict]:
         rows = self._q(
             "SELECT * FROM user_profile WHERE entity_name @@ $q "
