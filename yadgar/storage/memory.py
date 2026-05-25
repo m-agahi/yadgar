@@ -388,6 +388,7 @@ class _MemoryMixin:
             results.append((mid, score))
         return results
 
+    @trace_span("storage.memory.search_memories_by_content_date")
     def search_memories_by_content_date(
         self,
         date_hints: list[str],
@@ -427,6 +428,7 @@ class _MemoryMixin:
         )
         return self._rows_to_dicts(rows)
 
+    @trace_span("storage.memory.search_memories_by_timestamp_range")
     def search_memories_by_timestamp_range(
         self,
         start_date: str,
@@ -441,6 +443,7 @@ class _MemoryMixin:
         )
         return self._rows_to_dicts(rows)
 
+    @trace_span("storage.memory.search_memories_by_month")
     def search_memories_by_month(
         self,
         month_hints: list[str],
