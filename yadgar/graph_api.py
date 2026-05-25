@@ -1,13 +1,47 @@
 """Graph API — assembles graph JSON for knowledge graph visualization."""
 
+import gc
 import logging
 import os
 import time
 from pathlib import Path
 
+from yadgar.metrics import (
+    yadgar_process_cpu_percent,
+    yadgar_process_open_fds,
+    yadgar_process_rss_bytes,
+    yadgar_python_gc_duration_ms,
+)
 from yadgar.tracing import trace_span
 
 logger = logging.getLogger(__name__)
+
+# ── GC duration instrumentation ───────────────────────────────────────────────
+
+_gc_start_times: dict[int, float] = {}
+
+
+def _gc_callback(phase: str, info: dict) -> None:
+    """Record GC collection duration into yadgar_python_gc_duration_ms histogram."""
+    if phase == "start":
+        _gc_start_times[info["generation"]] = time.perf_counter()
+    elif phase == "stop":
+        start = _gc_start_times.pop(info["generation"], None)
+        if start is not None:
+            duration_ms = (time.perf_counter() - start) * 1000
+            yadgar_python_gc_duration_ms.labels(generation=str(info["generation"])).observe(
+                duration_ms
+            )
+
+
+# Idempotent registration — safe across importlib.reload().
+# Check by __qualname__ because reload() creates new function objects with a
+# different identity, so `_gc_callback not in gc.callbacks` would always be True.
+_already_registered = any(
+    getattr(cb, "__qualname__", "") == _gc_callback.__qualname__ for cb in gc.callbacks
+)
+if not _already_registered:
+    gc.callbacks.append(_gc_callback)
 
 
 class GraphAPI:
@@ -448,7 +482,14 @@ def sample_system_metrics(pid: int, db_path: str, storage: object = None) -> dic
     except Exception:
         pass
     result["daemon_rss_mb"] = round(rss_kb / 1024, 1)
+    result["rss_bytes"] = rss_kb * 1024
     result["daemon_threads"] = threads
+
+    # Open file descriptors (self — /proc/self/fd is always accessible)
+    try:
+        result["open_fds"] = len(os.listdir("/proc/self/fd"))
+    except Exception:
+        result.setdefault("open_fds", 0)
 
     # System RAM
     total_ram_kb = avail_ram_kb = 0
@@ -504,6 +545,12 @@ def sample_system_metrics(pid: int, db_path: str, storage: object = None) -> dic
     result["sampled_at"] = time.time()
     _metrics_cache = result
     _metrics_sampled_at = time.time()
+
+    # ── Bridge: push sampled values into Prometheus gauges ────────────────────
+    yadgar_process_rss_bytes.set(result.get("rss_bytes", 0))
+    yadgar_process_cpu_percent.set(result.get("daemon_cpu_pct", 0.0))
+    yadgar_process_open_fds.set(result.get("open_fds", 0))
+
     return result
 
 
