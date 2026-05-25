@@ -1,5 +1,82 @@
 # Migration Notes
 
+## v5.6.7 PR-M — Optional log-dir relocation (2026-05-25)
+
+Core 5.6.6 → 5.6.7. Backend unchanged.
+
+### Why
+
+PLT stack's Grafana Alloy log shipper runs as a `DynamicUser` and cannot traverse the
+user's home directory (`mode 700`). Moving logs to a world-traversable system path (e.g.
+`/var/log/yadgar`) lets Alloy read them without privilege escalation or `SupplementaryGroups`
+hacks. The change is OS-agnostic. **File logging is now opt-in via `YADGAR_LOG_DIR`**: when the
+env var is unset, yadgar continues stdout-only (the effective default for bare-metal installs
+and Docker containers before v5.5.1 applied). Container entrypoints default to
+`YADGAR_LOG_DIR=/data/logs` explicitly — no change for operators running containers.
+
+### Files changed
+
+- `yadgar/log_config.py` — new `_resolve_log_dir()` helper; `_resolve_log_file_path()`
+  derives path from dir knob; `_install_file_handler` requires at least one of
+  `YADGAR_LOG_DIR`, `YADGAR_LOG_FILE_PATH`, or `YADGAR_BACKEND_LOG_FILE_PATH` to be set
+  (per-file vars still take priority for test-rig compatibility).
+- `entrypoint.sh` + `entrypoint-backend.sh` — default `YADGAR_LOG_DIR=/data/logs` for
+  containers; log resolved value to stderr at startup; mkdir + chmod 0750 with fallback.
+- `docker-compose.yml` — comment block explaining dev (named volume) vs production
+  (host bind-mount) log-dir options.
+- `yadgar/tests/test_log_dir_env.py` — 6 new TDD tests.
+
+### For NixOS hosts running Alloy
+
+Set `services.yadgar.logDir = "/var/log/yadgar";` in the yadgar NixOS module
+(assuming the module exposes this option — flagged for nix-repo follow-up).
+
+**Manual commands (do NOT auto-apply — run as root or with sudo):**
+
+```bash
+mkdir -p /var/log/yadgar
+chmod 0750 /var/log/yadgar
+chown <yadgar-service-user>:users /var/log/yadgar
+```
+
+Then set `YADGAR_LOG_DIR=/var/log/yadgar` in the yadgar systemd `EnvironmentFile`
+or via the NixOS module's `environment` attribute.
+
+### Alloy config follow-up (separate nix-repo commit)
+
+Update the Alloy pipeline's `__path__` glob from:
+
+```
+~/.yadgar/logs/*.log
+```
+
+to:
+
+```
+/var/log/yadgar/*.log
+```
+
+The `{job="yadgar"}` label and all Loki dashboard queries are unchanged.
+
+### Migration of existing logs
+
+Optional. The new path starts fresh on first write. Archive or leave old logs
+in `~/.yadgar/logs/` — yadgar will not touch them after the env var is set.
+
+### Backwards compatibility
+
+**Container operators:** no change — entrypoints set `YADGAR_LOG_DIR=/data/logs` by default.
+
+**Bare-metal/non-container operators who want file logging:** explicitly set `YADGAR_LOG_DIR`
+(e.g. `YADGAR_LOG_DIR=$HOME/.yadgar/logs` to replicate the old implicit path, or
+`YADGAR_LOG_DIR=/var/log/yadgar` for Alloy integration).
+
+When `YADGAR_LOG_DIR` and per-file vars are all unset, yadgar is stdout-only (same as
+before v5.5.1 introduced Sink B). No restart-time shims needed; yadgar picks up the env
+on next deploy/restart.
+
+---
+
 ## v5.6.1 — V1c bug fixes (2026-05-22)
 
 Core 5.6.0 → 5.6.1. Backend unchanged (5.1.2).

@@ -11,6 +11,21 @@
 # server, and only after the upstream export-recursion issue is resolved.
 set -e
 
+# ---------------------------------------------------------------------------
+# v5.6.7 PR-M: resolve log directory (YADGAR_LOG_DIR env knob)
+# Default inside containers: /data/logs (bind-mounted by compose or systemd).
+# Operators on Linux hosts can override to e.g. /var/log/yadgar for Alloy access.
+# ---------------------------------------------------------------------------
+YADGAR_LOG_DIR="${YADGAR_LOG_DIR:-/data/logs}"
+export YADGAR_LOG_DIR
+echo "yadgar-backend: log dir = ${YADGAR_LOG_DIR}" >&2
+if ! mkdir -p "${YADGAR_LOG_DIR}" && chmod 0750 "${YADGAR_LOG_DIR}" 2>/dev/null; then
+    echo "WARNING: could not create ${YADGAR_LOG_DIR}; falling back to /tmp/yadgar-logs" >&2
+    YADGAR_LOG_DIR="/tmp/yadgar-logs"
+    export YADGAR_LOG_DIR
+    mkdir -p "${YADGAR_LOG_DIR}" || true
+fi
+
 # Fail fast if required credentials are missing.
 # Use YADGAR_ALLOW_ROOT=1 in test/dev environments to bypass.
 if [[ "${YADGAR_ALLOW_ROOT:-0}" != "1" ]]; then
