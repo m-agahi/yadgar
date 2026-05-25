@@ -2,6 +2,7 @@
 
 import logging
 import time
+from typing import Any
 
 from yadgar.config import Settings
 from yadgar.curation.contradiction import _ACTION_RE, _NEGATION_RE, detect_contradictions
@@ -76,40 +77,63 @@ class MemoryCurator:
 
         Returns dict with "action" key: "merged", "linked", or "created".
         """
-        threshold = self._settings.CURATION_SIMILARITY_THRESHOLD
+        # PR-E: bracket curate duration + outcome; fires even on exception via finally
+        _t0 = time.perf_counter()
+        _result: dict[str, Any] = {}
+        try:
+            threshold = self._settings.CURATION_SIMILARITY_THRESHOLD
+            similar = self._find_similar_memories(embedding, min_sim=_LINK_LOW)
 
-        # Search existing memories for similar content
-        similar = self._find_similar_memories(embedding, min_sim=_LINK_LOW)
+            # High similarity + textual overlap → merge
+            for mem_id, sim in similar:
+                if sim >= threshold:
+                    existing = self._storage.get_memory(mem_id)
+                    if existing and self._has_textual_overlap(content, existing["content"]):
+                        _result = self._merge_memory(
+                            mem_id, content, tags, embedding, contextual_prefix
+                        )
+                        return _result
 
-        # Check for high similarity -> merge (requires textual overlap too)
-        for mem_id, sim in similar:
-            if sim >= threshold:
-                existing = self._storage.get_memory(mem_id)
-                if existing and self._has_textual_overlap(content, existing["content"]):
-                    return self._merge_memory(mem_id, content, tags, embedding, contextual_prefix)
+            spec = NewMemorySpec(
+                tags=tags,
+                embedding=embedding,
+                heat=initial_heat,
+                file_hash=file_hash,
+                embedding_model=embedding_model,
+                contextual_prefix=contextual_prefix,
+                surprise=surprise,
+                importance=importance,
+                valence=valence,
+            )
 
-        spec = NewMemorySpec(
-            tags=tags,
-            embedding=embedding,
-            heat=initial_heat,
-            file_hash=file_hash,
-            embedding_model=embedding_model,
-            contextual_prefix=contextual_prefix,
-            surprise=surprise,
-            importance=importance,
-            valence=valence,
-        )
+            # Moderate similarity → link
+            for mem_id, sim in similar:
+                if _LINK_LOW <= sim < threshold:
+                    new_id = self._insert_new_memory(content, context, spec)
+                    self._create_link(new_id, mem_id)
+                    _result = {"action": "linked", "memory_id": new_id, "linked_to": mem_id}
+                    return _result
 
-        # Check for moderate similarity -> link
-        for mem_id, sim in similar:
-            if _LINK_LOW <= sim < threshold:
-                new_id = self._insert_new_memory(content, context, spec)
-                self._create_link(new_id, mem_id)
-                return {"action": "linked", "memory_id": new_id, "linked_to": mem_id}
+            # No similar memory → create
+            new_id = self._insert_new_memory(content, context, spec)
+            _result = {"action": "created", "memory_id": new_id}
+            return _result
+        except Exception:
+            _result = {"action": "error"}
+            raise
+        finally:
+            _elapsed_ms = (time.perf_counter() - _t0) * 1000
+            try:
+                from yadgar.metrics import (  # noqa: PLC0415
+                    yadgar_curator_duration_ms,
+                    yadgar_curator_merge_outcome,
+                )
 
-        # No similar memory -> create new
-        new_id = self._insert_new_memory(content, context, spec)
-        return {"action": "created", "memory_id": new_id}
+                yadgar_curator_duration_ms.observe(_elapsed_ms)
+                outcome = _result.get("action", "error") if _result else "error"
+                yadgar_curator_merge_outcome.labels(outcome=outcome).inc()
+            except Exception:
+                pass
 
     def _find_similar_memories(
         self, embedding: bytes, min_sim: float = 0.6

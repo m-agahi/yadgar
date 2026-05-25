@@ -7,6 +7,7 @@ creating automatic temporal linking with zero explicit logic.
 """
 
 import logging
+import time
 from datetime import UTC, datetime
 
 from yadgar.config import Settings
@@ -43,6 +44,20 @@ class EngramAllocator:
 
         Returns dict with slot_index, excitability, temporally_linked IDs, and link_count.
         """
+        # PR-E: bracket allocate duration
+        _t0 = time.perf_counter()
+        try:
+            return self._allocate_inner(memory_id)
+        finally:
+            try:
+                from yadgar.metrics import yadgar_engram_allocate_duration_ms  # noqa: PLC0415
+
+                yadgar_engram_allocate_duration_ms.observe((time.perf_counter() - _t0) * 1000)
+            except Exception:
+                pass
+
+    def _allocate_inner(self, memory_id: int) -> dict:
+        """Inner implementation of allocate()."""
         all_slots = self._storage.get_all_engram_slots()
         occupancy = self._storage.get_slot_occupancy()
 
