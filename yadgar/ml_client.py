@@ -36,6 +36,95 @@ def _rpc_span(name: str, attributes: dict | None = None):
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# v5.6.7 PR-G — YADGAR_MODEL_IDLE_EVICTION_SECONDS
+#
+# Default 0 = never evict (models stay loaded for container lifetime).
+# Positive integer = evict heavy models (CE/NLI/pair) after that many idle seconds.
+# Embedding model is managed separately (EmbeddingEngine) and is unaffected.
+#
+# Read per-call so that tests can monkeypatch os.environ without module reload.
+# Cost: one os.getenv() per unload_if_idle() invocation — negligible.
+# ---------------------------------------------------------------------------
+
+
+def _record_model_load(model: str, duration_seconds: float) -> None:
+    """Record a cold model load: observe histogram + emit OTel span.
+
+    model: metric/span label — "ce" or "nli".
+    duration_seconds: wall-clock elapsed for the constructor call.
+    cold_load is always True here (called only when the handle was None before construction).
+    """
+    # Histogram
+    try:
+        import yadgar.embed_service_metrics as _esm  # noqa: PLC0415
+
+        _esm.model_load_duration_seconds.labels(model=model).observe(duration_seconds)
+    except Exception:
+        pass  # metrics not available in core container
+
+    # OTel span
+    try:
+        from opentelemetry import trace as _otel  # noqa: PLC0415
+
+        tracer = _otel.get_tracer("yadgar.ml_client")
+        with tracer.start_as_current_span("model.load") as span:
+            span.set_attribute("model", model)
+            span.set_attribute("cold_load", True)
+            span.set_attribute("duration_seconds", duration_seconds)
+    except Exception:
+        pass  # OTel not available — no-op
+
+
+def _emit_unload_telemetry(unloaded_ce: bool, unloaded_nli: bool, effective: float) -> None:
+    """Emit Prometheus + OTel telemetry for an idle-eviction unload event.
+
+    Extracted to keep LocalMLClient.unload_if_idle under the cyclo hard limit.
+    """
+    # Prometheus gauges + counters
+    try:
+        import yadgar.embed_service_metrics as _esm  # noqa: PLC0415
+
+        if unloaded_ce:
+            _esm.model_loaded.labels(model="ce").set(0)
+            _esm.model_unload_total.labels(model="ce").inc()
+        if unloaded_nli:
+            _esm.model_loaded.labels(model="nli").set(0)
+            _esm.model_unload_total.labels(model="nli").inc()
+    except Exception:
+        pass  # metrics not available in core container
+
+    # OTel span — one span per call that actually evicted
+    try:
+        from opentelemetry import trace as _otel  # noqa: PLC0415
+
+        tracer = _otel.get_tracer("yadgar.ml_client")
+        model_label = ",".join((["ce"] if unloaded_ce else []) + (["nli"] if unloaded_nli else []))
+        with tracer.start_as_current_span("model.unload") as span:
+            span.set_attribute("model", model_label)
+            span.set_attribute("idle_seconds", float(effective))
+    except Exception:
+        pass  # OTel not available — no-op
+
+
+def _idle_eviction_seconds() -> int:
+    """Return the configured idle-eviction threshold in seconds.
+
+    Returns 0 when YADGAR_MODEL_IDLE_EVICTION_SECONDS is unset, empty, or
+    unparseable — meaning 'never evict' (safe default).
+    """
+    raw = os.environ.get("YADGAR_MODEL_IDLE_EVICTION_SECONDS", "0")
+    try:
+        return int(raw)
+    except ValueError, TypeError:
+        logger.warning(
+            "YADGAR_MODEL_IDLE_EVICTION_SECONDS=%r is not a valid integer; "
+            "defaulting to 0 (never evict)",
+            raw,
+        )
+        return 0
+
+
+# ---------------------------------------------------------------------------
 # N4 — Per-endpoint circuit breaker (v5.3.10 hotfix)
 # ---------------------------------------------------------------------------
 
@@ -215,8 +304,12 @@ class MLClient(Protocol):
         """Score a single query-text pair. Returns raw score or None on circuit-open."""
         ...
 
-    def unload_if_idle(self, idle_seconds: float = 600.0) -> None:
-        """Unload models if unused for idle_seconds."""
+    def unload_if_idle(self, idle_seconds: float | None = None) -> None:
+        """Unload models if unused for idle_seconds.
+
+        idle_seconds: override threshold. None = use YADGAR_MODEL_IDLE_EVICTION_SECONDS
+                      env (0 by default, meaning never evict). Explicit value bypasses env.
+        """
         ...
 
 
@@ -330,7 +423,11 @@ class LocalMLClient:
                 else "cross-encoder/ms-marco-MiniLM-L-6-v2"
             )
             try:
+                _t0 = time.monotonic()
                 self._cross_encoder = CrossEncoder(ce_model)
+                _load_dur = time.monotonic() - _t0
+                # Histogram + OTel span for cold load (v5.6.7 PR-G)
+                _record_model_load("ce", _load_dur)
             except Exception:
                 return [0.0] * len(texts)
 
@@ -361,8 +458,12 @@ class LocalMLClient:
             if self._nli_model is None:
                 from sentence_transformers import CrossEncoder
 
+                _t0 = time.monotonic()
                 self._nli_model = CrossEncoder(nli_model_name)
+                _load_dur = time.monotonic() - _t0
                 logger.info("LocalMLClient: loaded NLI model: %s", nli_model_name)
+                # Histogram + OTel span for cold load (v5.6.7 PR-G)
+                _record_model_load("nli", _load_dur)
 
             import numpy as np
 
@@ -390,32 +491,64 @@ class LocalMLClient:
         scores = self.score_cross_encoder(query, [text])
         return scores[0] if scores else 0.0
 
-    def unload_if_idle(self, idle_seconds: float = 600.0) -> None:
-        """Unload all model handles if unused for idle_seconds. Frees ~500 MB RSS."""
+    def unload_if_idle(self, idle_seconds: float | None = None) -> None:
+        """Unload all model handles if unused for the configured threshold. Frees ~500 MB RSS.
+
+        idle_seconds: explicit threshold (seconds). None = read from env
+                      YADGAR_MODEL_IDLE_EVICTION_SECONDS (default 0 = never evict).
+
+        When the effective threshold is 0 and no explicit idle_seconds is given,
+        this method is a no-op (never evict). Callers that pass an explicit
+        idle_seconds=N continue to work regardless of the env setting.
+
+        Handle → gauge/counter label mapping:
+          _gte_reranker, _flashrank_ranker, _cross_encoder → "ce"
+          _nli_model                                       → "nli"
+        Pair/embedding are not managed here.
+        """
         import gc
+
+        # Resolve effective threshold
+        if idle_seconds is None:
+            effective = _idle_eviction_seconds()
+            if effective == 0:
+                # Never-evict default — early return, no INFO spam
+                return
+        else:
+            effective = idle_seconds
 
         if self._last_used == 0.0:
             return
-        if time.monotonic() - self._last_used < idle_seconds:
+        if time.monotonic() - self._last_used < effective:
             return
+
+        unloaded_ce = False
+        unloaded_nli = False
 
         unloaded = []
         if self._gte_reranker not in (None, False):
             self._gte_reranker = None
             unloaded.append("GTE-Reranker")
+            unloaded_ce = True
         if self._nli_model not in (None, False):
             self._nli_model = None
             unloaded.append("NLI")
+            unloaded_nli = True
         if self._flashrank_ranker is not None:
             self._flashrank_ranker = None
             unloaded.append("FlashRank")
+            unloaded_ce = True
         if self._cross_encoder is not None:
             self._cross_encoder = None
             unloaded.append("CrossEncoder")
+            unloaded_ce = True
 
-        if unloaded:
-            gc.collect()
-            logger.info("LocalMLClient: idle unload (%.0fs): %s", idle_seconds, ", ".join(unloaded))
+        if not unloaded:
+            return
+
+        gc.collect()
+        logger.info("LocalMLClient: idle unload (%.0fs): %s", effective, ", ".join(unloaded))
+        _emit_unload_telemetry(unloaded_ce, unloaded_nli, effective)
 
 
 class RemoteMLClient:
@@ -629,5 +762,5 @@ class RemoteMLClient:
                     logger.warning("RemoteMLClient: /rerank pair failed: %s", e)
                 return None
 
-    def unload_if_idle(self, idle_seconds: float = 600.0) -> None:
+    def unload_if_idle(self, idle_seconds: float | None = None) -> None:
         pass  # backend manages its own lifecycle
