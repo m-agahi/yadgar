@@ -223,6 +223,19 @@ class StorageEngine(
             self._http.timeout = httpx.Timeout(
                 connect=2.0, read=_http_timeout_sec, write=_http_timeout_sec, pool=5.0
             )
+            # Pool-active / pool-wait metrics.  SurrealDB has no connection pool — the
+            # httpx.Client is a singleton.  pool_active=1 for the lifetime of this engine.
+            # pool_wait_ms gets one observation of 0.0 (no real acquire latency).
+            try:
+                from yadgar.metrics import (
+                    yadgar_surrealdb_connection_pool_wait_ms,
+                    yadgar_surrealdb_pool_active,
+                )
+
+                yadgar_surrealdb_pool_active.set(1)
+                yadgar_surrealdb_connection_pool_wait_ms.observe(0.0)
+            except Exception:
+                pass
             atexit.register(self.close)
             return
 
@@ -269,6 +282,20 @@ class StorageEngine(
         # Detects corruption from prior crashes (records exist but fields are null).
         self._verify_health()
 
+        # Pool-active / pool-wait metrics.  Embedded mode uses a single surrealkv
+        # connection (no pool).  pool_active=1 for the lifetime of this engine.
+        # pool_wait_ms gets one observation of 0.0 (no real acquire latency).
+        try:
+            from yadgar.metrics import (
+                yadgar_surrealdb_connection_pool_wait_ms,
+                yadgar_surrealdb_pool_active,
+            )
+
+            yadgar_surrealdb_pool_active.set(1)
+            yadgar_surrealdb_connection_pool_wait_ms.observe(0.0)
+        except Exception:
+            pass
+
         # Register atexit handler for clean shutdown even if close() isn't called
         atexit.register(self.close)
 
@@ -278,6 +305,13 @@ class StorageEngine(
         # Unregister atexit to avoid double-close
         try:
             atexit.unregister(self.close)
+        except Exception:
+            pass
+        # Signal connection gone regardless of mode.
+        try:
+            from yadgar.metrics import yadgar_surrealdb_pool_active
+
+            yadgar_surrealdb_pool_active.set(0)
         except Exception:
             pass
         if getattr(self, "_db_url", None):
