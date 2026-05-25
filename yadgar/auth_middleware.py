@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 _EXEMPT_PATHS: frozenset[str] = frozenset({"/health", "/metrics"})
 
 # Route prefixes that are protected when REQUIRE_AUTH=True
-_PROTECTED_PREFIXES: tuple[str, ...] = ("/api/", "/hooks/", "/mcp")
+_PROTECTED_PREFIXES: tuple[str, ...] = ("/admin/", "/api/", "/hooks/", "/mcp")
 
 _startup_warned = False
 
