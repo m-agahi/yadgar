@@ -281,6 +281,26 @@ Key v5 vars (full reference in [docs/configuration.md](docs/configuration.md)):
 | `YADGAR_ALLOWED_ORIGINS` | loopback | CORS allowlist. |
 | `YADGAR_METRICS_ENABLED` | `1` | Expose Prometheus `/metrics` (loopback, unauthenticated). |
 | `YADGAR_LOG_FORMAT` | `human` | Set `json` for structured logs. |
+| `YADGAR_MODEL_IDLE_EVICTION_SECONDS` | `0` | See below. |
+
+### Model idle eviction (`YADGAR_MODEL_IDLE_EVICTION_SECONDS`)
+
+Controls whether heavy ML models (CE / NLI / pair) are unloaded from RAM after a period of inactivity.
+
+| Value | Behaviour | Recommended for |
+|---|---|---|
+| `0` (default) | Models stay loaded for the container lifetime. No eviction. | 16+ GB hosts, production backends with steady traffic |
+| Positive integer (e.g. `300`) | Evict heavy models after that many idle seconds. Frees ~500 MB RSS. | ≤ 8 GB memory-tight hosts |
+
+**Trade-off:** eviction saves RAM but the next request after a cold unload pays a reload latency of roughly 1–3 s for `cross-encoder/nli-deberta-v3-small` on CPU. The reload also produces a brief CPU spike that is now attributed via the `yadgar_embed_model_load_duration_seconds{model}` histogram and a `model.load` OTel span — operators can correlate the spike to the reload event rather than treating it as unexplained noise.
+
+> **Tip:** `HEAVY_RERANK_ENABLED=false` already disables NLI on the hook hot-path. Eviction is the additional RAM-management knob for hosts that cannot afford 500 MB resident after the first request.
+
+Eviction telemetry (v5.6.7 PR-G):
+- `yadgar_embed_model_unload_total{model}` — counter, increments once per idle eviction.
+- `yadgar_embed_model_load_duration_seconds{model}` — histogram, wall-clock duration of each cold model load.
+- `model.unload` OTel span — emitted on each eviction call that actually unloads handles.
+- `model.load` OTel span with `cold_load=true` — emitted on each first-construction of a model handle.
 
 ## CLI
 
