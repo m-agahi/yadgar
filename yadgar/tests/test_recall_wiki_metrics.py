@@ -279,6 +279,47 @@ class TestRecallDurationMetricBugA:
             "Bug A: yadgar_recall_duration_ms never incremented."
         )
 
+    def test_recall_duration_increments_even_on_exception(self):
+        """yadgar_recall_duration_ms must be observed even when recall() body raises.
+
+        This is the discriminating test for Bug A: on master (before the try/finally fix),
+        an exception propagated through the bare try/except at end of the happy path and
+        the metric was NEVER observed. After the fix, the finally block fires regardless.
+        """
+        import yadgar.server._state as _st
+        from yadgar.metrics import yadgar_recall_duration_ms
+
+        mock_retriever = _make_mock_retriever()
+        mock_retriever.recall.side_effect = RuntimeError("injected error for Bug A test")
+        mock_storage = _make_mock_storage()
+        mock_wiki = _make_mock_wiki()
+
+        before = _count_nolabel(yadgar_recall_duration_ms)
+
+        with (
+            patch.object(_st, "_retriever", mock_retriever),
+            patch.object(_st, "_storage", mock_storage),
+            patch.object(_st, "_consolidation", None),
+            patch.object(_st, "_thermo", None),
+            patch.object(_st, "_cognitive_map", None),
+            patch.object(_st, "_buffer", None),
+            patch.object(_st, "_replay", None),
+            patch.object(_st, "_wiki", mock_wiki),
+            patch.object(_st, "_last_recalled_ids", {}),
+            patch("yadgar.server.tools.project._detect_branch", return_value=None),
+            patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
+            pytest.raises(RuntimeError, match="injected error for Bug A test"),
+        ):
+            from yadgar.server.tools.recall import recall as recall_fn
+
+            recall_fn(query="test", max_results=1)
+
+        after = _count_nolabel(yadgar_recall_duration_ms)
+        assert after - before == 1, (
+            f"yadgar_recall_duration_ms must be observed in finally block even on exception; "
+            f"before={before}, after={after}. Bug A fix requires try/finally, not try/except."
+        )
+
 
 # ---------------------------------------------------------------------------
 # 2. yadgar_recall_stage_ms stage observations (via Retriever directly)
