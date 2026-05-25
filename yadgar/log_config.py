@@ -54,6 +54,7 @@ import json
 import logging
 import logging.handlers
 import os
+import sys
 import time
 import uuid
 from datetime import UTC, datetime
@@ -447,21 +448,58 @@ def _configure_request_logger(formatter: logging.Formatter) -> None:
 
 # ---------------------------------------------------------------------------
 # v5.5.1 — Rotating file handler (Sink B)
+# v5.6.7 PR-M — YADGAR_LOG_DIR env knob for external log shippers (e.g. Alloy)
 # ---------------------------------------------------------------------------
 
-# Default log paths inside the container (both map through /data bind mount)
-_DEFAULT_CORE_LOG_PATH: str = "/data/logs/yadgar.log"
-_DEFAULT_BACKEND_LOG_PATH: str = "/data/logs/backend.log"
+# Default log paths inside the container (both map through /data bind mount).
+# These are used only when per-file env vars are set explicitly. The directory-
+# level default is now derived from _resolve_log_dir() (see below).
+_DEFAULT_CORE_LOG_FILENAME: str = "yadgar.log"
+_DEFAULT_BACKEND_LOG_FILENAME: str = "backend.log"
 
 # Gauge update interval: update log-file size metric at most once per second
 _LOG_SIZE_GAUGE_INTERVAL: float = 1.0
 
+# Fallback log directory when YADGAR_LOG_DIR points to an unwritable path.
+_FALLBACK_LOG_DIR: str = "/tmp/yadgar-logs"
+
+
+def _resolve_log_dir() -> str:
+    """Resolve the log directory, creating it if needed.
+
+    Priority: YADGAR_LOG_DIR env var → ~/.yadgar/logs (OS-agnostic default).
+
+    If the resolved directory cannot be created (PermissionError or OSError),
+    emits a warning to stderr and falls back to /tmp/yadgar-logs/. The fallback
+    creation failure is silently ignored so startup never crashes.
+
+    Returns the resolved (and created) directory path.
+    """
+    log_dir = os.environ.get("YADGAR_LOG_DIR", os.path.expanduser("~/.yadgar/logs"))
+    try:
+        os.makedirs(log_dir, mode=0o750, exist_ok=True)
+        return log_dir
+    except (PermissionError, OSError) as exc:
+        print(
+            f"WARNING: YADGAR_LOG_DIR={log_dir!r} could not be created ({exc}); "
+            f"falling back to {_FALLBACK_LOG_DIR!r}",
+            file=sys.stderr,
+        )
+        try:
+            os.makedirs(_FALLBACK_LOG_DIR, mode=0o750, exist_ok=True)
+        except PermissionError, OSError:
+            pass  # last resort — caller will discover dir is missing
+        return _FALLBACK_LOG_DIR
+
 
 def _resolve_log_file_path(process: Literal["core", "backend"] = "core") -> str:
-    """Option A env resolution: backend prefers YADGAR_BACKEND_LOG_FILE_PATH first.
+    """Resolve the log file path for the given process.
 
-    Priority (backend): YADGAR_BACKEND_LOG_FILE_PATH → YADGAR_LOG_FILE_PATH → default
-    Priority (core):    YADGAR_LOG_FILE_PATH → default
+    Priority (backend): YADGAR_BACKEND_LOG_FILE_PATH → YADGAR_LOG_FILE_PATH
+                        → {_resolve_log_dir()}/backend.log
+    Priority (core):    YADGAR_LOG_FILE_PATH → {_resolve_log_dir()}/yadgar.log
+
+    Per-file env vars are preserved for compatibility with existing test rigs.
     Returns empty string if operator explicitly set the resolved var to "".
     """
     if process == "backend":
@@ -471,12 +509,12 @@ def _resolve_log_file_path(process: Literal["core", "backend"] = "core") -> str:
         shared = os.environ.get("YADGAR_LOG_FILE_PATH")
         if shared is not None:
             return shared
-        return _DEFAULT_BACKEND_LOG_PATH
+        return os.path.join(_resolve_log_dir(), _DEFAULT_BACKEND_LOG_FILENAME)
     else:
         shared = os.environ.get("YADGAR_LOG_FILE_PATH")
         if shared is not None:
             return shared
-        return _DEFAULT_CORE_LOG_PATH
+        return os.path.join(_resolve_log_dir(), _DEFAULT_CORE_LOG_FILENAME)
 
 
 def _resolve_log_env_int(key: str, backend_key: str, default: int, process: str) -> int:
@@ -719,7 +757,18 @@ def _install_file_handler(
     Returns the handler if installed, None if skipped.
     Skips gracefully when path is empty (I3 opt-out) or dir unwritable.
     Idempotent: no-op if a RotatingJSONLFileHandler is already on root.
+
+    v5.6.7 PR-M: file logging is opt-in via env vars. At least one of
+    YADGAR_LOG_DIR, YADGAR_LOG_FILE_PATH, or YADGAR_BACKEND_LOG_FILE_PATH
+    must be set for the file handler to install. When none are set, the
+    process uses stdout-only logging (preserves dev-machine behavior where
+    /data/logs does not exist and ~/.yadgar/logs would otherwise auto-create).
+    Container entrypoints set YADGAR_LOG_DIR=/data/logs explicitly.
     """
+    _FILE_HANDLER_GATES = ("YADGAR_LOG_DIR", "YADGAR_LOG_FILE_PATH", "YADGAR_BACKEND_LOG_FILE_PATH")
+    if not any(os.environ.get(k) for k in _FILE_HANDLER_GATES):
+        return None  # no explicit dir/path → stdout-only (dev-machine default)
+
     root = logging.getLogger()
     if any(isinstance(h, RotatingJSONLFileHandler) for h in root.handlers):
         return None  # already installed

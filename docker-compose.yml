@@ -1,6 +1,24 @@
 # Yadgar v4 — dev-only Docker Compose
 # Production uses plain docker run via systemd (see: yadgar daemon install-service)
 # Usage: docker compose up --build
+#
+# v5.6.7 PR-M — Log directory (YADGAR_LOG_DIR) notes:
+#   Dev default (below): named volume `yadgar-backend-logs` mounted at /data/logs.
+#   The Python layer defaults to ~/.yadgar/logs when YADGAR_LOG_DIR is unset, but
+#   entrypoints default YADGAR_LOG_DIR to /data/logs so containers stay on /data/logs.
+#
+#   Production / Alloy integration: to let an external log shipper (e.g. Grafana Alloy
+#   running as DynamicUser) read logs without home-dir 700 traversal issues, flip the
+#   backend volume entry to a host bind-mount and set YADGAR_LOG_DIR accordingly:
+#
+#     # In the backend service, replace the named-volume line:
+#     #   - yadgar-backend-logs:/data/logs
+#     # with a host bind-mount (create the host dir first with tmpfiles or manually):
+#     #   - /var/log/yadgar:/data/logs
+#     # and add/set in environment:
+#     #   YADGAR_LOG_DIR: /data/logs
+#
+#   The NixOS side (systemd.tmpfiles + Alloy __path__ glob) is a separate nix-repo change.
 version: "3.9"
 
 networks:
@@ -12,10 +30,13 @@ volumes:
   yadgar-dev-data:
   yadgar-queue-data:
   yadgar-backend-logs:
+  # Production bind-mount alternative (see comment block above):
+  # To switch, remove the named volume entry above and use a host path in the
+  # backend service volumes section: - /var/log/yadgar:/data/logs
 
 services:
   backend:
-    image: openfantasy/yadgar-backend:${BACKEND_VERSION:-5.2.1}
+    image: openfantasy/yadgar-backend:${BACKEND_VERSION:-5.2.2}
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -45,7 +66,7 @@ services:
       start_period: 60s  # model load can take a while
 
   core:
-    image: openfantasy/yadgar:${CORE_VERSION:-5.6.6}
+    image: openfantasy/yadgar:${CORE_VERSION:-5.6.7}
     build:
       context: .
       dockerfile: Dockerfile
