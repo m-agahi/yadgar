@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+import time
 from datetime import UTC, datetime
 
 from yadgar.config import Settings
@@ -115,6 +116,20 @@ class AstrocytePool:
 
         Returns list of process names the memory was assigned to.
         """
+        # PR-E: bracket assign duration
+        _t0 = time.perf_counter()
+        try:
+            return self._assign_memory_inner(memory)
+        finally:
+            try:
+                from yadgar.metrics import yadgar_astrocyte_assign_duration_ms  # noqa: PLC0415
+
+                yadgar_astrocyte_assign_duration_ms.observe((time.perf_counter() - _t0) * 1000)
+            except Exception:
+                pass
+
+    def _assign_memory_inner(self, memory: dict) -> list[str]:
+        """Inner implementation of assign_memory()."""
         content = memory.get("content", "")
         tags = memory.get("tags", [])
         if isinstance(tags, str):

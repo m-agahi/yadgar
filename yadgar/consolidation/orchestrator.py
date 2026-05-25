@@ -73,6 +73,7 @@ class _OrchestratorMixin:
 
     @trace_span("consolidation.cycle")
     def _consolidation_cycle(self) -> dict:
+        _cycle_wall_t0 = time.monotonic()
         start = time.monotonic()
         stats = {
             "memories_added": 0,
@@ -81,97 +82,119 @@ class _OrchestratorMixin:
             "memories_deleted": 0,
         }
 
-        _t = time.monotonic()
-        logger.info("phase_start: apply_decay")
-        self._apply_decay(stats)
-        logger.info("phase_end: apply_decay duration_ms=%d", int((time.monotonic() - _t) * 1000))
-
-        _t = time.monotonic()
-        logger.info("phase_start: process_episodes")
-        self._process_new_episodes(stats)
-        logger.info(
-            "phase_end: process_episodes duration_ms=%d", int((time.monotonic() - _t) * 1000)
-        )
-
-        # Prune old episodes to keep the table bounded and _check_temporal_order fast
-        self._prune_old_episodes_safe()
-
-        _t = time.monotonic()
-        logger.info("phase_start: merge_duplicates")
-        self._merge_duplicates(stats)
-        logger.info(
-            "phase_end: merge_duplicates duration_ms=%d", int((time.monotonic() - _t) * 1000)
-        )
-
-        # Semantic similarity linking — create relationships between similar memories
         try:
             _t = time.monotonic()
-            logger.info("phase_start: link_similar")
-            self._link_similar_memories(stats)
+            logger.info("phase_start: apply_decay")
+            self._apply_decay(stats)
             logger.info(
-                "phase_end: link_similar duration_ms=%d", int((time.monotonic() - _t) * 1000)
+                "phase_end: apply_decay duration_ms=%d", int((time.monotonic() - _t) * 1000)
             )
-        except Exception:
-            logger.exception("Similarity linking failed")
 
-        try:
             _t = time.monotonic()
-            logger.info("phase_start: detect_causality")
-            self._graph.detect_causality()
+            logger.info("phase_start: process_episodes")
+            self._process_new_episodes(stats)
             logger.info(
-                "phase_end: detect_causality duration_ms=%d", int((time.monotonic() - _t) * 1000)
+                "phase_end: process_episodes duration_ms=%d", int((time.monotonic() - _t) * 1000)
             )
-        except Exception:
-            logger.exception("Causal detection failed")
 
-        # Run memify self-improvement cycle
-        try:
-            _t = time.monotonic()
-            logger.info("phase_start: memify")
-            memify_stats = self._curator.memify_cycle()
-            stats["memify_pruned"] = memify_stats.get("pruned", 0)
-            stats["memify_strengthened"] = memify_stats.get("strengthened", 0)
-            stats["memify_reweighted"] = memify_stats.get("reweighted", 0)
-            stats["memify_derived"] = memify_stats.get("derived", 0)
-            logger.info("phase_end: memify duration_ms=%d", int((time.monotonic() - _t) * 1000))
-        except Exception:
-            logger.exception("Memify cycle failed")
+            # Prune old episodes to keep the table bounded and _check_temporal_order fast
+            self._prune_old_episodes_safe()
 
-        # Run CLS dual-store consolidation (Go-CLS: episodic → semantic)
-        try:
             _t = time.monotonic()
-            logger.info("phase_start: cls_consolidation")
-            cls_stats = self._cls.consolidation_cycle()
-            stats["cls_patterns_found"] = cls_stats.get("patterns_found", 0)
-            stats["cls_promoted"] = cls_stats.get("promoted", 0)
-            stats["cls_skipped_inconsistent"] = cls_stats.get("skipped_inconsistent", 0)
+            logger.info("phase_start: merge_duplicates")
+            self._merge_duplicates(stats)
             logger.info(
-                "phase_end: cls_consolidation duration_ms=%d", int((time.monotonic() - _t) * 1000)
+                "phase_end: merge_duplicates duration_ms=%d", int((time.monotonic() - _t) * 1000)
             )
-        except Exception:
-            logger.exception("CLS consolidation cycle failed")
 
-        # Compression disabled: memory content must stay intact for LLM usage.
+            # Semantic similarity linking — create relationships between similar memories
+            try:
+                _t = time.monotonic()
+                logger.info("phase_start: link_similar")
+                self._link_similar_memories(stats)
+                logger.info(
+                    "phase_end: link_similar duration_ms=%d", int((time.monotonic() - _t) * 1000)
+                )
+            except Exception:
+                logger.exception("Similarity linking failed")
 
-        # Process action_log entries into real memories
-        try:
-            _t = time.monotonic()
-            logger.info("phase_start: action_log")
-            action_stats = self._process_action_log()
-            stats["actions_processed"] = action_stats.get("processed", 0)
-            stats["action_memories_created"] = action_stats.get("memories_created", 0)
-            logger.info("phase_end: action_log duration_ms=%d", int((time.monotonic() - _t) * 1000))
-        except Exception:
-            logger.exception("Action log processing failed")
+            try:
+                _t = time.monotonic()
+                logger.info("phase_start: detect_causality")
+                self._graph.detect_causality()
+                logger.info(
+                    "phase_end: detect_causality duration_ms=%d",
+                    int((time.monotonic() - _t) * 1000),
+                )
+            except Exception:
+                logger.exception("Causal detection failed")
 
-        # Run formal causal discovery (PC algorithm) periodically.
-        # v5.1 C1: placed after all memory-producing phases so counters are fully populated.
-        self._run_causal_discovery_phase(stats)
+            # Run memify self-improvement cycle
+            try:
+                _t = time.monotonic()
+                logger.info("phase_start: memify")
+                memify_stats = self._curator.memify_cycle()
+                stats["memify_pruned"] = memify_stats.get("pruned", 0)
+                stats["memify_strengthened"] = memify_stats.get("strengthened", 0)
+                stats["memify_reweighted"] = memify_stats.get("reweighted", 0)
+                stats["memify_derived"] = memify_stats.get("derived", 0)
+                logger.info("phase_end: memify duration_ms=%d", int((time.monotonic() - _t) * 1000))
+            except Exception:
+                logger.exception("Memify cycle failed")
 
-        # Table retention prunes — each is non-fatal; logged at debug on error.
-        self._run_retention_tasks()
+            # Run CLS dual-store consolidation (Go-CLS: episodic → semantic)
+            try:
+                _t = time.monotonic()
+                logger.info("phase_start: cls_consolidation")
+                cls_stats = self._cls.consolidation_cycle()
+                stats["cls_patterns_found"] = cls_stats.get("patterns_found", 0)
+                stats["cls_promoted"] = cls_stats.get("promoted", 0)
+                stats["cls_skipped_inconsistent"] = cls_stats.get("skipped_inconsistent", 0)
+                logger.info(
+                    "phase_end: cls_consolidation duration_ms=%d",
+                    int((time.monotonic() - _t) * 1000),
+                )
+            except Exception:
+                logger.exception("CLS consolidation cycle failed")
 
-        # Run invariant checks — non-fatal; violations are logged CRITICAL
+            # Compression disabled: memory content must stay intact for LLM usage.
+
+            # Process action_log entries into real memories
+            try:
+                _t = time.monotonic()
+                logger.info("phase_start: action_log")
+                action_stats = self._process_action_log()
+                stats["actions_processed"] = action_stats.get("processed", 0)
+                stats["action_memories_created"] = action_stats.get("memories_created", 0)
+                logger.info(
+                    "phase_end: action_log duration_ms=%d", int((time.monotonic() - _t) * 1000)
+                )
+            except Exception:
+                logger.exception("Action log processing failed")
+
+            # Run formal causal discovery (PC algorithm) periodically.
+            # v5.1 C1: placed after all memory-producing phases so counters are fully populated.
+            self._run_causal_discovery_phase(stats)
+
+            # Table retention prunes — each is non-fatal; logged at debug on error.
+            self._run_retention_tasks()
+
+            self._run_post_cycle_tasks(stats, start)
+            return stats
+        finally:
+            # PR-E: observe full cycle wall-clock even if a non-guarded phase raises
+            try:
+                from yadgar.metrics import yadgar_consolidation_duration_seconds  # noqa: PLC0415
+
+                yadgar_consolidation_duration_seconds.labels(phase="full_cycle").observe(
+                    time.monotonic() - _cycle_wall_t0
+                )
+            except Exception:
+                pass
+
+    def _run_post_cycle_tasks(self, stats: dict, start: float) -> None:
+        """Non-fatal post-consolidation tasks: invariant checks, vacuum, log, MTREE probe."""
+        # Run invariant checks — violations are logged CRITICAL
         try:
             from yadgar.server import _run_check_invariants
 
@@ -195,12 +218,7 @@ class _OrchestratorMixin:
         _t = time.monotonic()
         logger.info("phase_start: insert_consolidation_log")
         duration_ms = int((time.monotonic() - start) * 1000)
-        self._storage.insert_consolidation_log(
-            {
-                **stats,
-                "duration_ms": duration_ms,
-            }
-        )
+        self._storage.insert_consolidation_log({**stats, "duration_ms": duration_ms})
         logger.info(
             "phase_end: insert_consolidation_log duration_ms=%d",
             int((time.monotonic() - _t) * 1000),
@@ -222,5 +240,3 @@ class _OrchestratorMixin:
                     "until the container is restarted"
                 )
         logger.info("phase_end: mtree_probe duration_ms=%d", int((time.monotonic() - _t) * 1000))
-
-        return stats

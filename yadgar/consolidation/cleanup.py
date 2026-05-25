@@ -6,6 +6,16 @@ from datetime import datetime
 logger = logging.getLogger("yadgar.consolidation")
 
 
+def _observe_action_batch(n: int) -> None:
+    """Record action batch size metric. Silently no-ops if metrics unavailable."""
+    try:
+        from yadgar.metrics import yadgar_action_batch_size  # noqa: PLC0415
+
+        yadgar_action_batch_size.observe(n)
+    except Exception:
+        pass
+
+
 class _CleanupMixin:
     """Action log processing and retention-based table pruning."""
 
@@ -22,6 +32,9 @@ class _CleanupMixin:
             rows = self._storage.get_unprocessed_actions(limit=200)
         except Exception:
             return stats
+
+        # PR-E: observe batch size (including zero) into yadgar_action_batch_size
+        _observe_action_batch(len(rows))
 
         if not rows:
             return stats
