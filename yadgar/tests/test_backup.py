@@ -266,3 +266,172 @@ class TestEnvKnob:
 
         names = [e.name for e in list_config()]
         assert "YADGAR_BACKUP_RETENTION" in names
+
+
+# ---------------------------------------------------------------------------
+# Round-trip integrity: non-trivial nested structure
+# ---------------------------------------------------------------------------
+
+
+class TestRoundTripIntegrity:
+    """PR-7: verify create_snapshot copies byte-identical nested structures.
+
+    PR-6 tests confirmed snapshot creation and basic content copying.
+    These tests close the integrity gap: nested subdirs, empty dirs, empty
+    files, a large binary blob (~200 KB), and UTF-8 text must all survive the
+    copytree round-trip intact.
+
+    Symlink behavior: shutil.copytree(symlinks=False) (the default) dereferences
+    symlinks into regular files.  We include a symlink in the source and assert
+    only that the resolved content is present in the snapshot — not that link-ness
+    is preserved, since that is stdlib-documented behaviour, not a bug.
+
+    We do NOT assert mtime or directory permissions because copytree creates
+    snapshot directories at the current time (directory mtimes will diverge).
+    """
+
+    @staticmethod
+    def _build_complex_source(base: Path) -> Path:
+        """Create a non-trivial nested source directory tree."""
+        src = base / "complex_db"
+        src.mkdir()
+
+        # Nested subdirs
+        (src / "level1" / "level2").mkdir(parents=True)
+        (src / "level1" / "sibling").mkdir(parents=True)
+
+        # Empty directory
+        (src / "empty_dir").mkdir()
+
+        # Small text file
+        (src / "readme.txt").write_text("hello yadgar\nline two\n", encoding="utf-8")
+
+        # UTF-8 file with non-ASCII characters
+        (src / "unicode.txt").write_text(
+            "Привет мир — こんにちは — 你好世界 — 🎉\n", encoding="utf-8"
+        )
+
+        # Empty file
+        (src / "level1" / "empty_file.bin").write_bytes(b"")
+
+        # Small binary file in a subdir
+        (src / "level1" / "level2" / "data.kvs").write_bytes(bytes(range(256)) * 4)
+
+        # Large binary blob (~200 KB) — confirms copytree doesn't mangle raw bytes
+        large_blob = bytes((i % 251) for i in range(204_800))
+        (src / "level1" / "large_blob.bin").write_bytes(large_blob)
+
+        # Sibling subdir file
+        (src / "level1" / "sibling" / "notes.txt").write_text(
+            "surreal data\n" * 50, encoding="utf-8"
+        )
+
+        # Symlink — dereferenced by copytree; assert content not link-ness
+        link_target = src / "readme.txt"
+        symlink = src / "readme_link.txt"
+        symlink.symlink_to(link_target)
+
+        return src
+
+    def test_snapshot_contains_identical_relative_paths(self, tmp_path: Path) -> None:
+        """Every relative path in source (excluding symlinks) must exist in snapshot."""
+
+        from yadgar.backup import create_snapshot
+
+        src = self._build_complex_source(tmp_path)
+        snap = create_snapshot(src, snapshot_dir=tmp_path, label="rt-test")
+
+        src_paths = {p.relative_to(src) for p in src.rglob("*") if not p.is_symlink()}
+        snap_paths = {p.relative_to(snap) for p in snap.rglob("*")}
+
+        # All non-symlink source paths must be present in snapshot
+        missing = src_paths - snap_paths
+        assert not missing, f"Paths missing from snapshot: {sorted(missing)}"
+
+    def test_snapshot_file_contents_byte_identical(self, tmp_path: Path) -> None:
+        """Every non-symlink file in source must be byte-identical in snapshot."""
+        import filecmp
+        import hashlib
+
+        from yadgar.backup import create_snapshot
+
+        src = self._build_complex_source(tmp_path)
+        snap = create_snapshot(src, snapshot_dir=tmp_path, label="rt-test")
+
+        mismatches = []
+        for src_file in src.rglob("*"):
+            if src_file.is_symlink() or not src_file.is_file():
+                continue
+            rel = src_file.relative_to(src)
+            snap_file = snap / rel
+            if not snap_file.exists():
+                mismatches.append(f"MISSING: {rel}")
+                continue
+            if not filecmp.cmp(str(src_file), str(snap_file), shallow=False):
+                src_sha = hashlib.sha256(src_file.read_bytes()).hexdigest()[:12]
+                snap_sha = hashlib.sha256(snap_file.read_bytes()).hexdigest()[:12]
+                mismatches.append(f"CONTENT_DIFFERS: {rel} src={src_sha} snap={snap_sha}")
+
+        assert not mismatches, "Round-trip failures:\n" + "\n".join(mismatches)
+
+    def test_snapshot_large_binary_blob_integrity(self, tmp_path: Path) -> None:
+        """Large binary blob (~200 KB) must survive copytree byte-for-byte."""
+        import hashlib
+
+        from yadgar.backup import create_snapshot
+
+        src = self._build_complex_source(tmp_path)
+        snap = create_snapshot(src, snapshot_dir=tmp_path, label="rt-test")
+
+        src_blob = src / "level1" / "large_blob.bin"
+        snap_blob = snap / "level1" / "large_blob.bin"
+
+        assert snap_blob.exists(), "Large blob missing from snapshot"
+        assert snap_blob.stat().st_size == src_blob.stat().st_size, (
+            f"Size mismatch: src={src_blob.stat().st_size} snap={snap_blob.stat().st_size}"
+        )
+        src_sha = hashlib.sha256(src_blob.read_bytes()).hexdigest()
+        snap_sha = hashlib.sha256(snap_blob.read_bytes()).hexdigest()
+        assert src_sha == snap_sha, f"SHA256 mismatch: src={src_sha} snap={snap_sha}"
+
+    def test_snapshot_empty_directory_preserved(self, tmp_path: Path) -> None:
+        """Empty directories in source must be present in snapshot."""
+        from yadgar.backup import create_snapshot
+
+        src = self._build_complex_source(tmp_path)
+        snap = create_snapshot(src, snapshot_dir=tmp_path, label="rt-test")
+
+        empty_dir_in_snap = snap / "empty_dir"
+        assert empty_dir_in_snap.exists(), "empty_dir missing from snapshot"
+        assert empty_dir_in_snap.is_dir(), "empty_dir must be a directory in snapshot"
+        assert not any(empty_dir_in_snap.iterdir()), "empty_dir must remain empty in snapshot"
+
+    def test_snapshot_symlink_content_dereferenced(self, tmp_path: Path) -> None:
+        """Symlink in source is dereferenced: snapshot contains a regular file with linked content."""
+        from yadgar.backup import create_snapshot
+
+        src = self._build_complex_source(tmp_path)
+        snap = create_snapshot(src, snapshot_dir=tmp_path, label="rt-test")
+
+        snap_link = snap / "readme_link.txt"
+        assert snap_link.exists(), "Symlink target content must exist in snapshot"
+        # copytree dereferences by default — must be a regular file, not a link
+        assert not snap_link.is_symlink(), "Symlink must be dereferenced to regular file"
+        expected = (src / "readme.txt").read_bytes()
+        assert snap_link.read_bytes() == expected, (
+            "Dereferenced symlink content must match original"
+        )
+
+    def test_snapshot_utf8_text_not_mangled(self, tmp_path: Path) -> None:
+        """UTF-8 text file with non-ASCII content must survive copytree byte-identical."""
+        from yadgar.backup import create_snapshot
+
+        src = self._build_complex_source(tmp_path)
+        snap = create_snapshot(src, snapshot_dir=tmp_path, label="rt-test")
+
+        src_utf8 = src / "unicode.txt"
+        snap_utf8 = snap / "unicode.txt"
+        assert snap_utf8.exists(), "unicode.txt missing from snapshot"
+        assert snap_utf8.read_bytes() == src_utf8.read_bytes(), (
+            "UTF-8 file must be byte-identical in snapshot"
+        )
