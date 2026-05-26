@@ -59,6 +59,29 @@ def _lifecycle_span(name: str):
         return contextlib.nullcontext()
 
 
+# ── PR-I: loop telemetry helpers ────────────────────────────────────────
+
+
+def _lc_heartbeat(loop: str) -> None:
+    """PR-I: set loop heartbeat gauge. Never raises."""
+    try:
+        from yadgar.metrics import loop_heartbeat  # noqa: PLC0415
+
+        loop_heartbeat(loop)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _lc_record_exc(loop: str, exc: BaseException) -> None:
+    """PR-I: increment loop error counter. Never raises."""
+    try:
+        from yadgar.metrics import loop_record_exception  # noqa: PLC0415
+
+        loop_record_exception(loop, exc)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 # ── Getters ────────────────────────────────────────────────────────────
 
 
@@ -270,13 +293,14 @@ def init_engines(
         # Idle reranker unloader — frees ~500MB after 10 min of no recall activity
         def _reranker_idle_thread() -> None:
             while True:
+                _lc_heartbeat("model_unload")  # PR-I: heartbeat at top of every iteration
                 time.sleep(60)
                 try:
                     with _lifecycle_span("lifecycle.reranker_idle_check"):
                         if _st._retriever is not None:
                             _st._retriever.unload_rerankers_if_idle(idle_seconds=600.0)
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    _lc_record_exc("model_unload", _exc)  # PR-I: loop error counter
 
         threading.Thread(target=_reranker_idle_thread, daemon=True).start()
 

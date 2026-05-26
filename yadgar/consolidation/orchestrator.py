@@ -8,12 +8,34 @@ from yadgar.tracing import trace_span
 
 logger = logging.getLogger("yadgar.consolidation")
 
+# PR-I: lazy import helpers (avoids circular import at module load time)
+
+
+def _loop_hb(loop: str) -> None:
+    try:
+        from yadgar.metrics import loop_heartbeat  # noqa: PLC0415
+
+        loop_heartbeat(loop)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _loop_exc(loop: str, exc: BaseException) -> None:
+    try:
+        from yadgar.metrics import loop_record_exception  # noqa: PLC0415
+
+        loop_record_exception(loop, exc)
+    except Exception:  # noqa: BLE001
+        pass
+
 
 class _OrchestratorMixin:
     """Main consolidation cycle orchestrator and daemon loop."""
 
     def _daemon_loop(self) -> None:
         while not self._stop_event.is_set():
+            # PR-I: heartbeat — set at top of every iteration
+            _loop_hb("consolidation_daemon")
             self._stop_event.wait(timeout=self._settings.DAEMON_CHECK_INTERVAL)
             if self._stop_event.is_set():
                 break
@@ -44,6 +66,7 @@ class _OrchestratorMixin:
                             from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
 
                             record_exception("consolidation.idle_cycle", _exc)
+                            _loop_exc("consolidation_daemon", _exc)
                             logger.exception("Idle consolidation cycle failed")
                         finally:
                             self._last_cycle_completed_at = datetime.now(UTC)
@@ -58,6 +81,7 @@ class _OrchestratorMixin:
                     from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
 
                     record_exception("consolidation.daily_cycle", _exc)
+                    _loop_exc("consolidation_daemon", _exc)
                     logger.exception("Consolidation cycle failed")
                 finally:
                     self._last_cycle_completed_at = datetime.now(UTC)
