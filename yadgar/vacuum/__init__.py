@@ -396,6 +396,18 @@ def _vacuum_finalize(
         )
         return False
 
+    # Wait up to 30s for API layer readiness before check_invariants.
+    # The 180s wait above confirms /health=200 (process up), but API routes
+    # (/api/check_invariants) may not be registered yet — this short window
+    # closes that gap.  PR-2's warn-only handling is the fallback.
+    print(f"[vacuum] waiting up to 30s for {yadgar_url}/health (API readiness) ...", flush=True)
+    if not _wait_for_yadgar_health(yadgar_url, timeout_s=30.0):
+        print(
+            "[vacuum] WARNING: core /health not ready after 30s — "
+            "proceeding to check_invariants anyway",
+            file=sys.stderr,
+        )
+
     # Run check_invariants
     _ci_token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
     if not _ci_token:
@@ -420,8 +432,8 @@ def _vacuum_finalize(
             # Non-2xx (e.g. 404 when core hasn't finished booting post-restart)
             # or 200 with ok=false: log a warning but do NOT fail the vacuum.
             # The vacuum operation itself succeeded; post-flight verification is
-            # informational.  PR-3 will add a 30-second readiness wait so the
-            # 404 stops occurring in practice.
+            # informational.  The 30s readiness wait above reduces the probability
+            # of this branch, but the warn-only path remains as the safety net.
             body = ci_resp.text[:300] if ci_resp.status_code != 200 else str(ci_resp.json())
             print(
                 f"[vacuum] WARNING: check_invariants returned non-ok "
@@ -432,7 +444,8 @@ def _vacuum_finalize(
             )
     except Exception as exc:
         # Connection-refused / timeout: core hasn't finished booting yet.
-        # Warn-only — vacuum itself succeeded.  PR-3 adds the readiness wait.
+        # Warn-only — vacuum itself succeeded.  The 30s readiness wait above
+        # reduces the probability of this branch; this path is the safety net.
         print(
             f"[vacuum] WARNING: check_invariants request failed: {exc} "
             f"— core may not be fully ready post-restart; "
