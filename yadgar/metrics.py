@@ -460,6 +460,24 @@ yadgar_config_value = Gauge(
     registry=_registry,
 )
 
+# ── v5.6.7 PR-K — Hook handler execution metrics ─────────────────────────────
+
+yadgar_hook_execution_duration_ms = Histogram(
+    "yadgar_hook_execution_duration_ms",
+    "Wall-clock execution duration of HTTP hook handlers in milliseconds",
+    ["hook"],
+    buckets=(1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000),
+    registry=_registry,
+)
+
+yadgar_hook_failure_total = Counter(
+    "yadgar_hook_failure_total",
+    "Total hook handler failures by hook name and failure reason "
+    "(reason = exception class name or HTTP status code string)",
+    ["hook", "reason"],
+    registry=_registry,
+)
+
 # ── v5.6.7 PR-H — Exception telemetry ────────────────────────────────────────
 
 yadgar_exception_total = Counter(
@@ -509,6 +527,41 @@ def loop_heartbeat(loop: str) -> None:
         yadgar_loop_last_run_unix_timestamp.labels(loop=loop).set(time.time())
     except Exception:  # noqa: BLE001
         pass
+
+
+def hook_record_failure(
+    hook: str,
+    *,
+    exc: BaseException | None = None,
+    reason: str | None = None,
+    status_code: int | None = None,
+) -> None:
+    """Increment yadgar_hook_failure_total{hook, reason} and delegate to PR-H global counter.
+
+    Priority for reason label:
+      1. `reason` kwarg (explicit string)
+      2. exc.__class__.__name__ if exc given
+      3. str(status_code) if status_code >= 500
+    Never raises — telemetry must not compound caller failures.
+    """
+    try:
+        if reason is None:
+            if exc is not None:
+                reason = exc.__class__.__name__
+            elif status_code is not None and status_code >= 500:
+                reason = str(status_code)
+            else:
+                reason = "unknown"
+        yadgar_hook_failure_total.labels(hook=hook, reason=reason).inc()
+    except Exception:  # noqa: BLE001
+        pass
+    if exc is not None:
+        try:
+            from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+            record_exception(f"hook.{hook}", exc)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def loop_record_exception(loop: str, exc: BaseException) -> None:
