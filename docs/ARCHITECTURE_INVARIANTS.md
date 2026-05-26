@@ -5,7 +5,7 @@ Mirrored in wiki: `yadgar-architectural-invariants`.
 Anchored memory: project-scoped, `/home/max/git/yadgar`.
 Version-execution-order lives in the `yadgar-roadmap-future-improvements` wiki.
 
-Last updated: 2026-05-22 (V1a backend /metrics shipped — v5.5.0; V1b/V1c/V1d unblocked).
+Last updated: 2026-05-26 (I23 dead-metric lint added — v5.6.7 PR-L).
 
 ---
 
@@ -198,6 +198,33 @@ Bearer-token auth on yadgar APIs authenticates inside the host-user trust bounda
 **Banned regressions:**
 - Changing any listener bind address from `127.0.0.1` to `0.0.0.0` or `::` without TLS + token rotation.
 - Exposing yadgar ports via reverse proxy or tunnel without per-connection TLS.
+
+### I23 — Declared metric MUST have ≥1 writer (v5.6.7)
+
+Every Prometheus metric declared via `Gauge`, `Counter`, `Histogram`, or `Summary` in
+`yadgar/metrics.py` or `yadgar/embed_service_metrics.py` MUST have at least one
+writer call site (`.set()`, `.inc()`, `.observe()`, or `.labels(...).set/inc/observe()`)
+elsewhere in `yadgar/` (excluding `yadgar/tests/`).
+
+**Enforcement:** `scripts/check_metric_writers.py` — AST-parses declaration files,
+text-scans all non-test Python files under `yadgar/` for writer patterns and indirect
+references. Invoked from pre-commit and CI (`test` job). Exit code 1 if any declared
+metric has zero writers. Escape hatch: `--allowlist var1,var2` for legitimate
+placeholder metrics awaiting infrastructure.
+
+**Why:** 2026-05-24 audit found 34 declared metrics with zero writers across v5.4–v5.6.
+Dead metrics mislead Grafana operators (panel exists, no data) and indicate incomplete
+wiring of observability features. This invariant prevents regressions of v5.4 P11's
+original wiring requirement.
+
+**Banned regressions:**
+- Declaring a new `Gauge`/`Counter`/`Histogram`/`Summary` without a corresponding writer
+  call site in the same PR.
+- Suppressing the lint (`--allowlist`) without a comment explaining the placeholder
+  and a v5.7.x follow-up tag.
+
+History: introduced in v5.6.7 after the 2026-05-24 audit. See `yadgar-roadmap-future-improvements`
+wiki PR-L section.
 
 ### Deferred (codify only when violations surface)
 
@@ -559,6 +586,7 @@ Post-v5.3.9 `BindsTo → Wants` decouple, core + backend run as independent daem
 - 2026-05-22: v5.5.1 log rotation plan drafted (`docs/PLAN_v5_5_1_log_management.md`) — dual-sink (stdout+rotating file), 500 MB default cap, I3/I12/I13/I14 compliant. Awaiting human answers to 4 open questions before implementation dispatch.
 - 2026-05-22: v5.5.1 log rotation + rate limiter shipped. Dual-sink (stdout+rotating file), 500 MB cap/daemon, `RateLimitFilter` token-bucket at 10/s burst 50 (default ON), Option A env resolution (`YADGAR_BACKEND_LOG_*` override), 3 new metrics (rotations_total/file_size_bytes/dropped_total), 15 tests. Core 5.5.0→5.5.1; backend 5.1.0→5.1.1. Operator pre-deploy: `mkdir -p ~/.yadgar/logs`.
 - 2026-05-22: v5.5.2 shipped — backend log_* metric wiring fix. `_ensure_metrics()` in `RotatingJSONLFileHandler` and `RateLimitFilter` hardcoded `yadgar.metrics` import; backend's isolated `embed_service_metrics` registry was never updated. Fixed via DI (`metrics_module=` kwarg) + `_resolve_metrics_module(process)` helper in install path. Core 5.5.1→5.5.2; backend 5.1.1→5.1.2.
+- 2026-05-26: I23 added (v5.6.7 PR-L FINAL) — declared-metric-must-have-writer invariant + `scripts/check_metric_writers.py` AST lint. Live codebase passes at this commit: 63 metrics declared across `metrics.py` + `embed_service_metrics.py`, all have ≥1 writer or are detected via helper wrapper functions in the same file. Pre-commit hook and CI step added.
 
 ---
 
