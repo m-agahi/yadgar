@@ -1,8 +1,13 @@
-"""Astrocyte consolidation engine — background daemon that processes memories during idle time."""
+"""Astrocyte consolidation engine — processes memories on explicit invocation.
+
+v5.7.0 PR-0: background daemon (periodic auto-consolidation) removed.
+Consolidation runs via force_consolidate() (MCP consolidate_now) or the
+nightly cron (PR-1). record_activity() is kept as a no-op for HTTP/MCP
+callers that still call it.
+"""
 
 import logging
 import subprocess as _subprocess
-import threading
 from datetime import UTC, datetime
 
 from yadgar.cls_store import DualStoreCLS
@@ -110,10 +115,11 @@ class ConsolidationScheduler(
         self._last_consolidation_date = None
         self._last_cycle_completed_at: datetime = datetime.fromtimestamp(0, UTC)
 
+        # last_activity / is_running kept as inert attributes: HTTP/MCP handlers
+        # still call record_activity(); test_vacuum_auto_trigger sets is_running.
+        # The daemon thread and stop_event are gone (v5.7.0 PR-0).
         self.last_activity: datetime = datetime.now(UTC)
         self.is_running: bool = False
-        self._thread: threading.Thread | None = None
-        self._stop_event = threading.Event()
         self._last_consolidated_episode_id: int = 0
 
         # Initialize causal discovery engine
@@ -139,25 +145,8 @@ class ConsolidationScheduler(
 
     # -- Public API --
 
-    def start(self) -> None:
-        if self.is_running:
-            return
-        self._stop_event.clear()
-        self._last_consolidated_episode_id = self._storage.get_max_episode_id()
-        self._thread = threading.Thread(target=self._daemon_loop, daemon=True)
-        self.is_running = True
-        self._thread.start()
-        logger.info("Astrocyte daemon started")
-
-    def stop(self) -> None:
-        self._stop_event.set()
-        if self._thread is not None:
-            self._thread.join(timeout=10)
-        self.is_running = False
-        self._thread = None
-        logger.info("Astrocyte daemon stopped")
-
     def record_activity(self) -> None:
+        """No-op kept for HTTP/MCP callers (v5.7.0 PR-0: daemon removed)."""
         self.last_activity = datetime.now(UTC)
 
     def force_consolidate(self) -> dict:
