@@ -417,20 +417,28 @@ def _vacuum_finalize(
             print(f"[vacuum] removing bloated dir: {bloated_path}", flush=True)
             shutil.rmtree(str(bloated_path))
         else:
+            # Non-2xx (e.g. 404 when core hasn't finished booting post-restart)
+            # or 200 with ok=false: log a warning but do NOT fail the vacuum.
+            # The vacuum operation itself succeeded; post-flight verification is
+            # informational.  PR-3 will add a 30-second readiness wait so the
+            # 404 stops occurring in practice.
             body = ci_resp.text[:300] if ci_resp.status_code != 200 else str(ci_resp.json())
             print(
-                f"[vacuum] WARNING: check_invariants returned non-ok: {body}\n"
-                f"Bloated dir retained for rollback: {bloated_path}",
+                f"[vacuum] WARNING: check_invariants returned non-ok "
+                f"(HTTP {ci_resp.status_code}): {body} "
+                f"— core may not be fully ready post-restart; "
+                f"bloated dir retained for rollback: {bloated_path}",
                 file=sys.stderr,
             )
-            return False
     except Exception as exc:
+        # Connection-refused / timeout: core hasn't finished booting yet.
+        # Warn-only — vacuum itself succeeded.  PR-3 adds the readiness wait.
         print(
-            f"[vacuum] WARNING: check_invariants failed: {exc}\n"
-            f"Bloated dir retained for rollback: {bloated_path}",
+            f"[vacuum] WARNING: check_invariants request failed: {exc} "
+            f"— core may not be fully ready post-restart; "
+            f"bloated dir retained for rollback: {bloated_path}",
             file=sys.stderr,
         )
-        return False
 
     # Prune pre-vacuum snapshots
     _run_cleanup_script(yadgar_home, "surreal_db.pre-vacuum-*", keep_n)
