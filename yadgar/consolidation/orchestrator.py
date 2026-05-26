@@ -1,4 +1,10 @@
-"""Orchestrator mixin — consolidation cycle, daemon loop, and sleep cycle."""
+"""Orchestrator mixin — consolidation cycle and sleep cycle.
+
+v5.7.0 PR-0: _daemon_loop (idle-triggered + daily 18:30 auto-consolidation)
+removed. Consolidation now runs only when explicitly invoked via force_consolidate()
+(MCP consolidate_now), or by the nightly cron (PR-1). The _maybe_sleep_cycle
+helper is preserved for PR-1 to wire into the cron.
+"""
 
 import logging
 import time
@@ -8,84 +14,9 @@ from yadgar.tracing import trace_span
 
 logger = logging.getLogger("yadgar.consolidation")
 
-# PR-I: lazy import helpers (avoids circular import at module load time)
-
-
-def _loop_hb(loop: str) -> None:
-    try:
-        from yadgar.metrics import loop_heartbeat  # noqa: PLC0415
-
-        loop_heartbeat(loop)
-    except Exception:  # noqa: BLE001
-        pass
-
-
-def _loop_exc(loop: str, exc: BaseException) -> None:
-    try:
-        from yadgar.metrics import loop_record_exception  # noqa: PLC0415
-
-        loop_record_exception(loop, exc)
-    except Exception:  # noqa: BLE001
-        pass
-
 
 class _OrchestratorMixin:
-    """Main consolidation cycle orchestrator and daemon loop."""
-
-    def _daemon_loop(self) -> None:
-        while not self._stop_event.is_set():
-            # PR-I: heartbeat — set at top of every iteration
-            _loop_hb("consolidation_daemon")
-            self._stop_event.wait(timeout=self._settings.DAEMON_CHECK_INTERVAL)
-            if self._stop_event.is_set():
-                break
-            now = datetime.now(UTC)
-            today = now.date()
-
-            # Cooldown gate for idle-triggered cycles. last_activity is only reset
-            # by external API hits, so after a cycle completes idle_seconds is still
-            # >= IDLE_THRESHOLD_SECONDS and the next wake-up would immediately fire
-            # again. _last_cycle_completed_at prevents that.
-            cooldown = self._settings.CONSOLIDATION_COOLDOWN_SECONDS
-            since_last_cycle = (now - self._last_cycle_completed_at).total_seconds()
-            if cooldown > 0 and since_last_cycle < cooldown:
-                # Still within cooldown window — skip idle check, fall through to
-                # the daily 18:30 UTC block which is time-gated independently.
-                pass
-            else:
-                # Idle-triggered consolidation: process new episodes when system is idle
-                idle_seconds = (now - self.last_activity).total_seconds()
-                if idle_seconds >= self._settings.IDLE_THRESHOLD_SECONDS:
-                    new_episodes = self._storage.get_episodes_since(
-                        self._last_consolidated_episode_id
-                    )
-                    if new_episodes:
-                        try:
-                            self._consolidation_cycle()
-                        except Exception as _exc:
-                            from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
-
-                            record_exception("consolidation.idle_cycle", _exc)
-                            _loop_exc("consolidation_daemon", _exc)
-                            logger.exception("Idle consolidation cycle failed")
-                        finally:
-                            self._last_cycle_completed_at = datetime.now(UTC)
-
-            # Run once per day at or after 18:30 UTC
-            # T-0016: use >= so a long DAEMON_CHECK_INTERVAL can't skip the window
-            if (now.hour, now.minute) >= (18, 30) and self._last_consolidation_date != today:
-                try:
-                    self._consolidation_cycle()
-                    self._last_consolidation_date = today
-                except Exception as _exc:
-                    from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
-
-                    record_exception("consolidation.daily_cycle", _exc)
-                    _loop_exc("consolidation_daemon", _exc)
-                    logger.exception("Consolidation cycle failed")
-                finally:
-                    self._last_cycle_completed_at = datetime.now(UTC)
-                self._maybe_sleep_cycle()
+    """Main consolidation cycle orchestrator."""
 
     def _maybe_sleep_cycle(self) -> None:
         """Run a full sleep cycle if at least 6 hours since the last one."""
