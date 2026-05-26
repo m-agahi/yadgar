@@ -140,6 +140,8 @@ _REGISTRY: list[ConfigEntry] = [
     # ── Backend URLs ─────────────────────────────────────────────────────────
     ConfigEntry("YADGAR_BACKEND_EMBED_URL", "", "string"),
     ConfigEntry("YADGAR_BACKEND_METRICS_URL", "", "string"),
+    # ── Backup retention ─────────────────────────────────────────────────────
+    ConfigEntry("YADGAR_BACKUP_RETENTION", "3", "int"),
     # ── Vacuum trigger file ──────────────────────────────────────────────────
     ConfigEntry("YADGAR_VACUUM_TRIGGER_PATH", "/data/triggers/vacuum_requested", "string"),
     # ── Vacuum / DB credentials ──────────────────────────────────────────────
