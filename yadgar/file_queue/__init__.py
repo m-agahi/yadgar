@@ -116,6 +116,9 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
                 with _drainer_span():
                     self._drain_once()
             except Exception as exc:
+                from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+                record_exception("file_queue.drainer", exc)
                 logger.warning("Queue drain error: %s", exc)
             self._stop_event.wait(timeout=self._drain_interval)
 
