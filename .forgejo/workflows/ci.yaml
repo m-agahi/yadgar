@@ -96,6 +96,9 @@ jobs:
         # worker ordering. Retry twice before counting a failure.
         run: python -m pytest yadgar/tests/ -q --tb=short -n auto --reruns 2 --reruns-delay 2
 
+      - name: Check I23 — declared metrics must have writers
+        run: python scripts/check_metric_writers.py
+
   publish:
     needs: test
     runs-on: ubuntu-latest
