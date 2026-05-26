@@ -52,6 +52,13 @@ repos:
         exclude: "^benchmarks/"
         pass_filenames: true
 
+      - id: check-metric-writers
+        name: Check that declared Prometheus metrics have writers (I23)
+        language: system
+        entry: python scripts/check_metric_writers.py
+        pass_filenames: false
+        files: ^yadgar/.*\.py$
+
   - repo: local
     hooks:
       - id: check-image-size-backend
