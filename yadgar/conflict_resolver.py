@@ -194,10 +194,16 @@ def resolve_conflict(candidate: dict) -> dict[str, Any]:
         )
         return _result
     except httpx.TimeoutException as exc:
+        from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+        record_exception("conflict_resolver.llm_call", exc)
         _log.warning("conflict_resolver: Ollama timeout (%s) — degrading to ADD", exc)
         _result = {"op": "ADD", "target_id": None, "reason": "ollama_timeout"}
         return _result
     except Exception as exc:
+        from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+        record_exception("conflict_resolver.llm_call", exc)
         _log.warning("conflict_resolver: error (%s) — degrading to ADD", exc)
         _result = {"op": "ADD", "target_id": None, "reason": f"resolver_error: {exc}"}
         return _result

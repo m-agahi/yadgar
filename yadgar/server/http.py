@@ -530,7 +530,10 @@ async def _handle_team_inbox(file_path: str, match, storage) -> JSONResponse:
             continue
         try:
             msg = json.loads(raw_line)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as _jde:
+            from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+            record_exception("server.http.team_inbox", _jde)
             logger.warning("team_inbox malformed JSONL in %s — skipping line", file_path)
             skipped += 1
             continue

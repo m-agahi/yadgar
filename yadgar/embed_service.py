@@ -192,7 +192,10 @@ async def lifespan(app: FastAPI):
         )
 
         _HCI().instrument()
-    except Exception:
+    except Exception as _otel_exc:
+        from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+        record_exception("embed_service.otel_setup", _otel_exc)
         pass  # OTel not available — no-op
 
     # Load model eagerly so /health reflects true readiness
