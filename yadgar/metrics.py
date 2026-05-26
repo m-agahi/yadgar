@@ -457,6 +457,15 @@ yadgar_config_value = Gauge(
     registry=_registry,
 )
 
+# ── v5.6.7 PR-H — Exception telemetry ────────────────────────────────────────
+
+yadgar_exception_total = Counter(
+    "yadgar_exception_total",
+    "Total swallowed or near-silent exceptions by handler location and exception type",
+    ["location", "error_type"],
+    registry=_registry,
+)
+
 
 def _is_metrics_enabled() -> bool:
     """Return True when YADGAR_METRICS_ENABLED is truthy (default: True)."""
