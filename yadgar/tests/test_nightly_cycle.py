@@ -509,6 +509,34 @@ class TestVacuumFailure:
         assert len(snap_calls) == 2, f"Expected pre + post snapshots, got: {snap_calls}"
         mock_prune.assert_called_once()
 
+    def test_vacuum_exit_code_2_treated_as_success(self, tmp_path: Path) -> None:
+        """cmd_vacuum_impl exit code 2 (succeeded, warn-only invariants) must not fail the cycle."""
+        mod = _import_module()
+
+        mock_sched = MagicMock()
+        mock_sched.force_consolidate.return_value = {"merged": 0}
+
+        db_dir = tmp_path / "surreal_db"
+        db_dir.mkdir()
+        args = _make_args(db_path=str(db_dir))
+
+        with patch.multiple(
+            _MODULE,
+            _run_systemctl=MagicMock(),
+            create_snapshot=MagicMock(return_value=tmp_path / "snap"),
+            prune_snapshots=MagicMock(return_value=[]),
+            cmd_vacuum_impl=MagicMock(return_value=2),  # degraded-success: warn-only invariants
+            StorageEngine=MagicMock(return_value=MagicMock()),
+            ConsolidationScheduler=MagicMock(return_value=mock_sched),
+            EmbeddingEngine=MagicMock(return_value=MagicMock()),
+            Settings=MagicMock(return_value=SimpleNamespace(DB_PATH=str(db_dir))),
+            configure_logging=MagicMock(),
+            default_retention=MagicMock(return_value=3),
+        ):
+            code = mod.main(args)
+
+        assert code == 0, f"Exit code 2 from vacuum must yield overall exit 0, got {code}"
+
     def test_vacuum_failure_post_backup_uses_nightly_post_label(self, tmp_path: Path) -> None:
         mod = _import_module()
 
