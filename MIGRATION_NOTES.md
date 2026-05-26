@@ -1258,3 +1258,42 @@ for a stale trigger file at `/data/triggers/vacuum_requested` as a diagnostic si
 early on `FileNotFoundError`.  This means the auto-vacuum trigger (via `ConsolidationScheduler`)
 is still skipped in containerized deploys — it calls `_fire_vacuum_service` but only after a
 systemctl check that fails first.  Fixing the consolidation pre-check is out of scope for PR-4.
+
+---
+
+## v5.7.0 PR-5 — VACUUM_AUTO_THRESHOLD_BYTES is an emergency backstop (docs-only) (2026-05-26)
+
+### Mental model change
+
+Before v5.7.0 `VACUUM_AUTO_THRESHOLD_BYTES` was the **primary** vacuum trigger: vacuum fired when
+the DB grew beyond the threshold inside the configured time window.  This was also the only
+scheduled path; `vacuum_now()` existed for manual one-offs.
+
+From v5.7.0, a **nightly cron at 19:00 UTC** (`yadgar-vacuum.timer`, shipping in PR-1a/1b) becomes
+the primary trigger.  It runs unconditionally — DB size does not matter.
+
+The threshold-driven path in `ConsolidationScheduler._maybe_auto_vacuum()` now plays a **narrower,
+emergency-only role**: it catches runaway DB growth that happens between nightly cron cycles (e.g.
+a bulk import that pushes the DB past 2 GiB at 22:00).  The per-day cooldown in that function
+prevents double-fires on days when both cron and the threshold would trigger.
+
+### Trigger precedence summary (v5.7.0+)
+
+1. **Primary** — nightly cron at 19:00 UTC (`yadgar-vacuum.timer`).  Unconditional.
+2. **Emergency backstop** — `VACUUM_AUTO_THRESHOLD_BYTES` (default 2 GiB) + window guard in
+   `_maybe_auto_vacuum()`.  Fires only between cron cycles when DB exceeds the threshold.
+3. **Manual** — `vacuum_now()` MCP tool writes a trigger file (see PR-4 above).
+
+### No config migration required
+
+All four `VACUUM_AUTO_*` knobs remain unchanged and functional:
+
+| Knob | Default | Role |
+|---|---|---|
+| `VACUUM_AUTO_ENABLED` | `True` | Enable/disable the backstop path entirely. |
+| `VACUUM_AUTO_THRESHOLD_BYTES` | `2147483648` (2 GiB) | DB size that arms the backstop. |
+| `VACUUM_AUTO_WINDOW_START` | `19:00` | Backstop fires only after this local time. |
+| `VACUUM_AUTO_WINDOW_END` | `23:00` | Backstop fires only before this local time. |
+
+Existing deployments keep working without any env-var changes.  The only observable difference is
+that vacuum will also fire at 19:00 UTC once `yadgar-vacuum.timer` is deployed (PR-1a/1b).

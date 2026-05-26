@@ -283,6 +283,18 @@ Key v5 vars (full reference in [docs/configuration.md](docs/configuration.md)):
 | `YADGAR_LOG_FORMAT` | `human` | Set `json` for structured logs. |
 | `YADGAR_MODEL_IDLE_EVICTION_SECONDS` | `0` | See below. |
 
+### Vacuum trigger precedence (`VACUUM_AUTO_*`)
+
+From v5.7.0, three trigger paths exist and fire in the following order of priority:
+
+| Priority | Trigger | Knob |
+|---|---|---|
+| 1 — primary | Nightly cron at 19:00 UTC (`yadgar-vacuum.timer`, ships in PR-1a/1b). Runs unconditionally. | — (always on) |
+| 2 — backstop | Threshold path in `ConsolidationScheduler._maybe_auto_vacuum()`. Fires only when DB size exceeds `VACUUM_AUTO_THRESHOLD_BYTES` and local time is within [`VACUUM_AUTO_WINDOW_START`, `VACUUM_AUTO_WINDOW_END`). Role: catch runaway growth between cron cycles. | `YADGAR_VACUUM_AUTO_ENABLED`, `YADGAR_VACUUM_AUTO_THRESHOLD_BYTES` |
+| 3 — manual | `vacuum_now()` MCP tool. Writes a trigger file; host systemd path-watch unit starts `yadgar-vacuum.service`. | `YADGAR_VACUUM_TRIGGER_PATH` |
+
+`VACUUM_AUTO_THRESHOLD_BYTES` (default 2 GiB) is an **emergency backstop**, not the primary vacuum driver. The per-day cooldown in `_maybe_auto_vacuum()` prevents double-fires when both cron and the threshold would fire on the same day.
+
 ### Model idle eviction (`YADGAR_MODEL_IDLE_EVICTION_SECONDS`)
 
 Controls whether heavy ML models (CE / NLI / pair) are unloaded from RAM after a period of inactivity.
