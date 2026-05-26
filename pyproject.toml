@@ -63,6 +63,7 @@ dependencies = [
 
 [project.scripts]
 yadgar = "yadgar.__main__:cli"
+yadgar-nightly-cycle = "yadgar.scripts.nightly_cycle:main"
 
 [project.urls]
 Homepage = "https://codeberg.org/maxagahi/yadgar"
