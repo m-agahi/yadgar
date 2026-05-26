@@ -941,6 +941,16 @@ async def _make_event_stream(request: Request):
         _sse_g = None  # type: ignore[assignment]
     try:
         while True:
+            # PR-I: heartbeat (Option A) — shared gauge updated by most-recent active client.
+            # Per-client heartbeat would explode label cardinality; single label tracks that
+            # at least one SSE client iteration is alive.
+            try:
+                from yadgar.metrics import loop_heartbeat as _lhb  # noqa: PLC0415
+
+                _lhb("sse_event_stream")
+            except Exception:  # noqa: BLE001
+                pass
+
             # Exit cleanly if the client disconnected before we yield anything.
             if await request.is_disconnected():
                 logger.debug("SSE client %s disconnected; closing stream", client_id)

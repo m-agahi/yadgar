@@ -14,11 +14,14 @@ Collectors:
 - yadgar_tool_token_estimate_total{tool}  Counter — estimated tokens returned per tool call
 - yadgar_cache_hit_total{cache}    Counter — cache hits by cache name
 - yadgar_cache_miss_total{cache}   Counter — cache misses by cache name
+- yadgar_loop_last_run_unix_timestamp{loop}  Gauge   — unix timestamp of last loop iteration start
+- yadgar_loop_errors_total{loop,error_type}  Counter — exceptions caught in each background loop
 """
 
 from __future__ import annotations
 
 import os
+import time
 from typing import TYPE_CHECKING
 
 from prometheus_client import (
@@ -465,6 +468,65 @@ yadgar_exception_total = Counter(
     ["location", "error_type"],
     registry=_registry,
 )
+
+# ── v5.6.7 PR-I — Background loop heartbeat gauges + error counters ──────────
+
+yadgar_loop_last_run_unix_timestamp = Gauge(
+    "yadgar_loop_last_run_unix_timestamp",
+    "Unix timestamp of the most-recent iteration start for each background loop. "
+    "Stale value (older than expected interval) indicates a hung or dead loop.",
+    ["loop"],
+    registry=_registry,
+)
+
+yadgar_loop_errors_total = Counter(
+    "yadgar_loop_errors_total",
+    "Total exceptions caught in each background loop body",
+    ["loop", "error_type"],
+    registry=_registry,
+)
+
+# Stable, bounded set of loop label values (8 loops audited; 2 are not standalone while-True).
+# Active labels:
+#   metrics_sampler          — graph_api.py sample_system_metrics (lifecycle.py thread)
+#   consolidation_daemon     — consolidation/orchestrator.py _daemon_loop
+#   queue_drainer            — file_queue QueueDrainer.run
+#   viz_health_scraper       — viz_daemon_health.py run_health_scraper
+#   sse_event_stream         — server/http.py _make_event_stream (Option A: shared gauge)
+#   model_unload             — server/lifecycle.py _reranker_idle_thread
+# Skipped (not standalone while-True loops):
+#   consolidation_idle_check — branch inside _daemon_loop, not its own loop
+#   consolidation_sleep_cycle — one-shot _maybe_sleep_cycle(), not a while-True
+
+
+def loop_heartbeat(loop: str) -> None:
+    """Set the last-run gauge for a background loop.
+
+    Call at the TOP of each loop iteration.
+    Never raises — telemetry failures must not compound caller failures.
+    """
+    try:
+        yadgar_loop_last_run_unix_timestamp.labels(loop=loop).set(time.time())
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def loop_record_exception(loop: str, exc: BaseException) -> None:
+    """Increment loop-scoped error counter + delegate to PR-H global counter.
+
+    Call in the catch-all except of each background loop.
+    Never raises — telemetry failures must not compound caller failures.
+    """
+    try:
+        yadgar_loop_errors_total.labels(loop=loop, error_type=exc.__class__.__name__).inc()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+        record_exception(f"loop.{loop}", exc)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _is_metrics_enabled() -> bool:
