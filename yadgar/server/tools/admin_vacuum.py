@@ -15,18 +15,22 @@ def vacuum_now(force: bool = False) -> dict:
 
     power=True: vacuum stops the daemon, any active MCP session loses its connection.
 
+    Writes a trigger file to YADGAR_VACUUM_TRIGGER_PATH (default:
+    /data/triggers/vacuum_requested).  A host-side systemd path-watch unit picks
+    this up and starts yadgar-vacuum.service.  This approach works whether yadgar
+    runs on the host or inside a container.
+
     Returns:
         {
             "started": bool,
-            "service_unit": "yadgar-vacuum.service",
+            "trigger_path": str | None,
             "before_bytes": int,
             "skipped_reason": str | None,
         }
     """
-    import subprocess as _subprocess
     import sys as _sys
 
-    from yadgar.ops import _fire_vacuum_service, detect_service_mode
+    from yadgar.ops import _fire_vacuum_service
 
     # Look up _get_storage via yadgar.server so patch.object(srv, "_get_storage", ...)
     # in tests takes effect (v4.x patching contract restored after server split).
@@ -45,74 +49,17 @@ def vacuum_now(force: bool = False) -> dict:
     if before_bytes < _MIB_200 and not force:
         return {
             "started": False,
-            "service_unit": "yadgar-vacuum.service",
+            "trigger_path": None,
             "before_bytes": before_bytes,
             "skipped_reason": "db_below_threshold",
         }
 
-    # Refuse if no supported service manager
-    mode = detect_service_mode()
-    if mode in ("manual", "docker"):
-        _shell_cmd = (
-            "docker compose run --rm yadgar vacuum"
-            if mode == "docker"
-            else "yadgar vacuum --service-mode=manual"
-        )
-        return {
-            "started": False,
-            "service_unit": "yadgar-vacuum.service",
-            "before_bytes": before_bytes,
-            "skipped_reason": "requires_host_systemctl",
-            "host_command": "systemctl --user start yadgar-vacuum.service",
-            "fallback_host_command": "yadgar vacuum --service-mode=systemd --yes",
-            "detail": (
-                "yadgar runs inside a container with no host systemd visibility. "
-                "Trigger from host shell."
-            ),
-            # Backward compat: keep old field so existing callers don't break
-            "shell_command": _shell_cmd,
-        }
-
-    # Refuse if vacuum service is already running (active or activating)
-    try:
-        out = _subprocess.check_output(
-            ["systemctl", "--user", "is-active", "yadgar-vacuum.service"],
-            stderr=_subprocess.DEVNULL,
-        )
-        state = out.decode(errors="replace").strip()
-        if state in ("active", "activating"):
-            return {
-                "started": False,
-                "service_unit": "yadgar-vacuum.service",
-                "before_bytes": before_bytes,
-                "skipped_reason": "vacuum_already_running",
-            }
-    except FileNotFoundError:
-        # systemctl binary not available — treat as no supported service manager
-        return {
-            "started": False,
-            "service_unit": "yadgar-vacuum.service",
-            "before_bytes": before_bytes,
-            "skipped_reason": "requires_host_systemctl",
-            "host_command": "systemctl --user start yadgar-vacuum.service",
-            "fallback_host_command": "yadgar vacuum --service-mode=systemd --yes",
-            "detail": (
-                "yadgar runs inside a container with no host systemd visibility. "
-                "Trigger from host shell."
-            ),
-            # Backward compat: keep old field so existing callers don't break
-            "shell_command": "yadgar vacuum --service-mode=manual",
-        }
-    except _subprocess.CalledProcessError:
-        # is-active returns non-zero for inactive/failed — that's fine, proceed
-        pass
-
-    # Fire
-    _fire_vacuum_service()
+    # Fire — write trigger file atomically
+    trigger_path = _fire_vacuum_service()
 
     return {
         "started": True,
-        "service_unit": "yadgar-vacuum.service",
+        "trigger_path": str(trigger_path),
         "before_bytes": before_bytes,
         "skipped_reason": None,
     }

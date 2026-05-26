@@ -154,22 +154,41 @@ class ManualModeError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
-def _fire_vacuum_service() -> None:
-    """Start yadgar-vacuum.service non-blocking via systemctl --user.
+_DEFAULT_VACUUM_TRIGGER_PATH = "/data/triggers/vacuum_requested"
 
-    Raises RuntimeError if the subprocess call fails (non-zero exit) or if
-    systemctl is not available on this system.
+
+def _fire_vacuum_service() -> Path:
+    """Write a trigger file requesting yadgar-vacuum.service to run.
+
+    The trigger file path is read from YADGAR_VACUUM_TRIGGER_PATH (default:
+    /data/triggers/vacuum_requested).  A systemd path-watch unit on the host
+    watches the file and starts yadgar-vacuum.service when it appears; it then
+    removes the file.  This replaces the old 'systemctl --user start --no-block'
+    call which cannot cross the container ↔ host boundary.
+
+    Write is atomic: content is written to <path>.tmp then os.replace()d to <path>.
+
+    Returns the Path of the written trigger file.
+    Raises RuntimeError on I/O failure.
     """
-    cmd = ["systemctl", "--user", "start", "--no-block", "yadgar-vacuum.service"]
+    import datetime
+    import json as _json
+
+    trigger_path = Path(os.environ.get("YADGAR_VACUUM_TRIGGER_PATH", _DEFAULT_VACUUM_TRIGGER_PATH))
+    tmp_path = Path(str(trigger_path) + ".tmp")
+
+    payload = _json.dumps(
+        {
+            "requested_at": datetime.datetime.now(datetime.UTC).isoformat(),
+            "source": "vacuum_now",
+        }
+    )
+
     try:
-        result = subprocess.run(cmd, capture_output=True)
-    except FileNotFoundError as exc:
-        raise RuntimeError(
-            "systemctl not available — cannot fire yadgar-vacuum.service; "
-            "run 'yadgar vacuum' manually or use docker compose"
-        ) from exc
-    if result.returncode != 0:
-        stderr = result.stderr.decode(errors="replace").strip()
-        raise RuntimeError(
-            f"systemctl --user start --no-block yadgar-vacuum.service failed: {stderr}"
-        )
+        trigger_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path.write_text(payload)
+        os.replace(tmp_path, trigger_path)
+    except OSError as exc:
+        raise RuntimeError(f"Failed to write vacuum trigger file {trigger_path}: {exc}") from exc
+
+    return trigger_path
