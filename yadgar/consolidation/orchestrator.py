@@ -40,7 +40,10 @@ class _OrchestratorMixin:
                     if new_episodes:
                         try:
                             self._consolidation_cycle()
-                        except Exception:
+                        except Exception as _exc:
+                            from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+                            record_exception("consolidation.idle_cycle", _exc)
                             logger.exception("Idle consolidation cycle failed")
                         finally:
                             self._last_cycle_completed_at = datetime.now(UTC)
@@ -51,7 +54,10 @@ class _OrchestratorMixin:
                 try:
                     self._consolidation_cycle()
                     self._last_consolidation_date = today
-                except Exception:
+                except Exception as _exc:
+                    from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+                    record_exception("consolidation.daily_cycle", _exc)
                     logger.exception("Consolidation cycle failed")
                 finally:
                     self._last_cycle_completed_at = datetime.now(UTC)
@@ -68,7 +74,10 @@ class _OrchestratorMixin:
             stats = self._sleep_engine.run_sleep_cycle()
             self._last_sleep_cycle = now
             logger.info("Sleep cycle complete: %s", stats)
-        except Exception:
+        except Exception as _exc:
+            from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+            record_exception("consolidation.sleep_cycle", _exc)
             logger.exception("Sleep cycle failed")
 
     @trace_span("consolidation.cycle")
@@ -115,7 +124,10 @@ class _OrchestratorMixin:
                 logger.info(
                     "phase_end: link_similar duration_ms=%d", int((time.monotonic() - _t) * 1000)
                 )
-            except Exception:
+            except Exception as _exc:
+                from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+                record_exception("consolidation.phase_link_similar", _exc)
                 logger.exception("Similarity linking failed")
 
             try:
@@ -126,7 +138,10 @@ class _OrchestratorMixin:
                     "phase_end: detect_causality duration_ms=%d",
                     int((time.monotonic() - _t) * 1000),
                 )
-            except Exception:
+            except Exception as _exc:
+                from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+                record_exception("consolidation.phase_detect_causality", _exc)
                 logger.exception("Causal detection failed")
 
             # Run memify self-improvement cycle
@@ -139,7 +154,10 @@ class _OrchestratorMixin:
                 stats["memify_reweighted"] = memify_stats.get("reweighted", 0)
                 stats["memify_derived"] = memify_stats.get("derived", 0)
                 logger.info("phase_end: memify duration_ms=%d", int((time.monotonic() - _t) * 1000))
-            except Exception:
+            except Exception as _exc:
+                from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+                record_exception("consolidation.phase_memify", _exc)
                 logger.exception("Memify cycle failed")
 
             # Run CLS dual-store consolidation (Go-CLS: episodic → semantic)
@@ -154,7 +172,10 @@ class _OrchestratorMixin:
                     "phase_end: cls_consolidation duration_ms=%d",
                     int((time.monotonic() - _t) * 1000),
                 )
-            except Exception:
+            except Exception as _exc:
+                from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+                record_exception("consolidation.phase_cls_consolidation", _exc)
                 logger.exception("CLS consolidation cycle failed")
 
             # Compression disabled: memory content must stay intact for LLM usage.
@@ -169,7 +190,10 @@ class _OrchestratorMixin:
                 logger.info(
                     "phase_end: action_log duration_ms=%d", int((time.monotonic() - _t) * 1000)
                 )
-            except Exception:
+            except Exception as _exc:
+                from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+                record_exception("consolidation.phase_action_log", _exc)
                 logger.exception("Action log processing failed")
 
             # Run formal causal discovery (PC algorithm) periodically.

@@ -383,6 +383,9 @@ class LocalMLClient:
                     scores = self._gte_reranker.predict(pairs)
                     return [float(s) for s in scores]
             except Exception as e:
+                from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+                record_exception("ml_client.reranker_fallback", e)
                 logger.warning("LocalMLClient: GTE-Reranker failed, falling back: %s", e)
                 self._gte_reranker = False
                 self._gte_load_failed = True  # T-0006: mark permanent failure
@@ -443,14 +446,20 @@ class LocalMLClient:
                 _load_dur = time.monotonic() - _t0
                 # Histogram + OTel span for cold load (v5.6.7 PR-G)
                 _record_model_load("ce", _load_dur)
-            except Exception:
+            except Exception as e:
+                from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+                record_exception("ml_client.score_pair", e)
                 return [0.0] * len(texts)
 
         pairs = [(query, t) for t in texts]
         try:
             scores = self._cross_encoder.predict(pairs, show_progress_bar=False)
             return [float(s) for s in scores]
-        except Exception:
+        except Exception as e:
+            from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+            record_exception("ml_client.score_pair", e)
             return [0.0] * len(texts)
 
     def score_nli(self, query: str, texts: list[str]) -> list[float]:
@@ -497,6 +506,9 @@ class LocalMLClient:
             return result
 
         except Exception as e:
+            from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+            record_exception("ml_client.score_nli", e)
             logger.warning("LocalMLClient: NLI scoring failed: %s", e)
             self._nli_model = False
             return [0.0] * len(texts)
