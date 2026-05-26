@@ -1,5 +1,111 @@
 # Migration Notes
 
+## v5.7.0 — Nightly Cycle Redesign (2026-05-26)
+
+Core 5.6.7 → 5.7.0. Backend unchanged (still 5.2.2).
+
+### What changed
+
+Replaces the daemon's removed 30-minute consolidation trigger with a single nightly
+heavy cycle at 19:00 UTC. The cycle runs `backup → consolidation → vacuum → backup`
+once per day via a host-side systemd timer that invokes the new
+`yadgar-nightly-cycle` console script.
+
+### PRs in this train (in order)
+
+- **PR-0** Remove daemon 30-min consolidation trigger (`bac9540`).
+- **PR-2** Vacuum exit-code warn-only on post-restart `check_invariants` 404 (`3b84af4`).
+- **PR-3** 30s API readiness wait before `check_invariants` (`d41b63d`).
+- **PR-4** Trigger-file pattern for MCP `vacuum_now()` (`e0e9ee0`).
+- **PR-5** Documented `VACUUM_AUTO_THRESHOLD_BYTES` as emergency backstop (`bc653de`).
+- **PR-6** `create_snapshot` + `prune_snapshots` helpers in `yadgar/backup.py` (`e6857b2`).
+- **PR-1a** `yadgar/scripts/nightly_cycle.py` orchestrator (`4fbca8d` + `a7344cb`).
+- **PR-7** Backup snapshot round-trip integrity tests (`b9c0026`).
+- **PR-1b** Nix systemd timer/service + path-watch unit (in `~/git/nix/modules/home/yadgar.nix`).
+
+### Deploy steps
+
+1. **Rebuild yadgar core image** at the 5.7.0 tag (amd64-only per workflow rule):
+
+   ```
+   docker build -t docker.io/openfantasy/yadgar:5.7.0 .
+   ```
+
+2. **Bump `yadger_core_version`** in `~/git/nix/modules/home/yadgar.nix` from `5.6.7`
+   to `5.7.0`. Backend version (`yadger_backend_version`) stays at `5.2.2`.
+
+3. **Apply nix changes** (`~/git/nix` already contains the new systemd units for
+   nightly cycle + vacuum trigger path-watch via PR-1b):
+
+   ```
+   cd ~/git/nix && nix-update
+   ```
+
+   This activates:
+   - `systemd.user.services.yadgar-nightly-cycle` — runs the nightly cycle script.
+   - `systemd.user.timers.yadgar-nightly-cycle` — `OnCalendar=*-*-* 19:00:00 UTC`,
+     `Persistent=true`.
+   - `systemd.user.paths.yadgar-vacuum-trigger` — watches
+     `~/.yadgar/triggers/vacuum_requested` (host side of the container's
+     `/data/triggers/vacuum_requested`).
+   - `systemd.user.services.yadgar-vacuum-trigger` — removes the trigger file
+     and starts `yadgar-vacuum.service`.
+   - `home.activation.yadgarTriggerDir` — ensures the triggers dir exists.
+
+4. **Re-run the pipx editable install** so `yadgar-nightly-cycle` console-script
+   entry registers in `~/.local/bin/`:
+
+   ```
+   ~/.local/pipx/venvs/yadgar/bin/python -m pip install -e ~/git/yadgar
+   # or: rm ~/.local/pipx/venvs/yadgar/.editable-installed && nix-update
+   ```
+
+   Confirm: `which yadgar-nightly-cycle` resolves to `~/.local/bin/yadgar-nightly-cycle`.
+
+### Verification
+
+After deploy:
+
+- `systemctl --user list-timers yadgar-nightly-cycle` — shows the next 19:00 UTC fire.
+- `systemctl --user list-timers yadgar-vacuum` — weekly Sunday 04:00 still wired
+  (NOT replaced; runs alongside the nightly as the emergency-only legacy backstop).
+- `systemctl --user status yadgar-vacuum-trigger.path` — `Active: active (waiting)`.
+- Trigger flow smoke test:
+  ```
+  touch ~/.yadgar/triggers/vacuum_requested
+  systemctl --user status yadgar-vacuum-trigger.service
+  # should show oneshot ran; trigger file should be gone; yadgar-vacuum.service running
+  ```
+- Daemon idle eviction soak (from v5.6.7): `yadgar_embed_model_loaded{ce,nli,pair}`
+  should stay at 1 once first request loads them (24h soak ends ~2026-05-27 11:41).
+
+### Behavior change
+
+- Consolidation no longer auto-fires every 30 minutes from the daemon. It runs
+  ONLY when:
+  1. The nightly cycle (19:00 UTC) fires.
+  2. MCP `consolidate_now()` is called explicitly.
+- `VACUUM_AUTO_THRESHOLD_BYTES` (default 2 GiB) remains as an emergency backstop
+  invoked from `ConsolidationScheduler._maybe_auto_vacuum()`. Documented as
+  emergency-only in `README.md` and `yadgar/config.py`.
+
+### Known gaps / followups
+
+- `yadgar/consolidation/__init__.py:218-231` still has a `systemctl is-active`
+  pre-check that returns early on `FileNotFoundError` — auto-trigger path
+  remains broken in containers. Flagged for v5.7.x.
+- Consolidation auto-trigger from threshold path uses the trigger-file pattern
+  via `_fire_vacuum_service` (PR-4) — works correctly in containers now.
+- Pre-existing test failures inherited from v5.6.7 still red on master:
+  `test_branch_auto_capture::test_checkpoint_passes_branch_to_replay`,
+  `test_check_invariants`, `test_ml_client`, `test_session_context_endpoint`,
+  `test_structured_logging`, `test_transport`, `test_v546_parity`. Hotfix
+  candidates for v5.7.x.
+- 18s yadgar-core downtime during the nightly cycle is expected (same as
+  the existing weekly vacuum). Active Claude sessions reconnect via `/mcp`.
+
+---
+
 ## v5.6.7 PR-M — Optional log-dir relocation (2026-05-25)
 
 Core 5.6.6 → 5.6.7. Backend unchanged.
