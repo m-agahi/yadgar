@@ -485,27 +485,9 @@ class TestDuplicateMerge:
         assert storage.get_memory(id_b) is not None
 
 
-class TestDaemonLifecycle:
-    def test_starts_and_stops(self, engine):
-        engine.start()
-        assert engine.is_running is True
-        assert engine._thread is not None
-        assert engine._thread.is_alive()
-
-        engine.stop()
-        assert engine.is_running is False
-        assert engine._thread is None
-
-    def test_double_start_is_noop(self, engine):
-        engine.start()
-        thread1 = engine._thread
-        engine.start()
-        assert engine._thread is thread1
-        engine.stop()
-
-    def test_stop_without_start(self, engine):
-        engine.stop()  # should not raise
-        assert engine.is_running is False
+# TestDaemonLifecycle and test_idle_detection removed (v5.7.0 PR-0):
+# start()/stop()/_daemon_loop removed from ConsolidationScheduler.
+# Consolidation now runs only via force_consolidate() or nightly cron (PR-1).
 
 
 class TestActivityTracking:
@@ -514,29 +496,6 @@ class TestActivityTracking:
         time.sleep(0.01)
         engine.record_activity()
         assert engine.last_activity > old
-
-    def test_idle_detection(self, engine, storage):
-        # Set last_activity far in the past so the daemon considers us idle
-        engine.last_activity = datetime.now(UTC) - timedelta(seconds=600)
-        # Insert an episode so consolidation has something to do
-        storage.insert_episode(
-            {
-                "session_id": "sess1",
-                "directory": "/proj",
-                "raw_content": "def idle_test(): pass",
-            }
-        )
-        engine.start()
-        engine._last_consolidated_episode_id = 0
-        # Poll until the daemon loop fires and extracts the entity (up to 2 s)
-        for _ in range(20):
-            if storage.get_entity_by_name("idle_test") is not None:
-                break
-            time.sleep(0.1)
-        engine.stop()
-
-        # Entity should have been extracted during idle consolidation
-        assert storage.get_entity_by_name("idle_test") is not None
 
 
 class TestConsolidationLog:
@@ -901,122 +860,8 @@ class TestSimilarityMatrixCandidateCap:
         assert called_with_limit[0] == cap, f"expected limit={cap}, got {called_with_limit[0]}"
 
 
-# ── Consolidation cooldown tests (v4.8 fix #4) ──────────────────────────────
-
-
-class TestConsolidationCooldown:
-    """_daemon_loop must not re-fire idle consolidation until cooldown expires.
-
-    force_consolidate() always runs regardless of cooldown.
-    The daily 18:30 UTC cycle is not under test here (time-sensitive).
-    """
-
-    def _make_scheduler(self, tmp_path, cooldown: int, check_interval: float = 0.01):
-        """Build a ConsolidationScheduler with minimal settings for cooldown tests."""
-        settings = Settings(
-            DB_PATH=str(tmp_path / "cooldown_test.db"),
-            IDLE_THRESHOLD_SECONDS=1,
-            DAEMON_CHECK_INTERVAL=check_interval,
-            CONSOLIDATION_COOLDOWN_SECONDS=cooldown,
-        )
-        storage = StorageEngine(str(tmp_path / "cooldown_test.db"))
-        emb = EmbeddingEngine()
-        emb._unavailable = True
-        sched = ConsolidationScheduler(storage, emb, settings)
-        # Mark today's daily consolidation as already done so the 18:30 UTC
-        # time-gated path doesn't fire and interfere with cooldown assertions.
-        from datetime import UTC, datetime
-
-        sched._last_consolidation_date = datetime.now(UTC).date()
-        return sched, storage
-
-    def test_cooldown_blocks_immediate_refire(self, tmp_path):
-        """Idle-triggered cycle must not re-fire while cooldown has not expired.
-
-        Setup:
-        - last_activity = epoch (idle_seconds >> IDLE_THRESHOLD_SECONDS)
-        - get_episodes_since returns 1 episode (so threshold gate passes)
-        - CONSOLIDATION_COOLDOWN_SECONDS = 1800
-
-        Run the daemon for two iterations. Assert _consolidation_cycle called
-        exactly once: the cooldown blocks the second iteration.
-        """
-        from unittest.mock import patch
-
-        sched, storage = self._make_scheduler(tmp_path, cooldown=1800, check_interval=0.01)
-        # Simulate deep idle
-        sched.last_activity = datetime.fromtimestamp(0, UTC)
-
-        call_count = []
-
-        def fake_cycle():
-            call_count.append(1)
-            return {}
-
-        # Stub get_episodes_since so the new_episodes gate always passes
-        storage.insert_episode(
-            {"session_id": "s1", "directory": "/proj", "raw_content": "test content"}
-        )
-
-        with patch.object(sched, "_consolidation_cycle", side_effect=fake_cycle):
-            sched.start()
-            # Give daemon enough time for at least 2 check-interval wake-ups
-            time.sleep(0.15)
-            sched.stop()
-
-        assert len(call_count) == 1, (
-            f"expected exactly 1 cycle call with cooldown active, got {len(call_count)}"
-        )
-
-    def test_cooldown_expires(self, tmp_path):
-        """Idle cycle fires when _last_cycle_completed_at is older than cooldown."""
-        from unittest.mock import patch
-
-        sched, storage = self._make_scheduler(tmp_path, cooldown=60, check_interval=0.01)
-        # Simulate deep idle
-        sched.last_activity = datetime.fromtimestamp(0, UTC)
-        # Simulate last cycle completed 31 minutes ago (> 60s cooldown)
-        sched._last_cycle_completed_at = datetime.now(UTC) - timedelta(minutes=31)
-
-        call_count = []
-
-        def fake_cycle():
-            call_count.append(1)
-            return {}
-
-        storage.insert_episode(
-            {"session_id": "s2", "directory": "/proj", "raw_content": "test content 2"}
-        )
-
-        with patch.object(sched, "_consolidation_cycle", side_effect=fake_cycle):
-            sched.start()
-            time.sleep(0.15)
-            sched.stop()
-
-        assert len(call_count) >= 1, (
-            f"expected at least 1 cycle after cooldown expired, got {len(call_count)}"
-        )
-
-    def test_force_consolidate_ignores_cooldown(self, tmp_path):
-        """force_consolidate() must run even when cooldown has not expired.
-
-        An explicit user/MCP request beats throttling.
-        """
-        from unittest.mock import patch
-
-        sched, _storage = self._make_scheduler(tmp_path, cooldown=1800, check_interval=30)
-        # Mark cooldown as just started (now)
-        sched._last_cycle_completed_at = datetime.now(UTC)
-
-        call_count = []
-
-        def fake_cycle():
-            call_count.append(1)
-            return {}
-
-        with patch.object(sched, "_consolidation_cycle", side_effect=fake_cycle):
-            sched.force_consolidate()
-
-        assert len(call_count) == 1, (
-            f"force_consolidate() must ignore cooldown; got {len(call_count)} calls"
-        )
+# TestConsolidationCooldown removed (v5.7.0 PR-0):
+# _daemon_loop and its cooldown mechanism removed from ConsolidationScheduler.
+# Consolidation now runs only via force_consolidate() or nightly cron (PR-1).
+# test_force_consolidate_ignores_cooldown is now vacuously true:
+# force_consolidate() always runs since there is no cooldown gate.
