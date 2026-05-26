@@ -359,13 +359,27 @@ class Settings(BaseSettings):
     # scripts/cleanup-backups.sh after a successful vacuum.
     VACUUM_SNAPSHOT_RETENTION: int = 3
 
-    # v4.9: threshold auto-trigger for vacuum
-    # Fire vacuum automatically when DB exceeds this size (default 2 GiB).
+    # v4.9: threshold-driven auto-trigger for vacuum (emergency backstop only from v5.7.0).
+    #
+    # Trigger precedence (v5.7.0+):
+    #   1. PRIMARY   — nightly cron at 19:00 UTC (yadgar-vacuum.timer, ships in PR-1a/1b).
+    #                  Runs vacuum unconditionally regardless of DB size.
+    #   2. BACKSTOP  — this threshold path (ConsolidationScheduler._maybe_auto_vacuum()).
+    #                  Fires only when DB exceeds VACUUM_AUTO_THRESHOLD_BYTES AND the local
+    #                  clock falls inside [VACUUM_AUTO_WINDOW_START, VACUUM_AUTO_WINDOW_END).
+    #                  Role: catch runaway DB growth between nightly cron cycles — not the
+    #                  normal workhorse.
+    #   3. MANUAL    — vacuum_now() MCP tool (writes trigger file, see PR-4 / YADGAR_VACUUM_TRIGGER_PATH).
+    #
+    # The cooldown logic in _maybe_auto_vacuum() prevents double-fires within the same day,
+    # so cron and backstop coexist safely.
+    #
+    # Emergency backstop threshold: fire when DB exceeds this size (default 2 GiB).
     VACUUM_AUTO_THRESHOLD_BYTES: int = 2_147_483_648
-    # Local time window for automatic vacuum (HH:MM, 24-hour, end is exclusive).
+    # Local time window for the backstop trigger (HH:MM, 24-hour, end is exclusive).
     VACUUM_AUTO_WINDOW_START: str = "19:00"
     VACUUM_AUTO_WINDOW_END: str = "23:00"
-    # Set to False to disable threshold auto-trigger.
+    # Set to False to disable the backstop threshold trigger entirely.
     VACUUM_AUTO_ENABLED: bool = True
 
     # v5.0 perf settings
