@@ -451,6 +451,14 @@ def sample_system_metrics(pid: int, db_path: str, storage: object = None) -> dic
             service's /admin/dbsize endpoint — the local path doesn't exist in
             that topology and would always return 0.
     """
+    # PR-I: heartbeat — called at the start of every sampler iteration (lifecycle.py thread)
+    try:
+        from yadgar.metrics import loop_heartbeat  # noqa: PLC0415
+
+        loop_heartbeat("metrics_sampler")
+    except Exception:  # noqa: BLE001
+        pass
+
     global _metrics_cache, _metrics_sampled_at, _prev_cpu_ticks, _prev_cpu_time
 
     result: dict = dict(_metrics_cache)  # start with last known values

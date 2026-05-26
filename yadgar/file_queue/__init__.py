@@ -45,6 +45,26 @@ def _drainer_span():
 _DRAIN_INTERVAL = 30.0  # seconds between drain passes (configurable via QueueDrainer)
 _CLEANUP_EVERY = 120  # drain passes between archive cleanups (~1 hour at 30s interval)
 
+# PR-I: loop telemetry helpers (module-level to avoid adding nesting depth in run())
+
+
+def _drainer_heartbeat() -> None:
+    try:
+        from yadgar.metrics import loop_heartbeat  # noqa: PLC0415
+
+        loop_heartbeat("queue_drainer")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _drainer_record_exc(exc: BaseException) -> None:
+    try:
+        from yadgar.metrics import loop_record_exception  # noqa: PLC0415
+
+        loop_record_exception("queue_drainer", exc)
+    except Exception:  # noqa: BLE001
+        pass
+
 
 def is_draining() -> bool:
     """Return True if the current thread is inside a QueueDrainer._apply() call."""
@@ -112,6 +132,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
 
     def run(self) -> None:
         while not self._stop_event.is_set():
+            _drainer_heartbeat()  # PR-I: heartbeat at top of every iteration
             try:
                 with _drainer_span():
                     self._drain_once()
@@ -119,6 +140,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
                 from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
 
                 record_exception("file_queue.drainer", exc)
+                _drainer_record_exc(exc)  # PR-I: loop error counter
                 logger.warning("Queue drain error: %s", exc)
             self._stop_event.wait(timeout=self._drain_interval)
 

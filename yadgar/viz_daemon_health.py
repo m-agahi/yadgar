@@ -379,16 +379,38 @@ async def _scrape_once() -> None:
     }
 
 
+def _scraper_heartbeat() -> None:
+    """PR-I: heartbeat helper — no nesting added to run_health_scraper."""
+    try:
+        from yadgar.metrics import loop_heartbeat  # noqa: PLC0415
+
+        loop_heartbeat("viz_health_scraper")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _scraper_record_exc(exc: BaseException) -> None:
+    """PR-I: error counter helper — no nesting added to run_health_scraper."""
+    try:
+        from yadgar.metrics import loop_record_exception  # noqa: PLC0415
+
+        loop_record_exception("viz_health_scraper", exc)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 async def run_health_scraper() -> None:
     """Background loop — scrapes every _SCRAPE_INTERVAL_S seconds.
 
     Call once at server lifespan startup. Runs until task cancelled.
     """
     while True:
+        _scraper_heartbeat()  # PR-I: heartbeat at top of every iteration
         try:
             await _scrape_once()
         except Exception as exc:  # noqa: BLE001
             logger.warning("viz_daemon_health: scrape cycle error: %s", exc)
+            _scraper_record_exc(exc)  # PR-I: loop error counter
         await asyncio.sleep(_SCRAPE_INTERVAL_S)
 
 
