@@ -186,9 +186,10 @@ def _step_vacuum(db_path: Path, backend_url: str, service_mode: str | None) -> i
             yes=True,
         )
         vac_code = cmd_vacuum_impl(vacuum_args)
-        if vac_code != 0:
+        if vac_code not in (0, 2):
             raise RuntimeError(f"cmd_vacuum_impl returned exit code {vac_code}")
-        _log_step("vacuum", "ok", (time.monotonic() - t0) * 1000)
+        outcome = "degraded" if vac_code == 2 else "ok"
+        _log_step("vacuum", outcome, (time.monotonic() - t0) * 1000)
         return 0
     except Exception as exc:
         record_exception("nightly_cycle.vacuum", exc)
