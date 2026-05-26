@@ -1178,3 +1178,83 @@ External hosts cannot reach it without an explicit port forward. No auth needed 
 ```bash
 python scripts/check_image_size.py --image-type backend
 ```
+
+---
+
+## v5.7.0 PR-4 — vacuum_now() trigger-file pattern (2026-05-26)
+
+### Why
+
+The previous `vacuum_now()` MCP tool called `systemctl --user start --no-block yadgar-vacuum.service`
+directly from inside the yadgar process.  When yadgar runs in a container, this systemctl call cannot
+reach the host's systemd session (no dbus socket mounted into the container) — the trigger silently
+failed or raised a RuntimeError.
+
+The fix is a clean container ↔ host separation: yadgar writes a trigger file; a host-side systemd
+path-watch unit picks it up and starts `yadgar-vacuum.service`.
+
+### What changed in yadgar
+
+- `yadgar/ops.py` — `_fire_vacuum_service()` now writes an atomic trigger file instead of calling
+  systemctl.  The file path is controlled by `YADGAR_VACUUM_TRIGGER_PATH` (default:
+  `/data/triggers/vacuum_requested`).  The file contains one-line JSON:
+  `{"requested_at": "<ISO8601>", "source": "vacuum_now"}`.  Write is atomic (`*.tmp` then
+  `os.replace()`).  Parent directory is created if missing.  Returns the `Path` written; raises
+  `RuntimeError` on I/O failure.
+- `yadgar/server/tools/admin_vacuum.py` — vacuum_now() MCP tool simplified: removed
+  `detect_service_mode()` check, `is-active` subprocess check, and all `host_command` /
+  `service_unit` / `shell_command` fields.  New response field: `trigger_path` (str path written,
+  or `None` when skipped).
+- `yadgar/config_registry.py` — new knob `YADGAR_VACUUM_TRIGGER_PATH` (default
+  `/data/triggers/vacuum_requested`, kind=string) registered; appears in `/admin/config`.
+
+### Host-side requirement (separate nix-repo change)
+
+A systemd path-watch unit pair is needed on the host to bridge the trigger file to the service.
+This is tracked as a follow-up in `~/git/nix/modules/home/yadgar.nix`.
+
+Example unit fragments (do NOT apply manually — add via the nix module):
+
+**`yadgar-vacuum-trigger.path`**:
+```ini
+[Unit]
+Description=Watch for yadgar vacuum trigger file
+After=yadgar.service
+
+[Path]
+PathExists=/data/triggers/vacuum_requested
+Unit=yadgar-vacuum-trigger.service
+
+[Install]
+WantedBy=default.target
+```
+
+**`yadgar-vacuum-trigger.service`** (one-shot, removes trigger file then starts vacuum):
+```ini
+[Unit]
+Description=Dispatch yadgar vacuum on trigger-file appearance
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'rm -f /data/triggers/vacuum_requested && systemctl --user start yadgar-vacuum.service'
+```
+
+Enable the path unit:
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now yadgar-vacuum-trigger.path
+```
+
+### Graceful degradation
+
+Until the path-watch unit is deployed, `vacuum_now()` still writes the trigger file and returns
+`started=True` — the file simply accumulates until the watcher is wired.  No error is surfaced to
+the caller; the only observable effect is that vacuum doesn't actually start.  Operators can check
+for a stale trigger file at `/data/triggers/vacuum_requested` as a diagnostic signal.
+
+### Known gap: auto-trigger in containers
+
+`consolidation/__init__.py:218-231` contains its own `systemctl is-active` pre-check that returns
+early on `FileNotFoundError`.  This means the auto-vacuum trigger (via `ConsolidationScheduler`)
+is still skipped in containerized deploys — it calls `_fire_vacuum_service` but only after a
+systemctl check that fails first.  Fixing the consolidation pre-check is out of scope for PR-4.
