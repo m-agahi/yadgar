@@ -28,58 +28,97 @@ from yadgar.graph_api import GraphAPI
 from yadgar.sanitize import sanitize_log_field
 from yadgar.server._app import mcp_server
 from yadgar.server._helpers import _bounded_set, _build_dlq_alert_text  # noqa: F401
+from yadgar.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
 _CORS = {"Cache-Control": "no-cache"}
 
 
+def _hook_observe(hook: str, t0: float, exc: BaseException | None = None) -> None:
+    """Record hook execution duration + failure metrics. Never raises."""
+    try:
+        from yadgar.metrics import (  # noqa: PLC0415
+            hook_record_failure,
+            yadgar_hook_execution_duration_ms,
+        )
+
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        yadgar_hook_execution_duration_ms.labels(hook=hook).observe(elapsed_ms)
+        if exc is not None:
+            hook_record_failure(hook, exc=exc)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _hook_observe_response(hook: str, status_code: int) -> None:
+    """Increment failure counter if status_code >= 500. Never raises."""
+    if status_code >= 500:
+        try:
+            from yadgar.metrics import hook_record_failure  # noqa: PLC0415
+
+            hook_record_failure(hook, status_code=status_code)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 @mcp_server.custom_route("/health", methods=["GET"])
+@trace_span("hook.health")
 async def health_check(request: Request) -> JSONResponse:
     """Health check endpoint."""
     import httpx
 
-    session_count = 0
-    if mcp_server._session_manager is not None:
-        session_count = len(mcp_server._session_manager._server_instances)
+    _t0 = time.perf_counter()
+    _caught_exc: BaseException | None = None
+    try:
+        session_count = 0
+        if mcp_server._session_manager is not None:
+            session_count = len(mcp_server._session_manager._server_instances)
 
-    db_url = os.environ.get("YADGAR_DB_URL")
-    embed_url = os.environ.get("YADGAR_EMBED_URL")
+        db_url = os.environ.get("YADGAR_DB_URL")
+        embed_url = os.environ.get("YADGAR_EMBED_URL")
 
-    db_ok = None
-    embed_ok = None
+        db_ok = None
+        embed_ok = None
 
-    # §9 Q5: Use async httpx client to avoid blocking the event loop.
-    async with httpx.AsyncClient(timeout=2.0) as _aclient:
-        if db_url:
-            try:
-                r = await _aclient.get(f"{db_url}/health")
-                db_ok = r.status_code == 200
-            except Exception:
-                db_ok = False
+        # §9 Q5: Use async httpx client to avoid blocking the event loop.
+        async with httpx.AsyncClient(timeout=2.0) as _aclient:
+            if db_url:
+                try:
+                    r = await _aclient.get(f"{db_url}/health")
+                    db_ok = r.status_code == 200
+                except Exception:
+                    db_ok = False
 
-        if embed_url:
-            try:
-                r = await _aclient.get(f"{embed_url}/health")
-                embed_ok = r.status_code == 200
-            except Exception:
-                embed_ok = False
+            if embed_url:
+                try:
+                    r = await _aclient.get(f"{embed_url}/health")
+                    embed_ok = r.status_code == 200
+                except Exception:
+                    embed_ok = False
 
-    payload: dict = {
-        "status": "ok",
-        "version": __version__,
-        "transport": _st._active_transport,
-        "uptime_seconds": round(time.time() - _st._start_time, 1) if _st._start_time else 0,
-        "active_sessions": session_count,
-    }
-    if db_ok is not None:
-        payload["db"] = db_ok
-    if embed_ok is not None:
-        payload["embed"] = embed_ok
-    if db_ok is False or embed_ok is False:
-        payload["status"] = "degraded"
+        payload: dict = {
+            "status": "ok",
+            "version": __version__,
+            "transport": _st._active_transport,
+            "uptime_seconds": round(time.time() - _st._start_time, 1) if _st._start_time else 0,
+            "active_sessions": session_count,
+        }
+        if db_ok is not None:
+            payload["db"] = db_ok
+        if embed_ok is not None:
+            payload["embed"] = embed_ok
+        if db_ok is False or embed_ok is False:
+            payload["status"] = "degraded"
 
-    return JSONResponse(payload)
+        _resp = JSONResponse(payload)
+        _hook_observe_response("health", _resp.status_code)
+        return _resp
+    except Exception as _exc:
+        _caught_exc = _exc
+        raise
+    finally:
+        _hook_observe("health", _t0, _caught_exc)
 
 
 @mcp_server.custom_route("/metrics", methods=["GET"])
@@ -343,6 +382,7 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/hooks/subagent-stop", methods=["POST"])
+@trace_span("hook.subagent_stop")
 async def hook_subagent_stop(request: Request) -> JSONResponse:
     """SubagentStop hook endpoint — memorize Yadgar findings from subagent reports.
 
@@ -360,70 +400,83 @@ async def hook_subagent_stop(request: Request) -> JSONResponse:
         - tags = ["from-subagent", "agent-type:<agent_type>"]
         - context = cwd
     """
+    _t0 = time.perf_counter()
+    _caught_exc: BaseException | None = None
     try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse({"status": "error", "message": "Invalid JSON"}, status_code=400)
-
-    agent_type = sanitize_log_field(str(body.get("agent_type", "general-purpose")), max_len=64)
-    cwd = sanitize_log_field(str(body.get("cwd", os.getcwd())), max_len=500)
-    findings = body.get("findings", [])
-
-    if not isinstance(findings, list):
-        return JSONResponse(
-            {"status": "error", "message": "findings must be a list"}, status_code=400
-        )
-
-    # Validate agent_type before use as provenance_agent
-    import re as _re
-
-    _AGENT_TYPE_RE = _re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-    if not agent_type or not _AGENT_TYPE_RE.match(agent_type):
-        agent_type = "general-purpose"
-
-    if not findings:
-        return JSONResponse({"status": "ok", "stored": 0})
-
-    # Import memorize at call time to avoid circular import at module load
-    import sys as _sys
-
-    _srv = _sys.modules.get("yadgar.server")
-    _memorize = getattr(_srv, "memorize", None) if _srv else None
-    if _memorize is None:
-        from yadgar.server.tools.memorize import memorize as _memorize  # noqa: PLC0415
-
-    tags = ["from-subagent", f"agent-type:{agent_type}"]
-    stored = 0
-    errors = []
-
-    for finding in findings:
-        if not isinstance(finding, str) or not finding.strip():
-            continue
-        finding_clean = sanitize_log_field(finding.strip(), max_len=32_768)
-        if not finding_clean:
-            continue
         try:
-            result = await asyncio.to_thread(
-                _memorize,
-                content=finding_clean,
-                context=cwd,
-                tags=tags,
-                is_protected=False,
-                provenance_agent=agent_type,
-            )
-            if result.get("stored", True):  # queued=True counts as stored
-                stored += 1
-        except Exception as _e:
-            logger.debug("subagent-stop memorize failed: %s", _e)
-            errors.append(str(_e)[:100])
+            body = await request.json()
+        except Exception:
+            _resp = JSONResponse({"status": "error", "message": "Invalid JSON"}, status_code=400)
+            _hook_observe_response("subagent_stop", _resp.status_code)
+            return _resp
 
-    response: dict = {"status": "ok", "stored": stored, "agent_type": agent_type}
-    if errors:
-        response["errors"] = errors
-    return JSONResponse(response)
+        agent_type = sanitize_log_field(str(body.get("agent_type", "general-purpose")), max_len=64)
+        cwd = sanitize_log_field(str(body.get("cwd", os.getcwd())), max_len=500)
+        findings = body.get("findings", [])
+
+        if not isinstance(findings, list):
+            _resp = JSONResponse(
+                {"status": "error", "message": "findings must be a list"}, status_code=400
+            )
+            _hook_observe_response("subagent_stop", _resp.status_code)
+            return _resp
+
+        # Validate agent_type before use as provenance_agent
+        import re as _re
+
+        _AGENT_TYPE_RE = _re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+        if not agent_type or not _AGENT_TYPE_RE.match(agent_type):
+            agent_type = "general-purpose"
+
+        if not findings:
+            return JSONResponse({"status": "ok", "stored": 0})
+
+        # Import memorize at call time to avoid circular import at module load
+        import sys as _sys
+
+        _srv = _sys.modules.get("yadgar.server")
+        _memorize = getattr(_srv, "memorize", None) if _srv else None
+        if _memorize is None:
+            from yadgar.server.tools.memorize import memorize as _memorize  # noqa: PLC0415
+
+        tags = ["from-subagent", f"agent-type:{agent_type}"]
+        stored = 0
+        errors = []
+
+        for finding in findings:
+            if not isinstance(finding, str) or not finding.strip():
+                continue
+            finding_clean = sanitize_log_field(finding.strip(), max_len=32_768)
+            if not finding_clean:
+                continue
+            try:
+                result = await asyncio.to_thread(
+                    _memorize,
+                    content=finding_clean,
+                    context=cwd,
+                    tags=tags,
+                    is_protected=False,
+                    provenance_agent=agent_type,
+                )
+                if result.get("stored", True):  # queued=True counts as stored
+                    stored += 1
+            except Exception as _e:
+                logger.debug("subagent-stop memorize failed: %s", _e)
+                errors.append(str(_e)[:100])
+
+        response: dict = {"status": "ok", "stored": stored, "agent_type": agent_type}
+        if errors:
+            response["errors"] = errors
+        return JSONResponse(response)
+    except Exception as _exc:
+        _caught_exc = _exc
+        raise
+    finally:
+        _hook_observe("subagent_stop", _t0, _caught_exc)
 
 
 @mcp_server.custom_route("/hooks/file-changed", methods=["POST"])
+@trace_span("hook.file_changed")
 async def hook_file_changed(request: Request) -> JSONResponse:
     """FileChanged hook endpoint — mirrors team_inbox JSONL and PLAN_*.md changes.
 
@@ -445,203 +498,244 @@ async def hook_file_changed(request: Request) -> JSONResponse:
     import re as _re
     import urllib.parse as _urlparse
 
+    _t0 = time.perf_counter()
+    _caught_exc: BaseException | None = None
     try:
-        body = await request.json()
-    except Exception:
-        body = {}
-
-    # Accept path from query param OR body (hook script sends both)
-    file_path = request.query_params.get("path", "") or body.get("file_path", "")
-    if file_path:
         try:
-            file_path = _urlparse.unquote(file_path)
+            body = await request.json()
         except Exception:
-            pass
-    body.get("file_action", "modified")
+            body = {}
 
-    if not file_path:
-        return JSONResponse({"status": "error", "message": "missing file_path"}, status_code=400)
+        # Accept path from query param OR body (hook script sends both)
+        file_path = request.query_params.get("path", "") or body.get("file_path", "")
+        if file_path:
+            try:
+                file_path = _urlparse.unquote(file_path)
+            except Exception:
+                pass
+        body.get("file_action", "modified")
 
-    storage = _st._storage
-    if storage is None:
-        return JSONResponse(
-            {"status": "error", "message": "Storage not initialized"}, status_code=503
+        if not file_path:
+            _resp = JSONResponse(
+                {"status": "error", "message": "missing file_path"}, status_code=400
+            )
+            _hook_observe_response("file_changed", _resp.status_code)
+            return _resp
+
+        storage = _st._storage
+        if storage is None:
+            _resp = JSONResponse(
+                {"status": "error", "message": "Storage not initialized"}, status_code=503
+            )
+            _hook_observe_response("file_changed", _resp.status_code)
+            return _resp
+
+        # ── team_inbox filter ───────────────────────────────────────────────────
+        _TEAM_INBOX_RE = _re.compile(
+            r"[/\\]\.claude[/\\]team_inbox[/\\]([^/\\]+)[/\\]([^/\\]+)[/\\]([^/\\]+)\.jsonl$"
         )
+        _PLAN_FILE_RE = _re.compile(r"[/\\]docs[/\\](PLAN_[^/\\]*\.md)$")
 
-    # ── team_inbox filter ───────────────────────────────────────────────────
-    _TEAM_INBOX_RE = _re.compile(
-        r"[/\\]\.claude[/\\]team_inbox[/\\]([^/\\]+)[/\\]([^/\\]+)[/\\]([^/\\]+)\.jsonl$"
-    )
-    _PLAN_FILE_RE = _re.compile(r"[/\\]docs[/\\](PLAN_[^/\\]*\.md)$")
+        inbox_match = _TEAM_INBOX_RE.search(file_path)
+        plan_match = _PLAN_FILE_RE.search(file_path)
 
-    inbox_match = _TEAM_INBOX_RE.search(file_path)
-    plan_match = _PLAN_FILE_RE.search(file_path)
+        if inbox_match:
+            return await _handle_team_inbox(file_path, inbox_match, storage)
+        elif plan_match:
+            return await _handle_plan_file(file_path, plan_match, storage)
+        else:
+            # Unknown path — no-op, forward-compat
+            return JSONResponse({"status": "skipped", "reason": "path_not_watched"})
+    except Exception as _exc:
+        _caught_exc = _exc
+        raise
+    finally:
+        _hook_observe("file_changed", _t0, _caught_exc)
 
-    if inbox_match:
-        return await _handle_team_inbox(file_path, inbox_match, storage)
-    elif plan_match:
-        return await _handle_plan_file(file_path, plan_match, storage)
-    else:
-        # Unknown path — no-op, forward-compat
-        return JSONResponse({"status": "skipped", "reason": "path_not_watched"})
 
-
+@trace_span("hook.team_inbox")
 async def _handle_team_inbox(file_path: str, match, storage) -> JSONResponse:
     """Read new JSONL lines from a team_inbox file and write action_log entries."""
     import asyncio as _asyncio
     from datetime import UTC, datetime
 
-    project_id = match.group(1)
-    team_name = match.group(2)
-    agent_name = match.group(3)
-
-    from pathlib import Path as _Path
-
-    p = _Path(file_path)
-    if not p.exists():
-        return JSONResponse({"status": "skipped", "reason": "file_not_found"})
-
-    # Track file position to only read NEW lines since last call
-    current_pos = _st._team_inbox_positions.get(file_path, 0)
-
-    new_lines = []
+    _t0 = time.perf_counter()
+    _caught_exc: BaseException | None = None
     try:
-        with p.open("r", encoding="utf-8", errors="ignore") as fh:
-            fh.seek(current_pos)
-            new_lines = fh.readlines()
-            new_pos = fh.tell()
-    except Exception as _e:
-        logger.debug("team_inbox read error %s: %s", file_path, _e)
-        return JSONResponse({"status": "error", "message": str(_e)[:100]}, status_code=500)
+        project_id = match.group(1)
+        team_name = match.group(2)
+        agent_name = match.group(3)
 
-    # Update position — cap dict to 10_000 entries
-    _st._team_inbox_positions[file_path] = new_pos
-    if len(_st._team_inbox_positions) > 10_000:
-        # Evict oldest entry
-        _st._team_inbox_positions.popitem(last=False)
+        from pathlib import Path as _Path
 
-    stored = 0
-    skipped = 0
-    ts = datetime.now(UTC).isoformat()
+        p = _Path(file_path)
+        if not p.exists():
+            return JSONResponse({"status": "skipped", "reason": "file_not_found"})
 
-    for raw_line in new_lines:
-        raw_line = raw_line.strip()
-        if not raw_line:
-            continue
+        # Track file position to only read NEW lines since last call
+        current_pos = _st._team_inbox_positions.get(file_path, 0)
+
+        new_lines = []
         try:
-            msg = json.loads(raw_line)
-        except json.JSONDecodeError as _jde:
-            from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
-
-            record_exception("server.http.team_inbox", _jde)
-            logger.warning("team_inbox malformed JSONL in %s — skipping line", file_path)
-            skipped += 1
-            continue
-
-        msg.get("subagent_type") or msg.get("agent_type") or "unknown"
-        content_snippet = str(msg.get("content") or msg.get("text") or msg.get("message") or "")
-        summary = content_snippet[:200] if content_snippet else f"team_message from {agent_name}"
-
-        try:
-            await _asyncio.to_thread(
-                storage.insert_action_log,
-                tool_name="team_message",
-                tool_input_summary=sanitize_log_field(summary, max_len=500),
-                directory=sanitize_log_field(file_path, max_len=500),
-                session_id=sanitize_log_field(
-                    f"team:{project_id}/{team_name}/{agent_name}", max_len=100
-                ),
-                timestamp=ts,
-            )
-            stored += 1
+            with p.open("r", encoding="utf-8", errors="ignore") as fh:
+                fh.seek(current_pos)
+                new_lines = fh.readlines()
+                new_pos = fh.tell()
         except Exception as _e:
-            logger.debug("team_inbox action_log insert failed: %s", _e)
-            skipped += 1
+            logger.debug("team_inbox read error %s: %s", file_path, _e)
+            _resp = JSONResponse({"status": "error", "message": str(_e)[:100]}, status_code=500)
+            _hook_observe_response("team_inbox", _resp.status_code)
+            return _resp
 
-    return JSONResponse(
-        {
-            "status": "ok",
-            "stored": stored,
-            "skipped": skipped,
-            "new_lines": len(new_lines),
-        }
-    )
+        # Update position — cap dict to 10_000 entries
+        _st._team_inbox_positions[file_path] = new_pos
+        if len(_st._team_inbox_positions) > 10_000:
+            # Evict oldest entry
+            _st._team_inbox_positions.popitem(last=False)
+
+        stored = 0
+        skipped = 0
+        ts = datetime.now(UTC).isoformat()
+
+        for raw_line in new_lines:
+            raw_line = raw_line.strip()
+            if not raw_line:
+                continue
+            try:
+                msg = json.loads(raw_line)
+            except json.JSONDecodeError as _jde:
+                from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+                record_exception("server.http.team_inbox", _jde)
+                logger.warning("team_inbox malformed JSONL in %s — skipping line", file_path)
+                skipped += 1
+                continue
+
+            msg.get("subagent_type") or msg.get("agent_type") or "unknown"
+            content_snippet = str(msg.get("content") or msg.get("text") or msg.get("message") or "")
+            summary = (
+                content_snippet[:200] if content_snippet else f"team_message from {agent_name}"
+            )
+
+            try:
+                await _asyncio.to_thread(
+                    storage.insert_action_log,
+                    tool_name="team_message",
+                    tool_input_summary=sanitize_log_field(summary, max_len=500),
+                    directory=sanitize_log_field(file_path, max_len=500),
+                    session_id=sanitize_log_field(
+                        f"team:{project_id}/{team_name}/{agent_name}", max_len=100
+                    ),
+                    timestamp=ts,
+                )
+                stored += 1
+            except Exception as _e:
+                logger.debug("team_inbox action_log insert failed: %s", _e)
+                skipped += 1
+
+        return JSONResponse(
+            {
+                "status": "ok",
+                "stored": stored,
+                "skipped": skipped,
+                "new_lines": len(new_lines),
+            }
+        )
+    except Exception as _exc:
+        _caught_exc = _exc
+        raise
+    finally:
+        _hook_observe("team_inbox", _t0, _caught_exc)
 
 
+@trace_span("hook.plan_file")
 async def _handle_plan_file(file_path: str, match, storage) -> JSONResponse:
     """Read PLAN_*.md content and memorize with _plan tag (hash-dedup)."""
     import asyncio as _asyncio
     import hashlib as _hashlib
     from pathlib import Path as _Path
 
-    p = _Path(file_path)
-    if not p.exists():
-        return JSONResponse({"status": "skipped", "reason": "file_not_found"})
-
+    _t0 = time.perf_counter()
+    _caught_exc: BaseException | None = None
     try:
-        content = p.read_text(encoding="utf-8", errors="ignore")
-    except Exception as _e:
-        logger.debug("PLAN file read error %s: %s", file_path, _e)
-        return JSONResponse({"status": "error", "message": str(_e)[:100]}, status_code=500)
+        p = _Path(file_path)
+        if not p.exists():
+            return JSONResponse({"status": "skipped", "reason": "file_not_found"})
 
-    if not content.strip():
-        return JSONResponse({"status": "skipped", "reason": "empty_file"})
+        try:
+            content = p.read_text(encoding="utf-8", errors="ignore")
+        except Exception as _e:
+            logger.debug("PLAN file read error %s: %s", file_path, _e)
+            _resp = JSONResponse({"status": "error", "message": str(_e)[:100]}, status_code=500)
+            _hook_observe_response("plan_file", _resp.status_code)
+            return _resp
 
-    # Hash-dedup — skip if content unchanged since last memorize
-    file_hash = _hashlib.sha256(content.encode("utf-8", errors="ignore")).hexdigest()
-    if _st._plan_file_hashes.get(file_path) == file_hash:
-        return JSONResponse({"status": "skipped", "reason": "unchanged"})
+        if not content.strip():
+            return JSONResponse({"status": "skipped", "reason": "empty_file"})
 
-    _st._plan_file_hashes[file_path] = file_hash
+        # Hash-dedup — skip if content unchanged since last memorize
+        file_hash = _hashlib.sha256(content.encode("utf-8", errors="ignore")).hexdigest()
+        if _st._plan_file_hashes.get(file_path) == file_hash:
+            return JSONResponse({"status": "skipped", "reason": "unchanged"})
 
-    # Attempt to capture current git commit ref for provenance
-    git_ref = ""
-    try:
-        import subprocess as _sp
+        _st._plan_file_hashes[file_path] = file_hash
 
-        result = _sp.run(
-            ["git", "-C", str(p.parent.parent), "rev-parse", "--short", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=3,
+        # Attempt to capture current git commit ref for provenance
+        git_ref = ""
+        try:
+            import subprocess as _sp
+
+            result = _sp.run(
+                ["git", "-C", str(p.parent.parent), "rev-parse", "--short", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            if result.returncode == 0:
+                git_ref = result.stdout.strip()
+        except Exception:
+            pass
+
+        filename = match.group(1)
+        snippet = content[:800].strip()
+        memo_content = (
+            f"PLAN file {filename} (git:{git_ref}):\n{snippet}"
+            if git_ref
+            else f"PLAN file {filename}:\n{snippet}"
         )
-        if result.returncode == 0:
-            git_ref = result.stdout.strip()
-    except Exception:
-        pass
 
-    filename = match.group(1)
-    snippet = content[:800].strip()
-    memo_content = (
-        f"PLAN file {filename} (git:{git_ref}):\n{snippet}"
-        if git_ref
-        else f"PLAN file {filename}:\n{snippet}"
-    )
+        import sys as _sys
 
-    import sys as _sys
+        _srv = _sys.modules.get("yadgar.server")
+        _memorize = getattr(_srv, "memorize", None) if _srv else None
+        if _memorize is None:
+            from yadgar.server.tools.memorize import memorize as _memorize  # noqa: PLC0415
 
-    _srv = _sys.modules.get("yadgar.server")
-    _memorize = getattr(_srv, "memorize", None) if _srv else None
-    if _memorize is None:
-        from yadgar.server.tools.memorize import memorize as _memorize  # noqa: PLC0415
-
-    try:
-        result = await _asyncio.to_thread(
-            _memorize,
-            content=memo_content,
-            context=str(p.parent),
-            tags=["_plan", "plan-file"],
-            is_protected=False,
-        )
-        return JSONResponse(
-            {"status": "ok", "memorized": True, "file": filename, "git_ref": git_ref}
-        )
-    except Exception as _e:
-        logger.debug("PLAN memorize failed for %s: %s", file_path, _e)
-        return JSONResponse({"status": "error", "message": str(_e)[:100]}, status_code=500)
+        try:
+            result = await _asyncio.to_thread(
+                _memorize,
+                content=memo_content,
+                context=str(p.parent),
+                tags=["_plan", "plan-file"],
+                is_protected=False,
+            )
+            return JSONResponse(
+                {"status": "ok", "memorized": True, "file": filename, "git_ref": git_ref}
+            )
+        except Exception as _e:
+            logger.debug("PLAN memorize failed for %s: %s", file_path, _e)
+            _resp = JSONResponse({"status": "error", "message": str(_e)[:100]}, status_code=500)
+            _hook_observe_response("plan_file", _resp.status_code)
+            return _resp
+    except Exception as _exc:
+        _caught_exc = _exc
+        raise
+    finally:
+        _hook_observe("plan_file", _t0, _caught_exc)
 
 
 @mcp_server.custom_route("/hooks/instructions-loaded", methods=["GET"])
+@trace_span("hook.instructions_loaded")
 async def hook_instructions_loaded(request: Request) -> JSONResponse:
     """InstructionsLoaded hook endpoint — inject recalled context on CLAUDE.md load.
 
@@ -654,46 +748,59 @@ async def hook_instructions_loaded(request: Request) -> JSONResponse:
         load_reason: "session_start" | "compact"
     Returns: {"text": "<markdown to inject>"}
     """
-    file_path = request.query_params.get("file_path", "")
-    load_reason = request.query_params.get("load_reason", "")
-
-    retriever = _st._retriever
-    if retriever is None:
-        return JSONResponse({"text": ""})
-
-    # Build a query from the filename + load_reason for relevant memories
-    import pathlib as _pathlib
-
-    filename = _pathlib.Path(file_path).name if file_path else "CLAUDE.md"
-    query = f"{filename} {load_reason} instructions context".strip()
-
+    _t0 = time.perf_counter()
+    _caught_exc: BaseException | None = None
+    _observed = False
     try:
-        results = await asyncio.to_thread(retriever.recall, query, max_results=3, min_heat=0.0)
-    except Exception as _e:
-        logger.debug("instructions-loaded hook recall error: %s", _e)
-        return JSONResponse({"text": ""})
+        file_path = request.query_params.get("file_path", "")
+        load_reason = request.query_params.get("load_reason", "")
 
-    if not results:
-        return JSONResponse({"text": ""})
+        retriever = _st._retriever
+        if retriever is None:
+            return JSONResponse({"text": ""})
 
-    max_chars = 2000
-    lines = ["# Yadgar — Instructions Context\n"]
-    total_chars = 0
-    for m in results:
-        content = m.get("content", "")
-        if total_chars + len(content) > max_chars:
-            remaining = max_chars - total_chars
-            if remaining > 50:
-                content = content[:remaining] + "..."
-            else:
-                break
-        lines.append(f"- {content}")
-        total_chars += len(content)
+        # Build a query from the filename + load_reason for relevant memories
+        import pathlib as _pathlib
 
-    return JSONResponse({"text": "\n".join(lines)})
+        filename = _pathlib.Path(file_path).name if file_path else "CLAUDE.md"
+        query = f"{filename} {load_reason} instructions context".strip()
+
+        try:
+            results = await asyncio.to_thread(retriever.recall, query, max_results=3, min_heat=0.0)
+        except Exception as _e:
+            logger.debug("instructions-loaded hook recall error: %s", _e)
+            _hook_observe("instructions_loaded", _t0, _e)
+            _observed = True
+            return JSONResponse({"text": ""})
+
+        if not results:
+            return JSONResponse({"text": ""})
+
+        max_chars = 2000
+        lines = ["# Yadgar — Instructions Context\n"]
+        total_chars = 0
+        for m in results:
+            content = m.get("content", "")
+            if total_chars + len(content) > max_chars:
+                remaining = max_chars - total_chars
+                if remaining > 50:
+                    content = content[:remaining] + "..."
+                else:
+                    break
+            lines.append(f"- {content}")
+            total_chars += len(content)
+
+        return JSONResponse({"text": "\n".join(lines)})
+    except Exception as _exc:
+        _caught_exc = _exc
+        raise
+    finally:
+        if not _observed:
+            _hook_observe("instructions_loaded", _t0, _caught_exc)
 
 
 @mcp_server.custom_route("/hooks/subagent-start", methods=["POST"])
+@trace_span("hook.subagent_start")
 async def hook_subagent_start(request: Request) -> JSONResponse:
     """SubagentStart hook endpoint — inject recalled context into subagent.
 
@@ -715,88 +822,111 @@ async def hook_subagent_start(request: Request) -> JSONResponse:
         }
     Returns: {"text": "<markdown to inject>"}
     """
-    agent_type = sanitize_log_field(
-        request.query_params.get("agent_type", "general-purpose"), max_len=64
-    )
-    cwd = sanitize_log_field(request.query_params.get("cwd", os.getcwd()), max_len=500)
-
+    _t0 = time.perf_counter()
+    _caught_exc: BaseException | None = None
+    _observed = False
     try:
-        body = await request.json()
-    except Exception:
-        body = {}
+        agent_type = sanitize_log_field(
+            request.query_params.get("agent_type", "general-purpose"), max_len=64
+        )
+        cwd = sanitize_log_field(request.query_params.get("cwd", os.getcwd()), max_len=500)
 
-    description = sanitize_log_field(str(body.get("description", "")), max_len=2000)
-    if not cwd:
-        cwd = sanitize_log_field(str(body.get("cwd", os.getcwd())), max_len=500)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
 
-    retriever = _st._retriever
-    if retriever is None:
-        return JSONResponse({"text": ""})
+        description = sanitize_log_field(str(body.get("description", "")), max_len=2000)
+        if not cwd:
+            cwd = sanitize_log_field(str(body.get("cwd", os.getcwd())), max_len=500)
 
-    # P11: count the dispatch now that we know the agent_type is valid.
-    try:
-        from yadgar.metrics import yadgar_subagent_dispatch_count  # noqa: PLC0415
+        retriever = _st._retriever
+        if retriever is None:
+            return JSONResponse({"text": ""})
 
-        yadgar_subagent_dispatch_count.labels(agent_type=agent_type).inc()
-    except Exception:
-        pass
+        # P11: count the dispatch now that we know the agent_type is valid.
+        try:
+            from yadgar.metrics import yadgar_subagent_dispatch_count  # noqa: PLC0415
 
-    # Use description as primary query; fall back to agent_type if empty
-    query = description.strip() or f"agent {agent_type}"
+            yadgar_subagent_dispatch_count.labels(agent_type=agent_type).inc()
+        except Exception:
+            pass
 
-    try:
-        results = await asyncio.to_thread(retriever.recall, query, max_results=5, min_heat=0.0)
-    except Exception as _e:
-        logger.debug("subagent-start hook recall error: %s", _e)
-        return JSONResponse({"text": ""})
+        # Use description as primary query; fall back to agent_type if empty
+        query = description.strip() or f"agent {agent_type}"
 
-    if not results:
-        return JSONResponse({"text": ""})
+        try:
+            results = await asyncio.to_thread(retriever.recall, query, max_results=5, min_heat=0.0)
+        except Exception as _e:
+            logger.debug("subagent-start hook recall error: %s", _e)
+            _hook_observe("subagent_start", _t0, _e)
+            _observed = True
+            return JSONResponse({"text": ""})
 
-    max_chars = 3000
-    lines = [f"# Yadgar — Subagent Context [{agent_type}]\n"]
-    total_chars = 0
-    for m in results:
-        content = m.get("content", "")
-        if total_chars + len(content) > max_chars:
-            remaining = max_chars - total_chars
-            if remaining > 50:
-                content = content[:remaining] + "..."
-            else:
-                break
-        mem_dir = m.get("directory_context", "")
-        import pathlib as _pl
+        if not results:
+            return JSONResponse({"text": ""})
 
-        proj = f" [{_pl.Path(mem_dir).name}]" if mem_dir and mem_dir != cwd else ""
-        lines.append(f"- {content}{proj}")
-        total_chars += len(content)
+        max_chars = 3000
+        lines = [f"# Yadgar — Subagent Context [{agent_type}]\n"]
+        total_chars = 0
+        for m in results:
+            content = m.get("content", "")
+            if total_chars + len(content) > max_chars:
+                remaining = max_chars - total_chars
+                if remaining > 50:
+                    content = content[:remaining] + "..."
+                else:
+                    break
+            mem_dir = m.get("directory_context", "")
+            import pathlib as _pl
 
-    return JSONResponse({"text": "\n".join(lines)})
+            proj = f" [{_pl.Path(mem_dir).name}]" if mem_dir and mem_dir != cwd else ""
+            lines.append(f"- {content}{proj}")
+            total_chars += len(content)
+
+        return JSONResponse({"text": "\n".join(lines)})
+    except Exception as _exc:
+        _caught_exc = _exc
+        raise
+    finally:
+        if not _observed:
+            _hook_observe("subagent_start", _t0, _caught_exc)
 
 
 @mcp_server.custom_route("/api/graph", methods=["GET"])
+@trace_span("hook.api_graph")
 async def api_graph(request: Request) -> JSONResponse:
     """Return full knowledge graph (nodes + edges) for visualization."""
-    if _st._storage is None:
-        return JSONResponse({"nodes": [], "edges": []}, status_code=503)
+    _t0_hook = time.perf_counter()
+    _caught_exc: BaseException | None = None
     try:
-        max_mem = int(request.query_params.get("max_memories", 500))
-    except (ValueError, TypeError) as _e:
-        max_mem = 500
-    try:
-        top_k = int(request.query_params.get("top_k", 8))
-    except (ValueError, TypeError) as _e:
-        top_k = 8
-    _t0 = time.time()
-    data = await asyncio.to_thread(GraphAPI(_st._storage).get_full_graph, max_mem, top_k)
-    _elapsed_ms = (time.time() - _t0) * 1000.0
-    try:
-        from yadgar.metrics import yadgar_viz_api_graph_duration_ms  # noqa: PLC0415
+        if _st._storage is None:
+            _resp = JSONResponse({"nodes": [], "edges": []}, status_code=503)
+            _hook_observe_response("api_graph", _resp.status_code)
+            return _resp
+        try:
+            max_mem = int(request.query_params.get("max_memories", 500))
+        except (ValueError, TypeError) as _e:
+            max_mem = 500
+        try:
+            top_k = int(request.query_params.get("top_k", 8))
+        except (ValueError, TypeError) as _e:
+            top_k = 8
+        _t0 = time.time()
+        data = await asyncio.to_thread(GraphAPI(_st._storage).get_full_graph, max_mem, top_k)
+        _elapsed_ms = (time.time() - _t0) * 1000.0
+        try:
+            from yadgar.metrics import yadgar_viz_api_graph_duration_ms  # noqa: PLC0415
 
-        yadgar_viz_api_graph_duration_ms.observe(_elapsed_ms)
-    except Exception:
-        pass
-    return JSONResponse(data, headers=_CORS)
+            yadgar_viz_api_graph_duration_ms.observe(_elapsed_ms)
+        except Exception:
+            pass
+        return JSONResponse(data, headers=_CORS)
+    except Exception as _exc:
+        _caught_exc = _exc
+        raise
+    finally:
+        _hook_observe("api_graph", _t0_hook, _caught_exc)
 
 
 @mcp_server.custom_route("/api/stats", methods=["GET"])
@@ -1038,6 +1168,7 @@ async def api_wiki_read(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/viz/search", methods=["GET"])
+@trace_span("hook.viz_search")
 async def api_viz_search(request: Request) -> JSONResponse:
     """Semantic search for viz graph: return node IDs matching query.
 
@@ -1048,53 +1179,63 @@ async def api_viz_search(request: Request) -> JSONResponse:
 
     Response: {"node_ids": ["mem:42", "wiki:7", ...], "query": "<q>"}
     """
-    q = (request.query_params.get("q") or "").strip()
-    if not q:
-        return JSONResponse({"node_ids": [], "query": ""}, headers=_CORS)
+    _t0 = time.perf_counter()
+    _caught_exc: BaseException | None = None
+    try:
+        q = (request.query_params.get("q") or "").strip()
+        if not q:
+            return JSONResponse({"node_ids": [], "query": ""}, headers=_CORS)
 
-    node_ids: list[str] = []
+        node_ids: list[str] = []
 
-    # Memory recall
-    retriever = _st._retriever
-    if retriever is not None:
-        try:
-            mem_results = await asyncio.to_thread(retriever.recall, q, max_results=5, min_heat=0.0)
-            for r in mem_results or []:
-                raw_id = r.get("id")
-                if raw_id is not None:
-                    try:
-                        node_ids.append(f"mem:{int(raw_id)}")
-                    except TypeError, ValueError:
-                        pass
-        except Exception as _exc:
-            logger.debug("viz_search recall error: %s", _exc)
+        # Memory recall
+        retriever = _st._retriever
+        if retriever is not None:
+            try:
+                mem_results = await asyncio.to_thread(
+                    retriever.recall, q, max_results=5, min_heat=0.0
+                )
+                for r in mem_results or []:
+                    raw_id = r.get("id")
+                    if raw_id is not None:
+                        try:
+                            node_ids.append(f"mem:{int(raw_id)}")
+                        except TypeError, ValueError:
+                            pass
+            except Exception as _exc:
+                logger.debug("viz_search recall error: %s", _exc)
 
-    # Wiki query
-    wiki = _st._wiki
-    if wiki is not None:
-        try:
-            wiki_results = await asyncio.to_thread(wiki.query, q, None, None, 5)
-            for wp in wiki_results or []:
-                raw_id = wp.get("id")
-                if raw_id is not None:
-                    # id may be a RecordID — extract numeric part
-                    from yadgar.graph_api import GraphAPI  # noqa: PLC0415
+        # Wiki query
+        wiki = _st._wiki
+        if wiki is not None:
+            try:
+                wiki_results = await asyncio.to_thread(wiki.query, q, None, None, 5)
+                for wp in wiki_results or []:
+                    raw_id = wp.get("id")
+                    if raw_id is not None:
+                        # id may be a RecordID — extract numeric part
+                        from yadgar.graph_api import GraphAPI  # noqa: PLC0415
 
-                    nid = GraphAPI._extract_id(raw_id)
-                    if nid is not None:
-                        node_ids.append(f"wiki:{nid}")
-        except Exception as _exc:
-            logger.debug("viz_search wiki_query error: %s", _exc)
+                        nid = GraphAPI._extract_id(raw_id)
+                        if nid is not None:
+                            node_ids.append(f"wiki:{nid}")
+            except Exception as _exc:
+                logger.debug("viz_search wiki_query error: %s", _exc)
 
-    # Deduplicate while preserving order
-    seen: set[str] = set()
-    unique_ids: list[str] = []
-    for nid in node_ids:
-        if nid not in seen:
-            seen.add(nid)
-            unique_ids.append(nid)
+        # Deduplicate while preserving order
+        seen: set[str] = set()
+        unique_ids: list[str] = []
+        for nid in node_ids:
+            if nid not in seen:
+                seen.add(nid)
+                unique_ids.append(nid)
 
-    return JSONResponse({"node_ids": unique_ids, "query": q}, headers=_CORS)
+        return JSONResponse({"node_ids": unique_ids, "query": q}, headers=_CORS)
+    except Exception as _exc:
+        _caught_exc = _exc
+        raise
+    finally:
+        _hook_observe("viz_search", _t0, _caught_exc)
 
 
 @mcp_server.custom_route("/graph", methods=["GET"])
