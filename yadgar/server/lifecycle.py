@@ -262,7 +262,8 @@ def init_engines(
     _st._cls = _st._consolidation.cls
 
     if start_daemons:
-        _st._consolidation.start()
+        # v5.7.0 PR-0: consolidation daemon removed; cron takes over in PR-1.
+        # _st._consolidation.start() intentionally removed.
         if watch_directory:
             _st._staleness.start(watch_directory)
         # Background system-metrics sampler for /api/system and SSE events
@@ -344,8 +345,7 @@ def shutdown():
 
     if _st._queue_drainer is not None:
         _st._queue_drainer.stop()
-    if _st._consolidation is not None:
-        _st._consolidation.stop()
+    # v5.7.0 PR-0: consolidation daemon removed; no stop() needed.
     if _st._staleness is not None:
         _st._staleness.stop()
     if _st._buffer is not None:
