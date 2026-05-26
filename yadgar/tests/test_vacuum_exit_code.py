@@ -6,8 +6,8 @@ returned 404 because yadgar core hadn't finished booting yet. Script exited 2;
 systemd reported failure on a successful run.
 
 Fix: non-2xx response OR connection exception → WARN + exit 0.
-PR-3 (independent) will add a 30-second readiness wait so the 404 stops
-occurring in practice.
+PR-3 added a 30-second readiness wait before check_invariants to reduce
+the frequency of 404s in practice; this warn-only path remains as fallback.
 """
 
 from __future__ import annotations
@@ -76,7 +76,8 @@ class TestCheckInvariantsWarnOnly:
     core hadn't finished booting.  Script exited 2; systemd reported failure.
 
     Fix: 404 / any non-2xx / connection error → WARN + continue (exit 0).
-    PR-3 will add a 30s readiness wait that makes the 404 stop happening.
+    PR-3 added a 30s readiness wait that reduces the frequency of 404s;
+    this warn-only path stays in place as the fallback.
     """
 
     def _run_with_ci(  # noqa: C901 - cohesive: single helper drives all CI variants
@@ -127,7 +128,7 @@ class TestCheckInvariantsWarnOnly:
         result = self._run_with_ci(monkeypatch, ci_status=404)
         assert result == 0, (
             f"check_invariants 404 must not fail vacuum (exit 0); got exit {result}. "
-            "Core may not be fully ready post-restart — PR-3 will add readiness wait."
+            "Core may not be fully ready post-restart — PR-3 readiness wait is the first defense."
         )
 
     def test_check_invariants_non2xx_exits_0(self, monkeypatch):
