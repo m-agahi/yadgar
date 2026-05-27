@@ -361,3 +361,149 @@ def test_hook_record_failure_helper_exists():
         f"hook_record_failure('test_hook', reason='TestError') did not increment counter. "
         f"before={before}, after={after}."
     )
+
+
+# ---------------------------------------------------------------------------
+# v5.7.4 — auto-capture + prompt-recall duration histogram coverage
+# ---------------------------------------------------------------------------
+
+
+def test_hook_auto_capture_increments_duration_histogram():
+    """Calling hook_auto_capture → yadgar_hook_execution_duration_ms{hook=auto_capture} count +1.
+
+    PR-K covered 9 routes but skipped auto_capture and prompt_recall — the two
+    highest-frequency hooks (93% of traffic).  v5.7.4 wires those two routes.
+    """
+    from yadgar.metrics import yadgar_hook_execution_duration_ms
+
+    before = _labeled_hist_count(yadgar_hook_execution_duration_ms, hook="auto_capture")
+
+    import yadgar.server._state as _st
+    import yadgar.server.http as _http
+
+    mock_limiter = MagicMock()
+    mock_limiter.allow.return_value = True
+
+    mock_request = MagicMock()
+    mock_request.json = AsyncMock(
+        return_value={
+            "tool_name": "Write",
+            "summary": "wrote a file",
+            "directory": "/tmp/test",
+            "session_id": "sess-test",
+        }
+    )
+
+    with patch.object(_st, "_auto_capture_limiter", mock_limiter):
+        with patch.object(_st, "_storage", None):
+            # Storage=None triggers a 503 — but duration must still be recorded.
+            asyncio.run(_http.hook_auto_capture(mock_request))
+
+    after = _labeled_hist_count(yadgar_hook_execution_duration_ms, hook="auto_capture")
+    assert after == before + 1, (
+        f"yadgar_hook_execution_duration_ms{{hook=auto_capture}} count did not increase. "
+        f"before={before}, after={after}. "
+        "hook_auto_capture must record hook execution duration (v5.7.4)."
+    )
+
+
+def test_hook_auto_capture_failure_counter_on_500():
+    """Storage not initialized → 503 response → yadgar_hook_failure_total{hook=auto_capture,reason='503'} +1."""
+    from yadgar.metrics import yadgar_hook_failure_total
+
+    before = _labeled_counter_value(yadgar_hook_failure_total, hook="auto_capture", reason="503")
+
+    import yadgar.server._state as _st
+    import yadgar.server.http as _http
+
+    mock_limiter = MagicMock()
+    mock_limiter.allow.return_value = True
+
+    mock_request = MagicMock()
+    mock_request.json = AsyncMock(
+        return_value={
+            "tool_name": "Write",
+            "summary": "x",
+            "directory": "/tmp",
+            "session_id": "s",
+        }
+    )
+
+    with patch.object(_st, "_auto_capture_limiter", mock_limiter):
+        with patch.object(_st, "_storage", None):
+            asyncio.run(_http.hook_auto_capture(mock_request))
+
+    after = _labeled_counter_value(yadgar_hook_failure_total, hook="auto_capture", reason="503")
+    assert after == before + 1, (
+        f"yadgar_hook_failure_total{{hook=auto_capture,reason='503'}} did not increase. "
+        f"before={before}, after={after}. "
+        "hook_auto_capture must call _hook_observe_response for 5xx returns (v5.7.4)."
+    )
+
+
+def test_hook_prompt_recall_increments_duration_histogram():
+    """Calling hook_prompt_recall → yadgar_hook_execution_duration_ms{hook=prompt_recall} count +1."""
+    from yadgar.metrics import yadgar_hook_execution_duration_ms
+
+    before = _labeled_hist_count(yadgar_hook_execution_duration_ms, hook="prompt_recall")
+
+    import yadgar.server._state as _st
+    import yadgar.server.http as _http
+
+    mock_retriever = MagicMock()
+    mock_retriever.recall.return_value = []
+
+    mock_request = MagicMock()
+    mock_request.query_params = MagicMock()
+    mock_request.query_params.get = MagicMock(
+        side_effect=lambda k, d="": "test query" if k == "query" else "/tmp/test"
+    )
+
+    with patch.object(_st, "_retriever", mock_retriever):
+        with patch.object(_st, "_last_session_context", {}):
+            with patch.object(_st, "_last_prompt_recall", {}):
+                with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+                    mock_thread.return_value = []
+                    asyncio.run(_http.hook_prompt_recall(mock_request))
+
+    after = _labeled_hist_count(yadgar_hook_execution_duration_ms, hook="prompt_recall")
+    assert after == before + 1, (
+        f"yadgar_hook_execution_duration_ms{{hook=prompt_recall}} count did not increase. "
+        f"before={before}, after={after}. "
+        "hook_prompt_recall must record hook execution duration (v5.7.4)."
+    )
+
+
+def test_hook_prompt_recall_failure_counter_on_exception():
+    """When hook_prompt_recall's recall raises RuntimeError, failure counter increments."""
+    from yadgar.metrics import yadgar_hook_failure_total
+
+    before = _labeled_counter_value(
+        yadgar_hook_failure_total, hook="prompt_recall", reason="RuntimeError"
+    )
+
+    import yadgar.server._state as _st
+    import yadgar.server.http as _http
+
+    mock_retriever = MagicMock()
+
+    mock_request = MagicMock()
+    mock_request.query_params = MagicMock()
+    mock_request.query_params.get = MagicMock(
+        side_effect=lambda k, d="": "test query" if k == "query" else "/tmp/test"
+    )
+
+    with patch.object(_st, "_retriever", mock_retriever):
+        with patch.object(_st, "_last_session_context", {}):
+            with patch.object(_st, "_last_prompt_recall", {}):
+                with patch("asyncio.to_thread", side_effect=RuntimeError("retriever exploded")):
+                    asyncio.run(_http.hook_prompt_recall(mock_request))
+
+    after = _labeled_counter_value(
+        yadgar_hook_failure_total, hook="prompt_recall", reason="RuntimeError"
+    )
+    assert after == before + 1, (
+        f"yadgar_hook_failure_total{{hook=prompt_recall,reason=RuntimeError}} did not increase. "
+        f"before={before}, after={after}. "
+        "hook_prompt_recall must increment failure counter on RuntimeError (v5.7.4)."
+    )
