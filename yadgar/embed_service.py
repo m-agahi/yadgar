@@ -12,7 +12,9 @@ import asyncio
 import logging
 import os
 import threading
+import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import httpx
@@ -21,6 +23,15 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, field_validator
 
+from yadgar.embed_service_metrics import (
+    embed_dbsize_cache_hits_total as _dbsize_cache_hits,
+)
+from yadgar.embed_service_metrics import (
+    embed_dbsize_cache_misses_total as _dbsize_cache_misses,
+)
+from yadgar.embed_service_metrics import (
+    embed_restart_reason_total as _restart_reason_total,
+)
 from yadgar.embed_service_metrics import (
     metrics_handler as _metrics_handler,
 )
@@ -70,6 +81,25 @@ def _rerank_acquire_timeout() -> float:
     from yadgar.config import get_settings
 
     return float(get_settings().RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC)
+
+
+# ---------------------------------------------------------------------------
+# v5.3.0 — /admin/dbsize in-memory cache
+# ---------------------------------------------------------------------------
+# Module-level so importlib.reload() resets both fields, keeping tests isolated.
+
+_dbsize_cache: dict | None = None  # last computed payload (without cache_age_seconds)
+_dbsize_cache_ts: float = 0.0  # time.time() when last computed
+
+
+def _dbsize_cache_ttl() -> int:
+    """Return YADGAR_DBSIZE_CACHE_TTL_SEC (default 60). 0 = disabled."""
+    return int(os.environ.get("YADGAR_DBSIZE_CACHE_TTL_SEC", "60"))
+
+
+def _shutdown_marker_path() -> str:
+    """Return path for clean-shutdown marker file."""
+    return os.environ.get("YADGAR_SHUTDOWN_MARKER_PATH", "/data/.shutdown_clean")
 
 
 async def _require_admin_token(
@@ -198,6 +228,28 @@ async def lifespan(app: FastAPI):
         record_exception("embed_service.otel_setup", _otel_exc)
         pass  # OTel not available — no-op
 
+    # v5.3.0: restart attribution — inspect previous shutdown state before model load.
+    _marker = _shutdown_marker_path()
+    _db_path = os.environ.get("YADGAR_DB_PATH", "~/.yadgar/surreal_db")
+    _marker_path = Path(_marker)
+    _db_dir = Path(_db_path).expanduser()
+    if _marker_path.exists():
+        _restart_reason = "clean"
+        try:
+            _marker_path.unlink()
+        except OSError:
+            pass
+    elif _db_dir.exists():
+        _restart_reason = "crash"
+    else:
+        _restart_reason = "first_boot"
+
+    _restart_reason_total.labels(reason=_restart_reason).inc()
+    logger.info(
+        "backend_started",
+        extra={"event": "backend_started", "reason": _restart_reason},
+    )
+
     # Load model eagerly so /health reflects true readiness
     try:
         await asyncio.to_thread(_get_engine)
@@ -207,6 +259,14 @@ async def lifespan(app: FastAPI):
         _model_loaded.labels(model="embedding").set(0)
         logger.error("Failed to load embedding model: %s", exc)
     yield
+
+    # v5.3.0: write clean-shutdown marker so next start knows we exited cleanly.
+    _marker_path_shutdown = Path(_shutdown_marker_path())
+    try:
+        _marker_path_shutdown.parent.mkdir(parents=True, exist_ok=True)
+        _marker_path_shutdown.write_text("1")
+    except OSError as _exc:
+        logger.warning("Failed to write shutdown marker: %s", _exc)
 
 
 app = FastAPI(title="yadgar-embed", version="1.0", lifespan=lifespan)
@@ -339,16 +399,21 @@ async def rerank(req: RerankRequest, _: None = Depends(_require_admin_token)) ->
 
             return contextlib.nullcontext(), None
 
+    def _annotate_span(_span, _model_name, _mode: str, _n: int) -> None:
+        """Set OTel span attributes; silently ignores any attribute-set failure."""
+        if _span is None or _model_name is None:
+            return
+        try:
+            _span.set_attribute("rerank.mode", _mode)
+            _span.set_attribute("rerank.n_passages", _n)
+            _span.set_attribute("model.name", _model_name)
+        except Exception:
+            pass
+
     _span_ctx, _model_name = _make_inference_span()
     try:
         with _span_ctx as _span:
-            if _model_name is not None and _span is not None:
-                try:
-                    _span.set_attribute("rerank.mode", req.mode)
-                    _span.set_attribute("rerank.n_passages", len(req.texts))
-                    _span.set_attribute("model.name", _model_name)
-                except Exception:
-                    pass
+            _annotate_span(_span, _model_name, req.mode, len(req.texts))
             scores = await asyncio.to_thread(_score)
     finally:
         elapsed = _time.monotonic() - t0
@@ -383,45 +448,76 @@ async def health(response: Response):
     return payload
 
 
+def _walk_db_sizes(
+    db_path: Path,
+    known_subdirs: set[str],
+) -> tuple[dict[str, int], int]:
+    """Walk db_path and return (size_by_dir, other_size).
+
+    Extracted to keep admin_dbsize nesting ≤ 4 (I13 HARD cap).
+    """
+    size_by_dir: dict[str, int] = {k: 0 for k in known_subdirs}
+    other_size = 0
+    for dirpath, _dirs, filenames in os.walk(db_path):
+        rel = os.path.relpath(dirpath, db_path)
+        top = rel.split(os.sep)[0] if rel != "." else ""
+        for fname in filenames:
+            try:
+                fsize = os.stat(os.path.join(dirpath, fname)).st_size
+            except OSError:
+                continue
+            if top in known_subdirs:
+                size_by_dir[top] += fsize
+            else:
+                other_size += fsize
+    return size_by_dir, other_size
+
+
 @app.get("/admin/dbsize")
 async def admin_dbsize(_: None = Depends(_require_admin_token)):
     """Return a filesystem size breakdown of the SurrealDB data directory.
 
-    Walks /data/surreal_db using os.walk() and buckets files by subdirectory
-    (vlog/, sstables/, wal/).  Returns the same field structure as
-    StorageEngine.get_db_size() so the core container can use the response
-    directly without field remapping.
+    Walks /data/surreal_db (configurable via YADGAR_DB_PATH) using os.walk()
+    and buckets files by subdirectory (vlog/, sstables/, wal/).  Returns the
+    same field structure as StorageEngine.get_db_size() so the core container
+    can use the response directly without field remapping.
+
+    v5.3.0: response is cached in memory for YADGAR_DBSIZE_CACHE_TTL_SEC (default 60).
+    Set TTL=0 to disable caching.  cache_age_seconds in the response indicates
+    how old the cached payload is; 0 = freshly computed.
     """
-    import os as _os
-    from pathlib import Path as _Path
+    global _dbsize_cache, _dbsize_cache_ts
 
-    db_path = _Path("/data/surreal_db")
+    now = time.time()
+    ttl = _dbsize_cache_ttl()
+
+    if ttl > 0 and _dbsize_cache is not None and (now - _dbsize_cache_ts) < ttl:
+        _dbsize_cache_hits.inc()
+        return {**_dbsize_cache, "cache_age_seconds": now - _dbsize_cache_ts}
+
+    _dbsize_cache_misses.inc()
+
+    # Resolve DB path: container default is /data/surreal_db; elsewhere use YADGAR_DB_PATH.
+    _container_db = "/data/surreal_db"
+    db_path = (
+        Path(_container_db)
+        if Path(_container_db).exists()
+        else Path(os.environ.get("YADGAR_DB_PATH", "~/.yadgar/surreal_db")).expanduser()
+    )
+
     known_subdirs = {"vlog", "sstables", "wal"}
-    size_by_dir: dict[str, int] = {k: 0 for k in known_subdirs}
-    other_size = 0
-
     if not db_path.exists():
+        size_by_dir: dict[str, int] = {k: 0 for k in known_subdirs}
+        other_size = 0
         total = 0
     else:
-        for dirpath, _dirs, filenames in _os.walk(db_path):
-            rel = _os.path.relpath(dirpath, db_path)
-            top = rel.split(_os.sep)[0] if rel != "." else ""
-            for fname in filenames:
-                try:
-                    fsize = _os.stat(_os.path.join(dirpath, fname)).st_size
-                except OSError:
-                    continue
-                if top in known_subdirs:
-                    size_by_dir[top] += fsize
-                else:
-                    other_size += fsize
-
+        size_by_dir, other_size = _walk_db_sizes(db_path, known_subdirs)
         total = sum(size_by_dir.values()) + other_size
 
     vlog = size_by_dir["vlog"]
     vlog_pct = int(vlog * 100 / total) if total > 0 else 0
 
-    return {
+    payload = {
         "db_size_bytes": total,
         "vlog_size_bytes": vlog,
         "sstables_size_bytes": size_by_dir["sstables"],
@@ -429,3 +525,6 @@ async def admin_dbsize(_: None = Depends(_require_admin_token)):
         "other_size_bytes": other_size,
         "vlog_pct_of_total": vlog_pct,
     }
+    _dbsize_cache = payload
+    _dbsize_cache_ts = now
+    return {**payload, "cache_age_seconds": 0.0}
