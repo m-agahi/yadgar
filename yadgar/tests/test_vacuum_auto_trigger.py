@@ -153,11 +153,6 @@ class TestAutoTriggerWindow:
                 "yadgar.server._run_check_invariants",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
             ),
-            patch.object(
-                consolidation_mod._subprocess,
-                "check_output",
-                side_effect=subprocess.CalledProcessError(3, "systemctl"),
-            ),
         ):
             inside_time = datetime(2026, 5, 14, 19, 1, 0)
             with patch.object(consolidation_mod, "_now_local", return_value=inside_time):
@@ -236,11 +231,6 @@ class TestAutoTriggerCooldown:
                 "yadgar.server._run_check_invariants",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
             ),
-            patch.object(
-                consolidation_mod._subprocess,
-                "check_output",
-                side_effect=subprocess.CalledProcessError(3, "systemctl"),
-            ),
         ):
             inside_time = datetime(2026, 5, 14, 21, 0, 0)
             with patch.object(consolidation_mod, "_now_local", return_value=inside_time):
@@ -258,11 +248,6 @@ class TestAutoTriggerCooldown:
             patch(
                 "yadgar.server._run_check_invariants",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
-            ),
-            patch.object(
-                consolidation_mod._subprocess,
-                "check_output",
-                side_effect=subprocess.CalledProcessError(3, "systemctl"),
             ),
         ):
             inside_time = datetime(2026, 5, 14, 21, 0, 0)
@@ -337,29 +322,6 @@ class TestInWindowCrossMidnight:
 
 
 class TestIsActivePreCheck:
-    def test_already_active_skips_without_updating_cooldown(self):
-        """If yadgar-vacuum.service is active, skip fire and do NOT set _last_vacuum_at."""
-        scheduler, storage = _make_scheduler()
-        assert scheduler._last_vacuum_at is None
-
-        with (
-            patch.object(consolidation_mod, "_fire_vacuum_service") as mock_fire,
-            patch(
-                "yadgar.server._run_check_invariants",
-                return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
-            ),
-            patch(
-                "subprocess.check_output",
-                return_value=b"active\n",
-            ),
-        ):
-            inside_time = datetime(2026, 5, 14, 21, 0, 0)
-            with patch.object(consolidation_mod, "_now_local", return_value=inside_time):
-                scheduler._consolidation_cycle()
-
-        mock_fire.assert_not_called()
-        assert scheduler._last_vacuum_at is None
-
     def test_inactive_fires_and_updates_cooldown(self):
         """If unit is inactive (CalledProcessError from is-active), fire and set cooldown."""
         scheduler, storage = _make_scheduler()
@@ -383,8 +345,22 @@ class TestIsActivePreCheck:
         mock_fire.assert_called_once()
         assert scheduler._last_vacuum_at is not None
 
-    def test_systemctl_missing_skips_without_updating_cooldown(self):
-        """FNFE from is-active in auto-trigger → skip, no cooldown update."""
+
+# ---------------------------------------------------------------------------
+# v5.7.1: container-safe trigger — no systemctl required
+# ---------------------------------------------------------------------------
+
+
+class TestContainerSafeAutoTrigger:
+    def test_auto_trigger_fires_when_systemctl_missing_filenotfound(self):
+        """FileNotFoundError from systemctl must NOT block _fire_vacuum_service.
+
+        Containerized deploys have no systemctl on PATH.  The pre-check
+        (removed in v5.7.1) raised FNFE and returned early, silently
+        suppressing the threshold backstop.  After the fix, _fire_vacuum_service
+        is called unconditionally once all other guards (cooldown, window,
+        threshold) pass.
+        """
         scheduler, storage = _make_scheduler()
         assert scheduler._last_vacuum_at is None
 
@@ -394,14 +370,10 @@ class TestIsActivePreCheck:
                 "yadgar.server._run_check_invariants",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
             ),
-            patch(
-                "subprocess.check_output",
-                side_effect=FileNotFoundError("systemctl not found"),
-            ),
         ):
             inside_time = datetime(2026, 5, 14, 21, 0, 0)
             with patch.object(consolidation_mod, "_now_local", return_value=inside_time):
                 scheduler._consolidation_cycle()
 
-        mock_fire.assert_not_called()
-        assert scheduler._last_vacuum_at is None
+        mock_fire.assert_called_once()
+        assert scheduler._last_vacuum_at is not None
