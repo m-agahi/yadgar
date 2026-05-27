@@ -156,6 +156,7 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_ASGI_SHUTDOWN_TIMEOUT_SEC", "5", "int"),
     # ── Viz ──────────────────────────────────────────────────────────────────
     ConfigEntry("YADGAR_VIZ_PROXY", "1", "bool"),
+    ConfigEntry("YADGAR_VIZ_HEALTH_REFRESH_SEC", "5.0", "float"),
     # ── DB path (embedded mode) ──────────────────────────────────────────────
     ConfigEntry("YADGAR_DB_PATH", "~/.yadgar/surreal_db", "string"),
     # ── OTLP / Tempo exporter ────────────────────────────────────────────────
