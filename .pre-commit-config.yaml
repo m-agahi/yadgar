@@ -67,6 +67,13 @@ repos:
         pass_filenames: false
         files: ^yadgar/server/http\.py$
 
+      - id: check-config-three-way-sync
+        name: Check config three-way-sync invariant (I25)
+        language: system
+        entry: uv run python -m pytest yadgar/tests/test_config_three_way_sync.py -q --tb=short
+        pass_filenames: false
+        files: ^yadgar/(config\.py|config_yaml\.py|config_registry\.py|tests/config_env_only_allowlist\.txt)$
+
   - repo: local
     hooks:
       - id: check-image-size-backend
