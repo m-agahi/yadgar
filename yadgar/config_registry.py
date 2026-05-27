@@ -171,6 +171,10 @@ _REGISTRY: list[ConfigEntry] = [
     # Container deployments set this to /data/config.yaml so the yaml loader
     # reads from the bind-mounted /data volume instead of /root/.yadgar/
     ConfigEntry("YADGAR_CONFIG_FILE", "", "string"),
+    # ── project_brief thresholds + anchor cap (v5.7.12) ─────────────────────
+    ConfigEntry("YADGAR_ACTIVE_WORK_STALE_HOURS", "24.0", "float"),
+    ConfigEntry("YADGAR_CHECKPOINT_STALE_HOURS", "24.0", "float"),
+    ConfigEntry("YADGAR_PROJECT_BRIEF_MAX_ANCHORS", "12", "int"),
 ]
 
 
