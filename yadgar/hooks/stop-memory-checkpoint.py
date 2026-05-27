@@ -22,28 +22,23 @@ from pathlib import Path
 INTERVAL = 25  # human messages between checkpoints
 
 _PROMPT_TEMPLATE = """\
-Yadgar checkpoint. Evaluate signals and decide actions.
+Yadgar checkpoint. Evaluate signals and act.
 
-1. Call `project_brief(directory)` and check `signals`:
-   - `stale_wiki_count > 0` AND branch is master/main/default → consider repo-wiki regen
-   - `active_work_present == False` OR `active_work_age_hours > 24` → refresh _active_work
-   - `init_memory == None` after >5 sessions in this dir → create one
+1. Call `project_brief("{directory}", mode="signals")`.
 
-2. If repo-wiki regen warranted, dispatch background Agent:
-   Agent(
-     subagent_type="general-purpose",
-     run_in_background=True,
-     description="repo-wiki regen on default branch",
-     prompt="cd into the project, run /repo-wiki:repo-wiki update, "
-            "verify export-yadgar fires, report regenerated slug list."
-   )
+2. Iterate `recommended_actions` and execute each:
+   - action="bootstrap_project": propose <=1500-char init memory summarising the
+     project, then call `bootstrap_project("{directory}", content)`.
+   - action="refresh_active_work": summarise current task + open work,
+     then call `update_active_work("{directory}", content)`.
+   - action="refresh_checkpoint": call `checkpoint("{directory}", current_task=...,
+     key_decisions=..., next_steps=..., files_being_edited=..., open_questions=...)`.
 
-3. If _active_work needs refresh, call update_active_work(directory, content).
+3. Also check the `signals` dict:
+   - `stale_wiki_count > 0` AND on master/main/default branch → dispatch
+     background Agent to run /repo-wiki:repo-wiki update.
 
-4. If init_memory missing and you have enough session context, propose one
-   and call bootstrap_project(directory, content) (<=2000 chars).
-
-5. Otherwise: capture any key decisions via memorize/wiki_add.
+4. Otherwise: capture any key decisions via memorize / wiki_add.
 
 [yadgar] Checkpoint saved for {directory}.
 If user does /clear or session ends, resume via: restore(directory="{directory}")
