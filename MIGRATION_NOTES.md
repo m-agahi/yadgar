@@ -1,5 +1,118 @@
 # Migration Notes
 
+## v5.7.10 — Container yaml loading + I25 invariant + nix -e cleanup (2026-05-27)
+
+Core 5.7.9 → 5.7.10. Backend unchanged (5.3.0).
+
+### What changed
+
+**Step A — Container yaml loading.** `yadgar/config_yaml.py::get_config_path()`
+now honors `YADGAR_CONFIG_FILE` env override. Set in nix ExecStart to
+`/data/config.yaml`. Container app now reads `/data/config.yaml` (= host
+`~/.yadgar/config.yaml` via existing bind mount). Pre-v5.7.10 the hardcoded
+`~/.yadgar/config.yaml` resolved to `/root/.yadgar/config.yaml` inside container,
+which didn't exist → yaml silently ignored → ALL config came from env.
+
+**Step B core — I25 invariant + three-way-sync TDD test.** New
+`tests/test_config_three_way_sync.py` enforces that every `Settings` field
+must be EITHER triple-registered (`config.py` + `config_yaml.py` +
+`config_registry.py`) OR explicitly allowlisted as intentional env-only in
+`yadgar/tests/config_env_only_allowlist.txt`. Wired into pre-commit + CI.
+
+The allowlist landed with TWO tiers:
+- **Tier 1** (8 entries): genuine env-only by design — secrets, infra paths,
+  container flags.
+- **Tier 2** (181 entries): GRANDFATHERED backlog (66 yaml-gap +
+  115 registry-gap pre-v5.7.10 knobs). Invariant catches NEW drift; legacy
+  cleanup is incremental.
+
+Invariant **I25** added to `docs/ARCHITECTURE_INVARIANTS.md`.
+
+**Step C — Nix `-e` flag cleanup.** Four operational knobs moved from nix
+ExecStart `-e` flags into `~/.yadgar/config.yaml`:
+
+| Knob | Old (nix -e) | New (yaml key) |
+|---|---|---|
+| HOST | `YADGAR_HOST=0.0.0.0` | `host: 0.0.0.0` |
+| PORT | `YADGAR_PORT=8765` | `port: 8765` |
+| WIKI_SLUG_PREFIX | `YADGAR_WIKI_SLUG_PREFIX=yadgar` | `wiki_slug_prefix: yadgar` |
+| CORE_LOG_LEVEL | `YADGAR_CORE_LOG_LEVEL=INFO` | `core_log_level: info` |
+
+Stayed env (intentional):
+- Secrets (`DB_USER`, `DB_PASS`, `MCP_AUTH_TOKEN`)
+- Infra wiring (`DB_URL`, `EMBED_URL`, `DATA_DIR`)
+- Deployment flag (`IN_CONTAINER=1`)
+- OTLP endpoint (`YADGAR_OTLP_ENDPOINT` — no Settings field, reads via os.environ in tracing.py)
+- `YADGAR_LOG_LEVEL` (no Settings field — defensive keep)
+
+Backend ExecStart gains `-e YADGAR_CONFIG_FILE=/data/config.yaml` for
+consistency but no other knobs moved (DBSIZE_CACHE_TTL has no Settings
+field; remains env-only).
+
+End state: yadgar core ExecStart has 8 `-e` flags (was 12). Backend
+has 9 (was 8 — the YADGAR_CONFIG_FILE addition for uniform yaml loading).
+
+### Files changed
+
+- `yadgar/config_yaml.py` — `get_config_path()` env override.
+- `yadgar/config.py` — `YamlConfigSource._load()` delegates to the helper.
+- `yadgar/config_registry.py` — `YADGAR_CONFIG_FILE` entry.
+- `yadgar/tests/test_config_yaml_container_path.py` — 7 tests for Step A.
+- `yadgar/tests/test_config_three_way_sync.py` — I25 enforcement.
+- `yadgar/tests/config_env_only_allowlist.txt` — Tier-1 + Tier-2 lists.
+- `.pre-commit-config.yaml` + `.forgejo/workflows/ci.yaml` — I25 hook + CI step.
+- `docs/ARCHITECTURE_INVARIANTS.md` — I25 section.
+- `~/git/nix/modules/home/yadgar.nix` — yadgar core + backend ExecStart
+  flag changes. `yadger_core_version` 5.7.9 → 5.7.10.
+- `~/.yadgar/config.yaml` — NEW host file with the 4 moved keys + log level.
+
+### Deploy steps
+
+**Required before nix-update:**
+
+```
+mkdir -p ~/.yadgar
+cat > ~/.yadgar/config.yaml <<'EOF'
+host: 0.0.0.0
+port: 8765
+wiki_slug_prefix: yadgar
+core_log_level: info
+backend_log_level: info
+EOF
+chmod 0600 ~/.yadgar/config.yaml
+```
+
+Then:
+
+1. Image already rebuilt as `docker.io/openfantasy/yadgar:5.7.10`.
+2. `yadger_core_version` bump 5.7.9 → 5.7.10 (already done).
+3. `cd ~/git/nix && nix-update`.
+
+### Verification
+
+After restart, container should still listen on 8765 + announce
+`yadgar-core/5.7.10` etc. To confirm yaml IS being read:
+
+```
+podman exec yadgar python -c "import os; print(os.environ['YADGAR_CONFIG_FILE'])"
+# → /data/config.yaml
+podman exec yadgar ls -la /data/config.yaml
+# → exists, ~556 bytes
+```
+
+If something binds wrong (e.g. 127.0.0.1 instead of 0.0.0.0), yaml
+loading is broken — rollback by adding `-e YADGAR_HOST=0.0.0.0` back to
+nix ExecStart and reporting the issue.
+
+### v5.7.11 follow-up
+
+- Full Step B backfill: incrementally drain the 66+115 Tier-2 grandfather
+  list. I25 catches NEW drift; this trims the historical backlog.
+- I26 invariant: lint nix ExecStart for `-e <KNOB>=<value>` pairs where
+  KNOB has a Settings field + yaml entry (i.e. should be in yaml not env).
+
+---
+
 ## Backend v5.3.0 — dbsize cache + restart attribution (2026-05-27)
 
 Backend 5.2.2 → 5.3.0. Core unchanged (5.7.9).
