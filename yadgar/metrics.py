@@ -7,7 +7,6 @@ Collectors:
 - yadgar_queue_depth{queue}       Gauge   — items in queue/, archive/, dlq/
 - yadgar_requests_total{route}    Counter — requests by route
 - yadgar_consolidation_duration_seconds{phase}  Histogram — cycle phase timing
-- yadgar_db_query_duration_seconds  Histogram   — DB query latency (p50/p95)
 - yadgar_embedding_cache_hits_total Counter     — embedding cache hits
 - yadgar_embedding_cache_misses_total Counter   — embedding cache misses
 - yadgar_action_batch_size         Histogram    — action-batch size
@@ -65,14 +64,6 @@ yadgar_consolidation_duration_seconds = Histogram(
     "Duration of each consolidation cycle phase in seconds",
     ["phase"],
     buckets=(0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0),
-    registry=_registry,
-)
-
-# DB query latency histogram (p50/p95 readable via quantile buckets)
-yadgar_db_query_duration_seconds = Histogram(
-    "yadgar_db_query_duration_seconds",
-    "SurrealDB query round-trip latency in seconds",
-    buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0),
     registry=_registry,
 )
 
