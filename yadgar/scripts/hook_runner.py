@@ -128,10 +128,16 @@ def hook_session_start_context() -> None:
     try:
         data = json.load(sys.stdin)
         cwd = data.get("cwd", os.getcwd())
+        source = data.get("source", "")
     except Exception:
         cwd = os.getcwd()
+        source = ""
 
-    result = _http_get("/hooks/session-context", {"directory": cwd})
+    params: dict = {"directory": cwd}
+    if source:
+        params["source"] = source
+
+    result = _http_get("/hooks/session-context", params)
     if result:
         text = result.get("text", "")
         if text:
