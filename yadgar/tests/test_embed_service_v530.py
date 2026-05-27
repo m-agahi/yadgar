@@ -156,6 +156,56 @@ class TestDbsizeCache:
             f"expected 2 os.walk calls with TTL=0, got {len(call_counter)}"
         )
 
+    def test_yaml_ttl_override(self, monkeypatch, tmp_path):
+        """A5 (v5.7.11): DBSIZE_CACHE_TTL_SEC from yaml (not env) is respected.
+
+        Write a config.yaml with dbsize_cache_ttl_sec: 5, point YADGAR_CONFIG_FILE
+        at it, clear env, reload embed_service — the cache should expire after 5s
+        (not the default 60s), so advancing the clock by 6s causes a second os.walk.
+        """
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("dbsize_cache_ttl_sec: 5\n")
+
+        monkeypatch.setenv("YADGAR_CONFIG_FILE", str(config_file))
+        monkeypatch.delenv("YADGAR_DBSIZE_CACHE_TTL_SEC", raising=False)
+        monkeypatch.setenv("YADGAR_ALLOW_ROOT", "1")
+
+        import yadgar.config as cfg
+
+        cfg.get_settings.cache_clear()
+
+        import yadgar.embed_service as es
+
+        importlib.reload(es)
+
+        call_counter: list = []
+
+        def _patched_walk(root):
+            return _fake_walk(root, call_counter)
+
+        _fake_now = [1_000_000.0]
+
+        def _fake_time():
+            return _fake_now[0]
+
+        with (
+            patch.object(es.os, "walk", side_effect=_patched_walk),
+            patch("yadgar.embed_service.time.time", side_effect=_fake_time),
+        ):
+            client = _make_client(es)
+            r1 = client.get("/admin/dbsize")
+            assert r1.status_code == 200
+
+            # Advance clock by 6s — beyond yaml TTL of 5s but within default TTL of 60s
+            _fake_now[0] += 6.0
+
+            r2 = client.get("/admin/dbsize")
+            assert r2.status_code == 200
+
+        assert len(call_counter) == 2, (
+            f"A5: expected 2 os.walk calls (yaml TTL=5s, clock+6s), got {len(call_counter)}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # B. Restart attribution

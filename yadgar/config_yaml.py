@@ -484,6 +484,28 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Minimum confidence required to surface a memory",
         "section": "adversarial",
     },
+    # observability (OTLP exporter)
+    "otlp_endpoint": {
+        "desc": "OTLP/HTTP endpoint for Tempo trace export (e.g. http://tempo:4318/v1/traces). Empty = disabled.",
+        "section": "observability",
+    },
+    "otlp_headers": {
+        "desc": "Comma-separated k=v auth/tenant headers for OTLP exporter (e.g. x-tenant=foo,authorization=Bearer tok)",
+        "section": "observability",
+    },
+    "otlp_timeout_sec": {
+        "desc": "OTLP exporter HTTP timeout in seconds (default 10)",
+        "section": "observability",
+    },
+    "otlp_insecure": {
+        "desc": "Use plain HTTP for OTLP export (true = HTTP, false = TLS; default true)",
+        "section": "observability",
+    },
+    # backend_cache
+    "dbsize_cache_ttl_sec": {
+        "desc": "/admin/dbsize response cache TTL in seconds (0 = disabled, default 60)",
+        "section": "backend_cache",
+    },
     # logging
     "core_log_level": {
         "desc": "Log level for the core yadgar MCP server (DEBUG/INFO/WARNING/ERROR)",
@@ -534,6 +556,8 @@ SECTION_TITLES: dict[str, str] = {
     "enrichment": "Index-Time Enrichment",
     "profiles_beliefs": "Profiles & Beliefs",
     "adversarial": "Adversarial Protection",
+    "observability": "Observability (OTLP / Tracing)",
+    "backend_cache": "Backend Cache",
     "logging": "Logging",
     "misc": "Miscellaneous",
 }
