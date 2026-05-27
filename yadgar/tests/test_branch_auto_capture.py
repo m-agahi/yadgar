@@ -223,9 +223,13 @@ class TestCheckpointBranchCapture:
         replay = server._get_replay()
         orig_create = replay.create_checkpoint
 
-        def _capture_create(**kwargs):
+        def _capture_create(*args, **kwargs):
+            # Map positional args to parameter names (directory, ctx, session_id)
+            _param_names = ["directory", "ctx", "session_id"]
+            for _i, _v in enumerate(args):
+                captured_kwargs[_param_names[_i]] = _v
             captured_kwargs.update(kwargs)
-            return orig_create(**kwargs)
+            return orig_create(*args, **kwargs)
 
         monkeypatch.setattr(replay, "create_checkpoint", _capture_create)
         server.checkpoint(

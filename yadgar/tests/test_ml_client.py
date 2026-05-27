@@ -6,7 +6,7 @@ TDD: tests written before implementation.
 from __future__ import annotations
 
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 # ── RemoteMLClient tests ─────────────────────────────────────────────
 
@@ -37,6 +37,7 @@ class TestRemoteMLClientScoreCE:
                 "texts": ["Alice works here", "Bob works here"],
                 "mode": "ce",
             },
+            timeout=ANY,
         )
         assert scores == [0.9, 0.3]
 
@@ -67,6 +68,7 @@ class TestRemoteMLClientScoreNLI:
                 "texts": ["Alice works here", "Bob works here", "Charlie"],
                 "mode": "nli",
             },
+            timeout=ANY,
         )
         assert scores == [0.7, 0.1, 0.4]
 
@@ -91,6 +93,7 @@ class TestRemoteMLClientScorePair:
         mock_client.post.assert_called_once_with(
             "/rerank",
             json={"query": "who is alice", "texts": ["Alice works here"], "mode": "pair"},
+            timeout=ANY,
         )
         assert score == 0.85
 
