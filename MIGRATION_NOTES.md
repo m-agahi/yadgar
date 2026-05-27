@@ -1,5 +1,44 @@
 # Migration Notes
 
+## v5.7.9 — Source-aware SessionStart response (2026-05-27)
+
+Core 5.7.8 → 5.7.9. Backend unchanged (5.2.2).
+
+### What changed
+
+`SessionStart` hook handler now branches on the `source` field
+(`startup` / `resume` / `clear` / `compact`). Compact auto-restore was
+ALREADY shipped via a separate `matcher: "compact"` hook (routes to
+`post-compact-rehydrate` → `replay.restore()`). The general handler was
+emitting a redundant restore hint on top. v5.7.9 suppresses the hint
+on `compact` to eliminate the duplicate and adds source-tailored copy
+for the other three sources.
+
+### Behavior matrix
+
+| source | hint emitted? | copy |
+|---|---|---|
+| `startup` | yes | "Session starting — call restore(directory) to pick up where you left off" |
+| `resume` | yes | "Resuming session — checkpoint loaded externally if available" |
+| `clear` | yes | "Session cleared — call restore(directory) if needed" |
+| `compact` | NO (post-compact-rehydrate handles auto-restore) | — |
+| missing | yes (treated as startup) | startup copy |
+
+### Files changed
+
+- `yadgar/scripts/hook_runner.py` — `hook_session_start_context` reads stdin `source` and passes as query param.
+- `yadgar/server/http.py` — `hook_session_context` reads `source` query, branches.
+- `yadgar/tests/test_v579_smart_sessionstart.py` — 15 new TDD tests.
+- `yadgar/tests/test_session_context_endpoint.py` — one assertion updated (exact equality → `in`).
+
+### Deploy steps
+
+1. Image already rebuilt as `docker.io/openfantasy/yadgar:5.7.9`.
+2. Bump `yadger_core_version` 5.7.8 → 5.7.9 (already done).
+3. `cd ~/git/nix && nix-update`.
+
+---
+
 ## v5.7.8 — /mcp trace_id wiring (2026-05-27)
 
 Core 5.7.7 → 5.7.8. Backend unchanged (5.2.2).
