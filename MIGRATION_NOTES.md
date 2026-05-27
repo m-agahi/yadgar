@@ -1,5 +1,38 @@
 # Migration Notes
 
+## v5.7.1 — Consolidation systemctl container fix (2026-05-27)
+
+Core 5.7.0 → 5.7.1. Backend unchanged (5.2.2).
+
+### What changed
+
+Removed the broken `systemctl --user is-active yadgar-vacuum.service` pre-check
+inside `ConsolidationScheduler._maybe_auto_vacuum`. In container deploys
+`systemctl` does not exist on `PATH`; `subprocess.check_output` raised
+`FileNotFoundError`, the except clause returned early, and the threshold
+backstop never fired. With v5.7.0 PR-4 the underlying `_fire_vacuum_service()`
+became an atomic trigger-file write — the pre-check guard against double-start
+is now both unnecessary and broken.
+
+### Files changed
+
+- `yadgar/consolidation/__init__.py` — removed `import subprocess as _subprocess`
+  + the 16-line pre-check block in `_maybe_auto_vacuum`.
+- `yadgar/tests/test_vacuum_auto_trigger.py` — dropped 2 tests asserting the
+  broken pre-check behavior; stripped 3 dead `_subprocess` patches from
+  existing tests; added `test_auto_trigger_fires_when_systemctl_missing_filenotfound`.
+
+### Deploy steps
+
+1. Image already rebuilt as `docker.io/openfantasy/yadgar:5.7.1`.
+2. Bump `yadger_core_version` 5.7.0 → 5.7.1 in `~/git/nix/modules/home/yadgar.nix` (already done).
+3. `cd ~/git/nix && nix-update`
+4. The pipx re-install from v5.7.0 (item 4 of that section) still applies if
+   you haven't run it yet — `yadgar-nightly-cycle` entry point still needs
+   first-time registration in `~/.local/bin/`.
+
+---
+
 ## v5.7.0 — Nightly Cycle Redesign (2026-05-26)
 
 Core 5.6.7 → 5.7.0. Backend unchanged (still 5.2.2).
