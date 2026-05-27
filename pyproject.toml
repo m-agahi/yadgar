@@ -59,6 +59,8 @@ dependencies = [
     "opentelemetry-sdk>=1.30,<2",
     "opentelemetry-instrumentation-fastapi>=0.51b0",
     "opentelemetry-instrumentation-httpx>=0.51b0",
+    # v5.7.6 — OTLP/HTTP span exporter for direct Tempo ingestion (opt-in via YADGAR_OTLP_ENDPOINT)
+    "opentelemetry-exporter-otlp-proto-http>=1.30,<2",
 ]
 
 [project.scripts]
