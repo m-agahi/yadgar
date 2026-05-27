@@ -1,5 +1,35 @@
 # Migration Notes
 
+## v5.7.3 — DB metric dedup (2026-05-27)
+
+Core 5.7.2 → 5.7.3. Backend unchanged (5.2.2).
+
+### What changed
+
+Dropped duplicate metric `yadgar_db_query_duration_seconds`. Same writer
+site, same semantics as the canonical `yadgar_surrealdb_query_duration_ms{op}`
+(labeled by operation). Single writer in `storage/client.py::_observe_query_metrics`
+emitted both — now emits only the labeled `_ms` variant.
+
+### Files changed
+
+- `yadgar/metrics.py` — declaration removed.
+- `yadgar/storage/client.py` — `.observe(elapsed_s)` call + import removed.
+- `yadgar/tests/test_storage_db_metrics.py` — `TestDbQueryDurationSeconds` deleted.
+- `.complexity-baseline.json` — line-number keys shifted.
+
+### Deploy steps
+
+1. Image already rebuilt as `docker.io/openfantasy/yadgar:5.7.3`.
+2. Bump `yadger_core_version` 5.7.2 → 5.7.3 (already done).
+3. `cd ~/git/nix && nix-update`
+
+### Dashboard impact
+
+None — no Grafana panels referenced the dropped metric.
+
+---
+
 ## v5.7.2 — CROSS_ENCODER_TOP_K cut 20 → 10 (2026-05-27)
 
 Core 5.7.1 → 5.7.2. Backend unchanged (5.2.2).
