@@ -1,7 +1,8 @@
 """Daemon health scraper + aggregated JSON endpoint (V1c, v5.6.0).
 
 Exposes GET /api/daemon-health — returns aggregated metrics from both daemons.
-A background scraper (started by server lifespan) refreshes every 5 s.
+A background scraper (started by server lifespan) refreshes every
+YADGAR_VIZ_HEALTH_REFRESH_SEC seconds (default 5, configurable via env).
 
 Architecture decision (2026-05-22, v5.6.0 V1c):
   Server-side scraping (Option A) — viz_server is a thin reverse proxy;
@@ -9,9 +10,6 @@ Architecture decision (2026-05-22, v5.6.0 V1c):
   Polling (not SSE push) for the new endpoint — the existing SSE channel
   already emits `daemon_health` events; /api/daemon-health is a REST
   fallback for debug tab parity and initial page load.
-
-TODO(V1d): replace hardcoded 5-second cadence with
-    YADGAR_VIZ_HEALTH_REFRESH_SEC env var.
 
 I13 compliance: functions ≤15 cyclomatic, ≤150 LOC hard, ≤80 LOC soft.
 """
@@ -30,10 +28,12 @@ from prometheus_client.parser import text_string_to_metric_families
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from yadgar.config import get_settings
+
 logger = logging.getLogger(__name__)
 
-# Hardcoded refresh cadence — V1d will make this configurable.
-_SCRAPE_INTERVAL_S: float = 5.0
+# Refresh cadence default — overridden at runtime via YADGAR_VIZ_HEALTH_REFRESH_SEC.
+_SCRAPE_INTERVAL_S_DEFAULT: float = 5.0
 _BACKEND_TIMEOUT_S: float = 3.0
 _BACKEND_DEFAULT_URL: str = "http://yadgar-backend:8001"
 
@@ -400,9 +400,10 @@ def _scraper_record_exc(exc: BaseException) -> None:
 
 
 async def run_health_scraper() -> None:
-    """Background loop — scrapes every _SCRAPE_INTERVAL_S seconds.
+    """Background loop — scrapes every YADGAR_VIZ_HEALTH_REFRESH_SEC seconds.
 
     Call once at server lifespan startup. Runs until task cancelled.
+    Interval is re-read from settings each iteration so live env changes take effect.
     """
     while True:
         _scraper_heartbeat()  # PR-I: heartbeat at top of every iteration
@@ -411,7 +412,8 @@ async def run_health_scraper() -> None:
         except Exception as exc:  # noqa: BLE001
             logger.warning("viz_daemon_health: scrape cycle error: %s", exc)
             _scraper_record_exc(exc)  # PR-I: loop error counter
-        await asyncio.sleep(_SCRAPE_INTERVAL_S)
+        interval = get_settings().VIZ_HEALTH_REFRESH_SEC
+        await asyncio.sleep(interval)
 
 
 # ---------------------------------------------------------------------------

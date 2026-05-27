@@ -8,10 +8,12 @@ Tests:
 - Missing core is impossible (self-scraped) but parser returns empty on bad text
 - CB state mapped correctly (0=CLOSED, 1=HALF_OPEN, 2=OPEN)
 - scraped_at field present in response
+- YADGAR_VIZ_HEALTH_REFRESH_SEC env knob propagates to asyncio.sleep interval (v5.7.7)
 """
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -444,3 +446,74 @@ yadgar_process_cpu_percent 12.5
         )
         assert result["process"]["rss_bytes"] == 65536000
         assert result["process"]["open_fds"] == 55
+
+
+# ---------------------------------------------------------------------------
+# v5.7.7 — YADGAR_VIZ_HEALTH_REFRESH_SEC env knob
+# ---------------------------------------------------------------------------
+
+
+class TestVizHealthRefreshEnvKnob:
+    """YADGAR_VIZ_HEALTH_REFRESH_SEC propagates to run_health_scraper sleep interval."""
+
+    @pytest.mark.asyncio
+    async def test_default_interval_is_5s(self, monkeypatch) -> None:
+        """Without env override, run_health_scraper sleeps for 5.0 s."""
+        import yadgar.config as cfg
+
+        monkeypatch.delenv("YADGAR_VIZ_HEALTH_REFRESH_SEC", raising=False)
+        cfg.get_settings.cache_clear()
+
+        sleep_calls: list[float] = []
+
+        async def _fake_scrape_once() -> None:
+            pass
+
+        async def _fake_sleep(secs: float) -> None:
+            sleep_calls.append(secs)
+            raise asyncio.CancelledError  # stop after first iteration
+
+        with (
+            patch("yadgar.viz_daemon_health._scrape_once", side_effect=_fake_scrape_once),
+            patch("yadgar.viz_daemon_health._scraper_heartbeat"),
+            patch("yadgar.viz_daemon_health._scraper_record_exc"),
+            patch("asyncio.sleep", side_effect=_fake_sleep),
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                from yadgar.viz_daemon_health import run_health_scraper
+
+                await run_health_scraper()
+
+        cfg.get_settings.cache_clear()
+        assert sleep_calls == [5.0], f"expected [5.0], got {sleep_calls}"
+
+    @pytest.mark.asyncio
+    async def test_env_override_propagates(self, monkeypatch) -> None:
+        """YADGAR_VIZ_HEALTH_REFRESH_SEC=10 → run_health_scraper sleeps 10.0 s."""
+        import yadgar.config as cfg
+
+        monkeypatch.setenv("YADGAR_VIZ_HEALTH_REFRESH_SEC", "10")
+        cfg.get_settings.cache_clear()
+
+        sleep_calls: list[float] = []
+
+        async def _fake_scrape_once() -> None:
+            pass
+
+        async def _fake_sleep(secs: float) -> None:
+            sleep_calls.append(secs)
+            raise asyncio.CancelledError  # stop after first iteration
+
+        with (
+            patch("yadgar.viz_daemon_health._scrape_once", side_effect=_fake_scrape_once),
+            patch("yadgar.viz_daemon_health._scraper_heartbeat"),
+            patch("yadgar.viz_daemon_health._scraper_record_exc"),
+            patch("asyncio.sleep", side_effect=_fake_sleep),
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                from yadgar.viz_daemon_health import run_health_scraper
+
+                await run_health_scraper()
+
+        cfg.get_settings.cache_clear()
+        assert sleep_calls == [10.0], f"expected [10.0], got {sleep_calls}"
