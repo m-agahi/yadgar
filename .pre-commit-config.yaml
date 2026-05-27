@@ -59,6 +59,14 @@ repos:
         pass_filenames: false
         files: ^yadgar/.*\.py$
 
+      - id: check-trace-spans
+        name: Check that public observable methods have @trace_span (I24)
+        language: system
+        entry: python scripts/check_trace_spans.py
+        types: [python]
+        pass_filenames: false
+        files: ^yadgar/server/http\.py$
+
   - repo: local
     hooks:
       - id: check-image-size-backend
