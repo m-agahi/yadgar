@@ -1,5 +1,46 @@
 # Migration Notes
 
+## v5.7.5 — I24 @trace_span AST lint (2026-05-27)
+
+Core 5.7.4 → 5.7.5. Backend unchanged (5.2.2).
+
+### What changed
+
+Added `scripts/check_trace_spans.py` (stdlib-only AST scanner), pre-commit
+hook + Forgejo CI step, and new invariant **I24** ("declared public HTTP
+handlers MUST carry `@trace_span`"). Mirrors I23 (PR-L)'s metric-writer
+pattern. Scoped narrowly to `yadgar/server/http.py` top-level async
+functions — storage / retrieval / consolidation subpackages have too many
+public helpers without spans for a one-shot enforcement.
+
+### Files changed
+
+- `scripts/check_trace_spans.py` — new (208 LOC).
+- `yadgar/tests/test_check_trace_spans.py` — new (7 tests).
+- `yadgar/server/http.py` — 13 `@trace_span` decorators added on previously
+  un-spanned public handlers: `hook.metrics`, `hook.pre_compact`,
+  `hook.post_compact`, `hook.session_context`, `api.stats`,
+  `api.graph_stats`, `api.graph_neighborhood`, `api.system`,
+  `api.heat_histogram`, `api.consolidation_log`, `api.graph_events`,
+  `api.wiki_read`, `api.graph_view`.
+- `.pre-commit-config.yaml` — new `check-trace-spans` hook.
+- `.forgejo/workflows/ci.yaml` — new I24 step after I23.
+- `docs/ARCHITECTURE_INVARIANTS.md` — I24 entry + decision-log note.
+
+### Deploy steps
+
+1. Image already rebuilt as `docker.io/openfantasy/yadgar:5.7.5`.
+2. Bump `yadger_core_version` 5.7.4 → 5.7.5 (already done).
+3. `cd ~/git/nix && nix-update`
+
+### Verification
+
+After restart, the 13 new `span="api.*"` / `span="hook.*"` series should
+appear in Tempo / journal-jq trace lookup. `python scripts/check_trace_spans.py`
+exits 0 on master.
+
+---
+
 ## v5.7.4 — Hook observability extension (2026-05-27)
 
 Core 5.7.3 → 5.7.4. Backend unchanged (5.2.2).
