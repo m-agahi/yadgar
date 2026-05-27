@@ -1,5 +1,41 @@
 # Migration Notes
 
+## v5.7.4 — Hook observability extension (2026-05-27)
+
+Core 5.7.3 → 5.7.4. Backend unchanged (5.2.2).
+
+### What changed
+
+Added `@trace_span` + duration histogram + failure counter wrapper on the
+two HTTP hook handlers PR-K missed: `/hooks/auto-capture` and
+`/hooks/prompt-recall`. Post-v5.6.7 analytics flagged these two as ~93%
+of hook traffic with zero coverage — they're the busiest handlers in the
+codebase. Pattern matches PR-K's `_hook_observe` + `_hook_observe_response`
+envelope: only `>= 500` counts as failure (400 bad-JSON and 429
+rate-limited are not failures); 503 storage-uninit IS.
+
+### Files changed
+
+- `yadgar/server/http.py` — `hook_auto_capture` + `hook_prompt_recall` get
+  `@trace_span`, `_t0`/`_caught_exc`/`finally` envelope, early-return
+  `_hook_observe_response` calls.
+- `yadgar/tests/test_hook_handler_spans.py` — 4 new tests.
+- `.complexity-baseline.json` — `http.py` LOC baseline updated (1245→1269).
+
+### Deploy steps
+
+1. Image already rebuilt as `docker.io/openfantasy/yadgar:5.7.4`.
+2. Bump `yadger_core_version` 5.7.3 → 5.7.4 (already done).
+3. `cd ~/git/nix && nix-update`
+
+### Verification
+
+After restart, `yadgar_hook_execution_duration_ms_count{hook="auto_capture"}`
+and `{hook="prompt_recall"}` should start incrementing on every hook
+invocation. Both labels were absent from `/metrics` before this change.
+
+---
+
 ## v5.7.3 — DB metric dedup (2026-05-27)
 
 Core 5.7.2 → 5.7.3. Backend unchanged (5.2.2).
