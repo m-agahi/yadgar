@@ -1,5 +1,50 @@
 # Migration Notes
 
+## v5.7.6 — OTLP/HTTP span exporter to Tempo (2026-05-27)
+
+Core 5.7.5 → 5.7.6. Backend unchanged (5.2.2).
+
+### What changed
+
+Added an OTLP/HTTP span exporter alongside the existing `LogSpanProcessor`.
+When `YADGAR_OTLP_ENDPOINT` is set, spans ship directly to Tempo (or any
+OTLP receiver). When unset (default), behavior is unchanged — spans
+remain in JSON log lines for journal-jq.
+
+New env knobs (all 4 registered in `config_registry.py`):
+
+- `YADGAR_OTLP_ENDPOINT` — empty by default. Example: `http://tempo:4318/v1/traces`.
+- `YADGAR_OTLP_HEADERS` — comma-separated `k=v` pairs, default empty.
+- `YADGAR_OTLP_TIMEOUT_SEC` — default 10.
+- `YADGAR_OTLP_INSECURE` — advisory; actual TLS is determined by URL scheme.
+
+New dep: `opentelemetry-exporter-otlp-proto-http>=1.30,<2`.
+
+### Files changed
+
+- `yadgar/tracing.py` — `_parse_otlp_headers`, `_build_otlp_exporter`, conditional wiring in `setup_tracing()`.
+- `yadgar/config_registry.py` — 4 new env-knob entries.
+- `pyproject.toml` + `uv.lock` — new OTLP exporter dep + 5 transitive packages.
+- `yadgar/tests/test_otlp_exporter.py` — 14 new tests.
+
+### Deploy steps
+
+1. Image already rebuilt as `docker.io/openfantasy/yadgar:5.7.6`.
+2. Bump `yadger_core_version` 5.7.5 → 5.7.6 (already done).
+3. `cd ~/git/nix && nix-update`.
+4. To activate Tempo ingestion (separate nix work, not in this release):
+   set `YADGAR_OTLP_ENDPOINT=http://tempo:4318/v1/traces` (or wherever
+   your Tempo receiver listens) in the yadgar systemd unit's
+   `Environment=` block, then restart yadgar.
+
+### Verification
+
+After restart with `YADGAR_OTLP_ENDPOINT` set: spans appear in the
+Tempo "Search" Grafana panel within seconds. With endpoint unset:
+no behavior change vs v5.7.5.
+
+---
+
 ## v5.7.5 — I24 @trace_span AST lint (2026-05-27)
 
 Core 5.7.4 → 5.7.5. Backend unchanged (5.2.2).
