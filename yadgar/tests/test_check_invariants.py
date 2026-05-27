@@ -131,6 +131,8 @@ def test_db_size_block_populated(tmp_path, monkeypatch):
 
     from yadgar import config as _cfg
 
+    monkeypatch.setenv("YADGAR_DB_PATH", str(db_dir))
+    _cfg.get_settings.cache_clear()
     monkeypatch.setattr(_cfg.get_settings(), "DB_PATH", str(db_dir), raising=False)
 
     # Also patch the settings object used in server module
@@ -165,8 +167,11 @@ def test_db_size_warning_false_below_threshold(tmp_path, monkeypatch):
     db_dir = tmp_path / "surreal_db"
     _make_sparse_file(db_dir / "vlog" / "x", 1024)  # tiny
 
+    from yadgar import config as _cfg
     from yadgar import server as _s
 
+    monkeypatch.setenv("YADGAR_DB_PATH", str(db_dir))
+    _cfg.get_settings.cache_clear()
     monkeypatch.setattr(_s.settings, "DB_PATH", str(db_dir), raising=False)
 
     result = _run_check_invariants(server._get_storage())
@@ -179,8 +184,11 @@ def test_db_size_warning_true_above_threshold(tmp_path, monkeypatch):
     # Create a file > 1 GiB via sparse file (no actual disk usage)
     _make_sparse_file(db_dir / "vlog" / "big.vlog", 2 * 1024 * 1024 * 1024)  # 2 GiB
 
+    from yadgar import config as _cfg
     from yadgar import server as _s
 
+    monkeypatch.setenv("YADGAR_DB_PATH", str(db_dir))
+    _cfg.get_settings.cache_clear()
     monkeypatch.setattr(_s.settings, "DB_PATH", str(db_dir), raising=False)
 
     result = _run_check_invariants(server._get_storage())
@@ -199,12 +207,17 @@ def test_db_size_warning_logged_once_per_hour(tmp_path, monkeypatch, caplog):
     db_dir = tmp_path / "surreal_db"
     _make_sparse_file(db_dir / "vlog" / "big.vlog", 2 * 1024 * 1024 * 1024)
 
+    from yadgar import config as _cfg
     from yadgar import server as _s
 
+    monkeypatch.setenv("YADGAR_DB_PATH", str(db_dir))
+    _cfg.get_settings.cache_clear()
     monkeypatch.setattr(_s.settings, "DB_PATH", str(db_dir), raising=False)
 
     # Reset the throttle state so this test starts clean
-    monkeypatch.setattr(_s, "_db_size_warn_last_logged_hour", -1, raising=False)
+    import yadgar.server._state as _st
+
+    monkeypatch.setattr(_st, "_db_size_warn_last_logged_hour", -1)
 
     storage = server._get_storage()
     with caplog.at_level(logging.WARNING, logger="yadgar.server"):
