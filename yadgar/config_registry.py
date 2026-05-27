@@ -105,7 +105,6 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_OLLAMA_MODEL", "qwen3:8b", "string"),
     ConfigEntry("YADGAR_CONFLICT_K", "5", "int"),
     # ── Logging ─────────────────────────────────────────────────────────────
-    ConfigEntry("YADGAR_LOG_LEVEL", "WARNING", "string"),
     ConfigEntry("YADGAR_BACKEND_LOG_LEVEL", "warn", "string"),
     ConfigEntry("YADGAR_CORE_LOG_LEVEL", "WARNING", "string"),
     ConfigEntry("YADGAR_LOG_FORMAT", "json", "string"),

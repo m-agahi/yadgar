@@ -44,8 +44,21 @@ def _reset_tracing():
 @pytest.fixture(autouse=True)
 def reset_otel():
     _reset_tracing()
+    # Clear Settings cache so monkeypatched env vars are picked up by pydantic-settings.
+    try:
+        from yadgar.config import get_settings
+
+        get_settings.cache_clear()
+    except Exception:
+        pass
     yield
     _reset_tracing()
+    try:
+        from yadgar.config import get_settings
+
+        get_settings.cache_clear()
+    except Exception:
+        pass
 
 
 def _get_processors(provider):
@@ -332,3 +345,116 @@ class TestOtlpTimeout:
         assert otlp_proc is not None
         exporter = otlp_proc.span_exporter
         assert exporter._timeout == 30
+
+
+# ---------------------------------------------------------------------------
+# 6. YAML override path (v5.7.11) — Settings-backed knobs honour config.yaml
+# ---------------------------------------------------------------------------
+
+
+class TestYamlOverride:
+    """Verify yaml config file overrides work for OTLP Settings fields."""
+
+    def test_yaml_endpoint_override(self, monkeypatch, tmp_path):
+        """OTLP_ENDPOINT from yaml (not env) enables OTLP exporter."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("otlp_endpoint: http://yaml-tempo:4318/v1/traces\n")
+
+        monkeypatch.setenv("YADGAR_CONFIG_FILE", str(config_file))
+        monkeypatch.delenv("YADGAR_OTLP_ENDPOINT", raising=False)
+        monkeypatch.delenv("YADGAR_OTLP_HEADERS", raising=False)
+        monkeypatch.delenv("YADGAR_OTLP_TIMEOUT_SEC", raising=False)
+        monkeypatch.delenv("YADGAR_OTLP_INSECURE", raising=False)
+
+        import yadgar.config as cfg
+
+        cfg.get_settings.cache_clear()
+
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+        from yadgar.tracing import setup_tracing
+
+        setup_tracing("test-yaml-endpoint")
+
+        from opentelemetry import trace
+
+        provider = trace.get_tracer_provider()
+        processors = _get_processors(provider)
+        otlp_procs = [
+            p
+            for p in processors
+            if isinstance(p, BatchSpanProcessor)
+            and isinstance(getattr(p, "span_exporter", None), OTLPSpanExporter)
+        ]
+        assert len(otlp_procs) == 1, (
+            f"Expected 1 OTLP exporter via yaml override, got {len(otlp_procs)}"
+        )
+
+    def test_yaml_timeout_override(self, monkeypatch, tmp_path):
+        """OTLP_TIMEOUT_SEC from yaml (not env) is respected."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "otlp_endpoint: http://yaml-tempo:4318/v1/traces\notlp_timeout_sec: 25\n"
+        )
+
+        monkeypatch.setenv("YADGAR_CONFIG_FILE", str(config_file))
+        monkeypatch.delenv("YADGAR_OTLP_ENDPOINT", raising=False)
+        monkeypatch.delenv("YADGAR_OTLP_TIMEOUT_SEC", raising=False)
+
+        import yadgar.config as cfg
+
+        cfg.get_settings.cache_clear()
+
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+        from yadgar.tracing import setup_tracing
+
+        setup_tracing("test-yaml-timeout")
+
+        from opentelemetry import trace
+
+        provider = trace.get_tracer_provider()
+        processors = _get_processors(provider)
+        otlp_proc = next(
+            (
+                p
+                for p in processors
+                if isinstance(p, BatchSpanProcessor)
+                and isinstance(getattr(p, "span_exporter", None), OTLPSpanExporter)
+            ),
+            None,
+        )
+        assert otlp_proc is not None
+        assert otlp_proc.span_exporter._timeout == 25, (
+            f"Expected timeout=25 from yaml, got {otlp_proc.span_exporter._timeout}"
+        )
+
+    def test_yaml_headers_override(self, monkeypatch, tmp_path):
+        """OTLP_HEADERS from yaml (not env) are passed to exporter."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "otlp_endpoint: http://yaml-tempo:4318/v1/traces\notlp_headers: x-tenant=yaml-org\n"
+        )
+
+        monkeypatch.setenv("YADGAR_CONFIG_FILE", str(config_file))
+        monkeypatch.delenv("YADGAR_OTLP_ENDPOINT", raising=False)
+        monkeypatch.delenv("YADGAR_OTLP_HEADERS", raising=False)
+
+        import yadgar.config as cfg
+
+        cfg.get_settings.cache_clear()
+
+        from yadgar.tracing import _build_otlp_exporter
+
+        exporter = _build_otlp_exporter()
+        assert exporter is not None, "Expected exporter from yaml override"
+        # OTLPSpanExporter stores parsed headers in _headers
+        headers = getattr(exporter, "_headers", None)
+        # headers may be a dict or list of tuples depending on OTel version
+        if isinstance(headers, dict):
+            assert "x-tenant" in headers, f"Expected x-tenant header, got {headers}"
+        else:
+            header_keys = [k for k, _ in (headers or [])]
+            assert "x-tenant" in header_keys, f"Expected x-tenant header, got {headers}"
