@@ -157,7 +157,7 @@ class Settings(BaseSettings):
     # v10: Cross-encoder reranking settings
     CROSS_ENCODER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     CROSS_ENCODER_ENABLED: bool = True  # FlashRank ONNX is fast enough for CPU
-    CROSS_ENCODER_TOP_K: int = 20
+    CROSS_ENCODER_TOP_K: int = 10
     CROSS_ENCODER_WEIGHT: float = 0.6  # CE weight in blend (retrieval gets 1-this)
 
     # v12: Graph signal optimization settings
