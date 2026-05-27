@@ -1,8 +1,8 @@
-"""Distributed tracing for Yadgar — v5.7.6.
+"""Distributed tracing for Yadgar — v5.7.11.
 
 Provides:
   - setup_tracing(service_name) — creates TracerProvider, registers LogSpanProcessor, idempotent.
-    Optional OTLP/HTTP exporter (Tempo) via YADGAR_OTLP_ENDPOINT env knob.
+    Optional OTLP/HTTP exporter (Tempo) via Settings.OTLP_ENDPOINT (yaml/env/default).
   - LogSpanProcessor — on span finish, emits ONE INFO log line in I14 JSON format.
   - @trace_span(name, attributes) — decorator for sync + async functions.
   - get_current_trace_id() / get_current_span_id() — helpers for log formatter integration.
@@ -10,12 +10,12 @@ Provides:
 
 Falls back gracefully (no-op) when opentelemetry deps not installed.
 
-OTLP env knobs (all optional):
+OTLP knobs (all optional, yaml/env/default via Settings):
   YADGAR_OTLP_ENDPOINT      — HTTP endpoint, e.g. http://tempo:4318/v1/traces.
                               Empty/unset → OTLP exporter disabled.
   YADGAR_OTLP_HEADERS       — Comma-separated k=v pairs for auth/tenant headers.
   YADGAR_OTLP_TIMEOUT_SEC   — Exporter timeout in seconds (default 10).
-  YADGAR_OTLP_INSECURE      — 1/true → plain HTTP (default). 0/false → TLS.
+  YADGAR_OTLP_INSECURE      — true → plain HTTP (default). false → TLS.
 
 W3C TraceContext propagation: use opentelemetry-instrumentation-httpx (outbound)
 and opentelemetry-instrumentation-fastapi (inbound) in the service setup code.
@@ -26,7 +26,6 @@ from __future__ import annotations
 import functools
 import inspect
 import logging
-import os
 from typing import Any
 
 logger = logging.getLogger("yadgar.tracing")
@@ -80,12 +79,18 @@ def _parse_otlp_headers(raw: str) -> dict[str, str]:
 
 
 def _build_otlp_exporter():  # type: ignore[return]
-    """Construct an OTLPSpanExporter from env knobs, or return None.
+    """Construct an OTLPSpanExporter from Settings (yaml/env/default), or return None.
 
-    Returns None when YADGAR_OTLP_ENDPOINT is empty/unset.
+    v5.7.11: reads from Settings (pydantic-settings) instead of os.environ directly,
+    so yaml-overrides in ~/.yadgar/config.yaml are honoured.
+
+    Returns None when OTLP_ENDPOINT is empty/unset.
     Returns None and logs WARN on configuration error (URL validation failure).
     """
-    endpoint = os.environ.get("YADGAR_OTLP_ENDPOINT", "").strip()
+    from yadgar.config import get_settings  # noqa: PLC0415
+
+    settings = get_settings()
+    endpoint = settings.OTLP_ENDPOINT.strip()
     if not endpoint:
         return None
 
@@ -103,23 +108,10 @@ def _build_otlp_exporter():  # type: ignore[return]
         )
         return None
 
-    headers_raw = os.environ.get("YADGAR_OTLP_HEADERS", "").strip()
+    headers_raw = settings.OTLP_HEADERS.strip()
     headers = _parse_otlp_headers(headers_raw) if headers_raw else {}
 
-    timeout_raw = os.environ.get("YADGAR_OTLP_TIMEOUT_SEC", "10").strip()
-    try:
-        timeout = int(timeout_raw)
-    except ValueError:
-        logger.warning(
-            "otlp_timeout_invalid",
-            extra={
-                "event": "otlp_timeout_invalid",
-                "component": "tracing",
-                "value": timeout_raw,
-                "action": "using default 10s",
-            },
-        )
-        timeout = 10
+    timeout = settings.OTLP_TIMEOUT_SEC
 
     try:
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # noqa: PLC0415
@@ -287,8 +279,8 @@ else:  # pragma: no cover
 def setup_tracing(service_name: str) -> None:
     """Create TracerProvider with LogSpanProcessor. Idempotent per service_name.
 
-    If YADGAR_OTLP_ENDPOINT is set, also wires a BatchSpanProcessor with an
-    OTLPSpanExporter so spans ship directly to Tempo alongside the JSON log path.
+    If Settings.OTLP_ENDPOINT is set (via yaml/env/default), also wires a BatchSpanProcessor
+    with an OTLPSpanExporter so spans ship directly to Tempo alongside the JSON log path.
     LogSpanProcessor is always registered; OTLP exporter is opt-in via env.
 
     Falls back silently (no-op) when opentelemetry-sdk not installed.

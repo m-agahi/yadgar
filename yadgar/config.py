@@ -109,6 +109,15 @@ class Settings(BaseSettings):
     # Set YADGAR_LOG_FORMAT=text for local dev human-readable output.
     LOG_FORMAT: str = "json"  # YADGAR_LOG_FORMAT — "json" | "text" | "human"
 
+    # v5.7.11 OTLP exporter knobs (formerly env-only, now yaml-overridable)
+    OTLP_ENDPOINT: str = ""  # HTTP endpoint, e.g. http://tempo:4318/v1/traces. Empty = disabled.
+    OTLP_HEADERS: str = ""  # Comma-separated k=v pairs for auth/tenant headers.
+    OTLP_TIMEOUT_SEC: int = 10  # Exporter timeout in seconds.
+    OTLP_INSECURE: bool = True  # True → plain HTTP (default). False → TLS.
+
+    # v5.7.11 backend cache knob (formerly env-only, now yaml-overridable)
+    DBSIZE_CACHE_TTL_SEC: int = 60  # /admin/dbsize cache TTL in seconds. 0 = disabled.
+
     # v4: Hippocampal Replay settings
     REPLAY_MAX_RESTORE_MEMORIES: int = 8  # Max memories to include in restoration
     REPLAY_ANCHOR_HEAT: float = 1.0  # Heat assigned to anchored memories
