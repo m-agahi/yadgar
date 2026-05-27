@@ -286,11 +286,21 @@ async def hook_session_context(request: Request) -> JSONResponse:
         branch: host-side git branch hint (optional, v5.1.9 F2); passed to
             project_brief as branch_hint= so the container doesn't need git
             access.
+        source: SessionStart source field (v5.7.9); values: "compact",
+            "clear", "startup", "resume". Missing/unknown → treated as
+            "startup". "compact" suppresses restore hint (compact handler
+            owns auto-restore via /hooks/post-compact).
     Returns: {"text": "...markdown..."}
     """
     directory = request.query_params.get("directory", os.getcwd())
     mode = request.query_params.get("mode", "catalog")
     branch_hint = request.query_params.get("branch", "") or None
+    # v5.7.9: read source for per-source hint copy and compact suppression.
+    # Unknown/missing values fall through to the "startup" default.
+    source = request.query_params.get("source", "") or "startup"
+    _KNOWN_SOURCES = frozenset({"compact", "clear", "startup", "resume"})
+    if source not in _KNOWN_SOURCES:
+        source = "startup"
 
     # Record timestamp for prompt-recall throttling (bounded dict)
     _bounded_set(_st._last_session_context, directory, time.monotonic())
@@ -306,25 +316,45 @@ async def hook_session_context(request: Request) -> JSONResponse:
         brief = _pb(directory, mode=mode, branch_hint=branch_hint)
         render = brief.get("_render", "")
 
-        # v5.6.5: append checkpoint resume hint so Claude sees the exact restore() call.
-        # DO NOT auto-call restore() — hint only. /clear is explicit user intent.
-        try:
-            from yadgar.server.lifecycle import _get_storage as _gs  # noqa: PLC0415
+        # v5.7.9: source-aware prefix — context line before the brief.
+        _SOURCE_PREFIX = {
+            "compact": "[yadgar] Session compacted — context restored by compact handler.\n",
+            "clear": "[yadgar] Session cleared — previous context wiped.\n",
+            "startup": "[yadgar] Session starting.\n",
+            "resume": "[yadgar] Resuming session.\n",
+        }
+        render = _SOURCE_PREFIX.get(source, "") + render
 
-            _storage = _gs()
-            _cp = _storage.get_active_checkpoint(directory)
-            if _cp:
-                _task = _cp.get("current_task", "")
-                _ts = _cp.get("created_at", "")
-                _hint = (
-                    f"\n[yadgar] Active checkpoint for {directory}:\n"
-                    f"  Task: {_task}\n"
-                    f"  Time: {_ts}\n"
-                    f'To resume: call `restore(directory="{directory}")`\n'
-                )
-                render = render + _hint
-        except Exception as _ce:
-            logger.debug("session-context checkpoint hint error: %s", _ce)
+        # v5.6.5 / v5.7.9: append checkpoint resume hint.
+        # SUPPRESSED for source=compact — the compact handler (/hooks/post-compact)
+        # already calls replay.restore() automatically. Emitting a hint here would
+        # create a confusing duplicate "to resume call restore()" alongside the
+        # already-restored context.
+        # For all other sources: hint only — never auto-call restore().
+        if source != "compact":
+            try:
+                from yadgar.server.lifecycle import _get_storage as _gs  # noqa: PLC0415
+
+                _storage = _gs()
+                _cp = _storage.get_active_checkpoint(directory)
+                if _cp:
+                    _task = _cp.get("current_task", "")
+                    _ts = _cp.get("created_at", "")
+                    _source_hint_prefix = {
+                        "clear": "Session cleared — call restore() if needed.\n",
+                        "startup": "Call restore() to pick up where you left off.\n",
+                        "resume": "Checkpoint available — call restore() to load context.\n",
+                    }.get(source, "")
+                    _hint = (
+                        f"\n[yadgar] Active checkpoint for {directory}:\n"
+                        f"  Task: {_task}\n"
+                        f"  Time: {_ts}\n"
+                        + (f"  {_source_hint_prefix}" if _source_hint_prefix else "")
+                        + f'To resume: call `restore(directory="{directory}")`\n'
+                    )
+                    render = render + _hint
+            except Exception as _ce:
+                logger.debug("session-context checkpoint hint error: %s", _ce)
 
         return JSONResponse({"text": render})
     except Exception as _e:
