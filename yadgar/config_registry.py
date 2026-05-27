@@ -168,6 +168,10 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_DBSIZE_CACHE_TTL_SEC", "60", "int"),
     # ── Backend: restart attribution marker path (v5.3.0) ────────────────────
     ConfigEntry("YADGAR_SHUTDOWN_MARKER_PATH", "/data/.shutdown_clean", "string"),
+    # ── Config file path override (v5.7.10) ──────────────────────────────────
+    # Container deployments set this to /data/config.yaml so the yaml loader
+    # reads from the bind-mounted /data volume instead of /root/.yadgar/
+    ConfigEntry("YADGAR_CONFIG_FILE", "", "string"),
 ]
 
 

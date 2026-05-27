@@ -543,7 +543,19 @@ _SECTION_ORDER = list(SECTION_TITLES.keys())
 
 
 def get_config_path() -> Path:
-    """Return ~/.yadgar/config.yaml"""
+    """Return config file path.
+
+    Resolution order:
+      1. ``YADGAR_CONFIG_FILE`` env var (container bind-mount override).
+      2. Default ``~/.yadgar/config.yaml``.
+
+    The env override lets the container image pass ``-e YADGAR_CONFIG_FILE=/data/config.yaml``
+    so the yaml file is read from the bind-mounted ``/data`` volume rather than
+    ``/root/.yadgar/`` (which doesn't exist inside ``--user root`` containers).
+    """
+    override = os.environ.get("YADGAR_CONFIG_FILE", "").strip()
+    if override:
+        return Path(override)
     return Path("~/.yadgar/config.yaml").expanduser()
 
 

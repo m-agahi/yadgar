@@ -15,7 +15,9 @@ class YamlConfigSource(PydanticBaseSettingsSource):
         self._load()
 
     def _load(self) -> None:
-        config_path = Path("~/.yadgar/config.yaml").expanduser()
+        from yadgar.config_yaml import get_config_path  # noqa: PLC0415
+
+        config_path = get_config_path()
         if not config_path.exists():
             return
         try:

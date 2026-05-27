@@ -5,7 +5,7 @@ Mirrored in wiki: `yadgar-architectural-invariants`.
 Anchored memory: project-scoped, `/home/max/git/yadgar`.
 Version-execution-order lives in the `yadgar-roadmap-future-improvements` wiki.
 
-Last updated: 2026-05-27 (I24 @trace_span lint added — v5.7.5).
+Last updated: 2026-05-27 (I25 config three-way-sync invariant added — v5.7.10).
 
 ---
 
@@ -254,6 +254,47 @@ invariant — they are covered by I19-extended proposals in the roadmap (v5.8+).
 
 History: introduced in v5.7.5. 13 existing un-spanned handlers were back-filled
 in the same PR. Live codebase passes at this commit: 22 handlers, all spanned.
+
+### I25 — Config knob MUST be three-way registered or allowlisted (v5.7.10)
+
+Every `Settings` field in `yadgar/config.py` MUST be either:
+1. **Three-way registered**: present in `FIELD_META` (`yadgar/config_yaml.py`) AND
+   `_REGISTRY` (`yadgar/config_registry.py`), OR
+2. **Allowlisted** in `yadgar/tests/config_env_only_allowlist.txt` as either:
+   - an intentional env-only knob (secrets, infra-wiring, container paths), OR
+   - a grandfathered backlog entry (pre-existing drift tracked for follow-up PRs).
+
+**Why three surfaces?**
+- `Settings` is the authoritative definition of what exists and its defaults.
+- `FIELD_META` (yaml registry) enables `yadgar config init` to write a complete `config.yaml` and `yadgar config list` to show all tuneable knobs.
+- `_REGISTRY` (runtime registry) powers `/admin/config`, startup config-dump log, and the `yadgar_config_value{}` gauge family.
+A knob missing from any surface is invisible to operators and tooling; drift accumulates silently.
+
+**Ratchet model (mirrors I13 complexity baseline):**
+- `yadgar/tests/config_env_only_allowlist.txt` acts as the baseline for pre-existing drift.
+- `test_all_settings_fields_covered` blocks any NEW gap: adding a `Settings` field without covering it in yaml+registry or updating the allowlist turns the test RED.
+- Backlog entries are reduced by follow-up PRs; each removal is a forward ratchet step.
+
+**Intentional env-only (Tier-1 allowlist, never add yaml/registry):**
+`YADGAR_MCP_AUTH_TOKEN`, `YADGAR_DB_PASS`, `YADGAR_DB_URL`, `YADGAR_EMBED_URL`,
+`YADGAR_IN_CONTAINER`, `YADGAR_DATA_DIR`, `YADGAR_DB_USER`, `YADGAR_CONFIG_FILE`
+— secrets, infra-wiring, or container-specific paths that must not appear in a
+world-readable config file.
+
+**Enforcement:** `yadgar/tests/test_config_three_way_sync.py` — imports all three
+surfaces, checks coverage, reports gaps. Invoked from pre-commit and CI (`test` job).
+Exit code 1 (pytest) if any uncovered field found.
+
+**Banned regressions:**
+- Adding a new `Settings` field without a corresponding `FIELD_META` + `_REGISTRY` entry OR allowlist update.
+- Adding a knob to the Tier-1 allowlist unless it is a genuine secret or infra-wiring path.
+- Silently growing the backlog (adding to Tier-2 without filing a follow-up tag).
+
+History: introduced in v5.7.10. Audit (2026-05-27) found 71 yaml gaps + 190 registry
+gaps across 206 Settings fields. Gaps grandfathered into Tier-2 backlog; backfill
+target v5.7.11+. See `docs/PLAN_V5_7_X_CONFIG_KNOB_BACKFILL.md`.
+
+**Last updated:** 2026-05-27.
 
 ### Deferred (codify only when violations surface)
 
