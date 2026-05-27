@@ -430,6 +430,13 @@ class Settings(BaseSettings):
     PROJECT_INIT_CAP_CHARS: int = 2000
     # Default mode for project_brief. Options: "catalog" | "full".
     BRIEF_MODE_DEFAULT: str = "catalog"
+    # v5.7.12: signals mode thresholds + anchor cap
+    # Hours before active_work is considered stale (triggers refresh_active_work action).
+    ACTIVE_WORK_STALE_HOURS: float = 24.0
+    # Hours before checkpoint is considered stale (triggers refresh_checkpoint action).
+    CHECKPOINT_STALE_HOURS: float = 24.0
+    # Maximum number of anchors returned in restore mode top_anchors list.
+    PROJECT_BRIEF_MAX_ANCHORS: int = 12
 
     # C2 — Recall-frequency-modulated decay (MemoryBank parity, v5.3.3)
     # Per-access heat boost applied during each consolidation decay cycle.
