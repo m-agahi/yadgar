@@ -94,30 +94,28 @@ def test_signals_mode_no_bootstrap_when_init_present(flush_queue):
     assert "bootstrap_project" not in actions
 
 
-def test_signals_mode_recommended_actions_refresh_active_work_when_stale(monkeypatch):
+def test_signals_mode_recommended_actions_refresh_active_work_when_stale(monkeypatch, flush_queue):
     """When active_work_age_hours > ACTIVE_WORK_STALE_HOURS, emit refresh_active_work."""
     from yadgar.config import get_settings
 
     settings = get_settings()
+    directory = "/tmp/stale_aw_test"
 
-    # Monkeypatch so the age appears stale without actually waiting
+    server.update_active_work(directory=directory, content="active work content")
+    flush_queue()
+
     from yadgar.server.tools import project as proj_mod
 
-    def mock_age(rows):
-        # Return a value above threshold for any row
+    def mock_age_stale(rows):
         if rows:
             return settings.ACTIVE_WORK_STALE_HOURS + 1.0
         return None
 
-    monkeypatch.setattr(proj_mod, "_compute_row_age_hours", mock_age)
+    monkeypatch.setattr(proj_mod, "_compute_row_age_hours", mock_age_stale)
 
-    result = server.project_brief("/tmp/stale_aw_test", mode="signals")
-    # With mock, active_work is absent so bootstrap fires but not refresh_active_work
-    # This test verifies the refresh action fires when active_work IS present + stale
-    # Use a directory with content to trigger the path
+    result = server.project_brief(directory, mode="signals")
     actions = [a["action"] for a in result["recommended_actions"]]
-    # At minimum: recommended_actions is a deterministic list
-    assert isinstance(actions, list)
+    assert "refresh_active_work" in actions
 
 
 def test_signals_mode_recommended_actions_refresh_checkpoint_when_stale(monkeypatch, flush_queue):
