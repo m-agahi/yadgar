@@ -4,8 +4,10 @@ Every Settings field in yadgar/config.py MUST be either:
   (a) present in FIELD_META (config_yaml.py) AND
       present in _REGISTRY (config_registry.py, via list_config()), OR
   (b) listed in yadgar/tests/config_env_only_allowlist.txt as either:
-      - an intentional env-only knob (secrets, infra-wiring, container paths), OR
-      - a grandfathered backlog entry (pre-existing drift, tracked for follow-up PRs).
+      - a Tier-1 intentional env-only knob with a structured reason=<category>
+        annotation (secrets, infra-wiring, container paths, etc.), OR
+      - a Tier-2 grandfathered backlog entry (pre-existing drift, no reason
+        required; separated by the GRANDFATHERED marker comment).
 
 Naming conventions (used to normalise across all three surfaces):
   - Settings.model_fields keys:  uppercase, no prefix    (e.g. HEAVY_RERANK_ENABLED)
@@ -21,8 +23,11 @@ Ratchet behaviour:
     allowlist.  This is the forward-looking ratchet.
   - test_allowlist_entries_have_yadgar_prefix: FAILS if allowlist has entries
     missing the YADGAR_ prefix (catches typos).
+  - test_tier1_entries_have_valid_reason: FAILS if any Tier-1 entry is missing
+    a reason=<category> annotation or uses an unrecognised category.
 """
 
+import re
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -31,21 +36,82 @@ from pathlib import Path
 
 _ALLOWLIST_PATH = Path(__file__).parent / "config_env_only_allowlist.txt"
 
+# Approved reason categories for Tier-1 (env-only) allowlist entries.
+# New knobs MUST default to yaml-backed (three-way registered); env-only is the
+# exception and requires a reviewer-visible justification via one of these categories.
+VALID_REASONS = {
+    "secret",  # credentials/tokens, never persist to yaml on disk
+    "infra-wiring",  # URL/path differs per deploy target
+    "bootstrap-path",  # chicken-and-egg (yaml file location itself)
+    "deployment-flag",  # context marker, not user config
+    "downstream-process",  # env for a forked subprocess, not yadgar Python
+    # Note: dead-env-pending-removal is validated separately via _DEAD_ENV_VERSION_RE
+    # (requires :vX.Y.Z suffix) and is NOT included in this set.
+}
+
+# Marker comment that separates Tier-1 entries from Tier-2 grandfathered entries.
+_TIER2_MARKER = "GRANDFATHERED"
+
+# Pattern for the dead-env-pending-removal version suffix (must have :vX.Y.Z).
+_DEAD_ENV_VERSION_RE = re.compile(r"^dead-env-pending-removal:v\d+\.\d+\.\d+$")
+
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
+def _parse_allowlist() -> tuple[dict[str, str], set[str]]:
+    """Parse allowlist into (tier1, tier2).
+
+    Returns:
+        tier1: dict mapping env-name -> reason string (e.g. "secret")
+        tier2: set of raw env-names (no reason required)
+
+    Lines starting with '#' and blank lines are ignored.
+    Once the GRANDFATHERED marker comment is seen, subsequent plain key-only
+    lines go into tier2 instead of tier1.
+    """
+    tier1: dict[str, str] = {}
+    tier2: set[str] = set()
+    if not _ALLOWLIST_PATH.exists():
+        return tier1, tier2
+
+    in_tier2 = False
+    for raw_line in _ALLOWLIST_PATH.read_text().splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            if _TIER2_MARKER in line:
+                in_tier2 = True
+            continue
+
+        parts = line.split()
+        key = parts[0]
+        reason_token = parts[1] if len(parts) > 1 else None
+
+        if reason_token and reason_token.startswith("reason="):
+            # Explicit reason= → always Tier-1 regardless of position
+            reason = reason_token[len("reason=") :]
+            tier1[key] = reason
+        elif in_tier2:
+            tier2.add(key)
+        else:
+            # Pre-marker, no reason= → also Tier-1 (will fail reason validation)
+            tier1[key] = ""
+
+    return tier1, tier2
+
+
 def _load_allowlist() -> set[str]:
     """Return set of YADGAR_* env names present in the allowlist file.
 
     Lines starting with '#' and blank lines are ignored.
+    Returns all entries (both tiers) as a flat set for coverage checks.
     """
-    if not _ALLOWLIST_PATH.exists():
-        return set()
-    lines = _ALLOWLIST_PATH.read_text().splitlines()
-    return {line.strip() for line in lines if line.strip() and not line.startswith("#")}
+    tier1, tier2 = _parse_allowlist()
+    return set(tier1.keys()) | tier2
 
 
 def _compute_gaps() -> tuple[list[str], list[str]]:
@@ -127,3 +193,47 @@ class TestConfigThreeWaySync:
         allowlist = _load_allowlist()
         invalid = [name for name in sorted(allowlist) if not name.startswith("YADGAR_")]
         assert not invalid, "Allowlist entries must start with YADGAR_:\n  " + "\n  ".join(invalid)
+
+    def test_tier1_entries_have_valid_reason(self) -> None:
+        """Every Tier-1 allowlist entry must carry a valid reason=<category> annotation.
+
+        Tier-1 entries are those before the GRANDFATHERED marker comment.
+        A missing or unrecognised reason category is a hard failure — new env-only
+        knobs must justify themselves with a reviewer-visible category.
+
+        Valid categories: {valid}
+
+        For dead-env-pending-removal, a version suffix is required:
+          reason=dead-env-pending-removal:vX.Y.Z
+        """.format(valid=", ".join(sorted(VALID_REASONS)))
+        tier1, _tier2 = _parse_allowlist()
+
+        errors: list[str] = []
+        for key, reason in sorted(tier1.items()):
+            if not reason:
+                errors.append(
+                    f"Tier-1 entry '{key}' has invalid reason ''."
+                    f" Must be one of {VALID_REASONS} or 'dead-env-pending-removal:vX.Y.Z'"
+                )
+                continue
+
+            base_reason = reason.split(":")[0] if ":" in reason else reason
+
+            if base_reason == "dead-env-pending-removal":
+                if not _DEAD_ENV_VERSION_RE.match(reason):
+                    errors.append(
+                        f"Tier-1 entry '{key}' has invalid reason '{reason}'."
+                        f" Must be one of {VALID_REASONS} or 'dead-env-pending-removal:vX.Y.Z'"
+                    )
+            elif base_reason not in VALID_REASONS:
+                errors.append(
+                    f"Tier-1 entry '{key}' has invalid reason '{reason}'."
+                    f" Must be one of {VALID_REASONS} or 'dead-env-pending-removal:vX.Y.Z'"
+                )
+
+        assert not errors, (
+            "I25 Tier-1 allowlist entries with missing/invalid reason= annotation:\n\n"
+            + "\n".join(errors)
+            + "\n\nNew env-only knobs must default to yaml-backed (three-way registered)."
+            " Add reason= only when env-only is genuinely required."
+        )
