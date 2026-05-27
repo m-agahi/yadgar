@@ -239,11 +239,9 @@ def test_api_viz_search_failure_counter_on_500():
 # ---------------------------------------------------------------------------
 
 
-def test_requests_total_still_increments_on_hook_request():
+def test_requests_total_still_increments_on_hook_request(monkeypatch):
     """yadgar_requests_total{route=...} still increments after PR-K (no regression)."""
-    import os
-
-    os.environ["YADGAR_REQUIRE_AUTH"] = "0"
+    monkeypatch.setenv("YADGAR_REQUIRE_AUTH", "0")
 
     from starlette.applications import Starlette
     from starlette.requests import Request
