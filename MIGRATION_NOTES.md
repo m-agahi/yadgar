@@ -1,5 +1,31 @@
 # Migration Notes
 
+## v5.7.7 — VIZ_HEALTH_REFRESH_SEC env knob (2026-05-27)
+
+Core 5.7.6 → 5.7.7. Backend unchanged (5.2.2).
+
+### What changed
+
+The viz daemon's health-scraper interval (hardcoded 5.0s since V1c) is
+now configurable via `YADGAR_VIZ_HEALTH_REFRESH_SEC`. Live-reloaded per
+iteration — no daemon restart needed when the env value is updated.
+Default 5.0 preserves prior behavior.
+
+### Files changed
+
+- `yadgar/config.py` — `VIZ_HEALTH_REFRESH_SEC: float = 5.0` field.
+- `yadgar/config_registry.py` — registered for `/admin/config` + gauge.
+- `yadgar/viz_daemon_health.py` — `run_health_scraper` reads `get_settings().VIZ_HEALTH_REFRESH_SEC` per iteration; hardcoded constant + TODO removed.
+- `yadgar/tests/test_viz_daemon_health.py` — 2 new tests (default + env override).
+
+### Deploy steps
+
+1. Image already rebuilt as `docker.io/openfantasy/yadgar:5.7.7`.
+2. Bump `yadger_core_version` 5.7.6 → 5.7.7 (already done).
+3. `cd ~/git/nix && nix-update`.
+
+---
+
 ## v5.7.6 — OTLP/HTTP span exporter to Tempo (2026-05-27)
 
 Core 5.7.5 → 5.7.6. Backend unchanged (5.2.2).

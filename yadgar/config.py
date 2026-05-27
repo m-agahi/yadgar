@@ -451,6 +451,11 @@ class Settings(BaseSettings):
     # 0 = unlimited (uvicorn default); ≥1 = abandon after this many seconds.
     ASGI_SHUTDOWN_TIMEOUT_SEC: int = 5
 
+    # v5.7.7 — Viz health-refresh cadence
+    # How often the viz_daemon_health background scraper refreshes daemon metrics.
+    # Default 5.0 s matches original hardcoded value; lower for faster debug refresh.
+    VIZ_HEALTH_REFRESH_SEC: float = 5.0
+
     # v5.6.6 — Heavy-rerank kill switch for CPU-only hosts
     # When False: all CE/NLI/MP reranking is skipped; retrieval falls back to
     # BM25+HNSW fusion only (same as RETRIEVAL_PROFILE=fast but always applied).
