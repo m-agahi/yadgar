@@ -158,6 +158,36 @@ yadgar_log_dropped_total = Counter(
 )
 
 # ---------------------------------------------------------------------------
+# v5.3.0 — /admin/dbsize cache hit/miss observability
+# ---------------------------------------------------------------------------
+
+embed_dbsize_cache_hits_total = Counter(
+    "yadgar_embed_dbsize_cache_hits_total",
+    "Total /admin/dbsize responses served from in-memory cache (no os.walk).",
+    registry=_registry,
+)
+
+embed_dbsize_cache_misses_total = Counter(
+    "yadgar_embed_dbsize_cache_misses_total",
+    "Total /admin/dbsize responses that triggered a fresh os.walk recompute.",
+    registry=_registry,
+)
+
+# ---------------------------------------------------------------------------
+# v5.3.0 — Backend restart cause attribution
+# ---------------------------------------------------------------------------
+
+embed_restart_reason_total = Counter(
+    "yadgar_embed_restart_reason_total",
+    "Total backend start events bucketed by shutdown reason detected at startup.",
+    ["reason"],
+    registry=_registry,
+)
+# Pre-initialise all label-sets so the metric appears from first scrape
+for _reason in ("clean", "crash", "first_boot"):
+    embed_restart_reason_total.labels(reason=_reason)
+
+# ---------------------------------------------------------------------------
 # ASGI handler
 # ---------------------------------------------------------------------------
 
