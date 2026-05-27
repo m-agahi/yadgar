@@ -93,8 +93,10 @@ _dbsize_cache_ts: float = 0.0  # time.time() when last computed
 
 
 def _dbsize_cache_ttl() -> int:
-    """Return YADGAR_DBSIZE_CACHE_TTL_SEC (default 60). 0 = disabled."""
-    return int(os.environ.get("YADGAR_DBSIZE_CACHE_TTL_SEC", "60"))
+    """Return DBSIZE_CACHE_TTL_SEC from Settings (yaml/env/default 60). 0 = disabled."""
+    from yadgar.config import get_settings  # noqa: PLC0415
+
+    return int(get_settings().DBSIZE_CACHE_TTL_SEC)
 
 
 def _shutdown_marker_path() -> str:
