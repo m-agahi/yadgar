@@ -85,13 +85,74 @@ def _instrument_starlette_app(app) -> None:
         pass  # OTel not available or app already instrumented — no-op
 
 
+class MCPTraceSpanMiddleware:
+    """ASGI middleware that opens an OTel span for every HTTP request.
+
+    v5.7.8 — Bug 4 residual fix: FastMCP routes intercept requests before
+    FastAPIInstrumentor's middleware attaches the context.  FastAPIInstrumentor's
+    span therefore closes *before* RequestLoggingMiddleware.finally fires, leaving
+    get_current_trace_id() returning None when the log line is emitted.
+
+    This middleware sits *above* RequestLoggingMiddleware in the stack:
+
+        BearerAuth → MCPTraceSpanMiddleware → RequestLogging → CORS → MCP
+
+    It opens a span at request entry and closes it *after* the inner ASGI app
+    (including RequestLoggingMiddleware) returns, so a valid trace_id is always
+    present when the log line is formatted.
+
+    W3C traceparent propagation: if the incoming request carries a ``traceparent``
+    header the span is started as a child of that remote context; otherwise a new
+    root span is created.
+
+    No-op fallback: if OTel is unavailable the middleware passes through
+    transparently, matching the guard pattern used throughout this module.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+        self._tracer = None
+        self._propagator = None
+        try:
+            from opentelemetry import propagate, trace  # noqa: PLC0415
+
+            self._tracer = trace.get_tracer("yadgar.server.mcp")
+            self._propagator = propagate
+        except Exception:
+            pass  # OTel not available — degrade gracefully
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http" or self._tracer is None:
+            await self.app(scope, receive, send)
+            return
+
+        # Extract W3C traceparent (or other propagation headers) from ASGI scope.
+        # ASGI headers are a list of (bytes, bytes) tuples; build a dict for the
+        # propagator carrier interface.
+        raw_headers = scope.get("headers", [])
+        headers_map: dict[str, str] = {
+            k.decode("latin-1"): v.decode("latin-1") for k, v in raw_headers
+        }
+
+        ctx = self._propagator.extract(headers_map)
+
+        method = scope.get("method", "")
+        path = scope.get("path", "")
+        span_name = f"{method} {path}" if method else path or "mcp.http"
+
+        with self._tracer.start_as_current_span(span_name, context=ctx):
+            await self.app(scope, receive, send)
+
+
 def _cors_wrapped_http_app(self):
     from starlette.middleware.cors import CORSMiddleware
 
     from yadgar.auth_middleware import BearerAuthMiddleware
     from yadgar.log_config import RequestLoggingMiddleware
 
-    # Stack: BearerAuth (outermost) → RequestLogging → CORS → MCP
+    # Stack: BearerAuth (outermost) → MCPTrace → RequestLogging → CORS → MCP
+    # v5.7.8 Bug 4 residual: MCPTraceSpanMiddleware opens a span before
+    # RequestLoggingMiddleware so trace_id is present in the log line.
     inner = _orig_streamable_http_app(self)
     # v5.6.4 Bug 2: instrument the inner MCP app so HTTP requests produce server spans.
     _instrument_starlette_app(inner)
@@ -102,7 +163,8 @@ def _cors_wrapped_http_app(self):
         allow_headers=["Authorization", "Content-Type"],
     )
     logged_app = RequestLoggingMiddleware(cors_app)
-    return BearerAuthMiddleware(logged_app)
+    spanned_app = MCPTraceSpanMiddleware(logged_app)
+    return BearerAuthMiddleware(spanned_app)
 
 
 def _auth_wrapped_sse_app(self, mount_path=None):
@@ -118,7 +180,10 @@ def _auth_wrapped_sse_app(self, mount_path=None):
     # v5.6.4 Bug 2: instrument the inner SSE app for server spans.
     _instrument_starlette_app(inner)
     logged_app = RequestLoggingMiddleware(inner)
-    return BearerAuthMiddleware(logged_app)
+    # v5.7.8 Bug 4 residual: open a span above RequestLogging so trace_id is
+    # present in the log line (same fix as the streamable-HTTP path).
+    spanned_app = MCPTraceSpanMiddleware(logged_app)
+    return BearerAuthMiddleware(spanned_app)
 
 
 _orig_streamable_http_app = mcp_server.streamable_http_app.__func__
