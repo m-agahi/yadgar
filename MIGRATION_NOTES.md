@@ -1,5 +1,36 @@
 # Migration Notes
 
+## v5.7.8 — /mcp trace_id wiring (2026-05-27)
+
+Core 5.7.7 → 5.7.8. Backend unchanged (5.2.2).
+
+### What changed
+
+Closed Bug 4 residual. `POST /mcp` log lines previously lacked `trace_id`
+because FastAPIInstrumentor's span closed when the inner app returned, so
+`RequestLoggingMiddleware.finally` saw `None`. Added `MCPTraceSpanMiddleware`
+ABOVE `RequestLoggingMiddleware` in both `_cors_wrapped_http_app` and
+`_auth_wrapped_sse_app`. The outer span outlives the inner-app call, so the
+finally block reads a valid trace_id.
+
+### Files changed
+
+- `yadgar/server/_app.py` — new `MCPTraceSpanMiddleware` (~60 LOC); wired into both wrappers.
+- `yadgar/tests/test_mcp_trace_middleware.py` — 2 new tests.
+
+### Deploy steps
+
+1. Image already rebuilt as `docker.io/openfantasy/yadgar:5.7.8`.
+2. Bump `yadger_core_version` 5.7.7 → 5.7.8 (already done).
+3. `cd ~/git/nix && nix-update`.
+
+### Verification
+
+After restart: `journalctl --user -u yadgar | grep 'POST /mcp' | jq .trace_id`
+should return non-null values (was null before this release).
+
+---
+
 ## v5.7.7 — VIZ_HEALTH_REFRESH_SEC env knob (2026-05-27)
 
 Core 5.7.6 → 5.7.7. Backend unchanged (5.2.2).
