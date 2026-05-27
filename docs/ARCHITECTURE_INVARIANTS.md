@@ -5,7 +5,7 @@ Mirrored in wiki: `yadgar-architectural-invariants`.
 Anchored memory: project-scoped, `/home/max/git/yadgar`.
 Version-execution-order lives in the `yadgar-roadmap-future-improvements` wiki.
 
-Last updated: 2026-05-26 (I23 dead-metric lint added — v5.6.7 PR-L).
+Last updated: 2026-05-27 (I24 @trace_span lint added — v5.7.5).
 
 ---
 
@@ -225,6 +225,35 @@ original wiring requirement.
 
 History: introduced in v5.6.7 after the 2026-05-24 audit. See `yadgar-roadmap-future-improvements`
 wiki PR-L section.
+
+### I24 — Public HTTP-handler MUST have @trace_span (v5.7.5)
+
+Every public top-level `async def` function in `yadgar/server/http.py` that does not
+start with `_` MUST be decorated with `@trace_span(...)` directly above its `def`
+statement.
+
+**Enforcement:** `scripts/check_trace_spans.py` — AST-parses `yadgar/server/http.py`
+and checks that every public top-level async function has a `@trace_span` decorator.
+Invoked from pre-commit (files: `^yadgar/server/http\.py$`) and CI (`test` job).
+Exit code 1 if any public handler lacks the decorator. Escape hatch: `--allowlist fn1,fn2`
+for legitimate exceptions (document reason inline).
+
+**Why:** companion to I23 (dead-metric lint). Spans provide end-to-end latency
+visibility across all HTTP hook and API endpoints. v5.6.7 PR-K instrumented the
+highest-traffic handlers; this invariant locks in the pattern and prevents new
+routes silently shipping without span coverage.
+
+**Scope (narrow by design):** only `yadgar/server/http.py` top-level handlers.
+Private helpers (`_`-prefixed), nested functions, and class methods are out of scope.
+Storage / retrieval helpers are NOT required to have `@trace_span` under this
+invariant — they are covered by I19-extended proposals in the roadmap (v5.8+).
+
+**Banned regressions:**
+- Adding a new `@mcp_server.custom_route(...)` handler without a matching `@trace_span`.
+- Suppressing the lint (`--allowlist`) without an inline comment and a follow-up tag.
+
+History: introduced in v5.7.5. 13 existing un-spanned handlers were back-filled
+in the same PR. Live codebase passes at this commit: 22 handlers, all spanned.
 
 ### Deferred (codify only when violations surface)
 
@@ -587,6 +616,7 @@ Post-v5.3.9 `BindsTo → Wants` decouple, core + backend run as independent daem
 - 2026-05-22: v5.5.1 log rotation + rate limiter shipped. Dual-sink (stdout+rotating file), 500 MB cap/daemon, `RateLimitFilter` token-bucket at 10/s burst 50 (default ON), Option A env resolution (`YADGAR_BACKEND_LOG_*` override), 3 new metrics (rotations_total/file_size_bytes/dropped_total), 15 tests. Core 5.5.0→5.5.1; backend 5.1.0→5.1.1. Operator pre-deploy: `mkdir -p ~/.yadgar/logs`.
 - 2026-05-22: v5.5.2 shipped — backend log_* metric wiring fix. `_ensure_metrics()` in `RotatingJSONLFileHandler` and `RateLimitFilter` hardcoded `yadgar.metrics` import; backend's isolated `embed_service_metrics` registry was never updated. Fixed via DI (`metrics_module=` kwarg) + `_resolve_metrics_module(process)` helper in install path. Core 5.5.1→5.5.2; backend 5.1.1→5.1.2.
 - 2026-05-26: I23 added (v5.6.7 PR-L FINAL) — declared-metric-must-have-writer invariant + `scripts/check_metric_writers.py` AST lint. Live codebase passes at this commit: 63 metrics declared across `metrics.py` + `embed_service_metrics.py`, all have ≥1 writer or are detected via helper wrapper functions in the same file. Pre-commit hook and CI step added.
+- 2026-05-27: I24 added (v5.7.5) — public HTTP-handler must have @trace_span invariant + `scripts/check_trace_spans.py` AST lint. 13 previously un-spanned handlers back-filled in same PR. Live codebase passes at this commit: 22 public handlers in `yadgar/server/http.py`, all spanned. Pre-commit hook and CI step added.
 
 ---
 
