@@ -11530,15 +11530,26 @@
     "inh_depth": 0,
     "methods": 18
   },
+  "yadgar/storage/client.py::_ClientMixin@196": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 18
+  },
   "yadgar/storage/client.py::_ClientMixin@202": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 18
   },
   "yadgar/storage/client.py::__file__": {
-    "loc": 657
+    "loc": 651
   },
   "yadgar/storage/client.py::_build_chunk_body@431": {
+    "cyclo": 14,
+    "loc": 62,
+    "nesting": 5,
+    "params": 2
+  },
+  "yadgar/storage/client.py::_build_chunk_body@465": {
     "cyclo": 14,
     "loc": 62,
     "nesting": 5,
@@ -11556,6 +11567,12 @@
     "nesting": 1,
     "params": 3
   },
+  "yadgar/storage/client.py::_bytes_to_floats@259": {
+    "cyclo": 4,
+    "loc": 8,
+    "nesting": 1,
+    "params": 3
+  },
   "yadgar/storage/client.py::_bytes_to_floats@265": {
     "cyclo": 4,
     "loc": 8,
@@ -11563,6 +11580,12 @@
     "params": 3
   },
   "yadgar/storage/client.py::_db@172": {
+    "cyclo": 2,
+    "loc": 5,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/storage/client.py::_db@200": {
     "cyclo": 2,
     "loc": 5,
     "nesting": 1,
@@ -11580,6 +11603,12 @@
     "nesting": 2,
     "params": 2
   },
+  "yadgar/storage/client.py::_enrich_content_for_fts@614": {
+    "cyclo": 5,
+    "loc": 13,
+    "nesting": 2,
+    "params": 2
+  },
   "yadgar/storage/client.py::_enrich_content_for_fts@620": {
     "cyclo": 5,
     "loc": 13,
@@ -11587,6 +11616,12 @@
     "params": 2
   },
   "yadgar/storage/client.py::_extract_id@243": {
+    "cyclo": 6,
+    "loc": 8,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/storage/client.py::_extract_id@271": {
     "cyclo": 6,
     "loc": 8,
     "nesting": 1,
@@ -11604,6 +11639,12 @@
     "nesting": 0,
     "params": 2
   },
+  "yadgar/storage/client.py::_floats_to_bytes@268": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 2
+  },
   "yadgar/storage/client.py::_floats_to_bytes@274": {
     "cyclo": 1,
     "loc": 2,
@@ -11611,6 +11652,12 @@
     "params": 2
   },
   "yadgar/storage/client.py::_next_id@252": {
+    "cyclo": 2,
+    "loc": 5,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/storage/client.py::_next_id@280": {
     "cyclo": 2,
     "loc": 5,
     "nesting": 1,
@@ -11628,6 +11675,12 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/storage/client.py::_now_iso@339": {
+    "cyclo": 1,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/storage/client.py::_now_iso@345": {
     "cyclo": 1,
     "loc": 4,
@@ -11636,11 +11689,17 @@
   },
   "yadgar/storage/client.py::_observe_query_metrics@179": {
     "cyclo": 2,
-    "loc": 21,
+    "loc": 15,
     "nesting": 2,
     "params": 2
   },
   "yadgar/storage/client.py::_preprocess_fts_query@594": {
+    "cyclo": 6,
+    "loc": 24,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/storage/client.py::_preprocess_fts_query@628": {
     "cyclo": 6,
     "loc": 24,
     "nesting": 2,
@@ -11658,6 +11717,12 @@
     "nesting": 5,
     "params": 3
   },
+  "yadgar/storage/client.py::_q@395": {
+    "cyclo": 21,
+    "loc": 68,
+    "nesting": 5,
+    "params": 3
+  },
   "yadgar/storage/client.py::_q@401": {
     "cyclo": 21,
     "loc": 68,
@@ -11670,6 +11735,12 @@
     "nesting": 3,
     "params": 4
   },
+  "yadgar/storage/client.py::_q_timeout@344": {
+    "cyclo": 14,
+    "loc": 50,
+    "nesting": 3,
+    "params": 4
+  },
   "yadgar/storage/client.py::_q_timeout@350": {
     "cyclo": 14,
     "loc": 50,
@@ -11677,6 +11748,12 @@
     "params": 4
   },
   "yadgar/storage/client.py::_reserve_ids@258": {
+    "cyclo": 2,
+    "loc": 8,
+    "nesting": 0,
+    "params": 3
+  },
+  "yadgar/storage/client.py::_reserve_ids@286": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 0,
@@ -11694,6 +11771,12 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/storage/client.py::_restore_from_backup@234": {
+    "cyclo": 3,
+    "loc": 22,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/storage/client.py::_restore_from_backup@240": {
     "cyclo": 3,
     "loc": 22,
@@ -11701,6 +11784,12 @@
     "params": 1
   },
   "yadgar/storage/client.py::_row_to_dict@267": {
+    "cyclo": 11,
+    "loc": 40,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/storage/client.py::_row_to_dict@295": {
     "cyclo": 11,
     "loc": 40,
     "nesting": 2,
@@ -11718,6 +11807,12 @@
     "nesting": 0,
     "params": 2
   },
+  "yadgar/storage/client.py::_rows_to_dicts@336": {
+    "cyclo": 2,
+    "loc": 2,
+    "nesting": 0,
+    "params": 2
+  },
   "yadgar/storage/client.py::_rows_to_dicts@342": {
     "cyclo": 2,
     "loc": 2,
@@ -11725,6 +11820,12 @@
     "params": 2
   },
   "yadgar/storage/client.py::_send_chunk@494": {
+    "cyclo": 7,
+    "loc": 36,
+    "nesting": 2,
+    "params": 4
+  },
+  "yadgar/storage/client.py::_send_chunk@528": {
     "cyclo": 7,
     "loc": 36,
     "nesting": 2,
@@ -11748,6 +11849,12 @@
     "nesting": 3,
     "params": 1
   },
+  "yadgar/storage/client.py::_verify_health@206": {
+    "cyclo": 9,
+    "loc": 27,
+    "nesting": 3,
+    "params": 1
+  },
   "yadgar/storage/client.py::_verify_health@212": {
     "cyclo": 9,
     "loc": 27,
@@ -11755,6 +11862,12 @@
     "params": 1
   },
   "yadgar/storage/client.py::batch_writes@531": {
+    "cyclo": 5,
+    "loc": 48,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/storage/client.py::batch_writes@565": {
     "cyclo": 5,
     "loc": 48,
     "nesting": 2,

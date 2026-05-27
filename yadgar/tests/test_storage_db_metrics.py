@@ -1,14 +1,13 @@
 """Tests for v5.6.7 PR-C: DB-layer metrics wiring + storage search spans.
 
 Covers:
-  1. yadgar_db_query_duration_seconds._count increments M times after M _q calls.
-  2. yadgar_surrealdb_query_duration_ms._count (labelled op) increments M times.
-  3. yadgar_surrealdb_pool_active >= 1 after StorageEngine connects.
-  4. yadgar_surrealdb_connection_pool_wait_ms has >= 1 observation after init.
-  5. Span emitted for search_memories_by_content_date.
-  6. Span emitted for search_memories_by_timestamp_range.
-  7. Span emitted for search_memories_by_month.
-  8. Span emitted for search_profiles_fts.
+  1. yadgar_surrealdb_query_duration_ms._count (labelled op) increments M times.
+  2. yadgar_surrealdb_pool_active >= 1 after StorageEngine connects.
+  3. yadgar_surrealdb_connection_pool_wait_ms has >= 1 observation after init.
+  4. Span emitted for search_memories_by_content_date.
+  5. Span emitted for search_memories_by_timestamp_range.
+  6. Span emitted for search_memories_by_month.
+  7. Span emitted for search_profiles_fts.
 
 Pool-active semantics: SurrealDB embedded and server modes both use a singleton
 connection (no real pool exposed). pool_active is set to 1 at connect and 0 at
@@ -103,27 +102,7 @@ def in_memory_tracer():
 
 
 # ---------------------------------------------------------------------------
-# 1. yadgar_db_query_duration_seconds increments M times after M calls
-# ---------------------------------------------------------------------------
-
-
-class TestDbQueryDurationSeconds:
-    def test_increments_on_q_calls(self, storage):
-        """After M _q calls the no-label histogram count increases by M."""
-        from yadgar.metrics import yadgar_db_query_duration_seconds
-
-        before = _get_hist_count_nolabel(yadgar_db_query_duration_seconds)
-
-        M = 3
-        for _ in range(M):
-            storage._q("SELECT * FROM memory LIMIT 1")
-
-        after = _get_hist_count_nolabel(yadgar_db_query_duration_seconds)
-        assert after - before == M, f"Expected +{M} observations, got before={before} after={after}"
-
-
-# ---------------------------------------------------------------------------
-# 2. yadgar_surrealdb_query_duration_ms increments M times
+# 1. yadgar_surrealdb_query_duration_ms increments M times
 # ---------------------------------------------------------------------------
 
 

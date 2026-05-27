@@ -177,22 +177,16 @@ def _sql_op(surql: str) -> str:
 
 
 def _observe_query_metrics(surql: str, elapsed_s: float) -> None:
-    """Observe both DB-layer query histograms for a single query execution.
+    """Observe DB-layer query histogram for a single query execution.
 
-    - yadgar_db_query_duration_seconds: no labels, seconds.
     - yadgar_surrealdb_query_duration_ms: labelled op=<first keyword>, milliseconds.
-
-    Design note: duplicate naming (seconds vs ms) is a pre-existing wart preserved
-    intentionally; yadgar-roadmap-future-improvements tracks deprecating one of them.
     """
     try:
         from yadgar.metrics import (
-            yadgar_db_query_duration_seconds,
             yadgar_surrealdb_query_duration_ms,
         )
 
         op = _sql_op(surql)
-        yadgar_db_query_duration_seconds.observe(elapsed_s)
         yadgar_surrealdb_query_duration_ms.labels(op=op).observe(elapsed_s * 1000.0)
     except Exception:
         # Never let metrics errors crash a query.
