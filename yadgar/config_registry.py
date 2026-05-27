@@ -164,6 +164,10 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_OTLP_HEADERS", "", "string"),
     ConfigEntry("YADGAR_OTLP_TIMEOUT_SEC", "10", "int"),
     ConfigEntry("YADGAR_OTLP_INSECURE", "1", "bool"),
+    # ── Backend: /admin/dbsize cache (v5.3.0) ────────────────────────────────
+    ConfigEntry("YADGAR_DBSIZE_CACHE_TTL_SEC", "60", "int"),
+    # ── Backend: restart attribution marker path (v5.3.0) ────────────────────
+    ConfigEntry("YADGAR_SHUTDOWN_MARKER_PATH", "/data/.shutdown_clean", "string"),
 ]
 
 
