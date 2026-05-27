@@ -15,7 +15,7 @@ import logging
 import os
 import subprocess
 import time
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 from yadgar.config import get_settings
@@ -315,25 +315,380 @@ def _render_project_brief(brief: dict) -> str:
     return "\n".join(lines)
 
 
+# ── project_brief helpers (v5.7.12) ───────────────────────────────────────
+
+
+def _compute_row_age_hours(rows: list) -> float | None:
+    """Return age in hours of the first row's created_at, or None if absent.
+
+    created_at is stored as an ISO-8601 string.  Parses it with datetime.fromisoformat()
+    and computes (now - created_at).total_seconds() / 3600.
+    """
+    if not rows:
+        return None
+    row = rows[0]
+    created_at = row.get("created_at")
+    if not created_at:
+        return None
+    try:
+        if isinstance(created_at, str):
+            # SurrealDB returns ISO strings; strip trailing 'Z' for Python compat
+            ts = created_at.rstrip("Z").replace("Z", "+00:00")
+            dt = datetime.fromisoformat(ts)
+            # If no tzinfo, assume UTC
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+        else:
+            # datetime object
+            dt = created_at
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+        now = datetime.now(UTC)
+        return (now - dt).total_seconds() / 3600.0
+    except Exception:
+        logger.debug("_compute_row_age_hours: failed to parse created_at=%r", created_at)
+        return None
+
+
+def _get_max_anchors() -> int:
+    """Return PROJECT_BRIEF_MAX_ANCHORS from settings.  Separate function for monkeypatching in tests."""
+    return get_settings().PROJECT_BRIEF_MAX_ANCHORS
+
+
+def _fetch_presence_rows(storage, resolved: str) -> tuple:
+    """Fetch presence + age rows for init_memory, active_work, and checkpoint.
+
+    Returns (init_rows, active_rows, checkpoint_rows).
+    """
+    init_rows = storage._q(
+        "SELECT id, content, created_at FROM memory WHERE directory_context = $dir "
+        "AND '_project_init' INSIDE tags LIMIT 1",
+        {"dir": resolved},
+    )
+    active_rows = storage._q(
+        "SELECT id, content, created_at FROM memory WHERE directory_context = $dir "
+        "AND '_active_work' INSIDE tags LIMIT 1",
+        {"dir": resolved},
+    )
+    checkpoint_rows = storage._q(
+        "SELECT * FROM checkpoint WHERE directory_context = $dir ORDER BY created_at DESC LIMIT 1",
+        {"dir": resolved},
+    )
+    return init_rows, active_rows, checkpoint_rows
+
+
+def _build_checkpoint_dict(checkpoint_rows: list) -> dict | None:
+    """Build a compact checkpoint dict from raw checkpoint rows.  None if absent."""
+    if not checkpoint_rows:
+        return None
+    cp = checkpoint_rows[0]
+    return {
+        "current_task": cp.get("current_task", ""),
+        "key_decisions": (cp.get("key_decisions") or [])[:3],
+        "next_steps": (cp.get("next_steps") or [])[:3],
+    }
+
+
+def _build_wiki_pages(storage, limit: int) -> list[dict]:
+    """Fetch and shape wiki pages list."""
+    pages = storage.list_wiki_pages(limit=limit)
+    return [
+        {
+            "slug": p.get("slug", ""),
+            "title": p.get("title", ""),
+            "access_count": p.get("access_count") or 0,
+        }
+        for p in pages
+    ]
+
+
+def _build_hot_memories(storage, resolved: str, limit: int, snippet: int) -> list[dict]:
+    """Fetch hot memories excluding anchored entries.
+
+    Filters: heat > 0 AND 'anchor' NOTINSIDE tags AND '_anchor' NOTINSIDE tags.
+    """
+    rows = storage._q(
+        "SELECT id, content, heat, tags FROM memory "
+        "WHERE directory_context = $dir AND heat > 0 "
+        "AND 'anchor' NOTINSIDE tags AND '_anchor' NOTINSIDE tags "
+        f"ORDER BY heat DESC LIMIT {limit}",
+        {"dir": resolved},
+    )
+    return [
+        {
+            "id": storage._extract_id(row.get("id")),
+            "content": (row.get("content") or "")[:snippet],
+            "heat": row.get("heat", 0),
+            "tags": row.get("tags", []),
+        }
+        for row in rows
+    ]
+
+
+def _build_anchor_rows_catalog(storage, resolved: str) -> tuple:
+    """Fetch global + project anchor rows for catalog/full modes.
+
+    Returns (top_anchors_global, top_anchors_project, top_anchors_union).
+    """
+    global_rows = storage._q(
+        "SELECT id, content, tags, heat, access_count FROM memory "
+        "WHERE '_anchor' INSIDE tags "
+        "AND (directory_context = '' OR directory_context = 'global' OR directory_context = 'system') "
+        "ORDER BY heat DESC LIMIT 20",
+    )
+    top_anchors_global = []
+    for row in global_rows:
+        mid = storage._extract_id(row.get("id"))
+        top_anchors_global.append(
+            {
+                "id": mid,
+                "title": (row.get("content") or "")[:80],
+                "tags": row.get("tags", []),
+                "access_count": row.get("access_count") or 0,
+            }
+        )
+
+    project_rows = storage._q(
+        "SELECT id, content, tags, heat, access_count FROM memory "
+        "WHERE '_anchor' INSIDE tags "
+        "AND directory_context = $dir "
+        "ORDER BY heat DESC LIMIT 20",
+        {"dir": resolved},
+    )
+    top_anchors_project = []
+    for row in project_rows:
+        mid = storage._extract_id(row.get("id"))
+        top_anchors_project.append(
+            {
+                "id": mid,
+                "title": (row.get("content") or "")[:80],
+                "tags": row.get("tags", []),
+                "access_count": row.get("access_count") or 0,
+            }
+        )
+
+    seen: set = set()
+    top_anchors_union: list = []
+    for a in top_anchors_global + top_anchors_project:
+        if a["id"] not in seen:
+            seen.add(a["id"])
+            top_anchors_union.append(a)
+
+    return top_anchors_global, top_anchors_project, top_anchors_union
+
+
+def _build_anchor_rows_restore(storage, resolved: str) -> list[dict]:
+    """Fetch anchors for restore mode: merged list with scope field, truncated."""
+    max_anchors = _get_max_anchors()
+
+    global_rows = storage._q(
+        "SELECT id, content, tags, heat, access_count FROM memory "
+        "WHERE '_anchor' INSIDE tags "
+        "AND (directory_context = '' OR directory_context = 'global' OR directory_context = 'system') "
+        "ORDER BY heat DESC LIMIT 20",
+    )
+    project_rows = storage._q(
+        "SELECT id, content, tags, heat, access_count FROM memory "
+        "WHERE '_anchor' INSIDE tags "
+        "AND directory_context = $dir "
+        "ORDER BY heat DESC LIMIT 20",
+        {"dir": resolved},
+    )
+
+    # Schema note: directory_context is binary (global OR project) today.
+    # scope="both" reserved for future cross-scope migrations.
+    global_ids: set = {storage._extract_id(r.get("id")) for r in global_rows}
+    project_ids: set = {storage._extract_id(r.get("id")) for r in project_rows}
+    seen: set = set()
+    merged: list[dict] = []
+
+    for row in global_rows + project_rows:
+        mid = storage._extract_id(row.get("id"))
+        if mid in seen:
+            continue
+        seen.add(mid)
+        is_global = mid in global_ids
+        is_project = mid in project_ids
+        if is_global and is_project:
+            scope = "both"
+        elif is_project:
+            scope = "project"
+        else:
+            scope = "global"
+        merged.append(
+            {
+                "id": mid,
+                "title": (row.get("content") or "")[:80],
+                "tags": row.get("tags", []),
+                "access_count": row.get("access_count") or 0,
+                "scope": scope,
+            }
+        )
+
+    return merged[:max_anchors]
+
+
+def _build_recommended_actions(
+    init_memory_present: bool,
+    active_work_present: bool,
+    active_work_age_hours: float | None,
+    stale_checkpoint_hours: float | None,
+) -> list[dict]:
+    """Build deterministic recommended_actions list from signals + thresholds.
+
+    Order: bootstrap_project → refresh_active_work → refresh_checkpoint.
+    """
+    cfg = get_settings()
+    actions: list[dict] = []
+
+    if not init_memory_present:
+        actions.append(
+            {
+                "action": "bootstrap_project",
+                "reason": "init_memory absent",
+            }
+        )
+
+    if active_work_age_hours is not None and active_work_age_hours > cfg.ACTIVE_WORK_STALE_HOURS:
+        actions.append(
+            {
+                "action": "refresh_active_work",
+                "reason": f"age_hours={active_work_age_hours:.1f} > threshold={cfg.ACTIVE_WORK_STALE_HOURS}",
+            }
+        )
+
+    if stale_checkpoint_hours is not None and stale_checkpoint_hours > cfg.CHECKPOINT_STALE_HOURS:
+        actions.append(
+            {
+                "action": "refresh_checkpoint",
+                "reason": f"age_hours={stale_checkpoint_hours:.1f} > threshold={cfg.CHECKPOINT_STALE_HOURS}",
+            }
+        )
+
+    return actions
+
+
+def _project_brief_signals(
+    resolved: str,
+    mode: str,
+    init_memory_present: bool,
+    active_work_present: bool,
+    init_memory_age_hours: float | None,
+    active_work_age_hours: float | None,
+    stale_checkpoint_hours: float | None,
+) -> dict:
+    """Build signals mode payload (<100 tokens)."""
+    recommended_actions = _build_recommended_actions(
+        init_memory_present=init_memory_present,
+        active_work_present=active_work_present,
+        active_work_age_hours=active_work_age_hours,
+        stale_checkpoint_hours=stale_checkpoint_hours,
+    )
+    return {
+        "_resolved_directory": resolved,
+        "_mode": mode,
+        "init_memory_present": init_memory_present,
+        "active_work_present": active_work_present,
+        "stale_wiki_count": 0,
+        "stale_checkpoint_hours": stale_checkpoint_hours,
+        "active_work_age_hours": active_work_age_hours,
+        "init_memory_age_hours": init_memory_age_hours,
+        "recommended_actions": recommended_actions,
+    }
+
+
+def _project_brief_restore(
+    resolved: str,
+    mode: str,
+    storage,
+    checkpoint_rows: list,
+) -> dict:
+    """Build restore mode payload (<800 tokens)."""
+    return {
+        "_resolved_directory": resolved,
+        "_mode": mode,
+        "top_anchors": _build_anchor_rows_restore(storage, resolved),
+        "hot_memories": _build_hot_memories(storage, resolved, limit=5, snippet=150),
+        "checkpoint": _build_checkpoint_dict(checkpoint_rows),
+        "key_wiki_pages": _build_wiki_pages(storage, limit=3),
+    }
+
+
+def _project_brief_catalog_full(ctx: dict) -> dict:
+    """Build catalog/full mode payload (back-compat).
+
+    catalog mode is DEPRECATED as of v5.7.12. Kept for back-compat until v5.8.
+    ctx keys: resolved, mode, project, branch, storage, init_rows, active_rows,
+              init_memory_present, active_work_present, checkpoint_rows.
+    """
+    from datetime import timedelta
+
+    resolved = ctx["resolved"]
+    mode = ctx["mode"]
+    storage = ctx["storage"]
+    init_rows = ctx["init_rows"]
+    active_rows = ctx["active_rows"]
+    checkpoint_rows = ctx["checkpoint_rows"]
+
+    top_anchors_global, top_anchors_project, top_anchors = _build_anchor_rows_catalog(
+        storage, resolved
+    )
+    cutoff = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
+    ep_rows = storage._q(
+        "SELECT id FROM memory WHERE directory_context = $dir "
+        "AND store_type = 'episodic' AND created_at >= $cutoff",
+        {"dir": resolved, "cutoff": cutoff},
+    )
+    result: dict = {
+        "_resolved_directory": resolved,
+        "_mode": mode,
+        "project": ctx["project"],
+        "tech": [],
+        "branch": ctx["branch"],
+        "init_memory_present": ctx["init_memory_present"],
+        "active_work_present": ctx["active_work_present"],
+        "top_anchors": top_anchors,
+        "top_anchors_global": top_anchors_global,
+        "top_anchors_project": top_anchors_project,
+        "recent_episode_count": len(ep_rows),
+        "stale_wiki_count": 0,
+        "hot_memories": _build_hot_memories(storage, resolved, limit=3, snippet=100),
+        "key_wiki_pages": _build_wiki_pages(storage, limit=3),
+        "checkpoint": _build_checkpoint_dict(checkpoint_rows),
+    }
+    if mode == "full":
+        result["init_memory"] = init_rows[0].get("content") if init_rows else None
+        result["active_work"] = active_rows[0].get("content") if active_rows else None
+        result["hot_memories"] = _build_hot_memories(storage, resolved, limit=10, snippet=200)
+        result["key_wiki_pages"] = _build_wiki_pages(storage, limit=5)
+    # §28 — add _render for catalog+full (back-compat); signals+restore omit it
+    result["_render"] = _render_project_brief(result)
+    return result
+
+
 @_tool()
 def project_brief(directory: str, mode: str = "catalog", branch_hint: str | None = None) -> dict:
     """Return a layered project context snapshot.
 
-    mode="catalog" (~500 tokens): signals, anchors, presence flags.
-    mode="full" (~1050 tokens): catalog + inlined init_memory, active_work,
-    hot_memories, and key_wiki_pages.
+    mode="signals" (<100 tokens): pure binary signals + age numerics + recommended_actions.
+      Audience: stop-hook — needs minimal flags to decide which write actions to fire.
+      No anchors, no hot_memories, no wiki keys, no _render.
+    mode="restore" (<800 tokens): anchors + hot_memories + checkpoint + wiki keys.
+      Audience: post-/clear, post-/compact context restoration.
+      Single top_anchors list with scope field per entry.  No signal flags, no _render.
+    mode="catalog" (~500 tokens): DEPRECATED (v5.7.12). Kept for back-compat.
+      Returns current full shape: signals, anchors, presence flags, hot_memories,
+      key_wiki_pages, checkpoint, _render.  Will be removed in v5.8.
+    mode="full" (~1050 tokens): superset of catalog + inlined init_memory, active_work,
+      expanded hot_memories, and key_wiki_pages.
     branch_hint: optional branch name supplied by the host-side hook (v5.1.9).
       When present, used directly — host has git visibility; container does not.
       When absent, falls back to _get_current_branch(resolved).
     """
     resolved = _resolve_project_root(directory)
     storage = _get_storage()
-    get_settings()
 
-    # v5.1.9 F3: prefer host-supplied branch_hint (computed on host by SessionStart
-    # hook before calling this endpoint).  Fall back to in-process git query.
-    # The previous in-container subprocess fallback (v5.1.8 F3) is dropped: the
-    # container cannot see host .git, so it always returned None — dead code.
+    # v5.1.9 F3: prefer host-supplied branch_hint.
     if branch_hint:
         branch: str | None = branch_hint
     else:
@@ -342,195 +697,48 @@ def project_brief(directory: str, mode: str = "catalog", branch_hint: str | None
     # Project name: last path component of resolved root
     project = Path(resolved).name
 
-    # Tech: stub — would require scan; return empty list
-    tech: list[str] = []
-
-    # --- presence flags ---
-    init_rows = storage._q(
-        "SELECT id, content FROM memory WHERE directory_context = $dir "
-        "AND '_project_init' INSIDE tags LIMIT 1",
-        {"dir": resolved},
-    )
-    active_rows = storage._q(
-        "SELECT id, content FROM memory WHERE directory_context = $dir "
-        "AND '_active_work' INSIDE tags LIMIT 1",
-        {"dir": resolved},
-    )
+    # Shared: presence rows + age numerics (all modes)
+    init_rows, active_rows, checkpoint_rows = _fetch_presence_rows(storage, resolved)
     init_memory_present = len(init_rows) > 0
     active_work_present = len(active_rows) > 0
+    init_memory_age_hours = _compute_row_age_hours(init_rows)
+    active_work_age_hours = _compute_row_age_hours(active_rows)
+    stale_checkpoint_hours = _compute_row_age_hours(checkpoint_rows)
 
-    # --- top_anchors: scope-split into global + project buckets (F1) ---
-    # Global anchors: directory_context in ('', 'global', 'system') — no heat filter
-    global_anchor_rows = storage._q(
-        "SELECT id, content, tags, heat, access_count FROM memory "
-        "WHERE '_anchor' INSIDE tags "
-        "AND (directory_context = '' OR directory_context = 'global' OR directory_context = 'system') "
-        "ORDER BY heat DESC LIMIT 20",
-    )
-    top_anchors_global = []
-    for row in global_anchor_rows:
-        mid = storage._extract_id(row.get("id"))
-        content_snippet = (row.get("content") or "")[:80]
-        top_anchors_global.append(
-            {
-                "id": mid,
-                "title": content_snippet,
-                "tags": row.get("tags", []),
-                "access_count": row.get("access_count") or 0,
-            }
+    if mode == "signals":
+        return _project_brief_signals(
+            resolved=resolved,
+            mode=mode,
+            init_memory_present=init_memory_present,
+            active_work_present=active_work_present,
+            init_memory_age_hours=init_memory_age_hours,
+            active_work_age_hours=active_work_age_hours,
+            stale_checkpoint_hours=stale_checkpoint_hours,
         )
 
-    # Project anchors: directory_context matches resolved project dir
-    project_anchor_rows = storage._q(
-        "SELECT id, content, tags, heat, access_count FROM memory "
-        "WHERE '_anchor' INSIDE tags "
-        "AND directory_context = $dir "
-        "ORDER BY heat DESC LIMIT 20",
-        {"dir": resolved},
-    )
-    top_anchors_project = []
-    for row in project_anchor_rows:
-        mid = storage._extract_id(row.get("id"))
-        content_snippet = (row.get("content") or "")[:80]
-        top_anchors_project.append(
-            {
-                "id": mid,
-                "title": content_snippet,
-                "tags": row.get("tags", []),
-                "access_count": row.get("access_count") or 0,
-            }
+    if mode == "restore":
+        return _project_brief_restore(
+            resolved=resolved,
+            mode=mode,
+            storage=storage,
+            checkpoint_rows=checkpoint_rows,
         )
 
-    # Legacy union field (back-compat) — dedup by id
-    seen_ids: set = set()
-    top_anchors = []
-    for a in top_anchors_global + top_anchors_project:
-        if a["id"] not in seen_ids:
-            seen_ids.add(a["id"])
-            top_anchors.append(a)
-
-    # --- recent_episode_count: episodes in last 24h ---
-    from datetime import datetime, timedelta
-
-    cutoff = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
-    ep_rows = storage._q(
-        "SELECT id FROM memory WHERE directory_context = $dir "
-        "AND store_type = 'episodic' AND created_at >= $cutoff",
-        {"dir": resolved, "cutoff": cutoff},
-    )
-    recent_episode_count = len(ep_rows)
-
-    # stale_wiki_count: Stage 9 detail — pass 0 for now
-    stale_wiki_count = 0
-
-    # --- catalog: hot_memories top 3 (F2) ---
-    hot_rows = storage._q(
-        "SELECT id, content, heat, tags FROM memory "
-        "WHERE directory_context = $dir AND heat > 0 "
-        "ORDER BY heat DESC LIMIT 3",
-        {"dir": resolved},
-    )
-    hot_memories_catalog = []
-    for row in hot_rows:
-        hot_memories_catalog.append(
-            {
-                "id": storage._extract_id(row.get("id")),
-                "content": (row.get("content") or "")[:100],
-                "heat": row.get("heat", 0),
-                "tags": row.get("tags", []),
-            }
-        )
-
-    # --- catalog: key_wiki_pages top 3 (F2) ---
-    wiki_pages_catalog = storage.list_wiki_pages(limit=3)
-    key_wiki_pages_catalog = [
+    # catalog / full modes (back-compat)
+    return _project_brief_catalog_full(
         {
-            "slug": p.get("slug", ""),
-            "title": p.get("title", ""),
-            "access_count": p.get("access_count") or 0,
+            "resolved": resolved,
+            "mode": mode,
+            "project": project,
+            "branch": branch,
+            "storage": storage,
+            "init_rows": init_rows,
+            "active_rows": active_rows,
+            "init_memory_present": init_memory_present,
+            "active_work_present": active_work_present,
+            "checkpoint_rows": checkpoint_rows,
         }
-        for p in wiki_pages_catalog
-    ]
-
-    # --- catalog: checkpoint for this directory (F2) ---
-    checkpoint_rows = storage._q(
-        "SELECT * FROM checkpoint WHERE directory_context = $dir ORDER BY created_at DESC LIMIT 1",
-        {"dir": resolved},
     )
-    checkpoint_catalog: dict | None = None
-    if checkpoint_rows:
-        cp = checkpoint_rows[0]
-        checkpoint_catalog = {
-            "current_task": cp.get("current_task", ""),
-            "key_decisions": (cp.get("key_decisions") or [])[:3],
-            "next_steps": (cp.get("next_steps") or [])[:3],
-        }
-
-    result: dict = {
-        "_resolved_directory": resolved,
-        "_mode": mode,
-        "project": project,
-        "tech": tech,
-        "branch": branch,
-        "init_memory_present": init_memory_present,
-        "active_work_present": active_work_present,
-        "top_anchors": top_anchors,
-        "top_anchors_global": top_anchors_global,
-        "top_anchors_project": top_anchors_project,
-        "recent_episode_count": recent_episode_count,
-        "stale_wiki_count": stale_wiki_count,
-        "hot_memories": hot_memories_catalog,
-        "key_wiki_pages": key_wiki_pages_catalog,
-        "checkpoint": checkpoint_catalog,
-    }
-
-    if mode == "full":
-        # Inline init_memory content
-        init_memory_content = None
-        if init_rows:
-            init_memory_content = init_rows[0].get("content")
-        result["init_memory"] = init_memory_content
-
-        # Inline active_work content
-        active_work_content = None
-        if active_rows:
-            active_work_content = active_rows[0].get("content")
-        result["active_work"] = active_work_content
-
-        # full mode: expand hot_memories to top 10, 200-char snippets
-        hot_rows_full = storage._q(
-            "SELECT id, content, heat, tags FROM memory "
-            "WHERE directory_context = $dir AND heat > 0 "
-            "ORDER BY heat DESC LIMIT 10",
-            {"dir": resolved},
-        )
-        hot_memories_full = []
-        for row in hot_rows_full:
-            hot_memories_full.append(
-                {
-                    "id": storage._extract_id(row.get("id")),
-                    "content": (row.get("content") or "")[:200],
-                    "heat": row.get("heat", 0),
-                    "tags": row.get("tags", []),
-                }
-            )
-        result["hot_memories"] = hot_memories_full
-
-        # full mode: expand key_wiki_pages to 5
-        wiki_pages_full = storage.list_wiki_pages(limit=5)
-        result["key_wiki_pages"] = [
-            {
-                "slug": p.get("slug", ""),
-                "title": p.get("title", ""),
-                "access_count": p.get("access_count") or 0,
-            }
-            for p in wiki_pages_full
-        ]
-
-    # §28 — add _render markdown for the session-context hook pipe
-    result["_render"] = _render_project_brief(result)
-
-    return result
 
 
 @_tool(power=True)

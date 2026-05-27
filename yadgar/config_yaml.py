@@ -537,6 +537,19 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Auto-checkpoint every N tool calls",
         "section": "misc",
     },
+    # project_brief (v5.7.12)
+    "active_work_stale_hours": {
+        "desc": "Hours before active_work is considered stale (triggers refresh_active_work in signals mode)",
+        "section": "project_brief",
+    },
+    "checkpoint_stale_hours": {
+        "desc": "Hours before checkpoint is considered stale (triggers refresh_checkpoint in signals mode)",
+        "section": "project_brief",
+    },
+    "project_brief_max_anchors": {
+        "desc": "Maximum anchors returned in restore mode top_anchors list (default 12)",
+        "section": "project_brief",
+    },
 }
 
 
@@ -560,6 +573,7 @@ SECTION_TITLES: dict[str, str] = {
     "backend_cache": "Backend Cache",
     "logging": "Logging",
     "misc": "Miscellaneous",
+    "project_brief": "Project Brief",
 }
 
 # Ordered list of sections for deterministic output
