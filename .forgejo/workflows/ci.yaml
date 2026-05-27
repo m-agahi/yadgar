@@ -99,6 +99,9 @@ jobs:
       - name: Check I23 — declared metrics must have writers
         run: python scripts/check_metric_writers.py
 
+      - name: Check I24 — public HTTP handlers must have @trace_span
+        run: python scripts/check_trace_spans.py
+
   publish:
     needs: test
     runs-on: ubuntu-latest
