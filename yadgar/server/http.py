@@ -175,85 +175,98 @@ async def hook_post_compact(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/hooks/auto-capture", methods=["POST"])
+@trace_span("hook.auto_capture")
 async def hook_auto_capture(request: Request) -> JSONResponse:
     """Capture a tool action from PostToolUse hook (HTTP transport).
 
     Accepts JSON: {tool_name, summary, directory, session_id}
     Writes directly to action_log table — no write gate, no embeddings.
     """
+    _t0 = time.perf_counter()
+    _caught_exc: BaseException | None = None
     try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse({"status": "error", "message": "Invalid JSON"}, status_code=400)
+        try:
+            body = await request.json()
+        except Exception:
+            _resp = JSONResponse({"status": "error", "message": "Invalid JSON"}, status_code=400)
+            _hook_observe_response("auto_capture", _resp.status_code)
+            return _resp
 
-    storage = _st._storage
-    if storage is None:
-        return JSONResponse(
-            {"status": "error", "message": "Storage not initialized"}, status_code=503
+        storage = _st._storage
+        if storage is None:
+            _resp = JSONResponse(
+                {"status": "error", "message": "Storage not initialized"}, status_code=503
+            )
+            _hook_observe_response("auto_capture", _resp.status_code)
+            return _resp
+
+        from datetime import datetime
+
+        tool_name = sanitize_log_field(body.get("tool_name", "unknown"), max_len=200)
+
+        # §7: per-directory rate limit before any further processing
+        _raw_dir = body.get("directory", "")
+        _dir_key = sanitize_log_field(_raw_dir, max_len=500) if _raw_dir else ""
+        if not _st._auto_capture_limiter.allow(_dir_key or "_default"):
+            return JSONResponse({"status": "rate_limited"}, status_code=429)
+
+        # Skip self-referential Yadgar tools
+        for prefix in _st._SKIP_TOOL_PREFIXES:
+            if tool_name.startswith(prefix):
+                return JSONResponse({"status": "skipped", "reason": "yadgar_tool"})
+
+        # Only capture state-modifying tools
+        if tool_name not in _st._CAPTURE_TOOLS:
+            return JSONResponse({"status": "skipped", "reason": "read_only_tool"})
+
+        session_id = sanitize_log_field(body.get("session_id", "default"), max_len=100)
+        action = {
+            "tool_name": tool_name,
+            "summary": sanitize_log_field(body.get("summary", ""), max_len=500),
+            "directory": _dir_key,
+            "session_id": session_id,
+        }
+
+        # §9 Q2: Protect _action_batch under asyncio.Lock to prevent data races.
+        # §9 Q1: Wrap blocking storage call in asyncio.to_thread.
+        async with _st._action_batch_lock:
+            if session_id not in _st._action_batch:
+                _bounded_set(_st._action_batch, session_id, [])
+            batch = _st._action_batch[session_id]
+            batch.append(action)
+            if len(batch) < 5:
+                return JSONResponse({"status": "batched", "pending": len(batch)})
+
+            # Flush batch → one combined action_log entry.
+            # Swap under the lock so concurrent appends go to the new list.
+            to_flush = list(batch)
+            _st._action_batch[session_id] = []
+
+        combined_tools = ",".join(a["tool_name"] for a in to_flush)
+        combined_summary = " | ".join(a["summary"] for a in to_flush if a["summary"])
+        directory = to_flush[-1]["directory"]
+        from datetime import UTC
+
+        ts = datetime.now(UTC).isoformat()
+
+        await asyncio.to_thread(
+            storage.insert_action_log,
+            tool_name=f"batch[{combined_tools}]",
+            tool_input_summary=combined_summary[:500],
+            directory=directory,
+            session_id=session_id,
+            timestamp=ts,
         )
 
-    from datetime import datetime
+        if _st._consolidation is not None:
+            _st._consolidation.record_activity()
 
-    tool_name = sanitize_log_field(body.get("tool_name", "unknown"), max_len=200)
-
-    # §7: per-directory rate limit before any further processing
-    _raw_dir = body.get("directory", "")
-    _dir_key = sanitize_log_field(_raw_dir, max_len=500) if _raw_dir else ""
-    if not _st._auto_capture_limiter.allow(_dir_key or "_default"):
-        return JSONResponse({"status": "rate_limited"}, status_code=429)
-
-    # Skip self-referential Yadgar tools
-    for prefix in _st._SKIP_TOOL_PREFIXES:
-        if tool_name.startswith(prefix):
-            return JSONResponse({"status": "skipped", "reason": "yadgar_tool"})
-
-    # Only capture state-modifying tools
-    if tool_name not in _st._CAPTURE_TOOLS:
-        return JSONResponse({"status": "skipped", "reason": "read_only_tool"})
-
-    session_id = sanitize_log_field(body.get("session_id", "default"), max_len=100)
-    action = {
-        "tool_name": tool_name,
-        "summary": sanitize_log_field(body.get("summary", ""), max_len=500),
-        "directory": _dir_key,
-        "session_id": session_id,
-    }
-
-    # §9 Q2: Protect _action_batch under asyncio.Lock to prevent data races.
-    # §9 Q1: Wrap blocking storage call in asyncio.to_thread.
-    async with _st._action_batch_lock:
-        if session_id not in _st._action_batch:
-            _bounded_set(_st._action_batch, session_id, [])
-        batch = _st._action_batch[session_id]
-        batch.append(action)
-        if len(batch) < 5:
-            return JSONResponse({"status": "batched", "pending": len(batch)})
-
-        # Flush batch → one combined action_log entry.
-        # Swap under the lock so concurrent appends go to the new list.
-        to_flush = list(batch)
-        _st._action_batch[session_id] = []
-
-    combined_tools = ",".join(a["tool_name"] for a in to_flush)
-    combined_summary = " | ".join(a["summary"] for a in to_flush if a["summary"])
-    directory = to_flush[-1]["directory"]
-    from datetime import UTC
-
-    ts = datetime.now(UTC).isoformat()
-
-    await asyncio.to_thread(
-        storage.insert_action_log,
-        tool_name=f"batch[{combined_tools}]",
-        tool_input_summary=combined_summary[:500],
-        directory=directory,
-        session_id=session_id,
-        timestamp=ts,
-    )
-
-    if _st._consolidation is not None:
-        _st._consolidation.record_activity()
-
-    return JSONResponse({"status": "captured", "batch_size": 5})
+        return JSONResponse({"status": "captured", "batch_size": 5})
+    except Exception as _exc:
+        _caught_exc = _exc
+        raise
+    finally:
+        _hook_observe("auto_capture", _t0, _caught_exc)
 
 
 @mcp_server.custom_route("/hooks/session-context", methods=["GET"])
@@ -316,69 +329,80 @@ async def hook_session_context(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/hooks/prompt-recall", methods=["GET"])
+@trace_span("hook.prompt_recall")
 async def hook_prompt_recall(request: Request) -> JSONResponse:
     """Return auto-recall markdown for UserPromptSubmit hook (daemon mode).
 
     Query params: query, directory (optional)
     Returns: {"text": "...markdown..."}
     """
-    query = request.query_params.get("query", "")
-    directory = request.query_params.get("directory", os.getcwd())
-
-    if not query or len(query) < 2:
-        return JSONResponse({"text": ""})
-
-    # Throttle: skip if session-context ran < 3 min ago (already loaded context)
-    now = time.monotonic()
-    if now - _st._last_session_context.get(directory, 0) < 180:
-        return JSONResponse({"text": "", "skipped": "session_context_recent"})
-    # Throttle: max 1 recall per 2 minutes per directory
-    if now - _st._last_prompt_recall.get(directory, 0) < 120:
-        return JSONResponse({"text": "", "skipped": "rate_limited"})
-
-    retriever = _st._retriever
-    if retriever is None:
-        return JSONResponse({"text": ""})
-
+    _t0 = time.perf_counter()
+    _caught_exc: BaseException | None = None
+    _observed = False
     try:
-        import asyncio
+        query = request.query_params.get("query", "")
+        directory = request.query_params.get("directory", os.getcwd())
 
-        # v5.6.6 A: use lightweight "fast" profile (BM25+HNSW only, no CE/NLI/MP).
-        # Hooks fire 50+ times/hour; full rerank pipeline causes 8-46s CPU bursts.
-        results = await asyncio.to_thread(
-            retriever.recall, query, max_results=5, min_heat=0.0, profile="fast"
-        )
-    except Exception as e:
-        logger.debug("prompt-recall hook error: %s", e)
-        return JSONResponse({"text": ""})
+        if not query or len(query) < 2:
+            return JSONResponse({"text": ""})
 
-    if not results:
-        return JSONResponse({"text": ""})
+        # Throttle: skip if session-context ran < 3 min ago (already loaded context)
+        now = time.monotonic()
+        if now - _st._last_session_context.get(directory, 0) < 180:
+            return JSONResponse({"text": "", "skipped": "session_context_recent"})
+        # Throttle: max 1 recall per 2 minutes per directory
+        if now - _st._last_prompt_recall.get(directory, 0) < 120:
+            return JSONResponse({"text": "", "skipped": "rate_limited"})
 
-    max_chars = 3000
-    lines = ["# Yadgar — Auto-Recall\n"]
-    total_chars = 0
-    for m in results:
-        content = m.get("content", "")
-        if total_chars + len(content) > max_chars:
-            remaining = max_chars - total_chars
-            if remaining > 50:
-                content = content[:remaining] + "..."
-            else:
-                break
-        mem_dir = m.get("directory_context", "")
-        proj = f" [{Path(mem_dir).name}]" if mem_dir and mem_dir != directory else ""
-        lines.append(f"- {content}{proj}")
-        total_chars += len(content)
-    lines.append(f"\n*{len(results)} memories surfaced for: {directory}*")
+        retriever = _st._retriever
+        if retriever is None:
+            return JSONResponse({"text": ""})
 
-    # Prepend DLQ alerts if any items are stuck
-    dlq_text = _build_dlq_alert_text()
-    if dlq_text:
-        lines = [dlq_text, ""] + lines
+        try:
+            # v5.6.6 A: use lightweight "fast" profile (BM25+HNSW only, no CE/NLI/MP).
+            # Hooks fire 50+ times/hour; full rerank pipeline causes 8-46s CPU bursts.
+            results = await asyncio.to_thread(
+                retriever.recall, query, max_results=5, min_heat=0.0, profile="fast"
+            )
+        except Exception as e:
+            logger.debug("prompt-recall hook error: %s", e)
+            _hook_observe("prompt_recall", _t0, e)
+            _observed = True
+            return JSONResponse({"text": ""})
 
-    _bounded_set(_st._last_prompt_recall, directory, time.monotonic())
-    return JSONResponse({"text": "\n".join(lines)})
+        if not results:
+            return JSONResponse({"text": ""})
+
+        max_chars = 3000
+        lines = ["# Yadgar — Auto-Recall\n"]
+        total_chars = 0
+        for m in results:
+            content = m.get("content", "")
+            if total_chars + len(content) > max_chars:
+                remaining = max_chars - total_chars
+                if remaining > 50:
+                    content = content[:remaining] + "..."
+                else:
+                    break
+            mem_dir = m.get("directory_context", "")
+            proj = f" [{Path(mem_dir).name}]" if mem_dir and mem_dir != directory else ""
+            lines.append(f"- {content}{proj}")
+            total_chars += len(content)
+        lines.append(f"\n*{len(results)} memories surfaced for: {directory}*")
+
+        # Prepend DLQ alerts if any items are stuck
+        dlq_text = _build_dlq_alert_text()
+        if dlq_text:
+            lines = [dlq_text, ""] + lines
+
+        _bounded_set(_st._last_prompt_recall, directory, time.monotonic())
+        return JSONResponse({"text": "\n".join(lines)})
+    except Exception as _exc:
+        _caught_exc = _exc
+        raise
+    finally:
+        if not _observed:
+            _hook_observe("prompt_recall", _t0, _caught_exc)
 
 
 @mcp_server.custom_route("/hooks/subagent-stop", methods=["POST"])
