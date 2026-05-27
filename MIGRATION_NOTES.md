@@ -1,5 +1,41 @@
 # Migration Notes
 
+## v5.7.2 — CROSS_ENCODER_TOP_K cut 20 → 10 (2026-05-27)
+
+Core 5.7.1 → 5.7.2. Backend unchanged (5.2.2).
+
+### What changed
+
+`CROSS_ENCODER_TOP_K` default cut from 20 to 10. Cross-encoder rerank
+dominates explicit-recall latency (post-v5.6.7 analytics: 19s p50 vs
+<250ms for BM25+HNSW+embed combined). CE call cost scales roughly
+linearly with candidate count, so halving TOP_K should roughly halve
+rerank stage time.
+
+Override at runtime via `YADGAR_CROSS_ENCODER_TOP_K=20` (env var) if
+the wider candidate pool turns out to be necessary for recall quality
+on your corpus.
+
+### Files changed
+
+- `yadgar/config.py` — `CROSS_ENCODER_TOP_K: int = 10` (was 20).
+
+### Deploy steps
+
+1. Image already rebuilt as `docker.io/openfantasy/yadgar:5.7.2`.
+2. Bump `yadger_core_version` 5.7.1 → 5.7.2 in `~/git/nix/modules/home/yadgar.nix` (already done).
+3. `cd ~/git/nix && nix-update`
+
+No pipx re-install needed (no new console-script entries).
+
+### Verification
+
+Compare `yadgar_recall_duration_ms` p50 / p95 before vs after. Expect
+roughly 50% drop on the rerank stage; smaller drop on total recall
+(BM25 + HNSW + embed unchanged).
+
+---
+
 ## v5.7.1 — Consolidation systemctl container fix (2026-05-27)
 
 Core 5.7.0 → 5.7.1. Backend unchanged (5.2.2).
