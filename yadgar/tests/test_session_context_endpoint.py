@@ -133,7 +133,11 @@ def test_session_context_integrates_project_brief(tmp_path):
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["text"] == "# My Project\n\nTest render content."
+    # v5.7.9: response text now includes a source-aware prefix line before _render.
+    # Assert the render content is present rather than exact equality.
+    assert "# My Project\n\nTest render content." in body["text"], (
+        f"Response must include _render content; got: {body['text']!r}"
+    )
     mock_pb.assert_called_once()
 
 
