@@ -1,5 +1,73 @@
 # Migration Notes
 
+## v5.7.11 + backend v5.3.1 — Yamlify OTLP + DBSIZE knobs, drop dead LOG_LEVEL (2026-05-27)
+
+Core 5.7.10 → 5.7.11. Backend 5.3.0 → 5.3.1.
+
+### What changed
+
+5 env-only knobs migrated through `Settings` to yaml-overridable:
+
+| Knob | Old read site | New |
+|---|---|---|
+| `OTLP_ENDPOINT` | `tracing.py` `os.environ` | `Settings.OTLP_ENDPOINT` (yaml: `otlp_endpoint`) |
+| `OTLP_HEADERS` | same | `Settings.OTLP_HEADERS` (yaml: `otlp_headers`) |
+| `OTLP_TIMEOUT_SEC` | same | `Settings.OTLP_TIMEOUT_SEC` (yaml: `otlp_timeout_sec`) |
+| `OTLP_INSECURE` | same | `Settings.OTLP_INSECURE` (yaml: `otlp_insecure`) |
+| `DBSIZE_CACHE_TTL_SEC` (backend) | `embed_service.py::_dbsize_cache_ttl()` `os.environ` | `Settings.DBSIZE_CACHE_TTL_SEC` (yaml: `dbsize_cache_ttl_sec`) |
+
+LOG_LEVEL investigation confirmed it was DEAD env — only declaration in `config_registry.py`, zero code reads. Registry entry dropped. Nix `-e YADGAR_LOG_LEVEL=INFO` dropped.
+
+`YADGAR_*` env still beats yaml in pydantic-settings precedence.
+
+### Files changed
+
+- `yadgar/config.py` — 5 new Settings fields.
+- `yadgar/tracing.py` — `_build_otlp_exporter()` + `_parse_otlp_headers()` refactored to Settings reads.
+- `yadgar/embed_service.py` — `_dbsize_cache_ttl()` refactored to Settings read.
+- `yadgar/config_yaml.py` — 5 new FIELD_META entries, 2 new SECTION_TITLES (`observability`, `backend_cache`).
+- `yadgar/config_registry.py` — `YADGAR_LOG_LEVEL` declaration removed.
+- `yadgar/tests/test_otlp_exporter.py` — new `TestYamlOverride` (3 tests) + `reset_otel` fixture now clears Settings cache (was masking pre-existing test bug).
+- `yadgar/tests/test_embed_service_v530.py` — new `test_yaml_ttl_override` (A5).
+- `pyproject.toml` 5.7.10 → 5.7.11; `server.json` core + backend bumps; `docker-compose.yml` both tags bump; `uv.lock` yadgar version bump.
+
+Nix-side (`~/git/nix/modules/home/yadgar.nix`):
+- Core ExecStart drops `-e YADGAR_OTLP_ENDPOINT`, `-e YADGAR_LOG_LEVEL=INFO`. Net: 6 -e flags (was 8 post-v5.7.10).
+- Backend ExecStart drops `-e YADGAR_DBSIZE_CACHE_TTL_SEC=600`. Net: 8 -e flags (was 9 post-v5.7.10).
+- `yadger_core_version` 5.7.10 → 5.7.11.
+- `yadger_backend_version` 5.3.0 → 5.3.1.
+
+Host `~/.yadgar/config.yaml` extended with the 5 new keys at prior nix-default values:
+```
+otlp_endpoint: http://host.containers.internal:4318/v1/traces
+otlp_headers: ""
+otlp_timeout_sec: 10
+otlp_insecure: true
+dbsize_cache_ttl_sec: 600
+```
+
+### Deploy steps
+
+1. Images already rebuilt as `docker.io/openfantasy/yadgar:5.7.11` + `docker.io/openfantasy/yadgar-backend:5.3.1`.
+2. Bumps in `~/git/nix/modules/home/yadgar.nix` already done.
+3. Host `~/.yadgar/config.yaml` already extended.
+4. `cd ~/git/nix && nix-update`.
+
+### Verification
+
+```
+podman exec yadgar python -c "from yadgar.config import get_settings; s=get_settings(); print('OTLP:', s.OTLP_ENDPOINT)"
+# → OTLP: http://host.containers.internal:4318/v1/traces (from yaml)
+podman exec yadgar-backend python -c "from yadgar.config import get_settings; print(get_settings().DBSIZE_CACHE_TTL_SEC)"
+# → 600
+curl -s http://127.0.0.1:3200/api/search 2>&1 | grep -c yadgar-core
+# → spans still arriving via OTLP (yaml-sourced endpoint)
+```
+
+I25 invariant test still green; grandfather list unchanged (these knobs were never on it — they had no Settings field before, so I25 had nothing to flag).
+
+---
+
 ## v5.7.10 — Container yaml loading + I25 invariant + nix -e cleanup (2026-05-27)
 
 Core 5.7.9 → 5.7.10. Backend unchanged (5.3.0).
