@@ -158,6 +158,11 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_VIZ_PROXY", "1", "bool"),
     # ── DB path (embedded mode) ──────────────────────────────────────────────
     ConfigEntry("YADGAR_DB_PATH", "~/.yadgar/surreal_db", "string"),
+    # ── OTLP / Tempo exporter ────────────────────────────────────────────────
+    ConfigEntry("YADGAR_OTLP_ENDPOINT", "", "string"),
+    ConfigEntry("YADGAR_OTLP_HEADERS", "", "string"),
+    ConfigEntry("YADGAR_OTLP_TIMEOUT_SEC", "10", "int"),
+    ConfigEntry("YADGAR_OTLP_INSECURE", "1", "bool"),
 ]
 
 
