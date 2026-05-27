@@ -122,6 +122,7 @@ async def health_check(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/metrics", methods=["GET"])
+@trace_span("hook.metrics")
 async def metrics_endpoint(request: Request):
     """Prometheus metrics endpoint (§15).
 
@@ -134,6 +135,7 @@ async def metrics_endpoint(request: Request):
 
 
 @mcp_server.custom_route("/hooks/pre-compact", methods=["POST"])
+@trace_span("hook.pre_compact")
 async def hook_pre_compact(request: Request) -> JSONResponse:
     """Called by PreCompact hook before context compaction."""
     try:
@@ -161,6 +163,7 @@ async def hook_pre_compact(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/hooks/post-compact", methods=["GET"])
+@trace_span("hook.post_compact")
 async def hook_post_compact(request: Request) -> JSONResponse:
     """Called by SessionStart hook after compaction. Returns restoration context."""
     directory = request.query_params.get("directory", os.getcwd())
@@ -270,6 +273,7 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/hooks/session-context", methods=["GET"])
+@trace_span("hook.session_context")
 async def hook_session_context(request: Request) -> JSONResponse:
     """Return project_brief markdown for session-start hook (§28 pipe).
 
@@ -954,6 +958,7 @@ async def api_graph(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/stats", methods=["GET"])
+@trace_span("api.stats")
 async def api_stats(request: Request) -> JSONResponse:
     """Return memory statistics as JSON (used by `yadgar stats` CLI when daemon is running)."""
     if _st._storage is None:
@@ -966,6 +971,7 @@ async def api_stats(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/graph/stats", methods=["GET"])
+@trace_span("api.graph_stats")
 async def api_graph_stats(request: Request) -> JSONResponse:
     """Return graph statistics: counts + top entities by heat."""
     if _st._storage is None:
@@ -975,6 +981,7 @@ async def api_graph_stats(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/graph/neighborhood/{node_id}", methods=["GET"])
+@trace_span("api.graph_neighborhood")
 async def api_graph_neighborhood(request: Request) -> JSONResponse:
     """Return 1–2 hop subgraph around a node."""
     if _st._storage is None:
@@ -989,6 +996,7 @@ async def api_graph_neighborhood(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/system", methods=["GET"])
+@trace_span("api.system")
 async def api_system(request: Request) -> JSONResponse:
     """Return current system and process metrics."""
     # §9 Q6: snapshot under lock before serialising to avoid torn reads.
@@ -998,6 +1006,7 @@ async def api_system(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/metrics/heat-histogram", methods=["GET"])
+@trace_span("api.heat_histogram")
 async def api_heat_histogram(request: Request) -> JSONResponse:
     """Return heat distribution bucketed into N bins."""
     if _st._storage is None:
@@ -1027,6 +1036,7 @@ async def api_heat_histogram(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/metrics/consolidation-log", methods=["GET"])
+@trace_span("api.consolidation_log")
 async def api_consolidation_log(request: Request) -> JSONResponse:
     """Return last N consolidation cycle records (oldest first)."""
     if _st._storage is None:
@@ -1149,6 +1159,7 @@ async def _make_event_stream(request: Request):
 
 
 @mcp_server.custom_route("/api/graph/events", methods=["GET"])
+@trace_span("api.graph_events")
 async def api_graph_events(request: Request) -> StreamingResponse:
     """SSE stream of incremental graph update events + system metrics every 5s."""
     headers = {**_CORS, "Content-Type": "text/event-stream", "X-Accel-Buffering": "no"}
@@ -1158,6 +1169,7 @@ async def api_graph_events(request: Request) -> StreamingResponse:
 
 
 @mcp_server.custom_route("/api/wiki/read", methods=["GET"])
+@trace_span("api.wiki_read")
 async def api_wiki_read(request: Request) -> JSONResponse:
     """Read a single wiki page by slug for the viz detail panel.
 
@@ -1263,6 +1275,7 @@ async def api_viz_search(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/graph", methods=["GET"])
+@trace_span("api.graph_view")
 async def graph_view(request: Request) -> FileResponse:
     """3D memory force graph visualization."""
     static_dir = Path(__file__).parent.parent / "static"
