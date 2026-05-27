@@ -1,5 +1,77 @@
 # Migration Notes
 
+## Backend v5.3.0 — dbsize cache + restart attribution (2026-05-27)
+
+Backend 5.2.2 → 5.3.0. Core unchanged (5.7.9).
+
+### What changed
+
+**1. `/admin/dbsize` 60s in-memory cache.** Core polls this endpoint every 5s
+for the viz daemon. Previously every poll walked `/data/surreal_db` via
+`os.walk` — O(n) over the entire DB. Now: cached for `YADGAR_DBSIZE_CACHE_TTL_SEC`
+seconds (default 60). 12× reduction in walk frequency. Response gains a
+`cache_age_seconds` field; clients can ignore it for back-compat.
+
+**2. Restart cause attribution.** New counter
+`yadgar_embed_restart_reason_total{reason}` with labels: `clean` (graceful
+SIGTERM, shutdown marker present at startup), `crash` (no marker — process
+died unexpectedly), `first_boot` (no marker AND no surreal_db dir).
+Shutdown event writes marker at `YADGAR_SHUTDOWN_MARKER_PATH`
+(default `/data/.shutdown_clean`). Startup increments counter + removes
+marker. Forensic-time savings on mystery restarts.
+
+Bonus: pre-existing I13 HARD nesting violations in `rerank` + `admin_dbsize`
+fixed via extracted helpers `_annotate_span` + `_walk_db_sizes`. No
+behavior change.
+
+### New env knobs
+
+- `YADGAR_DBSIZE_CACHE_TTL_SEC` (int, default 60). Set to 0 to disable.
+- `YADGAR_SHUTDOWN_MARKER_PATH` (string, default `/data/.shutdown_clean`).
+
+Both registered in `config_registry.py`.
+
+### New metrics (backend registry)
+
+- `yadgar_embed_dbsize_cache_hits_total`
+- `yadgar_embed_dbsize_cache_misses_total`
+- `yadgar_embed_restart_reason_total{reason}`
+
+### Files changed
+
+- `yadgar/embed_service.py` — cache + restart attribution + helpers + lifespan extension.
+- `yadgar/embed_service_metrics.py` — 3 new counters.
+- `yadgar/config_registry.py` — 2 new env knob entries.
+- `server.json` — backend_version 5.2.2 → 5.3.0.
+- `docker-compose.yml` — backend image tag 5.2.2 → 5.3.0.
+- `yadgar/tests/test_embed_service_v530.py` — 8 TDD tests.
+
+### Deploy steps
+
+1. Image already rebuilt as `docker.io/openfantasy/yadgar-backend:5.3.0`.
+2. Bump `yadger_backend_version` 5.2.2 → 5.3.0 (already done in `~/git/nix/modules/home/yadgar.nix`).
+3. `cd ~/git/nix && nix-update`.
+
+### Verification
+
+After backend restart:
+
+```
+curl -sS http://127.0.0.1:8765/metrics | grep yadgar_embed_restart_reason_total
+```
+
+Should show `reason="clean"` (post-graceful-restart) or `reason="crash"`
+(if backend went down hard).
+
+dbsize cache:
+```
+curl -sS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8001/admin/dbsize | jq .cache_age_seconds
+```
+
+Second request within 60s should return a `cache_age_seconds` value > 0.
+
+---
+
 ## v5.7.9 — Source-aware SessionStart response (2026-05-27)
 
 Core 5.7.8 → 5.7.9. Backend unchanged (5.2.2).
