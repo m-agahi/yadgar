@@ -1,12 +1,21 @@
-"""Distributed tracing for Yadgar — v5.6.3.
+"""Distributed tracing for Yadgar — v5.7.6.
 
 Provides:
   - setup_tracing(service_name) — creates TracerProvider, registers LogSpanProcessor, idempotent.
+    Optional OTLP/HTTP exporter (Tempo) via YADGAR_OTLP_ENDPOINT env knob.
   - LogSpanProcessor — on span finish, emits ONE INFO log line in I14 JSON format.
   - @trace_span(name, attributes) — decorator for sync + async functions.
   - get_current_trace_id() / get_current_span_id() — helpers for log formatter integration.
+  - _parse_otlp_headers(raw) — parse comma-separated k=v header string.
 
 Falls back gracefully (no-op) when opentelemetry deps not installed.
+
+OTLP env knobs (all optional):
+  YADGAR_OTLP_ENDPOINT      — HTTP endpoint, e.g. http://tempo:4318/v1/traces.
+                              Empty/unset → OTLP exporter disabled.
+  YADGAR_OTLP_HEADERS       — Comma-separated k=v pairs for auth/tenant headers.
+  YADGAR_OTLP_TIMEOUT_SEC   — Exporter timeout in seconds (default 10).
+  YADGAR_OTLP_INSECURE      — 1/true → plain HTTP (default). 0/false → TLS.
 
 W3C TraceContext propagation: use opentelemetry-instrumentation-httpx (outbound)
 and opentelemetry-instrumentation-fastapi (inbound) in the service setup code.
@@ -17,6 +26,7 @@ from __future__ import annotations
 import functools
 import inspect
 import logging
+import os
 from typing import Any
 
 logger = logging.getLogger("yadgar.tracing")
@@ -40,6 +50,110 @@ except ImportError:  # pragma: no cover
 # ---------------------------------------------------------------------------
 
 _SETUP_DONE: set[str] = set()
+
+
+# ---------------------------------------------------------------------------
+# OTLP helpers
+# ---------------------------------------------------------------------------
+
+
+def _parse_otlp_headers(raw: str) -> dict[str, str]:
+    """Parse comma-separated k=v pairs into a header dict.
+
+    Splits on commas first, then on the FIRST '=' in each pair so that values
+    containing '=' (e.g. Base64 tokens) are preserved.  Whitespace around keys
+    and values is stripped.  Pairs without '=' are silently skipped.
+
+    Example:
+        "x-tenant=foo,authorization=Bearer x" → {"x-tenant": "foo", "authorization": "Bearer x"}
+    """
+    if not raw:
+        return {}
+    result: dict[str, str] = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if "=" not in pair:
+            continue
+        key, _, value = pair.partition("=")
+        result[key.strip()] = value.strip()
+    return result
+
+
+def _build_otlp_exporter():  # type: ignore[return]
+    """Construct an OTLPSpanExporter from env knobs, or return None.
+
+    Returns None when YADGAR_OTLP_ENDPOINT is empty/unset.
+    Returns None and logs WARN on configuration error (URL validation failure).
+    """
+    endpoint = os.environ.get("YADGAR_OTLP_ENDPOINT", "").strip()
+    if not endpoint:
+        return None
+
+    # Basic URL sanity check — must start with http:// or https://
+    if not (endpoint.startswith("http://") or endpoint.startswith("https://")):
+        logger.warning(
+            "otlp_endpoint_invalid",
+            extra={
+                "event": "otlp_endpoint_invalid",
+                "component": "tracing",
+                "endpoint": endpoint,
+                "reason": "endpoint must start with http:// or https://",
+                "action": "falling back to logs-only",
+            },
+        )
+        return None
+
+    headers_raw = os.environ.get("YADGAR_OTLP_HEADERS", "").strip()
+    headers = _parse_otlp_headers(headers_raw) if headers_raw else {}
+
+    timeout_raw = os.environ.get("YADGAR_OTLP_TIMEOUT_SEC", "10").strip()
+    try:
+        timeout = int(timeout_raw)
+    except ValueError:
+        logger.warning(
+            "otlp_timeout_invalid",
+            extra={
+                "event": "otlp_timeout_invalid",
+                "component": "tracing",
+                "value": timeout_raw,
+                "action": "using default 10s",
+            },
+        )
+        timeout = 10
+
+    try:
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # noqa: PLC0415
+            OTLPSpanExporter,
+        )
+
+        exporter = OTLPSpanExporter(
+            endpoint=endpoint,
+            headers=headers if headers else None,
+            timeout=timeout,
+        )
+        logger.info(
+            "otlp_exporter_init",
+            extra={
+                "event": "otlp_exporter_init",
+                "component": "tracing",
+                "endpoint": endpoint,
+                "timeout_sec": timeout,
+                "headers_count": len(headers),
+            },
+        )
+        return exporter
+    except Exception as exc:
+        logger.warning(
+            "otlp_exporter_init_failed",
+            extra={
+                "event": "otlp_exporter_init_failed",
+                "component": "tracing",
+                "endpoint": endpoint,
+                "error": str(exc),
+                "action": "falling back to logs-only",
+            },
+        )
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +287,10 @@ else:  # pragma: no cover
 def setup_tracing(service_name: str) -> None:
     """Create TracerProvider with LogSpanProcessor. Idempotent per service_name.
 
+    If YADGAR_OTLP_ENDPOINT is set, also wires a BatchSpanProcessor with an
+    OTLPSpanExporter so spans ship directly to Tempo alongside the JSON log path.
+    LogSpanProcessor is always registered; OTLP exporter is opt-in via env.
+
     Falls back silently (no-op) when opentelemetry-sdk not installed.
     """
     if not _OTEL_AVAILABLE:  # pragma: no cover
@@ -184,6 +302,14 @@ def setup_tracing(service_name: str) -> None:
     resource = Resource.create({"service.name": service_name})
     provider = TracerProvider(resource=resource)
     provider.add_span_processor(LogSpanProcessor(service_name=service_name))
+
+    # Optional OTLP/HTTP exporter — runs alongside LogSpanProcessor (not replacing it)
+    otlp_exporter = _build_otlp_exporter()
+    if otlp_exporter is not None:
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor  # noqa: PLC0415
+
+        provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+
     _otel_trace.set_tracer_provider(provider)
     _SETUP_DONE.add(service_name)
     logger.info(
@@ -193,6 +319,7 @@ def setup_tracing(service_name: str) -> None:
             "service": service_name,
             "action": "setup_tracing",
             "outcome": "ok",
+            "otlp_enabled": otlp_exporter is not None,
         },
     )
 
