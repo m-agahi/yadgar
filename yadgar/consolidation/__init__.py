@@ -7,7 +7,6 @@ callers that still call it.
 """
 
 import logging
-import subprocess as _subprocess
 from datetime import UTC, datetime
 
 from yadgar.cls_store import DualStoreCLS
@@ -214,22 +213,6 @@ class ConsolidationScheduler(
         if _in_window(
             now_local, settings.VACUUM_AUTO_WINDOW_START, settings.VACUUM_AUTO_WINDOW_END
         ):
-            # Pre-check: skip if yadgar-vacuum.service is already active/activating
-            try:
-                out = _subprocess.check_output(
-                    ["systemctl", "--user", "is-active", "yadgar-vacuum.service"],
-                    stderr=_subprocess.DEVNULL,
-                )
-                state = out.decode(errors="replace").strip()
-                if state in ("active", "activating"):
-                    logger.debug("Auto-vacuum skipped: yadgar-vacuum.service is %s", state)
-                    return  # Do NOT update _last_vacuum_at — retry next cycle
-            except FileNotFoundError:
-                logger.debug("Auto-vacuum skipped: systemctl not available")
-                return  # Do NOT update _last_vacuum_at
-            except _subprocess.CalledProcessError:
-                pass  # is-active returns non-zero for inactive/failed — proceed
-
             _fire_vacuum_service()
             self._last_vacuum_at = datetime.now(UTC)
             logger.warning(
