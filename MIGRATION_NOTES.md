@@ -1,5 +1,86 @@
 # Migration Notes
 
+## v5.7.12 — project_brief two-audience split + signals/restore modes (2026-05-27)
+
+Core 5.7.11 → 5.7.12. Backend unchanged at 5.3.1.
+
+### What changed
+
+`project_brief()` gained two new modes and three new config knobs.
+
+**New modes:**
+
+| Mode | Audience | Budget | Notes |
+|---|---|---|---|
+| `signals` | Stop hook | <100 tokens | Binary flags + age numerics + `recommended_actions`. No anchors, no _render. |
+| `restore` | Post-/clear, post-/compact | <800 tokens | `top_anchors` (scope-tagged), `hot_memories`, `checkpoint`, `key_wiki_pages`. No signal flags, no _render. |
+| `catalog` | (deprecated, back-compat) | ~500 tokens | Current shape unchanged. Marked deprecated in docstring. Remove in v5.8. |
+| `full` | Power user / debug | ~1050 tokens | Superset of catalog + inlined content. |
+
+**New `signals` payload fields:**
+- `stale_checkpoint_hours` — float|null. Age of latest checkpoint row.
+- `active_work_age_hours` — float|null. Age of `_active_work` row.
+- `init_memory_age_hours` — float|null. Age of `_project_init` row.
+- `recommended_actions` — pre-computed list: `refresh_active_work`, `refresh_checkpoint`, `bootstrap_project` based on configurable thresholds.
+
+**New `restore` payload:**
+- `top_anchors` — merged single list (no global/project split). Each entry has `scope: "global"|"project"|"both"`.
+- Truncated at `PROJECT_BRIEF_MAX_ANCHORS` (default 12).
+
+**Bug fixes:**
+- `hot_memories` now excludes anchored entries in all modes (`'_anchor' NOTINSIDE tags`). Anchors were previously appearing at top of hot_memories list by virtue of heat=1.0.
+
+**New config knobs (yaml-backed, three-way registered):**
+
+| Knob | Default | Description |
+|---|---|---|
+| `YADGAR_ACTIVE_WORK_STALE_HOURS` | `24.0` | Hours before active_work triggers `refresh_active_work` action |
+| `YADGAR_CHECKPOINT_STALE_HOURS` | `24.0` | Hours before checkpoint triggers `refresh_checkpoint` action |
+| `YADGAR_PROJECT_BRIEF_MAX_ANCHORS` | `12` | Max anchors in `restore` mode `top_anchors` list |
+
+Yaml keys (lowercase): `active_work_stale_hours`, `checkpoint_stale_hours`, `project_brief_max_anchors`.
+
+### Files changed
+
+- `yadgar/server/tools/project.py` — new helpers `_compute_row_age_hours`, `_get_max_anchors`, `_build_recommended_actions`; mode branching in `project_brief()`; hot_memories anchor filter; restore mode anchor merge with scope field.
+- `yadgar/config.py` — 3 new Settings fields.
+- `yadgar/config_yaml.py` — 3 new FIELD_META entries, new `project_brief` section.
+- `yadgar/config_registry.py` — 3 new `ConfigEntry` registrations.
+- `yadgar/tests/test_project_brief_modes.py` — 38 new tests.
+- `pyproject.toml` 5.7.11 → 5.7.12; `server.json` core version; `docker-compose.yml` core tag; `uv.lock` yadgar version.
+
+### Deploy steps
+
+1. Rebuild `docker.io/openfantasy/yadgar:5.7.12` image.
+2. Update `yadger_core_version` in `~/git/nix/modules/home/yadgar.nix` to `5.7.12`.
+3. Optional: extend `~/.yadgar/config.yaml` with the 3 new knobs (defaults are fine for most users):
+   ```yaml
+   active_work_stale_hours: 24.0
+   checkpoint_stale_hours: 24.0
+   project_brief_max_anchors: 12
+   ```
+4. `cd ~/git/nix && nix-update`.
+
+### Verification
+
+```
+podman exec yadgar python -c "from yadgar.config import get_settings; s=get_settings(); print('ACTIVE_WORK_STALE_HOURS:', s.ACTIVE_WORK_STALE_HOURS)"
+# → ACTIVE_WORK_STALE_HOURS: 24.0
+
+podman exec yadgar python -c "from yadgar import server; server.init_engines(); r=server.project_brief('/repo', mode='signals'); print(r.keys())"
+# → dict_keys(['_resolved_directory', '_mode', 'init_memory_present', 'active_work_present', 'stale_wiki_count', 'stale_checkpoint_hours', 'active_work_age_hours', 'init_memory_age_hours', 'recommended_actions'])
+```
+
+### Note on stop hook + restore() tool
+
+The stop hook script (`~/.claude/hooks/yadgar-stop-memory-checkpoint.py`) and `restore()` MCP tool are NOT updated in this release — that is the main thread's follow-up task. Until updated:
+- Stop hook continues to call `mode="catalog"` (back-compat guaranteed).
+- `restore()` continues to call `mode="catalog"` (back-compat guaranteed).
+
+To take advantage of new modes, update call sites to `mode="signals"` / `mode="restore"`.
+
+---
+
 ## v5.7.11 + backend v5.3.1 — Yamlify OTLP + DBSIZE knobs, drop dead LOG_LEVEL (2026-05-27)
 
 Core 5.7.10 → 5.7.11. Backend 5.3.0 → 5.3.1.
