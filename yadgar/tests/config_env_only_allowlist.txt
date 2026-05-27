@@ -1,11 +1,19 @@
 # I25 config three-way-sync allowlist
 # ─────────────────────────────────────────────────────────────────────────────
-# FORMAT: one YADGAR_* env-name per line.  Lines starting with # are comments.
+# FORMAT:
+#   Tier-1 lines: KEY reason=<category>
+#   Tier-2 lines: KEY  (no reason= required, see GRANDFATHERED marker below)
+#   Lines starting with # are comments.  Blank lines ignored.
 #
 # Two tiers:
 #   TIER-1  Intentional env-only: secrets, infra-wiring, container paths.
-#           These should NEVER get yaml entries (config.yaml is world-readable
-#           on some hosts; secrets belong in env or a secrets manager).
+#           Each entry MUST carry reason=<category>.  Valid categories:
+#             secret              — credentials/tokens, never persist to yaml
+#             infra-wiring        — URL/path differs per deploy target
+#             bootstrap-path      — chicken-and-egg (yaml file location itself)
+#             deployment-flag     — context marker, not user config
+#             downstream-process  — env for a forked subprocess, not yadgar Python
+#             dead-env-pending-removal:vX.Y.Z  — cleanup target in named version
 #
 #   TIER-2  Grandfathered backlog: pre-existing drift between Settings fields
 #           and the yaml/registry surfaces as of v5.7.10.
@@ -17,21 +25,17 @@
 # then delete the line here.  I25 will enforce the new coverage going forward.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# ── TIER-1: Intentional env-only ─────────────────────────────────────────────
-# Secrets — never in yaml
-YADGAR_MCP_AUTH_TOKEN
-# Infra-wiring — set per deployment, not per user config
-YADGAR_DB_URL
-YADGAR_EMBED_URL
-YADGAR_IN_CONTAINER
-YADGAR_DATA_DIR
-# DB credentials — secret, env-only
-YADGAR_DB_USER
-YADGAR_DB_PASS
-# Container yaml path override — bootstraps the yaml loader itself, can't be in yaml
-YADGAR_CONFIG_FILE
+# ── TIER-1: Intentional env-only (reason= required) ──────────────────────────
+YADGAR_MCP_AUTH_TOKEN reason=secret
+YADGAR_DB_USER reason=secret
+YADGAR_DB_PASS reason=secret
+YADGAR_DB_URL reason=infra-wiring
+YADGAR_EMBED_URL reason=infra-wiring
+YADGAR_IN_CONTAINER reason=deployment-flag
+YADGAR_DATA_DIR reason=bootstrap-path
+YADGAR_CONFIG_FILE reason=bootstrap-path
 
-# ── TIER-2: Grandfathered backlog (yaml gaps — 70 entries) ───────────────────
+# === GRANDFATHERED: Tier-2 backlog (no reason= required, drain in future trains) ===
 # Source: v5.7.10 three-way-sync audit (2026-05-27).
 # Backfill target: v5.7.11+ (docs/PLAN_V5_7_X_CONFIG_KNOB_BACKFILL.md).
 YADGAR_ACTION_LOG_RETENTION_DAYS

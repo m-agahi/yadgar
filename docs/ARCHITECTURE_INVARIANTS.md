@@ -255,14 +255,14 @@ invariant — they are covered by I19-extended proposals in the roadmap (v5.8+).
 History: introduced in v5.7.5. 13 existing un-spanned handlers were back-filled
 in the same PR. Live codebase passes at this commit: 22 handlers, all spanned.
 
-### I25 — Config knob MUST be three-way registered or allowlisted (v5.7.10)
+### I25 — Config knob defaults to yaml-backed
 
-Every `Settings` field in `yadgar/config.py` MUST be either:
-1. **Three-way registered**: present in `FIELD_META` (`yadgar/config_yaml.py`) AND
-   `_REGISTRY` (`yadgar/config_registry.py`), OR
-2. **Allowlisted** in `yadgar/tests/config_env_only_allowlist.txt` as either:
-   - an intentional env-only knob (secrets, infra-wiring, container paths), OR
-   - a grandfathered backlog entry (pre-existing drift tracked for follow-up PRs).
+Every config knob MUST be either:
+1. **Three-way registered**: `Settings` field + `config_yaml.py` `FIELD_META` + `config_registry.py` `ConfigEntry`, OR
+2. **Listed in `yadgar/tests/config_env_only_allowlist.txt` Tier-1** with structured `reason=<category>`:
+   - `secret`, `infra-wiring`, `bootstrap-path`, `deployment-flag`, `downstream-process`, `dead-env-pending-removal:vX.Y.Z`
+
+**New knobs default to path (1).** Env-only requires reviewer-visible justification. Tier-2 grandfather entries (pre-v5.7.10 backlog) carry no `reason=` until drained.
 
 **Why three surfaces?**
 - `Settings` is the authoritative definition of what exists and its defaults.
@@ -287,12 +287,12 @@ Exit code 1 (pytest) if any uncovered field found.
 
 **Banned regressions:**
 - Adding a new `Settings` field without a corresponding `FIELD_META` + `_REGISTRY` entry OR allowlist update.
-- Adding a knob to the Tier-1 allowlist unless it is a genuine secret or infra-wiring path.
+- Adding a knob to the Tier-1 allowlist without a valid `reason=<category>`.
 - Silently growing the backlog (adding to Tier-2 without filing a follow-up tag).
 
-History: introduced in v5.7.10. Audit (2026-05-27) found 71 yaml gaps + 190 registry
-gaps across 206 Settings fields. Gaps grandfathered into Tier-2 backlog; backfill
-target v5.7.11+. See `docs/PLAN_V5_7_X_CONFIG_KNOB_BACKFILL.md`.
+History: introduced in v5.7.10. Reason-category enforcement added in v5.7.x. Audit (2026-05-27)
+found 71 yaml gaps + 190 registry gaps across 206 Settings fields. Gaps grandfathered into
+Tier-2 backlog; backfill target v5.7.11+. See `docs/PLAN_V5_7_X_CONFIG_KNOB_BACKFILL.md`.
 
 **Last updated:** 2026-05-27.
 
