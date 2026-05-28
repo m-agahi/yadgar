@@ -1,10 +1,10 @@
-# PLAN — v5.10.0: Anchor Cross-Project Dedup + Optional Jira Integration
+# PLAN — v5.11.0: Anchor Cross-Project Dedup + Optional Jira Integration
 
-**Status:** drafted 2026-05-27 (evening).
+**Status:** drafted 2026-05-27 (evening). Renumbered from v5.10 to v5.11 on 2026-05-28 after test-harness hardening took the v5.10 slot.
 
-**Depends on:** v5.8.0 + v5.9.0 shipped. Audit history exists, `tier` + `valid_until` semantics validated in real-world use.
+**Depends on:** v5.8.0 + v5.9.0 + v5.10.0 shipped. Audit history exists, `tier` + `valid_until` semantics validated in real-world use, test harness no longer leaks orphan SurrealDB workers.
 
-**Related prior plans:** [[PLAN_V5_8_ANCHOR_HYGIENE]], [[PLAN_V5_9_ANCHOR_AUDIT]], [[yadgar-anchor-memory-design-scopes-and-surfacing]].
+**Related prior plans:** [[PLAN_V5_8_ANCHOR_HYGIENE]], [[PLAN_V5_9_ANCHOR_AUDIT]], [[PLAN_V5_10_TEST_HARNESS_HARDENING]], [[yadgar-anchor-memory-design-scopes-and-surfacing]].
 
 ---
 
