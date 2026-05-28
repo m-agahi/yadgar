@@ -1,5 +1,98 @@
 # Migration Notes
 
+## v5.8.0 — Anchor Hygiene Foundation: tier + valid_until + signals (2026-05-28)
+
+Core 5.7.12 → 5.8.0. Backend unchanged at 5.3.1 (SurrealDB is schemaless; all new fields added via `DEFINE FIELD IF NOT EXISTS` at yadgar-core layer).
+
+### What changed
+
+#### 1. New fields on `memorize()` and `anchor()`
+
+```python
+memorize(content, context, tags, *, is_protected=False,
+         tier=None,                # "semantic_immortal" | "conditional" | "ephemeral"
+         valid_until=None,         # ISO-8601 UTC datetime, exclusive expiry
+         ttl_days=None,            # shorthand: now + ttl_days
+         provenance_agent=None)
+
+anchor(content, context, reason="", *,
+       tier="conditional",         # default
+       valid_until=None,
+       ttl_days=None)
+```
+
+- `tier="semantic_immortal"`: truly cross-session forever (account IDs, hard rules). Requires non-empty `reason` (gated by `ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON=true` by default).
+- `tier="conditional"` (default): currently true but may stale. `valid_until` defaults to `now() + ANCHOR_CONDITIONAL_TTL_DAYS` (90d).
+- `tier="ephemeral"`: in-flight work (ticket state, dry-run plans). `valid_until` defaults to `now() + ANCHOR_EPHEMERAL_TTL_DAYS` (14d).
+- `valid_until < now()` → row excluded from `restore()`, hot ranking, `project_brief(restore)` top_anchors.
+
+#### 2. New `signals` mode fields
+
+| Field | Type | Computation |
+|---|---|---|
+| `anchor_count_project` | int | Project-scope anchors not expired. |
+| `anchor_redundancy_candidates` | `list[[id_a, id_b, sim]]` | **Compact tuple encoding.** Same `directory_context`, cosine ≥ `ANCHOR_REDUNDANCY_COSINE`. Capped at 3. |
+| `anchor_promote_candidates` | `list[int]` | IDs of oversized anchors (word_count > `ANCHOR_PROMOTE_WORDS` AND markdown_header_count ≥ `ANCHOR_PROMOTE_HEADERS` AND tags ∩ rule/pattern/convention/playbook/workflow/recipe). Capped at 3. |
+| `_truncated` | bool | True when candidate lists truncated. |
+
+Token budget `signals` mode ≤100 maintained via K=3 hard cap + compact tuple encoding (pathological case ~147 tokens total payload; candidate-only overhead ~37 tokens).
+
+#### 3. New `recommended_actions` action types
+
+| action | trigger |
+|---|---|
+| `audit_anchors` | `anchor_count_project > ANCHOR_AUDIT_THRESHOLD` (default 15) |
+| `merge_redundant_anchors` | `len(anchor_redundancy_candidates) ≥ 1` |
+| `promote_anchor_to_wiki` | `len(anchor_promote_candidates) ≥ 1` |
+| `forget_expired_anchors` | exists row with `valid_until < now()` AND `migration_grace=False` |
+
+Stop hook from v5.7.12 iterates these unchanged — caller maps action to tool call.
+
+#### 4. New config knobs (7 total, three-way registered per I25)
+
+| Knob | Default | Type |
+|---|---|---|
+| `ANCHOR_CONDITIONAL_TTL_DAYS` | 90 | int |
+| `ANCHOR_EPHEMERAL_TTL_DAYS` | 14 | int |
+| `ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON` | true | bool |
+| `ANCHOR_REDUNDANCY_COSINE` | 0.92 | float |
+| `ANCHOR_PROMOTE_WORDS` | 500 | int |
+| `ANCHOR_PROMOTE_HEADERS` | 2 | int |
+| `ANCHOR_AUDIT_THRESHOLD` | 15 | int |
+
+#### 5. Schema migration `migration_008`
+
+Adds `tier`, `valid_until`, `migration_grace` columns to `memory` table via `DEFINE FIELD IF NOT EXISTS`. Idempotent. Runs on first startup post-v5.8.0 — gated by sentinel `_anchor_migration_v5_8_completed=True` memory.
+
+Backfill: all pre-v5.8 `_anchor`-tagged rows → `tier="conditional", valid_until=now()+90d, migration_grace=True`. The `migration_grace` flag protects them from `forget_expired_anchors` action while the user audits. Clear the flag manually or via v5.9 `audit_anchors()` tool.
+
+### Deploy
+
+```bash
+# Build image
+podman build --arch amd64 -t docker.io/openfantasy/yadgar:5.8.0 -f Dockerfile .
+
+# Bump nix (user-managed)
+# Edit ~/git/nix/modules/home/yadgar.nix:
+#   yadger_core_version = "5.8.0"
+cd ~/git/nix && nix-update
+
+# First-startup will run migration_008; verify:
+journalctl --user -u yadgar.service --since "5 minutes ago" | grep migration_008
+```
+
+### Rollback
+
+Schemaless SurrealDB means rolling back to 5.7.12 is safe — the new `tier`/`valid_until`/`migration_grace` columns will simply be ignored by 5.7.12 code paths. No data loss.
+
+### What does NOT ship in v5.8.0 (deferred to v5.9.0)
+
+- `audit_anchors(directory, dry_run=True)` MCP tool — see `docs/PLAN_V5_9_ANCHOR_AUDIT.md`.
+- Extend `consolidate_now()` with anchor pass.
+- Promote-to-wiki draft generator.
+
+---
+
 ## v5.7.12 — project_brief two-audience split + signals/restore modes (2026-05-27)
 
 Core 5.7.11 → 5.7.12. Backend unchanged at 5.3.1.
