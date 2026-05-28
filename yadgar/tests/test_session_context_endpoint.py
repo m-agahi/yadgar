@@ -9,7 +9,6 @@ Covers:
 
 from __future__ import annotations
 
-import os
 from unittest.mock import patch
 
 import pytest
@@ -20,10 +19,10 @@ from starlette.testclient import TestClient
 # ---------------------------------------------------------------------------
 
 
-def _make_client(token: str) -> TestClient:
+def _make_client(token: str, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     """Build a TestClient for the session-context endpoint."""
-    os.environ["YADGAR_REQUIRE_AUTH"] = "1"
-    os.environ["YADGAR_MCP_AUTH_TOKEN"] = token
+    monkeypatch.setenv("YADGAR_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", token)
 
     from yadgar import server as _server
     from yadgar.auth_middleware import BearerAuthMiddleware
@@ -48,17 +47,17 @@ def _engines(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_session_context_requires_bearer_token(tmp_path):
+def test_session_context_requires_bearer_token(tmp_path, monkeypatch):
     """/hooks/session-context returns 401 without Authorization header."""
-    client = _make_client("secret-token")
+    client = _make_client("secret-token", monkeypatch)
     resp = client.get(f"/hooks/session-context?directory={tmp_path}")
     assert resp.status_code == 401, f"Expected 401, got {resp.status_code}"
 
 
-def test_session_context_accepts_valid_bearer(tmp_path):
+def test_session_context_accepts_valid_bearer(tmp_path, monkeypatch):
     """/hooks/session-context returns 200 with valid bearer token."""
     token = "valid-token-xyz"
-    client = _make_client(token)
+    client = _make_client(token, monkeypatch)
     resp = client.get(
         f"/hooks/session-context?directory={tmp_path}",
         headers={"Authorization": f"Bearer {token}"},
@@ -66,9 +65,9 @@ def test_session_context_accepts_valid_bearer(tmp_path):
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
 
 
-def test_session_context_rejects_wrong_token(tmp_path):
+def test_session_context_rejects_wrong_token(tmp_path, monkeypatch):
     """/hooks/session-context returns 401 with wrong bearer token."""
-    client = _make_client("correct-token")
+    client = _make_client("correct-token", monkeypatch)
     resp = client.get(
         f"/hooks/session-context?directory={tmp_path}",
         headers={"Authorization": "Bearer wrong-token"},
@@ -81,10 +80,10 @@ def test_session_context_rejects_wrong_token(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_session_context_returns_text_field(tmp_path):
+def test_session_context_returns_text_field(tmp_path, monkeypatch):
     """Response JSON must contain a 'text' field."""
     token = "tok"
-    client = _make_client(token)
+    client = _make_client(token, monkeypatch)
     resp = client.get(
         f"/hooks/session-context?directory={tmp_path}",
         headers={"Authorization": f"Bearer {token}"},
@@ -94,10 +93,10 @@ def test_session_context_returns_text_field(tmp_path):
     assert "text" in body, f"Response missing 'text' field: {body}"
 
 
-def test_session_context_text_is_string(tmp_path):
+def test_session_context_text_is_string(tmp_path, monkeypatch):
     """'text' field in response is a string."""
     token = "tok2"
-    client = _make_client(token)
+    client = _make_client(token, monkeypatch)
     resp = client.get(
         f"/hooks/session-context?directory={tmp_path}",
         headers={"Authorization": f"Bearer {token}"},
@@ -107,7 +106,7 @@ def test_session_context_text_is_string(tmp_path):
     assert isinstance(body["text"], str)
 
 
-def test_session_context_integrates_project_brief(tmp_path):
+def test_session_context_integrates_project_brief(tmp_path, monkeypatch):
     """Endpoint calls project_brief and uses its _render field as text."""
     token = "tok3"
 
@@ -125,7 +124,7 @@ def test_session_context_integrates_project_brief(tmp_path):
     from yadgar import server as _server
 
     with patch.object(_server, "project_brief", return_value=mock_brief) as mock_pb:
-        client = _make_client(token)
+        client = _make_client(token, monkeypatch)
         resp = client.get(
             f"/hooks/session-context?directory={tmp_path}",
             headers={"Authorization": f"Bearer {token}"},
@@ -141,7 +140,7 @@ def test_session_context_integrates_project_brief(tmp_path):
     mock_pb.assert_called_once()
 
 
-def test_session_context_uses_directory_param(tmp_path):
+def test_session_context_uses_directory_param(tmp_path, monkeypatch):
     """Endpoint passes directory query param to project_brief."""
     token = "tok4"
     from yadgar import server as _server
@@ -162,7 +161,7 @@ def test_session_context_uses_directory_param(tmp_path):
         }
 
     with patch.object(_server, "project_brief", side_effect=_fake_brief):
-        client = _make_client(token)
+        client = _make_client(token, monkeypatch)
         resp = client.get(
             f"/hooks/session-context?directory={tmp_path}",
             headers={"Authorization": f"Bearer {token}"},
@@ -172,13 +171,13 @@ def test_session_context_uses_directory_param(tmp_path):
     assert captured_dir["dir"] == str(tmp_path)
 
 
-def test_session_context_graceful_on_storage_error(tmp_path):
+def test_session_context_graceful_on_storage_error(tmp_path, monkeypatch):
     """Endpoint returns 200 with empty text if project_brief fails."""
     token = "tok5"
     from yadgar import server as _server
 
     with patch.object(_server, "project_brief", side_effect=RuntimeError("DB down")):
-        client = _make_client(token)
+        client = _make_client(token, monkeypatch)
         resp = client.get(
             f"/hooks/session-context?directory={tmp_path}",
             headers={"Authorization": f"Bearer {token}"},

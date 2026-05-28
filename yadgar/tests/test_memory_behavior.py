@@ -23,10 +23,14 @@ from yadgar.tests.conftest import memorize_sync
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
 
-@pytest.fixture(autouse=True, scope="module")
-def _engines(tmp_path_factory):
-    """Full server engine stack with isolated temp database per module."""
-    tmp_path = tmp_path_factory.mktemp("behavior")
+@pytest.fixture(autouse=True)
+def _engines(tmp_path):
+    """Full server engine stack with isolated temp database per test.
+
+    Function-scoped (default) so each test gets a fresh namespace — prevents
+    memories stored by earlier tests from leaking into recall() results under
+    xdist parallel execution (module-scope caused the 2/13 flake rate).
+    """
     server.init_engines(
         db_path=str(tmp_path / "behavior.db"),
         embedding_model="all-MiniLM-L6-v2",
