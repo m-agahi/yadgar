@@ -292,21 +292,26 @@ class TestDryRunFalse:
         assert rows, "semantic_immortal anchor must never be auto-deleted"
 
     def test_is_protected_legacy_never_mutated(self, storage):
-        """Legacy is_protected=True anchors are never auto-mutated (v5.11 repurpose)."""
+        """Legacy is_protected=True anchors with no tier are never auto-mutated (v5.11 repurpose).
+
+        Pre-v5.8 anchors: is_protected=True, tier=None/absent. These are the legacy rows
+        whose repurpose is deferred to v5.11.
+        """
         from yadgar.server.tools.audit import audit_anchors
 
         past = (datetime.now(UTC) - timedelta(days=5)).isoformat()
         now = storage._now_iso()
         mid = storage._next_id("memory")
+        # Insert WITHOUT tier field — simulates a pre-v5.8 legacy anchor
         storage._q(
             "CREATE type::record('memory', $id) SET "
             "content = $content, directory_context = $dir, tags = $tags, "
-            "heat = 0.5, is_protected = true, tier = 'conditional', "
+            "heat = 0.5, is_protected = true, "
             "valid_until = $vu, created_at = $now, last_accessed = $now, "
             "access_count = 0",
             {
                 "id": mid,
-                "content": "legacy protected anchor",
+                "content": "legacy protected anchor no tier",
                 "dir": _DIR,
                 "tags": ["_anchor"],
                 "vu": past,
@@ -317,7 +322,9 @@ class TestDryRunFalse:
         audit_anchors(directory=_DIR, dry_run=False)
 
         rows = storage._q(f"SELECT id FROM memory:{mid}")
-        assert rows, "is_protected=True anchor must not be auto-deleted (v5.11 repurpose reserved)"
+        assert rows, (
+            "Legacy is_protected=True anchor (no tier) must not be auto-deleted (v5.11 repurpose)"
+        )
 
     def test_idempotent_second_call(self, storage):
         """Second call on same state returns empty applied list."""
@@ -495,7 +502,8 @@ class TestSuggestedCall:
         from yadgar.config import get_settings
 
         original_settings = get_settings()
-        # Force anchor_count above threshold by patching ANCHOR_AUDIT_THRESHOLD=0
+        # Force audit_anchors action by setting ANCHOR_AUDIT_THRESHOLD=0 so
+        # anchor_count=1 > 0 triggers the action.
 
         class _FakeSettings:
             def __getattr__(self, name):
@@ -504,6 +512,9 @@ class TestSuggestedCall:
                 return getattr(original_settings, name)
 
         monkeypatch.setattr("yadgar.server.tools.project.get_settings", lambda: _FakeSettings())
+
+        # Insert 1 anchor so anchor_count_project=1 > threshold=0
+        _insert_anchor(storage, "trigger audit action")
 
         result = server.project_brief(_DIR, mode="signals")
         actions = result.get("recommended_actions", [])
