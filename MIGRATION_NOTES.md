@@ -1,5 +1,119 @@
 # Migration Notes
 
+## v5.9.0 — Anchor Audit: audit_anchors() tool + consolidate_now anchor pass (2026-05-28)
+
+Core 5.8.0 → 5.9.0. Backend unchanged at 5.3.1.
+
+### What changed
+
+#### 1. New MCP tool: `audit_anchors(directory, dry_run=True, cosine_threshold=None, include_global=False)`
+
+```python
+result = audit_anchors(
+    directory="/home/max/git/yadgar",
+    dry_run=True,                # default: report-only, no mutations
+    cosine_threshold=None,        # default: ANCHOR_REDUNDANCY_COSINE (0.92)
+    include_global=False,         # default: skip directory_context="global"
+)
+# Returns: {
+#   "scanned": int,
+#   "actions": [
+#     {"action": "forget_expired", "id": Y, "expired_at": "...", "rationale": "..."},
+#     {"action": "merge", "ids": [a, b], "similarity": 0.94, "rationale": "..."},
+#     {"action": "promote", "id": X, "draft": {...}, "next_step": "..."},
+#   ],
+#   "dry_run": bool,
+#   "applied": [...],  # populated when dry_run=False
+# }
+```
+
+**Behavior:**
+- `dry_run=True` (default): returns recommendations, no mutations.
+- `dry_run=False`: applies SAFE mutations only.
+  - `forget_expired`: `valid_until < now() AND migration_grace=False`. Safe to auto-apply.
+  - `merge`: keeps survivor with higher `last_accessed + access_count` rank; forgets lower.
+  - `promote`: NEVER auto-applied — always returns draft dict. Caller decides + calls `wiki_add` + `forget`.
+- NEVER auto-mutated: `tier="semantic_immortal"` rows, `is_protected=True` legacy rows.
+- All mutations logged to `action_log` with `source=audit_anchors` tag + before/after row snapshots.
+- Idempotent: second call on same state returns empty `applied` list.
+
+#### 2. Extended `consolidate_now()` with anchor pass
+
+Runs as final step (after write-gate replay → embedding refresh → heat decay → SR cogmap). Per-directory dry-run audit. Writes `_audit_anchors` sentinel memory (latest-wins single row per directory; matches `_active_work` pattern).
+
+Surfaced in next `project_brief(mode="signals")` as audit history reference.
+
+Gate: `ANCHOR_AUDIT_CONSOLIDATION_ENABLED` (default `true`). Set false to disable.
+
+#### 3. Promote-to-wiki draft generator
+
+When `audit_anchors` flags a `promote` candidate, returns:
+
+```python
+{
+    "action": "promote",
+    "id": 257,
+    "draft": {
+        "suggested_slug": "yadgar-workflow-rule-build-and-push",
+        "suggested_title": "Yadgar Workflow Rule — Build and Push",
+        "suggested_category": "convention",
+        "suggested_tags": ["yadgar", "workflow", "build", "deploy", "_anchor"],
+        "body": "<verbatim anchor content>",
+        "rationale": "word_count=623 AND headers=3 AND tags ∩ {workflow}",
+    },
+    "next_step": "Call wiki_add(title, content, tags, category) with these values, then forget(257).",
+}
+```
+
+Caller copy-pastes the `wiki_add` call. NO auto-`wiki_add` (would reproduce hygiene debt one layer down — dirty slugs, inconsistent tags, no approval workflow).
+
+#### 4. `recommended_actions` enhancement
+
+v5.8 emitted `audit_anchors` action with `action` + `reason`. v5.9 adds `suggested_call`:
+
+```python
+{
+    "action": "audit_anchors",
+    "reason": "count=70 > threshold=15",
+    "suggested_call": "audit_anchors(directory='/home/max/git/yadgar', dry_run=True)",
+}
+```
+
+Caller copy-pastes literal string. Same pattern as v5.7.12 `restore` hint.
+
+#### 5. New config knobs (3 total, three-way registered per I25)
+
+| Knob | Default | Type | Purpose |
+|---|---|---|---|
+| `ANCHOR_AUDIT_CONSOLIDATION_ENABLED` | true | bool | Toggle anchor pass inside `consolidate_now()` |
+| `ANCHOR_AUDIT_MAX_ACTIONS_PER_RUN` | 20 | int | Hard cap on actions returned per audit (token budget) |
+| `ANCHOR_AUDIT_HISTORY_RETENTION_DAYS` | 30 | int | How long `_audit_anchors` sentinel snapshots retained |
+
+### Deploy
+
+```bash
+podman build --arch amd64 -t docker.io/openfantasy/yadgar:5.9.0 -f Dockerfile .
+
+# Bump nix (user-managed)
+# Edit ~/git/nix/modules/home/yadgar.nix:
+#   yadger_core_version = "5.9.0"
+cd ~/git/nix && nix-update
+```
+
+### Rollback
+
+Pure code addition — no schema change, no breaking API. Rollback to 5.8.0 simply loses the `audit_anchors()` tool surface; sentinel memories remain harmless. Safe.
+
+### What does NOT ship in v5.9.0 (deferred to v5.11.0)
+
+- Cross-project anchor dedup (`scope=both` aware) — see `docs/PLAN_V5_11_ANCHOR_CROSS_PROJECT.md`.
+- Optional Jira MCP integration.
+- `is_protected` flag repurpose as verified-by-3-clean-audits.
+
+v5.10.0 is the **test harness hardening** train (pytest-timeout + SurrealDB fixture atexit + xdist port determinism + watchdog systemd timer), ships BEFORE v5.11.
+
+---
+
 ## v5.8.0 — Anchor Hygiene Foundation: tier + valid_until + signals (2026-05-28)
 
 Core 5.7.12 → 5.8.0. Backend unchanged at 5.3.1 (SurrealDB is schemaless; all new fields added via `DEFINE FIELD IF NOT EXISTS` at yadgar-core layer).
