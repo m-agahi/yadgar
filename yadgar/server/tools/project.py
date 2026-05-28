@@ -430,11 +430,14 @@ def _build_anchor_rows_catalog(storage, resolved: str) -> tuple:
 
     Returns (top_anchors_global, top_anchors_project, top_anchors_union).
     """
+    _now = storage._now_iso()
     global_rows = storage._q(
         "SELECT id, content, tags, heat, access_count FROM memory "
         "WHERE '_anchor' INSIDE tags "
         "AND (directory_context = '' OR directory_context = 'global' OR directory_context = 'system') "
+        "AND (valid_until IS NONE OR valid_until > $now) "
         "ORDER BY heat DESC LIMIT 20",
+        {"now": _now},
     )
     top_anchors_global = []
     for row in global_rows:
@@ -452,8 +455,9 @@ def _build_anchor_rows_catalog(storage, resolved: str) -> tuple:
         "SELECT id, content, tags, heat, access_count FROM memory "
         "WHERE '_anchor' INSIDE tags "
         "AND directory_context = $dir "
+        "AND (valid_until IS NONE OR valid_until > $now) "
         "ORDER BY heat DESC LIMIT 20",
-        {"dir": resolved},
+        {"dir": resolved, "now": _now},
     )
     top_anchors_project = []
     for row in project_rows:
@@ -480,19 +484,23 @@ def _build_anchor_rows_catalog(storage, resolved: str) -> tuple:
 def _build_anchor_rows_restore(storage, resolved: str) -> list[dict]:
     """Fetch anchors for restore mode: merged list with scope field, truncated."""
     max_anchors = _get_max_anchors()
+    _now = storage._now_iso()
 
     global_rows = storage._q(
         "SELECT id, content, tags, heat, access_count FROM memory "
         "WHERE '_anchor' INSIDE tags "
         "AND (directory_context = '' OR directory_context = 'global' OR directory_context = 'system') "
+        "AND (valid_until IS NONE OR valid_until > $now) "
         "ORDER BY heat DESC LIMIT 20",
+        {"now": _now},
     )
     project_rows = storage._q(
         "SELECT id, content, tags, heat, access_count FROM memory "
         "WHERE '_anchor' INSIDE tags "
         "AND directory_context = $dir "
+        "AND (valid_until IS NONE OR valid_until > $now) "
         "ORDER BY heat DESC LIMIT 20",
-        {"dir": resolved},
+        {"dir": resolved, "now": _now},
     )
 
     # Schema note: directory_context is binary (global OR project) today.
