@@ -11474,7 +11474,7 @@
     "params": 1
   },
   "yadgar/server/tools/project.py::__file__": {
-    "loc": 1328
+    "loc": 1334
   },
   "yadgar/server/tools/project.py::_build_anchor_rows_catalog@428": {
     "cyclo": 9,
@@ -11483,6 +11483,12 @@
     "params": 2
   },
   "yadgar/server/tools/project.py::_build_anchor_rows_catalog@450": {
+    "cyclo": 9,
+    "loc": 54,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/server/tools/project.py::_build_anchor_rows_catalog@452": {
     "cyclo": 9,
     "loc": 54,
     "nesting": 2,
@@ -11506,6 +11512,12 @@
     "nesting": 3,
     "params": 2
   },
+  "yadgar/server/tools/project.py::_build_anchor_rows_restore@508": {
+    "cyclo": 10,
+    "loc": 53,
+    "nesting": 3,
+    "params": 2
+  },
   "yadgar/server/tools/project.py::_build_checkpoint_dict@380": {
     "cyclo": 4,
     "loc": 10,
@@ -11518,6 +11530,12 @@
     "nesting": 1,
     "params": 1
   },
+  "yadgar/server/tools/project.py::_build_checkpoint_dict@404": {
+    "cyclo": 4,
+    "loc": 10,
+    "nesting": 1,
+    "params": 1
+  },
   "yadgar/server/tools/project.py::_build_hot_memories@405": {
     "cyclo": 3,
     "loc": 21,
@@ -11525,6 +11543,12 @@
     "params": 4
   },
   "yadgar/server/tools/project.py::_build_hot_memories@427": {
+    "cyclo": 3,
+    "loc": 21,
+    "nesting": 0,
+    "params": 4
+  },
+  "yadgar/server/tools/project.py::_build_hot_memories@429": {
     "cyclo": 3,
     "loc": 21,
     "nesting": 0,
@@ -11548,6 +11572,12 @@
     "nesting": 1,
     "params": 8
   },
+  "yadgar/server/tools/project.py::_build_recommended_actions@720": {
+    "cyclo": 10,
+    "loc": 78,
+    "nesting": 1,
+    "params": 8
+  },
   "yadgar/server/tools/project.py::_build_wiki_pages@392": {
     "cyclo": 3,
     "loc": 11,
@@ -11560,7 +11590,19 @@
     "nesting": 0,
     "params": 2
   },
+  "yadgar/server/tools/project.py::_build_wiki_pages@416": {
+    "cyclo": 3,
+    "loc": 11,
+    "nesting": 0,
+    "params": 2
+  },
   "yadgar/server/tools/project.py::_compute_anchor_signals@678": {
+    "cyclo": 4,
+    "loc": 34,
+    "nesting": 2,
+    "params": 3
+  },
+  "yadgar/server/tools/project.py::_compute_anchor_signals@684": {
     "cyclo": 4,
     "loc": 34,
     "nesting": 2,
@@ -11578,7 +11620,19 @@
     "nesting": 3,
     "params": 1
   },
+  "yadgar/server/tools/project.py::_compute_row_age_hours@345": {
+    "cyclo": 7,
+    "loc": 30,
+    "nesting": 3,
+    "params": 1
+  },
   "yadgar/server/tools/project.py::_compute_source_hash@1063": {
+    "cyclo": 4,
+    "loc": 18,
+    "nesting": 3,
+    "params": 2
+  },
+  "yadgar/server/tools/project.py::_compute_source_hash@1069": {
     "cyclo": 4,
     "loc": 18,
     "nesting": 3,
@@ -11614,7 +11668,19 @@
     "nesting": 1,
     "params": 2
   },
+  "yadgar/server/tools/project.py::_cosine_similarity@573": {
+    "cyclo": 6,
+    "loc": 8,
+    "nesting": 1,
+    "params": 2
+  },
   "yadgar/server/tools/project.py::_count_markdown_headers@561": {
+    "cyclo": 1,
+    "loc": 8,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/server/tools/project.py::_count_markdown_headers@563": {
     "cyclo": 1,
     "loc": 8,
     "nesting": 0,
@@ -11650,13 +11716,31 @@
     "nesting": 3,
     "params": 4
   },
+  "yadgar/server/tools/project.py::_fetch_anchor_promote_ids@633": {
+    "cyclo": 8,
+    "loc": 32,
+    "nesting": 3,
+    "params": 4
+  },
   "yadgar/server/tools/project.py::_fetch_anchor_redundancy_pairs@581": {
     "cyclo": 10,
     "loc": 44,
     "nesting": 4,
     "params": 4
   },
+  "yadgar/server/tools/project.py::_fetch_anchor_redundancy_pairs@583": {
+    "cyclo": 10,
+    "loc": 48,
+    "nesting": 4,
+    "params": 4
+  },
   "yadgar/server/tools/project.py::_fetch_expired_anchor_count@661": {
+    "cyclo": 3,
+    "loc": 15,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/server/tools/project.py::_fetch_expired_anchor_count@667": {
     "cyclo": 3,
     "loc": 15,
     "nesting": 2,
@@ -11669,6 +11753,12 @@
     "params": 2
   },
   "yadgar/server/tools/project.py::_fetch_presence_rows@380": {
+    "cyclo": 1,
+    "loc": 20,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/server/tools/project.py::_fetch_presence_rows@382": {
     "cyclo": 1,
     "loc": 20,
     "nesting": 0,
@@ -11722,6 +11812,12 @@
     "nesting": 0,
     "params": 0
   },
+  "yadgar/server/tools/project.py::_get_max_anchors@377": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 0
+  },
   "yadgar/server/tools/project.py::_git_safe_env@33": {
     "cyclo": 1,
     "loc": 15,
@@ -11735,6 +11831,12 @@
     "params": 0
   },
   "yadgar/server/tools/project.py::_parse_frontmatter@1038": {
+    "cyclo": 9,
+    "loc": 23,
+    "nesting": 3,
+    "params": 2
+  },
+  "yadgar/server/tools/project.py::_parse_frontmatter@1044": {
     "cyclo": 9,
     "loc": 23,
     "nesting": 3,
@@ -11782,6 +11884,12 @@
     "nesting": 1,
     "params": 1
   },
+  "yadgar/server/tools/project.py::_project_brief_catalog_full@880": {
+    "cyclo": 4,
+    "loc": 50,
+    "nesting": 1,
+    "params": 1
+  },
   "yadgar/server/tools/project.py::_project_brief_restore@600": {
     "cyclo": 1,
     "loc": 15,
@@ -11800,6 +11908,12 @@
     "nesting": 0,
     "params": 4
   },
+  "yadgar/server/tools/project.py::_project_brief_restore@863": {
+    "cyclo": 1,
+    "loc": 15,
+    "nesting": 0,
+    "params": 4
+  },
   "yadgar/server/tools/project.py::_project_brief_signals@571": {
     "cyclo": 1,
     "loc": 27,
@@ -11813,6 +11927,12 @@
     "params": 7
   },
   "yadgar/server/tools/project.py::_project_brief_signals@794": {
+    "cyclo": 5,
+    "loc": 61,
+    "nesting": 1,
+    "params": 8
+  },
+  "yadgar/server/tools/project.py::_project_brief_signals@800": {
     "cyclo": 5,
     "loc": 61,
     "nesting": 1,
@@ -11848,6 +11968,12 @@
     "nesting": 3,
     "params": 3
   },
+  "yadgar/server/tools/project.py::_wiki_refresh_stale_impl@1089": {
+    "cyclo": 23,
+    "loc": 100,
+    "nesting": 3,
+    "params": 3
+  },
   "yadgar/server/tools/project.py::_wiki_refresh_stale_impl@617": {
     "cyclo": 23,
     "loc": 100,
@@ -11873,6 +11999,12 @@
     "params": 3
   },
   "yadgar/server/tools/project.py::bootstrap_project@1003": {
+    "cyclo": 2,
+    "loc": 16,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/server/tools/project.py::bootstrap_project@1009": {
     "cyclo": 2,
     "loc": 16,
     "nesting": 1,
@@ -11926,7 +12058,19 @@
     "nesting": 1,
     "params": 3
   },
+  "yadgar/server/tools/project.py::project_brief@933": {
+    "cyclo": 4,
+    "loc": 73,
+    "nesting": 1,
+    "params": 3
+  },
   "yadgar/server/tools/project.py::update_active_work@1022": {
+    "cyclo": 1,
+    "loc": 11,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/server/tools/project.py::update_active_work@1028": {
     "cyclo": 1,
     "loc": 11,
     "nesting": 0,
@@ -11962,6 +12106,12 @@
     "nesting": 5,
     "params": 2
   },
+  "yadgar/server/tools/project.py::wiki_cleanup_merged_branches@1230": {
+    "cyclo": 19,
+    "loc": 105,
+    "nesting": 5,
+    "params": 2
+  },
   "yadgar/server/tools/project.py::wiki_cleanup_merged_branches@758": {
     "cyclo": 19,
     "loc": 105,
@@ -11987,6 +12137,12 @@
     "params": 2
   },
   "yadgar/server/tools/project.py::wiki_refresh_stale@1186": {
+    "cyclo": 2,
+    "loc": 35,
+    "nesting": 2,
+    "params": 3
+  },
+  "yadgar/server/tools/project.py::wiki_refresh_stale@1192": {
     "cyclo": 2,
     "loc": 35,
     "nesting": 2,
@@ -15900,6 +16056,16 @@
     "inh_depth": 0,
     "methods": 6
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::TestEnvKnobs@718": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 6
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::TestNewSignalFields@112": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 7
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::TestNewSignalFields@121": {
     "attrs": 0,
     "inh_depth": 0,
@@ -15910,7 +16076,17 @@
     "inh_depth": 0,
     "methods": 6
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::TestPromoteDetection@420": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 6
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::TestRecommendedActionsAudit@470": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 3
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::TestRecommendedActionsAudit@497": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 3
@@ -15920,7 +16096,17 @@
     "inh_depth": 0,
     "methods": 4
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::TestRecommendedActionsForgetExpired@618": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 4
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::TestRecommendedActionsOrder@638": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::TestRecommendedActionsOrder@665": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 1
@@ -15930,7 +16116,17 @@
     "inh_depth": 0,
     "methods": 3
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::TestRecommendedActionsPromote@583": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 3
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::TestRecommendedActionsRedundancy@510": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 3
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::TestRecommendedActionsRedundancy@537": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 3
@@ -15940,13 +16136,29 @@
     "inh_depth": 0,
     "methods": 7
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::TestRedundancyDetection@289": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 7
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::TestTokenBudget@185": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 4
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::TestTokenBudget@194": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 3
   },
   "yadgar/tests/test_anchor_hygiene_signals.py::__file__": {
-    "loc": 741
+    "loc": 768
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::_emb@217": {
+    "cyclo": 4,
+    "loc": 5,
+    "nesting": 0,
+    "params": 1
   },
   "yadgar/tests/test_anchor_hygiene_signals.py::_emb@225": {
     "cyclo": 4,
@@ -15960,6 +16172,18 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::_engines@35": {
+    "cyclo": 1,
+    "loc": 6,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::_insert_anchor@67": {
+    "cyclo": 5,
+    "loc": 38,
+    "nesting": 1,
+    "params": 7
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::_insert_anchor@76": {
     "cyclo": 5,
     "loc": 38,
@@ -15970,6 +16194,18 @@
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::_make_dim@292": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::_make_embedding_bytes@58": {
+    "cyclo": 4,
+    "loc": 7,
+    "nesting": 1,
     "params": 2
   },
   "yadgar/tests/test_anchor_hygiene_signals.py::_make_embedding_bytes@67": {
@@ -15983,6 +16219,12 @@
     "loc": 7,
     "nesting": 0,
     "params": 0
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::patched@130": {
+    "cyclo": 1,
+    "loc": 4,
+    "nesting": 0,
+    "params": 3
   },
   "yadgar/tests/test_anchor_hygiene_signals.py::patched@139": {
     "cyclo": 1,
@@ -16002,7 +16244,25 @@
     "nesting": 0,
     "params": 3
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::patched@551": {
+    "cyclo": 1,
+    "loc": 4,
+    "nesting": 0,
+    "params": 3
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::patched@567": {
+    "cyclo": 1,
+    "loc": 4,
+    "nesting": 0,
+    "params": 3
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::patched@659": {
+    "cyclo": 1,
+    "loc": 4,
+    "nesting": 0,
+    "params": 3
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::patched@686": {
     "cyclo": 1,
     "loc": 4,
     "nesting": 0,
@@ -16014,7 +16274,19 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::storage@44": {
+    "cyclo": 1,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::test_all_knobs_in_field_meta@735": {
+    "cyclo": 5,
+    "loc": 7,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_all_knobs_in_field_meta@762": {
     "cyclo": 5,
     "loc": 7,
     "nesting": 0,
@@ -16026,15 +16298,39 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_all_knobs_in_registry@753": {
+    "cyclo": 6,
+    "loc": 8,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::test_anchor_audit_threshold_in_settings@718": {
     "cyclo": 4,
     "loc": 7,
     "nesting": 0,
     "params": 1
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_anchor_audit_threshold_in_settings@745": {
+    "cyclo": 4,
+    "loc": 7,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_anchor_count_project_counts_only_non_expired@158": {
+    "cyclo": 2,
+    "loc": 13,
+    "nesting": 0,
+    "params": 2
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::test_anchor_count_project_counts_only_non_expired@167": {
     "cyclo": 2,
     "loc": 13,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_anchor_count_project_excludes_other_dir@172": {
+    "cyclo": 2,
+    "loc": 6,
     "nesting": 0,
     "params": 2
   },
@@ -16044,7 +16340,19 @@
     "nesting": 0,
     "params": 2
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_anchor_count_project_field_present@120": {
+    "cyclo": 2,
+    "loc": 3,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::test_anchor_count_project_field_present@129": {
+    "cyclo": 2,
+    "loc": 3,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_anchor_count_project_is_int@150": {
     "cyclo": 2,
     "loc": 3,
     "nesting": 0,
@@ -16056,11 +16364,23 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_anchor_count_project_zero_when_no_anchors@154": {
+    "cyclo": 2,
+    "loc": 3,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::test_anchor_count_project_zero_when_no_anchors@163": {
     "cyclo": 2,
     "loc": 3,
     "nesting": 0,
     "params": 1
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_anchor_promote_candidates_field_present_when_non_empty@142": {
+    "cyclo": 2,
+    "loc": 7,
+    "nesting": 0,
+    "params": 2
   },
   "yadgar/tests/test_anchor_hygiene_signals.py::test_anchor_promote_candidates_field_present_when_non_empty@151": {
     "cyclo": 2,
@@ -16074,11 +16394,29 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_anchor_promote_headers_in_settings@737": {
+    "cyclo": 4,
+    "loc": 7,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::test_anchor_promote_words_in_settings@702": {
     "cyclo": 4,
     "loc": 7,
     "nesting": 0,
     "params": 1
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_anchor_promote_words_in_settings@729": {
+    "cyclo": 4,
+    "loc": 7,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_anchor_redundancy_candidates_field_present_when_non_empty@124": {
+    "cyclo": 2,
+    "loc": 17,
+    "nesting": 0,
+    "params": 3
   },
   "yadgar/tests/test_anchor_hygiene_signals.py::test_anchor_redundancy_candidates_field_present_when_non_empty@133": {
     "cyclo": 2,
@@ -16092,7 +16430,19 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_anchor_redundancy_cosine_in_settings@721": {
+    "cyclo": 4,
+    "loc": 7,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::test_audit_anchors_emitted_above_threshold@484": {
+    "cyclo": 4,
+    "loc": 10,
+    "nesting": 1,
+    "params": 3
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_audit_anchors_emitted_above_threshold@511": {
     "cyclo": 4,
     "loc": 10,
     "nesting": 1,
@@ -16104,7 +16454,19 @@
     "nesting": 1,
     "params": 3
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_audit_anchors_not_emitted_below_threshold@500": {
+    "cyclo": 4,
+    "loc": 10,
+    "nesting": 1,
+    "params": 3
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::test_audit_anchors_reason_contains_count@495": {
+    "cyclo": 6,
+    "loc": 13,
+    "nesting": 1,
+    "params": 3
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_audit_anchors_reason_contains_count@522": {
     "cyclo": 6,
     "loc": 13,
     "nesting": 1,
@@ -16116,7 +16478,19 @@
     "nesting": 1,
     "params": 3
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_deterministic_order_with_all_actions@669": {
+    "cyclo": 8,
+    "loc": 42,
+    "nesting": 1,
+    "params": 3
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::test_forget_emitted_when_expired_no_grace@601": {
+    "cyclo": 3,
+    "loc": 8,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_forget_emitted_when_expired_no_grace@628": {
     "cyclo": 3,
     "loc": 8,
     "nesting": 0,
@@ -16128,7 +16502,19 @@
     "nesting": 0,
     "params": 2
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_forget_not_emitted_for_grace_period_rows@637": {
+    "cyclo": 3,
+    "loc": 9,
+    "nesting": 0,
+    "params": 2
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::test_forget_not_emitted_when_no_expired@594": {
+    "cyclo": 3,
+    "loc": 6,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_forget_not_emitted_when_no_expired@621": {
     "cyclo": 3,
     "loc": 6,
     "nesting": 0,
@@ -16140,7 +16526,19 @@
     "nesting": 0,
     "params": 2
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_forget_reason_contains_expired_count@647": {
+    "cyclo": 4,
+    "loc": 11,
+    "nesting": 0,
+    "params": 2
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::test_merge_emitted_when_pairs_present@518": {
+    "cyclo": 3,
+    "loc": 16,
+    "nesting": 0,
+    "params": 3
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_merge_emitted_when_pairs_present@545": {
     "cyclo": 3,
     "loc": 16,
     "nesting": 0,
@@ -16152,7 +16550,19 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_merge_not_emitted_when_no_pairs@540": {
+    "cyclo": 3,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::test_merge_reason_contains_pair_count@535": {
+    "cyclo": 4,
+    "loc": 19,
+    "nesting": 0,
+    "params": 3
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_merge_reason_contains_pair_count@562": {
     "cyclo": 4,
     "loc": 19,
     "nesting": 0,
@@ -16162,6 +16572,18 @@
     "cyclo": 2,
     "loc": 9,
     "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_promote_candidate_emitted_for_qualifying_anchor@423": {
+    "cyclo": 2,
+    "loc": 9,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_promote_cap_at_k3@479": {
+    "cyclo": 3,
+    "loc": 11,
+    "nesting": 1,
     "params": 2
   },
   "yadgar/tests/test_anchor_hygiene_signals.py::test_promote_cap_at_k5@452": {
@@ -16176,7 +16598,19 @@
     "nesting": 0,
     "params": 2
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_promote_code_block_hashes_not_counted@466": {
+    "cyclo": 2,
+    "loc": 12,
+    "nesting": 0,
+    "params": 2
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::test_promote_emitted_when_candidates_present@564": {
+    "cyclo": 3,
+    "loc": 10,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_promote_emitted_when_candidates_present@591": {
     "cyclo": 3,
     "loc": 10,
     "nesting": 0,
@@ -16188,7 +16622,19 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_promote_not_emitted_when_no_candidates@586": {
+    "cyclo": 3,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::test_promote_reason_contains_oversized_count@575": {
+    "cyclo": 4,
+    "loc": 14,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_promote_reason_contains_oversized_count@602": {
     "cyclo": 4,
     "loc": 14,
     "nesting": 0,
@@ -16200,7 +16646,19 @@
     "nesting": 0,
     "params": 2
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_promote_requires_header_count@444": {
+    "cyclo": 2,
+    "loc": 10,
+    "nesting": 0,
+    "params": 2
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::test_promote_requires_tag_intersection@428": {
+    "cyclo": 2,
+    "loc": 10,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_promote_requires_tag_intersection@455": {
     "cyclo": 2,
     "loc": 10,
     "nesting": 0,
@@ -16212,7 +16670,19 @@
     "nesting": 0,
     "params": 2
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_promote_requires_word_count@433": {
+    "cyclo": 2,
+    "loc": 10,
+    "nesting": 0,
+    "params": 2
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::test_redundancy_candidates_empty_when_no_embeddings@271": {
+    "cyclo": 2,
+    "loc": 6,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_redundancy_candidates_empty_when_no_embeddings@296": {
     "cyclo": 2,
     "loc": 6,
     "nesting": 0,
@@ -16224,6 +16694,18 @@
     "nesting": 0,
     "params": 3
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_redundancy_candidates_found_above_threshold@303": {
+    "cyclo": 6,
+    "loc": 21,
+    "nesting": 0,
+    "params": 3
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_redundancy_cap_at_k3@369": {
+    "cyclo": 3,
+    "loc": 16,
+    "nesting": 1,
+    "params": 3
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::test_redundancy_cap_at_k5@342": {
     "cyclo": 3,
     "loc": 16,
@@ -16233,6 +16715,18 @@
   "yadgar/tests/test_anchor_hygiene_signals.py::test_redundancy_cross_directory_excluded@322": {
     "cyclo": 3,
     "loc": 19,
+    "nesting": 1,
+    "params": 3
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_redundancy_cross_directory_excluded@349": {
+    "cyclo": 3,
+    "loc": 19,
+    "nesting": 1,
+    "params": 3
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_redundancy_pair_compact_tuple_encoding@325": {
+    "cyclo": 7,
+    "loc": 23,
     "nesting": 1,
     "params": 3
   },
@@ -16248,17 +16742,47 @@
     "nesting": 1,
     "params": 3
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_redundancy_truncated_flag_set_when_capped@386": {
+    "cyclo": 4,
+    "loc": 18,
+    "nesting": 1,
+    "params": 3
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_token_budget_empty_db@188": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::test_token_budget_empty_db@197": {
     "cyclo": 2,
     "loc": 4,
     "nesting": 0,
     "params": 1
   },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_token_budget_pathological@251": {
+    "cyclo": 4,
+    "loc": 31,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_token_budget_with_15_anchors_no_candidates@193": {
+    "cyclo": 3,
+    "loc": 7,
+    "nesting": 1,
+    "params": 2
+  },
   "yadgar/tests/test_anchor_hygiene_signals.py::test_token_budget_with_15_anchors_no_candidates@202": {
     "cyclo": 3,
     "loc": 7,
     "nesting": 1,
     "params": 2
+  },
+  "yadgar/tests/test_anchor_hygiene_signals.py::test_token_budget_with_max_candidates_capped@201": {
+    "cyclo": 9,
+    "loc": 49,
+    "nesting": 1,
+    "params": 3
   },
   "yadgar/tests/test_anchor_hygiene_signals.py::test_token_budget_with_max_candidates_capped@210": {
     "cyclo": 9,
