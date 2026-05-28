@@ -438,6 +438,14 @@ class Settings(BaseSettings):
     # Maximum number of anchors returned in restore mode top_anchors list.
     PROJECT_BRIEF_MAX_ANCHORS: int = 12
 
+    # v5.8.0: anchor hygiene TTL knobs
+    # Default valid_until offset (days) for tier=conditional anchors.
+    ANCHOR_CONDITIONAL_TTL_DAYS: int = 90
+    # Default valid_until offset (days) for tier=ephemeral anchors.
+    ANCHOR_EPHEMERAL_TTL_DAYS: int = 14
+    # Require non-empty reason when anchor(tier='semantic_immortal') is called.
+    ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON: bool = True
+
     # C2 — Recall-frequency-modulated decay (MemoryBank parity, v5.3.3)
     # Per-access heat boost applied during each consolidation decay cycle.
     # Formula: new_heat = min(compute_decay(mem, hours) + access_count_since_decay * RECALL_BOOST, 1.0)
