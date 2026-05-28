@@ -179,6 +179,11 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_ANCHOR_CONDITIONAL_TTL_DAYS", "90", "int"),
     ConfigEntry("YADGAR_ANCHOR_EPHEMERAL_TTL_DAYS", "14", "int"),
     ConfigEntry("YADGAR_ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON", "true", "bool"),
+    # ── anchor hygiene signals + recommended_actions knobs (v5.8.0 PR-B) ──
+    ConfigEntry("YADGAR_ANCHOR_REDUNDANCY_COSINE", "0.92", "float"),
+    ConfigEntry("YADGAR_ANCHOR_PROMOTE_WORDS", "500", "int"),
+    ConfigEntry("YADGAR_ANCHOR_PROMOTE_HEADERS", "2", "int"),
+    ConfigEntry("YADGAR_ANCHOR_AUDIT_THRESHOLD", "15", "int"),
 ]
 
 

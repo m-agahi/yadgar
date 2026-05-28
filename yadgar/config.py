@@ -445,6 +445,15 @@ class Settings(BaseSettings):
     ANCHOR_EPHEMERAL_TTL_DAYS: int = 14
     # Require non-empty reason when anchor(tier='semantic_immortal') is called.
     ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON: bool = True
+    # v5.8.0 PR-B: anchor hygiene signals + recommended_actions knobs
+    # Minimum cosine similarity for a pair to appear in anchor_redundancy_candidates.
+    ANCHOR_REDUNDANCY_COSINE: float = 0.92
+    # Minimum word count for an anchor to be a promote-to-wiki candidate.
+    ANCHOR_PROMOTE_WORDS: int = 500
+    # Minimum markdown header count for an anchor to be a promote-to-wiki candidate.
+    ANCHOR_PROMOTE_HEADERS: int = 2
+    # anchor_count_project threshold above which audit_anchors action is emitted.
+    ANCHOR_AUDIT_THRESHOLD: int = 15
 
     # C2 — Recall-frequency-modulated decay (MemoryBank parity, v5.3.3)
     # Per-access heat boost applied during each consolidation decay cycle.
