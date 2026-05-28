@@ -191,4 +191,4 @@ All 6 (I miscounted — six knobs total) three-way registered per I25 with reaso
 
 ## v5.9 / v5.10 follow-up (deferred)
 
-See [[PLAN_V5_9_ANCHOR_AUDIT]] and [[PLAN_V5_10_ANCHOR_CROSS_PROJECT]] (drafted same session).
+See [[PLAN_V5_9_ANCHOR_AUDIT]], [[PLAN_V5_10_TEST_HARNESS_HARDENING]] (deferred from v5.7.14), and [[PLAN_V5_11_ANCHOR_CROSS_PROJECT]] (renumbered from v5.10).
