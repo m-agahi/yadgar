@@ -184,6 +184,10 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_ANCHOR_PROMOTE_WORDS", "500", "int"),
     ConfigEntry("YADGAR_ANCHOR_PROMOTE_HEADERS", "2", "int"),
     ConfigEntry("YADGAR_ANCHOR_AUDIT_THRESHOLD", "15", "int"),
+    # ── anchor audit pass knobs (v5.9.0) ─────────────────────────────────────
+    ConfigEntry("YADGAR_ANCHOR_AUDIT_CONSOLIDATION_ENABLED", "true", "bool"),
+    ConfigEntry("YADGAR_ANCHOR_AUDIT_MAX_ACTIONS_PER_RUN", "20", "int"),
+    ConfigEntry("YADGAR_ANCHOR_AUDIT_HISTORY_RETENTION_DAYS", "30", "int"),
 ]
 
 

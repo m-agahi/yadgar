@@ -836,6 +836,10 @@ def _project_brief_signals(
         promote_count=len(anchor_signals["anchor_promote_candidates"]),
         expired_no_grace_count=anchor_signals["expired_no_grace_count"],
     )
+    # v5.9.0: enrich audit_anchors action with suggested_call (copy-paste-able MCP call)
+    for action_entry in recommended_actions:
+        if action_entry.get("action") == "audit_anchors":
+            action_entry["suggested_call"] = f"audit_anchors(directory={resolved!r}, dry_run=True)"
     result: dict = {
         "_resolved_directory": resolved,
         "_mode": mode,
