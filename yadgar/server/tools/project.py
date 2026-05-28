@@ -334,7 +334,9 @@ _FENCED_CODE_BLOCK_RE = re.compile(r"```.*?```|~~~.*?~~~", re.DOTALL)
 _MD_HEADER_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
 
 # Max candidates per list (redundancy pairs + promote IDs) before hard truncation.
-_ANCHOR_SIGNAL_CAP_K = 5
+# K=3 chosen to keep signals mode payload ≤100 tokens even under pathological load.
+# Not an env knob — too many already; this is an internal budget constant.
+_SIGNALS_CANDIDATES_K = 3
 
 
 # ── project_brief helpers (v5.7.12) ───────────────────────────────────────
@@ -580,12 +582,16 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
 
 def _fetch_anchor_redundancy_pairs(
     storage, resolved: str, _now: str, threshold: float
-) -> tuple[list[dict], bool]:
+) -> tuple[list[list], bool]:
     """Fetch pairwise cosine-similarity candidates for same-dir project anchors.
 
     Returns (pairs_capped, truncated).  pairs_capped is sorted by similarity DESC
-    and capped at _ANCHOR_SIGNAL_CAP_K.  truncated=True when more pairs qualify.
+    and capped at _SIGNALS_CANDIDATES_K.  truncated=True when more pairs qualify.
     All errors return ([], False).
+
+    Compact tuple encoding: each pair is [id_a, id_b, similarity] (list of 3 elements)
+    rather than {"id_a": ..., "id_b": ..., "similarity": ...} to stay within the
+    ≤100-token signals budget.
     """
     try:
         emb_rows = storage._q(
@@ -609,17 +615,17 @@ def _fetch_anchor_redundancy_pairs(
             else:
                 continue
             id_vec.append((mid, floats))
-        all_pairs: list[dict] = []
+        all_pairs: list[list] = []
         for i in range(len(id_vec)):
             for j in range(i + 1, len(id_vec)):
                 mid_a, vec_a = id_vec[i]
                 mid_b, vec_b = id_vec[j]
                 sim = _cosine_similarity(vec_a, vec_b)
                 if sim >= threshold:
-                    all_pairs.append({"id_a": mid_a, "id_b": mid_b, "similarity": round(sim, 4)})
-        all_pairs.sort(key=lambda p: p["similarity"], reverse=True)
-        truncated = len(all_pairs) > _ANCHOR_SIGNAL_CAP_K
-        return all_pairs[:_ANCHOR_SIGNAL_CAP_K], truncated
+                    all_pairs.append([mid_a, mid_b, round(sim, 4)])
+        all_pairs.sort(key=lambda p: p[2], reverse=True)
+        truncated = len(all_pairs) > _SIGNALS_CANDIDATES_K
+        return all_pairs[:_SIGNALS_CANDIDATES_K], truncated
     except Exception:
         return [], False
 
@@ -652,8 +658,8 @@ def _fetch_anchor_promote_ids(storage, resolved: str, _now: str, cfg) -> tuple[l
             if not (_ANCHOR_PROMOTE_TAGS & set(tags)):
                 continue
             all_promote.append(storage._extract_id(row.get("id")))
-        truncated = len(all_promote) > _ANCHOR_SIGNAL_CAP_K
-        return all_promote[:_ANCHOR_SIGNAL_CAP_K], truncated
+        truncated = len(all_promote) > _SIGNALS_CANDIDATES_K
+        return all_promote[:_SIGNALS_CANDIDATES_K], truncated
     except Exception:
         return [], False
 

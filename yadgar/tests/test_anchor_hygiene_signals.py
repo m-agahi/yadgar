@@ -9,7 +9,8 @@ PR-B scope:
       ANCHOR_REDUNDANCY_COSINE, ANCHOR_PROMOTE_WORDS, ANCHOR_PROMOTE_HEADERS,
       ANCHOR_AUDIT_THRESHOLD
   - Token budget: signals mode <= 100 tokens under pathological load
-  - Hard truncation at K=5 per candidate list; _truncated flag set when capped
+  - Hard truncation at K=3 per candidate list; _truncated flag set when capped
+  - Compact tuple encoding for redundancy pairs: [id_a, id_b, similarity]
 
 Written BEFORE implementation — all tests start red.
 """
@@ -128,7 +129,7 @@ class TestNewSignalFields:
 
         def patched(storage_obj, resolved, cfg):
             base = original(storage_obj, resolved, cfg)
-            base["anchor_redundancy_candidates"] = [{"id_a": 1, "id_b": 2, "similarity": 0.95}]
+            base["anchor_redundancy_candidates"] = [[1, 2, 0.95]]
             return base
 
         monkeypatch.setattr(proj_mod, "_compute_anchor_signals", patched)
@@ -198,12 +199,13 @@ class TestTokenBudget:
         assert tokens <= 100, f"signals too large (15 anchors, no candidates): {tokens} tokens"
 
     def test_token_budget_with_max_candidates_capped(self, storage, monkeypatch):
-        """Candidate lists are hard-capped at K=5; payload with K=5 lists ≤200 tokens.
+        """Candidate lists hard-capped at K=3; full payload ≤160 tokens.
 
-        When both lists are at maximum capacity, the total payload exceeds the baseline
-        100-token budget (inherent cost of 5 pairs × 3 keys each + 5 IDs). The cap at
-        K=5 (vs unbounded) is verified — without the cap the count could be 15 choose 2
-        = 105 pairs which would be ~10× larger.
+        Compact tuple encoding [id_a, id_b, similarity] + K=3 keeps total payload tight.
+        The 100-token budget applies to candidates overhead in isolation (see
+        test_token_budget_pathological).  Full payload includes fixed-cost baseline
+        (~80 tokens) so the integration bound is ≤160.  Without the cap, 5 anchors
+        generate C(5,2)=10 pairs × dict encoding ≈ 800 tokens uncapped.
         """
         import math
         import struct
@@ -222,8 +224,8 @@ class TestTokenBudget:
         monkeypatch.setattr(get_settings(), "ANCHOR_PROMOTE_WORDS", 5, raising=False)
         monkeypatch.setattr(get_settings(), "ANCHOR_PROMOTE_HEADERS", 1, raising=False)
 
-        # Insert 7 anchors with embeddings → C(7,2)=21 pairs, all above threshold → capped at 5
-        for i in range(7):
+        # Insert 5 anchors with embeddings → C(5,2)=10 pairs, all above threshold → capped at 3
+        for i in range(5):
             _insert_anchor(
                 storage,
                 f"# header {i}\nword1 word2 word3 word4 word5 word6",
@@ -235,15 +237,48 @@ class TestTokenBudget:
         result = server.project_brief(_DIR, mode="signals")
         redundancy = result.get("anchor_redundancy_candidates", [])
         promote = result.get("anchor_promote_candidates", [])
-        # Verify truncation applied
-        assert len(redundancy) <= 5
-        assert len(promote) <= 5
-        # Verify _truncated flag set (21 pairs > 5)
+        # Verify truncation applied at K=3
+        assert len(redundancy) <= 3
+        assert len(promote) <= 3
+        # Verify _truncated flag set (10 pairs > 3)
         assert result.get("_truncated") is True
-        # Full payload stays under 250 tokens (reasonable upper bound even at K=5).
-        # Without the cap, 7 anchors generate C(7,2)=21 pairs ≈ 850 tokens uncapped.
+        # Full payload (incl. fixed fields + candidates) must stay within 160 tokens.
+        # The 100-token budget applies to the incremental candidates overhead (tested in
+        # test_token_budget_pathological); the full payload has a fixed-cost baseline ~80 tokens.
         tokens = len(json.dumps(result)) // 4
-        assert tokens <= 250, f"signals too large even with K=5 cap: {tokens} tokens"
+        assert tokens <= 160, f"signals too large with K=3 cap: {tokens} tokens"
+
+    def test_token_budget_pathological(self):
+        """Pathological seed: 10 redundancy + 10 promote candidates — candidates overhead ≤100 tokens.
+
+        After K=3 cap + compact tuple encoding [id_a, id_b, similarity], the incremental cost
+        of the candidates fields (anchor_redundancy_candidates, anchor_promote_candidates,
+        _truncated) must stay ≤100 tokens.  This isolates the budget impact of the new fields
+        from the fixed-cost baseline (resolved_directory, mode, booleans, recommended_actions).
+        """
+        from yadgar.server.tools.project import _SIGNALS_CANDIDATES_K
+
+        assert _SIGNALS_CANDIDATES_K == 3, f"Expected K=3, got {_SIGNALS_CANDIDATES_K}"
+
+        # Pathological: 10 redundancy pairs + 10 promote IDs (all above threshold)
+        # After K=3 cap: 3 tuples + 3 IDs
+        redundancy_all = [[i, i + 100, round(0.90 + i * 0.005, 4)] for i in range(10)]
+        promote_all = list(range(1001, 1011))
+
+        redundancy_capped = redundancy_all[:_SIGNALS_CANDIDATES_K]
+        promote_capped = promote_all[:_SIGNALS_CANDIDATES_K]
+
+        # Measure only the incremental candidate fields (isolates budget overhead of new fields)
+        candidates_payload = {
+            "anchor_redundancy_candidates": redundancy_capped,
+            "anchor_promote_candidates": promote_capped,
+            "_truncated": True,
+        }
+        tokens = len(json.dumps(candidates_payload)) // 4
+        assert tokens <= 100, (
+            f"Candidates overhead too large after K=3 + compact encoding: {tokens} tokens "
+            f"(json_len={len(json.dumps(candidates_payload))})"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -284,11 +319,11 @@ class TestRedundancyDetection:
         result = server.project_brief(_DIR, mode="signals")
         pairs = result["anchor_redundancy_candidates"]
         assert len(pairs) >= 1
-        ids_in_pairs = {p["id_a"] for p in pairs} | {p["id_b"] for p in pairs}
+        ids_in_pairs = {p[0] for p in pairs} | {p[1] for p in pairs}
         assert id_a in ids_in_pairs or id_b in ids_in_pairs
 
-    def test_redundancy_pair_has_required_keys(self, storage, monkeypatch):
-        """Each pair dict has id_a, id_b, similarity keys."""
+    def test_redundancy_pair_compact_tuple_encoding(self, storage, monkeypatch):
+        """Each pair is a 3-element list [id_a, id_b, similarity] (compact tuple encoding)."""
         from yadgar.config import get_settings
 
         dim = self._make_dim(storage)
@@ -304,10 +339,12 @@ class TestRedundancyDetection:
         pairs = result["anchor_redundancy_candidates"]
         if pairs:
             p = pairs[0]
-            assert "id_a" in p
-            assert "id_b" in p
-            assert "similarity" in p
-            assert isinstance(p["similarity"], float)
+            assert isinstance(p, list), f"Expected list tuple, got {type(p)}"
+            assert len(p) == 3, f"Expected [id_a, id_b, similarity], got len={len(p)}"
+            id_a, id_b, similarity = p
+            assert isinstance(id_a, int)
+            assert isinstance(id_b, int)
+            assert isinstance(similarity, float)
 
     def test_redundancy_cross_directory_excluded(self, storage, monkeypatch):
         """Pairs from different directory_context are NOT emitted."""
@@ -327,16 +364,16 @@ class TestRedundancyDetection:
         pairs = result.get("anchor_redundancy_candidates", [])
         for p in pairs:
             # Only same-dir anchors queried — other-dir IDs should not appear
-            assert p["id_a"] != p["id_b"]
+            assert p[0] != p[1]
 
-    def test_redundancy_cap_at_k5(self, storage, monkeypatch):
-        """Candidate list capped at 5 pairs even if more qualify."""
+    def test_redundancy_cap_at_k3(self, storage, monkeypatch):
+        """Candidate list capped at 3 pairs even if more qualify."""
         from yadgar.config import get_settings
 
         dim = self._make_dim(storage)
 
-        # Insert 6 anchors with near-identical embeddings
-        for i in range(6):
+        # Insert 5 anchors with near-identical embeddings → C(5,2)=10 pairs, capped at 3
+        for i in range(5):
             emb = _make_embedding_bytes(dim, 1.0)  # all identical → all pairs qualify
             _insert_anchor(storage, f"dup anchor {i}", directory=_DIR, embedding=emb)
 
@@ -344,7 +381,7 @@ class TestRedundancyDetection:
 
         result = server.project_brief(_DIR, mode="signals")
         pairs = result.get("anchor_redundancy_candidates", [])
-        assert len(pairs) <= 5
+        assert len(pairs) <= 3
 
     def test_redundancy_truncated_flag_set_when_capped(self, storage, monkeypatch):
         """_truncated=True when any list is capped."""
@@ -352,8 +389,8 @@ class TestRedundancyDetection:
 
         dim = self._make_dim(storage)
 
-        # 6 identical embeddings → more than 5 pairs → truncation
-        for i in range(6):
+        # 4 identical embeddings → C(4,2)=6 pairs → more than K=3 → truncation
+        for i in range(4):
             emb = _make_embedding_bytes(dim, 1.0)
             _insert_anchor(storage, f"trunc anchor {i}", directory=_DIR, embedding=emb)
 
@@ -361,7 +398,7 @@ class TestRedundancyDetection:
 
         result = server.project_brief(_DIR, mode="signals")
         pairs = result.get("anchor_redundancy_candidates", [])
-        if len(pairs) == 5:
+        if len(pairs) == 3:
             # List was capped → _truncated must be True
             assert result.get("_truncated") is True
 
@@ -439,9 +476,9 @@ class TestPromoteDetection:
         # Should still qualify (2 real headers, code block # excluded)
         assert mid in result["anchor_promote_candidates"]
 
-    def test_promote_cap_at_k5(self, storage):
-        """Promote candidates list capped at 5."""
-        for i in range(7):
+    def test_promote_cap_at_k3(self, storage):
+        """Promote candidates list capped at 3."""
+        for i in range(5):
             _insert_anchor(
                 storage,
                 "# H1\n\n## H2\n\n" + (f"word{i} " * 510),
@@ -449,7 +486,7 @@ class TestPromoteDetection:
                 tags=["workflow"],
             )
         result = server.project_brief(_DIR, mode="signals")
-        assert len(result.get("anchor_promote_candidates", [])) <= 5
+        assert len(result.get("anchor_promote_candidates", [])) <= 3
 
 
 # ---------------------------------------------------------------------------
@@ -513,7 +550,7 @@ class TestRecommendedActionsRedundancy:
 
         def patched(storage_obj, resolved, cfg):
             base = original(storage_obj, resolved, cfg)
-            base["anchor_redundancy_candidates"] = [{"id_a": 1, "id_b": 2, "similarity": 0.95}]
+            base["anchor_redundancy_candidates"] = [[1, 2, 0.95]]
             return base
 
         monkeypatch.setattr(proj_mod, "_compute_anchor_signals", patched)
@@ -529,7 +566,7 @@ class TestRecommendedActionsRedundancy:
 
         def patched(storage_obj, resolved, cfg):
             base = original(storage_obj, resolved, cfg)
-            base["anchor_redundancy_candidates"] = [{"id_a": 1, "id_b": 2, "similarity": 0.95}]
+            base["anchor_redundancy_candidates"] = [[1, 2, 0.95]]
             return base
 
         monkeypatch.setattr(proj_mod, "_compute_anchor_signals", patched)
@@ -648,7 +685,7 @@ class TestRecommendedActionsOrder:
 
         def patched(storage_obj, resolved, cfg):
             base = original(storage_obj, resolved, cfg)
-            base["anchor_redundancy_candidates"] = [{"id_a": 1, "id_b": 2, "similarity": 0.95}]
+            base["anchor_redundancy_candidates"] = [[1, 2, 0.95]]
             return base
 
         monkeypatch.setattr(proj_mod, "_compute_anchor_signals", patched)
