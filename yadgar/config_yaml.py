@@ -563,6 +563,23 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Require non-empty reason when anchor(tier='semantic_immortal') is called (default true)",
         "section": "anchor_hygiene",
     },
+    # v5.8.0 PR-B: anchor hygiene signals + recommended_actions
+    "anchor_redundancy_cosine": {
+        "desc": "Minimum cosine similarity for anchor redundancy candidate pair (default 0.92)",
+        "section": "anchor_hygiene",
+    },
+    "anchor_promote_words": {
+        "desc": "Minimum word count for anchor promote-to-wiki candidate (default 500)",
+        "section": "anchor_hygiene",
+    },
+    "anchor_promote_headers": {
+        "desc": "Minimum markdown header count for anchor promote-to-wiki candidate (default 2)",
+        "section": "anchor_hygiene",
+    },
+    "anchor_audit_threshold": {
+        "desc": "anchor_count_project threshold above which audit_anchors action is emitted (default 15)",
+        "section": "anchor_hygiene",
+    },
 }
 
 
