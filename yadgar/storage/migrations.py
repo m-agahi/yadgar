@@ -175,6 +175,59 @@ def _migration_006_source_memory_id(storage) -> None:
     )
 
 
+def _migration_008_anchor_tier(storage) -> dict:
+    """Add tier / valid_until / migration_grace columns to memory table (v5.8.0).
+
+    DDL: DEFINE FIELD IF NOT EXISTS is idempotent — safe to run twice.
+
+    Backfill:
+      All existing _anchor memories without tier set receive:
+        tier = 'conditional'
+        valid_until = now() + ANCHOR_CONDITIONAL_TTL_DAYS  (default 90 days)
+        migration_grace = true
+
+    Skips rows that already have tier set — idempotent.
+
+    Returns dict with anchor_tier_migrated_count for surface signal.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    # DDL — add new columns (no-op if already present)
+    storage._q("DEFINE FIELD IF NOT EXISTS tier ON TABLE memory TYPE option<string>;")
+    storage._q("DEFINE FIELD IF NOT EXISTS valid_until ON TABLE memory TYPE option<string>;")
+    storage._q("DEFINE FIELD IF NOT EXISTS migration_grace ON TABLE memory TYPE option<bool>;")
+
+    # Load TTL from settings (respects ANCHOR_CONDITIONAL_TTL_DAYS env knob)
+    try:
+        from yadgar.config import get_settings as _get_settings
+
+        _ttl_days = int(_get_settings().ANCHOR_CONDITIONAL_TTL_DAYS)
+    except Exception:
+        _ttl_days = 90
+
+    valid_until_str = (datetime.now(UTC) + timedelta(days=_ttl_days)).isoformat()
+
+    # Find all anchors without tier
+    rows = storage._q("SELECT id FROM memory WHERE '_anchor' INSIDE tags AND tier IS NONE")
+    migrated = 0
+    for row in rows:
+        mid = storage._extract_id(row.get("id"))
+        storage._q(
+            f"UPDATE memory:{int(mid)} SET "
+            "tier = $tier, valid_until = $vu, migration_grace = $grace",
+            {"tier": "conditional", "vu": valid_until_str, "grace": True},
+        )
+        _log.info(
+            "anchor_tier_migration: memory:%d → tier=conditional valid_until=%s",
+            mid,
+            valid_until_str,
+        )
+        migrated += 1
+
+    _log.info("anchor_tier_migration complete: migrated=%d", migrated)
+    return {"anchor_tier_migrated_count": migrated}
+
+
 _MIGRATIONS: list[dict] = [
     {"version": "001_hnsw_indexes", "fn": _migration_001_hnsw_indexes},
     {"version": "002_relationship_indexes", "fn": _migration_002_relationship_indexes},
@@ -194,6 +247,10 @@ _MIGRATIONS: list[dict] = [
     {
         "version": "007_bitemporal_edges",
         "fn": _migration_007_bitemporal_edges,
+    },
+    {
+        "version": "008_anchor_tier",
+        "fn": _migration_008_anchor_tier,
     },
 ]
 

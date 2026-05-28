@@ -151,6 +151,10 @@ _MEMORY_UPDATABLE_FIELDS = frozenset(
         "provenance_agent",
         "vector_clock",
         "branch",
+        # v5.8.0 anchor hygiene fields
+        "tier",
+        "valid_until",
+        "migration_grace",
     }
 )
 
