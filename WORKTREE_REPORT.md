@@ -16,12 +16,13 @@
 | `e2ed526` | feat(query): valid_until expiry filter on restore + hot ranking + project_brief restore |
 | `058e4a3` | feat(migration): scripts/migrate_v5_7_to_v5_8.py + sentinel gating + idempotent backfill |
 | `116ff5b` | feat(config): 3 new env knobs three-way registered I25 (anchor hygiene) |
+| `b345b53` | test(anchor_hygiene): force sync path in engines fixture — remove vacuous escapes |
 
 ---
 
 ## Test Counts
 
-- `yadgar/tests/test_anchor_hygiene_schema.py`: **42 tests**, all pass
+- `yadgar/tests/test_anchor_hygiene_schema.py`: **42 tests**, all pass (verified non-vacuous — engines fixture forces sync path via `_drain_local.active=True`)
 - Key related files (memorize_async, memorize_provenance, project_brief_modes): 100 pass
 - Full suite: 0 failed (exit code 0, run with `-n auto`)
 
