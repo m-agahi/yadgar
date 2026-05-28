@@ -454,6 +454,13 @@ class Settings(BaseSettings):
     ANCHOR_PROMOTE_HEADERS: int = 2
     # anchor_count_project threshold above which audit_anchors action is emitted.
     ANCHOR_AUDIT_THRESHOLD: int = 15
+    # v5.9.0: anchor audit pass in consolidate_now() (anchor_audit section)
+    # Toggle anchor pass inside consolidate_now().
+    ANCHOR_AUDIT_CONSOLIDATION_ENABLED: bool = True
+    # Hard cap on actions returned per audit run (token budget).
+    ANCHOR_AUDIT_MAX_ACTIONS_PER_RUN: int = 20
+    # How long _audit_anchors snapshots are retained for history (days).
+    ANCHOR_AUDIT_HISTORY_RETENTION_DAYS: int = 30
 
     # C2 — Recall-frequency-modulated decay (MemoryBank parity, v5.3.3)
     # Per-access heat boost applied during each consolidation decay cycle.

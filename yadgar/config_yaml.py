@@ -580,6 +580,19 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "anchor_count_project threshold above which audit_anchors action is emitted (default 15)",
         "section": "anchor_hygiene",
     },
+    # v5.9.0: anchor audit pass knobs
+    "anchor_audit_consolidation_enabled": {
+        "desc": "Toggle anchor audit pass inside consolidate_now() (default true)",
+        "section": "anchor_hygiene",
+    },
+    "anchor_audit_max_actions_per_run": {
+        "desc": "Hard cap on actions returned per audit run — token budget (default 20)",
+        "section": "anchor_hygiene",
+    },
+    "anchor_audit_history_retention_days": {
+        "desc": "How long _audit_anchors sentinel snapshots are retained (days, default 30)",
+        "section": "anchor_hygiene",
+    },
 }
 
 
