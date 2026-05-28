@@ -11132,9 +11132,15 @@
     "params": 0
   },
   "yadgar/server/tools/admin_other.py::__file__": {
-    "loc": 449
+    "loc": 459
   },
   "yadgar/server/tools/admin_other.py::_p95@215": {
+    "cyclo": 8,
+    "loc": 21,
+    "nesting": 3,
+    "params": 1
+  },
+  "yadgar/server/tools/admin_other.py::_p95@225": {
     "cyclo": 8,
     "loc": 21,
     "nesting": 3,
@@ -11146,9 +11152,15 @@
     "nesting": 2,
     "params": 6
   },
-  "yadgar/server/tools/admin_other.py::consolidate_now@78": {
+  "yadgar/server/tools/admin_other.py::add_rule@297": {
     "cyclo": 4,
-    "loc": 12,
+    "loc": 31,
+    "nesting": 2,
+    "params": 6
+  },
+  "yadgar/server/tools/admin_other.py::consolidate_now@78": {
+    "cyclo": 6,
+    "loc": 22,
     "nesting": 4,
     "params": 0
   },
@@ -11164,7 +11176,19 @@
     "nesting": 1,
     "params": 1
   },
+  "yadgar/server/tools/admin_other.py::get_rules@331": {
+    "cyclo": 3,
+    "loc": 7,
+    "nesting": 1,
+    "params": 1
+  },
   "yadgar/server/tools/admin_other.py::memory_get@331": {
+    "cyclo": 2,
+    "loc": 14,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/server/tools/admin_other.py::memory_get@341": {
     "cyclo": 2,
     "loc": 14,
     "nesting": 1,
@@ -11176,11 +11200,29 @@
     "nesting": 5,
     "params": 0
   },
+  "yadgar/server/tools/admin_other.py::memory_stats@139": {
+    "cyclo": 32,
+    "loc": 155,
+    "nesting": 5,
+    "params": 0
+  },
   "yadgar/server/tools/admin_other.py::memory_update@363": {
     "cyclo": 5,
     "loc": 31,
     "nesting": 2,
     "params": 2
+  },
+  "yadgar/server/tools/admin_other.py::memory_update@373": {
+    "cyclo": 5,
+    "loc": 31,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/server/tools/admin_other.py::reembed_all@103": {
+    "cyclo": 7,
+    "loc": 33,
+    "nesting": 3,
+    "params": 0
   },
   "yadgar/server/tools/admin_other.py::reembed_all@93": {
     "cyclo": 7,
@@ -11189,6 +11231,12 @@
     "params": 0
   },
   "yadgar/server/tools/admin_other.py::vacuum_checkpoints@397": {
+    "cyclo": 1,
+    "loc": 23,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/server/tools/admin_other.py::vacuum_checkpoints@407": {
     "cyclo": 1,
     "loc": 23,
     "nesting": 0,
@@ -11206,6 +11254,12 @@
     "nesting": 1,
     "params": 1
   },
+  "yadgar/server/tools/admin_other.py::wiki_get@358": {
+    "cyclo": 2,
+    "loc": 12,
+    "nesting": 1,
+    "params": 1
+  },
   "yadgar/server/tools/admin_other.py::wiki_update@397": {
     "cyclo": 5,
     "loc": 27,
@@ -11213,6 +11267,12 @@
     "params": 2
   },
   "yadgar/server/tools/admin_other.py::wiki_update@423": {
+    "cyclo": 5,
+    "loc": 27,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/server/tools/admin_other.py::wiki_update@433": {
     "cyclo": 5,
     "loc": 27,
     "nesting": 2,
