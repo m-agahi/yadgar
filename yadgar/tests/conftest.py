@@ -152,6 +152,31 @@ def surreal_server(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_yaml_config(monkeypatch):
+    """Point YADGAR_CONFIG_FILE at a nonexistent path so every test starts from
+    true defaults, unaffected by the developer's ~/.yadgar/config.yaml.
+
+    Tests that need a specific yaml file (TestYamlOverride etc.) override
+    YADGAR_CONFIG_FILE with their own monkeypatch.setenv — LIFO ordering means
+    their value wins inside their test and is restored afterward.
+    """
+    monkeypatch.setenv("YADGAR_CONFIG_FILE", "/nonexistent/yadgar-test-isolated.yaml")
+    try:
+        from yadgar.config import get_settings
+
+        get_settings.cache_clear()
+    except Exception:
+        pass
+    yield
+    try:
+        from yadgar.config import get_settings
+
+        get_settings.cache_clear()
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _isolate_file_queue(tmp_path, monkeypatch):
     """Give each test its own file queue directory so queue items from one test
     cannot leak into another test's drain pass.

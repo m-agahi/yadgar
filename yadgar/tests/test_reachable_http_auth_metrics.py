@@ -103,13 +103,13 @@ def _make_counting_app(require_auth: bool = False, token: str = "tok") -> TestCl
     return TestClient(BearerAuthMiddleware(RequestLoggingMiddleware(app)))
 
 
-def test_requests_total_increments_on_http_request():
+def test_requests_total_increments_on_http_request(monkeypatch):
     """yadgar_requests_total{route="/api/hello"} increments by N after N requests."""
     from yadgar.metrics import yadgar_requests_total
 
     before = _get_counter_value(yadgar_requests_total, route="/api/hello")
 
-    os.environ["YADGAR_REQUIRE_AUTH"] = "0"
+    monkeypatch.setenv("YADGAR_REQUIRE_AUTH", "0")
 
     async def _hello(request: Request) -> PlainTextResponse:
         return PlainTextResponse("ok")
@@ -133,13 +133,13 @@ def test_requests_total_increments_on_http_request():
 # ---------------------------------------------------------------------------
 
 
-def test_requests_total_unmatched_route():
+def test_requests_total_unmatched_route(monkeypatch):
     """404 paths are counted under route='<unmatched>', not the raw URL."""
     from yadgar.metrics import yadgar_requests_total
 
     before = _get_counter_value(yadgar_requests_total, route="<unmatched>")
 
-    os.environ["YADGAR_REQUIRE_AUTH"] = "0"
+    monkeypatch.setenv("YADGAR_REQUIRE_AUTH", "0")
 
     from yadgar.auth_middleware import BearerAuthMiddleware
     from yadgar.log_config import RequestLoggingMiddleware
@@ -162,14 +162,14 @@ def test_requests_total_unmatched_route():
 # ---------------------------------------------------------------------------
 
 
-def test_auth_histogram_increments_on_authenticated_request():
+def test_auth_histogram_increments_on_authenticated_request(monkeypatch):
     """After M authenticated requests, auth histogram count increases by M."""
     from yadgar.metrics import yadgar_mcp_auth_check_duration_ms
 
     before = _get_hist_count(yadgar_mcp_auth_check_duration_ms)
 
-    os.environ["YADGAR_REQUIRE_AUTH"] = "1"
-    os.environ["YADGAR_MCP_AUTH_TOKEN"] = "good-token"
+    monkeypatch.setenv("YADGAR_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", "good-token")
 
     async def _hello(request: Request) -> PlainTextResponse:
         return PlainTextResponse("ok")
@@ -194,14 +194,14 @@ def test_auth_histogram_increments_on_authenticated_request():
 # ---------------------------------------------------------------------------
 
 
-def test_auth_histogram_skipped_for_exempt_paths():
+def test_auth_histogram_skipped_for_exempt_paths(monkeypatch):
     """Exempt paths (/health, /metrics) do not increment auth histogram."""
     from yadgar.metrics import yadgar_mcp_auth_check_duration_ms
 
     before = _get_hist_count(yadgar_mcp_auth_check_duration_ms)
 
-    os.environ["YADGAR_REQUIRE_AUTH"] = "1"
-    os.environ["YADGAR_MCP_AUTH_TOKEN"] = "good-token"
+    monkeypatch.setenv("YADGAR_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", "good-token")
 
     async def _health(request: Request) -> PlainTextResponse:
         return PlainTextResponse("ok")
@@ -232,14 +232,14 @@ def test_auth_histogram_skipped_for_exempt_paths():
 # ---------------------------------------------------------------------------
 
 
-def test_auth_histogram_increments_on_auth_failure():
+def test_auth_histogram_increments_on_auth_failure(monkeypatch):
     """401 bad-token response still observes the auth duration histogram."""
     from yadgar.metrics import yadgar_mcp_auth_check_duration_ms
 
     before = _get_hist_count(yadgar_mcp_auth_check_duration_ms)
 
-    os.environ["YADGAR_REQUIRE_AUTH"] = "1"
-    os.environ["YADGAR_MCP_AUTH_TOKEN"] = "correct-token"
+    monkeypatch.setenv("YADGAR_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", "correct-token")
 
     async def _hello(request: Request) -> PlainTextResponse:
         return PlainTextResponse("ok")
