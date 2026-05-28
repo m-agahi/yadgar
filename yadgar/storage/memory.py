@@ -140,6 +140,16 @@ class _MemoryMixin:
         if branch is not None:
             sql += ", branch = $branch"
             params["branch"] = branch
+        # v5.8.0: tier / valid_until / migration_grace (optional, nullable)
+        if memory.get("tier") is not None:
+            sql += ", tier = $tier"
+            params["tier"] = memory["tier"]
+        if memory.get("valid_until") is not None:
+            sql += ", valid_until = $valid_until"
+            params["valid_until"] = memory["valid_until"]
+        if memory.get("migration_grace") is not None:
+            sql += ", migration_grace = $migration_grace"
+            params["migration_grace"] = bool(memory["migration_grace"])
         self._q(sql, params)
 
         # Enrichment pipeline
@@ -290,8 +300,9 @@ class _MemoryMixin:
     def get_memories_for_directory(self, directory: str, min_heat: float = 0.1) -> list[dict]:
         rows = self._q(
             "SELECT * FROM memory WHERE directory_context = $dir AND heat >= $min "
+            "AND (valid_until IS NONE OR valid_until > $now) "
             "ORDER BY heat DESC",
-            {"dir": directory, "min": min_heat},
+            {"dir": directory, "min": min_heat, "now": self._now_iso()},
         )
         return self._rows_to_dicts(rows)
 
@@ -663,12 +674,18 @@ class _MemoryMixin:
             )
 
     def get_anchored_memories(self, limit: int = 20) -> list[dict]:
-        """Return protected memories tagged with _anchor, ordered by creation date desc."""
+        """Return protected memories tagged with _anchor, ordered by creation date desc.
+
+        v5.8.0: excludes rows where valid_until < now() (expired anchors).
+        valid_until is stored as ISO-8601 UTC string; comparison uses string $now param
+        to avoid type-mismatch between stored strings and SurrealDB datetime functions.
+        """
         rows = self._q(
             "SELECT * FROM memory "
             "WHERE is_protected = true AND heat > 0 AND '_anchor' INSIDE tags "
+            "AND (valid_until IS NONE OR valid_until > $now) "
             "ORDER BY created_at DESC LIMIT $lim",
-            {"lim": limit},
+            {"lim": limit, "now": self._now_iso()},
         )
         return self._rows_to_dicts(rows)
 
