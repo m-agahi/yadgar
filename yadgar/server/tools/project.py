@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import functools
 import logging
+import math
 import os
+import re
 import subprocess
 import time
 from datetime import UTC, datetime
@@ -315,6 +317,26 @@ def _render_project_brief(brief: dict) -> str:
     return "\n".join(lines)
 
 
+# ── Anchor hygiene constants (v5.8.0 PR-B) ────────────────────────────────
+
+# Tag set that qualifies an anchor for promote-to-wiki detection.
+# Triple AND: word_count > ANCHOR_PROMOTE_WORDS AND header_count >= ANCHOR_PROMOTE_HEADERS
+# AND tags ∩ _ANCHOR_PROMOTE_TAGS ≠ ∅.
+_ANCHOR_PROMOTE_TAGS: frozenset[str] = frozenset(
+    {"rule", "pattern", "convention", "playbook", "workflow", "recipe"}
+)
+
+# Compiled regex to strip fenced code blocks before counting markdown headers.
+# Handles ``` and ~~~ delimiters; DOTALL so . matches newlines inside blocks.
+_FENCED_CODE_BLOCK_RE = re.compile(r"```.*?```|~~~.*?~~~", re.DOTALL)
+
+# Compiled regex for markdown headers (after code-block stripping).
+_MD_HEADER_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
+
+# Max candidates per list (redundancy pairs + promote IDs) before hard truncation.
+_ANCHOR_SIGNAL_CAP_K = 5
+
+
 # ── project_brief helpers (v5.7.12) ───────────────────────────────────────
 
 
@@ -536,15 +558,174 @@ def _build_anchor_rows_restore(storage, resolved: str) -> list[dict]:
     return merged[:max_anchors]
 
 
+def _count_markdown_headers(content: str) -> int:
+    """Count level-1..6 markdown headers in content, excluding fenced code blocks.
+
+    Strips ``` and ~~~ fenced blocks first to avoid counting # comments inside
+    code blocks (e.g. Python # comment, shell ## heading).
+    """
+    stripped = _FENCED_CODE_BLOCK_RE.sub("", content)
+    return len(_MD_HEADER_RE.findall(stripped))
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Compute cosine similarity between two float vectors."""
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def _fetch_anchor_redundancy_pairs(
+    storage, resolved: str, _now: str, threshold: float
+) -> tuple[list[dict], bool]:
+    """Fetch pairwise cosine-similarity candidates for same-dir project anchors.
+
+    Returns (pairs_capped, truncated).  pairs_capped is sorted by similarity DESC
+    and capped at _ANCHOR_SIGNAL_CAP_K.  truncated=True when more pairs qualify.
+    All errors return ([], False).
+    """
+    try:
+        emb_rows = storage._q(
+            "SELECT id, embedding FROM memory "
+            "WHERE '_anchor' INSIDE tags "
+            "AND directory_context = $dir "
+            "AND (valid_until IS NONE OR valid_until > $now) "
+            "AND embedding IS NOT NONE",
+            {"dir": resolved, "now": _now},
+        )
+        id_vec: list[tuple[int, list[float]]] = []
+        for row in emb_rows:
+            mid = storage._extract_id(row.get("id"))
+            raw_emb = row.get("embedding")
+            if raw_emb is None:
+                continue
+            if isinstance(raw_emb, (bytes, bytearray)):
+                floats = storage._bytes_to_floats(raw_emb)
+            elif isinstance(raw_emb, list):
+                floats = [float(x) for x in raw_emb]
+            else:
+                continue
+            id_vec.append((mid, floats))
+        all_pairs: list[dict] = []
+        for i in range(len(id_vec)):
+            for j in range(i + 1, len(id_vec)):
+                mid_a, vec_a = id_vec[i]
+                mid_b, vec_b = id_vec[j]
+                sim = _cosine_similarity(vec_a, vec_b)
+                if sim >= threshold:
+                    all_pairs.append({"id_a": mid_a, "id_b": mid_b, "similarity": round(sim, 4)})
+        all_pairs.sort(key=lambda p: p["similarity"], reverse=True)
+        truncated = len(all_pairs) > _ANCHOR_SIGNAL_CAP_K
+        return all_pairs[:_ANCHOR_SIGNAL_CAP_K], truncated
+    except Exception:
+        return [], False
+
+
+def _fetch_anchor_promote_ids(storage, resolved: str, _now: str, cfg) -> tuple[list[int], bool]:
+    """Fetch IDs of anchors qualifying for promote-to-wiki detection.
+
+    Triple AND: word_count > ANCHOR_PROMOTE_WORDS, header_count >=
+    ANCHOR_PROMOTE_HEADERS, tags ∩ _ANCHOR_PROMOTE_TAGS ≠ ∅.
+    Returns (ids_capped, truncated).  All errors return ([], False).
+    """
+    try:
+        promote_rows = storage._q(
+            "SELECT id, content, tags FROM memory "
+            "WHERE '_anchor' INSIDE tags "
+            "AND directory_context = $dir "
+            "AND (valid_until IS NONE OR valid_until > $now)",
+            {"dir": resolved, "now": _now},
+        )
+        word_threshold = int(cfg.ANCHOR_PROMOTE_WORDS)
+        header_threshold = int(cfg.ANCHOR_PROMOTE_HEADERS)
+        all_promote: list[int] = []
+        for row in promote_rows:
+            content = row.get("content") or ""
+            tags = row.get("tags") or []
+            if len(content.split()) <= word_threshold:
+                continue
+            if _count_markdown_headers(content) < header_threshold:
+                continue
+            if not (_ANCHOR_PROMOTE_TAGS & set(tags)):
+                continue
+            all_promote.append(storage._extract_id(row.get("id")))
+        truncated = len(all_promote) > _ANCHOR_SIGNAL_CAP_K
+        return all_promote[:_ANCHOR_SIGNAL_CAP_K], truncated
+    except Exception:
+        return [], False
+
+
+def _fetch_expired_anchor_count(storage, _now: str) -> int:
+    """Count expired anchors (valid_until < now) that are not in migration grace period."""
+    try:
+        exp_rows = storage._q(
+            "SELECT count() AS cnt FROM memory "
+            "WHERE '_anchor' INSIDE tags "
+            "AND valid_until IS NOT NONE "
+            "AND valid_until < $now "
+            "AND (migration_grace IS NONE OR migration_grace = false) "
+            "GROUP ALL",
+            {"now": _now},
+        )
+        return int(exp_rows[0]["cnt"]) if exp_rows else 0
+    except Exception:
+        return 0
+
+
+def _compute_anchor_signals(storage, resolved: str, cfg) -> dict:
+    """Compute anchor hygiene signals for project_brief(mode='signals').
+
+    Delegates to focused sub-helpers to keep cyclomatic complexity bounded.
+    All DB errors are swallowed; callers receive safe zero/empty defaults.
+    """
+    _now = storage._now_iso()
+
+    try:
+        count_rows = storage._q(
+            "SELECT count() AS cnt FROM memory "
+            "WHERE '_anchor' INSIDE tags "
+            "AND directory_context = $dir "
+            "AND (valid_until IS NONE OR valid_until > $now) "
+            "GROUP ALL",
+            {"dir": resolved, "now": _now},
+        )
+        anchor_count_project: int = int(count_rows[0]["cnt"]) if count_rows else 0
+    except Exception:
+        anchor_count_project = 0
+
+    redundancy_pairs, trunc_r = _fetch_anchor_redundancy_pairs(
+        storage, resolved, _now, float(cfg.ANCHOR_REDUNDANCY_COSINE)
+    )
+    promote_ids, trunc_p = _fetch_anchor_promote_ids(storage, resolved, _now, cfg)
+    expired_no_grace_count = _fetch_expired_anchor_count(storage, _now)
+
+    return {
+        "anchor_count_project": anchor_count_project,
+        "anchor_redundancy_candidates": redundancy_pairs,
+        "anchor_promote_candidates": promote_ids,
+        "expired_no_grace_count": expired_no_grace_count,
+        "_truncated": trunc_r or trunc_p,
+    }
+
+
 def _build_recommended_actions(
     init_memory_present: bool,
     active_work_present: bool,
     active_work_age_hours: float | None,
     stale_checkpoint_hours: float | None,
+    anchor_count_project: int = 0,
+    redundancy_count: int = 0,
+    promote_count: int = 0,
+    expired_no_grace_count: int = 0,
 ) -> list[dict]:
     """Build deterministic recommended_actions list from signals + thresholds.
 
-    Order: bootstrap_project → refresh_active_work → refresh_checkpoint.
+    Order: bootstrap_project → refresh_active_work → refresh_checkpoint →
+           audit_anchors → merge_redundant_anchors → promote_anchor_to_wiki →
+           forget_expired_anchors.
     """
     cfg = get_settings()
     actions: list[dict] = []
@@ -573,6 +754,40 @@ def _build_recommended_actions(
             }
         )
 
+    # v5.8.0 anchor hygiene actions
+    audit_threshold = int(cfg.ANCHOR_AUDIT_THRESHOLD)
+    if anchor_count_project > audit_threshold:
+        actions.append(
+            {
+                "action": "audit_anchors",
+                "reason": f"count={anchor_count_project} > threshold={audit_threshold}",
+            }
+        )
+
+    if redundancy_count >= 1:
+        actions.append(
+            {
+                "action": "merge_redundant_anchors",
+                "reason": f"redundancy_pairs={redundancy_count}",
+            }
+        )
+
+    if promote_count >= 1:
+        actions.append(
+            {
+                "action": "promote_anchor_to_wiki",
+                "reason": f"oversized={promote_count}",
+            }
+        )
+
+    if expired_no_grace_count >= 1:
+        actions.append(
+            {
+                "action": "forget_expired_anchors",
+                "reason": f"expired={expired_no_grace_count}",
+            }
+        )
+
     return actions
 
 
@@ -584,15 +799,38 @@ def _project_brief_signals(
     init_memory_age_hours: float | None,
     active_work_age_hours: float | None,
     stale_checkpoint_hours: float | None,
+    storage=None,
 ) -> dict:
-    """Build signals mode payload (<100 tokens)."""
+    """Build signals mode payload (<100 tokens).
+
+    v5.8.0: includes 3 new anchor hygiene signals (anchor_count_project,
+    anchor_redundancy_candidates, anchor_promote_candidates) and 4 new
+    recommended_actions types.  storage arg required for anchor queries;
+    signals degrade gracefully (empty lists, count=0) when storage=None.
+    """
+    cfg = get_settings()
+    if storage is not None:
+        anchor_signals = _compute_anchor_signals(storage, resolved, cfg)
+    else:
+        anchor_signals = {
+            "anchor_count_project": 0,
+            "anchor_redundancy_candidates": [],
+            "anchor_promote_candidates": [],
+            "expired_no_grace_count": 0,
+            "_truncated": False,
+        }
+
     recommended_actions = _build_recommended_actions(
         init_memory_present=init_memory_present,
         active_work_present=active_work_present,
         active_work_age_hours=active_work_age_hours,
         stale_checkpoint_hours=stale_checkpoint_hours,
+        anchor_count_project=anchor_signals["anchor_count_project"],
+        redundancy_count=len(anchor_signals["anchor_redundancy_candidates"]),
+        promote_count=len(anchor_signals["anchor_promote_candidates"]),
+        expired_no_grace_count=anchor_signals["expired_no_grace_count"],
     )
-    return {
+    result: dict = {
         "_resolved_directory": resolved,
         "_mode": mode,
         "init_memory_present": init_memory_present,
@@ -601,8 +839,19 @@ def _project_brief_signals(
         "stale_checkpoint_hours": stale_checkpoint_hours,
         "active_work_age_hours": active_work_age_hours,
         "init_memory_age_hours": init_memory_age_hours,
+        "anchor_count_project": anchor_signals["anchor_count_project"],
         "recommended_actions": recommended_actions,
     }
+    # Omit empty candidate lists to stay within 100-token budget.
+    # Non-empty lists are always included; callers must handle key absence for
+    # empty case (equivalent to empty list).
+    if anchor_signals["anchor_redundancy_candidates"]:
+        result["anchor_redundancy_candidates"] = anchor_signals["anchor_redundancy_candidates"]
+    if anchor_signals["anchor_promote_candidates"]:
+        result["anchor_promote_candidates"] = anchor_signals["anchor_promote_candidates"]
+    if anchor_signals["_truncated"]:
+        result["_truncated"] = True
+    return result
 
 
 def _project_brief_restore(
@@ -722,6 +971,7 @@ def project_brief(directory: str, mode: str = "catalog", branch_hint: str | None
             init_memory_age_hours=init_memory_age_hours,
             active_work_age_hours=active_work_age_hours,
             stale_checkpoint_hours=stale_checkpoint_hours,
+            storage=storage,
         )
 
     if mode == "restore":
