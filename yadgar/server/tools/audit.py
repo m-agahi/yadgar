@@ -473,3 +473,113 @@ def audit_anchors(
     if truncated:
         result["_truncated"] = True
     return result
+
+
+# ── Consolidation anchor audit pass ──────────────────────────────────────
+
+
+def _run_anchor_audit_pass(storage) -> dict:
+    """Run dry-run anchor audit per directory; write _audit_anchors sentinel.
+
+    Called from consolidate_now() when ANCHOR_AUDIT_CONSOLIDATION_ENABLED=true.
+    Latest-wins: deletes existing sentinel before inserting new one.
+    Skips directories with anchor_count < ANCHOR_AUDIT_THRESHOLD.
+
+    Returns {directories_audited: N, sentinels_written: N}.
+    """
+    cfg = get_settings()
+    threshold = int(cfg.ANCHOR_AUDIT_THRESHOLD)
+    dirs_audited = 0
+    sentinels_written = 0
+
+    try:
+        dir_rows = storage._q(
+            "SELECT directory_context FROM memory "
+            "WHERE '_anchor' INSIDE tags "
+            "AND directory_context IS NOT NONE "
+            "AND directory_context != '' "
+            "GROUP BY directory_context"
+        )
+        directories = list(
+            {r.get("directory_context") for r in dir_rows if r.get("directory_context")}
+        )
+    except Exception:
+        logger.debug("_run_anchor_audit_pass: could not list directories", exc_info=True)
+        return {"directories_audited": 0, "sentinels_written": 0}
+
+    for directory in directories:
+        anchor_count = _count_anchors_for_dir(storage, directory)
+        if anchor_count < threshold:
+            continue
+        audit_result = _audit_dir_safe(directory)
+        if audit_result is None:
+            continue
+        dirs_audited += 1
+        if _write_audit_sentinel(storage, directory, audit_result):
+            sentinels_written += 1
+
+    return {"directories_audited": dirs_audited, "sentinels_written": sentinels_written}
+
+
+def _count_anchors_for_dir(storage, directory: str) -> int:
+    """Return anchor count for a directory (valid, non-expired)."""
+    try:
+        _now = storage._now_iso()
+        cnt_rows = storage._q(
+            "SELECT count() AS cnt FROM memory "
+            "WHERE '_anchor' INSIDE tags "
+            "AND directory_context = $dir "
+            "AND (valid_until IS NONE OR valid_until > $now) "
+            "GROUP ALL",
+            {"dir": directory, "now": _now},
+        )
+        return int(cnt_rows[0]["cnt"]) if cnt_rows else 0
+    except Exception:
+        return 0
+
+
+def _audit_dir_safe(directory: str) -> dict | None:
+    """Run audit_anchors(dry_run=True) on a directory; return None on error."""
+    try:
+        return audit_anchors(directory=directory, dry_run=True)
+    except Exception:
+        logger.debug("_run_anchor_audit_pass: audit failed for dir=%s", directory, exc_info=True)
+        return None
+
+
+def _write_audit_sentinel(storage, directory: str, audit_result: dict) -> bool:
+    """Write _audit_anchors sentinel memory for a directory (latest-wins). Returns True on success."""
+    import json as _json  # noqa: PLC0415
+
+    try:
+        sentinel_content = _json.dumps(
+            {
+                "actions": audit_result.get("actions", []),
+                "scanned": audit_result.get("scanned", 0),
+                "_truncated": audit_result.get("_truncated", False),
+                "audited_at": storage._now_iso(),
+            }
+        )
+        now = storage._now_iso()
+        storage._q(
+            "DELETE FROM memory WHERE directory_context = $dir AND '_audit_anchors' INSIDE tags",
+            {"dir": directory},
+        )
+        sid = storage._next_id("memory")
+        storage._q(
+            "CREATE type::record('memory', $id) SET "
+            "content = $content, directory_context = $dir, "
+            "tags = $tags, heat = 0.0, is_protected = false, "
+            "created_at = $now, last_accessed = $now, access_count = 0",
+            {
+                "id": sid,
+                "content": sentinel_content,
+                "dir": directory,
+                "tags": ["_audit_anchors", "_system"],
+                "now": now,
+            },
+        )
+        return True
+    except Exception:
+        logger.debug("_write_audit_sentinel: failed for dir=%s", directory, exc_info=True)
+        return False

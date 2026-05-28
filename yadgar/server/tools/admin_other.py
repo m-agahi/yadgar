@@ -85,6 +85,16 @@ def consolidate_now() -> dict:
                 stats["sleep_cycle"] = sleep_stats
             except Exception:
                 logger.exception("Sleep cycle failed during consolidate_now")
+        # v5.9.0: anchor audit pass as final step (gated on ANCHOR_AUDIT_CONSOLIDATION_ENABLED)
+        cfg = get_settings()
+        if cfg.ANCHOR_AUDIT_CONSOLIDATION_ENABLED:
+            try:
+                from yadgar.server.tools.audit import _run_anchor_audit_pass  # noqa: PLC0415
+
+                anchor_pass_stats = _run_anchor_audit_pass(_get_storage())
+                stats["anchor_audit_pass"] = anchor_pass_stats
+            except Exception:
+                logger.exception("Anchor audit pass failed during consolidate_now (non-fatal)")
         return {"status": "completed", **stats}
     return {"status": "error", "message": "Consolidation engine not initialized"}
 
