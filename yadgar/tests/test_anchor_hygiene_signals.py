@@ -46,16 +46,6 @@ def storage(_engines):
     return _get_storage()
 
 
-@pytest.fixture()
-def flush_queue():
-    """Force-drain the file queue so writes are immediately visible."""
-    from yadgar.file_queue._locals import _drain_local
-
-    _drain_local.active = True
-    yield lambda: None  # queue already drains synchronously when active=True
-    _drain_local.active = False
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
