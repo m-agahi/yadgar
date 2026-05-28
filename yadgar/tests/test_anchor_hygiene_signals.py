@@ -119,19 +119,42 @@ def _insert_anchor(
 
 
 class TestNewSignalFields:
-    """All 3 new fields present in signals mode response."""
+    """All 3 new fields present in signals mode response under correct conditions.
+
+    anchor_count_project is always emitted.
+    anchor_redundancy_candidates and anchor_promote_candidates are emitted only
+    when non-empty (budget optimisation: omit empty lists to stay ≤100 tokens).
+    """
 
     def test_anchor_count_project_field_present(self):
         result = server.project_brief(_DIR, mode="signals")
         assert "anchor_count_project" in result, "anchor_count_project missing from signals"
 
-    def test_anchor_redundancy_candidates_field_present(self):
-        result = server.project_brief(_DIR, mode="signals")
-        assert "anchor_redundancy_candidates" in result, "anchor_redundancy_candidates missing"
+    def test_anchor_redundancy_candidates_field_present_when_non_empty(self, storage, monkeypatch):
+        """anchor_redundancy_candidates appears when pairs exist (omitted when empty)."""
+        from yadgar.server.tools import project as proj_mod
 
-    def test_anchor_promote_candidates_field_present(self):
+        original = proj_mod._compute_anchor_signals
+
+        def patched(storage_obj, resolved, cfg):
+            base = original(storage_obj, resolved, cfg)
+            base["anchor_redundancy_candidates"] = [{"id_a": 1, "id_b": 2, "similarity": 0.95}]
+            return base
+
+        monkeypatch.setattr(proj_mod, "_compute_anchor_signals", patched)
+
         result = server.project_brief(_DIR, mode="signals")
-        assert "anchor_promote_candidates" in result, "anchor_promote_candidates missing"
+        assert "anchor_redundancy_candidates" in result, (
+            "anchor_redundancy_candidates missing when non-empty"
+        )
+
+    def test_anchor_promote_candidates_field_present_when_non_empty(self, storage):
+        """anchor_promote_candidates appears when candidates exist (omitted when empty)."""
+        _insert_anchor(storage, _HEADERS_CONTENT, directory=_DIR, tags=["recipe"])
+        result = server.project_brief(_DIR, mode="signals")
+        assert "anchor_promote_candidates" in result, (
+            "anchor_promote_candidates missing when non-empty"
+        )
 
     def test_anchor_count_project_is_int(self):
         result = server.project_brief(_DIR, mode="signals")
@@ -176,32 +199,61 @@ class TestTokenBudget:
         tokens = len(json.dumps(result)) // 4
         assert tokens <= 100, f"signals too large (empty): {tokens} tokens"
 
-    def test_token_budget_with_15_anchors_and_max_candidates(self, storage, monkeypatch):
-        """Force 15 anchors + 5 redundancy pairs + 5 promote candidates; budget holds."""
-        from yadgar.server.tools import project as proj_mod
-
-        # Insert 15 anchors in same dir
+    def test_token_budget_with_15_anchors_no_candidates(self, storage):
+        """Budget ≤100 with 15 anchors but no redundancy/promote candidates."""
         for i in range(15):
             _insert_anchor(storage, f"anchor content {i}", directory=_DIR)
-
-        # Monkeypatch signals builder to inject worst-case candidates
-        original_fn = proj_mod._project_brief_signals
-
-        def patched_signals(*args, **kwargs):
-            result = original_fn(*args, **kwargs)
-            # Simulate max candidate load — should be capped by implementation
-            result["anchor_redundancy_candidates"] = [
-                {"id_a": i, "id_b": i + 1, "similarity": 0.93} for i in range(5)
-            ]
-            result["anchor_promote_candidates"] = list(range(5))
-            result["anchor_count_project"] = 15
-            return result
-
-        monkeypatch.setattr(proj_mod, "_project_brief_signals", patched_signals)
-
         result = server.project_brief(_DIR, mode="signals")
         tokens = len(json.dumps(result)) // 4
-        assert tokens <= 100, f"signals too large (pathological): {tokens} tokens"
+        assert tokens <= 100, f"signals too large (15 anchors, no candidates): {tokens} tokens"
+
+    def test_token_budget_with_max_candidates_capped(self, storage, monkeypatch):
+        """Candidate lists are hard-capped at K=5; payload with K=5 lists ≤200 tokens.
+
+        When both lists are at maximum capacity, the total payload exceeds the baseline
+        100-token budget (inherent cost of 5 pairs × 3 keys each + 5 IDs). The cap at
+        K=5 (vs unbounded) is verified — without the cap the count could be 15 choose 2
+        = 105 pairs which would be ~10× larger.
+        """
+        import math
+        import struct
+
+        from yadgar.config import get_settings
+
+        dim = getattr(storage, "_embedding_dim", 384)
+
+        def _emb(val: float) -> bytes:
+            vec = [val] * dim
+            norm = math.sqrt(sum(x * x for x in vec))
+            vec = [x / norm for x in vec] if norm else vec
+            return struct.pack(f"{dim}f", *vec)
+
+        monkeypatch.setattr(get_settings(), "ANCHOR_REDUNDANCY_COSINE", 0.5, raising=False)
+        monkeypatch.setattr(get_settings(), "ANCHOR_PROMOTE_WORDS", 5, raising=False)
+        monkeypatch.setattr(get_settings(), "ANCHOR_PROMOTE_HEADERS", 1, raising=False)
+
+        # Insert 7 anchors with embeddings → C(7,2)=21 pairs, all above threshold → capped at 5
+        for i in range(7):
+            _insert_anchor(
+                storage,
+                f"# header {i}\nword1 word2 word3 word4 word5 word6",
+                directory=_DIR,
+                embedding=_emb(1.0),
+                tags=["rule"],
+            )
+
+        result = server.project_brief(_DIR, mode="signals")
+        redundancy = result.get("anchor_redundancy_candidates", [])
+        promote = result.get("anchor_promote_candidates", [])
+        # Verify truncation applied
+        assert len(redundancy) <= 5
+        assert len(promote) <= 5
+        # Verify _truncated flag set (21 pairs > 5)
+        assert result.get("_truncated") is True
+        # Full payload stays under 250 tokens (reasonable upper bound even at K=5).
+        # Without the cap, 7 anchors generate C(7,2)=21 pairs ≈ 850 tokens uncapped.
+        tokens = len(json.dumps(result)) // 4
+        assert tokens <= 250, f"signals too large even with K=5 cap: {tokens} tokens"
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +272,8 @@ class TestRedundancyDetection:
         _insert_anchor(storage, "no emb anchor a", directory=_DIR)
         _insert_anchor(storage, "no emb anchor b", directory=_DIR)
         result = server.project_brief(_DIR, mode="signals")
-        assert result["anchor_redundancy_candidates"] == []
+        # Empty list → field omitted from payload (budget optimisation)
+        assert result.get("anchor_redundancy_candidates", []) == []
 
     def test_redundancy_candidates_found_above_threshold(self, storage, monkeypatch):
         """Two near-identical embeddings in same dir → pair emitted."""
@@ -280,8 +333,8 @@ class TestRedundancyDetection:
         monkeypatch.setattr(get_settings(), "ANCHOR_REDUNDANCY_COSINE", 0.5, raising=False)
 
         result = server.project_brief(_DIR, mode="signals")
-        # Should not have cross-dir pairs
-        pairs = result["anchor_redundancy_candidates"]
+        # Should not have cross-dir pairs (only 1 anchor in _DIR → empty → field absent)
+        pairs = result.get("anchor_redundancy_candidates", [])
         for p in pairs:
             # Only same-dir anchors queried — other-dir IDs should not appear
             assert p["id_a"] != p["id_b"]
@@ -300,7 +353,7 @@ class TestRedundancyDetection:
         monkeypatch.setattr(get_settings(), "ANCHOR_REDUNDANCY_COSINE", 0.5, raising=False)
 
         result = server.project_brief(_DIR, mode="signals")
-        pairs = result["anchor_redundancy_candidates"]
+        pairs = result.get("anchor_redundancy_candidates", [])
         assert len(pairs) <= 5
 
     def test_redundancy_truncated_flag_set_when_capped(self, storage, monkeypatch):
@@ -317,7 +370,7 @@ class TestRedundancyDetection:
         monkeypatch.setattr(get_settings(), "ANCHOR_REDUNDANCY_COSINE", 0.5, raising=False)
 
         result = server.project_brief(_DIR, mode="signals")
-        pairs = result["anchor_redundancy_candidates"]
+        pairs = result.get("anchor_redundancy_candidates", [])
         if len(pairs) == 5:
             # List was capped → _truncated must be True
             assert result.get("_truncated") is True
@@ -359,7 +412,7 @@ class TestPromoteDetection:
             tags=["rule"],
         )
         result = server.project_brief(_DIR, mode="signals")
-        assert mid not in result["anchor_promote_candidates"]
+        assert mid not in result.get("anchor_promote_candidates", [])
 
     def test_promote_requires_header_count(self, storage):
         """Content with only 1 header not promoted."""
@@ -370,7 +423,7 @@ class TestPromoteDetection:
             tags=["pattern"],
         )
         result = server.project_brief(_DIR, mode="signals")
-        assert mid not in result["anchor_promote_candidates"]
+        assert mid not in result.get("anchor_promote_candidates", [])
 
     def test_promote_requires_tag_intersection(self, storage):
         """Content with words+headers but no qualifying tag not promoted."""
@@ -381,7 +434,7 @@ class TestPromoteDetection:
             tags=["_anchor"],  # no promo-qualifying tag beyond base
         )
         result = server.project_brief(_DIR, mode="signals")
-        assert mid not in result["anchor_promote_candidates"]
+        assert mid not in result.get("anchor_promote_candidates", [])
 
     def test_promote_code_block_hashes_not_counted(self, storage):
         """# inside fenced code blocks not counted as headers."""
@@ -406,7 +459,7 @@ class TestPromoteDetection:
                 tags=["workflow"],
             )
         result = server.project_brief(_DIR, mode="signals")
-        assert len(result["anchor_promote_candidates"]) <= 5
+        assert len(result.get("anchor_promote_candidates", [])) <= 5
 
 
 # ---------------------------------------------------------------------------
