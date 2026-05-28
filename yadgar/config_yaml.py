@@ -550,6 +550,36 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Maximum anchors returned in restore mode top_anchors list (default 12)",
         "section": "project_brief",
     },
+    # anchor_hygiene (v5.8.0)
+    "anchor_conditional_ttl_days": {
+        "desc": "Default valid_until offset (days) for tier=conditional anchors (default 90)",
+        "section": "anchor_hygiene",
+    },
+    "anchor_ephemeral_ttl_days": {
+        "desc": "Default valid_until offset (days) for tier=ephemeral anchors (default 14)",
+        "section": "anchor_hygiene",
+    },
+    "anchor_semantic_immortal_requires_reason": {
+        "desc": "Require non-empty reason when anchor(tier='semantic_immortal') is called (default true)",
+        "section": "anchor_hygiene",
+    },
+    # v5.8.0 PR-B: anchor hygiene signals + recommended_actions
+    "anchor_redundancy_cosine": {
+        "desc": "Minimum cosine similarity for anchor redundancy candidate pair (default 0.92)",
+        "section": "anchor_hygiene",
+    },
+    "anchor_promote_words": {
+        "desc": "Minimum word count for anchor promote-to-wiki candidate (default 500)",
+        "section": "anchor_hygiene",
+    },
+    "anchor_promote_headers": {
+        "desc": "Minimum markdown header count for anchor promote-to-wiki candidate (default 2)",
+        "section": "anchor_hygiene",
+    },
+    "anchor_audit_threshold": {
+        "desc": "anchor_count_project threshold above which audit_anchors action is emitted (default 15)",
+        "section": "anchor_hygiene",
+    },
 }
 
 
@@ -574,6 +604,7 @@ SECTION_TITLES: dict[str, str] = {
     "logging": "Logging",
     "misc": "Miscellaneous",
     "project_brief": "Project Brief",
+    "anchor_hygiene": "Anchor Hygiene (TTL)",
 }
 
 # Ordered list of sections for deterministic output

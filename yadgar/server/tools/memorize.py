@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import yadgar.server._state as _st
@@ -32,6 +32,46 @@ settings = get_settings()
 _reinject_skip_logged: bool = False  # I12: log once per process when reinjection is gated off
 
 
+_VALID_TIERS = frozenset({"semantic_immortal", "conditional", "ephemeral"})
+
+
+def _compute_valid_until(
+    tier: str | None,
+    valid_until: str | None,
+    ttl_days: int | None,
+    settings,
+) -> str | None:
+    """Compute the valid_until ISO-8601 UTC string from tier/valid_until/ttl_days.
+
+    Resolution order:
+      1. valid_until provided → validate timezone + return as-is.
+      2. ttl_days provided → now + ttl_days.
+      3. tier=semantic_immortal → None (no expiry).
+      4. tier=conditional → now + ANCHOR_CONDITIONAL_TTL_DAYS.
+      5. tier=ephemeral → now + ANCHOR_EPHEMERAL_TTL_DAYS.
+      6. tier=None → None (non-anchor memory, no expiry logic).
+    """
+    if valid_until is not None:
+        try:
+            dt = datetime.fromisoformat(valid_until)
+        except ValueError as exc:
+            raise ValueError(f"invalid valid_until format: {valid_until!r}") from exc
+        if dt.tzinfo is None:
+            raise ValueError("valid_until must be timezone-aware UTC (naive datetime rejected)")
+        return valid_until
+    if ttl_days is not None:
+        return (datetime.now(UTC) + timedelta(days=int(ttl_days))).isoformat()
+    if tier == "semantic_immortal":
+        return None
+    if tier == "conditional":
+        days = int(getattr(settings, "ANCHOR_CONDITIONAL_TTL_DAYS", 90))
+        return (datetime.now(UTC) + timedelta(days=days)).isoformat()
+    if tier == "ephemeral":
+        days = int(getattr(settings, "ANCHOR_EPHEMERAL_TTL_DAYS", 14))
+        return (datetime.now(UTC) + timedelta(days=days)).isoformat()
+    return None
+
+
 @_tool()
 def memorize(  # noqa: C901 — pre-existing complexity, tracked for P13 refactor
     content: str,
@@ -39,6 +79,9 @@ def memorize(  # noqa: C901 — pre-existing complexity, tracked for P13 refacto
     tags: list[str],
     is_protected: bool = False,
     provenance_agent: str | None = None,
+    tier: str | None = None,
+    valid_until: str | None = None,
+    ttl_days: int | None = None,
 ) -> dict:
     """Store a new memory with embedding.
 
@@ -53,10 +96,46 @@ def memorize(  # noqa: C901 — pre-existing complexity, tracked for P13 refacto
     - Alternatively, include "_anchor" in tags for the same effect.
     - Without either flag, memories decay naturally based on heat and last-access time.
 
+    tier: anchor tier — "semantic_immortal" | "conditional" | "ephemeral".
+      Setting tier auto-sets is_protected=True.
+      Defaults: conditional → 90d TTL; ephemeral → 14d TTL; semantic_immortal → no expiry.
+
+    valid_until: ISO-8601 UTC datetime string. Explicit expiry. Mutually exclusive with ttl_days.
+
+    ttl_days: Shorthand for valid_until = now() + ttl_days. Mutually exclusive with valid_until.
+
     provenance_agent: identifies the agent or subagent type that stored this memory.
       Defaults to "default". Must be ASCII alphanumeric/hyphen/underscore, ≤64 chars.
       Used for provenance tracking across multi-agent workflows.
     """
+    # v5.8.0: tier validation
+    if tier is not None and tier not in _VALID_TIERS:
+        return {
+            "stored": False,
+            "reason": f"invalid tier: {tier!r}. Must be one of {sorted(_VALID_TIERS)}",
+        }
+
+    # v5.8.0: conflicting valid_until + ttl_days
+    if valid_until is not None and ttl_days is not None:
+        return {
+            "stored": False,
+            "reason": "conflict: both valid_until and ttl_days provided — choose one",
+        }
+
+    # v5.8.0: validate + compute valid_until at API boundary
+    _computed_valid_until: str | None = None
+    if tier is not None or valid_until is not None or ttl_days is not None:
+        try:
+            _computed_valid_until = _compute_valid_until(tier, valid_until, ttl_days, settings)
+        except ValueError as _vu_exc:
+            reason = str(_vu_exc)
+            if "naive" in reason.lower() or "timezone" in reason.lower():
+                return {"stored": False, "reason": reason}
+            return {"stored": False, "reason": reason}
+
+    # v5.8.0: tier auto-sets is_protected
+    if tier is not None:
+        is_protected = True
     if len(content) > 32_768:
         return {"stored": False, "reason": "content_too_large", "max_bytes": 32_768}
 
@@ -106,17 +185,20 @@ def memorize(  # noqa: C901 — pre-existing complexity, tracked for P13 refacto
     # Async path: enqueue and return immediately (skip during drain replay)
     if not is_draining():
         try:
-            _fq_path = _get_file_queue().enqueue(
-                "memorize",
-                {
-                    "content": content,
-                    "context": context,
-                    "tags": list(tags),
-                    "is_protected": is_protected,
-                    "branch": _branch,
-                    "provenance_agent": _provenance_agent,
-                },
-            )
+            _enqueue_payload: dict = {
+                "content": content,
+                "context": context,
+                "tags": list(tags),
+                "is_protected": is_protected,
+                "branch": _branch,
+                "provenance_agent": _provenance_agent,
+            }
+            # v5.8.0: include tier + valid_until in enqueue payload for drainer replay
+            if tier is not None:
+                _enqueue_payload["tier"] = tier
+            if _computed_valid_until is not None:
+                _enqueue_payload["valid_until"] = _computed_valid_until
+            _fq_path = _get_file_queue().enqueue("memorize", _enqueue_payload)
             from pathlib import Path as _Path
 
             return {"stored": True, "queued": True, "queue_id": _Path(_fq_path).name}
@@ -277,13 +359,23 @@ def memorize(  # noqa: C901 — pre-existing complexity, tracked for P13 refacto
                     "file_hash": fhash,
                     "embedding_model": embeddings.get_model_name(),
                     "provenance_agent": _provenance_agent,
+                    "tier": tier,
+                    "valid_until": _computed_valid_until,
                 },
                 branch=_branch,
             )
             curation_action = "created"
-        elif _branch is not None:
-            # Curator inserted the memory — backfill branch via update
-            storage.update_memory_fields(memory_id, branch=_branch)
+        else:
+            # Curator inserted or merged the memory — backfill branch + v5.8 fields
+            _update_kw: dict = {}
+            if _branch is not None:
+                _update_kw["branch"] = _branch
+            if tier is not None:
+                _update_kw["tier"] = tier
+            if _computed_valid_until is not None:
+                _update_kw["valid_until"] = _computed_valid_until
+            if _update_kw:
+                storage.update_memory_fields(memory_id, **_update_kw)
     else:
         # Fallback: direct insert (no curator or no embedding)
         memory_id = storage.insert_memory(
@@ -297,6 +389,8 @@ def memorize(  # noqa: C901 — pre-existing complexity, tracked for P13 refacto
                 "file_hash": fhash,
                 "embedding_model": embeddings.get_model_name(),
                 "provenance_agent": _provenance_agent,
+                "tier": tier,
+                "valid_until": _computed_valid_until,
             },
             branch=_branch,
         )

@@ -135,18 +135,68 @@ def restore(directory: str = "") -> dict:
     return replay.restore(directory=directory)
 
 
+_VALID_ANCHOR_TIERS = frozenset({"semantic_immortal", "conditional", "ephemeral"})
+
+
 @_tool()
-def anchor(content: str, context: str, reason: str = "") -> dict:
+def anchor(
+    content: str,
+    context: str,
+    reason: str = "",
+    tier: str | None = None,
+    valid_until: str | None = None,
+    ttl_days: int | None = None,
+) -> dict:
     """Mark critical context as compaction-resistant.
 
     Anchored memories get max heat, max importance, and is_protected=True.
     They are ALWAYS included in post-compaction restoration regardless
     of other scoring. Use for decisions, constraints, and critical facts
     that must survive compaction.
+
+    tier: "semantic_immortal" | "conditional" (default) | "ephemeral".
+      semantic_immortal → no expiry, requires non-empty reason.
+      conditional → expires in ANCHOR_CONDITIONAL_TTL_DAYS (default 90d).
+      ephemeral → expires in ANCHOR_EPHEMERAL_TTL_DAYS (default 14d).
+
+    valid_until: ISO-8601 UTC explicit expiry. Mutually exclusive with ttl_days.
+    ttl_days: shorthand valid_until = now() + ttl_days. Mutually exclusive with valid_until.
     """
     for _field in (content, context, reason):
         if _has_unpaired_surrogate(_field):
             return {"stored": False, "reason": "invalid_unicode_surrogates"}
+
+    # v5.8.0: tier validation
+    _tier = tier if tier is not None else "conditional"
+    if _tier not in _VALID_ANCHOR_TIERS:
+        return {
+            "stored": False,
+            "reason": f"invalid tier: {tier!r}. Must be one of {sorted(_VALID_ANCHOR_TIERS)}",
+        }
+
+    # v5.8.0: semantic_immortal requires non-empty reason
+    if _tier == "semantic_immortal" and settings.ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON:
+        if not reason or not reason.strip():
+            return {
+                "stored": False,
+                "reason": "anchor tier=semantic_immortal requires a non-empty reason explaining why this anchor is truly immortal",
+            }
+
+    # v5.8.0: conflicting valid_until + ttl_days
+    if valid_until is not None and ttl_days is not None:
+        return {
+            "stored": False,
+            "reason": "conflict: both valid_until and ttl_days provided — choose one",
+        }
+
+    # v5.8.0: compute valid_until at API boundary
+    from yadgar.server.tools.memorize import _compute_valid_until
+
+    _computed_valid_until: str | None = None
+    try:
+        _computed_valid_until = _compute_valid_until(_tier, valid_until, ttl_days, settings)
+    except ValueError as _vu_exc:
+        return {"stored": False, "reason": str(_vu_exc)}
 
     # Capture branch at API boundary — enqueue-time value used by drainer.
     _branch = None
@@ -160,11 +210,23 @@ def anchor(content: str, context: str, reason: str = "") -> dict:
     # Async path: enqueue and return immediately (skip during drain replay)
     if not is_draining():
         try:
-            _get_file_queue().enqueue(
-                "anchor",
-                {"content": content, "context": context, "reason": reason, "branch": _branch},
-            )
-            return {"queued": True, "status": "anchored", "is_protected": True, "reason": reason}
+            _enqueue_payload: dict = {
+                "content": content,
+                "context": context,
+                "reason": reason,
+                "branch": _branch,
+                "tier": _tier,
+            }
+            if _computed_valid_until is not None:
+                _enqueue_payload["valid_until"] = _computed_valid_until
+            _get_file_queue().enqueue("anchor", _enqueue_payload)
+            return {
+                "queued": True,
+                "status": "anchored",
+                "is_protected": True,
+                "reason": reason,
+                "tier": _tier,
+            }
         except Exception as _fq_exc:
             logger.warning("File queue enqueue failed, falling back to sync: %s", _fq_exc)
 
@@ -173,12 +235,21 @@ def anchor(content: str, context: str, reason: str = "") -> dict:
     tags = ["_anchor"]
     if reason:
         tags.append(f"anchor:{reason}")
-    memory_id = replay.anchor_memory(content, context, tags, reason, branch=_branch)
+    memory_id = replay.anchor_memory(
+        content,
+        context,
+        tags,
+        reason,
+        branch=_branch,
+        tier=_tier,
+        valid_until=_computed_valid_until,
+    )
     return {
         "memory_id": memory_id,
         "status": "anchored",
         "is_protected": True,
         "reason": reason,
+        "tier": _tier,
     }
 
 
