@@ -36,11 +36,16 @@ def storage(tmp_path):
 
 @pytest.fixture()
 def engines(tmp_path):
-    """Full server init for MCP tool tests."""
+    """Full server init for MCP tool tests — drain mode forced so memorize/anchor
+    take the synchronous path and return a real ``id`` immediately."""
     from yadgar import server
+    from yadgar.file_queue._locals import _drain_local
 
+    # Force sync (drain) path so tool calls persist synchronously and return ids.
+    _drain_local.active = True
     server.init_engines(db_path=str(tmp_path / "test_tools.db"), embedding_model="all-MiniLM-L6-v2")
     yield server
+    _drain_local.active = False
     server.shutdown()
 
 
@@ -122,10 +127,8 @@ class TestValidUntil:
             is_protected=True,
             tier="semantic_immortal",
         )
-        assert result.get("stored") is True or result.get("queued") is True
         mid = result.get("id")
-        if mid is None:
-            return  # queued path — can't verify synchronously; covered by drain test
+        assert mid is not None, f"sync path must return id; got: {result}"
         storage = engines._storage
         rows = storage._q(f"SELECT valid_until FROM memory:{mid}")
         assert rows and rows[0].get("valid_until") is None
@@ -142,8 +145,7 @@ class TestValidUntil:
         )
         after = datetime.now(UTC)
         mid = result.get("id")
-        if mid is None:
-            return
+        assert mid is not None, f"sync path must return id; got: {result}"
         storage = engines._storage
         rows = storage._q(f"SELECT valid_until FROM memory:{mid}")
         assert rows
@@ -166,8 +168,7 @@ class TestValidUntil:
         )
         after = datetime.now(UTC)
         mid = result.get("id")
-        if mid is None:
-            return
+        assert mid is not None, f"sync path must return id; got: {result}"
         storage = engines._storage
         rows = storage._q(f"SELECT valid_until FROM memory:{mid}")
         assert rows
@@ -191,8 +192,7 @@ class TestValidUntil:
         )
         after = datetime.now(UTC)
         mid = result.get("id")
-        if mid is None:
-            return
+        assert mid is not None, f"sync path must return id; got: {result}"
         storage = engines._storage
         rows = storage._q(f"SELECT valid_until FROM memory:{mid}")
         assert rows
@@ -215,8 +215,7 @@ class TestValidUntil:
             valid_until=target.isoformat(),
         )
         mid = result.get("id")
-        if mid is None:
-            return
+        assert mid is not None, f"sync path must return id; got: {result}"
         storage = engines._storage
         rows = storage._q(f"SELECT valid_until FROM memory:{mid}")
         assert rows
@@ -360,8 +359,7 @@ class TestAutoProtect:
             tier="conditional",
         )
         mid = result.get("id")
-        if mid is None:
-            return
+        assert mid is not None, f"sync path must return id; got: {result}"
         storage = engines._storage
         rows = storage._q(f"SELECT is_protected FROM memory:{mid}")
         assert rows and rows[0].get("is_protected") is True
