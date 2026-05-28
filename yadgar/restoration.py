@@ -126,6 +126,8 @@ class CheckpointRestore:
         tags: list[str],
         reason: str = "",
         branch: str | None = None,
+        tier: str | None = None,
+        valid_until: str | None = None,
     ) -> int:
         """Store a memory with maximum protection — survives compaction restoration.
 
@@ -133,21 +135,25 @@ class CheckpointRestore:
         They are ALWAYS included in restoration regardless of other scoring.
 
         branch: auto-captured at write time via _detect_branch; None for non-git contexts.
+        tier: v5.8.0 — anchor tier string ("semantic_immortal"|"conditional"|"ephemeral").
+        valid_until: v5.8.0 — ISO-8601 UTC expiry string; None = no expiry.
         """
         embedding = self._embeddings.encode(content)
-        memory_id = self._storage.insert_memory(
-            {
-                "content": content,
-                "embedding": embedding,
-                "tags": tags + ["_anchor"],
-                "directory_context": context,
-                "heat": self._settings.REPLAY_ANCHOR_HEAT,
-                "is_stale": False,
-                "file_hash": None,
-                "embedding_model": self._embeddings.get_model_name(),
-            },
-            branch=branch,
-        )
+        memory_payload: dict = {
+            "content": content,
+            "embedding": embedding,
+            "tags": tags + ["_anchor"],
+            "directory_context": context,
+            "heat": self._settings.REPLAY_ANCHOR_HEAT,
+            "is_stale": False,
+            "file_hash": None,
+            "embedding_model": self._embeddings.get_model_name(),
+        }
+        if tier is not None:
+            memory_payload["tier"] = tier
+        if valid_until is not None:
+            memory_payload["valid_until"] = valid_until
+        memory_id = self._storage.insert_memory(memory_payload, branch=branch)
         # Set protection and importance flags
         self._storage.protect_memory(
             memory_id,
