@@ -37,6 +37,9 @@ class _ApplyMixin:
                 tags=p.get("tags", []),
                 is_protected=p.get("is_protected", False),
                 provenance_agent=p.get("provenance_agent"),
+                tier=p.get("tier"),
+                valid_until=p.get("valid_until"),
+                # ttl_days not needed: valid_until already computed before enqueue
             )
         elif op == "anchor":
             from yadgar.server import anchor as _anchor
@@ -45,6 +48,9 @@ class _ApplyMixin:
                 content=p["content"],
                 context=p["context"],
                 reason=p.get("reason", ""),
+                tier=p.get("tier"),
+                valid_until=p.get("valid_until"),
+                # ttl_days not needed: valid_until already computed before enqueue
             )
             # Branch in anchor payload (p.get("branch")) is captured at enqueue
             # time; the anchor() sync path re-detects branch via _detect_branch.
