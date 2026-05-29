@@ -571,7 +571,9 @@ class TestRegressionScenarios:
         Previously: directory mismatch contributed to mismatch score, potentially
         triggering reconsolidation when recalling from a different project context.
         """
-        content = "GitHub token for CI: ghp_SECRETTOKEN1234567890abcdefghijk"
+        # Use a short fake token (< 20 chars after prefix) so it doesn't trigger
+        # the v5.10.2 secret gate (ghp_[A-Za-z0-9_]{20,}).
+        content = "GitHub token for CI: ghp_FAKE1234567890"
         result = memorize_sync(content, "/home/user/projectA", ["github", "ci", "token"])
         mid = result["id"]
 
@@ -581,6 +583,6 @@ class TestRegressionScenarios:
 
         mem = _get_memory(mid)
         assert mem is not None
-        assert "ghp_SECRETTOKEN1234567890abcdefghijk" in mem["content"], (
+        assert "ghp_FAKE1234567890" in mem["content"], (
             "Token was corrupted during cross-project recall"
         )
