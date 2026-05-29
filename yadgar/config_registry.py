@@ -179,6 +179,7 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_ACTIVE_WORK_WARN_HOURS", "12.0", "float"),
     ConfigEntry("YADGAR_CHECKPOINT_WARN_HOURS", "12.0", "float"),
     ConfigEntry("YADGAR_AUTO_REFRESH_ACTIVE_WORK", "false", "bool"),
+    ConfigEntry("YADGAR_SIGNALS_TOKEN_BUDGET_SOFT", "350", "int"),
     # ── anchor hygiene TTL knobs (v5.8.0) ────────────────────────────────────
     ConfigEntry("YADGAR_ANCHOR_CONDITIONAL_TTL_DAYS", "90", "int"),
     ConfigEntry("YADGAR_ANCHOR_EPHEMERAL_TTL_DAYS", "14", "int"),

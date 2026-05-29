@@ -57,6 +57,10 @@ systemctl --user enable --now yadgar-active-work-watchdog.timer
 
 Auto-refresh dilutes user-curated `_active_work` content with a stub. Default OFF.
 
+### Token budget for signals mode
+
+Token budget for `signals` mode raised from 100 → 350 (configurable via `SIGNALS_TOKEN_BUDGET_SOFT`). The 100-token budget still applies to the empty-dir/minimal case; 350 covers real-world payloads with 2 soft actions + `suggested_call` fields. Real overhead at 350 per fire is <1% of typical context window. Tune via yaml (`signals_token_budget_soft`) or env (`YADGAR_SIGNALS_TOKEN_BUDGET_SOFT`).
+
 ---
 
 ## backend v5.4.0 — Recall hot-path caching: CE score cache + embedding vector cache (2026-05-29)

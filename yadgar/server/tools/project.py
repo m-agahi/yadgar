@@ -901,6 +901,15 @@ def _project_brief_signals(
         result["anchor_promote_candidates"] = anchor_signals["anchor_promote_candidates"]
     if anchor_signals["_truncated"]:
         result["_truncated"] = True
+    # Observability: fire counter if payload exceeds operator-tunable token budget.
+    _payload_tokens = len(__import__("json").dumps(result)) // 4
+    if _payload_tokens > cfg.SIGNALS_TOKEN_BUDGET_SOFT:
+        try:
+            from yadgar.metrics import yadgar_signals_payload_oversized_total
+
+            yadgar_signals_payload_oversized_total.inc()
+        except Exception:
+            pass  # non-fatal; metrics not available in all environments
     return result
 
 

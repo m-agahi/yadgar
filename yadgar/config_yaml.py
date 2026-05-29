@@ -563,6 +563,10 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Watchdog opt-in: auto-write stub _active_work when stale (default false; enable via systemd unit env)",
         "section": "active_work_watchdog",
     },
+    "signals_token_budget_soft": {
+        "desc": "Token-budget upper bound for signals mode payload (default 350; raise if new action types added)",
+        "section": "project_brief",
+    },
     # anchor_hygiene (v5.8.0)
     "anchor_conditional_ttl_days": {
         "desc": "Default valid_until offset (days) for tier=conditional anchors (default 90)",
