@@ -1,5 +1,68 @@
 # Migration Notes
 
+## v5.10.1 — `_active_work` soft warning tier + watchdog timer (2026-05-29)
+
+Core 5.10.0 → 5.10.1. Backend unchanged at 5.4.0. No schema changes. Additive only.
+
+### New recommended_actions
+
+Two new soft-tier action types emitted by `project_brief(mode="signals")`:
+
+| Action | Condition | Meaning |
+|---|---|---|
+| `consider_refresh_active_work` | `ACTIVE_WORK_WARN_HOURS < age ≤ ACTIVE_WORK_STALE_HOURS` | Proactive nudge — update during natural pause |
+| `consider_refresh_checkpoint` | `CHECKPOINT_WARN_HOURS < age ≤ CHECKPOINT_STALE_HOURS` | Proactive nudge |
+
+Soft and hard actions are **mutually exclusive** per row. Hard (`refresh_active_work`, `refresh_checkpoint`) unchanged.
+
+Both soft + hard actions now include a `suggested_call` field with a copy-paste-able MCP call.
+
+### New env knobs (3, three-way registered)
+
+| Env var | yaml key | default | role |
+|---|---|---|---|
+| `YADGAR_ACTIVE_WORK_WARN_HOURS` | `active_work_warn_hours` | `12.0` | Soft warn threshold (hours) |
+| `YADGAR_CHECKPOINT_WARN_HOURS` | `checkpoint_warn_hours` | `12.0` | Soft warn threshold (hours) |
+| `YADGAR_AUTO_REFRESH_ACTIVE_WORK` | `auto_refresh_active_work` | `false` | Watchdog opt-in (see below) |
+
+### Active-work directory registry
+
+`update_active_work()` now writes a marker file to `~/.yadgar/active-work-tracked/<sha256(dir)[:12]>/directory.txt`. This registry is purely additive (never auto-pruned).
+
+Manual prune old entries:
+```sh
+find ~/.yadgar/active-work-tracked -type d -mtime +30 -exec rm -rf {} +
+```
+
+### Optional watchdog timer (user-managed, NOT enabled by default)
+
+New systemd-user units at `scripts/systemd-user/`:
+- `yadgar-active-work-watchdog.timer` — fires every 6h
+- `yadgar-active-work-watchdog.service` — scans registry, POSTs `project_brief(mode="signals")` for each dir
+
+**Install (user-managed only):**
+```sh
+mkdir -p ~/.config/systemd/user/
+cp scripts/systemd-user/yadgar-active-work-watchdog.{timer,service} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now yadgar-active-work-watchdog.timer
+```
+
+**Auto-refresh opt-in** (stub `_active_work` written when stale):
+```sh
+# Add to ~/.config/systemd/user/yadgar-active-work-watchdog.service
+# under [Service]:
+#   Environment=YADGAR_AUTO_REFRESH_ACTIVE_WORK=true
+```
+
+Auto-refresh dilutes user-curated `_active_work` content with a stub. Default OFF.
+
+### Token budget for signals mode
+
+Token budget for `signals` mode raised from 100 → 350 (configurable via `SIGNALS_TOKEN_BUDGET_SOFT`). The 100-token budget still applies to the empty-dir/minimal case; 350 covers real-world payloads with 2 soft actions + `suggested_call` fields. Real overhead at 350 per fire is <1% of typical context window. Tune via yaml (`signals_token_budget_soft`) or env (`YADGAR_SIGNALS_TOKEN_BUDGET_SOFT`).
+
+---
+
 ## backend v5.4.0 — Recall hot-path caching: CE score cache + embedding vector cache (2026-05-29)
 
 Core unchanged at 5.10.0. Backend 5.3.1 → 5.4.0.
