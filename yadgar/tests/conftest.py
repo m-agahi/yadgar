@@ -3,11 +3,28 @@
 import hashlib
 import os
 import socket
-import subprocess
+import tempfile
 import time
 import urllib.parse
 
 import pytest
+
+# ---------------------------------------------------------------------------
+# Multi-agent session isolation (v5.10.0)
+#
+# YADGAR_TEST_NAMESPACE=<name>  → redirects TMPDIR to /tmp/pytest-<name>/
+#   so concurrent claude sessions don't collide on /tmp/pytest-of-max/.
+#
+# YADGAR_TEST_PORT_BASE=<int>   → deterministic port range for xdist workers.
+#   Formula: base + worker_index * 100 + n  (see _surreal_helpers.allocate_port).
+#   Default: 12000.  TEST-ONLY — NOT registered in yadgar production config.
+# ---------------------------------------------------------------------------
+_ns = os.environ.get("YADGAR_TEST_NAMESPACE", "")
+if _ns:
+    _ns_tmp = f"/tmp/pytest-{_ns}"
+    os.makedirs(_ns_tmp, exist_ok=True)
+    os.environ["TMPDIR"] = _ns_tmp
+    tempfile.tempdir = _ns_tmp
 
 # ---------------------------------------------------------------------------
 # Credentials escape hatch — set before any module-level import of yadgar.
@@ -82,6 +99,18 @@ def pytest_configure(config):
         )
 
 
+def pytest_sessionfinish(session, exitstatus):
+    """Final cleanup — kill any leftover spawned SurrealDB workers.
+
+    Fires unconditionally regardless of exitstatus, including on SIGINT,
+    timeout-induced teardown, and pytest-timeout thread unwind.
+    Belt-and-suspenders alongside atexit.register in _surreal_helpers.
+    """
+    from yadgar.tests._surreal_helpers import kill_all_spawned_surreal
+
+    kill_all_spawned_surreal()
+
+
 def _find_free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -106,8 +135,12 @@ def surreal_server(tmp_path_factory):
     """Start a real SurrealDB HTTP server for the test session.
 
     Falls back to embedded mode if the `surreal` binary is not on PATH.
+    Spawn is delegated to _surreal_helpers.spawn_surreal() which registers
+    the PID for atexit cleanup (v5.10.0 orphan-reap hardening).
     """
     import shutil
+
+    from yadgar.tests._surreal_helpers import spawn_surreal, teardown_surreal_proc
 
     if not shutil.which("surreal"):
         yield
@@ -115,22 +148,8 @@ def surreal_server(tmp_path_factory):
 
     db = tmp_path_factory.mktemp("surreal_data")
     port = _find_free_port()
-    proc = subprocess.Popen(
-        [
-            "surreal",
-            "start",
-            "--no-banner",
-            "--bind",
-            f"127.0.0.1:{port}",
-            "--user",
-            "root",
-            "--pass",
-            "root",
-            f"surrealkv://{db}",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    proc = spawn_surreal(port=port, data_dir=str(db))
+
     # Track PID so workers can identify the process in case of cleanup races.
     pid_file = db / "surreal.pid"
     pid_file.write_text(str(proc.pid))
@@ -140,13 +159,7 @@ def surreal_server(tmp_path_factory):
         _wait_for_health(port)
         yield
     finally:
-        # Explicit kill: terminate first, escalate to SIGKILL if needed.
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=2)
+        teardown_surreal_proc(proc, wait_timeout=5)
         pid_file.unlink(missing_ok=True)
         os.environ.pop("YADGAR_DB_URL", None)
 
