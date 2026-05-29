@@ -159,6 +159,15 @@ systemd.user.services.yadgar-nightly-cycle = mkPythonSystemdService "yadgar-nigh
 
 Defer Candidate 1 (pure-Python consolidation) until OTHER systemd-user services start hitting the same library issue OR until backend v5.5+ shifts the nightly cycle to a container-based execution model (Candidate 2).
 
+### Version assignments (2026-05-29 evening, all-drafts-get-versions rule)
+
+| Candidate | Slot | Status |
+|---|---|---|
+| Tier 1 (LD_LIBRARY_PATH wrapper) | nix-only (no yadgar version) | **APPLIED 2026-05-29** |
+| Candidate 1 (pure-Python consolidation) | **v5.12.0** | drafted, deferred |
+| Candidate 2 (container-based nightly execution) | **v5.12.1** | drafted, deferred |
+| Candidate 3 (`mkPythonSystemdService` nix helper) | nix-only (no yadgar version) | drafted, ship alongside any next systemd-user unit |
+
 ---
 
 ## Verification (post Tier 1 fix)
