@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import functools
+import hashlib
 import logging
 import math
 import os
@@ -729,9 +730,17 @@ def _build_recommended_actions(
 ) -> list[dict]:
     """Build deterministic recommended_actions list from signals + thresholds.
 
-    Order: bootstrap_project → refresh_active_work → refresh_checkpoint →
+    Order: bootstrap_project → refresh_active_work/consider_refresh_active_work →
+           refresh_checkpoint/consider_refresh_checkpoint →
            audit_anchors → merge_redundant_anchors → promote_anchor_to_wiki →
            forget_expired_anchors.
+
+    Soft/hard mutual exclusion: for each row, exactly one fires — hard takes
+    precedence when age > STALE_HOURS; soft fires when WARN_HOURS < age ≤ STALE_HOURS.
+
+    Note: suggested_call fields are NOT populated here — the caller
+    (_project_brief_signals) enriches them post-build to avoid the resolved-dir
+    parameter propagating into this function (keeps param count ≤8).
     """
     cfg = get_settings()
     actions: list[dict] = []
@@ -744,21 +753,43 @@ def _build_recommended_actions(
             }
         )
 
-    if active_work_age_hours is not None and active_work_age_hours > cfg.ACTIVE_WORK_STALE_HOURS:
-        actions.append(
-            {
-                "action": "refresh_active_work",
-                "reason": f"age_hours={active_work_age_hours:.1f} > threshold={cfg.ACTIVE_WORK_STALE_HOURS}",
-            }
-        )
+    # v5.10.1: soft/hard mutual exclusion for active_work
+    if active_work_age_hours is not None:
+        if active_work_age_hours > cfg.ACTIVE_WORK_STALE_HOURS:
+            # Hard action — age exceeds stale threshold
+            actions.append(
+                {
+                    "action": "refresh_active_work",
+                    "reason": f"age_hours={active_work_age_hours:.1f} > threshold={cfg.ACTIVE_WORK_STALE_HOURS}",
+                }
+            )
+        elif active_work_age_hours > cfg.ACTIVE_WORK_WARN_HOURS:
+            # Soft action — age in warn window (WARN_HOURS < age ≤ STALE_HOURS)
+            actions.append(
+                {
+                    "action": "consider_refresh_active_work",
+                    "reason": f"age_hours={active_work_age_hours:.1f} > warn={cfg.ACTIVE_WORK_WARN_HOURS}; not yet stale ({cfg.ACTIVE_WORK_STALE_HOURS}h)",
+                }
+            )
 
-    if stale_checkpoint_hours is not None and stale_checkpoint_hours > cfg.CHECKPOINT_STALE_HOURS:
-        actions.append(
-            {
-                "action": "refresh_checkpoint",
-                "reason": f"age_hours={stale_checkpoint_hours:.1f} > threshold={cfg.CHECKPOINT_STALE_HOURS}",
-            }
-        )
+    # v5.10.1: soft/hard mutual exclusion for checkpoint
+    if stale_checkpoint_hours is not None:
+        if stale_checkpoint_hours > cfg.CHECKPOINT_STALE_HOURS:
+            # Hard action
+            actions.append(
+                {
+                    "action": "refresh_checkpoint",
+                    "reason": f"age_hours={stale_checkpoint_hours:.1f} > threshold={cfg.CHECKPOINT_STALE_HOURS}",
+                }
+            )
+        elif stale_checkpoint_hours > cfg.CHECKPOINT_WARN_HOURS:
+            # Soft action
+            actions.append(
+                {
+                    "action": "consider_refresh_checkpoint",
+                    "reason": f"age_hours={stale_checkpoint_hours:.1f} > warn={cfg.CHECKPOINT_WARN_HOURS}; not yet stale ({cfg.CHECKPOINT_STALE_HOURS}h)",
+                }
+            )
 
     # v5.8.0 anchor hygiene actions
     audit_threshold = int(cfg.ANCHOR_AUDIT_THRESHOLD)
@@ -836,10 +867,19 @@ def _project_brief_signals(
         promote_count=len(anchor_signals["anchor_promote_candidates"]),
         expired_no_grace_count=anchor_signals["expired_no_grace_count"],
     )
-    # v5.9.0: enrich audit_anchors action with suggested_call (copy-paste-able MCP call)
+    # Enrich actions with suggested_call (copy-paste-able MCP call) — v5.9+v5.10.1 pattern.
+    # Enrichment is done post-build to avoid passing resolved dir into _build_recommended_actions.
+    _aw_call = f"update_active_work(directory={resolved!r}, content='...')"
+    _cp_call = f"checkpoint(directory={resolved!r}, current_task='...', key_decisions=[...], next_steps=[...])"
+    _audit_call = f"audit_anchors(directory={resolved!r}, dry_run=True)"
     for action_entry in recommended_actions:
-        if action_entry.get("action") == "audit_anchors":
-            action_entry["suggested_call"] = f"audit_anchors(directory={resolved!r}, dry_run=True)"
+        act = action_entry.get("action")
+        if act in ("refresh_active_work", "consider_refresh_active_work"):
+            action_entry["suggested_call"] = _aw_call
+        elif act in ("refresh_checkpoint", "consider_refresh_checkpoint"):
+            action_entry["suggested_call"] = _cp_call
+        elif act == "audit_anchors":
+            action_entry["suggested_call"] = _audit_call
     result: dict = {
         "_resolved_directory": resolved,
         "_mode": mode,
@@ -1028,6 +1068,37 @@ def bootstrap_project(directory: str, content: str) -> dict:
     return storage.upsert_project_init(resolved, content)
 
 
+def _get_active_work_tracked_dir() -> Path:
+    """Return the base path for the active-work directory registry.
+
+    Default: ~/.yadgar/active-work-tracked/
+    Override via YADGAR_ACTIVE_WORK_TRACKED_DIR env var (used in tests for isolation).
+    """
+    override = os.environ.get("YADGAR_ACTIVE_WORK_TRACKED_DIR")
+    if override:
+        return Path(override)
+    return Path.home() / ".yadgar" / "active-work-tracked"
+
+
+def _register_active_work_directory(resolved: str) -> None:
+    """Write a marker file to the active-work directory registry.
+
+    Path: <tracked_dir>/<sha256(resolved)[:12]>/directory.txt
+    Content: the absolute resolved path.
+
+    Registry is additive (never auto-pruned).  Errors are swallowed — registry
+    is best-effort; failure must not break update_active_work().
+    """
+    try:
+        tracked_dir = _get_active_work_tracked_dir()
+        key = hashlib.sha256(resolved.encode()).hexdigest()[:12]
+        entry_dir = tracked_dir / key
+        entry_dir.mkdir(parents=True, exist_ok=True)
+        (entry_dir / "directory.txt").write_text(resolved)
+    except Exception:
+        logger.debug("_register_active_work_directory: failed to write marker for %r", resolved)
+
+
 @_tool(power=True)
 def update_active_work(directory: str, content: str) -> dict:
     """Replace this directory's _active_work memory atomically.
@@ -1035,11 +1106,16 @@ def update_active_work(directory: str, content: str) -> dict:
     Deletes any existing _active_work memory(ies) for the directory,
     then inserts the new one in a single transaction.
 
+    v5.10.1: also writes a marker to ~/.yadgar/active-work-tracked/ so the
+    watchdog timer knows which directories to poll.
+
     Returns: {previous_content: str | None, new_memory: dict}
     """
     resolved = _resolve_project_root(directory)
     storage = _get_storage()
-    return storage.upsert_active_work(resolved, content)
+    result = storage.upsert_active_work(resolved, content)
+    _register_active_work_directory(resolved)
+    return result
 
 
 # ── Wiki refresh helpers ────────────────────────────────────────────────
