@@ -1335,3 +1335,91 @@ class TestCheckInvariantsBearer:
         assert "WARNING" in captured.err and "YADGAR_MCP_AUTH_TOKEN" in captured.err, (
             f"Expected WARNING about YADGAR_MCP_AUTH_TOKEN in stderr; got: {captured.err!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# v5.10.2 — _log_consolidation_row must use YADGAR_DB_URL not hard-coded :8080
+# ---------------------------------------------------------------------------
+
+
+class TestLogConsolidationRowURL:
+    """v5.10.2 Bug 2: _log_consolidation_row used http://127.0.0.1:8080 literal.
+    It must use YADGAR_DB_URL env var (with :8080 as fallback only if env unset).
+    """
+
+    def test_uses_yadgar_db_url_when_set(self, monkeypatch):
+        """When YADGAR_DB_URL is set, _log_consolidation_row must use it."""
+        from unittest.mock import MagicMock, patch
+
+        monkeypatch.setenv("YADGAR_DB_URL", "http://db.example.com:9000")
+
+        urls_used = []
+
+        def _fake_build_http_client(url):
+            urls_used.append(url)
+            mock_client = MagicMock()
+            mock_client.__enter__ = lambda s: s
+            mock_client.__exit__ = MagicMock(return_value=False)
+            mock_client.post.return_value = MagicMock(status_code=200)
+            mock_client.post.return_value.__enter__ = lambda s: s
+            mock_client.post.return_value.__exit__ = MagicMock(return_value=False)
+            return mock_client
+
+        from yadgar.vacuum import _log_consolidation_row
+
+        row = {
+            "kind": "vacuum",
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": "2026-01-01T00:01:00Z",
+            "duration_seconds": 60,
+            "before_bytes": 1000,
+            "after_bytes": 800,
+            "saved_bytes": 200,
+            "saved_pct": 20.0,
+        }
+
+        with patch("yadgar.vacuum._build_http_client", _fake_build_http_client):
+            _log_consolidation_row(row)
+
+        assert urls_used, "_build_http_client must be called"
+        assert "9000" in urls_used[0], (
+            f"Expected db.example.com:9000 URL but got {urls_used[0]!r}. "
+            "Fix: use os.environ.get('YADGAR_DB_URL', 'http://127.0.0.1:8080') as fallback."
+        )
+
+    def test_falls_back_to_8080_when_env_unset(self, monkeypatch):
+        """When YADGAR_DB_URL is not set, fallback to http://127.0.0.1:8080."""
+        from unittest.mock import MagicMock, patch
+
+        monkeypatch.delenv("YADGAR_DB_URL", raising=False)
+
+        urls_used = []
+
+        def _fake_build_http_client(url):
+            urls_used.append(url)
+            mock_client = MagicMock()
+            mock_client.__enter__ = lambda s: s
+            mock_client.__exit__ = MagicMock(return_value=False)
+            mock_client.post.return_value = MagicMock(status_code=200)
+            mock_client.post.return_value.__enter__ = lambda s: s
+            mock_client.post.return_value.__exit__ = MagicMock(return_value=False)
+            return mock_client
+
+        from yadgar.vacuum import _log_consolidation_row
+
+        row = {
+            "kind": "vacuum",
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": "2026-01-01T00:01:00Z",
+            "duration_seconds": 60,
+            "before_bytes": 1000,
+            "after_bytes": 800,
+            "saved_bytes": 200,
+            "saved_pct": 20.0,
+        }
+
+        with patch("yadgar.vacuum._build_http_client", _fake_build_http_client):
+            _log_consolidation_row(row)
+
+        assert urls_used, "_build_http_client must be called"
+        assert "8080" in urls_used[0], f"Expected :8080 fallback URL but got {urls_used[0]!r}"

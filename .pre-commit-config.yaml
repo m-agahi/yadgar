@@ -67,6 +67,13 @@ repos:
         pass_filenames: false
         files: ^yadgar/server/http\.py$
 
+      - id: check-secret-gate
+        name: Check I26 secret-gate invariant (all write tools call gate_or_reject)
+        language: system
+        entry: python scripts/check_secret_gate.py
+        pass_filenames: false
+        files: ^yadgar/server/tools/.*\.py$
+
       - id: check-config-three-way-sync
         name: Check config three-way-sync invariant (I25)
         language: system

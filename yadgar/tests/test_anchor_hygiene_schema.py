@@ -126,6 +126,7 @@ class TestValidUntil:
             tags=["_anchor"],
             is_protected=True,
             tier="semantic_immortal",
+            reason="test",  # v5.10.2: ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON defaults True
         )
         mid = result.get("id")
         assert mid is not None, f"sync path must return id; got: {result}"
