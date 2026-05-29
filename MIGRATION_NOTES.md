@@ -1,5 +1,58 @@
 # Migration Notes
 
+## v5.10.2 — Secret-gate architecture + memorize parity + nightly cycle hotfix (2026-05-29)
+
+Core 5.10.1 → 5.10.2. Backend unchanged at 5.4.0. No schema changes. Additive only.
+
+### Security — Secret-gate architecture (I26)
+
+Two-layer defence against accidental secret persistence:
+
+**Layer 2 — API boundary**: `gate_or_reject(*content_fields)` in `yadgar/secrets.py` called at the top of all write tools (`memorize`, `anchor`, `checkpoint`, `update_active_work`, `bootstrap_project`, `wiki_update`, `agent_prompt_save`). Rejects before any storage or file-queue write.
+
+**Layer 1 — Storage level**: `check_secrets()` called inside `insert_memory()` before the DB write. Raises `SecretLeakBlocked` on hit.
+
+**DLQ handling**: `SecretLeakBlocked` classified as `permanent` in `_classify_error()` — file moves to DLQ after 3 attempts instead of infinite retry.
+
+**Kill switch**: `YADGAR_SECRET_GATE_DISABLED=1` bypasses Layer 1 (not Layer 2). Logs `WARNING` at every boot iteration.
+
+**Pattern thresholds tightened**:
+
+| Pattern | Before | After |
+|---|---|---|
+| GitHub PAT `ghp_/gho_/ghu_/ghs_/ghr_` | `{36,}` | `{20,}` |
+| Anthropic `sk-ant-` | `{32,}` | `{20,}` |
+| OpenAI `sk-` | `{30,}` | `{20,}` |
+
+**I26 invariant lint**: `python scripts/check_secret_gate.py` — run manually or via pre-commit. Exits 1 if any write tool is missing a gate.
+
+**Backfill scan**: `python scripts/scan_db_for_secrets.py --dry-run` scans all existing DB rows. Non-destructive. Use `--storage-mock` in CI. Reports to `~/.yadgar/secret-leak-scan-<TS>.txt`.
+
+### memorize() anchor parity (v5.10.x)
+
+`memorize(is_protected=True)` now behaves identically to `anchor()`:
+
+| Behaviour | Before | After |
+|---|---|---|
+| `tier` when unset | `None` (no expiry logic) | `"conditional"` (90d TTL) |
+| `_anchor` in tags | Only in sync path after insert | Injected before insert + via `update_memory_fields` |
+| `anchor:{reason}` tag | Never | Added when `reason` arg provided |
+| `semantic_immortal` without `reason` | Silently accepted | Rejected when `ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON=True` |
+
+New kwarg: `memorize(…, reason: str = "")`.
+
+### Bug fixes
+
+**surrealdb dependency**: was `[project.optional-dependencies].dev` only. Fresh `pip install yadgar` would `ImportError` on `StorageEngine.__init__`. Promoted to `[project.dependencies]`.
+
+**vacuum `:8080` literal**: `_log_consolidation_row()` used `http://127.0.0.1:8080` as a hard-coded fallback. Now uses `os.environ.get("YADGAR_DB_URL", "http://127.0.0.1:8080")`.
+
+### No action required on upgrade
+
+All changes are backwards-compatible. Existing memories, anchors, and configurations are unaffected.
+
+---
+
 ## v5.10.1 — `_active_work` soft warning tier + watchdog timer (2026-05-29)
 
 Core 5.10.0 → 5.10.1. Backend unchanged at 5.4.0. No schema changes. Additive only.
