@@ -534,6 +534,20 @@ class Settings(BaseSettings):
     # Should be ≤ CIRCUIT_BREAKER_PROBE_TIMEOUT_SEC so probes always fail fast.
     RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC: float = 2.0
 
+    # backend v5.4.0 — CE + embed LRU cache knobs
+    # Kill switch for CE score cache (false/0 = disabled, pre-v5.4.0 behaviour).
+    CE_CACHE_ENABLED: bool = True
+    # Kill switch for embedding vector cache.
+    EMBED_CACHE_ENABLED: bool = True
+    # Maximum entries in CE score LRU cache. 0 = disabled.
+    CE_CACHE_MAX_ENTRIES: int = 100000
+    # Maximum entries in embedding vector LRU cache. 0 = disabled.
+    EMBED_CACHE_MAX_ENTRIES: int = 100000
+    # Interval in seconds between periodic cache snapshots to disk.
+    CACHE_SNAPSHOT_INTERVAL_SEC: int = 600
+    # Directory for cache snapshot files (ce.snap, embed.snap).
+    CACHE_SNAPSHOT_DIR: str = "/data/cache"
+
     model_config = {"env_prefix": "YADGAR_"}
 
     @field_validator("VACUUM_AUTO_WINDOW_START", "VACUUM_AUTO_WINDOW_END")
