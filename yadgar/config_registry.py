@@ -188,6 +188,13 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_ANCHOR_AUDIT_CONSOLIDATION_ENABLED", "true", "bool"),
     ConfigEntry("YADGAR_ANCHOR_AUDIT_MAX_ACTIONS_PER_RUN", "20", "int"),
     ConfigEntry("YADGAR_ANCHOR_AUDIT_HISTORY_RETENTION_DAYS", "30", "int"),
+    # ── Backend hot-path cache knobs (backend v5.4.0) ────────────────────────
+    ConfigEntry("YADGAR_CE_CACHE_ENABLED", "true", "bool"),
+    ConfigEntry("YADGAR_EMBED_CACHE_ENABLED", "true", "bool"),
+    ConfigEntry("YADGAR_CE_CACHE_MAX_ENTRIES", "100000", "int"),
+    ConfigEntry("YADGAR_EMBED_CACHE_MAX_ENTRIES", "100000", "int"),
+    ConfigEntry("YADGAR_CACHE_SNAPSHOT_INTERVAL_SEC", "600", "int"),
+    ConfigEntry("YADGAR_CACHE_SNAPSHOT_DIR", "/data/cache", "string"),
 ]
 
 

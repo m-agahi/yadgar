@@ -6,6 +6,21 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [backend-5.4.0] — 2026-05-29
+
+Backend hot-path caching: CE score LRU cache + embedding vector LRU cache.
+
+- `yadgar/cache.py` — new `LRUCache` class: `OrderedDict` LRU + msgpack snapshot with `YADCACHE\0` magic header + checkpoint-hash validation.
+- CE score cache in `/rerank?mode=ce`: partial-hit path splits texts into cached vs. miss batches; only misses go to ML; results merged + back-filled.
+- Embedding vector cache in `/embed`: per-text SHA256 key; hit avoids re-encode.
+- Lifespan: restore both caches from snapshot before first request; `_run_cache_snapshot_task` asyncio background task; final snapshot on shutdown.
+- 10 new I23-compliant Prometheus metrics: hits/misses/evictions/size_entries/size_bytes per cache + `cache_snapshot_age_seconds{cache}` gauge.
+- 6 new env knobs three-way registered: `CE_CACHE_ENABLED`, `EMBED_CACHE_ENABLED`, `CE_CACHE_MAX_ENTRIES`, `EMBED_CACHE_MAX_ENTRIES`, `CACHE_SNAPSHOT_INTERVAL_SEC`, `CACHE_SNAPSHOT_DIR`.
+- `msgpack>=1.0` added to `pyproject.toml`.
+- Kill switch: `YADGAR_CE_CACHE_ENABLED=false` → pre-v5.4.0 code path.
+
+See [MIGRATION_NOTES.md §backend-v5.4.0](MIGRATION_NOTES.md#backend-v540--recall-hot-path-caching-ce-score-cache--embedding-vector-cache-2026-05-29).
+
 ## [5.10.0] — 2026-05-29
 
 Test harness hardening: orphan reap + port determinism + session isolation.

@@ -593,6 +593,31 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "How long _audit_anchors sentinel snapshots are retained (days, default 30)",
         "section": "anchor_hygiene",
     },
+    # backend_hot_path_cache (backend v5.4.0)
+    "ce_cache_enabled": {
+        "desc": "Enable CE score LRU cache (false/0 = disabled, pre-v5.4.0 behaviour)",
+        "section": "backend_hot_path_cache",
+    },
+    "embed_cache_enabled": {
+        "desc": "Enable embedding vector LRU cache (false/0 = disabled)",
+        "section": "backend_hot_path_cache",
+    },
+    "ce_cache_max_entries": {
+        "desc": "Maximum entries in CE score LRU cache (0 = disabled, default 100000)",
+        "section": "backend_hot_path_cache",
+    },
+    "embed_cache_max_entries": {
+        "desc": "Maximum entries in embedding vector LRU cache (0 = disabled, default 100000)",
+        "section": "backend_hot_path_cache",
+    },
+    "cache_snapshot_interval_sec": {
+        "desc": "Interval in seconds between periodic cache snapshots to disk (default 600)",
+        "section": "backend_hot_path_cache",
+    },
+    "cache_snapshot_dir": {
+        "desc": "Directory for cache snapshot files ce.snap + embed.snap (default /data/cache)",
+        "section": "backend_hot_path_cache",
+    },
 }
 
 
@@ -614,6 +639,7 @@ SECTION_TITLES: dict[str, str] = {
     "adversarial": "Adversarial Protection",
     "observability": "Observability (OTLP / Tracing)",
     "backend_cache": "Backend Cache",
+    "backend_hot_path_cache": "Backend Hot-Path Cache (CE + Embed LRU)",
     "logging": "Logging",
     "misc": "Miscellaneous",
     "project_brief": "Project Brief",
