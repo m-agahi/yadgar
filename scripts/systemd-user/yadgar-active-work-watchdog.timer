@@ -1,0 +1,13 @@
+[Unit]
+Description=Yadgar active_work age watchdog
+# User-managed install — NOT enabled by default, NOT installed by yadgar.
+# Enable manually: systemctl --user enable --now yadgar-active-work-watchdog.timer
+# See MIGRATION_NOTES.md §v5.10.1 for setup instructions.
+
+[Timer]
+OnBootSec=1h
+OnUnitActiveSec=6h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

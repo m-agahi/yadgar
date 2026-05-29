@@ -1,0 +1,35 @@
+[Unit]
+Description=Yadgar active_work age watchdog — fires project_brief signals for tracked dirs
+# User-managed install — NOT enabled by default, NOT installed by yadgar.
+# Enable manually: systemctl --user enable --now yadgar-active-work-watchdog.timer
+# See MIGRATION_NOTES.md §v5.10.1 for setup instructions.
+
+[Service]
+Type=oneshot
+# Scan ~/.yadgar/active-work-tracked/ for registered directories and POST
+# a signals-mode project_brief call for each via the local MCP endpoint.
+#
+# If YADGAR_AUTO_REFRESH_ACTIVE_WORK=true, also auto-writes a stub _active_work
+# row for directories where the hard refresh_active_work action is present.
+# Default: YADGAR_AUTO_REFRESH_ACTIVE_WORK is not set (false) — read-only polling.
+ExecStart=/usr/bin/env bash -c \
+  'tracked="$${HOME}/.yadgar/active-work-tracked"; \
+   [ -d "$$tracked" ] || exit 0; \
+   find "$$tracked" -type d -maxdepth 1 -mindepth 1 | while read d; do \
+     dir=$$(cat "$$d/directory.txt" 2>/dev/null); \
+     [ -n "$$dir" ] || continue; \
+     response=$$(curl -sf -X POST http://127.0.0.1:8765/mcp \
+       -H "Content-Type: application/json" \
+       -d "{\"method\":\"tools/call\",\"params\":{\"name\":\"project_brief\",\"arguments\":{\"directory\":\"$$dir\",\"mode\":\"signals\"}}}" \
+       2>/dev/null) || continue; \
+     if [ "$${YADGAR_AUTO_REFRESH_ACTIVE_WORK:-false}" = "true" ]; then \
+       needs_refresh=$$(echo "$$response" | grep -c "refresh_active_work" || true); \
+       if [ "$$needs_refresh" -gt 0 ]; then \
+         ts=$$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ); \
+         curl -sf -X POST http://127.0.0.1:8765/mcp \
+           -H "Content-Type: application/json" \
+           -d "{\"method\":\"tools/call\",\"params\":{\"name\":\"update_active_work\",\"arguments\":{\"directory\":\"$$dir\",\"content\":\"<watchdog-refreshed at $$ts — no active session>\"}}}" \
+           > /dev/null 2>&1 || true; \
+       fi; \
+     fi; \
+   done'
