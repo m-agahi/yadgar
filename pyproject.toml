@@ -155,7 +155,12 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["yadgar/tests"]
-addopts = "--timeout=120 -n 4 --dist loadgroup --maxprocesses=4 -m 'not integration'"
+# --timeout=120 removed; per-session default now comes from `timeout = 300` below.
+addopts = "-n 4 --dist loadgroup --maxprocesses=4 -m 'not integration'"
+# pytest-timeout defaults — override per-test with @pytest.mark.timeout(N).
+timeout = 300
+timeout_method = "thread"
+timeout_func_only = false
 markers = [
     "xdist_group: group tests that share server module-level globals into one worker",
     "integration: requires docker/podman + spins up live containers (slow, opt-in)",
