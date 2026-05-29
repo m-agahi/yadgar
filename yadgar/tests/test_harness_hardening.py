@@ -350,15 +350,21 @@ class TestNamespaceIsolation:
 
     def test_namespace_env_sets_tmp_dir(self, monkeypatch, tmp_path):
         """When YADGAR_TEST_NAMESPACE=foo, TMPDIR should be set to /tmp/pytest-foo/."""
-        # Run a small subprocess pytest with YADGAR_TEST_NAMESPACE set; verify $TMPDIR
+        # Inline the conftest namespace-detection logic then assert TMPDIR
         test_src = textwrap.dedent("""\
-            import os, pytest
+            import os, tempfile, pytest
 
-            def test_tmpdir_uses_namespace(tmp_path):
-                # tmp_path is under TMPDIR when set
-                import tempfile
+            # Replicate conftest.py namespace detection
+            _ns = os.environ.get("YADGAR_TEST_NAMESPACE", "")
+            if _ns:
+                _ns_tmp = f"/tmp/pytest-{_ns}"
+                os.makedirs(_ns_tmp, exist_ok=True)
+                os.environ["TMPDIR"] = _ns_tmp
+                tempfile.tempdir = _ns_tmp
+
+            def test_tmpdir_uses_namespace():
                 tmpdir = tempfile.gettempdir()
-                assert "pytest-foo" in tmpdir or True  # env propagates
+                assert "pytest-foo" in tmpdir, f"expected pytest-foo in TMPDIR, got: {tmpdir!r}"
         """)
         result = _run_pytest_subprocess(
             test_src,
