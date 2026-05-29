@@ -108,9 +108,60 @@ def _scan_rows(
     return hits
 
 
+def _ensure_storage_initialized() -> None:
+    """Initialize StorageEngine if not already (v5.10.3 fix).
+
+    The scan script runs OUTSIDE the yadgar server process, so the singleton
+    StorageEngine never gets bootstrapped via the normal lifespan.
+
+    StorageEngine has two modes (yadgar/storage/__init__.py:178):
+      - YADGAR_DB_URL set → HTTP mode (talks to running yadgar-backend)
+      - YADGAR_DB_URL unset → embedded mode (opens SurrealKV file directly)
+
+    Embedded mode CONFLICTS with the running yadgar-backend container which
+    holds an exclusive lock on the SurrealKV file. The scan script MUST use
+    HTTP mode against the live backend.
+
+    Defaults: YADGAR_DB_URL=http://127.0.0.1:8000, YADGAR_ALLOW_ROOT=1.
+    Operator can override via env before invoking the script.
+    """
+    from yadgar.server import _state as _st  # noqa: PLC0415
+
+    if _st._storage is not None:
+        return  # already initialized
+
+    # Force HTTP mode if operator didn't set env explicitly.
+    os.environ.setdefault("YADGAR_DB_URL", "http://127.0.0.1:8000")
+
+    # Auto-source ~/.config/yadgar/secrets.env if creds not in env.
+    # The nix yadgar.service uses EnvironmentFile= to load these; scan
+    # script runs outside systemd so must read manually.
+    if not os.environ.get("YADGAR_DB_USER") or not os.environ.get("YADGAR_DB_PASS"):
+        _secrets_env = Path.home() / ".config" / "yadgar" / "secrets.env"
+        if _secrets_env.exists():
+            for _line in _secrets_env.read_text(encoding="utf-8").splitlines():
+                _line = _line.strip()
+                if not _line or _line.startswith("#") or "=" not in _line:
+                    continue
+                _k, _v = _line.split("=", 1)
+                _k = _k.strip()
+                _v = _v.strip().strip('"').strip("'")
+                if _k.startswith("YADGAR_"):
+                    os.environ.setdefault(_k, _v)
+
+    # Last-resort fallback: allow root creds (read-only SELECT only).
+    if not os.environ.get("YADGAR_DB_USER") or not os.environ.get("YADGAR_DB_PASS"):
+        os.environ.setdefault("YADGAR_ALLOW_ROOT", "1")
+
+    from yadgar.server.lifecycle import init_engines  # noqa: PLC0415
+
+    init_engines()
+
+
 def _fetch_memories_real(limit: int | None) -> list[dict[str, Any]]:
     """Fetch memory rows from real storage. Returns list of row dicts."""
     try:
+        _ensure_storage_initialized()
         from yadgar.server.lifecycle import _get_storage  # noqa: PLC0415
 
         storage = _get_storage()
@@ -126,6 +177,7 @@ def _fetch_memories_real(limit: int | None) -> list[dict[str, Any]]:
 def _fetch_wiki_real(limit: int | None) -> list[dict[str, Any]]:
     """Fetch wiki page rows from real storage."""
     try:
+        _ensure_storage_initialized()
         from yadgar.server.lifecycle import _get_storage  # noqa: PLC0415
 
         storage = _get_storage()
