@@ -6,4 +6,4 @@ After=default.target
 Type=oneshot
 # Filter: "pytest-of-max" matches test tmp dirs only — NOT ~/.yadgar/surreal_db (production).
 # Adjust "pytest-of-max" if your local username differs from "max".
-ExecStart=/bin/sh -c 'ps -eo pid,args | grep "surreal start" | grep "pytest-of-max" | awk "{print \$1}" | xargs -r kill -9'
+ExecStart=/bin/sh -c 'ps -eo pid,args | grep "surreal start" | grep "pytest-of-max" | awk "{print $$1}" | xargs -r kill -9'
