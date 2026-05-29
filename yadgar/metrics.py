@@ -15,6 +15,7 @@ Collectors:
 - yadgar_cache_miss_total{cache}   Counter — cache misses by cache name
 - yadgar_loop_last_run_unix_timestamp{loop}  Gauge   — unix timestamp of last loop iteration start
 - yadgar_loop_errors_total{loop,error_type}  Counter — exceptions caught in each background loop
+- yadgar_signals_payload_oversized_total     Counter — signals mode payload exceeded SIGNALS_TOKEN_BUDGET_SOFT
 """
 
 from __future__ import annotations
@@ -492,6 +493,14 @@ yadgar_loop_errors_total = Counter(
     "yadgar_loop_errors_total",
     "Total exceptions caught in each background loop body",
     ["loop", "error_type"],
+    registry=_registry,
+)
+
+# ── v5.10.1 — signals mode token-budget observability ────────────────────────
+
+yadgar_signals_payload_oversized_total = Counter(
+    "yadgar_signals_payload_oversized_total",
+    "Total project_brief(mode='signals') calls where payload exceeded SIGNALS_TOKEN_BUDGET_SOFT",
     registry=_registry,
 )
 
