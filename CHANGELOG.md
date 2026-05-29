@@ -6,6 +6,18 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.10.1] — 2026-05-29
+
+`_active_work` soft warning tier + optional watchdog timer.
+
+- `_build_recommended_actions`: new soft actions `consider_refresh_active_work` + `consider_refresh_checkpoint` when `WARN_HOURS < age ≤ STALE_HOURS`. Mutual exclusion with hard actions per row.
+- `suggested_call` enrichment on soft + hard refresh actions (continues v5.9 pattern).
+- `update_active_work()`: writes `~/.yadgar/active-work-tracked/<sha256[:12]>/directory.txt` registry marker.
+- 3 new env knobs three-way registered: `ACTIVE_WORK_WARN_HOURS`, `CHECKPOINT_WARN_HOURS`, `AUTO_REFRESH_ACTIVE_WORK`.
+- New systemd-user units: `yadgar-active-work-watchdog.{timer,service}` — user-managed, NOT enabled by default.
+
+See [MIGRATION_NOTES.md §v5.10.1](MIGRATION_NOTES.md#v5101--_active_work-soft-warning-tier--watchdog-timer-2026-05-29).
+
 ## [backend-5.4.0] — 2026-05-29
 
 Backend hot-path caching: CE score LRU cache + embedding vector LRU cache.
