@@ -1,8 +1,29 @@
 # PLAN — Nightly Backup Cycle Fix (nix systemd-user env)
 
-**Status:** drafted 2026-05-29 after investigation. Two-tier fix: immediate (nix-only, no yadgar release) + permanent (v5.X.Y train).
+**Status:** Tier 1 APPLIED 2026-05-29 to `~/git/nix/modules/home/yadgar.nix`. Pending user `nix-update`. Tier 2 candidates still deferred.
 
 **Master at draft time:** core v5.10.0 + backend v5.3.1 deployed.
+
+**Master at Tier 1 apply:** core v5.10.0 + backend v5.4.0 (deployed same day).
+
+---
+
+## Tier 1 — APPLIED
+
+Diff applied to `~/git/nix/modules/home/yadgar.nix` (line ~478 area):
+
+- Added `home.file.".local/bin/yadgar-nightly-cycle-wrapper.sh".source` block using `pkgs.writeShellScript`. Exports `LD_LIBRARY_PATH=${pkgs.stdenv.cc.cc.lib}/lib:$LD_LIBRARY_PATH` then `exec`s the pipx-installed script.
+- Changed `ExecStart` on `systemd.user.services.yadgar-nightly-cycle` from `${homeDir}/.local/bin/yadgar-nightly-cycle` to `${homeDir}/.local/bin/yadgar-nightly-cycle-wrapper.sh`.
+- Inline comment block documenting the root cause + rationale.
+
+User action: `cd ~/git/nix && nix-update`, then manually verify via:
+```bash
+systemctl --user start yadgar-nightly-cycle.service
+journalctl --user -u yadgar-nightly-cycle.service --since "1 minute ago" --no-pager | grep -i 'libstdc++\|error'
+# Expected: zero ImportError matches. Cycle runs to completion (exit 0 or documented degraded code 10/20/30/40/50/60/70).
+ls -la ~/.yadgar/backups/ | tail -3
+# Expected: new snapshot dated today.
+```
 
 ---
 
