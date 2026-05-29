@@ -73,7 +73,7 @@ def _compute_valid_until(
 
 
 @_tool()
-def memorize(  # noqa: C901 — pre-existing complexity, tracked for P13 refactor
+def memorize(  # noqa: C901, PLR0913 — pre-existing complexity + v5.10.x reason kwarg
     content: str,
     context: str,
     tags: list[str],
@@ -82,6 +82,7 @@ def memorize(  # noqa: C901 — pre-existing complexity, tracked for P13 refacto
     tier: str | None = None,
     valid_until: str | None = None,
     ttl_days: int | None = None,
+    reason: str = "",
 ) -> dict:
     """Store a new memory with embedding.
 
@@ -107,12 +108,31 @@ def memorize(  # noqa: C901 — pre-existing complexity, tracked for P13 refacto
     provenance_agent: identifies the agent or subagent type that stored this memory.
       Defaults to "default". Must be ASCII alphanumeric/hyphen/underscore, ≤64 chars.
       Used for provenance tracking across multi-agent workflows.
+
+    reason: human-readable justification for why this memory is protected.
+      Only meaningful when is_protected=True. Adds 'anchor:<reason>' tag.
+      Required when tier='semantic_immortal' and ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON=True.
     """
     # v5.8.0: tier validation
     if tier is not None and tier not in _VALID_TIERS:
         return {
             "stored": False,
             "reason": f"invalid tier: {tier!r}. Must be one of {sorted(_VALID_TIERS)}",
+        }
+
+    # v5.10.2: is_protected parity — auto-set tier=conditional when unset
+    if is_protected and tier is None:
+        tier = "conditional"
+
+    # v5.10.2: semantic_immortal requires reason (when flag is on)
+    if (
+        tier == "semantic_immortal"
+        and not reason
+        and getattr(settings, "ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON", False)
+    ):
+        return {
+            "stored": False,
+            "reason": "tier=semantic_immortal requires a non-empty reason argument",
         }
 
     # v5.8.0: conflicting valid_until + ttl_days
@@ -128,14 +148,21 @@ def memorize(  # noqa: C901 — pre-existing complexity, tracked for P13 refacto
         try:
             _computed_valid_until = _compute_valid_until(tier, valid_until, ttl_days, settings)
         except ValueError as _vu_exc:
-            reason = str(_vu_exc)
-            if "naive" in reason.lower() or "timezone" in reason.lower():
-                return {"stored": False, "reason": reason}
-            return {"stored": False, "reason": reason}
+            _vu_reason = str(_vu_exc)
+            return {"stored": False, "reason": _vu_reason}
 
     # v5.8.0: tier auto-sets is_protected
     if tier is not None:
         is_protected = True
+
+    # v5.10.2: is_protected parity — inject _anchor tag + anchor:{reason} tag early
+    if is_protected:
+        _tags_list = list(tags)
+        if "_anchor" not in _tags_list:
+            _tags_list.append("_anchor")
+        if reason and f"anchor:{reason}" not in _tags_list:
+            _tags_list.append(f"anchor:{reason}")
+        tags = _tags_list
     if len(content) > 32_768:
         return {"stored": False, "reason": "content_too_large", "max_bytes": 32_768}
 
@@ -466,9 +493,10 @@ def memorize(  # noqa: C901 — pre-existing complexity, tracked for P13 refacto
     explicit_anchor = is_protected or "_anchor" in tags
     if explicit_anchor:
         storage.update_memory_fields(memory_id, is_protected=1, importance=1.0)
+        # v5.10.2: always sync tags (includes _anchor + anchor:{reason} injected early)
         if "_anchor" not in tags:
             tags = list(tags) + ["_anchor"]
-            storage.update_memory_fields(memory_id, tags=tags)
+        storage.update_memory_fields(memory_id, tags=tags)
         auto_protected = True
         logger.debug("Explicitly protected: memory %s", memory_id)
     elif settings.DECISION_AUTO_PROTECT and _DECISION_STRONG_RE.search(content):

@@ -43,10 +43,15 @@ def _make_mock_settings(**kwargs):
 
 def _build_memorize_sync_env(monkeypatch, tmp_path):
     """Set up sync (is_draining=True) environment for memorize tests."""
+    import importlib
+
     import yadgar.file_queue as _fq
     import yadgar.server._state as _st
 
     monkeypatch.setattr(_fq, "is_draining", lambda: True)
+    # Patch the direct reference inside memorize module (module-level import)
+    _mem_mod = importlib.import_module("yadgar.server.tools.memorize")
+    monkeypatch.setattr(_mem_mod, "is_draining", lambda: True)
 
     mock_storage = MagicMock()
     mock_storage.insert_memory.return_value = 100
@@ -93,7 +98,7 @@ def _build_memorize_sync_env(monkeypatch, tmp_path):
     monkeypatch.setattr("yadgar.server.lifecycle._get_buffer", lambda: mock_buffer)
 
     mock_settings = _make_mock_settings()
-    monkeypatch.setattr("yadgar.server.tools.memorize.settings", mock_settings)
+    monkeypatch.setattr(_mem_mod, "settings", mock_settings)
 
     return {"storage": mock_storage, "embeddings": mock_embeddings, "settings": mock_settings}
 

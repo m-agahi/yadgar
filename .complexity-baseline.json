@@ -11637,7 +11637,7 @@
     "params": 3
   },
   "yadgar/server/tools/memorize.py::__file__": {
-    "loc": 636
+    "loc": 664
   },
   "yadgar/server/tools/memorize.py::_compute_valid_until@38": {
     "cyclo": 8,
@@ -11652,10 +11652,10 @@
     "params": 5
   },
   "yadgar/server/tools/memorize.py::memorize@76": {
-    "cyclo": 100,
-    "loc": 547,
+    "cyclo": 107,
+    "loc": 575,
     "nesting": 6,
-    "params": 8
+    "params": 9
   },
   "yadgar/server/tools/memorize.py::remember@523": {
     "cyclo": 1,
@@ -11670,6 +11670,12 @@
     "params": 4
   },
   "yadgar/server/tools/memorize.py::remember@626": {
+    "cyclo": 1,
+    "loc": 11,
+    "nesting": 0,
+    "params": 4
+  },
+  "yadgar/server/tools/memorize.py::remember@654": {
     "cyclo": 1,
     "loc": 11,
     "nesting": 0,
