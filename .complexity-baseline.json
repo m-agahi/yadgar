@@ -35835,6 +35835,11 @@
     "inh_depth": 0,
     "methods": 3
   },
+  "yadgar/tests/test_vacuum.py::TestLogConsolidationRowURL@1345": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 2
+  },
   "yadgar/tests/test_vacuum.py::TestRedefineUsersPostImport@1025": {
     "attrs": 0,
     "inh_depth": 0,
@@ -35871,7 +35876,7 @@
     "methods": 2
   },
   "yadgar/tests/test_vacuum.py::__file__": {
-    "loc": 1337
+    "loc": 1425
   },
   "yadgar/tests/test_vacuum.py::_capture_post@1055": {
     "cyclo": 3,
@@ -35890,6 +35895,18 @@
     "loc": 8,
     "nesting": 0,
     "params": 2
+  },
+  "yadgar/tests/test_vacuum.py::_fake_build_http_client@1358": {
+    "cyclo": 1,
+    "loc": 9,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_vacuum.py::_fake_build_http_client@1398": {
+    "cyclo": 1,
+    "loc": 9,
+    "nesting": 0,
+    "params": 1
   },
   "yadgar/tests/test_vacuum.py::_import_strip@102": {
     "cyclo": 1,
@@ -36089,6 +36106,12 @@
     "nesting": 1,
     "params": 2
   },
+  "yadgar/tests/test_vacuum.py::test_falls_back_to_8080_when_env_unset@1390": {
+    "cyclo": 4,
+    "loc": 36,
+    "nesting": 1,
+    "params": 2
+  },
   "yadgar/tests/test_vacuum.py::test_import_403_restores_original_db@701": {
     "cyclo": 8,
     "loc": 43,
@@ -36243,6 +36266,12 @@
     "cyclo": 2,
     "loc": 6,
     "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_vacuum.py::test_uses_yadgar_db_url_when_set@1350": {
+    "cyclo": 4,
+    "loc": 39,
+    "nesting": 1,
     "params": 2
   },
   "yadgar/tests/test_vacuum.py::test_wiki_crossref_preserved_in_filtered_surql@554": {
