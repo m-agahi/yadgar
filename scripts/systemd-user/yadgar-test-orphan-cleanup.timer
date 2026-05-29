@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodic orphan pytest SurrealDB cleanup
+Requires=yadgar-test-orphan-cleanup.service
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target

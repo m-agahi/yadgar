@@ -1,5 +1,82 @@
 # Migration Notes
 
+## v5.10.0 — Test Harness Hardening: orphan reap + port determinism + session isolation (2026-05-29)
+
+Core 5.9.0 → 5.10.0. Backend unchanged.
+
+### What changed
+
+#### 1. `pytest-timeout` default now 300s (was 120s via addopts)
+
+The `--timeout=120` flag was removed from `addopts`; a `timeout = 300` key is
+set in `[tool.pytest.ini_options]` instead. Per-test overrides work via:
+
+```python
+@pytest.mark.timeout(60)
+def test_slow_thing(): ...
+```
+
+#### 2. SurrealDB subprocess spawn centralized in `yadgar/tests/_surreal_helpers.py`
+
+All `surreal start` spawns go through `spawn_surreal(port, data_dir)`, which
+registers PIDs in a module-level list. An `atexit` handler calls
+`kill_all_spawned_surreal()` on process exit — including SIGINT and
+pytest-timeout unwind. `pytest_sessionfinish` hook in `conftest.py` also calls
+it as a last-resort cleanup pass.
+
+No action required. Existing tests use the `surreal_server` session fixture
+unchanged.
+
+#### 3. Deterministic xdist port allocation
+
+Port formula: `YADGAR_TEST_PORT_BASE + worker_index * 100 + n`
+
+Default base: 12000. Env knob is **TEST-ONLY** — not in production yadgar config.
+
+Multi-session usage (2+ concurrent agent sessions):
+
+```bash
+YADGAR_TEST_PORT_BASE=13000 uv run pytest yadgar/tests/
+```
+
+Up to 10 retries with linear 100ms backoff on EADDRINUSE before raising.
+
+#### 4. Multi-agent tmp dir isolation
+
+```bash
+YADGAR_TEST_NAMESPACE=agent-42 uv run pytest yadgar/tests/
+```
+
+Redirects `TMPDIR` to `/tmp/pytest-agent-42/` so concurrent sessions don't
+collide on `/tmp/pytest-of-max/`.
+
+Default (no env var): unchanged behaviour, `/tmp/pytest-of-max/` as before.
+
+#### 5. Optional watchdog systemd-user timer (user-managed, not auto-installed)
+
+Unit files are in `scripts/systemd-user/`. Install once:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp scripts/systemd-user/yadgar-test-orphan-cleanup.{service,timer} ~/.config/systemd/user/
+systemctl --user enable --now yadgar-test-orphan-cleanup.timer
+```
+
+Fires every 5 minutes. Kills any `surreal start` process whose args contain
+`pytest-of-max` — does NOT match production `~/.yadgar/surreal_db/` paths.
+
+Adjust `pytest-of-max` in the `.service` file if your username differs.
+
+To disable: `systemctl --user disable --now yadgar-test-orphan-cleanup.timer`
+
+#### 6. Perf test re-enablement (deferred — separate PR)
+
+`test_merge_duplicates_under_5s_at_500_memories_with_embeddings` remains as-is.
+Per-test `@pytest.mark.timeout(120)` mechanism is now available for re-enablement
+in a follow-up PR.
+
+---
+
 ## v5.9.0 — Anchor Audit: audit_anchors() tool + consolidate_now anchor pass (2026-05-28)
 
 Core 5.8.0 → 5.9.0. Backend unchanged at 5.3.1.
