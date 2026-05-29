@@ -22,6 +22,7 @@ from yadgar import __version__
 from yadgar.config import get_settings
 from yadgar.file_queue import is_draining
 from yadgar.restoration import CheckpointContext
+from yadgar.secrets import gate_or_reject
 from yadgar.server._app import _tool, mcp_server
 from yadgar.server._helpers import _has_unpaired_surrogate
 from yadgar.server.lifecycle import _get_consolidation, _get_file_queue, _get_replay, _get_storage
@@ -61,6 +62,22 @@ def checkpoint(
         for _item in _lst:
             if isinstance(_item, str) and _has_unpaired_surrogate(_item):
                 return {"stored": False, "reason": "invalid_unicode_surrogates"}
+
+    # v5.10.2: secret gate — scan all free-text fields before enqueue
+    _list_text = " ".join(
+        item
+        for lst in (
+            key_decisions or [],
+            next_steps or [],
+            open_questions or [],
+            active_errors or [],
+        )
+        for item in lst
+        if isinstance(item, str)
+    )
+    _gate = gate_or_reject(current_task, custom_context, _list_text)
+    if _gate is not None:
+        return _gate
 
     # Capture branch at API boundary for payload tagging and future filter use.
     _branch = None
@@ -165,6 +182,11 @@ def anchor(
     for _field in (content, context, reason):
         if _has_unpaired_surrogate(_field):
             return {"stored": False, "reason": "invalid_unicode_surrogates"}
+
+    # v5.10.2: secret gate — scan content + reason before any state mutation
+    _gate = gate_or_reject(content, reason)
+    if _gate is not None:
+        return _gate
 
     # v5.8.0: tier validation
     _tier = tier if tier is not None else "conditional"
