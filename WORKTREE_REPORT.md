@@ -96,9 +96,9 @@ The TDD test file (`test_memorize_anchor_parity.py`) had two fixture bugs:
 
 ### Commits
 
-| Commit | Message (pending) |
+| Commit | Message |
 |---|---|
-| pending | `chore(release): bump 5.10.1→5.10.2 + CHANGELOG + MIGRATION_NOTES` |
+| `7b01b06` | `chore(release): bump 5.10.1→5.10.2 + CHANGELOG + MIGRATION_NOTES + WORKTREE_REPORT` |
 
 ### Version bump
 - `pyproject.toml`: `5.10.1 → 5.10.2`
@@ -106,6 +106,25 @@ The TDD test file (`test_memorize_anchor_parity.py`) had two fixture bugs:
 - `docker-compose.yml`: image tag updated
 - `uv.lock`: regenerated
 - `scripts/check_versions.py`: exits clean
+
+---
+
+## Phase 5 — Test Fixture Regression Fixes (c13–c14)
+
+### Commits
+
+| Commit | Message |
+|---|---|
+| `cdafe04` | `fix(test): shorten fake ghp_ token in test_memory_behavior to avoid v5.10.2 secret gate` |
+| `36047f3` | `fix(test): add reason= to test_semantic_immortal_valid_until_none for v5.10.2 gate` |
+
+### What was fixed
+
+**Regression 1 — `test_credentials_not_corrupted_by_cross_project_recall`**: Our v5.10.2 secret gate lowered the `ghp_` pattern threshold from `{36,}` to `{20,}`. The test fixture used `"ghp_SECRETTOKEN1234567890abcdefghijk"` (32-char suffix, above new threshold), so `memorize()` now returns `{"stored": False}` instead of `{"id": ...}`, causing `KeyError: 'id'`. Fixed: shortened suffix to `"ghp_FAKE1234567890"` (14 chars, below threshold).
+
+**Regression 2 — `test_semantic_immortal_valid_until_none`**: Our v5.10.2 `ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON` flag (default `True`) rejects `memorize(tier="semantic_immortal")` without a `reason=` argument. The test didn't supply one. Fixed: added `reason="test"` to the `memorize()` call.
+
+**Env investigation — `test_specific_detail_preserved`**: This test appeared to fail 10/10 in the worktree but pass 10/10 on master. Root cause: the worktree venv was missing the `ml` extra (`sentence-transformers`, `transformers`, etc.) needed for semantic recall. Without embeddings, `recall("codeberg personal access token")` can't match `"Codeberg PAT is stored in..."` via acronym expansion. Fix: `uv sync --extra ml --extra test`. After install: 24/24 passed in `test_memory_behavior.py`.
 
 ---
 
