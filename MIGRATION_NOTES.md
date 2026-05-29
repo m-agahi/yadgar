@@ -1,5 +1,116 @@
 # Migration Notes
 
+## backend v5.4.0 — Recall hot-path caching: CE score cache + embedding vector cache (2026-05-29)
+
+Core unchanged at 5.10.0. Backend 5.3.1 → 5.4.0.
+
+### What changed
+
+Two LRU caches added to the backend container:
+
+| Cache | Hit-path | Key | Default cap |
+|---|---|---|---|
+| CE score cache | `/rerank?mode=ce` — per-text lookup before ML inference | `query_sha16:text_sha16:ckpt_sha16` | 100K entries (~100MB) |
+| Embedding vector cache | `/embed` — per-text lookup before model encode | `text_sha16:mode:ckpt_sha16` | 100K entries (~150MB) |
+
+Cache format: in-memory `OrderedDict` LRU + periodic msgpack snapshot.
+Snapshot files: `/data/cache/ce.snap` and `/data/cache/embed.snap`.
+Restore on startup: checkpoint-hash mismatch → discard (new model = empty cache).
+
+#### New env knobs (6, three-way registered: Settings + FIELD_META + registry)
+
+| Env var | yaml key | default | role |
+|---|---|---|---|
+| `YADGAR_CE_CACHE_ENABLED` | `ce_cache_enabled` | `true` | CE cache kill switch |
+| `YADGAR_EMBED_CACHE_ENABLED` | `embed_cache_enabled` | `true` | Embed cache kill switch |
+| `YADGAR_CE_CACHE_MAX_ENTRIES` | `ce_cache_max_entries` | `100000` | CE cache entry cap (0 = disabled) |
+| `YADGAR_EMBED_CACHE_MAX_ENTRIES` | `embed_cache_max_entries` | `100000` | Embed cache entry cap |
+| `YADGAR_CACHE_SNAPSHOT_INTERVAL_SEC` | `cache_snapshot_interval_sec` | `600` | Snapshot cadence (seconds) |
+| `YADGAR_CACHE_SNAPSHOT_DIR` | `cache_snapshot_dir` | `/data/cache` | Snapshot directory |
+
+#### New Prometheus metrics (10 series)
+
+```
+yadgar_embed_ce_cache_hits_total         counter
+yadgar_embed_ce_cache_misses_total       counter
+yadgar_embed_ce_cache_evictions_total    counter
+yadgar_embed_ce_cache_size_entries       gauge
+yadgar_embed_ce_cache_size_bytes         gauge
+yadgar_embed_embed_cache_hits_total      counter
+yadgar_embed_embed_cache_misses_total    counter
+yadgar_embed_embed_cache_evictions_total counter
+yadgar_embed_embed_cache_size_entries    gauge
+yadgar_embed_embed_cache_size_bytes      gauge
+yadgar_embed_cache_snapshot_age_seconds{cache} gauge
+```
+
+### Files changed
+
+- `yadgar/cache.py` — new `LRUCache` class + msgpack snapshot (NEW FILE)
+- `yadgar/embed_service.py` — `_ce_cache`, `_embed_cache` module-level instances; `_score_ce_with_cache()` partial-hit helper; embed cache in `_encode_all()`; lifespan restore + snapshot task
+- `yadgar/embed_service_metrics.py` — 10 new metric declarations + `cache_snapshot_age_seconds{cache}` gauge
+- `yadgar/config.py` — 6 new Settings fields (`CE_CACHE_ENABLED` etc.)
+- `yadgar/config_yaml.py` — 6 new FIELD_META entries (`backend_hot_path_cache` section)
+- `yadgar/config_registry.py` — 6 new `ConfigEntry` entries
+- `pyproject.toml` — `msgpack>=1.0` dependency added
+- `server.json` — `backend_version` 5.3.1 → 5.4.0
+- `docker-compose.yml` — backend image tag 5.3.1 → 5.4.0
+
+### Deploy steps
+
+1. Rebuild backend image: `docker build -t docker.io/openfantasy/yadgar-backend:5.4.0 -f Dockerfile.backend .`
+2. Mount writable directory for cache snapshots. The backend container mounts `/data:ro` by default — snapshot writes to `/data/cache` are silently skipped unless a writable volume is added. Options:
+   ```yaml
+   # Option A: named volume (recommended for persistence across restarts)
+   volumes:
+     - yadgar-cache-data:/data/cache
+   # Option B: tmpfs (in-memory only — cache lost on restart, no disk benefit)
+   tmpfs:
+     - /data/cache
+   ```
+   Or override to a writable path: `YADGAR_CACHE_SNAPSHOT_DIR=/tmp/cache`
+3. Bump `yadger_backend_version` in `~/git/nix/modules/home/yadgar.nix` to 5.4.0.
+4. Restart backend container.
+
+### Rollback
+
+```bash
+# Disable both caches (pre-v5.4.0 behaviour, zero overhead):
+YADGAR_CE_CACHE_ENABLED=false
+YADGAR_EMBED_CACHE_ENABLED=false
+# OR rollback image to 5.3.1:
+docker run ... openfantasy/yadgar-backend:5.3.1
+```
+
+### Verification
+
+After backend restart with traffic:
+```bash
+# Check hit + miss counters both > 0 within 60s of first recall
+curl -s http://127.0.0.1:8001/metrics | grep yadgar_embed_ce_cache
+# → yadgar_embed_ce_cache_hits_total 0 (initially)
+# → yadgar_embed_ce_cache_misses_total N (rising)
+# After second recall with same query:
+# → yadgar_embed_ce_cache_hits_total > 0
+
+# After CACHE_SNAPSHOT_INTERVAL_SEC elapses:
+ls -la /data/cache/  # ce.snap + embed.snap present
+```
+
+### Expected impact
+
+- CE cache: 30-70% hit-rate at steady state (same session re-querying related contexts). Each hit saves ~400ms CE inference on CPU.
+- Embed cache: 50-80% hit-rate (same texts recur frequently across recall calls). Each hit saves 20-50ms encode time.
+- Baseline target: ≥30% CE hit-rate after 24h soak. Tune `CE_CACHE_MAX_ENTRIES` down if RSS > 250MB.
+
+### Open questions (post-deploy tuning)
+
+- After 24h soak: measure actual CE + embed hit rates. Adjust cap if hit-rate cliffs below 50K entries.
+- Snapshot latency during heavy traffic: add Tempo span around `save_snapshot` if `/rerank` p99 shows anomaly at snapshot interval.
+- Eviction rate > 100/min sustained → cap too low; increase `CE_CACHE_MAX_ENTRIES`.
+
+---
+
 ## v5.10.0 — Test Harness Hardening: orphan reap + port determinism + session isolation (2026-05-29)
 
 Core 5.9.0 → 5.10.0. Backend unchanged.

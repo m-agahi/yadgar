@@ -188,6 +188,85 @@ for _reason in ("clean", "crash", "first_boot"):
     embed_restart_reason_total.labels(reason=_reason)
 
 # ---------------------------------------------------------------------------
+# backend v5.4.0 — CE + embed LRU cache observability
+# ---------------------------------------------------------------------------
+# Per-cache counters: hits, misses, evictions, size_entries, size_bytes.
+# Shared: snapshot_age_seconds{cache} gauge.
+#
+# Naming: yadgar_embed_<cache>_cache_<metric> — consistent with I23 naming
+# convention (embed-service prefix + cache domain + metric name).
+
+ce_cache_hits_total = Counter(
+    "yadgar_embed_ce_cache_hits_total",
+    "Total CE score cache hits (key found in LRU cache, ML inference skipped).",
+    registry=_registry,
+)
+
+ce_cache_misses_total = Counter(
+    "yadgar_embed_ce_cache_misses_total",
+    "Total CE score cache misses (key absent, ML inference required).",
+    registry=_registry,
+)
+
+ce_cache_evictions_total = Counter(
+    "yadgar_embed_ce_cache_evictions_total",
+    "Total CE cache LRU evictions (oldest entry removed to make room).",
+    registry=_registry,
+)
+
+ce_cache_size_entries = Gauge(
+    "yadgar_embed_ce_cache_size_entries",
+    "Current number of entries in the CE score LRU cache.",
+    registry=_registry,
+)
+
+ce_cache_size_bytes = Gauge(
+    "yadgar_embed_ce_cache_size_bytes",
+    "Approximate memory footprint of the CE score LRU cache (sys.getsizeof of internal dict).",
+    registry=_registry,
+)
+
+embed_cache_hits_total = Counter(
+    "yadgar_embed_embed_cache_hits_total",
+    "Total embedding vector cache hits (text already encoded, re-encode skipped).",
+    registry=_registry,
+)
+
+embed_cache_misses_total = Counter(
+    "yadgar_embed_embed_cache_misses_total",
+    "Total embedding vector cache misses (text not in cache, encode required).",
+    registry=_registry,
+)
+
+embed_cache_evictions_total = Counter(
+    "yadgar_embed_embed_cache_evictions_total",
+    "Total embed cache LRU evictions (oldest entry removed to make room).",
+    registry=_registry,
+)
+
+embed_cache_size_entries = Gauge(
+    "yadgar_embed_embed_cache_size_entries",
+    "Current number of entries in the embedding vector LRU cache.",
+    registry=_registry,
+)
+
+embed_cache_size_bytes = Gauge(
+    "yadgar_embed_embed_cache_size_bytes",
+    "Approximate memory footprint of the embedding vector LRU cache.",
+    registry=_registry,
+)
+
+cache_snapshot_age_seconds = Gauge(
+    "yadgar_embed_cache_snapshot_age_seconds",
+    "Seconds since the named cache snapshot was last written (-1 = no snapshot).",
+    ["cache"],
+    registry=_registry,
+)
+# Pre-initialise label-sets so gauges appear from first scrape
+for _cache_name in ("ce", "embed"):
+    cache_snapshot_age_seconds.labels(cache=_cache_name).set(-1)
+
+# ---------------------------------------------------------------------------
 # ASGI handler
 # ---------------------------------------------------------------------------
 
