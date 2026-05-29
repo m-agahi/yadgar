@@ -24,6 +24,39 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, field_validator
 
 from yadgar.embed_service_metrics import (
+    cache_snapshot_age_seconds as _cache_snapshot_age_seconds,
+)
+from yadgar.embed_service_metrics import (
+    ce_cache_evictions_total as _ce_cache_evictions_total,
+)
+from yadgar.embed_service_metrics import (
+    ce_cache_hits_total as _ce_cache_hits_total,
+)
+from yadgar.embed_service_metrics import (
+    ce_cache_misses_total as _ce_cache_misses_total,
+)
+from yadgar.embed_service_metrics import (
+    ce_cache_size_bytes as _ce_cache_size_bytes,
+)
+from yadgar.embed_service_metrics import (
+    ce_cache_size_entries as _ce_cache_size_entries,
+)
+from yadgar.embed_service_metrics import (
+    embed_cache_evictions_total as _embed_cache_evictions_total,
+)
+from yadgar.embed_service_metrics import (
+    embed_cache_hits_total as _embed_cache_hits_total,
+)
+from yadgar.embed_service_metrics import (
+    embed_cache_misses_total as _embed_cache_misses_total,
+)
+from yadgar.embed_service_metrics import (
+    embed_cache_size_bytes as _embed_cache_size_bytes,
+)
+from yadgar.embed_service_metrics import (
+    embed_cache_size_entries as _embed_cache_size_entries,
+)
+from yadgar.embed_service_metrics import (
     embed_dbsize_cache_hits_total as _dbsize_cache_hits,
 )
 from yadgar.embed_service_metrics import (
@@ -102,6 +135,116 @@ def _dbsize_cache_ttl() -> int:
 def _shutdown_marker_path() -> str:
     """Return path for clean-shutdown marker file."""
     return os.environ.get("YADGAR_SHUTDOWN_MARKER_PATH", "/data/.shutdown_clean")
+
+
+# ---------------------------------------------------------------------------
+# backend v5.4.0 — LRU caches for CE scores and embedding vectors
+# ---------------------------------------------------------------------------
+# Module-level so importlib.reload() resets both caches in tests.
+# Cache instances are created lazily on first access so env knobs are resolved
+# after any monkeypatch in tests.
+
+
+def _ce_cache_enabled() -> bool:
+    v = os.environ.get("YADGAR_CE_CACHE_ENABLED", "1").lower()
+    return v not in ("0", "false", "no")
+
+
+def _embed_cache_enabled() -> bool:
+    v = os.environ.get("YADGAR_EMBED_CACHE_ENABLED", "1").lower()
+    return v not in ("0", "false", "no")
+
+
+def _ce_cache_max_entries() -> int:
+    return int(os.environ.get("YADGAR_CE_CACHE_MAX_ENTRIES", "100000"))
+
+
+def _embed_cache_max_entries() -> int:
+    return int(os.environ.get("YADGAR_EMBED_CACHE_MAX_ENTRIES", "100000"))
+
+
+def _cache_snapshot_dir() -> str:
+    return os.environ.get("YADGAR_CACHE_SNAPSHOT_DIR", "/data/cache")
+
+
+def _cache_snapshot_interval_sec() -> int:
+    return int(os.environ.get("YADGAR_CACHE_SNAPSHOT_INTERVAL_SEC", "600"))
+
+
+def _get_ce_checkpoint_hash() -> str:
+    """Return a short hash identifying the current CE model checkpoint."""
+    import hashlib  # noqa: PLC0415
+
+    model = os.environ.get("YADGAR_CE_MODEL", os.environ.get("YADGAR_EMBEDDING_MODEL", "default"))
+    return hashlib.sha256(model.encode()).hexdigest()[:16]
+
+
+def _get_embed_checkpoint_hash() -> str:
+    """Return a short hash identifying the current embedding model."""
+    import hashlib  # noqa: PLC0415
+
+    model = os.environ.get("YADGAR_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+    return hashlib.sha256(model.encode()).hexdigest()[:16]
+
+
+def _make_ce_cache():
+    from yadgar.cache import LRUCache  # noqa: PLC0415
+
+    max_e = _ce_cache_max_entries() if _ce_cache_enabled() else 0
+    return LRUCache(max_entries=max_e, checkpoint_hash=_get_ce_checkpoint_hash())
+
+
+def _make_embed_cache():
+    from yadgar.cache import LRUCache  # noqa: PLC0415
+
+    max_e = _embed_cache_max_entries() if _embed_cache_enabled() else 0
+    return LRUCache(max_entries=max_e, checkpoint_hash=_get_embed_checkpoint_hash())
+
+
+# Module-level cache instances (reset on importlib.reload)
+_ce_cache = _make_ce_cache()
+_embed_cache = _make_embed_cache()
+
+
+def _update_cache_metrics() -> None:
+    """Sync cache counters to Prometheus gauges (called periodically + after ops)."""
+    try:
+        _ce_cache_size_entries.set(_ce_cache.size_entries)
+        _ce_cache_size_bytes.set(_ce_cache.size_bytes)
+        _embed_cache_size_entries.set(_embed_cache.size_entries)
+        _embed_cache_size_bytes.set(_embed_cache.size_bytes)
+    except Exception:
+        pass
+
+
+async def _run_cache_snapshot_task() -> None:
+    """Background task: save CE + embed caches to disk every snapshot interval."""
+    while True:
+        interval = _cache_snapshot_interval_sec()
+        await asyncio.sleep(interval)
+        snap_dir = _cache_snapshot_dir()
+        try:
+            _ce_cache.save_snapshot(snap_dir, "ce")
+            _embed_cache.save_snapshot(snap_dir, "embed")
+            _update_cache_metrics()
+            # Update snapshot age gauges
+            _cache_snapshot_age_seconds.labels(cache="ce").set(
+                _ce_cache.snapshot_age_seconds(snap_dir, "ce")
+            )
+            _cache_snapshot_age_seconds.labels(cache="embed").set(
+                _embed_cache.snapshot_age_seconds(snap_dir, "embed")
+            )
+            logger.info(
+                "cache_snapshot_written",
+                extra={
+                    "event": "cache_snapshot_written",
+                    "ce_entries": _ce_cache.size_entries,
+                    "embed_entries": _embed_cache.size_entries,
+                    "snap_dir": snap_dir,
+                },
+            )
+        except Exception as exc:
+            logger.warning("cache_snapshot_task error: %s", exc)
 
 
 async def _require_admin_token(
@@ -260,7 +403,43 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         _model_loaded.labels(model="embedding").set(0)
         logger.error("Failed to load embedding model: %s", exc)
+
+    # backend v5.4.0: restore caches from snapshot BEFORE serving first request.
+    _snap_dir = _cache_snapshot_dir()
+    try:
+        await asyncio.to_thread(_ce_cache.load_snapshot, _snap_dir, "ce")
+        await asyncio.to_thread(_embed_cache.load_snapshot, _snap_dir, "embed")
+        _update_cache_metrics()
+        logger.info(
+            "cache_restored",
+            extra={
+                "event": "cache_restored",
+                "ce_entries": _ce_cache.size_entries,
+                "embed_entries": _embed_cache.size_entries,
+            },
+        )
+    except Exception as _exc:
+        logger.warning("cache restore failed: %s", _exc)
+
+    # Start periodic snapshot background task (ExceptionGroup-safe: task is
+    # cancelled on lifespan exit).
+    _snap_task = asyncio.create_task(_run_cache_snapshot_task())
+
     yield
+
+    # Cancel snapshot task on shutdown
+    _snap_task.cancel()
+    try:
+        await _snap_task
+    except asyncio.CancelledError, Exception:
+        pass
+
+    # Final cache snapshot on shutdown
+    try:
+        _ce_cache.save_snapshot(_snap_dir, "ce")
+        _embed_cache.save_snapshot(_snap_dir, "embed")
+    except Exception as _exc:
+        logger.warning("cache final snapshot failed: %s", _exc)
 
     # v5.3.0: write clean-shutdown marker so next start knows we exited cleanly.
     _marker_path_shutdown = Path(_shutdown_marker_path())
@@ -304,8 +483,22 @@ async def embed(req: EmbedRequest, _: None = Depends(_require_admin_token)):
         raise HTTPException(status_code=503, detail="Embedding engine not ready")
 
     def _encode_all() -> list[list[float] | None]:
+        import hashlib as _hl  # noqa: PLC0415
+
+        ckpt = getattr(_embed_cache, "_ckpt", _get_embed_checkpoint_hash())
         results: list[list[float] | None] = []
+        prev_embed_evictions = _embed_cache.evictions
         for text in req.texts:
+            # Check embed cache first (backend v5.4.0)
+            text_sha = _hl.sha256(text.encode("utf-8", errors="replace")).hexdigest()[:16]
+            cache_key = f"{text_sha}:{req.mode}:{ckpt}"
+            cached = _embed_cache.get(cache_key)
+            if cached is not None:
+                _embed_cache_hits_total.inc()
+                results.append(cached)
+                continue
+
+            _embed_cache_misses_total.inc()
             if req.mode == "query":
                 raw = engine.encode_query(text)
             elif req.mode == "raw":
@@ -316,7 +509,17 @@ async def embed(req: EmbedRequest, _: None = Depends(_require_admin_token)):
                 results.append(None)
             else:
                 arr = np.frombuffer(raw, dtype=np.float32)
-                results.append(arr.tolist())
+                vec = arr.tolist()
+                _embed_cache.put(cache_key, vec)
+                results.append(vec)
+        # Sync eviction delta + size to Prometheus
+        new_embed_evictions = _embed_cache.evictions - prev_embed_evictions
+        if new_embed_evictions > 0:
+            _embed_cache_evictions_total.inc(new_embed_evictions)
+        try:
+            _embed_cache_size_entries.set(_embed_cache.size_entries)
+        except Exception:
+            pass
         return results
 
     results = await asyncio.to_thread(_encode_all)
@@ -331,6 +534,61 @@ async def embed(req: EmbedRequest, _: None = Depends(_require_admin_token)):
         model=engine.model_name,
         dim=engine.get_dimensions(),
     )
+
+
+def _score_ce_with_cache(ml, query: str, texts: list[str]) -> list[float]:
+    """CE scoring with per-text LRU cache hit-path (backend v5.4.0).
+
+    Key: sha256(query)[:16] + ":" + sha256(text)[:16] + ":" + ckpt_hash.
+    Partial hits: cached texts skip ML; only misses go to CE batch.
+    Results merged back to original order, then back-filled into cache.
+    """
+    import hashlib  # noqa: PLC0415
+
+    if not texts:
+        return []
+
+    ckpt = getattr(_ce_cache, "_ckpt", _get_ce_checkpoint_hash())
+    query_sha = hashlib.sha256(query.encode("utf-8", errors="replace")).hexdigest()[:16]
+
+    # Build keys and check cache
+    keys = []
+    for text in texts:
+        text_sha = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()[:16]
+        keys.append(f"{query_sha}:{text_sha}:{ckpt}")
+
+    cached_scores: dict[int, float] = {}
+    miss_indices: list[int] = []
+    miss_texts: list[str] = []
+
+    for i, key in enumerate(keys):
+        hit = _ce_cache.get(key)
+        if hit is not None:
+            cached_scores[i] = hit
+            _ce_cache_hits_total.inc()
+        else:
+            miss_indices.append(i)
+            miss_texts.append(texts[i])
+            _ce_cache_misses_total.inc()
+
+    if miss_texts:
+        new_scores = ml.score_cross_encoder(query, miss_texts)
+        # Back-fill cache + merge
+        prev_evictions = _ce_cache.evictions
+        for j, idx in enumerate(miss_indices):
+            score = float(new_scores[j]) if new_scores and j < len(new_scores) else 0.0
+            _ce_cache.put(keys[idx], score)
+            cached_scores[idx] = score
+        # Sync new evictions to Prometheus counter
+        new_evictions = _ce_cache.evictions - prev_evictions
+        if new_evictions > 0:
+            _ce_cache_evictions_total.inc(new_evictions)
+        try:
+            _ce_cache_size_entries.set(_ce_cache.size_entries)
+        except Exception:
+            pass
+
+    return [cached_scores.get(i, 0.0) for i in range(len(texts))]
 
 
 @app.post("/rerank", response_model=RerankResponse)
@@ -380,8 +638,8 @@ async def rerank(req: RerankRequest, _: None = Depends(_require_admin_token)) ->
             if not req.texts:
                 return []
             return [ml.score_pair(req.query, req.texts[0])]
-        else:  # "ce" default
-            return ml.score_cross_encoder(req.query, req.texts)
+        else:  # "ce" default — with LRU cache hit-path (backend v5.4.0)
+            return _score_ce_with_cache(ml, req.query, req.texts)
 
     t0 = _time.monotonic()
 
