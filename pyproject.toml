@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.10.1"
+version = "5.10.2"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "MIT"
@@ -63,6 +63,8 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-http>=1.30,<2",
     # backend v5.4.0 — msgpack snapshot for LRU cache (CE + embed caches)
     "msgpack>=1.0",
+    # v5.10.2 — surrealdb promoted from dev-only to base dep (StorageEngine uses it at runtime)
+    "surrealdb>=1.0.0",
 ]
 
 [project.scripts]
@@ -152,7 +154,6 @@ test = [
 dev = [
     "yadgar[test]",
     "ruff>=0.4.0",
-    "surrealdb>=1.0.0",
 ]
 
 [tool.pytest.ini_options]

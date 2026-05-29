@@ -72,7 +72,12 @@ def is_draining() -> bool:
 
 
 def _classify_error(err_str: str) -> str:
-    """Classify an error string as 'permanent' (HTTP 4xx) or 'transient' (everything else)."""
+    """Classify an error string as 'permanent' (HTTP 4xx) or 'transient' (everything else).
+
+    v5.10.2: SecretLeakBlocked is always permanent — retrying will never help.
+    """
+    if "SecretLeakBlocked" in err_str:
+        return "permanent"
     if _re.search(r"\b4\d\d\b", err_str):
         return "permanent"
     return "transient"
@@ -245,6 +250,16 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
                         classification,
                         err_str[:200],
                     )
+                    # v5.10.2: log metric for secret-blocked DLQ entries
+                    if "SecretLeakBlocked" in err_str:
+                        try:
+                            from yadgar.metrics import yadgar_writegate_outcome  # noqa: PLC0415
+
+                            yadgar_writegate_outcome.labels(
+                                outcome="rejected_secret_at_storage"
+                            ).inc()
+                        except Exception:
+                            pass
                     if attempt.count >= max_attempts:
                         self._move_to_dlq(path, attempt, op_type)
                         self._attempts.pop(fname, None)

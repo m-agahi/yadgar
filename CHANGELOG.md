@@ -6,6 +6,21 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.10.2] — 2026-05-29
+
+Unified security + parity + nightly-cycle hotfix.
+
+- **Secret-gate architecture (I26)**: dual-layer protection — Layer 2 `gate_or_reject()` on all write tool API boundaries; Layer 1 `SecretLeakBlocked` exception in `insert_memory()` as last-resort defence. `YADGAR_SECRET_GATE_DISABLED` kill switch with loud warning.
+- **Pattern strictness**: GitHub PAT `{36,}→{20,}`, Anthropic key `{32,}→{20,}`, OpenAI key `{30,}→{20,}`. Tighter thresholds reduce false-negative window.
+- **I26 invariant lint**: `scripts/check_secret_gate.py` — AST-walks all `@_tool()` write tools; fails if any lacks `gate_or_reject()`. Pre-commit hook added.
+- **Backfill scan**: `scripts/scan_db_for_secrets.py` — read-only scan of all memory + wiki rows; `--storage-mock` for CI; report to `~/.yadgar/`.
+- **DLQ handling**: `_classify_error()` treats `SecretLeakBlocked` as permanent → moves to DLQ after 3 attempts, no infinite retry.
+- **memorize() anchor parity** (v5.10.x): `is_protected=True` now auto-sets `tier="conditional"`, injects `_anchor` tag, adds `anchor:{reason}` tag. `reason` kwarg added. `semantic_immortal` without reason rejected when `ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON=True`.
+- **surrealdb dep fix**: promoted `surrealdb>=1.0.0` from `[dev]` to `[project.dependencies]` — `ImportError` on clean installs eliminated.
+- **vacuum `:8080` literal fix**: `_log_consolidation_row` now uses `YADGAR_DB_URL` env var with `:8080` as fallback only.
+
+See [MIGRATION_NOTES.md §v5.10.2](MIGRATION_NOTES.md#v5102--secret-gate-architecture--memorize-parity--nightly-cycle-hotfix-2026-05-29).
+
 ## [5.10.1] — 2026-05-29
 
 `_active_work` soft warning tier + optional watchdog timer.

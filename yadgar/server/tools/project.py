@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from yadgar.config import get_settings
+from yadgar.secrets import gate_or_reject
 from yadgar.server._app import _tool
 from yadgar.server.lifecycle import _get_storage
 
@@ -1068,6 +1069,11 @@ def bootstrap_project(directory: str, content: str) -> dict:
     Idempotent: deletes any existing _project_init memory for this directory
     before inserting the new one.
     """
+    # v5.10.2: secret gate — scan content before any state mutation
+    _gate = gate_or_reject(content)
+    if _gate is not None:
+        return _gate
+
     cfg = get_settings()
     cap = cfg.PROJECT_INIT_CAP_CHARS
     if len(content) > cap:
@@ -1120,6 +1126,11 @@ def update_active_work(directory: str, content: str) -> dict:
 
     Returns: {previous_content: str | None, new_memory: dict}
     """
+    # v5.10.2: secret gate — scan content before any state mutation
+    _gate = gate_or_reject(content)
+    if _gate is not None:
+        return _gate
+
     resolved = _resolve_project_root(directory)
     storage = _get_storage()
     result = storage.upsert_active_work(resolved, content)

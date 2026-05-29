@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import re
 
+from yadgar.secrets import gate_or_reject
 from yadgar.server._app import _tool
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,10 @@ def agent_prompt_save(
         from yadgar.server.lifecycle import _get_storage
 
         storage = _get_storage()
+
+    _gate = gate_or_reject(content)
+    if _gate is not None:
+        return _gate
 
     version = _next_version(storage, pattern)
     slug = _slug_for(pattern, version)

@@ -127,7 +127,10 @@ def _log_consolidation_row(row: dict) -> None:
 
     Non-fatal: if this fails we just warn. The vacuum itself succeeded.
     """
-    backend_url = row.pop("_backend_url", "http://127.0.0.1:8080")
+    backend_url = row.pop(
+        "_backend_url",
+        os.environ.get("YADGAR_DB_URL", "http://127.0.0.1:8080"),
+    )
     try:
         client = _build_http_client(backend_url)
         stmt = (
