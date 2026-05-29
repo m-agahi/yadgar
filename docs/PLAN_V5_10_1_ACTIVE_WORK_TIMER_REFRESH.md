@@ -1,8 +1,10 @@
-# PLAN — v5.11.x: `_active_work` timer-based refresh + soft warning tier
+# PLAN — v5.10.1: `_active_work` timer-based refresh + soft warning tier
 
-**Status:** drafted 2026-05-29 after investigation. Not strictly version-locked — may land as v5.11.x patch or fold into v5.12.
+**Status:** drafted 2026-05-29 after investigation. Renumbered to v5.10.1 (patch on v5.10 train) per user direction 2026-05-29 evening.
 
 **Master at draft time:** core v5.10.0 + backend v5.3.1 deployed.
+
+**Sequencing rationale:** small, surgical, additive — fits v5.10.x patch semantics rather than waiting for a v5.12+ minor.
 
 ---
 
@@ -127,7 +129,7 @@ Documented in MIGRATION_NOTES.
 
 5. **systemd-user unit files** — `scripts/systemd-user/yadgar-active-work-watchdog.{timer,service}`. Plain files, user-managed install.
 
-6. **MIGRATION_NOTES.md** — v5.11.x section with:
+6. **MIGRATION_NOTES.md** — v5.10.1 section with:
    - New action type semantic.
    - Watchdog installation steps + opt-in env knob.
    - Registry pruning command.
@@ -166,7 +168,7 @@ Documented in MIGRATION_NOTES.
 
 ## Sequencing
 
-After v5.11 (anchor cross-project + Jira) lands. Could fold into v5.11.x as a small follow-up. Not blocker-priority.
+Ships as v5.10.1 patch on v5.10 train (test harness hardening) — additive, no schema change. Decoupled from v5.11 cross-project + Jira train.
 
 Possible parallel with backend v5.4.0 — they don't overlap files.
 
@@ -174,7 +176,7 @@ Possible parallel with backend v5.4.0 — they don't overlap files.
 
 ## Open / parked questions
 
-- **Should `_active_work_age_hours` use `last_modified` instead of `created_at`?** Currently `created_at` is set on insert (matches DELETE+INSERT pattern). For semantic of "user-curated freshness", a separate `user_refreshed_at` column might better separate watchdog stub refreshes from real user refreshes. **Lean: add `user_refreshed_at` column in v5.12.** v5.11.x keeps `created_at` for simplicity.
+- **Should `_active_work_age_hours` use `last_modified` instead of `created_at`?** Currently `created_at` is set on insert (matches DELETE+INSERT pattern). For semantic of "user-curated freshness", a separate `user_refreshed_at` column might better separate watchdog stub refreshes from real user refreshes. **Lean: add `user_refreshed_at` column in v5.12.** v5.10.1 keeps `created_at` for simplicity.
 - **Registry-less alternative:** could yadgar use SurrealDB to track active-work-having directories instead of a filesystem registry? **Lean yes** — query `SELECT DISTINCT directory_context FROM memory WHERE tags CONTAINS '_active_work'`. No filesystem state. Replace step 3 above. Defer to implementation review.
 - **Watchdog cadence 6h vs 12h vs 1h:** 6h gives 4 polls/day → average refresh latency ~3h. 12h → ~6h avg. 1h → wasted CPU. **Lean: 6h default**, env knob to override.
 - **Auto-refresh stub content:** could include last-N user-prompted tool calls to make it more useful even as a stub. **Lean: ship minimal stub first**, enrich in v5.12.
