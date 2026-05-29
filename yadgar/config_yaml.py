@@ -550,6 +550,19 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Maximum anchors returned in restore mode top_anchors list (default 12)",
         "section": "project_brief",
     },
+    # project_brief soft warning tier (v5.10.1)
+    "active_work_warn_hours": {
+        "desc": "Hours before consider_refresh_active_work soft action fires (default 12; must be < active_work_stale_hours)",
+        "section": "project_brief",
+    },
+    "checkpoint_warn_hours": {
+        "desc": "Hours before consider_refresh_checkpoint soft action fires (default 12; must be < checkpoint_stale_hours)",
+        "section": "project_brief",
+    },
+    "auto_refresh_active_work": {
+        "desc": "Watchdog opt-in: auto-write stub _active_work when stale (default false; enable via systemd unit env)",
+        "section": "active_work_watchdog",
+    },
     # anchor_hygiene (v5.8.0)
     "anchor_conditional_ttl_days": {
         "desc": "Default valid_until offset (days) for tier=conditional anchors (default 90)",

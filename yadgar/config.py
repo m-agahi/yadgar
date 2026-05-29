@@ -437,6 +437,14 @@ class Settings(BaseSettings):
     CHECKPOINT_STALE_HOURS: float = 24.0
     # Maximum number of anchors returned in restore mode top_anchors list.
     PROJECT_BRIEF_MAX_ANCHORS: int = 12
+    # v5.10.1: soft warning tier thresholds + watchdog opt-in
+    # Hours before consider_refresh_active_work soft action fires (must be < ACTIVE_WORK_STALE_HOURS).
+    ACTIVE_WORK_WARN_HOURS: float = 12.0
+    # Hours before consider_refresh_checkpoint soft action fires (must be < CHECKPOINT_STALE_HOURS).
+    CHECKPOINT_WARN_HOURS: float = 12.0
+    # When True (opt-in): watchdog auto-writes stub _active_work on stale detection.
+    # Default OFF — preserves user-curated _active_work semantic. Enable via systemd unit env.
+    AUTO_REFRESH_ACTIVE_WORK: bool = False
 
     # v5.8.0: anchor hygiene TTL knobs
     # Default valid_until offset (days) for tier=conditional anchors.
