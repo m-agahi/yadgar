@@ -6,6 +6,18 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.10.3] — 2026-05-29
+
+Patch: `scripts/scan_db_for_secrets.py` end-to-end fix.
+
+- **OTLP hang fix**: `os.environ.setdefault("YADGAR_OTLP_ENDPOINT", "")` at script top — suppresses `BatchSpanProcessor` that hung at exit (~10 s backoff) pushing HITS/Clean output past `| tail -10`.
+- **ORDER BY id DESC**: memory + wiki queries now scan newest rows first; `--limit 200` catches memory 519107 (ghp_ 33-char leak at DB position 2994/3147).
+- **`--storage-mock-leak`**: new flag — mock data with known secret, exercises exit-1 path without live DB.
+- **9 new tests** in `yadgar/tests/test_scan_script.py` via subprocess; 2 live-DB tests gated on `YADGAR_TEST_LIVE_SCAN=1`.
+- **v5.10.3 bump**: pyproject.toml, server.json, docker-compose.yml, uv.lock.
+
+See [MIGRATION_NOTES.md §v5.10.3](MIGRATION_NOTES.md#v5103--scan_db_for_secretspy-end-to-end-fix-2026-05-29).
+
 ## [5.10.2] — 2026-05-29
 
 Unified security + parity + nightly-cycle hotfix.
