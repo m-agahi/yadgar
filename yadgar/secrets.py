@@ -3,11 +3,21 @@
 These patterns fire BEFORE user rules and cannot be disabled.
 Content matching any pattern is rejected with a reason and the
 (truncated) matched substring — the full secret is never logged.
+
+v5.10.2 changes:
+  - SecretLeakBlocked exception class (storage-level gate)
+  - gate_or_reject() helper for multi-field API-boundary checks
+  - GitHub token threshold lowered {36,} → {20,}
+  - Anthropic key threshold lowered {32,} → {20,}
+  - OpenAI key threshold lowered {30,} → {20,}
 """
 
 from __future__ import annotations
 
+import logging
 import re
+
+_log = logging.getLogger(__name__)
 
 # (compiled_pattern, human_readable_name)
 # Order matters: specific patterns must appear before the generic catch-all.
@@ -21,8 +31,9 @@ _SECRET_PATTERNS: list[tuple[re.Pattern, str]] = [
         re.compile(r"eyJ[A-Za-z0-9-_]+\.eyJ[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+"),
         "JWT token",
     ),
+    # v5.10.2: lowered {36,} → {20,} — short test/fake tokens slipped through
     (
-        re.compile(r"(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{36,}"),
+        re.compile(r"(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}"),
         "GitHub token",
     ),
     (
@@ -52,13 +63,15 @@ _SECRET_PATTERNS: list[tuple[re.Pattern, str]] = [
         "Slack token",
     ),
     # §5 T-0019: Anthropic API key — must appear before OpenAI (more specific prefix)
+    # v5.10.2: lowered {32,} → {20,}
     (
-        re.compile(r"sk-ant-[A-Za-z0-9\-_]{32,}"),
+        re.compile(r"sk-ant-[A-Za-z0-9\-_]{20,}"),
         "Anthropic API key",
     ),
     # §5 T-0019: OpenAI API key — covers both legacy sk-... and sk-proj-... format
+    # v5.10.2: lowered {30,} → {20,}
     (
-        re.compile(r"sk-(?:proj-)?[A-Za-z0-9_-]{30,}"),
+        re.compile(r"sk-(?:proj-)?[A-Za-z0-9_-]{20,}"),
         "OpenAI API key",
     ),
     # §5 T-0019: AWS secret access key (40 chars base64-like; broad, comes after specifics)
@@ -78,6 +91,26 @@ _SECRET_PATTERNS: list[tuple[re.Pattern, str]] = [
 ]
 
 _MATCH_PREVIEW_LEN = 20
+
+
+class SecretLeakBlocked(Exception):
+    """Raised by the storage-level gate when content contains a detected secret.
+
+    This is the Layer 1 (storage-level) exception.  It should never reach
+    the caller under normal operation because the Layer 2 (API-boundary)
+    gate_or_reject() fires first and returns a rejection dict without
+    raising.  If it does reach the caller it means someone bypassed the
+    API-boundary gate — the storage layer is the last line of defence.
+
+    Args:
+        reason: human-readable pattern name (e.g. "AWS access key")
+        pattern_preview: first 20 chars of the matched text
+    """
+
+    def __init__(self, reason: str, pattern_preview: str = "") -> None:
+        super().__init__(f"SecretLeakBlocked: {reason} — preview: {pattern_preview!r}")
+        self.secret_reason = reason
+        self.pattern_preview = pattern_preview
 
 
 def check_secrets(content: str) -> tuple[bool, str, str]:
@@ -101,3 +134,35 @@ def check_secrets(content: str) -> tuple[bool, str, str]:
                 preview += "..."
             return True, f"secret_detected: {name}", preview
     return False, "", ""
+
+
+def gate_or_reject(*content_fields: str | None) -> dict | None:
+    """Scan all provided fields for secrets.  Return rejection dict or None.
+
+    Layer 2 (API-boundary) helper.  Each write tool calls this before any
+    state mutation and returns the dict directly if non-None.
+
+    Increments the yadgar_writegate_outcome{outcome="rejected_secret"} metric
+    on rejection.
+
+    Args:
+        *content_fields: Text fields to scan (None/"" are skipped).
+
+    Returns:
+        None if all fields are clean.
+        {"stored": False, "reason": "secret_detected: ...", "pattern_preview": "..."}
+        on first match.
+    """
+    for field in content_fields:
+        if not field or not isinstance(field, str) or not field.strip():
+            continue
+        blocked, reason, preview = check_secrets(field)
+        if blocked:
+            try:
+                from yadgar.metrics import yadgar_writegate_outcome  # noqa: PLC0415
+
+                yadgar_writegate_outcome.labels(outcome="rejected_secret").inc()
+            except Exception:
+                pass
+            return {"stored": False, "reason": reason, "pattern_preview": preview}
+    return None
