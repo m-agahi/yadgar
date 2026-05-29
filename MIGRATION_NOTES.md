@@ -1,5 +1,40 @@
 # Migration Notes
 
+## v5.10.3 — scan_db_for_secrets.py end-to-end fix (2026-05-29)
+
+Core 5.10.2 → 5.10.3. Backend unchanged at 5.4.0. No schema changes.
+
+### scan_db_for_secrets.py — now functional
+
+The v5.10.2 backfill scan script had two bugs preventing it from running end-to-end:
+
+1. **OTLP hang at exit**: `~/.yadgar/config.yaml` sets `otlp_endpoint: http://host.containers.internal:4318/v1/traces`.
+   `yadgar/server/_app.py` calls `setup_tracing()` at module import time, which instantiates a
+   `BatchSpanProcessor` that retries failed OTLP exports on exit (~10 s delay with exponential back-off).
+   The HITS/Clean output line was printed but scrolled past `| tail -10` before the process exited.
+   Fix: `os.environ.setdefault("YADGAR_OTLP_ENDPOINT", "")` at the top of the script before any yadgar import.
+
+2. **Detection failure with --limit N**: DB rows are scanned in ascending ID order. Memory 519107
+   (the known `ghp_` 33-char leak) is at position 2994 of 3147 rows. `--limit 200` only fetched
+   IDs 1–200, never reaching the leak.
+   Fix: `SELECT ... ORDER BY id DESC LIMIT N` — scans newest rows first where recent leaks live.
+
+### Running the scan
+
+```
+~/.local/pipx/venvs/yadgar/bin/python scripts/scan_db_for_secrets.py --dry-run
+```
+
+- **NOT** system Python — uses pipx venv with mcp/surrealdb packages.
+- Auto-sources `~/.config/yadgar/secrets.env` if `YADGAR_DB_USER`/`YADGAR_DB_PASS` not set.
+- Auto-sets `YADGAR_DB_URL=http://127.0.0.1:8000` if not set (HTTP mode, avoids file-lock conflict).
+- Read-only. Never mutates the DB. Reports to `~/.yadgar/secret-leak-scan-<TS>.txt`.
+- Exit 0 = clean. Exit 1 = hits found. Review report; manually `forget(<id>)` for confirmed leaks.
+
+### No action required on upgrade
+
+---
+
 ## v5.10.2 — Secret-gate architecture + memorize parity + nightly cycle hotfix (2026-05-29)
 
 Core 5.10.1 → 5.10.2. Backend unchanged at 5.4.0. No schema changes. Additive only.
