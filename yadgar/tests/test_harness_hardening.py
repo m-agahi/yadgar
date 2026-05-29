@@ -31,10 +31,15 @@ import pytest
 
 
 def _block_port(port: int) -> socket.socket:
-    """Bind a socket to *port* and return it (caller must close)."""
+    """Bind and listen on *port*; return the socket (caller must close).
+
+    Must call listen() so connect()-based port-in-use checks see the port
+    as occupied (bind-only sockets aren't reachable via connect on Linux).
+    """
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(("127.0.0.1", port))
+    s.listen(1)
     return s
 
 
