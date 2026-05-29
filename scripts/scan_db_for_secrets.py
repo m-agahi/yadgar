@@ -17,11 +17,12 @@ Usage:
   python scripts/scan_db_for_secrets.py [options]
 
 Options:
-  --dry-run           Read-only scan (default; included for explicitness)
-  --storage-mock      Use built-in mock data instead of real DB (for tests/CI)
-  --report-dir PATH   Override report output directory
-  --limit N           Max rows to scan per table (default: unlimited)
-  --quiet             Suppress stdout progress; only write report file
+  --dry-run             Read-only scan (default; included for explicitness)
+  --storage-mock        Use built-in mock data instead of real DB (clean, exits 0)
+  --storage-mock-leak   Like --storage-mock but with known secret (exits 1)
+  --report-dir PATH     Override report output directory
+  --limit N             Max rows to scan per table (default: unlimited)
+  --quiet               Suppress stdout progress; only write report file
 """
 
 from __future__ import annotations
@@ -32,6 +33,20 @@ import os
 import sys
 from pathlib import Path
 from typing import Any
+
+# ---------------------------------------------------------------------------
+# v5.10.3: suppress OTLP exporter BEFORE any yadgar import.
+#
+# yadgar/server/_app.py calls setup_tracing("yadgar-core") at module import
+# time. setup_tracing reads Settings via get_settings() (lru_cache) which
+# pulls YADGAR_OTLP_ENDPOINT from ~/.yadgar/config.yaml. In production that
+# endpoint (http://host.containers.internal:4318) doesn't resolve on the host,
+# so BatchSpanProcessor hangs at exit retrying failed exports (~10 s backoff),
+# pushing the HITS/Clean output line past `| tail -N` and blocking the process.
+#
+# Setting env before any yadgar import makes pydantic-settings prefer env over
+# yaml, disabling OTLP for this scan process only.
+os.environ.setdefault("YADGAR_OTLP_ENDPOINT", "")
 
 # ---------------------------------------------------------------------------
 # Import secrets checker (must be on sys.path when invoked from repo root)
@@ -67,6 +82,23 @@ _MOCK_WIKI: list[dict[str, Any]] = [
         "slug": "test-page",
         "content": "Safe wiki content for testing.",
         "tags": ["test"],
+    },
+]
+
+# Mock data WITH a known-bad secret for --storage-mock-leak (tests exit-1 path).
+# Uses a synthetic ghp_ token long enough to trip the {20,} threshold.
+_MOCK_MEMORIES_WITH_LEAK: list[dict[str, Any]] = [
+    {
+        "id": "mock:mem:leak:1",
+        "content": "ghp_TESTTOKEN1234567890abcdefghijkl slipped through old threshold",
+        "tags": ["test"],
+        "reason": "unit test fixture with leak",
+    },
+    {
+        "id": "mock:mem:leak:2",
+        "content": "Safe memory alongside the leaked one.",
+        "tags": ["test"],
+        "reason": "",
     },
 ]
 
@@ -165,7 +197,11 @@ def _fetch_memories_real(limit: int | None) -> list[dict[str, Any]]:
         from yadgar.server.lifecycle import _get_storage  # noqa: PLC0415
 
         storage = _get_storage()
-        sql = "SELECT id, content, tags, reason FROM memory"
+        # ORDER BY id DESC: scan newest rows first.
+        # Leaked secrets are typically recent; this ensures --limit N covers
+        # them without requiring a full table scan (e.g. mem 519107 is at
+        # position 2994/3147, would never appear with --limit 200 ASC).
+        sql = "SELECT id, content, tags, reason FROM memory ORDER BY id DESC"
         if limit:
             sql += f" LIMIT {int(limit)}"
         rows = storage._q(sql, {})
@@ -181,7 +217,8 @@ def _fetch_wiki_real(limit: int | None) -> list[dict[str, Any]]:
         from yadgar.server.lifecycle import _get_storage  # noqa: PLC0415
 
         storage = _get_storage()
-        sql = "SELECT id, slug, content, tags FROM wiki_page"
+        # ORDER BY id DESC — same rationale as memory query.
+        sql = "SELECT id, slug, content, tags FROM wiki_page ORDER BY id DESC"
         if limit:
             sql += f" LIMIT {int(limit)}"
         rows = storage._q(sql, {})
@@ -229,7 +266,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--storage-mock",
         action="store_true",
-        help="Use built-in mock data instead of real DB (for tests/CI)",
+        help="Use built-in mock data instead of real DB (for tests/CI — clean data, exits 0)",
+    )
+    parser.add_argument(
+        "--storage-mock-leak",
+        action="store_true",
+        help=(
+            "Like --storage-mock but data contains a known secret "
+            "(for tests/CI — exercises exit-1 path)"
+        ),
     )
     parser.add_argument(
         "--report-dir",
@@ -264,10 +309,15 @@ def main(argv: list[str] | None = None) -> int:
         print("Yadgar secret-leak backfill scan starting...")
         print(f"Report will be written to: {report_path}")
         if args.storage_mock:
-            print("Mode: --storage-mock (using built-in test data)")
+            print("Mode: --storage-mock (using built-in test data, clean)")
+        elif args.storage_mock_leak:
+            print("Mode: --storage-mock-leak (built-in data with known secret, exits 1)")
 
     try:
-        if args.storage_mock:
+        if args.storage_mock_leak:
+            memories = _MOCK_MEMORIES_WITH_LEAK
+            wiki_pages = _MOCK_WIKI
+        elif args.storage_mock:
             memories = _MOCK_MEMORIES
             wiki_pages = _MOCK_WIKI
         else:
