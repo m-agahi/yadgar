@@ -1566,8 +1566,13 @@
     "inh_depth": 0,
     "methods": 0
   },
+  "yadgar/config_yaml.py::_FakeArgs@990": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 0
+  },
   "yadgar/config_yaml.py::__file__": {
-    "loc": 1004
+    "loc": 1008
   },
   "yadgar/config_yaml.py::cmd_config_edit@847": {
     "cyclo": 7,
@@ -1576,6 +1581,12 @@
     "params": 1
   },
   "yadgar/config_yaml.py::cmd_config_edit@980": {
+    "cyclo": 7,
+    "loc": 25,
+    "nesting": 3,
+    "params": 1
+  },
+  "yadgar/config_yaml.py::cmd_config_edit@984": {
     "cyclo": 7,
     "loc": 25,
     "nesting": 3,
@@ -1593,6 +1604,12 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/config_yaml.py::cmd_config_get@896": {
+    "cyclo": 6,
+    "loc": 36,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/config_yaml.py::cmd_config_init@619": {
     "cyclo": 11,
     "loc": 89,
@@ -1600,6 +1617,12 @@
     "params": 1
   },
   "yadgar/config_yaml.py::cmd_config_init@752": {
+    "cyclo": 11,
+    "loc": 89,
+    "nesting": 4,
+    "params": 1
+  },
+  "yadgar/config_yaml.py::cmd_config_init@756": {
     "cyclo": 11,
     "loc": 89,
     "nesting": 4,
@@ -1617,6 +1640,12 @@
     "nesting": 3,
     "params": 1
   },
+  "yadgar/config_yaml.py::cmd_config_list@847": {
+    "cyclo": 12,
+    "loc": 47,
+    "nesting": 3,
+    "params": 1
+  },
   "yadgar/config_yaml.py::cmd_config_set@797": {
     "cyclo": 8,
     "loc": 48,
@@ -1624,6 +1653,12 @@
     "params": 1
   },
   "yadgar/config_yaml.py::cmd_config_set@930": {
+    "cyclo": 8,
+    "loc": 48,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/config_yaml.py::cmd_config_set@934": {
     "cyclo": 8,
     "loc": 48,
     "nesting": 2,
@@ -1641,6 +1676,12 @@
     "nesting": 2,
     "params": 2
   },
+  "yadgar/config_yaml.py::coerce_value@713": {
+    "cyclo": 13,
+    "loc": 41,
+    "nesting": 2,
+    "params": 2
+  },
   "yadgar/config_yaml.py::get_config_path@545": {
     "cyclo": 1,
     "loc": 3,
@@ -1648,6 +1689,12 @@
     "params": 0
   },
   "yadgar/config_yaml.py::get_config_path@666": {
+    "cyclo": 2,
+    "loc": 15,
+    "nesting": 1,
+    "params": 0
+  },
+  "yadgar/config_yaml.py::get_config_path@670": {
     "cyclo": 2,
     "loc": 15,
     "nesting": 1,
@@ -1665,6 +1712,12 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/config_yaml.py::get_field_section@707": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/config_yaml.py::load_yaml@550": {
     "cyclo": 4,
     "loc": 8,
@@ -1677,6 +1730,12 @@
     "nesting": 1,
     "params": 1
   },
+  "yadgar/config_yaml.py::load_yaml@687": {
+    "cyclo": 4,
+    "loc": 8,
+    "nesting": 1,
+    "params": 1
+  },
   "yadgar/config_yaml.py::save_yaml@560": {
     "cyclo": 2,
     "loc": 8,
@@ -1684,6 +1743,12 @@
     "params": 2
   },
   "yadgar/config_yaml.py::save_yaml@693": {
+    "cyclo": 2,
+    "loc": 8,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/config_yaml.py::save_yaml@697": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 1,
@@ -11646,7 +11711,7 @@
     "params": 1
   },
   "yadgar/server/tools/project.py::__file__": {
-    "loc": 1414
+    "loc": 1423
   },
   "yadgar/server/tools/project.py::_build_anchor_rows_catalog@428": {
     "cyclo": 9,
@@ -11876,6 +11941,12 @@
     "nesting": 3,
     "params": 2
   },
+  "yadgar/server/tools/project.py::_compute_source_hash@1158": {
+    "cyclo": 4,
+    "loc": 18,
+    "nesting": 3,
+    "params": 2
+  },
   "yadgar/server/tools/project.py::_compute_source_hash@597": {
     "cyclo": 4,
     "loc": 18,
@@ -12056,6 +12127,12 @@
     "nesting": 1,
     "params": 0
   },
+  "yadgar/server/tools/project.py::_get_active_work_tracked_dir@1080": {
+    "cyclo": 2,
+    "loc": 10,
+    "nesting": 1,
+    "params": 0
+  },
   "yadgar/server/tools/project.py::_get_current_branch@85": {
     "cyclo": 5,
     "loc": 18,
@@ -12182,6 +12259,12 @@
     "nesting": 3,
     "params": 2
   },
+  "yadgar/server/tools/project.py::_parse_frontmatter@1133": {
+    "cyclo": 9,
+    "loc": 23,
+    "nesting": 3,
+    "params": 2
+  },
   "yadgar/server/tools/project.py::_parse_frontmatter@572": {
     "cyclo": 9,
     "loc": 23,
@@ -12248,6 +12331,12 @@
     "nesting": 1,
     "params": 1
   },
+  "yadgar/server/tools/project.py::_project_brief_catalog_full@933": {
+    "cyclo": 4,
+    "loc": 50,
+    "nesting": 1,
+    "params": 1
+  },
   "yadgar/server/tools/project.py::_project_brief_restore@600": {
     "cyclo": 1,
     "loc": 15,
@@ -12290,6 +12379,12 @@
     "nesting": 0,
     "params": 4
   },
+  "yadgar/server/tools/project.py::_project_brief_restore@916": {
+    "cyclo": 1,
+    "loc": 15,
+    "nesting": 0,
+    "params": 4
+  },
   "yadgar/server/tools/project.py::_project_brief_signals@571": {
     "cyclo": 1,
     "loc": 27,
@@ -12315,12 +12410,18 @@
     "params": 8
   },
   "yadgar/server/tools/project.py::_project_brief_signals@831": {
-    "cyclo": 9,
-    "loc": 74,
+    "cyclo": 11,
+    "loc": 83,
     "nesting": 4,
     "params": 8
   },
   "yadgar/server/tools/project.py::_register_active_work_directory@1083": {
+    "cyclo": 2,
+    "loc": 17,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/server/tools/project.py::_register_active_work_directory@1092": {
     "cyclo": 2,
     "loc": 17,
     "nesting": 2,
@@ -12392,6 +12493,12 @@
     "nesting": 3,
     "params": 3
   },
+  "yadgar/server/tools/project.py::_wiki_refresh_stale_impl@1178": {
+    "cyclo": 23,
+    "loc": 100,
+    "nesting": 3,
+    "params": 3
+  },
   "yadgar/server/tools/project.py::_wiki_refresh_stale_impl@617": {
     "cyclo": 23,
     "loc": 100,
@@ -12441,6 +12548,12 @@
     "params": 2
   },
   "yadgar/server/tools/project.py::bootstrap_project@1053": {
+    "cyclo": 2,
+    "loc": 16,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/server/tools/project.py::bootstrap_project@1062": {
     "cyclo": 2,
     "loc": 16,
     "nesting": 1,
@@ -12518,6 +12631,12 @@
     "nesting": 1,
     "params": 3
   },
+  "yadgar/server/tools/project.py::project_brief@986": {
+    "cyclo": 4,
+    "loc": 73,
+    "nesting": 1,
+    "params": 3
+  },
   "yadgar/server/tools/project.py::update_active_work@1022": {
     "cyclo": 1,
     "loc": 11,
@@ -12543,6 +12662,12 @@
     "params": 2
   },
   "yadgar/server/tools/project.py::update_active_work@1103": {
+    "cyclo": 1,
+    "loc": 16,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/server/tools/project.py::update_active_work@1112": {
     "cyclo": 1,
     "loc": 16,
     "nesting": 0,
@@ -12602,6 +12727,12 @@
     "nesting": 5,
     "params": 2
   },
+  "yadgar/server/tools/project.py::wiki_cleanup_merged_branches@1319": {
+    "cyclo": 19,
+    "loc": 105,
+    "nesting": 5,
+    "params": 2
+  },
   "yadgar/server/tools/project.py::wiki_cleanup_merged_branches@758": {
     "cyclo": 19,
     "loc": 105,
@@ -12651,6 +12782,12 @@
     "params": 3
   },
   "yadgar/server/tools/project.py::wiki_refresh_stale@1272": {
+    "cyclo": 2,
+    "loc": 35,
+    "nesting": 2,
+    "params": 3
+  },
+  "yadgar/server/tools/project.py::wiki_refresh_stale@1281": {
     "cyclo": 2,
     "loc": 35,
     "nesting": 2,

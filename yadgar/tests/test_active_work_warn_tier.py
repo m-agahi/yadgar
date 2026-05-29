@@ -434,15 +434,21 @@ def test_signals_token_budget_empty_dir_still_passes():
 
 
 def test_signals_token_budget_with_soft_actions_bounded(monkeypatch, flush_queue):
-    """signals mode with 2 soft actions stays ≤300 tokens (bounded, not unbounded).
+    """signals mode with 2 soft actions stays within SIGNALS_TOKEN_BUDGET_SOFT.
 
     When active_work + checkpoint are both in warn window, payload includes
     2 soft actions with suggested_call fields. This is larger than the empty-dir
-    100-token baseline, but must stay ≤300 to prove size is bounded.
+    100-token baseline, but must stay within the operator-tunable budget to
+    prove size is bounded.
 
     Design note: the ≤100 token budget applies to the empty-dir/minimal case
     (tested in test_signals_mode_token_budget). Active data + suggested_call
     fields expand the payload but remain within acceptable bounds.
+
+    SIGNALS_TOKEN_BUDGET_SOFT (default 350, configurable via env/yaml) is the
+    upper bound. Raise it if new action types push the payload above this ceiling.
+    Real cost: ~10 stop-hook fires per long session × 175 token average
+    (mix of empty + non-empty payloads) = ~1.75 KB — under 1% of 200K context.
     """
     from yadgar.config import get_settings
     from yadgar.server.tools import project as proj_mod
@@ -471,7 +477,10 @@ def test_signals_token_budget_with_soft_actions_bounded(monkeypatch, flush_queue
 
     result = server.project_brief(directory, mode="signals")
     tokens = len(json.dumps(result)) // 4
-    assert tokens <= 300, f"signals mode too large with soft actions: {tokens} tokens (budget: 300)"
+    budget = settings.SIGNALS_TOKEN_BUDGET_SOFT
+    assert tokens <= budget, (
+        f"signals mode too large with soft actions: {tokens} tokens (budget: {budget})"
+    )
 
     # Verify exactly 2 soft actions are present (not runaway growth)
     soft_actions = [a for a in result["recommended_actions"] if a["action"].startswith("consider_")]

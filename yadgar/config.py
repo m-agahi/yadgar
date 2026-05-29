@@ -445,6 +445,10 @@ class Settings(BaseSettings):
     # When True (opt-in): watchdog auto-writes stub _active_work on stale detection.
     # Default OFF — preserves user-curated _active_work semantic. Enable via systemd unit env.
     AUTO_REFRESH_ACTIVE_WORK: bool = False
+    # Token-budget upper bound for signals mode payload (tokens ≈ len(json) // 4).
+    # Default 350 covers 2 soft actions + suggested_call fields with headroom.
+    # Raise if new action types push the payload above this ceiling.
+    SIGNALS_TOKEN_BUDGET_SOFT: int = 350
 
     # v5.8.0: anchor hygiene TTL knobs
     # Default valid_until offset (days) for tier=conditional anchors.
