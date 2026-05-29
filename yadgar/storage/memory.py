@@ -34,8 +34,10 @@ Clusters + similarity links → storage/cluster.py (_ClusterMixin)
 """
 
 import logging
+import os
 import re as _re
 
+from yadgar.secrets import SecretLeakBlocked, check_secrets
 from yadgar.tracing import trace_span
 
 _log = logging.getLogger(__name__)
@@ -87,7 +89,7 @@ class _MemoryMixin:
     # ------------------------------------------------------------------ Memories
 
     @trace_span("storage.memory.insert_memory")
-    def insert_memory(
+    def insert_memory(  # noqa: C901 — pre-existing complexity + v5.10.2 security gate (P13)
         self, memory: dict, embeddings_engine=None, settings=None, branch: str | None = None
     ) -> int:
         from yadgar.storage import _get_enrichment_pipeline
@@ -150,6 +152,42 @@ class _MemoryMixin:
         if memory.get("migration_grace") is not None:
             sql += ", migration_grace = $migration_grace"
             params["migration_grace"] = bool(memory["migration_grace"])
+
+        # v5.10.2: Layer 1 storage-level secret gate — last line of defence.
+        # Fires only if API-boundary (Layer 2) gate was bypassed.
+        # YADGAR_SECRET_GATE_DISABLED=1 is a kill switch for emergencies only.
+        if not os.environ.get("YADGAR_SECRET_GATE_DISABLED"):
+            _content_str = memory.get("content", "") or ""
+            _tags_str = " ".join(str(t) for t in (memory.get("tags") or []))
+            _reason_str = memory.get("reason", "") or ""
+            _blocked, _reason, _preview = check_secrets(_content_str)
+            if not _blocked and _tags_str:
+                _blocked, _reason, _preview = check_secrets(_tags_str)
+            if not _blocked and _reason_str:
+                _blocked, _reason, _preview = check_secrets(_reason_str)
+            if _blocked:
+                try:
+                    from yadgar.metrics import yadgar_writegate_outcome  # noqa: PLC0415
+
+                    yadgar_writegate_outcome.labels(outcome="rejected_secret_at_storage").inc()
+                except Exception:
+                    pass
+                _log.error(
+                    "storage_secret_gate_blocked",
+                    extra={
+                        "component": "storage.memory.insert_memory",
+                        "outcome": "rejected_secret_at_storage",
+                        "reason": _reason,
+                        "preview": _preview,
+                    },
+                )
+                raise SecretLeakBlocked(_reason, _preview)
+        elif os.environ.get("YADGAR_SECRET_GATE_DISABLED"):
+            _log.warning(
+                "YADGAR_SECRET_GATE_DISABLED is set — storage-level secret gate bypassed. "
+                "This is a kill switch for emergencies only. Remove it when resolved."
+            )
+
         self._q(sql, params)
 
         # Enrichment pipeline

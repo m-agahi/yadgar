@@ -7,6 +7,7 @@ import logging
 
 import yadgar.server._state as _st
 from yadgar.config import get_settings
+from yadgar.secrets import gate_or_reject
 from yadgar.server._app import _tool
 from yadgar.server._helpers import _q_with_timeout
 from yadgar.server.lifecycle import (
@@ -445,6 +446,12 @@ def wiki_update(page_id: int, fields: dict) -> dict:
             f"Disallowed field(s) for wiki_update: {sorted(unknown)}. "
             f"Allowed: {sorted(_WIKI_UPDATE_ALLOWED)}"
         )
+    # v5.10.2: secret gate — scan content field before any state mutation
+    _content_val = fields.get("content", "") if fields else ""
+    _gate = gate_or_reject(_content_val)
+    if _gate is not None:
+        return _gate
+
     if not fields:
         result = _st._storage.get_wiki_page(int(page_id))
         if result is None:

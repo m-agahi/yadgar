@@ -15,6 +15,10 @@ class _ApplyMixin:
 
         Sets _drain_local.active = True so write tools skip re-enqueueing
         during this call, preventing exponential queue growth on replay.
+
+        v5.10.2: SecretLeakBlocked from Layer 1 storage gate propagates up
+        to the drainer's _drain_once() exception handler, which classifies it
+        as "permanent" and DLQs the payload so operator can inspect.
         """
         from yadgar.file_queue._locals import _drain_local
 
