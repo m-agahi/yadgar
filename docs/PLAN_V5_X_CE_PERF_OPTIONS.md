@@ -1,8 +1,22 @@
-# PLAN — v5.X+: Cross-Encoder Inference Performance Options
+# PLAN — v5.11+: Cross-Encoder Inference Performance Options (menu, version-assigned)
 
-**Status:** drafted 2026-05-29 for future discussion. Not scheduled.
+**Status:** drafted 2026-05-29 for future discussion. Each option is INDIVIDUALLY assigned a version slot per user direction 2026-05-29 evening; selection criteria after 72h soak.
 
 **Master at draft time:** core v5.10.3 (about to ship) + backend v5.4.0 deployed.
+
+## Version slot assignments
+
+| Option | Slot | Trigger |
+|---|---|---|
+| B (int8 quantization) | **backend-v5.4.2** | If CE cold-path >2s/query sustained AND cache hit-rate <60%. Highest value/effort. |
+| E (async ML pool) | **backend-v5.4.3** | If concurrent-session pain observed (multiple agents queueing on /rerank). Currently single-user — defer. |
+| G (skip CE on high retrieval_confidence) | **backend-v5.4.4** | If retrieval_confidence ≥0.95 correlates with stable rerank scores (measure first). |
+| A (GPU) | **backend-v5.5.0** (major) | Hardware change + nix module rewrite. Last resort. |
+| C (batch utilization) | **backend-v5.4.5** | Only if K>32 workflows observed (audit_anchors with N>32 anchors etc.). |
+| D (text truncation) | **REJECTED** | Risk of accuracy regression outweighs win. |
+| F (smaller CE model) | **REJECTED** | Compounds K=10 accuracy hit. |
+
+**Pick-one-at-a-time order if soak data points to "CE cold-path matters":** B → G → E → C → A. Skip D + F.
 
 ---
 

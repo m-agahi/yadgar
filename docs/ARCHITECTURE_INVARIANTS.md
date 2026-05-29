@@ -296,6 +296,67 @@ Tier-2 backlog; backfill target v5.7.11+. See `docs/PLAN_V5_7_X_CONFIG_KNOB_BACK
 
 **Last updated:** 2026-05-27.
 
+### I26 — Secret-gate single chokepoint at storage layer
+
+Every write tool that persists user-supplied content MUST pass through `gate_or_reject()` (yadgar/secrets.py) at the API boundary AND through `check_secrets()` at the storage-layer chokepoint (`yadgar/storage/memory.py::insert_memory()`). New write tools CANNOT escape gating because storage refuses any row containing a detected secret pattern.
+
+**Why:** per-tool gating proved fragile in v5.10.1 — `anchor()` had no gate while `memorize()` + `wiki_add()` did. Storage-layer gate is the load-bearing single chokepoint; API-boundary gate is the UX fast-feedback layer; both together = defense in depth.
+
+**Enforcement:** `scripts/check_secret_gate.py` AST-walks `@_tool()`-decorated functions in `yadgar/server/tools/*.py`. Asserts each write tool calls `gate_or_reject(` directly OR delegates to a function that does. Pre-commit hook + CI step. Exit code 1 on violation.
+
+**Banned regressions:**
+- New write tool with `content: str` parameter that doesn't call `gate_or_reject`.
+- Bypassing storage-layer check via direct SQL writes outside `insert_memory()`.
+- Adding a kill-switch env knob that's enabled by default.
+
+History: introduced in v5.10.2. See `docs/PLAN_V5_10_2_SECRET_GATE_ARCHITECTURE.md`.
+
+**Last updated:** 2026-05-29.
+
+### I27 — Plan-first for discoveries (every reproducible bug / >10 LOC fix / user-visible issue lands in a `PLAN_V5_*.md` same-session)
+
+Every in-session discovery satisfying ANY of:
+1. Reproducible bug
+2. Fix scope > 10 LOC
+3. User-visible behavior or UX issue
+
+MUST result in a `docs/PLAN_V5_X_<slug>.md` stub committed within the same session it was discovered, with a corresponding pointer line added to `docs/roadmap/v5.md`. Discoveries failing all three criteria stay in `memorize()` only.
+
+Stub may be ≤10 lines (problem statement, evidence, scope guess, version slot). Full scoping happens later — the rule forces the discovery into the tracked surface, not into chat-only ephemera.
+
+**Why:** observed leak pattern (2026-05-29 audit). Viz UX bugs S2.1–S2.4 sat in memory from 2026-05-20 → 2026-05-29 without a plan because they kept getting "noticed" but never tracked. Plan-first prevents drift between "we know about it" and "we're going to do something about it."
+
+**Pre-write overlap check (≤5 steps, run by dispatched agent NOT main thread):**
+1. `rg -l "<slug-keyword-1>|<slug-keyword-2>" docs/PLAN_V5_*.md`
+2. `mcp__yadgar__wiki_query("<topic>", tags=["plan","roadmap"])`
+3. `grep -E "^- \[\`PLAN" docs/roadmap/v5.md`
+4. Any hit → open file, decide extend-or-new (extend if scope <50 LOC AND same module; new file if cross-cutting or different train)
+5. No hit → write new stub + add roadmap pointer in same edit
+
+**Naming + versioning convention:**
+- `PLAN_V5_X_<slug>.md` for unscoped (`X` literal placeholder, grep-friendly: `rg "PLAN_V5_X"` lists backlog).
+- `PLAN_V5_<N>_<M>_<slug>.md` once assigned to a train.
+- Version slots assigned EAGERLY (not just `X`): pick the next plausible patch/minor based on dependency analysis, document rationale in plan header.
+
+**Enforcement:** `scripts/check_open_discoveries.py` (NEW, to be written) — invoked at session stop hook. Queries memories tagged `discovery|bug|hole` from last 24h. For each, asserts mention in some `PLAN_V5_*.md`. Unmatched → WARN at session end with proposed plan filename. Warn-only, never blocking (blocking would violate friction-budget).
+
+**Tag convention:** `mcp__yadgar__memorize(tags=["discovery", ...])` for anything that might need a plan. Existing un-tagged memories grandfathered.
+
+**Edge cases:**
+- "X feels slow, maybe fix later" — needs stub only if reproducible benchmark exists; else `memorize(tags=["perf-hunch"])`.
+- "Deprecate Y in 6 months" — roadmap note only; stub when work <2 versions away.
+- Overlaps existing plan → extend if same scope+module, new file if cross-cutting.
+- Too vague ("viz feels janky") — single `PLAN_V5_X_<topic>_TRIAGE.md` stub with "needs reproduction" checklist; don't speculatively split.
+
+**Banned regressions:**
+- Closing a session with a tagged `discovery` memory that has no corresponding plan file mention.
+- Creating `PLAN_*.md` without adding a `docs/roadmap/v5.md` pointer line in the same commit.
+- Leaving `PLAN_V5_X_*.md` files unassigned for >30 days without a `# Status: parked` header note.
+
+History: introduced 2026-05-29 (this commit). Proposed by Opus advisor agent after audit found viz UX bugs sat unplanned 9 days (memory ids 494192, 495861).
+
+**Last updated:** 2026-05-29.
+
 ### Deferred (codify only when violations surface)
 
 - **I16 migration reversibility** — better as documented rollback procedure (restore-from-backup OR forward-fix script) verified by integration test.
@@ -658,6 +719,8 @@ Post-v5.3.9 `BindsTo → Wants` decouple, core + backend run as independent daem
 - 2026-05-22: v5.5.2 shipped — backend log_* metric wiring fix. `_ensure_metrics()` in `RotatingJSONLFileHandler` and `RateLimitFilter` hardcoded `yadgar.metrics` import; backend's isolated `embed_service_metrics` registry was never updated. Fixed via DI (`metrics_module=` kwarg) + `_resolve_metrics_module(process)` helper in install path. Core 5.5.1→5.5.2; backend 5.1.1→5.1.2.
 - 2026-05-26: I23 added (v5.6.7 PR-L FINAL) — declared-metric-must-have-writer invariant + `scripts/check_metric_writers.py` AST lint. Live codebase passes at this commit: 63 metrics declared across `metrics.py` + `embed_service_metrics.py`, all have ≥1 writer or are detected via helper wrapper functions in the same file. Pre-commit hook and CI step added.
 - 2026-05-27: I24 added (v5.7.5) — public HTTP-handler must have @trace_span invariant + `scripts/check_trace_spans.py` AST lint. 13 previously un-spanned handlers back-filled in same PR. Live codebase passes at this commit: 22 public handlers in `yadgar/server/http.py`, all spanned. Pre-commit hook and CI step added.
+- 2026-05-29: I26 added (v5.10.2) — secret-gate single chokepoint at storage layer + `scripts/check_secret_gate.py` AST lint. Refactor of per-tool gating (memorize/wiki_add gated, anchor not) into Layer 1 storage chokepoint + Layer 2 API-boundary fast-feedback. GitHub/OpenAI/Anthropic token regex thresholds lowered `{36,}` → `{20,}`. Pre-commit hook and CI step added.
+- 2026-05-29: I27 added (this commit) — plan-first for discoveries. Every reproducible bug / >10 LOC fix / user-visible issue MUST land in `docs/PLAN_V5_*.md` + roadmap pointer same session. Proposed by Opus advisor after audit found viz UX bugs S2.1-S2.4 (memory ids 494192, 495861) sat unplanned for 9 days (2026-05-20 discovery → 2026-05-29 user-flagged). Enforcement via `scripts/check_open_discoveries.py` (lint to be written) + stop-hook warning. Tag convention: `memorize(tags=["discovery", ...])`.
 
 ---
 
