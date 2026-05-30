@@ -1,5 +1,51 @@
 # Migration Notes
 
+## v5.11.0 — Viz knobs configurable via config.yaml (2026-05-30)
+
+Core 5.10.11 → 5.11.0. Backend unchanged at 5.4.0. No schema changes. No DB migrations. Plan: `docs/PLAN_V5_11_0_VIZ_CONFIG_YAML.md`.
+
+### Why
+
+After 11 viz patches (v5.10.7–v5.10.11) every tweak required a code change + redeploy + hard-refresh. All hardcoded viz values are now configurable via `config.yaml` without touching code.
+
+### What changed
+
+**`yadgar/config.py`** — 35 new `VIZ_*` flat Settings fields with v5.10.11 defaults as fallback:
+
+- Node: `VIZ_NODE_SIZE_3D` (8.0), `VIZ_NODE_SIZE_2D` (4.0), `VIZ_HEAT_*` (6 HSL params), `VIZ_CAT_COLOR_*` (8 wiki category colors)
+- Edge: `VIZ_EDGE_COLOR_*` (5 edge type colors), `VIZ_EDGE_WIDTH_3D_MULTIPLIER` (1.5), `VIZ_EDGE_ARROW_LEN` (5)
+- Physics: `VIZ_PHYSICS_CHARGE_STRENGTH` (-12.0), `VIZ_PHYSICS_LINK_DISTANCE_2D` (30.0), `VIZ_PHYSICS_LINK_DISTANCE_3D` (36.0)
+- Layout: `VIZ_LAYOUT_ZOOM_FIT_TICK` (80), `VIZ_LAYOUT_ZOOM_FIT_PADDING` (50), `VIZ_LAYOUT_ZOOM_FIT_TRANSITION_MS` (800)
+- Search: `VIZ_SEARCH_MATCH_COLOR` (#ffffff), `VIZ_SEARCH_PINNED_COLOR` (#ffd700), `VIZ_SEARCH_DIM_OPACITY` (0.18)
+
+**`yadgar/config_yaml.py`** — 35 `FIELD_META` entries + new `viz_config` section in `SECTION_TITLES`.
+
+**`yadgar/config_registry.py`** — 35 `ConfigEntry` rows for I25 three-way sync.
+
+**`yadgar/server/http.py`** — new `GET /api/viz/config` endpoint returning nested JSON with keys `node`, `edge`, `physics`, `layout`, `search`. Auto-protected by `BearerAuthMiddleware`. Traced via `@trace_span("api.viz_config")`.
+
+**`yadgar/static/index.html`**:
+- `YADGAR_VIZ_CONFIG` global declared with v5.10.11 hardcoded fallback defaults
+- `loadVizConfig()` async function: fetches `/api/viz/config`, deep-merges over defaults; silent fallback on error
+- `loadGraph()` now calls `await loadVizConfig()` as first step
+- All viz constants replaced with `YADGAR_VIZ_CONFIG.*` references
+
+### Upgrade steps
+
+1. `nix-apply` (or `docker-compose pull && docker-compose up -d`) to deploy new image
+2. Hard-refresh browser (`Ctrl+Shift+R`) to get new `index.html`
+3. (Optional) Add a `viz:` section to `config.yaml` to override any knob — see `docs/VIZ_CONFIG.md`
+
+### Rollback
+
+Revert to v5.10.11. No data migration needed. No schema changes. Frontend falls back to hardcoded defaults if `/api/viz/config` is unreachable.
+
+### Zero-change deploy
+
+Deployments without any viz keys in `config.yaml` behave identically to v5.10.11. All 35 defaults match the previous hardcoded values exactly.
+
+---
+
 ## v5.10.11 — Viz polish (3D-only): edge thickness +50% + repulsion +20% (2026-05-30)
 
 Core 5.10.10 → 5.10.11. Backend unchanged at 5.4.0. No schema changes. No config changes. Plan: `docs/PLAN_V5_10_11_VIZ_EDGE_THICKNESS_AND_REPULSION.md`.
