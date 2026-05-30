@@ -302,9 +302,13 @@ class TestV51010VizPolish:
 
     def test_nodeRelSize_set_to_8_in_3d_init(self) -> None:
         html = _html()
-        assert ".nodeRelSize(8)" in html, (
-            ".nodeRelSize(8) not found in index.html — v5.10.10 Fix 1 (2x 3D node size) "
-            "not implemented. ForceGraph3D default is 4; set to 8 for 2x sphere radius."
+        # v5.11.0: nodeRelSize is now config-driven via YADGAR_VIZ_CONFIG.node.size_3d
+        # (default 8, same as v5.10.10 hardcoded value)
+        assert (
+            ".nodeRelSize(YADGAR_VIZ_CONFIG.node.size_3d)" in html or ".nodeRelSize(8)" in html
+        ), (
+            ".nodeRelSize not found in index.html — v5.10.10 Fix 1 (2x 3D node size) "
+            "not implemented. ForceGraph3D default is 4; set to 8 (or via YADGAR_VIZ_CONFIG) for 2x sphere radius."
         )
 
     def test_zoomFitDone_flag_declared(self) -> None:
@@ -374,8 +378,13 @@ class TestV51011VizEdgeThicknessAndRepulsion:
     def test_3d_linkWidth_multiplier_present(self) -> None:
         html = _html()
         three_d_block = self._extract_3d_block(html)
-        assert "_linkWidth(l) * 1.5" in three_d_block, (
-            "3D init block missing '.linkWidth(l => _linkWidth(l) * 1.5)' — "
+        # v5.11.0: multiplier is now config-driven (YADGAR_VIZ_CONFIG.edge.width_3d_multiplier)
+        # default 1.5, same behavior as v5.10.11 hardcoded value
+        assert (
+            "_linkWidth(l) * YADGAR_VIZ_CONFIG.edge.width_3d_multiplier" in three_d_block
+            or "_linkWidth(l) * 1.5" in three_d_block
+        ), (
+            "3D init block missing '.linkWidth(l => _linkWidth(l) * N)' — "
             "v5.10.11 Fix 1 (3D-only +50% edge thickness) not implemented."
         )
 
@@ -395,8 +404,14 @@ class TestV51011VizEdgeThicknessAndRepulsion:
     def test_3d_link_distance_36(self) -> None:
         html = _html()
         three_d_block = self._extract_3d_block(html)
-        assert "graph.d3Force('link').distance(36)" in three_d_block, (
-            "3D init block missing 'graph.d3Force(\"link\").distance(36)' — "
+        # v5.11.0: distance is now config-driven (YADGAR_VIZ_CONFIG.physics.link_distance_3d)
+        # default 36, same behavior as v5.10.11 hardcoded value
+        assert (
+            "graph.d3Force('link').distance(YADGAR_VIZ_CONFIG.physics.link_distance_3d)"
+            in three_d_block
+            or "graph.d3Force('link').distance(36)" in three_d_block
+        ), (
+            "3D init block missing 'graph.d3Force(\"link\").distance(36 or config)' — "
             "v5.10.11 Fix 2 (3D-only +20% connected-node repulsion) not implemented. "
             "30 * 1.2 = 36."
         )

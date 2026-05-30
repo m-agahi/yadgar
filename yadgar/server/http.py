@@ -1430,6 +1430,75 @@ async def api_viz_search(request: Request) -> JSONResponse:
         _hook_observe("viz_search", _t0, _caught_exc)
 
 
+@mcp_server.custom_route("/api/viz/config", methods=["GET"])
+@trace_span("api.viz_config")
+async def api_viz_config(request: Request) -> JSONResponse:
+    """Return active viz configuration as nested JSON.
+
+    GET /api/viz/config
+
+    All values come from Settings (config.yaml + env overrides).
+    Frontend fetches this before graph init and applies to all viz constants.
+    Fallback: if this endpoint is unreachable, frontend uses hardcoded defaults.
+
+    Response: nested dict with keys: node, edge, physics, layout, search.
+    """
+    from yadgar.config import get_settings  # noqa: PLC0415
+
+    s = get_settings()
+    data = {
+        "node": {
+            "size_3d": s.VIZ_NODE_SIZE_3D,
+            "size_2d": s.VIZ_NODE_SIZE_2D,
+            "category_colors": {
+                "architecture": s.VIZ_CAT_COLOR_ARCHITECTURE,
+                "decision": s.VIZ_CAT_COLOR_DECISION,
+                "pattern": s.VIZ_CAT_COLOR_PATTERN,
+                "debugging": s.VIZ_CAT_COLOR_DEBUGGING,
+                "reference": s.VIZ_CAT_COLOR_REFERENCE,
+                "convention": s.VIZ_CAT_COLOR_CONVENTION,
+                "fact": s.VIZ_CAT_COLOR_FACT,
+                "analysis": s.VIZ_CAT_COLOR_ANALYSIS,
+            },
+            "heat": {
+                "hue_start": s.VIZ_HEAT_HUE_START,
+                "hue_end": s.VIZ_HEAT_HUE_END,
+                "sat_base": s.VIZ_HEAT_SAT_BASE,
+                "sat_gain": s.VIZ_HEAT_SAT_GAIN,
+                "light_base": s.VIZ_HEAT_LIGHT_BASE,
+                "light_gain": s.VIZ_HEAT_LIGHT_GAIN,
+            },
+        },
+        "edge": {
+            "color": {
+                "semantic": s.VIZ_EDGE_COLOR_SEMANTIC,
+                "temporal": s.VIZ_EDGE_COLOR_TEMPORAL,
+                "transition": s.VIZ_EDGE_COLOR_TRANSITION,
+                "wiki_crossref": s.VIZ_EDGE_COLOR_WIKI_CROSSREF,
+                "memory_wiki": s.VIZ_EDGE_COLOR_MEMORY_WIKI,
+            },
+            "width_3d_multiplier": s.VIZ_EDGE_WIDTH_3D_MULTIPLIER,
+            "arrow_len": s.VIZ_EDGE_ARROW_LEN,
+        },
+        "physics": {
+            "charge_strength": s.VIZ_PHYSICS_CHARGE_STRENGTH,
+            "link_distance_2d": s.VIZ_PHYSICS_LINK_DISTANCE_2D,
+            "link_distance_3d": s.VIZ_PHYSICS_LINK_DISTANCE_3D,
+        },
+        "layout": {
+            "auto_zoom_fit_tick_threshold": s.VIZ_LAYOUT_ZOOM_FIT_TICK,
+            "zoom_fit_padding": s.VIZ_LAYOUT_ZOOM_FIT_PADDING,
+            "zoom_fit_transition_ms": s.VIZ_LAYOUT_ZOOM_FIT_TRANSITION_MS,
+        },
+        "search": {
+            "match_color": s.VIZ_SEARCH_MATCH_COLOR,
+            "pinned_color": s.VIZ_SEARCH_PINNED_COLOR,
+            "dim_opacity": s.VIZ_SEARCH_DIM_OPACITY,
+        },
+    }
+    return JSONResponse(data, headers=_CORS)
+
+
 @mcp_server.custom_route("/graph", methods=["GET"])
 @trace_span("api.graph_view")
 async def graph_view(request: Request) -> FileResponse:
