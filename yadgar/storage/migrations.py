@@ -175,6 +175,26 @@ def _migration_006_source_memory_id(storage) -> None:
     )
 
 
+def _migration_009_wiki_bookmark_table(storage) -> None:
+    """Add wiki_bookmark table + slug UNIQUE index (v5.23.0).
+
+    Table is SCHEMALESS for SurrealDB embedded compatibility.
+    Unique index on slug enforces one bookmark per wiki page.
+    position is a dense integer (0-based) managed by the storage layer.
+
+    Additive only — no impact on existing data.
+    """
+    storage._q("DEFINE TABLE IF NOT EXISTS wiki_bookmark SCHEMALESS;")
+    storage._q("""
+        DEFINE INDEX IF NOT EXISTS wiki_bookmark_slug_idx
+            ON wiki_bookmark FIELDS slug UNIQUE;
+    """)
+    storage._q("""
+        DEFINE INDEX IF NOT EXISTS wiki_bookmark_position_idx
+            ON wiki_bookmark FIELDS position;
+    """)
+
+
 def _migration_008_anchor_tier(storage) -> dict:
     """Add tier / valid_until / migration_grace columns to memory table (v5.8.0).
 
@@ -228,7 +248,7 @@ def _migration_008_anchor_tier(storage) -> dict:
     return {"anchor_tier_migrated_count": migrated}
 
 
-_MIGRATIONS: list[dict] = [
+_MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {"version": "001_hnsw_indexes", "fn": _migration_001_hnsw_indexes},
     {"version": "002_relationship_indexes", "fn": _migration_002_relationship_indexes},
     {
@@ -251,6 +271,10 @@ _MIGRATIONS: list[dict] = [
     {
         "version": "008_anchor_tier",
         "fn": _migration_008_anchor_tier,
+    },
+    {
+        "version": "009_wiki_bookmark_table",
+        "fn": _migration_009_wiki_bookmark_table,
     },
 ]
 
@@ -342,6 +366,7 @@ class _MigrationsMixin:
             "wiki_page",
             "wiki_crossref",
             "wiki_draft",
+            "wiki_bookmark",
         ):
             self._q(f"DEFINE TABLE IF NOT EXISTS {table} SCHEMALESS;")
 
@@ -433,6 +458,14 @@ class _MigrationsMixin:
                 ON engram_slot FIELDS slot_index;
         """)
 
+        self._init_wiki_indexes()
+
+        # ---- Schema migration ----
+        # Run AFTER all tables and indexes are defined so migrations can reference them
+        self._run_migrations()
+
+    def _init_wiki_indexes(self) -> None:
+        """Define wiki-related indexes (extracted for fn_loc compliance)."""
         # wiki_page: FTS on content (BM25 keyword search)
         self._q("""
             DEFINE INDEX IF NOT EXISTS wiki_content_idx
@@ -466,7 +499,12 @@ class _MigrationsMixin:
             DEFINE INDEX IF NOT EXISTS wiki_crossref_to_idx
                 ON wiki_crossref FIELDS to_slug;
         """)
-
-        # ---- Schema migration ----
-        # Run AFTER all tables and indexes are defined so migrations can reference them
-        self._run_migrations()
+        # wiki_bookmark: UNIQUE index on slug + position index (v5.23.0)
+        self._q("""
+            DEFINE INDEX IF NOT EXISTS wiki_bookmark_slug_idx
+                ON wiki_bookmark FIELDS slug UNIQUE;
+        """)
+        self._q("""
+            DEFINE INDEX IF NOT EXISTS wiki_bookmark_position_idx
+                ON wiki_bookmark FIELDS position;
+        """)

@@ -17,6 +17,7 @@ import yadgar.server.tools.agent_prompts  # noqa: F401 — side-effects: none (p
 import yadgar.server.tools.wiki_coverage  # noqa: F401 — side-effects: tool registration
 import yadgar.server.tools.dispatch_helper  # noqa: F401 — side-effects: tool registration
 import yadgar.server.tools.audit  # noqa: F401 — side-effects: tool registration
+import yadgar.server.tools.bookmarks  # noqa: F401 — side-effects: tool registration
 
 # Re-export everything that tests or external code import directly
 from yadgar.server.tools.memorize import memorize, remember
@@ -88,6 +89,12 @@ from yadgar.server.tools.agent_prompts import (
 from yadgar.server.tools.dispatch_helper import agent_dispatch_prelude
 from yadgar.server.tools.wiki_coverage import wiki_coverage
 from yadgar.server.tools.audit import audit_anchors
+from yadgar.server.tools.bookmarks import (
+    bookmark_add,
+    bookmark_remove,
+    bookmark_list,
+    bookmark_reorder,
+)
 
 __all__ = [
     "memorize",
@@ -139,6 +146,10 @@ __all__ = [
     "wiki_coverage",
     "audit_anchors",
     "agent_dispatch_prelude",
+    "bookmark_add",
+    "bookmark_remove",
+    "bookmark_list",
+    "bookmark_reorder",
     # Private helpers re-exported for test access
     "_detect_branch",
     "_detect_branch_cached",

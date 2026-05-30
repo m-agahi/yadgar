@@ -94,6 +94,7 @@ from yadgar.server.lifecycle import (  # noqa: F401
 # ── 5. HTTP routes (side-effects: registers @mcp_server.custom_route) ─
 import yadgar.server.http  # noqa: F401
 import yadgar.server.admin_config  # noqa: F401 — v5.6.7 PR-J: GET /admin/config route
+import yadgar.server.http_bookmarks  # noqa: F401 — v5.23.0: bookmark + wiki routes
 
 # Re-export HTTP route functions so 'import yadgar.server as srv; srv.hook_auto_capture'
 # resolves correctly (test_async_handlers_no_block.py, test_sse.py)
