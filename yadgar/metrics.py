@@ -229,6 +229,16 @@ yadgar_curator_merge_outcome = Counter(
     registry=_registry,
 )
 
+# v5.17.0 — write-time contradiction detection (Adopt-2)
+yadgar_write_time_contradiction_total = Counter(
+    "yadgar_write_time_contradiction_total",
+    "Contradictions detected at write time, by detector reason "
+    "(negation_mismatch | action_divergence). Gated by YADGAR_WRITE_TIME_CONTRADICTION "
+    "(default on).",
+    ["reason"],
+    registry=_registry,
+)
+
 yadgar_engram_allocate_duration_ms = Histogram(
     "yadgar_engram_allocate_duration_ms",
     "Engram slot allocation duration in milliseconds",
