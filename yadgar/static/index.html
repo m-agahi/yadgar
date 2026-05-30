@@ -787,6 +787,8 @@ const sparkDb  = Array(60).fill(0);
 let sparkDbMax = 1;
 // V4: 2D/3D mode. Default '3d'. Persisted in localStorage.
 let _graphMode = localStorage.getItem('yadgar-graph-mode') || '3d';
+// v5.10.8 Bug A: count engine ticks so onEngineStop can skip premature pin.
+let _engineTickCount = 0;
 
 // ── Colour helpers ──────────────────────────────────────────────────────────
 function heatColor(h) {
@@ -826,6 +828,8 @@ function _arrowLen(l) { return (l.type === 'transition' || l.type === 'memory_wi
 
 function initGraph(mode) {
   if (!mode) mode = _graphMode;
+  // v5.10.8 Bug A: reset tick counter so 2D↔3D toggle restarts the guard.
+  _engineTickCount = 0;
   const wrap = document.getElementById('canvas-wrap');
   // Clear previous graph instance
   if (graph) {
@@ -897,7 +901,12 @@ function initGraph(mode) {
         node.fx = node.x;
         node.fy = node.y;
       })
+      .onEngineTick(() => { _engineTickCount++; })
       .onEngineStop(() => {
+        // v5.10.8 Bug A: only pin after physics has actually run (≥50 ticks).
+        // If engine stops at 0 ticks (e.g. no data, or immediate stop on init),
+        // all n.x values are still 0 — pinning would clump everything at origin.
+        if (_engineTickCount < 50) return;
         // After layout settles, pin everything so forces can't push nodes around
         for (const n of graph.graphData().nodes) {
           if (n.fx == null) { n.fx = n.x; n.fy = n.y; }
@@ -1543,8 +1552,9 @@ function resetLayout() {
   if (!graph) return;
   const d = graph.graphData();
   d.nodes.forEach(n => { n.fx = undefined; n.fy = undefined; delete n.x; delete n.y; delete n.vx; delete n.vy; });
-  graph.graphData({ nodes: [], links: [] });
-  setTimeout(() => graph.graphData(d), 50);
+  // v5.10.8 Bug B: direct re-data instead of empty-then-restore (which leaked
+  // Three.js Mesh objects on every call — orphan meshes accumulated 3.3× node count).
+  graph.graphData(d);
 }
 
 // ── Debug panel ──────────────────────────────────────────────────────────────
