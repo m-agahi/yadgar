@@ -1,4 +1,4 @@
-# PLAN — v5.13.0: Bi-temporal edges extension (Adopt-3)
+# PLAN — v5.13.2: Bi-temporal edges extension (Adopt-3)
 
 **Status:** drafted 2026-05-30 from competitor audit 2026-05-30 Item 3 ("Bi-temporal edges on all relationships — 75% done"). Plan-first per I27.
 
