@@ -1,5 +1,32 @@
 # Migration Notes
 
+## v5.13.1 — Integration test backend version pin fix (2026-05-30)
+
+Core 5.13.0 → 5.13.1. Backend unchanged at 5.4.0. No schema changes. No DB migrations. Plan: `docs/PLAN_V5_13_1_INTEGRATION_BACKEND_VERSION_PIN_FIX.md`.
+
+### Why
+
+`yadgar/tests/integration/conftest.py` hardcoded `openfantasy/yadgar-backend:5.0.3` as the container image for integration tests. Production has run `5.4.0` since 2026-05-29. Integration tests exercised a 1-year-stale backend — CE cache + embedding cache code paths never validated in integration.
+
+### What changed
+
+**`yadgar/tests/integration/conftest.py`**:
+- Added `import json` + `from pathlib import Path` imports
+- Added module-level `_SERVER_JSON = Path(__file__).resolve().parents[3] / "server.json"`
+- Added `_backend_image() -> str`: reads `backend_version` from `server.json`, returns `openfantasy/yadgar-backend:{version}`; calls `pytest.skip(...)` on any read/parse failure
+- Replaced `"openfantasy/yadgar-backend:5.0.3"` at cmd list position with `_backend_image()`
+
+**`yadgar/tests/integration/test_conftest_backend_pin.py`** (new):
+- `test_conftest_uses_server_json_backend_version` — asserts `_backend_image()` matches server.json
+- `test_conftest_skips_when_server_json_missing` — asserts `pytest.skip` raised when path patched to missing file
+- `test_no_hardcoded_5_0_3_in_conftest` — regression gate: `"5.0.3"` absent from non-comment conftest source
+
+### Upgrade path
+
+No action required. Integration tests automatically use the correct backend version on next run. If you maintain a fork with a pinned version, remove the hardcoded literal and inherit from `server.json`.
+
+---
+
 ## v5.13.0 — Secret-gate context-awareness + allowlist (2026-05-30)
 
 Core 5.11.0 → 5.13.0. Backend unchanged at 5.4.0. No schema changes. No DB migrations. Plan: `docs/PLAN_V5_13_0_SECRET_GATE_CONTEXT_AWARENESS.md`.
