@@ -6,13 +6,27 @@ module complete.  Skip the whole module if docker/podman is unavailable.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import socket
 import subprocess
 import time
+from pathlib import Path
 
 import pytest
+
+_SERVER_JSON = Path(__file__).resolve().parents[3] / "server.json"
+
+
+def _backend_image() -> str:
+    """Return current backend image tag from server.json (single source of truth)."""
+    try:
+        data = json.loads(_SERVER_JSON.read_text())
+        version = data["backend_version"]
+        return f"openfantasy/yadgar-backend:{version}"
+    except (OSError, KeyError, json.JSONDecodeError) as e:
+        pytest.skip(f"Cannot read backend_version from {_SERVER_JSON}: {e}")
 
 
 def _find_free_port() -> int:
@@ -95,7 +109,7 @@ def live_backend_container(tmp_path_factory):
         "YADGAR_RO_PASS=test123",
         "-e",
         "YADGAR_MCP_AUTH_TOKEN=test-token",
-        "openfantasy/yadgar-backend:5.0.3",
+        _backend_image(),
     ]
 
     result = subprocess.run(cmd, capture_output=True, text=True)
