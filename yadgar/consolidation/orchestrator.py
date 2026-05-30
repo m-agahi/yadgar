@@ -4,15 +4,45 @@ v5.7.0 PR-0: _daemon_loop (idle-triggered + daily 18:30 auto-consolidation)
 removed. Consolidation now runs only when explicitly invoked via force_consolidate()
 (MCP consolidate_now), or by the nightly cron (PR-1). The _maybe_sleep_cycle
 helper is preserved for PR-1 to wire into the cron.
+
+v5.15.0 D1: per-phase duration alerting.  When any phase exceeds
+PHASE_DURATION_WARN_MS (config default 60 000 ms = 1 min), a CRITICAL log is
+emitted with the phase name and actual duration so bursts are immediately
+visible in journalctl.  Override via YADGAR_PHASE_DURATION_WARN_MS env var or
+config YAML.  Set to 0 to disable.
 """
 
 import logging
 import time
 from datetime import UTC, datetime
 
+from yadgar.config import get_settings
 from yadgar.tracing import trace_span
 
 logger = logging.getLogger("yadgar.consolidation")
+
+# v5.15.0 D1: loaded once at import time; tests may monkeypatch this module attr.
+PHASE_DURATION_WARN_MS: int = get_settings().PHASE_DURATION_WARN_MS
+
+
+def _warn_slow_phase(phase: str, duration_ms: int) -> None:
+    """Emit CRITICAL log when a consolidation phase exceeds the warn threshold.
+
+    Args:
+        phase:       Name of the phase (e.g. "apply_decay").
+        duration_ms: Actual elapsed time in milliseconds.
+    """
+    threshold = PHASE_DURATION_WARN_MS
+    if threshold <= 0:
+        return
+    if duration_ms > threshold:
+        logger.critical(
+            "SLOW_PHASE phase=%s duration_ms=%d threshold_ms=%d — "
+            "consolidation phase exceeded warn threshold; check CPU/embed-service load",
+            phase,
+            duration_ms,
+            threshold,
+        )
 
 
 class _OrchestratorMixin:
@@ -50,16 +80,16 @@ class _OrchestratorMixin:
             _t = time.monotonic()
             logger.info("phase_start: apply_decay")
             self._apply_decay(stats)
-            logger.info(
-                "phase_end: apply_decay duration_ms=%d", int((time.monotonic() - _t) * 1000)
-            )
+            _dur_ms = int((time.monotonic() - _t) * 1000)
+            logger.info("phase_end: apply_decay duration_ms=%d", _dur_ms)
+            _warn_slow_phase("apply_decay", _dur_ms)
 
             _t = time.monotonic()
             logger.info("phase_start: process_episodes")
             self._process_new_episodes(stats)
-            logger.info(
-                "phase_end: process_episodes duration_ms=%d", int((time.monotonic() - _t) * 1000)
-            )
+            _dur_ms = int((time.monotonic() - _t) * 1000)
+            logger.info("phase_end: process_episodes duration_ms=%d", _dur_ms)
+            _warn_slow_phase("process_episodes", _dur_ms)
 
             # Prune old episodes to keep the table bounded and _check_temporal_order fast
             self._prune_old_episodes_safe()
@@ -67,18 +97,18 @@ class _OrchestratorMixin:
             _t = time.monotonic()
             logger.info("phase_start: merge_duplicates")
             self._merge_duplicates(stats)
-            logger.info(
-                "phase_end: merge_duplicates duration_ms=%d", int((time.monotonic() - _t) * 1000)
-            )
+            _dur_ms = int((time.monotonic() - _t) * 1000)
+            logger.info("phase_end: merge_duplicates duration_ms=%d", _dur_ms)
+            _warn_slow_phase("merge_duplicates", _dur_ms)
 
             # Semantic similarity linking — create relationships between similar memories
             try:
                 _t = time.monotonic()
                 logger.info("phase_start: link_similar")
                 self._link_similar_memories(stats)
-                logger.info(
-                    "phase_end: link_similar duration_ms=%d", int((time.monotonic() - _t) * 1000)
-                )
+                _dur_ms = int((time.monotonic() - _t) * 1000)
+                logger.info("phase_end: link_similar duration_ms=%d", _dur_ms)
+                _warn_slow_phase("link_similar", _dur_ms)
             except Exception as _exc:
                 from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
 
@@ -89,10 +119,9 @@ class _OrchestratorMixin:
                 _t = time.monotonic()
                 logger.info("phase_start: detect_causality")
                 self._graph.detect_causality()
-                logger.info(
-                    "phase_end: detect_causality duration_ms=%d",
-                    int((time.monotonic() - _t) * 1000),
-                )
+                _dur_ms = int((time.monotonic() - _t) * 1000)
+                logger.info("phase_end: detect_causality duration_ms=%d", _dur_ms)
+                _warn_slow_phase("detect_causality", _dur_ms)
             except Exception as _exc:
                 from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
 
@@ -108,7 +137,9 @@ class _OrchestratorMixin:
                 stats["memify_strengthened"] = memify_stats.get("strengthened", 0)
                 stats["memify_reweighted"] = memify_stats.get("reweighted", 0)
                 stats["memify_derived"] = memify_stats.get("derived", 0)
-                logger.info("phase_end: memify duration_ms=%d", int((time.monotonic() - _t) * 1000))
+                _dur_ms = int((time.monotonic() - _t) * 1000)
+                logger.info("phase_end: memify duration_ms=%d", _dur_ms)
+                _warn_slow_phase("memify", _dur_ms)
             except Exception as _exc:
                 from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
 
@@ -123,10 +154,9 @@ class _OrchestratorMixin:
                 stats["cls_patterns_found"] = cls_stats.get("patterns_found", 0)
                 stats["cls_promoted"] = cls_stats.get("promoted", 0)
                 stats["cls_skipped_inconsistent"] = cls_stats.get("skipped_inconsistent", 0)
-                logger.info(
-                    "phase_end: cls_consolidation duration_ms=%d",
-                    int((time.monotonic() - _t) * 1000),
-                )
+                _dur_ms = int((time.monotonic() - _t) * 1000)
+                logger.info("phase_end: cls_consolidation duration_ms=%d", _dur_ms)
+                _warn_slow_phase("cls_consolidation", _dur_ms)
             except Exception as _exc:
                 from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
 
@@ -142,9 +172,9 @@ class _OrchestratorMixin:
                 action_stats = self._process_action_log()
                 stats["actions_processed"] = action_stats.get("processed", 0)
                 stats["action_memories_created"] = action_stats.get("memories_created", 0)
-                logger.info(
-                    "phase_end: action_log duration_ms=%d", int((time.monotonic() - _t) * 1000)
-                )
+                _dur_ms = int((time.monotonic() - _t) * 1000)
+                logger.info("phase_end: action_log duration_ms=%d", _dur_ms)
+                _warn_slow_phase("action_log", _dur_ms)
             except Exception as _exc:
                 from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
 

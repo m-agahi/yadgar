@@ -231,6 +231,8 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_SESSION_END_RETENTION_DAYS", "30", "int"),
     ConfigEntry("YADGAR_SESSION_END_SNIPPET_TURNS", "5", "int"),
     ConfigEntry("YADGAR_SESSION_END_MIN_MESSAGES", "2", "int"),
+    # ── CPU burst detection knobs (v5.15.0 D1) ──────────────────────────────
+    ConfigEntry("YADGAR_PHASE_DURATION_WARN_MS", "60000", "int"),
     # ── Backend hot-path cache knobs (backend v5.4.0) ────────────────────────
     ConfigEntry("YADGAR_CE_CACHE_ENABLED", "true", "bool"),
     ConfigEntry("YADGAR_EMBED_CACHE_ENABLED", "true", "bool"),
