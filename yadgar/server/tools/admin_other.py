@@ -4,6 +4,7 @@ memory_stats, add_rule, get_rules, memory_get, wiki_get, memory_update, wiki_upd
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 
 import yadgar.server._state as _st
 from yadgar.config import get_settings
@@ -76,17 +77,39 @@ def validate_memory(memory_id: int) -> dict:
 
 
 @_tool(power=True)
-def consolidate_now() -> dict:
-    """Trigger an immediate consolidation cycle."""
-    if _st._consolidation is not None:
-        stats = _st._consolidation.force_consolidate()
-        if _st._sleep is not None:
-            try:
-                sleep_stats = _st._sleep.run_sleep_cycle()
-                stats["sleep_cycle"] = sleep_stats
-            except Exception:
-                logger.exception("Sleep cycle failed during consolidate_now")
-        # v5.9.0: anchor audit pass as final step (gated on ANCHOR_AUDIT_CONSOLIDATION_ENABLED)
+def consolidate_now(mode: str = "light") -> dict:
+    """Trigger an immediate consolidation cycle.
+
+    mode="light" (default): consolidation cycle only (decay, episodes, merge,
+        CLS, causal). Fast — typically < 30 seconds. Use for pre-shutdown
+        flushes, debug runs, and queue-fill scenarios.
+
+    mode="full": consolidation cycle + full sleep cycle (dream replay,
+        community detection, cluster summaries, re-embedding, compression,
+        auto-narrate) + anchor audit pass (if ANCHOR_AUDIT_CONSOLIDATION_ENABLED).
+        Takes 5–15 minutes. Use for deliberate maintenance before a multi-day
+        break or after a large memory import. Also sets the 6-hour sleep cycle
+        gate timestamp so the nightly cron does not double-fire.
+    """
+    if _st._consolidation is None:
+        return {"status": "error", "message": "Consolidation engine not initialized"}
+
+    if mode not in ("light", "full"):
+        return {"status": "error", "message": f"Invalid mode {mode!r}. Use 'light' or 'full'."}
+
+    stats = _st._consolidation.force_consolidate()
+
+    if mode == "full" and _st._sleep is not None:
+        try:
+            sleep_stats = _st._sleep.run_sleep_cycle()
+            stats["sleep_cycle"] = sleep_stats
+            # Update the 6-hour gate timestamp so nightly cron sees the cycle ran
+            _st._consolidation._last_sleep_cycle = datetime.now(UTC)
+        except Exception:
+            logger.exception("Sleep cycle failed during consolidate_now(mode='full')")
+
+    # v5.9.0: anchor audit pass as final step — mode='full' only (gated on config flag)
+    if mode == "full":
         cfg = get_settings()
         if cfg.ANCHOR_AUDIT_CONSOLIDATION_ENABLED:
             try:
@@ -96,8 +119,8 @@ def consolidate_now() -> dict:
                 stats["anchor_audit_pass"] = anchor_pass_stats
             except Exception:
                 logger.exception("Anchor audit pass failed during consolidate_now (non-fatal)")
-        return {"status": "completed", **stats}
-    return {"status": "error", "message": "Consolidation engine not initialized"}
+
+    return {"status": "completed", "mode": mode, **stats}
 
 
 @_tool(power=True)
@@ -136,6 +159,96 @@ def reembed_all() -> dict:
     }
 
 
+def _ms_per_table_stats(storage) -> dict:
+    """Return per-table row/byte counts for DB-size telemetry (memory_stats helper)."""
+    _ms_timeout = settings.CHECK_INVARIANTS_QUERY_TIMEOUT_SECONDS
+    per_table: dict[str, dict] = {}
+    for tbl, field in _st._PER_TABLE_FIELDS.items():
+        try:
+            if field:
+                rows = _q_with_timeout(
+                    storage,
+                    f"SELECT count() AS c, math::sum(string::len({field})) AS content_bytes "
+                    f"FROM {tbl} GROUP ALL",
+                    timeout_seconds=_ms_timeout,
+                )
+            else:
+                rows = _q_with_timeout(
+                    storage,
+                    f"SELECT count() AS c FROM {tbl} GROUP ALL",
+                    timeout_seconds=_ms_timeout,
+                )
+            if rows:
+                r = rows[0]
+                entry: dict = {"rows": int(r.get("c", 0))}
+                if field:
+                    entry["estimated_bytes"] = int(r.get("content_bytes") or 0)
+                per_table[tbl] = entry
+            else:
+                per_table[tbl] = {"rows": 0}
+        except Exception as exc:
+            logger.warning("memory_stats: per_table query failed for %s: %s", tbl, exc)
+            per_table[tbl] = {"rows": 0, "error": str(exc)}
+    return per_table
+
+
+def _ms_histogram_p95(hist) -> float:
+    """Extract approximate p95 from a Prometheus Histogram sample."""
+    try:
+        samples = list(hist.collect()[0].samples)
+        count = next((s.value for s in samples if s.name.endswith("_count")), 0.0)
+        if count == 0:
+            return 0.0
+        target = count * 0.95
+        bucket_samples = sorted(
+            (s for s in samples if s.name.endswith("_bucket")),
+            key=lambda s: s.labels.get("le", "0"),
+        )
+        cumulative = 0.0
+        for s in bucket_samples:
+            le_val = s.labels.get("le", "+Inf")
+            if le_val == "+Inf":
+                break
+            cumulative = s.value
+            if cumulative >= target:
+                return float(le_val)
+        return 0.0
+    except Exception:
+        return 0.0
+
+
+def _ms_queue_depth() -> int:
+    """Return current queue depth from Prometheus gauge (memory_stats helper)."""
+    try:
+        from yadgar.metrics import yadgar_queue_depth  # noqa: PLC0415
+
+        gauge_samples = list(yadgar_queue_depth.collect()[0].samples)
+        for s in gauge_samples:
+            if s.labels.get("queue") == "queue":
+                return int(s.value)
+    except Exception:
+        pass
+    return 0
+
+
+def _ms_circuit_breaker_states() -> dict[str, int]:
+    """Return ML client circuit-breaker states (memory_stats helper)."""
+    cb_states: dict[str, int] = {}
+    try:
+        from yadgar.ml_client import RemoteMLClient  # noqa: PLC0415
+
+        _ml = getattr(_st, "_ml_client", None)
+        if isinstance(_ml, RemoteMLClient):
+            state_map = {"closed": 0, "half_open": 1, "open": 2}
+            for ep in ("ce", "nli", "pair"):
+                cb = getattr(_ml, f"_cb_{ep}", None)
+                if cb is not None:
+                    cb_states[ep] = state_map.get(cb._state, 0)
+    except Exception:
+        pass
+    return cb_states
+
+
 @_tool()
 def memory_stats() -> dict:
     """Return system memory statistics."""
@@ -143,7 +256,6 @@ def memory_stats() -> dict:
     stats = storage.get_memory_stats()
 
     if _st._write_gate is not None:
-        # Track rejections via memories with surprisal below threshold
         stats["write_gate_rejections"] = getattr(_st._write_gate, "_rejection_count", 0)
 
     if _st._engram is not None:
@@ -156,8 +268,7 @@ def memory_stats() -> dict:
             stats["engram_slot_utilization"] = 0.0
 
     if _st._rules_engine is not None:
-        active_rules = _st._rules_engine.get_all_rules()
-        stats["active_rules"] = len(active_rules)
+        stats["active_rules"] = len(_st._rules_engine.get_all_rules())
 
     if _st._cls is not None:
         stats["episodic_count"] = storage.count_memories_by_store_type("episodic")
@@ -169,49 +280,15 @@ def memory_stats() -> dict:
         )
 
     if _st._causal is not None:
-        causal_edges = storage.get_all_causal_edges()
-        stats["causal_edges"] = len(causal_edges)
+        stats["causal_edges"] = len(storage.get_all_causal_edges())
 
     if _st._metacognition is not None:
-        # Average coverage across recent queries isn't tracked globally,
-        # but we can report the chunk limit setting
         stats["cognitive_load_limit"] = _st._metacognition._chunk_limit
 
     # DB-size telemetry — always include so callers can monitor disk usage.
     try:
         db_size_info = storage.get_db_size()
-        # Append per-table breakdown so callers can identify which table drives bloat.
-        # Uses the module-level _PER_TABLE_FIELDS constant (shared with check_invariants).
-        _ms_timeout = settings.CHECK_INVARIANTS_QUERY_TIMEOUT_SECONDS
-        _ms_per_table: dict[str, dict] = {}
-        for _ms_tbl, _ms_field in _st._PER_TABLE_FIELDS.items():
-            try:
-                if _ms_field:
-                    _ms_rows = _q_with_timeout(
-                        storage,
-                        f"SELECT count() AS c, "
-                        f"math::sum(string::len({_ms_field})) AS content_bytes "
-                        f"FROM {_ms_tbl} GROUP ALL",
-                        timeout_seconds=_ms_timeout,
-                    )
-                else:
-                    _ms_rows = _q_with_timeout(
-                        storage,
-                        f"SELECT count() AS c FROM {_ms_tbl} GROUP ALL",
-                        timeout_seconds=_ms_timeout,
-                    )
-                if _ms_rows:
-                    _ms_r = _ms_rows[0]
-                    _ms_entry: dict = {"rows": int(_ms_r.get("c", 0))}
-                    if _ms_field:
-                        _ms_entry["estimated_bytes"] = int(_ms_r.get("content_bytes") or 0)
-                    _ms_per_table[_ms_tbl] = _ms_entry
-                else:
-                    _ms_per_table[_ms_tbl] = {"rows": 0}
-            except Exception as _ms_exc:
-                logger.warning("memory_stats: per_table query failed for %s: %s", _ms_tbl, _ms_exc)
-                _ms_per_table[_ms_tbl] = {"rows": 0, "error": str(_ms_exc)}
-        db_size_info["per_table"] = _ms_per_table
+        db_size_info["per_table"] = _ms_per_table_stats(storage)
         stats["db_size"] = db_size_info
     except Exception:
         pass  # non-fatal: stats are best-effort
@@ -223,63 +300,11 @@ def memory_stats() -> dict:
             yadgar_recall_duration_ms,
         )
 
-        def _p95(hist) -> float:
-            """Extract approximate p95 from a Histogram sample."""
-            try:
-                samples = list(hist.collect()[0].samples)
-                count = next((s.value for s in samples if s.name.endswith("_count")), 0.0)
-                if count == 0:
-                    return 0.0
-                target = count * 0.95
-                bucket_samples = [s for s in samples if s.name.endswith("_bucket")]
-                bucket_samples.sort(key=lambda s: s.labels.get("le", "0"))
-                cumulative = 0.0
-                for s in bucket_samples:
-                    le_val = s.labels.get("le", "+Inf")
-                    if le_val == "+Inf":
-                        break
-                    cumulative = s.value
-                    if cumulative >= target:
-                        return float(le_val)
-                return 0.0
-            except Exception:
-                return 0.0
-
-        # Queue depth from filesystem gauge (last scraped value)
-        try:
-            _qd_samples = list(yadgar_drainer_lag_ms.collect()[0].samples)
-            _queue_depth_val = 0
-            # Read from queue_depth gauge directly
-            from yadgar.metrics import yadgar_queue_depth  # noqa: PLC0415
-
-            _qd_gauge_samples = list(yadgar_queue_depth.collect()[0].samples)
-            for _s in _qd_gauge_samples:
-                if _s.labels.get("queue") == "queue":
-                    _queue_depth_val = int(_s.value)
-                    break
-        except Exception:
-            _queue_depth_val = 0
-
-        # Circuit breaker states (read-only, non-fatal)
-        _cb_states: dict[str, int] = {}
-        try:
-            from yadgar.ml_client import RemoteMLClient  # noqa: PLC0415
-
-            _ml = getattr(_st, "_ml_client", None)
-            if isinstance(_ml, RemoteMLClient):
-                _state_map = {"closed": 0, "half_open": 1, "open": 2}
-                for _ep in ("ce", "nli", "pair"):
-                    _cb = getattr(_ml, f"_cb_{_ep}", None)
-                    if _cb is not None:
-                        _cb_states[_ep] = _state_map.get(_cb._state, 0)
-        except Exception:
-            pass
-
         stats["metrics"] = {
-            "queue_depth": _queue_depth_val,
-            "drainer_lag_p95_ms": _p95(yadgar_drainer_lag_ms),
-            "recall_p95_ms": _p95(yadgar_recall_duration_ms),
-            "circuit_breaker_states": _cb_states,
+            "queue_depth": _ms_queue_depth(),
+            "drainer_lag_p95_ms": _ms_histogram_p95(yadgar_drainer_lag_ms),
+            "recall_p95_ms": _ms_histogram_p95(yadgar_recall_duration_ms),
+            "circuit_breaker_states": _ms_circuit_breaker_states(),
         }
     except Exception:
         # If prometheus_client missing or any error: still return a stub so

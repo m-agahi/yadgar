@@ -195,8 +195,8 @@ def hook_db_lockdown_check() -> None:
     """PreToolUse (Bash) — block direct docker exec into yadgar containers."""
     try:
         data = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError) as _e:
-        print(json.dumps({"decision": "allow"}))
+    except json.JSONDecodeError, ValueError:
+        print(json.dumps({"hookSpecificOutput": {"permissionDecision": "allow"}}))
         return
 
     cmd = data.get("tool_input", {}).get("command", "")
@@ -204,8 +204,8 @@ def hook_db_lockdown_check() -> None:
         print(
             json.dumps(
                 {
-                    "decision": "block",
-                    "reason": (
+                    "hookSpecificOutput": {"permissionDecision": "deny"},
+                    "systemMessage": (
                         "Direct docker exec into yadgar DB/backend containers is blocked "
                         "to prevent data corruption. Use yadgar MCP tools instead."
                     ),
@@ -213,7 +213,7 @@ def hook_db_lockdown_check() -> None:
             )
         )
     else:
-        print(json.dumps({"decision": "allow"}))
+        print(json.dumps({"hookSpecificOutput": {"permissionDecision": "allow"}}))
 
 
 _HOOKS = {
