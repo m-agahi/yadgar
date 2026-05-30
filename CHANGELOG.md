@@ -6,6 +6,16 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.10.7.2] — 2026-05-30
+
+Hotfix: 3D viz wiki nodes still rendered as fragmented triangle shards after v5.10.7.1.
+
+- **Root cause** (investigation 2026-05-30): `MeshBasicMaterial` with `transparent: true` + `opacity: 1.0` still places mesh in WebGL transparent render pass. Three.js sorts objects back-to-front in that pass but does NOT sort triangles within a single mesh. For an 8-faced `OctahedronGeometry`, back faces overdraw front faces → fragmented appearance. v5.10.7.1's Lambert→Basic swap was necessary but insufficient.
+- **Fix** (`yadgar/static/index.html` line ~823): `transparent: true` → `transparent: !!node.__dimmed`. Mesh stays in opaque render pass when not dimmed → triangle ordering correct → solid octahedra (wiki) + solid spheres (memory) render properly. `opacity` value still controls dim-state alpha when `transparent` is true.
+- **3D heat-coloring never worked** historically (PLAN_V5_10_7_VIZ_FIXES "soak-observed since 2026-05-20"); this fix restores SOLID-NODE rendering. Color treatment (whether heat gradient should be re-applied with proper material) is tracked as future work.
+
+See [MIGRATION_NOTES.md §v5.10.7.2](MIGRATION_NOTES.md#v51072--3d-viz-transparent-flag-fix-2026-05-30).
+
 ## [5.10.7.1] — 2026-05-30
 
 Bundled hotfix: sentinel filter + viz lighting fix.
