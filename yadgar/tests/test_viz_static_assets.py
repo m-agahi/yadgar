@@ -240,3 +240,53 @@ class TestV5108PhysicsAndMeshLeakFix:
             "empty step; each call accumulates orphan meshes. Replace with direct "
             "graph.graphData(d)."
         )
+
+
+class TestV5109OrphanEdgeFilter:
+    """v5.10.9: loadGraph() must filter orphan links before passing to force-graph library.
+
+    Root cause: force-graph.min.js throws 'node not found: entity:NNN' when a link
+    references an ID not in the node set. One orphan edge is enough to crash the
+    physics simulation entirely (engine tick count = 0, all nodes clump at origin).
+
+    Fix: filter allLinks before graph.graphData(...) call in loadGraph().
+    Tests verify the filter code and the console.warn observability guard are present.
+    """
+
+    def test_loadGraph_filters_orphan_links(self) -> None:
+        html = _html()
+        assert "nodeIdSet" in html, (
+            "nodeIdSet missing from loadGraph() — v5.10.9 orphan-edge filter not implemented. "
+            "Without this, force-graph.min.js throws 'node not found: entity:NNN' and the "
+            "physics simulation never starts."
+        )
+        lines = html.splitlines()
+        in_func = False
+        func_lines: list[str] = []
+        brace_depth = 0
+        for line in lines:
+            if "async function loadGraph()" in line:
+                in_func = True
+            if in_func:
+                func_lines.append(line)
+                brace_depth += line.count("{") - line.count("}")
+                if in_func and brace_depth == 0 and len(func_lines) > 1:
+                    break
+        body = "\n".join(func_lines)
+        assert "nodeIdSet" in body, (
+            "nodeIdSet filter not found inside loadGraph() body — filter may be in wrong scope"
+        )
+        assert "allLinks.filter" in body, (
+            "allLinks.filter call missing inside loadGraph() — edges are not being filtered"
+        )
+
+    def test_loadGraph_logs_dropped_count(self) -> None:
+        html = _html()
+        lines = html.splitlines()
+        warn_lines = [
+            ln for ln in lines if "console.warn" in ln and ("orphan" in ln or "dropped" in ln)
+        ]
+        assert warn_lines, (
+            "console.warn with 'orphan' or 'dropped' missing from loadGraph() — "
+            "orphan drops are silent; backend drift won't be observable in DevTools."
+        )

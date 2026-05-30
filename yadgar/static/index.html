@@ -1010,6 +1010,20 @@ async function loadGraph() {
     allNodes = d.nodes || [];
     for (const n of allNodes) { const p = posMap[n.id]; if (p) Object.assign(n, p); }
     allLinks = d.edges || [];
+    // v5.10.9: filter orphan edges before passing to force-graph library.
+    // force-graph throws 'node not found: <id>' synchronously when a link references
+    // an ID absent from the node set — one orphan edge crashes the physics simulation.
+    const nodeIdSet = new Set(allNodes.map(n => n.id));
+    const beforeCount = allLinks.length;
+    allLinks = allLinks.filter(l => {
+      const s = (l.source && l.source.id) || l.source;
+      const t = (l.target && l.target.id) || l.target;
+      return nodeIdSet.has(s) && nodeIdSet.has(t);
+    });
+    const dropped = beforeCount - allLinks.length;
+    if (dropped > 0) {
+      console.warn(`[yadgar viz] dropped ${dropped} orphan edges (endpoints not in node set). Backend payload drift?`);
+    }
     calcDegrees();
     graph.graphData({ nodes: allNodes, links: allLinks });
     applyFilters();
