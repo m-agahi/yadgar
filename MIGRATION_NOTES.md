@@ -1,5 +1,64 @@
 # Migration Notes
 
+## v5.20.0 — DB-lockdown PreToolUse hook migrated to yadgar/hooks/ + Claude Code 2026 schema fix (2026-05-30)
+
+Core 5.19.0 → 5.20.0. Backend unchanged at 5.4.0. No schema changes. No DB migrations.
+Hotfix slot (even version per skip-1 convention).
+
+### Why
+
+Multiple sessions produced recurring errors:
+
+> PreToolUse:Bash hook error — Hook JSON output validation failed — hookSpecificOutput is missing required field 'hookEventName'
+
+Root cause: the PreToolUse Bash hook was registered in `.claude/settings.json` as:
+
+```
+python3 /home/max/git/yadgar/.claude/hooks/hook_runner.py db-lockdown-check
+```
+
+`hook_runner.py` is a project-local file in `.claude/hooks/` — it is **gitignored and never git-tracked**. The `hook_db_lockdown_check()` handler in `yadgar/scripts/hook_runner.py` (the canonical source) emitted JSON without `hookEventName`, violating the Claude Code 2026 PreToolUse schema. In-session fixes to the workspace copy of the file were lost on every context reset.
+
+### What changed
+
+**`yadgar/hooks/db-lockdown-check.py`** (new):
+- Standalone PreToolUse hook script — no dependency on `hook_runner.py` dispatcher.
+- Emits schema-compliant JSON: `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"|"deny"}}` on both paths.
+- Fail-soft: malformed stdin → allow (never blocks work).
+- Logic: deny if `tool_input.command` contains `docker exec yadgar-backend` or `docker exec yadgar-db`.
+
+**`yadgar/install_hooks_lib.py`**:
+- Copies `db-lockdown-check.py` to `~/.claude/hooks/yadgar-db-lockdown-check.py` (global, always installed).
+- `hooks_config["PreToolUse"]` now uses a direct `python3 "<path>"` command (not the `hook_runner.py` dispatcher).
+
+**`yadgar/scripts/hook_runner.py`**:
+- Removed `hook_db_lockdown_check()` function and `"db-lockdown-check"` from `_HOOKS` dict.
+
+**`yadgar/tests/test_db_lockdown_hook.py`** (new):
+- 7 tests: allow path, deny for `yadgar-backend`, deny for `yadgar-db`, fail-soft on malformed JSON,
+  `hookEventName` present on allow, deny, and fail-soft paths.
+
+### Upgrade path
+
+**Run `install_hooks` MCP tool after upgrading** to deploy the new standalone script:
+
+```
+install_hooks(scope="global")
+```
+
+This writes `~/.claude/hooks/yadgar-db-lockdown-check.py` and updates `~/.claude/settings.json` with the new `PreToolUse` entry.
+
+**If you have a project-local `.claude/settings.json` with the old entry:**
+
+The old entry looks like:
+```json
+"PreToolUse": [{"matcher": "Bash", "hooks": [{"command": "python3 ... hook_runner.py db-lockdown-check"}]}]
+```
+
+Either remove it manually, or run `install_hooks(scope="global")` which will overwrite the `PreToolUse` key with the new wiring. The old `hook_runner.py db-lockdown-check` entry can be deleted — the handler no longer exists in `hook_runner.py`.
+
+---
+
 ## v5.19.0 — Scope-aware anchor surfacing in HippocampalReplay (2026-05-30)
 
 Core 5.17.0 → 5.19.0. Backend unchanged at 5.4.0. No schema changes. No DB migrations.
