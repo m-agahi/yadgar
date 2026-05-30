@@ -8,6 +8,7 @@ Verifies:
 - index.html nav link to bookmarks.html present
 - viz_server _mime_type helper returns correct MIME types
 - viz_server do_GET serves static files by path (path-traversal guard)
+- (v5.24.2) marked renderer does not throw on heading with parenthetical text
 """
 
 from __future__ import annotations
@@ -473,3 +474,66 @@ class TestVizServerStaticServing:
             assert b"YADGAR" in resp
         finally:
             del os.environ["YADGAR_VIZ_PROXY"]
+
+
+# ---------------------------------------------------------------------------
+# v5.24.2 regression: marked v15 renderer.text round-trip crash
+# ---------------------------------------------------------------------------
+
+
+class TestMarkedV15RendererRegression:
+    """Regression test for v5.24.2: marked v15 renderer.text must not throw.
+
+    Root cause: v5.24.1 extracted token.text correctly but then called
+    _origText(replaced), passing the HTML string back to v15's default text
+    renderer which does `'tokens' in arg` — throwing "Cannot use 'in' operator
+    to search for 'tokens' in <string>".  Fix: return replaced string directly.
+
+    This test runs node to exercise the actual vendored marked.min.js so future
+    vendored upgrades are caught immediately.
+    """
+
+    def test_marked_parse_heading_with_parens_no_throw(self) -> None:
+        """marked.parse('# v4.9 progress (2026-05-15)') must not throw."""
+        import subprocess
+
+        marked_path = str(_LIB / "marked.min.js")
+        # Use a CommonJS wrapper; marked v15 exports via UMD so require() works.
+        script = (
+            "const marked = require('" + marked_path.replace("'", "\\'") + "');"
+            "const out = marked.parse('# v4.9 progress (2026-05-15)\\n');"
+            "if (typeof out !== 'string') throw new Error('Expected string output, got ' + typeof out);"
+            "process.exit(0);"
+        )
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0, (
+            f"marked.parse threw on heading with parens (v15 renderer regression).\n"
+            f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+        )
+
+    def test_marked_parse_inline_text_no_throw(self) -> None:
+        """marked.parse with inline text containing parens must not throw."""
+        import subprocess
+
+        marked_path = str(_LIB / "marked.min.js")
+        script = (
+            "const marked = require('" + marked_path.replace("'", "\\'") + "');"
+            "const out = marked.parse('Some text (2026-05-15) with **bold** and `code`.');"
+            "if (typeof out !== 'string') throw new Error('Expected string, got ' + typeof out);"
+            "process.exit(0);"
+        )
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0, (
+            f"marked.parse threw on inline text (v15 renderer regression).\n"
+            f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+        )
