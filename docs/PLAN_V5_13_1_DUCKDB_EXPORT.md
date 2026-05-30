@@ -1,4 +1,4 @@
-# PLAN — v5.13.0: DuckDB analytics export
+# PLAN — v5.13.1: DuckDB analytics export
 
 **Status:** drafted 2026-05-30. Plan-first per I27. Source: Adopt-6 from `docs/competitor-audit-2026-05-30.md` (item 6, "DuckDB analytics export") + decision logged in `docs/AUDIT_DECISIONS.md`.
 

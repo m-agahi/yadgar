@@ -1,4 +1,4 @@
-# PLAN — v5.13.0: In-context Memory Blocks (Letta-style core memory primitive)
+# PLAN — v5.14.1: In-context Memory Blocks (Letta-style core memory primitive)
 
 **Status:** drafted 2026-05-30 by Adopt-4 parallel agent in response to competitor audit (`docs/competitor-audit-2026-05-30.md` Item 4 — "In-context memory blocks").
 
