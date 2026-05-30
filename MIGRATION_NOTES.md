@@ -1,5 +1,103 @@
 # Migration Notes
 
+## v5.21.0 — Cross-project anchor dedup detection + PD-23 migration_grace handler (2026-05-30)
+
+Core 5.20.0 → 5.21.0. Backend unchanged at 5.4.0. No schema changes. No DB migrations required.
+Odd minor per skip-1 convention.
+
+### PD-23 Deadline (CRITICAL)
+
+**Deadline: 2026-08-26.** First pre-v5.8 anchors (backfilled 2026-05-27 with 90-day TTL +
+`migration_grace=True`) expire on that date. Without this handler they become invisible to
+restore/hot queries but persist indefinitely in DB, counting toward `anchor_count_project`
+signal thresholds (silent data leak).
+
+**You must upgrade to v5.21.0 before 2026-08-26** to surface these rows for review.
+
+### What changed
+
+**Cross-project anchor redundancy detection:**
+
+`audit_anchors()` now returns a `cross_project_redundancy_candidates` key (always present, may be
+empty). Detection criteria:
+- Cosine similarity >= `ANCHOR_CROSS_PROJECT_COSINE` (default **0.95**, configurable)
+- `content_length_ratio > 0.85` (rejects "common phrase" false positives)
+- Anchors from **different** `directory_context` values
+- `directory_context="global"` rows excluded (already globally scoped)
+
+`project_brief(mode="signals")` also surfaces `cross_project_redundancy_candidates` when
+candidates are found (omitted when empty to stay within 100-token budget, capped at 3).
+
+Candidate shape:
+```json
+{
+  "primary_id": 257,
+  "duplicate_ids": [311992, 489731],
+  "similarity": 0.97,
+  "directory_contexts": ["/home/max/git/yadgar", "/home/max/git/nix"],
+  "recommended_action": "promote_to_global"
+}
+```
+
+**Semantics:** AUDIT-GATED ONLY. No auto-mutation. Candidates surface as read-only signals.
+The user reviews and acts (via existing `forget` / `anchor` tools) after reviewing.
+
+Primary anchor selection: highest `access_count × heat`; tie-broken by oldest `created_at`.
+
+**PD-23 migration_grace handler:**
+
+`audit_anchors()` now emits `verify_grace_expired_anchor` entries in `actions` for rows where
+`migration_grace=True AND valid_until < now`. These entries always have `skipped=True` and
+`skip_reason="user_verification_required"` — they are NEVER auto-applied even when
+`dry_run=False`. They surface as user-gated review items.
+
+Action shape:
+```json
+{
+  "action": "verify_grace_expired_anchor",
+  "id": 518764,
+  "expired_at": "2026-08-26T00:00:00+00:00",
+  "rationale": "migration_grace=True anchor past valid_until; tier=conditional. Verify whether this anchor should be kept (update tier) or forgotten.",
+  "skipped": true,
+  "skip_reason": "user_verification_required"
+}
+```
+
+Review workflow: call `audit_anchors(directory=..., dry_run=True)` → review
+`verify_grace_expired_anchor` entries → for each, either call `forget(id)` to remove or
+`anchor(content=..., tier='conditional')` to re-anchor with explicit TTL.
+
+**New env knob:**
+
+| Knob | Default | Description |
+|---|---|---|
+| `ANCHOR_CROSS_PROJECT_COSINE` | `0.95` | Min cosine for cross-project dedup candidate |
+
+Registered in three-way (Settings, config_registry, config_yaml). Configurable via
+`~/.yadgar/config.yaml` under `anchor_hygiene` section.
+
+**Deferred (planned for later releases):**
+
+- §2 Jira MCP integration for ticket-bound anchors — deferred (optional, opt-in module)
+- §3 `is_protected` repurpose as verified-by-audit flag — deferred (requires `audit_pass_count` schema migration)
+
+### Upgrade path
+
+No DB migration needed. Upgrade yadgar, restart the container. Existing
+`migration_grace=True` anchors will surface as `verify_grace_expired_anchor` candidates on
+the next `audit_anchors()` call.
+
+```bash
+# Pull new image
+podman pull openfantasy/yadgar:5.21.0
+
+# Run audit to see grace-expired rows
+# audit_anchors(directory="/your/project", dry_run=True)
+# → review verify_grace_expired_anchor entries in actions
+```
+
+---
+
 ## v5.20.0 — DB-lockdown PreToolUse hook migrated to yadgar/hooks/ + Claude Code 2026 schema fix (2026-05-30)
 
 Core 5.19.0 → 5.20.0. Backend unchanged at 5.4.0. No schema changes. No DB migrations.

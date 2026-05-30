@@ -7,6 +7,23 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.21.0] - 2026-05-30
+
+Cross-project anchor redundancy detection and PD-23 migration_grace graceful expiry handler.
+Deadline driver: first pre-v5.8 backfilled anchors expire 2026-08-26.
+
+### Added
+- `audit_anchors()` returns `cross_project_redundancy_candidates` key: cosine >= 0.95 + content_length_ratio > 0.85 pairs across different `directory_context` values. AUDIT-GATED ONLY — never auto-mutates.
+- `project_brief(mode="signals")` surfaces `cross_project_redundancy_candidates` (omitted when empty; capped at 3 for token budget).
+- `verify_grace_expired_anchor` recommendation type in `audit_anchors()` actions: surfaces `migration_grace=True` rows past `valid_until` as user-gated review items. Always `skipped=True` — never auto-applied.
+- New env knob `ANCHOR_CROSS_PROJECT_COSINE` (default 0.95): minimum cosine for cross-project dedup. Registered three-way (Settings, config_registry, config_yaml `anchor_hygiene` section).
+
+### Internal
+- New test file `test_cross_project_audit.py` (16 tests): detection, filtering, shape, primary selection, never-auto-mutate guard.
+- `TestMigrationGraceHandler` class added to `test_audit_anchors.py` (7 tests): PD-23 handler.
+
+See MIGRATION_NOTES.md — v5.21.0
+
 ## [5.20.0] - 2026-05-30
 
 Hotfix: db-lockdown PreToolUse hook migrated from project-local `hook_runner.py` dispatcher
