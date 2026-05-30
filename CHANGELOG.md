@@ -14,6 +14,8 @@ Hotfix: `consolidate_now` heavyweight fix + PreToolUse hook schema fix.
 - **Hook schema fix**: `hook_runner.py:db-lockdown-check` now emits `{"hookSpecificOutput": {"permissionDecision": "allow"|"deny"}}` (new PreToolUse schema). Eliminates `(root): Invalid input` noise on Bash tool calls.
 - **I13 compliance fix**: extracted 4 helper functions from `memory_stats()` to resolve pre-existing HARD complexity violations (cyclo=32, fn_loc=155, nesting=5). No behavior change.
 - **Behavior change**: `consolidate_now()` (default/no args) no longer runs the sleep cycle or anchor audit. Callers requiring the full cycle must pass `mode='full'`.
+- **License correction**: `pyproject.toml` `license` field MIT → Apache-2.0 (matches `LICENSE` file). Resolves YELLOW finding #3 in `docs/LICENSE_COMPLIANCE_AUDIT_2026-05-30.md`.
+- **Verified live**: deployed via local merge + amd64 build + nix bump per `yadgar-dev-workflow-single-isolated-change-release-cycle` anchor. `/health` reports `version=5.10.4` post-restart.
 
 See [MIGRATION_NOTES.md §v5.10.4](MIGRATION_NOTES.md#v5104--consolidate_now-mode-parameter-2026-05-30).
 
