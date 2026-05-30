@@ -6,6 +6,23 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.13.0] — 2026-05-30
+
+Secret-gate context-awareness + allowlist — false-positive reduction for test fixtures, plan docs, and changelog entries.
+
+- **New module `yadgar/security/allowlist.py`**: `AllowlistEntry` dataclass, `is_allowlisted(content, tags, source)`, `_reload_allowlist()`, `_write_audit()`. Tag-based + pattern-based bypass (full-bypass only; pattern override deferred).
+- **`gate_or_reject()` extended** (`yadgar/secrets.py`): new `tags=` and `source=` kwargs. Calls `is_allowlisted()` BEFORE pattern scan. Allowlist hit → audit log + return clean. No allowlist file → identical to v5.10.x default-deny.
+- **Allowlist config**: `YADGAR_SECRET_GATE_ALLOWLIST_PATH` (default `~/.yadgar/secret-gate-allowlist.yaml`) + `YADGAR_SECRET_GATE_AUDIT_DIR` (default `~/.yadgar/secret-gate-audit/`). Date-based JSONL rotation.
+- **Audit trail**: every allowlist hit appended to `<audit-dir>/YYYY-MM-DD.jsonl` with fields: `ts`, `matched_pattern`, `tags`, `reason`, `source`, `content_preview` (≤80 chars).
+- **Source detection**: `inspect.stack()` heuristic — `/tests/` → `"test:<file>"`, `/server/tools/` → `"tool:<name>"`, `/curation/` → `"doc-ingest"`, else `"unknown"`.
+- **Allowlist YAML schema** (v1): `allowlist: [{tags: [...], patterns: [...], reason: "..."}]`. Tag match = entry tags ⊆ call-site tags. Pattern match = prefix-contains (`ghp_*` → `"ghp_" in content`).
+- **New invariant `scripts/check_allowlist_audit.py`** (I28): static check that `_write_audit` and `is_allowlisted` co-present in `allowlist.py`, and that `gate_or_reject()` calls both. Pre-commit wired on `yadgar/security/allowlist.py` and `yadgar/secrets.py` changes.
+- **Test fixture** `yadgar/tests/fixtures/secret-gate-allowlist.yaml`: canonical allowlist for all v5.10.2 false-positive cases.
+- **11 new tests** (`test_allowlist.py`): per-tag bypass, audit log fields, default-deny, YAML invalid fails loud, source detection.
+- I26 (`check_secret_gate.py`) still passes. Backward-compatible: callers without `tags=` get default-deny.
+
+See [MIGRATION_NOTES.md §v5.13.0](MIGRATION_NOTES.md#v5130--secret-gate-context-awareness--allowlist-2026-05-30).
+
 ## [5.11.0] — 2026-05-30
 
 Viz knobs configurable via config.yaml — all hardcoded viz constants replaced with config-driven values.
