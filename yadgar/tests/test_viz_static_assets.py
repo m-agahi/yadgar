@@ -290,3 +290,55 @@ class TestV5109OrphanEdgeFilter:
             "console.warn with 'orphan' or 'dropped' missing from loadGraph() — "
             "orphan drops are silent; backend drift won't be observable in DevTools."
         )
+
+
+class TestV51010VizPolish:
+    """v5.10.10: 2x 3D node size + auto-zoom-fit on initial load (both modes).
+
+    Fix 1: .nodeRelSize(8) in 3D init block — doubles default sphere radius (4 → 8).
+    Fix 2: _zoomFitDone flag + onEngineTick callback triggers zoomToFit at tick 80,
+           once per data load, in both 2D and 3D modes.
+    """
+
+    def test_nodeRelSize_set_to_8_in_3d_init(self) -> None:
+        html = _html()
+        assert ".nodeRelSize(8)" in html, (
+            ".nodeRelSize(8) not found in index.html — v5.10.10 Fix 1 (2x 3D node size) "
+            "not implemented. ForceGraph3D default is 4; set to 8 for 2x sphere radius."
+        )
+
+    def test_zoomFitDone_flag_declared(self) -> None:
+        html = _html()
+        assert "_zoomFitDone" in html, (
+            "_zoomFitDone variable missing from index.html — v5.10.10 Fix 2 "
+            "(auto-zoom-fit) requires a module-level flag to prevent repeated zoom "
+            "calls per data load."
+        )
+
+    def test_onEngineTick_calls_zoomToFit_at_threshold(self) -> None:
+        html = _html()
+        # Both _zoomFitDone and zoomToFit must appear inside an onEngineTick callback
+        lines = html.splitlines()
+        in_tick = False
+        tick_lines: list[str] = []
+        brace_depth = 0
+        for line in lines:
+            if ".onEngineTick(" in line:
+                in_tick = True
+                tick_lines = []
+                brace_depth = 0
+            if in_tick:
+                tick_lines.append(line)
+                brace_depth += line.count("{") - line.count("}")
+                if in_tick and brace_depth == 0 and len(tick_lines) > 1:
+                    # Check this callback block, then reset and keep searching
+                    body = "\n".join(tick_lines)
+                    if "_zoomFitDone" in body and "zoomToFit" in body:
+                        return  # found a qualifying onEngineTick block
+                    in_tick = False
+                    tick_lines = []
+        raise AssertionError(
+            "No onEngineTick callback found that references both _zoomFitDone and "
+            "zoomToFit — v5.10.10 Fix 2 (auto-zoom-fit) not implemented. "
+            "The callback must set _zoomFitDone=true and call graph.zoomToFit() at tick 80."
+        )

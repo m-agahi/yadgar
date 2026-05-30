@@ -789,6 +789,8 @@ let sparkDbMax = 1;
 let _graphMode = localStorage.getItem('yadgar-graph-mode') || '3d';
 // v5.10.8 Bug A: count engine ticks so onEngineStop can skip premature pin.
 let _engineTickCount = 0;
+// v5.10.10: zoom-fit flag — reset per initGraph + loadGraph so fit fires once per load.
+let _zoomFitDone = false;
 
 // ── Colour helpers ──────────────────────────────────────────────────────────
 function heatColor(h) {
@@ -830,6 +832,8 @@ function initGraph(mode) {
   if (!mode) mode = _graphMode;
   // v5.10.8 Bug A: reset tick counter so 2D↔3D toggle restarts the guard.
   _engineTickCount = 0;
+  // v5.10.10: reset zoom-fit flag so toggle / re-init re-fits on next data load.
+  _zoomFitDone = false;
   const wrap = document.getElementById('canvas-wrap');
   // Clear previous graph instance
   if (graph) {
@@ -846,6 +850,7 @@ function initGraph(mode) {
     // 3D mode using 3d-force-graph + Three.js
     graph = ForceGraph3D()(wrap)
       .backgroundColor('#0d1117')
+      .nodeRelSize(8)                     // v5.10.10: 2x default (4) for visibility
       .nodeId('id')
       .linkSource('source')
       .linkTarget('target')
@@ -865,7 +870,17 @@ function initGraph(mode) {
         return vis.has(s) && vis.has(t);
       })
       .onNodeClick(showDetail)
-      .onBackgroundClick(closeDetail);
+      .onBackgroundClick(closeDetail)
+      .onEngineTick(() => {
+        _engineTickCount++;
+        // v5.10.10: auto-fit once layout has settled (tick 80, 30 past the pin threshold).
+        if (!_zoomFitDone && _engineTickCount === 80) {
+          _zoomFitDone = true;
+          if (typeof graph.zoomToFit === 'function') {
+            graph.zoomToFit(800, 50);
+          }
+        }
+      });
   } else {
     // 2D mode (force-graph canvas) — default
     graph = ForceGraph()(wrap)
@@ -901,7 +916,16 @@ function initGraph(mode) {
         node.fx = node.x;
         node.fy = node.y;
       })
-      .onEngineTick(() => { _engineTickCount++; })
+      .onEngineTick(() => {
+        _engineTickCount++;
+        // v5.10.10: auto-fit once layout has settled (tick 80, 30 past the pin threshold).
+        if (!_zoomFitDone && _engineTickCount === 80) {
+          _zoomFitDone = true;
+          if (typeof graph.zoomToFit === 'function') {
+            graph.zoomToFit(800, 50);
+          }
+        }
+      })
       .onEngineStop(() => {
         // v5.10.8 Bug A: only pin after physics has actually run (≥50 ticks).
         // If engine stops at 0 ticks (e.g. no data, or immediate stop on init),
@@ -999,6 +1023,8 @@ function drawNode(node, ctx, scale) {
 
 // ── Data loading ────────────────────────────────────────────────────────────
 async function loadGraph() {
+  // v5.10.10: reset zoom-fit flag so reload button re-fits on next engine settle.
+  _zoomFitDone = false;
   status('Loading…', 'wait');
   try {
     const r = await fetch(`${DAEMON}/api/graph`);
