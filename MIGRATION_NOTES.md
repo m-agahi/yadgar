@@ -1,5 +1,82 @@
 # Migration Notes
 
+## v5.10.8 — Viz physics hang + mesh leak fix (2026-05-30)
+
+Core 5.10.7.3 → 5.10.8. Backend unchanged at 5.4.0. No schema changes. Plan: `docs/PLAN_V5_10_8_VIZ_PHYSICS_AND_MESH_LEAK_FIX.md`.
+
+### Why
+
+v5.10.7.3 LIVE showed 700 graph nodes clumped at origin with all velocities `vx/vy/vz = 0` — force simulation never iterated. Browser DevTools also showed 2297 Mesh children in the scene Group for 700 nodes (3.3× node count accumulating on each filter cycle).
+
+**Bug A root cause:** `onEngineStop` fired with `cooldownTicks=null` / `warmupTicks=0` — engine stopped immediately with zero iterations. The callback pinned `n.fx = n.x = 0, n.fy = n.y = 0` for all nodes. Future simulation restarts couldn't move them.
+
+**Bug B root cause:** `resetLayout` called `graph.graphData({ nodes: [], links: [] })` then `setTimeout(() => graph.graphData(d), 50)`. ForceGraph3D doesn't dispose Three.js Mesh objects on the empty step — orphan meshes accumulated on every call.
+
+### What changed
+
+`yadgar/static/index.html`:
+
+**Bug A — tick-count guard:**
+```javascript
+// Before (v5.10.7.3):
+.onEngineStop(() => {
+  for (const n of graph.graphData().nodes) {
+    if (n.fx == null) { n.fx = n.x; n.fy = n.y; }
+  }
+});
+
+// After (v5.10.8):
+let _engineTickCount = 0;  // module scope, reset in initGraph
+// ...
+.onEngineTick(() => { _engineTickCount++; })
+.onEngineStop(() => {
+  if (_engineTickCount < 50) return;
+  for (const n of graph.graphData().nodes) {
+    if (n.fx == null) { n.fx = n.x; n.fy = n.y; }
+  }
+});
+```
+
+**Bug B — direct re-data:**
+```javascript
+// Before (v5.10.7.3) in resetLayout():
+graph.graphData({ nodes: [], links: [] });
+setTimeout(() => graph.graphData(d), 50);
+
+// After (v5.10.8):
+graph.graphData(d);
+```
+
+### Apply
+
+```bash
+cd /home/max/git/nix && nix-apply
+```
+
+### Verify (manual smoke — required post-deploy)
+
+1. Open `http://localhost:42069/` — hard-refresh `Ctrl+Shift+R` to bust browser cache.
+2. **3D mode:** nodes must spread across visible volume, NOT clumped at origin. Check mesh count via DevTools console:
+   ```javascript
+   graph.scene().children.find(c => c.type === 'Group').children.length
+   ```
+   Expected: ≈ node count (e.g. 700 nodes → ~700 meshes, NOT 2297).
+3. **2D mode:** nodes laid out by force simulation — hexagons (wiki) + circles (memory) visible with link lines. NOT all at origin.
+4. **Filter cycle:** apply a search term or tag toggle; nodes update. Re-check mesh count — should stay ≈ node count (NOT 2×/3× after multiple filter applications).
+5. **Layout reset:** click Reset Layout button; nodes re-scatter and re-settle. Mesh count stable.
+
+### Open questions for main thread
+
+- Threshold of 50 ticks is a safe lower bound; library default cooldown is 15000 ticks typically. Observe in production — adjust if layout still pins prematurely or never pins.
+- Bug B: `resetLayout` only — `applyFilters` calls `graph.graphData(d)` directly and was not using the empty-then-restore pattern. If mesh leak persists after filter cycles (not reset cycles), deeper investigation needed (possibly applyFilters path or library internal).
+- Filter UX post-Bug-B: only static-asset test verifies the pattern is gone; actual filter rendering correctness requires manual smoke.
+
+### Hard deadlines unchanged
+
+PD-23 `migration_grace` expiry 2026-08-26 still requires v5.11.x handler before then.
+
+---
+
 ## v5.10.7.3 — Revert v5.10.7 custom 3D node geometry (2026-05-30)
 
 Core 5.10.7.2 → 5.10.7.3. Backend unchanged at 5.4.0. No schema changes. Plan: `docs/PLAN_V5_10_7_3_VIZ_REVERT_TO_DEFAULTS.md`.
