@@ -45,10 +45,10 @@ function _configureMarked() {
 
   // Custom renderer: [[slug]] → clickable links that navigate bookmarks
   // marked v15 passes a token object to renderer.text, not a raw string.
-  // v5.24.1 extracted token.text correctly but then called _origText(replaced),
-  // which is v15's default text renderer and expects a token object — it does
-  // `'tokens' in arg` on the returned string and throws.  Fix: return the
-  // replaced HTML string directly; DOMPurify downstream handles XSS.
+  // v5.24.1 bug: after extracting token.text, the code delegated back to
+  // v15's default text renderer (via a bound _origText reference), which
+  // does `'tokens' in arg` — throwing on a plain string.  v5.24.2 fix:
+  // return the replaced HTML string directly; DOMPurify downstream handles XSS.
   const renderer = new marked.Renderer();
   renderer.text = (token) => {
     // marked v15: token is an object {type:"text", text:"...", tokens:[...]}
