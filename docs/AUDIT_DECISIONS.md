@@ -103,10 +103,26 @@
   - Probe + rebuild becomes hot in profiles (currently sub-ms)
 
 #### D2. NLI diversity stage as always-on
-- **Decision:** pending — being discussed.
+- **Recommendation:** Make NLI diversity (HEAVY_RERANK_ENABLED) opt-in rather than default-on. mem0 + Zep achieve diversity architecturally (graph traversal / multi-signal) instead of post-hoc NLI.
+- **Decision:** DEFER
+- **Reason:** can't decide whether NLI earns its cost without measurement. Tied to two prerequisites: Adopt-1 (benchmarks — needed for A/B data) and Refactor-2 (recall plugin arch — makes stages independently togglable for clean A/B). Without those, flipping default risks silently degrading recall quality.
+- **Evidence:** no current benchmark data on NLI vs no-NLI recall accuracy. `HEAVY_RERANK_ENABLED` env knob exists; cross-encoder model `cross-encoder/nli-deberta-v3-small` loaded eagerly when enabled.
+- **Revisit triggers:**
+  - Adopt-1 (LongMemEval/LoCoMo benchmarks) produces baseline numbers
+  - Refactor-2 (recall pipeline plugin arch) ships
+  - A/B run shows NLI contributes <5 percentage points to accuracy (then flip default)
+  - Or NLI shows >5pp gain (then keep default + close revisit)
 
 #### D3. PC algorithm causal discovery
-- **Decision:** pending — being discussed.
+- **Recommendation:** Validate that causal discovery improves recall accuracy on test set. If not, retire or gate behind explicit opt-in.
+- **Decision:** DEFER
+- **Reason:** same posture as D2 — need benchmark data first. Bonus consideration: yadgar is the ONLY memory system with formal causal discovery; this is a Hold-tier unique-moat feature. Removing without measurement also removes architectural distinction. Either keep + measure (preferred) or gate-but-keep-defaults-on if measurement shows neutral.
+- **Evidence:** `yadgar/causal_discovery/` (5 files: pc.py, meek.py, independence.py, dag_io.py, __init__.py). `pc_algorithm` is "cognitive complexity ~146" per characterization test. Phase duration logs exist (`detect_causality duration_ms`) but no dedicated Prometheus metric. No recall A/B data exists.
+- **Revisit triggers:**
+  - Adopt-1 (benchmarks) produces causal-on vs causal-off accuracy numbers
+  - Refactor-2 (recall pipeline plugin arch) lands — enables clean toggle
+  - CPU bursts traced specifically to PC algorithm phase (then accelerate revisit)
+  - Or PC algorithm completion duration >30s on typical state (then accelerate)
 
 ### Hold items (audit identified as unique moats; no decision needed, recorded for future agents)
 
