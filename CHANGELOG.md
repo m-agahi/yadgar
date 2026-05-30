@@ -6,6 +6,18 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.10.9] — 2026-05-30
+
+Fix viz crash: filter orphan edges before passing to force-graph library (real root cause of all v5.10.7+ viz failures).
+
+- **Root cause identified** (`force-graph.min.js`): library throws `Uncaught Error: node not found: entity:NNN` synchronously during `f.links` resolution when any link references an ID absent from the node set. One orphan edge crashes the entire physics simulation — no ticks run, all nodes clump at `(0,0,0)`. All v5.10.7–v5.10.8 symptom-chasing (mesh material, transparent flag, tick-count guard, mesh-leak removal) addressed downstream effects of this single crash.
+- **Backend fix** (`yadgar/graph_api.py`): after assembling `nodes` + `edges`, filter edges to only those whose `source` AND `target` are in `{n["id"] for n in nodes}`. All `entity:*` causal edges are orphan-filtered because entity nodes are not included in the graph response (post-v5.0.0 monolith split). Logs count at INFO level. Increments `yadgar_graph_api_orphan_edges_dropped_total` counter.
+- **New metric** (`yadgar/metrics.py`): `yadgar_graph_api_orphan_edges_dropped_total` Counter — tracks payload drift; non-zero after deploy confirms the fix fired on real data.
+- **Frontend defensive filter** (`yadgar/static/index.html` `loadGraph()`): before `graph.graphData(...)`, builds `nodeIdSet` and filters `allLinks` to remove any edges whose endpoints are absent. `console.warn` logs count if any dropped — belt-and-suspenders for future backend drift.
+- **5 new tests**: `test_graph_api_filters_orphan_edges`, `test_graph_api_orphan_drop_metric`, `test_graph_api_no_drops_in_healthy_payload` (backend); `test_loadGraph_filters_orphan_links`, `test_loadGraph_logs_dropped_count` (frontend static-asset).
+
+See [MIGRATION_NOTES.md §v5.10.9](MIGRATION_NOTES.md#v5109--viz-orphan-edge-filter-2026-05-30) + `docs/PLAN_V5_10_9_VIZ_ORPHAN_EDGE_FILTER.md`.
+
 ## [5.10.8] — 2026-05-30
 
 Fix 3D/2D viz physics hang (nodes clumped at origin) + Three.js mesh leak on filter cycles.
