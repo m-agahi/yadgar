@@ -439,11 +439,17 @@ Code comments representing architectural decisions — not trivial cleanups. App
 - **Background:** cAdvisor was enabled (v5.6.6 session). Dashboard Row 9 queries `container_cpu_usage_seconds_total{name=~"yadgar.*"}`. Rootless podman puts containers under user cgroup slice with auto-generated IDs; cAdvisor `name` label may be empty or different. Needs first scrape to inspect actual labels.
 - **Resolution path:** after next nix apply, curl cAdvisor metrics endpoint, identify correct label for yadgar containers, update Row 9 queries + `$container` variable in `dotfiles/observability/dashboards/yadgar.json`.
 
-**YM-W-6: Security findings S1–S3 — no DECISIONS.md entry (frozen v5.2 plan)**
-- **Source:** [wiki: yadgar-v5-stabilize-strategy-tldr-gap-analysis] Security findings section (frozen 2026-05-20)
-- **Decision:** DEFER (never assigned a version slot or DECISIONS entry; frozen page says "none assigned to a version yet")
-- **Background:** Three H-level security findings from gap audit: (S1) `storage/ops.py:110,138` + `storage/client.py:375` — raw `json.dumps` in INSERT and raw `extra_where` interpolation bypass SurrealDB bind facility (SQL injection). (S2) `rules_engine.py:445` — caller-supplied regex → ReDoS. (S3) `config_yaml.py:840` — config file written without `chmod 600` (credential exposure). All were in v5.2.0 security baseline plan but frozen doc confirms not shipped.
-- **Revisit triggers:** any external access surface added to yadgar; or rules_engine exposed to untrusted input; or security review scheduled. S3 is trivially cheap (one-liner) — candidate for next hotfix.
+**YM-W-6: Security findings S1–S3 — ALL SHIPPED in v5.2.0 (corrected 2026-05-30)**
+- **Source:** [wiki: yadgar-v5-stabilize-strategy-tldr-gap-analysis] Security findings section (frozen 2026-05-20, predates v5.2.0)
+- **Decision:** **DONE-ALREADY** (corrected from DEFER after security-planner agent verified code state on 2026-05-30)
+- **Background:** Three H-level security findings from gap audit: (S1) `storage/ops.py:110,138` + `storage/client.py:375` — raw `json.dumps` in INSERT and raw `extra_where` interpolation (SQL injection). (S2) `rules_engine.py:445` — caller-supplied regex → ReDoS. (S3) `config_yaml.py:840` — config file written without `chmod 600`.
+- **Verified shipped:**
+  - **S1 SQL injection** — `yadgar/storage/ops.py:25-28,159-163` has `_EXTRA_WHERE_PATTERN` allowlist + `$data` bind param with `S1a`/`S1b` comments. Commit `bea40e2` (v5.2.0).
+  - **S3 ReDoS** — `yadgar/rules_engine.py:7-19` imports third-party `regex` lib with `_REGEX_TIMEOUT_S = 1.0`; `:460-484` calls `_regex_lib.sub(..., timeout=_REGEX_TIMEOUT_S)` with `TimeoutError` handler. Commit `e7d231b` (v5.2.0).
+  - **S2 chmod 600** — `yadgar/config_yaml.py:977-978` has `os.chmod(path, 0o600)` with `S2 (H-9)` comment. Commit `be1a653` (v5.2.0).
+- **Root cause of false premise in original YM-W-6 entry:** the entry was synthesized from a frozen wiki page (`yadgar-v5-stabilize-strategy-tldr-gap-analysis`, frozen 2026-05-20) whose security section predated v5.2.0 ship. Observed state (code + git log) beats stale wiki snapshot.
+- **Revisit triggers:** none — closed. If a follow-up regression hardening plan is desired (AST lint confirming no `_EXTRA_WHERE_PATTERN` bypass callers, `regex` lib pin enforcement, audit of any other config files lacking chmod), that's a separate plan and can claim the freed v5.10.11 slot.
+- **Lesson recorded:** when consolidating memory-store / wiki content into DECISIONS.md, verify ALL claims against current code state, not just the wiki snapshot. Frozen wiki entries can be stale by multiple ship cycles.
 
 **YM-W-7: repo-wiki DLQ escalation trigger — Option Y threshold**
 - **Source:** [wiki: yadgar-repo-wiki-queue-drainer-validation-option-z-v5] (2026-05-15)
