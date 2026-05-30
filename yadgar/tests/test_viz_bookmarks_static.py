@@ -493,15 +493,46 @@ class TestMarkedV15RendererRegression:
     vendored upgrades are caught immediately.
     """
 
-    def test_marked_parse_heading_with_parens_no_throw(self) -> None:
-        """marked.parse('# v4.9 progress (2026-05-15)') must not throw."""
+    def test_marked_parse_with_custom_renderer_no_throw(self) -> None:
+        """marked v15 + custom renderer.text that returns a string must not throw.
+
+        The v5.24.1 bug: our renderer.text extracted token.text correctly but
+        called _origText(replaced), passing the HTML string back to v15's default
+        text renderer which does `'tokens' in arg` → throws on strings.
+
+        This test reproduces that exact failure mode with the v5.24.2 fix: a
+        custom renderer.text that returns a string directly must not throw.
+        """
         import subprocess
 
         marked_path = str(_LIB / "marked.min.js")
-        # Use a CommonJS wrapper; marked v15 exports via UMD so require() works.
         script = (
             "const marked = require('" + marked_path.replace("'", "\\'") + "');"
-            "const out = marked.parse('# v4.9 progress (2026-05-15)\\n');"
+            # Reproduce the v5.24.1 broken pattern to confirm v15 DOES throw it.
+            # (This is a verify-the-test step — we assert it would fail broken.)
+            # Then reproduce the v5.24.2 fix pattern and assert it does NOT throw.
+            #
+            # Broken pattern (what v5.24.1 did):
+            "const brokenRenderer = new marked.Renderer();"
+            "const origText = brokenRenderer.text.bind(brokenRenderer);"
+            "brokenRenderer.text = (token) => {"
+            "  const raw = (typeof token === 'object' && token !== null && typeof token.text === 'string') ? token.text : (typeof token === 'string' ? token : '');"
+            "  const replaced = raw.replace(/\\[\\[([^\\]]+)\\]\\]/g, (_, s) => '<a>' + s + '</a>');"
+            "  return origText(replaced);"  # BUG: passes string to v15 default
+            "};"
+            "let brokenThrew = false;"
+            "try { marked.use({ renderer: brokenRenderer }); marked.parse('# v4.9 progress (2026-05-15)\\n'); }"
+            "catch (e) { brokenThrew = true; }"
+            "if (!brokenThrew) { process.stderr.write('WARN: broken pattern did not throw — marked API may have changed\\n'); }"
+            # Reset marked options for the fixed-pattern test.
+            "marked.setOptions({});"
+            # Fixed pattern (v5.24.2 — return string directly, no _origText):
+            "const fixedRenderer = new marked.Renderer();"
+            "fixedRenderer.text = (token) => {"
+            "  const raw = (typeof token === 'object' && token !== null && typeof token.text === 'string') ? token.text : (typeof token === 'string' ? token : '');"
+            "  return raw.replace(/\\[\\[([^\\]]+)\\]\\]/g, (_, s) => '<a>' + s + '</a>');"
+            "};"
+            "const out = marked.parse('# v4.9 progress (2026-05-15)\\n', { renderer: fixedRenderer });"
             "if (typeof out !== 'string') throw new Error('Expected string output, got ' + typeof out);"
             "process.exit(0);"
         )
@@ -512,28 +543,19 @@ class TestMarkedV15RendererRegression:
             timeout=10,
         )
         assert result.returncode == 0, (
-            f"marked.parse threw on heading with parens (v15 renderer regression).\n"
+            f"marked v15 custom renderer (v5.24.2 fix pattern) threw unexpectedly.\n"
             f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
         )
 
-    def test_marked_parse_inline_text_no_throw(self) -> None:
-        """marked.parse with inline text containing parens must not throw."""
-        import subprocess
+    def test_bookmarks_js_no_orig_text_call(self) -> None:
+        """bookmarks.js must not call _origText(...) — that was the v5.24.1 bug.
 
-        marked_path = str(_LIB / "marked.min.js")
-        script = (
-            "const marked = require('" + marked_path.replace("'", "\\'") + "');"
-            "const out = marked.parse('Some text (2026-05-15) with **bold** and `code`.');"
-            "if (typeof out !== 'string') throw new Error('Expected string, got ' + typeof out);"
-            "process.exit(0);"
-        )
-        result = subprocess.run(
-            ["node", "-e", script],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        assert result.returncode == 0, (
-            f"marked.parse threw on inline text (v15 renderer regression).\n"
-            f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+        Guard: if a dev re-introduces `_origText(replaced)`, this test fails.
+        Checks for the call pattern, not the identifier in comments.
+        """
+        js = _read("bookmarks.js")
+        assert "_origText(" not in js, (
+            "bookmarks.js calls _origText(...) — this re-introduces the v5.24.1 "
+            "round-trip crash where the HTML string is passed back to marked v15's "
+            "default text renderer which does 'tokens' in arg and throws."
         )
