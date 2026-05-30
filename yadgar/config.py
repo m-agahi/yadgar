@@ -474,6 +474,16 @@ class Settings(BaseSettings):
     # How long _audit_anchors snapshots are retained for history (days).
     ANCHOR_AUDIT_HISTORY_RETENTION_DAYS: int = 30
 
+    # v5.10.6: SESSION_END_CAPTURE sentinel-marker pattern
+    # Kill switch for entire session-end capture feature.
+    SESSION_END_CAPTURE_ENABLED: bool = True
+    # Auto-prune sentinel memory rows older than this many days during vacuum.
+    SESSION_END_RETENTION_DAYS: int = 30
+    # Last N human turns to embed in sentinel for rotation resilience.
+    SESSION_END_SNIPPET_TURNS: int = 5
+    # Skip sentinel write if session had fewer than this many human messages.
+    SESSION_END_MIN_MESSAGES: int = 2
+
     # C2 — Recall-frequency-modulated decay (MemoryBank parity, v5.3.3)
     # Per-access heat boost applied during each consolidation decay cycle.
     # Formula: new_heat = min(compute_decay(mem, hours) + access_count_since_decay * RECALL_BOOST, 1.0)
