@@ -6,6 +6,20 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.10.6] — 2026-05-30
+
+SESSION_END_CAPTURE sentinel-marker pattern + SessionStart extraction.
+
+- **SessionEnd hook** (`yadgar/hooks/session-end-capture.py`): writes `~/.yadgar/session-ends/<session_id>.json` atomically on true exit (logout/other). Skips on `end_reason=clear/resume` and short sessions (`<SESSION_END_MIN_MESSAGES`). Embeds last N human turns + last 3 touched file paths for rotation resilience.
+- **SessionStart import**: `hook_session_context` scans `~/.yadgar/session-ends/*.json`, imports each into memory with `_session_end_sentinel` tag, deletes on success. Retry semantics: `retries` counter incremented on failure; moved to `failed/` after 3 failures.
+- **`_project_brief_signals` extension**: sentinel memory row → `extract_last_session_findings` recommended_action with `transcript_path`, `sentinel_id`, `last_human_turns`. Missing transcript → tombstone note + `forget(sentinel_id)` suggested_call.
+- **Vacuum prune**: `_vacuum_stale_sentinels()` deletes `_session_end_sentinel` rows older than `SESSION_END_RETENTION_DAYS` (default 30).
+- **4 new I25 env knobs**: `SESSION_END_CAPTURE_ENABLED=true`, `SESSION_END_RETENTION_DAYS=30`, `SESSION_END_SNIPPET_TURNS=5`, `SESSION_END_MIN_MESSAGES=2`.
+- **`install_hooks` updated**: adds `SessionEnd` entry to `settings.json` (re-run required).
+- **26 new tests** in `test_session_end_capture.py`.
+
+See [MIGRATION_NOTES.md §v5.10.6](MIGRATION_NOTES.md#v5106--session-end-capture-sentinel-marker-pattern-2026-05-30).
+
 ## [5.10.5] — 2026-05-30
 
 Patch: nightly cycle remaining bugs — vacuum URL second call site + prune deletes just-created snapshot.
