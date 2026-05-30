@@ -1,6 +1,16 @@
-# PLAN — v5.15.0: CPU burst residual investigation + detection infrastructure
+# PLAN — v5.15.0: CPU burst residual investigation + detection infrastructure + secret-gate caller plumbing
 
 **Renumbered:** v5.12.0 → v5.15.0 on 2026-05-30. Reason: skip-1 minor convention adopted 2026-05-30 — odd-only minors for sequential features, even slots reserved for hotfix patches between them.
+
+**Scope bundle (added 2026-05-30, post-v5.13.0 ship):** v5.13.0 secret-gate allowlist mechanism shipped DORMANT — `gate_or_reject(tags=, source=)` accepts context but no production write tool (`memorize`, `wiki_add`, `anchor`) forwards its `tags` to the gate. Allowlist tested via direct `is_allowlisted()` calls only; will not fire in real tool invocations until caller plumbing lands. **v5.15.0 bundles tag-plumbing** so allowlist becomes effective in production.
+
+Tag-plumbing sub-scope:
+- `yadgar/server/tools/memorize.py` — pass `tags=tags` to `gate_or_reject` call
+- `yadgar/server/tools/wiki.py::wiki_add` — pass `tags=tags`
+- `yadgar/server/tools/admin_other.py::anchor` (and any other `@_tool(power=True)` write paths) — pass `tags=tags`
+- Audit ALL `gate_or_reject()` call sites + plumb where applicable
+- Tests: regression gate per call site asserting `tags=` forwarded
+- Acceptance: memorize a test-fixture-tagged memory containing fake `ghp_*` token + allowlist entry for `test-fixture` tag → write succeeds (was previously blocked by v5.10.2 gate)
 
 **Status:** drafted 2026-05-30 based on empirical investigation. No burst visible at time of writing. Plan focuses on detection infrastructure and fix verification rather than speculative new root cause.
 
