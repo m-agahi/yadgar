@@ -1,5 +1,37 @@
 # Migration Notes
 
+## v5.10.11 — Viz polish (3D-only): edge thickness +50% + repulsion +20% (2026-05-30)
+
+Core 5.10.10 → 5.10.11. Backend unchanged at 5.4.0. No schema changes. No config changes. Plan: `docs/PLAN_V5_10_11_VIZ_EDGE_THICKNESS_AND_REPULSION.md`.
+
+### Why
+
+User feedback after v5.10.10 LIVE:
+
+> *"make them 50 percent thiker. only in 3d. also repel the nodes connected with edges 20 percent more."*
+
+Two small 3D-only tweaks. No backend changes. Coloring completely untouched.
+
+### What changed
+
+**`yadgar/static/index.html`** — 2 line changes, both 3D-branch only:
+
+1. Line 863 — 3D init `.linkWidth` wrapper: `_linkWidth` → `l => _linkWidth(l) * 1.5`
+2. After 3D init chain (line 884) — added: `graph.d3Force('link').distance(36);` (30 × 1.2)
+
+2D init block's `.linkWidth(_linkWidth)` on line 893 is unchanged.
+2D else block's `graph.d3Force('link').distance(30)` on line 942 is unchanged.
+
+Note: plan assumed `distance(30)` was in a shared post-init block. Actual code already had it inside the 2D `else` branch only. 3D had no prior `distance()` call — so Fix 2 added one to the 3D branch rather than gating a shared call.
+
+**`yadgar/tests/test_viz_static_assets.py`** — `TestV51011VizEdgeThicknessAndRepulsion` class with 3 regression tests.
+
+**Version bump files**: `pyproject.toml`, `server.json`, `docker-compose.yml`, `uv.lock`.
+
+### Rollback
+
+Revert v5.10.11 commits. v5.10.10 state is fully preserved.
+
 ## v5.10.10 — Viz polish: 2x 3D node size + auto-zoom-fit (2026-05-30)
 
 Core 5.10.9 → 5.10.10. Backend unchanged at 5.4.0. No schema changes. No config changes. Plan: `docs/PLAN_V5_10_10_VIZ_NODE_SIZE_AND_ZOOM_FIT.md`.

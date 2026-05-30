@@ -342,3 +342,61 @@ class TestV51010VizPolish:
             "zoomToFit — v5.10.10 Fix 2 (auto-zoom-fit) not implemented. "
             "The callback must set _zoomFitDone=true and call graph.zoomToFit() at tick 80."
         )
+
+
+class TestV51011VizEdgeThicknessAndRepulsion:
+    """v5.10.11: 3D-only edge thickness +50% + connected-node repulsion +20%.
+
+    Fix 1: 3D init block uses .linkWidth(l => _linkWidth(l) * 1.5) instead of
+           .linkWidth(_linkWidth). 2D init block keeps plain .linkWidth(_linkWidth).
+    Fix 2: 3D branch sets graph.d3Force('link').distance(36) (30 * 1.2).
+           2D branch keeps graph.d3Force('link').distance(30).
+    """
+
+    def _extract_3d_block(self, html: str) -> str:
+        """Extract the 3D init block (between 'if (mode === '3d') {' and '} else {')."""
+        marker_start = "if (mode === '3d') {"
+        marker_end = "} else {"
+        start = html.find(marker_start)
+        end = html.find(marker_end, start)
+        assert start != -1 and end != -1, "Could not find 3D/2D branch markers in index.html"
+        return html[start:end]
+
+    def _extract_2d_block(self, html: str) -> str:
+        """Extract the 2D init block (between '} else {' and the resize listener)."""
+        marker_start = "} else {"
+        marker_end = "window.addEventListener('resize'"
+        start = html.find(marker_start)
+        end = html.find(marker_end, start)
+        assert start != -1 and end != -1, "Could not find 2D block or resize listener in index.html"
+        return html[start:end]
+
+    def test_3d_linkWidth_multiplier_present(self) -> None:
+        html = _html()
+        three_d_block = self._extract_3d_block(html)
+        assert "_linkWidth(l) * 1.5" in three_d_block, (
+            "3D init block missing '.linkWidth(l => _linkWidth(l) * 1.5)' — "
+            "v5.10.11 Fix 1 (3D-only +50% edge thickness) not implemented."
+        )
+
+    def test_2d_linkWidth_unchanged(self) -> None:
+        html = _html()
+        two_d_block = self._extract_2d_block(html)
+        # 2D must have plain .linkWidth(_linkWidth), no multiplier
+        assert ".linkWidth(_linkWidth)" in two_d_block, (
+            "2D init block missing plain '.linkWidth(_linkWidth)' — "
+            "v5.10.11 must NOT change 2D edge width."
+        )
+        assert "_linkWidth(l) * 1.5" not in two_d_block, (
+            "2D init block contains the 1.5x multiplier — "
+            "edge thickness change must be 3D-only (v5.10.11 constraint)."
+        )
+
+    def test_3d_link_distance_36(self) -> None:
+        html = _html()
+        three_d_block = self._extract_3d_block(html)
+        assert "graph.d3Force('link').distance(36)" in three_d_block, (
+            "3D init block missing 'graph.d3Force(\"link\").distance(36)' — "
+            "v5.10.11 Fix 2 (3D-only +20% connected-node repulsion) not implemented. "
+            "30 * 1.2 = 36."
+        )
