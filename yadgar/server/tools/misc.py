@@ -183,8 +183,10 @@ def anchor(
         if _has_unpaired_surrogate(_field):
             return {"stored": False, "reason": "invalid_unicode_surrogates"}
 
-    # v5.10.2: secret gate — scan content + reason before any state mutation
-    _gate = gate_or_reject(content, reason)
+    # v5.15.0: secret gate — pass _anchor tag so allowlist can fire for anchor() calls.
+    # anchor() always writes with ["_anchor"] tag; forward that to gate so allowlist
+    # entries keyed on "_anchor" become effective.
+    _gate = gate_or_reject(content, reason, tags=["_anchor"])
     if _gate is not None:
         return _gate
 

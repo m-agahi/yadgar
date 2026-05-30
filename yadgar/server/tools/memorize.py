@@ -10,7 +10,7 @@ from pathlib import Path
 import yadgar.server._state as _st
 from yadgar.config import get_settings
 from yadgar.file_queue import is_draining
-from yadgar.secrets import check_secrets
+from yadgar.secrets import gate_or_reject
 from yadgar.server._app import _tool
 from yadgar.server._helpers import (
     _DECISION_STRONG_RE,
@@ -175,16 +175,17 @@ def memorize(  # noqa: C901, PLR0913 — pre-existing complexity + v5.10.x reaso
     except ValueError as _ve:
         return {"stored": False, "reason": f"invalid_provenance_agent: {_ve}"}
 
-    # Secret detection — always on, fires before anything else
-    sec_blocked, sec_reason, sec_pattern = check_secrets(content)
-    if sec_blocked:
+    # v5.15.0: secret gate — use gate_or_reject() so allowlist tags= kwarg is forwarded.
+    # Replaces direct check_secrets() call so v5.13.0 allowlist fires on real memorize() calls.
+    _gate = gate_or_reject(content, tags=list(tags) if tags else [])
+    if _gate is not None:
         try:
             from yadgar.metrics import yadgar_writegate_outcome  # noqa: PLC0415
 
             yadgar_writegate_outcome.labels(outcome="rejected_secret").inc()
         except Exception:
             pass
-        return {"stored": False, "reason": sec_reason, "pattern_matched": sec_pattern}
+        return _gate
 
     # Write-path policy rules — may block or redact content
     if _st._rules_engine is not None:

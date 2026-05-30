@@ -49,7 +49,7 @@ def _run_memorize_with_settings(settings_stub: MagicMock, retriever_mock: MagicM
     """Run memorize() with fully-stubbed sync path; return wall-clock seconds."""
     with (
         patch("yadgar.server.tools.memorize.is_draining", return_value=True),
-        patch("yadgar.server.tools.memorize.check_secrets", return_value=(False, None, None)),
+        patch("yadgar.server.tools.memorize.gate_or_reject", return_value=None),
         patch("yadgar.server.tools.memorize.settings", settings_stub),
         patch("yadgar.server.tools.memorize._st") as mock_st,
         patch("yadgar.server.tools.memorize._get_storage") as mock_get_storage,

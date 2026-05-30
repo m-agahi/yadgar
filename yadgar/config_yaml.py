@@ -778,6 +778,15 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Opacity for non-matched dimmed nodes (default 0.18)",
         "section": "viz_config",
     },
+    # cpu_burst_detection (v5.15.0 D1)
+    "phase_duration_warn_ms": {
+        "desc": (
+            "Consolidation phase duration warn threshold in milliseconds (default 60000 = 1 min). "
+            "When any _consolidation_cycle() phase exceeds this, a CRITICAL log is emitted. "
+            "Set to 0 to disable."
+        ),
+        "section": "cpu_burst_detection",
+    },
 }
 
 
@@ -805,6 +814,7 @@ SECTION_TITLES: dict[str, str] = {
     "project_brief": "Project Brief",
     "anchor_hygiene": "Anchor Hygiene (TTL)",
     "viz_config": "Visualization Knobs (v5.11.0)",
+    "cpu_burst_detection": "CPU Burst Detection (v5.15.0)",
 }
 
 # Ordered list of sections for deterministic output

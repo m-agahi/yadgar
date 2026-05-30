@@ -6,6 +6,29 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.15.0] — 2026-05-30
+
+CPU burst detection infrastructure (D1+D4) + secret-gate caller tag plumbing.
+
+**Part A — CPU burst detection:**
+
+- **D1: Phase duration CRITICAL alerting** (`yadgar/consolidation/orchestrator.py`): new `_warn_slow_phase(phase, duration_ms)` helper emits `CRITICAL` log (`SLOW_PHASE phase=X duration_ms=N threshold_ms=M`) when any `_consolidation_cycle()` phase exceeds the threshold. Covers 7 phases: `apply_decay`, `process_episodes`, `merge_duplicates`, `link_similar`, `detect_causality`, `memify`, `cls_consolidation`, `action_log`. Bursts immediately visible in `journalctl`.
+- **New config `PHASE_DURATION_WARN_MS`**: default `60000` ms (1 min). Override via `YADGAR_PHASE_DURATION_WARN_MS` env var or `phase_duration_warn_ms` in config.yaml. Set to `0` to disable.
+- **I25 three-way sync**: new `cpu_burst_detection` section in `config_yaml.py` + `config_registry.py`.
+- **D4: Static caller audit tests** (`yadgar/tests/test_cpu_burst_detection.py`): grep-based tests assert no new callers of `run_sleep_cycle` / `force_consolidate` outside the known-good set. Fail on regression.
+
+**Part B — secret-gate caller tag plumbing:**
+
+- **`memorize.py`**: `check_secrets(content)` → `gate_or_reject(content, tags=list(tags))`. Allowlist now fires on real `memorize()` calls.
+- **`wiki.py::wiki_add`**: same migration to `gate_or_reject`.
+- **`misc.py::anchor`**: added `tags=["_anchor"]` to existing `gate_or_reject` call.
+- **5 new tests** (`test_secret_gate_plumbing.py`): per-callsite regression + e2e allowlist acceptance (`ghp_FAKE + test-fixture tag → stored`).
+- **Regression fix** (`test_memorize_reinject_gate.py`): updated mock target after import rename.
+
+D2/D3 (backend `/health/inference` + uptime metric): deferred, require yadgar-backend release.
+
+See [MIGRATION_NOTES.md §v5.15.0](MIGRATION_NOTES.md#v5150--cpu-burst-detection--secret-gate-plumbing-2026-05-30).
+
 ## [5.13.1] — 2026-05-30
 
 Integration test backend image pin fix — drift since v5.0.3 era.

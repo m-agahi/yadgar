@@ -352,6 +352,12 @@ class Settings(BaseSettings):
     # limit is exceeded.  Default 100_000.  Set to 0 to disable ceiling check.
     MAX_CAUSED_BY_ROWS: int = 100_000
 
+    # v5.15.0 D1: per-phase consolidation duration alerting.
+    # When any _consolidation_cycle() phase exceeds this threshold in milliseconds,
+    # a CRITICAL log is emitted with the phase name and actual duration.
+    # Default 60000ms (1 minute). Set to 0 to disable phase duration alerting.
+    PHASE_DURATION_WARN_MS: int = 60_000
+
     # v5.3.9 N1: backend HTTP timeouts
     # Short timeout for all non-import backend calls (health, /sql, /admin/dbsize).
     BACKEND_HTTP_TIMEOUT_SEC: int = 5

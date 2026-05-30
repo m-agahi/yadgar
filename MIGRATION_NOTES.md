@@ -1,5 +1,67 @@
 # Migration Notes
 
+## v5.15.0 — CPU burst detection + secret-gate plumbing (2026-05-30)
+
+Core 5.13.1 → 5.15.0. Backend unchanged at 5.4.0. No schema changes. No DB migrations.
+Plan: `docs/PLAN_V5_15_0_CPU_BURSTS_RESIDUAL.md`.
+
+### Why (Part A)
+
+CPU bursts from `_consolidation_cycle()` phases are intermittent and invisible without instrumentation. Prior fixes (v4.8 cooldown, v5.7 daemon removal, v5.10 orphan cleanup, v5.10.4 sleep-cycle bypass fix) addressed known vectors. D1 adds per-phase CRITICAL logging so the NEXT burst is diagnosable in real time from `journalctl`.
+
+### What changed (Part A — CPU burst detection)
+
+**`yadgar/consolidation/orchestrator.py`**:
+- New module-level `PHASE_DURATION_WARN_MS: int` constant loaded from settings at import time.
+- New `_warn_slow_phase(phase: str, duration_ms: int) -> None` helper: emits CRITICAL log if `duration_ms > PHASE_DURATION_WARN_MS` and threshold is non-zero.
+- All 7 `_consolidation_cycle()` phases now capture duration into `_dur_ms` and call `_warn_slow_phase()`.
+
+**`yadgar/config.py`**:
+- New `PHASE_DURATION_WARN_MS: int = 60_000`. Override: `YADGAR_PHASE_DURATION_WARN_MS` env var or `phase_duration_warn_ms:` in `~/.yadgar/config.yaml`.
+
+**`yadgar/config_yaml.py`** + **`yadgar/config_registry.py`**:
+- I25 three-way sync: new `cpu_burst_detection` section in `FIELD_META` + `ConfigEntry` in `_REGISTRY`.
+
+**`yadgar/tests/test_cpu_burst_detection.py`** (new):
+- `test_phase_duration_warn_emits_critical_log`: PHASE_DURATION_WARN_MS=1 → CRITICAL log emitted for slow phase.
+- `test_phase_duration_under_threshold_no_warn`: high threshold → no CRITICAL emitted.
+- `test_no_unexpected_sleep_cycle_callers`: grep-based audit of `run_sleep_cycle` callers.
+- `test_no_unexpected_force_consolidate_callers`: grep-based audit of `force_consolidate` callers.
+
+### Why (Part B)
+
+v5.13.0 shipped `gate_or_reject(tags=, source=)` + allowlist mechanism as DORMANT. Production write tools (`memorize`, `wiki_add`, `anchor`) called `check_secrets()` directly (no `tags=`), so allowlist entries never fired on real tool invocations.
+
+### What changed (Part B — secret-gate tag plumbing)
+
+**`yadgar/server/tools/memorize.py`**:
+- Import changed: `from yadgar.secrets import check_secrets` → `from yadgar.secrets import gate_or_reject`.
+- Secret gate replaced: `sec_blocked, ... = check_secrets(content)` → `_gate = gate_or_reject(content, tags=list(tags) if tags else [])`. Return format aligned to gate_or_reject dict.
+
+**`yadgar/server/tools/wiki.py`**:
+- Same migration for `wiki_add()`.
+
+**`yadgar/server/tools/misc.py::anchor`**:
+- Added `tags=["_anchor"]` kwarg to existing `gate_or_reject(content, reason)` call.
+
+**`yadgar/tests/test_secret_gate_plumbing.py`** (new):
+- 5 tests: memorize/wiki_add/anchor gate kwarg regression + checkpoint gate called + e2e allowlist acceptance.
+
+**`yadgar/tests/test_memorize_reinject_gate.py`**:
+- Updated `patch("yadgar.server.tools.memorize.check_secrets", return_value=(False, None, None))` → `patch("yadgar.server.tools.memorize.gate_or_reject", return_value=None)`.
+
+### D2/D3 — deferred (backend-side)
+
+D2 (`/health/inference` timed-inference probe) and D3 (embed_service uptime metric + 28h alert) require `yadgar-backend` release. Implement in a follow-on `yadgar-backend` version when deploying the next backend bump.
+
+### Upgrade path
+
+**D1 (phase duration alert):** No action required. Default threshold is 60s — alerts fire only if a phase runs over 1 minute. To lower (more sensitive): `YADGAR_PHASE_DURATION_WARN_MS=10000`. To disable: `YADGAR_PHASE_DURATION_WARN_MS=0`.
+
+**Part B (allowlist plumbing):** If you have a `~/.yadgar/secret-gate-allowlist.yaml` configured (v5.13.0), it NOW fires on `memorize()`, `wiki_add()`, and `anchor()` calls. Previously dormant. Verify your allowlist entries are correct before deploying.
+
+---
+
 ## v5.13.1 — Integration test backend version pin fix (2026-05-30)
 
 Core 5.13.0 → 5.13.1. Backend unchanged at 5.4.0. No schema changes. No DB migrations. Plan: `docs/PLAN_V5_13_1_INTEGRATION_BACKEND_VERSION_PIN_FIX.md`.
