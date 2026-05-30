@@ -34,7 +34,8 @@ Secondary win: yadgar wiki has hundreds of pages, semantic discovery via `wiki_q
 6. **Remove:** per-bookmark delete (X button or right-click).
 7. **Reorder:** drag-to-reorder (nice-to-have, V2 if scope creeps).
 8. **Live freshness:** bookmark view fetches latest wiki content on each click (no stale cache).
-9. **Mobile-tolerant:** usable on tablet; phone is nice-to-have.
+9. **Refresh button (per-bookmark + global).** Forces fresh re-fetch. Defends against the wiki write-queue lag window. See "Cache & freshness model" section below.
+10. **Mobile-tolerant:** usable on tablet; phone is nice-to-have.
 
 ---
 
@@ -46,6 +47,94 @@ Secondary win: yadgar wiki has hundreds of pages, semantic discovery via `wiki_q
 - **Real-time updates.** No WebSocket/SSE for "wiki changed" push. User refreshes manually.
 - **Bookmark folders / nesting.** Flat list. (V2 if user complains.)
 - **Export / import bookmarks.** YAGNI until asked.
+
+---
+
+## Cache & freshness model (designed-in, not bolted-on)
+
+Question raised during design review: how does the page know its data is current vs stale? Answer below; mechanism is intentionally minimal because yadgar's wiki layer has NO read cache to invalidate.
+
+### Three distinct freshness layers in yadgar
+
+| Layer | What | Invalidation mechanism |
+|---|---|---|
+| CE score cache (backend v5.4.0) | `(query_emb, doc_emb) → CE score` | **Content-addressed.** Same inputs → same key. Changed wiki content → new embedding → new key → automatic cache miss. No explicit invalidation needed. |
+| Embedding cache (backend v5.4.0) | `text → vector` | Same — content-addressed. Text change → key change → miss. |
+| Wiki storage (`wiki_read`) | DB row lookup by slug | **No read cache at all.** `yadgar/server/tools/wiki.py:230` calls `_wiki.read_by_branch(slug, …)` directly per call. Every read hits SurrealDB. |
+
+### Where freshness ACTUALLY breaks: the write queue (NOT a cache)
+
+`wiki_add` returns `{stored: true, queued: true}` immediately — it enqueues into `file_queue`. Background `QueueDrainer` later commits the write to SurrealDB.
+
+```
+T+0    wiki_add(X)            → enqueued; returns immediately
+T+0.5  wiki_read(X)           → DB still has pre-X content → STALE
+T+~2s  drainer flushes        → SurrealDB now has X
+T+3    wiki_read(X)           → returns fresh
+```
+
+So the only freshness gap is the **drainer flush window** (typically 1-3 seconds, observed up to ~10s under load).
+
+### v5.12.0 design implications
+
+1. **No app-level cache invalidation needed.** Because there's no app-level read cache. Every bookmark click → `wiki_read` → DB hit.
+2. **HTTP layer: send `Cache-Control: no-store, no-cache` on `/api/wiki/read/{slug}`.** Prevents browser caching of stale responses.
+3. **Refresh button (per-bookmark + global) is the user-facing freshness primitive.** Doesn't "force the DB to flush" (DB is already authoritative) — it just re-issues the read AFTER any pending writes have drained. Useful when:
+   - Claude just wrote a wiki and user wants the new content NOW (waits 2-3s, refreshes).
+   - User suspects browser-cached anything.
+4. **Optional: surface queue depth.** Expose `yadgar_queue_depth` metric to viz. Show in nav: "3 writes pending" when > 0. Gives user a clue: "wait until 0 then refresh for newest". Lean: add this in v5.12.0 (cheap, observable signal).
+5. **Optional: fetched-at indicator under each bookmark.** "fetched 30s ago". Visual cue if user suspects staleness. Cheap to add.
+
+### What does NOT work for freshness
+
+- ❌ Polling for "wiki updated" events — yadgar doesn't emit them via MCP today
+- ❌ ETag / If-Modified-Since — wiki rows don't expose monotonic version. Could add `updated_at` comparison, but reading `updated_at` is itself a wiki_read → just as cheap to read whole page.
+- ❌ `consolidate_now()` to "force flush" — this is a 13-min sleep cycle (see v5.10.4 plan), NOT a queue flush primitive. Wrong tool.
+
+### Future: optional `flush_only` MCP primitive
+
+If yadgar grows a `flush_only()` MCP tool that just commits queued writes (no sleep cycle), the refresh button could optionally call it before re-reading. Tracked as related design point — see `PLAN_V5_20_0_ROADMAP_FRESHNESS.md` and `PLAN_V5_10_4_CONSOLIDATE_NOW_HEAVYWEIGHT.md` for context.
+
+---
+
+## Why MCP for "purely viz" feature?
+
+Question raised: bookmarks live in viz UI only — why expose as MCP tools instead of direct viz_server → DB calls?
+
+### Tradeoff matrix
+
+| Property | MCP path (chosen) | Direct viz→DB |
+|---|---|---|
+| Bearer auth uniformity | ✓ same as all yadgar APIs | new auth code needed |
+| Observability (metrics, tracing, logs) | ✓ `yadgar_mcp_request_*` automatic | new instrumentation needed |
+| Claude integration ("Claude, pin this wiki") | ✓ works out of box | viz-only, no script reuse |
+| Schema invariants (secret gate, rules engine, validation) | ✓ enforced via existing `@_tool()` pipeline | duplicated or skipped |
+| DB conn pool ownership | ✓ daemon owns | viz_server needs own |
+| Latency cost | ~5-10ms extra hop | direct |
+
+### Reasoning
+
+yadgar's architecture posture: **MCP is the unified read/write boundary.** Even the viz uses it via the reverse proxy in `yadgar/viz_server.py`. Every persistent operation flows through `@_tool()`. This gives:
+
+- One place to add metrics
+- One place to enforce auth
+- One place to apply schema/secret/rule invariants (I26 etc.)
+- One place to instrument with `trace_span` (I24)
+- One place to expose to MCP clients (Claude, scripts, future bots)
+
+For human-paced clicks, the 5-10ms extra hop is negligible. The wins compound: future features (e.g. "Claude, what are my pinned bookmarks?", "list bookmarks with stale wikis", "auto-pin every page tagged 'roadmap'") reuse the same 4 tools — no second API surface.
+
+### When direct would be the right call
+
+- Feature must be sub-millisecond latency (not relevant for clicks).
+- Feature is truly viz-only with ZERO automation use case (rare in yadgar — most things benefit from Claude/MCP reuse).
+- Bookmark feature itself becomes hot-path and 5-10ms hop hurts (premature concern; benchmark first).
+
+### Counter-design (NOT chosen)
+
+`yadgar/viz_server.py` directly imports `yadgar.storage.bookmarks` and calls CRUD. Saves the HTTP hop. Loses: Claude integration, observability, auth uniformity, conn-pool ownership. ~50% less code in viz_server but doubles maintenance surface for "what does yadgar do with bookmarks".
+
+**Verdict:** MCP. Document the reasoning in the plan so future maintainers don't re-litigate.
 
 ---
 
@@ -130,6 +219,14 @@ Why this combo over alternatives:
 ```
 
 Left column: ~280px wide, scrollable. Right pane: fills rest, scrollable.
+
+**Refresh affordances (per cache/freshness section above):**
+
+- 🔄 button in the per-bookmark row of the left column — refreshes that bookmark's wiki content. Keyboard: `r` on focused row.
+- 🔄 global button in top nav — re-fetches `/api/bookmarks` list (rare use; in case Claude added/removed bookmarks externally).
+- Fetched-at indicator under each bookmark (e.g. "30s ago" / "5m ago").
+- Queue-depth indicator in top nav: "3 writes pending" badge when `yadgar_queue_depth > 0`. Hidden when 0.
+- HTTP responses for `/api/wiki/read/{slug}` sent with `Cache-Control: no-store, no-cache, must-revalidate` — defeat browser caching entirely.
 
 **Add modal (clicked from `+ Add` button):**
 
