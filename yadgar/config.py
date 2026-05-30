@@ -479,6 +479,9 @@ class Settings(BaseSettings):
     ANCHOR_AUDIT_MAX_ACTIONS_PER_RUN: int = 20
     # How long _audit_anchors snapshots are retained for history (days).
     ANCHOR_AUDIT_HISTORY_RETENTION_DAYS: int = 30
+    # v5.21.0: cross-project anchor dedup — minimum cosine for cross-project pair detection.
+    # Higher than within-project ANCHOR_REDUNDANCY_COSINE (0.92) to avoid false positives.
+    ANCHOR_CROSS_PROJECT_COSINE: float = 0.95
 
     # v5.10.6: SESSION_END_CAPTURE sentinel-marker pattern
     # Kill switch for entire session-end capture feature.
