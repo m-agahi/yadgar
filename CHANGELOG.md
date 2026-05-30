@@ -6,6 +6,16 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.10.5] — 2026-05-30
+
+Patch: nightly cycle remaining bugs — vacuum URL second call site + prune deletes just-created snapshot.
+
+- **Bug 1 — vacuum URL second call site**: `nightly_cycle.main()` and `cmd_vacuum_impl()` both had `getattr(args, "backend_url", "http://127.0.0.1:8080")` literals that bypassed `YADGAR_DB_URL` env when systemd invokes without `--backend-url`. Fixed both to `getattr(args, "backend_url", None) or os.environ.get("YADGAR_DB_URL", "http://127.0.0.1:8080")`. Eliminates `[vacuum] ERROR: backend at http://127.0.0.1:8080 is not reachable: HTTP 307`.
+- **Bug 2 — prune deletes just-created snapshot**: `shutil.copytree` with `copy2` propagates the source DB directory's mtime to the new snapshot directory. If the DB dir is old (stopped core, no writes for hours), the snapshot sorts as "oldest" by mtime and gets pruned in the same cycle. Fixed `create_snapshot()` to call `target.touch()` after copytree, stamping the snapshot to current time.
+- **7 new tests**: `test_vacuum_url.py` (3 — structural + env-read correctness for both call sites) + `test_backup.py::TestPruneDoesNotDeleteJustCreated` (3 — mtime stamp, round-trip cycle) + structural source-scan (1).
+
+See [MIGRATION_NOTES.md §v5.10.5](MIGRATION_NOTES.md#v5105--nightly-cycle-remaining-bugs-2026-05-30).
+
 ## [5.10.4] — 2026-05-30
 
 Hotfix: `consolidate_now` heavyweight fix + PreToolUse hook schema fix.
