@@ -719,6 +719,73 @@ def _compute_anchor_signals(storage, resolved: str, cfg) -> dict:
     }
 
 
+def _check_session_end_sentinel(storage, resolved: str) -> dict | None:
+    """Check for an unprocessed session_end_sentinel memory row for this directory.
+
+    Returns an extract_last_session_findings recommended_action dict, or None.
+    Handles missing transcript (tombstone note) gracefully.
+    v5.10.6.
+    """
+    import json as _json  # noqa: PLC0415 — local to avoid circular if json not top-level
+
+    try:
+        sentinel_rows = storage._q(
+            "SELECT id, content, created_at FROM memory "
+            "WHERE '_session_end_sentinel' INSIDE tags "
+            "AND directory_context = $dir "
+            "ORDER BY created_at DESC LIMIT 1",
+            {"dir": resolved},
+        )
+    except Exception:
+        return None
+
+    if not sentinel_rows:
+        return None
+
+    row = sentinel_rows[0]
+    try:
+        sentinel_data = _json.loads(row.get("content", "{}"))
+    except Exception:
+        return None
+
+    transcript_path = sentinel_data.get("transcript_path", "")
+    ended_at = sentinel_data.get("ended_at", "")
+    msg_count = sentinel_data.get("message_count", 0)
+    last_human_turns = sentinel_data.get("last_human_turns", [])
+    last_touched_files = sentinel_data.get("last_touched_files", [])
+    sentinel_id = storage._extract_id(row.get("id"))
+
+    transcript_exists = bool(transcript_path) and Path(transcript_path).exists()
+
+    if transcript_exists:
+        suggested_call = (
+            f"# Read transcript at {transcript_path!r}, extract key decisions/findings,\n"
+            f"# then call: memorize(content='...', context={resolved!r}, tags=['session-finding'])\n"
+            f"# and: forget(memory_id={sentinel_id})"
+        )
+        reason = f"sentinel found: ended_at={ended_at}, msg_count={msg_count}"
+    else:
+        suggested_call = (
+            f"# Transcript at {transcript_path!r} no longer exists.\n"
+            f"# last_human_turns embedded in sentinel may still be useful.\n"
+            f"# Call: forget(memory_id={sentinel_id})  # clean up stale sentinel"
+        )
+        reason = (
+            f"sentinel found: ended_at={ended_at}, msg_count={msg_count}"
+            f" [transcript_not_found — extract from memory only]"
+        )
+
+    return {
+        "action": "extract_last_session_findings",
+        "reason": reason,
+        "suggested_call": suggested_call,
+        "transcript_path": transcript_path,
+        "sentinel_id": sentinel_id,
+        "last_human_turns": last_human_turns,
+        "last_touched_files": last_touched_files,
+    }
+
+
 def _build_recommended_actions(
     init_memory_present: bool,
     active_work_present: bool,
@@ -881,6 +948,13 @@ def _project_brief_signals(
             action_entry["suggested_call"] = _cp_call
         elif act == "audit_anchors":
             action_entry["suggested_call"] = _audit_call
+
+    # v5.10.6: session-end sentinel check — surface extract_last_session_findings action.
+    if storage is not None:
+        _sentinel_action = _check_session_end_sentinel(storage, resolved)
+        if _sentinel_action is not None:
+            recommended_actions.append(_sentinel_action)
+
     result: dict = {
         "_resolved_directory": resolved,
         "_mode": mode,

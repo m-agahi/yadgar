@@ -34,6 +34,122 @@ logger = logging.getLogger(__name__)
 
 _CORS = {"Cache-Control": "no-cache"}
 
+# ---------------------------------------------------------------------------
+# v5.10.6: session-end sentinel helpers
+# ---------------------------------------------------------------------------
+
+_SENTINEL_MAX_RETRIES = 3
+
+
+def _sentinel_memorize(content: str, directory_context: str) -> None:
+    """Import one sentinel record into memory. Extracted for patching in tests."""
+    import yadgar.server as _srv  # noqa: PLC0415
+
+    result = _srv.memorize(
+        content=content,
+        context=directory_context,
+        tags=["_session_end_sentinel", "session_end"],
+    )
+    if not result.get("stored") and not result.get("queued"):
+        # Raise so the caller's retry logic triggers
+        raise RuntimeError(f"memorize rejected sentinel: {result}")
+
+
+def _sentinel_handle_failure(marker: Path, record: dict, retries: int, failed_dir: Path) -> None:
+    """Handle a failed sentinel import: increment retries or move to failed/."""
+    record["retries"] = retries
+    if retries >= _SENTINEL_MAX_RETRIES:
+        try:
+            failed_dir.mkdir(parents=True, exist_ok=True)
+            marker.rename(failed_dir / marker.name)
+        except Exception as mv_e:
+            logger.warning("sentinel move to failed/ error: %s", mv_e)
+    else:
+        try:
+            tmp = marker.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+            tmp.rename(marker)
+        except Exception as wb_e:
+            logger.warning("sentinel retry write-back error: %s", wb_e)
+
+
+def _import_pending_sentinels(sentinel_dir_path: str) -> None:
+    """Scan sentinel dir, import each unprocessed *.json file into memory.
+
+    - On success: file deleted (consumed).
+    - On failure: retries field incremented; after _SENTINEL_MAX_RETRIES, moved to failed/.
+    - Never raises — errors are logged.
+    """
+    sentinel_dir = Path(sentinel_dir_path)
+    if not sentinel_dir.exists():
+        return
+
+    failed_dir = sentinel_dir / "failed"
+
+    for marker in sorted(sentinel_dir.glob("*.json")):
+        try:
+            record = json.loads(marker.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning("sentinel parse error for %s: %s", marker, e)
+            continue
+
+        cwd = record.get("cwd", "global")
+        retries = int(record.get("retries", 0))
+
+        try:
+            _sentinel_memorize(content=json.dumps(record), directory_context=cwd)
+            marker.unlink()  # consumed
+        except Exception as e:
+            retries += 1
+            logger.warning("sentinel import failed for %s (attempt %d): %s", marker, retries, e)
+            _sentinel_handle_failure(marker, record, retries, failed_dir)
+
+
+def _vacuum_stale_sentinels(retention_days: int | None = None) -> int:
+    """Delete _session_end_sentinel memory rows older than retention_days.
+
+    Returns count of deleted rows.
+    Never raises.
+    """
+    from datetime import UTC, datetime, timedelta  # noqa: PLC0415
+
+    from yadgar.server.lifecycle import _get_storage as _gs  # noqa: PLC0415
+
+    if retention_days is None:
+        from yadgar.config import get_settings  # noqa: PLC0415
+
+        retention_days = get_settings().SESSION_END_RETENTION_DAYS
+
+    cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).isoformat()
+    deleted = 0
+    try:
+        storage = _gs()
+        rows = storage._q(
+            "SELECT id FROM memory "
+            "WHERE '_session_end_sentinel' INSIDE tags "
+            "AND created_at < $cutoff",
+            {"cutoff": cutoff},
+        )
+        deleted = _vacuum_delete_rows(storage, rows)
+    except Exception as e:
+        logger.warning("sentinel vacuum error: %s", e)
+    return deleted
+
+
+def _vacuum_delete_rows(storage, rows: list) -> int:
+    """Delete memory rows by id. Returns count deleted."""
+    deleted = 0
+    for row in rows:
+        mid = storage._extract_id(row.get("id"))
+        if mid is None:
+            continue
+        try:
+            storage.delete_memory(mid)
+            deleted += 1
+        except Exception as e:
+            logger.warning("sentinel vacuum: delete_memory(%s) failed: %s", mid, e)
+    return deleted
+
 
 def _hook_observe(hook: str, t0: float, exc: BaseException | None = None) -> None:
     """Record hook execution duration + failure metrics. Never raises."""
@@ -304,6 +420,16 @@ async def hook_session_context(request: Request) -> JSONResponse:
 
     # Record timestamp for prompt-recall throttling (bounded dict)
     _bounded_set(_st._last_session_context, directory, time.monotonic())
+
+    # v5.10.6: import any pending session-end sentinel files before project_brief query.
+    _sentinel_dir_env = os.environ.get("YADGAR_SESSION_END_DIR", "")
+    _sentinel_dir = (
+        _sentinel_dir_env if _sentinel_dir_env else str(Path.home() / ".yadgar" / "session-ends")
+    )
+    try:
+        _import_pending_sentinels(_sentinel_dir)
+    except Exception as _se:
+        logger.debug("sentinel import error in session-context: %s", _se)
 
     try:
         # Look up via yadgar.server so patch.object(srv, "project_brief", ...) takes effect

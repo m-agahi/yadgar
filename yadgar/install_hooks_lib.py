@@ -124,6 +124,13 @@ def install_hooks_impl(
         shutil.copy2(stop_hook_src, stop_hook_dst)
         stop_hook_dst.chmod(0o755)
 
+    # SessionEnd hook — always installed globally (v5.10.6)
+    session_end_hook_src = package_hooks / "session-end-capture.py"
+    session_end_hook_dst = global_hooks_dir / "yadgar-session-end-capture.py"
+    if not dry_run and session_end_hook_src.exists():
+        shutil.copy2(session_end_hook_src, session_end_hook_dst)
+        session_end_hook_dst.chmod(0o755)
+
     # hook_runner.py
     hook_runner_src = Path(__file__).parent / "scripts" / "hook_runner.py"
     hook_runner_dst = hooks_dir / "hook_runner.py"
@@ -290,14 +297,27 @@ def install_hooks_impl(
         }
     ]
 
-    # Stop hook placement depends on scope:
+    _session_end_entry = [
+        {
+            "matcher": "",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": f'python3 "{session_end_hook_dst}"',
+                }
+            ],
+        }
+    ]
+
+    # Stop + SessionEnd hook placement depends on scope:
     # - scope=global: same file as the rest of the hooks — merge directly.
-    # - scope=project: separate global file (so Stop fires in every session).
+    # - scope=project: separate global file (so they fire in every session).
     if scope == "global":
-        # Everything goes into one file — add Stop alongside the rest.
+        # Everything goes into one file — add Stop + SessionEnd alongside the rest.
         hooks_config["Stop"] = _stop_entry
+        hooks_config["SessionEnd"] = _session_end_entry
         settings_data["hooks"] = hooks_config
-    # else: settings_data already has hooks_config; global Stop handled below
+    # else: settings_data already has hooks_config; global Stop+SessionEnd handled below
 
     if dry_run:
         preview = json.dumps(settings_data, indent=2)
@@ -314,8 +334,8 @@ def install_hooks_impl(
     # Atomic write: primary settings file
     _atomic_write(settings_target_dir, settings_path, settings_data)
 
-    # For scope=project, also register Stop in the global settings file
-    # (always global so it fires in every session regardless of project)
+    # For scope=project, also register Stop + SessionEnd in the global settings file
+    # (always global so they fire in every session regardless of project)
     if scope == "project":
         global_settings_path = global_claude_dir / "settings.json"
         global_settings: dict = {}
@@ -326,6 +346,7 @@ def install_hooks_impl(
                 global_settings = {}
         global_hooks = global_settings.get("hooks", {})
         global_hooks["Stop"] = _stop_entry
+        global_hooks["SessionEnd"] = _session_end_entry
         global_settings["hooks"] = global_hooks
         _atomic_write(global_claude_dir, global_settings_path, global_settings)
 
@@ -345,6 +366,7 @@ def install_hooks_impl(
             "UserPromptSubmit (auto-recall)",
             "PreToolUse (DB lockdown)",
             "Stop (memory checkpoint — global)",
+            "SessionEnd (sentinel capture — global)",
             "SubagentStop (findings capture — append-if-absent)",
             "InstructionsLoaded (recall on CLAUDE.md load — append-if-absent)",
             "SubagentStart (context injection at dispatch — append-if-absent)",
