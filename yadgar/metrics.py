@@ -375,6 +375,16 @@ yadgar_viz_dbsize_sample_duration_ms = Histogram(
     registry=_registry,
 )
 
+# ── v5.10.9 — Orphan-edge filter observability ───────────────────────────────
+
+yadgar_graph_api_orphan_edges_dropped_total = Counter(
+    "yadgar_graph_api_orphan_edges_dropped_total",
+    "Total edges dropped by get_full_graph() because one or both endpoints were absent "
+    "from the returned node set. A non-zero value indicates backend payload drift "
+    "(e.g. causal edges referencing entity nodes not included in the graph response).",
+    registry=_registry,
+)
+
 # ── P11 — Backend liveness + circuit breaker (N3) ────────────────────────────
 
 yadgar_backend_reachable = Gauge(

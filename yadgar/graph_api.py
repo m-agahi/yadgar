@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from yadgar.metrics import (
+    yadgar_graph_api_orphan_edges_dropped_total,
     yadgar_process_cpu_percent,
     yadgar_process_open_fds,
     yadgar_process_rss_bytes,
@@ -246,7 +247,27 @@ class GraphAPI:
                 edge["source_memory_id"] = int(smid)
             edges.append(edge)
 
-        return {"nodes": nodes, "edges": edges}
+        # ── Orphan-edge filter (v5.10.9) ─────────────────────────────────────────
+        # force-graph.min.js throws 'node not found: <id>' synchronously when any
+        # link references an ID not in the node set. One orphan edge crashes the
+        # entire physics simulation (tick count stays 0, all nodes clump at origin).
+        # After v5.0.0 monolith split, entity:* nodes are assembled separately from
+        # causal edges — causal edges reference entity:* IDs that are never included
+        # in the node list, making every causal edge an orphan until entity nodes
+        # are restored in a future release.
+        node_ids = {n["id"] for n in nodes}
+        filtered_edges = [
+            e for e in edges if e.get("source") in node_ids and e.get("target") in node_ids
+        ]
+        orphan_count = len(edges) - len(filtered_edges)
+        if orphan_count > 0:
+            logger.info(
+                "graph_api: dropped %d orphan edge(s) (endpoints absent from node set)",
+                orphan_count,
+            )
+            yadgar_graph_api_orphan_edges_dropped_total.inc(orphan_count)
+
+        return {"nodes": nodes, "edges": filtered_edges}
 
     @trace_span("graph_api.get_graph_stats")
     def get_graph_stats(self) -> dict:

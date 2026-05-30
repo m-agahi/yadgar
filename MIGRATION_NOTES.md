@@ -1,5 +1,87 @@
 # Migration Notes
 
+## v5.10.9 — Viz orphan-edge filter (2026-05-30)
+
+Core 5.10.8 → 5.10.9. Backend unchanged at 5.4.0. No schema changes. Plan: `docs/PLAN_V5_10_9_VIZ_ORPHAN_EDGE_FILTER.md`.
+
+### Why
+
+After v5.10.8 deploy + hard refresh, viz STILL showed nodes clumped at origin with 0 engine ticks. Live DevTools console pasted by user: `Uncaught Error: node not found: entity:172` from `force-graph.min.js:34398` during `f.links` resolution inside `_.update`. The library throws synchronously when any link references a node ID not in the node set. After the throw, simulation never advances — every downstream symptom (no ticks, clumped nodes, 0 tick count) cascades from this one crash.
+
+All v5.10.7–v5.10.8 attempts (Lambert→Basic material, transparent fix, tick-count guard, mesh-leak removal) targeted downstream effects. None addressed the library crash.
+
+Root cause: after v5.0.0 monolith split, `yadgar/graph_api.py` assembles nodes and edges from separate queries. Causal edges reference `entity:*` IDs — but entity nodes are never added to the node list in `get_full_graph()`. Every causal edge is therefore an orphan. One orphan crashes force-graph.
+
+### What changed
+
+**`yadgar/graph_api.py`** — after assembling `nodes` and `edges`, add orphan filter:
+
+```python
+# Before (v5.10.8):
+return {"nodes": nodes, "edges": edges}
+
+# After (v5.10.9):
+node_ids = {n["id"] for n in nodes}
+filtered_edges = [
+    e for e in edges
+    if e.get("source") in node_ids and e.get("target") in node_ids
+]
+orphan_count = len(edges) - len(filtered_edges)
+if orphan_count > 0:
+    logger.info("graph_api: dropped %d orphan edge(s) ...", orphan_count)
+    yadgar_graph_api_orphan_edges_dropped_total.inc(orphan_count)
+return {"nodes": nodes, "edges": filtered_edges}
+```
+
+**`yadgar/metrics.py`** — new counter:
+
+```python
+yadgar_graph_api_orphan_edges_dropped_total = Counter(
+    "yadgar_graph_api_orphan_edges_dropped_total",
+    "Total edges dropped by get_full_graph() because one or both endpoints "
+    "were absent from the returned node set.",
+    registry=_registry,
+)
+```
+
+**`yadgar/static/index.html`** — in `loadGraph()`, before `graph.graphData(...)`:
+
+```javascript
+// After (v5.10.9):
+const nodeIdSet = new Set(allNodes.map(n => n.id));
+const beforeCount = allLinks.length;
+allLinks = allLinks.filter(l => {
+  const s = (l.source && l.source.id) || l.source;
+  const t = (l.target && l.target.id) || l.target;
+  return nodeIdSet.has(s) && nodeIdSet.has(t);
+});
+const dropped = beforeCount - allLinks.length;
+if (dropped > 0) {
+  console.warn(`[yadgar viz] dropped ${dropped} orphan edges ...`);
+}
+```
+
+### Apply
+
+No migration required. Static file change — deploy + hard refresh (`Ctrl+Shift+R` or `Cmd+Shift+R`) to clear browser cache.
+
+### Manual smoke procedure
+
+After deploy + hard refresh:
+
+1. Open viz in browser (`http://localhost:5173` or configured port).
+2. Open DevTools console (F12).
+3. Reload viz via "↺ Reload" button.
+4. Verify: **no** `Uncaught Error: node not found:` in console.
+5. Verify: engine tick count > 0 visible (status bar should show non-zero).
+6. Verify: nodes spread away from origin via force layout (not all clumped at center).
+7. Verify: both 2D and 3D modes render (toggle via mode button).
+8. Optional: check Prometheus `/metrics` endpoint for `yadgar_graph_api_orphan_edges_dropped_total` — non-zero value confirms the fix fired on real data (expected: equals number of causal edges in DB).
+
+### Rollback
+
+Revert this commit. Returns to v5.10.8 broken state with library crash. Not desirable unless this fix causes a new regression.
+
 ## v5.10.8 — Viz physics hang + mesh leak fix (2026-05-30)
 
 Core 5.10.7.3 → 5.10.8. Backend unchanged at 5.4.0. No schema changes. Plan: `docs/PLAN_V5_10_8_VIZ_PHYSICS_AND_MESH_LEAK_FIX.md`.
