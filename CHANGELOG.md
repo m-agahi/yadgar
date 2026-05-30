@@ -6,6 +6,30 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.11.0] — 2026-05-30
+
+Viz knobs configurable via config.yaml — all hardcoded viz constants replaced with config-driven values.
+
+- **35 new `VIZ_*` Settings fields** (`yadgar/config.py`): node sizing, heat HSL params, 8 wiki category colors, 5 edge colors, edge width 3D multiplier, arrow length, physics charge/link-distance (2D+3D), layout zoom-fit params (tick threshold, padding, transition ms), search match/pinned stroke colors + dim opacity. All default to v5.10.11 hardcoded values — zero behavioral change on no-config deploys.
+- **I25 three-way sync** (`config_yaml.py` + `config_registry.py`): 35 FIELD_META entries in new `viz_config` section + 35 `ConfigEntry` rows. All hooks pass.
+- **`/api/viz/config` endpoint** (`yadgar/server/http.py`): `GET /api/viz/config` returns nested JSON (`node`/`edge`/`physics`/`layout`/`search`). Bearer-auth auto-applied by existing middleware. `@trace_span("api.viz_config")`.
+- **Frontend wiring** (`yadgar/static/index.html`): `YADGAR_VIZ_CONFIG` global with hardcoded fallbacks; `loadVizConfig()` async function fetches `/api/viz/config` and deep-merges (silent fallback on error); `loadGraph()` calls `await loadVizConfig()` before init; all viz call sites replaced with `YADGAR_VIZ_CONFIG.*` references.
+- **7 new tests** + **3 updated** (see `test_viz_config_endpoint.py`, `test_viz_static_assets.py::TestV5110VizConfigFetch`).
+- **Complexity baseline** (`.complexity-baseline.json`): LOC baselines updated for `config_yaml.py` (1025→1152) and `server/http.py` (1440→1507) — growth is schema data.
+
+See [MIGRATION_NOTES.md §v5.11.0](MIGRATION_NOTES.md#v5110--viz-knobs-configurable-via-configyaml-2026-05-30) + `docs/PLAN_V5_11_0_VIZ_CONFIG_YAML.md`.
+
+## [5.10.11] — 2026-05-30
+
+Viz polish (3D-only): edge thickness +50% + connected-node repulsion +20%.
+
+- **3D edge thickness +50%** (`yadgar/static/index.html` line 863): 3D init block `.linkWidth` changed from plain `_linkWidth` to `l => _linkWidth(l) * 1.5`. 2D init block unchanged.
+- **3D link distance 30 → 36** (`yadgar/static/index.html` after 3D init chain): added `graph.d3Force('link').distance(36)` in 3D branch only. 2D branch retains `distance(30)` in its else block. (Plan assumed shared post-init block; actual code is per-branch — 3D had no prior `distance()` call, so we added one directly.)
+- **3 new static-asset regression tests** (`test_viz_static_assets.py::TestV51011VizEdgeThicknessAndRepulsion`): `test_3d_linkWidth_multiplier_present`, `test_2d_linkWidth_unchanged`, `test_3d_link_distance_36`.
+- **Coloring logic untouched** — `_nodeColorFor`, `_linkColor`, `heatColor`, `WIKI_CAT_COLOR` unchanged per user instruction. 2D edge width untouched.
+
+See [MIGRATION_NOTES.md §v5.10.11](MIGRATION_NOTES.md#v51011--viz-polish-3d-only-edge-thickness-50--repulsion-20-2026-05-30) + `docs/PLAN_V5_10_11_VIZ_EDGE_THICKNESS_AND_REPULSION.md`.
+
 ## [5.10.10] — 2026-05-30
 
 Viz polish: 2x 3D node size + auto-zoom-fit on initial load (both 2D and 3D modes).
