@@ -6,6 +6,16 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.10.7.1] — 2026-05-30
+
+Bundled hotfix: sentinel filter + viz lighting fix.
+
+- **Sentinel filter** (`yadgar/hooks/session-end-capture.py`): extended `SKIP_TAGS` frozenset to cover all slash-command output tags — `command-name`, `command-args`, `local-command-caveat`, `local-command-stdout`, `local-command-stderr` (in addition to existing `system-reminder`, `command-message`). Both `_count_human_messages` and `_parse_user_content` now reference the single module-level constant. Eliminates slash-command noise in `last_human_turns` sentinel field that was burying real human-turn context.
+- **Viz lighting fix** (`yadgar/static/index.html`): `_makeNodeThreeObject` changed from `THREE.MeshLambertMaterial` → `THREE.MeshBasicMaterial`. ForceGraph3D adds no scene lights; Lambert rendered nodes as dark/fragmented triangle shards. Basic is unlit — colour always renders at set value. Wiki octahedra and memory spheres now render as solid coloured shapes.
+- **8 new tests**: 6 sentinel-filter tests pinning per-tag skip behaviour + typo-turn survival; 2 viz tests asserting `MeshBasicMaterial` present + `MeshLambertMaterial` absent in `_makeNodeThreeObject` block.
+
+See [MIGRATION_NOTES.md §v5.10.7.1](MIGRATION_NOTES.md#v51071--bundled-hotfix-sentinel-filter--viz-lighting-2026-05-30).
+
 ## [5.10.7] — 2026-05-30
 
 Viz UX fixes S2.1–S2.4: heat colour in 3D, distinct node shapes, search mode fix, stats panel auto-refresh.

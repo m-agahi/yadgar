@@ -815,7 +815,7 @@ function _makeNodeThreeObject(node) {
   const color = node.__pinned
     ? '#ffd700'
     : _nodeColorFor(node);
-  const mat = new THREE.MeshLambertMaterial({ color, transparent: true, opacity: node.__dimmed ? 0.18 : 1.0 });
+  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: node.__dimmed ? 0.18 : 1.0 });
   return new THREE.Mesh(geo, mat);
 }
 
