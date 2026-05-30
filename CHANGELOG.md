@@ -6,6 +6,18 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.10.7] — 2026-05-30
+
+Viz UX fixes S2.1–S2.4: heat colour in 3D, distinct node shapes, search mode fix, stats panel auto-refresh.
+
+- **S2.1 — 3D heat colour**: `_nodeColorFor(node)` helper drives `.nodeColor()` in 3D init; heat gradient now visible in 3D (was uniform library default). `heatColor()` formula unchanged from 2D.
+- **S2.2 — Node shape distinction**: `_makeNodeThreeObject(node)` returns `OctahedronGeometry` for wiki (visibly faceted) and `SphereGeometry` for memory. Material colour encodes heat (S2.1+S2.2 unified). Wired via `.nodeThreeObject()`.
+- **S2.3 — Search in 3D**: `_applySearchHighlight()` now branches on `_graphMode`. 3D path re-fires `.nodeColor()` + `.nodeThreeObject()`. Old path called `nodeCanvasObject` (2D-only) causing `TypeError` in 3D.
+- **S2.4 — Stats auto-refresh**: `openStats()` starts a 5 s `setInterval(refreshStats)`. `closeStats()` clears it. CPU/DB sparklines now animate while panel is open.
+- **10 new static-asset tests** in `test_viz_static_assets.py`.
+
+See [MIGRATION_NOTES.md §v5.10.7](MIGRATION_NOTES.md#v5107--viz-ux-fixes-2026-05-30).
+
 ## [5.10.6] — 2026-05-30
 
 SESSION_END_CAPTURE sentinel-marker pattern + SessionStart extraction.
