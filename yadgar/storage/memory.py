@@ -727,6 +727,53 @@ class _MemoryMixin:
         )
         return self._rows_to_dicts(rows)
 
+    def get_anchored_memories_scoped(
+        self,
+        directory: str,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Return anchors in scope priority order: global first, then project.
+
+        Two queries, hard cap `limit` each (safety cap 50 per design).
+        Global = directory_context IN ('', 'global', 'system').
+        Project = directory_context = directory (exact repo root match).
+        Deduplicates by memory id. Returns global anchors first, then project.
+        No rank-filter applied — anchors surface unconditionally (design §2).
+
+        v5.19.0: replaces flat get_anchored_memories() in restore() path.
+        """
+        _now = self._now_iso()
+        _cap = min(limit, 50)  # hard safety cap
+
+        global_rows = self._q(
+            "SELECT * FROM memory "
+            "WHERE '_anchor' INSIDE tags AND is_protected = true "
+            "AND (directory_context = '' OR directory_context = 'global' "
+            "     OR directory_context = 'system') "
+            "AND (valid_until IS NONE OR valid_until > $now) "
+            "ORDER BY heat DESC LIMIT $lim",
+            {"now": _now, "lim": _cap},
+        )
+        project_rows = self._q(
+            "SELECT * FROM memory "
+            "WHERE '_anchor' INSIDE tags AND is_protected = true "
+            "AND directory_context = $dir "
+            "AND (valid_until IS NONE OR valid_until > $now) "
+            "ORDER BY heat DESC LIMIT $lim",
+            {"dir": directory, "now": _now, "lim": _cap},
+        )
+
+        seen: set[int] = set()
+        merged: list = []
+        for row in global_rows + project_rows:
+            mid = self._extract_id(row.get("id"))
+            if mid in seen:
+                continue
+            seen.add(mid)
+            merged.append(row)
+
+        return self._rows_to_dicts(merged)
+
     def get_recent_memories(self, limit: int = 20, exclude_anchored: bool = True) -> list[dict]:
         """Return recent non-protected memories, ordered by creation date desc."""
         if exclude_anchored:
