@@ -1,5 +1,11 @@
 # PLAN — v5.10.7.2: 3D viz lighting fix (Lambert → Basic material)
 
+## ABSORBED INTO v5.10.7.1
+
+This plan was originally designated v5.10.7.2. It was absorbed into v5.10.7.1 to ship both hotfixes in a single release cycle. The implementation is complete in `feat/v5.10.7.1-bundled-hotfix`. See `docs/PLAN_V5_10_7_1_SENTINEL_FILTER_LOCAL_COMMAND_TAGS.md` for the combined plan.
+
+---
+
 **Status:** drafted 2026-05-30. Plan-first per I27. Hotfix for v5.10.7 viz regression observed post-deploy.
 
 **Master at draft time:** v5.10.7 SHIPPED LIVE; viz wiki nodes render as dark fragments instead of solid octahedra.
