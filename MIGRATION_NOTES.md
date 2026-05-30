@@ -1,5 +1,65 @@
 # Migration Notes
 
+## v5.10.6 — SESSION_END_CAPTURE sentinel-marker pattern (2026-05-30)
+
+Core 5.10.5 → 5.10.6. Backend unchanged at 5.4.0. No schema changes.
+
+### What's new
+
+Session endings are now captured as filesystem sentinel markers in `~/.yadgar/session-ends/`.
+On the next session start, the marker is imported into memory and surfaced as an
+`extract_last_session_findings` recommended action in `project_brief(mode="signals")`.
+
+### Required action: re-run install_hooks
+
+The SessionEnd hook is new and must be registered in `~/.claude/settings.json`:
+
+```
+install_hooks(scope="global")
+```
+
+Or if using project scope:
+
+```
+install_hooks(project_directory="/your/project", scope="project")
+```
+
+This adds `SessionEnd` alongside the existing `Stop` hook in the global settings file.
+
+### New directory (auto-created)
+
+`~/.yadgar/session-ends/` — created automatically by the hook on first run.
+
+Failed imports moved to `~/.yadgar/session-ends/failed/` after 3 retries.
+
+Manual cleanup if needed: `rm ~/.yadgar/session-ends/*.json`
+
+### New env knobs (all optional, defaults shown)
+
+| Knob | Default | Purpose |
+|------|---------|---------|
+| `SESSION_END_CAPTURE_ENABLED` | `true` | Kill switch for entire feature |
+| `SESSION_END_RETENTION_DAYS` | `30` | Auto-prune sentinels older than N days |
+| `SESSION_END_SNIPPET_TURNS` | `5` | Last N human turns embedded in sentinel |
+| `SESSION_END_MIN_MESSAGES` | `2` | Skip sentinel if session had fewer than N human messages |
+
+### end_reason gating (intentional)
+
+`end_reason=clear` and `end_reason=resume` are intentionally skipped — they are not
+true session exits. Only `logout` and `other` write sentinels.
+
+### Consuming a sentinel
+
+When the next session's `project_brief(mode="signals")` emits `extract_last_session_findings`:
+
+1. Read the transcript at `transcript_path` (if it still exists).
+2. Synthesize key decisions/findings.
+3. Call `memorize(content='...', context=<directory>, tags=['session-finding'])`.
+4. Call `forget(memory_id=<sentinel_id>)` to consume the sentinel.
+
+If transcript is gone (file rotated), the `suggested_call` directs `forget(sentinel_id)` only.
+The sentinel's `last_human_turns` field still provides partial context.
+
 ## v5.10.5 — nightly cycle remaining bugs (2026-05-30)
 
 Core 5.10.4 → 5.10.5. Backend unchanged at 5.4.0. No schema changes.

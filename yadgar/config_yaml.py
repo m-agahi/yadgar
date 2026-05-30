@@ -610,6 +610,23 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "How long _audit_anchors sentinel snapshots are retained (days, default 30)",
         "section": "anchor_hygiene",
     },
+    # session_end_capture (v5.10.6)
+    "session_end_capture_enabled": {
+        "desc": "Kill switch for session-end sentinel capture (default true)",
+        "section": "session_end_capture",
+    },
+    "session_end_retention_days": {
+        "desc": "Auto-prune sentinel memory rows older than this many days (default 30)",
+        "section": "session_end_capture",
+    },
+    "session_end_snippet_turns": {
+        "desc": "Last N human turns embedded in sentinel for rotation resilience (default 5)",
+        "section": "session_end_capture",
+    },
+    "session_end_min_messages": {
+        "desc": "Skip sentinel if session had fewer than N human messages (default 2)",
+        "section": "session_end_capture",
+    },
     # backend_hot_path_cache (backend v5.4.0)
     "ce_cache_enabled": {
         "desc": "Enable CE score LRU cache (false/0 = disabled, pre-v5.4.0 behaviour)",
