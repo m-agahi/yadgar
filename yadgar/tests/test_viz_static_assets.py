@@ -1,4 +1,4 @@
-"""Static-asset string checks for v5.10.7 viz UX fixes (S2.1–S2.4).
+"""Static-asset string checks for v5.10.7 viz UX fixes (S2.1–S2.4) + v5.10.7.1 lighting fix.
 
 These tests verify that key JS code is present in index.html without
 running a browser. They act as regression guards that confirm:
@@ -6,6 +6,7 @@ running a browser. They act as regression guards that confirm:
 - S2.2: Wiki nodes use OctahedronGeometry (visibly faceted vs sphere)
 - S2.3: _applySearchHighlight branches on _graphMode (no 2D-only API in 3D)
 - S2.4: Stats overlay has an auto-refresh interval when opened
+- v5.10.7.1: _makeNodeThreeObject uses MeshBasicMaterial (unlit), not MeshLambertMaterial
 """
 
 from __future__ import annotations
@@ -155,4 +156,47 @@ class TestS24StatsAutoRefresh:
         body = "\n".join(close_lines)
         assert "clearInterval" in body, (
             "closeStats() does not call clearInterval — interval leaks when stats closed"
+        )
+
+
+class TestV510701LightingFix:
+    """v5.10.7.1: _makeNodeThreeObject must use MeshBasicMaterial (unlit), not MeshLambertMaterial.
+
+    Lambert requires scene lights; ForceGraph3D adds none by default → nodes render dark/fragmented.
+    Basic is unlit — colour always visible regardless of scene lighting.
+    """
+
+    @staticmethod
+    def _node_obj_block(html: str) -> str:
+        """Extract the _makeNodeThreeObject function body via brace-depth scan."""
+        lines = html.splitlines()
+        in_func = False
+        func_lines: list[str] = []
+        brace_depth = 0
+        for line in lines:
+            if "function _makeNodeThreeObject" in line:
+                in_func = True
+            if in_func:
+                func_lines.append(line)
+                brace_depth += line.count("{") - line.count("}")
+                if in_func and brace_depth == 0 and func_lines:
+                    break
+        return "\n".join(func_lines)
+
+    def test_mesh_basic_material_present_in_node_obj(self) -> None:
+        html = _html()
+        block = self._node_obj_block(html)
+        assert block, "_makeNodeThreeObject function not found in index.html"
+        assert "MeshBasicMaterial" in block, (
+            "_makeNodeThreeObject uses something other than MeshBasicMaterial — "
+            "nodes may render dark without scene lights"
+        )
+
+    def test_mesh_lambert_material_absent_in_node_obj(self) -> None:
+        html = _html()
+        block = self._node_obj_block(html)
+        assert block, "_makeNodeThreeObject function not found in index.html"
+        assert "MeshLambertMaterial" not in block, (
+            "_makeNodeThreeObject still uses MeshLambertMaterial — "
+            "nodes will render as dark fragments (no scene lights in ForceGraph3D)"
         )
