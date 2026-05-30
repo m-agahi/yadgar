@@ -191,38 +191,15 @@ def hook_prompt_recall() -> None:
             print(text)
 
 
-def hook_db_lockdown_check() -> None:
-    """PreToolUse (Bash) — block direct docker exec into yadgar containers."""
-    try:
-        data = json.load(sys.stdin)
-    except json.JSONDecodeError, ValueError:
-        print(json.dumps({"hookSpecificOutput": {"permissionDecision": "allow"}}))
-        return
-
-    cmd = data.get("tool_input", {}).get("command", "")
-    if "docker exec yadgar-backend" in cmd or "docker exec yadgar-db" in cmd:
-        print(
-            json.dumps(
-                {
-                    "hookSpecificOutput": {"permissionDecision": "deny"},
-                    "systemMessage": (
-                        "Direct docker exec into yadgar DB/backend containers is blocked "
-                        "to prevent data corruption. Use yadgar MCP tools instead."
-                    ),
-                }
-            )
-        )
-    else:
-        print(json.dumps({"hookSpecificOutput": {"permissionDecision": "allow"}}))
-
-
 _HOOKS = {
     "post-tool-capture": hook_post_tool_capture,
     "session-start-context": hook_session_start_context,
     "post-compact-rehydrate": hook_post_compact_rehydrate,
     "pre-compact-drain": hook_pre_compact_drain,
     "prompt-recall": hook_prompt_recall,
-    "db-lockdown-check": hook_db_lockdown_check,
+    # db-lockdown-check removed in v5.20.0 — migrated to standalone
+    # yadgar/hooks/db-lockdown-check.py, installed as
+    # ~/.claude/hooks/yadgar-db-lockdown-check.py by install_hooks.
 }
 
 
