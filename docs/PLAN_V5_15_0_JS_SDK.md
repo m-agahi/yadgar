@@ -1,4 +1,4 @@
-# PLAN — v5.13.0 / `@yadgar/sdk` v0.1.0: JavaScript / TypeScript SDK
+# PLAN — v5.15.0 / `@yadgar/sdk` v0.1.0: JavaScript / TypeScript SDK
 
 **Status:** drafted 2026-05-30. Plan-first per I27. Greenfield — scan agent verdict NEVER-CONSIDERED. No prior commits, plans, or files touch a JS SDK. Implementation deferred.
 
@@ -6,7 +6,7 @@
 
 **Master at draft time:** core v5.10.3 shipped. v5.10.4 in flight on `feat/v5.10.4-consolidate-now-mode-hook-schema`.
 
-**Sequencing:** v5.13.0 slot reserved for the first server-side support release (CORS knobs already shipped — `YADGAR_ALLOWED_ORIGINS` in `yadgar/server/_app.py:60`). Slot is light on the server side; bulk of the work lives in a new `sdk-js/` subdirectory that ships its own package version `@yadgar/sdk` v0.1.0. Independent of v5.11 (anchor cross-project), v5.12.0 (wiki bookmarks), v5.14.x (R2 recall plugin arch — slated to land after Adopt-1 benchmarks).
+**Sequencing:** v5.15.0 slot — server-side support release (CORS knobs already shipped — `YADGAR_ALLOWED_ORIGINS` in `yadgar/server/_app.py:60`). Slot is light on the server side; bulk of the work lives in a new `sdk-js/` subdirectory that ships its own package version `@yadgar/sdk` v0.1.0. Lands after v5.13.0 (Adopt-1 benchmarks — `docs/PLAN_V5_13_0_BENCHMARK_PUBLICATION.md`) and v5.14.x (R2 recall plugin arch). Independent of v5.11 (anchor cross-project) and v5.12.0 (wiki bookmarks).
 
 ---
 
