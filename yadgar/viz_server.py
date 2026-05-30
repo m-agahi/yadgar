@@ -23,6 +23,21 @@ import httpx
 STATIC_DIR = Path(__file__).parent / "static"
 INDEX_HTML = STATIC_DIR / "index.html"
 
+_MIME_MAP: dict[str, str] = {
+    ".html": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+    ".json": "application/json",
+    ".png": "image/png",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+}
+
+
+def _mime_type(path: Path) -> str:
+    """Return MIME type string for *path* based on suffix."""
+    return _MIME_MAP.get(path.suffix.lower(), "application/octet-stream")
+
 
 def _proxy_enabled() -> bool:
     """Return True unless YADGAR_VIZ_PROXY is explicitly set to '0'."""
@@ -131,6 +146,32 @@ class _Handler(BaseHTTPRequestHandler):
         if _proxy_enabled() and raw_path.startswith("/api/"):
             self._handle_proxy()
             return
+
+        # Serve static files (bookmarks.html, bookmarks.css, bookmarks.js, lib/*).
+        # Any path that maps to an existing file under STATIC_DIR is served directly.
+        # Everything else falls back to index.html (SPA behaviour).
+        if raw_path not in ("", "/"):
+            candidate = STATIC_DIR / raw_path.lstrip("/")
+            # Resolve to prevent path traversal outside STATIC_DIR.
+            try:
+                resolved = candidate.resolve()
+                static_resolved = STATIC_DIR.resolve()
+            except Exception:
+                self.send_error(400, "Bad Request")
+                return
+            if resolved.is_file() and str(resolved).startswith(str(static_resolved)):
+                ct = _mime_type(resolved)
+                try:
+                    data = resolved.read_bytes()
+                except OSError:
+                    self.send_error(404, "File Not Found")
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", ct)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
 
         try:
             data = INDEX_HTML.read_bytes()
