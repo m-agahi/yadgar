@@ -73,6 +73,12 @@ Rules:
 
 ### Deferred (v5.15.0+)
 
+- **Caller plumbing (KNOWN GAP):** v5.13.0 ships the allowlist mechanism, but no production
+  write tool (memorize, wiki_add, anchor, etc.) yet forwards its `tags` parameter to
+  `gate_or_reject(tags=...)`. The allowlist YAML loads and is validated, but will never
+  match any real call until callers are plumbed. Tracked for v5.15.0+. In the meantime
+  the test fixture (`yadgar/tests/fixtures/secret-gate-allowlist.yaml`) exercises the full
+  path via direct `is_allowlisted()` calls in tests.
 - Pattern OVERRIDE (raise threshold for one tag) — v5.13.0 is full-bypass only
 - Allowlist YAML schema versioning / migration
 - Audit log size-based rotation (currently date-based only)
