@@ -1,5 +1,95 @@
 # Migration Notes
 
+## v5.13.0 — Secret-gate context-awareness + allowlist (2026-05-30)
+
+Core 5.11.0 → 5.13.0. Backend unchanged at 5.4.0. No schema changes. No DB migrations. Plan: `docs/PLAN_V5_13_0_SECRET_GATE_CONTEXT_AWARENESS.md`.
+
+### Why
+
+v5.10.2 secret-gate (I26) catches real secrets but trips on legitimate content: test fixtures with fake `ghp_` tokens, plan documents discussing pattern strings, CHANGELOG entries referencing format strings. This release adds a user-managed YAML allowlist with audit trail to express context-aware bypass without removing pattern strictness.
+
+### What changed
+
+**`yadgar/security/allowlist.py`** (new module):
+- `AllowlistEntry(tags, patterns, reason)` frozen dataclass
+- `is_allowlisted(content, tags, source) -> (bool, AllowlistEntry | None)` — checks YAML allowlist
+- `_reload_allowlist()` — loads/reloads from disk; raises `ValueError` loudly on bad YAML or wrong schema
+- `_write_audit(...)` — appends JSONL entry to audit log
+- `_detect_source()` — `inspect.stack()` heuristic for call-site name
+
+**`yadgar/secrets.py`** — `gate_or_reject()` extended:
+- New kwargs: `tags: list[str] | None = None`, `source: str | None = None`
+- Calls `is_allowlisted()` BEFORE pattern scan. Hit → `_write_audit()` + skip field (return clean)
+- Existing callers without `tags=` → default-deny (identical to v5.10.x)
+
+**`scripts/check_allowlist_audit.py`** (new I28 invariant):
+- Static check: `_write_audit` and `is_allowlisted` defined in `allowlist.py`
+- Static check: `gate_or_reject()` calls both
+- Static check: both env knobs documented in module
+- Pre-commit hook wired on `yadgar/security/allowlist.py` and `yadgar/secrets.py`
+
+**`yadgar/tests/fixtures/secret-gate-allowlist.yaml`** (new):
+- Canonical YAML covering all v5.10.2 false-positive cases (test fixtures, plan-document, changelog tags)
+
+**`yadgar/tests/test_allowlist.py`** (new, 11 tests):
+- `TestAllowlistPerTagBypass` (3 tests): tag bypass / deny without tag / deny with no tags
+- `TestAllowlistAuditLogWritten` (2 tests): JSONL fields + content_preview truncation
+- `TestAllowlistDefaultDeny` (2 tests): no allowlist file = default-deny; clean still passes
+- `TestAllowlistYamlInvalidFailsLoud` (2 tests): malformed YAML + wrong schema
+- `TestSourceCallSiteDetection` (2 tests): source field present + non-empty in all entries
+
+### Upgrade steps
+
+1. Deploy new image (or `uv install`)
+2. (Optional) Create `~/.yadgar/secret-gate-allowlist.yaml` with your allow rules
+3. Review `~/.yadgar/secret-gate-audit/` periodically — JSONL files record every bypass
+
+### Configuring the allowlist
+
+```yaml
+# ~/.yadgar/secret-gate-allowlist.yaml
+allowlist:
+  - tags: ["test-fixture"]
+    patterns: ["ghp_*", "gho_*"]
+    reason: "test fixtures may contain fake GitHub tokens"
+
+  - tags: ["plan-document"]
+    patterns: ["sk-ant-*", "ghp_*"]
+    reason: "plan docs discuss secret patterns as examples"
+```
+
+Rules:
+- `tags`: ALL listed tags must be present at the call site (subset match)
+- `patterns`: ANY matching pattern causes bypass for that field
+- `reason`: required; logged in every audit entry
+- Schema version: 1 (top-level `allowlist:` key required)
+
+### Env knobs
+
+| Var | Default | Effect |
+|-----|---------|--------|
+| `YADGAR_SECRET_GATE_ALLOWLIST_PATH` | `~/.yadgar/secret-gate-allowlist.yaml` | Path to allowlist YAML |
+| `YADGAR_SECRET_GATE_AUDIT_DIR` | `~/.yadgar/secret-gate-audit/` | Audit log directory |
+
+### Deferred (v5.15.0+)
+
+- **Caller plumbing (KNOWN GAP):** v5.13.0 ships the allowlist mechanism, but no production
+  write tool (memorize, wiki_add, anchor, etc.) yet forwards its `tags` parameter to
+  `gate_or_reject(tags=...)`. The allowlist YAML loads and is validated, but will never
+  match any real call until callers are plumbed. Tracked for v5.15.0+. In the meantime
+  the test fixture (`yadgar/tests/fixtures/secret-gate-allowlist.yaml`) exercises the full
+  path via direct `is_allowlisted()` calls in tests.
+- Pattern OVERRIDE (raise threshold for one tag) — v5.13.0 is full-bypass only
+- Allowlist YAML schema versioning / migration
+- Audit log size-based rotation (currently date-based only)
+- doc-ingest pipeline as a named call-site
+
+### Rollback
+
+v5.11.0 is backward-compatible: remove allowlist file → default-deny, identical to v5.11.0 behavior. No DB changes.
+
+---
+
 ## v5.11.0 — Viz knobs configurable via config.yaml (2026-05-30)
 
 Core 5.10.11 → 5.11.0. Backend unchanged at 5.4.0. No schema changes. No DB migrations. Plan: `docs/PLAN_V5_11_0_VIZ_CONFIG_YAML.md`.

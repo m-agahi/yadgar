@@ -10,6 +10,12 @@ v5.10.2 changes:
   - GitHub token threshold lowered {36,} → {20,}
   - Anthropic key threshold lowered {32,} → {20,}
   - OpenAI key threshold lowered {30,} → {20,}
+
+v5.13.0 changes:
+  - gate_or_reject() gains tags= and source= kwargs for context-awareness
+  - Allowlist integration: YADGAR_SECRET_GATE_ALLOWLIST_PATH YAML bypass
+    with per-tag + per-pattern entries; every hit audited to JSONL
+  - Source call-site detection via inspect.stack() (only when allowlist loaded)
 """
 
 from __future__ import annotations
@@ -136,26 +142,74 @@ def check_secrets(content: str) -> tuple[bool, str, str]:
     return False, "", ""
 
 
-def gate_or_reject(*content_fields: str | None) -> dict | None:
+def gate_or_reject(
+    *content_fields: str | None,
+    tags: list[str] | None = None,
+    source: str | None = None,
+) -> dict | None:
     """Scan all provided fields for secrets.  Return rejection dict or None.
 
     Layer 2 (API-boundary) helper.  Each write tool calls this before any
     state mutation and returns the dict directly if non-None.
+
+    v5.13.0: accepts optional tags= and source= kwargs for allowlist context-
+    awareness.  When tags= are provided and an allowlist entry matches, the
+    field is allowed through and an audit entry is written.  When no allowlist
+    file exists, behavior is identical to v5.10.x (default-deny).
 
     Increments the yadgar_writegate_outcome{outcome="rejected_secret"} metric
     on rejection.
 
     Args:
         *content_fields: Text fields to scan (None/"" are skipped).
+        tags:            Optional list of tags at the call site.  Used for
+                         allowlist matching.  When None, allowlist is skipped.
+        source:          Optional call-site name.  When None, auto-detected
+                         via inspect.stack() if allowlist has entries.
 
     Returns:
-        None if all fields are clean.
+        None if all fields are clean (or allowlisted).
         {"stored": False, "reason": "secret_detected: ...", "pattern_preview": "..."}
-        on first match.
+        on first match that is not allowlisted.
     """
+    from yadgar.security.allowlist import (  # noqa: PLC0415
+        _detect_source,
+        _write_audit,
+        is_allowlisted,
+    )
+
+    # Resolve source lazily — only pay inspect.stack() cost when allowlist may apply
+    _resolved_source: str | None = source
+
     for field in content_fields:
         if not field or not isinstance(field, str) or not field.strip():
             continue
+
+        # --- Allowlist check (before pattern scan) ---
+        allowed, entry = is_allowlisted(field, tags, _resolved_source or "")
+        if allowed and entry is not None:
+            if _resolved_source is None:
+                _resolved_source = _detect_source()
+            _write_audit(
+                matched_pattern=next(
+                    (p for p in entry.patterns if p.rstrip("*") in field),
+                    entry.patterns[0] if entry.patterns else "",
+                ),
+                tags=list(tags or []),
+                reason=entry.reason,
+                source=_resolved_source,
+                content_preview=field,
+            )
+            try:
+                from yadgar.metrics import yadgar_writegate_outcome  # noqa: PLC0415
+
+                yadgar_writegate_outcome.labels(outcome="allowlisted").inc()
+            except Exception:
+                pass
+            # Field is allowlisted — skip pattern scan for this field
+            continue
+
+        # --- Pattern scan ---
         blocked, reason, preview = check_secrets(field)
         if blocked:
             try:

@@ -81,6 +81,13 @@ repos:
         pass_filenames: false
         files: ^yadgar/(config\.py|config_yaml\.py|config_registry\.py|tests/config_env_only_allowlist\.txt)$
 
+      - id: check-allowlist-audit
+        name: Check I28 allowlist-audit invariant (every allowlist hit has audit entry)
+        language: system
+        entry: python scripts/check_allowlist_audit.py
+        pass_filenames: false
+        files: ^yadgar/(security/allowlist\.py|secrets\.py)$
+
   - repo: local
     hooks:
       - id: check-image-size-backend
