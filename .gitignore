@@ -21,6 +21,9 @@ eggs/
 .eggs/
 lib/
 lib64/
+# Vendored JS libs (v5.24.0) must not be excluded by the `lib/` rule above
+!yadgar/static/lib/
+!yadgar/static/lib/**
 parts/
 sdist/
 var/
