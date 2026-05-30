@@ -1,5 +1,45 @@
 # Migration Notes
 
+## v5.10.5 — nightly cycle remaining bugs (2026-05-30)
+
+Core 5.10.4 → 5.10.5. Backend unchanged at 5.4.0. No schema changes.
+
+### Bug 1 — vacuum URL second call site
+
+`v5.10.2` fixed `_log_consolidation_row` to read `YADGAR_DB_URL` from env. Two other
+call sites were missed:
+
+- `yadgar/scripts/nightly_cycle.py::main()` — the systemd entry point
+- `yadgar/vacuum/__init__.py::cmd_vacuum_impl()` — called from nightly cycle step 4
+
+Both used `getattr(args, "backend_url", "http://127.0.0.1:8080")` which returns the
+hard-coded `:8080` literal when invoked without `--backend-url` (systemd unit path).
+The backend runs on `:8000`; something else bound to `:8080` returned HTTP 307.
+
+**Fix:** both sites now use `getattr(args, "backend_url", None) or os.environ.get("YADGAR_DB_URL", "http://127.0.0.1:8080")`.
+
+**Effect:** `[vacuum] ERROR: backend at http://127.0.0.1:8080 is not reachable: HTTP 307` is eliminated. `YADGAR_DB_URL=http://127.0.0.1:8000` in the systemd unit is now respected end-to-end.
+
+### Bug 2 — prune deletes just-created post snapshot
+
+The nightly cycle creates a post-backup snapshot (`label="nightly-post"`) in step 5,
+then prunes in step 6. `shutil.copytree(copy_function=copy2)` propagates the source
+DB directory's mtime to the snapshot directory. The DB dir mtime is the last time the
+DB was written — with core stopped for the cycle, this can be hours in the past.
+
+`prune_snapshots` sorts by mtime descending; the just-created snapshot sorted as
+"oldest" and was pruned immediately, leaving zero post snapshots.
+
+**Fix:** `create_snapshot()` calls `target.touch()` after `copytree()`, stamping the
+snapshot directory to the current time. This ensures a just-created snapshot always
+sorts as newest regardless of source DB age.
+
+**Retention semantics:** unchanged. `YADGAR_BACKUP_RETENTION` (default 3) still controls how many total snapshots survive. No config changes required.
+
+### No action required for upgrade
+
+Docker image tag: `openfantasy/yadgar:5.10.5`. No DB migrations. No config changes. Restart the core container.
+
 ## v5.10.4 — consolidate_now mode parameter (2026-05-30)
 
 Core 5.10.3 → 5.10.4. Backend unchanged at 5.4.0. No schema changes.
