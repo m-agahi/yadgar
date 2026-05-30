@@ -94,7 +94,7 @@ class TestAnchorPassEnabled:
         _insert_anchor(storage, "anchor content one")
         _insert_anchor(storage, "anchor content two")
 
-        server.consolidate_now()
+        server.consolidate_now(mode="full")
 
         sentinels = _get_audit_sentinels(storage, _DIR)
         assert sentinels, (
@@ -114,8 +114,8 @@ class TestAnchorPassEnabled:
 
         _insert_anchor(storage, "anchor one for latest wins")
 
-        server.consolidate_now()
-        server.consolidate_now()
+        server.consolidate_now(mode="full")
+        server.consolidate_now(mode="full")
 
         sentinels = _get_audit_sentinels(storage, _DIR)
         assert len(sentinels) == 1, "_audit_anchors must be latest-wins single row (not append)"
@@ -134,7 +134,7 @@ class TestAnchorPassEnabled:
 
         _insert_anchor(storage, "anchor for content check")
 
-        server.consolidate_now()
+        server.consolidate_now(mode="full")
 
         sentinels = _get_audit_sentinels(storage, _DIR)
         assert sentinels
@@ -163,7 +163,7 @@ class TestAnchorPassDisabled:
 
         _insert_anchor(storage, "anchor when disabled")
 
-        server.consolidate_now()
+        server.consolidate_now(mode="full")
 
         sentinels = _get_audit_sentinels(storage, _DIR)
         assert not sentinels, (
@@ -191,7 +191,7 @@ class TestThresholdGate:
 
         _insert_anchor(storage, "only one anchor")  # below threshold of 5
 
-        server.consolidate_now()
+        server.consolidate_now(mode="full")
 
         sentinels = _get_audit_sentinels(storage, _DIR)
         assert not sentinels, "Anchor pass must skip directories below ANCHOR_AUDIT_THRESHOLD"
@@ -209,7 +209,7 @@ class TestThresholdGate:
         _insert_anchor(storage, "anchor A at threshold")
         _insert_anchor(storage, "anchor B at threshold")
 
-        server.consolidate_now()
+        server.consolidate_now(mode="full")
 
         sentinels = _get_audit_sentinels(storage, _DIR)
         assert sentinels, "Anchor pass must run when anchor_count >= ANCHOR_AUDIT_THRESHOLD"
