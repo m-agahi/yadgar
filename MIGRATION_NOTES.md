@@ -1,5 +1,46 @@
 # Migration Notes
 
+## v5.10.7.3 — Revert v5.10.7 custom 3D node geometry (2026-05-30)
+
+Core 5.10.7.2 → 5.10.7.3. Backend unchanged at 5.4.0. No schema changes. Plan: `docs/PLAN_V5_10_7_3_VIZ_REVERT_TO_DEFAULTS.md`.
+
+### Why
+
+v5.10.7 introduced `_makeNodeThreeObject` to render custom octahedron (wiki) + sphere (memory) meshes in 3D mode. v5.10.7.1 + v5.10.7.2 attempted material/transparent fixes. All three rendered as fragmented triangle shards per user verification. Reverting to ForceGraph3D's library-managed default solid spheres — last-known-good visual from v5.3.7.
+
+### What changed
+
+`yadgar/static/index.html`:
+- Removed `_makeNodeThreeObject` function (was lines 805-824)
+- Removed `.nodeThreeObject(_makeNodeThreeObject).nodeThreeObjectExtend(false)` from 3D init
+- Simplified `_applySearchHighlight` 3D path: only `.nodeColor()` re-fires (no longer `.nodeThreeObject()` re-call)
+
+`_nodeColorFor` + `.nodeColor()` retained — should apply heat colour to ForceGraph3D's default sphere material. May finally produce 3D heat coloring (which never worked historically with custom mesh in the way).
+
+### Apply
+
+```bash
+cd /home/max/git/nix && nix-apply
+```
+
+### Verify
+
+- `/health` returns `version=5.10.7.3`
+- Open `http://localhost:42069/` in 3D mode + hard-refresh (`Ctrl+Shift+R`)
+- Expect: SOLID coloured spheres for all nodes (wiki + memory both spheres now). NO fragments. Last-known-good visual from v5.3.7 restored.
+- Bonus check: heat gradient may now be visible on sphere surfaces (was never working historically; restored as side-effect of dropping custom mesh).
+
+### Lost functionality
+
+- S2.2 shape distinction (octahedra for wiki vs spheres for memory in 3D) — gone. User explicitly OK'd uniform shapes.
+- If shape distinction is wanted later, requires deeper ForceGraph3D + ThreeJS investigation. Three attempts at custom mesh today failed; deferred to v5.X+ pending further analysis.
+
+### Hard deadlines unchanged
+
+PD-23 `migration_grace` expiry 2026-08-26 still requires v5.11.x handler before then.
+
+---
+
 ## v5.10.7.2 — 3D viz transparent flag fix (2026-05-30)
 
 Core 5.10.7.1 → 5.10.7.2. Backend unchanged at 5.4.0. No schema changes. Plan: `docs/PLAN_V5_10_7_2_VIZ_LIGHTING_FIX.md` (originally drafted as separate `MeshLambertMaterial`-only fix; superseded by investigation that revealed deeper `transparent` flag issue).
