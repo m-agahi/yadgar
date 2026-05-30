@@ -1,5 +1,74 @@
 # Migration Notes
 
+## v5.23.0 — Wiki Bookmarks backend: storage + 4 MCP tools + HTTP proxy routes (2026-05-30)
+
+Core 5.21.0 → 5.23.0. Backend unchanged at 5.4.0. **New DB migration: `wiki_bookmark` table.**
+v5.22.0 slot reserved for hotfix (skipped per skip-1 convention).
+Frontend (bookmarks.html UI) follows in v5.24.0.
+
+### New table: `wiki_bookmark`
+
+Migration `009_wiki_bookmark_table` adds the `wiki_bookmark` SCHEMALESS table with:
+- `slug` — wiki page slug (UNIQUE index `wiki_bookmark_slug_idx`)
+- `label_override` — optional user display name (None → frontend uses wiki title)
+- `position` — 0-based dense integer for ordering
+- `added_at` — creation timestamp
+
+**Migration is additive only.** Existing data (memories, wiki pages, anchors) unaffected.
+
+SurrealDB server mode: migration runs automatically on daemon startup via `_run_migrations_locked`.
+Embedded mode: table created by `_init_schema` on startup.
+
+### 4 new MCP tools
+
+| Tool | Purpose |
+|---|---|
+| `bookmark_add(slug, label_override="")` | Add/update bookmark. Idempotent on slug. |
+| `bookmark_remove(slug)` | Remove bookmark. Idempotent — no error if not found. |
+| `bookmark_list()` | Return bookmarks ordered by position ascending. |
+| `bookmark_reorder(slug, new_position)` | Move bookmark; adjacent entries shift (dense integers). |
+
+All tools registered via `@_tool()` decorator. Located in `yadgar/server/tools/bookmarks.py`.
+
+### New HTTP routes (daemon port 8765)
+
+| Method | Path | Tool |
+|---|---|---|
+| GET | `/api/bookmarks` | `bookmark_list` |
+| POST | `/api/bookmarks` | `bookmark_add` (body: `{slug, label_override?}`) |
+| DELETE | `/api/bookmarks/{slug}` | `bookmark_remove` |
+| PUT | `/api/bookmarks/{slug}/position` | `bookmark_reorder` (body: `{position}`) |
+| GET | `/api/wiki/search` | wiki semantic search (passthrough for UI) |
+| GET | `/api/wiki/list` | wiki slug list for autocomplete |
+
+`/api/wiki/read` already existed (unchanged). All new routes respond with `Cache-Control: no-store`.
+
+### viz_server changes
+
+`yadgar/viz_server.py` gained `do_DELETE` and `do_PUT` methods so the browser-side proxy
+forwards DELETE and PUT requests to the daemon. Previously only GET and POST were proxied.
+
+### Upgrade steps
+
+1. Pull image: `podman pull docker.io/openfantasy/yadgar:5.23.0`
+2. Restart daemon: `systemctl --user restart yadgar.service`
+3. Migration applies automatically on first startup (embedded) or on schema init (server mode).
+4. Verify: `bookmark_list()` returns `[]` (empty — no bookmarks yet).
+5. Test: `bookmark_add('yadgar-roadmap-future-improvements')` → confirms MCP tool works.
+
+### What's NOT in v5.23.0 (deferred to v5.24.0)
+
+- `yadgar/static/bookmarks.html`, `bookmarks.css`, `bookmarks.js`
+- Navigation link in `yadgar/static/index.html`
+- Vendored JS libs (`marked.min.js`, `highlight.min.js`, `dompurify.min.js`)
+- Playwright browser tests (PD-27 deferred)
+
+### Rollback
+
+Drop the `wiki_bookmark` table and revert daemon. Existing wiki/memory data unaffected.
+
+---
+
 ## v5.21.0 — Cross-project anchor dedup detection + PD-23 migration_grace handler (2026-05-30)
 
 Core 5.20.0 → 5.21.0. Backend unchanged at 5.4.0. No schema changes. No DB migrations required.

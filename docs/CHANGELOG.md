@@ -7,6 +7,35 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.23.0] - 2026-05-30
+
+Wiki Bookmarks backend: storage layer + 4 MCP tools + HTTP proxy routes. Frontend UI (bookmarks.html) ships in v5.24.0.
+v5.22.0 slot reserved for hotfix per skip-1 convention (odd-only sequential features).
+
+### Added
+- `wiki_bookmark` SurrealDB table: slug (UNIQUE), label_override, position (dense 0-based int), added_at. Schema migration `009_wiki_bookmark_table`.
+- `yadgar/storage/bookmarks.py` — `_BookmarksMixin` with `add_bookmark`, `remove_bookmark`, `get_bookmark`, `list_bookmarks`, `reorder_bookmark`. Idempotent add (upsert on slug); dense-integer position shift on reorder/remove.
+- `yadgar/server/tools/bookmarks.py` — 4 MCP tools: `bookmark_add`, `bookmark_remove`, `bookmark_list`, `bookmark_reorder`. All registered via `@_tool()` pattern.
+- HTTP routes on daemon (port 8765): `GET/POST /api/bookmarks`, `DELETE /api/bookmarks/{slug}`, `PUT /api/bookmarks/{slug}/position`, `GET /api/wiki/search`, `GET /api/wiki/list`. Cache-Control: no-store on wiki read routes.
+- `viz_server.py` `do_DELETE` + `do_PUT` methods so browser-side proxy forwards all bookmark HTTP verbs.
+- `yadgar/tests/test_bookmarks.py` (34 tests): storage CRUD + MCP tool unit tests. TDD red-first.
+- `yadgar/tests/test_api_bookmarks.py` (14 tests): HTTP route registration + proxy + e2e MCP tests.
+
+### Internal
+- `_BookmarksMixin` added to `StorageEngine` inheritance chain.
+- `wiki_bookmark` added to `_WIPE_TABLES` in test conftest for per-test isolation.
+
+### Deferred (v5.24.0)
+- Frontend: `bookmarks.html`, `bookmarks.css`, `bookmarks.js`, nav link in `index.html`
+- Vendored libs: `marked.min.js`, `highlight.min.js`, `dompurify.min.js`
+- Playwright browser tests (PD-27)
+
+See MIGRATION_NOTES.md — v5.23.0
+
+## [5.22.0] - 2026-05-30
+
+Hotfix slot — reserved per skip-1 convention (odd-only sequential features). No release shipped.
+
 ## [5.21.0] - 2026-05-30
 
 Cross-project anchor redundancy detection and PD-23 migration_grace graceful expiry handler.

@@ -9,6 +9,7 @@ StorageEngine is assembled from topic-specific mixin classes:
   _VectorMixin (vector.py)       — embedding CRUD and HNSW/MTREE index management
   _ClusterMixin (cluster.py)     — memory_cluster + memory_similarity_link CRUD
   _WikiMixin (wiki.py)           — wiki page CRUD and search
+  _BookmarksMixin (bookmarks.py) — wiki_bookmark CRUD (v5.23.0)
   _QueueMixin (queue.py)         — file hashes and action log
   _DbSizeMixin (dbsize.py)       — database size reporting
   _RulesMixin (rules.py)         — memory_rule, memory_archive, memory_transition CRUD
@@ -30,6 +31,7 @@ import shutil
 from collections.abc import Iterator
 from pathlib import Path
 
+from yadgar.storage.bookmarks import _BookmarksMixin
 from yadgar.storage.branch import BranchFilter as BranchFilter
 from yadgar.storage.branch import _build_branch_clause as _build_branch_clause
 from yadgar.storage.causal import _CausalMixin
@@ -155,6 +157,7 @@ class StorageEngine(
     _VectorMixin,
     _ClusterMixin,
     _WikiMixin,
+    _BookmarksMixin,
     _QueueMixin,
     _DbSizeMixin,
     _RulesMixin,
