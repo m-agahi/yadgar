@@ -6,6 +6,16 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.10.8] — 2026-05-30
+
+Fix 3D/2D viz physics hang (nodes clumped at origin) + Three.js mesh leak on filter cycles.
+
+- **Bug A fixed** (`yadgar/static/index.html`): `onEngineStop` auto-pin guard — added `_engineTickCount` module-scope counter, incremented via `.onEngineTick()`. `onEngineStop` now returns early if `_engineTickCount < 50`, preventing premature pinning of all nodes at `(0,0,0)` before physics ran. Counter resets in `initGraph` so 2D↔3D toggle restarts it.
+- **Bug B fixed** (`yadgar/static/index.html`): dropped `graph.graphData({ nodes: [], links: [] })` + `setTimeout(() => graph.graphData(d), 50)` empty-then-restore hack in `resetLayout`. ForceGraph3D does not dispose Three.js Mesh objects on the empty step — each call accumulated orphan meshes (700 nodes → 2297 meshes observed). Replaced with direct `graph.graphData(d)`.
+- **3 new static-asset tests** (`test_viz_static_assets.py::TestV5108PhysicsAndMeshLeakFix`): `test_onEngineStop_has_tick_count_guard`, `test_onEngineTick_handler_present`, `test_no_empty_then_restore_pattern` (regression gate).
+
+See [MIGRATION_NOTES.md §v5.10.8](MIGRATION_NOTES.md#v5108--viz-physics-hang--mesh-leak-fix-2026-05-30) + `docs/PLAN_V5_10_8_VIZ_PHYSICS_AND_MESH_LEAK_FIX.md`.
+
 ## [5.10.7.3] — 2026-05-30
 
 Revert v5.10.7 custom 3D node geometry. Back to ForceGraph3D defaults.
