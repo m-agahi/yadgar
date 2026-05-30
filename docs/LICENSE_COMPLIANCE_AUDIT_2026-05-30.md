@@ -55,7 +55,7 @@ Source: `/home/max/git/yadgar/LICENSE` (local; homepage `https://codeberg.org/ma
 | pgvector | PostgreSQL License (BSD-like) | Alternative storage (v5.20.0 possible) | GREEN | None |
 | highlight.js | BSD 3-Clause | Vendored JS lib (v5.12.0) | YELLOW | Include copyright notice in vendored file |
 | marked | MIT | Vendored JS lib (v5.12.0) | GREEN | Include copyright notice in vendored file |
-| DOMPurify | Apache 2.0 | Vendored JS lib (v5.12.0, optional) | GREEN | None |
+| DOMPurify | Apache 2.0 OR MPL 2.0 (dual) | Vendored JS lib (v5.12.0, optional) | GREEN | None |
 | OpenTelemetry SDKs | Apache 2.0 | Runtime dep (v5.6.3+) | GREEN | None |
 | sentence-transformers | Apache 2.0 | Runtime dep (ML extras) | GREEN | None |
 | cross-encoder/nli-deberta-v3-small | Apache 2.0 | ML model (NLI reranker stage) | GREEN | None |
@@ -381,19 +381,23 @@ vendored file, but this is a soft requirement rarely enforced.
 
 ### DOMPurify (v5.12.0 Wiki Bookmarks — optional vendoring)
 
-**License:** Apache 2.0
-**Source:** `https://github.com/cure53/DOMPurify/blob/main/LICENSE`
-**Note:** Search results originally suggested MPL 2.0 dual license; direct license file fetch
-confirms current main branch is Apache 2.0 only. Verify at implementation time (could vary by version).
+**License:** Apache 2.0 OR MPL 2.0 (dual license — consumer's choice)
+**Source:** `https://github.com/cure53/DOMPurify/blob/main/LICENSE` (Apache 2.0) and
+`https://github.com/cure53/DOMPurify/blob/main/LICENSE-MPL` (MPL 2.0)
+**Confirmed:** Both LICENSE and LICENSE-MPL files exist in the cure53/DOMPurify root.
+Consumer may choose either license.
 
 **What yadgar plans:** Optional vendored in `yadgar/static/lib/dompurify.min.js` (v5.12.0).
 
 **Compliance verdict: GREEN**
 
-Apache 2.0 to Apache 2.0 (yadgar's license) — fully compatible.
+Dual Apache 2.0 / MPL 2.0 — yadgar can choose Apache 2.0, making it Apache-to-Apache
+compatible (yadgar's own license is Apache 2.0). Alternatively, MPL 2.0 is also compatible
+with Apache 2.0 for embedding purposes (MPL 2.0 §3.3 explicitly allows combining with
+Apache 2.0-licensed code).
 
-**Required action:** None. Verify license at the exact version vendored, as older DOMPurify
-versions used a different license structure.
+**Required action:** None. When vendoring, include a brief comment indicating which license
+was selected (Apache 2.0 recommended for consistency with yadgar's own license).
 
 ---
 
@@ -660,7 +664,8 @@ confusion for automated tooling and downstream consumers.
 12. pgvector LICENSE: `https://github.com/pgvector/pgvector/blob/master/LICENSE`
 13. highlight.js LICENSE: `https://github.com/highlightjs/highlight.js/blob/main/LICENSE`
 14. marked LICENSE: `https://marked.js.org/license`
-15. DOMPurify LICENSE: `https://github.com/cure53/DOMPurify/blob/main/LICENSE`
+15. DOMPurify LICENSE (Apache 2.0): `https://github.com/cure53/DOMPurify/blob/main/LICENSE`
+15b. DOMPurify LICENSE-MPL (MPL 2.0): `https://github.com/cure53/DOMPurify/blob/main/LICENSE-MPL`
 16. cross-encoder/nli-deberta-v3-small: `https://huggingface.co/cross-encoder/nli-deberta-v3-small`
 17. sentence-transformers LICENSE: `https://github.com/UKPLab/sentence-transformers/blob/master/LICENSE`
 18. OpenTelemetry Python LICENSE: `https://github.com/open-telemetry/opentelemetry-python/blob/main/LICENSE`
