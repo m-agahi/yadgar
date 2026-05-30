@@ -610,6 +610,11 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "How long _audit_anchors sentinel snapshots are retained (days, default 30)",
         "section": "anchor_hygiene",
     },
+    # v5.21.0: cross-project anchor dedup
+    "anchor_cross_project_cosine": {
+        "desc": "Minimum cosine for cross-project anchor dedup candidate (default 0.95, higher than within-project 0.92)",
+        "section": "anchor_hygiene",
+    },
     # session_end_capture (v5.10.6)
     "session_end_capture_enabled": {
         "desc": "Kill switch for session-end sentinel capture (default true)",

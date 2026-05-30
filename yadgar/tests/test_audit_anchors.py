@@ -524,3 +524,114 @@ class TestSuggestedCall:
         sc = audit_action["suggested_call"]
         assert "audit_anchors" in sc
         assert "directory" in sc or _DIR in sc
+
+
+# ---------------------------------------------------------------------------
+# 7. PD-23 migration_grace handler (v5.21.0)
+# ---------------------------------------------------------------------------
+
+
+class TestMigrationGraceHandler:
+    """PD-23: verify_grace_expired_anchor recommendation type in audit_anchors().
+
+    When migration_grace=True AND valid_until < now, rows are surfaced as
+    verify_grace_expired_anchor candidates requiring user verification.
+    They are NEVER auto-applied — skipped=True in all dry_run modes.
+
+    Scope: v5.21.0 deadline driver. First pre-v5.8 anchors expire 2026-08-26.
+    """
+
+    def test_verify_grace_action_present_for_expired_grace_row(self, storage):
+        """verify_grace_expired_anchor action emitted for migration_grace=True + valid_until<now."""
+        from yadgar.server.tools.audit import audit_anchors
+
+        past = (datetime.now(UTC) - timedelta(days=5)).isoformat()
+        _insert_anchor(storage, "grace expired anchor", valid_until=past, migration_grace=True)
+
+        result = audit_anchors(directory=_DIR, dry_run=True)
+        actions = result["actions"]
+        grace_actions = [a for a in actions if a["action"] == "verify_grace_expired_anchor"]
+        assert grace_actions, "Expected verify_grace_expired_anchor for migration_grace expired row"
+
+    def test_verify_grace_action_shape(self, storage):
+        """verify_grace_expired_anchor action dict has required fields."""
+        from yadgar.server.tools.audit import audit_anchors
+
+        past = (datetime.now(UTC) - timedelta(days=3)).isoformat()
+        mid = _insert_anchor(
+            storage, "grace expired content", valid_until=past, migration_grace=True
+        )
+
+        result = audit_anchors(directory=_DIR, dry_run=True)
+        actions = result["actions"]
+        grace_actions = [a for a in actions if a["action"] == "verify_grace_expired_anchor"]
+        assert grace_actions, "Expected verify_grace_expired_anchor action"
+        ga = grace_actions[0]
+        assert "id" in ga
+        assert "expired_at" in ga
+        assert "rationale" in ga
+        assert ga["id"] == mid
+
+    def test_verify_grace_skipped_true_never_auto_applied(self, storage):
+        """verify_grace_expired_anchor always has skipped=True — never auto-applied."""
+        from yadgar.server.tools.audit import audit_anchors
+
+        past = (datetime.now(UTC) - timedelta(days=5)).isoformat()
+        _insert_anchor(storage, "grace do not delete", valid_until=past, migration_grace=True)
+
+        result = audit_anchors(directory=_DIR, dry_run=True)
+        actions = result["actions"]
+        for ga in [a for a in actions if a["action"] == "verify_grace_expired_anchor"]:
+            assert ga.get("skipped") is True, "verify_grace_expired_anchor must always be skipped"
+
+    def test_grace_row_not_deleted_dry_run_false(self, storage):
+        """migration_grace=True rows are NOT deleted even when dry_run=False."""
+        from yadgar.server.tools.audit import audit_anchors
+
+        past = (datetime.now(UTC) - timedelta(days=5)).isoformat()
+        mid = _insert_anchor(storage, "grace protected row", valid_until=past, migration_grace=True)
+
+        audit_anchors(directory=_DIR, dry_run=False)
+
+        rows = storage._q(f"SELECT id FROM memory:{mid}")
+        assert rows, "migration_grace=True row must NOT be deleted by dry_run=False"
+
+    def test_valid_grace_row_not_flagged(self, storage):
+        """migration_grace=True row with valid_until in the future is NOT flagged."""
+        from yadgar.server.tools.audit import audit_anchors
+
+        future = (datetime.now(UTC) + timedelta(days=60)).isoformat()
+        _insert_anchor(storage, "grace still valid", valid_until=future, migration_grace=True)
+
+        result = audit_anchors(directory=_DIR, dry_run=True)
+        actions = result["actions"]
+        grace_actions = [a for a in actions if a["action"] == "verify_grace_expired_anchor"]
+        assert not grace_actions, "Future-dated grace row must NOT appear in verify_grace actions"
+
+    def test_non_grace_expired_row_not_flagged_as_grace(self, storage):
+        """migration_grace=False expired rows use forget_expired, not verify_grace_expired_anchor."""
+        from yadgar.server.tools.audit import audit_anchors
+
+        past = (datetime.now(UTC) - timedelta(days=5)).isoformat()
+        _insert_anchor(storage, "normal expired", valid_until=past, migration_grace=False)
+
+        result = audit_anchors(directory=_DIR, dry_run=True)
+        actions = result["actions"]
+        grace_actions = [a for a in actions if a["action"] == "verify_grace_expired_anchor"]
+        assert not grace_actions, "Non-grace expired row must use forget_expired, not verify_grace"
+
+    def test_grace_action_rationale_mentions_migration_grace(self, storage):
+        """rationale field references migration_grace to aid user understanding."""
+        from yadgar.server.tools.audit import audit_anchors
+
+        past = (datetime.now(UTC) - timedelta(days=5)).isoformat()
+        _insert_anchor(storage, "explain grace", valid_until=past, migration_grace=True)
+
+        result = audit_anchors(directory=_DIR, dry_run=True)
+        actions = result["actions"]
+        grace_actions = [a for a in actions if a["action"] == "verify_grace_expired_anchor"]
+        assert grace_actions
+        rationale = grace_actions[0]["rationale"]
+        assert "migration_grace" in rationale.lower() or "grace" in rationale.lower(), (
+            "rationale must mention grace period for clarity"
+        )
