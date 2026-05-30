@@ -259,8 +259,10 @@ class CheckpointRestore:
         # 1. Get latest checkpoint for this directory
         checkpoint = self._storage.get_active_checkpoint(directory)
 
-        # 2. Get anchored memories (always included)
-        anchored = self._storage.get_anchored_memories(limit=max_memories)
+        # 2. Get anchored memories (always included, scope-split: global first then project)
+        anchored = self._storage.get_anchored_memories_scoped(
+            directory=directory, limit=max_memories
+        )
         for m in anchored:
             m.pop("embedding", None)
 
@@ -342,6 +344,42 @@ class CheckpointRestore:
             "formatted": markdown,
         }
 
+    @staticmethod
+    def _truncate(text: str, max_len: int) -> str:
+        """Truncate text to max_len characters, appending '...' if cut."""
+        return text if len(text) <= max_len else text[:max_len] + "..."
+
+    @staticmethod
+    def _parse_list_field(value) -> list:
+        """Parse a checkpoint list field — already a list or a JSON string."""
+        if isinstance(value, str):
+            return json.loads(value)
+        return value or []
+
+    def _format_checkpoint_section(self, checkpoint: dict) -> list[str]:
+        """Return markdown lines for the checkpoint block."""
+        lines: list[str] = ["## What You Were Doing"]
+        if checkpoint.get("current_task"):
+            lines.append(f"**Task:** {checkpoint['current_task']}")
+        files = self._parse_list_field(checkpoint.get("files_being_edited"))
+        if files:
+            lines.append(f"**Files:** {', '.join(files)}")
+        _list_sections = [
+            ("key_decisions", "**Decisions:**"),
+            ("open_questions", "**Open questions:**"),
+            ("next_steps", "**Next steps:**"),
+            ("active_errors", "**Active errors:**"),
+        ]
+        for fname, header in _list_sections:
+            items = self._parse_list_field(checkpoint.get(fname))
+            if items:
+                lines.append(header)
+                lines.extend(f"- {item}" for item in items)
+        if checkpoint.get("custom_context"):
+            lines.append(f"\n{checkpoint['custom_context']}")
+        lines.append("")
+        return lines
+
     def _format_restoration(
         self,
         checkpoint: dict | None,
@@ -353,102 +391,43 @@ class CheckpointRestore:
         directory: str,
     ) -> str:
         """Format restoration data as injectable markdown."""
-        lines = []
-        lines.append("# Yadgar Context Restoration (Hippocampal Replay)")
-        lines.append("")
+        lines: list[str] = ["# Yadgar Context Restoration (Hippocampal Replay)", ""]
 
-        # Checkpoint section
         if checkpoint:
-            lines.append("## What You Were Doing")
-            if checkpoint.get("current_task"):
-                lines.append(f"**Task:** {checkpoint['current_task']}")
-            if checkpoint.get("files_being_edited"):
-                files = checkpoint["files_being_edited"]
-                if isinstance(files, str):
-                    files = json.loads(files)
-                if files:
-                    lines.append(f"**Files:** {', '.join(files)}")
-            if checkpoint.get("key_decisions"):
-                decisions = checkpoint["key_decisions"]
-                if isinstance(decisions, str):
-                    decisions = json.loads(decisions)
-                if decisions:
-                    lines.append("**Decisions:**")
-                    for d in decisions:
-                        lines.append(f"- {d}")
-            if checkpoint.get("open_questions"):
-                questions = checkpoint["open_questions"]
-                if isinstance(questions, str):
-                    questions = json.loads(questions)
-                if questions:
-                    lines.append("**Open questions:**")
-                    for q in questions:
-                        lines.append(f"- {q}")
-            if checkpoint.get("next_steps"):
-                steps = checkpoint["next_steps"]
-                if isinstance(steps, str):
-                    steps = json.loads(steps)
-                if steps:
-                    lines.append("**Next steps:**")
-                    for s in steps:
-                        lines.append(f"- {s}")
-            if checkpoint.get("active_errors"):
-                errors = checkpoint["active_errors"]
-                if isinstance(errors, str):
-                    errors = json.loads(errors)
-                if errors:
-                    lines.append("**Active errors:**")
-                    for e in errors:
-                        lines.append(f"- {e}")
-            if checkpoint.get("custom_context"):
-                lines.append(f"\n{checkpoint['custom_context']}")
-            lines.append("")
+            lines.extend(self._format_checkpoint_section(checkpoint))
 
-        # Anchored facts
         if anchored:
             lines.append("## Critical Facts (Anchored)")
-            for m in anchored:
-                content = m.get("content", "")
-                lines.append(f"- {content}")
+            lines.extend(f"- {m.get('content', '')}" for m in anchored)
             lines.append("")
 
-        # Recently stored (working memory)
         if recent:
             lines.append("## Working Memory (Recently Stored)")
             for m in recent[:6]:
-                content = m.get("content", "")
-                if len(content) > 250:
-                    content = content[:250] + "..."
+                content = self._truncate(m.get("content", ""), 250)
                 created = m.get("created_at", "")[:16]
                 lines.append(f"- [{created}] {content}")
             lines.append("")
 
-        # Hot memories
         if hot:
             lines.append("## Active Project Context")
             for m in hot[:6]:
-                content = m.get("content", "")
-                if len(content) > 200:
-                    content = content[:200] + "..."
+                content = self._truncate(m.get("content", ""), 200)
                 heat = m.get("heat", 0)
                 lines.append(f"- [{heat:.1f}] {content}")
             lines.append("")
 
-        # Predicted memories
         if predicted:
             lines.append("## Predicted Context (SR Navigation)")
             for m in predicted[:4]:
-                content = m.get("content", "")
-                if len(content) > 200:
-                    content = content[:200] + "..."
-                lines.append(f"- {content}")
+                lines.append(f"- {self._truncate(m.get('content', ''), 200)}")
             lines.append("")
 
-        # Gaps
         if gaps:
             lines.append("## Knowledge Gaps Detected")
-            for g in gaps:
-                lines.append(f"- **{g.get('type', 'unknown')}**: {g.get('description', '')}")
+            lines.extend(
+                f"- **{g.get('type', 'unknown')}**: {g.get('description', '')}" for g in gaps
+            )
             lines.append("")
 
         if directory:

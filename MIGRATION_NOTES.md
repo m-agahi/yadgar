@@ -1,5 +1,46 @@
 # Migration Notes
 
+## v5.19.0 — Scope-aware anchor surfacing in HippocampalReplay (2026-05-30)
+
+Core 5.17.0 → 5.19.0. Backend unchanged at 5.4.0. No schema changes. No DB migrations.
+Plan: `docs/PLAN_V5_19_0_ANCHOR_SURFACING.md`.
+
+### Why
+
+`restoration.py::HippocampalReplay.restore()` called `get_anchored_memories(limit=20)` — a flat,
+unscoped query ordered by `created_at DESC`. Any project with 20+ anchors crowded global anchors
+completely out of the restore payload. The `project_brief(mode="restore")` path (used by the
+session-start hook via catalog) already did a correct two-query scope split; the MCP `restore()`
+tool did not. This inconsistency caused the 2026-05-18 "I forgot anchor X" incidents.
+
+### What changed
+
+**`yadgar/storage/memory.py`**:
+- New method `get_anchored_memories_scoped(directory, limit)`: two queries (global bucket first,
+  then project bucket), hard safety cap 50 per scope, merged with dedup by id, ordered heat DESC
+  within each scope. Global = `directory_context IN ('', 'global', 'system')`. Project = exact
+  `directory_context = directory` match. Expired anchors (`valid_until < now`) excluded.
+
+**`yadgar/restoration.py`**:
+- Line 263: replaced `get_anchored_memories(limit=max_memories)` with
+  `get_anchored_memories_scoped(directory=directory, limit=max_memories)`.
+
+**`yadgar/tests/test_anchor_surfacing.py`** (new):
+- 12 tests covering: global anchor in unrelated project, project isolation, global-before-project
+  ordering, dedup when same row matches both queries, hard cap 50, expired anchor exclusion,
+  empty/system directory_context global treatment, heat ordering within scope, and two
+  HippocampalReplay integration tests.
+
+### Upgrade path
+
+**No action required.** Drop-in replacement. Existing anchors with `directory_context = ''` now
+correctly surface as global anchors (same behaviour as the session-start catalog path).
+
+Anchors with `directory_context = NULL` (pre-v5.8 rows) are NOT included in the global bucket
+(intentional — NULL = misconfigured, not global). Run `audit_anchors()` to surface them.
+
+---
+
 ## v5.17.0 — Write-time contradiction detection default-on (2026-05-30)
 
 Core 5.15.0 → 5.17.0. Backend unchanged at 5.4.0. No schema changes. No DB migrations.
