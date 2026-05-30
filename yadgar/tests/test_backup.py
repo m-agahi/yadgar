@@ -236,6 +236,144 @@ class TestPruneSnapshots:
 
 
 # ---------------------------------------------------------------------------
+# Bug v5.10.5: prune must not delete a just-created snapshot
+# ---------------------------------------------------------------------------
+
+
+class TestPruneDoesNotDeleteJustCreated:
+    """Regression guard for v5.10.5 Bug 2.
+
+    The nightly cycle creates a post-backup snapshot and immediately prunes.
+    `shutil.copytree` with `copy_function=copy2` propagates the source
+    directory's mtime to the snapshot, so if the source DB dir has an old
+    mtime the new snapshot sorts as 'oldest' and gets pruned on that same call.
+
+    Fix: `create_snapshot` stamps the created snapshot with the current time
+    after copytree so mtime always reflects creation time, not DB source time.
+    """
+
+    def test_just_created_snapshot_not_pruned_when_source_has_old_mtime(
+        self, tmp_path: Path
+    ) -> None:
+        """create_snapshot + prune_snapshots sequence: just-created post snapshot survives."""
+        import os
+        import time
+
+        from yadgar.backup import create_snapshot, prune_snapshots
+
+        # Simulate a DB directory that hasn't been written to in a while
+        db = tmp_path / "surreal_db"
+        db.mkdir()
+        (db / "data.kvs").write_bytes(b"\x00\x01\x02")
+        old_ts = time.time() - 7200  # 2 hours old — older than existing snapshots
+        os.utime(db, (old_ts, old_ts))
+
+        # Seed two existing snapshots with more recent mtimes (from yesterday)
+        for i, age_seconds in enumerate([3600, 7200]):
+            snap = tmp_path / f"surreal_db.nightly-pre-2026-05-28-10000{i}"
+            snap.mkdir()
+            (snap / "placeholder").write_bytes(b"x")
+            ts = time.time() - age_seconds
+            os.utime(snap, (ts, ts))
+
+        # Create the just-created post snapshot (simulates nightly cycle step 5)
+        t_before = time.time()
+        just_created = create_snapshot(db, snapshot_dir=tmp_path, label="nightly-post")
+        time.time()
+
+        # Verify the snapshot's mtime is >= t_before (i.e. stamped to now, not source DB mtime)
+        snap_mtime = just_created.stat().st_mtime
+        assert snap_mtime >= t_before - 1, (
+            f"Snapshot mtime {snap_mtime:.3f} is older than creation time "
+            f"{t_before:.3f}. create_snapshot must stamp snapshot to current time, "
+            "not inherit source DB mtime."
+        )
+
+        # Now prune with retention=2 (3 snapshots total, keep 2 → remove 1 oldest)
+        removed = prune_snapshots(tmp_path, "surreal_db.nightly-*", retention=2)
+
+        assert just_created not in removed, (
+            f"prune_snapshots deleted the just-created post snapshot! "
+            f"Removed: {[str(r) for r in removed]}. "
+            "The newest snapshot must never be deleted by an immediately-following prune."
+        )
+        assert just_created.exists(), (
+            "just-created post snapshot was deleted by prune — Bug 2 still present"
+        )
+
+    def test_create_snapshot_stamps_mtime_to_now_regardless_of_source_age(
+        self, tmp_path: Path
+    ) -> None:
+        """Snapshot mtime must reflect creation time, not source directory mtime."""
+        import os
+        import time
+
+        from yadgar.backup import create_snapshot
+
+        db = tmp_path / "surreal_db"
+        db.mkdir()
+        (db / "data.kvs").write_bytes(b"\x00")
+
+        # Make source DB very old
+        very_old = time.time() - 86400  # 24 hours ago
+        os.utime(db, (very_old, very_old))
+
+        t_before = time.time()
+        snap = create_snapshot(db, snapshot_dir=tmp_path, label="nightly-post")
+        t_after = time.time()
+
+        mtime = snap.stat().st_mtime
+        assert mtime >= t_before - 1, (
+            f"Snapshot mtime ({mtime:.3f}) predates creation call ({t_before:.3f}). "
+            "Must be stamped to current time."
+        )
+        assert mtime <= t_after + 1, (
+            f"Snapshot mtime ({mtime:.3f}) is in the future ({t_after:.3f}). Unexpected."
+        )
+
+    def test_round_trip_create_then_prune_keeps_latest(self, tmp_path: Path) -> None:
+        """Full nightly-cycle round trip: create N+1 snapshots, prune keeps latest N.
+
+        Covers the exact failure mode from 2026-05-29: post snapshot created then
+        immediately pruned because it sorts older than the pre snapshot.
+        """
+        import os
+        import time
+
+        from yadgar.backup import create_snapshot, prune_snapshots
+
+        db = tmp_path / "surreal_db"
+        db.mkdir()
+        (db / "data.kvs").write_bytes(b"\x00\x01\x02")
+
+        # Make source DB 2 hours old (simulates stopped core during nightly)
+        db_old_ts = time.time() - 7200
+        os.utime(db, (db_old_ts, db_old_ts))
+
+        # Step 1: create pre snapshot (1 hour ago — simulates pre-backup from previous cycle)
+        pre_snap = tmp_path / "surreal_db.nightly-pre-2026-05-28-190000"
+        pre_snap.mkdir()
+        (pre_snap / "ph").write_bytes(b"x")
+        os.utime(pre_snap, (time.time() - 3600, time.time() - 3600))
+
+        # Step 2: create post snapshot NOW (simulates _step_post_backup)
+        post_snap = create_snapshot(db, snapshot_dir=tmp_path, label="nightly-post")
+
+        # Step 3: prune with retention=1 (keep 1, delete 1)
+        removed = prune_snapshots(tmp_path, "surreal_db.nightly-*", retention=1)
+
+        # post_snap is newer — pre_snap should be removed, not post_snap
+        assert post_snap not in removed, (
+            f"prune removed the just-created post snapshot instead of the older pre snapshot! "
+            f"Removed: {[str(r) for r in removed]}"
+        )
+        assert pre_snap in removed, (
+            f"prune should have removed the older pre snapshot. "
+            f"Removed: {[str(r) for r in removed]}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Env knob
 # ---------------------------------------------------------------------------
 
