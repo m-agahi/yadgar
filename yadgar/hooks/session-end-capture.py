@@ -60,6 +60,25 @@ session_id = data.get("session_id", "unknown")
 # ---------------------------------------------------------------------------
 
 SKIP_REASONS = frozenset({"clear", "resume"})
+
+# ---------------------------------------------------------------------------
+# Slash-command tag filter — tags injected by Claude Code as part of slash-command
+# processing. These are NOT genuine user turns and must be excluded from
+# last_human_turns to keep the sentinel's human-context signal clean.
+# Extend this set when new slash-command tag patterns are observed.
+# ---------------------------------------------------------------------------
+
+SKIP_TAGS: frozenset[str] = frozenset(
+    {
+        "system-reminder",
+        "command-message",
+        "command-name",
+        "command-args",
+        "local-command-caveat",
+        "local-command-stdout",
+        "local-command-stderr",
+    }
+)
 if end_reason in SKIP_REASONS:
     sys.exit(0)
 
@@ -88,9 +107,7 @@ def _count_human_messages(tp: str) -> int:
         if msg.get("role") != "user":
             continue
         content = msg.get("content", "")
-        if isinstance(content, str) and (
-            "<system-reminder>" in content or "<command-message>" in content
-        ):
+        if isinstance(content, str) and any(f"<{tag}>" in content for tag in SKIP_TAGS):
             continue
         if (
             isinstance(content, list)
@@ -119,7 +136,7 @@ if message_count < MIN_MESSAGES:
 def _parse_user_content(content) -> str | None:
     """Extract text from a user message content field. Returns None to skip."""
     if isinstance(content, str):
-        if "<system-reminder>" in content or "<command-message>" in content:
+        if any(f"<{tag}>" in content for tag in SKIP_TAGS):
             return None
         return content
     if isinstance(content, list):
