@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Yadgar — Bookmarks</title>
+<link rel="stylesheet" href="bookmarks.css">
+<link rel="stylesheet" href="lib/github-dark.css">
+</head>
+<body>
+
+<!-- Top nav -->
+<div id="topbar">
+  <h1>YADGAR</h1>
+  <span style="color:#8b949e;font-size:10px">Bookmarks</span>
+  <a class="btn" href="index.html" style="text-decoration:none">← Graph</a>
+  <button class="btn" onclick="globalRefresh()" title="Reload bookmark list">↺ Reload</button>
+  <span id="queue-badge" title="Writes pending in queue"></span>
+  <span id="status-text" style="margin-left:auto"></span>
+</div>
+
+<!-- Main layout: sidebar + pane -->
+<div id="main">
+
+  <!-- Left sidebar: bookmark list -->
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <span class="sec-title">Pinned Pages</span>
+      <span id="bm-count" style="font-size:10px;color:#6e7681"></span>
+    </div>
+    <div id="bookmark-list"></div>
+    <div id="empty-hint" style="display:none">No bookmarks yet.<br>Click + Add to pin a wiki page.</div>
+    <button id="add-btn" onclick="openModal()">+ Add bookmark</button>
+  </div>
+
+  <!-- Right pane: rendered markdown -->
+  <div id="pane">
+    <div id="pane-header">
+      <span id="pane-title" style="color:#6e7681">Select a bookmark</span>
+      <span id="pane-slug"></span>
+      <button id="pane-refresh-btn" onclick="if(_selectedSlug)loadWikiContent(_selectedSlug)" title="Refresh content">↺</button>
+    </div>
+    <div id="pane-content">
+      <div id="spinner">Loading…</div>
+      <div id="pane-error"></div>
+      <div id="md-render"></div>
+      <div id="pane-empty" style="display:none">Select a bookmark from the left panel to read its content.</div>
+    </div>
+  </div>
+
+</div><!-- #main -->
+
+<!-- Add Bookmark Modal -->
+<div id="modal-overlay">
+  <div id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-heading">
+    <h2 id="modal-heading">Add Bookmark</h2>
+
+    <div class="modal-radio-row">
+      <label><input type="radio" name="modal-mode" id="radio-slug" value="slug" checked> Type slug</label>
+      <label><input type="radio" name="modal-mode" id="radio-search" value="search"> Search semantically</label>
+    </div>
+
+    <!-- Slug input (default mode) -->
+    <div class="modal-field" id="slug-field">
+      <label for="modal-slug-input">Wiki slug</label>
+      <input class="modal-input" type="text" id="modal-slug-input"
+             placeholder="yadgar-roadmap-future-improvements"
+             autocomplete="off" spellcheck="false">
+      <div id="slug-autocomplete"></div>
+    </div>
+
+    <!-- Semantic search input (alternate mode) -->
+    <div class="modal-field" id="search-field" style="display:none">
+      <label for="modal-search-input">Search query</label>
+      <input class="modal-input" type="text" id="modal-search-input"
+             placeholder="roadmap improvements…"
+             autocomplete="off">
+      <div id="search-results"></div>
+    </div>
+
+    <div class="modal-field">
+      <label for="modal-label-input">Display label (optional)</label>
+      <input class="modal-input" type="text" id="modal-label-input"
+             placeholder="Leave blank to use wiki title">
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn" id="modal-add-btn" onclick="submitModal()">Add</button>
+    </div>
+  </div>
+</div><!-- #modal-overlay -->
+
+<!-- Vendored libraries (CSP-safe, no CDN) -->
+<script src="lib/marked.min.js"></script>
+<script src="lib/highlight.min.js"></script>
+<script src="lib/dompurify.min.js"></script>
+<script src="bookmarks.js"></script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-"""HTTP routes for wiki bookmarks (v5.23.0).
+"""HTTP routes for wiki bookmarks (v5.23.0 + v5.24.0 frontend view).
 
 All @mcp_server.custom_route decorators live here — they fire at import time.
 This module is imported in server/__init__.py alongside http.py.
@@ -10,15 +10,17 @@ Routes:
   PUT    /api/bookmarks/{slug}/position  → api_bookmarks_reorder
   GET    /api/wiki/search                → api_wiki_search  (bookmark UI)
   GET    /api/wiki/list                  → api_wiki_list    (bookmark UI)
+  GET    /static/bookmarks.html          → bookmarks_view   (v5.24.0 frontend page)
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import FileResponse, JSONResponse
 
 import yadgar.server._state as _st
 from yadgar.server._app import mcp_server
@@ -202,3 +204,21 @@ async def api_wiki_list(request: Request) -> JSONResponse:
         for r in rows or []
     ]
     return JSONResponse(result, headers=_NO_CACHE)
+
+
+# ---------------------------------------------------------------------------
+# Bookmarks frontend page (v5.24.0)
+# ---------------------------------------------------------------------------
+
+
+@mcp_server.custom_route("/static/bookmarks.html", methods=["GET"])
+@trace_span("api.bookmarks_view")
+async def bookmarks_view(request: Request) -> FileResponse:
+    """Serve the wiki bookmarks UI page (v5.24.0 frontend).
+
+    GET /static/bookmarks.html
+
+    Returns the bookmarks.html static file from yadgar/static/.
+    """
+    static_dir = Path(__file__).parent.parent / "static"
+    return FileResponse(static_dir / "bookmarks.html")

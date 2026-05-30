@@ -7,6 +7,27 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.24.0] - 2026-05-30
+
+Wiki Bookmarks frontend: `bookmarks.html` + `bookmarks.css` + `bookmarks.js` + vendored libs. Completes the Wiki Bookmarks feature started in v5.23.0 backend.
+v5.24.0 is a deliberate one-time even slot (frontend to match v5.23.0 backend; skip-1 convention resumes at v5.25.0).
+
+### Added
+- `yadgar/static/bookmarks.html` — bookmarks page: left sidebar (pinned list, drag-to-reorder, per-row refresh, remove), right pane (markdown rendering), queue-depth badge in nav, `+ Add` button.
+- `yadgar/static/bookmarks.css` — dark theme matching `index.html` (`#0d1117`/`#161b22`/`#58a6ff` palette).
+- `yadgar/static/bookmarks.js` — fetch logic against `/api/bookmarks`, `/api/wiki/read`, `/api/wiki/search`, `/api/wiki/list`, `/api/stats`. Markdown render via `marked` + `highlight.js` + `DOMPurify`. Drag-and-drop reorder. Add bookmark modal with slug autocomplete + semantic search modes. `j`/`k` keyboard nav. `r` per-row refresh. `Escape` to close modal.
+- `yadgar/static/lib/marked.min.js` — marked 15.0.12 vendored (CommonMark + GFM tables/strikethrough/task lists).
+- `yadgar/static/lib/highlight.min.js` — highlight.js 11.11.1 vendored (@highlightjs/cdn-assets).
+- `yadgar/static/lib/dompurify.min.js` — DOMPurify 3.2.6 vendored (XSS guard on rendered markdown).
+- `yadgar/static/lib/github-dark.css` — highlight.js GitHub-dark theme vendored.
+- `yadgar/static/index.html` — `📑 Bookmarks` nav link added to top bar.
+- `yadgar/viz_server.py` — `_mime_type()` helper + `do_GET` updated to serve any static file by path (path-traversal guard via `Path.resolve()`); falls back to `index.html` for unknown paths.
+- `yadgar/server/http.py` — `GET /static/bookmarks.html` route on daemon (port 8765).
+- `yadgar/tests/test_viz_bookmarks_static.py` — 71 static-asset tests: file presence, HTML structure, CSS selectors, JS functions, vendored lib sizes, viz_server MIME types + static file serving + path-traversal guard + SPA fallback.
+
+### Deferred (PD-27)
+- Playwright browser tests: deferred per plan note. Manual smoke test steps in MIGRATION_NOTES.
+
 ## [5.23.0] - 2026-05-30
 
 Wiki Bookmarks backend: storage layer + 4 MCP tools + HTTP proxy routes. Frontend UI (bookmarks.html) ships in v5.24.0.
