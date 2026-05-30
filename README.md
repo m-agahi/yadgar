@@ -414,3 +414,12 @@ Inspired by [Zikkaron](https://github.com/amanhij/Zikkaron) by [@amanhij](https:
 ## License
 
 Apache 2.0. See [LICENSE](LICENSE).
+
+### Third-party licenses (key dependencies)
+
+- **SurrealDB** (default storage backend) — [Business Source License 1.1](https://github.com/surrealdb/surrealdb/blob/main/LICENSE) (BSL). The Additional Use Grant explicitly permits embedded use; yadgar bundles + operates SurrealDB as a single-tenant store per-deployment, which falls under that grant. **Non-compliant trigger:** offering a hosted multi-tenant managed yadgar service that exposes the SurrealDB API directly to third-party customers. If that ever becomes a goal, get a commercial SurrealDB license OR migrate to Postgres+pgvector (see `docs/competitor-audit-2026-05-30.md`).
+- **`surrealdb` Python SDK** — Apache 2.0 (separately licensed from the server).
+- **embed/rerank models** — `sentence-transformers/all-MiniLM-L6-v2`, `cross-encoder/ms-marco-MiniLM-L-6-v2`, `cross-encoder/nli-deberta-v3-small`: Apache 2.0 model weights via Hugging Face.
+- **Benchmarks** (`benchmarks/`): scripts Apache 2.0 (yadgar code), but the datasets themselves carry their own licenses — **LoCoMo is CC BY-NC 4.0 (non-commercial only)**; LongMemEval MIT. See `benchmarks/README.md` for full citations + commercial-use guidance.
+
+Full per-dependency audit: `docs/LICENSE_COMPLIANCE_AUDIT_2026-05-30.md`.
