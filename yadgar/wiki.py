@@ -1,5 +1,6 @@
 """Wiki knowledge base — curated, persistent knowledge pages with hybrid search."""
 
+import html
 import logging
 import re
 import time as _time
@@ -397,8 +398,13 @@ class WikiStore:
     # ── Internal ──────────────────────────────────────────────────────────
 
     def _slugify(self, title: str) -> str:
-        """Convert title to URL-safe slug. Max 64 chars."""
-        slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+        """Convert title to URL-safe slug. Max 64 chars.
+
+        HTML entities (&amp;, &lt;, etc.) are unescaped before slug generation
+        so titles created via different code paths (direct API vs repo_wiki)
+        always produce identical slugs. v5.24.1: fixes &amp; → 'amp' drift.
+        """
+        slug = re.sub(r"[^a-z0-9]+", "-", html.unescape(title).lower()).strip("-")
         return slug[:64] if slug else "untitled"
 
     def _extract_wikilinks(self, content: str) -> list[str]:

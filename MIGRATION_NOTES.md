@@ -1,5 +1,45 @@
 # Migration Notes
 
+## v5.24.1 — Bookmarks hotfix: marked.js text guard + slug HTML entity normalisation (2026-05-30)
+
+Core 5.24.0 → 5.24.1. Backend unchanged at 5.4.0. **No DB migration.**
+
+### Bug 1 (PRIMARY — feature blocker): `text.replace is not a function` in bookmarks.html
+
+**Root cause:** `marked` v15 changed the renderer API — `renderer.text()` now receives a token
+object `{type:"text", text:"..."}` instead of a raw string. `bookmarks.js` called `text.replace(...)`
+directly on the token object, throwing the reported error whenever a wiki page was loaded.
+
+**Fix:** `yadgar/static/bookmarks.js` — the `renderer.text` handler now extracts the string from
+the token object (`token.text` when typeof token === "object") before calling `.replace()`. A
+companion guard in `_renderMarkdown` coerces any non-string `content` to `""` and logs a console
+warning before calling `marked.parse()`.
+
+### Bug 2 (SECONDARY — slug drift): `&amp;` entity in title creates duplicate slug
+
+**Root cause:** Some code paths (e.g. `repo_wiki` skill) pass HTML-escaped titles such as
+`"Yadgar Roadmap &amp; Future Improvements"` to `wiki_add`. `_slugify` did not unescape HTML
+entities before generating the slug, so `&amp;` → `amp` token → `yadgar-roadmap-amp-...` while
+the canonical page had slug `yadgar-roadmap-...`.
+
+**Fix:** `yadgar/wiki.py::WikiStore._slugify` — calls `html.unescape(title)` before the regex
+substitution, so `&amp;`, `&lt;`, `&gt;`, etc. collapse to their raw characters (then stripped by
+the non-alphanumeric regex). Both code paths now produce identical slugs.
+
+**Note:** The duplicate page `yadgar-roadmap-amp-future-improvements` already exists in your DB.
+Merge or delete it manually via:
+```
+mcp_yadgar_wiki_delete(slug="yadgar-roadmap-amp-future-improvements")
+```
+
+### Smoke verification
+
+1. Open `http://localhost:42069/bookmarks.html`
+2. Select any bookmarked wiki page — content should render without error.
+3. `wiki_add` a page with `&amp;` in the title — confirm slug does not contain `amp`.
+
+---
+
 ## v5.24.0 — Wiki Bookmarks frontend: bookmarks.html + JS renderer + add modal (2026-05-30)
 
 Core 5.23.0 → 5.24.0. Backend unchanged at 5.4.0. **No DB migration — frontend only.**

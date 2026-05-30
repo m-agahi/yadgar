@@ -7,6 +7,14 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.24.1] - 2026-05-30
+
+Hotfix for two production bugs introduced at v5.24.0 ship.
+
+### Fixed
+- **Bug 1 (bookmarks renderer):** `marked` v15 passes a token object to `renderer.text()`, not a raw string. `bookmarks.js` called `.replace()` on the token object → `text.replace is not a function`. Fixed: extract `token.text` string before `.replace()`; added `typeof content !== "string"` guard in `_renderMarkdown`.
+- **Bug 2 (slug drift):** `_slugify` did not unescape HTML entities before slug generation, causing titles containing `&amp;` to produce `yadgar-roadmap-amp-*` slugs instead of canonical `yadgar-roadmap-*`. Fixed: `html.unescape(title)` at top of `_slugify` in `yadgar/wiki.py`.
+
 ## [5.24.0] - 2026-05-30
 
 Wiki Bookmarks frontend: `bookmarks.html` + `bookmarks.css` + `bookmarks.js` + vendored libs. Completes the Wiki Bookmarks feature started in v5.23.0 backend.

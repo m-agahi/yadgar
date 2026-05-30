@@ -57,6 +57,16 @@ class TestSlugGeneration:
     def test_numeric_title(self):
         assert _wiki()._slugify("123") == "123"
 
+    def test_html_entity_ampersand_normalised(self):
+        """v5.24.1: &amp; in title must not leak 'amp' into slug (Bug 2)."""
+        assert _wiki()._slugify("Yadgar Roadmap &amp; Future Improvements") == (
+            "yadgar-roadmap-future-improvements"
+        )
+
+    def test_raw_ampersand_normalised(self):
+        """& (raw) and &amp; (entity) produce identical slugs."""
+        assert _wiki()._slugify("Foo &amp; Bar") == _wiki()._slugify("Foo & Bar")
+
 
 # ── B. Wikilink Extraction ──────────────────────────────────────────────────
 
