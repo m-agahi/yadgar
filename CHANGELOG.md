@@ -6,6 +6,16 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.13.1] — 2026-05-30
+
+Integration test backend image pin fix — drift since v5.0.3 era.
+
+- **`yadgar/tests/integration/conftest.py`**: replaced hardcoded `openfantasy/yadgar-backend:5.0.3` with `_backend_image()` function that reads `backend_version` from `server.json` at fixture-import time. Integration tests now spin up `5.4.0` (current production). Future backend version bumps apply automatically.
+- **`_SERVER_JSON` constant** + **`_backend_image()` function** added to conftest; skips cleanly if `server.json` unreadable.
+- **3 new regression tests** (`yadgar/tests/integration/test_conftest_backend_pin.py`): version-match assertion, skip-on-missing guard, and no-hardcoded-5.0.3 gate.
+
+See [MIGRATION_NOTES.md §v5.13.1](MIGRATION_NOTES.md#v5131--integration-test-backend-version-pin-fix-2026-05-30).
+
 ## [5.13.0] — 2026-05-30
 
 Secret-gate context-awareness + allowlist — false-positive reduction for test fixtures, plan docs, and changelog entries.
