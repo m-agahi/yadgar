@@ -1,5 +1,38 @@
 # Migration Notes
 
+## v5.10.4 — consolidate_now mode parameter (2026-05-30)
+
+Core 5.10.3 → 5.10.4. Backend unchanged at 5.4.0. No schema changes.
+
+### consolidate_now() — mode parameter (BEHAVIOR CHANGE)
+
+`consolidate_now()` now accepts `mode='light'` (default) or `mode='full'`.
+
+**Light mode (default):** runs `force_consolidate()` only — decay, episodes, merge, CLS, causal phases. Typical runtime <30 seconds. Correct for pre-shutdown flushes, debug runs, and queue-fill scenarios.
+
+**Full mode:** `force_consolidate()` + sleep cycle (dream replay, community detection, cluster summaries, re-embedding, compression, auto-narrate) + anchor audit pass (if `ANCHOR_AUDIT_CONSOLIDATION_ENABLED=true`). Typical runtime 5–15 minutes. Use for deliberate maintenance before a multi-day break.
+
+**Breaking behavior change:** previous `consolidate_now()` with no args ran the full sleep cycle every time. After this upgrade, no-arg calls only run consolidation. If you have scripts or workflows that relied on `consolidate_now()` triggering the sleep cycle, update them to `consolidate_now(mode='full')`.
+
+**Timestamp fix:** `mode='full'` now sets `_consolidation._last_sleep_cycle` so the 6-hour nightly gate respects manual full cycles. Previously, calling `consolidate_now()` twice in rapid succession ran the sleep cycle twice.
+
+### hook_runner.py — PreToolUse schema fix
+
+`db-lockdown-check` hook now emits the current Claude Code PreToolUse schema:
+
+```json
+{"hookSpecificOutput": {"permissionDecision": "allow"}}
+{"hookSpecificOutput": {"permissionDecision": "deny"}, "systemMessage": "..."}
+```
+
+Old schema (`{"decision": "allow"|"block"}`) caused `(root): Invalid input` validation noise on every Bash tool call. No behavior change — Claude Code was already failing-open on the allow path.
+
+**Installed copy:** `.claude/hooks/hook_runner.py` was updated in-place. If you re-run `yadgar install_hooks`, it will copy the fixed source from `yadgar/scripts/hook_runner.py`.
+
+### No action required for upgrade
+
+Docker image tag: `openfantasy/yadgar:5.10.4`. No DB migrations. No config changes. Restart the core container.
+
 ## v5.10.3 — scan_db_for_secrets.py end-to-end fix (2026-05-29)
 
 Core 5.10.2 → 5.10.3. Backend unchanged at 5.4.0. No schema changes.
