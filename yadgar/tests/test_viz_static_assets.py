@@ -200,3 +200,22 @@ class TestV510701LightingFix:
             "_makeNodeThreeObject still uses MeshLambertMaterial — "
             "nodes will render as dark fragments (no scene lights in ForceGraph3D)"
         )
+
+    def test_transparent_flag_conditional_v51072(self) -> None:
+        """v5.10.7.2: transparent must be conditional (!!node.__dimmed), NOT always-true.
+
+        transparent:true with opacity:1.0 still puts mesh in WebGL transparent render pass.
+        Three.js sorts objects back-to-front in that pass but does NOT sort triangles within
+        a single mesh — back faces overdraw front faces → fragmented shard appearance.
+        """
+        html = _html()
+        block = self._node_obj_block(html)
+        assert block, "_makeNodeThreeObject function not found in index.html"
+        assert "transparent: true" not in block, (
+            "_makeNodeThreeObject has 'transparent: true' as unconditional literal — "
+            "wiki octahedra will render as triangle shards. Use 'transparent: !!node.__dimmed' "
+            "so non-dimmed nodes stay in the opaque render pass."
+        )
+        assert "transparent: !!node.__dimmed" in block or "transparent: node.__dimmed" in block, (
+            "_makeNodeThreeObject must set 'transparent' conditionally based on __dimmed state"
+        )

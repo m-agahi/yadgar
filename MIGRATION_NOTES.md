@@ -1,5 +1,48 @@
 # Migration Notes
 
+## v5.10.7.2 — 3D viz transparent flag fix (2026-05-30)
+
+Core 5.10.7.1 → 5.10.7.2. Backend unchanged at 5.4.0. No schema changes. Plan: `docs/PLAN_V5_10_7_2_VIZ_LIGHTING_FIX.md` (originally drafted as separate `MeshLambertMaterial`-only fix; superseded by investigation that revealed deeper `transparent` flag issue).
+
+### Why
+
+v5.10.7.1's Lambert→Basic material swap was necessary (Lambert needs lights ForceGraph3D doesn't provide) but insufficient. Wiki nodes still rendered as fragmented triangle shards. Investigation 2026-05-30 found root cause: `MeshBasicMaterial({transparent: true})` puts mesh in WebGL transparent render pass even at `opacity: 1.0`. Three.js sorts objects back-to-front but does NOT sort triangles within a single mesh — for `OctahedronGeometry` (8 faces) back faces overdraw front → "shards" appearance.
+
+### What changed
+
+`yadgar/static/index.html` `_makeNodeThreeObject` (~line 823):
+
+```javascript
+// Before (v5.10.7.1):
+new THREE.MeshBasicMaterial({ color, transparent: true, opacity: node.__dimmed ? 0.18 : 1.0 })
+
+// After (v5.10.7.2):
+new THREE.MeshBasicMaterial({ color, transparent: !!node.__dimmed, opacity: node.__dimmed ? 0.18 : 1.0 })
+```
+
+Non-dimmed nodes → opaque render pass → correct triangle ordering → solid mesh. Dimmed (search miss) nodes → transparent pass → translucent.
+
+### Apply
+
+Standard single-isolated-change cycle (per anchor `yadgar-dev-workflow-single-isolated-change-release-cycle`):
+
+```bash
+cd /home/max/git/nix && nix-apply
+```
+
+### Verify
+
+- `/health` returns `version=5.10.7.2`
+- Open viz at `http://localhost:42069/`, switch to 3D mode (hard refresh `Ctrl+Shift+R` to bust any browser cache)
+- Expect: solid octahedra (wiki) + solid spheres (memory). All same color. No fragments.
+- Heat-color gradient still NOT working (was never working in 3D historically; tracked as future work).
+
+### Known follow-up
+
+3D heat coloring + per-type shape distinction were the original S2.1/S2.2 intent. v5.10.7 introduced shape distinction (octahedra/sphere) but broke rendering. v5.10.7.1 fixed material. v5.10.7.2 fixed transparent flag. Solid nodes restored. Heat-color gradient never worked historically; new plan to address separately.
+
+---
+
 ## v5.10.7.1 — Bundled hotfix: sentinel filter + viz lighting (2026-05-30)
 
 Core 5.10.7 → 5.10.7.1. Backend unchanged at 5.4.0. No schema changes.
