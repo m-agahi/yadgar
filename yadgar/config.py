@@ -570,6 +570,48 @@ class Settings(BaseSettings):
     # Directory for cache snapshot files (ce.snap, embed.snap).
     CACHE_SNAPSHOT_DIR: str = "/data/cache"
 
+    # ── v5.11.0 — Viz knobs (configurable via config.yaml) ──────────────────
+    # Node sizing
+    VIZ_NODE_SIZE_3D: float = 8.0  # nodeRelSize in 3D mode (default = ForceGraph3D 2× = 8)
+    VIZ_NODE_SIZE_2D: float = 4.0  # base radius in 2D canvas draw
+    # Heat colour HSL params (heatColor function)
+    VIZ_HEAT_HUE_START: int = 240  # hue at h=0 (cool, blue)
+    VIZ_HEAT_HUE_END: int = 0  # hue at h=1 (hot, red)
+    VIZ_HEAT_SAT_BASE: int = 60  # saturation base %
+    VIZ_HEAT_SAT_GAIN: int = 30  # saturation gain %
+    VIZ_HEAT_LIGHT_BASE: int = 40  # lightness base %
+    VIZ_HEAT_LIGHT_GAIN: int = 20  # lightness gain %
+    # Wiki category colours (WIKI_CAT_COLOR object)
+    VIZ_CAT_COLOR_ARCHITECTURE: str = "#58a6ff"
+    VIZ_CAT_COLOR_DECISION: str = "#ffa657"
+    VIZ_CAT_COLOR_PATTERN: str = "#3fb950"
+    VIZ_CAT_COLOR_DEBUGGING: str = "#f85149"
+    VIZ_CAT_COLOR_REFERENCE: str = "#8b949e"
+    VIZ_CAT_COLOR_CONVENTION: str = "#d2a8ff"
+    VIZ_CAT_COLOR_FACT: str = "#a5d6ff"
+    VIZ_CAT_COLOR_ANALYSIS: str = "#d29922"
+    # Edge colours (EDGE_COLOR object)
+    VIZ_EDGE_COLOR_SEMANTIC: str = "#1f6feb"
+    VIZ_EDGE_COLOR_TEMPORAL: str = "#6e40c9"
+    VIZ_EDGE_COLOR_TRANSITION: str = "#3fb950"
+    VIZ_EDGE_COLOR_WIKI_CROSSREF: str = "#d2a8ff"
+    VIZ_EDGE_COLOR_MEMORY_WIKI: str = "#ffa657"
+    # Edge sizing
+    VIZ_EDGE_WIDTH_3D_MULTIPLIER: float = 1.5  # _linkWidth(l) * N in 3D mode
+    VIZ_EDGE_ARROW_LEN: int = 5  # arrowLen for directional edge types
+    # Physics
+    VIZ_PHYSICS_CHARGE_STRENGTH: float = -12.0
+    VIZ_PHYSICS_LINK_DISTANCE_2D: float = 30.0
+    VIZ_PHYSICS_LINK_DISTANCE_3D: float = 36.0
+    # Layout / zoom-fit
+    VIZ_LAYOUT_ZOOM_FIT_TICK: int = 80  # tick threshold to trigger auto-zoom-fit
+    VIZ_LAYOUT_ZOOM_FIT_PADDING: int = 50  # padding passed to zoomToFit()
+    VIZ_LAYOUT_ZOOM_FIT_TRANSITION_MS: int = 800  # transition duration ms for zoomToFit()
+    # Search highlight
+    VIZ_SEARCH_MATCH_COLOR: str = "#ffffff"  # stroke for matched (search-pinned) nodes
+    VIZ_SEARCH_PINNED_COLOR: str = "#ffd700"  # stroke for pinned (clicked-to-pin) nodes
+    VIZ_SEARCH_DIM_OPACITY: float = 0.18  # opacity for non-matched dimmed nodes
+
     model_config = {"env_prefix": "YADGAR_"}
 
     @field_validator("VACUUM_AUTO_WINDOW_START", "VACUUM_AUTO_WINDOW_END")

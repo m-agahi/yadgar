@@ -652,6 +652,132 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Directory for cache snapshot files ce.snap + embed.snap (default /data/cache)",
         "section": "backend_hot_path_cache",
     },
+    # viz_config — v5.11.0
+    "viz_node_size_3d": {
+        "desc": "3D node sphere radius (nodeRelSize, default 8)",
+        "section": "viz_config",
+    },
+    "viz_node_size_2d": {"desc": "2D canvas node base radius (default 4)", "section": "viz_config"},
+    "viz_heat_hue_start": {
+        "desc": "Heat colour hue at h=0 (cool end, default 240 = blue)",
+        "section": "viz_config",
+    },
+    "viz_heat_hue_end": {
+        "desc": "Heat colour hue at h=1 (hot end, default 0 = red)",
+        "section": "viz_config",
+    },
+    "viz_heat_sat_base": {
+        "desc": "Heat colour saturation base % (default 60)",
+        "section": "viz_config",
+    },
+    "viz_heat_sat_gain": {
+        "desc": "Heat colour saturation gain % (default 30)",
+        "section": "viz_config",
+    },
+    "viz_heat_light_base": {
+        "desc": "Heat colour lightness base % (default 40)",
+        "section": "viz_config",
+    },
+    "viz_heat_light_gain": {
+        "desc": "Heat colour lightness gain % (default 20)",
+        "section": "viz_config",
+    },
+    "viz_cat_color_architecture": {
+        "desc": "Wiki category colour: architecture (default #58a6ff)",
+        "section": "viz_config",
+    },
+    "viz_cat_color_decision": {
+        "desc": "Wiki category colour: decision (default #ffa657)",
+        "section": "viz_config",
+    },
+    "viz_cat_color_pattern": {
+        "desc": "Wiki category colour: pattern (default #3fb950)",
+        "section": "viz_config",
+    },
+    "viz_cat_color_debugging": {
+        "desc": "Wiki category colour: debugging (default #f85149)",
+        "section": "viz_config",
+    },
+    "viz_cat_color_reference": {
+        "desc": "Wiki category colour: reference (default #8b949e)",
+        "section": "viz_config",
+    },
+    "viz_cat_color_convention": {
+        "desc": "Wiki category colour: convention (default #d2a8ff)",
+        "section": "viz_config",
+    },
+    "viz_cat_color_fact": {
+        "desc": "Wiki category colour: fact (default #a5d6ff)",
+        "section": "viz_config",
+    },
+    "viz_cat_color_analysis": {
+        "desc": "Wiki category colour: analysis (default #d29922)",
+        "section": "viz_config",
+    },
+    "viz_edge_color_semantic": {
+        "desc": "Edge colour: semantic (default #1f6feb)",
+        "section": "viz_config",
+    },
+    "viz_edge_color_temporal": {
+        "desc": "Edge colour: temporal (default #6e40c9)",
+        "section": "viz_config",
+    },
+    "viz_edge_color_transition": {
+        "desc": "Edge colour: transition (default #3fb950)",
+        "section": "viz_config",
+    },
+    "viz_edge_color_wiki_crossref": {
+        "desc": "Edge colour: wiki_crossref (default #d2a8ff)",
+        "section": "viz_config",
+    },
+    "viz_edge_color_memory_wiki": {
+        "desc": "Edge colour: memory_wiki (default #ffa657)",
+        "section": "viz_config",
+    },
+    "viz_edge_width_3d_multiplier": {
+        "desc": "3D edge width multiplier over 2D base (default 1.5)",
+        "section": "viz_config",
+    },
+    "viz_edge_arrow_len": {
+        "desc": "Arrow length for directional edge types (default 5)",
+        "section": "viz_config",
+    },
+    "viz_physics_charge_strength": {
+        "desc": "D3 charge (repulsion) strength (default -12)",
+        "section": "viz_config",
+    },
+    "viz_physics_link_distance_2d": {
+        "desc": "D3 link distance in 2D mode (default 30)",
+        "section": "viz_config",
+    },
+    "viz_physics_link_distance_3d": {
+        "desc": "D3 link distance in 3D mode (default 36)",
+        "section": "viz_config",
+    },
+    "viz_layout_zoom_fit_tick": {
+        "desc": "Engine tick threshold to trigger auto-zoom-fit (default 80)",
+        "section": "viz_config",
+    },
+    "viz_layout_zoom_fit_padding": {
+        "desc": "Padding px passed to zoomToFit() (default 50)",
+        "section": "viz_config",
+    },
+    "viz_layout_zoom_fit_transition_ms": {
+        "desc": "Transition duration ms for zoomToFit() (default 800)",
+        "section": "viz_config",
+    },
+    "viz_search_match_color": {
+        "desc": "Stroke colour for search-matched nodes (default #ffffff)",
+        "section": "viz_config",
+    },
+    "viz_search_pinned_color": {
+        "desc": "Stroke colour for pinned nodes (default #ffd700)",
+        "section": "viz_config",
+    },
+    "viz_search_dim_opacity": {
+        "desc": "Opacity for non-matched dimmed nodes (default 0.18)",
+        "section": "viz_config",
+    },
 }
 
 
@@ -678,6 +804,7 @@ SECTION_TITLES: dict[str, str] = {
     "misc": "Miscellaneous",
     "project_brief": "Project Brief",
     "anchor_hygiene": "Anchor Hygiene (TTL)",
+    "viz_config": "Visualization Knobs (v5.11.0)",
 }
 
 # Ordered list of sections for deterministic output

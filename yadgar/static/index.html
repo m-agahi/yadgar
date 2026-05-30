@@ -769,12 +769,56 @@ body.dh-open #dh-toggle { right: 480px; }
 <script>
 // ── Config ─────────────────────────────────────────────────────────────────
 const DAEMON = '';  // empty = same-origin; viz_server proxies /api/* to the daemon
-const EDGE_COLOR = { semantic: '#1f6feb', temporal: '#6e40c9', transition: '#3fb950', wiki_crossref: '#d2a8ff', memory_wiki: '#ffa657' };
-const WIKI_CAT_COLOR = {
-  architecture: '#58a6ff', decision: '#ffa657', pattern: '#3fb950',
-  debugging: '#f85149', reference: '#8b949e', convention: '#d2a8ff',
-  fact: '#a5d6ff', analysis: '#d29922',
+
+// v5.11.0: viz knobs — populated from /api/viz/config on load, falls back to
+// v5.10.11 hardcoded defaults if fetch fails or server unreachable.
+let YADGAR_VIZ_CONFIG = {
+  node: {
+    size_3d: 8, size_2d: 4,
+    category_colors: {
+      architecture: '#58a6ff', decision: '#ffa657', pattern: '#3fb950',
+      debugging: '#f85149', reference: '#8b949e', convention: '#d2a8ff',
+      fact: '#a5d6ff', analysis: '#d29922',
+    },
+    heat: { hue_start: 240, hue_end: 0, sat_base: 60, sat_gain: 30, light_base: 40, light_gain: 20 },
+  },
+  edge: {
+    color: { semantic: '#1f6feb', temporal: '#6e40c9', transition: '#3fb950', wiki_crossref: '#d2a8ff', memory_wiki: '#ffa657' },
+    width_3d_multiplier: 1.5, arrow_len: 5,
+  },
+  physics: { charge_strength: -12, link_distance_2d: 30, link_distance_3d: 36 },
+  layout: { auto_zoom_fit_tick_threshold: 80, zoom_fit_padding: 50, zoom_fit_transition_ms: 800 },
+  search: { match_color: '#ffffff', pinned_color: '#ffd700', dim_opacity: 0.18 },
 };
+
+async function loadVizConfig() {
+  // v5.11.0: fetch viz config from backend; deep-merge over defaults.
+  // Failure is silent — falls back to hardcoded defaults above.
+  try {
+    const r = await fetch(`${DAEMON}/api/viz/config`);
+    if (!r.ok) return;
+    const cfg = await r.json();
+    // Deep merge: only overwrite keys present in response
+    if (cfg.node) {
+      if (cfg.node.size_3d != null) YADGAR_VIZ_CONFIG.node.size_3d = cfg.node.size_3d;
+      if (cfg.node.size_2d != null) YADGAR_VIZ_CONFIG.node.size_2d = cfg.node.size_2d;
+      if (cfg.node.category_colors) Object.assign(YADGAR_VIZ_CONFIG.node.category_colors, cfg.node.category_colors);
+      if (cfg.node.heat) Object.assign(YADGAR_VIZ_CONFIG.node.heat, cfg.node.heat);
+    }
+    if (cfg.edge) {
+      if (cfg.edge.color) Object.assign(YADGAR_VIZ_CONFIG.edge.color, cfg.edge.color);
+      if (cfg.edge.width_3d_multiplier != null) YADGAR_VIZ_CONFIG.edge.width_3d_multiplier = cfg.edge.width_3d_multiplier;
+      if (cfg.edge.arrow_len != null) YADGAR_VIZ_CONFIG.edge.arrow_len = cfg.edge.arrow_len;
+    }
+    if (cfg.physics) Object.assign(YADGAR_VIZ_CONFIG.physics, cfg.physics);
+    if (cfg.layout) Object.assign(YADGAR_VIZ_CONFIG.layout, cfg.layout);
+    if (cfg.search) Object.assign(YADGAR_VIZ_CONFIG.search, cfg.search);
+  } catch (_) { /* silent fallback */ }
+}
+
+// Convenience aliases — updated after loadVizConfig() runs
+function _edgeColor() { return YADGAR_VIZ_CONFIG.edge.color; }
+function _wikiCatColor() { return YADGAR_VIZ_CONFIG.node.category_colors; }
 
 // ── State ───────────────────────────────────────────────────────────────────
 let allNodes = [], allLinks = [];
@@ -795,14 +839,16 @@ let _zoomFitDone = false;
 // ── Colour helpers ──────────────────────────────────────────────────────────
 function heatColor(h) {
   h = Math.max(0, Math.min(1, h || 0));
-  return `hsl(${(1 - h) * 240},${60 + h * 30}%,${40 + h * 20}%)`;
+  const ht = YADGAR_VIZ_CONFIG.node.heat;
+  return `hsl(${(1 - h) * ht.hue_start + h * ht.hue_end},${ht.sat_base + h * ht.sat_gain}%,${ht.light_base + h * ht.light_gain}%)`;
 }
 
 // ── 3D node colour resolver (S2.1) ──────────────────────────────────────────
 // Used by .nodeColor() in 3D mode and by _applySearchHighlight re-trigger.
 function _nodeColorFor(node) {
-  if (node.__dimmed) return 'rgba(80,80,80,0.18)';
-  if (node.type === 'wiki') return WIKI_CAT_COLOR[node.category] || '#8b949e';
+  const dimOpacity = YADGAR_VIZ_CONFIG.search.dim_opacity;
+  if (node.__dimmed) return `rgba(80,80,80,${dimOpacity})`;
+  if (node.type === 'wiki') return _wikiCatColor()[node.category] || '#8b949e';
   return heatColor(node.heat || 0);
 }
 
@@ -824,9 +870,9 @@ function _nodeLabel(n) {
     : `[heat=${(n.heat||0).toFixed(3)}] ${(n.content || n.label || '').slice(0, 120)}`;
 }
 
-function _linkColor(l) { return EDGE_COLOR[l.type] || '#484f58'; }
+function _linkColor(l) { return _edgeColor()[l.type] || '#484f58'; }
 function _linkWidth(l) { return l.type === 'transition' ? Math.min(4, 1 + Math.log2(l.count || 1)) : l.type === 'semantic' ? 1 : l.type === 'wiki_crossref' ? 1 : 1.5; }
-function _arrowLen(l) { return (l.type === 'transition' || l.type === 'memory_wiki' || l.type === 'wiki_crossref') ? 5 : 0; }
+function _arrowLen(l) { return (l.type === 'transition' || l.type === 'memory_wiki' || l.type === 'wiki_crossref') ? YADGAR_VIZ_CONFIG.edge.arrow_len : 0; }
 
 function initGraph(mode) {
   if (!mode) mode = _graphMode;
@@ -850,7 +896,7 @@ function initGraph(mode) {
     // 3D mode using 3d-force-graph + Three.js
     graph = ForceGraph3D()(wrap)
       .backgroundColor('#0d1117')
-      .nodeRelSize(8)                     // v5.10.10: 2x default (4) for visibility
+      .nodeRelSize(YADGAR_VIZ_CONFIG.node.size_3d)  // v5.10.10: 2x default; v5.11.0: config-driven
       .nodeId('id')
       .linkSource('source')
       .linkTarget('target')
@@ -860,7 +906,7 @@ function initGraph(mode) {
       // — three attempts at custom mesh rendered as fragmented shards. Falling back to
       // ForceGraph3D's default solid sphere rendering. Last-known-good visual.
       .linkColor(_linkColor)
-      .linkWidth(l => _linkWidth(l) * 1.5)   // v5.10.11: 3D-only +50% thickness
+      .linkWidth(l => _linkWidth(l) * YADGAR_VIZ_CONFIG.edge.width_3d_multiplier)  // v5.10.11: 3D-only; v5.11.0: config-driven
       .linkDirectionalArrowLength(_arrowLen)
       .linkDirectionalArrowRelPos(1)
       .nodeVisibility(n => n.__visible !== false)
@@ -873,15 +919,15 @@ function initGraph(mode) {
       .onBackgroundClick(closeDetail)
       .onEngineTick(() => {
         _engineTickCount++;
-        // v5.10.10: auto-fit once layout has settled (tick 80, 30 past the pin threshold).
-        if (!_zoomFitDone && _engineTickCount === 80) {
+        // v5.10.10: auto-fit once layout has settled; v5.11.0: tick threshold config-driven.
+        if (!_zoomFitDone && _engineTickCount === YADGAR_VIZ_CONFIG.layout.auto_zoom_fit_tick_threshold) {
           _zoomFitDone = true;
           if (typeof graph.zoomToFit === 'function') {
-            graph.zoomToFit(800, 50);
+            graph.zoomToFit(YADGAR_VIZ_CONFIG.layout.zoom_fit_transition_ms, YADGAR_VIZ_CONFIG.layout.zoom_fit_padding);
           }
         }
       });
-    graph.d3Force('link').distance(36);   // v5.10.11: 3D-only +20% repulsion (30 * 1.2)
+    graph.d3Force('link').distance(YADGAR_VIZ_CONFIG.physics.link_distance_3d);  // v5.10.11: 3D-only; v5.11.0: config-driven
   } else {
     // 2D mode (force-graph canvas) — default
     graph = ForceGraph()(wrap)
@@ -919,11 +965,11 @@ function initGraph(mode) {
       })
       .onEngineTick(() => {
         _engineTickCount++;
-        // v5.10.10: auto-fit once layout has settled (tick 80, 30 past the pin threshold).
-        if (!_zoomFitDone && _engineTickCount === 80) {
+        // v5.10.10: auto-fit once layout has settled; v5.11.0: tick threshold config-driven.
+        if (!_zoomFitDone && _engineTickCount === YADGAR_VIZ_CONFIG.layout.auto_zoom_fit_tick_threshold) {
           _zoomFitDone = true;
           if (typeof graph.zoomToFit === 'function') {
-            graph.zoomToFit(800, 50);
+            graph.zoomToFit(YADGAR_VIZ_CONFIG.layout.zoom_fit_transition_ms, YADGAR_VIZ_CONFIG.layout.zoom_fit_padding);
           }
         }
       })
@@ -938,9 +984,9 @@ function initGraph(mode) {
         }
       });
 
-    // Softer repulsion — default -30 spreads clusters too far
-    graph.d3Force('charge').strength(-12);
-    graph.d3Force('link').distance(30);
+    // Softer repulsion — default -30 spreads clusters too far; v5.11.0: config-driven
+    graph.d3Force('charge').strength(YADGAR_VIZ_CONFIG.physics.charge_strength);
+    graph.d3Force('link').distance(YADGAR_VIZ_CONFIG.physics.link_distance_2d);
   }
 
   window.addEventListener('resize', () => {
@@ -965,13 +1011,13 @@ function toggleMode() {
 }
 
 function drawNode(node, ctx, scale) {
-  const dimAlpha = node.__dimmed ? 0.18 : 1.0;
+  const dimAlpha = node.__dimmed ? YADGAR_VIZ_CONFIG.search.dim_opacity : 1.0;
   ctx.globalAlpha = dimAlpha;
 
   if (node.type === 'wiki') {
     // Hexagon
     const r = node.__pinned ? 11 : 8;
-    const color = WIKI_CAT_COLOR[node.category] || '#8b949e';
+    const color = _wikiCatColor()[node.category] || '#8b949e';
     ctx.beginPath();
     for (let i = 0; i < 6; i++) {
       const angle = Math.PI / 3 * i - Math.PI / 6;
@@ -983,7 +1029,7 @@ function drawNode(node, ctx, scale) {
     ctx.fillStyle = color;
     ctx.fill();
     if (node.__match || node.__pinned) {
-      ctx.strokeStyle = node.__pinned ? '#ffd700' : '#ffffff';
+      ctx.strokeStyle = node.__pinned ? YADGAR_VIZ_CONFIG.search.pinned_color : YADGAR_VIZ_CONFIG.search.match_color;
       ctx.lineWidth = (node.__pinned ? 2.5 : 1.5) / scale;
       ctx.stroke();
     }
@@ -1007,7 +1053,7 @@ function drawNode(node, ctx, scale) {
   ctx.fill();
 
   if (node.__match || node.__pinned) {
-    ctx.strokeStyle = node.__pinned ? '#ffd700' : '#ffffff';
+    ctx.strokeStyle = node.__pinned ? YADGAR_VIZ_CONFIG.search.pinned_color : YADGAR_VIZ_CONFIG.search.match_color;
     ctx.lineWidth = (node.__pinned ? 2.5 : 1.5) / scale;
     ctx.stroke();
   }
@@ -1024,6 +1070,8 @@ function drawNode(node, ctx, scale) {
 
 // ── Data loading ────────────────────────────────────────────────────────────
 async function loadGraph() {
+  // v5.11.0: fetch viz config before graph init so all knobs apply on first render.
+  await loadVizConfig();
   // v5.10.10: reset zoom-fit flag so reload button re-fits on next engine settle.
   _zoomFitDone = false;
   status('Loading…', 'wait');
