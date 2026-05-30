@@ -1,5 +1,38 @@
 # Migration Notes
 
+## v5.24.2 — Bookmarks hotfix: marked v15 renderer.text round-trip crash (2026-05-30)
+
+Core 5.24.1 → 5.24.2. Backend unchanged at 5.4.0. **No DB migration.**
+
+### Bug: `Cannot use 'in' operator to search for 'tokens' in <string>` (bookmarks crash on any wiki page)
+
+**Root cause:** v5.24.1 fixed `renderer.text()` to extract `token.text` from the marked v15 token
+object, but then called `_origText(replaced)` — passing the resulting HTML string back to v15's
+default `text` renderer, which does `'tokens' in arg` internally. When `arg` is a string (not a
+token object), JavaScript throws "Cannot use 'in' operator to search for 'tokens' in <string>".
+This fires on any wiki page whose heading or body contains inline text (i.e. essentially all pages).
+
+**Fix:** `yadgar/static/bookmarks.js` — drop the `_origText` delegation entirely. The custom
+`renderer.text` handler now returns the replaced HTML string directly. DOMPurify downstream already
+sanitizes XSS; the default text renderer's HTML-escaping pass is not needed (and would have escaped
+the `<a>` anchor we just built anyway).
+
+**Vendored marked.js:** unchanged — still v15.0.12 (`yadgar/static/lib/marked.min.js`). No SRI hash
+change (bookmarks.html loads marked via plain `<script src>` with no `integrity=` attribute).
+
+### Regression test added
+
+`yadgar/tests/test_viz_bookmarks_static.py::TestMarkedV15RendererRegression` — two node subprocess
+tests that call `marked.parse()` on a heading with parenthetical text and assert no throw.
+
+### Manual smoke test
+
+After `nix-rebuild` / container restart, open `/bookmarks.html`, add any wiki page as a bookmark,
+click it. Page should render without the "Error loading" banner. Specifically test the
+`yadgar-roadmap-amp-future-improvements` or any page with `(date)` in a heading.
+
+---
+
 ## v5.24.1 — Bookmarks hotfix: marked.js text guard + slug HTML entity normalisation (2026-05-30)
 
 Core 5.24.0 → 5.24.1. Backend unchanged at 5.4.0. **No DB migration.**
