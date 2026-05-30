@@ -1,5 +1,82 @@
 # Migration Notes
 
+## v5.24.0 — Wiki Bookmarks frontend: bookmarks.html + JS renderer + add modal (2026-05-30)
+
+Core 5.23.0 → 5.24.0. Backend unchanged at 5.4.0. **No DB migration — frontend only.**
+Completes the Wiki Bookmarks feature started in v5.23.0 (backend).
+
+### New static files
+
+| File | Size | Purpose |
+|---|---|---|
+| `yadgar/static/bookmarks.html` | ~4 KB | Bookmarks page UI |
+| `yadgar/static/bookmarks.css` | ~6 KB | Dark-theme styles matching index.html |
+| `yadgar/static/bookmarks.js` | ~10 KB | Fetch logic, markdown render, drag-to-reorder, add modal |
+| `yadgar/static/lib/marked.min.js` | ~39 KB | Markdown → HTML renderer (vendored) |
+| `yadgar/static/lib/highlight.min.js` | ~127 KB | Syntax highlighting (vendored) |
+| `yadgar/static/lib/dompurify.min.js` | ~22 KB | XSS sanitization of rendered HTML (vendored) |
+| `yadgar/static/lib/github-dark.css` | ~1.3 KB | highlight.js GitHub-dark theme (vendored) |
+
+### Vendored library versions + SRI
+
+| Library | Version | Source | SRI (sha384) |
+|---|---|---|---|
+| marked | 15.0.12 | jsdelivr/npm | `sha384-948ahk4ZmxYVYOc+rxN1H2gM1EJ2Duhp7uHtZ4WSLkV4Vtx5MUqnV+l7u9B+jFv+` |
+| highlight.js | 11.11.1 | @highlightjs/cdn-assets | `sha384-RH2xi4eIQ/gjtbs9fUXM68sLSi99C7ZWBRX1vDrVv6GQXRibxXLbwO2NGZB74MbU` |
+| DOMPurify | 3.2.6 | jsdelivr/npm | `sha384-JEyTNhjM6R1ElGoJns4U2Ln4ofPcqzSsynQkmEc/KGy6336qAZl70tDLufbkla+3` |
+| github-dark.css | 11.11.1 | @highlightjs/cdn-assets | `sha384-wH75j6z1lH97ZOpMOInqhgKzFkAInZPPSPlZpYKYTOqsaizPvhQZmAtLcPKXpLyH` |
+
+Note: Libraries are vendored under `yadgar/static/lib/` — no CDN dependency at runtime. CSP-safe.
+
+### New daemon route
+
+`GET /static/bookmarks.html` — served directly from daemon (port 8765) via `FileResponse`.
+The viz server (port 42069) also serves all static files by path (including `bookmarks.css`, `bookmarks.js`, `lib/*`).
+
+### Accessing the bookmarks page
+
+- Via viz server (port 42069): `http://localhost:42069/bookmarks.html`
+- Direct from daemon (port 8765): `http://localhost:8765/static/bookmarks.html`
+- Via nav link in the graph view (`📑 Bookmarks` button in top bar)
+
+### Manual smoke test
+
+After deploying v5.24.0:
+
+```bash
+# From host (adjust port if different)
+curl -sf http://localhost:42069/bookmarks.html | grep -c "bookmark-list"   # → 1
+curl -sf http://localhost:42069/bookmarks.css | grep -c "#sidebar"         # → 1
+curl -sf http://localhost:42069/bookmarks.js | grep -c "loadBookmarks"     # → 1
+curl -sf http://localhost:42069/lib/marked.min.js | wc -c                  # → ~39903
+curl -sf http://localhost:42069/lib/highlight.min.js | wc -c               # → ~127496
+curl -sf http://localhost:42069/lib/dompurify.min.js | wc -c               # → ~22305
+
+# Or via daemon port
+curl -sf http://localhost:8765/static/bookmarks.html | grep -c "DOCTYPE"   # → 1
+```
+
+### Interactive smoke (manual, cannot be automated without browser)
+
+Per PD-27, Playwright tests deferred. Manual steps:
+1. Open `http://localhost:42069/bookmarks.html`
+2. Click `+ Add bookmark` → modal opens with two modes
+3. Switch to "Search semantically" → type "roadmap" → results appear within 500ms
+4. Click first result → slug fills in slug field
+5. Click `Add` → bookmark appears in left sidebar
+6. Click bookmark → markdown renders in right pane with syntax-highlighted code blocks
+7. Drag bookmark to reorder → position persists on reload
+8. Click `↺` (row refresh) → content reloads
+
+### v5.24.0: no JS test infra — relies on manual smoke test per PD-27
+
+No Jest/Vitest/Playwright infrastructure in this repo. Static-asset tests in
+`yadgar/tests/test_viz_bookmarks_static.py` verify file presence, structure, and
+viz_server static file serving (including path-traversal guard). Interactive browser
+tests deferred per PD-27 plan note.
+
+---
+
 ## v5.23.0 — Wiki Bookmarks backend: storage + 4 MCP tools + HTTP proxy routes (2026-05-30)
 
 Core 5.21.0 → 5.23.0. Backend unchanged at 5.4.0. **New DB migration: `wiki_bookmark` table.**

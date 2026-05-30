@@ -10220,7 +10220,7 @@
     "loc": 139
   },
   "yadgar/server/http.py::__file__": {
-    "loc": 1507
+    "loc": 1510
   },
   "yadgar/server/http.py::_compute@1010": {
     "cyclo": 6,
