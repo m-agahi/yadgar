@@ -815,7 +815,11 @@ function _makeNodeThreeObject(node) {
   const color = node.__pinned
     ? '#ffd700'
     : _nodeColorFor(node);
-  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: node.__dimmed ? 0.18 : 1.0 });
+  // v5.10.7.2: transparent flag conditional. transparent:true with opacity:1.0 still puts mesh in
+  // WebGL transparent render pass — Three.js sorts objects back-to-front but NOT triangles within a
+  // single mesh. For an 8-faced OctahedronGeometry, back faces overdraw front faces → fragmented
+  // shard appearance. Only set transparent when actually dimming (opacity < 1).
+  const mat = new THREE.MeshBasicMaterial({ color, transparent: !!node.__dimmed, opacity: node.__dimmed ? 0.18 : 1.0 });
   return new THREE.Mesh(geo, mat);
 }
 
