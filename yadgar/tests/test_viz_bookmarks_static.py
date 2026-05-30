@@ -256,6 +256,22 @@ class TestBookmarksJs:
         js = _read("bookmarks.js")
         assert "function globalRefresh" in js
 
+    def test_render_markdown_guards_non_string(self) -> None:
+        """v5.24.1 Bug 1: _renderMarkdown must guard against non-string input."""
+        js = _read("bookmarks.js")
+        # Guard must coerce non-string content before calling marked.parse
+        assert 'typeof content !== "string"' in js or "typeof content !== 'string'" in js, (
+            "_renderMarkdown must have typeof-string guard before marked.parse"
+        )
+
+    def test_marked_renderer_text_uses_token_text(self) -> None:
+        """v5.24.1 Bug 1: marked v15 passes token object to renderer.text, not a string."""
+        js = _read("bookmarks.js")
+        # The [[slug]] renderer must extract .text from token, not call .replace() on token
+        assert "token.text" in js or "text.text" in js, (
+            "renderer.text handler must extract string from token (marked v15 API)"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Vendored libs
