@@ -400,3 +400,55 @@ class TestV51011VizEdgeThicknessAndRepulsion:
             "v5.10.11 Fix 2 (3D-only +20% connected-node repulsion) not implemented. "
             "30 * 1.2 = 36."
         )
+
+
+class TestV5110VizConfigFetch:
+    """v5.11.0: loadGraph() must fetch /api/viz/config before rendering.
+
+    Fix 1: A loadVizConfig() async function (or equivalent) fetches /api/viz/config
+           and stores the result in window.YADGAR_VIZ_CONFIG.
+    Fix 2: YADGAR_VIZ_CONFIG is referenced in node-color / link-color / nodeRelSize
+           call sites, replacing hardcoded constants.
+    """
+
+    def test_loadGraph_fetches_viz_config(self) -> None:
+        html = _html()
+        # loadGraph must invoke fetch('/api/viz/config') or call a loadVizConfig helper
+        assert "/api/viz/config" in html, (
+            "'/api/viz/config' missing from index.html — v5.11.0 requires loadGraph() "
+            "to fetch viz config from the backend before initialising the graph."
+        )
+        # The fetch must happen inside or before loadGraph
+        lines = html.splitlines()
+        in_func = False
+        func_lines: list[str] = []
+        brace_depth = 0
+        for line in lines:
+            if "async function loadGraph()" in line:
+                in_func = True
+            if in_func:
+                func_lines.append(line)
+                brace_depth += line.count("{") - line.count("}")
+                if in_func and brace_depth == 0 and len(func_lines) > 1:
+                    break
+        body = "\n".join(func_lines)
+        assert "/api/viz/config" in body or "loadVizConfig" in body, (
+            "loadGraph() does not call fetch('/api/viz/config') or loadVizConfig() — "
+            "v5.11.0 requires viz config to be fetched before graph initialisation."
+        )
+
+    def test_viz_constants_reference_config(self) -> None:
+        html = _html()
+        # YADGAR_VIZ_CONFIG must be declared and referenced in node/edge color logic
+        assert "YADGAR_VIZ_CONFIG" in html, (
+            "YADGAR_VIZ_CONFIG missing from index.html — v5.11.0 requires a global "
+            "config object populated from /api/viz/config to drive viz constants."
+        )
+        # Must be referenced in color/sizing call sites
+        lines = html.splitlines()
+        config_ref_lines = [ln for ln in lines if "YADGAR_VIZ_CONFIG" in ln]
+        assert len(config_ref_lines) >= 3, (
+            f"YADGAR_VIZ_CONFIG referenced only {len(config_ref_lines)} time(s) — "
+            "expected at least 3 (node color, edge color, physics/layout). "
+            "Hardcoded constants must be replaced."
+        )
