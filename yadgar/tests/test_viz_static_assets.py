@@ -302,9 +302,13 @@ class TestV51010VizPolish:
 
     def test_nodeRelSize_set_to_8_in_3d_init(self) -> None:
         html = _html()
-        assert ".nodeRelSize(8)" in html, (
-            ".nodeRelSize(8) not found in index.html — v5.10.10 Fix 1 (2x 3D node size) "
-            "not implemented. ForceGraph3D default is 4; set to 8 for 2x sphere radius."
+        # v5.11.0: nodeRelSize is now config-driven via YADGAR_VIZ_CONFIG.node.size_3d
+        # (default 8, same as v5.10.10 hardcoded value)
+        assert (
+            ".nodeRelSize(YADGAR_VIZ_CONFIG.node.size_3d)" in html or ".nodeRelSize(8)" in html
+        ), (
+            ".nodeRelSize not found in index.html — v5.10.10 Fix 1 (2x 3D node size) "
+            "not implemented. ForceGraph3D default is 4; set to 8 (or via YADGAR_VIZ_CONFIG) for 2x sphere radius."
         )
 
     def test_zoomFitDone_flag_declared(self) -> None:
@@ -341,4 +345,125 @@ class TestV51010VizPolish:
             "No onEngineTick callback found that references both _zoomFitDone and "
             "zoomToFit — v5.10.10 Fix 2 (auto-zoom-fit) not implemented. "
             "The callback must set _zoomFitDone=true and call graph.zoomToFit() at tick 80."
+        )
+
+
+class TestV51011VizEdgeThicknessAndRepulsion:
+    """v5.10.11: 3D-only edge thickness +50% + connected-node repulsion +20%.
+
+    Fix 1: 3D init block uses .linkWidth(l => _linkWidth(l) * 1.5) instead of
+           .linkWidth(_linkWidth). 2D init block keeps plain .linkWidth(_linkWidth).
+    Fix 2: 3D branch sets graph.d3Force('link').distance(36) (30 * 1.2).
+           2D branch keeps graph.d3Force('link').distance(30).
+    """
+
+    def _extract_3d_block(self, html: str) -> str:
+        """Extract the 3D init block (between 'if (mode === '3d') {' and '} else {')."""
+        marker_start = "if (mode === '3d') {"
+        marker_end = "} else {"
+        start = html.find(marker_start)
+        end = html.find(marker_end, start)
+        assert start != -1 and end != -1, "Could not find 3D/2D branch markers in index.html"
+        return html[start:end]
+
+    def _extract_2d_block(self, html: str) -> str:
+        """Extract the 2D init block (between '} else {' and the resize listener)."""
+        marker_start = "} else {"
+        marker_end = "window.addEventListener('resize'"
+        start = html.find(marker_start)
+        end = html.find(marker_end, start)
+        assert start != -1 and end != -1, "Could not find 2D block or resize listener in index.html"
+        return html[start:end]
+
+    def test_3d_linkWidth_multiplier_present(self) -> None:
+        html = _html()
+        three_d_block = self._extract_3d_block(html)
+        # v5.11.0: multiplier is now config-driven (YADGAR_VIZ_CONFIG.edge.width_3d_multiplier)
+        # default 1.5, same behavior as v5.10.11 hardcoded value
+        assert (
+            "_linkWidth(l) * YADGAR_VIZ_CONFIG.edge.width_3d_multiplier" in three_d_block
+            or "_linkWidth(l) * 1.5" in three_d_block
+        ), (
+            "3D init block missing '.linkWidth(l => _linkWidth(l) * N)' — "
+            "v5.10.11 Fix 1 (3D-only +50% edge thickness) not implemented."
+        )
+
+    def test_2d_linkWidth_unchanged(self) -> None:
+        html = _html()
+        two_d_block = self._extract_2d_block(html)
+        # 2D must have plain .linkWidth(_linkWidth), no multiplier
+        assert ".linkWidth(_linkWidth)" in two_d_block, (
+            "2D init block missing plain '.linkWidth(_linkWidth)' — "
+            "v5.10.11 must NOT change 2D edge width."
+        )
+        assert "_linkWidth(l) * 1.5" not in two_d_block, (
+            "2D init block contains the 1.5x multiplier — "
+            "edge thickness change must be 3D-only (v5.10.11 constraint)."
+        )
+
+    def test_3d_link_distance_36(self) -> None:
+        html = _html()
+        three_d_block = self._extract_3d_block(html)
+        # v5.11.0: distance is now config-driven (YADGAR_VIZ_CONFIG.physics.link_distance_3d)
+        # default 36, same behavior as v5.10.11 hardcoded value
+        assert (
+            "graph.d3Force('link').distance(YADGAR_VIZ_CONFIG.physics.link_distance_3d)"
+            in three_d_block
+            or "graph.d3Force('link').distance(36)" in three_d_block
+        ), (
+            "3D init block missing 'graph.d3Force(\"link\").distance(36 or config)' — "
+            "v5.10.11 Fix 2 (3D-only +20% connected-node repulsion) not implemented. "
+            "30 * 1.2 = 36."
+        )
+
+
+class TestV5110VizConfigFetch:
+    """v5.11.0: loadGraph() must fetch /api/viz/config before rendering.
+
+    Fix 1: A loadVizConfig() async function (or equivalent) fetches /api/viz/config
+           and stores the result in window.YADGAR_VIZ_CONFIG.
+    Fix 2: YADGAR_VIZ_CONFIG is referenced in node-color / link-color / nodeRelSize
+           call sites, replacing hardcoded constants.
+    """
+
+    def test_loadGraph_fetches_viz_config(self) -> None:
+        html = _html()
+        # loadGraph must invoke fetch('/api/viz/config') or call a loadVizConfig helper
+        assert "/api/viz/config" in html, (
+            "'/api/viz/config' missing from index.html — v5.11.0 requires loadGraph() "
+            "to fetch viz config from the backend before initialising the graph."
+        )
+        # The fetch must happen inside or before loadGraph
+        lines = html.splitlines()
+        in_func = False
+        func_lines: list[str] = []
+        brace_depth = 0
+        for line in lines:
+            if "async function loadGraph()" in line:
+                in_func = True
+            if in_func:
+                func_lines.append(line)
+                brace_depth += line.count("{") - line.count("}")
+                if in_func and brace_depth == 0 and len(func_lines) > 1:
+                    break
+        body = "\n".join(func_lines)
+        assert "/api/viz/config" in body or "loadVizConfig" in body, (
+            "loadGraph() does not call fetch('/api/viz/config') or loadVizConfig() — "
+            "v5.11.0 requires viz config to be fetched before graph initialisation."
+        )
+
+    def test_viz_constants_reference_config(self) -> None:
+        html = _html()
+        # YADGAR_VIZ_CONFIG must be declared and referenced in node/edge color logic
+        assert "YADGAR_VIZ_CONFIG" in html, (
+            "YADGAR_VIZ_CONFIG missing from index.html — v5.11.0 requires a global "
+            "config object populated from /api/viz/config to drive viz constants."
+        )
+        # Must be referenced in color/sizing call sites
+        lines = html.splitlines()
+        config_ref_lines = [ln for ln in lines if "YADGAR_VIZ_CONFIG" in ln]
+        assert len(config_ref_lines) >= 3, (
+            f"YADGAR_VIZ_CONFIG referenced only {len(config_ref_lines)} time(s) — "
+            "expected at least 3 (node color, edge color, physics/layout). "
+            "Hardcoded constants must be replaced."
         )
