@@ -401,6 +401,72 @@ Code comments representing architectural decisions — not trivial cleanups. App
 
 ---
 
+## 2026-05-30 — Yadgar memory + wiki scan (consolidation addendum)
+
+**Scan scope:** yadgar wiki pages (all yadgar-* slugs) + episodic memory recall. Prior pass (same date) scanned PLAN_*.md files and repo source. This pass explicitly targets yadgar's own memory store for deferrals not yet captured in DECISIONS.md.
+
+**Noise filtered:** 40+ items excluded — adopt/PD/OQ items already present in this file, action-stream episodic memories, roadmap pipeline entries already in `yadgar-roadmap-future-improvements`, one-off planning notes without revisit triggers.
+
+### Wiki-sourced deferrals
+
+**YM-W-1: Anchor unconditional surfacing — implementation not shipped**
+- **Source:** [wiki: yadgar-anchor-memory-design-scopes-and-surfacing] (2026-05-18)
+- **Decision:** DEFERRED (design decided, code not shipped)
+- **Background:** `restore()` and `session-start-context.py` rank-filter ALL anchors by relevance, dropping cross-project anchors (e.g. PR workflow anchor not surfaced during bug-fix task). Design specifies two scope buckets (global + project) surfaced unconditionally before ranked content. Implementation surface: `yadgar/restore.py` anchor query split + `dotfiles/common/yadgar-hooks/session-start-context.py` + one-time SQL migration of legacy `directory_context IN ("", "system")` rows to `"global"`. S6 from frozen v5.2 plan.
+- **Revisit triggers:** next session-start context failure ("I forgot anchor X exists") OR v5.11 cross-project anchor work ships (natural time to wire unconditional surfacing alongside new anchor scope).
+
+**YM-W-2: MCP + Supervisor container proxy (Idea 1) — deferred pending prerequisites**
+- **Source:** [wiki: yadgar-deferred-architecture-ideas-half-baked-exploration] (2026-05-23)
+- **Decision:** DEFER (prerequisites unmet)
+- **Background:** split MCP transport into thin `yadgar-mcp` container that stays alive across daemon restarts, eliminating manual `/mcp` reconnect after vacuum / upgrades. Rejected for now: P8 idempotency markers (currently deferred v5.5) required to prevent double-writes on replay; MCP spec has no pause/resume notification; Claude Code has no auto-reconnect.
+- **Revisit triggers:** P8 idempotency markers ship; OR SurrealKV gains online compaction (enables Alt A: move vacuum to separate service); OR Claude Code MCP plugin gains auto-reconnect; OR multi-host deployment.
+
+**YM-W-3: Loki log ingestion blocked — Alloy DynamicUser home-dir permission**
+- **Source:** [wiki: yadgar-obs-2026-05-23-investigation] Bug 2 (2026-05-23)
+- **Decision:** OPEN-QUESTION (unresolved; three candidate fixes documented)
+- **Background:** Alloy (DynamicUser) cannot traverse `~/.yadgar/logs/` because home dir is mode 700. Log shipper silently never ingests — Loki is empty. Dashboard Row 11 (logs) renders blank. Options: A (move log dir to `/var/log/yadgar/` + FHS bind-mount); B (switch to journald + `loki.source.journal` — cleanest for NixOS); C (chmod g+rx home — discouraged). Requires knowing whether yadgar already logs to stdout and whether log files are test-pinned.
+- **Resolution path:** decide Option A vs B. Check `yadgar/log_config.py` stdout support + `tests/test_logs_*` coupling. Then implement in yadgar repo + nix repo in same cycle.
+
+**YM-W-4: Tempo OTLP tracing not wired — spans produced but immediately dropped**
+- **Source:** [wiki: yadgar-obs-2026-05-23-investigation] Bug 3 (2026-05-23)
+- **Decision:** DEFER (needs yadgar version bump + TDD + nix-side Tempo OTLP receiver verification)
+- **Background:** `yadgar/tracing.py` has `_OTEL_AVAILABLE` and `get_current_trace_id()` / `get_current_span_id()`. No `OTLPSpanExporter` or `BatchSpanProcessor` wired. No `OTEL_EXPORTER_OTLP_ENDPOINT` set on containers. Tempo OTLP receiver in `modules/observability/tempo.nix` unverified. Full wiring requires: `init_tracing()` in `yadgar/server/__main__.py` + `yadgar/embed_service.py`, env in `docker-compose.yml`, pyproject deps verify, nix receiver confirm.
+- **Revisit triggers:** tracing becomes a debugging priority; OR F5-A semaphore CPU burst recurs and trace data would help root-cause; OR next observability session explicitly targets Tempo.
+
+**YM-W-5: cAdvisor + rootless podman label mismatch — Row 9 dashboard queries may be wrong**
+- **Source:** [wiki: yadgar-obs-2026-05-23-investigation] Bug 4 (2026-05-23)
+- **Decision:** OPEN-QUESTION (predicted issue, not yet observed)
+- **Background:** cAdvisor was enabled (v5.6.6 session). Dashboard Row 9 queries `container_cpu_usage_seconds_total{name=~"yadgar.*"}`. Rootless podman puts containers under user cgroup slice with auto-generated IDs; cAdvisor `name` label may be empty or different. Needs first scrape to inspect actual labels.
+- **Resolution path:** after next nix apply, curl cAdvisor metrics endpoint, identify correct label for yadgar containers, update Row 9 queries + `$container` variable in `dotfiles/observability/dashboards/yadgar.json`.
+
+**YM-W-6: Security findings S1–S3 — no DECISIONS.md entry (frozen v5.2 plan)**
+- **Source:** [wiki: yadgar-v5-stabilize-strategy-tldr-gap-analysis] Security findings section (frozen 2026-05-20)
+- **Decision:** DEFER (never assigned a version slot or DECISIONS entry; frozen page says "none assigned to a version yet")
+- **Background:** Three H-level security findings from gap audit: (S1) `storage/ops.py:110,138` + `storage/client.py:375` — raw `json.dumps` in INSERT and raw `extra_where` interpolation bypass SurrealDB bind facility (SQL injection). (S2) `rules_engine.py:445` — caller-supplied regex → ReDoS. (S3) `config_yaml.py:840` — config file written without `chmod 600` (credential exposure). All were in v5.2.0 security baseline plan but frozen doc confirms not shipped.
+- **Revisit triggers:** any external access surface added to yadgar; or rules_engine exposed to untrusted input; or security review scheduled. S3 is trivially cheap (one-liner) — candidate for next hotfix.
+
+**YM-W-7: repo-wiki DLQ escalation trigger — Option Y threshold**
+- **Source:** [wiki: yadgar-repo-wiki-queue-drainer-validation-option-z-v5] (2026-05-15)
+- **Decision:** PLANNED (trigger condition documented, not tracked in DECISIONS.md)
+- **Background:** Option Z (queue boundary validation) ships as drainer gatekeeper for repo-wiki format drift. Escalation condition: if DLQ accumulates > 5 entries/week from repo-wiki path in v5 production → escalate to Option Y (in-daemon regen, coupling yadgar to repo-indexer CLI). No DLQ monitoring or alert exists yet for this threshold.
+- **Revisit triggers:** DLQ monitoring added and first 7-day window with > 5 degenerate/missing-field/schema-old repo-wiki entries observed.
+
+**YM-W-8: v6 depth saturation chunking — must design BEFORE first nightly LLM curator run**
+- **Source:** [wiki: yadgar-v5-stabilize-strategy-tldr-gap-analysis] Open design forks #3 (frozen 2026-05-20); partially overlaps PD-36
+- **Decision:** OPEN-QUESTION (PD-36 exists but resolution path vague; this entry sharpens it)
+- **Background:** SleepGate paper: 16.5% accuracy at interference depth 15. Cluster-by-topic chunking (community detection; curate cluster-by-cluster; never whole-store batch) must be designed as part of v6 plan refinement, not improvised at first-run time. PD-36 says "design as part of v6 plan refinement post-soak" — accepted. This entry surfaces the design artifact needed: a separate `docs/PLAN_V6_CHUNKING_STRATEGY.md` before any v6 LLM curator dispatch.
+- **Resolution path:** Draft `docs/PLAN_V6_CHUNKING_STRATEGY.md` as prerequisite gate blocking first `_dream_replay` LLM curator dispatch. **Supersedes:** PD-36 (adds artifact gate — not contradictory).
+
+### Memory-sourced deferrals
+
+**YM-M-1: I13 ruff pre-existing gap — `heuristic_rerank` C901=17 + `sample_system_metrics` PLR0913 noqa fix pending**
+- **Source:** [memory id 495179] v5.4 P12 complexity audit anchor (recorded 2026-05-20)
+- **Decision:** PLANNED — v5.4.3 (per anchor text "v5.4.3 noqa fix pending")
+- **Background:** I13 enforcement shipped v5.4.2 with baseline-ratchet. Two pre-existing ruff violations survive as known gap: `heuristic_rerank` cyclomatic=17 (cap 15) and `sample_system_metrics` PLR0913 (too many args). Ratchet blocks NEW violations; these pre-existing ones need `# noqa: C901` / `# noqa: PLR0913` inline annotations to silence without worsening.
+- **Revisit triggers:** v5.4.3 cycle or next complexity-touching PR. Low priority — ratchet prevents regression.
+
+---
+
 ## Convention for future use
 
 - **This file** lives at `docs/DECISIONS.md` on master (renamed from `docs/AUDIT_DECISIONS.md` on 2026-05-30).
