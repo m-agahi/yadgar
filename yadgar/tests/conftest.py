@@ -278,6 +278,7 @@ _WIPE_TABLES = (
     "memory",
     "wiki_page",
     "wiki_draft",
+    "wiki_bookmark",
     "entity",
     "relationship",
     "memory_rule",
