@@ -155,6 +155,8 @@ _MEMORY_UPDATABLE_FIELDS = frozenset(
         "tier",
         "valid_until",
         "migration_grace",
+        # v5.17.0 contradiction confidence decay
+        "confidence",
     }
 )
 
