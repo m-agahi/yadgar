@@ -44,25 +44,49 @@ class TestS21HeatColorIn3D:
         )
 
 
-class TestS22OctahedronForWiki:
-    """S2.2: Wiki nodes must use OctahedronGeometry."""
+class TestV510703RevertCustomMesh:
+    """v5.10.7.3: custom 3D node mesh REVERTED. Three attempts failed (Lambert v5.10.7,
+    Basic v5.10.7.1, conditional transparent v5.10.7.2) — all rendered as fragmented shards.
+    Fall back to ForceGraph3D default solid spheres. Regression gates below prevent
+    accidental re-introduction without deeper investigation.
+    """
 
-    def test_octahedron_geometry_present(self) -> None:
+    def test_no_makeNodeThreeObject_function(self) -> None:
         html = _html()
-        assert "OctahedronGeometry" in html, (
-            "OctahedronGeometry missing — wiki nodes won't be visibly distinct"
+        # Function definition must be gone (comment mentioning the removal is OK)
+        assert "function _makeNodeThreeObject" not in html, (
+            "_makeNodeThreeObject function re-introduced — three attempts at custom mesh "
+            "produced fragmented shards. Don't re-add without deeper ForceGraph3D + ThreeJS "
+            "investigation. See docs/PLAN_V5_10_7_3_VIZ_REVERT_TO_DEFAULTS.md."
         )
 
-    def test_sphere_geometry_present_for_memory(self) -> None:
+    def test_no_nodeThreeObject_call(self) -> None:
         html = _html()
-        assert "SphereGeometry" in html, (
-            "SphereGeometry missing — memory nodes need sphere shape in 3D"
+        # Any .nodeThreeObject( call (not in a comment) is a regression
+        lines_with_call = [
+            line
+            for line in html.splitlines()
+            if ".nodeThreeObject(" in line and not line.strip().startswith("//")
+        ]
+        assert not lines_with_call, (
+            f".nodeThreeObject( call present (not in a comment): {lines_with_call[:3]} — "
+            "v5.10.7.3 revert dropped this. Re-introducing requires new plan."
         )
 
-    def test_nodeThreeObject_present_in_3d_init(self) -> None:
+    def test_no_octahedron_or_custom_sphere_geometry(self) -> None:
         html = _html()
-        assert ".nodeThreeObject(" in html, (
-            ".nodeThreeObject( not set — shapes won't be custom in 3D mode"
+        # Custom OctahedronGeometry should not be in non-comment code
+        non_comment_lines = [
+            line
+            for line in html.splitlines()
+            if not line.strip().startswith("//") and not line.strip().startswith("*")
+        ]
+        non_comment_src = "\n".join(non_comment_lines)
+        assert "new THREE.OctahedronGeometry" not in non_comment_src, (
+            "OctahedronGeometry instantiation re-introduced — custom 3D mesh reverted in v5.10.7.3"
+        )
+        assert "new THREE.SphereGeometry" not in non_comment_src, (
+            "SphereGeometry instantiation re-introduced — custom 3D mesh reverted in v5.10.7.3"
         )
 
 
@@ -159,63 +183,5 @@ class TestS24StatsAutoRefresh:
         )
 
 
-class TestV510701LightingFix:
-    """v5.10.7.1: _makeNodeThreeObject must use MeshBasicMaterial (unlit), not MeshLambertMaterial.
-
-    Lambert requires scene lights; ForceGraph3D adds none by default → nodes render dark/fragmented.
-    Basic is unlit — colour always visible regardless of scene lighting.
-    """
-
-    @staticmethod
-    def _node_obj_block(html: str) -> str:
-        """Extract the _makeNodeThreeObject function body via brace-depth scan."""
-        lines = html.splitlines()
-        in_func = False
-        func_lines: list[str] = []
-        brace_depth = 0
-        for line in lines:
-            if "function _makeNodeThreeObject" in line:
-                in_func = True
-            if in_func:
-                func_lines.append(line)
-                brace_depth += line.count("{") - line.count("}")
-                if in_func and brace_depth == 0 and func_lines:
-                    break
-        return "\n".join(func_lines)
-
-    def test_mesh_basic_material_present_in_node_obj(self) -> None:
-        html = _html()
-        block = self._node_obj_block(html)
-        assert block, "_makeNodeThreeObject function not found in index.html"
-        assert "MeshBasicMaterial" in block, (
-            "_makeNodeThreeObject uses something other than MeshBasicMaterial — "
-            "nodes may render dark without scene lights"
-        )
-
-    def test_mesh_lambert_material_absent_in_node_obj(self) -> None:
-        html = _html()
-        block = self._node_obj_block(html)
-        assert block, "_makeNodeThreeObject function not found in index.html"
-        assert "MeshLambertMaterial" not in block, (
-            "_makeNodeThreeObject still uses MeshLambertMaterial — "
-            "nodes will render as dark fragments (no scene lights in ForceGraph3D)"
-        )
-
-    def test_transparent_flag_conditional_v51072(self) -> None:
-        """v5.10.7.2: transparent must be conditional (!!node.__dimmed), NOT always-true.
-
-        transparent:true with opacity:1.0 still puts mesh in WebGL transparent render pass.
-        Three.js sorts objects back-to-front in that pass but does NOT sort triangles within
-        a single mesh — back faces overdraw front faces → fragmented shard appearance.
-        """
-        html = _html()
-        block = self._node_obj_block(html)
-        assert block, "_makeNodeThreeObject function not found in index.html"
-        assert "transparent: true" not in block, (
-            "_makeNodeThreeObject has 'transparent: true' as unconditional literal — "
-            "wiki octahedra will render as triangle shards. Use 'transparent: !!node.__dimmed' "
-            "so non-dimmed nodes stay in the opaque render pass."
-        )
-        assert "transparent: !!node.__dimmed" in block or "transparent: node.__dimmed" in block, (
-            "_makeNodeThreeObject must set 'transparent' conditionally based on __dimmed state"
-        )
+# v5.10.7.3: TestV510701LightingFix removed (entire class). Custom mesh reverted —
+# regression gates live in TestV510703RevertCustomMesh above.

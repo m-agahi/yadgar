@@ -802,26 +802,16 @@ function _nodeColorFor(node) {
   return heatColor(node.heat || 0);
 }
 
-// ── 3D node geometry (S2.1 + S2.2) ─────────────────────────────────────────
-// Returns a THREE.Mesh: octahedron for wiki (visibly faceted), sphere for memory.
-// Material colour encodes heat (S2.1). Pinned/matched nodes get a gold tint.
-function _makeNodeThreeObject(node) {
-  const THREE = window.THREE;
-  const isWiki = node.type === 'wiki';
-  const size = node.__pinned ? 5 : 4;
-  const geo = isWiki
-    ? new THREE.OctahedronGeometry(size)      // S2.2: faceted for wiki
-    : new THREE.SphereGeometry(size, 8, 6);   // S2.2: sphere for memory
-  const color = node.__pinned
-    ? '#ffd700'
-    : _nodeColorFor(node);
-  // v5.10.7.2: transparent flag conditional. transparent:true with opacity:1.0 still puts mesh in
-  // WebGL transparent render pass — Three.js sorts objects back-to-front but NOT triangles within a
-  // single mesh. For an 8-faced OctahedronGeometry, back faces overdraw front faces → fragmented
-  // shard appearance. Only set transparent when actually dimming (opacity < 1).
-  const mat = new THREE.MeshBasicMaterial({ color, transparent: !!node.__dimmed, opacity: node.__dimmed ? 0.18 : 1.0 });
-  return new THREE.Mesh(geo, mat);
-}
+// ── 3D node rendering ───────────────────────────────────────────────────────
+// REVERTED in v5.10.7.3 — three attempts at custom mesh (Lambert v5.10.7,
+// Basic v5.10.7.1, conditional transparent v5.10.7.2) all rendered as
+// fragmented triangle shards. Falling back to ForceGraph3D default solid
+// sphere rendering, which was the last-known-good visual state from v5.3.7.
+// .nodeColor() below still applies heat-based colouring to the default sphere
+// material; S2.2 shape distinction (wiki octahedra vs memory spheres) is
+// deferred until deeper ForceGraph3D + ThreeJS investigation.
+//
+// _makeNodeThreeObject removed.
 
 // ── Graph initialisation ────────────────────────────────────────────────────
 function _nodeLabel(n) {
@@ -856,9 +846,10 @@ function initGraph(mode) {
       .linkSource('source')
       .linkTarget('target')
       .nodeLabel(_nodeLabel)
-      .nodeColor(_nodeColorFor)           // S2.1: heat colour for labels/glow
-      .nodeThreeObject(_makeNodeThreeObject)  // S2.1+S2.2: heat-coloured geometry
-      .nodeThreeObjectExtend(false)
+      .nodeColor(_nodeColorFor)           // S2.1: heat-based colour applied to default sphere mesh
+      // v5.10.7.3: removed .nodeThreeObject(_makeNodeThreeObject).nodeThreeObjectExtend(false)
+      // — three attempts at custom mesh rendered as fragmented shards. Falling back to
+      // ForceGraph3D's default solid sphere rendering. Last-known-good visual.
       .linkColor(_linkColor)
       .linkWidth(_linkWidth)
       .linkDirectionalArrowLength(_arrowLen)
@@ -1405,11 +1396,12 @@ function _applySearchHighlight() {
     // De-emphasise non-matched nodes when a search is active
     n.__dimmed = hasPins && !n.__pinned;
   }
-  // S2.3: branch on mode — 3D uses nodeColor/nodeThreeObject re-evaluation;
+  // S2.3: branch on mode — 3D uses nodeColor re-evaluation;
   // 2D uses nodeCanvasObject (which is 2D-only and throws in 3D mode).
   if (_graphMode === '3d') {
-    // Force the 3D renderer to re-evaluate node colours and geometries.
-    graph.nodeColor(_nodeColorFor).nodeThreeObject(_makeNodeThreeObject);
+    // v5.10.7.3: dropped nodeThreeObject re-call (custom mesh reverted). Only
+    // nodeColor needs re-application so ForceGraph3D refreshes default sphere material.
+    graph.nodeColor(_nodeColorFor);
     if (hasPins) {
       // Zoom toward matched nodes in 3D
       const matched = allNodes.filter(n => n.__pinned);
