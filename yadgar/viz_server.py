@@ -150,6 +150,22 @@ class _Handler(BaseHTTPRequestHandler):
         else:
             self.send_error(405, "Method Not Allowed")
 
+    def do_DELETE(self) -> None:
+        """Proxy DELETE /api/* to the daemon (e.g. DELETE /api/bookmarks/{slug})."""
+        raw_path = self.path.split("?", 1)[0]
+        if _proxy_enabled() and raw_path.startswith("/api/"):
+            self._handle_proxy()
+        else:
+            self.send_error(405, "Method Not Allowed")
+
+    def do_PUT(self) -> None:
+        """Proxy PUT /api/* to the daemon (e.g. PUT /api/bookmarks/{slug}/position)."""
+        raw_path = self.path.split("?", 1)[0]
+        if _proxy_enabled() and raw_path.startswith("/api/"):
+            self._handle_proxy()
+        else:
+            self.send_error(405, "Method Not Allowed")
+
     def log_message(self, fmt: str, *args: object) -> None:  # noqa: ANN001
         pass  # silence request logs
 
