@@ -1,15 +1,17 @@
-# PLAN — v5.13.1: DuckDB analytics export
+# PLAN — v5.27.0: DuckDB analytics export
 
-**Status:** drafted 2026-05-30. Plan-first per I27. Source: Adopt-6 from `docs/competitor-audit-2026-05-30.md` (item 6, "DuckDB analytics export") + decision logged in `docs/AUDIT_DECISIONS.md`.
+**Renumbered:** v5.18.0 → v5.27.0 on 2026-05-30. Reason: skip-1 minor convention adopted 2026-05-30 — odd-only minors for sequential features, even slots reserved for hotfix patches between them.
+
+**Status:** drafted 2026-05-30. Plan-first per I27. Source: Adopt-6 from `docs/competitor-audit-2026-05-30.md` (item 6, "DuckDB analytics export") + decision logged in `docs/DECISIONS.md`.
 
 **Master at draft time:** core v5.10.3 shipped; v5.10.4 in flight on `feat/v5.10.4-consolidate-now-mode-hook-schema`.
 
-**Sequencing:** v5.13.0 slot. Independent of:
+**Sequencing:** v5.27.0 slot. Independent of:
 - v5.10.x train (consolidation/sleep cycle fixes)
-- v5.11.0 (anchor cross-project)
-- v5.12.0 (wiki bookmarks viz)
-- v5.14.x (R2 retrieval pipeline plugin arch)
-- v5.20.0 (roadmap freshness)
+- v5.21.0 (anchor cross-project)
+- v5.23.0 (wiki bookmarks viz)
+- v5.31.x (R2 retrieval pipeline plugin arch)
+- v5.99.0 (roadmap freshness)
 
 No dependency on benchmarks landing (Adopt-1) — this is read-only analytics tooling that can ship anytime.
 
@@ -195,7 +197,7 @@ Each view comes with a `COMMENT ON VIEW` describing the question it answers. Duc
 
 - `yadgar/__main__.py` — register `export` CLI module (one line in the registration block).
 - `pyproject.toml` — add `[project.optional-dependencies] analytics = ["duckdb>=0.10"]`.
-- `CHANGELOG.md` — v5.13.0 entry.
+- `CHANGELOG.md` — v5.27.0 entry.
 - `MIGRATION_NOTES.md` — note the new optional extra + how to install it.
 - `README.md` — one-line section under "CLI commands" pointing to `yadgar export duckdb --help`.
 - `docs/AUDIT_DECISIONS.md` — Adopt-6 entry: status → ADOPTED → IMPLEMENTED with PR/SHA link.

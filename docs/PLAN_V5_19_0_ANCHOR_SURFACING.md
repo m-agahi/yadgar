@@ -1,7 +1,9 @@
-# PLAN — v5.10.12: Anchor Unconditional Surfacing
+# PLAN — v5.19.0: Anchor Unconditional Surfacing
+
+**Renumbered:** v5.14.0 → v5.19.0 on 2026-05-30. Reason: skip-1 minor convention adopted 2026-05-30 — odd-only minors for sequential features, even slots reserved for hotfix patches between them.
 
 **Status:** plan-only — 2026-05-30.
-**Version slot:** v5.10.12 — after v5.10.11 security hotfix.
+**Version slot:** v5.19.0 — slots after v5.17.0 (write-time contradiction); v5.18.x reserved for hotfixes.
 **Effort:** ~1.5 days (implementation + TDD).
 **Design source:** wiki page `yadgar-anchor-memory-design-scopes-and-surfacing` (captured 2026-05-18 after repeat "I forgot anchor X" incidents).
 
@@ -266,7 +268,7 @@ Buffer for hook-path audit and unexpected edge cases: +0.5 day. Total: **~1.5 da
 
 - Session-start hook migration from deprecated `mode="catalog"` to `mode="restore"` — tracked separately. Hook path works correctly today via catalog; no regression.
 - `directory_context` normalization SQL ('' → 'global') — safe follow-on, not blocking.
-- Cross-project dedup detection — covered by `PLAN_V5_11_ANCHOR_CROSS_PROJECT.md`.
+- Cross-project dedup detection — covered by `PLAN_V5_21_0_ANCHOR_CROSS_PROJECT.md`.
 - `is_protected` repurpose — also v5.11.
 
 ---
@@ -285,16 +287,16 @@ Buffer for hook-path audit and unexpected edge cases: +0.5 day. Total: **~1.5 da
 
 ## Sequencing
 
-v5.10.11 (security hotfix) → **v5.10.12 (this plan)** → v5.11.0 (cross-project dedup).
+v5.10.11 (security hotfix) → **v5.19.0 (this plan)** → v5.21.0 (cross-project dedup).
 
-v5.10.12 is a prerequisite for v5.11 to be meaningful: cross-project dedup works on anchors that actually surface. If global anchors don't surface, cross-project dedup recommendations are never acted on.
+v5.19.0 is a prerequisite for v5.21.0 to be meaningful: cross-project dedup works on anchors that actually surface. If global anchors don't surface, cross-project dedup recommendations are never acted on.
 
 ---
 
 ## Related
 
 - Wiki: `yadgar-anchor-memory-design-scopes-and-surfacing`
-- `docs/PLAN_V5_11_ANCHOR_CROSS_PROJECT.md` — next milestone
+- `docs/PLAN_V5_21_0_ANCHOR_CROSS_PROJECT.md` — next milestone
 - `yadgar/storage/memory.py:714` — `get_anchored_memories` (to be supplemented)
 - `yadgar/restoration.py:263` — call site (to be changed)
 - `yadgar/server/tools/project.py:510` — `_build_anchor_rows_restore` (reference impl, already correct)

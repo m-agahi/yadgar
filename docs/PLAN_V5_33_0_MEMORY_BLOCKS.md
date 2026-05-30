@@ -1,10 +1,12 @@
-# PLAN — v5.14.1: In-context Memory Blocks (Letta-style core memory primitive)
+# PLAN — v5.33.0: In-context Memory Blocks (Letta-style core memory primitive)
+
+**Renumbered:** v5.21.0 → v5.33.0 on 2026-05-30. Reason: skip-1 minor convention adopted 2026-05-30 — odd-only minors for sequential features, even slots reserved for hotfix patches between them.
 
 **Status:** drafted 2026-05-30 by Adopt-4 parallel agent in response to competitor audit (`docs/competitor-audit-2026-05-30.md` Item 4 — "In-context memory blocks").
 
-**Sequencing:** v5.13.0 slot. After v5.11.0 (anchor cross-project) and v5.12.0 (wiki bookmarks). Independent of both. NOT v6.x — the scan agent found ~30% of this is already shipped via `_active_work` / `_project_init` / anchors; the remaining gap is a single primitive addition, not an architectural rethink. PLAN_V5_2 / PLAN_V5_3 "deferred to v6 (architectural rethink needed)" framing pre-dates the scan finding and is superseded by this plan.
+**Sequencing:** v5.33.0. After v5.21.0 (anchor cross-project) and v5.23.0 (wiki bookmarks). Independent of both. NOT v6.x — the scan agent found ~30% of this is already shipped via `_active_work` / `_project_init` / anchors; the remaining gap is a single primitive addition, not an architectural rethink. PLAN_V5_2 / PLAN_V5_3 "deferred to v6 (architectural rethink needed)" framing pre-dates the scan finding and is superseded by this plan.
 
-**Master at draft time:** core v5.10.3 shipped. v5.10.4, v5.10.5, v5.10.6, v5.10.7, v5.10.8, v5.10.9, v5.11.0, v5.12.0, v5.20.0 plans queued.
+**Master at draft time:** core v5.10.3 shipped. v5.10.4, v5.10.5, v5.10.6, v5.10.7, v5.10.8, v5.10.9, v5.11.0, v5.13.0, v5.99.0 plans queued (skip-1 renumbered).
 
 **Related prior plans / wiki:**
 - `docs/competitor-audit-2026-05-30.md` Item 4 (primary reference)
@@ -66,12 +68,12 @@ This gives the same property: agent reads blocks zero times, writes them through
 
 ## Non-goals
 
-- **No UI surface.** Blocks are an agent-facing primitive. No viz integration in v5.13.0. (Possible v5.13.x: viz panel for human inspection — out of scope here.)
+- **No UI surface.** Blocks are an agent-facing primitive. No viz integration in v5.33.0. (Possible v5.33.x: viz panel for human inspection — out of scope here.)
 - **No automatic summarization.** Blocks are exactly what the agent writes — no LLM-curated trimming. (v6 LLM curator may add this; out of scope.)
 - **No multi-tenancy.** Single-user yadgar — one block namespace per scope.
 - **No cross-block dependencies.** Each block is independent text.
-- **No bookmark integration.** Wiki Bookmarks (v5.12.0) is a read-only viz pin for wiki pages; blocks are a write-capable agent context primitive. Different beasts — explicitly NOT merged. Only shared concept is "user-curated pin," too thin to bridge.
-- **No deprecation of `_active_work` in v5.13.0.** Both coexist initially. Block named `_active_work` (project scope) is a candidate canonical migration in v5.13.1+ once the primitive is proven.
+- **No bookmark integration.** Wiki Bookmarks (v5.23.0) is a read-only viz pin for wiki pages; blocks are a write-capable agent context primitive. Different beasts — explicitly NOT merged. Only shared concept is "user-curated pin," too thin to bridge.
+- **No deprecation of `_active_work` in v5.33.0.** Both coexist initially. Block named `_active_work` (project scope) is a candidate canonical migration in v5.33.1+ once the primitive is proven.
 - **No agentic sleep-time block refinement.** Letta has it; yadgar's batch consolidation already covers the consolidation niche. Defer to v6 curator if revisited.
 
 ---
@@ -302,8 +304,8 @@ Idempotent — re-running bootstrap_project does NOT overwrite existing blocks.
 | Secret leak via block content | I26 chokepoint runs at storage layer — every block write goes through `gate_or_reject`. Tested in `test_block_secret_gate_rejects_creation`. |
 | Block fragmentation across scopes confuses agent | Render in SessionStart with clear "### Global blocks" / "### Project blocks (<path>)" headers. Document in CLAUDE.md global guidance. |
 | Hook timing — PostToolUse fires before block is committed | Tool call returns synchronously after DB write completes (yadgar's `@_tool` pipeline is sync). Hook reads after tool returns → race-free. Test 26 validates. |
-| Conflict with parallel adopt-1 / adopt-5 plans | Plan-only, NEW file path (`docs/PLAN_V5_13_0_MEMORY_BLOCKS.md`). Storage migration number 008 — coordinate with adopt-1/5 if they also propose schema changes. |
-| `_active_work` and `current_task` block overlap | Both coexist in v5.13.0. v5.13.1+ decide whether to canonicalize `_active_work` as the block named `_active_work` (project scope). Document in MIGRATION_NOTES as known overlap. |
+| Conflict with parallel adopt-1 / adopt-5 plans | Plan-only, NEW file path (`docs/PLAN_V5_33_0_MEMORY_BLOCKS.md`). Storage migration number 008 — coordinate with adopt-1/5 if they also propose schema changes. |
+| `_active_work` and `current_task` block overlap | Both coexist in v5.33.0. v5.33.1+ decide whether to canonicalize `_active_work` as the block named `_active_work` (project scope). Document in MIGRATION_NOTES as known overlap. |
 
 ---
 
@@ -321,10 +323,10 @@ Total: ~640 LOC + ~480 LOC tests + ~100 lines docs. **~2-3 days dedicated work**
 
 ## Open questions (resolve before dispatch)
 
-1. **Default block set scope.** Plan seeds `current_task` + `gotchas` per project. Alternatives: `persona` (global), `claude_self_review` (global). Lean: ship with empty defaults beyond the two above; let usage patterns drive additions in v5.13.x.
+1. **Default block set scope.** Plan seeds `current_task` + `gotchas` per project. Alternatives: `persona` (global), `claude_self_review` (global). Lean: ship with empty defaults beyond the two above; let usage patterns drive additions in v5.33.x.
 2. **Block name validation.** Plan permits any string. Should we restrict to `[a-z][a-z0-9_]*` to keep parseable? Lean YES (defensive).
-3. **Deprecation path for `_active_work`.** v5.13.0 keeps both; v5.13.1 decision: (a) hard-deprecate and migrate, (b) keep both with `_active_work` as canonical "running task" block, (c) automatic alias. Lean (b) initially — let users opt into pure block model.
-4. **PostToolUse hook in v5.13.0 or follow-up?** Plan ships it in v5.13.0 because without it, the "no round-trip" property doesn't hold — blocks would only refresh on SessionStart. Lean: SHIP IN v5.13.0. The block primitive without write-reflection delivers half the value.
+3. **Deprecation path for `_active_work`.** v5.33.0 keeps both; v5.33.1 decision: (a) hard-deprecate and migrate, (b) keep both with `_active_work` as canonical "running task" block, (c) automatic alias. Lean (b) initially — let users opt into pure block model.
+4. **PostToolUse hook in v5.33.0 or follow-up?** Plan ships it in v5.33.0 because without it, the "no round-trip" property doesn't hold — blocks would only refresh on SessionStart. Lean: SHIP IN v5.33.0. The block primitive without write-reflection delivers half the value.
 5. **Block injection in `restore()` output?** Plan adds blocks to SessionStart hook but `restore()` MCP tool currently returns its own context bundle. Should `restore(directory)` also include blocks? Lean YES — keep parity, otherwise post-`/clear` rehydration is incomplete.
 6. **Embed blocks (so `recall(query)` can match block content)?** Plan says `embedding=NONE` — blocks aren't retrieval targets, they're always-on. But edge case: agent forgets a block exists, calls `recall("project task")`, and doesn't find it. Lean NO — block always-on means agent doesn't need to recall; if it forgets, that's a SessionStart hook bug. Re-evaluate after first 30 days of use.
 7. **Audit integration.** Should `audit_anchors` (v5.9.0+) consider blocks? Blocks are tagged `_anchor` for restore-surfacing, but they don't represent the same "high-value durable fact" concept anchors do. Lean: SKIP blocks in audit. Add scope filter `_block NOT IN tags` to audit queries. Document.
@@ -336,12 +338,12 @@ Total: ~640 LOC + ~480 LOC tests + ~100 lines docs. **~2-3 days dedicated work**
 
 ## Sequencing relative to other plans
 
-- **After v5.11.0 (anchor cross-project)** — to avoid cross-contamination on anchor surfacing logic.
-- **After v5.12.0 (bookmarks)** — independent, no overlap, but bookmarks lands first to keep PR pipeline clear.
+- **After v5.21.0 (anchor cross-project)** — to avoid cross-contamination on anchor surfacing logic.
+- **After v5.23.0 (bookmarks)** — independent, no overlap, but bookmarks lands first to keep PR pipeline clear.
 - **Independent of v5.10.x train** — purely additive primitive.
-- **Independent of v5.20.0 (roadmap freshness)** — different surface.
+- **Independent of v5.99.0 (roadmap freshness)** — different surface.
 
-If v5.11/v5.12 slip, v5.13.0 can ship first (no hard dependency).
+If v5.21/v5.23 slip, v5.33.0 can ship first (no hard dependency).
 
 ---
 
@@ -362,18 +364,18 @@ If v5.11/v5.12 slip, v5.13.0 can ship first (no hard dependency).
 - `yadgar/server/tools/project.py` — `bootstrap_project` seeds default blocks.
 - `yadgar/server/tools/restore.py` (or wherever `restore()` lives) — include blocks in output bundle.
 - `yadgar/config_yaml.py` + `yadgar/server/settings.py` + `yadgar/config_registry.py` — 4 new env knobs (I25).
-- `pyproject.toml` — 5.12.x → 5.13.0 bump (timing dependent on v5.12.0 ship state).
+- `pyproject.toml` — 5.32.x → 5.33.0 bump (timing dependent on v5.23.0 ship state).
 - `server.json`, `docker-compose.yml`, `uv.lock` — version sync.
-- `CHANGELOG.md` — v5.13.0 entry.
-- `MIGRATION_NOTES.md` — v5.13.0 section: schema migration step + new env knobs + hook install instructions.
-- `docs/AUDIT_DECISIONS.md` — record Adopt-4 as ADOPT, link this plan.
+- `CHANGELOG.md` — v5.33.0 entry.
+- `MIGRATION_NOTES.md` — v5.33.0 section: schema migration step + new env knobs + hook install instructions.
+- `docs/DECISIONS.md` — record Adopt-4 as ADOPT, link this plan.
 - `docs/ARCHITECTURE_INVARIANTS.md` — note that `_block`-tagged rows are excluded from anchor audit (I9 amendment).
 
 ---
 
 ## Implementation phasing
 
-If v5.13.0 lands in pieces:
+If v5.33.0 lands in pieces:
 
 1. **Phase 1 (storage + tools, ~1 day):** schema migration + 6 MCP tools + 20 storage tests. No hooks yet — tools callable via MCP.
 2. **Phase 2 (SessionStart hook, ~half day):** modify `session-start-context.py` + render tests (#21-#24).
@@ -385,9 +387,9 @@ Total: ~2-3 days. Phases 2-3 can land separately if needed (tool-only release is
 
 ---
 
-## Cumulative state after v5.13.0
+## Cumulative state after v5.33.0
 
-| Surface | pre-v5.13 | v5.13.0 |
+| Surface | pre-v5.33 | v5.33.0 |
 |---|---|---|
 | In-context state | hot memories + anchors + checkpoint + `_active_work` (single, ad-hoc) | + named multi-block primitive (global + project scopes) |
 | Mid-session write-reflection | none (next SessionStart only) | PostToolUse re-emits updated block as system reminder |
@@ -395,4 +397,4 @@ Total: ~2-3 days. Phases 2-3 can land separately if needed (tool-only release is
 | Per-context size cap | `restore()` budget only | + per-block char_limit + total block budget |
 | Letta parity gap | "no in-context core memory" (audit Item 4) | core memory blocks shipped |
 
-After v5.13.0, the audit's Item 4 gap closes. Yadgar gains a primitive that Letta agents take for granted, without inheriting Letta's runtime lock-in. Existing anchors / `_active_work` / `_project_init` remain — they serve adjacent purposes (durable facts vs running state vs always-on context).
+After v5.33.0, the audit's Item 4 gap closes. Yadgar gains a primitive that Letta agents take for granted, without inheriting Letta's runtime lock-in. Existing anchors / `_active_work` / `_project_init` remain — they serve adjacent purposes (durable facts vs running state vs always-on context).

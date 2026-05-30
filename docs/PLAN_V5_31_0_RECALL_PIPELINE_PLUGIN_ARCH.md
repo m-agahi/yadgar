@@ -1,10 +1,12 @@
-# PLAN — v5.14.0: Recall pipeline plugin architecture (R2 from 2026-05-30 audit)
+# PLAN — v5.31.0: Recall pipeline plugin architecture (R2 from 2026-05-30 audit)
+
+**Renumbered:** v5.20.0 → v5.31.0 on 2026-05-30. Reason: skip-1 minor convention adopted 2026-05-30 — odd-only minors for sequential features, even slots reserved for hotfix patches between them.
 
 **Status:** drafted 2026-05-30. Plan-first per I27. Implements Refactor-2 (ADOPT) from `docs/competitor-audit-2026-05-30.md` and `docs/DECISIONS.md` R2 entry.
 
-**Master at draft time:** core v5.10.3 shipped; v5.10.4 in-flight; later v5.10.x train + v5.11.0 + v5.12.0 + v5.13.0 + v5.13.1 + v5.13.2 drafted.
+**Master at draft time:** core v5.10.3 shipped; v5.10.4 in-flight; later v5.10.x train + v5.11.0 + v5.13.0 + v5.15.0 + v5.17.0 + v5.27.0 + v5.29.0 drafted.
 
-**Sequencing:** v5.14.0. Must ship AFTER v5.13.0 (Adopt-1 benchmarks) — the plugin architecture is the substrate for A/B testing individual stages, which is only meaningful once a baseline accuracy number exists. Independent of v5.13.1 (DuckDB) and v5.13.2 (bi-temporal).
+**Sequencing:** v5.31.0. Must ship AFTER v5.25.0 (Adopt-1 benchmarks) — the plugin architecture is the substrate for A/B testing individual stages, which is only meaningful once a baseline accuracy number exists. Independent of v5.27.0 (DuckDB) and v5.29.0 (bi-temporal).
 
 ---
 
@@ -34,15 +36,15 @@ Patterns from competitors:
 4. **Per-stage Prometheus metrics** — `yadgar_recall_stage_duration_seconds{stage="ce_rerank",profile="balanced"}` histograms.
 5. **A/B test harness** — `recall_compare(query, profiles=["balanced","balanced_no_nli"])` returns both result sets side-by-side for benchmark scripts to evaluate.
 6. **Backward compatible** — existing `recall(query, max_results, min_heat)` callers unaffected; `profile="balanced"` is default and matches current behavior.
-7. **No silent regression** — plugin extraction must preserve current retrieval quality. Validated against v5.13.0 LongMemEval baseline before merge.
+7. **No silent regression** — plugin extraction must preserve current retrieval quality. Validated against v5.25.0 LongMemEval baseline before merge.
 
 ---
 
 ## Non-goals
 
-- **Per-stage model swapping** in v5.14.0 (e.g. trying a different CE model) — that's v5.14.x patch territory once the interface is stable.
-- **External plugin loading** (e.g. user-supplied plugins via entrypoints) — internal-only for v5.14.0.
-- **Pipeline visualization in viz** — could be a v5.14.x viz add-on later.
+- **Per-stage model swapping** in v5.31.0 (e.g. trying a different CE model) — that's v5.31.x patch territory once the interface is stable.
+- **External plugin loading** (e.g. user-supplied plugins via entrypoints) — internal-only for v5.31.0.
+- **Pipeline visualization in viz** — could be a v5.31.x viz add-on later.
 - **Replacing WRRF fusion algorithm** — that's a research project; here we just preserve current behavior in plugin form.
 
 ---
@@ -226,10 +228,10 @@ I23 invariant satisfied (each metric has a writer in the plugin).
 
 - All ~25 tests green
 - Existing recall test suite still passes (no behavioral regression)
-- `recall(query, profile="balanced")` produces identical (or equivalent within float tolerance) output to v5.13.x `recall(query)`
+- `recall(query, profile="balanced")` produces identical (or equivalent within float tolerance) output to v5.25.x `recall(query)`
 - New per-stage Prometheus metrics visible in Grafana
-- v5.13.0 LongMemEval benchmark numbers reproduce within 0.5 percentage points after this refactor (no quality regression)
-- CHANGELOG + MIGRATION_NOTES updated for v5.14.0
+- v5.25.0 LongMemEval benchmark numbers reproduce within 0.5 percentage points after this refactor (no quality regression)
+- CHANGELOG + MIGRATION_NOTES updated for v5.31.0
 - Pre-commit hooks pass (I13 / I23 / I24 / I25 / I26 / I27)
 
 ---
@@ -238,7 +240,7 @@ I23 invariant satisfied (each metric has a writer in the plugin).
 
 1. **Where does `query_embedding` get computed?** — outside the pipeline (in caller) or as a pre-stage? Lean pre-stage so different profiles could swap embedding model.
 2. **Stage-level retry / circuit breaker?** — current code has CB-1 on CE rerank backend. Should that be in the CE stage's `apply()` or external? Lean external; CE stage just calls the existing `MLClient.rerank_ce()`.
-3. **Async stages?** — could run FTS + KNN in parallel. Current code is serial. Lean: keep serial in v5.14.0; parallel = v5.14.x optimization.
+3. **Async stages?** — could run FTS + KNN in parallel. Current code is serial. Lean: keep serial in v5.31.0; parallel = v5.31.x optimization.
 4. **Per-stage config schema?** — e.g. NLI threshold, MMR lambda. Inline kwargs vs typed config classes? Lean: typed config classes (pydantic) — easier to validate, documents the API.
 5. **Backward-compat shim duration?** — keep `recall(query, max_results)` signature working forever. Profile + stage_overrides are additive — old callers don't break.
 
@@ -246,14 +248,14 @@ I23 invariant satisfied (each metric has a writer in the plugin).
 
 ## Dependencies + non-deps
 
-**Hard prereq:** v5.13.0 ships first. Need a baseline benchmark number to validate "no quality regression after extraction."
+**Hard prereq:** v5.25.0 ships first. Need a baseline benchmark number to validate "no quality regression after extraction."
 
-**Independent of:** v5.10.x train, v5.11.0, v5.12.0, v5.13.1, v5.13.2.
+**Independent of:** v5.10.x train, v5.21.0, v5.23.0, v5.27.0, v5.29.0.
 
 **Unblocks:**
 - **D2 NLI default decision** — once plugin arch exists + benchmarks exist, can A/B `balanced` vs `balanced_no_nli` and decide
 - **D3 PC causal discovery validation** — same; `balanced_no_pc_causal` profile lets us measure
-- **v5.14.x optimizations** — per-stage caching, async stage execution, alternative model swaps
+- **v5.31.x optimizations** — per-stage caching, async stage execution, alternative model swaps
 
 ---
 
@@ -267,7 +269,7 @@ I23 invariant satisfied (each metric has a writer in the plugin).
 | Breaking existing recall callers | profile defaults to "balanced" = legacy behavior; all kwargs additive |
 | Stage extraction misses subtle state mutations | RetrievalState carries all state; stages can only mutate via return value |
 
-**Rollback:** revert the v5.14.0 commits. Recall returns to monolithic implementation. No data migration involved.
+**Rollback:** revert the v5.31.0 commits. Recall returns to monolithic implementation. No data migration involved.
 
 ---
 
@@ -284,7 +286,7 @@ I23 invariant satisfied (each metric has a writer in the plugin).
 ### Modify
 - `yadgar/server/tools/recall.py` — replace monolithic body with pipeline.run() call
 - `yadgar/metrics.py` — register new per-stage metric series
-- `CHANGELOG.md` + `MIGRATION_NOTES.md` — v5.14.0 sections
+- `CHANGELOG.md` + `MIGRATION_NOTES.md` — v5.31.0 sections
 - `pyproject.toml`, `server.json`, `docker-compose.yml`, `uv.lock` — version bump
 
 ---
@@ -308,5 +310,5 @@ Larger than most v5.x patches because it touches the hottest code path. Worth th
 
 - `docs/competitor-audit-2026-05-30.md` Refactor R2 — audit recommendation source
 - `docs/DECISIONS.md` R2 entry — formal decision: ADOPT
-- `docs/PLAN_V5_13_0_BENCHMARK_PUBLICATION.md` — hard prereq (provides regression baseline)
+- `docs/PLAN_V5_25_0_BENCHMARK_PUBLICATION.md` — hard prereq (provides regression baseline)
 - D2 + D3 entries in `docs/DECISIONS.md` — unblocked by this plan + Adopt-1 ship

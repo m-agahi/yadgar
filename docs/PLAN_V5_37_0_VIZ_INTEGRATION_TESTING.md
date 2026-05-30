@@ -1,10 +1,12 @@
-# PLAN — v5.23.0: Viz integration testing infrastructure (Playwright + API contract)
+# PLAN — v5.37.0: Viz integration testing infrastructure (Playwright + API contract)
 
-**Status:** drafted 2026-05-30 after v5.10.7→v5.10.9 viz chaos exposed a hard test-coverage gap. Plan-first per I27. Slotted v5.23.0 per `docs/VERSIONING.md` (next free minor after current pipeline through v5.22.0).
+**Renumbered:** v5.23.0 → v5.37.0 on 2026-05-30. Reason: skip-1 minor convention adopted 2026-05-30 — odd-only minors for sequential features, even slots reserved for hotfix patches between them.
+
+**Status:** drafted 2026-05-30 after v5.10.7→v5.10.9 viz chaos exposed a hard test-coverage gap. Plan-first per I27.
 
 **Master at draft time:** v5.10.8 LIVE; v5.10.9 in flight (real root cause finally identified after 5 attempts).
 
-**Sequencing:** v5.23.0. Independent of all currently-planned features. CANDIDATE for leapfrog to ship sooner — see "Why ship earlier" section.
+**Sequencing:** v5.37.0. Independent of all currently-planned features. CANDIDATE for leapfrog to ship sooner — see "Why ship earlier" section.
 
 ---
 
@@ -186,15 +188,15 @@ Rollback: drop the new test directories. Pre-v5.23.0 manual-smoke regime returns
 
 ## Why ship earlier (LEAPFROG CANDIDATE)
 
-Current pipeline puts this at v5.23.0 — after v5.16.0 Wiki Bookmarks (which is another viz feature). That's BACKWARDS. If Wiki Bookmarks introduces new bugs, we'll repeat the v5.10.7-v5.10.9 saga.
+Current pipeline puts this at v5.37.0 — after v5.23.0 Wiki Bookmarks (which is another viz feature). That's BACKWARDS. If Wiki Bookmarks introduces new bugs, we'll repeat the v5.10.7-v5.10.9 saga.
 
-**Recommend leapfrog to v5.16.0 slot** (push Wiki Bookmarks to v5.17.0). Test infra BEFORE more viz features. User's call.
+**Recommend leapfrog before v5.23.0** (push Wiki Bookmarks later). Test infra BEFORE more viz features. User's call.
 
-If leapfrogged: renumber per `docs/VERSIONING.md` cascade. Wiki Bookmarks v5.16.0 → v5.17.0, Adopt-1 benchmarks v5.17.0 → v5.18.0, etc. — one-step shift.
+If leapfrogged: renumber per `docs/VERSIONING.md` cascade and skip-1 convention.
 
 ## Cross-references
 
 - `docs/PLAN_V5_10_7_VIZ_FIXES.md` — what we were trying to fix when this exposed the gap
 - `docs/PLAN_V5_10_9_VIZ_ORPHAN_EDGE_FILTER.md` — the actual root cause this would have caught immediately
 - `docs/VERSIONING.md` — slot numbering rule
-- `docs/DECISIONS.md` — DECISIONS log entry candidate: "v5.10.7-v5.10.9 saga taught us viz needs integration testing. Acted on via v5.23.0 (or earlier per leapfrog)."
+- `docs/DECISIONS.md` — DECISIONS log entry candidate: "v5.10.7-v5.10.9 saga taught us viz needs integration testing. Acted on via v5.37.0 (or earlier per leapfrog)."

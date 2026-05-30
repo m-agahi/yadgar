@@ -1,6 +1,8 @@
-# PLAN — v5.11.0: Anchor Cross-Project Dedup + Optional Jira Integration
+# PLAN — v5.21.0: Anchor Cross-Project Dedup + Optional Jira Integration
 
-**Status:** drafted 2026-05-27 (evening). Renumbered from v5.10 to v5.11 on 2026-05-28 after test-harness hardening took the v5.10 slot.
+**Renumbered:** v5.15.0 → v5.21.0 on 2026-05-30. Reason: skip-1 minor convention adopted 2026-05-30 — odd-only minors for sequential features, even slots reserved for hotfix patches between them.
+
+**Status:** drafted 2026-05-27 (evening). Renumber history: v5.10 → v5.11 on 2026-05-28 → v5.15.0 on 2026-05-30 first strict-semver pass → **v5.21.0** on 2026-05-30 skip-1 pass.
 
 **Depends on:** v5.8.0 + v5.9.0 + v5.10.0 shipped. Audit history exists, `tier` + `valid_until` semantics validated in real-world use, test harness no longer leaks orphan SurrealDB workers.
 

@@ -56,7 +56,7 @@
 
 | Item | Status |
 |---|---|
-| 1. Formal benchmarking (LongMemEval / LoCoMo) | Plan dispatched — `docs/PLAN_V5_13_0_*` |
+| 1. Formal benchmarking (LongMemEval / LoCoMo) | Plan dispatched — `docs/PLAN_V5_25_0_*` |
 | 2. Write-time conflict resolution | Agent dispatch pending |
 | 3. Bi-temporal edges on all relationships | Agent dispatch pending |
 | 4. In-context memory blocks (Letta) | Agent dispatch pending |
@@ -81,14 +81,14 @@
 - **Reason:** A/B testing of individual stages currently impossible without code surgery. Pays off once Adopt item 1 (benchmarks) lands — enables data-driven pipeline tuning.
 - **Evidence:** `docs/competitor-audit-2026-05-30.md` Refactor section R2. Current pipeline coupled in single `recall()` function.
 - **Revisit triggers:** none expected — forward commitment. If implementation hits unexpected friction, reassess.
-- **Version slot:** v5.14.x (after benchmarks land in adopt #1 plan).
+- **Version slot:** v5.31.0 (after benchmarks land in adopt #1 plan — `docs/PLAN_V5_25_0_BENCHMARK_PUBLICATION.md`).
 
 #### R3. Replace file-based write queue with DB-native pub/sub
 - **Recommendation:** Replace `file_queue/` with SurrealDB `LIVE SELECT` or Postgres LISTEN/NOTIFY.
 - **Decision:** REJECT (accept eventual consistency everywhere instead)
 - **What was rejected:** the migration itself. File queue stays. No `flush_only()` MCP primitive added either.
 - **Reason:** SurrealDB LIVE SELECT is experimental; pgvector migration is multi-version refactor. File queue works. Callers must design around eventual consistency.
-- **Evidence:** `docs/PLAN_V5_20_0_ROADMAP_FRESHNESS.md` documents the constraint; user explicitly chose this option.
+- **Evidence:** `docs/PLAN_V5_99_0_ROADMAP_FRESHNESS.md` documents the constraint; user explicitly chose this option.
 - **Revisit triggers:** SurrealDB LIVE SELECT exits experimental; or yadgar suffers multiple production incidents traced to file-queue state; or migration to Postgres+pgvector becomes a separate priority.
 
 ### Ditch items
@@ -105,14 +105,14 @@
 - **Decision:** DEFER
 - **Reason:** no benchmark data on NLI vs no-NLI recall accuracy. Tied to two prerequisites: Adopt-1 (benchmarks) and Refactor-2 (recall plugin arch — makes stages independently togglable).
 - **Evidence:** `HEAVY_RERANK_ENABLED` env knob exists; cross-encoder model `cross-encoder/nli-deberta-v3-small` loaded eagerly when enabled.
-- **Revisit triggers:** Adopt-1 benchmarks produce baseline numbers; Refactor-2 plugin arch ships; A/B run shows NLI contributes less than 5 percentage points accuracy gain (then flip default) OR more than 5pp gain (then keep default and close revisit).
+- **Revisit triggers:** Adopt-1 benchmarks (v5.25.0) produce baseline numbers; Refactor-2 plugin arch (v5.31.0) ships; A/B run shows NLI contributes less than 5 percentage points accuracy gain (then flip default) OR more than 5pp gain (then keep default and close revisit).
 
 #### D3. PC algorithm causal discovery
 - **Recommendation:** Validate that causal discovery improves recall accuracy. If not, retire or gate.
 - **Decision:** DEFER
 - **Reason:** same posture as D2 — need benchmark data first. Unique-moat feature; removing without measurement also removes architectural distinction.
 - **Evidence:** `yadgar/causal_discovery/` (5 files: pc.py, meek.py, independence.py, dag_io.py, __init__.py). No recall A/B data exists.
-- **Revisit triggers:** Adopt-1 benchmarks produce causal-on vs causal-off accuracy numbers; Refactor-2 plugin arch ships; CPU bursts traced to PC algorithm phase; or PC algorithm completion duration more than 30s on typical state.
+- **Revisit triggers:** Adopt-1 benchmarks (v5.25.0) produce causal-on vs causal-off accuracy numbers; Refactor-2 plugin arch (v5.31.0) ships; CPU bursts traced to PC algorithm phase; or PC algorithm completion duration more than 30s on typical state.
 
 ### Hold items (audit identified as unique moats — recorded for future agents)
 
@@ -190,7 +190,7 @@ Items extracted from "What does NOT ship" / "Non-goals" / "Out of scope" section
 - **Source:** `docs/PLAN_V5_10_7_VIZ_FIXES.md` section v5.X+ follow-up, line 160
 - **Decision:** DEFER
 - **Reason:** UX enhancement; blocked on confirming ThreeJS per-node styling API.
-- **Revisit triggers:** anchor cross-project feature (v5.11) ships — anchors become more prominent in the data model.
+- **Revisit triggers:** anchor cross-project feature (v5.21.0) ships — anchors become more prominent in the data model.
 
 **PD-11. Viz "replay last session" mode via action_log**
 - **Source:** `docs/PLAN_V5_10_7_VIZ_FIXES.md` section v5.X+ follow-up, line 161
@@ -263,52 +263,52 @@ Items extracted from "What does NOT ship" / "Non-goals" / "Out of scope" section
 - **Source:** `docs/PLAN_V5_10_TEST_HARNESS_HARDENING.md` "What does NOT ship", line 156
 - **Decision:** DEFER
 - **Reason:** scope creep for test hardening sprint; no current regression signal.
-- **Revisit triggers:** a performance regression ships to master and is caught only by manual observation; or Adopt-1 benchmark plan (v5.13.0) creates infra reusable for this.
+- **Revisit triggers:** a performance regression ships to master and is caught only by manual observation; or Adopt-1 benchmark plan (v5.25.0) creates infra reusable for this.
 
-### From `docs/PLAN_V5_11_ANCHOR_CROSS_PROJECT.md`
+### From `docs/PLAN_V5_21_0_ANCHOR_CROSS_PROJECT.md`
 
 **PD-22. Tier auto-upgrade (`conditional` to `semantic_immortal` after N clean audits)**
-- **Source:** `docs/PLAN_V5_11_ANCHOR_CROSS_PROJECT.md` "What does NOT ship", line 92
-- **Decision:** DEFER — v5.11+
+- **Source:** `docs/PLAN_V5_21_0_ANCHOR_CROSS_PROJECT.md` "What does NOT ship"
+- **Decision:** DEFER — v5.21+
 - **Reason:** needs more real-world audit history before designing auto-upgrade thresholds.
-- **Revisit triggers:** cross-project audit (v5.11) ships and runs for 30+ days; tier distribution data available.
+- **Revisit triggers:** cross-project audit (v5.21.0) ships and runs for 30+ days; tier distribution data available.
 
 **PD-23. `migration_grace=true` graceful expiry design hole**
-- **Source:** `docs/PLAN_V5_11_ANCHOR_CROSS_PROJECT.md`, line 166
-- **Decision:** PLANNED — v5.11.x candidates documented
+- **Source:** `docs/PLAN_V5_21_0_ANCHOR_CROSS_PROJECT.md`
+- **Decision:** PLANNED — v5.21.x candidates documented
 - **Background:** v5.8 backfill set `migration_grace=true` on ALL pre-v5.8 `_anchor` rows. After 90d TTL, rows become invisible but persist as dead weight indefinitely, counting toward `anchor_count_project` signal threshold. This is a silent data leak. CRITICAL: first affected rows expire 2026-08-26 (anchored 2026-05-27 + 90d).
 - **Candidates:** (a) `verify_grace_expired_anchor` recommendation type in `audit_anchors` — surfaces grace-protected rows past `valid_until` for user-gated review, auto-clears after N skipped audits; (b) auto-upgrade to `semantic_immortal` if heat above threshold at grace-expiry, else re-enter normal expiry. Lean (a).
-- **Revisit triggers:** must ship v5.11.x grace handler before 2026-08-26.
+- **Revisit triggers:** must ship v5.21.x grace handler before 2026-08-26.
 
 **PD-24. Multi-language ticket tag patterns (Linear, GitHub Issues)**
-- **Source:** `docs/PLAN_V5_11_ANCHOR_CROSS_PROJECT.md` "What does NOT ship", line 93
+- **Source:** `docs/PLAN_V5_21_0_ANCHOR_CROSS_PROJECT.md` "What does NOT ship"
 - **Decision:** PLANNED — start with Jira; expand on demand
 - **Revisit triggers:** user actively uses Linear or GitHub Issues for task tracking alongside yadgar.
 
 **PD-25. Anchor reorganization UI / web frontend (`yadgar-tui`)**
-- **Source:** `docs/PLAN_V5_11_ANCHOR_CROSS_PROJECT.md` "What does NOT ship", line 94
+- **Source:** `docs/PLAN_V5_21_0_ANCHOR_CROSS_PROJECT.md` "What does NOT ship"
 - **Decision:** DEFER (permanent for v5.x)
 - **Reason:** out of yadgar core scope. CLI and MCP surface is the primary interface.
 - **Revisit triggers:** yadgar-tui becomes a real project with scope.
 
-### From `docs/PLAN_V5_12_0_WIKI_BOOKMARKS.md`
+### From `docs/PLAN_V5_23_0_WIKI_BOOKMARKS.md`
 
 **PD-26. Multi-user bookmarks**
-- **Source:** `docs/PLAN_V5_12_0_WIKI_BOOKMARKS.md` section Non-goals, line 45
+- **Source:** `docs/PLAN_V5_23_0_WIKI_BOOKMARKS.md` section Non-goals
 - **Decision:** DEFER — v6+ concern
 - **Reason:** yadgar is single-user. Per-user bookmarks require auth model that does not exist.
 - **Revisit triggers:** yadgar gains multi-user concept.
 
 **PD-27. Playwright automated browser tests for viz/bookmark UI**
-- **Source:** `docs/PLAN_V5_12_0_WIKI_BOOKMARKS.md` step 18, line 312
+- **Source:** `docs/PLAN_V5_23_0_WIKI_BOOKMARKS.md`
 - **Decision:** DEFER
 - **Reason:** big infra add for a cosmetic/UX feature. Manual smoke test acceptable per v5.10.7 viz plan precedent.
 - **Revisit triggers:** recurring browser-regression bugs caught only by manual testing; or test suite standardizes on headless browser.
 
-### From `docs/PLAN_V5_20_0_ROADMAP_FRESHNESS.md`
+### From `docs/PLAN_V5_99_0_ROADMAP_FRESHNESS.md`
 
-**PD-28. v5.20.0 roadmap freshness mechanism**
-- **Decision:** DEFER — to v5.20.0
+**PD-28. v5.99.0 roadmap freshness mechanism**
+- **Decision:** DEFER — to v5.99.0
 - **Reason:** fundamental design issue with yadgar's async wiki write queue: read-after-write race means splice operations corrupt wiki content. Requires `flush_only()` primitive or blocking write path first.
 - **Revisit triggers:** yadgar gains `flush_only()` MCP primitive; OR SurrealDB blocking write path available; OR roadmap drift incident severe enough to justify accepting data loss risk.
 
@@ -379,14 +379,14 @@ Questions raised during design reviews, plan drafting, or session investigations
 | OQ-2 | What is `DREAM_REPLAY_PAIRS` set to in production? If more than 500, dream_replay is significant CPU contributor. | `docs/PLAN_V5_10_9_CPU_BURSTS_RESIDUAL.md` section Open Questions | Check `~/.yadgar/config.yaml` before v5.10.9 dispatch. |
 | OQ-3 | Is F5 (embed_service lazy-load rerankers OR cap batch OR cgroup bump) shipped? | `docs/PLAN_V5_10_9_CPU_BURSTS_RESIDUAL.md`, line 29 | Check CHANGELOG for v5.4.2+ embed_service changes. |
 | OQ-4 | `consolidate_now mode='full'` — should respect 6h gate or run unconditionally? | `docs/PLAN_V5_10_4_CONSOLIDATE_NOW_HEAVYWEIGHT.md` section Open Questions | Resolved in v5.10.4 — gate respected. Mark DONE. |
-| OQ-5 | v5.12.0 wiki bookmarks page — refresh-on-focus, `[[slug]]` clickable, pre-seed defaults? | `yadgar-roadmap-future-improvements` section Open Questions | Decide before v5.12.0 agent dispatch. |
-| OQ-6 | `flush_only()` MCP primitive — design now or wait for clear use case? | `docs/PLAN_V5_20_0_ROADMAP_FRESHNESS.md` (deferred for it) | Wait for v5.20.0 to become active; design as prerequisite. |
+| OQ-5 | v5.23.0 wiki bookmarks page — refresh-on-focus, `[[slug]]` clickable, pre-seed defaults? | `yadgar-roadmap-future-improvements` section Open Questions | Decide before v5.23.0 agent dispatch. |
+| OQ-6 | `flush_only()` MCP primitive — design now or wait for clear use case? | `docs/PLAN_V5_99_0_ROADMAP_FRESHNESS.md` (deferred for it) | Wait for v5.99.0 to become active; design as prerequisite. |
 | OQ-7 | `reason` kwarg on `memorize()` — keyword-only? | `docs/PLAN_V5_10_X_MEMORIZE_ANCHOR_PARITY.md` section Open / parked questions | Lean: keyword-only. Confirm in v5.10.x implementation. |
 | OQ-8 | Auto-prepend `_anchor` to tags vs reject without it in `memorize(is_protected=True)` | Same plan | Auto-prepend (advisor lean). Confirm in implementation. |
 | OQ-9 | Allowlist YAML schema versioning strategy (v5.10.8) | `docs/PLAN_V5_10_8_SECRET_GATE_CONTEXT_AWARENESS.md` | Decide before dispatch. Lean: version field in YAML root. |
 | OQ-10 | Allowlist audit log rotation: size-based vs date-based? | Same plan | Lean: date-based. Confirm before dispatch. |
 | OQ-11 | Should `anchor(tier="semantic_immortal")` require a `reason` argument? | `docs/PLAN_V5_8_ANCHOR_HYGIENE.md` | Verify if shipped in v5.8. |
-| OQ-12 | `migration_grace=true` row expiry — handler must ship before 2026-08-26 (earliest affected rows expire). | `docs/PLAN_V5_11_ANCHOR_CROSS_PROJECT.md`, line 166 | PD-23. Ship v5.11.x grace handler before that date. |
+| OQ-12 | `migration_grace=true` row expiry — handler must ship before 2026-08-26 (earliest affected rows expire). | `docs/PLAN_V5_21_0_ANCHOR_CROSS_PROJECT.md` | PD-23. Ship v5.21.x grace handler before that date. |
 
 ---
 

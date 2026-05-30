@@ -1,10 +1,12 @@
-# PLAN — v5.10.8: Secret-gate pattern context-awareness + allowlist (false-positive reduction)
+# PLAN — v5.13.0: Secret-gate pattern context-awareness + allowlist (false-positive reduction)
 
-**Status:** drafted 2026-05-29 late evening. Renumber history: originally v5.10.7 → temporarily v5.10.8 during freshness insertion attempt → back to v5.10.7 after freshness deferred → **final: v5.10.8** after v5.10.7 slot taken by viz fixes in the 2026-05-30 renumber. Plan-first per I27.
+**Renumbered:** v5.11.0 → v5.13.0 on 2026-05-30. Reason: skip-1 minor convention adopted 2026-05-30 — v5.11.0 pre-empted by new viz config.yaml plan; odd-only minors reserved for sequential features, even slots reserved for hotfix patches.
+
+**Status:** drafted 2026-05-29 late evening. Renumber history: originally v5.10.7 → temporarily v5.10.8 during freshness insertion attempt → back to v5.10.7 after freshness deferred → v5.10.8 after v5.10.7 slot taken by viz fixes in the 2026-05-30 renumber → v5.11.0 in first skip-1 pass → **final: v5.13.0** after v5.11.0 pre-empted by viz config.yaml. Plan-first per I27.
 
 **Master at draft time:** core v5.10.3 shipped + tagged.
 
-**Sequencing:** v5.10.8 patch. Slots after v5.10.7 (viz fixes). Independent of backend-v5.4.x soak decision.
+**Sequencing:** v5.13.0. Slots after v5.11.0 (viz config.yaml) and v5.12.x hotfixes. Independent of backend-v5.4.x soak decision.
 
 ## Problem
 
