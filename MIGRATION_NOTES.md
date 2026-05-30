@@ -1,5 +1,41 @@
 # Migration Notes
 
+## v5.10.7.1 — Bundled hotfix: sentinel filter + viz lighting (2026-05-30)
+
+Core 5.10.7 → 5.10.7.1. Backend unchanged at 5.4.0. No schema changes.
+
+### What's new
+
+Two hotfixes shipped together in a single release cycle.
+
+**Fix 1 — SessionEnd sentinel slash-command tag filter:**
+
+The `last_human_turns` field in session_end sentinels was being polluted by Claude Code slash-command output tags (`<local-command-caveat>`, `<local-command-stdout>`, `<local-command-stderr>`, `<command-name>`, `<command-args>`). These are injected into the transcript as user-role messages when slash commands (e.g. `/model`, `/mcp`) run. Effect: `extract_last_session_findings` was returning ~80% noise, ~20% real user-intent signal.
+
+Extended `SKIP_TAGS` in `yadgar/hooks/session-end-capture.py` to cover all seven known slash-command tags. `SKIP_TAGS` is now a module-level `frozenset` referenced by both `_count_human_messages` (gate) and `_parse_user_content` (extraction) — previously only two tags were hardcoded inline.
+
+**Fix 2 — 3D viz node lighting:**
+
+Wiki nodes and memory nodes were rendering as dark fragmented triangle shards in 3D mode post-v5.10.7 deploy. Root cause: `_makeNodeThreeObject` used `THREE.MeshLambertMaterial`, which requires scene lighting (ambient + directional) to render colour. ForceGraph3D does not add scene lights by default. Changed to `THREE.MeshBasicMaterial` (unlit — colour always renders at set value regardless of scene lighting). One-line fix. Transparent/opacity semantics unchanged.
+
+### Required action: none
+
+No server restart, no `install_hooks` re-run, no schema migration. Reload the browser tab after the container image is updated.
+
+### Manual smoke procedure
+
+After deploying 5.10.7.1:
+
+1. **Sentinel quality** (optional — only if you had noisy sentinels from a slash-command-heavy session): run a new session with slash commands, exit normally, start a fresh session and call `project_brief(mode="signals")`. The `last_human_turns` in the recommended action should contain your real prompts only — no `MCP dialog dismissed` or stdout/stderr noise. If you accumulated noisy sentinels under v5.10.7, you can manually `forget()` them using the `sentinel_id` from the action.
+2. **3D viz**: open `http://127.0.0.1:42069` in 3D mode. Wiki nodes should render as solid purple octahedra; memory nodes as solid coloured spheres. No dark triangle fragments or near-invisible shapes.
+
+### Files changed
+
+- `yadgar/hooks/session-end-capture.py` — `SKIP_TAGS` constant (lines ~68–80) + both call sites updated
+- `yadgar/static/index.html` — line ~818: `MeshLambertMaterial` → `MeshBasicMaterial`
+- `yadgar/tests/test_session_end_capture.py` — 6 new sentinel-filter tests (section 11)
+- `yadgar/tests/test_viz_static_assets.py` — `TestV510701LightingFix` class (2 tests)
+
 ## v5.10.7 — Viz UX fixes (2026-05-30)
 
 Core 5.10.6 → 5.10.7. Backend unchanged at 5.4.0. No schema changes.
