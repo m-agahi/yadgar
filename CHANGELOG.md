@@ -6,6 +6,21 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.10.7.3] — 2026-05-30
+
+Revert v5.10.7 custom 3D node geometry. Back to ForceGraph3D defaults.
+
+- **Removed** `_makeNodeThreeObject` (custom THREE.Mesh factory for wiki/memory) from `yadgar/static/index.html`.
+- **Removed** `.nodeThreeObject(_makeNodeThreeObject).nodeThreeObjectExtend(false)` from 3D graph init.
+- **Removed** the 3D-mode `nodeThreeObject` re-call inside `_applySearchHighlight` (now only `.nodeColor()` re-fires).
+- **Kept** `_nodeColorFor` + `.nodeColor(_nodeColorFor)` — applies heat-based colour to ForceGraph3D's default sphere material (may finally make 3D heat-coloring visible — bonus side-effect; was never working historically).
+- **Why:** three attempts at custom 3D mesh (v5.10.7 Lambert; v5.10.7.1 Lambert→Basic; v5.10.7.2 conditional transparent) all rendered as fragmented triangle shards in user verification. Defaulting back to ForceGraph3D's library-managed solid spheres = last-known-good visual from v5.3.7.
+- **Regression gates added** (`yadgar/tests/test_viz_static_assets.py::TestV510703RevertCustomMesh`): assert no `_makeNodeThreeObject` function, no `.nodeThreeObject(` call, no `new THREE.OctahedronGeometry`/`SphereGeometry` instantiation outside comments.
+- **Removed** v5.10.7.1+v5.10.7.2 lighting/transparent tests (superseded by revert).
+- **Trade-off:** S2.2 shape distinction (octahedra vs spheres) lost. User explicitly OK'd uniform shapes.
+
+See [MIGRATION_NOTES.md §v5.10.7.3](MIGRATION_NOTES.md#v51073--revert-v5107-custom-3d-node-geometry-2026-05-30) + `docs/PLAN_V5_10_7_3_VIZ_REVERT_TO_DEFAULTS.md`.
+
 ## [5.10.7.2] — 2026-05-30
 
 Hotfix: 3D viz wiki nodes still rendered as fragmented triangle shards after v5.10.7.1.
