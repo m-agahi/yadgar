@@ -1,5 +1,11 @@
 # PLAN — v5.10.7.1: SessionEnd sentinel filter — skip local-command tags
 
+## BUNDLED WITH viz lighting fix
+
+v5.10.7.2 (viz Lambert→Basic lighting fix) was absorbed into this v5.10.7.1 release. Both fixes shipped together as a single bundled hotfix. See `docs/PLAN_V5_10_7_2_VIZ_LIGHTING_FIX.md` for the absorbed plan.
+
+---
+
 **Status:** drafted 2026-05-30. Plan-first per I27. Patch-level (v5.10.7.1) for v5.10.7 release train. Hotfix follows v5.10.7 viz fixes ship.
 
 **Master at draft time:** v5.10.6 LIVE; v5.10.7 viz-fixes in flight on `feat/v5.10.7-viz-fixes` (not merged yet).
