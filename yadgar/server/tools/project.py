@@ -683,6 +683,23 @@ def _fetch_expired_anchor_count(storage, _now: str) -> int:
         return 0
 
 
+def _fetch_cross_project_candidates_for_signals(storage, _now: str, cfg) -> list[dict]:
+    """Fetch cross-project redundancy candidates for signals mode payload.
+
+    Delegates to audit module's detection logic.
+    Capped to _SIGNALS_CANDIDATES_K for token budget.
+    Returns empty list on any error (graceful degradation).
+    """
+    try:
+        from yadgar.server.tools.audit import _fetch_cross_project_candidates  # noqa: PLC0415
+
+        cross_threshold = float(cfg.ANCHOR_CROSS_PROJECT_COSINE)
+        candidates = _fetch_cross_project_candidates(storage, _now, cross_threshold)
+        return candidates[:_SIGNALS_CANDIDATES_K]
+    except Exception:
+        return []
+
+
 def _compute_anchor_signals(storage, resolved: str, cfg) -> dict:
     """Compute anchor hygiene signals for project_brief(mode='signals').
 
@@ -709,12 +726,14 @@ def _compute_anchor_signals(storage, resolved: str, cfg) -> dict:
     )
     promote_ids, trunc_p = _fetch_anchor_promote_ids(storage, resolved, _now, cfg)
     expired_no_grace_count = _fetch_expired_anchor_count(storage, _now)
+    cross_project_candidates = _fetch_cross_project_candidates_for_signals(storage, _now, cfg)
 
     return {
         "anchor_count_project": anchor_count_project,
         "anchor_redundancy_candidates": redundancy_pairs,
         "anchor_promote_candidates": promote_ids,
         "expired_no_grace_count": expired_no_grace_count,
+        "cross_project_redundancy_candidates": cross_project_candidates,
         "_truncated": trunc_r or trunc_p,
     }
 
@@ -922,6 +941,7 @@ def _project_brief_signals(
             "anchor_redundancy_candidates": [],
             "anchor_promote_candidates": [],
             "expired_no_grace_count": 0,
+            "cross_project_redundancy_candidates": [],
             "_truncated": False,
         }
 
@@ -974,6 +994,10 @@ def _project_brief_signals(
         result["anchor_redundancy_candidates"] = anchor_signals["anchor_redundancy_candidates"]
     if anchor_signals["anchor_promote_candidates"]:
         result["anchor_promote_candidates"] = anchor_signals["anchor_promote_candidates"]
+    if anchor_signals.get("cross_project_redundancy_candidates"):
+        result["cross_project_redundancy_candidates"] = anchor_signals[
+            "cross_project_redundancy_candidates"
+        ]
     if anchor_signals["_truncated"]:
         result["_truncated"] = True
     # Observability: fire counter if payload exceeds operator-tunable token budget.
