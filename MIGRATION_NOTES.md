@@ -1,5 +1,68 @@
 # Migration Notes
 
+## v5.10.10 — Viz polish: 2x 3D node size + auto-zoom-fit (2026-05-30)
+
+Core 5.10.9 → 5.10.10. Backend unchanged at 5.4.0. No schema changes. No config changes. Plan: `docs/PLAN_V5_10_10_VIZ_NODE_SIZE_AND_ZOOM_FIT.md`.
+
+### Why
+
+User feedback after v5.10.9 LIVE (viz now functional):
+
+> *"3d, make the nodes a bit bigger. 2x their current size. also when the page refreshes it zoomes in and not show all nodes and i have to zoom out to see them all. same zoom issue with 2d. coloring works very nicely in both 2d and 3d so that is fixed as well. dont touch :D"*
+
+Two small polish fixes. No backend changes. Coloring completely untouched.
+
+### What changed
+
+**`yadgar/static/index.html`** — three additions, no removals:
+
+1. Module-level flag: `let _zoomFitDone = false;` (after `_engineTickCount`).
+2. 3D init block: `.nodeRelSize(8)` chained after `.backgroundColor(...)`. ForceGraph3D default is 4 — value 8 doubles the sphere radius.
+3. `onEngineTick` callback extended in BOTH 2D and 3D init blocks:
+
+   ```javascript
+   .onEngineTick(() => {
+     _engineTickCount++;
+     if (!_zoomFitDone && _engineTickCount === 80) {
+       _zoomFitDone = true;
+       if (typeof graph.zoomToFit === 'function') {
+         graph.zoomToFit(800, 50);
+       }
+     }
+   })
+   ```
+
+4. `_zoomFitDone = false;` reset at top of `initGraph()` (alongside `_engineTickCount = 0`).
+5. `_zoomFitDone = false;` reset at top of `loadGraph()` (so reload button re-fits).
+
+**`yadgar/tests/test_viz_static_assets.py`** — `TestV51010VizPolish` class with 3 regression tests.
+
+**Version bump files**: `pyproject.toml`, `server.json`, `docker-compose.yml`, `uv.lock`.
+
+### Deploy procedure
+
+Standard container rebuild + restart — same as every viz patch.
+
+```bash
+docker compose pull core || docker compose build core
+docker compose up -d core
+```
+
+### Manual smoke procedure (post deploy, hard-refresh)
+
+1. Open viz in browser → hard-refresh (`Ctrl+Shift+R`).
+2. **3D mode**: nodes visibly larger than v5.10.9 (~2x area). After ~1 second, view auto-fits to show all nodes — no manual zoom-out needed.
+3. **2D mode**: click "2D" button → same auto-fit behavior on initial load.
+4. **Toggle**: switch 2D↔3D → each switch re-fits view on layout settle.
+5. **Reload button** (↺): re-fits view after data reload.
+6. **Coloring verification**: heat/wiki colors unchanged from v5.10.9 — same color distribution expected.
+
+### Rollback
+
+Revert to v5.10.9 container. No data migration needed.
+
+---
+
 ## v5.10.9 — Viz orphan-edge filter (2026-05-30)
 
 Core 5.10.8 → 5.10.9. Backend unchanged at 5.4.0. No schema changes. Plan: `docs/PLAN_V5_10_9_VIZ_ORPHAN_EDGE_FILTER.md`.

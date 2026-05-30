@@ -6,6 +6,17 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.10.10] — 2026-05-30
+
+Viz polish: 2x 3D node size + auto-zoom-fit on initial load (both 2D and 3D modes).
+
+- **3D node size 2x** (`yadgar/static/index.html`): added `.nodeRelSize(8)` to 3D init chain. ForceGraph3D default is 4 — doubled radius makes nodes visibly larger on load without affecting layout coordinates.
+- **Auto-zoom-fit on initial load** (`yadgar/static/index.html`): added `_zoomFitDone` module-level flag; extended `onEngineTick` callback in BOTH 2D and 3D init blocks to call `graph.zoomToFit(800, 50)` exactly once after tick 80 (layout well-settled, 30 ticks past the v5.10.8 pin threshold). Flag resets in `initGraph` (2D↔3D toggle re-fits) and `loadGraph` (reload button re-fits).
+- **3 new static-asset regression tests** (`test_viz_static_assets.py::TestV51010VizPolish`): `test_nodeRelSize_set_to_8_in_3d_init`, `test_zoomFitDone_flag_declared`, `test_onEngineTick_calls_zoomToFit_at_threshold`.
+- **Coloring logic untouched** — `_nodeColorFor`, `_linkColor`, `heatColor`, `WIKI_CAT_COLOR` unchanged per user instruction.
+
+See [MIGRATION_NOTES.md §v5.10.10](MIGRATION_NOTES.md#v51010--viz-polish-2x-3d-node-size--auto-zoom-fit-2026-05-30) + `docs/PLAN_V5_10_10_VIZ_NODE_SIZE_AND_ZOOM_FIT.md`.
+
 ## [5.10.9] — 2026-05-30
 
 Fix viz crash: filter orphan edges before passing to force-graph library (real root cause of all v5.10.7+ viz failures).
