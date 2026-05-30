@@ -1,5 +1,36 @@
 # Migration Notes
 
+## v5.10.7 — Viz UX fixes (2026-05-30)
+
+Core 5.10.6 → 5.10.7. Backend unchanged at 5.4.0. No schema changes.
+
+### What's new
+
+Four long-standing viz UX bugs fixed (soak-observed since 2026-05-20):
+
+- **S2.1**: 3D mode now colours nodes by heat. Previously all nodes rendered in the library's default colour.
+- **S2.2**: Wiki nodes use `OctahedronGeometry` (8-sided, visibly faceted). Memory nodes remain spheres. Previously both looked like spheres at default zoom.
+- **S2.3**: Semantic search now works in 3D mode. The search handler called `nodeCanvasObject` (2D-only), causing `TypeError: graph.nodeCanvasObject is not a function` in 3D mode. Fixed by branching on `_graphMode`.
+- **S2.4**: Stats overlay now polls `/api/metrics/*` every 5 s while open. Previously heat histogram and consolidation charts were static after initial load.
+
+### Required action: none
+
+Pure frontend change. No server restart, no migration, no `install_hooks` re-run required. Reload the browser tab after the container image is updated.
+
+### Manual smoke procedure
+
+After deploying 5.10.7, open `http://127.0.0.1:42069` and verify:
+
+1. **3D mode (default)**: nodes should show a colour gradient from cool blue (low heat) to warm orange/red (high heat). No uniform yellow/pale dots.
+2. **Shape distinction**: wiki nodes are faceted octahedra (angular 8-sided shape). Memory nodes are smooth spheres. Toggle 2D mode (button top-right) to confirm 2D mode still renders hexagons for wiki and circles for memory.
+3. **Search**: type a query in the search box and press Enter. Console: no `TypeError`. Matching nodes should be highlighted; non-matching nodes dimmed. "Clear" button appears.
+4. **Stats panel**: click the "📊 Stats" button. Watch the heat distribution chart and consolidation chart for 10–15 s; they should refresh automatically every 5 s (count changes if memories were recently added/consolidated). Closing and reopening the panel should restart the refresh cycle.
+
+### Files changed
+
+- `yadgar/static/index.html` — all four fixes
+- `yadgar/tests/test_viz_static_assets.py` — 10 new static-asset regression tests
+
 ## v5.10.6 — SESSION_END_CAPTURE sentinel-marker pattern (2026-05-30)
 
 Core 5.10.5 → 5.10.6. Backend unchanged at 5.4.0. No schema changes.
