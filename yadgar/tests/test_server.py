@@ -475,6 +475,44 @@ def test_install_hooks_global_scope_returns_scope(tmp_path, monkeypatch):
     assert result["scope"] == "global"
 
 
+def test_install_hooks_pretooluse_direct_command_not_dispatcher(tmp_path, monkeypatch):
+    """v5.20.0: PreToolUse hook uses standalone script, NOT hook_runner.py dispatcher.
+
+    The old wiring routed through hook_runner.py which emitted JSON missing
+    hookEventName, causing repeated PreToolUse validation errors in Claude Code 2026.
+    The new wiring calls yadgar-db-lockdown-check.py directly.
+    """
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    from pathlib import Path as _Path
+
+    monkeypatch.setattr(_Path, "home", staticmethod(lambda: fake_home))
+
+    result = server.install_hooks(str(tmp_path), scope="global")
+    assert result["status"] == "installed"
+
+    global_settings = fake_home / ".claude" / "settings.json"
+    data = json.loads(global_settings.read_text())
+    hooks = data.get("hooks", {})
+
+    # PreToolUse must exist and have Bash matcher
+    assert "PreToolUse" in hooks
+    pre_tool_entries = hooks["PreToolUse"]
+    assert len(pre_tool_entries) >= 1
+    entry = pre_tool_entries[0]
+    assert entry.get("matcher") == "Bash"
+    cmd = entry["hooks"][0]["command"]
+
+    # Must NOT route through hook_runner.py dispatcher
+    assert "hook_runner.py" not in cmd, (
+        f"PreToolUse should use standalone script, not hook_runner.py dispatcher. Got: {cmd}"
+    )
+    # Must reference the yadgar-db-lockdown-check.py standalone script
+    assert "yadgar-db-lockdown-check.py" in cmd, (
+        f"PreToolUse must reference yadgar-db-lockdown-check.py. Got: {cmd}"
+    )
+
+
 # Helpers that call the async list methods on FastMCP
 import asyncio  # noqa: E402
 
