@@ -1,4 +1,6 @@
-# PLAN — v5.13.2: Bi-temporal edges extension (Adopt-3)
+# PLAN — v5.29.0: Bi-temporal edges extension (Adopt-3)
+
+**Renumbered:** v5.19.0 → v5.29.0 on 2026-05-30. Reason: skip-1 minor convention adopted 2026-05-30 — odd-only minors for sequential features, even slots reserved for hotfix patches between them.
 
 **Status:** drafted 2026-05-30 from competitor audit 2026-05-30 Item 3 ("Bi-temporal edges on all relationships — 75% done"). Plan-first per I27.
 
@@ -8,7 +10,7 @@
 
 - `docs/competitor-audit-2026-05-30.md` and `docs/AUDIT_DECISIONS.md` are referenced as source-of-truth in the roadmap wiki but were not present on disk at draft time. This plan treats the wiki entry as canonical; if those docs land later the plan should be reconciled against them. Coordinator owns committing those source docs — this plan does not create them.
 
-**Sequencing:** independent of v5.10.x train; ships after v5.10.x and `backend-v5.4.x` are stable. Slots BEFORE v5.14.x (recall plugin arch — R2 from 2026-05-30 audit) because the bi-temporal as-of-date helper this plan introduces is a building block the plugin architecture may want to plug into.
+**Sequencing:** independent of v5.10.x train; ships after v5.10.x and `backend-v5.4.x` are stable. Slots BEFORE v5.31.x (recall plugin arch — R2 from 2026-05-30 audit) because the bi-temporal as-of-date helper this plan introduces is a building block the plugin architecture may want to plug into.
 
 **Hard rules honoured:** No terraform. No co-author trailers. No hook bypass. Branch first. Schema migrations require `MIGRATION_NOTES.md` entry — see §10.
 
@@ -103,7 +105,7 @@ Two new migrations following the `_migration_007_bitemporal_edges` template (ide
 
 ```python
 def _migration_009_bitemporal_user_profile(storage) -> None:
-    """Add valid_from / valid_until to user_profile (Adopt-3, v5.13.0).
+    """Add valid_from / valid_until to user_profile (Adopt-3, v5.29.0).
 
     Pivot semantics: from "UPSERT in-place" to "close prior row + insert new row".
     The existing UNIQUE index (entity_name, attribute_type, attribute_key, directory_context)
@@ -139,7 +141,7 @@ def _migration_009_bitemporal_user_profile(storage) -> None:
 
 ```python
 def _migration_010_bitemporal_derived_belief(storage) -> None:
-    """Add valid_from / valid_until to derived_belief (Adopt-3, v5.13.0)."""
+    """Add valid_from / valid_until to derived_belief (Adopt-3, v5.29.0)."""
     storage._q("DEFINE FIELD IF NOT EXISTS valid_from ON TABLE derived_belief TYPE option<string>;")
     storage._q("DEFINE FIELD IF NOT EXISTS valid_until ON TABLE derived_belief TYPE option<string>;")
 
@@ -176,8 +178,8 @@ _VALID_EDGE_TABLES = frozenset({
     "causal_dag_edge",
     "relationship",
     "memory_similarity_link",
-    "user_profile",       # NEW v5.13.0
-    "derived_belief",     # NEW v5.13.0
+    "user_profile",       # NEW v5.29.0
+    "derived_belief",     # NEW v5.29.0
 })
 ```
 
@@ -291,8 +293,8 @@ All tests added under `yadgar/tests/test_bitemporal_extension.py` (new file — 
 - `get_full_graph(as_of="<past-ts>")` returns a graph snapshot reflecting that point in time.
 - SurrealDB partial-unique-index capability verified (§4): either confirmed working OR application-side fallback implemented and tested.
 - Row-growth ceiling verified: bulk insert 1000 user_profile UPSERT cycles for the same key with confidence drift below threshold ⇒ row count stays bounded (< 5 versions for the key, governed by the delta knob).
-- `MIGRATION_NOTES.md` v5.13.0 entry added — operators warned about row-count growth on `user_profile` and `derived_belief`, with `vacuum_now` recommendation post-deploy if data volume is large.
-- `CHANGELOG.md` v5.13.0 entry added.
+- `MIGRATION_NOTES.md` v5.29.0 entry added — operators warned about row-count growth on `user_profile` and `derived_belief`, with `vacuum_now` recommendation post-deploy if data volume is large.
+- `CHANGELOG.md` v5.29.0 entry added.
 - Roadmap wiki + `AUDIT_DECISIONS.md` (when it exists) updated: Item 3 status moves 75% → 100%.
 
 ---
@@ -317,7 +319,7 @@ Risk multiplier ×1.5 for partial-index verification → real estimate **5–6 d
 
 ## 10. Migration notes (excerpt for `MIGRATION_NOTES.md`)
 
-Operators upgrading from v5.12.x to v5.13.0:
+Operators upgrading from v5.28.x to v5.29.0:
 
 - **Schema migrations 009 + 010 run automatically on first daemon start.** No manual intervention.
 - **Behaviour change — `insert_profile`:** profile UPSERT becomes "supersede + insert new row" when `attribute_value` changes. Row count for `user_profile` will grow over time. Mitigations: (a) `PROFILE_BITEMPORAL_VERSION_DELTA` env knob (default `0.05`) suppresses row creation for noise-level confidence drift; (b) `vacuum_now` retains historical rows by default — to prune, set `VACUUM_USER_PROFILE_HISTORY_DAYS` (new knob, default `None` = keep forever).
@@ -343,12 +345,12 @@ The following are deliberate "NOT NOW" decisions with revisit triggers. Each goe
 
 ## 12. Version-slot reasoning
 
-Slotted as v5.13.0 because:
+Slotted as v5.29.0 (skip-1 renumber from original v5.13.0) because:
 - v5.10.x train is hot-fix oriented (consolidate_now, secret-gate, viz fixes, CPU bursts) — schema migrations are too heavy.
-- v5.11.0 is reserved for anchor cross-project work, gated on 4 weeks of audit history (mid-June 2026 earliest).
-- v5.12.0 is Wiki Bookmarks (MCP-only, no schema migration).
-- v5.13.0 — the first free slot for schema work. Independent of all v5.10/v5.11/v5.12 work.
-- v5.14.x is reserved for "Recall pipeline plugin architecture (R2)" per AUDIT_DECISIONS. Slotting Adopt-3 BEFORE that lets the plugin architecture optionally consume the `as_of_filter` helper from day one.
+- v5.21.0 is reserved for anchor cross-project work, gated on 4 weeks of audit history (mid-June 2026 earliest).
+- v5.23.0 is Wiki Bookmarks (MCP-only, no schema migration).
+- v5.29.0 — odd-minor slot for schema work, after v5.27.0 (DuckDB export). Independent of all v5.10/v5.21/v5.23 work.
+- v5.31.x is reserved for "Recall pipeline plugin architecture (R2)" per DECISIONS. Slotting Adopt-3 BEFORE that lets the plugin architecture optionally consume the `as_of_filter` helper from day one.
 - v6.x is the LLM-tier shift — out of scope for schema work.
 
 ---

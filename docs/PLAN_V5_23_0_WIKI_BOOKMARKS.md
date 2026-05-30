@@ -1,10 +1,12 @@
-# PLAN — v5.12.0: Wiki Bookmarks page in viz (pinned wiki reader)
+# PLAN — v5.23.0: Wiki Bookmarks page in viz (pinned wiki reader)
+
+**Renumbered:** v5.16.0 → v5.23.0 on 2026-05-30. Reason: skip-1 minor convention adopted 2026-05-30 — odd-only minors for sequential features, even slots reserved for hotfix patches between them.
 
 **Status:** drafted 2026-05-30. Plan-first per I27. Implementation deferred — requires backend (storage + endpoints) + frontend (new page) + markdown rendering pipeline. Net positive UX: replaces "ask Claude what's in roadmap" with one-click pinned page.
 
 **Master at draft time:** core v5.10.3 shipped.
 
-**Sequencing:** v5.12.0 slot. After v5.11.0 (anchor cross-project) ships. Independent of v5.10.x train. Independent of v5.20.0 (deferred roadmap freshness) — but if v5.20.0 ships first, the roadmap wiki page will be one of the most-pinned bookmarks (synergy).
+**Sequencing:** v5.23.0. After v5.21.0 (anchor cross-project) ships. Independent of v5.10.x train. Independent of v5.99.0 (deferred roadmap freshness) — but if v5.99.0 ships first, the roadmap wiki page will be one of the most-pinned bookmarks (synergy).
 
 ---
 
@@ -75,14 +77,14 @@ T+3    wiki_read(X)           → returns fresh
 
 So the only freshness gap is the **drainer flush window** (typically 1-3 seconds, observed up to ~10s under load).
 
-### v5.12.0 design implications
+### v5.23.0 design implications
 
 1. **No app-level cache invalidation needed.** Because there's no app-level read cache. Every bookmark click → `wiki_read` → DB hit.
 2. **HTTP layer: send `Cache-Control: no-store, no-cache` on `/api/wiki/read/{slug}`.** Prevents browser caching of stale responses.
 3. **Refresh button (per-bookmark + global) is the user-facing freshness primitive.** Doesn't "force the DB to flush" (DB is already authoritative) — it just re-issues the read AFTER any pending writes have drained. Useful when:
    - Claude just wrote a wiki and user wants the new content NOW (waits 2-3s, refreshes).
    - User suspects browser-cached anything.
-4. **Optional: surface queue depth.** Expose `yadgar_queue_depth` metric to viz. Show in nav: "3 writes pending" when > 0. Gives user a clue: "wait until 0 then refresh for newest". Lean: add this in v5.12.0 (cheap, observable signal).
+4. **Optional: surface queue depth.** Expose `yadgar_queue_depth` metric to viz. Show in nav: "3 writes pending" when > 0. Gives user a clue: "wait until 0 then refresh for newest". Lean: add this in v5.23.0 (cheap, observable signal).
 5. **Optional: fetched-at indicator under each bookmark.** "fetched 30s ago". Visual cue if user suspects staleness. Cheap to add.
 
 ### What does NOT work for freshness
@@ -93,7 +95,7 @@ So the only freshness gap is the **drainer flush window** (typically 1-3 seconds
 
 ### Future: optional `flush_only` MCP primitive
 
-If yadgar grows a `flush_only()` MCP tool that just commits queued writes (no sleep cycle), the refresh button could optionally call it before re-reading. Tracked as related design point — see `PLAN_V5_20_0_ROADMAP_FRESHNESS.md` and `PLAN_V5_10_4_CONSOLIDATE_NOW_HEAVYWEIGHT.md` for context.
+If yadgar grows a `flush_only()` MCP tool that just commits queued writes (no sleep cycle), the refresh button could optionally call it before re-reading. Tracked as related design point — see `PLAN_V5_99_0_ROADMAP_FRESHNESS.md` and `PLAN_V5_10_4_CONSOLIDATE_NOW_HEAVYWEIGHT.md` for context.
 
 ---
 
@@ -268,7 +270,7 @@ Add a "📑 Bookmarks" link in the existing top nav of `yadgar/static/index.html
 ### Option 2: Lightweight SPA (e.g. Alpine.js or htmx)
 - Marginal ergonomic win (declarative bindings).
 - Adds a runtime dep + learning curve.
-- Reject unless viz grows beyond bookmarks page (e.g. v5.13+ adds settings panel etc.).
+- Reject unless viz grows beyond bookmarks page (e.g. v5.25+ adds settings panel etc.).
 
 ### Option 3: Browser localStorage for bookmarks (no DB)
 - Faster initial impl, no backend changes.
@@ -322,7 +324,7 @@ Add a "📑 Bookmarks" link in the existing top nav of `yadgar/static/index.html
 - Semantic search returns results in <500ms for a warm CE cache.
 - Slug autocomplete returns results in <100ms (DB-backed).
 - DOMPurify sanitization confirmed via fixture page with `<script>` tags — script blocks rendered as text, not executed.
-- CHANGELOG + MIGRATION_NOTES updated for v5.12.0.
+- CHANGELOG + MIGRATION_NOTES updated for v5.23.0.
 
 ---
 
@@ -343,7 +345,7 @@ Add a "📑 Bookmarks" link in the existing top nav of `yadgar/static/index.html
 
 ---
 
-## Suggested ENHANCEMENTS (out of v5.12.0 scope; v5.12.x candidates)
+## Suggested ENHANCEMENTS (out of v5.23.0 scope; v5.23.x candidates)
 
 - **Pinned-section headers:** group bookmarks under user-defined headings ("Roadmap & plans", "Reference docs", "Active investigations").
 - **Search inside bookmark:** Ctrl-F over rendered markdown of currently-open bookmark.
@@ -405,8 +407,8 @@ Add a "📑 Bookmarks" link in the existing top nav of `yadgar/static/index.html
 - `yadgar/static/index.html` — add "📑 Bookmarks" nav link.
 - `pyproject.toml` — version bump 5.11.x → 5.12.0.
 - `server.json`, `docker-compose.yml`, `uv.lock` — version sync.
-- `CHANGELOG.md` — v5.12.0 entry.
-- `MIGRATION_NOTES.md` — v5.12.0 section (esp. DB migration step).
+- `CHANGELOG.md` — v5.23.0 entry.
+- `MIGRATION_NOTES.md` — v5.23.0 section (esp. DB migration step).
 
 ---
 
@@ -427,16 +429,16 @@ Add a "📑 Bookmarks" link in the existing top nav of `yadgar/static/index.html
 
 ---
 
-## Sequencing relative to v5.11.0 and v5.20.0
+## Sequencing relative to v5.21.0 and v5.99.0
 
-- **v5.11.0** (anchor cross-project + Jira) is the next core ship. v5.12.0 lands AFTER v5.11.0 — gives time to bake schema patterns.
-- **v5.20.0** (deferred roadmap freshness) is FAR future. v5.12.0 is INDEPENDENT — bookmarks work regardless of how roadmap is freshness-enforced. (Bonus: bookmarks page is a natural target for the roadmap autogen if/when v5.20.0 ships.)
+- **v5.21.0** (anchor cross-project + Jira) is the next core anchor ship. v5.23.0 lands AFTER v5.21.0 — gives time to bake schema patterns.
+- **v5.99.0** (deferred roadmap freshness) is FAR future. v5.23.0 is INDEPENDENT — bookmarks work regardless of how roadmap is freshness-enforced. (Bonus: bookmarks page is a natural target for the roadmap autogen if/when v5.99.0 ships.)
 
 ---
 
 ## Implementation phasing suggestion
 
-If v5.12.0 lands in pieces, suggest order:
+If v5.23.0 lands in pieces, suggest order:
 
 1. **Phase 1 (backend, ~1 day):** schema migration + 4 MCP tools + tests. Ship dark — no UI yet.
 2. **Phase 2 (HTTP routes, ~half day):** viz_server.py proxy additions + tests. Browser still has no UI but routes callable.

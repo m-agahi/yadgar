@@ -1,4 +1,6 @@
-# PLAN — v5.15.0 / `@yadgar/sdk` v0.1.0: JavaScript / TypeScript SDK
+# PLAN — v5.35.0 / `@yadgar/sdk` v0.1.0: JavaScript / TypeScript SDK
+
+**Renumbered:** v5.22.0 → v5.35.0 on 2026-05-30. Reason: skip-1 minor convention adopted 2026-05-30 — odd-only minors for sequential features, even slots reserved for hotfix patches between them.
 
 **Status:** drafted 2026-05-30. Plan-first per I27. Greenfield — scan agent verdict NEVER-CONSIDERED. No prior commits, plans, or files touch a JS SDK. Implementation deferred.
 
@@ -6,7 +8,7 @@
 
 **Master at draft time:** core v5.10.3 shipped. v5.10.4 in flight on `feat/v5.10.4-consolidate-now-mode-hook-schema`.
 
-**Sequencing:** v5.15.0 slot — server-side support release (CORS knobs already shipped — `YADGAR_ALLOWED_ORIGINS` in `yadgar/server/_app.py:60`). Slot is light on the server side; bulk of the work lives in a new `sdk-js/` subdirectory that ships its own package version `@yadgar/sdk` v0.1.0. Lands after v5.13.0 (Adopt-1 benchmarks — `docs/PLAN_V5_13_0_BENCHMARK_PUBLICATION.md`) and v5.14.x (R2 recall plugin arch). Independent of v5.11 (anchor cross-project) and v5.12.0 (wiki bookmarks).
+**Sequencing:** v5.35.0 — server-side support release (CORS knobs already shipped — `YADGAR_ALLOWED_ORIGINS` in `yadgar/server/_app.py:60`). Slot is light on the server side; bulk of the work lives in a new `sdk-js/` subdirectory that ships its own package version `@yadgar/sdk` v0.1.0. Lands after v5.25.0 (Adopt-1 benchmarks — `docs/PLAN_V5_25_0_BENCHMARK_PUBLICATION.md`) and v5.31.0 (R2 recall plugin arch). Independent of v5.21.0 (anchor cross-project) and v5.23.0 (wiki bookmarks).
 
 ---
 
@@ -117,7 +119,7 @@ yadgar/                              # existing repo root
 | Visibility for JS users | Lower (Python repo, intimidating) | Higher (clean JS-only repo) |
 | Versioning independence | Achieved via separate `sdk-js/package.json` semver — no coupling forced | Native |
 | Branch hygiene | Subdir changes scoped via `paths:` in CI; no force-push pressure | Native |
-| Release tagging | Tag prefix `sdk-js/v0.1.0` distinct from core `v5.13.0` | Native |
+| Release tagging | Tag prefix `sdk-js/v0.1.0` distinct from core `v5.35.0` | Native |
 
 Subdir wins on every operational axis except "JS-only discoverability" — which the README + a `docs/sdk-js.md` pointer + clear npm package name solve. Audit explicitly noted yadgar's 32-tool MCP advantage; keeping the SDK close to those tools is the point.
 
@@ -145,8 +147,8 @@ Subdir wins on every operational axis except "JS-only discoverability" — which
 | Component | Versioning |
 |---|---|
 | `@yadgar/sdk` npm package | Independent semver. v0.x while API settling. v1.0 only after stable API + 2+ consumers using it. |
-| yadgar core (Python) | Existing semver, unchanged. v5.13.0 slot for the server-side support release. |
-| Compatibility matrix | Maintained in `sdk-js/README.md`. e.g. `@yadgar/sdk v0.1.x` supports `yadgar >= v5.13.0`. |
+| yadgar core (Python) | Existing semver, unchanged. v5.35.0 slot for the server-side support release. |
+| Compatibility matrix | Maintained in `sdk-js/README.md`. e.g. `@yadgar/sdk v0.1.x` supports `yadgar >= v5.35.0`. |
 | Breaking server changes | Server bumps minor; SDK bumps patch with new generated types in same PR. SDK minor bump only on SDK-side breaking changes (e.g. transport switch). |
 
 ### npm publication decision
@@ -344,7 +346,7 @@ Release tag format: `sdk-js/v0.1.0` — keeps SDK tags out of the core `v5.x.x` 
 6. **Examples** — 3-5 short scripts: memorize+recall, wiki query, project brief load, anchor pin, checkpoint+restore.
 7. **Edge runtime support** — Vercel Edge, Cloudflare Workers, Deno — minimal config notes.
 8. **Versioning + compatibility matrix** — table.
-9. **Roadmap** — link to `docs/PLAN_V5_13_0_JS_SDK.md` + planned v0.2 (SSE + framework adapters).
+9. **Roadmap** — link to `docs/PLAN_V5_35_0_JS_SDK.md` + planned v0.2 (SSE + framework adapters).
 10. **Contributing** — how to regenerate types, add a tool, run tests.
 11. **License** — Apache-2.0.
 
@@ -435,4 +437,4 @@ Audit's "1-2 weeks" estimate matches when you include the v0.2 lift (SSE + first
 
 mem0's 21 framework integrations and JavaScript SDK are the #1 reason it ranks higher than yadgar in casual comparison threads — even though yadgar's per-tool capability surface is larger. Without a JS SDK, every "I want to use yadgar in my Next.js / Mastra / Cloudflare Worker" thread ends with "you'd have to write your own MCP client." That's a moat-eroder.
 
-A typed thin client closes the gap with a week of focused work, no server changes, and zero risk to existing Python consumers. It also unlocks the browser viz path (call MCP from frontend instead of bespoke REST routes per feature), which compounds into v5.12.0 (wiki bookmarks) and any future viz expansion. Worth doing; worth doing first among the Option-A/B/C tiers.
+A typed thin client closes the gap with a week of focused work, no server changes, and zero risk to existing Python consumers. It also unlocks the browser viz path (call MCP from frontend instead of bespoke REST routes per feature), which compounds into v5.23.0 (wiki bookmarks) and any future viz expansion. Worth doing; worth doing first among the Option-A/B/C tiers.

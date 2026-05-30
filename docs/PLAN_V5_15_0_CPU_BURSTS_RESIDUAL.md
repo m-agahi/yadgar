@@ -1,10 +1,12 @@
-# PLAN — v5.10.9: CPU burst residual investigation + detection infrastructure
+# PLAN — v5.15.0: CPU burst residual investigation + detection infrastructure
+
+**Renumbered:** v5.12.0 → v5.15.0 on 2026-05-30. Reason: skip-1 minor convention adopted 2026-05-30 — odd-only minors for sequential features, even slots reserved for hotfix patches between them.
 
 **Status:** drafted 2026-05-30 based on empirical investigation. No burst visible at time of writing. Plan focuses on detection infrastructure and fix verification rather than speculative new root cause.
 
 **Master at draft time:** v5.10.3 shipped + tagged. v5.10.4 (consolidate_now) in flight.
 
-**Sequencing:** v5.10.9 patch. Independent of v5.10.4-8. Can ship after v5.10.4 but does not block on it. The consolidate_now fix in v5.10.4 is relevant context (sleep cycle bypassing gate was itself a CPU burst vector).
+**Sequencing:** v5.15.0. Slots after v5.13.0 (secret-gate). Independent of v5.13.x hotfix space. Can ship after v5.13.0 but does not block on it. The consolidate_now fix in v5.10.4 is relevant context (sleep cycle bypassing gate was itself a CPU burst vector).
 
 ---
 

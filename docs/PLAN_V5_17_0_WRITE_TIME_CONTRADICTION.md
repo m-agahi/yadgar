@@ -1,7 +1,9 @@
-# PLAN v5.10.10 — Write-Time Contradiction Detection (Audit Adopt-2)
+# PLAN v5.17.0 — Write-Time Contradiction Detection (Audit Adopt-2)
+
+**Renumbered:** v5.13.0 → v5.17.0 on 2026-05-30. Reason: skip-1 minor convention adopted 2026-05-30 — odd-only minors for sequential features, even slots reserved for hotfix patches between them.
 
 **Status:** DRAFT — pending TDD execution
-**Version slot:** v5.10.10 (light wiring patch; v5.10.x already crowded — this slot is free)
+**Version slot:** v5.17.0 (slots after v5.15.0 CPU bursts; v5.16.x reserved for hotfixes)
 **Audit reference:** `docs/competitor-audit-2026-05-30.md` Adopt item 2 ("Write-time conflict resolution")
 **Audit-decisions entry to add:** under "Adopt items → 2. Write-time conflict resolution" — see end of this plan
 **Related shipped code:**

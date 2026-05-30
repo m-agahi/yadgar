@@ -1,12 +1,14 @@
-# PLAN — v5.13.0: Benchmark Publication (LongMemEval headline number)
+# PLAN — v5.25.0: Benchmark Publication (LongMemEval headline number)
 
-**Status:** drafted 2026-05-30. Plan-first per I27. Fires the revisit trigger on `AUDIT_DECISIONS.md` D2 (NLI default-on) and D3 (PC causal discovery). Lean MVP scope: **publish one comparable number against mem0 (94.4) and Zep (63.8) on LongMemEval** so Yadgar has a benchmark figure to cite.
+**Renumbered:** v5.17.0 → v5.25.0 on 2026-05-30. Reason: skip-1 minor convention adopted 2026-05-30 — odd-only minors for sequential features, even slots reserved for hotfix patches between them.
+
+**Status:** drafted 2026-05-30. Plan-first per I27. Fires the revisit trigger on `DECISIONS.md` D2 (NLI default-on) and D3 (PC causal discovery). Lean MVP scope: **publish one comparable number against mem0 (94.4) and Zep (63.8) on LongMemEval** so Yadgar has a benchmark figure to cite.
 
 **Audit lineage:** Adopt-1 in `docs/competitor-audit-2026-05-30.md` ("Formal benchmarking — High impact, medium effort"). Audit text: *"This is the single highest-ROI missing piece for Yadgar's credibility."*
 
 **Master at draft time:** core v5.10.3 shipped; v5.10.4 in-flight on branch `feat/v5.10.4-consolidate-now-mode-hook-schema`.
 
-**Proposed slot:** **v5.13.0**. Confirmed by main thread.
+**Proposed slot:** **v5.25.0**. (Previously confirmed as v5.13.0; renumbered to v5.25.0 under skip-1 convention.)
 
 ---
 
@@ -28,22 +30,22 @@
 
 ---
 
-## Why v5.13.0 (proposed slot)
+## Why v5.25.0 (proposed slot)
 
 Slot reasoning — present this as a proposal; main thread synthesizes against the rest of the roadmap.
 
 | Slot | Status | Why this isn't where benchmarks go |
 |---|---|---|
 | v5.10.4 → v5.10.9 | Active micro-fix train; surgical scope (single-bug fixes, hook fixes, secret-gate, etc.) | Benchmark publication is a multi-day cross-cutting effort, not a micro-fix. Doesn't belong in a patch train. |
-| v5.11.0 | Anchor cross-project (`PLAN_V5_11_ANCHOR_CROSS_PROJECT.md`) | Independent feature, already planned. Don't conflate. |
-| v5.12.0 | Wiki Bookmarks page (`PLAN_V5_12_0_WIKI_BOOKMARKS.md`) | Independent UI feature. Don't conflate. |
-| **v5.13.0** | **Benchmark publication** | **First available clean minor slot. Downstream blockers waiting on it (R2 plugin arch, D2 NLI, D3 PC causal) — getting the number out earlier unblocks more later work.** |
-| v5.14.x | R2 retrieval-pipeline plugin architecture (per AUDIT_DECISIONS R2, "likely v5.14.x") | Pre-slotted in audit log AS the slot that follows benchmark landing. |
-| v5.20.0 | Roadmap freshness | Unrelated. |
+| v5.21.0 | Anchor cross-project (`PLAN_V5_21_0_ANCHOR_CROSS_PROJECT.md`) | Independent feature, already planned. Don't conflate. |
+| v5.23.0 | Wiki Bookmarks page (`PLAN_V5_23_0_WIKI_BOOKMARKS.md`) | Independent UI feature. Don't conflate. |
+| **v5.25.0** | **Benchmark publication** | **Odd-minor slot under skip-1 convention. Downstream blockers waiting on it (R2 plugin arch, D2 NLI, D3 PC causal) — getting the number out earlier unblocks more later work.** |
+| v5.31.x | R2 retrieval-pipeline plugin architecture (per DECISIONS R2) | Pre-slotted AS the slot that follows benchmark landing. |
+| v5.99.0 | Roadmap freshness | Unrelated. |
 
-**Sequencing constraint:** v5.13.0 must ship **before** v5.14.x (R2 plugin arch). The audit-decisions log already pins R2 to "likely v5.14.x (after benchmarks land)". Inverting the order would mean designing the plugin architecture without benchmark data to justify the per-stage toggles it enables.
+**Sequencing constraint:** v5.25.0 must ship **before** v5.31.x (R2 plugin arch). The decisions log already pins R2 to after benchmarks land. Inverting the order would mean designing the plugin architecture without benchmark data to justify the per-stage toggles it enables.
 
-**Calendar ordering is independent of version ordering.** v5.13.0 can run in parallel with v5.10.x train (different agent / different files). Both can land in any chronological order — but no v5.14+ work touches the retrieval pipeline until v5.13.0 numbers exist.
+**Calendar ordering is independent of version ordering.** v5.25.0 can run in parallel with v5.10.x train (different agent / different files). Both can land in any chronological order — but no v5.31+ work touches the retrieval pipeline until v5.25.0 numbers exist.
 
 ---
 
@@ -58,15 +60,15 @@ Why LongMemEval first (not LoCoMo):
 - Script (`benchmarks/run_longmemeval.py`) is already 848 LOC and complete — dataset download is built-in (HuggingFace URL hardcoded, no license gate at download level).
 - Retrieval-only mode is free (no LLM, no API key) → produces partial signal even if budget kills Phase 2.
 
-LoCoMo + ablation can ship in a follow-up minor (v5.13.x or later); they are not part of v5.13.0 acceptance criteria.
+LoCoMo + ablation can ship in a follow-up minor (v5.25.x or later); they are not part of v5.25.0 acceptance criteria.
 
 ---
 
 ## Non-goals (explicit)
 
-- **No LoCoMo numbers** in v5.13.0. LoCoMo follows in a separate slot once LongMemEval headline exists.
+- **No LoCoMo numbers** in v5.25.0. LoCoMo follows in a separate slot once LongMemEval headline exists.
 - **No GPU benchmark.** `run_benchmark_gpu.py` is the GPU rerank path; untested per `benchmarks-current.md`. Wait for separate hardware story.
-- **No ablation study.** `run_locomo_ablation.py` (per-signal contribution) only makes sense after R2 plugin arch (v5.14.x) lands.
+- **No ablation study.** `run_locomo_ablation.py` (per-signal contribution) only makes sense after R2 plugin arch (v5.31.x) lands.
 - **No D2 / D3 decisions in this plan.** This plan PRODUCES the data D2/D3 need; the actual revisit happens after ship.
 - **No `flush_only()` MCP primitive, no pipeline refactor.** Pure benchmark publication.
 - **No new test infra.** Existing pytest + standalone scripts are enough.
@@ -129,7 +131,7 @@ LoCoMo + ablation can ship in a follow-up minor (v5.13.x or later); they are not
 - Run: `.venv/bin/python -m benchmarks.run_longmemeval --variant s`.
 - Cost: ~1000 `claude -p` invocations. Document exact cost in result JSON.
 - Output: full per-query + aggregated metrics including `qa_accuracy` per question type, plus overall accuracy = the headline number.
-- Wall-clock: hours-to-overnight depending on Claude latency and concurrency. Script is sequential; if concurrency is needed, that's a separate spike (out of scope for v5.13.0).
+- Wall-clock: hours-to-overnight depending on Claude latency and concurrency. Script is sequential; if concurrency is needed, that's a separate spike (out of scope for v5.25.0).
 - Persist output JSON.
 
 ### Step 3 — Sanity checks (≤ 0.5 day)
@@ -154,8 +156,8 @@ Long-form per-question-type breakdown. Sections:
 - Caveats (judge model, subsampling if any, known failure modes)
 - Reproduction instructions: exact command line + env
 
-#### 4c. CHANGELOG.md entry for v5.13.0
-One paragraph in the v5.13.0 section: "Published first LongMemEval QA accuracy: X.X% on `longmemeval_s` variant. See `docs/BENCHMARK_RESULTS.md` for breakdown and reproduction."
+#### 4c. CHANGELOG.md entry for v5.25.0
+One paragraph in the v5.25.0 section: "Published first LongMemEval QA accuracy: X.X% on `longmemeval_s` variant. See `docs/BENCHMARK_RESULTS.md` for breakdown and reproduction."
 
 #### 4d. Conditional: README.md
 If headline number is ≥ Zep's 63.8 (i.e. genuinely competitive), add a "Benchmarks" line to README with the number + link to BENCHMARK_RESULTS.md. If below 63.8, publish without README banner — frame as "first published number, retrieval pipeline tuning in progress."
@@ -182,32 +184,32 @@ Both D2 (NLI as default) and D3 (PC algorithm causal discovery) are DEFER decisi
 
 **Required post-ship actions:**
 
-1. Add entry to `docs/AUDIT_DECISIONS.md` under the 2026-05-30 audit section, OR open a new dated audit section if a fresh audit has run since:
-   - Note that Adopt-1 has shipped (cite v5.13.0 commit SHA).
+1. Add entry to `docs/DECISIONS.md` under the 2026-05-30 audit section, OR open a new dated audit section if a fresh audit has run since:
+   - Note that Adopt-1 has shipped (cite v5.25.0 commit SHA).
    - State that D2 and D3 are now in **RECONSIDER** posture per their own revisit triggers.
    - Either include the A/B numbers if Step 7 has been executed, or schedule Step 7 explicitly.
 
 2. Draft (do not necessarily implement) two follow-up plans:
-   - `docs/PLAN_V5_13_X_D2_NLI_AB.md` — A/B run of LongMemEval with `NLI_RERANKING_ENABLED=False` vs True. Decision rule: if NLI contributes <5pp, flip default OFF.
-   - `docs/PLAN_V5_13_X_D3_PC_AB.md` — A/B run with `pc_algorithm` disabled in nightly cycle. Decision rule from D3 entry.
+   - `docs/PLAN_V5_25_X_D2_NLI_AB.md` — A/B run of LongMemEval with `NLI_RERANKING_ENABLED=False` vs True. Decision rule: if NLI contributes <5pp, flip default OFF.
+   - `docs/PLAN_V5_25_X_D3_PC_AB.md` — A/B run with `pc_algorithm` disabled in nightly cycle. Decision rule from D3 entry.
 
-   These plans are draft-only on v5.13.0 ship; whether to implement them is a separate decision per their respective revisit triggers.
+   These plans are draft-only on v5.25.0 ship; whether to implement them is a separate decision per their respective revisit triggers.
 
-### Step 7 (optional, may slip to v5.13.x) — D2 + D3 A/B runs
+### Step 7 (optional, may slip to v5.25.x) — D2 + D3 A/B runs
 
-The actual A/B experimentation. Costs: 2× full LongMemEval Phase 2 runs (one per ablation). Could land in v5.13.1 / v5.13.2 / v5.14.0 — slot determined by main thread after Step 6 plans are reviewed.
+The actual A/B experimentation. Costs: 2× full LongMemEval Phase 2 runs (one per ablation). Could land in v5.25.1 / v5.25.2 / v5.31.0 — slot determined by main thread after Step 6 plans are reviewed.
 
 ---
 
 ## Acceptance criteria
 
-v5.13.0 ships when ALL of the following are true:
+v5.25.0 ships when ALL of the following are true:
 
-- [ ] `docs/benchmarks-current.md` "Per-release results" table has a populated row for v5.13.0 (no TBD).
+- [ ] `docs/benchmarks-current.md` "Per-release results" table has a populated row for v5.25.0 (no TBD).
 - [ ] `docs/BENCHMARK_RESULTS.md` exists with: headline number, per-question-type breakdown, comparison-to-competitors table, reproducibility metadata, reproduction command.
-- [ ] `CHANGELOG.md` has v5.13.0 entry citing the headline number and linking to `BENCHMARK_RESULTS.md`.
-- [ ] Result JSON files committed at `benchmarks/results/longmemeval_v5.13.0_<variant>_full.json` (and `..._retrieval.json` for Phase 1).
-- [ ] `docs/AUDIT_DECISIONS.md` updated with D2 + D3 RECONSIDER notes (Step 6.1).
+- [ ] `CHANGELOG.md` has v5.25.0 entry citing the headline number and linking to `BENCHMARK_RESULTS.md`.
+- [ ] Result JSON files committed at `benchmarks/results/longmemeval_v5.25.0_<variant>_full.json` (and `..._retrieval.json` for Phase 1).
+- [ ] `docs/DECISIONS.md` updated with D2 + D3 RECONSIDER notes (Step 6.1).
 - [ ] (Optional but recommended) D2 + D3 follow-up plan files drafted (Step 6.2).
 
 **Headline number quality bar:** must include reproducibility metadata. **The number itself can be ANY number — including below Zep's 63.8.** A bad benchmark number is still a published benchmark number; that's the point. Iteration follows.
@@ -245,18 +247,18 @@ Matches the audit estimate ("2-4 days to set up") with extra buffer for publicat
 ## Dependencies & blockers
 
 - **None blocking start.** v5.10.4 active development on a separate branch — no file overlap. Scripts already exist on master.
-- **Downstream:** v5.14.x (R2 plugin arch) and D2/D3 revisit BLOCKED until v5.13.0 ships.
+- **Downstream:** v5.31.x (R2 plugin arch) and D2/D3 revisit BLOCKED until v5.25.0 ships.
 - **Hardware:** no special hardware needed for Phase 1 or default Phase 2. If GPU benchmark is later added, that's a separate slot.
 
 ---
 
-## What this plan ship enables (post-v5.13.0)
+## What this plan ship enables (post-v5.25.0)
 
 | Downstream item | What unlocks |
 |---|---|
-| AUDIT_DECISIONS.md D2 (NLI default) | RECONSIDER posture; A/B run becomes meaningful |
-| AUDIT_DECISIONS.md D3 (PC causal) | RECONSIDER posture; ablation run becomes meaningful |
-| v5.14.x R2 (recall pipeline plugin arch) | Per-stage A/B becomes routine, justifying the refactor cost |
+| DECISIONS.md D2 (NLI default) | RECONSIDER posture; A/B run becomes meaningful |
+| DECISIONS.md D3 (PC causal) | RECONSIDER posture; ablation run becomes meaningful |
+| v5.31.x R2 (recall pipeline plugin arch) | Per-stage A/B becomes routine, justifying the refactor cost |
 | Yadgar README credibility | A real number to cite vs "no published benchmarks" gap audit calls out |
 | Yadgar release marketing | CHANGELOG / blog post material |
 
@@ -265,7 +267,7 @@ Matches the audit estimate ("2-4 days to set up") with extra buffer for publicat
 ## Coordination notes for main thread
 
 - Plan-only doc → direct to master per workflow rule set 2026-05-30 (wiki slug `yadgar-workflow-plan-commits-direct-to-master`).
-- Implementation work on this plan will require a feature branch — `feat/v5.13.0-longmemeval-publication` is the obvious name. Implementer should branch from latest master after this plan commits.
+- Implementation work on this plan will require a feature branch — `feat/v5.25.0-longmemeval-publication` is the obvious name. Implementer should branch from latest master after this plan commits.
 - v5.10.4 active development on `feat/v5.10.4-consolidate-now-mode-hook-schema` — file overlap NONE (this plan touches `benchmarks/`, `docs/benchmarks-current.md`, `docs/BENCHMARK_RESULTS.md` new, `CHANGELOG.md`, possibly `README.md`; v5.10.4 touches `yadgar/server/tools/admin_other.py`, hooks, `yadgar/tests/test_consolidate_now.py`).
 - Implementer must read `docs/AUDIT_DECISIONS.md` per protocol before re-recommending or re-scoping.
 - If main thread decides a different version slot, rename the file and update the header line + "Proposed slot" section. Body content remains valid for any v5.13.x or v5.1y.0 slot.

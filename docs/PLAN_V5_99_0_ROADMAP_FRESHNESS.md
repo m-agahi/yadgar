@@ -1,10 +1,12 @@
-# PLAN — v5.20.0: Roadmap freshness mechanism (DEFERRED)
+# PLAN — v5.99.0: Roadmap freshness mechanism (DEFERRED)
 
-**Status:** DEFERRED on 2026-05-30. Originally drafted + implemented as v5.10.4 on 2026-05-29; deferred to v5.20.0 after encountering fundamental design issues with yadgar's async wiki write queue. Discussion required before resuming.
+**Renumbered:** v5.30.0 → v5.99.0 on 2026-05-30. Reason: skip-1 minor convention adopted 2026-05-30. Far-future deferred slot bumped to v5.99.0 to maintain clear gap ahead of the active pipeline (now extending to v5.37.0) and to signal indefinite deferral.
+
+**Status:** DEFERRED on 2026-05-30. Originally drafted + implemented as v5.10.4 on 2026-05-29; deferred to v5.30.0 after encountering fundamental design issues with yadgar's async wiki write queue; renumbered to v5.99.0 under skip-1 convention. Discussion required before resuming.
 
 **Master at deferral time:** core v5.10.3 (unchanged — no v5.10.4 release shipped).
 
-**Sequencing:** v5.20.0 slot — far future. Pick up after v5.11.0 ships and the issues below are resolved by either (a) new yadgar primitive `flush_only`, (b) explicit design choice on splice-vs-full-render, or (c) different architecture entirely.
+**Sequencing:** v5.99.0 slot — far future / indefinite. Pick up after active pipeline (v5.11.0–v5.37.0) clears and the issues below are resolved by either (a) new yadgar primitive `flush_only`, (b) explicit design choice on splice-vs-full-render, or (c) different architecture entirely.
 
 ---
 
@@ -112,7 +114,7 @@ First instinct to fix Issue 5: call `consolidate_now()` to force flush. Reality:
 
 Total: ~13 minutes. Per v5.7.0 design, meant for NIGHTLY 19:00 UTC run only. Calling on-demand for "force flush" is wildly inappropriate.
 
-**Implication for any future yadgar-write-then-read script.** Same gotcha will hit any author who needs synchronous behavior. A dedicated `flush_only` MCP tool (commit queued writes without sleep cycle) would unblock both v5.20.0 and other future tooling.
+**Implication for any future yadgar-write-then-read script.** Same gotcha will hit any author who needs synchronous behavior. A dedicated `flush_only` MCP tool (commit queued writes without sleep cycle) would unblock both v5.99.0 and other future tooling.
 
 ### Issue 7: `ruff format` strips parens from `except (A, B):`
 `ruff format` (v0.15.x in repo) auto-rewrites `except (json.JSONDecodeError, TypeError):` to invalid `except json.JSONDecodeError, TypeError:` (Python-2 era syntax, raises `SyntaxError` in Python 3).
@@ -146,7 +148,7 @@ Inserting v5.10.4 = freshness pushed prior chain by +1 (nightly → v5.10.5, etc
 
 ---
 
-## Open questions (to resolve when picking up v5.20.0)
+## Open questions (to resolve when picking up v5.99.0)
 
 1. **Splice (B) vs full-render (C)?**
    - **B:** wiki = manual prose + sentinel-bounded autogen sections, spliced on publish. Pros: humans can edit non-autogen wiki sections freely. Cons: requires read-after-write (Issue 5).
@@ -156,7 +158,7 @@ Inserting v5.10.4 = freshness pushed prior chain by +1 (nightly → v5.10.5, etc
 2. **Should yadgar grow `flush_only` MCP tool?**
    - Cheap: commit queued wiki/memory writes to backing store without sleep cycle.
    - Unblocks Issue 5 generically (not just for this script).
-   - Probably v5.11+ design point (separate from this plan).
+   - Probably v5.13+ design point (separate from this plan).
 
 3. **If C: where does static prose live?**
    - Inline in `scripts/refresh_roadmap_pipeline.py` (template constant)?
@@ -177,7 +179,7 @@ Inserting v5.10.4 = freshness pushed prior chain by +1 (nightly → v5.10.5, etc
 
 ## When to resume
 
-Pick up v5.20.0 after at least one of:
+Pick up v5.99.0 after at least one of:
 - **Trigger A:** yadgar ships `flush_only` MCP primitive (unblocks Option B).
 - **Trigger B:** explicit decision in user discussion to go with Option C (then this becomes mechanical: pick prose location, rewrite `_publish_to_wiki`, drop splice code).
 - **Trigger C:** another roadmap-drift incident bad enough to force the issue.
@@ -202,7 +204,7 @@ Non-deps (this plan is independent of):
 - v5.10.6 viz fixes
 - v5.10.7 secret-gate context-awareness
 - backend-v5.4.x CE perf
-- v5.11.0 anchor cross-project
+- v5.21.0 anchor cross-project
 
 ---
 
@@ -212,4 +214,4 @@ Non-deps (this plan is independent of):
 - File artifact (`docs/ROADMAP_GENERATED.md`) doesn't exist on master (lives only on the feature branch). So `--check` lint isn't running anywhere either.
 - Each new release cycle reproduces the manual-rewrite-the-wiki ritual.
 
-**Acceptable trade-off** for deferral: pipeline ahead has higher value (security fixes in v5.10.7, viz UX in v5.10.6, etc.). Manual roadmap refresh is a known cost we keep paying until v5.20.0 lands.
+**Acceptable trade-off** for deferral: pipeline ahead has higher value (security fixes in v5.10.7, viz UX in v5.10.6, etc.). Manual roadmap refresh is a known cost we keep paying until v5.99.0 lands.

@@ -6,17 +6,6 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
-## [5.10.11] — 2026-05-30
-
-Viz polish (3D-only): edge thickness +50% + connected-node repulsion +20%.
-
-- **3D edge thickness +50%** (`yadgar/static/index.html` line 863): 3D init block `.linkWidth` changed from plain `_linkWidth` to `l => _linkWidth(l) * 1.5`. 2D init block unchanged.
-- **3D link distance 30 → 36** (`yadgar/static/index.html` after 3D init chain): added `graph.d3Force('link').distance(36)` in 3D branch only. 2D branch retains `distance(30)` in its else block. (Plan assumed shared post-init block; actual code is per-branch — 3D had no prior `distance()` call, so we added one directly.)
-- **3 new static-asset regression tests** (`test_viz_static_assets.py::TestV51011VizEdgeThicknessAndRepulsion`): `test_3d_linkWidth_multiplier_present`, `test_2d_linkWidth_unchanged`, `test_3d_link_distance_36`.
-- **Coloring logic untouched** — `_nodeColorFor`, `_linkColor`, `heatColor`, `WIKI_CAT_COLOR` unchanged per user instruction. 2D edge width untouched.
-
-See [MIGRATION_NOTES.md §v5.10.11](MIGRATION_NOTES.md#v51011--viz-polish-3d-only-edge-thickness-50--repulsion-20-2026-05-30) + `docs/PLAN_V5_10_11_VIZ_EDGE_THICKNESS_AND_REPULSION.md`.
-
 ## [5.10.10] — 2026-05-30
 
 Viz polish: 2x 3D node size + auto-zoom-fit on initial load (both 2D and 3D modes).

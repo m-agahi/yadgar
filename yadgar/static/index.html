@@ -860,7 +860,7 @@ function initGraph(mode) {
       // — three attempts at custom mesh rendered as fragmented shards. Falling back to
       // ForceGraph3D's default solid sphere rendering. Last-known-good visual.
       .linkColor(_linkColor)
-      .linkWidth(l => _linkWidth(l) * 1.5)   // v5.10.11: 3D-only +50% thickness
+      .linkWidth(_linkWidth)
       .linkDirectionalArrowLength(_arrowLen)
       .linkDirectionalArrowRelPos(1)
       .nodeVisibility(n => n.__visible !== false)
@@ -881,7 +881,6 @@ function initGraph(mode) {
           }
         }
       });
-    graph.d3Force('link').distance(36);   // v5.10.11: 3D-only +20% repulsion (30 * 1.2)
   } else {
     // 2D mode (force-graph canvas) — default
     graph = ForceGraph()(wrap)
