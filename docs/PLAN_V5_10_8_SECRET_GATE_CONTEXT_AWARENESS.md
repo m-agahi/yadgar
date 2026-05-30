@@ -1,10 +1,10 @@
-# PLAN — v5.10.7: Secret-gate pattern context-awareness + allowlist (false-positive reduction)
+# PLAN — v5.10.8: Secret-gate pattern context-awareness + allowlist (false-positive reduction)
 
-**Status:** drafted 2026-05-29 late evening. Originally drafted as v5.10.7 then renumbered v5.10.8 during v5.10.4-freshness insertion attempt; v5.10.4 freshness work deferred to v5.20.0 on 2026-05-30, so this returns to its original v5.10.7 slot. Plan-first per I27.
+**Status:** drafted 2026-05-29 late evening. Renumber history: originally v5.10.7 → temporarily v5.10.8 during freshness insertion attempt → back to v5.10.7 after freshness deferred → **final: v5.10.8** after v5.10.7 slot taken by viz fixes in the 2026-05-30 renumber. Plan-first per I27.
 
 **Master at draft time:** core v5.10.3 shipped + tagged.
 
-**Sequencing:** v5.10.7 patch. Slots after v5.10.6 viz fixes. Independent of backend-v5.4.x soak decision.
+**Sequencing:** v5.10.8 patch. Slots after v5.10.7 (viz fixes). Independent of backend-v5.4.x soak decision.
 
 ## Problem
 

@@ -1,10 +1,10 @@
-# PLAN — v5.11.x: Viz UX fixes (S2.1–S2.4)
+# PLAN — v5.10.7: Viz UX fixes (S2.1–S2.4)
 
-**Status:** drafted 2026-05-29. Soak-observed since 2026-05-20 (memory id 494192). Originally scoped for v5.5, dropped when v5.5.1 went log-management direction. Re-scoped now after user noticed nothing addresses them.
+**Status:** drafted 2026-05-29. Soak-observed since 2026-05-20 (memory id 494192). Originally scoped for v5.5, dropped when v5.5.1 went log-management direction. Re-scoped now after user noticed nothing addresses them. Renumbered v5.11.x→v5.10.7 on 2026-05-30 per all-drafts-get-concrete-version rule.
 
 **Master at draft time:** core v5.10.2 + backend v5.4.0 deployed.
 
-**Sequencing:** v5.11.x patch on the v5.11 train (cross-project + Jira + migration_grace). Independent of v5.11.0 core anchor work — different files (`yadgar/static/index.html`, `yadgar/viz_server.py` vs anchor/audit code). Can ship as standalone patch after v5.11.0 OR as parallel v5.10.x patch if user wants viz fixed before anchor cross-project work lands.
+**Sequencing:** v5.10.7 patch. Slots after v5.10.6 (session-end capture). Independent of v5.10.4 (consolidate_now) and v5.10.5 (nightly cycle bugs). Can ship in parallel with v5.11.0 anchor work — different files (`yadgar/static/index.html`, `yadgar/viz_server.py` vs anchor/audit code).
 
 ---
 
