@@ -1,4 +1,4 @@
-/* yadgar bookmarks page JS — v5.24.1
+/* yadgar bookmarks page JS — v5.24.2
  *
  * Consumes:
  *   GET  /api/bookmarks                    → [{slug, label_override, position, added_at}]
@@ -45,22 +45,23 @@ function _configureMarked() {
 
   // Custom renderer: [[slug]] → clickable links that navigate bookmarks
   // marked v15 passes a token object to renderer.text, not a raw string.
-  // Extract the string via token.text (v5 API) before calling replace().
+  // v5.24.1 extracted token.text correctly but then called _origText(replaced),
+  // which is v15's default text renderer and expects a token object — it does
+  // `'tokens' in arg` on the returned string and throws.  Fix: return the
+  // replaced HTML string directly; DOMPurify downstream handles XSS.
   const renderer = new marked.Renderer();
-  const _origText = renderer.text.bind(renderer);
   renderer.text = (token) => {
-    // marked v5+: token is an object {type:"text", text:"...", ...}
-    // marked v4 and below: token is already the string.
+    // marked v15: token is an object {type:"text", text:"...", tokens:[...]}
+    // marked v14 and below: token is already the string.
     const raw = (typeof token === "object" && token !== null && typeof token.text === "string")
       ? token.text
       : (typeof token === "string" ? token : "");
     // Replace [[slug]] patterns with anchor that calls selectBookmark(slug)
-    const replaced = raw.replace(
+    return raw.replace(
       /\[\[([^\]]+)\]\]/g,
       (_, slug) =>
         `<a href="#" class="wiki-xref" onclick="selectBookmarkBySlug('${slug.replace(/'/g, "\\'")}');return false;">${slug}</a>`
     );
-    return _origText(replaced);
   };
   marked.setOptions({ renderer });
 }

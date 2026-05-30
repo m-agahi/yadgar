@@ -7,6 +7,13 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.24.2] - 2026-05-30
+
+Second hotfix for bookmarks renderer introduced at v5.24.0.
+
+### Fixed
+- **bookmarks renderer round-trip crash:** v5.24.1 extracted `token.text` from the marked v15 token object correctly but then called `_origText(replaced)` — passing the HTML string back to v15's default `text` renderer, which does `'tokens' in arg` internally, throwing "Cannot use 'in' operator to search for 'tokens' in `<string>`" on any wiki page with inline text. Fixed: drop `_origText` delegation; return replaced string directly. DOMPurify downstream handles XSS.
+
 ## [5.24.1] - 2026-05-30
 
 Hotfix for two production bugs introduced at v5.24.0 ship.
