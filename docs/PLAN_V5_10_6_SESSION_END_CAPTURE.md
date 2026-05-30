@@ -1,10 +1,10 @@
-# PLAN — v5.10.5: SESSION_END_CAPTURE sentinel-marker pattern + SessionStart extraction
+# PLAN — v5.10.6: SESSION_END_CAPTURE sentinel-marker pattern + SessionStart extraction
 
-**Status:** drafted + advisor-reviewed 2026-05-29. Ready for implementation. Renumbered v5.10.5 on 2026-05-29 evening per all-drafts-get-versions rule (v5.10.2 shipped; v5.10.3 scan-fix in flight; v5.10.4 reserved for nightly cycle remaining bugs).
+**Status:** drafted + advisor-reviewed 2026-05-29. Ready for implementation. Renumbered v5.10.5→v5.10.6 on 2026-05-30: v5.10.4 slot claimed by consolidate_now heavyweight fix, nightly-cycle remaining bugs shifted to v5.10.5.
 
 **Master at draft time:** bbd50fb (initial draft) → master is now post-v5.10.2 ship (f42e4d8).
 
-**Sequencing:** v5.10.5 patch. Independent of v5.10.3 (scan script) and v5.10.4 (nightly cycle remaining bugs). No file overlap. Ships when prior patches clear.
+**Sequencing:** v5.10.6 patch. Independent of v5.10.3 (scan script), v5.10.4 (consolidate_now heavyweight), and v5.10.5 (nightly cycle remaining bugs). No file overlap. Ships when prior patches clear.
 
 ---
 

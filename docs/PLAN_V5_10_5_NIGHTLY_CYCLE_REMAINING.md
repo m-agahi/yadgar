@@ -1,10 +1,10 @@
-# PLAN — v5.10.4: Nightly cycle remaining bugs (vacuum URL second site + prune logic)
+# PLAN — v5.10.5: Nightly cycle remaining bugs (vacuum URL second site + prune logic)
 
-**Status:** drafted 2026-05-29 evening after tonight's 19:00 UTC fire revealed v5.10.2 nightly-cycle fix was partial.
+**Status:** drafted 2026-05-29 evening after tonight's 19:00 UTC fire revealed v5.10.2 nightly-cycle fix was partial. Renumbered v5.10.4→v5.10.5 on 2026-05-30: v5.10.4 slot claimed by consolidate_now heavyweight fix.
 
 **Master at draft time:** core v5.10.2 deployed + tagged.
 
-**Sequencing:** v5.10.4 hotfix patch. Slots between v5.10.3 (scan-script fix in flight) and v5.10.5 (session-end capture).
+**Sequencing:** v5.10.5 patch. Slots between v5.10.4 (consolidate_now heavyweight fix) and v5.10.6 (session-end capture).
 
 ---
 
