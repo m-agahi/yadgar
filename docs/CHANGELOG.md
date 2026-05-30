@@ -7,6 +7,520 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.20.0] - 2026-05-30
+
+Hotfix: db-lockdown PreToolUse hook migrated from project-local `hook_runner.py` dispatcher
+to a standalone `yadgar/hooks/db-lockdown-check.py` script that ships with the package and
+is deployed by `install_hooks`. Fixes recurring "hookSpecificOutput is missing required field
+'hookEventName'" PreToolUse validation errors caused by the old handler's non-compliant
+JSON output.
+
+### Fixed
+- PreToolUse Bash hook now emits `hookEventName: "PreToolUse"` on all paths (allow, deny, fail-soft), satisfying the Claude Code 2026 hook schema.
+- Old `hook_runner.py db-lockdown-check` wiring referenced a gitignored local file; in-session fixes were lost on every context reset. Now ships as `yadgar/hooks/db-lockdown-check.py`, installed globally as `~/.claude/hooks/yadgar-db-lockdown-check.py` by `install_hooks`.
+
+### Changed
+- `install_hooks_lib.py` `PreToolUse` entry uses direct-command pattern (`python3 "<dst>"`) instead of dispatcher pattern, matching `SubagentStop`, `InstructionsLoaded`, and `SubagentStart` hooks.
+- `yadgar/scripts/hook_runner.py`: removed `hook_db_lockdown_check()` and `"db-lockdown-check"` from `_HOOKS`.
+
+### Internal
+- 7 new tests in `test_db_lockdown_hook.py` (subprocess-level, tests real entry point).
+- 1 new test in `test_server.py`: `test_install_hooks_pretooluse_direct_command_not_dispatcher`.
+
+See MIGRATION_NOTES.md — v5.20.0
+
+## [5.19.0] - 2026-05-30
+
+Scope-aware anchor surfacing in `HippocampalReplay.restore()`. Projects with 20+
+anchors no longer crowd out global anchors from the restore payload.
+
+### Fixed
+- `restore()` called `get_anchored_memories(limit=20)` — a flat unscoped query. Projects with many anchors silently dropped global anchors. Now uses `get_anchored_memories_scoped(directory, limit)`: global bucket first, then project bucket, merged with dedup and heat ordering.
+
+### Added
+- `StorageEngine.get_anchored_memories_scoped(directory, limit)` — two-query scope split with hard safety cap 50 per scope, expired anchor exclusion, heat DESC ordering within scope.
+
+### Internal
+- 12 new tests in `test_anchor_surfacing.py`.
+
+See MIGRATION_NOTES.md — v5.19.0
+
+## [5.17.0] - 2026-05-30
+
+Write-time contradiction detection wired default-on. Contradicting memories
+no longer wait for the nightly consolidation pass — the lightweight detector
+fires on every write where similar memories (cosine ≥ 0.6) exist.
+
+### Added
+- `curate_on_remember()` calls `detect_contradictions()` before merge/link/create. Env-gated via `YADGAR_WRITE_TIME_CONTRADICTION` (default `on`); fail-soft so detector errors never block writes.
+- `yadgar_write_time_contradiction_total{reason}` counter (`negation_mismatch` | `action_divergence`).
+
+### Fixed
+- `confidence` added to `_MEMORY_UPDATABLE_FIELDS` — `update_memory_fields(id, confidence=...)` was a silent no-op; detector's confidence-decay side effect was dead code.
+
+### Internal
+- 7 new tests in `test_write_time_contradiction.py`.
+
+See MIGRATION_NOTES.md — v5.17.0
+
+## [5.15.0] - 2026-05-30
+
+Two independent D-items: per-phase CPU burst alerting (D1) and secret-gate
+tag plumbing through production write tools (D4/Part B).
+
+### Added
+- `PHASE_DURATION_WARN_MS` (default 60 000 ms): all 7 `_consolidation_cycle` phases now emit CRITICAL log when they exceed the threshold. Configurable via env or `config.yaml`.
+- `yadgar/security/allowlist.py` tag plumbing: `memorize`, `wiki_add`, and `anchor` now pass `tags=` through `gate_or_reject()`. Allowlist entries configured in v5.13.0 now fire on real tool calls.
+
+### Fixed
+- Secret-gate allowlist was dormant on production writes — callers forwarded no `tags=` so allowlist entries never matched. All three write tools corrected.
+
+### Internal
+- 4 new CPU-burst tests; 5 new plumbing tests; `test_memorize_reinject_gate.py` updated to patch `gate_or_reject` (was `check_secrets`).
+
+See MIGRATION_NOTES.md — v5.15.0
+
+## [5.13.1] - 2026-05-30
+
+Integration test backend pin fix — conftest was hard-coded to `5.0.3` while
+production runs `5.4.0`.
+
+### Fixed
+- `yadgar/tests/integration/conftest.py` now reads `backend_version` from `server.json` at collection time; `pytest.skip` on read/parse failure.
+
+### Internal
+- 3 new tests: version-reads-server-json, skip-on-missing-file, regression gate for the `5.0.3` literal.
+
+See MIGRATION_NOTES.md — v5.13.1
+
+## [5.13.0] - 2026-05-30
+
+Secret-gate context-awareness: user-managed YAML allowlist with JSONL audit
+trail lets known-good content (test fixtures, plan docs) bypass pattern
+detection without weakening strictness.
+
+### Added
+- `yadgar/security/allowlist.py` — `AllowlistEntry`, `is_allowlisted()`, `_write_audit()`. Allowlist loaded from `~/.yadgar/secret-gate-allowlist.yaml`; schema-version validated; errors loudly.
+- `gate_or_reject()` extended with `tags=` and `source=` kwargs; calls `is_allowlisted()` before pattern scan.
+- I28 pre-commit invariant (`scripts/check_allowlist_audit.py`).
+
+### Internal
+- 11 new tests (`test_allowlist.py`); fixture YAML covering known v5.10.2 false-positive cases.
+- **Known gap at release:** no production write tool forwarded `tags=` to `gate_or_reject()` — allowlist loaded but never matched. Closed in v5.15.0.
+
+See MIGRATION_NOTES.md — v5.13.0
+
+## [5.11.0] - 2026-05-30
+
+All 35 hardcoded viz constants (node size, edge width, physics, layout,
+search colors) are now overridable via `config.yaml` — no redeploy needed
+to tweak the graph.
+
+### Added
+- 35 `VIZ_*` Settings fields with v5.10.11 hardcoded values as defaults.
+- `GET /api/viz/config` endpoint returning nested JSON; auto-protected by bearer auth.
+- `loadVizConfig()` in frontend: fetches config at graph load, deep-merges over defaults.
+- `config_yaml.py` + `config_registry.py` updated (I25 three-way sync).
+
+### Changed
+- All viz constants in `index.html` replaced with `YADGAR_VIZ_CONFIG.*` references.
+
+See MIGRATION_NOTES.md — v5.11.0
+
+## [5.10.4 → 5.10.11] - 2026-05-30 — Viz saga
+
+Eight rapid patches fixing a cascade of force-graph rendering bugs discovered
+after the v5.10.3 deploy. Root cause (v5.10.9): causal edges reference
+`entity:*` node IDs that are never included in `get_full_graph()` — one
+orphan edge crashed the force-graph library synchronously, stalling the
+entire simulation. All v5.10.7–v5.10.8 attempts targeted downstream effects.
+
+### Fixed
+- **v5.10.4** `consolidate_now()` now accepts `mode='light'` (default, consolidation only) or `mode='full'` (+ sleep cycle + anchor pass). Previous no-arg behavior ran the full sleep cycle every time. Also: `hook_runner.py` PreToolUse schema updated to current Claude Code format.
+- **v5.10.5** Two nightly-cycle URL bugs: vacuum and nightly-cycle entry-points used hard-coded `:8080` fallback; now read `YADGAR_DB_URL`. Also: `create_snapshot()` stamps snapshot mtime to prevent prune-on-create race.
+- **v5.10.6** Session-end sentinel markers: new `session-end-capture.py` hook writes `~/.yadgar/session-ends/` on session exit; `project_brief(mode="signals")` surfaces `extract_last_session_findings` on next startup. Requires `install_hooks` re-run.
+- **v5.10.7** Viz UX: 3D heat coloring, wiki/memory shape distinction (octahedra vs spheres), semantic search in 3D mode, stats overlay auto-refresh every 5 s.
+- **v5.10.7.1** Bundled hotfix: sentinel slash-command noise filter (`SKIP_TAGS` frozenset covering 7 tag types) + 3D viz node material changed `MeshLambertMaterial` → `MeshBasicMaterial` (Lambert requires scene lights ForceGraph3D does not provide).
+- **v5.10.7.2** 3D viz `transparent` flag: `MeshBasicMaterial({transparent: true})` at opacity 1.0 caused triangle-sort artifacts ("shard" rendering). Fixed to `transparent: !!node.__dimmed`.
+- **v5.10.7.3** Reverted all custom `_makeNodeThreeObject` geometry (three attempts failed). ForceGraph3D default spheres restored; heat coloring retained via `.nodeColor()`.
+- **v5.10.8** Physics hang: `onEngineStop` was firing with 0 ticks and pinning all nodes at origin. Tick-count guard (≥50 ticks before pin). Mesh leak: `resetLayout` double-data cleared by removing the empty-then-restore pattern.
+- **v5.10.9** Root cause fix: `graph_api.py` now filters orphan edges (source or target absent from node set) before returning graph data. Frontend mirrors the filter. Counter `yadgar_graph_api_orphan_edges_dropped_total` added.
+- **v5.10.10** 3D node size doubled (`nodeRelSize(8)`, default was 4). Auto-zoom-fit on engine tick 80 in both 2D and 3D modes.
+- **v5.10.11** 3D-only: edge thickness ×1.5, link repulsion distance ×1.2 (30→36).
+
+See MIGRATION_NOTES.md — v5.10.4 through v5.10.11
+
+## [5.10.3] - 2026-05-29
+
+`scan_db_for_secrets.py` end-to-end fix.
+
+### Fixed
+- OTLP hang on exit suppressed via `YADGAR_OTLP_ENDPOINT=""` env before import.
+- `--limit N` scan now orders `DESC` (newest rows first) so recent leaks aren't missed.
+
+See MIGRATION_NOTES.md — v5.10.3
+
+## [5.10.2] - 2026-05-29
+
+Secret-gate architecture (I26) + memorize/anchor parity + nightly-cycle hotfix.
+
+### Added
+- Two-layer secret defence: API boundary (`gate_or_reject()`) + storage level (`check_secrets()` inside `insert_memory()`). `SecretLeakBlocked` classified permanent in DLQ.
+- `YADGAR_SECRET_GATE_DISABLED=1` kill switch (Layer 1 only; logs WARNING on every boot).
+- Pattern thresholds tightened (GitHub PAT, Anthropic, OpenAI all cut to `{20,}`).
+- I26 pre-commit lint (`scripts/check_secret_gate.py`).
+- `memorize(is_protected=True)` now behaves identically to `anchor()`: injects `_anchor` tag and `anchor:{reason}` tag, defaults tier to `"conditional"`.
+
+### Fixed
+- `surrealdb` promoted from dev-dep to main dep; `pip install yadgar` no longer `ImportError`.
+- vacuum `:8080` hard-coded URL replaced with `YADGAR_DB_URL` env read.
+
+See MIGRATION_NOTES.md — v5.10.2
+
+## [5.10.1] - 2026-05-29
+
+`_active_work` and checkpoint soft-warning tier + optional watchdog timer.
+
+### Added
+- Two new `project_brief(mode="signals")` action types: `consider_refresh_active_work` and `consider_refresh_checkpoint` (soft warn before hard stale threshold). Both include `suggested_call` copy-paste field.
+- Active-work directory registry (`~/.yadgar/active-work-tracked/`); optional watchdog systemd-user timer units in `scripts/systemd-user/`.
+- `YADGAR_ACTIVE_WORK_WARN_HOURS`, `YADGAR_CHECKPOINT_WARN_HOURS`, `YADGAR_AUTO_REFRESH_ACTIVE_WORK` knobs (three-way registered).
+
+### Changed
+- `signals` mode token budget raised 100 → 350 (configurable via `YADGAR_SIGNALS_TOKEN_BUDGET_SOFT`).
+
+See MIGRATION_NOTES.md — v5.10.1
+
+## [5.10.0] - 2026-05-29
+
+Test harness hardening: orphan SurrealDB process reap, deterministic xdist
+port allocation, and multi-agent session isolation.
+
+### Added
+- `yadgar/tests/_surreal_helpers.py`: centralized `spawn_surreal()` with `atexit` + `pytest_sessionfinish` cleanup.
+- Deterministic xdist ports: `YADGAR_TEST_PORT_BASE + worker_index * 100 + n` (default base 12000).
+- `YADGAR_TEST_NAMESPACE` env redirects `TMPDIR` for concurrent agent sessions.
+- Optional `yadgar-test-orphan-cleanup.timer` (user-managed systemd-user unit).
+
+### Changed
+- Default pytest timeout raised 120 s → 300 s (via `[tool.pytest.ini_options]`); per-test `@pytest.mark.timeout` now works.
+
+See MIGRATION_NOTES.md — v5.10.0
+
+## [5.9.0] - 2026-05-28
+
+Anchor audit tooling: `audit_anchors()` MCP tool + automatic anchor pass
+inside `consolidate_now()`.
+
+### Added
+- `audit_anchors(directory, dry_run=True)` MCP tool: scans anchors for expired rows, redundant pairs (cosine ≥ 0.92), and promote-to-wiki candidates. Returns draft `wiki_add` payloads; never auto-promotes.
+- Anchor pass runs at end of `consolidate_now()` (gate: `ANCHOR_AUDIT_CONSOLIDATION_ENABLED`, default `true`). Writes `_audit_anchors` sentinel memory (latest-wins per directory).
+- `recommended_actions` items now include `suggested_call` copy-paste field (v5.8 items lacked it).
+- 3 new config knobs: `ANCHOR_AUDIT_CONSOLIDATION_ENABLED`, `ANCHOR_AUDIT_MAX_ACTIONS_PER_RUN` (20), `ANCHOR_AUDIT_HISTORY_RETENTION_DAYS` (30).
+
+See MIGRATION_NOTES.md — v5.9.0
+
+## [5.8.0] - 2026-05-28
+
+Anchor hygiene foundation: tier expiry, TTL fields, and signals-mode
+candidate detection.
+
+### Added
+- `tier` (`semantic_immortal` | `conditional` | `ephemeral`), `valid_until`, `ttl_days` params on `memorize()` and `anchor()`. `tier="conditional"` is the new default for anchors (90-day TTL).
+- `valid_until < now()` rows excluded from `restore()`, hot ranking, and `project_brief(restore)`.
+- `signals` mode: `anchor_count_project`, `anchor_redundancy_candidates`, `anchor_promote_candidates` fields. Four new `recommended_actions` types.
+- Schema migration `migration_008`: adds `tier`, `valid_until`, `migration_grace` columns; backfills pre-v5.8 anchors with `tier="conditional"`, `migration_grace=True`.
+- 7 new config knobs (three-way registered per I25).
+
+See MIGRATION_NOTES.md — v5.8.0
+
+## [5.7.12] - 2026-05-27
+
+`project_brief()` two-audience split: `signals` mode for stop hooks and
+`restore` mode for post-`/clear` rehydration.
+
+### Added
+- `signals` mode: binary flags + age numerics + `recommended_actions` (stale checkpoint, stale active-work, bootstrap-project). Budget <100 tokens.
+- `restore` mode: `top_anchors` (scope-tagged) + `hot_memories` + checkpoint + key wiki pages. Budget <800 tokens.
+- 3 new config knobs: `YADGAR_ACTIVE_WORK_STALE_HOURS` (24 h), `YADGAR_CHECKPOINT_STALE_HOURS` (24 h), `YADGAR_PROJECT_BRIEF_MAX_ANCHORS` (12).
+
+### Fixed
+- `hot_memories` now excludes anchor-tagged entries in all modes (were appearing at top due to `heat=1.0`).
+
+### Internal
+- 38 new tests (`test_project_brief_modes.py`).
+
+See MIGRATION_NOTES.md — v5.7.12
+
+## [5.7.11] - 2026-05-27
+
+5 OTLP + dbsize knobs migrated from env-only to yaml-overridable Settings
+fields; dead `YADGAR_LOG_LEVEL` env declaration removed. Backend 5.3.0 → 5.3.1.
+
+### Changed
+- `OTLP_ENDPOINT`, `OTLP_HEADERS`, `OTLP_TIMEOUT_SEC`, `OTLP_INSECURE`, `DBSIZE_CACHE_TTL_SEC` now read from Settings (yaml or env); `yadgar.tracing` + `embed_service` refactored accordingly.
+- `YADGAR_LOG_LEVEL` removed from `config_registry.py` (was declared but never read).
+
+See MIGRATION_NOTES.md — v5.7.11
+
+## [5.7.10] - 2026-05-27
+
+Container yaml-loading fix, I25 three-way-sync invariant, and nix `-e` flag
+cleanup.
+
+### Added
+- `YADGAR_CONFIG_FILE` env override in `get_config_path()`; containers now actually read `~/.yadgar/config.yaml` via bind mount.
+- I25 invariant: `test_config_three_way_sync.py` enforces every `Settings` field is either triple-registered or allowlisted as env-only. Wired into pre-commit + CI.
+
+### Changed
+- 4 operational knobs (`HOST`, `PORT`, `WIKI_SLUG_PREFIX`, `CORE_LOG_LEVEL`) moved from nix `-e` flags into `config.yaml`; yadgar core ExecStart reduced from 12 to 8 `-e` flags.
+
+See MIGRATION_NOTES.md — v5.7.10
+
+## [5.7.9] - 2026-05-27
+
+`SessionStart` hook response now branches on `source` field.
+
+### Changed
+- `compact` source suppressed (post-compact-rehydrate hook already handles restore); other sources (`startup`, `resume`, `clear`, missing) emit tailored copy. Eliminates duplicate restore hint on compact.
+
+See MIGRATION_NOTES.md — v5.7.9
+
+## [5.7.8] - 2026-05-27
+
+`/mcp` trace_id wiring fix.
+
+### Fixed
+- `POST /mcp` log lines lacked `trace_id`: new `MCPTraceSpanMiddleware` inserted above `RequestLoggingMiddleware` so the outer span is live when the finally block reads it.
+
+See MIGRATION_NOTES.md — v5.7.8
+
+## [5.7.7] - 2026-05-27
+
+`VIZ_HEALTH_REFRESH_SEC` env knob for viz daemon scrape interval (was hardcoded 5 s).
+
+### Added
+- `YADGAR_VIZ_HEALTH_REFRESH_SEC` Settings field (default 5.0). Live-reloaded per iteration — no daemon restart needed.
+
+See MIGRATION_NOTES.md — v5.7.7
+
+## [5.7.6] - 2026-05-27
+
+OTLP/HTTP span exporter to Tempo.
+
+### Added
+- When `YADGAR_OTLP_ENDPOINT` is set, spans export via OTLP/HTTP alongside the existing `LogSpanProcessor`. 4 new knobs: `OTLP_ENDPOINT`, `OTLP_HEADERS`, `OTLP_TIMEOUT_SEC`, `OTLP_INSECURE`.
+- New dep: `opentelemetry-exporter-otlp-proto-http>=1.30,<2`.
+
+See MIGRATION_NOTES.md — v5.7.6
+
+## [5.7.5] - 2026-05-27
+
+I24 `@trace_span` AST lint invariant.
+
+### Added
+- `scripts/check_trace_spans.py` (stdlib AST): enforces all public HTTP handlers in `server/http.py` carry `@trace_span`. Wired into pre-commit + CI.
+- 13 `@trace_span` decorators added to previously un-spanned handlers.
+
+See MIGRATION_NOTES.md — v5.7.5
+
+## [5.7.4] - 2026-05-27
+
+Hook observability: `@trace_span` + duration histogram + failure counter on
+`/hooks/auto-capture` and `/hooks/prompt-recall` (the two highest-traffic handlers).
+
+### Added
+- `hook_auto_capture` and `hook_prompt_recall` gain full `_hook_observe` + `_hook_observe_response` envelope matching the PR-K pattern.
+
+See MIGRATION_NOTES.md — v5.7.4
+
+## [5.7.3] - 2026-05-27
+
+Remove duplicate `yadgar_db_query_duration_seconds` metric.
+
+### Internal
+- Duplicate declaration and write site removed; only `yadgar_surrealdb_query_duration_ms{op}` remains.
+
+See MIGRATION_NOTES.md — v5.7.3
+
+## [5.7.2] - 2026-05-27
+
+`CROSS_ENCODER_TOP_K` default cut 20 → 10 to halve CE rerank latency.
+
+### Changed
+- CE candidate count halved at default; recall quality impact expected minimal at corpus sizes tested. Override via `YADGAR_CROSS_ENCODER_TOP_K=20`.
+
+See MIGRATION_NOTES.md — v5.7.2
+
+## [5.7.1] - 2026-05-27
+
+Consolidation `systemctl` container fix — auto-vacuum trigger now works
+inside containers.
+
+### Fixed
+- `_maybe_auto_vacuum` pre-check called `systemctl --user is-active` which raised `FileNotFoundError` in containers and returned early, disabling the threshold backstop. Pre-check removed; trigger-file pattern from v5.7.0 PR-4 is sufficient.
+
+See MIGRATION_NOTES.md — v5.7.1
+
+## [5.7.0] - 2026-05-26
+
+Nightly cycle redesign: daemon's 30-minute consolidation trigger removed;
+replaced by a single `yadgar-nightly-cycle` systemd timer at 19:00 UTC
+running `backup → consolidation → vacuum → backup`.
+
+### Added
+- `yadgar/scripts/nightly_cycle.py` console script (`yadgar-nightly-cycle` entry point).
+- `yadgar/backup.py` `create_snapshot()` + `prune_snapshots()` helpers.
+- Trigger-file pattern for `vacuum_now()` MCP tool: writes atomic file at `YADGAR_VACUUM_TRIGGER_PATH`; host-side systemd path-watch unit starts vacuum service. Eliminates container→host systemctl call.
+- `VACUUM_AUTO_THRESHOLD_BYTES` documented as emergency backstop only.
+
+### Changed
+- Consolidation fires only at nightly cycle (19:00 UTC) or explicit `consolidate_now()` call.
+
+### Internal
+- Backup snapshot round-trip integrity tests.
+
+See MIGRATION_NOTES.md — v5.7.0
+
+## [5.6.7] - 2026-05-25
+
+File logging made opt-in via `YADGAR_LOG_DIR`; enables Grafana Alloy log
+shipping without privilege escalation.
+
+### Changed
+- File logging now requires `YADGAR_LOG_DIR` (or per-file env vars) to be set; containers default to `/data/logs` via entrypoint. Bare-metal installs are stdout-only by default.
+
+See MIGRATION_NOTES.md — v5.6.7
+
+## [5.6.1] - 2026-05-22
+
+Viz daemon health endpoint bug fixes.
+
+### Fixed
+- Backend metrics URL now resolved via `YADGAR_EMBED_URL` / `YADGAR_BACKEND_METRICS_URL` (was hard-coded).
+- `parse_core_metrics` reads correct per-registry metrics (`yadgar_process_rss_bytes`, `_open_fds`, `_cpu_percent`).
+
+See MIGRATION_NOTES.md — v5.6.1
+
+## [5.6.0] - 2026-05-22
+
+Viz daemon health sidebar (V1c): live core + backend stats overlay in the
+graph UI.
+
+### Added
+- `yadgar/viz_daemon_health.py`: background scraper polling core + backend `/metrics` every 5 s; `/api/daemon-health` endpoint.
+- SSE `daemon_health` event emitted every 5 s from `_make_event_stream`.
+- Collapsible "Daemons" sidebar panel in `index.html` showing process, queue, log, CB, and rerank metrics.
+
+See MIGRATION_NOTES.md — v5.6.0
+
+## [5.5.3] - 2026-05-22
+
+Circuit-breaker state gauge fix.
+
+### Fixed
+- `yadgar_circuit_breaker_state{endpoint}` gauge was emitting nothing — polling function looked for attributes that never existed. Replaced with inline update on every CB state transition.
+
+See MIGRATION_NOTES.md — v5.5.3
+
+## [5.5.2] - 2026-05-22
+
+Backend log metrics wiring fix (backend 5.1.1 → 5.1.2).
+
+### Fixed
+- `yadgar_log_file_size_bytes`, `yadgar_log_file_rotations_total`, `yadgar_log_dropped_total` now update correctly in the backend's own Prometheus registry.
+
+See MIGRATION_NOTES.md — v5.5.2
+
+## [5.5.1] - 2026-05-22
+
+Dual-sink log rotation + token-bucket rate limiter.
+
+### Added
+- `RotatingJSONLFileHandler` (Sink B): 100 MB × 5 backups per daemon. Core: `/data/logs/yadgar.log`; backend: `/data/logs/backend.log`.
+- Token-bucket log rate limiter: 10 records/s burst 50 per (logger, level) bucket. `YADGAR_LOG_RATE_LIMIT_ENABLED` kill switch.
+- 3 new metrics: `yadgar_log_file_rotations_total`, `yadgar_log_file_size_bytes`, `yadgar_log_dropped_total`.
+
+### Changed
+- Backend 5.1.0 → 5.1.1.
+
+### Operator action
+- `mkdir -p ~/.yadgar/logs` required before deploy; absent dir → graceful stdout-only fallback.
+
+See MIGRATION_NOTES.md — v5.5.1
+
+## [5.5.0] - 2026-05-22
+
+Backend `/metrics` endpoint (V1a): Prometheus metrics from `yadgar-backend`
+container.
+
+### Added
+- `yadgar/embed_service_metrics.py`: rerank request/503/duration/semaphore metrics per `{mode}` + model-loaded gauge + process metrics. Exposed at `GET /metrics` (unauthenticated, loopback-only port 8001).
+
+### Changed
+- Backend 5.0.3 → 5.1.0.
+
+See MIGRATION_NOTES.md — v5.5.0
+
+## [5.4.8] - 2026-05-22
+
+Request log visibility fix — `yadgar.requests` INFO lines were silently
+dropped at WARNING root level.
+
+### Fixed
+- `configure_logging()` installs a dedicated always-INFO `StreamHandler` on `yadgar.requests` (`propagate=False`).
+- **Note:** `YADGAR_LOG_LEVEL` is not a valid env var; correct var is `YADGAR_CORE_LOG_LEVEL`.
+
+See MIGRATION_NOTES.md — v5.4.8
+
+## [5.4.7] - 2026-05-22
+
+I14 request-log schema ratchet.
+
+### Changed
+- `RequestLoggingMiddleware`: `duration_ms` renamed to `latency_ms` (**BREAKING** — update Loki/Grafana queries); `status` renamed to `http_status`; `component`, `action`, `outcome` fields added.
+- `ContentRedactor` denylist tightened: `content_type`/`content_length` no longer falsely redacted.
+
+See MIGRATION_NOTES.md — v5.4.7
+
+## [5.4.6] - 2026-05-22
+
+LOW-risk complexity refactor: 4 functions decomposed via dataclass parameter
+objects (P12 audit).
+
+### Internal
+- `insert_typed_relationship`, `insert_new_memory`, `create_checkpoint`, `cmd_config` refactored. `.complexity-baseline.json` regenerated.
+
+See MIGRATION_NOTES.md — v5.4.6
+
+## [5.4.3] - 2026-05-22
+
+I14 framework-logger coverage: all framework loggers (uvicorn, mcp, fastmcp,
+httpx, starlette) now emit I14-conformant JSON.
+
+### Changed
+- `configure_logging()` uses root-logger approach to cover all framework loggers.
+- 31 pre-existing C901/PLR0913 ruff violations grandfathered in per-file-ignores.
+- New `YADGAR_LOG_FORMAT=human` env for local dev.
+
+See MIGRATION_NOTES.md — v5.4.3
+
+## [5.4.2] - 2026-05-22
+
+Circuit-breaker probe hardening (CB-1 backoff + F5-A semaphore) + I14
+structured logging default-on.
+
+### Added
+- CB-1 probe: exponential backoff up to `YADGAR_CIRCUIT_BREAKER_MAX_OPEN_DURATION_SEC` (600 s). Probe timeout configurable via `YADGAR_CIRCUIT_BREAKER_PROBE_TIMEOUT_SEC` (2 s).
+- Backend rerank semaphore `YADGAR_RERANK_MAX_CONCURRENCY` (default 1): concurrent rerank requests beyond the cap receive HTTP 503 immediately instead of queueing indefinitely.
+- Image size ratchet (`scripts/check_image_size.py`): backend ≤2.0 GB, core ≤0.8 GB.
+
+### Changed
+- **Breaking:** default log format changed `human` → `json` (I14 structured). Old fields `timestamp`→`ts`, `message`→`event`. Set `YADGAR_LOG_FORMAT=text` to restore human-readable output.
+- Backend 5.0.2 → 5.0.3.
+
+See MIGRATION_NOTES.md — v5.4.2
+
 ## [5.4.1] - 2026-05-21
 
 P11 Observability v1 — unified metrics framework. Per invariant I12 (measure before optimize), this is the prerequisite for all further v5.4.x perf work (P12 audit, F0 image bloat, F5 OOM report, I14 logging, eventual memorize split in v5.5).
@@ -609,7 +1123,54 @@ None required. Image rebuild + `yadger_core_version` 5.1.2 → 5.1.3 bump only.
 ### Fixed
 - Forked from Zikkaron; all Zikkaron-specific DB schemas and modules replaced with SurrealDB-only backend.
 
-[unreleased]: https://codeberg.org/maxagahi/yadgar/compare/v5.3.7...HEAD
+[unreleased]: https://codeberg.org/maxagahi/yadgar/compare/v5.17.0...HEAD
+[5.17.0]: https://codeberg.org/maxagahi/yadgar/compare/v5.15.0...v5.17.0
+[5.15.0]: https://codeberg.org/maxagahi/yadgar/compare/v5.13.1...v5.15.0
+[5.13.1]: https://codeberg.org/maxagahi/yadgar/compare/v5.13.0...v5.13.1
+[5.13.0]: https://codeberg.org/maxagahi/yadgar/compare/v5.11.0...v5.13.0
+[5.11.0]: https://codeberg.org/maxagahi/yadgar/compare/v5.10.11...v5.11.0
+[5.10.11]: https://codeberg.org/maxagahi/yadgar/compare/v5.10.10...v5.10.11
+[5.10.10]: https://codeberg.org/maxagahi/yadgar/compare/v5.10.9...v5.10.10
+[5.10.9]: https://codeberg.org/maxagahi/yadgar/compare/v5.10.8...v5.10.9
+[5.10.8]: https://codeberg.org/maxagahi/yadgar/compare/v5.10.7.3...v5.10.8
+[5.10.7.3]: https://codeberg.org/maxagahi/yadgar/compare/v5.10.7.2...v5.10.7.3
+[5.10.7.2]: https://codeberg.org/maxagahi/yadgar/compare/v5.10.7.1...v5.10.7.2
+[5.10.7.1]: https://codeberg.org/maxagahi/yadgar/compare/v5.10.7...v5.10.7.1
+[5.10.7]: https://codeberg.org/maxagahi/yadgar/compare/v5.10.6...v5.10.7
+[5.10.6]: https://codeberg.org/maxagahi/yadgar/compare/v5.10.5...v5.10.6
+[5.10.5]: https://codeberg.org/maxagahi/yadgar/compare/v5.10.4...v5.10.5
+[5.10.4]: https://codeberg.org/maxagahi/yadgar/compare/v5.10.3...v5.10.4
+[5.10.3]: https://codeberg.org/maxagahi/yadgar/compare/v5.10.2...v5.10.3
+[5.10.2]: https://codeberg.org/maxagahi/yadgar/compare/v5.10.1...v5.10.2
+[5.10.1]: https://codeberg.org/maxagahi/yadgar/compare/v5.10.0...v5.10.1
+[5.10.0]: https://codeberg.org/maxagahi/yadgar/compare/v5.9.0...v5.10.0
+[5.9.0]: https://codeberg.org/maxagahi/yadgar/compare/v5.8.0...v5.9.0
+[5.8.0]: https://codeberg.org/maxagahi/yadgar/compare/v5.7.12...v5.8.0
+[5.7.12]: https://codeberg.org/maxagahi/yadgar/compare/v5.7.11...v5.7.12
+[5.7.11]: https://codeberg.org/maxagahi/yadgar/compare/v5.7.10...v5.7.11
+[5.7.10]: https://codeberg.org/maxagahi/yadgar/compare/v5.7.9...v5.7.10
+[5.7.9]: https://codeberg.org/maxagahi/yadgar/compare/v5.7.8...v5.7.9
+[5.7.8]: https://codeberg.org/maxagahi/yadgar/compare/v5.7.7...v5.7.8
+[5.7.7]: https://codeberg.org/maxagahi/yadgar/compare/v5.7.6...v5.7.7
+[5.7.6]: https://codeberg.org/maxagahi/yadgar/compare/v5.7.5...v5.7.6
+[5.7.5]: https://codeberg.org/maxagahi/yadgar/compare/v5.7.4...v5.7.5
+[5.7.4]: https://codeberg.org/maxagahi/yadgar/compare/v5.7.3...v5.7.4
+[5.7.3]: https://codeberg.org/maxagahi/yadgar/compare/v5.7.2...v5.7.3
+[5.7.2]: https://codeberg.org/maxagahi/yadgar/compare/v5.7.1...v5.7.2
+[5.7.1]: https://codeberg.org/maxagahi/yadgar/compare/v5.7.0...v5.7.1
+[5.7.0]: https://codeberg.org/maxagahi/yadgar/compare/v5.6.7...v5.7.0
+[5.6.7]: https://codeberg.org/maxagahi/yadgar/compare/v5.6.1...v5.6.7
+[5.6.1]: https://codeberg.org/maxagahi/yadgar/compare/v5.6.0...v5.6.1
+[5.6.0]: https://codeberg.org/maxagahi/yadgar/compare/v5.5.3...v5.6.0
+[5.5.3]: https://codeberg.org/maxagahi/yadgar/compare/v5.5.2...v5.5.3
+[5.5.2]: https://codeberg.org/maxagahi/yadgar/compare/v5.5.1...v5.5.2
+[5.5.1]: https://codeberg.org/maxagahi/yadgar/compare/v5.5.0...v5.5.1
+[5.5.0]: https://codeberg.org/maxagahi/yadgar/compare/v5.4.8...v5.5.0
+[5.4.8]: https://codeberg.org/maxagahi/yadgar/compare/v5.4.7...v5.4.8
+[5.4.7]: https://codeberg.org/maxagahi/yadgar/compare/v5.4.6...v5.4.7
+[5.4.6]: https://codeberg.org/maxagahi/yadgar/compare/v5.4.3...v5.4.6
+[5.4.3]: https://codeberg.org/maxagahi/yadgar/compare/v5.4.2...v5.4.3
+[5.4.2]: https://codeberg.org/maxagahi/yadgar/compare/v5.4.1...v5.4.2
 [5.3.7]: https://codeberg.org/maxagahi/yadgar/compare/v5.3.6...v5.3.7
 [5.3.6]: https://codeberg.org/maxagahi/yadgar/compare/v5.3.5...v5.3.6
 [5.3.5]: https://codeberg.org/maxagahi/yadgar/compare/v5.3.4...v5.3.5

@@ -42,6 +42,183 @@ def is_running_in_container() -> bool:
     return os.environ.get("YADGAR_IN_CONTAINER", "") == "1"
 
 
+# ── Internal helpers ───────────────────────────────────────────────────────
+
+
+def _copy_hook(src: Path, dst: Path, dry_run: bool) -> None:
+    """Copy a hook script and mark it executable (no-op on dry_run)."""
+    if dry_run:
+        return
+    if src.exists():
+        shutil.copy2(src, dst)
+        dst.chmod(0o755)
+
+
+def _make_hook_entry(cmd: str, matcher: str, env_block: dict) -> dict:
+    """Build a single hook entry dict."""
+    entry: dict = {
+        "matcher": matcher,
+        "hooks": [{"type": "command", "command": cmd}],
+    }
+    if env_block:
+        entry["hooks"][0]["env"] = env_block
+    return entry
+
+
+def _append_if_absent(
+    hooks_config: dict,
+    event: str,
+    cmd: str,
+    env_block: dict,
+    matcher: str = "",
+) -> None:
+    """Register a hook entry under *event* only if no entry with the same command exists."""
+    existing = hooks_config.get(event, [])
+    already = any(
+        entry.get("hooks", [{}])[0].get("command", "") == cmd
+        for entry in existing
+        if isinstance(entry, dict) and entry.get("hooks")
+    )
+    if not already:
+        existing.append(_make_hook_entry(cmd, matcher, env_block))
+    hooks_config[event] = existing
+
+
+def _install_global_scripts(
+    package_hooks: Path,
+    global_hooks_dir: Path,
+    dry_run: bool,
+) -> tuple[Path, Path, Path]:
+    """Copy always-global hook scripts; return (stop_dst, session_end_dst, db_lockdown_dst)."""
+    stop_dst = global_hooks_dir / "yadgar-stop-memory-checkpoint.py"
+    _copy_hook(package_hooks / "stop-memory-checkpoint.py", stop_dst, dry_run)
+
+    session_end_dst = global_hooks_dir / "yadgar-session-end-capture.py"
+    _copy_hook(package_hooks / "session-end-capture.py", session_end_dst, dry_run)
+
+    # v5.20.0: standalone DB lockdown — not routed through hook_runner dispatcher
+    db_lockdown_dst = global_hooks_dir / "yadgar-db-lockdown-check.py"
+    _copy_hook(package_hooks / "db-lockdown-check.py", db_lockdown_dst, dry_run)
+
+    return stop_dst, session_end_dst, db_lockdown_dst
+
+
+def _build_core_hooks(
+    hooks_config: dict,
+    runner: str,
+    env_block: dict,
+    db_lockdown_dst: Path,
+) -> None:
+    """Populate the four core (replace-always) hook event entries."""
+
+    def _runner_entry(hook_type: str, matcher: str = "") -> dict:
+        cmd = f"python3 {shlex.quote(runner)} {hook_type}"
+        return _make_hook_entry(cmd, matcher, env_block)
+
+    hooks_config["PreCompact"] = [_runner_entry("pre-compact-drain")]
+    hooks_config["SessionStart"] = [
+        _runner_entry("session-start-context"),
+        _runner_entry("post-compact-rehydrate", matcher="compact"),
+    ]
+    hooks_config["PostToolUse"] = [_runner_entry("post-tool-capture")]
+    hooks_config["UserPromptSubmit"] = [_runner_entry("prompt-recall")]
+
+    # v5.20.0: direct-command entry so hookEventName is always emitted
+    db_cmd = f'python3 "{db_lockdown_dst}"'
+    hooks_config["PreToolUse"] = [_make_hook_entry(db_cmd, "Bash", env_block)]
+
+
+def _install_append_hooks(
+    package_hooks: Path,
+    hooks_dir: Path,
+    hooks_config: dict,
+    env_block: dict,
+    dry_run: bool,
+) -> None:
+    """Install and register the append-if-absent hook scripts."""
+    _append_specs = [
+        ("subagent-stop.py", "yadgar-subagent-stop.py", "SubagentStop", ""),
+        ("instructions-loaded.py", "yadgar-instructions-loaded.py", "InstructionsLoaded", ""),
+        ("subagent-start.py", "yadgar-subagent-start.py", "SubagentStart", ""),
+        ("file-changed.py", "yadgar-file-changed.py", "FileChanged", ""),
+    ]
+    for src_name, dst_name, event, matcher in _append_specs:
+        dst = hooks_dir / dst_name
+        _copy_hook(package_hooks / src_name, dst, dry_run)
+        _append_if_absent(hooks_config, event, f'python3 "{dst}"', env_block, matcher)
+
+
+def _write_global_stop_hooks(
+    global_claude_dir: Path,
+    stop_entry: list,
+    session_end_entry: list,
+) -> None:
+    """Merge Stop + SessionEnd into the global settings.json (scope=project path)."""
+    global_settings_path = global_claude_dir / "settings.json"
+    global_settings: dict = {}
+    if global_settings_path.exists():
+        try:
+            global_settings = json.loads(global_settings_path.read_text())
+        except Exception:
+            global_settings = {}
+    global_hooks = global_settings.get("hooks", {})
+    global_hooks["Stop"] = stop_entry
+    global_hooks["SessionEnd"] = session_end_entry
+    global_settings["hooks"] = global_hooks
+    _atomic_write(global_claude_dir, global_settings_path, global_settings)
+
+
+def _resolve_scope_paths(
+    home_dir: Path,
+    scope: str,
+    project_dir: Path,
+) -> tuple[Path, Path, Path, Path]:
+    """Return (global_claude_dir, global_hooks_dir, hooks_dir, settings_target_dir)."""
+    global_claude_dir = home_dir / ".claude"
+    global_hooks_dir = global_claude_dir / "hooks"
+    if scope == "global":
+        return global_claude_dir, global_hooks_dir, global_hooks_dir, global_claude_dir
+    claude_dir = project_dir / ".claude"
+    return global_claude_dir, global_hooks_dir, claude_dir / "hooks", claude_dir
+
+
+def _copy_scope_scripts(
+    package_hooks: Path,
+    hooks_dir: Path,
+    dry_run: bool,
+) -> None:
+    """Bulk-copy dispatcher-pattern hook scripts into hooks_dir."""
+    _files = {
+        "pre-compact-drain.sh": 0o755,
+        "post-compact-rehydrate.sh": 0o755,
+        "post-tool-capture.py": 0o755,
+        "session-start-context.py": 0o755,
+        "prompt-recall.py": 0o755,
+        "subagent-stop.py": 0o755,
+        "instructions-loaded.py": 0o755,
+        "subagent-start.py": 0o755,
+        "file-changed.py": 0o755,
+    }
+    if dry_run:
+        return
+    for filename, mode in _files.items():
+        src = package_hooks / filename
+        dst = hooks_dir / filename
+        if src.exists():
+            shutil.copy2(src, dst)
+            dst.chmod(mode)
+
+
+def _load_settings(settings_path: Path) -> dict:
+    """Read existing settings.json; return empty dict on missing or parse error."""
+    if not settings_path.exists():
+        return {}
+    try:
+        return json.loads(settings_path.read_text())
+    except Exception:
+        return {}
+
+
 # ── Shared install logic ───────────────────────────────────────────────────
 
 
@@ -75,249 +252,55 @@ def install_hooks_impl(
         }
 
     project_dir = Path(project_directory) if project_directory else Path.cwd()
-
-    # Global paths (Stop hook always here; all hooks go here when scope=global)
-    global_claude_dir = home_dir / ".claude"
-    global_hooks_dir = global_claude_dir / "hooks"
-
-    # Determine where hook scripts and settings are written based on scope
-    if scope == "global":
-        hooks_dir = global_hooks_dir
-        settings_target_dir = global_claude_dir
-    else:
-        claude_dir = project_dir / ".claude"
-        hooks_dir = claude_dir / "hooks"
-        settings_target_dir = claude_dir
+    global_claude_dir, global_hooks_dir, hooks_dir, settings_target_dir = _resolve_scope_paths(
+        home_dir, scope, project_dir
+    )
 
     if not dry_run:
         global_hooks_dir.mkdir(parents=True, exist_ok=True)
         if scope != "global":
             hooks_dir.mkdir(parents=True, exist_ok=True)
 
-    # Copy hook scripts from package
     package_hooks = Path(__file__).parent / "hooks"
+    _copy_scope_scripts(package_hooks, hooks_dir, dry_run)
 
-    hook_files = {
-        "pre-compact-drain.sh": 0o755,
-        "post-compact-rehydrate.sh": 0o755,
-        "post-tool-capture.py": 0o755,
-        "session-start-context.py": 0o755,
-        "prompt-recall.py": 0o755,
-        "subagent-stop.py": 0o755,
-        "instructions-loaded.py": 0o755,
-        "subagent-start.py": 0o755,
-        "file-changed.py": 0o755,
-    }
+    # Always-global scripts
+    stop_dst, session_end_dst, db_lockdown_dst = _install_global_scripts(
+        package_hooks, global_hooks_dir, dry_run
+    )
 
-    if not dry_run:
-        for filename, mode in hook_files.items():
-            src = package_hooks / filename
-            dst = hooks_dir / filename
-            if src.exists():
-                shutil.copy2(src, dst)
-                dst.chmod(mode)
-
-    # Stop hook — always installed globally
-    stop_hook_src = package_hooks / "stop-memory-checkpoint.py"
-    stop_hook_dst = global_hooks_dir / "yadgar-stop-memory-checkpoint.py"
-    if not dry_run and stop_hook_src.exists():
-        shutil.copy2(stop_hook_src, stop_hook_dst)
-        stop_hook_dst.chmod(0o755)
-
-    # SessionEnd hook — always installed globally (v5.10.6)
-    session_end_hook_src = package_hooks / "session-end-capture.py"
-    session_end_hook_dst = global_hooks_dir / "yadgar-session-end-capture.py"
-    if not dry_run and session_end_hook_src.exists():
-        shutil.copy2(session_end_hook_src, session_end_hook_dst)
-        session_end_hook_dst.chmod(0o755)
-
-    # hook_runner.py
-    hook_runner_src = Path(__file__).parent / "scripts" / "hook_runner.py"
+    # hook_runner.py (dispatcher for core hooks)
     hook_runner_dst = hooks_dir / "hook_runner.py"
-    if not dry_run and hook_runner_src.exists():
-        shutil.copy2(hook_runner_src, hook_runner_dst)
-        hook_runner_dst.chmod(0o755)
-
+    _copy_hook(Path(__file__).parent / "scripts" / "hook_runner.py", hook_runner_dst, dry_run)
     _runner = str(hook_runner_dst)
 
     # Auth env block
     _auth_token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
-    _env_block: dict = {}
-    if _auth_token:
-        _env_block = {"YADGAR_MCP_AUTH_TOKEN": _auth_token}
+    _env_block: dict = {"YADGAR_MCP_AUTH_TOKEN": _auth_token} if _auth_token else {}
 
-    def _hook_entry(hook_type: str, matcher: str = "") -> dict:
-        entry: dict = {
-            "matcher": matcher,
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": f"python3 {shlex.quote(_runner)} {hook_type}",
-                }
-            ],
-        }
-        if _env_block:
-            entry["hooks"][0]["env"] = _env_block
-        return entry
-
-    # Build hooks config
     settings_path = settings_target_dir / "settings.json"
-    settings_data: dict = {}
-    if settings_path.exists():
-        try:
-            settings_data = json.loads(settings_path.read_text())
-        except Exception:
-            settings_data = {}
-
+    settings_data = _load_settings(settings_path)
     hooks_config = settings_data.get("hooks", {})
-    hooks_config["PreCompact"] = [_hook_entry("pre-compact-drain")]
-    hooks_config["SessionStart"] = [
-        _hook_entry("session-start-context"),
-        _hook_entry("post-compact-rehydrate", matcher="compact"),
-    ]
-    hooks_config["PostToolUse"] = [_hook_entry("post-tool-capture")]
-    hooks_config["UserPromptSubmit"] = [_hook_entry("prompt-recall")]
-    hooks_config["PreToolUse"] = [_hook_entry("db-lockdown-check", matcher="Bash")]
 
-    # SubagentStop — append-if-absent semantics.
-    # We only add the yadgar entry if no entry with our command substring exists.
-    # This preserves user-defined SubagentStop hooks and avoids duplicates on re-runs.
-    _subagent_stop_src = package_hooks / "subagent-stop.py"
-    _subagent_stop_dst = hooks_dir / "yadgar-subagent-stop.py"
-    if not dry_run and _subagent_stop_src.exists():
-        shutil.copy2(_subagent_stop_src, _subagent_stop_dst)
-        _subagent_stop_dst.chmod(0o755)
+    # Core hooks (always replaced)
+    _build_core_hooks(hooks_config, _runner, _env_block, db_lockdown_dst)
 
-    _subagent_stop_cmd = f'python3 "{_subagent_stop_dst}"'
-    _existing_subagent_stop = hooks_config.get("SubagentStop", [])
-    _already_registered = any(
-        entry.get("hooks", [{}])[0].get("command", "") == _subagent_stop_cmd
-        for entry in _existing_subagent_stop
-        if isinstance(entry, dict) and entry.get("hooks")
-    )
-    if not _already_registered:
-        _subagent_stop_hook_entry: dict = {
-            "matcher": "",
-            "hooks": [{"type": "command", "command": _subagent_stop_cmd}],
-        }
-        if _env_block:
-            _subagent_stop_hook_entry["hooks"][0]["env"] = _env_block
-        _existing_subagent_stop.append(_subagent_stop_hook_entry)
-    hooks_config["SubagentStop"] = _existing_subagent_stop
-
-    # InstructionsLoaded — append-if-absent semantics.
-    # Fires recall on CLAUDE.md load (session_start / compact only — throttled in script).
-    _il_src = package_hooks / "instructions-loaded.py"
-    _il_dst = hooks_dir / "yadgar-instructions-loaded.py"
-    if not dry_run and _il_src.exists():
-        shutil.copy2(_il_src, _il_dst)
-        _il_dst.chmod(0o755)
-
-    _il_cmd = f'python3 "{_il_dst}"'
-    _existing_il = hooks_config.get("InstructionsLoaded", [])
-    _il_already_registered = any(
-        entry.get("hooks", [{}])[0].get("command", "") == _il_cmd
-        for entry in _existing_il
-        if isinstance(entry, dict) and entry.get("hooks")
-    )
-    if not _il_already_registered:
-        _il_hook_entry: dict = {
-            "matcher": "",
-            "hooks": [{"type": "command", "command": _il_cmd}],
-        }
-        if _env_block:
-            _il_hook_entry["hooks"][0]["env"] = _env_block
-        _existing_il.append(_il_hook_entry)
-    hooks_config["InstructionsLoaded"] = _existing_il
-
-    # SubagentStart — append-if-absent semantics.
-    # No matcher needed — fires on all subagent dispatches.
-    _ss_src = package_hooks / "subagent-start.py"
-    _ss_dst = hooks_dir / "yadgar-subagent-start.py"
-    if not dry_run and _ss_src.exists():
-        shutil.copy2(_ss_src, _ss_dst)
-        _ss_dst.chmod(0o755)
-
-    _ss_cmd = f'python3 "{_ss_dst}"'
-    _existing_ss = hooks_config.get("SubagentStart", [])
-    _ss_already_registered = any(
-        entry.get("hooks", [{}])[0].get("command", "") == _ss_cmd
-        for entry in _existing_ss
-        if isinstance(entry, dict) and entry.get("hooks")
-    )
-    if not _ss_already_registered:
-        _ss_hook_entry: dict = {
-            "matcher": "",
-            "hooks": [{"type": "command", "command": _ss_cmd}],
-        }
-        if _env_block:
-            _ss_hook_entry["hooks"][0]["env"] = _env_block
-        _existing_ss.append(_ss_hook_entry)
-    hooks_config["SubagentStart"] = _existing_ss
-
-    # FileChanged — append-if-absent semantics.
-    # Matcher is empty (fires on all file changes); the hook script filters
-    # to team_inbox/**/*.jsonl and docs/PLAN_*.md only.
-    # NOTE: FileChanged matcher uses literal filenames only (no regex/glob per
-    # Claude Code 2026 docs). We use empty matcher + script-side filtering.
-    _fc_src = package_hooks / "file-changed.py"
-    _fc_dst = hooks_dir / "yadgar-file-changed.py"
-    if not dry_run and _fc_src.exists():
-        shutil.copy2(_fc_src, _fc_dst)
-        _fc_dst.chmod(0o755)
-
-    _fc_cmd = f'python3 "{_fc_dst}"'
-    _existing_fc = hooks_config.get("FileChanged", [])
-    _fc_already_registered = any(
-        entry.get("hooks", [{}])[0].get("command", "") == _fc_cmd
-        for entry in _existing_fc
-        if isinstance(entry, dict) and entry.get("hooks")
-    )
-    if not _fc_already_registered:
-        _fc_hook_entry: dict = {
-            "matcher": "",
-            "hooks": [{"type": "command", "command": _fc_cmd}],
-        }
-        if _env_block:
-            _fc_hook_entry["hooks"][0]["env"] = _env_block
-        _existing_fc.append(_fc_hook_entry)
-    hooks_config["FileChanged"] = _existing_fc
+    # Append-if-absent hooks
+    _install_append_hooks(package_hooks, hooks_dir, hooks_config, _env_block, dry_run)
 
     settings_data["hooks"] = hooks_config
 
     _stop_entry = [
-        {
-            "matcher": "",
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": f'python3 "{stop_hook_dst}"',
-                }
-            ],
-        }
+        {"matcher": "", "hooks": [{"type": "command", "command": f'python3 "{stop_dst}"'}]}
     ]
-
     _session_end_entry = [
-        {
-            "matcher": "",
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": f'python3 "{session_end_hook_dst}"',
-                }
-            ],
-        }
+        {"matcher": "", "hooks": [{"type": "command", "command": f'python3 "{session_end_dst}"'}]}
     ]
 
-    # Stop + SessionEnd hook placement depends on scope:
-    # - scope=global: same file as the rest of the hooks — merge directly.
-    # - scope=project: separate global file (so they fire in every session).
     if scope == "global":
-        # Everything goes into one file — add Stop + SessionEnd alongside the rest.
         hooks_config["Stop"] = _stop_entry
         hooks_config["SessionEnd"] = _session_end_entry
         settings_data["hooks"] = hooks_config
-    # else: settings_data already has hooks_config; global Stop+SessionEnd handled below
 
     if dry_run:
         preview = json.dumps(settings_data, indent=2)
@@ -331,24 +314,10 @@ def install_hooks_impl(
             "preview": settings_data,
         }
 
-    # Atomic write: primary settings file
     _atomic_write(settings_target_dir, settings_path, settings_data)
 
-    # For scope=project, also register Stop + SessionEnd in the global settings file
-    # (always global so they fire in every session regardless of project)
     if scope == "project":
-        global_settings_path = global_claude_dir / "settings.json"
-        global_settings: dict = {}
-        if global_settings_path.exists():
-            try:
-                global_settings = json.loads(global_settings_path.read_text())
-            except Exception:
-                global_settings = {}
-        global_hooks = global_settings.get("hooks", {})
-        global_hooks["Stop"] = _stop_entry
-        global_hooks["SessionEnd"] = _session_end_entry
-        global_settings["hooks"] = global_hooks
-        _atomic_write(global_claude_dir, global_settings_path, global_settings)
+        _write_global_stop_hooks(global_claude_dir, _stop_entry, _session_end_entry)
 
     global_settings_file = (
         str(settings_path) if scope == "global" else str(global_claude_dir / "settings.json")
