@@ -2074,9 +2074,14 @@ async function _dhFetchOnce() {
 }
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
-initGraph(_graphMode);
-loadGraph();
-connectSSE();
+// v5.11.0: fetch viz config before initGraph so value-based ForceGraph setters
+// (nodeRelSize, d3Force distances, charge strength) apply config overrides.
+(async () => {
+  await loadVizConfig();
+  initGraph(_graphMode);
+  loadGraph();
+  connectSSE();
+})();
 </script>
 </body>
 </html>
