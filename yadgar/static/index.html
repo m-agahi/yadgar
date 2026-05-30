@@ -794,6 +794,31 @@ function heatColor(h) {
   return `hsl(${(1 - h) * 240},${60 + h * 30}%,${40 + h * 20}%)`;
 }
 
+// ── 3D node colour resolver (S2.1) ──────────────────────────────────────────
+// Used by .nodeColor() in 3D mode and by _applySearchHighlight re-trigger.
+function _nodeColorFor(node) {
+  if (node.__dimmed) return 'rgba(80,80,80,0.18)';
+  if (node.type === 'wiki') return WIKI_CAT_COLOR[node.category] || '#8b949e';
+  return heatColor(node.heat || 0);
+}
+
+// ── 3D node geometry (S2.1 + S2.2) ─────────────────────────────────────────
+// Returns a THREE.Mesh: octahedron for wiki (visibly faceted), sphere for memory.
+// Material colour encodes heat (S2.1). Pinned/matched nodes get a gold tint.
+function _makeNodeThreeObject(node) {
+  const THREE = window.THREE;
+  const isWiki = node.type === 'wiki';
+  const size = node.__pinned ? 5 : 4;
+  const geo = isWiki
+    ? new THREE.OctahedronGeometry(size)      // S2.2: faceted for wiki
+    : new THREE.SphereGeometry(size, 8, 6);   // S2.2: sphere for memory
+  const color = node.__pinned
+    ? '#ffd700'
+    : _nodeColorFor(node);
+  const mat = new THREE.MeshLambertMaterial({ color, transparent: true, opacity: node.__dimmed ? 0.18 : 1.0 });
+  return new THREE.Mesh(geo, mat);
+}
+
 // ── Graph initialisation ────────────────────────────────────────────────────
 function _nodeLabel(n) {
   return n.type === 'wiki'
@@ -827,6 +852,9 @@ function initGraph(mode) {
       .linkSource('source')
       .linkTarget('target')
       .nodeLabel(_nodeLabel)
+      .nodeColor(_nodeColorFor)           // S2.1: heat colour for labels/glow
+      .nodeThreeObject(_makeNodeThreeObject)  // S2.1+S2.2: heat-coloured geometry
+      .nodeThreeObjectExtend(false)
       .linkColor(_linkColor)
       .linkWidth(_linkWidth)
       .linkDirectionalArrowLength(_arrowLen)
@@ -1373,19 +1401,33 @@ function _applySearchHighlight() {
     // De-emphasise non-matched nodes when a search is active
     n.__dimmed = hasPins && !n.__pinned;
   }
-  // Trigger redraw
-  graph.nodeCanvasObject(drawNode).nodeCanvasObjectMode(() => 'replace');
-  if (hasPins) {
-    // Center on matched nodes
-    const matched = allNodes.filter(n => n.__pinned);
-    if (matched.length > 0) {
-      const xs = matched.map(n => n.x).filter(x => x != null);
-      const ys = matched.map(n => n.y).filter(y => y != null);
-      if (xs.length > 0) {
-        const cx = xs.reduce((a,b) => a+b, 0) / xs.length;
-        const cy = ys.reduce((a,b) => a+b, 0) / ys.length;
-        graph.centerAt(cx, cy, 600);
-        graph.zoom(2.5, 600);
+  // S2.3: branch on mode — 3D uses nodeColor/nodeThreeObject re-evaluation;
+  // 2D uses nodeCanvasObject (which is 2D-only and throws in 3D mode).
+  if (_graphMode === '3d') {
+    // Force the 3D renderer to re-evaluate node colours and geometries.
+    graph.nodeColor(_nodeColorFor).nodeThreeObject(_makeNodeThreeObject);
+    if (hasPins) {
+      // Zoom toward matched nodes in 3D
+      const matched = allNodes.filter(n => n.__pinned);
+      if (matched.length > 0) {
+        graph.zoomToFit(600, 50, n => n.__pinned);
+      }
+    }
+  } else {
+    // 2D: use canvas draw override
+    graph.nodeCanvasObject(drawNode).nodeCanvasObjectMode(() => 'replace');
+    if (hasPins) {
+      // Center on matched nodes
+      const matched = allNodes.filter(n => n.__pinned);
+      if (matched.length > 0) {
+        const xs = matched.map(n => n.x).filter(x => x != null);
+        const ys = matched.map(n => n.y).filter(y => y != null);
+        if (xs.length > 0) {
+          const cx = xs.reduce((a, b) => a + b, 0) / xs.length;
+          const cy = ys.reduce((a, b) => a + b, 0) / ys.length;
+          graph.centerAt(cx, cy, 600);
+          graph.zoom(2.5, 600);
+        }
       }
     }
   }
@@ -1664,15 +1706,21 @@ document.addEventListener('keydown', e => {
 
 // ── Stats panel ──────────────────────────────────────────────────────────────
 let _chartHeat = null, _chartConsol = null;
+let _statsRefreshInterval = null;  // S2.4: interval handle for auto-refresh
 
 function openStats() {
   document.getElementById('main').style.display = 'none';
   document.getElementById('stats-overlay').style.display = 'flex';
   document.getElementById('stats-btn').classList.add('active');
   refreshStats();
+  // S2.4: poll every 5 s so CPU/DB trends animate while panel is open
+  if (_statsRefreshInterval) clearInterval(_statsRefreshInterval);
+  _statsRefreshInterval = setInterval(refreshStats, 5000);
 }
 
 function closeStats() {
+  // S2.4: stop polling when panel closes to avoid resource leak
+  if (_statsRefreshInterval) { clearInterval(_statsRefreshInterval); _statsRefreshInterval = null; }
   document.getElementById('stats-overlay').style.display = 'none';
   document.getElementById('main').style.display = 'flex';
   document.getElementById('stats-btn').classList.remove('active');
