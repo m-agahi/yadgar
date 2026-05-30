@@ -7,7 +7,7 @@ import os
 
 import yadgar.server._state as _st
 from yadgar.file_queue import is_draining
-from yadgar.secrets import check_secrets
+from yadgar.secrets import gate_or_reject
 from yadgar.server._app import _tool
 from yadgar.server._helpers import _has_unpaired_surrogate, _push_event
 from yadgar.server.lifecycle import _get_file_queue, _get_storage
@@ -49,10 +49,11 @@ def wiki_add(
     if len(content) > 65_536:
         return {"stored": False, "reason": "content_too_large", "max_bytes": 65_536}
 
-    # Secret detection and write-path rules
-    sec_blocked, sec_reason, sec_pattern = check_secrets(content)
-    if sec_blocked:
-        return {"stored": False, "reason": sec_reason, "pattern_matched": sec_pattern}
+    # v5.15.0: secret gate — use gate_or_reject() so allowlist tags= kwarg is forwarded.
+    # Replaces direct check_secrets() call so v5.13.0 allowlist fires on real wiki_add() calls.
+    _gate = gate_or_reject(content, tags=list(tags) if tags else [])
+    if _gate is not None:
+        return _gate
     if _st._rules_engine is not None:
         wp_blocked, wp_reason, wp_modified = _st._rules_engine.check_write_policy(
             content, "", tags or []
