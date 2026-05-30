@@ -1,5 +1,45 @@
 # Migration Notes
 
+## v5.17.0 — Write-time contradiction detection default-on (2026-05-30)
+
+Core 5.15.0 → 5.17.0. Backend unchanged at 5.4.0. No schema changes. No DB migrations.
+Plan: `docs/PLAN_V5_17_0_WRITE_TIME_CONTRADICTION.md`.
+
+### Why
+
+Audit Adopt-2 ("Write-time conflict resolution") identified that the lightweight contradiction detector (`yadgar/curation/contradiction.py`, built v5.3.x) was never wired into the write path. Contradicting memories accumulated until the nightly consolidation pass — a ~24h stale window. This release closes that gap.
+
+### What changed
+
+**`yadgar/curation/__init__.py`**:
+- `curate_on_remember()` now calls `detect_contradictions()` on every write where similar memories exist (cosine ≥ 0.6). Runs after `find_similar_memories`, before the merge/link/create branch. Env-gated (`YADGAR_WRITE_TIME_CONTRADICTION`, default `on`). Fail-soft: detector errors are logged but never block the write.
+
+**`yadgar/metrics.py`**:
+- New counter `yadgar_write_time_contradiction_total{reason}` (reason: `negation_mismatch` | `action_divergence`).
+
+**`yadgar/storage/client.py`**:
+- `confidence` added to `_MEMORY_UPDATABLE_FIELDS`. Previously absent, making `update_memory_fields(id, confidence=...)` a silent no-op. The detector's confidence-decay side effect was latent dead code until this fix.
+
+**`yadgar/tests/test_write_time_contradiction.py`** (new):
+- 7 tests: default-on fires detector, env-off skips, empty store noop, fail-soft, metric increment, LLM-resolver orthogonality, no-negation no-decay.
+
+**`docs/CONFLICT_RESOLVER.md`**:
+- New "Lightweight write-time detector" section documenting the two-layer model.
+
+### Upgrade path
+
+**Default on.** No action required on upgrade. Pre-existing memories whose content contradicts a new write will have `confidence` decremented by 0.1–0.2 (clamped at 0.1 floor) on the next contradicting write.
+
+To disable:
+
+```bash
+export YADGAR_WRITE_TIME_CONTRADICTION=off
+```
+
+The LLM resolver (`YADGAR_CONFLICT_RESOLVER=on`, Ollama-dependent) is unchanged and remains default-off.
+
+---
+
 ## v5.15.0 — CPU burst detection + secret-gate plumbing (2026-05-30)
 
 Core 5.13.1 → 5.15.0. Backend unchanged at 5.4.0. No schema changes. No DB migrations.

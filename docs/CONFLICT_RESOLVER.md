@@ -1,5 +1,51 @@
 # Conflict Resolver (C4 — v5.3.4)
 
+Yadgar's conflict resolution on write operates in two layers:
+
+1. **Lightweight write-time detector (v5.17.0, default on)** — cosine similarity + negation-pattern + action-divergence heuristics. No network I/O. Runs on every write.
+2. **LLM resolver (v5.3.4, opt-in)** — Ollama-backed semantic understanding. Runs before the lightweight detector; short-circuits the write path on NOOP/UPDATE/DELETE.
+
+## Lightweight write-time detector (v5.17.0)
+
+Wired into `MemoryCurator.curate_on_remember()` between `find_similar_memories` and the merge/link/create branch. Source: `yadgar/curation/contradiction.py`.
+
+### How it works
+
+For each write that has at least one similar memory (cosine ≥ 0.7):
+
+1. Checks whether one side has negation patterns (`no longer`, `not`, `switched from`, etc.) and the other does not — `negation_mismatch`.
+2. Checks whether the same topic carries different action verbs with low overlap — `action_divergence`.
+3. For each contradiction found, decrements the old memory's `confidence` by 0.1–0.2, clamped at 0.1 floor. **This is a silent side effect on the contradicting row.** The write of the new memory proceeds normally regardless.
+
+### Side effect documentation
+
+Writing memory X can lower `confidence` on memory Y without any tool-level return signal. This is intentional (audit Adopt-2: "mark conflicting as stale"). To observe it:
+
+- Metric: `yadgar_write_time_contradiction_total{reason="negation_mismatch"|"action_divergence"}` — incremented once per contradiction detected.
+- Log: `INFO write_time_contradiction: N contradicting memories flagged (reasons=[...])`.
+
+### Environment variable
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `YADGAR_WRITE_TIME_CONTRADICTION` | `on` | Set to `off` to disable the lightweight detector. |
+
+To disable:
+
+```bash
+export YADGAR_WRITE_TIME_CONTRADICTION=off
+```
+
+The LLM resolver (`YADGAR_CONFLICT_RESOLVER`) is unaffected — both knobs are independent.
+
+### Relationship to the LLM resolver
+
+When `YADGAR_CONFLICT_RESOLVER=on` and the LLM resolver returns `NOOP`, `UPDATE`, or `DELETE`, the write path returns before reaching the curator. The lightweight detector never runs in those cases. When the LLM resolver returns `ADD`, falls through due to error, or is disabled, the curator runs and the lightweight detector fires. Both can be on simultaneously without conflict.
+
+---
+
+## LLM resolver (C4 — v5.3.4)
+
 Yadgar's LLM-based conflict resolution on write. Mem0 parity. Ollama-only in v5.3.
 
 ## How it works

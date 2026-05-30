@@ -2353,8 +2353,13 @@
     "inh_depth": 0,
     "methods": 13
   },
+  "yadgar/curation/__init__.py::MemoryCurator@39": {
+    "attrs": 4,
+    "inh_depth": 0,
+    "methods": 14
+  },
   "yadgar/curation/__init__.py::__file__": {
-    "loc": 251
+    "loc": 289
   },
   "yadgar/curation/__init__.py::__init__@44": {
     "cyclo": 1,
@@ -2375,6 +2380,12 @@
     "params": 5
   },
   "yadgar/curation/__init__.py::__init__@47": {
+    "cyclo": 1,
+    "loc": 11,
+    "nesting": 0,
+    "params": 5
+  },
+  "yadgar/curation/__init__.py::__init__@48": {
     "cyclo": 1,
     "loc": 11,
     "nesting": 0,
@@ -2404,6 +2415,12 @@
     "nesting": 0,
     "params": 3
   },
+  "yadgar/curation/__init__.py::_create_link@215": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 3
+  },
   "yadgar/curation/__init__.py::_find_similar_memories@114": {
     "cyclo": 1,
     "loc": 5,
@@ -2423,6 +2440,12 @@
     "params": 3
   },
   "yadgar/curation/__init__.py::_find_similar_memories@138": {
+    "cyclo": 1,
+    "loc": 5,
+    "nesting": 0,
+    "params": 3
+  },
+  "yadgar/curation/__init__.py::_find_similar_memories@176": {
     "cyclo": 1,
     "loc": 5,
     "nesting": 0,
@@ -2452,6 +2475,12 @@
     "nesting": 0,
     "params": 2
   },
+  "yadgar/curation/__init__.py::_has_textual_overlap@183": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 2
+  },
   "yadgar/curation/__init__.py::_insert_new_memory@144": {
     "cyclo": 1,
     "loc": 8,
@@ -2471,6 +2500,12 @@
     "params": 12
   },
   "yadgar/curation/__init__.py::_insert_new_memory@168": {
+    "cyclo": 1,
+    "loc": 8,
+    "nesting": 0,
+    "params": 4
+  },
+  "yadgar/curation/__init__.py::_insert_new_memory@206": {
     "cyclo": 1,
     "loc": 8,
     "nesting": 0,
@@ -2500,6 +2535,12 @@
     "nesting": 0,
     "params": 2
   },
+  "yadgar/curation/__init__.py::_memify_derive@287": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 2
+  },
   "yadgar/curation/__init__.py::_memify_prune@210": {
     "cyclo": 1,
     "loc": 3,
@@ -2519,6 +2560,12 @@
     "params": 2
   },
   "yadgar/curation/__init__.py::_memify_prune@242": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/curation/__init__.py::_memify_prune@272": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
@@ -2548,6 +2595,12 @@
     "nesting": 0,
     "params": 2
   },
+  "yadgar/curation/__init__.py::_memify_reweight@282": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 2
+  },
   "yadgar/curation/__init__.py::_memify_strengthen@215": {
     "cyclo": 1,
     "loc": 3,
@@ -2567,6 +2620,12 @@
     "params": 2
   },
   "yadgar/curation/__init__.py::_memify_strengthen@247": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/curation/__init__.py::_memify_strengthen@277": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
@@ -2596,6 +2655,18 @@
     "nesting": 0,
     "params": 6
   },
+  "yadgar/curation/__init__.py::_merge_memory@187": {
+    "cyclo": 1,
+    "loc": 18,
+    "nesting": 0,
+    "params": 6
+  },
+  "yadgar/curation/__init__.py::_run_write_time_contradiction@144": {
+    "cyclo": 6,
+    "loc": 31,
+    "nesting": 4,
+    "params": 3
+  },
   "yadgar/curation/__init__.py::curate_on_remember@58": {
     "cyclo": 7,
     "loc": 65,
@@ -2617,6 +2688,12 @@
   "yadgar/curation/__init__.py::curate_on_remember@61": {
     "cyclo": 10,
     "loc": 76,
+    "nesting": 4,
+    "params": 12
+  },
+  "yadgar/curation/__init__.py::curate_on_remember@62": {
+    "cyclo": 12,
+    "loc": 81,
     "nesting": 4,
     "params": 12
   },
@@ -2644,6 +2721,12 @@
     "nesting": 1,
     "params": 3
   },
+  "yadgar/curation/__init__.py::detect_contradictions@221": {
+    "cyclo": 2,
+    "loc": 10,
+    "nesting": 1,
+    "params": 3
+  },
   "yadgar/curation/__init__.py::memify_cycle@172": {
     "cyclo": 1,
     "loc": 36,
@@ -2663,6 +2746,12 @@
     "params": 1
   },
   "yadgar/curation/__init__.py::memify_cycle@204": {
+    "cyclo": 1,
+    "loc": 36,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/curation/__init__.py::memify_cycle@234": {
     "cyclo": 1,
     "loc": 36,
     "nesting": 0,
@@ -5927,7 +6016,7 @@
     "params": 2
   },
   "yadgar/metrics.py::__file__": {
-    "loc": 643
+    "loc": 653
   },
   "yadgar/metrics.py::_collect_circuit_breaker_states@422": {
     "cyclo": 5,
@@ -5960,6 +6049,12 @@
     "params": 0
   },
   "yadgar/metrics.py::_collect_process_metrics@408": {
+    "cyclo": 4,
+    "loc": 23,
+    "nesting": 2,
+    "params": 0
+  },
+  "yadgar/metrics.py::_collect_process_metrics@418": {
     "cyclo": 4,
     "loc": 23,
     "nesting": 2,
@@ -6001,6 +6096,12 @@
     "nesting": 4,
     "params": 0
   },
+  "yadgar/metrics.py::_collect_queue_depths@611": {
+    "cyclo": 6,
+    "loc": 18,
+    "nesting": 4,
+    "params": 0
+  },
   "yadgar/metrics.py::_is_metrics_enabled@441": {
     "cyclo": 1,
     "loc": 4,
@@ -6037,6 +6138,12 @@
     "nesting": 0,
     "params": 0
   },
+  "yadgar/metrics.py::_is_metrics_enabled@605": {
+    "cyclo": 1,
+    "loc": 4,
+    "nesting": 0,
+    "params": 0
+  },
   "yadgar/metrics.py::hook_record_failure@532": {
     "cyclo": 8,
     "loc": 33,
@@ -6044,6 +6151,12 @@
     "params": 4
   },
   "yadgar/metrics.py::hook_record_failure@542": {
+    "cyclo": 8,
+    "loc": 33,
+    "nesting": 4,
+    "params": 4
+  },
+  "yadgar/metrics.py::hook_record_failure@552": {
     "cyclo": 8,
     "loc": 33,
     "nesting": 4,
@@ -6067,6 +6180,12 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/metrics.py::loop_heartbeat@540": {
+    "cyclo": 2,
+    "loc": 10,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/metrics.py::loop_record_exception@514": {
     "cyclo": 3,
     "loc": 16,
@@ -6080,6 +6199,12 @@
     "params": 2
   },
   "yadgar/metrics.py::loop_record_exception@577": {
+    "cyclo": 3,
+    "loc": 16,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/metrics.py::loop_record_exception@587": {
     "cyclo": 3,
     "loc": 16,
     "nesting": 2,
@@ -6116,6 +6241,12 @@
     "params": 1
   },
   "yadgar/metrics.py::metrics_handler@621": {
+    "cyclo": 2,
+    "loc": 23,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/metrics.py::metrics_handler@631": {
     "cyclo": 2,
     "loc": 23,
     "nesting": 1,
@@ -14759,7 +14890,7 @@
     "methods": 18
   },
   "yadgar/storage/client.py::__file__": {
-    "loc": 655
+    "loc": 657
   },
   "yadgar/storage/client.py::_build_chunk_body@431": {
     "cyclo": 14,
@@ -14965,6 +15096,12 @@
     "nesting": 2,
     "params": 2
   },
+  "yadgar/storage/client.py::_observe_query_metrics@185": {
+    "cyclo": 2,
+    "loc": 15,
+    "nesting": 2,
+    "params": 2
+  },
   "yadgar/storage/client.py::_preprocess_fts_query@594": {
     "cyclo": 6,
     "loc": 24,
@@ -15164,6 +15301,12 @@
     "params": 1
   },
   "yadgar/storage/client.py::_sql_op@173": {
+    "cyclo": 2,
+    "loc": 8,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/storage/client.py::_sql_op@175": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 0,
