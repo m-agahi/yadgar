@@ -6,6 +6,17 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.10.4] — 2026-05-30
+
+Hotfix: `consolidate_now` heavyweight fix + PreToolUse hook schema fix.
+
+- **`consolidate_now(mode='light'|'full')`**: new `mode` param (default `'light'`). Light = `force_consolidate()` only, typically <30 s. Full = consolidation + sleep cycle + anchor audit; sets `_last_sleep_cycle` timestamp so 6-hour gate fires correctly. Fixes 13-minute surprise on every on-demand flush.
+- **Hook schema fix**: `hook_runner.py:db-lockdown-check` now emits `{"hookSpecificOutput": {"permissionDecision": "allow"|"deny"}}` (new PreToolUse schema). Eliminates `(root): Invalid input` noise on Bash tool calls.
+- **I13 compliance fix**: extracted 4 helper functions from `memory_stats()` to resolve pre-existing HARD complexity violations (cyclo=32, fn_loc=155, nesting=5). No behavior change.
+- **Behavior change**: `consolidate_now()` (default/no args) no longer runs the sleep cycle or anchor audit. Callers requiring the full cycle must pass `mode='full'`.
+
+See [MIGRATION_NOTES.md §v5.10.4](MIGRATION_NOTES.md#v5104--consolidate_now-mode-parameter-2026-05-30).
+
 ## [5.10.3] — 2026-05-29
 
 Patch: `scripts/scan_db_for_secrets.py` end-to-end fix.
