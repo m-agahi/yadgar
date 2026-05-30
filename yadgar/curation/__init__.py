@@ -1,6 +1,7 @@
 """Active memory curation engine — deduplication, merging, contradiction detection, and self-improvement."""
 
 import logging
+import os
 import time
 from typing import Any
 
@@ -84,6 +85,11 @@ class MemoryCurator:
             threshold = self._settings.CURATION_SIMILARITY_THRESHOLD
             similar = self._find_similar_memories(embedding, min_sim=_LINK_LOW)
 
+            # v5.17.0: write-time contradiction detection (audit Adopt-2).
+            # Env-gated; default on. Re-uses `similar` already computed above.
+            if os.environ.get("YADGAR_WRITE_TIME_CONTRADICTION", "on").lower() == "on" and similar:
+                self._run_write_time_contradiction(similar, content)
+
             # High similarity + textual overlap → merge
             for mem_id, sim in similar:
                 if sim >= threshold:
@@ -134,6 +140,38 @@ class MemoryCurator:
                 yadgar_curator_merge_outcome.labels(outcome=outcome).inc()
             except Exception:
                 pass
+
+    def _run_write_time_contradiction(
+        self,
+        similar: list[tuple[int, float]],
+        content: str,
+    ) -> None:
+        """Detect contradictions at write time and emit metrics (fail-soft).
+
+        Extracted from curate_on_remember to keep that method within complexity caps.
+        Any exception is logged and swallowed — never blocks the write path.
+        """
+        try:
+            contradictions = detect_contradictions(self._storage, similar, content)
+            if contradictions:
+                logger.info(
+                    "write_time_contradiction: %d contradicting memories flagged "
+                    "(reasons=%s) for new content=%r",
+                    len(contradictions),
+                    [c["reason"] for c in contradictions],
+                    content[:80],
+                )
+                try:
+                    from yadgar.metrics import (  # noqa: PLC0415
+                        yadgar_write_time_contradiction_total,
+                    )
+
+                    for c in contradictions:
+                        yadgar_write_time_contradiction_total.labels(reason=c["reason"]).inc()
+                except Exception:
+                    pass
+        except Exception as exc:
+            logger.warning("write_time_contradiction detector failed (fail-soft): %s", exc)
 
     def _find_similar_memories(
         self, embedding: bytes, min_sim: float = 0.6
