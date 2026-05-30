@@ -1,4 +1,4 @@
-/* yadgar bookmarks page JS — v5.24.0
+/* yadgar bookmarks page JS — v5.24.1
  *
  * Consumes:
  *   GET  /api/bookmarks                    → [{slug, label_override, position, added_at}]
@@ -44,11 +44,18 @@ function _configureMarked() {
   }
 
   // Custom renderer: [[slug]] → clickable links that navigate bookmarks
+  // marked v15 passes a token object to renderer.text, not a raw string.
+  // Extract the string via token.text (v5 API) before calling replace().
   const renderer = new marked.Renderer();
   const _origText = renderer.text.bind(renderer);
-  renderer.text = (text) => {
+  renderer.text = (token) => {
+    // marked v5+: token is an object {type:"text", text:"...", ...}
+    // marked v4 and below: token is already the string.
+    const raw = (typeof token === "object" && token !== null && typeof token.text === "string")
+      ? token.text
+      : (typeof token === "string" ? token : "");
     // Replace [[slug]] patterns with anchor that calls selectBookmark(slug)
-    const replaced = text.replace(
+    const replaced = raw.replace(
       /\[\[([^\]]+)\]\]/g,
       (_, slug) =>
         `<a href="#" class="wiki-xref" onclick="selectBookmarkBySlug('${slug.replace(/'/g, "\\'")}');return false;">${slug}</a>`
@@ -78,6 +85,12 @@ function _debounce(fn, ms) {
  * Render markdown
  * ----------------------------------------------------------------------- */
 function _renderMarkdown(content) {
+  // v5.24.1: guard — if API returns non-string (null, object, etc.) fall back
+  // to empty string rather than passing a non-string to marked.parse().
+  if (typeof content !== "string") {
+    console.warn("_renderMarkdown: expected string, got", typeof content, content);
+    content = "";
+  }
   if (typeof marked === 'undefined') {
     // Fallback: plain text in <pre>
     const pre = document.createElement('pre');
