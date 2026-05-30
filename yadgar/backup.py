@@ -81,6 +81,17 @@ def create_snapshot(
     except OSError as exc:
         raise RuntimeError(f"create_snapshot: failed to copy {db_path} → {target}: {exc}") from exc
 
+    # Stamp snapshot directory mtime to now so prune_snapshots (mtime-sorted) always
+    # treats a just-created snapshot as newest. shutil.copytree with copy2 propagates
+    # the source directory's mtime to the snapshot, which can be arbitrarily old
+    # (the DB dir mtime is the last write, not the copy time). Without this stamp,
+    # a newly created post-backup snapshot can sort as "oldest" and get pruned
+    # immediately in the same nightly cycle (v5.10.5 Bug 2).
+    try:
+        target.touch()  # os.utime(target, None) — sets atime+mtime to current time
+    except OSError:
+        pass  # non-fatal: snapshot is created, mtime stamp is best-effort
+
     _log.info("backup snapshot created: %s", target)
     return target
 
