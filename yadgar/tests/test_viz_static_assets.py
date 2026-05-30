@@ -185,3 +185,58 @@ class TestS24StatsAutoRefresh:
 
 # v5.10.7.3: TestV510701LightingFix removed (entire class). Custom mesh reverted —
 # regression gates live in TestV510703RevertCustomMesh above.
+
+
+class TestV5108PhysicsAndMeshLeakFix:
+    """v5.10.8: tick-count guard for onEngineStop + drop empty-then-restore mesh leak.
+
+    Bug A: onEngineStop fired before physics ran → pinned all nodes at origin.
+           Fix: count ticks via onEngineTick; skip pin if < 50 ticks elapsed.
+    Bug B: graphData({nodes:[],links:[]}) empty-then-restore via setTimeout leaked
+           Three.js Mesh objects on every filter cycle. Fix: direct graphData(d).
+    """
+
+    def test_onEngineStop_has_tick_count_guard(self) -> None:
+        html = _html()
+        # _engineTickCount must be declared (module-scope guard variable)
+        assert "_engineTickCount" in html, (
+            "_engineTickCount variable missing — onEngineStop tick-count guard (v5.10.8 Bug A fix) "
+            "not implemented. Without this, onEngineStop pins all nodes at origin before "
+            "physics runs."
+        )
+        # The onEngineStop callback must reference _engineTickCount
+        lines = html.splitlines()
+        in_stop = False
+        stop_lines: list[str] = []
+        brace_depth = 0
+        for line in lines:
+            if ".onEngineStop(" in line:
+                in_stop = True
+            if in_stop:
+                stop_lines.append(line)
+                brace_depth += line.count("{") - line.count("}")
+                if in_stop and brace_depth == 0 and len(stop_lines) > 1:
+                    break
+        body = "\n".join(stop_lines)
+        assert "_engineTickCount" in body, (
+            "onEngineStop callback does not reference _engineTickCount — "
+            "guard is declared but not wired into the stop handler."
+        )
+
+    def test_onEngineTick_handler_present(self) -> None:
+        html = _html()
+        assert ".onEngineTick(" in html, (
+            ".onEngineTick( call missing — v5.10.8 Bug A fix requires an onEngineTick handler "
+            "to increment _engineTickCount. Without it the guard variable stays 0 forever and "
+            "onEngineStop will never pin (or will always skip pinning)."
+        )
+
+    def test_no_empty_then_restore_pattern(self) -> None:
+        html = _html()
+        # The empty-then-restore hack must be gone (regression gate)
+        assert "graph.graphData({ nodes: [], links: [] })" not in html, (
+            "graph.graphData({ nodes: [], links: [] }) found — this is the v5.10.8 Bug B "
+            "mesh-leak pattern. ForceGraph3D does not dispose Three.js Mesh objects on the "
+            "empty step; each call accumulates orphan meshes. Replace with direct "
+            "graph.graphData(d)."
+        )
