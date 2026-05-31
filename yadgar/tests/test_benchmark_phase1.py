@@ -132,7 +132,7 @@ def test_build_reproducibility_dict_required_fields(tmp_path, monkeypatch):
 
 
 def test_build_reproducibility_dict_placeholders_in_retrieval_only(tmp_path, monkeypatch):
-    """reader_llm and judge_llm are None for retrieval-only (Phase 1)."""
+    """reader_llm and judge_llm are None when ANTHROPIC_MODEL is not set (Phase 1)."""
     settings = MagicMock()
     settings.EMBEDDING_MODEL = "test-model"
 
@@ -143,6 +143,8 @@ def test_build_reproducibility_dict_placeholders_in_retrieval_only(tmp_path, mon
         "subprocess.check_output",
         lambda *a, **kw: b"abc123\n",
     )
+    # Ensure model env var is absent so reader_llm / judge_llm remain None
+    monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
 
     result = build_reproducibility_dict(dataset_path, settings)
     assert result["reader_llm"] is None
@@ -405,3 +407,76 @@ def test_wipe_benchmark_tables_callable():
     from benchmarks.run_longmemeval import wipe_benchmark_tables  # noqa: F401
 
     assert callable(wipe_benchmark_tables)
+
+
+# ── v5.26.0 — call_claude_pipe model routing ──────────────────────────
+
+
+def test_call_claude_pipe_passes_model_flag_when_anthropic_model_set(monkeypatch):
+    """When ANTHROPIC_MODEL is set, call_claude_pipe must pass --model <value> to claude."""
+    import benchmarks.run_longmemeval as bm
+
+    captured_cmds = []
+
+    def _fake_run(cmd, **kw):
+        captured_cmds.append(cmd)
+        mock = MagicMock()
+        mock.returncode = 0
+        mock.stdout = '{"result": "answer", "type": "result"}'
+        return mock
+
+    monkeypatch.setenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+    monkeypatch.setattr("subprocess.run", _fake_run)
+
+    bm.call_claude_pipe("test prompt", "system prompt")
+
+    assert len(captured_cmds) == 1
+    cmd = captured_cmds[0]
+    assert "--model" in cmd, f"--model flag missing from cmd: {cmd}"
+    model_idx = cmd.index("--model")
+    assert cmd[model_idx + 1] == "claude-haiku-4-5-20251001", (
+        f"Expected haiku model id, got: {cmd[model_idx + 1]}"
+    )
+
+
+def test_call_claude_pipe_no_model_flag_when_anthropic_model_unset(monkeypatch):
+    """Without ANTHROPIC_MODEL, call_claude_pipe must NOT pass --model flag."""
+    import benchmarks.run_longmemeval as bm
+
+    captured_cmds = []
+
+    def _fake_run(cmd, **kw):
+        captured_cmds.append(cmd)
+        mock = MagicMock()
+        mock.returncode = 0
+        mock.stdout = '{"result": "answer", "type": "result"}'
+        return mock
+
+    monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
+    monkeypatch.setattr("subprocess.run", _fake_run)
+
+    bm.call_claude_pipe("test prompt")
+
+    assert len(captured_cmds) == 1
+    assert "--model" not in captured_cmds[0], (
+        f"--model should not be present when ANTHROPIC_MODEL unset, got: {captured_cmds[0]}"
+    )
+
+
+def test_build_reproducibility_dict_llm_from_anthropic_model(tmp_path, monkeypatch):
+    """reader_llm and judge_llm are populated from ANTHROPIC_MODEL when set (Phase 2)."""
+    settings = MagicMock()
+    settings.EMBEDDING_MODEL = "test-model"
+
+    dataset_path = tmp_path / "data.json"
+    dataset_path.write_bytes(b"[]")
+
+    monkeypatch.setattr(
+        "subprocess.check_output",
+        lambda *a, **kw: b"abc123\n",
+    )
+    monkeypatch.setenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+
+    result = build_reproducibility_dict(dataset_path, settings)
+    assert result["reader_llm"] == "claude-haiku-4-5-20251001"
+    assert result["judge_llm"] == "claude-haiku-4-5-20251001"
