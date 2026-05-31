@@ -7,6 +7,15 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.25.5] - 2026-05-31
+
+SVG residue cleanup hit complexity wall (overlapping paths); pivoted to PNG with chroma-threshold transparency processing.
+
+### Fixed
+- **README hero image:** replaced `yadgar.svg` (residue) with `yadgar.png` (Pillow chroma-threshold cleaned, 531KB, 1.20% pixels made transparent).
+- **yadgar.svg removed:** stale asset with near-white residue deleted from `yadgar/static/`.
+- **favicon.svg unchanged:** separate clean asset; favicon links in `index.html` and `bookmarks.html` untouched.
+
 ## [5.25.4] - 2026-05-31
 
 User-provided SVG logo wired into README hero and favicon links added to viz pages.
