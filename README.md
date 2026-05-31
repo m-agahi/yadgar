@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="yadgar/static/yadgar.svg" alt="yadgar logo" width="200">
+  <img src="yadgar/static/yadgar.png" alt="yadgar logo" width="200">
 </p>
 
 <div align="center">
