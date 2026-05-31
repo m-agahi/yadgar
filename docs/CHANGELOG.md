@@ -7,6 +7,18 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.25.4] - 2026-05-31
+
+User-provided SVG logo wired into README hero and favicon links added to viz pages.
+
+### Added
+- **README hero image:** `yadgar/static/yadgar.svg` displayed at top of README (200px, centered).
+- **Favicon — index.html:** `<link rel="icon" type="image/svg+xml" href="/favicon.svg">` in `<head>`.
+- **Favicon — bookmarks.html:** same favicon link.
+- **SVG assets committed:** `yadgar/static/yadgar.svg` (logo) and `yadgar/static/favicon.svg` (tab favicon).
+
+Multi-size favicon set (16/32/48/96/180/192/512 PNG), apple-touch-icon, OG image, Info-tab branding, and tab-nav header logo deferred to v5.50 viz overhaul.
+
 ## [5.25.3] - 2026-05-31
 
 Fast profile follow-up to v5.25.2 CPU burst hotfix.
