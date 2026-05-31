@@ -7,6 +7,15 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.25.6] - 2026-05-31
+
+README cosmetic patch: HTML table white-bg wrapper for transparent PNG hero.
+
+### Fixed
+- **README hero background:** wrapped `<img>` in `<table bgcolor="white" cellpadding="40" cellspacing="0" border="0">` so the transparent-bg `yadgar.png` renders with a clean white surround on dark-mode viewers (Codeberg, GitHub). Inline `style` attribute is stripped by markdown sanitizers; legacy HTML4 `bgcolor` on table cells is preserved by all common renderers.
+- **Redundant H1 removed:** deleted `# Yadgar` heading — the logo image contains the wordmark.
+- **Display size:** bumped hero width 200 → 320 for better readability at typical render widths.
+
 ## [5.25.5] - 2026-05-31
 
 SVG residue cleanup hit complexity wall (overlapping paths); pivoted to PNG with chroma-threshold transparency processing.

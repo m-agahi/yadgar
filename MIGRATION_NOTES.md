@@ -1,5 +1,24 @@
 # Migration Notes
 
+## v5.25.6 — README white-bg HTML table wrapper + H1 removal (2026-05-31)
+
+Core 5.25.5 → 5.25.6. Backend unchanged at 5.4.0. **No DB migration.**
+
+### Summary
+
+The transparent-bg `yadgar.png` (shipped in v5.25.5) renders with an unwanted halo on dark-mode README viewers (Codeberg, GitHub). This release wraps the hero `<img>` in an HTML `<table bgcolor="white" cellpadding="40">` to give it a clean white surround regardless of viewer theme. Inline `style="background:white"` is stripped by Codeberg/GitHub markdown sanitizers; legacy HTML4 `bgcolor` on table cells is preserved.
+
+Also removed the redundant `# Yadgar` H1 heading (the logo image contains the wordmark), and bumped display size 200 → 320.
+
+- `README.md`: hero `<img>` wrapped in `<table bgcolor="white" ...>`; `# Yadgar` H1 removed; width 200 → 320.
+- `yadgar.png`: **unchanged** — transparent original preserved.
+
+### Rebuild required
+
+Static assets are bundled in the Docker image. Pull / rebuild to get the updated README on the registry listing. No config changes needed.
+
+---
+
 ## v5.25.5 — Branding: pivot SVG hero → PNG with cleaned transparency (2026-05-31)
 
 Core 5.25.4 → 5.25.5. Backend unchanged at 5.4.0. **No DB migration.**
