@@ -1,7 +1,9 @@
 """Cleanup mixin — action log processing and table retention prunes."""
 
+import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
+from pathlib import Path
 
 logger = logging.getLogger("yadgar.consolidation")
 
@@ -16,6 +18,31 @@ def _observe_action_batch(n: int) -> None:
         pass
 
 
+def _quarantine_action_group(action_ids: list, reason: str, directory: str) -> None:
+    """Append a quarantine entry for a poison-pill action-log group.
+
+    Best-effort: any I/O error is swallowed so the quarantine write never
+    re-poisons the consolidation cycle.
+
+    File: ~/.yadgar/quarantine/action_log_poison.jsonl
+    Format: one JSON object per line — {timestamp, action_ids, reason, directory}
+    """
+    try:
+        quarantine_dir = Path.home() / ".yadgar" / "quarantine"
+        quarantine_dir.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "timestamp": datetime.now(tz=UTC).isoformat(),
+            "action_ids": action_ids,
+            "reason": reason,
+            "directory": directory,
+        }
+        quarantine_file = quarantine_dir / "action_log_poison.jsonl"
+        with quarantine_file.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except Exception:
+        logger.debug("quarantine write failed (non-fatal)", exc_info=True)
+
+
 class _CleanupMixin:
     """Action log processing and retention-based table pruning."""
 
@@ -26,7 +53,7 @@ class _CleanupMixin:
         a summary memory for each group. This is the cold path — the hot
         path (PostToolCall hook) just writes to action_log.
         """
-        stats = {"processed": 0, "memories_created": 0}
+        stats = {"processed": 0, "memories_created": 0, "actions_quarantined": 0}
 
         try:
             rows = self._storage.get_unprocessed_actions(limit=200)
@@ -82,22 +109,12 @@ class _CleanupMixin:
                 if details:
                     content += "\n" + "\n".join(f"- {d}" for d in details)
 
-                # Store as a low-heat episodic memory (will be consolidated normally)
-                embedding = self._embeddings.encode(content)
-                self._storage.insert_memory(
-                    {
-                        "content": content,
-                        "embedding": embedding,
-                        "tags": ["_action_stream", "_auto"],
-                        "directory_context": directory,
-                        "heat": 0.4,
-                        "confidence": 0.0,
-                        "is_stale": False,
-                        "file_hash": None,
-                        "embedding_model": self._embeddings.get_model_name(),
-                    }
-                )
-                stats["memories_created"] += 1
+                group_ids = [a["id"] for a in actions]
+                stored = self._try_store_action_summary(content, directory, group_ids)
+                if stored is None:
+                    stats["actions_quarantined"] += len(group_ids)
+                else:
+                    stats["memories_created"] += stored
 
             # Mark all as processed
             ids = [a["id"] for a in actions]
@@ -112,6 +129,47 @@ class _CleanupMixin:
             logger.debug("action_log prune failed (non-fatal)", exc_info=True)
 
         return stats
+
+    def _try_store_action_summary(
+        self, content: str, directory: str, group_ids: list
+    ) -> int | None:
+        """Attempt to store one action-log group as a memory.
+
+        Returns 1 on success, None if blocked by SecretLeakBlocked (poison-pill).
+        Re-raises any other exception so the caller sees unexpected failures.
+
+        v5.25.2: extracted from _process_action_log to reduce nesting/cyclo.
+        """
+        from yadgar.secrets import SecretLeakBlocked  # noqa: PLC0415
+
+        embedding = self._embeddings.encode(content)
+        try:
+            self._storage.insert_memory(
+                {
+                    "content": content,
+                    "embedding": embedding,
+                    "tags": ["_action_stream", "_auto"],
+                    "directory_context": directory,
+                    "heat": 0.4,
+                    "confidence": 0.0,
+                    "is_stale": False,
+                    "file_hash": None,
+                    "embedding_model": self._embeddings.get_model_name(),
+                }
+            )
+            return 1
+        except SecretLeakBlocked as _slb:
+            # Poison-pill: log + quarantine + let caller skip the entry.
+            logger.warning(
+                "action_log poison-pill: SecretLeakBlocked on group "
+                "(directory=%s, action_ids=%s, reason=%s) — "
+                "quarantining and skipping. Entry will not be retried.",
+                directory,
+                group_ids,
+                _slb,
+            )
+            _quarantine_action_group(group_ids, str(_slb), directory)
+            return None
 
     def _prune_old_episodes_safe(self) -> None:
         """Prune old episodes to keep the table bounded. Non-fatal."""

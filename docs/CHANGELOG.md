@@ -7,6 +7,16 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.25.2] - 2026-05-31
+
+CPU burst hotfix. Two root causes confirmed (HIGH confidence, 2-pass investigation).
+
+### Fixed
+- **subagent_start CPU burst (2.5-10s/dispatch):** `hook_subagent_start` in `yadgar/server/http.py` called `retriever.recall()` without `profile="fast"`, triggering the full CE/NLI/MP rerank pipeline on every subagent dispatch. Sibling `hook_prompt_recall` (~line 524) already used `profile="fast"` with comment warning about 8-46s bursts. Same fix applied to `hook_subagent_start` (was line 1043).
+- **Consolidation daemon poison-pill loop:** `_process_action_log()` in `yadgar/consolidation/cleanup.py` hit `SecretLeakBlocked` from `insert_memory()` every cycle on a poisoned action-log group. Only 1 of N expected cycles completed in 5h10min. Fix: catch `SecretLeakBlocked` narrowly around `insert_memory()`, log WARNING, quarantine group IDs to `~/.yadgar/quarantine/action_log_poison.jsonl` (best-effort), fall through to `mark_actions_processed()` so the poisoned group never re-queues. Adds `actions_quarantined` counter to stats.
+
+## [5.25.1] - 2026-05-31
+
 ## [5.25.0] - 2026-05-31
 
 Benchmark infrastructure + Phase 1 retrieval-only scaffolding. Zero API spend.
