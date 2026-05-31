@@ -1,5 +1,58 @@
 # Migration Notes
 
+## v5.26.0 — Phase 2 Haiku Pilot Benchmark: First Published QA Accuracy (2026-05-31)
+
+Core 5.25.6 → 5.26.0. Backend unchanged at 5.4.0. **No DB migration.**
+
+### Summary
+
+First published LongMemEval benchmark numbers for yadgar. Closes Adopt-1 from competitor audit
+(2026-05-30). 96 stratified questions (16/type × 6 types), `longmemeval_s` variant.
+
+**Phase 1 (retrieval-only):** MRR=0.935, Recall@10=0.964, NDCG@10=0.913. Gate PASS.
+**Phase 2 (QA accuracy):** **61.46% (59/96)**, `claude-haiku-4-5-20251001` reader + judge, 100.1 min wall-clock.
+
+Per-type:
+- single-session-assistant: 93.8% (15/16)
+- single-session-user: 87.5% (14/16)
+- temporal-reasoning: 75.0% (12/16)
+- knowledge-update: 68.8% (11/16)
+- multi-session: 31.2% (5/16)
+- single-session-preference: 12.5% (2/16)
+
+Comparison: mem0 94.4% (full 500-q), Zep 63.8% (full 500-q GPT-4o). Yadgar pilot is 96 questions
+on smaller Haiku reader; full 500-question run planned as follow-up. Retrieval is strong (MRR ≥ 0.90
+for every type) so QA gap is reader/judge, not retrieval — confirms the D2/D3 RECONSIDER framing
+(reader/judge improvements likely lift QA without changing retrieval stack).
+
+### Changes
+
+- `benchmarks/run_longmemeval.py`:
+  - `call_claude_pipe()`: now passes `--model` from `ANTHROPIC_MODEL` env var explicitly
+  - `build_reproducibility_dict()`: populates `reader_llm`/`judge_llm` from `ANTHROPIC_MODEL`
+- `yadgar/tests/test_benchmark_phase1.py`: 3 new model-routing tests; 1 test updated for env isolation
+- `docs/BENCHMARK_RESULTS.md`: Phase 1 + Phase 2 numbers (replaces all PENDING)
+- `docs/benchmarks-current.md`: v5.26.0 row populated
+- `docs/DECISIONS.md`: D2 + D3 RECONSIDER posture (Adopt-1 trigger fired)
+- `docs/PLAN_V5_25_X_D2_NLI_AB.md`: draft A/B plan for NLI default-on/off decision
+- `docs/PLAN_V5_25_X_D3_PC_AB.md`: draft A/B plan for PC algorithm causal discovery
+- `benchmarks/results/longmemeval_v5.26.0_s_retrieval.json`: Phase 1 result (committed)
+- `benchmarks/results/longmemeval_v5.26.0_s_full.json`: Phase 2 result (committed)
+
+### To run Phase 2 benchmark yourself
+
+```bash
+# Set model to Haiku (same as v5.26.0 pilot)
+ALL_TYPES="single-session-user,single-session-assistant,single-session-preference,multi-session,temporal-reasoning,knowledge-update"
+ANTHROPIC_MODEL=claude-haiku-4-5-20251001 \
+  uv run python benchmarks/run_longmemeval.py \
+  --max-questions 100 --stratify-per-type --types "$ALL_TYPES" \
+  --output benchmarks/results/longmemeval_v5.26.0_s_full.json
+```
+Cost: ~$0.40-1 Haiku API spend. Wall-clock: ~2 hours (96 questions, sequential).
+
+---
+
 ## v5.25.6 — README white-bg HTML table wrapper + H1 removal (2026-05-31)
 
 Core 5.25.5 → 5.25.6. Backend unchanged at 5.4.0. **No DB migration.**

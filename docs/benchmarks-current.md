@@ -1,17 +1,18 @@
 # Benchmarks — current numbers
 
-## Status (2026-05-31, v5.25.0)
+## Status (2026-05-31, v5.26.0)
 
-**v5.25.0** ships Phase 1 LongMemEval retrieval infrastructure: dataset downloaded + sha256-pinned,
-reproducibility metadata wired into output JSON, license attribution documented.
-Phase 1 retrieval numbers PENDING deployment run (requires live SurrealDB server).
-Phase 2 QA accuracy (comparison vs mem0 94.4 / Zep 63.8) ships in v5.26.0.
+**v5.26.0** ships Phase 1 + Phase 2 LongMemEval pilot results (96 stratified questions).
+
+**Phase 1 (retrieval):** MRR=0.935, Recall@10=0.964, NDCG@10=0.913. Gate: PASS.
+**Phase 2 (QA accuracy):** **61.46% (59/96)** — Haiku (`claude-haiku-4-5-20251001`) reader + judge, 100.1 min wall-clock.
+See `docs/BENCHMARK_RESULTS.md` for full per-type breakdown and comparison vs mem0/Zep.
 
 | Suite | Script | Dataset required | Status |
 |---|---|---|---|
 | LoCoMo F1 + J-Score | `run_locomo_jscore.py` | LoCoMo (CC BY-NC 4.0, HuggingFace) | scripts ready; numbers not published yet |
 | LoCoMo ablation | `run_locomo_ablation.py` | LoCoMo (CC BY-NC 4.0) | scripts ready; numbers not published yet |
-| **LongMemEval** | `run_longmemeval.py` | **MIT — downloaded + pinned (v5.25.0)** | **Phase 1 infra shipped; run pending deployment** |
+| **LongMemEval** | `run_longmemeval.py` | **MIT — downloaded + pinned (v5.25.0)** | **v5.26.0: Phase 1 MRR=0.935, R@10=0.964; Phase 2 QA=61.46% (96 stratified, Haiku pilot)** |
 | LoCoMo GPU | `run_benchmark_gpu.py` | LoCoMo (CC BY-NC 4.0) | scripts ready; GPU path untested |
 | LoCoMo smoke test | `test_e_locomo.py` | LoCoMo JSON at `LOCOMO_JSON_PATH` | 6 tests collected, 6 skipped (dataset absent) |
 
@@ -52,4 +53,4 @@ Compare against Zikkaron's published LoCoMo numbers (see https://github.com/aman
 |---|---:|---:|---:|---:|---|
 | 5.0.1 | TBD | TBD | TBD | TBD | benchmarks revived this release (`b97ac35`) |
 | **5.25.0** | — | — | **PENDING run** | — | Phase 1 infra shipped; dataset pinned (sha256: `d6f21ea…`); run pending deployment |
-| **5.26.0** | — | — | (inherit 5.25.0) | **PENDING QA run** | Phase 2 QA + comparison vs mem0/Zep |
+| **5.26.0** | — | — | **MRR=0.935, R@10=0.964** | **61.46% (59/96)** | 96 stratified q, Haiku reader+judge; vs Zep 63.8% (full 500-q, GPT-4o) and mem0 94.4% (full 500-q) |
