@@ -7,6 +7,17 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.26.0] - 2026-05-31
+
+Published first LongMemEval QA accuracy number against mem0 and Zep. Closes Adopt-1.
+
+### Added
+- **LongMemEval Phase 1 + Phase 2 pilot results** — 96 stratified questions (16/type × 6 types), `claude-haiku-4-5-20251001` reader + judge. Phase 1: MRR=0.935, Recall@10=0.964, NDCG@10=0.913. **Phase 2 QA accuracy: 61.46% (59/96)** — below Zep's 63.8% headline by 2.3pp on 5x smaller sample; retrieval is strong (MRR ≥ 0.90 per type) so failure modes are reader/judge, not retrieval. Two weak buckets: `single-session-preference` (12.5%) and `multi-session` (31.2%). Full numbers + per-type breakdown in `docs/BENCHMARK_RESULTS.md`.
+- **`call_claude_pipe` model routing** — now passes `--model` from `ANTHROPIC_MODEL` env var explicitly, so model identity is deterministic and recorded in reproducibility block (`benchmarks/run_longmemeval.py`).
+- **`build_reproducibility_dict` model recording** — `reader_llm` and `judge_llm` fields populated from `ANTHROPIC_MODEL` at run time (was always `null` in Phase 1).
+- **D2/D3 revisit trigger fired** — both decisions are now in RECONSIDER posture per `docs/DECISIONS.md` 2026-05-31 entry. Draft A/B plans: `docs/PLAN_V5_25_X_D2_NLI_AB.md`, `docs/PLAN_V5_25_X_D3_PC_AB.md`.
+- **3 new tests** — `test_call_claude_pipe_passes_model_flag_when_anthropic_model_set`, `test_call_claude_pipe_no_model_flag_when_anthropic_model_unset`, `test_build_reproducibility_dict_llm_from_anthropic_model` (in `test_benchmark_phase1.py`). Plus existing test updated for `ANTHROPIC_MODEL` env isolation.
+
 ## [5.25.3] - 2026-05-31
 
 Fast profile follow-up to v5.25.2 CPU burst hotfix.

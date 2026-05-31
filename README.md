@@ -32,7 +32,7 @@
 - **Bearer-token MCP auth** — default-deny CORS, timing-safe token compare, always-on secret patterns blocking AWS/GCP/Stripe/Slack/OpenAI/Anthropic keys, JWT, PATs, private keys, DB URIs. Context-aware allowlist (`~/.yadgar/secret-gate-allowlist.yaml`) for known-good fixtures.
 - **Knowledge-graph viz** — `yadgar viz` serves a Three.js graph of memories, entities, and relationships at `http://localhost:42069` with live filtering by tag, age, and store type. All 35 viz constants configurable via `config.yaml` without redeploy.
 - **Prometheus `/metrics`** — structured JSON logs, per-phase consolidation duration markers, CRITICAL alert on phase exceeding `PHASE_DURATION_WARN_MS`, loopback-only by default.
-- **Benchmark infra** — Phase 1 LongMemEval retrieval harness with reproducibility metadata (commit SHA, dataset SHA256, model names); Phase 2 QA + publication in v5.26.0.
+- **Benchmark infra** — LongMemEval Phase 1 + Phase 2 pilot published in v5.26.0 (96 stratified questions, Haiku reader + judge). Phase 1: MRR=0.935, Recall@10=0.964. Phase 2 QA accuracy: 61.46%. See `docs/BENCHMARK_RESULTS.md` for per-type breakdown and comparison vs mem0 (94.4%) / Zep (63.8%).
 - **Idempotent transactional migrations** — backfills safe to re-run, failures roll back cleanly.
 
 v5 ships bearer-token auth, branch-tagged retrieval, layered session bootstrap, write-time contradiction detection, scope-aware anchor surfacing, cross-project anchor dedup, Wiki Bookmarks, db-lockdown 2026 hook schema, and benchmark Phase 1 infra. See [Roadmap](#roadmap) for v6 (nightly LLM curator) and v7 (real-time synthesis).
