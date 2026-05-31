@@ -47,6 +47,53 @@
 
 ---
 
+## 2026-05-31 — v5.26.0 Adopt-1 Benchmark Ship + D2/D3 RECONSIDER
+
+**Source:** v5.26.0 ship — Phase 1 (retrieval) + Phase 2 (QA) LongMemEval pilot.
+**Commit:** v5.26.0 release commit (see CHANGELOG).
+**Plan:** `docs/PLAN_V5_26_0_BENCHMARK_QA_PUBLICATION.md`
+
+### Adopt-1: LongMemEval benchmark — SHIPPED
+
+Adopt item 1 ("Formal benchmarking (LongMemEval / LoCoMo)") is now SHIPPED as of v5.26.0.
+
+- **Phase 1 gate:** PASS. MRR=0.935, Recall@10=0.964 (gate: mrr>0.1 AND r@10>0.3).
+- **Phase 2 headline QA accuracy:** PENDING Phase 2 run completion (running at ship time).
+  See `docs/BENCHMARK_RESULTS.md` for live numbers.
+- **Dataset:** LongMemEval `s` variant, 96 stratified questions (16/type × 6 types).
+- **Model:** `claude-haiku-4-5-20251001` (reader + judge).
+- **Result files:** `benchmarks/results/longmemeval_v5.26.0_s_retrieval.json` (Phase 1),
+  `benchmarks/results/longmemeval_v5.26.0_s_full.json` (Phase 2, pending).
+
+### D2 — NLI diversity stage: RECONSIDER
+
+D2 revisit trigger "Adopt-1 benchmarks produce baseline numbers" has fired.
+
+- **Current status:** RECONSIDER (was DEFER)
+- **Baseline with NLI ON:** see Phase 2 QA accuracy in `docs/BENCHMARK_RESULTS.md`.
+- **NLI settings in benchmark:** `NLI_RERANKING_ENABLED=True` in `make_benchmark_settings()`.
+- **Next action:** Run D2 A/B (NLI OFF) per `docs/PLAN_V5_25_X_D2_NLI_AB.md`.
+  Decision rule: delta < 5pp → flip default OFF; >= 5pp → keep ON.
+- **Note:** Refactor-2 (v5.31.0 plugin arch) NOT yet shipped — A/B doable via env var toggle.
+
+### D3 — PC algorithm causal discovery: RECONSIDER (with caveat)
+
+D3 revisit trigger "Adopt-1 benchmarks produce causal-on vs causal-off accuracy numbers" has
+technically fired, but the v5.26.0 benchmark does NOT test causal discovery impact on retrieval.
+
+**Why:** `make_benchmark_settings()` sets `WRRF_PPR_WEIGHT=0.0` and `WRRF_SPREADING_WEIGHT=0.0`
+(graph signals disabled). The PC algorithm builds a causal DAG used only by graph signals.
+The v5.26.0 baseline is implicitly "causal-off" for retrieval purposes.
+
+- **Current status:** RECONSIDER (was DEFER) — with caveat (see above)
+- **Next action:** Follow `docs/PLAN_V5_25_X_D3_PC_AB.md`.
+  Primary question: does PC algorithm phase take > 30s in nightly cycle? Check production logs.
+  Secondary: if D2 A/B run happens, consider enabling `WRRF_PPR_WEIGHT > 0` to get true causal-on data.
+- **CPU burst watch:** D3 revisit trigger "CPU bursts traced to PC algorithm" has NOT fired.
+  As of v5.25.3, no PC-algorithm-related CPU burst events in production journal.
+
+---
+
 ## 2026-05-30 — Competitor Audit (mem0 / chroma / pinecone / zep / letta / postgres / DW)
 
 **Audit doc:** `docs/competitor-audit-2026-05-30.md` (commit `635781e`)

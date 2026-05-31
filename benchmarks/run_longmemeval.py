@@ -230,16 +230,17 @@ def build_reproducibility_dict(dataset_path: Path, settings) -> dict:
     Fields populated at Phase 1 (retrieval-only):
       yadgar_commit, dataset_sha256, embedding_model, surreal_version,
       python_version, run_date_utc.
-    Fields left as None (Phase 2 fills them in):
-      reader_llm, judge_llm.
+    Phase 2 fills in reader_llm + judge_llm from ANTHROPIC_MODEL env var;
+    both use the same model (reader + judge are the same Claude invocation pattern).
     """
+    llm_model = os.environ.get("ANTHROPIC_MODEL") or None  # None if not set
     return {
         "yadgar_commit": get_yadgar_commit(),
         "dataset_sha256": compute_dataset_sha256(dataset_path),
         "embedding_model": settings.EMBEDDING_MODEL,
         "surreal_version": get_surreal_version(),
-        "reader_llm": None,   # Phase 2 (v5.26.0) fills this in
-        "judge_llm": None,    # Phase 2 (v5.26.0) fills this in
+        "reader_llm": llm_model,
+        "judge_llm": llm_model,
         "python_version": sys.version,
         "run_date_utc": datetime.now(UTC).isoformat(),
     }
@@ -619,9 +620,15 @@ System answer: {hypothesis}"""
 def call_claude_pipe(prompt: str, system_prompt: str = "", timeout: int = 120) -> str:
     """Call Claude via `claude -p` pipe mode.
 
+    Model selection: honours ANTHROPIC_MODEL env var (explicit --model flag).
+    Falls back to claude CLI default (Sonnet) if env var not set.
+
     Returns the generated text. Falls back to empty string on error.
     """
     cmd = ["claude", "-p", "--output-format", "json"]
+    model = os.environ.get("ANTHROPIC_MODEL")
+    if model:
+        cmd.extend(["--model", model])
     if system_prompt:
         cmd.extend(["--system-prompt", system_prompt])
 
