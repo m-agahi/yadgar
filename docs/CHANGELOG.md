@@ -7,6 +7,14 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.25.3] - 2026-05-31
+
+Fast profile follow-up to v5.25.2 CPU burst hotfix.
+
+### Fixed
+- **instructions_loaded CPU burst (session_start/compact):** `hook_instructions_loaded` in `yadgar/server/http.py` called `retriever.recall()` without `profile="fast"`, triggering the full CE/NLI/MP rerank pipeline on every session_start + compact event. Highest-frequency burst path missed by v5.25.2. Fix: add `profile="fast"` (pattern matches siblings `hook_prompt_recall` + `hook_subagent_start`).
+- **viz_search CPU burst (user-initiated search):** `api_viz_search` in `yadgar/server/http.py` called `retriever.recall()` without `profile="fast"`. Lower frequency than hooks but same rerank pipeline cost. Fix: same 1-line addition.
+
 ## [5.25.2] - 2026-05-31
 
 CPU burst hotfix. Two root causes confirmed (HIGH confidence, 2-pass investigation).

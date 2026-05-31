@@ -950,7 +950,13 @@ async def hook_instructions_loaded(request: Request) -> JSONResponse:
         query = f"{filename} {load_reason} instructions context".strip()
 
         try:
-            results = await asyncio.to_thread(retriever.recall, query, max_results=3, min_heat=0.0)
+            # v5.25.3: use lightweight "fast" profile (BM25+HNSW only, no CE/NLI/MP).
+            # Fires on every session_start + compact event — highest-frequency burst path.
+            # Siblings prompt_recall (~line 524) and subagent_start (~line 1048) already
+            # use profile="fast" with same rationale. Same fix now applied here.
+            results = await asyncio.to_thread(
+                retriever.recall, query, max_results=3, min_heat=0.0, profile="fast"
+            )
         except Exception as _e:
             logger.debug("instructions-loaded hook recall error: %s", _e)
             _hook_observe("instructions_loaded", _t0, _e)
@@ -1390,8 +1396,11 @@ async def api_viz_search(request: Request) -> JSONResponse:
         retriever = _st._retriever
         if retriever is not None:
             try:
+                # v5.25.3: use lightweight "fast" profile (BM25+HNSW only, no CE/NLI/MP).
+                # Full rerank pipeline causes 2.5-10s CPU bursts; fast profile is sufficient
+                # for viz graph node lookup. Pattern matches siblings prompt_recall + subagent_start.
                 mem_results = await asyncio.to_thread(
-                    retriever.recall, q, max_results=5, min_heat=0.0
+                    retriever.recall, q, max_results=5, min_heat=0.0, profile="fast"
                 )
                 for r in mem_results or []:
                     raw_id = r.get("id")
