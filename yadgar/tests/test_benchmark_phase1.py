@@ -310,3 +310,98 @@ def test_run_benchmark_output_has_reproducibility_key(tmp_path, monkeypatch):
 
     assert "reproducibility" in result, "run_benchmark() result must include 'reproducibility' key"
     assert result["reproducibility"] == fake_repro
+
+
+# ── v5.25.1 — shared surreal runner + YADGAR_DB_URL override ─────────
+
+
+def test_shared_runner_module_importable():
+    """yadgar._surreal_runner must exist and export spawn_surreal."""
+    from yadgar._surreal_runner import (  # noqa: F401
+        allocate_port_with_retry,
+        spawn_surreal,
+        teardown_surreal_proc,
+    )
+
+    assert callable(spawn_surreal)
+    assert callable(teardown_surreal_proc)
+    assert callable(allocate_port_with_retry)
+
+
+def test_helpers_shim_re_exports():
+    """yadgar.tests._surreal_helpers still exports spawn_surreal (shim)."""
+    from yadgar._surreal_runner import spawn_surreal as r_spawn
+    from yadgar.tests._surreal_helpers import spawn_surreal as h_spawn  # noqa: F401
+
+    assert h_spawn is r_spawn
+
+
+def test_benchmark_skips_spawn_when_db_url_set(monkeypatch, tmp_path):
+    """If YADGAR_DB_URL is already set, benchmark must NOT spawn a server."""
+    import benchmarks.run_longmemeval as bm
+
+    spawn_calls = []
+
+    def _fake_spawn(*a, **kw):
+        spawn_calls.append(a)
+        raise AssertionError(
+            "spawn_surreal_for_benchmark must not be called when YADGAR_DB_URL is set"
+        )
+
+    monkeypatch.setenv("YADGAR_DB_URL", "http://127.0.0.1:19999")
+    monkeypatch.setattr(bm, "spawn_surreal_for_benchmark", _fake_spawn)
+
+    # build a minimal dataset
+    minimal_question = {
+        "question_id": "test_override_q",
+        "question_type": "single-session-user",
+        "question": "Test question?",
+        "question_date": "2024-01-01",
+        "answer": "Yes",
+        "answer_session_ids": ["s1"],
+        "haystack_sessions": [[{"role": "user", "content": "Yes."}]],
+        "haystack_session_ids": ["s1"],
+        "haystack_dates": ["2024-01-01"],
+    }
+    dataset_path = tmp_path / "longmemeval_s_cleaned.json"
+    dataset_path.write_text(json.dumps([minimal_question]))
+
+    mock_storage = MagicMock()
+    mock_storage.insert_memory.return_value = 1
+    mock_storage.close = MagicMock()
+    mock_embeddings = MagicMock()
+    mock_embeddings.encode.return_value = b"\x00" * 384
+    mock_embeddings.get_model_name.return_value = "test-model"
+    mock_retriever = MagicMock()
+    mock_retriever.recall.return_value = []
+    mock_curator = MagicMock()
+    mock_thermo = MagicMock()
+    mock_thermo.compute_importance.return_value = 0.5
+
+    with (
+        patch("benchmarks.run_longmemeval.StorageEngine", return_value=mock_storage),
+        patch("benchmarks.run_longmemeval.EmbeddingEngine", return_value=mock_embeddings),
+        patch("benchmarks.run_longmemeval.KnowledgeGraph", return_value=MagicMock()),
+        patch("benchmarks.run_longmemeval.MemoryThermodynamics", return_value=mock_thermo),
+        patch("benchmarks.run_longmemeval.Retriever", return_value=mock_retriever),
+        patch("benchmarks.run_longmemeval.MemoryCurator", return_value=mock_curator),
+        patch("benchmarks.run_longmemeval.build_reproducibility_dict", return_value={}),
+        patch("subprocess.check_output", return_value=b"abc\n"),
+    ):
+        bm.run_benchmark(
+            dataset_path=dataset_path,
+            retrieval_only=True,
+            max_questions=1,
+            output_path=str(tmp_path / "out3.json"),
+        )
+
+    assert spawn_calls == [], (
+        "spawn_surreal_for_benchmark was called despite YADGAR_DB_URL being set"
+    )
+
+
+def test_wipe_benchmark_tables_callable():
+    """run_longmemeval must export a wipe_benchmark_tables function."""
+    from benchmarks.run_longmemeval import wipe_benchmark_tables  # noqa: F401
+
+    assert callable(wipe_benchmark_tables)
