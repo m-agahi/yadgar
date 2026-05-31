@@ -98,7 +98,7 @@ class TestAtexitHandler:
         len(_SPAWNED_SURREAL_PIDS)
         fake_proc = MagicMock()
         fake_proc.pid = 99999
-        with patch("yadgar.tests._surreal_helpers.subprocess.Popen", return_value=fake_proc):
+        with patch("yadgar._surreal_runner.subprocess.Popen", return_value=fake_proc):
             result = spawn_surreal(port=19999, data_dir="/tmp/fake-surreal-data")
         assert result is fake_proc
         assert fake_proc.pid in _SPAWNED_SURREAL_PIDS
@@ -121,8 +121,8 @@ class TestAtexitHandler:
         original = list(_SPAWNED_SURREAL_PIDS)
         _SPAWNED_SURREAL_PIDS[:] = [12301, 12302]
 
-        with patch("yadgar.tests._surreal_helpers.os.kill", side_effect=fake_kill):
-            with patch("yadgar.tests._surreal_helpers.time.sleep"):
+        with patch("yadgar._surreal_runner.os.kill", side_effect=fake_kill):
+            with patch("yadgar._surreal_runner.time.sleep"):
                 kill_all_spawned_surreal()
 
         assert 12301 in killed_term
@@ -142,8 +142,8 @@ class TestAtexitHandler:
         def raise_lookup(pid, sig):
             raise ProcessLookupError(f"no process {pid}")
 
-        with patch("yadgar.tests._surreal_helpers.os.kill", side_effect=raise_lookup):
-            with patch("yadgar.tests._surreal_helpers.time.sleep"):
+        with patch("yadgar._surreal_runner.os.kill", side_effect=raise_lookup):
+            with patch("yadgar._surreal_runner.time.sleep"):
                 # Must not raise
                 kill_all_spawned_surreal()
 
@@ -172,7 +172,7 @@ class TestAtexitHandler:
             m.pid = pid
             mocks.append(m)
 
-        with patch("yadgar.tests._surreal_helpers.subprocess.Popen", side_effect=mocks):
+        with patch("yadgar._surreal_runner.subprocess.Popen", side_effect=mocks):
             for i, _pid in enumerate(test_pids):
                 spawn_surreal(port=19000 + i, data_dir=f"/tmp/fake-{i}")
 
