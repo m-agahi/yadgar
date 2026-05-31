@@ -1,5 +1,7 @@
 # PLAN — v5.8.0: Anchor Hygiene Foundation (TTL + tier + new signals)
 
+> **STATUS: SHIPPED v5.8.0 (2026-05-27/28)**
+
 **Status:** drafted 2026-05-27 (evening, post-v5.7.12 ship).
 
 **Master at draft time:** core v5.7.12 + backend v5.3.1.

@@ -1,5 +1,7 @@
 # PLAN — v5.10.11: Viz polish — 3D edge thickness +50% + connected-node repulsion +20%
 
+> **STATUS: SHIPPED v5.10.11 (2026-05-30)**
+
 **Status:** drafted 2026-05-30. Plan-first per I27. Patch on v5.10 minor train.
 
 **Master at draft time:** v5.10.10 LIVE (2x 3D node size + auto-zoom-fit shipped).

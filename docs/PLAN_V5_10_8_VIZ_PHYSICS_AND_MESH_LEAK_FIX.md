@@ -1,5 +1,7 @@
 # PLAN — v5.10.8: 3D/2D viz physics hang + mesh leak fix
 
+> **STATUS: SHIPPED v5.10.8 (2026-05-30)**
+
 **Status:** drafted 2026-05-30. Plan-first per I27. Patch on v5.10 minor train. Hotfix follow-up to v5.10.7's S2.1-S2.4 viz changes (v5.10.7 / .7.1 / .7.2 / .7.3 attempted feature work + reverts, but the underlying physics/mesh-leak bugs predated all of them).
 
 **Master at draft time:** v5.10.7.3 LIVE; user verified BOTH 2D + 3D viz broken — nodes clumped at origin, force layout not running, 2297 meshes accumulated in 3D scene for 700 nodes.

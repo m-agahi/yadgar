@@ -1,5 +1,7 @@
 # PLAN — v5.10.0: Test Harness Hardening (deferred from v5.7.14)
 
+> **STATUS: SHIPPED v5.10.0 (2026-05-29)**
+
 **Status:** drafted 2026-05-28. Originally scoped as v5.7.14 hotfix; renamed v5.10 after v5.8.0 shipped first.
 
 **Master at draft time:** core v5.8.0 + backend v5.3.1.

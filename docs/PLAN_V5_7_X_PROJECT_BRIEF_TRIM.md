@@ -1,5 +1,7 @@
 # PLAN — v5.7.12: `project_brief` catalog-mode trim + two-audience split
 
+> **STATUS: SHIPPED v5.7.12 (2026-05-27)**
+
 **Status:** drafted 2026-05-27 (evening). Triggered by external critique of catalog-mode payload.
 
 **Master at draft time:** core v5.7.11 + backend v5.3.1 (both deployed).

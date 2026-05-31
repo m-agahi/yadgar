@@ -1,5 +1,7 @@
 # PLAN — v5.11.0: Viz knobs configurable via config.yaml
 
+> **STATUS: SHIPPED v5.11.0 (2026-05-30)**
+
 **Status:** drafted 2026-05-30. Plan-first per I27. New minor on v5.11 train. **Pre-empts old v5.11.0 slot (secret-gate context-awareness)** which cascades to v5.13.0 per pipeline renumber accompanying this plan.
 
 **Master at draft time:** v5.10.10 LIVE; v5.10.11 in draft (edge thickness + repulsion).

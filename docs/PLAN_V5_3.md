@@ -1,5 +1,7 @@
 # PLAN_V5_3 — Feature Release Cycle
 
+> **STATUS: SHIPPED (historical — v5.3 era, 2026-05-19)**
+
 Cut from `yadgar-v5-stabilize-strategy-tldr-gap-analysis` wiki (2026-05-18) + v5.3 chat-level approval (2026-05-19). Scope: agent integration, hook adoption, competitor parity, QoL, multi-agent collaboration.
 
 **Cross-cutting constraint**: every change works for **any** user. Yadgar ships portable defaults via:

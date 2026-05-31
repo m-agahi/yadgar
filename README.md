@@ -18,24 +18,30 @@
 - **Persistent memory** — survives Claude sessions; heat-based decay drops unused items, surprise gating drops duplicates on arrival.
 - **Branch-aware recall** — 1.5× boost on current-branch matches; wiki pages resolve in branch precedence so canonical content stays reachable from feature work.
 - **Curated wiki paired with memory** — one ranking pipeline searches both stores in a single query.
+- **Wiki Bookmarks** — pinned wiki pages in the viz UI (`/static/bookmarks.html`); 4 MCP tools (`bookmark_add`, `bookmark_remove`, `bookmark_list`, `bookmark_reorder`); drag-to-reorder, keyboard nav, markdown rendering with syntax highlighting.
+- **Write-time contradiction detection** — lightweight heuristic (negation + action-divergence) fires on every write; contradicting memories flagged and confidence-decayed without blocking the write.
+- **Scope-aware anchor surfacing** — `restore()` serves a two-bucket blend (global + project anchors) so high-anchor projects don't crowd out cross-cutting knowledge.
+- **Cross-project anchor dedup** — `audit_anchors()` surfaces cosine ≥ 0.95 pairs across different `directory_context` values; PD-23 `migration_grace` expiry handler ships alongside.
 - **Wiki sync with repo** — drift detection, master-only regen dispatch, cleanup of merged-branch wikis; pairs with the `repo-wiki` skill shipped via [ccpm](https://codeberg.org/maxagahi/ccpm).
 - **Nightly consolidation** — heat decay, episodic→semantic promotion via Complementary Learning Systems, dream insights, causal-DAG discovery, duplicate merging.
 - **Hippocampal-replay session bootstrap** — top anchors, hot memories, and active-work pointer auto-injected when Claude opens a session.
 - **Auto-capture hook** — records tool usage with per-source token-bucket rate limit and sanitization (ANSI, control chars, bidi-override stripped).
+- **db-lockdown 2026 hook schema** — PreToolUse hook ships as `yadgar/hooks/db-lockdown-check.py` (installed globally by `install_hooks`); emits `hookEventName` field required by Claude Code 2026 schema.
 - **Stop-hook signal-eval prompt** — fires every 25 messages, asking the running session to evaluate stale-wiki and active-work signals.
 - **Async write queue** — retry/backoff, dead-letter for permanent failures, schema-version validation on drain, DLQ inspection tools.
-- **Bearer-token MCP auth** — default-deny CORS, timing-safe token compare, always-on secret patterns blocking AWS/GCP/Stripe/Slack/OpenAI/Anthropic keys, JWT, PATs, private keys, DB URIs.
-- **Knowledge-graph viz** — `yadgar viz` serves a Three.js graph of memories, entities, and relationships at `http://localhost:42069` with live filtering by tag, age, and store type.
-- **Prometheus `/metrics`** — structured JSON logs, per-phase consolidation duration markers, loopback-only by default.
+- **Bearer-token MCP auth** — default-deny CORS, timing-safe token compare, always-on secret patterns blocking AWS/GCP/Stripe/Slack/OpenAI/Anthropic keys, JWT, PATs, private keys, DB URIs. Context-aware allowlist (`~/.yadgar/secret-gate-allowlist.yaml`) for known-good fixtures.
+- **Knowledge-graph viz** — `yadgar viz` serves a Three.js graph of memories, entities, and relationships at `http://localhost:42069` with live filtering by tag, age, and store type. All 35 viz constants configurable via `config.yaml` without redeploy.
+- **Prometheus `/metrics`** — structured JSON logs, per-phase consolidation duration markers, CRITICAL alert on phase exceeding `PHASE_DURATION_WARN_MS`, loopback-only by default.
+- **Benchmark infra** — Phase 1 LongMemEval retrieval harness with reproducibility metadata (commit SHA, dataset SHA256, model names); Phase 2 QA + publication in v5.26.0.
 - **Idempotent transactional migrations** — backfills safe to re-run, failures roll back cleanly.
 
-v5 ships bearer-token auth, branch-tagged retrieval, layered session bootstrap, and 9 new MCP tools. See [Roadmap](#roadmap) for v6 (nightly LLM curator) and v7 (real-time synthesis).
+v5 ships bearer-token auth, branch-tagged retrieval, layered session bootstrap, write-time contradiction detection, scope-aware anchor surfacing, cross-project anchor dedup, Wiki Bookmarks, db-lockdown 2026 hook schema, and benchmark Phase 1 infra. See [Roadmap](#roadmap) for v6 (nightly LLM curator) and v7 (real-time synthesis).
 
 ---
 
 ## Yadgar in production
 
-Personal deployment — first commit 2026-04-20, ~33 days runtime as of 2026-05-23.
+Personal deployment — first commit 2026-04-20, ~41 days runtime as of 2026-05-31.
 
 ### Scale
 
@@ -64,7 +70,7 @@ Personal deployment — first commit 2026-04-20, ~33 days runtime as of 2026-05-
 
 - Distributed tracing (OpenTelemetry) across both core + backend processes
 - Every memory operation produces a span with W3C `traceparent` propagation
-- 17 rapid releases (v5.4.2 → v5.6.6) shipped in 24 hours with zero data loss
+- 17 rapid releases (v5.4.2 → v5.6.6) shipped in 24 hours with zero data loss; 17 further versions (v5.10.4 → v5.25.0) shipped 2026-05-30 to 2026-05-31
 
 ---
 
@@ -167,7 +173,7 @@ docker run -d --name yadgar-backend --network yadgar-net \
   -v yadgar-db-data:/data \
   -e SURREAL_USER=$SURREAL_USER \
   -e SURREAL_PASS=$SURREAL_PASS \
-  looseking/yadgar-backend:5.0.0
+  openfantasy/yadgar-backend:5.4.0
 
 docker run -d --name yadgar --network yadgar-net \
   -v yadgar-data:/data \
@@ -175,7 +181,7 @@ docker run -d --name yadgar --network yadgar-net \
   -e YADGAR_DB_URL=http://yadgar-backend:8000 \
   -e YADGAR_EMBED_URL=http://yadgar-backend:8001 \
   -e YADGAR_MCP_AUTH_TOKEN=$YADGAR_MCP_AUTH_TOKEN \
-  looseking/yadgar:5.0.0
+  openfantasy/yadgar:5.25.0
 ```
 
 Containers bundle Python 3.14 — no host Python required.
@@ -231,6 +237,17 @@ Generated units include `EnvironmentFile=/etc/yadgar/secrets.env`. See [MIGRATIO
 | `wiki_lint(slug)` | ⚡ | Validate structure |
 | `wiki_refresh_stale(directory)` | ⚡ | Dispatch regen of stale wikis (master-only) |
 | `wiki_cleanup_merged_branches(directory, dry_run)` | ⚡ | Remove wikis on merged branches |
+
+</details>
+
+<details><summary><b>Bookmarks</b> — 4 tools (v5.23.0)</summary>
+
+| Tool | Power | Purpose |
+|---|:---:|---|
+| `bookmark_add(slug, label_override)` | ⚡ | Pin a wiki page; idempotent upsert |
+| `bookmark_remove(slug)` | ⚡ | Unpin |
+| `bookmark_list()` | | List pinned pages in position order |
+| `bookmark_reorder(slug, new_position)` | ⚡ | Move pin; dense integer shift |
 
 </details>
 
@@ -397,7 +414,7 @@ subagents just won't auto-write their findings.
 
 - **v6 — Nightly LLM curator.** A local agent (Ollama, deepseek-r1 + qwen3:8b two-tier routing) runs every night to detect staleness, annotate contradictions, find semantic correlations beyond co-occurrence, propose merges and forgets, and dedupe wiki pages. Two-phase consolidation: tier 1 (existing) plus tier 2 (LLM, skips if Ollama offline). Plan: [docs/roadmap/v6.md](docs/roadmap/v6.md).
 - **v7 — Real-time synthesis.** `recall(synthesize=True)` and `wiki_query(synthesize=True)` append a synthesized answer alongside raw records. New `ask()` tool returns synthesis-only output for conversational callers. Depends on a sub-10s local synthesis model. Plan: [docs/roadmap/v7.md](docs/roadmap/v7.md).
-- **v5.x backlog.** xdist isolation leak hunt, branch-cleanup automation, viz UI refactor, mega-function decomposition pass 2.
+- **v5.x pipeline.** v5.26.0 benchmark QA + publication (LongMemEval results); v5.27.0 DuckDB analytics export; v5.29.0 bi-temporal edges; v5.31.0 recall pipeline plugin architecture (A/B-testable stages); v5.33.0 in-context memory blocks; v5.35.0 JS/TS SDK. See `docs/roadmap/` for full plans.
 
 ## Contributing
 
