@@ -1,5 +1,7 @@
 # PLAN — v5.10.9: Viz orphan-edge filter (real root cause of v5.10.7+ chaos)
 
+> **STATUS: SHIPPED v5.10.9 (2026-05-30)**
+
 **Status:** drafted 2026-05-30. Plan-first per I27. Patch on v5.10 minor train (per `docs/VERSIONING.md`).
 
 **Master at draft time:** v5.10.8 LIVE; viz STILL broken; live DevTools console revealed `force-graph.min.js: Uncaught Error: node not found: entity:172`.

@@ -1,5 +1,7 @@
 # PLAN — v5.10.10: Viz polish — 2x 3D node size + auto-zoom-fit on load
 
+> **STATUS: SHIPPED v5.10.10 (2026-05-30)**
+
 **Status:** drafted 2026-05-30 after v5.10.9 LIVE + user-verified working. Plan-first per I27. Patch on v5.10 minor train per `docs/VERSIONING.md`.
 
 **Master at draft time:** v5.10.9 LIVE; user verified viz works end-to-end — coloring functional, nodes spread by force layout, no console errors. Two small polish asks remain.

@@ -1,5 +1,7 @@
 # PLAN — v5.10.7.3: Revert v5.10.7 custom node geometry; back to ForceGraph3D defaults
 
+> **STATUS: SHIPPED v5.10.7.3 (2026-05-30)**
+
 **Status:** drafted 2026-05-30 (third viz attempt today). Plan-first per I27. Hotfix for v5.10.7/.1/.2 viz regression.
 
 **Master at draft time:** v5.10.7.2 LIVE; user verified nodes STILL render as fragmented shards despite theory-1 fix (transparent flag conditional).

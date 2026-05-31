@@ -1,5 +1,7 @@
 # PLAN — v5.19.0: Anchor Unconditional Surfacing
 
+> **STATUS: SHIPPED v5.19.0 (2026-05-30)**
+
 **Renumbered:** v5.14.0 → v5.19.0 on 2026-05-30. Reason: skip-1 minor convention adopted 2026-05-30 — odd-only minors for sequential features, even slots reserved for hotfix patches between them.
 
 **Status:** plan-only — 2026-05-30.

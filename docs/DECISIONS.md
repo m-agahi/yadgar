@@ -56,22 +56,22 @@
 
 | Item | Status |
 |---|---|
-| 1. Formal benchmarking (LongMemEval / LoCoMo) | Plan dispatched — `docs/PLAN_V5_25_0_*` |
-| 2. Write-time conflict resolution | Agent dispatch pending |
-| 3. Bi-temporal edges on all relationships | Agent dispatch pending |
-| 4. In-context memory blocks (Letta) | Agent dispatch pending |
-| 5. JavaScript / TypeScript SDK | Agent dispatch pending |
-| 6. DuckDB analytics export | Agent dispatch pending |
+| 1. Formal benchmarking (LongMemEval / LoCoMo) | SHIPPED v5.25.0 (Phase 1 infra); Phase 2 QA → v5.26.0 |
+| 2. Write-time conflict resolution | SHIPPED v5.17.0 |
+| 3. Bi-temporal edges on all relationships | Planned → v5.29.0 |
+| 4. In-context memory blocks (Letta) | Planned → v5.33.0 |
+| 5. JavaScript / TypeScript SDK | Planned → v5.35.0 |
+| 6. DuckDB analytics export | Planned → v5.27.0 |
 
 ### Refactor items
 
 #### R1. Decouple consolidation from sleep cycle
 - **Recommendation:** Separate consolidation cycle (deterministic, fast) and sleep cycle (LLM/CPU-heavy, slow) into distinct orchestrators with separate triggers.
 - **Decision:** PARTIAL-ADOPT (limited scope only)
-- **What was adopted:** `consolidate_now(mode='light'|'full')` param + 6h gate respect (in-flight as v5.10.4). Stops at param-level switch; no full structural separation.
+- **What was adopted:** `consolidate_now(mode='light'|'full')` param + 6h gate respect (SHIPPED v5.10.4). Stops at param-level switch; no full structural separation.
 - **What was NOT adopted:** full split into separate orchestrator classes (`ConsolidationOrchestrator` + `SleepCycleOrchestrator`). Audit recommended this; user decided current scope is enough.
 - **Reason:** v5.10.4 mode param solves the immediate bug (13-min surprise + design inversion). Full structural separation is bigger blast radius without clear additional value. Preserve as audit-recorded future option.
-- **Evidence:** `docs/PLAN_V5_10_4_CONSOLIDATE_NOW_HEAVYWEIGHT.md`; v5.10.4 in progress on branch `feat/v5.10.4-consolidate-now-mode-hook-schema`.
+- **Evidence:** `docs/PLAN_V5_10_4_CONSOLIDATE_NOW_HEAVYWEIGHT.md`; shipped 2026-05-30.
 - **Revisit triggers:** sleep cycle grows enough phases that mode param becomes unwieldy; or new use cases require running sleep-cycle phases independently of consolidation; or LLM curator tier (v6) needs different scheduling model.
 
 #### R2. Modularize 8-stage retrieval pipeline for pluggability

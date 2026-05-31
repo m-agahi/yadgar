@@ -1,5 +1,7 @@
 # PLAN — v5.10.x: `memorize(is_protected=True)` ↔ `anchor()` parity fix
 
+> **STATUS: SHIPPED v5.10.2 (2026-05-29)** — parity fix included in secret-gate PR
+
 **Status:** drafted 2026-05-29 after advisor consult on "should we kill anchor() entirely?" Decision: keep `anchor()` (convenience shorthand has ergonomic value for in-chat use). Fix the underlying parity bug so the two surfaces produce identical row state.
 
 **Master at draft time:** core v5.10.1 + backend v5.4.0 deployed.
