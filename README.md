@@ -1,6 +1,8 @@
 <div align="center">
 
-# Yadgar
+<table bgcolor="white" cellpadding="40" cellspacing="0" border="0"><tr><td bgcolor="white">
+<img src="yadgar/static/yadgar.png" alt="yadgar logo" width="320">
+</td></tr></table>
 
 [![CI](https://codeberg.org/maxagahi/yadgar/actions/workflows/ci.yaml/badge.svg?branch=master)](https://codeberg.org/maxagahi/yadgar/actions?workflow=ci.yaml)
 [![Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcodeberg.org%2Fapi%2Fv1%2Frepos%2Fmaxagahi%2Fyadgar%2Ftags&query=%24%5B0%5D.name&label=version&color=blue)](https://codeberg.org/maxagahi/yadgar/tags)
