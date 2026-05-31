@@ -1040,7 +1040,13 @@ async def hook_subagent_start(request: Request) -> JSONResponse:
         query = description.strip() or f"agent {agent_type}"
 
         try:
-            results = await asyncio.to_thread(retriever.recall, query, max_results=5, min_heat=0.0)
+            # v5.25.2: use lightweight "fast" profile (BM25+HNSW only, no CE/NLI/MP).
+            # Hooks fire on every agent dispatch; full rerank pipeline causes 2.5-10s
+            # CPU bursts. Sibling prompt_recall (~line 524) already used profile="fast"
+            # with same rationale — same fix now applied here.
+            results = await asyncio.to_thread(
+                retriever.recall, query, max_results=5, min_heat=0.0, profile="fast"
+            )
         except Exception as _e:
             logger.debug("subagent-start hook recall error: %s", _e)
             _hook_observe("subagent_start", _t0, _e)
