@@ -1,5 +1,27 @@
 # Migration Notes
 
+## v5.25.4 — Branding: SVG logo + favicon (2026-05-31)
+
+Core 5.25.3 → 5.25.4. Backend unchanged at 5.4.0. **No DB migration.**
+
+### Summary
+
+User-provided SVG assets (`yadgar.svg`, `favicon.svg`) wired into existing surfaces:
+
+- `README.md`: hero image at top (200px centered, `yadgar/static/yadgar.svg`).
+- `yadgar/static/index.html`: favicon link (`<link rel="icon" type="image/svg+xml" href="/favicon.svg">`).
+- `yadgar/static/bookmarks.html`: same favicon link.
+
+### Rebuild required
+
+The served static assets come from the Docker image. After pull/build, the new SVG files and favicon links will be live. No config changes needed — static files are served from `yadgar/static/` by the existing viz route handler.
+
+### Deferred to v5.50
+
+Multi-size favicon set (16/32/48/96/180/192/512 PNG), apple-touch-icon, OG image (1200×630), Info-tab branding, tab-nav header logo.
+
+---
+
 ## v5.25.3 — Fast Profile Follow-up: instructions_loaded + viz_search (2026-05-31)
 
 Core 5.25.2 → 5.25.3. Backend unchanged at 5.4.0. **No DB migration.**
