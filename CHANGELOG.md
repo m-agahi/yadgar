@@ -6,6 +6,34 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.25.1] — 2026-05-31
+
+**Fixed:** benchmark now spawns `surreal start` subprocess for FULLTEXT-capable Phase 1 retrieval.
+
+- Root cause: embedded `surrealkv://` lacks `FULLTEXT ANALYZER` support; v5.25.0 benchmark ran but produced all-zero retrieval metrics.
+- `yadgar/_surreal_runner.py` (new): shared spawn/teardown/port helpers extracted from test-only module so benchmark can reuse them.
+- `yadgar/tests/_surreal_helpers.py`: re-export shim — existing test imports unchanged.
+- `benchmarks/run_longmemeval.py`: `spawn_surreal_for_benchmark()` spawns server on random port; `wipe_benchmark_tables()` issues `DELETE` on all data tables between questions (per-question isolation in server mode); `YADGAR_DB_URL` override skips spawn entirely. Sets `YADGAR_SECRET_GATE_DISABLED=1` during the run (corpus contains code / API-shaped strings that false-positive the storage gate) and restores prior value on exit. Per-question try/except keeps the run going if a single question fails.
+- 4 new tests in `test_benchmark_phase1.py` (import, shim re-export, override path, wipe callable).
+- **Phase 1 numbers deferred.** Benchmark wall-clock exceeded 2+ hours without completion; blocked deploy. Numbers land in v5.25.2 or v5.26.0 execution. `docs/BENCHMARK_RESULTS.md` remains PENDING.
+
+Infrastructure ready. Phase 1 numbers deferred to v5.25.2 / v5.26.0 execution.
+
+See [MIGRATION_NOTES.md §v5.25.1](MIGRATION_NOTES.md#v5251--benchmark-phase-1-spawn-surreal-server-subprocess-2026-05-31).
+
+## [5.25.0] — 2026-05-31
+
+Benchmark Phase 1 retrieval infra + reproducibility metadata.
+
+- `benchmarks/run_longmemeval.py`: LongMemEval `s` variant download + sha256 pin (`LONGMEMEVAL_S_SHA256`), `build_reproducibility_dict()`, `--retrieval-only` flag, per-type + overall aggregation, JSON output with `reproducibility` key.
+- `docs/BENCHMARK_RESULTS.md` v0 draft (PENDING placeholders — filled in v5.25.1).
+- `docs/BENCHMARK_LICENSE.md`: LongMemEval (MIT) + LoCoMo (CC BY-NC) attribution.
+- 12 tests in `yadgar/tests/test_benchmark_phase1.py`.
+
+Note: Phase 1 retrieval run required live SurrealDB (embedded surrealkv lacks FULLTEXT). Fixed in v5.25.1.
+
+See [MIGRATION_NOTES.md §v5.25.0](MIGRATION_NOTES.md#v5250--benchmark-phase-1-retrieval-infra--reproducibility-metadata-2026-05-31).
+
 ## [5.15.0] — 2026-05-30
 
 CPU burst detection infrastructure (D1+D4) + secret-gate caller tag plumbing.

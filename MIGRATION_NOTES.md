@@ -1,5 +1,80 @@
 # Migration Notes
 
+## v5.25.1 — Benchmark Phase 1: spawn surreal-server subprocess (2026-05-31)
+
+Core 5.25.0 → 5.25.1. Backend unchanged at 5.4.0. **No DB migration.**
+
+### Summary
+
+Patch that unblocks Phase 1 retrieval benchmark execution. Root cause: embedded
+`surrealkv://` does not support `FULLTEXT ANALYZER` SQL syntax, so all retrieval
+metrics were zero in v5.25.0 (benchmark ran but FTS index was missing).
+
+Fix: adopt the test-fixture pattern from `yadgar/tests/conftest.py`. Benchmark
+now spawns a `surreal start` subprocess on a random port, sets `YADGAR_DB_URL`
+so `StorageEngine` uses HTTP server mode (which has FULLTEXT support), and tears
+down the process on exit.
+
+Changes:
+- `yadgar/_surreal_runner.py` (new): shared spawn/teardown/port-allocation
+  helpers extracted from `yadgar/tests/_surreal_helpers.py`
+- `yadgar/tests/_surreal_helpers.py`: converted to re-export shim — no import
+  breakage in existing test code
+- `benchmarks/run_longmemeval.py`: `spawn_surreal_for_benchmark()`,
+  `wipe_benchmark_tables()`, and server-mode lifecycle wired into `run_benchmark()`
+- `yadgar/tests/test_benchmark_phase1.py`: 4 new tests (shared runner import,
+  shim re-export, YADGAR_DB_URL override, wipe callable)
+
+### Per-question isolation in server mode
+
+In server mode `StorageEngine` shares the `yadgar/main` namespace. `wipe_benchmark_tables()`
+issues `DELETE <table>;` on all data tables between questions to prevent cross-contamination.
+Schema (DEFINE TABLE/INDEX/ANALYZER) is not wiped — it's idempotent and recreating it each
+question would add significant wall-clock overhead.
+
+### Secret-gate disabled for benchmark ingestion
+
+The LongMemEval corpus contains technical content (code snippets, Vulkan API names,
+API-key-shaped strings) that triggers false positives in the storage-level secret
+gate. The benchmark sets `YADGAR_SECRET_GATE_DISABLED=1` for the duration of the
+run and restores the prior value on exit. This is the intended escape hatch for
+fixed test corpora — same env var the production kill switch uses.
+
+### Per-question error resilience
+
+Each question runs inside a `try/except` so a single failing question records an
+`error` field in its `per_query` entry and the run continues to completion.
+Aggregation already skips entries without retrieval metrics, so error-only rows
+do not perturb the per-type means.
+
+### Phase 1 benchmark — run command (now works without pre-existing server)
+
+```bash
+uv run python benchmarks/run_longmemeval.py --retrieval-only \
+  --output benchmarks/results/longmemeval_v5.25.1_s_retrieval.json
+```
+
+No `surreal` server needed — the benchmark spawns its own. To use an existing server:
+```bash
+YADGAR_DB_URL=http://127.0.0.1:8000 YADGAR_ALLOW_ROOT=1 \
+  uv run python benchmarks/run_longmemeval.py --retrieval-only
+```
+
+### Phase 1 gate condition (unchanged)
+
+`mrr > 0.1` AND `recall@10 > 0.3` must hold before v5.26.0 QA run starts.
+Results in `benchmarks/results/longmemeval_v5.25.1_s_retrieval.json`.
+
+### Phase 1 numbers — deferred
+
+v5.25.1 ships infrastructure only. The Phase 1 benchmark run exceeded 2+ hours
+wall-clock (295% CPU) without completing, blocking this deploy. Numbers will land
+in v5.25.2 (dedicated benchmark patch) or as part of v5.26.0 execution.
+
+`docs/BENCHMARK_RESULTS.md` remains PENDING.
+
+---
+
 ## v5.25.0 — Benchmark Phase 1: retrieval infra + reproducibility metadata (2026-05-31)
 
 Core 5.24.2 → 5.25.0. Backend unchanged at 5.4.0. **No DB migration.**

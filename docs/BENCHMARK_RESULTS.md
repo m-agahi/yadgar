@@ -3,8 +3,9 @@
 Published benchmark numbers for Yadgar's memory retrieval pipeline.
 
 > **v0 draft — Phase 1 retrieval scaffold (2026-05-31)**
-> Phase 1 infrastructure and reproducibility metadata shipped in v5.25.0.
-> Full Phase 1 retrieval run pending deployment (requires live SurrealDB — see §Reproduction).
+> Phase 1 infrastructure ready as of v5.25.1 (spawn-server pattern wired; FULLTEXT-capable).
+> Numbers deferred — benchmark wall-clock ran 2+ hours without completion; blocked deploy.
+> Phase 1 numbers land in v5.25.2 or as part of v5.26.0 execution.
 > Phase 2 QA accuracy (the headline number vs mem0/Zep) ships in v5.26.0.
 
 ---
@@ -28,17 +29,17 @@ Published benchmark numbers for Yadgar's memory retrieval pipeline.
 
 ### Phase 1 Retrieval Metrics — PENDING
 
-> Full run pending v5.25.0 deployment.
-> Infrastructure validated: dataset downloaded and pinned (sha256 above).
-> Reproducibility metadata wired into output JSON.
-> Run requires a live SurrealDB server — embedded SurrealDB does not support FULLTEXT ANALYZER (pre-existing upstream limitation).
+> Infrastructure ready as of v5.25.1 (spawn-server pattern; no pre-existing SurrealDB required).
+> Numbers deferred — benchmark run exceeded 2+ hours wall-clock; deploy blocked.
+> Will land in v5.25.2 or v5.26.0 execution.
+> Dataset downloaded and pinned (sha256 above); reproducibility metadata wired into output JSON.
 
-To populate this table, run after deployment:
+To populate this table, run:
 ```bash
-.venv/bin/python -m benchmarks.run_longmemeval \
-  --variant s --retrieval-only \
-  --output benchmarks/results/longmemeval_v5.25.0_s_retrieval.json
+uv run python benchmarks/run_longmemeval.py --retrieval-only \
+  --output benchmarks/results/longmemeval_v5.25.1_s_retrieval.json
 ```
+(No external SurrealDB needed — benchmark spawns its own subprocess.)
 
 | Question Type | Count | MRR | Recall@5 | Recall@10 | NDCG@10 |
 |---|---:|---:|---:|---:|---:|
@@ -101,12 +102,10 @@ See `docs/BENCHMARK_LICENSE.md` for details.
 
 Phase 1 run (retrieval-only, ~30–120 min CPU wall-clock, zero API spend):
 ```bash
-# Requires: live SurrealDB server OR fix for embedded FULLTEXT ANALYZER syntax.
-# See benchmarks/README.md for setup.
-.venv/bin/python -m benchmarks.run_longmemeval \
-  --variant s \
+# As of v5.25.1: no external SurrealDB required. Benchmark spawns its own subprocess.
+uv run python benchmarks/run_longmemeval.py \
   --retrieval-only \
-  --output benchmarks/results/longmemeval_v5.25.0_s_retrieval.json
+  --output benchmarks/results/longmemeval_v5.25.1_s_retrieval.json
 ```
 
 Phase 2 run (full QA, ~$2–50 API spend depending on model, v5.26.0 only):
