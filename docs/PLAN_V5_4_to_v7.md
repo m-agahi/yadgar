@@ -1,5 +1,7 @@
 # Yadgar v5.3.9 → v7 Trajectory (advisor-audited 2026-05-20)
 
+> **STATUS: HISTORICAL ROADMAP — current state is v5.25.0 (2026-05-31). Many items planned here shipped across v5.4–v5.25. Kept as architectural artifact.**
+
 Locked plan after soak day + advisor review. Supersedes prior fragmented
 roadmap entries. v5.3.9 shipped 2026-05-20 (8 commits on `feat/v5.3.9`).
 Mirror lives in wiki `yadgar-roadmap-future-improvements`.

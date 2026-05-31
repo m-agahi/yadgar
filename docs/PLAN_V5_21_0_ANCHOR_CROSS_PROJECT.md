@@ -1,5 +1,7 @@
 # PLAN — v5.21.0: Anchor Cross-Project Dedup + Optional Jira Integration
 
+> **STATUS: SHIPPED v5.21.0 (2026-05-30)**
+
 **Renumbered:** v5.15.0 → v5.21.0 on 2026-05-30. Reason: skip-1 minor convention adopted 2026-05-30 — odd-only minors for sequential features, even slots reserved for hotfix patches between them.
 
 **Status:** drafted 2026-05-27 (evening). Renumber history: v5.10 → v5.11 on 2026-05-28 → v5.15.0 on 2026-05-30 first strict-semver pass → **v5.21.0** on 2026-05-30 skip-1 pass.

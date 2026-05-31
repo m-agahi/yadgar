@@ -1,5 +1,7 @@
 # PLAN — v5.9.0: Anchor Audit + Consolidation Pass
 
+> **STATUS: SHIPPED v5.9.0 (2026-05-28)**
+
 **Status:** drafted 2026-05-27 (evening).
 
 **Depends on:** v5.8.0 shipped (`tier`, `valid_until`, hygiene signals exist).

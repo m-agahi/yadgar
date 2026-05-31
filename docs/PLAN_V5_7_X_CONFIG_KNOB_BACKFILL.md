@@ -1,5 +1,7 @@
 # PLAN — Config Knob Backfill (v5.7.10 core + backend v5.3.1)
 
+> **STATUS: SHIPPED v5.7.10 (2026-05-27)** — I25 invariant shipped with this PR. Backlog drain (Tier-2 gaps) ongoing.
+
 **Status:** drafted 2026-05-27 from live audit. Pending implementation.
 
 ## Why

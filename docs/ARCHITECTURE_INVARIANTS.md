@@ -5,7 +5,7 @@ Mirrored in wiki: `yadgar-architectural-invariants`.
 Anchored memory: project-scoped, `/home/max/git/yadgar`.
 Version-execution-order lives in the `yadgar-roadmap-future-improvements` wiki.
 
-Last updated: 2026-05-27 (I25 config three-way-sync invariant added — v5.7.10).
+Last updated: 2026-05-31 (I26 secret-gate chokepoint v5.10.2; I27 plan-first for discoveries v5.10.x; I28 pre-commit allowlist audit v5.13.0 — all now shipped).
 
 ---
 

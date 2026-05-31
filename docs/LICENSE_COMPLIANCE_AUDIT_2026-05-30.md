@@ -1,5 +1,7 @@
 # License Compliance Audit — 2026-05-30
 
+> **Update (2026-05-31):** Adopt-1 (LongMemEval benchmarks) shipped in v5.25.0 — MIT license (GREEN). LongMemEval dataset status remains MIT / GREEN as audited. LoCoMo (CC BY-NC 4.0 / YELLOW / deferred) unchanged. This document is a point-in-time snapshot; do not update the body.
+
 **Purpose:** Verify that yadgar's intended adoption of competitor patterns, datasets, and runtime libraries
 (per `docs/competitor-audit-2026-05-30.md` and the 6 Adopt items) is license-compliant. Audit follows
 the protocol in `docs/AUDIT_DECISIONS.md`.

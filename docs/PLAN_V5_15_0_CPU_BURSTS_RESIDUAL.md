@@ -1,5 +1,7 @@
 # PLAN — v5.15.0: CPU burst residual investigation + detection infrastructure + secret-gate caller plumbing
 
+> **STATUS: SHIPPED v5.15.0 (2026-05-30)**
+
 **Renumbered:** v5.12.0 → v5.15.0 on 2026-05-30. Reason: skip-1 minor convention adopted 2026-05-30 — odd-only minors for sequential features, even slots reserved for hotfix patches between them.
 
 **Scope bundle (added 2026-05-30, post-v5.13.0 ship):** v5.13.0 secret-gate allowlist mechanism shipped DORMANT — `gate_or_reject(tags=, source=)` accepts context but no production write tool (`memorize`, `wiki_add`, `anchor`) forwards its `tags` to the gate. Allowlist tested via direct `is_allowlisted()` calls only; will not fire in real tool invocations until caller plumbing lands. **v5.15.0 bundles tag-plumbing** so allowlist becomes effective in production.

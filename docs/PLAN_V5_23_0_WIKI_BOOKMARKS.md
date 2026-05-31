@@ -1,5 +1,7 @@
 # PLAN — v5.23.0: Wiki Bookmarks page in viz (pinned wiki reader)
 
+> **STATUS: SHIPPED v5.23.0 (backend) + v5.24.0 (frontend) — 2026-05-30**
+
 **Renumbered:** v5.16.0 → v5.23.0 on 2026-05-30. Reason: skip-1 minor convention adopted 2026-05-30 — odd-only minors for sequential features, even slots reserved for hotfix patches between them.
 
 **Status:** drafted 2026-05-30. Plan-first per I27. Implementation deferred — requires backend (storage + endpoints) + frontend (new page) + markdown rendering pipeline. Net positive UX: replaces "ask Claude what's in roadmap" with one-click pinned page.

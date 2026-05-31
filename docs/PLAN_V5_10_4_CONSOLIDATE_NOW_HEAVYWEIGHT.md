@@ -1,5 +1,7 @@
 # PLAN — v5.10.4: consolidate_now heavyweight fix + mode parameter
 
+> **STATUS: SHIPPED v5.10.4 (2026-05-30)**
+
 **Status:** drafted 2026-05-30. Inserted as v5.10.4; prior v5.10.4 (nightly cycle remaining bugs) renumbered to v5.10.5. Plan-first per I27.
 
 **Master at draft time:** v5.10.3 shipped + tagged (26011d6).

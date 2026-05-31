@@ -1,5 +1,7 @@
 # PLAN v5.5.1 — Log Rotation + Disk-Fill Protection
 
+> **STATUS: SHIPPED v5.5.1 (2026-05-22)** — see CHANGELOG [5.5.1] for implementation details.
+
 Status: **DRAFT — awaiting answers to §12 open questions before implementation.**
 Version target: v5.5.1
 Author: architecture session 2026-05-22

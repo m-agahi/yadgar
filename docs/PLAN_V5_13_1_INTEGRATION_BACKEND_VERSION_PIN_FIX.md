@@ -1,5 +1,7 @@
 # PLAN — v5.13.1: Integration test backend version pin fix (drift since v5.0.3)
 
+> **STATUS: SHIPPED v5.13.1 (2026-05-30)**
+
 **Status:** drafted 2026-05-30. Plan-first per I27. Patch on v5.13 minor train per `docs/VERSIONING.md`.
 
 **Master at draft time:** v5.13.0 LIVE.

@@ -1,5 +1,7 @@
 # PLAN — v5.10.6: SESSION_END_CAPTURE sentinel-marker pattern + SessionStart extraction
 
+> **STATUS: SHIPPED v5.10.6 (2026-05-30)**
+
 **Status:** drafted + advisor-reviewed 2026-05-29. Ready for implementation. Renumbered v5.10.5→v5.10.6 on 2026-05-30: v5.10.4 slot claimed by consolidate_now heavyweight fix, nightly-cycle remaining bugs shifted to v5.10.5.
 
 **Master at draft time:** bbd50fb (initial draft) → master is now post-v5.10.2 ship (f42e4d8).

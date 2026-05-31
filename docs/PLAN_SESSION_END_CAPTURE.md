@@ -1,5 +1,7 @@
 # PLAN — SESSION_END_CAPTURE: sentinel-marker pattern + SessionStart extraction
 
+> **STATUS: SHIPPED v5.10.6 (2026-05-30)** — this is the earlier draft; canonical plan is `docs/PLAN_V5_10_6_SESSION_END_CAPTURE.md`
+
 **Status:** drafted + advisor-reviewed 2026-05-29. Ready for implementation.
 
 **Master at draft time:** bbd50fb (v5.7.12 project_brief trim plan merged).
