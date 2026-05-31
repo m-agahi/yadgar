@@ -1,5 +1,67 @@
 # Migration Notes
 
+## v5.25.2 — CPU Burst Hotfix: subagent_start fast profile + action-log poison-pill skip (2026-05-31)
+
+Core 5.25.1 → 5.25.2. Backend unchanged at 5.4.0. **No DB migration.**
+
+### Summary
+
+Hotfix for two confirmed CPU burst root causes (HIGH confidence, 2-pass investigation).
+
+### Root Cause 1: subagent_start ran full rerank pipeline on every dispatch
+
+`/hooks/subagent-start` calls `retriever.recall()` inside `http.py`. The call was
+missing `profile="fast"`, triggering the full CE/NLI/MP rerank pipeline. 100% of
+subagent dispatch calls took 2.5-10s of CPU time. The sibling `/hooks/prompt-recall`
+handler (~line 524) already used `profile="fast"` with an explicit comment warning
+about 8-46s CPU bursts from the full pipeline. The same fix was never applied to
+`hook_subagent_start`.
+
+**Fix:** Added `profile="fast"` to the `retriever.recall()` call in
+`yadgar/server/http.py` (was line 1043, now line 1048 after comment). One-line patch.
+Matches the existing pattern and comment at the `prompt_recall` sibling.
+
+### Root Cause 2: SecretLeakBlocked poison-pill blocked consolidation daemon
+
+`_process_action_log()` in `yadgar/consolidation/cleanup.py` groups action-log rows
+and calls `storage.insert_memory()` per group. When action-log content contains a
+detected secret, `insert_memory()` raises `SecretLeakBlocked`. The exception exited
+the group loop before `mark_actions_processed()` ran, so those action IDs were never
+marked. Next cycle fetched the same 200 rows again, hit the same group, same
+exception. Result: only 1 of N expected consolidation cycles completed in 5h10min.
+
+**Fix:** Wrapped `insert_memory()` in a targeted try/except for `SecretLeakBlocked`.
+On detection: logs WARNING (not CRITICAL) with directory + action_ids + reason,
+increments `stats["actions_quarantined"]`, writes a quarantine entry to
+`~/.yadgar/quarantine/action_log_poison.jsonl` (best-effort, disk errors swallowed),
+then falls through to `mark_actions_processed()` so the poisoned group never
+re-queues. Non-SecretLeakBlocked insert errors still re-raise.
+
+Quarantine entry format (JSONL): `{timestamp, action_ids, reason, directory}`
+
+Note: the quarantine logs the group's action IDs. The specific content row that
+triggered the gate is not isolable at this call site — the gate fires on the
+aggregated summary string built from all actions in the group. Isolating the
+specific triggering row would require per-action gate checks, out of scope for
+this hotfix.
+
+### v5.51.0 rescope needed
+
+The v5.51.0 plan was mistargeted at `/api/stats` (0.6% sustained CPU — not a burst
+source). The bursts identified here come from `/hooks/*` endpoints. v5.51.0 needs
+rescope to target the hooks pipeline and tuning of the `profile="fast"` retrieval
+parameters.
+
+### Changes
+
+- `yadgar/server/http.py`: add `profile="fast"` to `hook_subagent_start` recall call
+- `yadgar/consolidation/cleanup.py`: add `_quarantine_action_group()` helper + poison-pill
+  catch in `_process_action_log()`, add `actions_quarantined` to stats dict
+- `yadgar/tests/test_subagent_start_fast_profile.py`: new TDD tests (3 assertions)
+- `yadgar/tests/test_action_log_poison_pill.py`: new TDD tests (6 assertions)
+
+---
+
 ## v5.25.1 — Benchmark Phase 1: spawn surreal-server subprocess (2026-05-31)
 
 Core 5.25.0 → 5.25.1. Backend unchanged at 5.4.0. **No DB migration.**
