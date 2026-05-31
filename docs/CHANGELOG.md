@@ -18,6 +18,36 @@ Published first LongMemEval QA accuracy number against mem0 and Zep. Closes Adop
 - **D2/D3 revisit trigger fired** — both decisions are now in RECONSIDER posture per `docs/DECISIONS.md` 2026-05-31 entry. Draft A/B plans: `docs/PLAN_V5_25_X_D2_NLI_AB.md`, `docs/PLAN_V5_25_X_D3_PC_AB.md`.
 - **3 new tests** — `test_call_claude_pipe_passes_model_flag_when_anthropic_model_set`, `test_call_claude_pipe_no_model_flag_when_anthropic_model_unset`, `test_build_reproducibility_dict_llm_from_anthropic_model` (in `test_benchmark_phase1.py`). Plus existing test updated for `ANTHROPIC_MODEL` env isolation.
 
+## [5.25.6] - 2026-05-31
+
+README cosmetic patch: HTML table white-bg wrapper for transparent PNG hero.
+
+### Fixed
+- **README hero background:** wrapped `<img>` in `<table bgcolor="white" cellpadding="40" cellspacing="0" border="0">` so the transparent-bg `yadgar.png` renders with a clean white surround on dark-mode viewers (Codeberg, GitHub). Inline `style` attribute is stripped by markdown sanitizers; legacy HTML4 `bgcolor` on table cells is preserved by all common renderers.
+- **Redundant H1 removed:** deleted `# Yadgar` heading — the logo image contains the wordmark.
+- **Display size:** bumped hero width 200 → 320 for better readability at typical render widths.
+
+## [5.25.5] - 2026-05-31
+
+SVG residue cleanup hit complexity wall (overlapping paths); pivoted to PNG with chroma-threshold transparency processing.
+
+### Fixed
+- **README hero image:** replaced `yadgar.svg` (residue) with `yadgar.png` (Pillow chroma-threshold cleaned, 531KB, 1.20% pixels made transparent).
+- **yadgar.svg removed:** stale asset with near-white residue deleted from `yadgar/static/`.
+- **favicon.svg unchanged:** separate clean asset; favicon links in `index.html` and `bookmarks.html` untouched.
+
+## [5.25.4] - 2026-05-31
+
+User-provided SVG logo wired into README hero and favicon links added to viz pages.
+
+### Added
+- **README hero image:** `yadgar/static/yadgar.svg` displayed at top of README (200px, centered).
+- **Favicon — index.html:** `<link rel="icon" type="image/svg+xml" href="/favicon.svg">` in `<head>`.
+- **Favicon — bookmarks.html:** same favicon link.
+- **SVG assets committed:** `yadgar/static/yadgar.svg` (logo) and `yadgar/static/favicon.svg` (tab favicon).
+
+Multi-size favicon set (16/32/48/96/180/192/512 PNG), apple-touch-icon, OG image, Info-tab branding, and tab-nav header logo deferred to v5.50 viz overhaul.
+
 ## [5.25.3] - 2026-05-31
 
 Fast profile follow-up to v5.25.2 CPU burst hotfix.

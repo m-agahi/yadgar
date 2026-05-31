@@ -2,7 +2,7 @@
 
 ## v5.26.0 — Phase 2 Haiku Pilot Benchmark: First Published QA Accuracy (2026-05-31)
 
-Core 5.25.3 → 5.26.0. Backend unchanged at 5.4.0. **No DB migration.**
+Core 5.25.6 → 5.26.0. Backend unchanged at 5.4.0. **No DB migration.**
 
 ### Summary
 
@@ -50,6 +50,69 @@ ANTHROPIC_MODEL=claude-haiku-4-5-20251001 \
   --output benchmarks/results/longmemeval_v5.26.0_s_full.json
 ```
 Cost: ~$0.40-1 Haiku API spend. Wall-clock: ~2 hours (96 questions, sequential).
+
+---
+
+## v5.25.6 — README white-bg HTML table wrapper + H1 removal (2026-05-31)
+
+Core 5.25.5 → 5.25.6. Backend unchanged at 5.4.0. **No DB migration.**
+
+### Summary
+
+The transparent-bg `yadgar.png` (shipped in v5.25.5) renders with an unwanted halo on dark-mode README viewers (Codeberg, GitHub). This release wraps the hero `<img>` in an HTML `<table bgcolor="white" cellpadding="40">` to give it a clean white surround regardless of viewer theme. Inline `style="background:white"` is stripped by Codeberg/GitHub markdown sanitizers; legacy HTML4 `bgcolor` on table cells is preserved.
+
+Also removed the redundant `# Yadgar` H1 heading (the logo image contains the wordmark), and bumped display size 200 → 320.
+
+- `README.md`: hero `<img>` wrapped in `<table bgcolor="white" ...>`; `# Yadgar` H1 removed; width 200 → 320.
+- `yadgar.png`: **unchanged** — transparent original preserved.
+
+### Rebuild required
+
+Static assets are bundled in the Docker image. Pull / rebuild to get the updated README on the registry listing. No config changes needed.
+
+---
+
+## v5.25.5 — Branding: pivot SVG hero → PNG with cleaned transparency (2026-05-31)
+
+Core 5.25.4 → 5.25.5. Backend unchanged at 5.4.0. **No DB migration.**
+
+### Summary
+
+SVG residue cleanup proved too complex: near-white pixels sit on overlapping paths requiring geometric analysis beyond simple threshold ops. Pivoted to PNG with chroma-threshold transparency processing via Pillow (brightness ≥ 220, chroma ≤ 25 → alpha=0). 1.20% of pixels made transparent; 531KB clean asset.
+
+- `yadgar/static/yadgar.png`: cleaned PNG logo (replaces deleted `yadgar.svg`).
+- `README.md`: hero image updated to reference PNG.
+- `yadgar/static/favicon.svg`: unchanged (separate asset, clean from the start).
+
+### Rebuild required
+
+The served static assets come from the Docker image. After pull/build, the new PNG file will be live. No config changes needed.
+
+### Deferred to v5.50
+
+Multi-size favicon set (16/32/48/96/180/192/512 PNG), apple-touch-icon, OG image (1200×630), Info-tab branding, tab-nav header logo.
+
+---
+
+## v5.25.4 — Branding: SVG logo + favicon (2026-05-31)
+
+Core 5.25.3 → 5.25.4. Backend unchanged at 5.4.0. **No DB migration.**
+
+### Summary
+
+User-provided SVG assets (`yadgar.svg`, `favicon.svg`) wired into existing surfaces:
+
+- `README.md`: hero image at top (200px centered, `yadgar/static/yadgar.svg`).
+- `yadgar/static/index.html`: favicon link (`<link rel="icon" type="image/svg+xml" href="/favicon.svg">`).
+- `yadgar/static/bookmarks.html`: same favicon link.
+
+### Rebuild required
+
+The served static assets come from the Docker image. After pull/build, the new SVG files and favicon links will be live. No config changes needed — static files are served from `yadgar/static/` by the existing viz route handler.
+
+### Deferred to v5.50
+
+Multi-size favicon set (16/32/48/96/180/192/512 PNG), apple-touch-icon, OG image (1200×630), Info-tab branding, tab-nav header logo.
 
 ---
 
