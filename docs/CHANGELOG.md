@@ -7,6 +7,27 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.25.0] - 2026-05-31
+
+Benchmark infrastructure + Phase 1 retrieval-only scaffolding. Zero API spend.
+
+Split from original v5.25.0 plan (2026-05-30): infrastructure + Phase 1 ship first (this release);
+Phase 2 QA + publication ships in v5.26.0 after Phase 1 gate passes.
+
+### Added
+- **LongMemEval dataset download + sha256 pin:** `download_dataset()` in `benchmarks/run_longmemeval.py` downloads `longmemeval_s_cleaned.json` from HuggingFace. Pin constant `LONGMEMEVAL_S_SHA256` set to `d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442` (verified 2026-05-31). Mismatch on re-download prints a warning (non-blocking).
+- **Reproducibility metadata in output JSON:** `run_benchmark()` now writes a `reproducibility` dict to every output JSON. Fields: `yadgar_commit` (git HEAD SHA), `dataset_sha256`, `embedding_model`, `reader_llm` (null for Phase 1), `judge_llm` (null for Phase 1), `python_version`, `run_date_utc`. Helper functions: `compute_dataset_sha256`, `get_yadgar_commit`, `get_claude_version`, `build_reproducibility_dict`.
+- **`docs/BENCHMARK_LICENSE.md`:** license status and required citations for LongMemEval (MIT, GREEN) and LoCoMo (CC BY-NC 4.0, YELLOW, deferred). LongMemEval citation: Wu et al., ICLR 2025, arXiv:2410.10813.
+- **`docs/BENCHMARK_RESULTS.md`:** v0 draft. Phase 1 retrieval metrics table (PENDING deployment run), Phase 2 QA placeholder, comparison table (mem0 94.4, Zep 63.8, Yadgar PENDING), reproducibility block, Phase 1 gate condition, exact reproduction command.
+- **`benchmarks/README.md`:** fixed LongMemEval citation URL (was `mtvu/LongMemEval`, correct is `xiaowu0162/longmemeval-cleaned`); added full Wu et al. citation per MIT attribution clause.
+- **`benchmarks/results/longmemeval_v5.25.0_s_retrieval.json`:** scaffold result file. Full numbers PENDING deployment run (embedded SurrealDB path does not support FULLTEXT ANALYZER — pre-existing; full run requires live SurrealDB).
+- **`yadgar/tests/test_benchmark_phase1.py`:** 12 tests. Covers: `compute_dataset_sha256` determinism, `get_yadgar_commit` and `get_claude_version` success + fail-soft paths, `build_reproducibility_dict` required fields + placeholder values, `LONGMEMEVAL_S_SHA256` format, `--retrieval-only` flag suppresses `call_claude_pipe`, `run_benchmark()` output includes `reproducibility` key. No ML pipeline invoked (all heavy fixtures mocked). TDD red-first.
+- **`docs/benchmarks-current.md`:** updated status block (v5.25.0 infra shipped, run pending); per-release table extended with v5.25.0 and v5.26.0 rows.
+
+### Plan
+- v5.25.0: `docs/PLAN_V5_25_0_BENCHMARK_PUBLICATION.md` (revised, infra + Phase 1 only)
+- Next: v5.26.0 Phase 2 QA + citation-ready number
+
 ## [5.24.2] - 2026-05-30
 
 Second hotfix for bookmarks renderer introduced at v5.24.0.
