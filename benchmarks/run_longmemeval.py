@@ -23,9 +23,15 @@ Usage:
 
   # Specific question types only
   python benchmarks/run_longmemeval.py --types temporal-reasoning,knowledge-update
+
+License: LongMemEval dataset is MIT licensed.
+  Citation: Wu et al., "LongMemEval: Benchmarking Chat Assistants on Long-Term
+  Interactive Memory", ICLR 2025. arXiv:2410.10813.
+  Dataset: https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned
 """
 
 import argparse
+import hashlib
 import json
 import logging
 import math
@@ -75,6 +81,65 @@ ABILITY_MAP = {
     "knowledge-update": "Knowledge Updates",
 }
 
+# SHA-256 pin for longmemeval_s_cleaned.json (xiaowu0162/longmemeval-cleaned, 2026-05-31).
+# If the dataset is updated upstream and the hash changes, a warning is printed (not a hard abort).
+# Update this pin after verifying the upstream change is intentional.
+LONGMEMEVAL_S_SHA256: str = "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442"
+
+
+# ── Reproducibility helpers ───────────────────────────────────────────
+
+
+def compute_dataset_sha256(path: Path) -> str:
+    """Compute SHA-256 hex digest of a file (streaming, large-file safe)."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def get_yadgar_commit() -> str | None:
+    """Return current git HEAD SHA (40 hex chars), or None on failure."""
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(Path(__file__).parent.parent),
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+    except Exception:
+        return None
+
+
+def get_claude_version() -> str | None:
+    """Return `claude --version` output string, or None if binary absent."""
+    try:
+        return subprocess.check_output(
+            ["claude", "--version"],
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+    except Exception:
+        return None
+
+
+def build_reproducibility_dict(dataset_path: Path, settings) -> dict:
+    """Build the reproducibility metadata dict for a benchmark run.
+
+    Fields populated at Phase 1 (retrieval-only):
+      yadgar_commit, dataset_sha256, embedding_model, python_version, run_date_utc.
+    Fields left as None (Phase 2 fills them in):
+      reader_llm, judge_llm.
+    """
+    return {
+        "yadgar_commit": get_yadgar_commit(),
+        "dataset_sha256": compute_dataset_sha256(dataset_path),
+        "embedding_model": settings.EMBEDDING_MODEL,
+        "reader_llm": None,   # Phase 2 (v5.26.0) fills this in
+        "judge_llm": None,    # Phase 2 (v5.26.0) fills this in
+        "python_version": sys.version,
+        "run_date_utc": datetime.now(UTC).isoformat(),
+    }
+
 
 # ── Dataset Download ──────────────────────────────────────────────────
 
@@ -101,6 +166,21 @@ def download_dataset(variant: str = "s") -> Path:
 
     urllib.request.urlretrieve(url, local_path)
     print(f"Saved to {local_path} ({local_path.stat().st_size / 1024 / 1024:.1f} MB)")
+
+    # Verify sha256 pin if set (variant s only; m/oracle pins TBD)
+    if variant == "s" and LONGMEMEVAL_S_SHA256:
+        actual = compute_dataset_sha256(local_path)
+        if actual != LONGMEMEVAL_S_SHA256:
+            print(
+                f"WARNING: dataset sha256 mismatch!\n"
+                f"  expected: {LONGMEMEVAL_S_SHA256}\n"
+                f"  actual:   {actual}\n"
+                "  Dataset may have been updated upstream. "
+                "Update LONGMEMEVAL_S_SHA256 after verifying the change is intentional."
+            )
+        else:
+            print(f"Dataset sha256 verified: {actual[:16]}...")
+
     return local_path
 
 
@@ -558,6 +638,7 @@ def run_benchmark(
         "settings_overrides": settings_overrides or {},
         "per_query": [],
         "aggregated": {},
+        "reproducibility": build_reproducibility_dict(dataset_path, settings),
     }
 
     start_time = time.monotonic()
