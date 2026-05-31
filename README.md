@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="yadgar/static/yadgar.svg" alt="yadgar logo" width="200">
+</p>
+
 <div align="center">
 
 # Yadgar
