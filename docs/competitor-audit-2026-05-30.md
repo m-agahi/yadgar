@@ -1,5 +1,7 @@
 # Competitor Audit — 2026-05-30
 
+> **Update (2026-05-31):** Several Adopt items from this audit have now shipped — Adopt-1 (benchmarks) infra in v5.25.0; Adopt-2 (write-time contradiction) in v5.17.0. Remaining adopts (bi-temporal edges, memory blocks, JS SDK, DuckDB) are tracked in `docs/DECISIONS.md`. This document is a point-in-time snapshot; do not update the body.
+
 **Scope:** Memory systems, vector databases, and storage backends relevant to Yadgar's design space.
 **Yadgar version at time of writing:** v5.10.3 (deployed 2026-05-29).
 **Auditor note:** All competitor information sourced from official docs and independent analyses as of May 2026. Yadgar sections derived from reading the live codebase (`/home/max/git/yadgar`). Bias check applied: where Yadgar is clearly behind, that is stated directly.

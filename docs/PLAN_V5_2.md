@@ -1,5 +1,7 @@
 # PLAN_V5_2 — Stabilize-Only Release
 
+> **STATUS: SHIPPED (historical — v5.2 through v5.3 era, 2026-05-18)**
+
 Cut from `yadgar-v5-stabilize-strategy-tldr-gap-analysis` wiki (2026-05-18). Scope: ship v5.2 as the "stabilize before v6 LLM curator" cycle — security cleanup, hook adoption, competitor parity, QoL — without any LLM integration work.
 
 Workflow: bundled-release per `yadgar-bundled-release-integration-model`. Long-lived branch `feat/v5.2`, sub-branches per S/A/H/C/Q item off `feat/v5.2`. One final merge to master at end.

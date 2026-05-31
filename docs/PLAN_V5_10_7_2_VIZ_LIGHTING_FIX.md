@@ -1,5 +1,7 @@
 # PLAN — v5.10.7.2: 3D viz lighting fix (Lambert → Basic material)
 
+> **STATUS: SHIPPED v5.10.7.1 (absorbed — both hotfixes bundled)**
+
 ## ABSORBED INTO v5.10.7.1
 
 This plan was originally designated v5.10.7.2. It was absorbed into v5.10.7.1 to ship both hotfixes in a single release cycle. The implementation is complete in `feat/v5.10.7.1-bundled-hotfix`. See `docs/PLAN_V5_10_7_1_SENTINEL_FILTER_LOCAL_COMMAND_TAGS.md` for the combined plan.

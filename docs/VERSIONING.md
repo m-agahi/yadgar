@@ -97,6 +97,16 @@ These are the only permitted four-digit version tags. Any future tag with four p
 
 ---
 
+## Convention exceptions
+
+### v5.24.0 — deliberate even-slot use (2026-05-30)
+
+v5.24.0 (Wiki Bookmarks frontend) was intentionally shipped in an even slot, breaking the skip-1 convention once. Reason: the backend (v5.23.0) and frontend (v5.24.0) form a single logical feature that required two consecutive releases in the same day. Using an odd slot (v5.25.0) for the frontend would have created a gap that implies unrelated work. The skip-1 convention resumes at v5.25.0.
+
+Recorded in `docs/CHANGELOG.md` [5.24.0] with explicit note: *"v5.24.0 is a deliberate one-time even slot (frontend to match v5.23.0 backend; skip-1 convention resumes at v5.25.0)."*
+
+---
+
 ## Renumber history (2026-05-30) — strict semver adoption
 
 On 2026-05-30 all drafted (unshipped) plan slots were renumbered from pre-convention patch-train slots to comply with strict semver (one minor per feature). The mapping:

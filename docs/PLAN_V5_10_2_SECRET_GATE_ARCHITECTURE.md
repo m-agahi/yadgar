@@ -1,5 +1,7 @@
 # PLAN — v5.10.2: Secret-Gate Architecture (single chokepoint, no escape)
 
+> **STATUS: SHIPPED v5.10.2 (2026-05-29)**
+
 **Status:** drafted 2026-05-29 after discovering `anchor()` bypasses secret detection. Security fix.
 
 **Master at draft time:** core v5.10.1 + backend v5.4.0 deployed.

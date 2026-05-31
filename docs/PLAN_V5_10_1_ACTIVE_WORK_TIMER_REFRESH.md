@@ -1,5 +1,7 @@
 # PLAN — v5.10.1: `_active_work` timer-based refresh + soft warning tier
 
+> **STATUS: SHIPPED v5.10.1 (2026-05-29)**
+
 **Status:** drafted 2026-05-29 after investigation. Renumbered to v5.10.1 (patch on v5.10 train) per user direction 2026-05-29 evening.
 
 **Master at draft time:** core v5.10.0 + backend v5.3.1 deployed.

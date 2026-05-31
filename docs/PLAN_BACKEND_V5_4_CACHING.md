@@ -1,5 +1,7 @@
 # PLAN — Backend v5.4.0: Recall Hot-Path Caching
 
+> **STATUS: SHIPPED backend v5.4.0 (2026-05-27)**
+
 **Status:** drafted 2026-05-27, scope locked via interactive Q&A. Pending implementation.
 
 **Master at draft time:** yadgar-core v5.7.9 live, yadgar-backend v5.3.0 live, PLT/OTLP verified.
