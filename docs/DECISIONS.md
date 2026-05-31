@@ -369,6 +369,47 @@ Items extracted from "What does NOT ship" / "Non-goals" / "Out of scope" section
 
 ---
 
+## 2026-05-31 — Setup mechanism decision (v5.45 plan-derived)
+
+**PD-37. Setup mechanism for non-NixOS installs**
+- **Source:** `docs/PLAN_V5_45_0_SETUP_FOUNDATION.md` (v5.45.0 plan), `docs/PLAN_V5_46_0_DISTRIBUTION.md` (v5.46.0 plan), `docs/PLAN_V5_47_0_UPDATE_MECHANISM.md` (v5.47.0 plan)
+- **Decision:** ADOPT — Compose-canonical + systemd opt-in + interactive installer + auto-detect runtime + auto-detect OS
+- **Scope:** Three-ship train:
+  - **v5.45.0** ships the foundation: portable Makefile (`make setup` / `make uninstall` / `make uninstall-purge`), interactive `yadgar install` CLI, container-runtime auto-detect (podman/docker), OS auto-detect (Linux/macOS/others), systemd opt-in path with new `yadgar.target`, macOS launchd plist path. Data preserved by default on uninstall; `--purge` for full wipe. Hooks delegated to existing MCP `install_hooks` tool. NixOS hosts refused with suggestion to use v5.46 nix flake.
+  - **v5.46.0** ships the distribution: PyPI metadata polish, new Homebrew tap (separate `homebrew-yadgar` Codeberg repo), Nix flake at yadgar repo root (packages/apps/nixosModules/homeManagerModules outputs), Codeberg release automation via Forgejo Actions (sdist + container manifest + checksums + CycloneDX JSON SBOM + brew/nix bump PRs). Container source-of-truth stays at `docker.io/openfantasy/yadgar`; release manifest mirrors. Single-source-of-truth version bumper (`scripts/bump_version.py`).
+  - **v5.47.0** ships the update mechanism: `yadgar update [--check | --install]` CLI subcommand (detects install method: pipx / brew / nix-flake / container / source), opt-in anonymous version-only auto-check on daemon start (`update.check_on_start: false` default OFF; no IP, no user-ID, no telemetry — strictly version probe), `/api/control/update` HTTP route (gated by `YADGAR_DEBUG_APIS_ENABLED=on` + bearer middleware). v5.50 viz Control-tab Update button wires to this API.
+- **Reason:**
+  - Compose is portable across Linux/macOS/Windows/WSL2 — single deployment model.
+  - systemd opt-in path supports power users + matches NixOS-managed pattern without forcing it.
+  - Interactive installer (no curl-pipe-sh) eliminates supply-chain attack surface.
+  - Auto-detect runtime/OS removes per-distro tribal knowledge from documentation.
+  - macOS launchd path bundles the same UX as Linux systemd — first-class macOS support.
+  - Homebrew + Nix flake first-class install paths cover the long-tail user base.
+  - Codeberg release automation removes manual asset-attachment toil; SBOM (CycloneDX JSON) satisfies enterprise security scanners.
+  - Anonymous version-only update check respects privacy (opt-in, no telemetry) while letting users discover updates.
+- **Alternatives considered + rejected:**
+  - **Per-service systemd units only** — rejected; excludes macOS users entirely.
+  - **Detect-OS hybrid without compose path** — rejected; loses portability across Linux distros (Alpine, RHEL, Ubuntu, NixOS each differ).
+  - **Compose-only without systemd opt-in** — rejected; loses daemon supervision on power-user Linux installs; doesn't match NixOS pattern.
+  - **curl-pipe-sh installer** — rejected; supply-chain attack surface unacceptable for a memory engine that handles user data.
+  - **Phone-home telemetry with usage data** — rejected; privacy violation. Version-only opt-in probe is the maximum acceptable.
+  - **SPDX SBOM** — deferred to v5.47+ variant; CycloneDX is v5.46 default (broader enterprise scanner support).
+  - **Signed release artifacts (sigstore/cosign)** — deferred to v5.48+ candidate.
+- **Lower-priority opens resolved:**
+  - Data preservation: `make uninstall` preserves `~/.yadgar/` (DB + queue) by default; `make uninstall-purge` for full wipe.
+  - Hooks delegation: Makefile delegates to existing `mcp__yadgar__install_hooks` MCP tool.
+  - Versioning sync: bump script keeps pyproject + server.json + nix module + brew formula + Codeberg tag in sync; single source of truth.
+  - Container source-of-truth: image stays at `docker.io/openfantasy/yadgar`; release manifest in Codeberg points to it (mirror reference, not duplicate hosting).
+  - Phone-home: explicit anonymous version-only check (no IP / user-id telemetry); opt-in via `update.check_on_start: false` in config.yaml.
+  - NixOS user migration: installer detects existing nix-managed install via `/etc/NIXOS` or `command -v nixos-version`; if detected, refuses to overwrite + suggests using nix flake derivation instead.
+- **Open questions retained in plan docs (not blockers for PD-37):**
+  - macOS launchd plist exact content + management commands (resolved during v5.45 Step 4 implementation).
+  - Python 3.14 availability on macOS Homebrew core (resolved during v5.46 Step 0 implementation; fallback to 3.13 if needed).
+  - Anonymous version-check payload exact wire shape — corporate firewalls + privacy auditors (resolved during v5.47 Step 0 implementation; documented in `docs/PRIVACY.md`).
+- **Revisit triggers:** macOS launchd path proves unreliable in field; OR compose v3 spec deprecates a depended-on feature; OR user demand for FreeBSD / Windows-native paths; OR Codeberg releases API rate-limits the update-check probe; OR privacy posture must extend (e.g. SBOM transparency on update check); OR multi-host / multi-user yadgar deployment becomes a real use case (current scope: single-user).
+
+---
+
 ## 2026-05-30 — Open architectural questions
 
 Questions raised during design reviews, plan drafting, or session investigations that do not yet have a decision. Each needs an owner or an expected resolution path.
