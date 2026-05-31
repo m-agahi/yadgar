@@ -46,6 +46,11 @@ from pathlib import Path
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from yadgar._surreal_runner import (
+    allocate_port_with_retry,
+    spawn_surreal,
+    teardown_surreal_proc,
+)
 from yadgar.config import Settings
 from yadgar.curation import MemoryCurator
 from yadgar.embeddings import EmbeddingEngine
@@ -56,6 +61,92 @@ from yadgar.thermodynamics import MemoryThermodynamics
 
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
+
+# ── Surreal-server lifecycle ───────────────────────────────────────────
+
+# All data tables defined in _init_schema that must be wiped between questions.
+# Excludes: schema_version (migration state), wiki_*, checkpoint (not used in benchmark).
+_BENCHMARK_WIPE_TABLES = [
+    "memory",
+    "episode",
+    "entity",
+    "relationship",
+    "consolidation_log",
+    "file_hash",
+    "memory_cluster",
+    "prospective_memory",
+    "narrative_entry",
+    "astrocyte_process",
+    "memory_rule",
+    "memory_archive",
+    "memory_transition",
+    "causal_dag_edge",
+    "engram_slot",
+    "action_log",
+    "user_profile",
+    "derived_belief",
+    "counter",
+    "memory_similarity_link",
+]
+
+
+def wipe_benchmark_tables(storage: StorageEngine) -> None:
+    """DELETE all rows from benchmark data tables to isolate per-question state.
+
+    In server mode, StorageEngine ignores db_path and shares the yadgar/main
+    namespace across all calls.  Between questions the benchmark creates a new
+    StorageEngine — but in server mode that still points at the same DB.  This
+    function wipes all data tables so each question starts with a clean slate.
+
+    Indexes and schema (DEFINE TABLE / DEFINE INDEX / DEFINE ANALYZER) are not
+    dropped — they are NOT recreated per question, so wiping data alone is
+    sufficient and much faster than REMOVE TABLE + _init_schema().
+
+    Args:
+        storage: An open StorageEngine instance in server mode.
+    """
+    for table in _BENCHMARK_WIPE_TABLES:
+        try:
+            storage._q(f"DELETE {table};")
+        except Exception as exc:
+            logger.warning("wipe_benchmark_tables: DELETE %s failed: %s", table, exc)
+
+
+def _wait_for_health(port: int, timeout: float = 30.0) -> None:
+    """Poll SurrealDB /health until it responds or timeout expires."""
+    import urllib.request
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=1)
+            return
+        except Exception:
+            time.sleep(0.1)
+    raise RuntimeError(f"SurrealDB did not start on port {port} within {timeout}s")
+
+
+def spawn_surreal_for_benchmark(data_dir: str) -> tuple[subprocess.Popen, int]:
+    """Spawn a SurrealDB server process for the benchmark run.
+
+    Allocates a free port, starts surreal, waits for health-check.
+    Caller must call teardown_surreal_proc(proc) on exit.
+
+    Args:
+        data_dir: Path to a writable directory for SurrealKV storage.
+
+    Returns:
+        (proc, port) — the Popen instance and the bound port.
+
+    Raises:
+        FileNotFoundError: If the `surreal` binary is not on PATH.
+        RuntimeError: If the server does not start within 30s.
+    """
+    port = allocate_port_with_retry(n=99)  # n=99 → outside xdist range (gw0–gw3 use 0–3)
+    proc = spawn_surreal(port=port, data_dir=data_dir)
+    _wait_for_health(port)
+    return proc, port
+
 
 # ── Constants ─────────────────────────────────────────────────────────
 
@@ -122,11 +213,23 @@ def get_claude_version() -> str | None:
         return None
 
 
+def get_surreal_version() -> str | None:
+    """Return `surreal version` output string, or None if binary absent."""
+    try:
+        return subprocess.check_output(
+            ["surreal", "version"],
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+    except Exception:
+        return None
+
+
 def build_reproducibility_dict(dataset_path: Path, settings) -> dict:
     """Build the reproducibility metadata dict for a benchmark run.
 
     Fields populated at Phase 1 (retrieval-only):
-      yadgar_commit, dataset_sha256, embedding_model, python_version, run_date_utc.
+      yadgar_commit, dataset_sha256, embedding_model, surreal_version,
+      python_version, run_date_utc.
     Fields left as None (Phase 2 fills them in):
       reader_llm, judge_llm.
     """
@@ -134,6 +237,7 @@ def build_reproducibility_dict(dataset_path: Path, settings) -> dict:
         "yadgar_commit": get_yadgar_commit(),
         "dataset_sha256": compute_dataset_sha256(dataset_path),
         "embedding_model": settings.EMBEDDING_MODEL,
+        "surreal_version": get_surreal_version(),
         "reader_llm": None,   # Phase 2 (v5.26.0) fills this in
         "judge_llm": None,    # Phase 2 (v5.26.0) fills this in
         "python_version": sys.version,
@@ -603,6 +707,7 @@ def run_benchmark(
     top_k_context: int = 10,
     settings_overrides: dict | None = None,
     output_path: str | None = None,
+    stratify_per_type: bool = False,
 ) -> dict:
     """Run the full LongMemEval benchmark.
 
@@ -617,9 +722,41 @@ def run_benchmark(
         print(f"Filtered to {len(data)} questions of types: {question_types}")
 
     # Limit for quick testing
+    # - If `stratify_per_type=True` and types are specified: take up to
+    #   ceil(max_questions / len(types)) per type, interleaved so all types
+    #   appear early in the run (matters when the harness kills mid-run).
+    # - Otherwise: simple head-slice (file is type-sorted upstream, so this
+    #   reads contiguous blocks per type).
     if max_questions > 0:
-        data = data[:max_questions]
-        print(f"Limited to {max_questions} questions")
+        if stratify_per_type and question_types:
+            from collections import defaultdict
+            buckets: dict[str, list[dict]] = defaultdict(list)
+            for q in data:
+                buckets[q["question_type"]].append(q)
+            per_type = max(1, max_questions // len(question_types))
+            # Truncate each bucket, then interleave round-robin.
+            truncated = {t: buckets[t][:per_type] for t in question_types if t in buckets}
+            interleaved: list[dict] = []
+            i = 0
+            while len(interleaved) < max_questions:
+                added_this_round = False
+                for t in question_types:
+                    if t in truncated and i < len(truncated[t]):
+                        interleaved.append(truncated[t][i])
+                        added_this_round = True
+                        if len(interleaved) >= max_questions:
+                            break
+                if not added_this_round:
+                    break
+                i += 1
+            data = interleaved
+            print(
+                f"Stratified to {len(data)} questions "
+                f"(~{per_type} per type, interleaved)"
+            )
+        else:
+            data = data[:max_questions]
+            print(f"Limited to {max_questions} questions")
 
     settings = make_benchmark_settings(**(settings_overrides or {}))
 
@@ -641,89 +778,179 @@ def run_benchmark(
         "reproducibility": build_reproducibility_dict(dataset_path, settings),
     }
 
+    # ── Surreal-server lifecycle ──────────────────────────────────────
+    # If YADGAR_DB_URL is already set (user points at an existing server),
+    # skip the spawn entirely and use that server as-is.
+    # Otherwise spawn a surreal-server subprocess on a free port so that
+    # FULLTEXT ANALYZER SQL syntax works (embedded surrealkv doesn't support it).
+    _spawned_proc = None
+    _surreal_tmpdir = None
+    _server_mode = bool(os.environ.get("YADGAR_DB_URL"))
+
+    # Benchmark dataset contains technical content (Vulkan APIs, code snippets,
+    # API-key-shaped strings in user questions) that triggers false positives
+    # in the storage-level secret gate. The gate is a defence-in-depth check
+    # for real user data — for fixed benchmark corpora it produces noise that
+    # kills the run partway through. Disable for the duration of benchmark
+    # ingestion. Caller env is restored in the `finally` block below.
+    _prev_secret_gate = os.environ.get("YADGAR_SECRET_GATE_DISABLED")
+    os.environ["YADGAR_SECRET_GATE_DISABLED"] = "1"
+
+    if not _server_mode:
+        import shutil
+        if not shutil.which("surreal"):
+            print(
+                "WARNING: `surreal` binary not on PATH. "
+                "Falling back to embedded mode — FULLTEXT retrieval will fail. "
+                "Install SurrealDB or set YADGAR_DB_URL to point at a running server."
+            )
+        else:
+            _surreal_tmpdir = tempfile.mkdtemp(prefix="yadgar_bench_surreal_")
+            print(f"Starting SurrealDB server (data dir: {_surreal_tmpdir}) ...")
+            _spawned_proc, _port = spawn_surreal_for_benchmark(_surreal_tmpdir)
+            os.environ["YADGAR_DB_URL"] = f"http://127.0.0.1:{_port}"
+            os.environ["YADGAR_ALLOW_ROOT"] = "1"
+            _server_mode = True
+            print(f"SurrealDB ready on port {_port}")
+
     start_time = time.monotonic()
 
-    for qi, question in enumerate(data):
-        qid = question["question_id"]
-        qtype = question["question_type"]
-        is_abs = qid.endswith("_abs")
+    try:
+        for qi, question in enumerate(data):
+            qid = question["question_id"]
+            qtype = question["question_type"]
+            is_abs = qid.endswith("_abs")
 
-        print(
-            f"\r[{qi + 1}/{len(data)}] {qtype}: {question['question'][:60]}...", end="", flush=True
-        )
-
-        # Create fresh DB for this question (no cross-contamination)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = os.path.join(tmpdir, "bench.db")
-
-            storage = StorageEngine(db_path)
-            kg = KnowledgeGraph(storage, settings)
-            thermo = MemoryThermodynamics(storage, embeddings, settings)
-            retriever = Retriever(storage, embeddings, kg, settings)
-            curator = MemoryCurator(storage, embeddings, thermo, settings)
-
-            # Phase 1a: Ingest haystack
-            t_ingest = time.monotonic()
-            session_map = ingest_question_haystack(
-                question, storage, embeddings, curator, thermo, settings
+            print(
+                f"\r[{qi + 1}/{len(data)}] {qtype}: {question['question'][:60]}...",
+                end="",
+                flush=True,
             )
-            ingest_time = time.monotonic() - t_ingest
 
-            total_memories = sum(len(mids) for mids in session_map.values())
+            # In server mode: reuse single server, wipe data between questions.
+            # In embedded mode (no surreal binary): tmpdir per question as before.
+            # NOTE: FULLTEXT retrieval is broken in embedded mode; warn but proceed.
+            _q_tmpdir_path: str | None = None
+            storage = None
+            try:
+                if _server_mode:
+                    db_path = ""  # ignored in server mode
+                    storage = StorageEngine(db_path)
+                    # Wipe all data tables so this question starts with a clean slate.
+                    # Must happen AFTER StorageEngine.__init__ (calls _init_schema).
+                    if qi > 0:
+                        wipe_benchmark_tables(storage)
+                else:
+                    # mkdtemp (not ctx mgr) so the dir outlives StorageEngine init.
+                    # Cleaned up explicitly after storage.close() in finally block.
+                    _q_tmpdir_path = tempfile.mkdtemp(prefix="yadgar_bench_q_")
+                    db_path = os.path.join(_q_tmpdir_path, "bench.db")
+                    storage = StorageEngine(db_path)
 
-            # Phase 1b: Retrieval evaluation
-            t_retrieve = time.monotonic()
-            retrieval_metrics = evaluate_retrieval(
-                question, retriever, session_map, max_results=max_results
-            )
-            retrieve_time = time.monotonic() - t_retrieve
+                kg = KnowledgeGraph(storage, settings)
+                thermo = MemoryThermodynamics(storage, embeddings, settings)
+                retriever = Retriever(storage, embeddings, kg, settings)
+                curator = MemoryCurator(storage, embeddings, thermo, settings)
 
-            # Phase 2: Answer generation + judging
-            hypothesis = ""
-            judge_result = {}
-            gen_time = 0.0
-            judge_time = 0.0
+                # Phase 1a: Ingest haystack
+                t_ingest = time.monotonic()
+                session_map = ingest_question_haystack(
+                    question, storage, embeddings, curator, thermo, settings
+                )
+                ingest_time = time.monotonic() - t_ingest
 
-            if not retrieval_only:
-                # Get retrieved memories for answer generation
-                try:
-                    retrieved = retriever.recall(
-                        question["question"], max_results=max_results, min_heat=0.0
-                    )
-                except Exception:
-                    retrieved = []
+                total_memories = sum(len(mids) for mids in session_map.values())
 
-                t_gen = time.monotonic()
-                hypothesis = generate_answer(question, retrieved, top_k_context)
-                gen_time = time.monotonic() - t_gen
+                # Phase 1b: Retrieval evaluation
+                t_retrieve = time.monotonic()
+                retrieval_metrics = evaluate_retrieval(
+                    question, retriever, session_map, max_results=max_results
+                )
+                retrieve_time = time.monotonic() - t_retrieve
 
-                if hypothesis:
-                    t_judge = time.monotonic()
-                    judge_result = judge_answer(question, hypothesis)
-                    judge_time = time.monotonic() - t_judge
+                # Phase 2: Answer generation + judging
+                hypothesis = ""
+                judge_result = {}
+                gen_time = 0.0
+                judge_time = 0.0
 
-            # Record per-query result
-            query_result = {
-                "question_id": qid,
-                "question_type": qtype,
-                "is_abstention": is_abs,
-                "question": question["question"],
-                "gold_answer": question["answer"],
-                "sessions_in_haystack": len(question["haystack_session_ids"]),
-                "memories_ingested": total_memories,
-                "ingest_seconds": round(ingest_time, 2),
-                "retrieve_seconds": round(retrieve_time, 2),
-                **{k: v for k, v in retrieval_metrics.items() if k != "skipped"},
-            }
+                if not retrieval_only:
+                    # Get retrieved memories for answer generation
+                    try:
+                        retrieved = retriever.recall(
+                            question["question"], max_results=max_results, min_heat=0.0
+                        )
+                    except Exception:
+                        retrieved = []
 
-            if not retrieval_only:
-                query_result["hypothesis"] = hypothesis
-                query_result["correct"] = judge_result.get("correct", False)
-                query_result["gen_seconds"] = round(gen_time, 2)
-                query_result["judge_seconds"] = round(judge_time, 2)
+                    t_gen = time.monotonic()
+                    hypothesis = generate_answer(question, retrieved, top_k_context)
+                    gen_time = time.monotonic() - t_gen
 
-            results["per_query"].append(query_result)
-            storage.close()
+                    if hypothesis:
+                        t_judge = time.monotonic()
+                        judge_result = judge_answer(question, hypothesis)
+                        judge_time = time.monotonic() - t_judge
+
+                # Record per-query result
+                query_result = {
+                    "question_id": qid,
+                    "question_type": qtype,
+                    "is_abstention": is_abs,
+                    "question": question["question"],
+                    "gold_answer": question["answer"],
+                    "sessions_in_haystack": len(question["haystack_session_ids"]),
+                    "memories_ingested": total_memories,
+                    "ingest_seconds": round(ingest_time, 2),
+                    "retrieve_seconds": round(retrieve_time, 2),
+                    **{k: v for k, v in retrieval_metrics.items() if k != "skipped"},
+                }
+
+                if not retrieval_only:
+                    query_result["hypothesis"] = hypothesis
+                    query_result["correct"] = judge_result.get("correct", False)
+                    query_result["gen_seconds"] = round(gen_time, 2)
+                    query_result["judge_seconds"] = round(judge_time, 2)
+
+                results["per_query"].append(query_result)
+            except Exception as _qerr:
+                # Don't let one bad question kill the whole run — record it as error
+                # so per-type aggregates remain comparable across runs.
+                print(f"\n  ERROR on {qid}: {type(_qerr).__name__}: {_qerr}",
+                      flush=True)
+                results["per_query"].append({
+                    "question_id": qid,
+                    "question_type": qtype,
+                    "is_abstention": is_abs,
+                    "error": f"{type(_qerr).__name__}: {_qerr}",
+                })
+            finally:
+                if storage is not None:
+                    try:
+                        storage.close()
+                    except Exception:
+                        pass
+                # Clean up per-question embedded tmpdir (server mode: None, skip).
+                if _q_tmpdir_path is not None:
+                    import shutil as _q_shutil
+                    _q_shutil.rmtree(_q_tmpdir_path, ignore_errors=True)
+
+    finally:
+        # Tear down the spawned server and clean up temp data dir.
+        if _spawned_proc is not None:
+            teardown_surreal_proc(_spawned_proc)
+        if _surreal_tmpdir is not None:
+            import shutil as _shutil
+            _shutil.rmtree(_surreal_tmpdir, ignore_errors=True)
+        # Remove env var we injected (don't pollute caller env on function return).
+        if _spawned_proc is not None:
+            os.environ.pop("YADGAR_DB_URL", None)
+            os.environ.pop("YADGAR_ALLOW_ROOT", None)
+        # Restore secret-gate env var (we only disabled it for benchmark ingestion).
+        if _prev_secret_gate is None:
+            os.environ.pop("YADGAR_SECRET_GATE_DISABLED", None)
+        else:
+            os.environ["YADGAR_SECRET_GATE_DISABLED"] = _prev_secret_gate
 
     print()  # newline after progress
 
@@ -905,6 +1132,12 @@ def main():
         default=None,
         help="Output JSON path",
     )
+    parser.add_argument(
+        "--stratify-per-type",
+        action="store_true",
+        help="With --max-questions and --types, sample evenly per type and "
+        "interleave them so early-killed runs still yield per-type signal.",
+    )
 
     args = parser.parse_args()
 
@@ -922,6 +1155,7 @@ def main():
         max_results=args.max_results,
         top_k_context=args.top_k_context,
         output_path=args.output,
+        stratify_per_type=args.stratify_per_type,
     )
 
 
