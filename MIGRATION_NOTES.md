@@ -1,5 +1,27 @@
 # Migration Notes
 
+## v5.25.5 — Branding: pivot SVG hero → PNG with cleaned transparency (2026-05-31)
+
+Core 5.25.4 → 5.25.5. Backend unchanged at 5.4.0. **No DB migration.**
+
+### Summary
+
+SVG residue cleanup proved too complex: near-white pixels sit on overlapping paths requiring geometric analysis beyond simple threshold ops. Pivoted to PNG with chroma-threshold transparency processing via Pillow (brightness ≥ 220, chroma ≤ 25 → alpha=0). 1.20% of pixels made transparent; 531KB clean asset.
+
+- `yadgar/static/yadgar.png`: cleaned PNG logo (replaces deleted `yadgar.svg`).
+- `README.md`: hero image updated to reference PNG.
+- `yadgar/static/favicon.svg`: unchanged (separate asset, clean from the start).
+
+### Rebuild required
+
+The served static assets come from the Docker image. After pull/build, the new PNG file will be live. No config changes needed.
+
+### Deferred to v5.50
+
+Multi-size favicon set (16/32/48/96/180/192/512 PNG), apple-touch-icon, OG image (1200×630), Info-tab branding, tab-nav header logo.
+
+---
+
 ## v5.25.4 — Branding: SVG logo + favicon (2026-05-31)
 
 Core 5.25.3 → 5.25.4. Backend unchanged at 5.4.0. **No DB migration.**
