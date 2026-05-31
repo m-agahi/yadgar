@@ -1,5 +1,33 @@
 # Migration Notes
 
+## v5.25.3 — Fast Profile Follow-up: instructions_loaded + viz_search (2026-05-31)
+
+Core 5.25.2 → 5.25.3. Backend unchanged at 5.4.0. **No DB migration.**
+
+### Summary
+
+Micro-patch follow-up to v5.25.2 CPU burst hotfix. v5.51.0 plan rescope (ec33c92)
+identified two more `retriever.recall()` call sites missing `profile="fast"`:
+
+1. **`hook_instructions_loaded` (`http.py` ~line 953):** fires on every `session_start`
+   + `compact` event — the highest-frequency burst path. Uncaught by v5.25.2.
+2. **`api_viz_search` (`http.py` ~line 1394):** user-initiated viz graph search.
+   Lower frequency than hooks but same rerank CPU cost per call.
+
+Both are 1-line fixes. Same risk profile as v5.25.2 subagent_start fix. Completes
+coverage of the three hooks fast-profile call sites (subagent_start v5.25.2;
+instructions_loaded + viz_search v5.25.3). Broader fast-profile parameter tuning
+continues in v5.51.0 plan.
+
+### Changes
+
+- `yadgar/server/http.py`: add `profile="fast"` to `hook_instructions_loaded` recall call
+- `yadgar/server/http.py`: add `profile="fast"` to `api_viz_search` recall call
+- `yadgar/tests/test_instructions_loaded_fast_profile.py`: new TDD tests (3 assertions)
+- `yadgar/tests/test_viz_search_fast_profile.py`: new TDD tests (3 assertions)
+
+---
+
 ## v5.25.2 — CPU Burst Hotfix: subagent_start fast profile + action-log poison-pill skip (2026-05-31)
 
 Core 5.25.1 → 5.25.2. Backend unchanged at 5.4.0. **No DB migration.**
