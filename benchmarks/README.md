@@ -40,4 +40,12 @@ Maharana et al., "Evaluating Very Long-Term Conversational Memory of LLM Agents,
 ### LongMemEval
 **License:** MIT
 
-Wu et al., "LongMemEval: Benchmarking Long-Context Large Language Models," arXiv preprint arXiv:2410.10813 (2024). Available: https://huggingface.co/datasets/mtvu/LongMemEval
+Wu, Junhao, Shangyu Xing, Bin Wang, Shengyu Zhang, Wei Fan, Pengfei Liu, and Chunhua Shen.
+"LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory."
+ICLR 2025. arXiv:2410.10813 (2024).
+Dataset: https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned (MIT License).
+
+Note: use the `-cleaned` variant (`xiaowu0162/longmemeval-cleaned`), not the deprecated
+`xiaowu0162/longmemeval` or `mtvu/LongMemEval`. The cleaned variant removes noisy history sessions.
+
+See `docs/BENCHMARK_LICENSE.md` and `docs/BENCHMARK_RESULTS.md` for full details.

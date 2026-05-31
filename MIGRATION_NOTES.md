@@ -1,5 +1,76 @@
 # Migration Notes
 
+## v5.25.0 — Benchmark Phase 1: retrieval infra + reproducibility metadata (2026-05-31)
+
+Core 5.24.2 → 5.25.0. Backend unchanged at 5.4.0. **No DB migration.**
+
+### Summary
+
+Phase 1 of the LongMemEval benchmark infrastructure. Zero API spend. Ships:
+- LongMemEval dataset download + sha256 pin (`LONGMEMEVAL_S_SHA256`)
+- Reproducibility metadata in output JSON (`reproducibility` key)
+- License attribution docs: `docs/BENCHMARK_LICENSE.md`, `docs/BENCHMARK_RESULTS.md`
+- `benchmarks/README.md` LongMemEval citation fixed (correct HuggingFace URL)
+- Tests: `yadgar/tests/test_benchmark_phase1.py` (12 tests)
+
+Phase 2 QA accuracy (headline number vs mem0/Zep) ships in v5.26.0.
+
+### Phase 1 retrieval run — requires live SurrealDB
+
+The embedded SurrealDB path (`surrealkv://...`) does NOT support `FULLTEXT ANALYZER` syntax
+(pre-existing upstream limitation, confirmed on master before v5.25.0).
+
+**Phase 1 run requires a live SurrealDB server.** After deployment:
+
+```bash
+# 1. Ensure SurrealDB server is running (see: yadgar daemon install-service)
+# 2. Run Phase 1 retrieval-only benchmark:
+.venv/bin/python -m benchmarks.run_longmemeval \
+  --variant s \
+  --retrieval-only \
+  --output benchmarks/results/longmemeval_v5.25.0_s_retrieval.json
+```
+
+Expected wall-clock: 30–120 min for 500 questions (CPU only, no GPU needed).
+No LLM calls. No API spend.
+
+### Phase 1 gate condition
+
+Before v5.26.0 QA run, verify:
+- `mrr > 0.1` AND `recall@10 > 0.3` in the aggregated results
+
+If either condition fails, investigate `make_benchmark_settings()` config before any LLM budget burn.
+
+### Dataset
+
+Dataset downloaded to `benchmarks/data/longmemeval/longmemeval_s_cleaned.json` (264.5 MB, MIT).
+SHA-256 pinned in `LONGMEMEVAL_S_SHA256` constant. Dataset NOT committed to repo.
+
+### Reproducibility metadata
+
+`run_benchmark()` output JSON now includes a `reproducibility` block:
+```json
+{
+  "reproducibility": {
+    "yadgar_commit": "<40-char git sha>",
+    "dataset_sha256": "<64-char sha256 of longmemeval_s_cleaned.json>",
+    "embedding_model": "all-MiniLM-L6-v2",
+    "reader_llm": null,
+    "judge_llm": null,
+    "python_version": "...",
+    "run_date_utc": "..."
+  }
+}
+```
+`reader_llm` and `judge_llm` remain `null` for Phase 1. v5.26.0 fills them in.
+
+### What NOT to do
+
+- Do NOT run Phase 2 (`python -m benchmarks.run_longmemeval --variant s` without `--retrieval-only`) until Phase 1 gate passes. Phase 2 spends LLM budget.
+- Do NOT commit the dataset file to the repo.
+
+---
+
 ## v5.24.2 — Bookmarks hotfix: marked v15 renderer.text round-trip crash (2026-05-30)
 
 Core 5.24.1 → 5.24.2. Backend unchanged at 5.4.0. **No DB migration.**
