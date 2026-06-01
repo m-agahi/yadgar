@@ -120,7 +120,13 @@ def _build_core_hooks(
         _runner_entry("session-start-context"),
         _runner_entry("post-compact-rehydrate", matcher="compact"),
     ]
-    hooks_config["PostToolUse"] = [_runner_entry("post-tool-capture")]
+    # PostToolUse: two entries — (1) generic capture, (2) block-reflect on block_* writes.
+    # block-reflect matcher: any of the five block write tools (v5.35.1).
+    _block_reflect_matcher = "mcp__yadgar__block_(create|update|delete|replace|append)"
+    hooks_config["PostToolUse"] = [
+        _runner_entry("post-tool-capture"),
+        _runner_entry("block-reflect", matcher=_block_reflect_matcher),
+    ]
     hooks_config["UserPromptSubmit"] = [_runner_entry("prompt-recall")]
 
     # v5.20.0: direct-command entry so hookEventName is always emitted

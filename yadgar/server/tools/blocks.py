@@ -1,17 +1,20 @@
 """Memory block MCP tool registrations (v5.33.0 — Adopt-4 Letta-style core memory).
 
-Five tools:
+Seven tools:
   block_create  — create a new named block (project or global scope)
   block_get     — fetch block content by name + scope
   block_update  — full-replace block content (char_limit enforced)
   block_delete  — remove a block (idempotent)
   block_list    — list blocks for a scope + directory
+  block_replace — patch: string-replace old_text with new_text (v5.35.1)
+  block_append  — patch: append text with newline (v5.35.1)
 
 All tools use the unified @_tool(power=True) decorator and delegate to
 StorageEngine._BlocksMixin via yadgar.server.lifecycle._get_storage().
 
 Error model: all errors return {ok: False, error: "..."} — never raise.
-Secret gate: block_create and block_update scan content via gate_or_reject (I26).
+Secret gate: block_create, block_update, block_replace, block_append scan
+content via gate_or_reject (I26).
 """
 
 from __future__ import annotations
@@ -30,7 +33,7 @@ def block_create(
     name: str,
     content: str,
     scope: str = "project",
-    char_limit: int = 2000,
+    char_limit: int | None = None,
     directory: str | None = None,
 ) -> dict:
     """Create a new memory block. Blocks are always-injected, named text containers.
@@ -39,7 +42,7 @@ def block_create(
         name: Block name — lowercase, underscore-separated, e.g. 'current_task'.
         content: Initial block content.
         scope: 'project' (per-directory) or 'global' (cross-project). Default 'project'.
-        char_limit: Per-block character cap. Default 2000, max 8000.
+        char_limit: Per-block character cap. Default from config (MEMORY_BLOCK_DEFAULT_CHAR_LIMIT=2000), hard max from config (MEMORY_BLOCK_HARD_CHAR_LIMIT=8000).
         directory: Absolute project path. Required for scope='project'.
 
     Returns:
@@ -55,14 +58,11 @@ def block_create(
     if gate is not None:
         return gate
 
+    kwargs: dict = {"name": name, "content": content, "scope": scope, "directory": directory}
+    if char_limit is not None:
+        kwargs["char_limit"] = char_limit
     try:
-        result = storage.create_block(
-            name=name,
-            content=content,
-            scope=scope,
-            directory=directory,
-            char_limit=char_limit,
-        )
+        result = storage.create_block(**kwargs)
     except Exception as exc:
         logger.warning("block_create error name=%s: %s", name, exc)
         return {"ok": False, "error": str(exc)}
@@ -214,3 +214,96 @@ def block_list(
         }
         for r in rows
     ]
+
+
+@_tool(power=True)
+def block_replace(
+    name: str,
+    old_text: str,
+    new_text: str,
+    scope: str = "project",
+    directory: str | None = None,
+) -> dict:
+    """Patch a memory block by replacing one occurrence of old_text with new_text.
+
+    Cheaper than block_update for incremental edits — no need to re-emit full content.
+    Errors if old_text is not found (0 matches) OR found more than once (ambiguous).
+
+    Args:
+        name: Block name to patch.
+        old_text: Exact string to find (must appear exactly once).
+        new_text: Replacement string.
+        scope: 'project' or 'global'. Default 'project'.
+        directory: Absolute project path. Required for scope='project'.
+
+    Returns:
+        Updated {id, name, scope, content, char_limit, updated_at} on success.
+        {ok: False, error: "..."} on failure (not found, ambiguous, limit exceeded).
+    """
+    storage = _get_storage()
+    if storage is None:
+        return {"ok": False, "error": "storage_not_initialized"}
+
+    # Secret gate on new_text (I26)
+    gate = gate_or_reject(new_text)
+    if gate is not None:
+        return gate
+
+    try:
+        result = storage.replace_block(
+            name=name,
+            old_text=old_text,
+            new_text=new_text,
+            scope=scope,
+            directory=directory,
+        )
+    except Exception as exc:
+        logger.warning("block_replace error name=%s: %s", name, exc)
+        return {"ok": False, "error": str(exc)}
+
+    return result
+
+
+@_tool(power=True)
+def block_append(
+    name: str,
+    text: str,
+    scope: str = "project",
+    directory: str | None = None,
+) -> dict:
+    """Append text to a memory block with a newline separator.
+
+    Cheaper than block_update for incremental additions — no need to re-emit full content.
+    Respects the block's char_limit (hard cap enforced).
+
+    Args:
+        name: Block name to append to.
+        text: Text to append (a newline is inserted between existing content and text).
+        scope: 'project' or 'global'. Default 'project'.
+        directory: Absolute project path. Required for scope='project'.
+
+    Returns:
+        Updated {id, name, scope, content, char_limit, updated_at} on success.
+        {ok: False, error: "..."} on failure (block not found, limit exceeded).
+    """
+    storage = _get_storage()
+    if storage is None:
+        return {"ok": False, "error": "storage_not_initialized"}
+
+    # Secret gate (I26)
+    gate = gate_or_reject(text)
+    if gate is not None:
+        return gate
+
+    try:
+        result = storage.append_block(
+            name=name,
+            text=text,
+            scope=scope,
+            directory=directory,
+        )
+    except Exception as exc:
+        logger.warning("block_append error name=%s: %s", name, exc)
+        return {"ok": False, "error": str(exc)}
+
+    return result
