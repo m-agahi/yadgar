@@ -1,5 +1,49 @@
 # Migration Notes
 
+## v5.37.0 — Viz integration testing infrastructure (2026-06-01)
+
+Core `5.35.1 → 5.37.0`. Backend unchanged at `5.4.0`. **No DB migration.**
+
+### What shipped
+
+- **Layer 1 API contract tests** — 18 new pytest tests in `yadgar/tests/test_graph_api_contract.py`.
+- **Layer 2 Playwright smoke tests** — 10 new pytest tests in `yadgar/tests/integration/viz/`.
+- **Layer 3 JS unit tests** — 28 Vitest tests in `yadgar/static/viz_helpers.test.js`.
+- **`viz-tests/` directory** at repo root with `package.json` + `vitest.config.js`.
+- **`yadgar/static/viz_helpers.js`** — ES module with pure helper functions (extracted from `index.html`).
+- **CI `viz-tests` job** added to `.forgejo/workflows/ci.yaml`.
+
+### Consumer action required
+
+**None for existing deployments.** Pure testing infrastructure — no runtime behavior change,
+no API changes, no DB schema changes.
+
+**For local dev with Layer 2 + 3:**
+
+```bash
+# Layer 2 (Playwright):
+pip install -e ".[test,ml]"   # now pulls playwright + pytest-playwright
+playwright install chromium   # or set PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+
+# Layer 3 (Vitest):
+cd viz-tests && npm ci
+npx vitest run
+```
+
+**NixOS / system Chromium users:**
+
+```bash
+export PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=$(which chromium)
+python -m pytest yadgar/tests/integration/viz/ -m integration
+```
+
+Layer 2 tests auto-skip if neither Playwright nor Chromium is available — non-blocking for
+users who only need Layers 1 + 3.
+
+See `docs/VIZ_TESTING.md` for full local dev setup and failure interpretation.
+
+---
+
 ## v5.35.1 — Memory block follow-ups (2026-06-01)
 
 Core `5.35.0 → 5.35.1`. Backend unchanged at `5.4.0`. **No DB migration.**
