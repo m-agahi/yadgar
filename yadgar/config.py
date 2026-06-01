@@ -579,6 +579,16 @@ class Settings(BaseSettings):
     # Directory for cache snapshot files (ce.snap, embed.snap).
     CACHE_SNAPSHOT_DIR: str = "/data/cache"
 
+    # v5.35.1 — Memory block caps (I25: env + yaml + registry, formerly module constants)
+    # Max blocks per (scope, directory) tuple.
+    MEMORY_BLOCK_MAX_PER_SCOPE: int = 10
+    # Default per-block character limit when none specified.
+    MEMORY_BLOCK_DEFAULT_CHAR_LIMIT: int = 2000
+    # Absolute maximum per-block character limit (hard cap).
+    MEMORY_BLOCK_HARD_CHAR_LIMIT: int = 8000
+    # Total character budget across all blocks at restore-time (prevents context-bombing).
+    MEMORY_BLOCK_TOTAL_BUDGET_CHARS: int = 12000
+
     # ── v5.11.0 — Viz knobs (configurable via config.yaml) ──────────────────
     # Node sizing
     VIZ_NODE_SIZE_3D: float = 8.0  # nodeRelSize in 3D mode (default = ForceGraph3D 2× = 8)

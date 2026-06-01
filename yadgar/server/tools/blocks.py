@@ -30,7 +30,7 @@ def block_create(
     name: str,
     content: str,
     scope: str = "project",
-    char_limit: int = 2000,
+    char_limit: int | None = None,
     directory: str | None = None,
 ) -> dict:
     """Create a new memory block. Blocks are always-injected, named text containers.
@@ -39,7 +39,7 @@ def block_create(
         name: Block name — lowercase, underscore-separated, e.g. 'current_task'.
         content: Initial block content.
         scope: 'project' (per-directory) or 'global' (cross-project). Default 'project'.
-        char_limit: Per-block character cap. Default 2000, max 8000.
+        char_limit: Per-block character cap. Default from config (MEMORY_BLOCK_DEFAULT_CHAR_LIMIT=2000), hard max from config (MEMORY_BLOCK_HARD_CHAR_LIMIT=8000).
         directory: Absolute project path. Required for scope='project'.
 
     Returns:
@@ -55,14 +55,11 @@ def block_create(
     if gate is not None:
         return gate
 
+    kwargs: dict = {"name": name, "content": content, "scope": scope, "directory": directory}
+    if char_limit is not None:
+        kwargs["char_limit"] = char_limit
     try:
-        result = storage.create_block(
-            name=name,
-            content=content,
-            scope=scope,
-            directory=directory,
-            char_limit=char_limit,
-        )
+        result = storage.create_block(**kwargs)
     except Exception as exc:
         logger.warning("block_create error name=%s: %s", name, exc)
         return {"ok": False, "error": str(exc)}

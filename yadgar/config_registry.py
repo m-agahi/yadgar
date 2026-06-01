@@ -196,6 +196,11 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_OTLP_HEADERS", "", "string"),
     ConfigEntry("YADGAR_OTLP_TIMEOUT_SEC", "10", "int"),
     ConfigEntry("YADGAR_OTLP_INSECURE", "1", "bool"),
+    # ── Memory block caps (v5.35.1, I25) ────────────────────────────────────
+    ConfigEntry("YADGAR_MEMORY_BLOCK_MAX_PER_SCOPE", "10", "int"),
+    ConfigEntry("YADGAR_MEMORY_BLOCK_DEFAULT_CHAR_LIMIT", "2000", "int"),
+    ConfigEntry("YADGAR_MEMORY_BLOCK_HARD_CHAR_LIMIT", "8000", "int"),
+    ConfigEntry("YADGAR_MEMORY_BLOCK_TOTAL_BUDGET_CHARS", "12000", "int"),
     # ── Backend: /admin/dbsize cache (v5.3.0) ────────────────────────────────
     ConfigEntry("YADGAR_DBSIZE_CACHE_TTL_SEC", "60", "int"),
     # ── Backend: restart attribution marker path (v5.3.0) ────────────────────

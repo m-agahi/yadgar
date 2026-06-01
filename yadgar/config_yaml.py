@@ -783,6 +783,23 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Opacity for non-matched dimmed nodes (default 0.18)",
         "section": "viz_config",
     },
+    # memory_blocks (v5.35.1)
+    "memory_block_max_per_scope": {
+        "desc": "Maximum blocks per (scope, directory) tuple (default 10)",
+        "section": "memory_blocks",
+    },
+    "memory_block_default_char_limit": {
+        "desc": "Default per-block character limit when none specified (default 2000)",
+        "section": "memory_blocks",
+    },
+    "memory_block_hard_char_limit": {
+        "desc": "Absolute maximum per-block character limit — hard cap (default 8000)",
+        "section": "memory_blocks",
+    },
+    "memory_block_total_budget_chars": {
+        "desc": "Total character budget across all blocks at restore-time (default 12000)",
+        "section": "memory_blocks",
+    },
     # cpu_burst_detection (v5.15.0 D1)
     "phase_duration_warn_ms": {
         "desc": (
@@ -820,6 +837,7 @@ SECTION_TITLES: dict[str, str] = {
     "anchor_hygiene": "Anchor Hygiene (TTL)",
     "viz_config": "Visualization Knobs (v5.11.0)",
     "cpu_burst_detection": "CPU Burst Detection (v5.15.0)",
+    "memory_blocks": "Memory Blocks (v5.35.1)",
 }
 
 # Ordered list of sections for deterministic output
