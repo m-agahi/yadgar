@@ -7,13 +7,81 @@ _WikiMixin provides:
   - replace_wiki_crossrefs / get_wiki_backlinks / get_all_wiki_crossrefs
   - insert_wiki_draft / get_wiki_draft_by_slug / list_wiki_drafts / delete_wiki_draft
   - upsert_project_init / upsert_active_work
+  - insert_wiki_page_version / get_max_version_for_page
+  - list_wiki_page_versions / get_wiki_page_version
+  - _compute_change_summary
 """
 
+import difflib
 import logging
+import re as _re
 
 from yadgar.tracing import trace_span
 
 _log = logging.getLogger(__name__)
+
+
+# ── Change-summary helpers ─────────────────────────────────────────────────────
+
+
+_HEADING_RE = _re.compile(r"^##+ (.+)")
+
+
+def _diff_context_line(diff_line: str) -> str:
+    """Strip unified-diff prefix (+/-/@/ ) to get the raw text for heading detection."""
+    if diff_line.startswith("@"):
+        return diff_line.lstrip("+-@ ")
+    return diff_line[1:] if diff_line else ""
+
+
+def _find_nearby_heading(diff: list[str], i: int, touched: list[str]) -> None:
+    """Look back up to 5 diff lines for a ## heading; append to touched if found."""
+    for j in range(max(0, i - 5), i):
+        m = _HEADING_RE.match(_diff_context_line(diff[j]))
+        if m:
+            heading = m.group(1).strip()
+            if heading not in touched:
+                touched.append(heading)
+            return
+
+
+def _compute_change_summary(old_content: str, new_content: str) -> str:
+    """Generate a concise diff summary for a wiki page version.
+
+    Format: "+N -M lines | sections: 'Foo', 'Bar' | size: X → Y bytes"
+    Capped at 300 chars. No LLM — pure difflib (I9: no LLM on write path).
+
+    Section detection: markdown ## / ### headings at column 0 that appear
+    within 5 lines above changed (added/removed) content.
+    """
+    old_lines = old_content.splitlines(keepends=True)
+    new_lines = new_content.splitlines(keepends=True)
+    diff = list(difflib.unified_diff(old_lines, new_lines, lineterm=""))
+
+    added = 0
+    removed = 0
+    touched_sections: list[str] = []
+
+    for i, line in enumerate(diff):
+        if line.startswith("+") and not line.startswith("+++"):
+            added += 1
+            _find_nearby_heading(diff, i, touched_sections)
+        elif line.startswith("-") and not line.startswith("---"):
+            removed += 1
+
+    size_old = len(old_content.encode())
+    size_new = len(new_content.encode())
+
+    parts = [f"+{added} -{removed} lines"]
+    if touched_sections:
+        section_str = ", ".join(f"'{s}'" for s in touched_sections[:5])
+        parts.append(f"sections: {section_str}")
+    parts.append(f"size: {size_old} → {size_new} bytes")
+
+    summary = " | ".join(parts)
+    if len(summary) > 300:
+        summary = summary[:299] + "…"
+    return summary
 
 
 class _WikiMixin:
@@ -23,7 +91,14 @@ class _WikiMixin:
 
     @trace_span("storage.wiki.insert_wiki_page")
     def insert_wiki_page(self, page: dict, branch: str | None = None) -> int:
-        """Insert a new wiki page, return its integer ID."""
+        """Insert a new wiki page, return its integer ID.
+
+        v5.41.0: Also writes version=1 row to wiki_page_version table.
+        Version insert is a separate call (not in the same TX) because embedded
+        mode does not support multi-statement TX with CREATE + UNIQUE index in
+        one compound block. Atomicity is best-effort at the application level
+        (single-writer embedded SurrealDB assumption).
+        """
         now = self._now_iso()
         pid = self._next_id("wiki_page")
         embedding = page.get("embedding")
@@ -54,13 +129,43 @@ class _WikiMixin:
             sql += ", branch = $branch"
             params["branch"] = branch
         self._q(sql, params)
+
+        # v5.41.0: write version=1 snapshot (I1: single INSERT, no LLM/embed)
+        try:
+            snapshot = {
+                "title": page.get("title", ""),
+                "content": page.get("content", ""),
+                "category": page.get("category"),
+                "tags": page.get("tags", []),
+                "confidence": page.get("confidence"),
+                "source_memory_ids": page.get("source_memory_ids", []),
+                "branch": branch,
+            }
+            self.insert_wiki_page_version(pid, snapshot, "initial version")
+        except Exception:
+            _log.debug("wiki_page_version insert failed for page_id=%s (non-fatal)", pid)
+
         return pid
 
     @trace_span("storage.wiki.update_wiki_page")
     def update_wiki_page(self, page_id: int, updates: dict) -> bool:
-        """Update fields on an existing wiki page. Return True if found."""
+        """Update fields on an existing wiki page. Return True if found.
+
+        v5.41.0: Reads old page state before update to compute change_summary,
+        then writes a version row after the pointer update.
+        Version is always recorded regardless of content identity (I6: no skip
+        on hash-identical content — preserves full history).
+        """
         if not updates:
             return False
+
+        # v5.41.0: read old state before update (for change_summary)
+        old_page: dict | None = None
+        try:
+            old_page = self.get_wiki_page(int(page_id))
+        except Exception:
+            pass
+
         # Handle embedding conversion if present
         if "embedding" in updates and isinstance(updates["embedding"], bytes):
             updates = dict(updates)
@@ -76,7 +181,33 @@ class _WikiMixin:
             f"UPDATE type::record('wiki_page', $id) SET {', '.join(set_parts)}",
             params,
         )
-        return len(rows) > 0
+        found = len(rows) > 0
+
+        if found:
+            # v5.41.0: write version snapshot (I1: single INSERT, no LLM/embed)
+            try:
+                # Build post-update snapshot from old page merged with updates
+                merged = dict(old_page or {})
+                merged.update(updates)
+                old_content = (old_page or {}).get("content", "") if old_page else ""
+                new_content = updates.get("content", merged.get("content", ""))
+                if old_page and "content" not in updates:
+                    new_content = old_page.get("content", "")
+                change_summary = _compute_change_summary(old_content, new_content)
+                snapshot = {
+                    "title": merged.get("title", ""),
+                    "content": new_content,
+                    "category": merged.get("category"),
+                    "tags": merged.get("tags", []),
+                    "confidence": merged.get("confidence"),
+                    "source_memory_ids": merged.get("source_memory_ids", []),
+                    "branch": merged.get("branch"),
+                }
+                self.insert_wiki_page_version(int(page_id), snapshot, change_summary)
+            except Exception:
+                _log.debug("wiki_page_version insert failed for page_id=%s (non-fatal)", page_id)
+
+        return found
 
     @trace_span("storage.wiki.get_wiki_page")
     def get_wiki_page(self, page_id: int) -> dict | None:
@@ -183,6 +314,77 @@ class _WikiMixin:
         sql = f"SELECT * FROM wiki_page {where_clause} ORDER BY updated_at DESC {limit_clause}".strip()
         rows = self._q(sql, params) if params else self._q(sql)
         return self._rows_to_dicts(rows)
+
+    # ------------------------------------------------------------------ Wiki Version CRUD
+
+    def insert_wiki_page_version(
+        self,
+        page_id: int,
+        snapshot: dict,
+        change_summary: str,
+        provenance_agent: str = "default",
+    ) -> int:
+        """Insert a wiki_page_version row. Returns the version number assigned."""
+        max_ver = self.get_max_version_for_page(page_id)
+        new_ver = max_ver + 1
+        vid = self._next_id("wiki_page_version")
+        now = self._now_iso()
+        self._q(
+            "CREATE type::record('wiki_page_version', $id) SET "
+            "page_id = $page_id, version = $version, title = $title, "
+            "content = $content, category = $category, tags = $tags, "
+            "confidence = $confidence, "
+            "source_memory_ids = $source_memory_ids, branch = $branch, "
+            "change_summary = $change_summary, created_at = $created_at, "
+            "provenance_agent = $provenance_agent",
+            {
+                "id": vid,
+                "page_id": page_id,
+                "version": new_ver,
+                "title": snapshot.get("title", ""),
+                "content": snapshot.get("content", ""),
+                "category": snapshot.get("category"),
+                "tags": snapshot.get("tags", []),
+                "confidence": snapshot.get("confidence"),
+                "source_memory_ids": snapshot.get("source_memory_ids", []),
+                "branch": snapshot.get("branch"),
+                "change_summary": change_summary,
+                "created_at": now,
+                "provenance_agent": provenance_agent,
+            },
+        )
+        return new_ver
+
+    def get_max_version_for_page(self, page_id: int) -> int:
+        """Return the highest version number for a page, or 0 if none."""
+        rows = self._q(
+            "SELECT version FROM wiki_page_version WHERE page_id = $p "
+            "ORDER BY version DESC LIMIT 1",
+            {"p": int(page_id)},
+        )
+        if not rows:
+            return 0
+        return int(rows[0].get("version", 0))
+
+    def list_wiki_page_versions(self, page_id: int, limit: int = 20) -> list[dict]:
+        """List version history for a page, newest first, without 'content' field."""
+        rows = self._q(
+            "SELECT id, page_id, version, title, category, tags, confidence, "
+            "change_summary, created_at, provenance_agent, "
+            "string::len(content) AS size_bytes "
+            "FROM wiki_page_version WHERE page_id = $p "
+            "ORDER BY version DESC LIMIT $lim",
+            {"p": int(page_id), "lim": int(limit)},
+        )
+        return self._rows_to_dicts(rows)
+
+    def get_wiki_page_version(self, page_id: int, version: int) -> dict | None:
+        """Fetch a single version row with full content."""
+        rows = self._q(
+            "SELECT * FROM wiki_page_version WHERE page_id = $p AND version = $v LIMIT 1",
+            {"p": int(page_id), "v": int(version)},
+        )
+        return self._row_to_dict(rows[0]) if rows else None
 
     # ------------------------------------------------------------------ Wiki Search
 
