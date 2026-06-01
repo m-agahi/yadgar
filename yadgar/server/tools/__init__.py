@@ -70,6 +70,7 @@ from yadgar.server.tools.wiki import (
     wiki_drafts,
     wiki_approve,
     wiki_discard,
+    wiki_check_duplicate,
 )
 from yadgar.server.tools.misc import (
     checkpoint,
@@ -140,6 +141,7 @@ __all__ = [
     "wiki_drafts",
     "wiki_approve",
     "wiki_discard",
+    "wiki_check_duplicate",
     "checkpoint",
     "restore",
     "anchor",

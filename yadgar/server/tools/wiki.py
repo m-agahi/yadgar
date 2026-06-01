@@ -346,3 +346,49 @@ def wiki_discard(slug: str) -> dict:
     if deleted:
         return {"discarded": True, "slug": slug}
     return {"discarded": False, "error": f"Draft '{slug}' not found"}
+
+
+@_tool()
+def wiki_check_duplicate(  # secret-gate: skip — read-only dry-run, never writes to DB
+    title: str,
+    content: str,
+    branch: str | None = None,
+    threshold: float | None = None,
+    top_k: int = 5,
+) -> dict:
+    """Dry-run similarity check: returns candidate duplicate pages without writing anything.
+
+    Use before wiki_add to detect near-duplicates and decide whether to proceed.
+    Returns candidates sorted by descending similarity score.
+
+    Args:
+        title: Title of the proposed new page.
+        content: Content of the proposed new page.
+        branch: Branch context for scope filter (None = canonical slot).
+        threshold: Minimum cosine similarity (0-1). Defaults to WIKI_SIM_CONTENT_THRESHOLD.
+        top_k: Maximum candidates to return (default 5).
+
+    Returns:
+        {"candidates": [...], "threshold_used": float}
+        Each candidate: {slug, title, similarity, branch}
+    """
+    assert _st._wiki is not None, "WikiStore not initialized"
+
+    from yadgar.config import get_settings  # noqa: PLC0415
+
+    cfg = get_settings()
+    effective_threshold = (
+        threshold if threshold is not None else getattr(cfg, "WIKI_SIM_CONTENT_THRESHOLD", 0.80)
+    )
+
+    candidates = _st._wiki.find_similar_wiki_pages(
+        title=title,
+        content=content,
+        branch=branch,
+        threshold=effective_threshold,
+        top_k=top_k,
+    )
+    return {
+        "candidates": candidates,
+        "threshold_used": effective_threshold,
+    }
