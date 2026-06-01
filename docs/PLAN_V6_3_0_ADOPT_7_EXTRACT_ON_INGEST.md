@@ -1,9 +1,30 @@
-# PLAN — v5.36.0: Adopt-7 LLM extract-on-ingest (SKELETON)
+# PLAN — v6.3.0: Adopt-7 LLM extract-on-ingest (SKELETON)
 
 **Status:** SKELETON — 2026-06-01. Placeholder for future drafting. Not ready for impl.
 
-**Slot caveat:** v5.36 is an even minor, violates 2026-05-30 odd-only convention.
-User-requested slot — may re-slot to v5.34 / v5.36 / v5.38 / v5.40 during discussion.
+**Re-slotted 2026-06-01 night:** was v5.36.0 standalone; moved to v6.3.0 sub-release inside v6 LLM curator framework. Rationale: extract-on-ingest IS LLM inference on memory pipeline → v6 territory by definition. v5.36 standalone would have built parallel LLM infra; v6.0 ships the scaffolding (model routing, scheduler, safety, knobs) and v6.3 plugs in as one of several curator jobs. v6 sub-release order: v6.0 scaffolding → v6.1 dedup+cleanup → v6.2 synthesis → **v6.3 Adopt-7 extract-on-ingest** → v6.4 contradiction+staleness → v6.5 correlation.
+
+**Realistic eval target re-scoped:** original skeleton aimed at closing the −25pp gap to mem0 (cloud GPU + GPT-4o-class). Unrealistic on laptop 8B local. Revised target: **+5pp on multi-session + temporal-reasoning categories** (the two synthesis-heavy types). Anything more = bonus.
+
+**Knob-gated (ALL v6 jobs share this surface):**
+```
+YADGAR_V6_ENABLED=0                # master switch, default OFF
+YADGAR_V6_DRY_RUN=1                # default ON, log proposed ops
+YADGAR_V6_WINDOW_START=19:00
+YADGAR_V6_WINDOW_END=23:00
+YADGAR_V6_RATE_LIMIT_PER_HOUR=50
+YADGAR_V6_MAX_OPS_PER_NIGHT=20     # circuit breaker
+YADGAR_V6_SCOPE_HEAT_MAX=0.2
+YADGAR_V6_SCOPE_AGE_MIN_DAYS=30
+YADGAR_V6_PROTECTED_SKIP=1
+
+# Per-job (Adopt-7 specific):
+YADGAR_V6_JOB_EXTRACT_ENABLED=0           # default OFF even when v6 ON
+YADGAR_V6_JOB_EXTRACT_MODEL_TIER=reasoning # fast|reasoning
+YADGAR_V6_JOB_EXTRACT_TAGS_ALLOWLIST=*
+YADGAR_V6_JOB_EXTRACT_BATCH_SIZE=10
+YADGAR_V6_JOB_EXTRACT_EVAL_GATE_PCT=5     # +5pp target on synthesis-heavy categories
+```
 
 **Origin:** v5.26.0 LongMemEval-s 500q result. yadgar 69.4% vs mem0 94.4%
 (−25pp). Reader-attributable failures = 76/153 errors (≈50%). Retrieval already
