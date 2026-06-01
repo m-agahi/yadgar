@@ -15007,13 +15007,13 @@
     "params": 3
   },
   "yadgar/server/tools/recall.py::__file__": {
-    "loc": 235
+    "loc": 280
   },
   "yadgar/server/tools/recall.py::recall@20": {
-    "cyclo": 44,
-    "loc": 216,
-    "nesting": 5,
-    "params": 3
+    "cyclo": 48,
+    "loc": 261,
+    "nesting": 6,
+    "params": 5
   },
   "yadgar/server/tools/wiki.py::__file__": {
     "loc": 348
