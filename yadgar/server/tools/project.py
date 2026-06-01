@@ -1166,6 +1166,10 @@ def bootstrap_project(directory: str, content: str) -> dict:
 
     Idempotent: deletes any existing _project_init memory for this directory
     before inserting the new one.
+
+    v5.33.0: also seeds default memory blocks (current_task + gotchas) if they
+    don't already exist for this directory. Idempotent — existing blocks are
+    not overwritten.
     """
     # v5.10.2: secret gate — scan content before any state mutation
     _gate = gate_or_reject(content)
@@ -1178,7 +1182,37 @@ def bootstrap_project(directory: str, content: str) -> dict:
         raise ValueError(f"project_init content exceeds {cap} char cap (got {len(content)} chars)")
     resolved = _resolve_project_root(directory)
     storage = _get_storage()
-    return storage.upsert_project_init(resolved, content)
+    result = storage.upsert_project_init(resolved, content)
+
+    # v5.33.0: Seed default memory blocks (idempotent — skip if already exist)
+    _seed_default_blocks(storage, resolved)
+
+    return result
+
+
+def _seed_default_blocks(storage, directory: str) -> None:
+    """Seed default memory blocks for a project directory (v5.33.0).
+
+    Creates current_task and gotchas blocks if they don't already exist.
+    Idempotent — existing blocks are not modified.
+    """
+    _DEFAULT_BLOCKS = [
+        ("current_task", ""),
+        ("gotchas", ""),
+    ]
+    for name, content in _DEFAULT_BLOCKS:
+        try:
+            existing = storage.get_block(name, scope="project", directory=directory)
+            if existing is None:
+                storage.create_block(
+                    name=name,
+                    content=content,
+                    scope="project",
+                    directory=directory,
+                    char_limit=2000,
+                )
+        except Exception:
+            logger.debug("_seed_default_blocks: failed to seed block %r for %r", name, directory)
 
 
 def _get_active_work_tracked_dir() -> Path:
