@@ -1,5 +1,40 @@
 # Migration Notes
 
+## v5.35.0 — JavaScript/TypeScript SDK `@yadgar/sdk` v0.1.0 (2026-06-01)
+
+Core 5.31.1 → 5.35.0. Backend unchanged at 5.4.0. **No DB migration. No Python server changes.**
+
+### What shipped
+
+- `sdk-js/` subdirectory: self-contained Node/TypeScript package `@yadgar/sdk` v0.1.0.
+- 53 MCP tool wrappers — all tools currently in `yadgar/server/tools/`.
+- Streamable HTTP transport; bearer auth via `Authorization: Bearer <token>`.
+- ESM + CJS + `.d.ts` build output (tsup).
+- 73 vitest unit tests; in-process mock MCP server.
+- CI workflow `.github/workflows/sdk-js.yml` (test + GitHub Packages publish).
+
+### Consumer action required
+
+**None** for existing Python / Claude Code consumers. Zero server-side changes.
+
+### First publish (manual — NOT done in this PR)
+
+```bash
+cd sdk-js
+npm run build
+npm publish --no-git-checks
+# Requires ~/.npmrc with GitHub Packages auth token
+# Tag format: sdk-js/v0.1.0
+```
+
+### Install (once published to GitHub Packages)
+
+```bash
+# Add to ~/.npmrc:
+# @yadgar:registry=https://npm.pkg.github.com
+# //npm.pkg.github.com/:_authToken=YOUR_GITHUB_PAT
+pnpm add @yadgar/sdk
+```
 ## v5.33.0 — In-context memory blocks (2026-06-01)
 
 Core `5.31.1 → 5.33.0`. Backend unchanged at `5.4.0`.

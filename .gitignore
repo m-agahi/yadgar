@@ -190,3 +190,7 @@ result-*
 # Benchmark datasets (large files, not committed to repo)
 # Download via: .venv/bin/python -m benchmarks.run_longmemeval --retrieval-only
 benchmarks/data/
+
+# JS SDK — sdk-js/
+sdk-js/node_modules/
+sdk-js/dist/
