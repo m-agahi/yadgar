@@ -372,3 +372,98 @@ class _BlocksMixin:
                 )
 
         return self._rows_to_dicts(rows)
+
+    @trace_span("storage.blocks.replace_block")
+    def replace_block(
+        self,
+        name: str,
+        old_text: str,
+        new_text: str,
+        scope: str = "project",
+        directory: str | None = None,
+    ) -> dict:
+        """String-replace old_text with new_text in block content.
+
+        Errors if old_text is not found OR found more than once (force disambiguation).
+        Returns updated block dict on success.
+        Returns {ok: False, error: "..."} on failure.
+        """
+        try:
+            canonical_dir = _canonical_dir(scope, directory)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+
+        existing = self.get_block(name, scope=scope, directory=canonical_dir)
+        if existing is None:
+            return {
+                "ok": False,
+                "error": f"block {name!r} not found in scope={scope!r} directory={canonical_dir!r}",
+            }
+
+        content = existing.get("content", "")
+        count = content.count(old_text)
+        if count == 0:
+            return {
+                "ok": False,
+                "error": (f"old_text {old_text!r} not found in block {name!r}; nothing replaced"),
+            }
+        if count > 1:
+            return {
+                "ok": False,
+                "error": (
+                    f"old_text {old_text!r} found {count} times in block {name!r} — "
+                    "ambiguous; use a more specific old_text for disambiguation"
+                ),
+            }
+
+        new_content = content.replace(old_text, new_text, 1)
+        char_limit = int(existing.get("char_limit") or _default_char_limit())
+        if len(new_content) > char_limit:
+            return {
+                "ok": False,
+                "error": (
+                    f"replacement content length {len(new_content)} exceeds char_limit {char_limit}; "
+                    "shorten new_text"
+                ),
+            }
+
+        return self.update_block(name, new_content, scope=scope, directory=canonical_dir)
+
+    @trace_span("storage.blocks.append_block")
+    def append_block(
+        self,
+        name: str,
+        text: str,
+        scope: str = "project",
+        directory: str | None = None,
+    ) -> dict:
+        """Append text to block content with a newline separator.
+
+        Respects the block's char_limit. Returns updated block dict on success.
+        Returns {ok: False, error: "..."} on failure.
+        """
+        try:
+            canonical_dir = _canonical_dir(scope, directory)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+
+        existing = self.get_block(name, scope=scope, directory=canonical_dir)
+        if existing is None:
+            return {
+                "ok": False,
+                "error": f"block {name!r} not found in scope={scope!r} directory={canonical_dir!r}",
+            }
+
+        current = existing.get("content", "")
+        new_content = (current + "\n" + text) if current else text
+        char_limit = int(existing.get("char_limit") or _default_char_limit())
+        if len(new_content) > char_limit:
+            return {
+                "ok": False,
+                "error": (
+                    f"appended content length {len(new_content)} exceeds char_limit {char_limit}; "
+                    "shorten text or raise char_limit"
+                ),
+            }
+
+        return self.update_block(name, new_content, scope=scope, directory=canonical_dir)

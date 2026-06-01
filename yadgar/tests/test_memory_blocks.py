@@ -415,3 +415,141 @@ class TestMemoryBlockConfigKnobs:
         assert "memory_block_default_char_limit" in FIELD_META
         assert "memory_block_hard_char_limit" in FIELD_META
         assert "memory_block_total_budget_chars" in FIELD_META
+
+
+# ---------------------------------------------------------------------------
+# E. block_replace + block_append patch semantics (v5.35.1, Phase 3)
+# ---------------------------------------------------------------------------
+
+
+class TestBlockReplace:
+    """block_replace MCP tool: string replacement, error on 0 or >1 matches."""
+
+    def test_replace_success(self) -> None:
+        """replace_block replaces exactly-one occurrence, returns updated content."""
+        from yadgar.server.tools.blocks import block_create, block_replace
+
+        block_create(
+            name="replace_me", content="Hello World!", scope="project", directory=_PROJ_DIR
+        )
+        result = block_replace(
+            name="replace_me",
+            old_text="World",
+            new_text="Yadgar",
+            scope="project",
+            directory=_PROJ_DIR,
+        )
+        assert result.get("ok") is not False
+        assert result.get("content") == "Hello Yadgar!"
+
+    def test_replace_not_found_errors(self) -> None:
+        """block_replace errors if old_text not found in block content."""
+        from yadgar.server.tools.blocks import block_create, block_replace
+
+        block_create(name="no_match", content="Hello World", scope="project", directory=_PROJ_DIR)
+        result = block_replace(
+            name="no_match", old_text="Missing", new_text="X", scope="project", directory=_PROJ_DIR
+        )
+        assert result.get("ok") is False
+        assert "not found" in result.get("error", "").lower()
+
+    def test_replace_ambiguous_errors(self) -> None:
+        """block_replace errors if old_text appears more than once."""
+        from yadgar.server.tools.blocks import block_create, block_replace
+
+        block_create(name="ambiguous", content="foo bar foo", scope="project", directory=_PROJ_DIR)
+        result = block_replace(
+            name="ambiguous", old_text="foo", new_text="baz", scope="project", directory=_PROJ_DIR
+        )
+        assert result.get("ok") is False
+        assert (
+            "ambiguous" in result.get("error", "").lower()
+            or "more than once" in result.get("error", "").lower()
+            or "multiple" in result.get("error", "").lower()
+            or "2" in result.get("error", "")
+        )
+
+    def test_replace_block_not_found_errors(self) -> None:
+        """block_replace on nonexistent block returns {ok: False}."""
+        from yadgar.server.tools.blocks import block_replace
+
+        result = block_replace(
+            name="ghost", old_text="x", new_text="y", scope="project", directory=_PROJ_DIR
+        )
+        assert result.get("ok") is False
+
+    def test_replace_secret_gate(self) -> None:
+        """block_replace rejects new_text containing secrets (I26)."""
+        from yadgar.server.tools.blocks import block_create, block_replace
+
+        block_create(name="safe_r", content="initial content", scope="project", directory=_PROJ_DIR)
+        result = block_replace(
+            name="safe_r",
+            old_text="initial",
+            new_text="sk-ant-api03-FAKEFAKEFAKEFAKE",
+            scope="project",
+            directory=_PROJ_DIR,
+        )
+        assert result.get("stored") is False or result.get("ok") is False
+
+
+class TestBlockAppend:
+    """block_append MCP tool: append with newline, respect HARD_CHAR_LIMIT."""
+
+    def test_append_success(self) -> None:
+        """block_append appends text with newline separator."""
+        from yadgar.server.tools.blocks import block_append, block_create
+
+        block_create(name="appendable", content="line one", scope="project", directory=_PROJ_DIR)
+        result = block_append(
+            name="appendable", text="line two", scope="project", directory=_PROJ_DIR
+        )
+        assert result.get("ok") is not False
+        assert "line one" in result.get("content", "")
+        assert "line two" in result.get("content", "")
+        # Newline separator
+        assert "\n" in result.get("content", "")
+
+    def test_append_block_not_found_errors(self) -> None:
+        """block_append on nonexistent block returns {ok: False}."""
+        from yadgar.server.tools.blocks import block_append
+
+        result = block_append(name="ghost_append", text="x", scope="project", directory=_PROJ_DIR)
+        assert result.get("ok") is False
+
+    def test_append_exceeds_char_limit_errors(self) -> None:
+        """block_append respects char_limit — rejects append that would overflow."""
+        from yadgar.server.tools.blocks import block_append, block_create
+
+        # char_limit=20, content fills it up so append overflows
+        block_create(
+            name="full_block",
+            content="1234567890",
+            scope="project",
+            directory=_PROJ_DIR,
+            char_limit=10,
+        )
+        result = block_append(
+            name="full_block", text="overflow", scope="project", directory=_PROJ_DIR
+        )
+        assert result.get("ok") is False
+        assert (
+            "char_limit" in result.get("error", "").lower()
+            or "limit" in result.get("error", "").lower()
+            or "exceed" in result.get("error", "").lower()
+        )
+
+    def test_append_secret_gate(self) -> None:
+        """block_append rejects text containing secrets (I26)."""
+        from yadgar.server.tools.blocks import block_append, block_create
+
+        block_create(
+            name="safe_append", content="safe content", scope="project", directory=_PROJ_DIR
+        )
+        result = block_append(
+            name="safe_append",
+            text="sk-ant-api03-FAKEFAKEFAKEFAKE",
+            scope="project",
+            directory=_PROJ_DIR,
+        )
+        assert result.get("stored") is False or result.get("ok") is False

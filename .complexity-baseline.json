@@ -13266,11 +13266,23 @@
     "params": 4
   },
   "yadgar/server/tools/blocks.py::__file__": {
-    "loc": 216
+    "loc": 309
+  },
+  "yadgar/server/tools/blocks.py::block_append@268": {
+    "cyclo": 4,
+    "loc": 42,
+    "nesting": 2,
+    "params": 4
   },
   "yadgar/server/tools/blocks.py::block_create@29": {
     "cyclo": 4,
     "loc": 42,
+    "nesting": 2,
+    "params": 5
+  },
+  "yadgar/server/tools/blocks.py::block_create@32": {
+    "cyclo": 5,
+    "loc": 39,
     "nesting": 2,
     "params": 5
   },
@@ -13291,6 +13303,12 @@
     "loc": 35,
     "nesting": 2,
     "params": 2
+  },
+  "yadgar/server/tools/blocks.py::block_replace@220": {
+    "cyclo": 4,
+    "loc": 45,
+    "nesting": 2,
+    "params": 5
   },
   "yadgar/server/tools/blocks.py::block_update@110": {
     "cyclo": 4,
@@ -15832,10 +15850,10 @@
   "yadgar/storage/blocks.py::_BlocksMixin@88": {
     "attrs": 0,
     "inh_depth": 0,
-    "methods": 7
+    "methods": 9
   },
   "yadgar/storage/blocks.py::__file__": {
-    "loc": 374
+    "loc": 472
   },
   "yadgar/storage/blocks.py::_block_dir_clause@75": {
     "cyclo": 2,
@@ -15909,6 +15927,12 @@
     "nesting": 1,
     "params": 1
   },
+  "yadgar/storage/blocks.py::append_block@436": {
+    "cyclo": 6,
+    "loc": 37,
+    "nesting": 2,
+    "params": 5
+  },
   "yadgar/storage/blocks.py::create_block@114": {
     "cyclo": 10,
     "loc": 117,
@@ -15956,6 +15980,12 @@
     "loc": 37,
     "nesting": 3,
     "params": 3
+  },
+  "yadgar/storage/blocks.py::replace_block@377": {
+    "cyclo": 7,
+    "loc": 57,
+    "nesting": 2,
+    "params": 6
   },
   "yadgar/storage/blocks.py::update_block@237": {
     "cyclo": 6,
@@ -29574,6 +29604,11 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/tests/test_memory_blocks.py::TestBlockAppend@490": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 4
+  },
   "yadgar/tests/test_memory_blocks.py::TestBlockCreate@77": {
     "attrs": 0,
     "inh_depth": 0,
@@ -29588,6 +29623,11 @@
     "attrs": 0,
     "inh_depth": 0,
     "methods": 4
+  },
+  "yadgar/tests/test_memory_blocks.py::TestBlockReplace@425": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 5
   },
   "yadgar/tests/test_memory_blocks.py::TestBootstrapSeedsBlocks@313": {
     "attrs": 0,
@@ -29605,7 +29645,7 @@
     "methods": 5
   },
   "yadgar/tests/test_memory_blocks.py::__file__": {
-    "loc": 417
+    "loc": 545
   },
   "yadgar/tests/test_memory_blocks.py::_engines@62": {
     "cyclo": 1,
@@ -29616,6 +29656,30 @@
   "yadgar/tests/test_memory_blocks.py::storage@54": {
     "cyclo": 1,
     "loc": 5,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_memory_blocks.py::test_append_block_not_found_errors@507": {
+    "cyclo": 2,
+    "loc": 8,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_memory_blocks.py::test_append_exceeds_char_limit_errors@516": {
+    "cyclo": 5,
+    "loc": 17,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_memory_blocks.py::test_append_secret_gate@534": {
+    "cyclo": 3,
+    "loc": 12,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_memory_blocks.py::test_append_success@493": {
+    "cyclo": 5,
+    "loc": 13,
     "nesting": 0,
     "params": 1
   },
@@ -29796,6 +29860,36 @@
   "yadgar/tests/test_memory_blocks.py::test_mcp_block_update_success@258": {
     "cyclo": 3,
     "loc": 11,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_memory_blocks.py::test_replace_ambiguous_errors@450": {
+    "cyclo": 6,
+    "loc": 15,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_memory_blocks.py::test_replace_block_not_found_errors@466": {
+    "cyclo": 2,
+    "loc": 8,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_memory_blocks.py::test_replace_not_found_errors@439": {
+    "cyclo": 3,
+    "loc": 10,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_memory_blocks.py::test_replace_secret_gate@475": {
+    "cyclo": 3,
+    "loc": 13,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_memory_blocks.py::test_replace_success@428": {
+    "cyclo": 3,
+    "loc": 10,
     "nesting": 0,
     "params": 1
   },
