@@ -1,5 +1,71 @@
 # Migration Notes
 
+## v5.31.0 — Recall pipeline plugin architecture (2026-06-01)
+
+Core 5.26.0 → 5.31.0. Backend unchanged at 5.4.0. **No DB migration.**
+
+### Summary
+
+Refactors the 8-stage recall pipeline (FTS + KNN + PPR + spreading + temporal → WRRF fusion → cross-encoder rerank → NLI → MMR diversity → adversarial detection → rules engine) into a plug-in architecture. Implements Refactor-R2 (ADOPT) from `docs/competitor-audit-2026-05-30.md`.
+
+**Goal:** stages are A/B-testable and swappable. Foundation for ablation studies (D2 NLI on/off, D3 PC causal discovery) and future extract-on-ingest interplay (Adopt-7).
+
+### Behavior impact
+
+**None.** `recall()` is untouched. `recall_via_pipeline(profile="balanced")` produces bit-identical output. Verified by regression tests on 10-query corpus.
+
+### New public API
+
+```python
+# New method on Retriever (profile-aware, pipeline-backed)
+retriever.recall_via_pipeline(
+    query="...",
+    max_results=10,
+    profile="balanced",          # "fast" | "balanced" | "full" | "debug"
+    stage_overrides={"nli": False},  # per-call disable map
+)
+
+# A/B comparison harness
+from yadgar.retrieval import recall_compare
+result = recall_compare(retriever, "my query", profiles=["balanced", "balanced_no_nli"])
+# result["profiles"]["balanced"]["results"] → list of memories
+# result["profiles"]["balanced"]["stage_stats"] → {stage: {duration_ms, ...}}
+
+# Profile validation
+from yadgar.retrieval import get_profile
+profile = get_profile("fast")   # raises ValueError on unknown profile
+```
+
+### New modules
+
+| File | Purpose |
+|---|---|
+| `yadgar/retrieval/state.py` | `RetrievalState` dataclass — inter-stage carrier |
+| `yadgar/retrieval/pipeline.py` | `RetrievalPipeline` orchestrator |
+| `yadgar/retrieval/profiles.py` | Profile definitions (`fast`/`balanced`/`full`/`debug`) |
+| `yadgar/retrieval/compare.py` | `recall_compare()` A/B harness |
+| `yadgar/retrieval/stages/base.py` | `RetrievalStage` ABC |
+| `yadgar/retrieval/stages/{fts,knn,ppr,spreading,temporal,fusion,ce_rerank,nli,mmr,adversarial,rules,query_analysis}.py` | Stage wrappers |
+
+### New Prometheus metrics
+
+| Metric | Type | Labels |
+|---|---|---|
+| `yadgar_recall_stage_duration_seconds` | Histogram | `stage`, `profile` |
+| `yadgar_recall_stage_candidates_in` | Gauge | `stage`, `profile` |
+| `yadgar_recall_stage_candidates_out` | Gauge | `stage`, `profile` |
+| `yadgar_recall_profile_invocations_total` | Counter | `profile` |
+
+### Version bumps
+
+`pyproject.toml`, `server.json`, `docker-compose.yml`, `uv.lock`: 5.26.0 → 5.31.0.
+
+### Deferred to v5.31.x
+
+- Extracting logic OUT of mixins into stage files (currently stages delegate to mixin methods)
+- Async parallel stage execution (FTS + KNN concurrently)
+- Per-stage model swapping (e.g. alternative CE model)
+- External plugin loading (entrypoints)
 ## v5.29.0 — Bi-temporal edges extension (Adopt-3) (2026-06-01)
 
 Core 5.27.0 → 5.29.0. v5.28.0 SKIPPED (even-minor reserved for hotfix patches per odd-only convention).
