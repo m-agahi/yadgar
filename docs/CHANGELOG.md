@@ -7,16 +7,20 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
-## [5.26.0] - 2026-05-31
+## [5.26.0] - 2026-06-01
 
-Published first LongMemEval QA accuracy number against mem0 and Zep. Closes Adopt-1.
+Published full 500q Sonnet 4.6 LongMemEval-s benchmark. Closes Adopt-1. Supersedes Haiku 96q pilot.
 
 ### Added
-- **LongMemEval Phase 1 + Phase 2 pilot results** — 96 stratified questions (16/type × 6 types), `claude-haiku-4-5-20251001` reader + judge. Phase 1: MRR=0.935, Recall@10=0.964, NDCG@10=0.913. **Phase 2 QA accuracy: 61.46% (59/96)** — below Zep's 63.8% headline by 2.3pp on 5x smaller sample; retrieval is strong (MRR ≥ 0.90 per type) so failure modes are reader/judge, not retrieval. Two weak buckets: `single-session-preference` (12.5%) and `multi-session` (31.2%). Full numbers + per-type breakdown in `docs/BENCHMARK_RESULTS.md`.
-- **`call_claude_pipe` model routing** — now passes `--model` from `ANTHROPIC_MODEL` env var explicitly, so model identity is deterministic and recorded in reproducibility block (`benchmarks/run_longmemeval.py`).
-- **`build_reproducibility_dict` model recording** — `reader_llm` and `judge_llm` fields populated from `ANTHROPIC_MODEL` at run time (was always `null` in Phase 1).
-- **D2/D3 revisit trigger fired** — both decisions are now in RECONSIDER posture per `docs/DECISIONS.md` 2026-05-31 entry. Draft A/B plans: `docs/PLAN_V5_25_X_D2_NLI_AB.md`, `docs/PLAN_V5_25_X_D3_PC_AB.md`.
-- **3 new tests** — `test_call_claude_pipe_passes_model_flag_when_anthropic_model_set`, `test_call_claude_pipe_no_model_flag_when_anthropic_model_unset`, `test_build_reproducibility_dict_llm_from_anthropic_model` (in `test_benchmark_phase1.py`). Plus existing test updated for `ANTHROPIC_MODEL` env isolation.
+- **LongMemEval full 500q Sonnet 4.6 results** — `claude-sonnet-4-6` reader + judge, 500 questions (natural distribution), 470 min wall-clock via `claude -p` Max quota path (zero cash spend). **Phase 2 QA accuracy: 69.4% (347/500)** — beats Zep 63.8% (GPT-4o, 500q) by 5.6pp; apples-to-apples on sample size. Per-type: single-session-assistant 96.4%, single-session-user 92.9%, knowledge-update 75.6%, temporal-reasoning 63.9%, multi-session 55.6%, single-session-preference 33.3%. Abstention 80.0% (24/30). Full numbers + per-type breakdown in `docs/BENCHMARK_RESULTS.md`.
+- **`--model` flag + `--resume` flag** — `benchmarks/run_longmemeval.py` now accepts `--model` (explicit model routing, deterministic reproducibility block) and `--resume` (per-question JSONL append with deduplication — enables incremental runs across quota windows without recompute).
+- **Per-question JSONL incremental save** — `benchmarks/results/longmemeval_v5.26.0_s_full_hypotheses.jsonl` (500 lines). Survives process restart.
+- **Aggregate + monitor scripts** — `scripts/aggregate_sonnet_results.py` (JSONL → final JSON + per-type table) and `scripts/monitor_sonnet_run.sh` (live progress monitoring).
+- **favicon extended to graph.html** — `yadgar/templates/graph.html` now has `<link rel="icon" type="image/svg+xml" href="/favicon.svg">`. Original SVG archived in `docs/assets/`.
+- **`call_claude_pipe` model routing** — passes `--model` from `ANTHROPIC_MODEL` env var explicitly so model identity is deterministic and recorded in reproducibility block.
+- **`build_reproducibility_dict` model recording** — `reader_llm` and `judge_llm` fields populated from `ANTHROPIC_MODEL` at run time.
+- **D2/D3 DEFER** — Sonnet run had NLI ON and `WRRF_PPR_WEIGHT=0.0` (single arm, no A/B). D2 (NLI on/off) and D3 (causal graph signals) remain DEFER pending explicit A/B runs. Plans: `docs/PLAN_V5_25_X_D2_NLI_AB.md`, `docs/PLAN_V5_25_X_D3_PC_AB.md`.
+- **3 new tests** — `test_call_claude_pipe_passes_model_flag_when_anthropic_model_set`, `test_call_claude_pipe_no_model_flag_when_anthropic_model_unset`, `test_build_reproducibility_dict_llm_from_anthropic_model` (in `test_benchmark_phase1.py`).
 
 ## [5.25.6] - 2026-05-31
 

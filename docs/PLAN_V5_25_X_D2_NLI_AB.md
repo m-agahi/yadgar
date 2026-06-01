@@ -1,6 +1,6 @@
 # PLAN — D2: NLI Diversity Stage A/B Run
 
-**Status:** draft — awaiting v5.26.0 pilot numbers to confirm whether A/B is warranted.
+**Status:** READY — v5.26.0 Sonnet 4.6 full 500q baseline available (NLI ON: 69.4% overall). NLI-OFF arm needed to compute delta. See `docs/DECISIONS.md` D2 entry.
 
 **Triggered by:** Adopt-1 benchmark (v5.26.0) producing baseline QA accuracy.
 **References:** `docs/DECISIONS.md` D2 entry (2026-05-30); `docs/PLAN_V5_26_0_BENCHMARK_QA_PUBLICATION.md`.
