@@ -47,6 +47,8 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
         self._metacognition = None  # Set externally via set_metacognition()
         self._comet_expander = None  # Lazy-loaded COMET query expander
         self._reranker = Reranker(settings, storage, ml_client=ml_client)
+        # v5.31.0: lazy-initialised plugin pipeline (None until first use)
+        self._pipeline = None
 
     def set_engram(self, engram) -> None:
         """Attach an EngramAllocator for temporal linking in recall results."""
@@ -234,49 +236,129 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
             mem = self._storage.get_memory(mid)
             if not mem:
                 continue
-            entities = self._find_entities_in_content(mem["content"])
-            seed_entities.update(entities)
+            seed_entities.update(self._find_entities_in_content(mem["content"]))
 
         if not seed_entities:
             return []
 
         # 2. BFS through entity graph up to max_depth
-        activated: dict[int, float] = {}  # memory_id -> activation score
+        activated: dict[int, float] = {}
         seed_memory_set = set(seed_memories)
-
         visited_entities: set[int] = set(seed_entities)
         frontier: list[tuple[int, int]] = [(eid, 0) for eid in seed_entities]
 
         while frontier:
-            next_frontier: list[tuple[int, int]] = []
-            for entity_id, depth in frontier:
-                if depth >= max_depth:
-                    continue
-                # Get connected entities
-                neighbors = self._graph._get_adjacent(entity_id, None)
-                for neighbor in neighbors:
-                    nid = neighbor["entity_id"]
-                    if nid in visited_entities:
-                        continue
-                    visited_entities.add(nid)
-                    current_depth = depth + 1
-                    activation = spread_factor**current_depth
+            frontier = self._spreading_bfs_step(
+                frontier, visited_entities, activated, seed_memory_set, spread_factor, max_depth
+            )
 
-                    # Find memories for this neighbor entity
-                    entity_row = self._storage.get_entity_by_id(nid)
-                    if entity_row:
-                        mids = self._find_memories_for_entity(entity_row["name"])
-                        for mid in mids:
-                            if mid not in seed_memory_set:
-                                activated[mid] = max(activated.get(mid, 0.0), activation)
-
-                    next_frontier.append((nid, current_depth))
-            frontier = next_frontier
-
-        # Sort by activation score descending
         return sorted(activated.items(), key=lambda x: x[1], reverse=True)
 
-    # -- d. Unified Recall --
+    def _spreading_bfs_step(
+        self,
+        frontier: list[tuple[int, int]],
+        visited_entities: set[int],
+        activated: dict[int, float],
+        seed_memory_set: set[int],
+        spread_factor: float,
+        max_depth: int,
+    ) -> list[tuple[int, int]]:
+        """One BFS expansion step for spreading_activation. Returns next frontier."""
+        next_frontier: list[tuple[int, int]] = []
+        for entity_id, depth in frontier:
+            if depth >= max_depth:
+                continue
+            for neighbor in self._graph._get_adjacent(entity_id, None):
+                nid = neighbor["entity_id"]
+                if nid in visited_entities:
+                    continue
+                visited_entities.add(nid)
+                current_depth = depth + 1
+                activation = spread_factor**current_depth
+                self._spreading_apply_activation(nid, activation, activated, seed_memory_set)
+                next_frontier.append((nid, current_depth))
+        return next_frontier
+
+    def _spreading_apply_activation(
+        self,
+        entity_id: int,
+        activation: float,
+        activated: dict[int, float],
+        seed_memory_set: set[int],
+    ) -> None:
+        """Update activated scores for memories linked to entity_id."""
+        entity_row = self._storage.get_entity_by_id(entity_id)
+        if not entity_row:
+            return
+        for mid in self._find_memories_for_entity(entity_row["name"]):
+            if mid not in seed_memory_set:
+                activated[mid] = max(activated.get(mid, 0.0), activation)
+
+    # -- d1. Plugin pipeline --
+
+    def _get_pipeline(self):
+        """Return the plugin pipeline, initialising it lazily on first call."""
+        if self._pipeline is None:
+            from yadgar.retrieval.pipeline import RetrievalPipeline  # noqa: PLC0415
+
+            self._pipeline = RetrievalPipeline.from_retriever(self)
+        return self._pipeline
+
+    def recall_via_pipeline(
+        self,
+        query: str,
+        max_results: int = 5,
+        min_heat: float = 0.1,
+        current_branch: str | None = None,
+        default_branch: str | None = None,
+        profile: str = "balanced",
+        stage_overrides: dict | None = None,
+    ) -> list[dict]:
+        """Run recall through the v5.31.0 plugin pipeline.
+
+        Functionally identical to ``recall()`` with profile="balanced" (the default).
+        Exposes per-stage timing via ``RetrievalState.stage_stats`` (available via
+        ``recall_compare()``).
+
+        Args:
+            query: Search query.
+            max_results: Maximum results to return.
+            min_heat: Minimum heat threshold.
+            current_branch: Active git branch for branch filtering.
+            default_branch: Repository default branch.
+            profile: Profile name ("fast", "balanced", "full", "debug").
+            stage_overrides: Per-call disable map, e.g. {"nli": False}.
+
+        Returns:
+            List of memory dicts (same format as ``recall()``).
+        """
+        from collections import defaultdict  # noqa: PLC0415
+
+        from yadgar.retrieval.state import RetrievalState  # noqa: PLC0415
+
+        state = RetrievalState(
+            query=query,
+            max_results=max_results,
+            min_heat=min_heat,
+            profile=profile,
+            stage_overrides=stage_overrides or {},
+            current_branch=current_branch,
+            default_branch=default_branch,
+            scores=defaultdict(
+                lambda: {
+                    "vector": 0.0,
+                    "fts": 0.0,
+                    "ppr": 0.0,
+                    "spread": 0.0,
+                    "temporal": 0.0,
+                }
+            ),
+        )
+        pipeline = self._get_pipeline()
+        state = pipeline.run(state)
+        return state.result_memories
+
+    # -- d2. Unified Recall (legacy monolithic implementation — kept for compat) --
 
     @trace_span("retrieval.recall")
     def recall(
