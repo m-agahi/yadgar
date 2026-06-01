@@ -114,7 +114,7 @@ The v5.26.0 baseline is implicitly "causal-off" for retrieval purposes.
 | 3. Bi-temporal edges on all relationships | Planned → v5.29.0 |
 | 4. In-context memory blocks (Letta) | Planned → v5.33.0 |
 | 5. JavaScript / TypeScript SDK | Planned → v5.35.0 |
-| 6. DuckDB analytics export | Planned → v5.27.0 |
+| 6. DuckDB analytics export | IMPLEMENTED v5.27.0 (2026-06-01, branch feat/v5.27.0-duckdb-export) |
 
 ### Refactor items
 
