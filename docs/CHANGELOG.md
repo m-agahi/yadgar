@@ -7,6 +7,36 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.37.0] - 2026-06-01
+
+Three-layer viz integration testing infrastructure. Directly addresses the v5.10.7–v5.10.9 saga
+where five sequential patches failed to catch the actual bug (orphan edge endpoints crashing
+force-graph.min.js). Now a single pytest catches that class of failure in CI.
+
+### Added
+- **Layer 1 — API contract integrity** (`yadgar/tests/test_graph_api_contract.py`): 18 tests on
+  the `/api/graph` HTTP wire format. Asserts no orphan edge endpoints, required node/edge fields,
+  node type values, stats shape. Uses `starlette.testclient.TestClient` + `BearerAuthMiddleware`
+  against a seeded in-process test daemon. Meta-test confirms the orphan-edge check actually
+  catches injected orphans.
+- **Layer 2 — Playwright headless smoke** (`yadgar/tests/integration/viz/`): 10 tests. Spawns
+  real uvicorn daemon + `viz_server._ThreadingHTTPServer` on ephemeral ports; Playwright loads
+  the full `index.html`, waits for graph render, asserts DOM elements (`#canvas-wrap`, `#stats-btn`),
+  no JS console errors, `allNodes` array defined, `/api/graph` request observed. System Chromium
+  detection (NixOS-safe via `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` env or `shutil.which("chromium")`).
+- **Layer 3 — JS unit tests** (`yadgar/static/viz_helpers.js` + `yadgar/static/viz_helpers.test.js`):
+  Pure JS helpers extracted from `index.html` into an ES module. 28 Vitest tests covering
+  `_fmtBytes`, `_fmtUptime`, `esc`, `_linkWidth`, and `findOrphanEdgeEndpoints` (the algebraic
+  check that would have caught v5.10.9 immediately).
+- **Layer 4 — CI integration** (`.forgejo/workflows/ci.yaml`): new `viz-tests` job runs all
+  three layers on every PR and version tag. Installs system Chromium to avoid 200 MB bundled
+  Playwright download. Layer 2 uses `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium`.
+- **`viz-tests/` directory** at repo root: `package.json` + `vitest.config.js` for Vitest.
+  `vitest.config.js` targets `../yadgar/static/**/*.test.js`.
+- **`playwright>=1.40` + `pytest-playwright>=0.4`** added to `[project.optional-dependencies.test]`.
+- **`docs/VIZ_TESTING.md`** — how-to doc covering all three layers, local dev setup, failure
+  interpretation, and CI architecture.
+
 ## [5.26.0] - 2026-06-01
 
 Published full 500q Sonnet 4.6 LongMemEval-s benchmark. Closes Adopt-1. Supersedes Haiku 96q pilot.
