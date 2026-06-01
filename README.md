@@ -379,6 +379,7 @@ yadgar seed <directory>
 yadgar viz                          # graph at http://localhost:42069
 yadgar rules add|export|import
 yadgar config init|list|get|set|edit
+yadgar export duckdb --output snap.duckdb   # analytics snapshot (pip install yadgar[analytics])
 ```
 
 ## Architecture

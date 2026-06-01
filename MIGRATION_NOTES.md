@@ -1,5 +1,47 @@
 # Migration Notes
 
+## v5.27.0 — DuckDB analytics export (SHIPPED 2026-06-01)
+
+Core 5.26.0 → 5.27.0. **No DB migration. No schema change.**
+
+### New optional dependency
+
+```bash
+pip install yadgar[analytics]   # installs duckdb>=0.10,<2
+```
+
+Without this extra, the CLI entry-point `yadgar export duckdb` exits 2 with the install hint. All other yadgar commands are unaffected.
+
+### Usage
+
+```bash
+yadgar export duckdb --output /path/to/snapshot.duckdb
+
+# Flags (all optional)
+# --include-secrets         forward-compat no-op; v5.10.2 gate is write-time
+# --action-log-since 30d    time window for action_log (Nd/Nh/Nm or 'all')
+# --action-log-limit 100000 hard row cap on action_log
+# --no-views                skip the 10 analytics views
+# --tables memory,wiki_page subset of tables to export
+# --force                   overwrite existing output file
+```
+
+### Behavioral notes
+
+- **Not a backup.** DuckDB export is analytics-only and lossy. Canonical backups remain `yadgar vacuum` (SurrealDB `.surql` export). Do not rely on DuckDB files for restore.
+- **Snapshot semantics.** Re-run the export to pick up new SurrealDB writes.
+- **Embeddings.** Stored as `FLOAT[<dim>]` native DuckDB arrays. Cosine similarity queryable via `list_cosine_similarity(a, b)`. DuckDB VSS extension is NOT auto-installed; opt-in via `INSTALL vss; LOAD vss;` if you want HNSW vector search.
+- **secret_flag.** The v5.10.2 secret-gate blocks writes at write-time (no `secret_flag` column on memory rows). `--include-secrets` is a forward-compat stub for future row-level tagging schemas.
+
+### Open questions (surfaced, not resolved)
+
+1. **VSS bundling.** Recommend don't bundle; document user-side opt-in (see above).
+2. **Parquet output format.** Deferred to v2 (`--format parquet` flag placeholder).
+3. **Lossy-vs-backup confirmation.** Answered: DuckDB is analytics-only. `yadgar vacuum` owns canonical backups.
+4. **Optional-dep extra name.** Chose `analytics` (reads best in `pip install yadgar[analytics]`).
+
+---
+
 ## v5.26.0 — LongMemEval Sonnet 4.6 Full 500q (SHIPPED 2026-06-01)
 
 Core 5.25.6 → 5.26.0. Backend unchanged at 5.4.0. **No DB migration.**
