@@ -2,6 +2,9 @@
 .claude/
 .omc/
 
+# DuckDB analytics snapshots (output of yadgar export duckdb — not committed)
+*.duckdb
+
 # ---> Python
 # Byte-compiled / optimized / DLL files
 __pycache__/
