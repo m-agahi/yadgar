@@ -1,0 +1,8 @@
+tests/
+scripts/
+src/
+tsconfig.json
+tsup.config.ts
+vitest.config.ts
+*.map
+.eslintrc*

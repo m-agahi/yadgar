@@ -1,0 +1,49 @@
+{
+  "name": "@yadgar/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript client for Yadgar — persistent memory engine for Claude Code (MCP).",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/m-agahi/yadgar.git",
+    "directory": "sdk-js"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist", "README.md", "CHANGELOG.md"],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "YADGAR_INTEGRATION_TEST=1 vitest run tests/integration",
+    "lint": "eslint src tests scripts",
+    "typecheck": "tsc --noEmit",
+    "generate": "tsx scripts/generate-types.ts",
+    "verify-tool-coverage": "tsx scripts/verify-tool-coverage.ts",
+    "prepublishOnly": "npm run build && npm run test && npm run verify-tool-coverage"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsup": "^8.5.1",
+    "tsx": "^4.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["mcp", "yadgar", "memory", "claude", "ai", "sdk", "typescript"]
+}
