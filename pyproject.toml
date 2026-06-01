@@ -151,6 +151,9 @@ test = [
     "pytest-rerunfailures>=14",
     "hypothesis>=6",
 ]
+analytics = [
+    "duckdb>=0.10,<2",
+]
 dev = [
     "yadgar[test]",
     "ruff>=0.4.0",
