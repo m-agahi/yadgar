@@ -66,6 +66,7 @@ def cli():
         context,
         daemon,
         drain,
+        export,
         install_hooks,
         restore,
         rules,
@@ -77,6 +78,7 @@ def cli():
     )
 
     drain.register(subparsers)
+    export.register(subparsers)
     restore.register(subparsers)
     capture.register(subparsers)
     context.register(subparsers)
