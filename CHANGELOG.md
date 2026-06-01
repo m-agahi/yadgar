@@ -6,6 +6,21 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.29.0] — 2026-06-01
+
+Bi-temporal edges extension (Adopt-3) — user_profile and derived_belief.
+
+- **Schema migrations 010 + 011**: `valid_from` / `valid_until` added to `user_profile` and `derived_belief` tables. Backfills `valid_from = created_at` on existing rows. Migration 010 drops the old unconditional UNIQUE index on `user_profile` (replaced by app-side uniqueness enforced in `insert_profile`).
+- **`insert_profile` pivoted to close-and-insert**: When `attribute_value` changes or confidence delta ≥ `PROFILE_BITEMPORAL_VERSION_DELTA` (env knob, default `0.05`), the existing row is closed (`valid_until = now()`) and a new row is inserted. Minor confidence drift folds into an in-place update to bound row growth.
+- **`insert_belief` gains `supersede=True` default**: New beliefs for the same `(subject, belief_type, directory_context)` close prior currently-valid rows before inserting. Pass `supersede=False` for competing co-existing beliefs.
+- **`_VALID_EDGE_TABLES` extended**: `invalidate_edge()` now accepts `user_profile` and `derived_belief` without raising `ValueError`.
+- **`as_of_filter(table, as_of)` helper added** (`yadgar/storage/bitemporal.py`): Returns a SQL WHERE-fragment selecting rows valid at a given ISO-8601 timestamp. `as_of=None` = current state. Wired into `get_all_causal_edges(as_of=)` and `get_full_graph(as_of=)`.
+- **Filtered read helpers**: `search_profiles_fts`, `get_profiles_for_entity`, `search_beliefs_fts`, `get_beliefs_for_subject` gain `include_invalidated: bool = False` parameter — default excludes superseded rows.
+- **SurrealDB partial-index capability verified**: `DEFINE INDEX ... WHERE` is NOT supported in v3.0.5. Application-side uniqueness used instead (documented in migration 010 and T5 tests).
+- 22 new tests in `yadgar/tests/test_bitemporal_extension.py` (T1–T6, green). Pre-existing `test_bitemporal_edges.py` unchanged.
+
+See [MIGRATION_NOTES.md §v5.29.0](MIGRATION_NOTES.md#v5290--bi-temporal-edges-extension-adopt-3-2026-06-01).
+
 ## [5.27.0] — 2026-06-01
 
 DuckDB analytics export — behavioral observability add-on (Adopt-6).
