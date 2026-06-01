@@ -337,3 +337,81 @@ class TestBootstrapSeedsBlocks:
         bootstrap_project(directory=_PROJ_DIR, content="# Second bootstrap")
         block = block_get(name="current_task", scope="project", directory=_PROJ_DIR)
         assert block.get("content") == "Working on feat/foo"
+
+
+# ---------------------------------------------------------------------------
+# D. Config knob regression tests (I25 — v5.35.1)
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryBlockConfigKnobs:
+    """I25 regression: the four MEMORY_BLOCK_* knobs must be present in Settings."""
+
+    def test_knobs_present_in_settings(self) -> None:
+        """Settings class exposes all four MEMORY_BLOCK_* knobs with correct defaults."""
+        from yadgar.config import Settings
+
+        fields = Settings.model_fields
+        assert "MEMORY_BLOCK_MAX_PER_SCOPE" in fields, "Missing MEMORY_BLOCK_MAX_PER_SCOPE"
+        assert "MEMORY_BLOCK_DEFAULT_CHAR_LIMIT" in fields, (
+            "Missing MEMORY_BLOCK_DEFAULT_CHAR_LIMIT"
+        )
+        assert "MEMORY_BLOCK_HARD_CHAR_LIMIT" in fields, "Missing MEMORY_BLOCK_HARD_CHAR_LIMIT"
+        assert "MEMORY_BLOCK_TOTAL_BUDGET_CHARS" in fields, (
+            "Missing MEMORY_BLOCK_TOTAL_BUDGET_CHARS"
+        )
+
+    def test_knob_defaults(self) -> None:
+        """MEMORY_BLOCK_* knobs default to the values specified in the plan."""
+        from yadgar.config import Settings
+
+        s = Settings()
+        assert s.MEMORY_BLOCK_MAX_PER_SCOPE == 10
+        assert s.MEMORY_BLOCK_DEFAULT_CHAR_LIMIT == 2000
+        assert s.MEMORY_BLOCK_HARD_CHAR_LIMIT == 8000
+        assert s.MEMORY_BLOCK_TOTAL_BUDGET_CHARS == 12000
+
+    def test_blocks_storage_reads_from_config(self, storage: StorageEngine) -> None:
+        """create_block honours MEMORY_BLOCK_HARD_CHAR_LIMIT from config (not module constant)."""
+        import os
+
+        # Patch env so get_settings() returns a smaller hard cap for this test.
+        orig = os.environ.get("YADGAR_MEMORY_BLOCK_HARD_CHAR_LIMIT")
+        os.environ["YADGAR_MEMORY_BLOCK_HARD_CHAR_LIMIT"] = "100"
+        # Bust the lru_cache so the patched env is picked up.
+        from yadgar.config import get_settings
+
+        get_settings.cache_clear()
+        try:
+            result = storage.create_block(
+                "capped_knob", "x" * 50, scope="project", directory=_PROJ_DIR, char_limit=101
+            )
+            assert result.get("ok") is False, (
+                "Expected rejection when char_limit > patched hard cap"
+            )
+            assert "101" in result.get("error", "") or "hard cap" in result.get("error", "").lower()
+        finally:
+            if orig is None:
+                os.environ.pop("YADGAR_MEMORY_BLOCK_HARD_CHAR_LIMIT", None)
+            else:
+                os.environ["YADGAR_MEMORY_BLOCK_HARD_CHAR_LIMIT"] = orig
+            get_settings.cache_clear()
+
+    def test_i25_knobs_in_registry(self) -> None:
+        """All four MEMORY_BLOCK_* env names appear in config_registry._REGISTRY."""
+        from yadgar.config_registry import list_config
+
+        names = {e.name for e in list_config()}
+        assert "YADGAR_MEMORY_BLOCK_MAX_PER_SCOPE" in names
+        assert "YADGAR_MEMORY_BLOCK_DEFAULT_CHAR_LIMIT" in names
+        assert "YADGAR_MEMORY_BLOCK_HARD_CHAR_LIMIT" in names
+        assert "YADGAR_MEMORY_BLOCK_TOTAL_BUDGET_CHARS" in names
+
+    def test_i25_knobs_in_field_meta(self) -> None:
+        """All four MEMORY_BLOCK_* lower-case keys appear in config_yaml.FIELD_META."""
+        from yadgar.config_yaml import FIELD_META
+
+        assert "memory_block_max_per_scope" in FIELD_META
+        assert "memory_block_default_char_limit" in FIELD_META
+        assert "memory_block_hard_char_limit" in FIELD_META
+        assert "memory_block_total_budget_chars" in FIELD_META
