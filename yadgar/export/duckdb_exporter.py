@@ -348,7 +348,7 @@ class DuckDBExporter:
             cutoff = (datetime.now(UTC) - duration).isoformat()
             try:
                 raw = storage._q(
-                    "SELECT * FROM action_log WHERE ts >= $cutoff ORDER BY ts DESC LIMIT $lim",
+                    "SELECT * FROM action_log WHERE ts >= type::datetime($cutoff) ORDER BY ts DESC LIMIT $lim",
                     {"cutoff": cutoff, "lim": self._cfg.action_log_limit},
                 )
             except Exception:
