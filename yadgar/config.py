@@ -260,6 +260,21 @@ class Settings(BaseSettings):
     DUAL_VECTORS_ENABLED: bool = False
     IMPLICIT_EMBEDDING_MODEL: str = ""
 
+    # v5.39.0: wiki similarity gate knobs
+    # Master switch — set to False to disable the gate entirely (WIKI_SIM_GATE_ENABLED=0).
+    WIKI_SIM_GATE_ENABLED: bool = True
+    # Minimum cosine similarity for combined (title+content) embedding to flag a duplicate.
+    # Calibrated empirically: all-MiniLM-L6-v2 gives ~0.91-0.95 on near-clones,
+    # ~0.50-0.65 on distinct pages. 0.80 provides a clean separator with margin.
+    WIKI_SIM_CONTENT_THRESHOLD: float = 0.80
+    # Title-similarity threshold. Currently unused (single combined embedding stored),
+    # reserved for future schema upgrade that stores title-only embedding separately.
+    WIKI_SIM_TITLE_THRESHOLD: float = 0.85
+    # Gate enforcement mode: "hard" (reject) or "soft" (warn + allow).
+    WIKI_SIM_MODE: str = "hard"
+    # How many candidate duplicates to return in the rejection response.
+    WIKI_SIM_TOP_K: int = 5
+
     # File queue — async write queue base directory
     DATA_DIR: str = str(Path.home() / ".yadgar")
     # Optional prefix for wiki .md archive filenames (e.g. "myproject" → "myproject-overview.md")
