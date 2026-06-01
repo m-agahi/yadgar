@@ -1,5 +1,66 @@
 # Migration Notes
 
+## v5.33.0 — In-context memory blocks (2026-06-01)
+
+Core `5.31.1 → 5.33.0`. Backend unchanged at `5.4.0`.
+
+### Schema migration
+
+**Migration 012** (`_migration_012_memory_block_table`) runs automatically on daemon start:
+
+```sql
+DEFINE TABLE IF NOT EXISTS memory_block SCHEMALESS;
+DEFINE INDEX IF NOT EXISTS memory_block_name_scope_dir_idx
+    ON memory_block FIELDS name, scope, directory;
+DEFINE INDEX IF NOT EXISTS memory_block_scope_dir_idx
+    ON memory_block FIELDS scope, directory;
+```
+
+Additive only — no existing tables or rows are modified. Safe to apply to v5.31.x databases.
+
+### New MCP tools
+
+Five new tools registered on the MCP server (`mcp__yadgar__block_*`):
+
+| Tool | Purpose |
+|---|---|
+| `block_create(name, content, scope, char_limit, directory)` | Create a named block |
+| `block_get(name, scope, directory)` | Fetch block content |
+| `block_update(name, content, scope, directory)` | Full-replace content |
+| `block_delete(name, scope, directory)` | Remove block (idempotent) |
+| `block_list(scope, directory)` | List blocks for scope |
+
+**Hard caps** (hardcoded in v5.33.0; env knobs promoted in v5.33.x):
+- `MEMORY_BLOCK_MAX_PER_SCOPE = 10` — max blocks per (scope, directory)
+- `MEMORY_BLOCK_DEFAULT_CHAR_LIMIT = 2000` — default char cap
+- `MEMORY_BLOCK_HARD_CHAR_LIMIT = 8000` — absolute max char_limit
+
+### restore() change
+
+`restore(directory)` now includes memory blocks in its `formatted` output under `## Memory Blocks`. If no blocks exist, the section is omitted (zero noise).
+
+### bootstrap_project change
+
+`bootstrap_project(directory, content)` now seeds two default blocks if they don't already exist:
+- `current_task` (project scope, empty, char_limit=2000)
+- `gotchas` (project scope, empty, char_limit=2000)
+
+Re-running `bootstrap_project` does **not** overwrite existing block content.
+
+### Known overlap with `_active_work`
+
+`_active_work` (managed by `update_active_work`) and `current_task` block (managed by `block_update`) serve similar but distinct purposes. Both coexist in v5.33.0. Decision on canonicalization (keep both / migrate `_active_work` → block) deferred to v5.33.x.
+
+### Deferred to v5.33.x
+
+- **Env knobs**: `MEMORY_BLOCK_MAX_PER_SCOPE`, `MEMORY_BLOCK_DEFAULT_CHAR_LIMIT`, `MEMORY_BLOCK_HARD_CHAR_LIMIT`, `MEMORY_BLOCK_TOTAL_BUDGET_CHARS` — three-way registration (I25) pending.
+- **PostToolUse block-reflect hook** (`block-reflect.py`) — real-time re-injection on `block_*` writes.
+- **SessionStart hook integration** — automatic injection at session start.
+- **PreCompact hook** — block re-injection after `/compact`.
+- **Patch semantics** (`block_replace` / `block_append`) — substring replace + append operations.
+
+---
+
 ## v5.31.1 — Graph filter + MCP recall kwargs (2026-06-01)
 
 Core 5.31.0 → 5.31.1. Backend unchanged at 5.4.0. **No DB migration.**

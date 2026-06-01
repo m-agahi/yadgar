@@ -330,8 +330,20 @@ class CheckpointRestore:
 
         # Build formatted markdown for hook injection
         markdown = self._format_restoration(
-            checkpoint, anchored, recent_memories, hot_memories, predicted, gaps, directory
+            checkpoint,
+            anchored,
+            recent_memories,
+            hot_memories,
+            predicted,
+            gaps,
+            directory,
         )
+
+        # 7. Memory blocks (v5.33.0) — always-injected named text containers.
+        # Fetched + rendered via helpers; no new branches in restore() to respect
+        # baseline ratchet (cyclo=24 — every additional branch triggers HARD violation).
+        blocks = self._fetch_blocks_safe(directory)
+        markdown = self._prepend_blocks(blocks, directory, markdown)
 
         return {
             "checkpoint": checkpoint,
@@ -340,6 +352,7 @@ class CheckpointRestore:
             "hot_memories": len(hot_memories),
             "predicted_memories": len(predicted),
             "gaps_detected": len(gaps),
+            "memory_blocks": len(blocks),
             "epoch": checkpoint.get("epoch", 0) if checkpoint else 0,
             "formatted": markdown,
         }
@@ -379,6 +392,49 @@ class CheckpointRestore:
             lines.append(f"\n{checkpoint['custom_context']}")
         lines.append("")
         return lines
+
+    def _prepend_blocks(self, blocks: list[dict], directory: str, markdown: str) -> str:
+        """Prepend memory blocks section to markdown if blocks exist (v5.33.0)."""
+        section = self._render_blocks_section(blocks, directory)
+        return (section + "\n" + markdown) if section else markdown
+
+    def _fetch_blocks_safe(self, directory: str) -> list[dict]:
+        """Fetch memory blocks, swallowing errors (v5.33.0). Returns [] on failure."""
+        try:
+            return self._storage.list_blocks(scope=None, directory=directory if directory else None)
+        except Exception:
+            logger.debug("Failed to fetch memory blocks for restore")
+            return []
+
+    def _render_blocks_section(self, blocks: list[dict], directory: str) -> str:
+        """Render memory blocks as markdown section for restore() injection (v5.33.0).
+
+        Returns "" when blocks is empty (safe to call unconditionally).
+        """
+        if not blocks:
+            return ""
+        lines: list[str] = [
+            "## Memory Blocks (always-injected, editable via block_* MCP tools)",
+            "",
+        ]
+        global_blocks = [b for b in blocks if b.get("scope") == "global"]
+        project_blocks = [b for b in blocks if b.get("scope") == "project"]
+        if global_blocks:
+            lines.append("### Global blocks")
+            for b in global_blocks:
+                content = b.get("content", "")
+                name = b.get("name", "")
+                lines.append(f"- `{name}`: {content}" if content else f"- `{name}`: *(empty)*")
+            lines.append("")
+        if project_blocks:
+            dir_label = directory or "project"
+            lines.append(f"### Project blocks ({dir_label})")
+            for b in project_blocks:
+                content = b.get("content", "")
+                name = b.get("name", "")
+                lines.append(f"- `{name}`: {content}" if content else f"- `{name}`: *(empty)*")
+            lines.append("")
+        return "\n".join(lines)
 
     def _format_restoration(
         self,

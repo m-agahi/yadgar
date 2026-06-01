@@ -18,6 +18,7 @@ import yadgar.server.tools.wiki_coverage  # noqa: F401 — side-effects: tool re
 import yadgar.server.tools.dispatch_helper  # noqa: F401 — side-effects: tool registration
 import yadgar.server.tools.audit  # noqa: F401 — side-effects: tool registration
 import yadgar.server.tools.bookmarks  # noqa: F401 — side-effects: tool registration
+import yadgar.server.tools.blocks  # noqa: F401 — side-effects: tool registration (v5.33.0)
 
 # Re-export everything that tests or external code import directly
 from yadgar.server.tools.memorize import memorize, remember
@@ -95,6 +96,13 @@ from yadgar.server.tools.bookmarks import (
     bookmark_list,
     bookmark_reorder,
 )
+from yadgar.server.tools.blocks import (
+    block_create,
+    block_get,
+    block_update,
+    block_delete,
+    block_list,
+)
 
 __all__ = [
     "memorize",
@@ -150,6 +158,11 @@ __all__ = [
     "bookmark_remove",
     "bookmark_list",
     "bookmark_reorder",
+    "block_create",
+    "block_get",
+    "block_update",
+    "block_delete",
+    "block_list",
     # Private helpers re-exported for test access
     "_detect_branch",
     "_detect_branch_cached",
