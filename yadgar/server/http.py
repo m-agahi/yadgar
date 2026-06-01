@@ -293,6 +293,36 @@ async def hook_post_compact(request: Request) -> JSONResponse:
     return JSONResponse(result)
 
 
+@mcp_server.custom_route("/hooks/block-reflect", methods=["GET"])
+@trace_span("hook.block_reflect")
+async def hook_block_reflect(request: Request) -> JSONResponse:
+    """Re-inject updated block contents after a block_* MCP write tool call (v5.35.1).
+
+    Called by the block-reflect PostToolUse hook in hook_runner.py when any of
+    block_create / block_update / block_delete / block_replace / block_append fires.
+
+    Query params:
+        directory: project directory (optional, defaults to cwd)
+    Returns: {"text": "...markdown blocks section..."}
+    """
+    from yadgar.blocks_render import render_blocks_section  # noqa: PLC0415
+
+    directory = request.query_params.get("directory", os.getcwd())
+    storage = _st._storage
+    if storage is None:
+        return JSONResponse({"text": ""})
+
+    try:
+        blocks = await asyncio.to_thread(
+            storage.list_blocks, scope=None, directory=directory if directory else None
+        )
+        text = render_blocks_section(blocks, directory)
+        return JSONResponse({"text": text})
+    except Exception as _e:
+        logger.debug("block-reflect hook error: %s", _e)
+        return JSONResponse({"text": ""})
+
+
 @mcp_server.custom_route("/hooks/auto-capture", methods=["POST"])
 @trace_span("hook.auto_capture")
 async def hook_auto_capture(request: Request) -> JSONResponse:
@@ -450,6 +480,23 @@ async def hook_session_context(request: Request) -> JSONResponse:
             "resume": "[yadgar] Resuming session.\n",
         }
         render = _SOURCE_PREFIX.get(source, "") + render
+
+        # v5.35.1: prepend memory blocks (always-injected named containers).
+        # Skipped for source=compact — /hooks/post-compact already calls restore()
+        # which prepends blocks via _prepend_blocks.
+        if source != "compact":
+            try:
+                from yadgar.blocks_render import render_blocks_section as _rbs  # noqa: PLC0415
+                from yadgar.server.lifecycle import _get_storage as _gs2  # noqa: PLC0415
+
+                _storage2 = _gs2()
+                if _storage2 is not None:
+                    _blocks = _storage2.list_blocks(scope=None, directory=directory or None)
+                    _bsection = _rbs(_blocks, directory)
+                    if _bsection:
+                        render = _bsection + "\n" + render
+            except Exception as _be:
+                logger.debug("session-context blocks inject error: %s", _be)
 
         # v5.6.5 / v5.7.9: append checkpoint resume hint.
         # SUPPRESSED for source=compact — the compact handler (/hooks/post-compact)
