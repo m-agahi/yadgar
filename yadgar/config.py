@@ -264,8 +264,11 @@ class Settings(BaseSettings):
     # Master switch — set to False to disable the gate entirely (WIKI_SIM_GATE_ENABLED=0).
     WIKI_SIM_GATE_ENABLED: bool = True
     # Minimum cosine similarity for combined (title+content) embedding to flag a duplicate.
-    # Calibrated empirically: all-MiniLM-L6-v2 gives ~0.91-0.95 on near-clones,
-    # ~0.50-0.65 on distinct pages. 0.80 provides a clean separator with margin.
+    # Calibrated 2026-06-01 with all-MiniLM-L6-v2 on 7 sample pairs (test_wiki_sim_calibration.py):
+    #   Near-duplicate pairs: 0.9560 (roadmap A vs B), 0.9931 (arch vs paraphrase)
+    #   Distinct pairs:       0.4392–0.7135 (arch/hooks/bench/config cross-pairs)
+    #   Min near-dup: 0.9560 | Max distinct: 0.7135 | Separation margin: 0.2425
+    # 0.80 sits cleanly between the two clusters with ≥0.15 gap on each side.
     WIKI_SIM_CONTENT_THRESHOLD: float = 0.80
     # Title-similarity threshold. Currently unused (single combined embedding stored),
     # reserved for future schema upgrade that stores title-only embedding separately.

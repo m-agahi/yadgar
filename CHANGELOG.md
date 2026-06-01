@@ -6,6 +6,18 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.39.0] — 2026-06-01
+
+Wiki similarity gate — blocks near-duplicate page creation (prevents 2026-05-30 corruption class).
+
+- **feat(wiki):** `wiki_add()` now rejects near-duplicate pages (cosine similarity ≥ 0.80 on combined title+content embedding) with `{"stored": false, "reason": "duplicate_detected", "candidates": [...]}`. Bypasses: `force=True`, `replace_slug=<slug>`, `append=True`.
+- **feat(wiki):** `wiki_check_duplicate(title, content, branch?, threshold?, top_k?)` — dry-run MCP tool to probe for duplicates without writing.
+- **feat(wiki):** `WikiStore.find_similar_wiki_pages()` — branch-scoped KNN search against HNSW vector index with configurable threshold.
+- **feat(config):** 5 new env knobs — `WIKI_SIM_GATE_ENABLED`, `WIKI_SIM_CONTENT_THRESHOLD`, `WIKI_SIM_MODE`, `WIKI_SIM_TOP_K`, `WIKI_SIM_TITLE_THRESHOLD` — registered in all three config layers (I25 compliant).
+- **calibration:** Threshold 0.80 calibrated on 7 sample pairs with all-MiniLM-L6-v2; near-dup cluster 0.956–0.993, distinct cluster 0.439–0.714, separation margin 0.242.
+- **tests:** 18 unit tests + 1 calibration test in `test_wiki_similarity_gate.py` and `test_wiki_sim_calibration.py`; real embeddings, no mocks.
+- **I26:** `wiki_check_duplicate` marked `# secret-gate: skip` (read-only dry-run).
+- **I25:** All 5 knobs registered in `config.py`, `config_registry.py`, `config_yaml.py`.
 ## [5.35.1] — 2026-06-01
 
 Hotfix bundle: memory-block follow-ups + `_MEMORY_UPDATABLE_FIELDS` fix.
