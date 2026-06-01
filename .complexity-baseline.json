@@ -5079,7 +5079,7 @@
     "cyclo": 60,
     "loc": 214,
     "nesting": 3,
-    "params": 4
+    "params": 5
   },
   "yadgar/graph_api.py::get_graph_stats@214": {
     "cyclo": 8,
@@ -17647,7 +17647,7 @@
     "methods": 12
   },
   "yadgar/storage/narrative.py::__file__": {
-    "loc": 210
+    "loc": 256
   },
   "yadgar/storage/narrative.py::deactivate_prospective_memory@55": {
     "cyclo": 1,
@@ -17673,6 +17673,12 @@
     "nesting": 1,
     "params": 3
   },
+  "yadgar/storage/narrative.py::get_beliefs_for_subject@233": {
+    "cyclo": 3,
+    "loc": 24,
+    "nesting": 1,
+    "params": 4
+  },
   "yadgar/storage/narrative.py::get_narratives_for_directory@86": {
     "cyclo": 1,
     "loc": 7,
@@ -17686,9 +17692,9 @@
     "params": 2
   },
   "yadgar/storage/narrative.py::insert_belief@153": {
-    "cyclo": 3,
-    "loc": 35,
-    "nesting": 0,
+    "cyclo": 9,
+    "loc": 63,
+    "nesting": 4,
     "params": 9
   },
   "yadgar/storage/narrative.py::insert_narrative_entry@63": {
@@ -17708,6 +17714,12 @@
     "loc": 7,
     "nesting": 0,
     "params": 3
+  },
+  "yadgar/storage/narrative.py::search_beliefs_fts@217": {
+    "cyclo": 2,
+    "loc": 15,
+    "nesting": 0,
+    "params": 4
   },
   "yadgar/storage/narrative.py::trigger_prospective_memory@47": {
     "cyclo": 1,
@@ -18221,8 +18233,13 @@
     "inh_depth": 0,
     "methods": 6
   },
+  "yadgar/storage/user.py::_UserMixin@19": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 6
+  },
   "yadgar/storage/user.py::__file__": {
-    "loc": 190
+    "loc": 252
   },
   "yadgar/storage/user.py::get_memories_in_time_window@70": {
     "cyclo": 2,
@@ -18231,6 +18248,12 @@
     "params": 3
   },
   "yadgar/storage/user.py::get_memories_in_time_window@72": {
+    "cyclo": 2,
+    "loc": 17,
+    "nesting": 2,
+    "params": 3
+  },
+  "yadgar/storage/user.py::get_memories_in_time_window@73": {
     "cyclo": 2,
     "loc": 17,
     "nesting": 2,
@@ -18248,6 +18271,12 @@
     "nesting": 1,
     "params": 3
   },
+  "yadgar/storage/user.py::get_profiles_for_entity@229": {
+    "cyclo": 3,
+    "loc": 24,
+    "nesting": 1,
+    "params": 4
+  },
   "yadgar/storage/user.py::insert_profile@90": {
     "cyclo": 6,
     "loc": 74,
@@ -18257,6 +18286,12 @@
   "yadgar/storage/user.py::insert_profile@92": {
     "cyclo": 6,
     "loc": 74,
+    "nesting": 2,
+    "params": 8
+  },
+  "yadgar/storage/user.py::insert_profile@93": {
+    "cyclo": 8,
+    "loc": 117,
     "nesting": 2,
     "params": 8
   },
@@ -18272,6 +18307,12 @@
     "nesting": 0,
     "params": 3
   },
+  "yadgar/storage/user.py::search_profiles_fts@212": {
+    "cyclo": 2,
+    "loc": 16,
+    "nesting": 0,
+    "params": 4
+  },
   "yadgar/storage/user.py::update_memory_metamemory@47": {
     "cyclo": 2,
     "loc": 22,
@@ -18284,6 +18325,12 @@
     "nesting": 1,
     "params": 6
   },
+  "yadgar/storage/user.py::update_memory_metamemory@50": {
+    "cyclo": 2,
+    "loc": 22,
+    "nesting": 1,
+    "params": 6
+  },
   "yadgar/storage/user.py::update_memory_scores@21": {
     "cyclo": 6,
     "loc": 25,
@@ -18291,6 +18338,12 @@
     "params": 5
   },
   "yadgar/storage/user.py::update_memory_scores@23": {
+    "cyclo": 6,
+    "loc": 25,
+    "nesting": 1,
+    "params": 5
+  },
+  "yadgar/storage/user.py::update_memory_scores@24": {
     "cyclo": 6,
     "loc": 25,
     "nesting": 1,
