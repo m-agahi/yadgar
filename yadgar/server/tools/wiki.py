@@ -517,3 +517,179 @@ def wiki_check_duplicate(  # secret-gate: skip — read-only dry-run, never writ
         "candidates": candidates,
         "threshold_used": effective_threshold,
     }
+
+
+# ── v5.41.0: Versioning + section-patching tools ──────────────────────────────
+
+
+def _resolve_page_id_by_slug(slug: str) -> tuple[int | None, dict | None]:
+    """Branch-resolve slug → page dict. Returns (page_id, page) or (None, None)."""
+    assert _st._wiki is not None, "WikiStore not initialized"
+    try:
+        import sys as _sys  # noqa: PLC0415
+
+        _cwd = os.getcwd()
+        _srv = _sys.modules.get("yadgar.server")
+        _detect_branch = getattr(_srv, "_detect_branch", None) if _srv else None
+        _get_default_branch = getattr(_srv, "_get_default_branch", None) if _srv else None
+        if _detect_branch is None or _get_default_branch is None:
+            from yadgar.server.tools.project import (  # noqa: PLC0415
+                _detect_branch,
+                _get_default_branch,
+            )
+        current_branch = _detect_branch(_cwd)
+        default_branch = _get_default_branch(_cwd)
+    except Exception:
+        current_branch = None
+        default_branch = "master"
+
+    page = _st._wiki.read_by_branch(slug, current_branch, default_branch)
+    if page is None:
+        return None, None
+    return page.get("id"), page
+
+
+@_tool()
+def wiki_history(slug: str, limit: int = 20) -> dict:
+    """List version history for a wiki page, newest first.
+
+    Returns metadata for each version (no content — use wiki_read_version for that).
+    Each entry includes: version, created_at, change_summary, size_bytes, provenance_agent.
+
+    Note: wiki_add uses an async file queue. Calling wiki_history immediately after
+    wiki_add may return a stale list until the queue drains.
+
+    Args:
+        slug: Wiki page slug.
+        limit: Max versions to return (default 20).
+    """
+    assert _st._wiki is not None, "WikiStore not initialized"
+    page_id, page = _resolve_page_id_by_slug(slug)
+    if page_id is None:
+        return {"error": f"Wiki page '{slug}' not found"}
+    versions = _st._wiki.history(page_id, limit=limit)
+    total = _get_storage().get_max_version_for_page(page_id)
+    return {"slug": slug, "page_id": page_id, "versions": versions, "total_versions": total}
+
+
+@_tool()
+def wiki_read_version(slug: str, version: int) -> dict:
+    """Read a specific historical version of a wiki page (full content + snapshot fields).
+
+    Args:
+        slug: Wiki page slug.
+        version: Version number (1-based; use wiki_history to find version numbers).
+
+    Returns the full snapshot including: version, title, content, category, tags,
+    confidence, source_memory_ids, branch, change_summary, created_at.
+
+    Error: {"error": "...", "max_version": N} if version not found.
+    """
+    assert _st._wiki is not None, "WikiStore not initialized"
+    page_id, _ = _resolve_page_id_by_slug(slug)
+    if page_id is None:
+        return {"error": f"Wiki page '{slug}' not found"}
+    result = _st._wiki.read_version(page_id, version)
+    result["slug"] = slug
+    return result
+
+
+@_tool()
+def wiki_diff(slug: str, v1: int, v2: int, fmt: str = "unified") -> dict:
+    """Diff two versions of a wiki page.
+
+    Args:
+        slug: Wiki page slug.
+        v1: First (older) version number.
+        v2: Second (newer) version number.
+        fmt: "unified" (default, human-readable text diff) or "json" (structured).
+
+    unified format returns: {"diff": "<unified diff text>", "v1": N, "v2": M, ...}
+    json format returns: {"hunks": [...], "added_lines": N, "removed_lines": M,
+                          "sections_changed": [...], ...}
+    """
+    assert _st._wiki is not None, "WikiStore not initialized"
+    page_id, _ = _resolve_page_id_by_slug(slug)
+    if page_id is None:
+        return {"error": f"Wiki page '{slug}' not found"}
+    result = _st._wiki.diff(page_id, v1, v2, fmt=fmt)
+    result["slug"] = slug
+    return result
+
+
+@_tool(power=True)
+def wiki_restore(slug: str, version: int) -> dict:
+    """Restore a wiki page to a previous version by creating a new version.
+
+    Creates a NEW version (N+1) whose content matches the specified historical version.
+    Intervening versions are preserved — restore does not delete history.
+    Rebuilds embedding, crossrefs, and all snapshot fields (title, tags, category,
+    confidence) from the restored version.
+
+    Bypasses the v5.39 similarity gate: restore is explicit user intent (recovery
+    from corruption), not a new duplicate page.
+
+    Use wiki_history to see version numbers; use wiki_diff to confirm the content
+    before restoring.
+
+    Args:
+        slug: Wiki page slug.
+        version: Version number to restore from (use wiki_history to list).
+
+    Returns: {"page_id": N, "restored_from_version": V, "new_version": N+1, "note": "..."}
+    """
+    assert _st._wiki is not None, "WikiStore not initialized"
+    page_id, _ = _resolve_page_id_by_slug(slug)
+    if page_id is None:
+        return {"error": f"Wiki page '{slug}' not found"}
+    result = _st._wiki.restore_version(page_id, version)
+    result["slug"] = slug
+    return result
+
+
+@_tool(power=True)
+def wiki_append_section(
+    slug: str,
+    section_heading: str,
+    content: str,
+    position: str = "end_of_section",
+) -> dict:
+    """Section-atomic wiki write: patch a specific section without replacing entire content.
+
+    Prevents the 2026-05-31 corruption pattern where agents replaced full wiki content
+    with only their section patch (destroying everything else). Use this instead of
+    wiki_update(fields={"content": <short patch>}) for targeted edits.
+
+    Heading detection: matches ## or ### at column 0. Case-insensitive. Ignores
+    ## inside fenced code blocks. Use "Pipeline#2" syntax for 2nd occurrence.
+
+    Positions:
+      end_of_section    (default) — append content before next heading
+      start_of_section  — insert immediately after heading line
+      replace_section   — replace section body (heading preserved)
+      new_section_top   — create new section at top (error if heading exists)
+      new_section_bottom — create new section at bottom (error if heading exists)
+
+    Error responses:
+      {"error": "section_not_found", "available_sections": [...]}
+      {"error": "section_exists"} — heading already present + new_section_* position
+      {"error": "ambiguous_section"} — multiple headings + non-replace position
+        (use "Heading#2" syntax to address 2nd occurrence)
+
+    Returns: {"page_id": N, "new_version": M, "section_heading": "...",
+              "action": "appended", "size_before": X, "size_after": Y}
+    """
+    assert _st._wiki is not None, "WikiStore not initialized"
+
+    # I26: secret-gate on written content
+    _gate = gate_or_reject(content, tags=[])
+    if _gate is not None:
+        return _gate
+
+    page_id, _ = _resolve_page_id_by_slug(slug)
+    if page_id is None:
+        return {"error": f"Wiki page '{slug}' not found"}
+
+    result = _st._wiki.append_section(page_id, section_heading, content, position)
+    result["slug"] = slug
+    return result
