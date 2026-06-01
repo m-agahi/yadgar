@@ -6,6 +6,24 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.35.1] — 2026-06-01
+
+Hotfix bundle: memory-block follow-ups + `_MEMORY_UPDATABLE_FIELDS` fix.
+
+- **feat(blocks/I25):** Four `MEMORY_BLOCK_*` knobs (`MAX_PER_SCOPE`, `DEFAULT_CHAR_LIMIT`, `HARD_CHAR_LIMIT`, `TOTAL_BUDGET_CHARS`) registered in `config.py` + `config_registry.py` + `config_yaml.py`. Storage layer reads from config instead of module constants. Env-overridable.
+- **feat(blocks/tools):** Two new MCP patch tools: `block_replace` (string-replace, errors on 0 or >1 matches) and `block_append` (append with newline, char_limit enforced). Both `power=True`, secret-gated (I26).
+- **feat(hooks/block-reflect):** PostToolUse `block-reflect` handler fires after any `block_create/update/delete/replace/append` call and re-injects updated block content into next context. Registered via `install_hooks` as second PostToolUse entry.
+- **feat(hooks/session-start):** `session-context` endpoint now prepends `## Memory Blocks` section to SessionStart context output (non-compact sources only).
+- **fix(memory):** `last_accessed` and `access_count` added to `_MEMORY_UPDATABLE_FIELDS` — both silently no-op'd in `memory_update()` since initial implementation.
+- **feat(test):** `test_memory_updatable_fields.py` — invariant test that asserts every non-internal memory field is in `_MEMORY_UPDATABLE_FIELDS`. Prevents future regressions of this class.
+- **refactor:** `_render_blocks_section` extracted to `yadgar/blocks_render.py` (DRY shared helper used by restoration, session-context, block-reflect).
+- **decide:** `_active_work` canonicalization — Option C (defer to v5.50+). See `docs/DECISIONS.md`.
+- **chore:** Version bump `5.35.0 → 5.35.1`.
+
+See [MIGRATION_NOTES.md §v5.35.1](MIGRATION_NOTES.md#v5351--memory-block-follow-ups-2026-06-01).
+
+---
+
 ## [5.35.0] — 2026-06-01
 
 JavaScript/TypeScript SDK release (Adopt-5 from 2026-05-30 competitor audit).
