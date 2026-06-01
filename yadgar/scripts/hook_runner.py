@@ -191,12 +191,47 @@ def hook_prompt_recall() -> None:
             print(text)
 
 
+_BLOCK_REFLECT_TOOLS = frozenset(
+    {
+        "mcp__yadgar__block_create",
+        "mcp__yadgar__block_update",
+        "mcp__yadgar__block_delete",
+        "mcp__yadgar__block_replace",
+        "mcp__yadgar__block_append",
+    }
+)
+
+
+def hook_block_reflect() -> None:
+    """PostToolUse — re-inject block contents after any block_* write tool (v5.35.1).
+
+    Fires only when tool_name is one of the five block write tools.
+    Fetches current block state from the daemon and prints to stdout for injection.
+    """
+    try:
+        data = json.load(sys.stdin)
+    except Exception:  # JSONDecodeError, ValueError
+        return
+
+    tool_name = data.get("tool_name", "")
+    if tool_name not in _BLOCK_REFLECT_TOOLS:
+        return
+
+    cwd = data.get("cwd", os.getcwd())
+    result = _http_get("/hooks/block-reflect", {"directory": cwd}, timeout=0.5)
+    if result:
+        text = result.get("text", "")
+        if text:
+            print(text)
+
+
 _HOOKS = {
     "post-tool-capture": hook_post_tool_capture,
     "session-start-context": hook_session_start_context,
     "post-compact-rehydrate": hook_post_compact_rehydrate,
     "pre-compact-drain": hook_pre_compact_drain,
     "prompt-recall": hook_prompt_recall,
+    "block-reflect": hook_block_reflect,
     # db-lockdown-check removed in v5.20.0 — migrated to standalone
     # yadgar/hooks/db-lockdown-check.py, installed as
     # ~/.claude/hooks/yadgar-db-lockdown-check.py by install_hooks.

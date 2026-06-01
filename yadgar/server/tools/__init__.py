@@ -97,11 +97,13 @@ from yadgar.server.tools.bookmarks import (
     bookmark_reorder,
 )
 from yadgar.server.tools.blocks import (
+    block_append,
     block_create,
-    block_get,
-    block_update,
     block_delete,
+    block_get,
     block_list,
+    block_replace,
+    block_update,
 )
 
 __all__ = [
@@ -158,11 +160,13 @@ __all__ = [
     "bookmark_remove",
     "bookmark_list",
     "bookmark_reorder",
+    "block_append",
     "block_create",
-    "block_get",
-    "block_update",
     "block_delete",
+    "block_get",
     "block_list",
+    "block_replace",
+    "block_update",
     # Private helpers re-exported for test access
     "_detect_branch",
     "_detect_branch_cached",
