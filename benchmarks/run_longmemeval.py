@@ -705,6 +705,33 @@ def judge_answer(question: dict, hypothesis: str) -> dict:
 # ── Main Benchmark Pipeline ──────────────────────────────────────────
 
 
+def _load_processed(hyp_path: str) -> tuple[set[str], list[dict]]:
+    """Load already-processed question results from incremental JSONL.
+
+    Returns:
+        (processed_ids, prior_results) — set of question_ids already done,
+        and their full query_result dicts for aggregation continuity.
+    """
+    processed_ids: set[str] = set()
+    prior_results: list[dict] = []
+    if not os.path.exists(hyp_path):
+        return processed_ids, prior_results
+    with open(hyp_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+                qid = entry.get("question_id")
+                if qid:
+                    processed_ids.add(qid)
+                    prior_results.append(entry)
+            except Exception:
+                pass
+    return processed_ids, prior_results
+
+
 def run_benchmark(
     dataset_path: Path,
     retrieval_only: bool = False,
@@ -715,11 +742,16 @@ def run_benchmark(
     settings_overrides: dict | None = None,
     output_path: str | None = None,
     stratify_per_type: bool = False,
+    resume: bool = False,
 ) -> dict:
     """Run the full LongMemEval benchmark.
 
     Phase 1: Retrieval evaluation (always runs)
     Phase 2: Answer generation + judging (unless retrieval_only=True)
+
+    resume: if True, load already-processed question_ids from incremental JSONL
+    and skip them. Requires --output to be set explicitly so the path is stable
+    across invocations.
     """
     data = load_dataset(dataset_path)
 
@@ -765,6 +797,26 @@ def run_benchmark(
             data = data[:max_questions]
             print(f"Limited to {max_questions} questions")
 
+    # ── Resolve output path early (needed for incremental JSONL) ─────────
+    # Derive output_path now so hyp_path is stable across resume invocations.
+    # Callers should pass --output explicitly when using --resume.
+    if output_path is None:
+        variant_name = dataset_path.stem.replace("longmemeval_", "").replace("_cleaned", "")
+        mode = "retrieval" if retrieval_only else "full"
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = str(Path(__file__).parent / "results" / f"longmemeval_{variant_name}_{mode}_{ts}.json")
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    hyp_path = output_path.replace(".json", "_hypotheses.jsonl")
+
+    # ── Resume: load already-processed results ─────────────────────────
+    processed_ids: set[str] = set()
+    _prior_results: list[dict] = []
+    if resume and not retrieval_only:
+        processed_ids, _prior_results = _load_processed(hyp_path)
+        if processed_ids:
+            print(f"Resume: skipping {len(processed_ids)} already-processed questions")
+
     settings = make_benchmark_settings(**(settings_overrides or {}))
 
     # Initialize embedding engine once (shared across all questions)
@@ -780,7 +832,7 @@ def run_benchmark(
         "max_results": max_results,
         "top_k_context": top_k_context,
         "settings_overrides": settings_overrides or {},
-        "per_query": [],
+        "per_query": list(_prior_results),  # pre-load resumed results for aggregation
         "aggregated": {},
         "reproducibility": build_reproducibility_dict(dataset_path, settings),
     }
@@ -827,6 +879,10 @@ def run_benchmark(
             qid = question["question_id"]
             qtype = question["question_type"]
             is_abs = qid.endswith("_abs")
+
+            # Skip already-processed questions on resume
+            if qid in processed_ids:
+                continue
 
             print(
                 f"\r[{qi + 1}/{len(data)}] {qtype}: {question['question'][:60]}...",
@@ -920,6 +976,12 @@ def run_benchmark(
                     query_result["judge_seconds"] = round(judge_time, 2)
 
                 results["per_query"].append(query_result)
+                # Incremental save: append full result to JSONL immediately.
+                # Ensures progress survives process death mid-run.
+                if not retrieval_only:
+                    with open(hyp_path, "a") as _hf:
+                        _hf.write(json.dumps(query_result) + "\n")
+                        _hf.flush()
             except Exception as _qerr:
                 # Don't let one bad question kill the whole run — record it as error
                 # so per-type aggregates remain comparable across runs.
@@ -1062,32 +1124,14 @@ def run_benchmark(
 
     print(f"\nElapsed: {elapsed:.0f}s ({elapsed / 60:.1f}min)")
 
-    # Save JSON
-    if output_path is None:
-        variant = dataset_path.stem.replace("longmemeval_", "").replace("_cleaned", "")
-        mode = "retrieval" if retrieval_only else "full"
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = str(DATASET_DIR.parent / f"longmemeval_{variant}_{mode}_{ts}.json")
-
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    # Save aggregated JSON results
     with open(output_path, "w") as f:
         json.dump(results, f, indent=2, default=str)
     print(f"\nResults saved: {output_path}")
 
-    # Also save JSONL hypothesis file (for external eval scripts)
+    # Incremental JSONL is already written per-question during the run.
+    # Print path for reference; do NOT truncate/overwrite.
     if not retrieval_only:
-        hyp_path = output_path.replace(".json", "_hypotheses.jsonl")
-        with open(hyp_path, "w") as f:
-            for qr in results["per_query"]:
-                f.write(
-                    json.dumps(
-                        {
-                            "question_id": qr["question_id"],
-                            "hypothesis": qr.get("hypothesis", ""),
-                        }
-                    )
-                    + "\n"
-                )
         print(f"Hypotheses JSONL: {hyp_path}")
 
     return results
@@ -1145,8 +1189,26 @@ def main():
         help="With --max-questions and --types, sample evenly per type and "
         "interleave them so early-killed runs still yield per-type signal.",
     )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help="Claude model to use (sets ANTHROPIC_MODEL env var). "
+        "Example: claude-sonnet-4-6. Overrides ANTHROPIC_MODEL if both set.",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume an interrupted run: skip questions already present in the "
+        "incremental JSONL. Requires --output to be set explicitly so the path "
+        "is stable across invocations.",
+    )
 
     args = parser.parse_args()
+
+    # Set model via env var so call_claude_pipe picks it up
+    if args.model:
+        os.environ["ANTHROPIC_MODEL"] = args.model
 
     dataset_path = download_dataset(args.variant)
 
@@ -1163,6 +1225,7 @@ def main():
         top_k_context=args.top_k_context,
         output_path=args.output,
         stratify_per_type=args.stratify_per_type,
+        resume=args.resume,
     )
 
 

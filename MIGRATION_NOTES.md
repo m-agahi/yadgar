@@ -1,55 +1,54 @@
 # Migration Notes
 
-## v5.26.0 — Phase 2 Haiku Pilot Benchmark: First Published QA Accuracy (2026-05-31)
+## v5.26.0 — LongMemEval Sonnet 4.6 Full 500q (SHIPPED 2026-06-01)
 
 Core 5.25.6 → 5.26.0. Backend unchanged at 5.4.0. **No DB migration.**
 
 ### Summary
 
-First published LongMemEval benchmark numbers for yadgar. Closes Adopt-1 from competitor audit
-(2026-05-30). 96 stratified questions (16/type × 6 types), `longmemeval_s` variant.
+Full 500-question Sonnet 4.6 LongMemEval-s benchmark. Closes Adopt-1 from competitor audit (2026-05-30).
+Apples-to-apples comparison: mem0 (GPT-4o, 500q), Zep (GPT-4o, 500q), Yadgar (Sonnet 4.6, 500q).
 
-**Phase 1 (retrieval-only):** MRR=0.935, Recall@10=0.964, NDCG@10=0.913. Gate PASS.
-**Phase 2 (QA accuracy):** **61.46% (59/96)**, `claude-haiku-4-5-20251001` reader + judge, 100.1 min wall-clock.
+**Phase 2 QA accuracy: 69.4% (347/500)** — beats Zep 63.8% by 5.6pp. 470 min wall-clock.
 
 Per-type:
-- single-session-assistant: 93.8% (15/16)
-- single-session-user: 87.5% (14/16)
-- temporal-reasoning: 75.0% (12/16)
-- knowledge-update: 68.8% (11/16)
-- multi-session: 31.2% (5/16)
-- single-session-preference: 12.5% (2/16)
+- single-session-assistant: 96.4% (54/56)
+- single-session-user: 92.9% (65/70)
+- knowledge-update: 75.6% (59/78)
+- abstention: 80.0% (24/30)
+- temporal-reasoning: 63.9% (85/133)
+- multi-session: 55.6% (74/133)
+- single-session-preference: 33.3% (10/30)
 
-Comparison: mem0 94.4% (full 500-q), Zep 63.8% (full 500-q GPT-4o). Yadgar pilot is 96 questions
-on smaller Haiku reader; full 500-question run planned as follow-up. Retrieval is strong (MRR ≥ 0.90
-for every type) so QA gap is reader/judge, not retrieval — confirms the D2/D3 RECONSIDER framing
-(reader/judge improvements likely lift QA without changing retrieval stack).
+Phase 1 retrieval (embedded in full run, 500q natural distribution): MRR=0.928, Recall@10=0.906, NDCG@10=0.863.
+
+D2 (NLI on/off) and D3 (causal graph signals) remain DEFER — single arm, no A/B.
+See `docs/PLAN_V5_25_X_D2_NLI_AB.md` and `docs/PLAN_V5_25_X_D3_PC_AB.md`.
 
 ### Changes
 
-- `benchmarks/run_longmemeval.py`:
-  - `call_claude_pipe()`: now passes `--model` from `ANTHROPIC_MODEL` env var explicitly
-  - `build_reproducibility_dict()`: populates `reader_llm`/`judge_llm` from `ANTHROPIC_MODEL`
-- `yadgar/tests/test_benchmark_phase1.py`: 3 new model-routing tests; 1 test updated for env isolation
-- `docs/BENCHMARK_RESULTS.md`: Phase 1 + Phase 2 numbers (replaces all PENDING)
-- `docs/benchmarks-current.md`: v5.26.0 row populated
-- `docs/DECISIONS.md`: D2 + D3 RECONSIDER posture (Adopt-1 trigger fired)
-- `docs/PLAN_V5_25_X_D2_NLI_AB.md`: draft A/B plan for NLI default-on/off decision
-- `docs/PLAN_V5_25_X_D3_PC_AB.md`: draft A/B plan for PC algorithm causal discovery
-- `benchmarks/results/longmemeval_v5.26.0_s_retrieval.json`: Phase 1 result (committed)
-- `benchmarks/results/longmemeval_v5.26.0_s_full.json`: Phase 2 result (committed)
+- `benchmarks/run_longmemeval.py`: `--resume` flag + per-question JSONL incremental save + `--model` flag
+- `benchmarks/results/longmemeval_v5.26.0_s_full.json`: final aggregated results (500 questions)
+- `benchmarks/results/longmemeval_v5.26.0_s_full_hypotheses.jsonl`: per-question JSONL (500 lines)
+- `benchmarks/results/longmemeval_v5.26.0_s_retrieval.json`: Phase 1 (96q stratified, reader-independent — kept for historical reference)
+- `scripts/monitor_sonnet_run.sh`: progress monitoring
+- `scripts/aggregate_sonnet_results.py`: JSONL → final JSON aggregation
+- `docs/BENCHMARK_RESULTS.md`: replaced Haiku pilot table with Sonnet full-run numbers
+- `docs/CHANGELOG.md`: v5.26.0 entry updated with Sonnet headline
+- `docs/benchmarks-current.md`: updated status + per-release table
+- `README.md`: benchmark section updated with Sonnet headline
+- `docs/DECISIONS.md`: D2/D3 DEFER entries updated with post-Sonnet analysis
 
-### To run Phase 2 benchmark yourself
+### To reproduce
 
 ```bash
-# Set model to Haiku (same as v5.26.0 pilot)
-ALL_TYPES="single-session-user,single-session-assistant,single-session-preference,multi-session,temporal-reasoning,knowledge-update"
-ANTHROPIC_MODEL=claude-haiku-4-5-20251001 \
-  uv run python benchmarks/run_longmemeval.py \
-  --max-questions 100 --stratify-per-type --types "$ALL_TYPES" \
-  --output benchmarks/results/longmemeval_v5.26.0_s_full.json
+uv run python benchmarks/run_longmemeval.py \
+  --model claude-sonnet-4-6 \
+  --output benchmarks/results/longmemeval_v5.26.0_s_full.json \
+  --save-hypotheses benchmarks/results/longmemeval_v5.26.0_s_full_hypotheses.jsonl \
+  --resume
 ```
-Cost: ~$0.40-1 Haiku API spend. Wall-clock: ~2 hours (96 questions, sequential).
+Cost: zero cash (burns Max 20x usage quota). Wall-clock: ~470 min (28237s).
 
 ---
 

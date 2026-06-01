@@ -1,6 +1,6 @@
 # PLAN — D3: PC Algorithm Causal Discovery A/B Run
 
-**Status:** draft — awaiting v5.26.0 pilot numbers to confirm whether A/B is warranted.
+**Status:** DEFERRED — v5.26.0 Sonnet 4.6 full 500q run had `WRRF_PPR_WEIGHT=0.0` (graph signals off). Baseline is implicitly causal-off; no causal-on vs causal-off comparison exists. A/B requires a run with `WRRF_PPR_WEIGHT > 0`. See `docs/DECISIONS.md` D3 entry.
 
 **Triggered by:** Adopt-1 benchmark (v5.26.0) producing baseline QA accuracy.
 **References:** `docs/DECISIONS.md` D3 entry (2026-05-30); `docs/PLAN_V5_26_0_BENCHMARK_QA_PUBLICATION.md`.

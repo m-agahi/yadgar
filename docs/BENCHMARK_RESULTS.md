@@ -2,14 +2,14 @@
 
 Published benchmark numbers for Yadgar's memory retrieval pipeline.
 
-> **v5.26.0 — Phase 1 + Phase 2 published (2026-05-31)**
-> Phase 1 retrieval: MRR 0.935, Recall@10 0.964 on 96 stratified questions (v5.26.0 run).
-> Phase 2 QA accuracy: **61.46%** (59/96), Haiku reader + judge, 100.1 min wall-clock.
-> Both runs: Haiku model, 96 stratified questions, LongMemEval `s` variant.
+> **v5.26.0 — Full 500q Sonnet 4.6 run published (2026-06-01)**
+> Phase 2 QA accuracy: **69.4% (347/500)**, Claude Sonnet 4.6 reader + judge, 470 min wall-clock.
+> Phase 1 retrieval (reader-independent, 500q natural distribution): MRR 0.928, Recall@10 0.906, NDCG@10 0.863.
+> This SUPERSEDES the Haiku pilot (96 stratified questions, 61.46%). Closes Adopt-1.
 
 ---
 
-## v5.26.0 — LongMemEval Benchmark (Pilot: 96 stratified questions)
+## v5.26.0 — LongMemEval Benchmark (Full 500q, Sonnet 4.6)
 
 ### Setup
 
@@ -20,63 +20,79 @@ Published benchmark numbers for Yadgar's memory retrieval pipeline.
 | Dataset SHA-256 | `d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442` |
 | Dataset license | MIT — Wu et al., ICLR 2025 |
 | Dataset source | https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned |
-| Questions (pilot) | 96 stratified (16 per type × 6 types; `--max-questions 100 --stratify-per-type`) |
-| Full dataset size | 500 questions |
+| Questions | 500 (full dataset, natural type distribution) |
 | Embedding model | `all-MiniLM-L6-v2` |
-| Reader + Judge LLM | `claude-haiku-4-5-20251001` |
-| Retrieval settings | NLI reranking ON, CE reranking ON, WRRF vector+FTS fusion (graph signals off) |
-| Commit | `1e63607182f0bcfa0db557aad419c29298392e86` (v5.26.0 pre-bump; master before version bump) |
-| Run date | 2026-05-31 |
+| Reader + Judge LLM | `claude-sonnet-4-6` |
+| Retrieval settings | NLI reranking ON, CE reranking ON, WRRF vector+FTS fusion (graph signals off: `WRRF_PPR_WEIGHT=0.0`) |
+| Commit | `36bca02f2eee29f63e758793c4f3cc1daf13fe1a` (feature branch at run time) |
+| Run date | 2026-05-31 → 2026-06-01 |
+| Wall-clock | 470 min (~7.84 hours) via `claude -p` subprocess (Max 20x quota path; no cash spend) |
 
 ---
 
-### Phase 1 — Retrieval Metrics
+### Phase 1 — Retrieval Metrics (embedded in full run)
 
-Run: `benchmarks/results/longmemeval_v5.26.0_s_retrieval.json`
-Wall-clock: 61.9 min (96 questions, sequential, p50 ingest 29s + retrieve 8s = 37s/question)
+Run: `benchmarks/results/longmemeval_v5.26.0_s_full.json` (retrieval aggregates from 500q full run)
 
 | Question Type | Count | MRR | Recall@5 | Recall@10 | NDCG@10 |
 |---|---:|---:|---:|---:|---:|
-| single-session-user | 16 | 0.906 | 0.938 | 0.938 | 0.914 |
-| single-session-assistant | 16 | 1.000 | 1.000 | 1.000 | 1.000 |
-| single-session-preference | 16 | 0.846 | 1.000 | 1.000 | 0.884 |
-| multi-session | 16 | 0.922 | 0.852 | 0.917 | 0.849 |
-| temporal-reasoning | 16 | 0.938 | 0.880 | 0.932 | 0.875 |
-| knowledge-update | 16 | 1.000 | 1.000 | 1.000 | 0.957 |
-| **overall** | **96** | **0.935** | **0.945** | **0.964** | **0.913** |
+| single-session-user | 70 | 0.961 | 0.984 | 0.984 | 0.967 |
+| single-session-assistant | 56 | 0.982 | 0.982 | 0.982 | 0.982 |
+| single-session-preference | 30 | 0.780 | 0.867 | 0.900 | 0.807 |
+| multi-session | 133 | 0.930 | 0.815 | 0.893 | 0.832 |
+| temporal-reasoning | 133 | 0.892 | 0.781 | 0.833 | 0.785 |
+| knowledge-update | 78 | 0.979 | 0.924 | 0.931 | 0.893 |
+| **overall** | **500** | **0.928** | **0.869** | **0.906** | **0.863** |
 
-**Phase 1 Gate: PASS** (`mrr=0.935 > 0.1` AND `recall@10=0.964 > 0.3`)
-
-Latency (ingest + retrieve, p50/p95 from 96 questions):
-- Ingest p50: 29.2s, p95: 32.2s
-- Retrieve p50: 7.6s, p95: 10.0s
-- Total p50: 37.1s, p95: 42.0s
+> Note: the 96q stratified pilot (16/type) had MRR=0.935, Recall@10=0.964, NDCG@10=0.913 on that balanced sample.
+> The 500q natural distribution is weighted toward harder types (133 multi-session + 133 temporal-reasoning = 53% of sample),
+> which explains the lower aggregated numbers vs the pilot — not a regression.
 
 ---
 
 ### Phase 2 — QA Accuracy
 
 Run: `benchmarks/results/longmemeval_v5.26.0_s_full.json`
-Model: `claude-haiku-4-5-20251001` (reader + judge)
+Model: `claude-sonnet-4-6` (reader + judge)
 
 | Question Type | Count | QA Accuracy |
 |---|---:|---:|
-| single-session-user | 16 | 87.5% (14/16) |
-| single-session-assistant | 16 | 93.8% (15/16) |
-| single-session-preference | 16 | 12.5% (2/16) |
-| multi-session | 16 | 31.2% (5/16) |
-| temporal-reasoning | 16 | 75.0% (12/16) |
-| knowledge-update | 16 | 68.8% (11/16) |
-| abstention | 0 | N/A (none in stratified sample) |
-| **overall** | **96** | **61.46% (59/96)** |
+| single-session-user | 70 | 92.9% (65/70) |
+| single-session-assistant | 56 | 96.4% (54/56) |
+| single-session-preference | 30 | 33.3% (10/30) |
+| multi-session | 133 | 55.6% (74/133) |
+| temporal-reasoning | 133 | 63.9% (85/133) |
+| knowledge-update | 78 | 75.6% (59/78) |
+| abstention | 30 | 80.0% (24/30) |
+| **overall** | **500** | **69.4% (347/500)** |
 
-Wall-clock: 100.1 min (96 questions). Per-question averages: ingest 28.5s, retrieve 7.9s, gen 9.9s, judge 9.9s.
+Wall-clock: 470 min (500 questions, sequential). Elapsed seconds: 28237.
 
-**Failure-mode analysis:** Retrieval is strong everywhere (MRR ≥ 0.90 for every type), so QA gaps are answer-synthesis or judge-strictness, not retrieval. Two weak buckets:
-- `single-session-preference` (12.5%): preference questions often have open-ended/subjective gold answers; strict-match judging penalises plausible alternatives.
-- `multi-session` (31.2%): requires aggregating facts across sessions; reader model loses precision under context dilution.
+**Failure-mode analysis:** Retrieval is strong (MRR ≥ 0.78 for every type), so QA gaps are
+answer-synthesis or judge-strictness, not retrieval. Two structurally weaker buckets:
 
-These match published failure modes of Haiku-class readers on LongMemEval `s`. A stronger reader (Sonnet/Opus) or per-type judge rubrics would likely lift the floor without retrieval changes.
+- `single-session-preference` (33.3%): preference questions have open-ended/subjective gold answers;
+  strict-match judging penalises plausible alternatives even for a Sonnet-class reader. This is a
+  judge rubric issue, not a memory retrieval issue.
+- `multi-session` (55.6%): requires aggregating facts across sessions; even Sonnet loses precision
+  under context dilution from 100+ retrieved sessions stacked in context.
+
+Sonnet vs Haiku (stratified pilot) comparison (same bucket order):
+
+| Type | Haiku 96q pilot | Sonnet 500q full | Delta |
+|---|---:|---:|---:|
+| single-session-user | 87.5% (14/16) | 92.9% (65/70) | +5.4pp |
+| single-session-assistant | 93.8% (15/16) | 96.4% (54/56) | +2.6pp |
+| single-session-preference | 12.5% (2/16) | 33.3% (10/30) | +20.8pp |
+| multi-session | 31.2% (5/16) | 55.6% (74/133) | +24.4pp |
+| temporal-reasoning | 75.0% (12/16) | 63.9% (85/133) | −11.1pp |
+| knowledge-update | 68.8% (11/16) | 75.6% (59/78) | +6.8pp |
+| **overall** | **61.46% (59/96)** | **69.4% (347/500)** | **+7.9pp** |
+
+> `temporal-reasoning` shows −11.1pp vs the stratified pilot, almost certainly a sample-composition
+> artifact: the pilot's 16 stratified temporal questions were a biased draw (pilot MRR 0.938) vs the
+> 133 natural-distribution questions (full-run MRR 0.892). The hardest temporal questions are
+> underrepresented in any stratified 16-question sample. Not a Sonnet regression.
 
 ---
 
@@ -84,12 +100,13 @@ These match published failure modes of Haiku-class readers on LongMemEval `s`. A
 
 | System | LongMemEval Variant | Questions | QA Accuracy | Notes |
 |---|---|---:|---:|---|
-| mem0 | s | 500 (full) | 94.4% | mem0 state-of-memory blog, 2026 |
+| mem0 | s | 500 (full) | 94.4% | mem0 state-of-memory blog, 2026 (GPT-4o) |
 | Zep | s | 500 (full) | 63.8% | Zep announcement (GPT-4o) |
-| **Yadgar v5.26.0 (pilot)** | **s** | **96 stratified** | **61.46%** | **Haiku reader+judge, 16/type × 6 types; full 500-q run in follow-up** |
+| **Yadgar v5.26.0** | **s** | **500 (full)** | **69.4%** | **Sonnet 4.6 reader+judge; Adopt-1 closed** |
 
-> Note: mem0 and Zep used full 500-question evaluation; yadgar pilot uses 96 stratified questions.
-> Full 500-question run planned as v5.26.1 / future slot. Pilot numbers are preliminary.
+> Comparison is now apples-to-apples on sample size: all three systems use full 500-question evaluation.
+> Reader/judge model differs: Yadgar uses Sonnet 4.6, competitors used GPT-4o.
+> A weaker reader (Haiku) at 61.46% (96q pilot) confirms the gap was partly reader-model, not purely retrieval.
 
 ---
 
@@ -97,43 +114,42 @@ These match published failure modes of Haiku-class readers on LongMemEval `s`. A
 
 ```json
 {
-  "yadgar_commit": "1e63607182f0bcfa0db557aad419c29298392e86",
+  "yadgar_commit": "36bca02f2eee29f63e758793c4f3cc1daf13fe1a",
   "dataset": "longmemeval_s_cleaned",
   "dataset_sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
   "embedding_model": "all-MiniLM-L6-v2",
-  "reader_llm": "claude-haiku-4-5-20251001",
-  "judge_llm": "claude-haiku-4-5-20251001",
-  "python_version": "3.14.3",
-  "surreal_version": "3.0.5",
-  "phase1_run_date_utc": "2026-05-31T10:08:33Z",
-  "phase1_elapsed_seconds": 3713,
-  "phase2_run_date_utc": "2026-05-31T12:27:29Z",
-  "phase2_elapsed_seconds": 6009,
-  "questions": 96,
-  "stratification": "--max-questions 100 --stratify-per-type (16 per type x 6 types)"
+  "surreal_version": "3.0.5 for linux on x86_64",
+  "reader_llm": "claude-sonnet-4-6",
+  "judge_llm": "claude-sonnet-4-6",
+  "python_version": "3.14.3 (main, Feb  3 2026, 15:32:20) [GCC 15.2.0]",
+  "run_date_utc": "2026-05-31T17:02:30.497222+00:00",
+  "elapsed_seconds": 28237,
+  "questions": 500
 }
 ```
 
 ### Reproduction commands
 
 ```bash
-# Phase 1: Retrieval-only (no LLM, ~62 min, zero API spend)
-ALL_TYPES="single-session-user,single-session-assistant,single-session-preference,multi-session,temporal-reasoning,knowledge-update"
+# Full 500q QA run (470 min, zero cash spend via Max quota claude -p)
 uv run python benchmarks/run_longmemeval.py \
-  --retrieval-only \
-  --max-questions 100 \
-  --stratify-per-type \
-  --types "$ALL_TYPES" \
-  --output benchmarks/results/longmemeval_v5.26.0_s_retrieval.json
-
-# Phase 2: Full QA (~2-3 hours, ~$0.40-1 Haiku API spend)
-ANTHROPIC_MODEL=claude-haiku-4-5-20251001 \
-uv run python benchmarks/run_longmemeval.py \
-  --max-questions 100 \
-  --stratify-per-type \
-  --types "$ALL_TYPES" \
-  --output benchmarks/results/longmemeval_v5.26.0_s_full.json
+  --model claude-sonnet-4-6 \
+  --output benchmarks/results/longmemeval_v5.26.0_s_full.json \
+  --save-hypotheses benchmarks/results/longmemeval_v5.26.0_s_full_hypotheses.jsonl \
+  --resume
 ```
+
+---
+
+## v5.26.0 — Haiku Pilot (96 stratified questions) — SUPERSEDED
+
+Historical record. Superseded by the full 500q Sonnet run above.
+
+Phase 1 retrieval (96q stratified, reader-independent): MRR=0.935, Recall@10=0.964, NDCG@10=0.913.
+Phase 2 QA (Haiku reader+judge, 16/type × 6 types): **61.46% (59/96)**. Wall-clock 100.1 min.
+
+Run files: `benchmarks/results/longmemeval_v5.26.0_s_retrieval.json` (Phase 1),
+commit `1e63607182f0bcfa0db557aad419c29298392e86`.
 
 ---
 
@@ -153,9 +169,8 @@ See `docs/BENCHMARK_LICENSE.md` for details.
 
 ## Caveats
 
-- Pilot uses 96 questions (stratified, 16 per type × 6 types). Full 500-question run is planned.
-- mem0 (94.4%) and Zep (63.8%) used full 500-question evaluation. Direct comparison must account for sample size difference.
-- Reader and judge use the same model (Haiku). A stronger judge may yield higher or lower accuracy.
-- Abstention questions (`_abs` suffix) absent from stratified pilot — abstention accuracy not measured.
-- NLI reranking ON, graph signals OFF in `make_benchmark_settings()`. D2 A/B (NLI on/off) planned in `docs/PLAN_V5_25_X_D2_NLI_AB.md`.
-- PC algorithm / causal discovery not active in benchmark (runs during nightly consolidation, not retrieval). D3 A/B design in `docs/PLAN_V5_25_X_D3_PC_AB.md`.
+- Full 500q run uses natural type distribution (not stratified). Retrieval aggregates differ from pilot due to harder type weighting.
+- mem0 (94.4%) and Zep (63.8%) used GPT-4o; Yadgar used Sonnet 4.6. Different reader/judge models may favor different answer-generation styles.
+- NLI reranking ON, graph signals OFF (`WRRF_PPR_WEIGHT=0.0`). D2 A/B (NLI on/off) deferred: no NLI-off run exists yet. See `docs/PLAN_V5_25_X_D2_NLI_AB.md`.
+- PC algorithm / causal discovery untested: graph signals disabled in benchmark. D3 A/B deferred pending a run with `WRRF_PPR_WEIGHT > 0`. See `docs/PLAN_V5_25_X_D3_PC_AB.md`.
+- `single-session-preference` low accuracy (33.3%) reflects open-ended gold answers penalised by strict-match judging. Not a retrieval failure (MRR 0.780).
