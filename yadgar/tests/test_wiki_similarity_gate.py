@@ -362,3 +362,192 @@ class TestWikiCheckDuplicate:
             f"False positive: distinct benchmark page flagged as dup of architecture. "
             f"Candidates: {candidates}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 tests: gate enforcement in wiki_add (sync path)
+# ---------------------------------------------------------------------------
+
+
+def _wiki_add_sync(monkeypatch, **kwargs) -> dict:
+    """Call wiki_add on the sync (drain) path."""
+    monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
+    return server.wiki_add(**kwargs)
+
+
+class TestWikiAddSimilarityGate:
+    """Tests for gate enforcement in wiki_add."""
+
+    def test_gate_blocks_near_duplicate(self, monkeypatch):
+        """Near-clone of 2026-05-30 incident: different slugs, gate BLOCKS second add."""
+        monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
+
+        # Insert page A
+        r1 = server.wiki_add(
+            title="Yadgar Roadmap Future Improvements",
+            content=_ROADMAP_CONTENT_A,
+        )
+        assert r1.get("slug") == "yadgar-roadmap-future-improvements"
+
+        # Attempt page B (near-clone) — gate should BLOCK
+        r2 = server.wiki_add(
+            title="Yadgar Future Roadmap",
+            content=_ROADMAP_CONTENT_B,
+        )
+        assert r2.get("stored") is False, (
+            f"Gate failed to block near-duplicate. Result: {r2}. "
+            "This reproduces the 2026-05-30 incident class."
+        )
+        assert r2.get("reason") == "duplicate_detected"
+        assert "candidates" in r2
+        assert len(r2["candidates"]) >= 1
+        slugs = [c["slug"] for c in r2["candidates"]]
+        assert "yadgar-roadmap-future-improvements" in slugs
+
+        # Verify page B was NOT created
+        page_b = _wiki()._storage.get_wiki_page_by_slug("yadgar-future-roadmap")
+        assert page_b is None, "Gate blocked but page B was still created"
+
+    def test_force_bypass_allows_write(self, monkeypatch):
+        """force=True bypasses gate and allows the write."""
+        monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
+
+        server.wiki_add(
+            title="Yadgar Roadmap Future Improvements",
+            content=_ROADMAP_CONTENT_A,
+        )
+
+        # force=True bypasses gate
+        r2 = server.wiki_add(
+            title="Yadgar Future Roadmap",
+            content=_ROADMAP_CONTENT_B,
+            force=True,
+        )
+        # Should succeed (stored=True or has slug)
+        assert r2.get("reason") != "duplicate_detected", (
+            f"force=True failed to bypass gate. Result: {r2}"
+        )
+        assert "slug" in r2
+
+    def test_replace_slug_bypasses_gate(self, monkeypatch):
+        """replace_slug bypasses gate and overwrites named existing page."""
+        monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
+
+        server.wiki_add(
+            title="Yadgar Roadmap Future Improvements",
+            content=_ROADMAP_CONTENT_A,
+        )
+
+        # replace_slug points at the existing page — bypass gate
+        r2 = server.wiki_add(
+            title="Yadgar Future Roadmap",
+            content=_ROADMAP_CONTENT_B,
+            replace_slug="yadgar-roadmap-future-improvements",
+        )
+        assert r2.get("reason") != "duplicate_detected", (
+            f"replace_slug failed to bypass gate. Result: {r2}"
+        )
+
+    def test_distinct_pages_allowed_through_gate(self, monkeypatch):
+        """False-positive control: distinct pages pass gate at default threshold."""
+        monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
+
+        # Insert several distinct pages
+        server.wiki_add(title="Yadgar Architecture", content=_ARCH_CONTENT)
+        server.wiki_add(title="Yadgar Hook System", content=_HOOKS_CONTENT)
+
+        # A new distinct page should not be blocked
+        r = server.wiki_add(title="Yadgar Benchmark Results v5.26.0", content=_BENCHMARK_CONTENT)
+        assert r.get("reason") != "duplicate_detected", (
+            f"False positive: distinct benchmark page blocked. Result: {r}"
+        )
+        assert "slug" in r
+
+    def test_gate_disabled_by_env(self, monkeypatch):
+        """WIKI_SIM_GATE_ENABLED=False skips gate entirely."""
+        monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
+
+        server.wiki_add(
+            title="Yadgar Roadmap Future Improvements",
+            content=_ROADMAP_CONTENT_A,
+        )
+
+        # Disable gate via settings mock
+        from yadgar.config import get_settings
+
+        orig_settings = get_settings()
+
+        class _PatchedSettings:
+            def __getattr__(self, name):
+                if name == "WIKI_SIM_GATE_ENABLED":
+                    return False
+                return getattr(orig_settings, name)
+
+        import yadgar.server.tools.wiki as _wiki_tools
+
+        monkeypatch.setattr(_wiki_tools, "get_settings", lambda: _PatchedSettings(), raising=False)
+
+        # Import inline since it's imported inside the function
+        import yadgar.config as _config_mod
+
+        monkeypatch.setattr(_config_mod, "get_settings", lambda: _PatchedSettings())
+
+        r2 = server.wiki_add(
+            title="Yadgar Future Roadmap",
+            content=_ROADMAP_CONTENT_B,
+        )
+        assert r2.get("reason") != "duplicate_detected", (
+            f"Gate ran despite WIKI_SIM_GATE_ENABLED=False. Result: {r2}"
+        )
+
+    def test_soft_mode_allows_with_warning(self, monkeypatch):
+        """WIKI_SIM_MODE=soft allows write but logs warning for near-duplicates."""
+        monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
+
+        server.wiki_add(
+            title="Yadgar Roadmap Future Improvements",
+            content=_ROADMAP_CONTENT_A,
+        )
+
+        from yadgar.config import get_settings
+
+        orig_settings = get_settings()
+
+        class _SoftSettings:
+            def __getattr__(self, name):
+                if name == "WIKI_SIM_MODE":
+                    return "soft"
+                return getattr(orig_settings, name)
+
+        import yadgar.config as _config_mod
+
+        monkeypatch.setattr(_config_mod, "get_settings", lambda: _SoftSettings())
+
+        r2 = server.wiki_add(
+            title="Yadgar Future Roadmap",
+            content=_ROADMAP_CONTENT_B,
+        )
+        # soft mode: should NOT return duplicate_detected — write proceeds
+        assert r2.get("reason") != "duplicate_detected", (
+            f"Soft mode should allow write but returned: {r2}"
+        )
+        assert "slug" in r2
+
+    def test_append_skips_gate(self, monkeypatch):
+        """append=True skips the gate (update op, not create)."""
+        monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
+
+        server.wiki_add(
+            title="Yadgar Roadmap Future Improvements",
+            content=_ROADMAP_CONTENT_A,
+        )
+
+        # append=True on near-duplicate content — gate skipped
+        r2 = server.wiki_add(
+            title="Yadgar Future Roadmap",
+            content=_ROADMAP_CONTENT_B,
+            append=True,
+        )
+        assert r2.get("reason") != "duplicate_detected", (
+            f"append=True should skip gate but gate fired: {r2}"
+        )

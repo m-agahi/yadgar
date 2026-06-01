@@ -15,6 +15,135 @@ from yadgar.server.lifecycle import _get_file_queue, _get_storage
 logger = logging.getLogger(__name__)
 
 
+def _wiki_add_sync_write(
+    title: str,
+    content: str,
+    category: str,
+    tags: list[str] | None,
+    source_memory_ids: list[int] | None,
+    confidence: str,
+    branch: str | None,
+    append: bool,
+    replace_slug: str | None,
+) -> dict:
+    """Execute the sync wiki_add write path (QueueDrainer or fallback).
+
+    Handles replace_slug overwrite, append merge, and normal upsert.
+    """
+    # replace_slug: overwrite a named existing page (gate already bypassed)
+    if replace_slug is not None:
+        existing = _st._wiki._storage.get_wiki_page_by_slug(replace_slug)
+        if existing is not None:
+            result = _st._wiki.add(
+                title, content, category, tags or [], source_memory_ids, confidence, branch=branch
+            )
+            result.pop("embedding", None)
+            _push_event(
+                {
+                    "event": "wiki_updated",
+                    "node": {
+                        "id": f"wiki:{result.get('id', '')}",
+                        "slug": result.get("slug", ""),
+                        "title": result.get("title", ""),
+                    },
+                }
+            )
+            try:
+                _get_file_queue().write_wiki(result.get("slug", title), content)
+            except Exception as exc:
+                logger.debug("File queue wiki mirror failed (non-fatal): %s", exc)
+            return result
+
+    if append:
+        result = _st._wiki.ingest(content, title, tags, source_memory_ids)
+    else:
+        result = _st._wiki.add(
+            title, content, category, tags or [], source_memory_ids, confidence, branch=branch
+        )
+    result.pop("embedding", None)
+    event_type = "wiki_updated" if result.get("_merged") else "wiki_added"
+    _push_event(
+        {
+            "event": event_type,
+            "node": {
+                "id": f"wiki:{result.get('id', '')}",
+                "slug": result.get("slug", ""),
+                "title": result.get("title", ""),
+            },
+        }
+    )
+    try:
+        _get_file_queue().write_wiki(result.get("slug", title), content)
+    except Exception as exc:
+        logger.debug("File queue wiki mirror failed (non-fatal): %s", exc)
+    return result
+
+
+def _check_similarity_gate(
+    title: str,
+    content: str,
+    branch: str | None,
+    force: bool,
+    replace_slug: str | None,
+    append: bool,
+    new_slug: str,
+) -> dict | None:
+    """Run the v5.39.0 similarity gate.
+
+    Returns a rejection dict if gate fires in hard mode, None otherwise.
+    Gate is skipped when: force=True, replace_slug set, append=True, or disabled via config.
+    """
+    if force:
+        logger.info("wiki_add similarity gate bypassed via force=True for '%s'", title)
+        return None
+    if replace_slug is not None or append:
+        return None  # update ops skip gate
+
+    try:
+        from yadgar.config import get_settings  # noqa: PLC0415
+
+        cfg = get_settings()
+        if not getattr(cfg, "WIKI_SIM_GATE_ENABLED", True):
+            return None
+
+        sim_mode = getattr(cfg, "WIKI_SIM_MODE", "hard")
+        sim_threshold = getattr(cfg, "WIKI_SIM_CONTENT_THRESHOLD", 0.80)
+        sim_top_k = getattr(cfg, "WIKI_SIM_TOP_K", 5)
+
+        candidates = _st._wiki.find_similar_wiki_pages(
+            title=title,
+            content=content,
+            branch=branch,
+            threshold=sim_threshold,
+            top_k=sim_top_k,
+            exclude_slug=new_slug,  # skip self (upsert path)
+        )
+        if not candidates:
+            return None
+
+        if sim_mode == "soft":
+            logger.warning(
+                "wiki_add similarity gate (soft): near-duplicate for '%s', candidates=%s — allowing",
+                title,
+                [c["slug"] for c in candidates],
+            )
+            return None
+
+        # hard mode: reject
+        return {
+            "stored": False,
+            "reason": "duplicate_detected",
+            "candidates": candidates,
+            "hint": (
+                "Use force=True to bypass, or replace_slug=<existing-slug> "
+                "to overwrite the existing page."
+            ),
+        }
+    except Exception as exc:
+        logger.debug("wiki_add similarity gate error (non-fatal): %s", exc)
+        return None
+
+
 @_tool()
 def wiki_add(
     title: str,
@@ -26,12 +155,22 @@ def wiki_add(
     append: bool = False,
     branch: str | None = None,
     branch_hint: str | None = None,
+    force: bool = False,
+    replace_slug: str | None = None,
 ) -> dict:
     """Create or update a wiki page. Content can include [[slug]] cross-references.
 
     append=False (default): create a new page or overwrite an existing one.
     append=True: merge content into an existing page (appends with timestamp,
       merges tags and source_memory_ids). Use for accumulating knowledge over time.
+
+    v5.39.0 similarity gate: wiki_add now checks for near-duplicate pages before
+    writing. If a similar page exists (combined cosine similarity >= threshold),
+    the call is rejected with {"stored": False, "reason": "duplicate_detected", "candidates": [...]}.
+
+    Use force=True to bypass the gate (logs warning). Use replace_slug=<existing-slug>
+    to explicitly update an existing page by a different slug (treated as overwrite,
+    gate is skipped).
 
     Categories: architecture, decision, pattern, debugging, reference, convention, fact, analysis.
     Confidence: high, medium, low.
@@ -72,17 +211,25 @@ def wiki_add(
         branch = branch_hint
     # If both are falsy (None / ""), branch stays None → canonical NULL slot.
 
+    # v5.39.0: similarity gate — runs AFTER secret-gate, BEFORE enqueue (I26 ordering).
+    import re as _re_slug  # noqa: PLC0415
+
+    _new_slug = (_re_slug.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "untitled")[:64]
+
+    _gate_result = _check_similarity_gate(
+        title, content, branch, force, replace_slug, append, _new_slug
+    )
+    if _gate_result is not None:
+        return _gate_result
+
     # Async path: enqueue and return immediately (skip during drain replay)
     if not is_draining():
         try:
-            import re as _re
-
-            slug = (_re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "untitled")[:64]
             _get_file_queue().enqueue(
                 "wiki_add",
                 {
                     "wiki_schema_version": 2,
-                    "slug": slug,
+                    "slug": _new_slug,
                     "title": title,
                     "content": content,
                     "category": category or "reference",
@@ -93,36 +240,14 @@ def wiki_add(
                     "branch": branch,
                 },
             )
-            return {"stored": True, "queued": True, "slug": slug, "title": title}
+            return {"stored": True, "queued": True, "slug": _new_slug, "title": title}
         except Exception as _fq_exc:
             logger.warning("File queue enqueue failed, falling back to sync write: %s", _fq_exc)
 
     # Sync path: called by QueueDrainer (is_draining=True) or queue fallback
-    if append:
-        result = _st._wiki.ingest(content, title, tags, source_memory_ids)
-    else:
-        result = _st._wiki.add(
-            title, content, category, tags or [], source_memory_ids, confidence, branch=branch
-        )
-    result.pop("embedding", None)
-    event_type = "wiki_updated" if result.get("_merged") else "wiki_added"
-    _push_event(
-        {
-            "event": event_type,
-            "node": {
-                "id": f"wiki:{result.get('id', '')}",
-                "slug": result.get("slug", ""),
-                "title": result.get("title", ""),
-            },
-        }
+    return _wiki_add_sync_write(
+        title, content, category, tags, source_memory_ids, confidence, branch, append, replace_slug
     )
-
-    try:
-        _get_file_queue().write_wiki(result.get("slug", title), content)
-    except Exception as _fq_exc:
-        logger.debug("File queue wiki mirror failed (non-fatal): %s", _fq_exc)
-
-    return result
 
 
 @_tool()
