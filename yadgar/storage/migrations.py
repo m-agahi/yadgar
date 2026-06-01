@@ -300,6 +300,30 @@ def _migration_011_bitemporal_derived_belief(storage) -> None:
     )
 
 
+def _migration_012_memory_block_table(storage) -> None:
+    """Add memory_block table for named in-context memory blocks (v5.33.0, Adopt-4).
+
+    Separate table (not extending memory) for cleaner isolation:
+    - No cross-contamination with anchor audit, heat decay, or secret-gate scans.
+    - No field aliasing complications.
+    - Uniqueness enforced application-side (no DB-level constraint to allow
+      schema flexibility in v5.33.x).
+
+    Schema is SCHEMALESS for SurrealDB embedded compatibility.
+    Unique index on (name, scope, directory) enforced by application layer.
+    Additive only — no impact on existing data.
+    """
+    storage._q("DEFINE TABLE IF NOT EXISTS memory_block SCHEMALESS;")
+    storage._q("""
+        DEFINE INDEX IF NOT EXISTS memory_block_name_scope_dir_idx
+            ON memory_block FIELDS name, scope, directory;
+    """)
+    storage._q("""
+        DEFINE INDEX IF NOT EXISTS memory_block_scope_dir_idx
+            ON memory_block FIELDS scope, directory;
+    """)
+
+
 _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {"version": "001_hnsw_indexes", "fn": _migration_001_hnsw_indexes},
     {"version": "002_relationship_indexes", "fn": _migration_002_relationship_indexes},
@@ -335,6 +359,10 @@ _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {
         "version": "011_bitemporal_derived_belief",
         "fn": _migration_011_bitemporal_derived_belief,
+    },
+    {
+        "version": "012_memory_block_table",
+        "fn": _migration_012_memory_block_table,
     },
 ]
 
