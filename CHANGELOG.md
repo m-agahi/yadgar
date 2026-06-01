@@ -6,6 +6,19 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.27.0] — 2026-06-01
+
+DuckDB analytics export — behavioral observability add-on (Adopt-6).
+
+- `yadgar export duckdb --output FILE` — dumps 19 SurrealDB tables to a local `.duckdb` file with typed schema (FLOAT[dim] embeddings, TIMESTAMP fields, JSON tag columns) and an `extra_fields JSON` catch-all for schema drift.
+- 10 pre-built analytics views ship inside the file: `v_decay_distribution`, `v_recall_efficacy_by_tag`, `v_anchor_usage`, `v_high_heat_memories`, `v_domain_clustering`, `v_consolidation_effect`, `v_conflict_density`, `v_wiki_coverage`, `v_tool_call_volume`, `v_branch_distribution`. Each view has a `COMMENT ON VIEW` describing the behavioral question it answers.
+- Optional dependency `analytics = ["duckdb>=0.10,<2"]`. Install with `pip install yadgar[analytics]`. CLI exits 2 with install hint if duckdb missing.
+- Flags: `--include-secrets` (forward-compat no-op — v5.10.2 gate is write-time), `--action-log-since 30d`, `--action-log-limit 100000`, `--no-views`, `--tables`, `--force`.
+- `*.duckdb` added to `.gitignore`.
+- Adopt-6 from 2026-05-30 competitor audit: IMPLEMENTED.
+
+Not a backup — analytics-only, lossy snapshot. Re-run to get fresh data. See MIGRATION_NOTES.md §v5.27.0.
+
 ## [5.25.1] — 2026-05-31
 
 **Fixed:** benchmark now spawns `surreal start` subprocess for FULLTEXT-capable Phase 1 retrieval.
