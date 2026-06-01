@@ -258,6 +258,96 @@ class WikiStore:
             category=category, slug_prefix=slug_prefix, limit=limit
         )
 
+    def find_similar_wiki_pages(
+        self,
+        title: str,
+        content: str,
+        branch: str | None = None,
+        threshold: float = 0.80,
+        top_k: int = 5,
+        exclude_slug: str | None = None,
+    ) -> list[dict]:
+        """Return wiki pages with combined embedding similarity >= threshold.
+
+        Design note: wiki_page stores one combined embedding (title + content[:2000]).
+        Separate title-only / content-only embeddings would require a schema change
+        (violates §4 non-goals). Gate uses a single cosine similarity threshold on
+        the combined embedding.
+
+        Scope: branch-aware. Candidates must have branch == branch OR branch IS NULL
+        (canonical). Pages on unrelated branches are excluded.
+
+        Args:
+            title: Title of the candidate new page.
+            content: Content of the candidate new page.
+            branch: Branch context for scope filtering (None = canonical/NULL slot).
+            threshold: Minimum cosine similarity to include a page. Default 0.80.
+            top_k: Maximum number of candidates to return.
+            exclude_slug: Exclude this slug (used to skip self-comparison on upsert).
+
+        Returns:
+            List of dicts with keys: slug, title, similarity, branch.
+            Sorted descending by similarity.
+        """
+        # Embed the new page (same formula as _compute_embedding)
+        try:
+            text = f"{title}\n{content[:2000]}"
+            query_embedding = self._embeddings.encode_query(text)
+        except Exception:
+            logger.debug("find_similar_wiki_pages: embedding failed for '%s'", title)
+            return []
+
+        if query_embedding is None:
+            return []
+
+        # KNN search — get top_k * 4 candidates so we have room after branch + threshold filter
+        try:
+            vec_results = self._storage.search_wiki_vectors(query_embedding, top_k=top_k * 4)
+        except Exception:
+            logger.debug("find_similar_wiki_pages: vector search failed")
+            return []
+
+        if not vec_results:
+            return []
+
+        # Branch-aware scope: allowed = {branch, None}
+        # (branch=None means canonical/NULL slot — always included)
+        allowed_branches: set[str | None] = {None}
+        if branch is not None:
+            allowed_branches.add(branch)
+
+        candidates = []
+        for page_id, distance in vec_results:
+            similarity = 1.0 - distance  # cosine similarity from cosine distance
+            if similarity < threshold:
+                continue
+
+            page = self._storage.get_wiki_page(page_id)
+            if page is None:
+                continue
+
+            # Branch scope filter
+            page_branch = page.get("branch")
+            if page_branch not in allowed_branches:
+                continue
+
+            # Exclude self-slug (used for upsert path)
+            if exclude_slug is not None and page.get("slug") == exclude_slug:
+                continue
+
+            candidates.append(
+                {
+                    "slug": page.get("slug", ""),
+                    "title": page.get("title", ""),
+                    "similarity": round(similarity, 4),
+                    "branch": page_branch,
+                }
+            )
+            if len(candidates) >= top_k:
+                break
+
+        return sorted(candidates, key=lambda c: c["similarity"], reverse=True)
+
     def ingest(
         self,
         content: str,

@@ -247,6 +247,12 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_EMBED_CACHE_MAX_ENTRIES", "100000", "int"),
     ConfigEntry("YADGAR_CACHE_SNAPSHOT_INTERVAL_SEC", "600", "int"),
     ConfigEntry("YADGAR_CACHE_SNAPSHOT_DIR", "/data/cache", "string"),
+    # ── v5.39.0 wiki similarity gate knobs ───────────────────────────────────
+    ConfigEntry("YADGAR_WIKI_SIM_GATE_ENABLED", "true", "bool"),
+    ConfigEntry("YADGAR_WIKI_SIM_CONTENT_THRESHOLD", "0.80", "float"),
+    ConfigEntry("YADGAR_WIKI_SIM_TITLE_THRESHOLD", "0.85", "float"),
+    ConfigEntry("YADGAR_WIKI_SIM_MODE", "hard", "string"),
+    ConfigEntry("YADGAR_WIKI_SIM_TOP_K", "5", "int"),
 ]
 
 

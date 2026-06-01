@@ -809,6 +809,40 @@ FIELD_META: dict[str, dict[str, str]] = {
         ),
         "section": "cpu_burst_detection",
     },
+    # wiki_similarity_gate (v5.39.0)
+    "wiki_sim_gate_enabled": {
+        "desc": "Enable wiki_add similarity gate (default true). Set to false to disable entirely.",
+        "section": "wiki_similarity_gate",
+    },
+    "wiki_sim_content_threshold": {
+        "desc": (
+            "Minimum cosine similarity on combined (title+content) embedding to flag a duplicate "
+            "(default 0.80). Calibrated on all-MiniLM-L6-v2: near-clones ~0.91-0.95, "
+            "distinct pages ~0.50-0.65. Reduce to 0.70 for stricter gate; raise toward 0.90 "
+            "to reduce false positives."
+        ),
+        "section": "wiki_similarity_gate",
+    },
+    "wiki_sim_title_threshold": {
+        "desc": (
+            "Reserved: minimum cosine similarity on title-only embedding (default 0.85). "
+            "Currently unused — single combined embedding stored. Future schema upgrade will "
+            "add title_embedding column and activate this threshold."
+        ),
+        "section": "wiki_similarity_gate",
+    },
+    "wiki_sim_mode": {
+        "desc": (
+            "Gate enforcement mode: 'hard' (default) rejects duplicate creates; "
+            "'soft' logs a WARNING but allows the write. Use soft mode to audit "
+            "without blocking existing agents."
+        ),
+        "section": "wiki_similarity_gate",
+    },
+    "wiki_sim_top_k": {
+        "desc": "Max candidate duplicate pages returned in rejection response (default 5).",
+        "section": "wiki_similarity_gate",
+    },
 }
 
 
@@ -838,6 +872,7 @@ SECTION_TITLES: dict[str, str] = {
     "viz_config": "Visualization Knobs (v5.11.0)",
     "cpu_burst_detection": "CPU Burst Detection (v5.15.0)",
     "memory_blocks": "Memory Blocks (v5.35.1)",
+    "wiki_similarity_gate": "Wiki Similarity Gate (v5.39.0)",
 }
 
 # Ordered list of sections for deterministic output
