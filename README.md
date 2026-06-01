@@ -11,7 +11,7 @@
 
 </div>
 
-[Changelog](docs/CHANGELOG.md) · [Roadmap](#roadmap) · [Architecture](docs/architecture.md)
+[Changelog](docs/CHANGELOG.md) · [Benchmark](#benchmark) · [Roadmap](#roadmap) · [Architecture](docs/architecture.md)
 
 *Yadgar* (یادگار) is Persian for "memento, keepsake." It's a persistent memory engine for Claude Code: tell it what matters, and it survives across sessions — decaying what you stop touching, promoting what repeats, filtering recall to the git branch you're on, and pairing every memory with a curated wiki that searches through the same pipeline.
 
@@ -34,10 +34,41 @@
 - **Bearer-token MCP auth** — default-deny CORS, timing-safe token compare, always-on secret patterns blocking AWS/GCP/Stripe/Slack/OpenAI/Anthropic keys, JWT, PATs, private keys, DB URIs. Context-aware allowlist (`~/.yadgar/secret-gate-allowlist.yaml`) for known-good fixtures.
 - **Knowledge-graph viz** — `yadgar viz` serves a Three.js graph of memories, entities, and relationships at `http://localhost:42069` with live filtering by tag, age, and store type. All 35 viz constants configurable via `config.yaml` without redeploy.
 - **Prometheus `/metrics`** — structured JSON logs, per-phase consolidation duration markers, CRITICAL alert on phase exceeding `PHASE_DURATION_WARN_MS`, loopback-only by default.
-- **Benchmark** — LongMemEval full 500q published in v5.26.0 (Sonnet 4.6 reader + judge). **QA accuracy: 69.4% (347/500)** — beats Zep 63.8% (GPT-4o, 500q) by 5.6pp; Phase 1 retrieval MRR=0.928, Recall@10=0.906. See `docs/BENCHMARK_RESULTS.md` for per-type breakdown and comparison vs mem0 (94.4%) / Zep (63.8%).
 - **Idempotent transactional migrations** — backfills safe to re-run, failures roll back cleanly.
 
 v5 ships bearer-token auth, branch-tagged retrieval, layered session bootstrap, write-time contradiction detection, scope-aware anchor surfacing, cross-project anchor dedup, Wiki Bookmarks, db-lockdown 2026 hook schema, and benchmark Phase 1 infra. See [Roadmap](#roadmap) for v6 (nightly LLM curator) and v7 (real-time synthesis).
+
+---
+
+## Benchmark
+
+Yadgar is evaluated on [**LongMemEval**](https://arxiv.org/abs/2410.10813) (ICLR 2025) — the standard academic benchmark for long-term conversational memory. The `longmemeval_s` variant runs 500 questions across 6 categories (single-session-user, single-session-assistant, knowledge-update, temporal-reasoning, multi-session, single-session-preference) against ~50 sessions of synthetic history per query. Each question is scored on two axes: **Phase 1 retrieval** (does the memory layer surface gold-context sessions in top-k?) and **Phase 2 QA accuracy** (does the reader produce the gold answer, judged by an LLM grader?).
+
+**Headline (v5.26.0, full 500q, Sonnet 4.6 reader + judge):**
+
+| System | Reader | LongMemEval-s QA | vs yadgar |
+|---|---|---|---|
+| **yadgar v5.26.0** | **Sonnet 4.6** | **69.4%** (347/500) | — |
+| mem0 V3 | GPT-4o | 94.4% | +25.0 pp |
+| Zep / Graphiti | GPT-4o | 63.8% | **−5.6 pp** |
+
+Yadgar beats Zep by 5.6pp on the same 500-question sample. mem0 leads by 25pp via LLM-extract-on-ingest (closing this gap is tracked as Adopt-7, see [Roadmap](#roadmap)).
+
+**Phase 1 retrieval (500q natural distribution):** MRR = 0.928, Recall@10 = 0.906, NDCG@10 = 0.863. Memory layer surfaces gold context for 91% of queries — the remaining QA gap is almost entirely reader synthesis, not retrieval.
+
+**Per-type QA breakdown:**
+
+| Category | n | QA accuracy | R@10 |
+|---|---|---|---|
+| single-session-assistant | 56 | 96.4% | 0.982 |
+| single-session-user | 70 | 92.9% | 0.984 |
+| abstention | 30 | 80.0% | — |
+| knowledge-update | 78 | 75.6% | 0.931 |
+| temporal-reasoning | 133 | 63.9% | 0.833 |
+| multi-session | 133 | 55.6% | 0.893 |
+| single-session-preference | 30 | 33.3% | 0.900 |
+
+**Reproducibility:** wall-clock 470 min via `claude -p` Max quota (zero cash spend). Raw results: `benchmarks/results/longmemeval_v5.26.0_s_full.json` + `_hypotheses.jsonl`. Full per-type analysis, methodology, and comparison details: [`docs/BENCHMARK_RESULTS.md`](docs/BENCHMARK_RESULTS.md). Competitor landscape: [`docs/competitor-audit-2026-05-30.md`](docs/competitor-audit-2026-05-30.md).
 
 ---
 
