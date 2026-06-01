@@ -47,6 +47,44 @@
 
 ---
 
+## 2026-06-01 — v5.35.1 Memory Blocks Follow-ups
+
+**Source:** `docs/PLAN_V5_35_1_BLOCKS_FOLLOWUPS.md`
+**Branch:** `fix/v5.35.1-blocks-followups`
+
+### Item 6: `_active_work` canonicalization — DEFER (Option C)
+
+**Item:** Should `_active_work` episodic memory be replaced by a named memory block `active_work`?
+
+**Options evaluated:**
+- (A) Keep both — parallel infrastructure, bloat.
+- (B) Canonicalize `_active_work` as a memory block — deprecate `update_active_work` MCP tool.
+- (C) Defer — design call, no obvious right answer yet.
+
+**Decision: DEFER — Option C**
+
+**Reason:**
+- Block hook integration (Items 2-4) shipped in this version and is still new; UX is unproven.
+- Canonicalizing `_active_work` as a block risks data loss during migration if the path is buggy.
+  Plan risk note: "keep parallel path 1 release before deprecating."
+- No user-reported pain with `update_active_work` tool. No compelling functional reason to merge now.
+- `update_active_work` vs. `block_update("active_work")` is a surface-area question, not a
+  correctness question. Both paths produce the same restore() injection; blocks just add
+  always-injected semantics that `_active_work` doesn't have.
+
+**Revisit triggers:**
+- v5.50+ after block UX is proven (3+ releases with block hooks stable).
+- User or agent explicitly requests the merge / reports confusion between the two surfaces.
+- Restore() performance or context-window pressure makes the dual-path a measurable problem.
+
+**If implemented (Option B) — guard rails:**
+- Keep `update_active_work` MCP tool alive for ≥1 release, delegating to `block_update`.
+- Restore() reads from block if present, falls back to episodic memory tag.
+- Migration script to copy existing `_active_work` episodic memory → block for each project.
+- No `DELETE` of episodic memory until 2 releases post-migration.
+
+---
+
 ## 2026-05-31 — v5.26.0 Adopt-1 Benchmark Ship + D2/D3 RECONSIDER
 
 **Source:** v5.26.0 ship — Phase 1 (retrieval) + Phase 2 (QA) LongMemEval pilot.
