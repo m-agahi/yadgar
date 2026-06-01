@@ -17,9 +17,37 @@ settings = get_settings()
 
 
 @_tool()
-def recall(query: str, max_results: int = 5, min_heat: float = 0.0) -> list[dict]:
-    """Semantic + keyword search filtered by heat. Boosts accessed memories."""
+def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all recall variants
+    query: str,
+    max_results: int = 5,
+    min_heat: float = 0.0,
+    profile: str | None = None,
+    stage_overrides: dict[str, dict] | None = None,
+) -> list[dict]:
+    """Semantic + keyword search filtered by heat. Boosts accessed memories.
+
+    profile (v5.31.1): optional retrieval profile name. When provided, routes
+    through the v5.31.0 plugin pipeline instead of the legacy monolithic path.
+    Valid values: "fast", "balanced", "full", "debug". When None (default),
+    behavior is identical to pre-v5.31.1 — zero change for existing callers.
+
+    stage_overrides (v5.31.1): per-call stage disable map, e.g.
+    {"nli": {"enabled": False}}. Only used when profile is set. Passed
+    through to Retriever.recall_via_pipeline(stage_overrides=...).
+
+    Raises ValueError immediately (before any retrieval work) if profile is
+    set to an unrecognised value.
+    """
     import time as _time  # noqa: PLC0415
+
+    # I3: validate profile BEFORE any expensive setup or DB access.
+    if profile is not None:
+        from yadgar.retrieval.profiles import _VALID_PROFILES  # noqa: PLC0415
+
+        if profile not in _VALID_PROFILES:
+            raise ValueError(
+                f"Unknown retrieval profile {profile!r}. Valid profiles: {sorted(_VALID_PROFILES)}"
+            )
 
     _recall_t0 = _time.monotonic()
     merged: list[dict] = []  # P11 Bug A fix: init before try so finally sees it
@@ -59,7 +87,23 @@ def recall(query: str, max_results: int = 5, min_heat: float = 0.0) -> list[dict
 
         # Use HippoRetriever for unified 4-signal recall
         retriever = _st._retriever
-        if retriever is not None:
+        if retriever is not None and profile is not None:
+            # v5.31.1: profile set → route through plugin pipeline.
+            from yadgar.metrics import (  # noqa: PLC0415
+                yadgar_recall_profile_invocations_total,
+            )
+
+            yadgar_recall_profile_invocations_total.labels(profile=profile).inc()
+            merged = retriever.recall_via_pipeline(
+                query,
+                max_results=max_results * 3,
+                min_heat=min_heat,
+                current_branch=_current_branch,
+                default_branch=_default_branch,
+                profile=profile,
+                stage_overrides=stage_overrides,
+            )
+        elif retriever is not None:
             merged = retriever.recall(
                 query,
                 max_results=max_results * 3,

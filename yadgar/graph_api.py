@@ -220,6 +220,9 @@ class GraphAPI:
                         }
                     )
 
+        # ── Entity nodes (C1/v5.31.1: required so causal edges pass orphan filter) ─
+        self._assemble_entity_nodes(nodes)
+
         # ── Causal edges (C3: include source_memory_id for citation tracing) ──
         # C1: filter out invalidated edges by default.
         # v5.29.0: as_of parameter enables point-in-time graph snapshots.
@@ -251,10 +254,7 @@ class GraphAPI:
         # force-graph.min.js throws 'node not found: <id>' synchronously when any
         # link references an ID not in the node set. One orphan edge crashes the
         # entire physics simulation (tick count stays 0, all nodes clump at origin).
-        # After v5.0.0 monolith split, entity:* nodes are assembled separately from
-        # causal edges — causal edges reference entity:* IDs that are never included
-        # in the node list, making every causal edge an orphan until entity nodes
-        # are restored in a future release.
+        # v5.31.1: entity nodes now included above; causal edges no longer orphans.
         node_ids = {n["id"] for n in nodes}
         filtered_edges = [
             e for e in edges if e.get("source") in node_ids and e.get("target") in node_ids
@@ -325,6 +325,32 @@ class GraphAPI:
         return {"nodes": nodes, "edges": []}
 
     # ── Private helpers ───────────────────────────────────────────────────────
+
+    def _assemble_entity_nodes(self, nodes: list[dict]) -> None:
+        """Fetch all entities and append entity:* node dicts to *nodes*.
+
+        v5.31.1: entity nodes were removed in v5.0.0 monolith split.  Without
+        them every causal edge references an absent node ID and is dropped by
+        the orphan filter — making include_invalidated filtering unobservable
+        via get_full_graph().  Restoring entity nodes fixes the orphan filter
+        for causal edges while keeping all other edge types unchanged.
+        """
+        try:
+            all_entities = self._s.get_all_entities(include_archived=True)
+        except Exception:
+            all_entities = []
+        for ent in all_entities:
+            raw_id = self._extract_id(ent.get("id"))
+            if raw_id is None:
+                continue
+            nodes.append(
+                {
+                    "id": f"entity:{raw_id}",
+                    "type": "entity",
+                    "label": (ent.get("name") or "")[:60],
+                    "heat": round(float(ent.get("heat") or 0), 4),
+                }
+            )
 
     def _expand_memory(self, raw_id: int, nodes: list, seen: set) -> None:
         try:

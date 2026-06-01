@@ -6,6 +6,15 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.31.1] — 2026-06-01
+
+Hotfix bundle: graph filter tests + MCP recall() pipeline kwargs.
+
+- **fix(graph):** restore entity nodes in `get_full_graph()` so causal edges survive the orphan filter. Root cause: v5.0.0 monolith split removed `entity:*` nodes; every causal edge was silently dropped before returning, making `include_invalidated` filtering unobservable. Fix adds `_assemble_entity_nodes()` helper. Fixes 2 pre-existing `test_bitemporal_edges` failures.
+- **feat(mcp):** `recall()` MCP tool now accepts `profile: str | None` (`"fast"` / `"balanced"` / `"full"` / `"debug"`) and `stage_overrides: dict[str, dict] | None`. When `profile=None` (default) behavior is unchanged. When set, routes through `Retriever.recall_via_pipeline()` and emits `yadgar_recall_profile_invocations_total{profile=...}`. Invalid profile raises `ValueError` before any retrieval work (I3).
+
+---
+
 ## [5.31.0] — 2026-06-01
 
 Recall pipeline plugin architecture (Adopt-R2 from 2026-05-30 competitor audit).
