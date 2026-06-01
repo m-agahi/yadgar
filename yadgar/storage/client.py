@@ -157,6 +157,9 @@ _MEMORY_UPDATABLE_FIELDS = frozenset(
         "migration_grace",
         # v5.17.0 contradiction confidence decay
         "confidence",
+        # v5.35.1 — were missing since initial implementation (same class as v5.17.0 confidence fix)
+        "last_accessed",
+        "access_count",
     }
 )
 
