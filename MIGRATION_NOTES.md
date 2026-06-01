@@ -1,5 +1,51 @@
 # Migration Notes
 
+## v5.41.0 — Wiki versioning + section-patching (2026-06-01)
+
+Core 5.39.0 → 5.41.0. Backend unchanged at 5.4.0.
+**DB migration required** — migration 013 runs automatically on daemon start.
+
+### Schema migration
+
+Migration `013_wiki_page_version` runs under `~/.yadgar/.migration.lock` on first server start after upgrade:
+
+1. **DDL** — creates `wiki_page_version` SCHEMALESS table + three indexes.
+2. **Seed** — inserts `version=1` row for every existing `wiki_page` row. Each seed row copies `title`, `content`, `category`, `tags`, `confidence`, `source_memory_ids`, `branch` with `change_summary="initial version"`. Pages that already have version rows are skipped (idempotent).
+
+**Expected wall-clock on production (≈2,054 pages):** <30 s. Lock prevents parallel daemon starts from running migration twice.
+
+**Safe-to-re-run:** `_migration_013_wiki_page_version` is idempotent — re-running after partial failure continues from where it left off (pages already seeded are skipped).
+
+**Rollback:** The table and indexes are additive — no existing data is modified. Rolling back is `REMOVE TABLE wiki_page_version;` (manual, out-of-band). Version hook in `insert/update_wiki_page` would also need to be reverted (code-level rollback).
+
+### Version retention policy
+
+Every version row is kept forever. No garbage collection. Estimated storage growth: ~450 MB/year at current write rate (~5 wiki_updates/day across all pages). A `memory_stats`-style surface will be added in v5.42+ if needed.
+
+### One-liner recovery (goal of this release)
+
+```
+wiki_restore(slug="yadgar-roadmap-future-improvements", version=15)
+```
+
+Compare with the 2026-05-31 incident recovery: 90 minutes of manual archive digging. After v5.41.0: seconds.
+
+### New MCP tools
+
+| Tool | Power | Notes |
+|---|---|---|
+| `wiki_history(slug, limit=20)` | No | Version list, no content field |
+| `wiki_read_version(slug, version)` | No | Full snapshot |
+| `wiki_diff(slug, v1, v2, fmt)` | No | unified or JSON format |
+| `wiki_restore(slug, version)` | Yes | Creates new version N+1; bypasses sim gate |
+| `wiki_append_section(slug, heading, content, position)` | Yes | Section-atomic write; secret-gated |
+
+### async queue timing note
+
+`wiki_add` uses an async file queue and returns before the write completes. `wiki_history(slug)` called immediately after `wiki_add` may show stale results until the queue drains. Use `wiki_read_version` after queue drain for consistency.
+
+---
+
 ## v5.39.0 — Wiki similarity gate (2026-06-01)
 
 Core 5.31.1 → 5.39.0. Backend unchanged at 5.4.0. **No DB migration.**

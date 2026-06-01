@@ -6,6 +6,23 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.41.0] — 2026-06-01
+
+Wiki versioning + section-patching — closes the 2026-05-31 corruption class.
+Migration 013 seeds version history for all existing wiki pages.
+See `docs/PLAN_V5_41_0_WIKI_VERSIONING.md` and `MIGRATION_NOTES.md` v5.41.0.
+
+- **feat(wiki/storage):** `wiki_page_version` table — per-write snapshot of every wiki page field except embedding. Version row written on every `insert_wiki_page` and `update_wiki_page` call. Hash-identical content still creates a version.
+- **migration 013:** `_migration_013_wiki_page_version` — DDL + seed `version=1` from all existing `wiki_page` rows. Idempotent. Three indexes: `page_id`, `(page_id, version) UNIQUE`, `created_at`.
+- **feat(wiki/tools):** `wiki_history(slug, limit=20)` — version history list, newest first, no content (light payload).
+- **feat(wiki/tools):** `wiki_read_version(slug, version)` — full snapshot of any historical version.
+- **feat(wiki/tools):** `wiki_diff(slug, v1, v2, fmt='unified'|'json')` — compare two versions.
+- **feat(wiki/tools):** `wiki_restore(slug, version)` — restore to prior version as new version N+1. Bypasses v5.39 similarity gate (explicit recovery). Rebuilds embedding + crossrefs.
+- **feat(wiki/tools):** `wiki_append_section(slug, heading, content, position)` — section-atomic write. Prevents full-content overwrites. Supports `Pipeline#2` disambiguation. `power=True` + secret-gated.
+- **feat(wiki):** `_compute_change_summary` — pure-Python difflib stats + section headings. No LLM (I9).
+- **tests:** 38 tests in `test_wiki_versioning.py`. Extended `test_wiki.py` + `test_memory_update_wiki_update.py`.
+- **recovery:** Future corruption → `wiki_restore(slug, N-1)` instead of 90-minute archive dig.
+
 ## [5.39.0] — 2026-06-01
 
 Wiki similarity gate — blocks near-duplicate page creation (prevents 2026-05-30 corruption class).
