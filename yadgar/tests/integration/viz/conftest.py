@@ -58,8 +58,17 @@ def _free_port() -> int:
 
 @pytest.fixture(scope="session")
 def chromium_executable() -> str | None:
-    """Return path to a usable Chromium binary."""
-    return _SYSTEM_CHROMIUM  # None → playwright uses bundled (FHS systems)
+    """Return path to a usable Chromium binary.
+
+    Priority:
+    1. PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH env var (CI override)
+    2. System chromium on PATH (NixOS dev machines)
+    3. None → playwright uses bundled default (standard FHS Linux / macOS)
+    """
+    env_path = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH")
+    if env_path and os.path.isfile(env_path):
+        return env_path
+    return _SYSTEM_CHROMIUM  # None → playwright uses bundled
 
 
 # ── MCP daemon fixture ────────────────────────────────────────────────────────
