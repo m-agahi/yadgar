@@ -6,6 +6,22 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.31.0] — 2026-06-01
+
+Recall pipeline plugin architecture (Adopt-R2 from 2026-05-30 competitor audit).
+
+- **`RetrievalStage` ABC** (`yadgar/retrieval/stages/base.py`) — interface every stage implements: `name`, `apply(state)`, optional `is_enabled(profile, config)`.
+- **`RetrievalState` dataclass** (`yadgar/retrieval/state.py`) — single inter-stage carrier (query, scores, embeddings, candidates, stats, branch context, profile).
+- **`RetrievalPipeline`** (`yadgar/retrieval/pipeline.py`) — ordered stage orchestrator with per-stage timing, Prometheus metrics, per-call stage overrides, composite post-fusion dispatch.
+- **11 stage wrappers** (`yadgar/retrieval/stages/`): `query_analysis`, `fts`, `knn`, `ppr`, `spreading`, `temporal`, `fusion`, `ce_rerank`, `nli`, `mmr`, `adversarial`, `rules` — each delegates to the existing `_collect_*` / `_apply_rerank_pipeline` methods; no computation moved.
+- **`recall_via_pipeline()`** on `Retriever` — functionally identical to `recall()` with `profile="balanced"`, backed by the plugin pipeline. Legacy `recall()` unchanged.
+- **`recall_compare()`** (`yadgar/retrieval/compare.py`) — A/B harness: runs the same query under multiple profiles side-by-side; returns results + per-stage timing for each profile.
+- **4 new Prometheus metrics**: `yadgar_recall_stage_duration_seconds{stage,profile}` histogram, `yadgar_recall_stage_candidates_in{stage,profile}` gauge, `yadgar_recall_stage_candidates_out{stage,profile}` gauge, `yadgar_recall_profile_invocations_total{profile}` counter.
+- **Profiles** (`yadgar/retrieval/profiles.py`): `fast`, `balanced`, `full`, `debug`. Balanced = current default behavior. All existing `profile["cross_encoder"]` / `profile["nli"]` / `profile["multi_passage"]` dict accesses preserved for backward compat.
+- **29 new tests** in `yadgar/tests/test_retrieval_pipeline.py` — Phases 0/2/3/4/5/6; regression tests confirm `recall_via_pipeline(profile="balanced")` produces bit-identical output to legacy `recall()`.
+- **No behavior change** — `recall()` untouched; existing callers unaffected.
+
+See [MIGRATION_NOTES.md §v5.31.0](MIGRATION_NOTES.md#v5310--recall-pipeline-plugin-architecture-2026-06-01).
 ## [5.29.0] — 2026-06-01
 
 Bi-temporal edges extension (Adopt-3) — user_profile and derived_belief.

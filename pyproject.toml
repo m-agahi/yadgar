@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.29.0"
+version = "5.31.0"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "Apache-2.0"
@@ -150,9 +150,6 @@ test = [
     "pytest-timeout>=2.3",
     "pytest-rerunfailures>=14",
     "hypothesis>=6",
-]
-analytics = [
-    "duckdb>=0.10,<2",
 ]
 dev = [
     "yadgar[test]",
