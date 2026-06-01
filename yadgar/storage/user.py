@@ -1,13 +1,14 @@
 """User profile and thermodynamics table CRUD.
 
 _UserMixin provides:
-  - User profile insert/search/query (upsert-like)
+  - User profile insert/search/query (bi-temporal close-and-insert from v5.29.0)
   - Memory thermodynamics helpers (update_memory_scores, update_memory_metamemory,
     get_memories_in_time_window)
 """
 
 import json
 import logging
+import os
 from datetime import datetime
 
 from yadgar.tracing import trace_span
@@ -99,12 +100,24 @@ class _UserMixin:
         confidence: float = 0.5,
         directory_context: str | None = None,
     ) -> int:
+        """Insert or supersede a user_profile fact (v5.29.0 bi-temporal).
+
+        Pivots from UPSERT-in-place to close-and-insert when attribute_value
+        changes or confidence delta >= PROFILE_BITEMPORAL_VERSION_DELTA (default 0.05).
+        Minor confidence drift folds into an in-place update to bound row growth.
+
+        Uniqueness on currently-valid rows is enforced application-side:
+        SurrealDB v3 does not support partial indexes (DEFINE INDEX ... WHERE).
+        Migration 010 drops the old unconditional UNIQUE index.
+        """
         now = self._now_iso()
-        # Check if profile already exists
+        delta = float(os.environ.get("PROFILE_BITEMPORAL_VERSION_DELTA", "0.05"))
+
+        # Find currently-valid row for this key (application-side unique check)
         existing = self._q(
-            "SELECT id, confidence, evidence_memory_ids FROM user_profile "
+            "SELECT id, attribute_value, confidence, evidence_memory_ids FROM user_profile "
             "WHERE entity_name = $en AND attribute_type = $at AND attribute_key = $ak "
-            "AND directory_context = $dc LIMIT 1",
+            "AND directory_context = $dc AND valid_until IS NONE LIMIT 1",
             {
                 "en": entity_name,
                 "at": attribute_type,
@@ -116,39 +129,70 @@ class _UserMixin:
         if existing:
             row = existing[0]
             pid = self._extract_id(row["id"])
-            new_confidence = min(float(row.get("confidence", 0.5)) + 0.1, 1.0)
+            old_value = row.get("attribute_value", "")
+            old_conf = float(row.get("confidence", 0.5))
             evidence = row.get("evidence_memory_ids", [])
             if isinstance(evidence, str):
                 evidence = json.loads(evidence)
             if memory_id is not None and memory_id not in evidence:
                 evidence.append(memory_id)
-            # §6 Q15: wrap update in TX
+
+            value_changed = old_value != attribute_value
+            conf_delta = abs(confidence - old_conf)
+            needs_supersession = value_changed or conf_delta >= delta
+
+            if needs_supersession:
+                from yadgar.storage.bitemporal import invalidate_edge
+
+                invalidate_edge(self, "user_profile", pid)
+
+                new_pid = self._next_id("user_profile")
+                self._q(
+                    "BEGIN TRANSACTION;\n"
+                    "CREATE type::record('user_profile', $id) SET "
+                    "entity_name = $en, attribute_type = $at, attribute_key = $ak, "
+                    "attribute_value = $av, evidence_memory_ids = $evids, "
+                    "confidence = $conf, created_at = $now, updated_at = $now, "
+                    "directory_context = $dc, valid_from = $now, valid_until = NONE;\n"
+                    "COMMIT TRANSACTION",
+                    {
+                        "id": new_pid,
+                        "en": entity_name,
+                        "at": attribute_type,
+                        "ak": attribute_key,
+                        "av": attribute_value,
+                        "evids": evidence,
+                        "conf": confidence,
+                        "now": now,
+                        "dc": directory_context,
+                    },
+                )
+                return new_pid
+
+            # Below threshold: in-place update only (merge evidence, bump updated_at)
             self._q(
                 "BEGIN TRANSACTION;\n"
                 "UPDATE type::record('user_profile', $id) SET "
-                "attribute_value = $av, confidence = $conf, "
                 "evidence_memory_ids = $evids, updated_at = $now;\n"
                 "COMMIT TRANSACTION",
                 {
                     "id": pid,
-                    "av": attribute_value,
-                    "conf": new_confidence,
                     "evids": evidence,
                     "now": now,
                 },
             )
             return pid
 
+        # No existing currently-valid row — fresh insert
         evidence = [memory_id] if memory_id is not None else []
         pid = self._next_id("user_profile")
-        # §6 Q15: wrap create in TX
         self._q(
             "BEGIN TRANSACTION;\n"
             "CREATE type::record('user_profile', $id) SET "
             "entity_name = $en, attribute_type = $at, attribute_key = $ak, "
             "attribute_value = $av, evidence_memory_ids = $evids, "
             "confidence = $conf, created_at = $now, updated_at = $now, "
-            "directory_context = $dc;\n"
+            "directory_context = $dc, valid_from = $now, valid_until = NONE;\n"
             "COMMIT TRANSACTION",
             {
                 "id": pid,
@@ -165,26 +209,44 @@ class _UserMixin:
         return pid
 
     @trace_span("storage.user.search_profiles_fts")
-    def search_profiles_fts(self, query: str, limit: int = 10) -> list[dict]:
+    def search_profiles_fts(
+        self, query: str, limit: int = 10, include_invalidated: bool = False
+    ) -> list[dict]:
+        """FTS over user_profile.
+
+        include_invalidated (v5.29.0): when False (default), excludes
+        superseded rows (valid_until IS NOT NONE).
+        """
+        validity_clause = "" if include_invalidated else " AND valid_until IS NONE"
         rows = self._q(
-            "SELECT * FROM user_profile WHERE entity_name @@ $q "
-            "OR attribute_type @@ $q OR attribute_key @@ $q OR attribute_value @@ $q "
-            "LIMIT $lim",
+            f"SELECT * FROM user_profile WHERE (entity_name @@ $q "
+            f"OR attribute_type @@ $q OR attribute_key @@ $q OR attribute_value @@ $q)"
+            f"{validity_clause} LIMIT $lim",
             {"q": query, "lim": limit},
         )
         return self._rows_to_dicts(rows)
 
     def get_profiles_for_entity(
-        self, entity_name: str, directory_context: str | None = None
+        self,
+        entity_name: str,
+        directory_context: str | None = None,
+        include_invalidated: bool = False,
     ) -> list[dict]:
+        """Return user_profile rows for an entity.
+
+        include_invalidated (v5.29.0): when False (default), returns only
+        currently-valid rows (valid_until IS NONE).
+        """
+        validity_clause = "" if include_invalidated else " AND valid_until IS NONE"
         if directory_context is not None:
             rows = self._q(
-                "SELECT * FROM user_profile WHERE entity_name = $en AND directory_context = $dc",
+                f"SELECT * FROM user_profile WHERE entity_name = $en "
+                f"AND directory_context = $dc{validity_clause}",
                 {"en": entity_name, "dc": directory_context},
             )
         else:
             rows = self._q(
-                "SELECT * FROM user_profile WHERE entity_name = $en",
+                f"SELECT * FROM user_profile WHERE entity_name = $en{validity_clause}",
                 {"en": entity_name},
             )
         return self._rows_to_dicts(rows)
