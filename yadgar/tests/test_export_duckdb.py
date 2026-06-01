@@ -320,6 +320,38 @@ class TestExporterActionLogWindow:
         con.close()
         assert count == 0
 
+    def test_action_log_time_window_excludes_old_rows(self, tmp_db, tmp_duckdb):
+        """action-log-since 30d: old row (60d ago) excluded, fresh row included."""
+        pytest.importorskip("duckdb", reason="duckdb not installed")
+        import duckdb
+
+        from yadgar.storage import StorageEngine
+
+        storage = StorageEngine(tmp_db, embedding_dim=4)
+        # Insert old row: 60 days ago (ISO string — SurrealDB accepts it)
+        storage._q(
+            "CREATE action_log SET tool = 'recall', processed = false, "
+            "ts = <datetime>'2026-04-01T00:00:00Z'",
+        )
+        # Insert fresh row: now
+        storage._q(
+            "CREATE action_log SET tool = 'memorize', processed = false, ts = time::now()",
+        )
+        storage.close()
+
+        from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig
+
+        cfg = ExportConfig(action_log_since="30d", embedding_dim=4, create_views=False)
+        exporter = DuckDBExporter(db_path=tmp_db, output_path=str(tmp_duckdb), config=cfg)
+        exporter.run()
+
+        con = duckdb.connect(str(tmp_duckdb), read_only=True)
+        rows = con.execute("SELECT tool FROM action_log ORDER BY tool").fetchall()
+        con.close()
+        tools = [r[0] for r in rows]
+        assert "memorize" in tools, "fresh row should be included"
+        assert "recall" not in tools, "60-day-old row should be excluded by 30d window"
+
 
 # ---------------------------------------------------------------------------
 # Embedding roundtrip
