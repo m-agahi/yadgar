@@ -9,7 +9,9 @@
 
 </div>
 
-[Changelog](docs/CHANGELOG.md) · [Benchmark](#benchmark) · [Roadmap](#roadmap) · [Architecture](docs/architecture.md)
+[Changelog](docs/CHANGELOG.md) · [Benchmark](#benchmark) · [Roadmap](#roadmap) · [Architecture](docs/architecture.md) · [JS/TS SDK](docs/sdk-js.md)
+
+**JavaScript/TypeScript SDK available** — [`@yadgar/sdk`](sdk-js/) wraps all 53 MCP tools as typed async methods. Works in Node.js, Vercel Edge, Cloudflare Workers, and Deno. See [`sdk-js/README.md`](sdk-js/README.md) for install instructions and quick start.
 
 *Yadgar* (یادگار) is Persian for "memento, keepsake." It's a persistent memory engine for Claude Code: tell it what matters, and it survives across sessions — decaying what you stop touching, promoting what repeats, filtering recall to the git branch you're on, and pairing every memory with a curated wiki that searches through the same pipeline.
 
