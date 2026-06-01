@@ -5,6 +5,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 
+from yadgar.blocks_render import render_blocks_section
 from yadgar.cognitive_map import CognitiveMap
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
@@ -409,32 +410,10 @@ class CheckpointRestore:
     def _render_blocks_section(self, blocks: list[dict], directory: str) -> str:
         """Render memory blocks as markdown section for restore() injection (v5.33.0).
 
+        Delegates to yadgar.blocks_render.render_blocks_section (v5.35.1 DRY extract).
         Returns "" when blocks is empty (safe to call unconditionally).
         """
-        if not blocks:
-            return ""
-        lines: list[str] = [
-            "## Memory Blocks (always-injected, editable via block_* MCP tools)",
-            "",
-        ]
-        global_blocks = [b for b in blocks if b.get("scope") == "global"]
-        project_blocks = [b for b in blocks if b.get("scope") == "project"]
-        if global_blocks:
-            lines.append("### Global blocks")
-            for b in global_blocks:
-                content = b.get("content", "")
-                name = b.get("name", "")
-                lines.append(f"- `{name}`: {content}" if content else f"- `{name}`: *(empty)*")
-            lines.append("")
-        if project_blocks:
-            dir_label = directory or "project"
-            lines.append(f"### Project blocks ({dir_label})")
-            for b in project_blocks:
-                content = b.get("content", "")
-                name = b.get("name", "")
-                lines.append(f"- `{name}`: {content}" if content else f"- `{name}`: *(empty)*")
-            lines.append("")
-        return "\n".join(lines)
+        return render_blocks_section(blocks, directory)
 
     def _format_restoration(
         self,
