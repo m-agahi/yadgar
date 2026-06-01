@@ -163,6 +163,7 @@ from yadgar.server.tools import (  # noqa: F401
     block_delete,
     block_list,
     wiki_discard,
+    wiki_check_duplicate,
     checkpoint,
     restore,
     anchor,
