@@ -175,6 +175,37 @@ yadgar_recall_stage_ms = Histogram(
     registry=_registry,
 )
 
+# ── v5.31.0 — Plugin pipeline per-stage metrics ──────────────────────────────
+
+yadgar_recall_stage_duration_seconds = Histogram(
+    "yadgar_recall_stage_duration_seconds",
+    "Duration of a recall pipeline stage in seconds (v5.31.0 plugin arch)",
+    ["stage", "profile"],
+    buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+    registry=_registry,
+)
+
+yadgar_recall_stage_candidates_in = Gauge(
+    "yadgar_recall_stage_candidates_in",
+    "Candidate count entering a recall pipeline stage",
+    ["stage", "profile"],
+    registry=_registry,
+)
+
+yadgar_recall_stage_candidates_out = Gauge(
+    "yadgar_recall_stage_candidates_out",
+    "Candidate count exiting a recall pipeline stage",
+    ["stage", "profile"],
+    registry=_registry,
+)
+
+yadgar_recall_profile_invocations_total = Counter(
+    "yadgar_recall_profile_invocations_total",
+    "Total recall() calls by profile name",
+    ["profile"],
+    registry=_registry,
+)
+
 yadgar_wiki_query_duration_ms = Histogram(
     "yadgar_wiki_query_duration_ms",
     "Total wiki_query() duration in milliseconds",
