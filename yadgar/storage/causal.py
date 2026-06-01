@@ -60,13 +60,25 @@ class _CausalMixin:
         )
         return self._rows_to_dicts(rows)
 
-    def get_all_causal_edges(self, include_invalidated: bool = False) -> list[dict]:
+    def get_all_causal_edges(
+        self, include_invalidated: bool = False, as_of: str | None = None
+    ) -> list[dict]:
         """Return causal DAG edges.
 
         include_invalidated (C1): when False (default), excludes rows whose
-        valid_until is set and non-null (i.e. closed/superseded edges).
+        valid_until is set (i.e. closed/superseded). Ignored when as_of is set.
+
+        as_of (v5.29.0): ISO-8601 timestamp. When provided, returns edges valid
+        at that point in time via as_of_filter. Default None = current state.
         """
-        if include_invalidated:
+        if as_of is not None:
+            from yadgar.storage.bitemporal import as_of_filter
+
+            clause = as_of_filter("causal_dag_edge", as_of=as_of)
+            rows = self._q(
+                f"SELECT * FROM causal_dag_edge WHERE 1=1{clause} ORDER BY confidence DESC"
+            )
+        elif include_invalidated:
             rows = self._q("SELECT * FROM causal_dag_edge ORDER BY confidence DESC")
         else:
             rows = self._q(

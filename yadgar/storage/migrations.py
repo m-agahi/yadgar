@@ -248,6 +248,58 @@ def _migration_008_anchor_tier(storage) -> dict:
     return {"anchor_tier_migrated_count": migrated}
 
 
+def _migration_010_bitemporal_user_profile(storage) -> None:
+    """Add valid_from / valid_until to user_profile (Adopt-3, v5.29.0).
+
+    Pivot semantics: from "UPSERT in-place" to "close prior row + insert new row".
+
+    SurrealDB v3.0.5 does not support DEFINE INDEX ... WHERE (partial index), so
+    the old UNIQUE constraint on (entity_name, attribute_type, attribute_key,
+    directory_context) is DROPPED entirely. Uniqueness for currently-valid rows is
+    enforced application-side in insert_profile (query valid_until IS NONE first).
+
+    DEFINE FIELD IF NOT EXISTS is idempotent — safe to run twice.
+    Backfill: set valid_from = created_at on existing rows (best-effort).
+    """
+    storage._q("DEFINE FIELD IF NOT EXISTS valid_from ON TABLE user_profile TYPE option<string>;")
+    storage._q("DEFINE FIELD IF NOT EXISTS valid_until ON TABLE user_profile TYPE option<string>;")
+
+    # Backfill valid_from from created_at on existing rows
+    storage._q(
+        "BEGIN TRANSACTION;\n"
+        "UPDATE user_profile SET valid_from = created_at "
+        "WHERE valid_from IS NONE AND created_at IS NOT NONE;\n"
+        "COMMIT TRANSACTION"
+    )
+
+    # Drop the old unconditional UNIQUE index — application-side enforcement replaces it.
+    # REMOVE INDEX IF EXISTS is idempotent.
+    storage._q("REMOVE INDEX IF EXISTS profile_unique_idx ON user_profile;")
+
+
+def _migration_011_bitemporal_derived_belief(storage) -> None:
+    """Add valid_from / valid_until to derived_belief (Adopt-3, v5.29.0).
+
+    derived_belief has no UNIQUE constraint, so no index rework needed.
+    Existing rows are append-only (no UPSERT); backfill sets valid_from = created_at.
+
+    DEFINE FIELD IF NOT EXISTS is idempotent — safe to run twice.
+    """
+    storage._q("DEFINE FIELD IF NOT EXISTS valid_from ON TABLE derived_belief TYPE option<string>;")
+    storage._q(
+        "DEFINE FIELD IF NOT EXISTS valid_until ON TABLE derived_belief TYPE option<string>;"
+    )
+
+    # Backfill: every existing belief is the current one for its group.
+    # valid_from = created_at; valid_until = NONE (currently valid).
+    storage._q(
+        "BEGIN TRANSACTION;\n"
+        "UPDATE derived_belief SET valid_from = created_at "
+        "WHERE valid_from IS NONE AND created_at IS NOT NONE;\n"
+        "COMMIT TRANSACTION"
+    )
+
+
 _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {"version": "001_hnsw_indexes", "fn": _migration_001_hnsw_indexes},
     {"version": "002_relationship_indexes", "fn": _migration_002_relationship_indexes},
@@ -275,6 +327,14 @@ _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {
         "version": "009_wiki_bookmark_table",
         "fn": _migration_009_wiki_bookmark_table,
+    },
+    {
+        "version": "010_bitemporal_user_profile",
+        "fn": _migration_010_bitemporal_user_profile,
+    },
+    {
+        "version": "011_bitemporal_derived_belief",
+        "fn": _migration_011_bitemporal_derived_belief,
     },
 ]
 

@@ -59,15 +59,12 @@ class GraphAPI:
         max_memories: int = 500,
         top_k: int = 8,
         include_invalidated: bool = False,
+        as_of: str | None = None,
     ) -> dict:
         """Return full graph: memory nodes with semantic, temporal, and transition edges.
 
-        Memory nodes: id="mem:{id}", type="memory"
-        Edge types: "semantic", "temporal", "transition"
-
-        include_invalidated (C1): when False (default), KG edges whose valid_until is
-        set and in the past are excluded. Pass True to include all rows regardless of
-        bi-temporal validity.
+        include_invalidated: when False (default), excludes invalidated KG edges.
+        as_of (v5.29.0): ISO-8601 timestamp for point-in-time graph snapshot.
         """
         nodes: list[dict] = []
         edges: list[dict] = []
@@ -225,8 +222,11 @@ class GraphAPI:
 
         # ── Causal edges (C3: include source_memory_id for citation tracing) ──
         # C1: filter out invalidated edges by default.
+        # v5.29.0: as_of parameter enables point-in-time graph snapshots.
         try:
-            causal_edges_raw = self._s.get_all_causal_edges(include_invalidated=include_invalidated)
+            causal_edges_raw = self._s.get_all_causal_edges(
+                include_invalidated=include_invalidated, as_of=as_of
+            )
         except Exception:
             causal_edges_raw = []
 

@@ -150,27 +150,55 @@ class _NarrativeMixin:
 
     # ------------------------------------------------------------------ Derived Beliefs
 
-    def insert_belief(
+    def insert_belief(  # noqa: PLR0913
         self,
         belief_type: str,
         subject: str,
         content: str,
         evidence_memory_ids: list[int] | None = None,
         confidence: float = 0.5,
-        embedding: bytes | None = None,
-        embedding_model: str | None = None,
+        embedding_info: tuple[bytes, str] | None = None,
         directory_context: str | None = None,
+        supersede: bool = True,
     ) -> int:
+        """Insert a derived belief, optionally superseding prior beliefs.
+
+        embedding_info: optional (embedding_bytes, model_name) pair.
+        v5.29.0 (Adopt-3): when supersede=True (default), any currently-valid
+        rows for the same (subject, belief_type, directory_context) are closed
+        (valid_until set to now()) before the new row is inserted. Set
+        supersede=False to allow competing co-existing beliefs (both remain valid).
+        """
         now = self._now_iso()
         evidence = evidence_memory_ids or []
+        embedding: bytes | None = embedding_info[0] if embedding_info else None
+        embedding_model: str | None = embedding_info[1] if embedding_info else None
         emb_floats = self._bytes_to_floats(embedding) if embedding else None
+
+        if supersede:
+            # Close any currently-valid rows for this (subject, belief_type, dc) group
+            prior = self._q(
+                "SELECT id FROM derived_belief "
+                "WHERE subject = $subj AND belief_type = $bt "
+                "AND directory_context = $dc AND valid_until IS NONE",
+                {"subj": subject, "bt": belief_type, "dc": directory_context},
+            )
+            if prior:
+                from yadgar.storage.bitemporal import invalidate_edge
+
+                for row in prior:
+                    prior_id = self._extract_id(row.get("id"))
+                    if prior_id is not None:
+                        invalidate_edge(self, "derived_belief", prior_id)
+
         bid = self._next_id("derived_belief")
         self._q(
             "CREATE type::record('derived_belief', $id) SET "
             "belief_type = $bt, subject = $subject, content = $content, "
             "evidence_memory_ids = $evids, confidence = $conf, "
             "embedding = $emb, embedding_model = $em, "
-            "created_at = $now, updated_at = $now, directory_context = $dc",
+            "created_at = $now, updated_at = $now, directory_context = $dc, "
+            "valid_from = $now, valid_until = NONE",
             {
                 "id": bid,
                 "bt": belief_type,
@@ -186,25 +214,43 @@ class _NarrativeMixin:
         )
         return bid
 
-    def search_beliefs_fts(self, query: str, limit: int = 10) -> list[dict]:
+    def search_beliefs_fts(
+        self, query: str, limit: int = 10, include_invalidated: bool = False
+    ) -> list[dict]:
+        """FTS over derived_belief.
+
+        include_invalidated (v5.29.0): when False (default), excludes
+        superseded rows (valid_until IS NOT NONE).
+        """
+        validity_clause = "" if include_invalidated else " AND valid_until IS NONE"
         rows = self._q(
-            "SELECT * FROM derived_belief WHERE subject @@ $q "
-            "OR belief_type @@ $q OR content @@ $q LIMIT $lim",
+            f"SELECT * FROM derived_belief WHERE (subject @@ $q "
+            f"OR belief_type @@ $q OR content @@ $q){validity_clause} LIMIT $lim",
             {"q": query, "lim": limit},
         )
         return self._rows_to_dicts(rows)
 
     def get_beliefs_for_subject(
-        self, subject: str, directory_context: str | None = None
+        self,
+        subject: str,
+        directory_context: str | None = None,
+        include_invalidated: bool = False,
     ) -> list[dict]:
+        """Return derived_belief rows for a subject.
+
+        include_invalidated (v5.29.0): when False (default), returns only
+        currently-valid rows (valid_until IS NONE).
+        """
+        validity_clause = "" if include_invalidated else " AND valid_until IS NONE"
         if directory_context is not None:
             rows = self._q(
-                "SELECT * FROM derived_belief WHERE subject = $subj AND directory_context = $dc",
+                f"SELECT * FROM derived_belief WHERE subject = $subj "
+                f"AND directory_context = $dc{validity_clause}",
                 {"subj": subject, "dc": directory_context},
             )
         else:
             rows = self._q(
-                "SELECT * FROM derived_belief WHERE subject = $subj",
+                f"SELECT * FROM derived_belief WHERE subject = $subj{validity_clause}",
                 {"subj": subject},
             )
         return self._rows_to_dicts(rows)
