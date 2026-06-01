@@ -4932,10 +4932,10 @@
   "yadgar/graph_api.py::GraphAPI@48": {
     "attrs": 1,
     "inh_depth": 0,
-    "methods": 7
+    "methods": 8
   },
   "yadgar/graph_api.py::__file__": {
-    "loc": 610
+    "loc": 636
   },
   "yadgar/graph_api.py::__init__@14": {
     "cyclo": 1,
@@ -4961,6 +4961,12 @@
     "nesting": 0,
     "params": 2
   },
+  "yadgar/graph_api.py::_assemble_entity_nodes@329": {
+    "cyclo": 6,
+    "loc": 25,
+    "nesting": 2,
+    "params": 2
+  },
   "yadgar/graph_api.py::_compute_semantic_edges@292": {
     "cyclo": 13,
     "loc": 63,
@@ -4980,6 +4986,12 @@
     "params": 4
   },
   "yadgar/graph_api.py::_compute_semantic_edges@352": {
+    "cyclo": 13,
+    "loc": 63,
+    "nesting": 5,
+    "params": 4
+  },
+  "yadgar/graph_api.py::_compute_semantic_edges@378": {
     "cyclo": 13,
     "loc": 63,
     "nesting": 5,
@@ -5009,6 +5021,12 @@
     "nesting": 2,
     "params": 4
   },
+  "yadgar/graph_api.py::_expand_memory@355": {
+    "cyclo": 10,
+    "loc": 22,
+    "nesting": 2,
+    "params": 4
+  },
   "yadgar/graph_api.py::_extract_id@357": {
     "cyclo": 8,
     "loc": 26,
@@ -5033,6 +5051,12 @@
     "nesting": 3,
     "params": 1
   },
+  "yadgar/graph_api.py::_extract_id@443": {
+    "cyclo": 8,
+    "loc": 26,
+    "nesting": 3,
+    "params": 1
+  },
   "yadgar/graph_api.py::_gc_callback@24": {
     "cyclo": 4,
     "loc": 11,
@@ -5052,6 +5076,12 @@
     "params": 1
   },
   "yadgar/graph_api.py::_observe_dbsize_ms@453": {
+    "cyclo": 2,
+    "loc": 8,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/graph_api.py::_observe_dbsize_ms@479": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 2,
@@ -5165,6 +5195,12 @@
     "nesting": 3,
     "params": 3
   },
+  "yadgar/graph_api.py::run_metrics_sampler@627": {
+    "cyclo": 3,
+    "loc": 10,
+    "nesting": 3,
+    "params": 3
+  },
   "yadgar/graph_api.py::sample_system_metrics@393": {
     "cyclo": 24,
     "loc": 110,
@@ -5190,6 +5226,12 @@
     "params": 3
   },
   "yadgar/graph_api.py::sample_system_metrics@463": {
+    "cyclo": 26,
+    "loc": 136,
+    "nesting": 5,
+    "params": 3
+  },
+  "yadgar/graph_api.py::sample_system_metrics@489": {
     "cyclo": 26,
     "loc": 136,
     "nesting": 5,
@@ -14965,13 +15007,13 @@
     "params": 3
   },
   "yadgar/server/tools/recall.py::__file__": {
-    "loc": 235
+    "loc": 280
   },
   "yadgar/server/tools/recall.py::recall@20": {
-    "cyclo": 44,
-    "loc": 216,
-    "nesting": 5,
-    "params": 3
+    "cyclo": 48,
+    "loc": 261,
+    "nesting": 6,
+    "params": 5
   },
   "yadgar/server/tools/wiki.py::__file__": {
     "loc": 348

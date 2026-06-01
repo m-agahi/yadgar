@@ -1,5 +1,24 @@
 # Migration Notes
 
+## v5.31.1 — Graph filter + MCP recall kwargs (2026-06-01)
+
+Core 5.31.0 → 5.31.1. Backend unchanged at 5.4.0. **No DB migration.**
+
+### Item 1 — `get_full_graph()` causal edge fix
+
+No API change. Entity nodes now included in graph response. Existing callers unaffected; any clients that expected zero causal edges in the graph output (due to the bug) will now receive them correctly.
+
+### Item 2 — MCP `recall()` new kwargs
+
+**Opt-in only.** Existing callers with no `profile` argument behave identically to v5.31.0. New kwargs:
+
+- `profile: str | None = None` — `"fast"` / `"balanced"` / `"full"` / `"debug"`. When set, routes through `Retriever.recall_via_pipeline()`.
+- `stage_overrides: dict[str, dict] | None = None` — per-call stage disable map, e.g. `{"nli": {"enabled": false}}`.
+
+Invalid `profile` raises `ValueError` immediately (before any DB access).
+
+---
+
 ## v5.31.0 — Recall pipeline plugin architecture (2026-06-01)
 
 Core 5.26.0 → 5.31.0. Backend unchanged at 5.4.0. **No DB migration.**
