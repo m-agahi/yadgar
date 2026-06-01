@@ -71,6 +71,11 @@ from yadgar.server.tools.wiki import (
     wiki_approve,
     wiki_discard,
     wiki_check_duplicate,
+    wiki_history,
+    wiki_read_version,
+    wiki_diff,
+    wiki_restore,
+    wiki_append_section,
 )
 from yadgar.server.tools.misc import (
     checkpoint,
@@ -142,6 +147,11 @@ __all__ = [
     "wiki_approve",
     "wiki_discard",
     "wiki_check_duplicate",
+    "wiki_history",
+    "wiki_read_version",
+    "wiki_diff",
+    "wiki_restore",
+    "wiki_append_section",
     "checkpoint",
     "restore",
     "anchor",

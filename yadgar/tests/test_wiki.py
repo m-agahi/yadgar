@@ -390,3 +390,45 @@ class TestRecallIntegration:
         flush_queue()
         results = server.recall(query="plain memory", max_results=5)
         assert len(results) >= 1
+
+
+# ── K. v5.41.0 Versioning Regression Guards ────────────────────────────────
+
+
+class TestVersioningRegression:
+    """wiki_add produces version=1; subsequent writes increment version."""
+
+    def test_wiki_add_produces_version_1(self):
+        """wiki_add (insert path) creates version=1 row (v5.41.0 regression guard)."""
+        from yadgar.storage.migrations import _migration_013_wiki_page_version  # noqa: PLC0415
+
+        storage = server._get_storage()
+        _migration_013_wiki_page_version(storage)  # DDL + seed (idempotent)
+
+        result = _wiki().add("Versioning Test", "initial content", "reference", ["v5.41"])
+        pid = result["id"]
+        rows = storage._q(
+            "SELECT * FROM wiki_page_version WHERE page_id = $p",
+            {"p": pid},
+        )
+        assert len(rows) == 1, f"Expected 1 version row after add, got {len(rows)}"
+        assert rows[0]["version"] == 1
+
+    def test_wiki_add_upsert_produces_version_2(self):
+        """wiki_add upsert (update path) creates version=2 row (v5.41.0 regression guard)."""
+        from yadgar.storage.migrations import _migration_013_wiki_page_version  # noqa: PLC0415
+
+        storage = server._get_storage()
+        _migration_013_wiki_page_version(storage)
+
+        _wiki().add("Upsert Version", "v1 content", "reference")
+        result2 = _wiki().add("Upsert Version", "v2 content", "reference")
+        pid = result2["id"]
+
+        rows = storage._q(
+            "SELECT * FROM wiki_page_version WHERE page_id = $p ORDER BY version ASC",
+            {"p": pid},
+        )
+        assert len(rows) == 2, f"Expected 2 version rows after upsert, got {len(rows)}"
+        assert rows[0]["version"] == 1
+        assert rows[1]["version"] == 2

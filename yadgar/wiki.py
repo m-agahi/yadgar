@@ -1,5 +1,6 @@
 """Wiki knowledge base — curated, persistent knowledge pages with hybrid search."""
 
+import difflib
 import html
 import logging
 import re
@@ -22,6 +23,172 @@ def _wiki_observe_stage(stage: str, elapsed_ms: float) -> None:
 
 
 WIKI_STALE_DAYS = 90
+
+
+# ── Section-parsing helpers (wiki_append_section) ─────────────────────────────
+
+
+def _parse_section_heading_spec(spec: str) -> tuple[str, int | None]:
+    """Parse 'Pipeline#2' → ('Pipeline', 2). Bare name → (name, None)."""
+    if "#" in spec:
+        parts = spec.rsplit("#", 1)
+        try:
+            return parts[0].strip(), int(parts[1])
+        except ValueError:
+            pass
+    return spec.strip(), None
+
+
+def _find_section_headings(content: str) -> list[dict]:
+    """Find all ## / ### headings at column 0, skipping fenced code blocks.
+
+    Returns list of dicts: {text, level, line_idx, prefix}
+    line_idx is 0-based index into content.splitlines().
+    """
+    lines = content.splitlines()
+    headings: list[dict] = []
+    in_fence = False
+    fence_marker = ""
+    _heading_re = re.compile(r"^(#{2,3}) (.+)")
+
+    for i, line in enumerate(lines):
+        stripped = line.rstrip()
+        # Track fenced code blocks
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            marker = stripped[:3]
+            if not in_fence:
+                in_fence = True
+                fence_marker = marker
+            elif marker == fence_marker:
+                in_fence = False
+            continue
+
+        if in_fence:
+            continue
+
+        m = _heading_re.match(stripped)
+        if m:
+            headings.append(
+                {
+                    "text": m.group(2).strip(),
+                    "level": len(m.group(1)),
+                    "line_idx": i,
+                    "prefix": m.group(1),
+                }
+            )
+    return headings
+
+
+def _find_section_end(lines: list[str], heading_line_idx: int, target_level: int) -> int:
+    """Return index of the line that ends the section (exclusive).
+
+    Skips fenced code blocks. Returns len(lines) if no subsequent heading found.
+    """
+    _heading_re = re.compile(r"^#{2,3} ")
+    in_fence = False
+    fence_marker = ""
+    for i in range(heading_line_idx + 1, len(lines)):
+        stripped = lines[i].rstrip("\n")
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            marker = stripped[:3]
+            if not in_fence:
+                in_fence = True
+                fence_marker = marker
+            elif marker == fence_marker:
+                in_fence = False
+            continue
+        if in_fence:
+            continue
+        m = _heading_re.match(stripped)
+        if m:
+            level_here = len(stripped) - len(stripped.lstrip("#"))
+            if level_here <= target_level:
+                return i
+    return len(lines)
+
+
+def _patch_section(
+    content: str,
+    target: dict,
+    new_content: str,
+    position: str,
+) -> str:
+    """Apply a section patch. Returns updated content string."""
+    lines = content.splitlines(keepends=True)
+    heading_line_idx = target["line_idx"]
+    target_level = target["level"]
+    end_line_idx = _find_section_end(lines, heading_line_idx, target_level)
+
+    if position == "start_of_section":
+        new_line = new_content if new_content.endswith("\n") else new_content + "\n"
+        lines.insert(heading_line_idx + 1, new_line)
+
+    elif position == "replace_section":
+        body_lines = new_content.splitlines(keepends=True)
+        if body_lines and not body_lines[-1].endswith("\n"):
+            body_lines[-1] += "\n"
+        lines[heading_line_idx + 1 : end_line_idx] = body_lines
+
+    else:  # end_of_section (default)
+        # Find last non-blank line in section body; insert after it
+        body_end = end_line_idx
+        for i in range(end_line_idx - 1, heading_line_idx, -1):
+            if lines[i].strip():
+                body_end = i + 1
+                break
+        new_line = new_content if new_content.endswith("\n") else new_content + "\n"
+        lines.insert(body_end, new_line)
+
+    return "".join(lines)
+
+
+def _diff_json(page_id: int, v1: int, v2: int, lines1: list[str], lines2: list[str]) -> dict:
+    """Compute JSON-format diff between two version content lists."""
+    _heading_re = re.compile(r"^##+ (.+)")
+    added_lines = 0
+    removed_lines = 0
+    hunks: list[dict] = []
+    sections_changed: list[str] = []
+
+    for group in difflib.SequenceMatcher(None, lines1, lines2).get_grouped_opcodes(3):
+        hunk: dict = {
+            "old_start": group[0][1] + 1,
+            "old_count": group[-1][2] - group[0][1],
+            "new_start": group[0][3] + 1,
+            "new_count": group[-1][4] - group[0][3],
+            "removed": [],
+            "added": [],
+        }
+        for tag, i1, i2, j1, j2 in group:
+            if tag in ("replace", "delete"):
+                hunk["removed"].extend(lines1[i1:i2])
+                removed_lines += i2 - i1
+                _collect_headings(lines1[i1:i2], _heading_re, sections_changed)
+            if tag in ("replace", "insert"):
+                hunk["added"].extend(lines2[j1:j2])
+                added_lines += j2 - j1
+        hunks.append(hunk)
+
+    return {
+        "page_id": page_id,
+        "v1": v1,
+        "v2": v2,
+        "fmt": "json",
+        "hunks": hunks,
+        "added_lines": added_lines,
+        "removed_lines": removed_lines,
+        "sections_changed": sections_changed,
+    }
+
+
+def _collect_headings(lines: list[str], pattern: re.Pattern[str], result: list[str]) -> None:
+    """Append section heading texts from lines to result if not already present."""
+    for line in lines:
+        m = pattern.match(line.rstrip())
+        if m:
+            heading = m.group(1).strip()
+            if heading not in result:
+                result.append(heading)
 
 
 class WikiStore:
@@ -483,6 +650,209 @@ class WikiStore:
                 "broken_ref_count": broken_ref_count,
                 "low_confidence_count": low_confidence_count,
             },
+        }
+
+    # ── Versioning API ────────────────────────────────────────────────────
+
+    def history(self, page_id: int, limit: int = 20) -> list[dict]:
+        """Return version history for a page, newest first, without content field."""
+        return self._storage.list_wiki_page_versions(page_id, limit=limit)
+
+    def read_version(self, page_id: int, version: int) -> dict:
+        """Return a specific version with full content, or error dict if missing."""
+        row = self._storage.get_wiki_page_version(page_id, version)
+        if row is None:
+            max_ver = self._storage.get_max_version_for_page(page_id)
+            return {
+                "error": f"version {version} not found for page_id={page_id}",
+                "max_version": max_ver,
+            }
+        row.pop("id", None)  # internal field
+        return row
+
+    def diff(self, page_id: int, v1: int, v2: int, fmt: str = "unified") -> dict:
+        """Diff two versions of a page. fmt='unified' or 'json'."""
+        snap1 = self._storage.get_wiki_page_version(page_id, v1)
+        snap2 = self._storage.get_wiki_page_version(page_id, v2)
+        if snap1 is None:
+            return {"error": f"version {v1} not found for page_id={page_id}"}
+        if snap2 is None:
+            return {"error": f"version {v2} not found for page_id={page_id}"}
+
+        c1 = snap1.get("content", "")
+        c2 = snap2.get("content", "")
+        lines1 = c1.splitlines(keepends=True)
+        lines2 = c2.splitlines(keepends=True)
+        ts1 = snap1.get("created_at", "")
+        ts2 = snap2.get("created_at", "")
+
+        if fmt == "json":
+            result = _diff_json(page_id, v1, v2, lines1, lines2)
+            return result
+        # unified
+        diff_text = "".join(
+            difflib.unified_diff(
+                lines1,
+                lines2,
+                fromfile=f"v{v1} ({ts1})",
+                tofile=f"v{v2} ({ts2})",
+            )
+        )
+        return {
+            "page_id": page_id,
+            "v1": v1,
+            "v2": v2,
+            "fmt": "unified",
+            "diff": diff_text,
+        }
+
+    def restore_version(self, page_id: int, version: int) -> dict:
+        """Restore a wiki page to a previous version by creating a new version.
+
+        Creates a NEW version (does not delete intervening versions).
+        The restored content becomes the new current content.
+        Rebuilds embedding from restored title+content.
+
+        Note: wiki_restore bypasses the v5.39 similarity gate because restore is
+        explicit user intent (recovery from corruption, not a new duplicate page).
+        This method calls storage.update_wiki_page directly, not the gated wiki_add
+        MCP path, so the gate is naturally avoided.
+        """
+        snap = self._storage.get_wiki_page_version(page_id, version)
+        if snap is None:
+            max_ver = self._storage.get_max_version_for_page(page_id)
+            return {
+                "error": f"version {version} not found for page_id={page_id}",
+                "max_version": max_ver,
+            }
+
+        # Recompute embedding from restored content (embedding not stored in version rows)
+        title = snap.get("title", "")
+        content = snap.get("content", "")
+        embedding = self._compute_embedding(title, content)
+
+        updates = {
+            "title": title,
+            "content": content,
+            "category": snap.get("category"),
+            "tags": snap.get("tags", []),
+            "confidence": snap.get("confidence"),
+            "source_memory_ids": snap.get("source_memory_ids", []),
+        }
+        if embedding is not None:
+            updates["embedding"] = embedding
+
+        self._storage.update_wiki_page(page_id, updates)
+        new_version = self._storage.get_max_version_for_page(page_id)
+
+        # Rebuild crossrefs from restored content
+        links = self._extract_wikilinks(content)
+        page = self._storage.get_wiki_page(page_id)
+        if page:
+            self._sync_crossrefs(page.get("slug", ""), links)
+
+        return {
+            "page_id": page_id,
+            "restored_from_version": version,
+            "new_version": new_version,
+            "note": f"version {new_version} created from snapshot of version {version}",
+        }
+
+    def append_section(
+        self,
+        page_id: int,
+        section_heading: str,
+        content: str,
+        position: str = "end_of_section",
+    ) -> dict:
+        """Section-atomic write: patch a specific section without replacing entire content.
+
+        Prevents the 2026-05-31 corruption pattern where agents replaced the full
+        wiki_page content with only their section, destroying everything else.
+
+        Positions:
+          end_of_section   — append after section body, before next heading (default)
+          start_of_section — insert immediately after the heading line
+          replace_section  — replace section body (heading line preserved)
+          new_section_top  — create section at top of page (error if heading exists)
+          new_section_bottom — create section at bottom of page (error if heading exists)
+
+        Heading detection:
+          Matches ## or ### at column 0. Case-insensitive. Ignores ## inside fenced
+          code blocks (``` ... ```). Supports Pipeline#2 syntax for nth occurrence
+          (1-based; bare name matches first).
+
+        Returns dict with action='appended' on success, or error dict.
+        """
+        page = self._storage.get_wiki_page(page_id)
+        if page is None:
+            return {"error": "page_not_found", "page_id": page_id}
+
+        page_content = page.get("content", "")
+        heading_text, occurrence = _parse_section_heading_spec(section_heading)
+
+        headings = _find_section_headings(page_content)
+
+        if position in ("new_section_top", "new_section_bottom"):
+            # Error if heading already exists
+            existing = [h for h in headings if h["text"].lower() == heading_text.lower()]
+            if existing:
+                return {"error": "section_exists", "section_heading": heading_text}
+            # Create new section
+            if position == "new_section_bottom":
+                new_content = page_content.rstrip("\n") + f"\n\n## {heading_text}\n\n{content}"
+            else:  # new_section_top
+                new_content = f"## {heading_text}\n\n{content}\n\n" + page_content
+            new_content = new_content if new_content.endswith("\n") else new_content + "\n"
+        else:
+            # Requires existing heading
+            matches = [h for h in headings if h["text"].lower() == heading_text.lower()]
+
+            if not matches:
+                available = [h["text"] for h in headings]
+                return {
+                    "error": "section_not_found",
+                    "section_heading": heading_text,
+                    "available_sections": available,
+                }
+
+            if len(matches) > 1 and position != "replace_section" and occurrence is None:
+                return {
+                    "error": "ambiguous_section",
+                    "section_heading": heading_text,
+                    "occurrences": len(matches),
+                    "hint": "Use 'Pipeline#2' syntax to target nth occurrence",
+                }
+
+            occ_idx = (occurrence - 1) if occurrence is not None else 0
+            if occ_idx >= len(matches):
+                return {
+                    "error": "occurrence_out_of_range",
+                    "section_heading": heading_text,
+                    "requested": occurrence,
+                    "max": len(matches),
+                }
+
+            target = matches[occ_idx]
+            new_content = _patch_section(page_content, target, content, position)
+
+        size_before = len(page_content.encode())
+        size_after = len(new_content.encode())
+
+        self._storage.update_wiki_page(page_id, {"content": new_content})
+        new_version = self._storage.get_max_version_for_page(page_id)
+
+        # Sync crossrefs from updated content
+        links = self._extract_wikilinks(new_content)
+        self._sync_crossrefs(page.get("slug", ""), links)
+
+        return {
+            "page_id": page_id,
+            "new_version": new_version,
+            "section_heading": heading_text,
+            "action": "appended",
+            "size_before": size_before,
+            "size_after": size_after,
         }
 
     # ── Internal ──────────────────────────────────────────────────────────
