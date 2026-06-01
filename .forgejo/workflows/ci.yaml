@@ -16,6 +16,7 @@ on:
       - "entrypoint.sh"
       - "entrypoint-backend.sh"
       - "server.json"
+      - "viz-tests/**"
   workflow_dispatch:
 
 # Cancel superseded test runs on a fresh push to the same ref. Saves
@@ -104,6 +105,83 @@ jobs:
 
       - name: Check I25 — config three-way-sync (Settings + yaml + registry)
         run: python -m pytest yadgar/tests/test_config_three_way_sync.py -q --tb=short
+
+  viz-tests:
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.14-slim
+    # Same gate as `test` — PRs + version tags only.
+    if: >-
+      github.event_name == 'pull_request' ||
+      startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Install system deps
+        # nodejs for vitest; chromium for Playwright Layer 2 smoke tests;
+        # git+curl for actions runtime and SurrealDB download.
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends \
+            nodejs npm git curl ca-certificates \
+            chromium chromium-driver \
+            libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+            libxcomposite1 libxdamage1 libxrandr2 libgbm1 libpango-1.0-0 \
+            libcairo2 libasound2
+
+      - uses: https://data.forgejo.org/actions/checkout@v6
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: /root/.cache/pip
+          key: pip-viz-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-viz-
+
+      - name: Cache SurrealDB binary
+        id: cache-surreal-viz
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/bin/surreal
+          key: surrealdb-v3.0.5
+
+      - name: Install SurrealDB v3.0.5
+        if: steps.cache-surreal-viz.outputs.cache-hit != 'true'
+        run: |
+          SURREAL_VERSION="v3.0.5"
+          SURREAL_SHA256="48dbeba4896765f33e07acc25224073f0850c190872052b917ebda1f7b4375cb"
+          curl -fsSL "https://github.com/surrealdb/surrealdb/releases/download/${SURREAL_VERSION}/surreal-${SURREAL_VERSION}.linux-amd64.tgz" -o /tmp/surreal.tgz
+          echo "${SURREAL_SHA256}  /tmp/surreal.tgz" | sha256sum -c -
+          tar -xzf /tmp/surreal.tgz -C /usr/local/bin surreal
+          chmod +x /usr/local/bin/surreal
+
+      - name: Install Python dependencies
+        run: pip install -e ".[test,ml]" playwright pytest-playwright
+
+      - name: Install Playwright browsers
+        # Use system chromium to avoid 200 MB Playwright Chromium download.
+        # PLAYWRIGHT_BROWSERS_PATH=0 tells Playwright to skip its bundled install.
+        # The system chromium package installs at /usr/bin/chromium.
+        run: PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 playwright install-deps || true
+
+      - name: Layer 1 — API contract integrity (Python)
+        run: |
+          python -m pytest yadgar/tests/test_graph_api_contract.py \
+            -v --tb=short -q --reruns 1
+
+      - name: Layer 2 — Playwright headless smoke
+        # Pass system chromium path via env so conftest.py can use it.
+        env:
+          PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: /usr/bin/chromium
+        run: |
+          python -m pytest yadgar/tests/integration/viz/ \
+            -m integration -v --tb=short -q --reruns 1
+
+      - name: Install Node.js deps (Layer 3)
+        working-directory: viz-tests
+        run: npm ci
+
+      - name: Layer 3 — JS unit tests (Vitest)
+        working-directory: viz-tests
+        run: npx vitest run
 
   publish:
     needs: test

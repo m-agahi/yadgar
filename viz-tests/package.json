@@ -1,0 +1,14 @@
+{
+  "name": "yadgar-viz-tests",
+  "version": "1.0.0",
+  "description": "Layer 3 JS unit tests for yadgar viz helpers (v5.37.0)",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "vitest": "^2.0.0"
+  }
+}
