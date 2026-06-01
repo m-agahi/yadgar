@@ -131,6 +131,32 @@ yadgar/install_assets/
 
 5. **Backward compatibility for systemd unit names.** Existing nix-managed installs have `yadgar.service` + `yadgar-backend.service`. New `yadgar.target` is additive — does not conflict. Confirm `systemctl --user list-unit-files` round-trips cleanly on a mixed install.
 
+6. **Seed-anchors + bundled CLAUDE.md rules (DISCUSSION ITEM, added 2026-06-01).** Should `yadgar install` / `yadgar setup` bootstrap a fresh DB with canonical workflow anchors + matching CLAUDE.md rule snippets? Captures pain-points learned the hard way so new installs don't repeat them.
+
+   **Candidate seed anchors:**
+   - Wiki read-modify-write rule (the 2026-05-31 corruption that destroyed `yadgar-roadmap-future-improvements`)
+   - `wiki_query` tag-or-fail (untagged queries score ~0.34, low recall)
+   - `restore(directory=...)` after `/clear` / `/compact` (NOT `recall`)
+   - `memorize(context=<abs-path>)` must be literal CWD, not description (breaks `project_brief`)
+   - `wiki_add` then `wiki_approve(slug)` for new pages (draft → published)
+   - Anchor hygiene: prefer `audit_anchors(dry_run=True)` over manual count
+   - SurrealKV vacuum schedule + `vacuum_now()` reclaim path
+   - "Never directly query DB; always MCP tools" (already in user's global CLAUDE.md but worth seeding per-install)
+
+   **Design questions:**
+   - Mechanism: shipped as `yadgar/seeds/anchors.yaml` + loaded by `yadgar install --with-seeds` (opt-in default ON)?
+   - Format: structured YAML → `memorize(..., tags=["_anchor"], is_protected=True)` calls?
+   - CLAUDE.md fragment: separate `yadgar/seeds/CLAUDE.md.fragment` for users to paste/append into their own CLAUDE.md (don't auto-write — user-owned file). OR `yadgar install-rules` subcommand that appends + dedupes.
+   - Combination strategy: seed-anchor + matching CLAUDE.md fragment paired by reference (e.g. anchor body says "see CLAUDE.md §wiki-rules" and fragment exists).
+   - Versioning: seeds shipped per-yadgar-release; re-running `yadgar install` skips already-present anchors (dedup via content-hash).
+   - Scope: per-install (global) vs per-project (when `yadgar install` invoked inside a project dir).
+   - Opt-out: `--no-seeds` flag + config knob `YADGAR_INSTALL_SEED_ANCHORS=0`.
+   - Update path: when v5.46+ adds a new pain-point seed, how does an existing install pick it up? `yadgar update --apply-new-seeds`? Or surface as `audit_seeds()` MCP tool that lists missing canonical anchors.
+
+   **Why this slot:** v5.45 is the natural home — it owns the install pipeline. Seeds bootstrap is install-time work. Risk: scope creep. Mitigation: ship as one YAML + one Python loader (~100 LOC); defer the CLAUDE.md auto-append story to v5.46/v5.47 if it balloons.
+
+   **Resolve before impl:** confirm scope (seeds-only vs seeds+rules), confirm opt-in default, confirm seed file location + format.
+
 ---
 
 ## Plan steps (concrete, executable)
