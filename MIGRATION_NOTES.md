@@ -1,78 +1,43 @@
 # Migration Notes
 
-## v5.26.0 — LongMemEval Sonnet 4.6 Full 500q (IN PROGRESS as of 2026-05-31)
+## v5.26.0 — LongMemEval Sonnet 4.6 Full 500q (SHIPPED 2026-06-01)
 
 Core 5.25.6 → 5.26.0. Backend unchanged at 5.4.0. **No DB migration.**
 
 ### Summary
 
-Replaces Haiku 96-question pilot with full 500-question Sonnet 4.6 run.
-Closes Adopt-1 from competitor audit (2026-05-30) with apples-to-apples comparison:
-mem0 (GPT-4o, 500q) and Zep (GPT-4o, 500q) both used full 500q strong readers.
+Full 500-question Sonnet 4.6 LongMemEval-s benchmark. Closes Adopt-1 from competitor audit (2026-05-30).
+Apples-to-apples comparison: mem0 (GPT-4o, 500q), Zep (GPT-4o, 500q), Yadgar (Sonnet 4.6, 500q).
 
-**Phase 1 (retrieval-only, reader-independent):** MRR=0.945, Recall@10=0.950, NDCG@10=0.913.
-These numbers come from the Haiku-era run and are reusable — retrieval stack unchanged.
+**Phase 2 QA accuracy: 69.4% (347/500)** — beats Zep 63.8% by 5.6pp. 470 min wall-clock.
 
-**Phase 2 (QA accuracy):** PENDING — run in progress via `claude -p` subprocess (Max quota).
-ETA: ~7-10 hours from 2026-05-31 19:02 UTC (started). PID 3167438.
+Per-type:
+- single-session-assistant: 96.4% (54/56)
+- single-session-user: 92.9% (65/70)
+- knowledge-update: 75.6% (59/78)
+- abstention: 80.0% (24/30)
+- temporal-reasoning: 63.9% (85/133)
+- multi-session: 55.6% (74/133)
+- single-session-preference: 33.3% (10/30)
 
-Monitor: `./scripts/monitor_sonnet_run.sh`
-After completion: `python3 scripts/aggregate_sonnet_results.py`
+Phase 1 retrieval (embedded in full run, 500q natural distribution): MRR=0.928, Recall@10=0.906, NDCG@10=0.863.
 
-### Post-run steps (run these after JSONL has 500 lines)
+D2 (NLI on/off) and D3 (causal graph signals) remain DEFER — single arm, no A/B.
+See `docs/PLAN_V5_25_X_D2_NLI_AB.md` and `docs/PLAN_V5_25_X_D3_PC_AB.md`.
 
-```bash
-# 1. Verify completion
-wc -l benchmarks/results/longmemeval_v5.26.0_s_full_hypotheses.jsonl
-# Should be 500
+### Changes
 
-# 2. Aggregate JSONL → final JSON + print table
-python3 scripts/aggregate_sonnet_results.py
-
-# 3. Update docs with Sonnet numbers (replace all Haiku references):
-#    docs/BENCHMARK_RESULTS.md
-#    docs/CHANGELOG.md
-#    docs/benchmarks-current.md
-#    MIGRATION_NOTES.md (this file — fill in PENDING above)
-#    README.md (if benchmark section exists)
-
-# 4. Commit Sonnet results
-git add benchmarks/results/ docs/ MIGRATION_NOTES.md README.md
-git commit -m "feat(benchmark): v5.26.0 Sonnet 4.6 full 500q LongMemEval-s — REPLACES Haiku pilot
-
-..."  # fill in headline accuracy + per-type breakdown
-
-# 5. Merge to master
-git checkout master
-git pull --ff-only origin master
-git merge --no-ff feat/v5.26.0-benchmark-phase2-haiku-pilot \
-  -m "merge: v5.26.0 — Sonnet 500q LongMemEval-s (Adopt-1 headline)"
-git push origin master
-
-# 6. Build image
-podman build --platform linux/amd64 \
-  -t docker.io/openfantasy/yadgar:5.26.0 \
-  -t docker.io/openfantasy/yadgar:latest \
-  -t localhost/openfantasy/yadgar:5.26.0 .
-
-# 7. Check nix bump
-grep yadger_core_version /home/max/git/nix/modules/home/yadgar.nix
-# If not 5.26.0: bump + commit + push in nix repo
-```
-
-### Changes (incremental-save patch, committed 36bca02)
-
-- `benchmarks/run_longmemeval.py`:
-  - `_load_processed()` helper: load prior JSONL for resume continuity
-  - `run_benchmark()`: resolve output_path early, write per-question JSONL append (incremental save)
-  - `--resume` flag: skip already-processed questions, pre-load for aggregation
-  - `--model` flag: sets `ANTHROPIC_MODEL` env var (used by `call_claude_pipe`)
-  - End-of-run JSONL truncation removed (was overwriting incremental log)
-- `benchmarks/results/longmemeval_v5.26.0_s_full.json`: DELETED (Haiku pilot)
-- `benchmarks/results/longmemeval_v5.26.0_s_full_hypotheses.jsonl`: DELETED (Haiku pilot)
-- `benchmarks/results/longmemeval_v5.26.0_s_retrieval.json`: KEPT (reader-independent)
+- `benchmarks/run_longmemeval.py`: `--resume` flag + per-question JSONL incremental save + `--model` flag
+- `benchmarks/results/longmemeval_v5.26.0_s_full.json`: final aggregated results (500 questions)
+- `benchmarks/results/longmemeval_v5.26.0_s_full_hypotheses.jsonl`: per-question JSONL (500 lines)
+- `benchmarks/results/longmemeval_v5.26.0_s_retrieval.json`: Phase 1 (96q stratified, reader-independent — kept for historical reference)
 - `scripts/monitor_sonnet_run.sh`: progress monitoring
 - `scripts/aggregate_sonnet_results.py`: JSONL → final JSON aggregation
+- `docs/BENCHMARK_RESULTS.md`: replaced Haiku pilot table with Sonnet full-run numbers
+- `docs/CHANGELOG.md`: v5.26.0 entry updated with Sonnet headline
+- `docs/benchmarks-current.md`: updated status + per-release table
+- `README.md`: benchmark section updated with Sonnet headline
+- `docs/DECISIONS.md`: D2/D3 DEFER entries updated with post-Sonnet analysis
 
 ### To reproduce
 
@@ -80,9 +45,10 @@ grep yadger_core_version /home/max/git/nix/modules/home/yadgar.nix
 uv run python benchmarks/run_longmemeval.py \
   --model claude-sonnet-4-6 \
   --output benchmarks/results/longmemeval_v5.26.0_s_full.json \
+  --save-hypotheses benchmarks/results/longmemeval_v5.26.0_s_full_hypotheses.jsonl \
   --resume
 ```
-Cost: zero cash (burns Max 20x usage quota). Wall-clock: ~7-10h (500q, ~55s/q sequential).
+Cost: zero cash (burns Max 20x usage quota). Wall-clock: ~470 min (28237s).
 
 ---
 

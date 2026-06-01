@@ -57,26 +57,32 @@
 
 Adopt item 1 ("Formal benchmarking (LongMemEval / LoCoMo)") is now SHIPPED as of v5.26.0.
 
-- **Phase 1 gate:** PASS. MRR=0.935, Recall@10=0.964 (gate: mrr>0.1 AND r@10>0.3).
-- **Phase 2 headline QA accuracy:** PENDING Phase 2 run completion (running at ship time).
-  See `docs/BENCHMARK_RESULTS.md` for live numbers.
-- **Dataset:** LongMemEval `s` variant, 96 stratified questions (16/type × 6 types).
-- **Model:** `claude-haiku-4-5-20251001` (reader + judge).
-- **Result files:** `benchmarks/results/longmemeval_v5.26.0_s_retrieval.json` (Phase 1),
-  `benchmarks/results/longmemeval_v5.26.0_s_full.json` (Phase 2, pending).
+- **Phase 1 gate:** PASS. Sonnet full run: MRR=0.928, Recall@10=0.906 (500q natural distribution).
+- **Phase 2 headline QA accuracy: 69.4% (347/500).** Sonnet 4.6 reader + judge, 470 min wall-clock.
+  Per-type: single-session-assistant 96.4%, single-session-user 92.9%, knowledge-update 75.6%,
+  abstention 80.0%, temporal-reasoning 63.9%, multi-session 55.6%, single-session-preference 33.3%.
+- **Dataset:** LongMemEval `s` variant, 500 questions (natural distribution).
+- **Model:** `claude-sonnet-4-6` (reader + judge).
+- **Result files:** `benchmarks/results/longmemeval_v5.26.0_s_full.json` (Sonnet 500q final),
+  `benchmarks/results/longmemeval_v5.26.0_s_full_hypotheses.jsonl` (500 lines),
+  `benchmarks/results/longmemeval_v5.26.0_s_retrieval.json` (96q stratified pilot Phase 1, historical).
+- **Supersedes:** Haiku 96q pilot (61.46%, 59/96) in the same Adopt-1 slot.
 
-### D2 — NLI diversity stage: RECONSIDER
+### D2 — NLI diversity stage: DEFER (post-Sonnet baseline)
 
-D2 revisit trigger "Adopt-1 benchmarks produce baseline numbers" has fired.
+D2 revisit trigger "Adopt-1 benchmarks produce baseline numbers" has fired. Post-Sonnet analysis:
 
-- **Current status:** RECONSIDER (was DEFER)
-- **Baseline with NLI ON:** see Phase 2 QA accuracy in `docs/BENCHMARK_RESULTS.md`.
+- **Current status:** DEFER (was RECONSIDER — reverting to DEFER because no A/B exists)
+- **Baseline with NLI ON:** 69.4% (347/500) overall QA accuracy, Sonnet 4.6 reader.
 - **NLI settings in benchmark:** `NLI_RERANKING_ENABLED=True` in `make_benchmark_settings()`.
+- **Why DEFER not FLIP/STAY:** the v5.26.0 Sonnet run is a single-arm measurement (NLI ON only).
+  The D2 decision rule requires a NLI-OFF arm to compute delta. Without that arm, any decision
+  would be guesswork. DEFER until NLI-OFF ablation run is complete per `docs/PLAN_V5_25_X_D2_NLI_AB.md`.
 - **Next action:** Run D2 A/B (NLI OFF) per `docs/PLAN_V5_25_X_D2_NLI_AB.md`.
   Decision rule: delta < 5pp → flip default OFF; >= 5pp → keep ON.
-- **Note:** Refactor-2 (v5.31.0 plugin arch) NOT yet shipped — A/B doable via env var toggle.
+- **Note:** Refactor-2 (v5.31.0 plugin arch) NOT yet shipped — A/B doable via `NLI_RERANKING_ENABLED=False` env var.
 
-### D3 — PC algorithm causal discovery: RECONSIDER (with caveat)
+### D3 — PC algorithm causal discovery: DEFER (graph signals off in benchmark)
 
 D3 revisit trigger "Adopt-1 benchmarks produce causal-on vs causal-off accuracy numbers" has
 technically fired, but the v5.26.0 benchmark does NOT test causal discovery impact on retrieval.
@@ -85,10 +91,10 @@ technically fired, but the v5.26.0 benchmark does NOT test causal discovery impa
 (graph signals disabled). The PC algorithm builds a causal DAG used only by graph signals.
 The v5.26.0 baseline is implicitly "causal-off" for retrieval purposes.
 
-- **Current status:** RECONSIDER (was DEFER) — with caveat (see above)
+- **Current status:** DEFER (unchanged — revisit trigger fired but is inconclusive for causal signal)
 - **Next action:** Follow `docs/PLAN_V5_25_X_D3_PC_AB.md`.
   Primary question: does PC algorithm phase take > 30s in nightly cycle? Check production logs.
-  Secondary: if D2 A/B run happens, consider enabling `WRRF_PPR_WEIGHT > 0` to get true causal-on data.
+  Secondary: run LongMemEval with `WRRF_PPR_WEIGHT > 0` to get true causal-on vs causal-off QA data.
 - **CPU burst watch:** D3 revisit trigger "CPU bursts traced to PC algorithm" has NOT fired.
   As of v5.25.3, no PC-algorithm-related CPU burst events in production journal.
 
@@ -103,7 +109,7 @@ The v5.26.0 baseline is implicitly "causal-off" for retrieval purposes.
 
 | Item | Status |
 |---|---|
-| 1. Formal benchmarking (LongMemEval / LoCoMo) | SHIPPED v5.25.0 (Phase 1 infra); Phase 2 QA → v5.26.0 |
+| 1. Formal benchmarking (LongMemEval / LoCoMo) | SHIPPED v5.26.0 (69.4%, 347/500, Sonnet 4.6 full run). Adopt-1 CLOSED. |
 | 2. Write-time conflict resolution | SHIPPED v5.17.0 |
 | 3. Bi-temporal edges on all relationships | Planned → v5.29.0 |
 | 4. In-context memory blocks (Letta) | Planned → v5.33.0 |
