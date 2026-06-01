@@ -208,3 +208,26 @@ class TestWikiUpdate:
         result = server.wiki_update(pid, {"content": "new content"})
         assert isinstance(result, dict)
         assert result["content"] == "new content"
+
+    # v5.41.0: version regression guards
+    def test_wiki_update_produces_version_row(self):
+        """Every wiki_update call produces a new wiki_page_version row (v5.41.0)."""
+        from yadgar.storage.migrations import _migration_013_wiki_page_version  # noqa: PLC0415
+
+        storage = server._get_storage()
+        _migration_013_wiki_page_version(storage)  # DDL + seed for existing pages
+        pid = self._insert_wiki("ver-update-test", "version update check")
+        # pid already has version=1 from insert_wiki_page hook
+        server.wiki_update(pid, {"content": "updated once"})
+        server.wiki_update(pid, {"content": "updated twice"})
+
+        rows = storage._q(
+            "SELECT * FROM wiki_page_version WHERE page_id = $p ORDER BY version ASC",
+            {"p": pid},
+        )
+        # insert: version=1; update 1: version=2; update 2: version=3
+        assert len(rows) >= 3, f"Expected ≥3 version rows, got {len(rows)}"
+        versions = [r["version"] for r in rows]
+        assert 1 in versions
+        assert 2 in versions
+        assert 3 in versions
