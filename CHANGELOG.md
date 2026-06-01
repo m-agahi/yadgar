@@ -6,6 +6,14 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.35.0] — 2026-06-01
+
+JavaScript/TypeScript SDK release (Adopt-5 from 2026-05-30 competitor audit).
+
+- **feat(sdk-js):** `@yadgar/sdk` v0.1.0 — typed thin client for all 53 MCP tools exposed by yadgar. Streamable HTTP transport via `@modelcontextprotocol/sdk`. Bearer token auth. ESM+CJS+types output. 73 unit tests (vitest). See `sdk-js/README.md` and `docs/sdk-js.md`.
+- **ci:** `.github/workflows/sdk-js.yml` — test + publish pipeline gated on `sdk-js/**` path changes. Publish job fires on `sdk-js/v*` tags only.
+- **docs:** `docs/sdk-js.md` pointer doc. Root `README.md` mentions JS SDK.
+- No Python server changes. Zero migration required for existing Claude Code / Python consumers.
 ## [5.33.0] — 2026-06-01
 
 In-context memory blocks (Adopt-4 Letta-style core memory primitive).
