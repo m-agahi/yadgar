@@ -8,7 +8,7 @@
 - D2 NLI A/B: 0.5-1d (benchmark re-run + analysis)
 - D3 PC A/B: 1-1.5d (config + new edges + benchmark re-run + analysis)
 
-**Slots:** v5.38.0 + v5.40.0 (both even-minor — A/B work is data/analysis, not feature shipping; even minor signals "not user-facing feature"). Or fold into the v5.41-ish slot. Discuss.
+**Slots:** v5.57.0 + v5.58.0 (v5.57 odd, v5.58 even; A/B work is data/analysis, not user-facing feature). Or fold into the v5.41-ish slot. Discuss.
 
 ---
 
