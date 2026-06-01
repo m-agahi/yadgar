@@ -1,12 +1,12 @@
-# PLAN — v5.33.1: Memory blocks follow-ups + `_MEMORY_UPDATABLE_FIELDS` invariant
+# PLAN — v5.35.1: Memory blocks follow-ups + `_MEMORY_UPDATABLE_FIELDS` invariant
 
 **Status:** drafted 2026-06-01. Hotfix bundle (same pattern as v5.31.1).
 
-**Why now:** v5.33.0 shipped MVP (storage + MCP tools + restore inject + bootstrap seeds). Six items were explicitly deferred. Slotting before v5.36/v5.37 keeps the deferred-list short. Also folds in the recurring `_MEMORY_UPDATABLE_FIELDS` class.
+**Why now:** v5.33.0 shipped memory-blocks MVP (storage + MCP tools + restore inject + bootstrap seeds); six items were explicitly deferred at that release. Master since shipped v5.35.0 (JS SDK), so the patch slot is v5.35.1 (numbering reflects current head). Slotting before v5.36/v5.37 keeps the deferred-list short. Also folds in the recurring `_MEMORY_UPDATABLE_FIELDS` class.
 
 **Effort estimate:** 1-1.5 calendar days.
 
-**Branch:** `fix/v5.33.1-blocks-followups` off master.
+**Branch:** `fix/v5.35.1-blocks-followups` off master.
 
 ---
 
@@ -105,7 +105,7 @@ Excluded fields list (internal-only): `id`, `embedding`, `created_at`, `consolid
 8. `_active_work` decision committed (A/B/C) + executed.
 9. `last_accessed` + `access_count` updatable via `memory_update`.
 10. Schema-vs-updatable-fields invariant test green.
-11. Version bumped 5.33.0 → 5.33.1.
+11. Version bumped 5.35.0 → 5.35.1.
 12. CHANGELOG + MIGRATION_NOTES updated.
 13. All existing tests still pass.
 
@@ -124,7 +124,7 @@ Excluded fields list (internal-only): `id`, `embedding`, `created_at`, `consolid
 
 ## Dependencies
 
-- v5.33.0 must be live (✓).
+- v5.33.0 must be live (✓ shipped); v5.35.0 also live (✓).
 - No other dependencies.
 
 ## Coordination notes
