@@ -324,6 +324,106 @@ def _migration_012_memory_block_table(storage) -> None:
     """)
 
 
+def _migration_013_wiki_page_version(storage) -> None:
+    """Add wiki_page_version table for per-write version history (v5.41.0).
+
+    Three-stage idempotent migration:
+    1. DDL — define table + three indexes.
+    2. Seed — for every existing wiki_page row, create version=1 row (skip if
+       versions already exist for that page_id — idempotency guard).
+    3. No-op on subsequent calls via schema_version table guard (standard pattern).
+
+    Schema is SCHEMALESS. Embedding intentionally excluded from version rows
+    (storage cost; recomputed on restore). Unique (page_id, version) index
+    enforces correct increment ordering.
+    """
+    import json as _json  # noqa: PLC0415
+
+    # Stage 1: DDL
+    storage._q("DEFINE TABLE IF NOT EXISTS wiki_page_version SCHEMALESS;")
+    storage._q("""
+        DEFINE INDEX IF NOT EXISTS wiki_page_version_page_idx
+            ON wiki_page_version FIELDS page_id;
+    """)
+    storage._q("""
+        DEFINE INDEX IF NOT EXISTS wiki_page_version_page_version_idx
+            ON wiki_page_version FIELDS page_id, version UNIQUE;
+    """)
+    storage._q("""
+        DEFINE INDEX IF NOT EXISTS wiki_page_version_created_idx
+            ON wiki_page_version FIELDS created_at;
+    """)
+
+    # Stage 2: Seed — create version=1 from every existing wiki_page row
+    # that has no version rows yet (idempotency guard).
+    pages = storage._q("SELECT * FROM wiki_page")
+    now = storage._now_iso()
+    for page in pages:
+        raw_id = page.get("id")
+        page_id = storage._extract_id(raw_id)
+        if page_id is None:
+            continue
+
+        existing_versions = storage._q(
+            "SELECT id FROM wiki_page_version WHERE page_id = $p LIMIT 1",
+            {"p": page_id},
+        )
+        if existing_versions:
+            continue  # already seeded — skip
+
+        vid = storage._next_id("wiki_page_version")
+        row = {
+            "id": vid,
+            "page_id": page_id,
+            "version": 1,
+            "title": page.get("title", ""),
+            "content": page.get("content", ""),
+            "category": page.get("category"),
+            "tags": page.get("tags", []),
+            "confidence": page.get("confidence"),
+            "source_memory_ids": page.get("source_memory_ids", []),
+            "branch": page.get("branch"),
+            "change_summary": "initial version",
+            "created_at": now,
+            "provenance_agent": "migration_seed",
+        }
+
+        if storage._db_url:
+            # Server mode: LET preamble + SQL
+            lets = [f"LET ${k} = {_json.dumps(v, ensure_ascii=False)}" for k, v in row.items()]
+            body = (
+                ";\n".join(
+                    lets
+                    + [
+                        "CREATE type::record('wiki_page_version', $id) SET "
+                        "page_id = $page_id, version = $version, title = $title, "
+                        "content = $content, category = $category, tags = $tags, "
+                        "confidence = $confidence, "
+                        "source_memory_ids = $source_memory_ids, branch = $branch, "
+                        "change_summary = $change_summary, created_at = $created_at, "
+                        "provenance_agent = $provenance_agent"
+                    ]
+                )
+                + ";"
+            )
+            resp = storage._http.post(
+                "/sql", content=body.encode(), headers={"Content-Type": "text/plain"}
+            )
+            resp.raise_for_status()
+        else:
+            # Embedded mode
+            storage._q(
+                "CREATE type::record('wiki_page_version', $id) SET "
+                "page_id = $page_id, version = $version, title = $title, "
+                "content = $content, category = $category, tags = $tags, "
+                "confidence = $confidence, "
+                "source_memory_ids = $source_memory_ids, branch = $branch, "
+                "change_summary = $change_summary, created_at = $created_at, "
+                "provenance_agent = $provenance_agent",
+                {k: v for k, v in row.items()},
+            )
+
+
 _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {"version": "001_hnsw_indexes", "fn": _migration_001_hnsw_indexes},
     {"version": "002_relationship_indexes", "fn": _migration_002_relationship_indexes},
@@ -363,6 +463,10 @@ _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {
         "version": "012_memory_block_table",
         "fn": _migration_012_memory_block_table,
+    },
+    {
+        "version": "013_wiki_page_version",
+        "fn": _migration_013_wiki_page_version,
     },
 ]
 
@@ -455,6 +559,7 @@ class _MigrationsMixin:
             "wiki_crossref",
             "wiki_draft",
             "wiki_bookmark",
+            "wiki_page_version",
         ):
             self._q(f"DEFINE TABLE IF NOT EXISTS {table} SCHEMALESS;")
 
