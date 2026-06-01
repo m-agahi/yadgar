@@ -144,6 +144,7 @@ SurrealDB tables:
 | `entities` | Extracted code/file/concept entities with heat |
 | `relationships` | Edges between entities (co_occurrence, causal, etc.) |
 | `wiki_page` | User-approved wiki pages (markdown), `branch: option<string>` (same auto-capture as `memory`) |
+| `wiki_page_version` | Immutable version snapshots for wiki pages: full content + change_summary per version (v5.41.0, migration 013). Powers `wiki_history`, `wiki_read_version`, `wiki_diff`, `wiki_restore`, `wiki_append_section`. |
 | `wiki_drafts` | Pending drafts awaiting approval |
 | `checkpoints` | Saved working state snapshots |
 | `profiles` | Structured user attribute records |

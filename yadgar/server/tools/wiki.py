@@ -626,6 +626,10 @@ def wiki_restore(slug: str, version: int) -> dict:
     Rebuilds embedding, crossrefs, and all snapshot fields (title, tags, category,
     confidence) from the restored version.
 
+    I26 secret-gate: NOT applied on restore. The content being restored was
+    already secret-gated when first stored — re-gating would incorrectly reject
+    your own previously approved content. This is intentional, not an oversight.
+
     Bypasses the v5.39 similarity gate: restore is explicit user intent (recovery
     from corruption), not a new duplicate page.
 
