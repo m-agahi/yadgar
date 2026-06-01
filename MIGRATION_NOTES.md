@@ -1,5 +1,56 @@
 # Migration Notes
 
+## v5.29.0 — Bi-temporal edges extension (Adopt-3) (2026-06-01)
+
+Core 5.27.0 → 5.29.0. v5.28.0 SKIPPED (even-minor reserved for hotfix patches per odd-only convention).
+
+### Schema changes
+
+Two new migrations run automatically on first daemon start. No manual action required.
+
+**Migration 010 — `user_profile` bi-temporal** (`_migration_010_bitemporal_user_profile`):
+- Adds `valid_from` (option<string>) and `valid_until` (option<string>) to `user_profile`.
+- Backfills `valid_from = created_at` on existing rows.
+- **Drops** the old unconditional UNIQUE index `profile_unique_idx`. Application-side uniqueness replaces it (SurrealDB v3.0.5 does not support `DEFINE INDEX ... WHERE`).
+
+**Migration 011 — `derived_belief` bi-temporal** (`_migration_011_bitemporal_derived_belief`):
+- Adds `valid_from` and `valid_until` to `derived_belief`.
+- Backfills `valid_from = created_at` on existing rows.
+- No index changes — `derived_belief` had no UNIQUE constraint.
+
+### Behaviour changes
+
+**`insert_profile` pivot to close-and-insert:**
+Prior to v5.29.0, `insert_profile` was an UPSERT-in-place. From v5.29.0:
+- When `attribute_value` changes OR `abs(new_confidence - old_confidence) >= PROFILE_BITEMPORAL_VERSION_DELTA` (default `0.05`): existing currently-valid row is closed (`valid_until = now()`), new row inserted with `valid_from = now()`.
+- When change is below threshold (confidence noise): in-place update only — evidence merged, `updated_at` bumped. **No new row created.**
+- This may increase `user_profile` row count over time. At typical rates (~5 profile facts/day per project) and 5-version average per key, expect ~5× row growth over a year. Negligible for typical yadgar deployments (<1 MB).
+
+Env knob: `PROFILE_BITEMPORAL_VERSION_DELTA` (float, default `0.05`). Set to `0.0` to create a new row on every confidence change. Set to `1.0` to never supersede on confidence alone (only value changes trigger supersession).
+
+**`insert_belief` gains `supersede=True` default:**
+When inserting a belief for the same `(subject, belief_type, directory_context)`, prior currently-valid beliefs are closed before the new row is inserted. Pass `supersede=False` to opt out and allow competing co-existing beliefs (e.g. multiple hypotheses).
+
+**Filtered read helpers now exclude invalidated rows by default:**
+`search_profiles_fts`, `get_profiles_for_entity`, `search_beliefs_fts`, `get_beliefs_for_subject` all gain `include_invalidated: bool = False`. Default preserves current-state-only behaviour. Existing callers unaffected.
+
+**New `as_of_filter` helper:**
+`yadgar.storage.bitemporal.as_of_filter(table, as_of=None)` returns a SQL WHERE-fragment for point-in-time queries. Wired into `get_all_causal_edges(as_of=)` and `get_full_graph(as_of=)` — both default `None` = current state.
+
+**MCP tool surface:** `recall` signature unchanged in v5.29.0 — `as_of` wiring to MCP is deferred to v5.31.x plugin architecture per open question §13.3.
+
+### Operator recommendations
+
+- **No manual steps** for existing deployments. Migrations run on first start.
+- If you have very large `user_profile` tables (millions of rows), consider running `vacuum_now` after the first start to compact history. Set `VACUUM_USER_PROFILE_HISTORY_DAYS` (env knob — default `None` = keep all history) to prune older versions automatically.
+- **Rollback:** downgrading to v5.27.x is safe — the new columns are nullable and old callers ignore them. The dropped UNIQUE index is NOT restored on downgrade (application-side enforcement is active).
+
+### SurrealDB capability note
+
+`DEFINE INDEX ... WHERE` (partial unique index) is **not supported** in SurrealDB v3.0.5. The plan §4 fallback was implemented: uniqueness on currently-valid rows is enforced application-side in `insert_profile`. This is documented in migration 010 comments and verified by test `test_user_profile_unique_constraint_scoped_to_current`.
+
+---
+
 ## v5.27.0 — DuckDB analytics export (SHIPPED 2026-06-01)
 
 Core 5.26.0 → 5.27.0. **No DB migration. No schema change.**
