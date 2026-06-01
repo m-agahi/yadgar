@@ -6,6 +6,20 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.33.0] — 2026-06-01
+
+In-context memory blocks (Adopt-4 Letta-style core memory primitive).
+
+- **feat(blocks):** New `memory_block` primitive — named, scoped, char-capped text containers editable via MCP and always-injected on `restore()`. Five new MCP tools: `block_create`, `block_get`, `block_update`, `block_delete`, `block_list`. Two scopes: `project` (per-directory) and `global` (cross-project).
+- **feat(migration 012):** New `memory_block` SurrealDB table with indexes on `(name, scope, directory)`. Additive, no existing data touched.
+- **feat(restore):** `restore()` now prepends a `## Memory Blocks` section to its formatted markdown output. Global blocks rendered first, then project blocks for the current directory.
+- **feat(bootstrap):** `bootstrap_project` seeds two empty default blocks per project: `current_task` (agent running state) and `gotchas` (non-obvious facts). Idempotent — re-running does not overwrite existing content.
+- **chore:** Version bump `5.31.1 → 5.33.0`.
+
+See [MIGRATION_NOTES.md §v5.33.0](MIGRATION_NOTES.md#v5330--in-context-memory-blocks-2026-06-01).
+
+---
+
 ## [5.31.1] — 2026-06-01
 
 Hotfix bundle: graph filter tests + MCP recall() pipeline kwargs.
