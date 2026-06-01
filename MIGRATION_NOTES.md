@@ -1,5 +1,72 @@
 # Migration Notes
 
+## v5.39.0 — Wiki similarity gate (2026-06-01)
+
+Core 5.31.1 → 5.39.0. Backend unchanged at 5.4.0. **No DB migration.**
+
+### Summary
+
+`wiki_add()` now blocks near-duplicate page creation. If a page with cosine similarity ≥ 0.80 (combined title+content embedding) already exists, `wiki_add` returns an error dict instead of writing. Motivated by the 2026-05-30 incident where different slugs with near-identical content created corruption.
+
+### Breaking change — `wiki_add()` rejection response
+
+Callers that always treat `wiki_add()` as non-failing must now handle the new rejection path:
+
+```python
+result = wiki_add(title="...", content="...")
+if result.get("stored") is False and result.get("reason") == "duplicate_detected":
+    # Gate fired — page not written
+    candidates = result["candidates"]  # list of {slug, title, similarity, branch}
+    hint = result["hint"]              # "Use force=True to bypass, ..."
+```
+
+**Gate active by default in `"hard"` mode.** Soft mode (log + allow) available via `WIKI_SIM_MODE=soft`.
+
+### Bypasses
+
+| Scenario | Flag | Effect |
+|---|---|---|
+| Intentional duplicate | `force=True` | Gate skipped, page written unconditionally |
+| Overwrite existing | `replace_slug="existing-slug"` | Treats as update, gate skipped |
+| Appending to existing | `append=True` | Append path, gate skipped |
+| Disable gate globally | `WIKI_SIM_GATE_ENABLED=0` | Gate never fires |
+
+### New MCP tool — `wiki_check_duplicate`
+
+Read-only probe. Call before `wiki_add` to check for duplicates without writing:
+
+```python
+result = wiki_check_duplicate(title="...", content="...", branch=None, threshold=0.80)
+# result = {"candidates": [...], "threshold_used": 0.80}
+```
+
+### Config knobs (all I25-registered)
+
+| Env var | Default | Description |
+|---|---|---|
+| `YADGAR_WIKI_SIM_GATE_ENABLED` | `true` | Master switch |
+| `YADGAR_WIKI_SIM_CONTENT_THRESHOLD` | `0.80` | Cosine similarity threshold |
+| `YADGAR_WIKI_SIM_MODE` | `hard` | `hard` (reject) or `soft` (warn + allow) |
+| `YADGAR_WIKI_SIM_TOP_K` | `5` | Max candidates returned |
+| `YADGAR_WIKI_SIM_TITLE_THRESHOLD` | `0.85` | Reserved — not active yet |
+
+### Threshold calibration
+
+Measured with all-MiniLM-L6-v2 on 2026-06-01:
+
+| Pair | Similarity |
+|---|---|
+| Roadmap A vs B (near-duplicate) | 0.9560 |
+| Arch vs Arch-paraphrase (near-duplicate) | 0.9931 |
+| Arch vs Hooks (distinct) | 0.4396 |
+| Arch vs Benchmark (distinct) | 0.4897 |
+| Hooks vs Benchmark (distinct) | 0.4545 |
+| Benchmark vs Config (distinct) | 0.4392 |
+| Arch vs Config (distinct) | 0.7135 |
+
+Min near-dup: 0.9560 | Max distinct: 0.7135 | **Separation margin: 0.2425**
+
+Threshold 0.80 sits in the middle with ≥0.15 gap on each side.
 ## v5.37.0 — Viz integration testing infrastructure (2026-06-01)
 
 Core `5.35.1 → 5.37.0`. Backend unchanged at `5.4.0`. **No DB migration.**
