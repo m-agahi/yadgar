@@ -343,3 +343,35 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
                 )
             except Exception:
                 pass
+
+        # v5.41.2: signal per-job completion after archive so wait_for_job() callers unblock.
+        job_id = data.get("id")
+        if job_id:
+            self._queue.signal_complete(job_id)
+
+    def wait_for_job(self, job_id: str, timeout: float = 5.0) -> bool:
+        """Block until job_id has been committed to the DB, or until timeout.
+
+        Returns True if the job committed within timeout, False on timeout.
+
+        Triggers drain_now() once immediately so callers don't wait a full
+        drain-interval cycle (default 30s). The event wait is a backstop for
+        races where the background drainer is mid-cycle on this job.
+
+        This is the opt-in slow path for wait=True. The default async path
+        (wait=False) never calls this method.
+        """
+        event = self._queue.register_wait(job_id)
+        if event.is_set():
+            # Already completed before we got here (signal_complete fired first).
+            self._queue._cleanup_job(job_id)
+            return True
+        # Trigger an immediate drain so we don't wait a full drain interval.
+        try:
+            self.drain_now()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("wait_for_job: drain_now() failed: %s", exc)
+        # Wait for the event (set by signal_complete after archive).
+        result = event.wait(timeout=timeout)
+        self._queue._cleanup_job(job_id)
+        return result
