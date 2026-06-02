@@ -1,5 +1,44 @@
 # Migration Notes
 
+## v5.41.3 — MCP-handler perf test + I9 attribution correction (2026-06-02)
+
+Core 5.41.2 → 5.41.3. Backend unchanged at 5.4.0. **No DB migration required.**
+
+### Layer model clarification
+
+| Layer | Path | Latency budget |
+|---|---|---|
+| MCP handler | `wiki_add(wait=False)` file enqueue | **I9 ≤5ms p50** — governs this layer only |
+| File queue write | `Path.write_text(json)` | sub-ms; included in I9 scope |
+| Queue worker | `QueueDrainer._apply()` | NOT I9; heavy work allowed (I2/I4) |
+| Storage layer | `update_wiki_page()` (embedded SurrealKV) | NOT I9; ~89ms baseline |
+
+The ~89ms storage-layer baseline is a queue-worker latency — it is **not** an I9
+violation. I9 governs the MCP handler return time only (before the drainer touches
+the DB). This was mis-attributed in v5.41.1 test docstrings; corrected in v5.41.3.
+
+### New test: MCP handler I9 perf guard (xfail)
+
+`yadgar/tests/test_wiki_mcp_handler_perf.py` measures `wiki_add(wait=False)`
+handler latency directly (100 calls, real file queue write, no drainer).
+
+Current baseline (measured 2026-06-02): **p50 ≈ 28–48ms** (5.8–9.6× over the
+≤5ms I9 budget). The test is marked `xfail(strict=True)` — it fails on the
+current codebase and keeps the suite green. When v5.41.5 fixes the handler cost,
+the test will start passing and `strict=True` will signal that the marker can be
+removed.
+
+Root cause: similarity gate (`find_similar_wiki_pages` = embed + vector search)
+runs on the request thread before enqueue. Moving it to the drainer or a
+background check is the expected fix in v5.41.5.
+
+### No operator action required
+
+No schema change. No config change. No migration. Suite still passes (230 tests,
+1 xfail).
+
+---
+
 ## v5.41.2 — wiki_add wait flag for read-your-writes consistency (2026-06-02)
 
 Core 5.41.1 → 5.41.2. Backend unchanged at 5.4.0. **No DB migration required.**
