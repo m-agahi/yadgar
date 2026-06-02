@@ -34,6 +34,8 @@
 
 **Mock strategy (opus reviewer note):** use a REAL tmpdir for the queue file write. Only mock the drainer-side processing. Otherwise the test measures dictionary serialization, not the real handler — the `Path.write_text` cost IS part of I9-budgeted MCP handler path. Add explicit assertion: drainer is NOT called on the request thread (test that handler returns before drainer processes the job).
 
+**CONCRETE BASELINE (discovered v5.41.2 fix attempt 2026-06-02):** MCP handler `wiki_add` p50 = ~48ms with `wait=False`. **9.6x over I9 budget.** v5.41.3 perf test MUST fail on this baseline — that's the point. Plan must include INVESTIGATION step before declaring "ship I9 test": identify the 48ms work and decide if it can move to drainer / if I9 budget should be relaxed for wiki path / if a real fix is needed (probably last).
+
 ### 2. Re-attribute test docstring
 
 `yadgar/tests/test_wiki_versioning_atomicity.py::TestUpdatePerfUnder5msP50`:
