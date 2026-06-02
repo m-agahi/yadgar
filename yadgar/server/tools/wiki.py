@@ -707,17 +707,11 @@ def wiki_check_duplicate(  # secret-gate: skip — read-only dry-run, never writ
 
             _cwd = os.getcwd()
             _srv = _sys.modules.get("yadgar.server")
-            _detect_branch = getattr(_srv, "_detect_branch", None) if _srv else None
             _get_default_branch = getattr(_srv, "_get_default_branch", None) if _srv else None
-            if _detect_branch is None or _get_default_branch is None:
-                from yadgar.server.tools.project import (  # noqa: PLC0415
-                    _detect_branch,
-                    _get_default_branch,
-                )
-            _current_branch = _detect_branch(_cwd)
+            if _get_default_branch is None:
+                from yadgar.server.tools.project import _get_default_branch  # noqa: PLC0415
             _default_branch = _get_default_branch(_cwd)
         except Exception:
-            _current_branch = None
             _default_branch = "master"
 
         branch = _default_branch
