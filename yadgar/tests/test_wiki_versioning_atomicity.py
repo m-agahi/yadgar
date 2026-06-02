@@ -8,10 +8,20 @@ RED in v5.41.0 (try/except best-effort pattern).
 GREEN after v5.41.1 fix (BEGIN/COMMIT compound _q).
 
 Failure-injection strategy:
-  - patch storage.insert_wiki_page_version to raise RuntimeError → simulates
-    version INSERT failure (I/O error, lock contention, schema drift).
-  - Tests assert the wiki_page row is NOT created / NOT mutated after the
-    injected failure → proves transactional rollback.
+  After v5.41.1: insert_wiki_page and update_wiki_page issue one compound
+  _q("BEGIN TRANSACTION; ... wiki_page ...; ... wiki_page_version ...; COMMIT")
+  call. To inject failure, we patch the storage instance's _q method to raise
+  RuntimeError when it receives the compound-txn body. This simulates a DB-level
+  I/O or constraint error on the whole compound statement.
+
+  Because both writes are in the same _q call, the patch causes NEITHER the
+  wiki_page row NOR the wiki_page_version row to be written — which is exactly
+  the rollback guarantee we are testing.
+
+  In v5.41.0 (pre-fix), the version INSERT was a separate _q call after the
+  wiki_page write succeeded. Injecting failure there (via insert_wiki_page_version
+  patch) left the wiki_page row mutated — the bug. Tests assert wiki_page NOT
+  mutated → RED in v5.41.0, GREEN after v5.41.1 fix.
 
 Perf test:
   - 100 sequential update_wiki_page calls; assert p50 latency ≤ baseline × 1.5.
@@ -27,13 +37,13 @@ from __future__ import annotations
 
 import statistics
 import time
+from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest
 
 from yadgar import server
 from yadgar.storage.migrations import _migration_013_wiki_page_version
-from yadgar.storage.wiki import _WikiMixin
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -72,24 +82,45 @@ def _insert_page(slug="test-page", content="initial content"):
     )
 
 
+@contextmanager
+def _inject_compound_txn_failure(st):
+    """Patch _q on a storage instance to raise on the compound BEGIN TRANSACTION
+    body that writes wiki_page_version. All other _q calls pass through normally.
+
+    Simulates a DB-level failure (I/O error, constraint violation, lock timeout)
+    on the compound transaction that mutates wiki_page + wiki_page_version.
+
+    Why this approach: v5.41.1 issues a single compound _q call for both writes.
+    Failing that one _q prevents BOTH writes — proving atomicity. In v5.41.0 the
+    version write was a separate _q call after the wiki_page write, so injecting
+    failure at that point left the wiki_page mutated (the bug being fixed).
+    """
+    real_q = st._q.__func__  # unbound method from the class
+
+    def selective_fail(self_inner, surql, params=None):
+        if "BEGIN TRANSACTION" in surql and "wiki_page_version" in surql:
+            raise RuntimeError("injected compound-txn failure (simulates DB-level error)")
+        return real_q(self_inner, surql, params)
+
+    with patch.object(type(st), "_q", selective_fail):
+        yield
+
+
 # ── 1. insert rollback on version failure ─────────────────────────────────────
 
 
 class TestInsertRollbackOnVersionFailure:
     def test_insert_rollback_on_version_failure(self):
-        """insert_wiki_page failure in version INSERT → wiki_page row NOT created.
+        """insert_wiki_page compound-txn failure → wiki_page row NOT created.
 
-        RED in v5.41.0: wiki_page IS created (version failure is swallowed).
-        GREEN after fix: single txn rolls back; wiki_page row absent.
+        GREEN after fix: the compound BEGIN/COMMIT _q fails before any writes land.
+        RED in v5.41.0: wiki_page was created by a separate _q call before version
+        INSERT was attempted, so wiki_page row persists despite version failure.
         """
         _apply_migration()
         st = _storage()
 
-        with patch.object(
-            _WikiMixin,
-            "insert_wiki_page_version",
-            side_effect=RuntimeError("injected version INSERT failure"),
-        ):
+        with _inject_compound_txn_failure(st):
             with pytest.raises(RuntimeError):
                 _insert_page(slug="atomic-insert-test", content="should not persist")
 
@@ -105,20 +136,17 @@ class TestInsertRollbackOnVersionFailure:
 
 class TestUpdateRollbackOnVersionFailure:
     def test_update_rollback_on_version_failure(self):
-        """update_wiki_page failure in version INSERT → wiki_page content UNCHANGED.
+        """update_wiki_page compound-txn failure → wiki_page content UNCHANGED.
 
-        RED in v5.41.0: wiki_page content IS updated (version failure swallowed).
-        GREEN after fix: single txn rolls back; wiki_page content stays at 'orig'.
+        GREEN after fix: compound _q fails → neither UPDATE nor version INSERT lands.
+        RED in v5.41.0: wiki_page UPDATE succeeded before version INSERT was attempted,
+        leaving wiki_page with mutated content despite version write failure.
         """
         _apply_migration()
         st = _storage()
         pid = _insert_page(slug="update-rollback-test", content="orig")
 
-        with patch.object(
-            _WikiMixin,
-            "insert_wiki_page_version",
-            side_effect=RuntimeError("injected version INSERT failure"),
-        ):
+        with _inject_compound_txn_failure(st):
             with pytest.raises(RuntimeError):
                 st.update_wiki_page(pid, {"content": "new"})
 
@@ -126,7 +154,7 @@ class TestUpdateRollbackOnVersionFailure:
         page = st.get_wiki_page(pid)
         assert page is not None, "wiki_page row disappeared unexpectedly"
         assert page["content"] == "orig", (
-            f"wiki_page content mutated despite version INSERT failure (atomicity violation): "
+            f"wiki_page content mutated despite txn failure (atomicity violation): "
             f"{page['content']!r}"
         )
 
@@ -136,10 +164,11 @@ class TestUpdateRollbackOnVersionFailure:
 
 class TestUpdateRollbackPreservesVersionChain:
     def test_update_rollback_preserves_version_chain(self):
-        """Failed v3 insert → version chain still has only v1 and v2; wiki_page unchanged.
+        """Failed v3 txn → version chain still has only v1 and v2; wiki_page unchanged.
 
-        RED in v5.41.0: wiki_page IS mutated to v3 content; version chain has v1+v2 only.
-        GREEN after fix: txn rolls back; wiki_page content = v2; chain = [v1, v2].
+        GREEN after fix: txn for v3 rolls back entirely; chain = [v1, v2] and
+        wiki_page content = v2. No partial state (wiki_page at v3 but version=v3 absent).
+        RED in v5.41.0: wiki_page was mutated to v3 content but version=v3 was absent.
         """
         _apply_migration()
         st = _storage()
@@ -155,12 +184,8 @@ class TestUpdateRollbackPreservesVersionChain:
         page_before = st.get_wiki_page(pid)
         assert page_before["content"] == "v2 content"
 
-        # Inject v3 failure.
-        with patch.object(
-            _WikiMixin,
-            "insert_wiki_page_version",
-            side_effect=RuntimeError("injected v3 INSERT failure"),
-        ):
+        # Inject v3 txn failure.
+        with _inject_compound_txn_failure(st):
             with pytest.raises(RuntimeError):
                 st.update_wiki_page(pid, {"content": "v3 content"})
 
@@ -177,21 +202,21 @@ class TestUpdateRollbackPreservesVersionChain:
         # wiki_page content must remain v2.
         page_after = st.get_wiki_page(pid)
         assert page_after["content"] == "v2 content", (
-            f"wiki_page content mutated despite version INSERT failure: {page_after['content']!r}"
+            f"wiki_page content mutated despite txn failure: {page_after['content']!r}"
         )
 
 
-# ── 4. concurrent updates serialize ──────────────────────────────────────────
+# ── 4. sequential updates serialize ──────────────────────────────────────────
 
 
 class TestConcurrentUpdatesSerialize:
     def test_concurrent_updates_serialize(self):
         """Two sequential updates both produce version rows (embedded = single-writer).
 
-        In embedded SurrealKV mode there is no real concurrency — this test verifies
-        that sequential rapid-fire updates both land correctly: 3 versions (v1+v2+v3),
-        page content = last write. A future server-mode integration test can exercise
-        true concurrent writes.
+        Embedded SurrealKV has no real concurrency — this test verifies sequential
+        rapid-fire updates both land correctly: 3 versions (v1+v2+v3), page content
+        = last write. A future server-mode integration test can exercise true
+        concurrent writes.
         """
         _apply_migration()
         st = _storage()
