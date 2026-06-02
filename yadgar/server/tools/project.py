@@ -1310,9 +1310,12 @@ def _project_brief_signals(
         "init_memory_age_hours": init_memory_age_hours,
         "anchor_count_project": anchor_signals["anchor_count_project"],
         "roadmap_update_lag_hours": roadmap_update_lag_hours,
-        "pending_rejections_count": pending_rejections_count,
         "recommended_actions": recommended_actions,
     }
+    # v5.42.0: omit pending_rejections_count when 0 to stay within 100-token budget.
+    # Non-zero count is always included; callers treat absent key as 0.
+    if pending_rejections_count > 0:
+        result["pending_rejections_count"] = pending_rejections_count
     # Omit empty candidate lists to stay within 100-token budget.
     # Non-empty lists are always included; callers must handle key absence for
     # empty case (equivalent to empty list).
