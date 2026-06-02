@@ -1161,6 +1161,78 @@ def _apply_roadmap_signal(resolved: str, storage, actions: list) -> float:
         return -1.0
 
 
+# ── v5.42.0: DLQ rejection signal ───────────────────────────────────────────
+
+#: failure_reason values treated as "rejections" (must match admin_dlq._REJECTION_TAXONOMY).
+_REJECTION_REASONS: frozenset[str] = frozenset({"duplicate_detected", "policy_rejected"})
+
+
+def _compute_pending_rejections(resolved: str) -> int:
+    """Count DLQ rejection entries whose caller_context.directory matches resolved.
+
+    Reads DLQ sidecar files directly (single-pass, O(n) files, no DB query).
+    Returns 0 on any error (graceful degradation).
+
+    Filters by caller_context.directory to enable cross-directory isolation: Stop hook
+    only surfaces rejections relevant to the current project. dlq_inspect(filter='rejections')
+    still lists all rejections regardless of directory.
+
+    v5.42.0 plan §3.3 spec.
+    """
+    import json as _json  # noqa: PLC0415
+
+    try:
+        from yadgar.server.lifecycle import _get_file_queue  # noqa: PLC0415
+
+        fq = _get_file_queue()
+        dlq_dir = fq.dlq_dir
+    except Exception:
+        return 0
+    if not dlq_dir.exists():
+        return 0
+    count = 0
+    try:
+        for sidecar in dlq_dir.glob("*.json.error.json"):
+            try:
+                meta = _json.loads(sidecar.read_text())
+                failure_reason = meta.get("failure_reason") or "permanent_error"
+                if failure_reason not in _REJECTION_REASONS:
+                    continue
+                caller_dir = (
+                    (meta.get("failure_metadata") or {})
+                    .get("caller_context", {})
+                    .get("directory", "")
+                )
+                if caller_dir and caller_dir == resolved:
+                    count += 1
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return count
+
+
+def _apply_rejection_signal(resolved: str, actions: list) -> int:
+    """Compute pending_rejections_count and append review_rejections action if warranted.
+
+    Returns count (0 if none or on error). Appends to actions in-place. Never raises.
+    Same structural pattern as _apply_roadmap_signal.
+    """
+    try:
+        count = _compute_pending_rejections(resolved)
+        if count > 0:
+            actions.append(
+                {
+                    "action": "review_rejections",
+                    "reason": f"{count} write rejection(s) pending review",
+                    "suggested_call": "dlq_inspect(filter='rejections')",
+                }
+            )
+        return count
+    except Exception:
+        return 0
+
+
 def _project_brief_signals(
     resolved: str,
     mode: str,
@@ -1224,6 +1296,9 @@ def _project_brief_signals(
     # v5.41.4: roadmap update lag signal.
     roadmap_update_lag_hours = _apply_roadmap_signal(resolved, storage, recommended_actions)
 
+    # v5.42.0: DLQ rejection signal — pending_rejections_count + review_rejections action.
+    pending_rejections_count = _apply_rejection_signal(resolved, recommended_actions)
+
     result: dict = {
         "_resolved_directory": resolved,
         "_mode": mode,
@@ -1237,6 +1312,10 @@ def _project_brief_signals(
         "roadmap_update_lag_hours": roadmap_update_lag_hours,
         "recommended_actions": recommended_actions,
     }
+    # v5.42.0: omit pending_rejections_count when 0 to stay within 100-token budget.
+    # Non-zero count is always included; callers treat absent key as 0.
+    if pending_rejections_count > 0:
+        result["pending_rejections_count"] = pending_rejections_count
     # Omit empty candidate lists to stay within 100-token budget.
     # Non-empty lists are always included; callers must handle key absence for
     # empty case (equivalent to empty list).

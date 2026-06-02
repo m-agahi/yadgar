@@ -20,8 +20,19 @@ def _json_default(obj):
 class _DLQMixin:
     """Dead-letter queue operations for QueueDrainer."""
 
-    def _move_to_dlq(self, path: Path, attempt, op_type: str) -> None:
-        """Atomically move a queue file to DLQ, write a .error.json sidecar, append events log."""
+    def _move_to_dlq(
+        self,
+        path: Path,
+        attempt,
+        op_type: str,
+        failure_reason: str = "permanent_error",
+        failure_metadata: dict | None = None,
+    ) -> None:
+        """Atomically move a queue file to DLQ, write a .error.json sidecar, append events log.
+
+        v5.42.0: failure_reason taxonomy (permanent_error | duplicate_detected | policy_rejected).
+        failure_metadata carries structured context for rejection entries.
+        """
         now_ts = datetime.now(UTC).isoformat()
         first_failed = (
             datetime.fromtimestamp(attempt.first_failed_at, UTC).isoformat()
@@ -36,7 +47,10 @@ class _DLQMixin:
             "classification": attempt.classification,
             "last_error": attempt.last_error,
             "moved_to_dlq_at": now_ts,
+            "failure_reason": failure_reason,
         }
+        if failure_metadata:
+            meta["failure_metadata"] = failure_metadata
 
         dlq_path = self._queue.dlq_dir / path.name
         try:
