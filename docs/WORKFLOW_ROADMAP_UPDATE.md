@@ -41,25 +41,54 @@ wiki_append_section(
 )
 ```
 
-## When to use full RMW instead
+## Section-by-section guide
 
-- Restructuring section headers or table rows in Pipeline / Deferred decisions
-- Closing a previously open item (needs an edit to a non-`Recently shipped` line)
-- Removing stale entries (full page read required to locate them)
+**Use `wiki_append_section` for bullet-list sections:**
 
-For those cases: read full page → edit in memory → `wiki_update(slug=..., content=<full>)`.
+| Section | Position | Notes |
+|---|---|---|
+| `Recently shipped` | `start_of_section` | newest entry at top |
+| `Follow-ups logged` | `end_of_section` | append new items |
+| `Open architectural questions` | `end_of_section` | append new numbered item |
+| `Workflow rules (anchored)` | `end_of_section` | append new rule |
 
-## Pipeline-table updates
+**Use `wiki_append_section` with `position="replace_section"` for structural sections (tables / state):**
 
-`wiki_append_section` cannot edit table rows. After shipping a Pipeline item, do a
-targeted RMW of just the Pipeline table row:
+| Section | Why replace_section |
+|---|---|
+| `Pipeline (in dispatch order)` | Markdown table — row status changes need full body rewrite |
+| `Deferred decisions` | Markdown table — same reason |
+| `Branches` | Bullet list of current branches; ship → branch deleted |
 
 ```python
-# read
-page = wiki_read("yadgar-roadmap-future-improvements")
-# edit the relevant row in page["content"]
-wiki_update(slug="yadgar-roadmap-future-improvements", content=<edited content>)
+wiki_append_section(
+    slug="yadgar-roadmap-future-improvements",
+    section_heading="Pipeline (in dispatch order)",
+    content="<new full markdown table body>",
+    position="replace_section",
+)
 ```
+
+`replace_section` replaces the section BODY (heading preserved). Cheaper than full RMW
+because the rest of the page is untouched.
+
+**Use full RMW only for:**
+- Editing the page preamble (e.g., `Currently deployed (LIVE)` lines that sit BEFORE the first `##` heading)
+- Cross-section restructuring
+- Removing entire sections
+
+```python
+page = wiki_read("yadgar-roadmap-future-improvements")
+new_content = edit_in_memory(page["content"])
+wiki_update(page_id=page["id"], fields={"content": new_content})
+```
+
+## Common mistake (2026-06-02 lesson)
+
+If the user reports "pipeline table looks stale" after you appended ship entries to
+`Recently shipped`: you wrote to the wrong section. **Pipeline table rows are NOT
+auto-updated by appending to `Recently shipped`.** Use `replace_section` on the
+Pipeline section to mark shipped items struck-through and add new in-flight rows.
 
 ## Signal: `roadmap_update_lag_hours`
 
