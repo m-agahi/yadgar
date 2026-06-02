@@ -62,7 +62,7 @@ def test_memorize_enqueue_under_5ms():
     # Ensure file queue is initialized (warm up)
     server.memorize("warmup for latency test setup", "/latency/project", ["warmup"])
 
-    mock_enqueue = MagicMock(return_value="/tmp/fake_queue/0000000000000001_fake.json")
+    mock_enqueue = MagicMock(return_value="00000000-0000-0000-0000-000000000001")
     # Return (blocked=False, reason="", modified=None) so the write path proceeds
     mock_write_policy = MagicMock(return_value=(False, "", None))
 
