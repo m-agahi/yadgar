@@ -10,6 +10,15 @@ _WikiMixin provides:
   - insert_wiki_page_version / get_max_version_for_page
   - list_wiki_page_versions / get_wiki_page_version
   - _compute_change_summary
+
+v5.41.1 audit: all version-write paths reviewed for try/except masking.
+  - insert_wiki_page: compound BEGIN/COMMIT txn (no masking).
+  - update_wiki_page: compound BEGIN/COMMIT txn (no masking).
+  - wiki_restore (wiki.py caller): calls storage.update_wiki_page — no masking.
+  - wiki_append_section (wiki.py caller): calls storage.update_wiki_page — no masking.
+  - insert_wiki_page_version: kept for migration seeder; not called by write paths.
+  - replace_wiki_crossrefs: separate txn scope (crossref consistency, not version).
+  No other version-write try/except patterns found.
 """
 
 import difflib
