@@ -1,6 +1,12 @@
 # PLAN — v5.41.4: Roadmap-update gap signal + wiki_append_section convention
 
-**Status:** drafted 2026-06-02. Tiny patch (hotfix tier).
+**Status:** drafted 2026-06-02. REVISED 2026-06-02 post-opus-review. Tiny patch (hotfix tier).
+
+**Revision notes (opus reviewer):**
+- DROPPED CLAUDE.md edit step — violates HARD RULE "No Per-Project CLAUDE.md" (global CLAUDE.md is nix-managed). Anchored block in roadmap wiki is the canonical doc location. CLAUDE.md changes (if any) go through the nix repo separately.
+- Tightened ship-commit heuristic — compare `pyproject.toml` `version` field across roadmap-updated commit vs HEAD, NOT regex-on-commit-message alone (squash/rebase merges drop "merge:" prefix).
+- Added test for squash-merge case (HEAD message lacks "merge:" prefix but pyproject version changed).
+- Revised effort: 0.75-1d (was 0.5d).
 
 **Origin:** 2026-06-02 user observation — "you keep missing the roadmap update after ships." Root-caused this session:
 1. Stop hook signals don't detect "version bumped on master since last roadmap update" — no hard gate.
@@ -29,7 +35,7 @@ Add to returned signals dict:
 - `roadmap_update_lag_hours: float` — hours between roadmap wiki `updated_at` and most recent master HEAD commit timestamp. 0 if roadmap is newer; positive if master has moved since roadmap last refreshed.
 
 Add to `recommended_actions`:
-- When `roadmap_update_lag_hours > 0` AND most recent master commit looks like a ship commit (heuristic: matches `^merge: v\d+\.\d+\.\d+` OR contains "chore: bump version") → emit:
+- When `roadmap_update_lag_hours > 0` AND a ship has occurred since roadmap was last updated — detected via **pyproject.toml `version` field diff** (primary, robust to squash/rebase merge) PLUS commit-message regex fallback (`^merge: v\d+\.\d+\.\d+` OR contains "chore: bump version") → emit:
   ```
   {
     "action": "update_roadmap",
@@ -42,7 +48,7 @@ This becomes a Stop-hook recommended action — main thread is prompted explicit
 
 ### 2. Convention shift: `wiki_append_section` for ship entries
 
-Update workflow rules anchored in roadmap wiki + CLAUDE.md:
+Update workflow rules anchored in roadmap wiki (NOT CLAUDE.md — CLAUDE.md is nix-managed; do NOT edit it from this repo).
 
 OLD:
 > "After EACH ship: read-modify-write the roadmap wiki."
@@ -51,6 +57,8 @@ NEW:
 > "After EACH ship: use `wiki_append_section(slug='yadgar-roadmap-future-improvements', section='Recently shipped', content='- vX.Y.Z (date): ...', position='start_of_section')`. Reserve full RMW for restructures."
 
 Document the pattern with example. Add `yadgar/docs/WORKFLOW_ROADMAP_UPDATE.md` (new file) with templated section-append snippet.
+
+**CLAUDE.md update path (separate flow, out of scope for this plan):** if user wants the rule reflected in global CLAUDE.md, change goes through the nix repo (`~/git/nix/modules/home/claude.nix` or wherever the CLAUDE.md content is sourced). Document the convention in MIGRATION_NOTES so the user can sync.
 
 ### 3. Tests
 

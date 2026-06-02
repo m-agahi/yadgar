@@ -1,6 +1,13 @@
 # PLAN — v5.46.0: Distribution (PyPI Polish + Homebrew + Nix Flake + Codeberg Release Automation + SBOM)
 
-**Status:** drafted 2026-05-31. Plan-first per I27.
+**Status:** drafted 2026-05-31. REVISED 2026-06-02 post-opus-review (MAJOR cut). Plan-first per I27.
+
+**Revision notes (opus reviewer):**
+- Cross-repo PR auto-open (brew tap + nix repo) SPLIT to **v5.46.1** (token rotation security surface; ship manual bumps first).
+- License classifier mismatch (MIT vs Apache-2.0 SPDX) — pre-flight Step 0 confirms LICENSE source-of-truth before fixing pyproject.
+- Nix-repo backward-compat shim requires explicit user signoff. Document in MIGRATION_NOTES, not automatic ship.
+- Pre-flight: confirm Forgejo Actions OIDC + asset upload endpoint BEFORE Step 6.
+- SBOM CycloneDX JSON only (SPDX deferred as originally planned).
 
 **Audit lineage:** prior Explore agent (post-v5.25.0 setup audit) flagged GAPS: no Homebrew tap, no Nix flake (only home-manager module in separate repo), no Codeberg release-asset automation, no SBOM tooling. PyPI metadata is functional but ships partial classifier/keyword set.
 

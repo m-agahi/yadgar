@@ -32,6 +32,8 @@
 - Bypass the queue worker — measure the handler's own time-to-return.
 - Document explicitly: "this is the I9 budget; storage-layer latency is a separate concern measured by `test_wiki_versioning_atomicity::TestUpdatePerfUnder5msP50`."
 
+**Mock strategy (opus reviewer note):** use a REAL tmpdir for the queue file write. Only mock the drainer-side processing. Otherwise the test measures dictionary serialization, not the real handler — the `Path.write_text` cost IS part of I9-budgeted MCP handler path. Add explicit assertion: drainer is NOT called on the request thread (test that handler returns before drainer processes the job).
+
 ### 2. Re-attribute test docstring
 
 `yadgar/tests/test_wiki_versioning_atomicity.py::TestUpdatePerfUnder5msP50`:

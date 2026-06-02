@@ -1,6 +1,11 @@
 # PLAN — v5.43.0: memory_archive retention
 
-**Status:** drafted 2026-06-02. DPs resolved. READY for impl.
+**Status:** drafted 2026-06-02. DPs resolved. REVISED 2026-06-02 post-opus-review. READY for impl.
+
+**Revision notes (opus reviewer):**
+- ADDED Phase 0: `audit_anchors` extension to flag "anchored-by-prose-only" memories (no `_anchor` tag + no `is_protected=true` + heat=0 + present in archive table). Required pre-condition before retention can be enabled. Closes the DP-D data-loss-shape concern.
+- TIGHTENED DP-D query: also exclude `tags CONTAINS 'anchor'` (no underscore) for legacy state. Cheap, defensive.
+- DOCUMENTED `archived_at` re-archival semantics explicitly (not just in test names): a memory archived 91d ago that gets RE-archived 3d ago → `archived_at` updates to 3d ago, so won't be purged. Thrash guard (DP-E `created_at < 7d`) catches the secondary case where created_at is recent.
 
 **Origin:** 2026-06-01 user observation — viz reports total > visible by ~1300 memories. Investigation confirmed `memory_archive` table has zero permanent-deletion policy:
 - `prune_old_rows()` allowlist EXCLUDES `memory_archive` (`yadgar/storage/ops.py:110-118`)
@@ -158,7 +163,8 @@ Return: same dict as storage layer.
 
 ## 10. Phases (agent dispatch)
 
-1. **Storage function + tests RED first.** `purge_expired_archives()` w/ all 5 DPs. 10 storage tests. → COMMIT `feat(storage): purge_expired_archives helper w/ thrash guard + anchor skip`
+0. **`audit_anchors` extension — anchored-by-prose detection.** Extend `yadgar/server/tools/anchors.py::audit_anchors` to detect memories with: `_anchor` tag absent + `is_protected=false` + heat=0 + present in `memory_archive`. Returns a candidate-list dict. Add as recommended_action when count > 0. 4 tests (positive/negative/empty/threshold). → COMMIT `feat(anchors): detect anchored-by-prose-only memories at-risk from v5.43 retention`
+1. **Storage function + tests RED first.** `purge_expired_archives()` w/ all 5 DPs + the legacy `tags CONTAINS 'anchor'` no-underscore exclusion. 10 storage tests. → COMMIT `feat(storage): purge_expired_archives helper w/ thrash guard + anchor skip`
 2. **Config knobs (I25).** 3 knobs three-way. 1 test. → COMMIT `feat(config): I25 env knobs for MEMORY_ARCHIVE_RETENTION_*`
 3. **Consolidation integration + telemetry.** Wire into `_run_retention_tasks()`. 2 tests + 2 Prometheus counters. → COMMIT `feat(consolidation): wire archive retention into nightly cycle + metrics`
 4. **MCP tool.** `archive_purge` power-gated + secret-gated. 5 tests. → COMMIT `feat(mcp): archive_purge tool (dry_run default True)`

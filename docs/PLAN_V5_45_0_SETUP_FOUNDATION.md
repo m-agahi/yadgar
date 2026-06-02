@@ -1,6 +1,16 @@
-# PLAN — v5.45.0: Setup Foundation (Makefile + Interactive Installer + Multi-OS Daemons)
+# PLAN — v5.45.0: Setup Foundation (Linux only, scope cut)
 
-**Status:** drafted 2026-05-31. Plan-first per I27.
+**Status:** drafted 2026-05-31. REVISED 2026-06-02 post-opus-review (MAJOR cut). Plan-first per I27.
+
+**Revision notes (opus reviewer):**
+- SCOPE CUT — was 9 steps + 2-3d. Now Linux core only.
+- macOS launchd path SPLIT to **v5.45.2** (separate plan, once verifying host available).
+- Seed-anchors + bundled CLAUDE.md fragment SPLIT to **v5.45.1** (Open Question §6 — was scope creep).
+- Symlink scheme REPLACED with `importlib.resources.files()` (works across sdist/wheel/pipx/editable).
+- Test 14 byte-for-byte template match REPLACED with semantic equivalence.
+- NixOS detection refusal path: confirm `/etc/NIXOS` + error message BEFORE shipping (data-loss-shaped).
+- Revised effort: ~1d (was 2-3d). Steps cap: 1-3 + 5 + 8-9 only.
+- HIGHEST-RISK plan — blocks v5.46 + v5.47 chain. De-scope MANDATORY before dispatch.
 
 **Audit lineage:** identified during v5.41-set viz-planning sweep + post-v5.25.0 setup audit. Current installer (`scripts/setup.sh`) hard-codes `docker` and assumes Linux + systemd. `yadgar/cli/setup.py` is a fragmented config-only wrapper. NixOS-managed installs work; everything else degrades silently.
 

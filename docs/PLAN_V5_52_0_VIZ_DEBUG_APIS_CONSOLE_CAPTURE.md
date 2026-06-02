@@ -1,6 +1,13 @@
 # PLAN — v5.52.0: Debug Viz Interaction APIs + Console Log Capture
 
-**Status:** drafted 2026-05-31. Plan-first per I27.
+**Status:** drafted 2026-05-31. REVISED 2026-06-02 post-opus-review (minor). Plan-first per I27.
+
+**Revision notes (opus reviewer):**
+- ADD I24 `@trace_span` per endpoint (14 new HTTP handlers). Acceptance criterion.
+- ADD I9 budget assertion for `_publish_state` handler (≤5ms p50) — POSTs 1Hz hot path if `YADGAR_DEBUG_APIS_ENABLED=on`.
+- BYTE-cap ring buffer (1MB cap) instead of entry-count (1000). High log rates blow entry-count cap. Memory budget must be bounded.
+- ADD XSS escape regression test for console-capture rendering path — `window.console` proxy is XSS-vulnerable if captured strings rendered without escape. Acceptance criterion.
+- v5.50.0 introduces `YADGAR_DEBUG_APIS_ENABLED` — v5.52 does NOT re-register. Document dependency.
 
 **Renumbered:** v5.43.0 → v5.52.0 on 2026-05-31. User explicitly bumped the viz train forward so the setup-refactor (v5.45-v5.47) ships first. Numbering is locked at v5.50 / v5.51 / v5.52. Do NOT revert to v5.43 anywhere.
 
