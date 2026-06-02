@@ -474,6 +474,47 @@ class _WikiMixin:
                 break
         return results
 
+    # ------------------------------------------------------------------ Embedding backfill helpers
+
+    def get_wiki_pages_without_embedding(self) -> list[dict]:
+        """Return wiki_page rows where embedding is absent or null.
+
+        SurrealDB distinguishes NONE (field absent) from null (explicit null).
+        We catch both: rows inserted via JSON params receive null (not NONE)
+        when embedding=None is passed. Both indicate a missing embedding.
+
+        Used by migration_014 backfill to find rows that need re-embedding.
+        Returns list of dicts with keys: id, title, content.
+        """
+        rows = self._q(
+            "SELECT id, title, content FROM wiki_page WHERE embedding IS NONE OR embedding IS NULL"
+        )
+        result = []
+        for row in rows:
+            pid = self._extract_id(row.get("id"))
+            if pid is None:
+                continue
+            result.append(
+                {
+                    "id": pid,
+                    "title": row.get("title", ""),
+                    "content": row.get("content", ""),
+                }
+            )
+        return result
+
+    def update_wiki_page_embedding_only(self, page_id: int, embedding: bytes) -> None:
+        """Set embedding on a wiki_page row WITHOUT creating a version entry.
+
+        Used exclusively by migration_014 backfill — updating only the embedding
+        column is not a content change and should not produce a version snapshot.
+        """
+        floats = self._bytes_to_floats(embedding)
+        self._q(
+            "UPDATE type::record('wiki_page', $pid) SET embedding = $emb",
+            {"pid": int(page_id), "emb": floats},
+        )
+
     # ------------------------------------------------------------------ Wiki Cross-References
 
     def replace_wiki_crossrefs(self, from_slug: str, to_slugs: list[str]) -> None:
