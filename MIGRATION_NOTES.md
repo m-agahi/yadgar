@@ -1,5 +1,51 @@
 # Migration Notes
 
+## v5.41.1 — Wiki versioning transactional atomicity hotfix (2026-06-02)
+
+Core 5.41.0 → 5.41.1. Backend unchanged at 5.4.0. **No DB migration required.**
+
+### What changed
+
+`insert_wiki_page` and `update_wiki_page` now wrap the wiki_page mutation and
+the wiki_page_version INSERT in a single `BEGIN TRANSACTION … COMMIT TRANSACTION`
+compound statement. Either both rows land or both roll back.
+
+In v5.41.0, the version INSERT was wrapped in `try/except` and swallowed on
+failure — wiki_page could be mutated without a corresponding version row. This
+created holes in the version chain (`wiki_history` returned non-contiguous
+timelines; `wiki_restore` could not restore across a missing version).
+
+### Failure-surface change — BREAKING for callers that swallowed version errors
+
+In v5.41.0, a version INSERT failure was swallowed silently (debug log only).
+In v5.41.1, version INSERT failure propagates as an exception, rolling back the
+entire wiki_page write.
+
+**Impact on callers:**
+- `wiki_add` (MCP tool) — exception propagates to the caller response as
+  `{"error": "..."}`. Clients that assumed `wiki_add` was always non-fatal now
+  need to handle this error path. In practice, the version table is only at risk
+  if the DB itself is in a bad state (I/O error, lock timeout, OOM), which should
+  also prevent the wiki_page write from being useful anyway.
+- `wiki_append_section` (MCP tool) — same as `wiki_add`.
+- Direct `storage.update_wiki_page` callers — exception bubbles up unchanged.
+
+### Gap note (low risk)
+
+Any `wiki_page` mutation between v5.41.0 ship (2026-06-01 night) and v5.41.1
+ship (2026-06-02) where the version INSERT failed silently will have a version
+chain hole. There is no automated backfill — the window is narrow (≈1 day) and
+the failure mode requires a DB-level write error on the version row specifically.
+If you suspect a gap, run `wiki_history(slug)` and look for non-contiguous
+version numbers.
+
+### No schema change
+
+Migration 013 (`wiki_page_version` table + indexes) is unchanged. No new
+migration is needed.
+
+---
+
 ## v5.41.0 — Wiki versioning + section-patching (2026-06-01)
 
 Core 5.39.0 → 5.41.0. Backend unchanged at 5.4.0.

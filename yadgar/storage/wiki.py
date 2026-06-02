@@ -10,6 +10,15 @@ _WikiMixin provides:
   - insert_wiki_page_version / get_max_version_for_page
   - list_wiki_page_versions / get_wiki_page_version
   - _compute_change_summary
+
+v5.41.1 audit: all version-write paths reviewed for try/except masking.
+  - insert_wiki_page: compound BEGIN/COMMIT txn (no masking).
+  - update_wiki_page: compound BEGIN/COMMIT txn (no masking).
+  - wiki_restore (wiki.py caller): calls storage.update_wiki_page — no masking.
+  - wiki_append_section (wiki.py caller): calls storage.update_wiki_page — no masking.
+  - insert_wiki_page_version: kept for migration seeder; not called by write paths.
+  - replace_wiki_crossrefs: separate txn scope (crossref consistency, not version).
+  No other version-write try/except patterns found.
 """
 
 import difflib
@@ -93,18 +102,18 @@ class _WikiMixin:
     def insert_wiki_page(self, page: dict, branch: str | None = None) -> int:
         """Insert a new wiki page, return its integer ID.
 
-        v5.41.0: Also writes version=1 row to wiki_page_version table.
-        Version insert is a separate call (not in the same TX) because embedded
-        mode does not support multi-statement TX with CREATE + UNIQUE index in
-        one compound block. Atomicity is best-effort at the application level
-        (single-writer embedded SurrealDB assumption).
+        v5.41.1: wiki_page CREATE and wiki_page_version CREATE are wrapped in a
+        single BEGIN/COMMIT transaction. Either both succeed or both roll back —
+        no orphan wiki_page rows without a version, and no orphan version rows.
         """
         now = self._now_iso()
         pid = self._next_id("wiki_page")
+        # Reserve version row ID outside the txn (counter bump is non-transactional).
+        vid = self._next_id("wiki_page_version")
         embedding = page.get("embedding")
         emb_floats = self._bytes_to_floats(embedding) if isinstance(embedding, bytes) else embedding
-        sql = (
-            "CREATE type::record('wiki_page', $id) SET "
+
+        page_set = (
             "title = $title, slug = $slug, content = $content, "
             "category = $category, tags = $tags, links = $links, "
             "confidence = $confidence, embedding = $embedding, "
@@ -112,7 +121,7 @@ class _WikiMixin:
             "created_at = $created_at, updated_at = $updated_at"
         )
         params: dict = {
-            "id": pid,
+            "pid": pid,
             "title": page.get("title", ""),
             "slug": page["slug"],
             "content": page.get("content", ""),
@@ -124,90 +133,118 @@ class _WikiMixin:
             "source_memory_ids": page.get("source_memory_ids", []),
             "created_at": page.get("created_at", now),
             "updated_at": page.get("updated_at", now),
+            "vid": vid,
+            "ver_title": page.get("title", ""),
+            "ver_content": page.get("content", ""),
+            "ver_category": page.get("category"),
+            "ver_tags": page.get("tags", []),
+            "ver_confidence": page.get("confidence"),
+            "ver_source_memory_ids": page.get("source_memory_ids", []),
+            "ver_branch": branch,
+            "ver_now": now,
         }
         if branch is not None:
-            sql += ", branch = $branch"
+            page_set += ", branch = $branch"
             params["branch"] = branch
-        self._q(sql, params)
 
-        # v5.41.0: write version=1 snapshot (I1: single INSERT, no LLM/embed)
-        try:
-            snapshot = {
-                "title": page.get("title", ""),
-                "content": page.get("content", ""),
-                "category": page.get("category"),
-                "tags": page.get("tags", []),
-                "confidence": page.get("confidence"),
-                "source_memory_ids": page.get("source_memory_ids", []),
-                "branch": branch,
-            }
-            self.insert_wiki_page_version(pid, snapshot, "initial version")
-        except Exception:
-            _log.debug("wiki_page_version insert failed for page_id=%s (non-fatal)", pid)
-
+        # Single compound transaction: wiki_page + wiki_page_version version=1.
+        # I1: no LLM/embed inside txn — pure DB writes only.
+        self._q(
+            "BEGIN TRANSACTION;\n"
+            f"CREATE type::record('wiki_page', $pid) SET {page_set};\n"
+            "CREATE type::record('wiki_page_version', $vid) SET "
+            "page_id = $pid, version = 1, title = $ver_title, "
+            "content = $ver_content, category = $ver_category, tags = $ver_tags, "
+            "confidence = $ver_confidence, "
+            "source_memory_ids = $ver_source_memory_ids, branch = $ver_branch, "
+            "change_summary = 'initial version', created_at = $ver_now, "
+            "provenance_agent = 'default';\n"
+            "COMMIT TRANSACTION",
+            params,
+        )
         return pid
 
     @trace_span("storage.wiki.update_wiki_page")
     def update_wiki_page(self, page_id: int, updates: dict) -> bool:
         """Update fields on an existing wiki page. Return True if found.
 
-        v5.41.0: Reads old page state before update to compute change_summary,
-        then writes a version row after the pointer update.
+        v5.41.1: wiki_page UPDATE and wiki_page_version INSERT are wrapped in a
+        single BEGIN/COMMIT transaction. Either both succeed or both roll back.
         Version is always recorded regardless of content identity (I6: no skip
         on hash-identical content — preserves full history).
+
+        Pre-txn reads (get_wiki_page, get_max_version_for_page, _next_id) happen
+        outside the transaction. In embedded single-writer mode this is safe.
+        In server mode a race window exists between read and txn open, but that
+        is a pre-existing constraint scoped out per plan §Non-goals.
         """
         if not updates:
             return False
 
-        # v5.41.0: read old state before update (for change_summary)
-        old_page: dict | None = None
-        try:
-            old_page = self.get_wiki_page(int(page_id))
-        except Exception:
-            pass
+        # Read old state before txn (for change_summary + snapshot fields).
+        old_page: dict | None = self.get_wiki_page(int(page_id))
+        if old_page is None:
+            return False
 
-        # Handle embedding conversion if present
+        # Handle embedding conversion if present.
         if "embedding" in updates and isinstance(updates["embedding"], bytes):
             updates = dict(updates)
             updates["embedding"] = self._bytes_to_floats(updates["embedding"])
         updates = dict(updates)
-        updates["updated_at"] = self._now_iso()
+        now = self._now_iso()
+        updates["updated_at"] = now
+
+        # Build post-update snapshot from old page merged with updates.
+        merged = dict(old_page)
+        merged.update(updates)
+        old_content = old_page.get("content", "")
+        new_content = updates.get("content", old_page.get("content", ""))
+        change_summary = _compute_change_summary(old_content, new_content)
+
+        # Reserve version row ID + number outside the txn (counters are non-txn).
+        vid = self._next_id("wiki_page_version")
+        new_ver = self.get_max_version_for_page(int(page_id)) + 1
+
+        # Build UPDATE SET clause for wiki_page.
         set_parts = []
-        params = {"id": int(page_id)}
+        params: dict = {"pid": int(page_id)}
         for col, val in updates.items():
-            set_parts.append(f"{col} = ${col}")
-            params[col] = val
-        rows = self._q(
-            f"UPDATE type::record('wiki_page', $id) SET {', '.join(set_parts)}",
+            set_parts.append(f"{col} = $upd_{col}")
+            params[f"upd_{col}"] = val
+
+        # Version snapshot params.
+        params.update(
+            {
+                "vid": vid,
+                "new_ver": new_ver,
+                "ver_title": merged.get("title", ""),
+                "ver_content": new_content,
+                "ver_category": merged.get("category"),
+                "ver_tags": merged.get("tags", []),
+                "ver_confidence": merged.get("confidence"),
+                "ver_source_memory_ids": merged.get("source_memory_ids", []),
+                "ver_branch": merged.get("branch"),
+                "ver_change_summary": change_summary,
+                "ver_now": now,
+            }
+        )
+
+        # Single compound transaction: wiki_page UPDATE + wiki_page_version CREATE.
+        # I1: no LLM/embed inside txn — pure DB writes only.
+        self._q(
+            "BEGIN TRANSACTION;\n"
+            f"UPDATE type::record('wiki_page', $pid) SET {', '.join(set_parts)};\n"
+            "CREATE type::record('wiki_page_version', $vid) SET "
+            "page_id = $pid, version = $new_ver, title = $ver_title, "
+            "content = $ver_content, category = $ver_category, tags = $ver_tags, "
+            "confidence = $ver_confidence, "
+            "source_memory_ids = $ver_source_memory_ids, branch = $ver_branch, "
+            "change_summary = $ver_change_summary, created_at = $ver_now, "
+            "provenance_agent = 'default';\n"
+            "COMMIT TRANSACTION",
             params,
         )
-        found = len(rows) > 0
-
-        if found:
-            # v5.41.0: write version snapshot (I1: single INSERT, no LLM/embed)
-            try:
-                # Build post-update snapshot from old page merged with updates
-                merged = dict(old_page or {})
-                merged.update(updates)
-                old_content = (old_page or {}).get("content", "") if old_page else ""
-                new_content = updates.get("content", merged.get("content", ""))
-                if old_page and "content" not in updates:
-                    new_content = old_page.get("content", "")
-                change_summary = _compute_change_summary(old_content, new_content)
-                snapshot = {
-                    "title": merged.get("title", ""),
-                    "content": new_content,
-                    "category": merged.get("category"),
-                    "tags": merged.get("tags", []),
-                    "confidence": merged.get("confidence"),
-                    "source_memory_ids": merged.get("source_memory_ids", []),
-                    "branch": merged.get("branch"),
-                }
-                self.insert_wiki_page_version(int(page_id), snapshot, change_summary)
-            except Exception:
-                _log.debug("wiki_page_version insert failed for page_id=%s (non-fatal)", page_id)
-
-        return found
+        return True
 
     @trace_span("storage.wiki.get_wiki_page")
     def get_wiki_page(self, page_id: int) -> dict | None:
