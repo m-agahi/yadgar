@@ -1,5 +1,43 @@
 # Migration Notes
 
+## v5.41.2 — wiki_add wait flag for read-your-writes consistency (2026-06-02)
+
+Core 5.41.1 → 5.41.2. Backend unchanged at 5.4.0. **No DB migration required.**
+
+### What changed
+
+`wiki_add`, `wiki_update`, `wiki_restore`, and `wiki_append_section` now accept
+`wait: bool = False`. When `wait=True`:
+
+- `wiki_add` bypasses the async file queue and writes directly to storage, returning
+  `{"stored": true, "queued": false, "committed": true, ...}`. Callers can call
+  `wiki_history(slug)` immediately after without a `sleep()`.
+- `wiki_update`, `wiki_restore`, `wiki_append_section` are already synchronous —
+  `wait=True` is a no-op accepted for API symmetry.
+
+`FileQueue.enqueue()` return value changed from file path (string) to `job_id` (UUID
+string). If your code captures the return value of `enqueue()`, update it. Callers that
+ignore the return value are unaffected. `memorize` MCP tool return now includes
+`queue_id` as a UUID string rather than a filename.
+
+### New config knob (I25)
+
+`WIKI_WRITE_WAIT_TIMEOUT_SECONDS` (default `5.0`): maximum seconds `wiki_add(wait=True)`
+may block. Only applies to the opt-in wait path — the default async path is unaffected.
+Set via env: `YADGAR_WIKI_WRITE_WAIT_TIMEOUT_SECONDS=10.0`.
+
+**NOTE: v5.41.2 wait=True does not yet use this knob.** The wait=True path currently
+bypasses the queue entirely (sync write) so no timeout is needed. The knob is registered
+now (I25 compliance) for a future queue-wait implementation that may need it.
+
+### Performance
+
+- `wiki_add(wait=False)` (default): p50 latency unchanged (<50ms for queue enqueue).
+  I9 budget applies as before.
+- `wiki_add(wait=True)`: opt-in slow path, not bound by I9. Expect storage-write latency
+  (~80-150ms for embedded SurrealKV). Do NOT use as default in agent prompts — reserve
+  for callers that genuinely need immediate read-after-write consistency.
+
 ## v5.41.1 — Wiki versioning transactional atomicity hotfix (2026-06-02)
 
 Core 5.41.0 → 5.41.1. Backend unchanged at 5.4.0. **No DB migration required.**

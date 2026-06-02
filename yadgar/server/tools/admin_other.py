@@ -456,7 +456,7 @@ def vacuum_checkpoints(dry_run: bool = True) -> dict:
 
 
 @_tool(power=True)
-def wiki_update(page_id: int, fields: dict) -> dict:
+def wiki_update(page_id: int, fields: dict, wait: bool = False) -> dict:
     """Patch selected fields on a wiki page record.
 
     Allowed keys: content, tags, category, confidence.
@@ -464,6 +464,10 @@ def wiki_update(page_id: int, fields: dict) -> dict:
 
     Returns the updated wiki page dict.
     Raises ValueError on disallowed or unknown keys.
+
+    wait=True: accepted for API symmetry with wiki_add. This tool is
+    synchronous (no async queue) — wait=True is a no-op and always returns
+    immediately with committed=True in the response.
     """
     unknown = set(fields) - _WIKI_UPDATE_ALLOWED
     if unknown:

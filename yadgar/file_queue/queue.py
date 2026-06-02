@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 import uuid
 from datetime import UTC, datetime
@@ -43,6 +44,10 @@ class FileQueue:
         self.archive_dir.mkdir(parents=True, exist_ok=True)
         self.wiki_dir.mkdir(parents=True, exist_ok=True)
         self.dlq_dir.mkdir(parents=True, exist_ok=True)
+        # Per-job completion tracking (v5.41.2 wait flag).
+        # Only populated when a caller opts in via register_wait(job_id).
+        self._job_futures: dict[str, threading.Event] = {}
+        self._job_lock: threading.Lock = threading.Lock()
 
     def _memories_archive_dir(self) -> Path:
         """Return today's memories archive dir, creating it if needed."""
@@ -51,7 +56,12 @@ class FileQueue:
         return d
 
     def enqueue(self, op_type: str, payload: dict) -> str:
-        """Write a queued operation atomically. Returns the queue file path."""
+        """Write a queued operation atomically.
+
+        Returns the job_id (UUID string) for this enqueue operation.
+        Pass the job_id to QueueDrainer.wait_for_job() when wait=True to block
+        until this specific write has been committed to the database.
+        """
         record_id = str(uuid.uuid4())
         data = {
             "op": op_type,
@@ -64,7 +74,40 @@ class FileQueue:
         target = self.queue_dir / fname
         tmp.write_text(json.dumps(data, ensure_ascii=False, default=_json_default))
         tmp.rename(target)  # atomic on POSIX
-        return str(target)
+        return record_id
+
+    def register_wait(self, job_id: str) -> threading.Event:
+        """Register interest in completion of job_id. Returns a threading.Event.
+
+        The event is set by signal_complete() when the drainer commits the job.
+        Multiple calls with the same job_id return the same event (idempotent).
+        Only allocates an event when wait=True is opted in — zero cost on the
+        default async path.
+        """
+        with self._job_lock:
+            if job_id not in self._job_futures:
+                self._job_futures[job_id] = threading.Event()
+            return self._job_futures[job_id]
+
+    def signal_complete(self, job_id: str) -> None:
+        """Mark job_id as committed. Sets the event registered via register_wait().
+
+        Safe to call even if no caller registered a wait for this job — no-op.
+        Called by QueueDrainer._apply_with_stage_metrics after archive succeeds.
+
+        The event is NOT removed here — wait_for_job() cleans it up after waiting,
+        so callers that call signal_complete before wait_for_job() still see the
+        pre-set event in register_wait().
+        """
+        with self._job_lock:
+            event = self._job_futures.get(job_id)
+        if event is not None:
+            event.set()
+
+    def _cleanup_job(self, job_id: str) -> None:
+        """Remove a job from tracking after wait_for_job() has consumed it."""
+        with self._job_lock:
+            self._job_futures.pop(job_id, None)
 
     def pending(self) -> list[Path]:
         """Return queue files sorted oldest-first."""
@@ -78,6 +121,22 @@ class FileQueue:
         except OSError:
             path.unlink(missing_ok=True)
 
+    def _cleanup_date_dir(self, date_dir: Path, cutoff: float) -> int:
+        """Delete stale files in one dated archive sub-directory. Returns count deleted."""
+        deleted = 0
+        for f in date_dir.iterdir():
+            try:
+                if f.stat().st_mtime < cutoff:
+                    f.unlink(missing_ok=True)
+                    deleted += 1
+            except OSError:
+                pass
+        try:
+            date_dir.rmdir()
+        except OSError:
+            pass
+        return deleted
+
     def cleanup_archive(self) -> int:
         """Delete archive files older than _ARCHIVE_MAX_AGE. Returns count deleted."""
         cutoff = time.time() - _ARCHIVE_MAX_AGE
@@ -89,18 +148,7 @@ class FileQueue:
             for date_dir in subdir.iterdir():
                 if not date_dir.is_dir():
                     continue
-                for f in date_dir.iterdir():
-                    try:
-                        if f.stat().st_mtime < cutoff:
-                            f.unlink(missing_ok=True)
-                            deleted += 1
-                    except OSError:
-                        pass
-                # Remove empty date dirs
-                try:
-                    date_dir.rmdir()
-                except OSError:
-                    pass
+                deleted += self._cleanup_date_dir(date_dir, cutoff)
         # Also clean up any legacy flat archive files (migration)
         for f in self.archive_dir.glob("*.json"):
             try:

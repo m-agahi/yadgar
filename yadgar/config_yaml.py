@@ -809,6 +809,16 @@ FIELD_META: dict[str, dict[str, str]] = {
         ),
         "section": "cpu_burst_detection",
     },
+    # wiki_write_wait (v5.41.2)
+    "wiki_write_wait_timeout_seconds": {
+        "desc": (
+            "Maximum seconds wiki_add(wait=True) may block before returning a timeout error "
+            "(default 5.0). Only applies to the opt-in wait=True path — the default async "
+            "path is completely unaffected. Increase for slow storage; decrease for faster "
+            "failure in interactive callers."
+        ),
+        "section": "wiki_write_wait",
+    },
     # wiki_similarity_gate (v5.39.0)
     "wiki_sim_gate_enabled": {
         "desc": "Enable wiki_add similarity gate (default true). Set to false to disable entirely.",
@@ -873,6 +883,7 @@ SECTION_TITLES: dict[str, str] = {
     "cpu_burst_detection": "CPU Burst Detection (v5.15.0)",
     "memory_blocks": "Memory Blocks (v5.35.1)",
     "wiki_similarity_gate": "Wiki Similarity Gate (v5.39.0)",
+    "wiki_write_wait": "Wiki Write Wait / Read-Your-Writes (v5.41.2)",
 }
 
 # Ordered list of sections for deterministic output
