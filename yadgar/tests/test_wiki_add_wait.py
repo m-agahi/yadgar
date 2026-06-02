@@ -14,6 +14,9 @@ Plus:
 
 RED before Phase 2; GREEN after.
 """
+# NOTE: wait=True on wiki_add goes through the queue + wait_for_job (v5.41.2 fix).
+# Storage errors on the wait=True path are NOT propagated synchronously — they are
+# caught by the drainer's retry/DLQ machinery, and the caller sees wait_timeout instead.
 
 from __future__ import annotations
 
@@ -178,57 +181,47 @@ class TestWaitOnSyncTools:
         assert "error" not in result, f"wiki_append_section returned error: {result}"
 
 
-# ── 4. wait=True sync path — storage error propagates cleanly ────────────────
+# ── 4. wait=True timeout — drainer doesn't commit within budget ───────────────
 
 
-class TestWaitSyncErrorHandling:
-    def test_wait_true_storage_error_surfaces(self):
-        """wiki_add(wait=True) — storage errors propagate rather than silently queuing.
+class TestWaitTimeout:
+    def test_wait_timeout_returns_error(self):
+        """wiki_add(wait=True) — returns wait_timeout when drainer doesn't commit in time.
 
-        wait=True bypasses the async queue and writes synchronously. If the
-        underlying write fails (e.g. storage down), the error is returned
-        immediately rather than buried in the queue's retry/DLQ machinery.
+        wait=True enqueues the write and calls wait_for_job. If the drainer
+        never signals completion (e.g. drain_now is patched to no-op), the
+        call returns {"stored": False, "reason": "wait_timeout", "queued": True}
+        within the timeout budget.
         """
         import yadgar.server._state as _state
 
-        title = _make_unique_title("Storage Error Test Page")
+        drainer = _state._queue_drainer
+        if drainer is None:
+            pytest.skip("No drainer running in this test setup")
 
-        # Patch _wiki.add to raise
-        original_add = _state._wiki.add
-        _state._wiki.add = lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("db down"))
+        title = _make_unique_title("Timeout Test Page")
 
-        try:
-            with pytest.raises(RuntimeError, match="db down"):
-                server.wiki_add(
+        t0 = time.perf_counter()
+        # Patch drain_now to no-op so signal_complete is never called.
+        with patch.object(drainer, "drain_now", return_value=0):
+            # Use a short timeout via config knob to keep test fast.
+            with patch("yadgar.config.get_settings") as _mock_cfg:
+                _mock_cfg.return_value = type(
+                    "_Cfg", (), {"WIKI_WRITE_WAIT_TIMEOUT_SECONDS": 0.3}
+                )()
+                result = server.wiki_add(
                     title=title,
-                    content="error test",
+                    content="timeout test",
                     wait=True,
-                    tags=["error-test"],
+                    tags=["timeout-test"],
                 )
-        finally:
-            _state._wiki.add = original_add
+        elapsed = time.perf_counter() - t0
 
-    def test_wait_true_ingest_error_surfaces(self):
-        """wiki_add(wait=True, append=True) — storage errors propagate synchronously."""
-        import yadgar.server._state as _state
-
-        title = _make_unique_title("Ingest Error Test Page")
-
-        # Patch _wiki.ingest to raise
-        original_ingest = _state._wiki.ingest
-        _state._wiki.ingest = lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("ingest down"))
-
-        try:
-            with pytest.raises(RuntimeError, match="ingest down"):
-                server.wiki_add(
-                    title=title,
-                    content="error test",
-                    wait=True,
-                    append=True,
-                    tags=["error-test"],
-                )
-        finally:
-            _state._wiki.ingest = original_ingest
+        assert result.get("stored") is False, f"Expected stored=False, got: {result}"
+        assert result.get("reason") == "wait_timeout", f"Expected wait_timeout, got: {result}"
+        assert result.get("queued") is True, f"Expected queued=True, got: {result}"
+        # Should complete within a reasonable budget (timeout + small overhead)
+        assert elapsed < 2.0, f"wait_timeout took {elapsed:.2f}s — expected < 2s"
 
 
 # ── 5. wait=False performance — <50ms ────────────────────────────────────────

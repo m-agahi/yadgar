@@ -79,6 +79,107 @@ def _wiki_add_sync_write(
     return result
 
 
+def _wiki_add_wait_path(
+    title: str,
+    content: str,
+    category: str,
+    tags: list[str] | None,
+    source_memory_ids: list[int] | None,
+    confidence: str,
+    branch: str | None,
+    append: bool,
+    replace_slug: str | None,
+    new_slug: str,
+) -> dict:
+    """Handle wiki_add(wait=True): enqueue + wait_for_job to preserve FIFO ordering.
+
+    Falls back to sync write when no drainer is running or replace_slug is set
+    (queue path doesn't carry replace_slug semantics; named overwrite has no
+    FIFO hazard anyway).
+
+    Returns {"committed": True} on success, {"reason": "wait_timeout"} on
+    drainer timeout, or the sync-write result annotated with committed=True
+    on fallback.
+    """
+    drainer = _st._queue_drainer
+
+    # Sync fallback: no drainer running, or replace_slug requires sync path.
+    if drainer is None or replace_slug is not None:
+        result = _wiki_add_sync_write(
+            title,
+            content,
+            category,
+            tags,
+            source_memory_ids,
+            confidence,
+            branch,
+            append,
+            replace_slug,
+        )
+        result["stored"] = True
+        result["queued"] = False
+        result["committed"] = True
+        return result
+
+    # Enqueue like the async path so FIFO ordering is preserved.
+    try:
+        job_id = _get_file_queue().enqueue(
+            "wiki_add",
+            {
+                "wiki_schema_version": 2,
+                "slug": new_slug,
+                "title": title,
+                "content": content,
+                "category": category or "reference",
+                "tags": tags,
+                "source_memory_ids": source_memory_ids,
+                "confidence": confidence,
+                "append": append,
+                "branch": branch,
+            },
+        )
+    except Exception as fq_exc:
+        logger.warning("wait=True enqueue failed, falling back to sync write: %s", fq_exc)
+        result = _wiki_add_sync_write(
+            title,
+            content,
+            category,
+            tags,
+            source_memory_ids,
+            confidence,
+            branch,
+            append,
+            replace_slug,
+        )
+        result["stored"] = True
+        result["queued"] = False
+        result["committed"] = True
+        return result
+
+    try:
+        from yadgar.config import get_settings as _get_settings  # noqa: PLC0415
+
+        timeout = getattr(_get_settings(), "WIKI_WRITE_WAIT_TIMEOUT_SECONDS", 5.0)
+    except Exception:
+        timeout = 5.0
+
+    if drainer.wait_for_job(job_id, timeout=timeout):
+        return {
+            "stored": True,
+            "queued": False,
+            "committed": True,
+            "slug": new_slug,
+            "title": title,
+        }
+    return {
+        "stored": False,
+        "reason": "wait_timeout",
+        "queued": True,
+        "slug": new_slug,
+        "hint": "Write still queued — will commit on next drain or hit DLQ on repeated failure.",
+    }
+
+
 def _check_similarity_gate(
     title: str,
     content: str,
@@ -185,11 +286,14 @@ def wiki_add(
        the daemon CWD is not the caller's repo and would always resolve to "master".
 
     wait=False (default): async fast path — returns immediately with {"queued": True}.
-    wait=True: synchronous path — bypasses the queue and writes directly to storage,
-      then returns {"committed": True, "queued": False}. Use when the caller needs
-      immediate read-your-writes consistency (e.g. wiki_history immediately after
-      wiki_add). I9 latency budget does NOT apply to wait=True (opt-in slow path).
-      Storage errors propagate immediately rather than being buried in queue retries.
+    wait=True: read-your-writes path — enqueues then blocks until the drainer
+      commits the write, then returns {"committed": True, "queued": False}.
+      Preserves FIFO ordering (earlier queued writes to the same slug still land
+      before this one). On timeout returns {"stored": False, "reason":
+      "wait_timeout", "queued": True} — the write is still in the queue and will
+      eventually commit or hit DLQ. I9 latency budget does NOT apply to wait=True
+      (opt-in slow path). If no drainer is running or replace_slug is set, falls
+      back to the sync write path with the same committed=True response.
     """
     assert _st._wiki is not None, "WikiStore not initialized"
 
@@ -230,10 +334,10 @@ def wiki_add(
     if _gate_result is not None:
         return _gate_result
 
-    # wait=True: synchronous path — skip queue and write directly for read-your-writes.
-    # Also used by QueueDrainer replay (is_draining=True) and queue fallback.
-    if wait or is_draining():
-        result = _wiki_add_sync_write(
+    # QueueDrainer replay path: is_draining() means we're inside _apply().
+    # Must not re-enqueue — write directly and return.
+    if is_draining():
+        return _wiki_add_sync_write(
             title,
             content,
             category,
@@ -244,12 +348,22 @@ def wiki_add(
             append,
             replace_slug,
         )
-        if wait and not is_draining():
-            # Annotate response to make the contract explicit.
-            result["stored"] = True
-            result["queued"] = False
-            result["committed"] = True
-        return result
+
+    # wait=True: enqueue first (preserves FIFO), then block until drainer commits.
+    # See _wiki_add_wait_path for fallback semantics (no drainer, replace_slug).
+    if wait:
+        return _wiki_add_wait_path(
+            title,
+            content,
+            category,
+            tags,
+            source_memory_ids,
+            confidence,
+            branch,
+            append,
+            replace_slug,
+            _new_slug,
+        )
 
     # Async path (wait=False default): enqueue and return immediately.
     try:
