@@ -700,6 +700,235 @@ def _fetch_cross_project_candidates_for_signals(storage, _now: str, cfg) -> list
         return []
 
 
+# ── Roadmap update signal (v5.41.4) ───────────────────────────────────────────
+
+#: Slug of the canonical roadmap wiki page.  Change here if wiki slug changes.
+_ROADMAP_WIKI_SLUG = "yadgar-roadmap-future-improvements"
+
+#: Regex patterns that indicate a ship commit (fallback when pyproject diff unavailable).
+_SHIP_COMMIT_RE = re.compile(
+    r"^merge:\s+v\d+\.\d+\.\d+|chore:\s+bump\s+version",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _get_master_head_info(resolved: str) -> dict | None:
+    """Return HEAD info for the default (master) branch of resolved repo.
+
+    Returns dict with keys: commit_ts (float), commit_msg (str), pyproject_version (str | None).
+    Returns None on any error (git not available, not a repo, etc.).
+
+    Uses committer date (%ct) to match v5.41.4 plan spec (robust to rebases).
+    All git invocations use _GIT_SAFE_ARGS + _git_safe_env() (H-10 hardening).
+    """
+    try:
+        default_branch = _get_default_branch(resolved)
+        # Committer timestamp
+        ts_out = (
+            subprocess.check_output(
+                [
+                    "git",
+                    *_GIT_SAFE_ARGS,
+                    "-C",
+                    resolved,
+                    "log",
+                    default_branch,
+                    "-1",
+                    "--format=%ct",
+                ],
+                stderr=subprocess.DEVNULL,
+                timeout=3,
+                env=_git_safe_env(),
+            )
+            .decode()
+            .strip()
+        )
+        if not ts_out:
+            return None
+        commit_ts = float(ts_out)
+
+        # Commit message (subject + body)
+        msg_out = (
+            subprocess.check_output(
+                [
+                    "git",
+                    *_GIT_SAFE_ARGS,
+                    "-C",
+                    resolved,
+                    "log",
+                    default_branch,
+                    "-1",
+                    "--format=%B",
+                ],
+                stderr=subprocess.DEVNULL,
+                timeout=3,
+                env=_git_safe_env(),
+            )
+            .decode()
+            .strip()
+        )
+
+        # pyproject.toml version at master HEAD
+        pyproject_version: str | None = None
+        try:
+            pyp_out = subprocess.check_output(
+                [
+                    "git",
+                    *_GIT_SAFE_ARGS,
+                    "-C",
+                    resolved,
+                    "show",
+                    f"{default_branch}:pyproject.toml",
+                ],
+                stderr=subprocess.DEVNULL,
+                timeout=3,
+                env=_git_safe_env(),
+            ).decode()
+            m = re.search(r'^\s*version\s*=\s*["\']([^"\']+)["\']', pyp_out, re.MULTILINE)
+            if m:
+                pyproject_version = m.group(1)
+        except Exception:
+            pass
+
+        return {
+            "commit_ts": commit_ts,
+            "commit_msg": msg_out,
+            "pyproject_version": pyproject_version,
+        }
+    except Exception:
+        return None
+
+
+def _get_pyproject_version_at_ts(resolved: str, ts: float) -> str | None:
+    """Return pyproject.toml version at the most recent master commit on or before ts.
+
+    Finds the commit hash via `git log --until=<iso>` then reads pyproject.toml at that
+    revision.  Returns None on any error or if pyproject.toml absent at that revision.
+    """
+    try:
+        default_branch = _get_default_branch(resolved)
+        dt = datetime.fromtimestamp(ts, UTC)
+        until_iso = dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+        # Find the commit hash at or before ts on default_branch
+        hash_out = (
+            subprocess.check_output(
+                [
+                    "git",
+                    *_GIT_SAFE_ARGS,
+                    "-C",
+                    resolved,
+                    "log",
+                    default_branch,
+                    f"--until={until_iso}",
+                    "-1",
+                    "--format=%H",
+                ],
+                stderr=subprocess.DEVNULL,
+                timeout=3,
+                env=_git_safe_env(),
+            )
+            .decode()
+            .strip()
+        )
+        if not hash_out:
+            return None
+
+        # Read pyproject.toml at that commit
+        pyp_out = subprocess.check_output(
+            ["git", *_GIT_SAFE_ARGS, "-C", resolved, "show", f"{hash_out}:pyproject.toml"],
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+            env=_git_safe_env(),
+        ).decode()
+        m = re.search(r'^\s*version\s*=\s*["\']([^"\']+)["\']', pyp_out, re.MULTILINE)
+        return m.group(1) if m else None
+    except Exception:
+        return None
+
+
+def _get_roadmap_wiki_updated_at(storage) -> float | None:
+    """Return roadmap wiki page updated_at as a unix timestamp float.
+
+    Queries wiki_page table directly for the canonical roadmap slug.
+    Returns None when page not found or timestamp unparseable.
+    Sentinel distinction: returns None (missing) vs 0.0 (parseable but epoch).
+    """
+    try:
+        rows = storage._q(
+            "SELECT updated_at FROM wiki_page WHERE slug = $slug LIMIT 1",
+            {"slug": _ROADMAP_WIKI_SLUG},
+        )
+        if not rows:
+            return None
+        ts_raw = rows[0].get("updated_at")
+        if ts_raw is None:
+            return None
+        if isinstance(ts_raw, (int, float)):
+            return float(ts_raw)
+        # ISO string
+        ts_str = str(ts_raw).rstrip("Z").replace("Z", "+00:00")
+        dt = datetime.fromisoformat(ts_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt.timestamp()
+    except Exception:
+        return None
+
+
+def _detect_ship(head_info: dict, resolved: str, roadmap_ts: float) -> bool:
+    """Return True when a ship is detected since roadmap_ts.
+
+    PRIMARY:  pyproject version at master HEAD ≠ version at roadmap-updated-at commit.
+    FALLBACK: HEAD commit message matches ^merge: vX.Y.Z or contains 'chore: bump version'.
+    """
+    head_version = head_info.get("pyproject_version")
+    roadmap_version = _get_pyproject_version_at_ts(resolved, roadmap_ts)
+    if head_version and roadmap_version and head_version != roadmap_version:
+        return True
+    msg = head_info.get("commit_msg") or ""
+    return bool(_SHIP_COMMIT_RE.search(msg))
+
+
+def _compute_roadmap_signal(resolved: str, storage) -> tuple[float, dict | None]:
+    """Compute roadmap_update_lag_hours and optional update_roadmap action.
+
+    Returns (lag_hours, action_dict_or_None).
+
+    lag_hours semantics:
+      -1.0  → roadmap wiki slug not found (I3 sentinel)
+       0.0  → roadmap is up to date (updated_at >= master HEAD commit_ts)
+      > 0   → master has moved X hours since roadmap was last updated
+    """
+    roadmap_ts = _get_roadmap_wiki_updated_at(storage)
+    if roadmap_ts is None:
+        return -1.0, None
+
+    head_info = _get_master_head_info(resolved)
+    if head_info is None:
+        return 0.0, None
+
+    lag_hours = max(0.0, (head_info["commit_ts"] - roadmap_ts) / 3600.0)
+    if lag_hours <= 0.0:
+        return 0.0, None
+
+    if not _detect_ship(head_info, resolved, roadmap_ts):
+        return lag_hours, None
+
+    action = {
+        "action": "update_roadmap",
+        "reason": f"master moved {lag_hours:.1f}h ago; roadmap not updated since",
+        "suggested_call": (
+            "wiki_append_section("
+            f"slug='{_ROADMAP_WIKI_SLUG}', "
+            "section_heading='Recently shipped', "
+            "content='- vX.Y.Z (date): description', "
+            "position='start_of_section')"
+        ),
+    }
+    return lag_hours, action
+
+
 def _compute_anchor_signals(storage, resolved: str, cfg) -> dict:
     """Compute anchor hygiene signals for project_brief(mode='signals').
 
@@ -915,6 +1144,23 @@ def _build_recommended_actions(
     return actions
 
 
+def _apply_roadmap_signal(resolved: str, storage, actions: list) -> float:
+    """Compute roadmap lag and append update_roadmap action if warranted.
+
+    Returns roadmap_update_lag_hours (-1 = wiki missing, 0 = up-to-date, >0 = lag).
+    Appends to actions in-place when a ship is detected.  Never raises.
+    """
+    if storage is None:
+        return -1.0
+    try:
+        lag, action = _compute_roadmap_signal(resolved, storage)
+        if action is not None:
+            actions.append(action)
+        return lag
+    except Exception:
+        return -1.0
+
+
 def _project_brief_signals(
     resolved: str,
     mode: str,
@@ -975,6 +1221,9 @@ def _project_brief_signals(
         if _sentinel_action is not None:
             recommended_actions.append(_sentinel_action)
 
+    # v5.41.4: roadmap update lag signal.
+    roadmap_update_lag_hours = _apply_roadmap_signal(resolved, storage, recommended_actions)
+
     result: dict = {
         "_resolved_directory": resolved,
         "_mode": mode,
@@ -985,6 +1234,7 @@ def _project_brief_signals(
         "active_work_age_hours": active_work_age_hours,
         "init_memory_age_hours": init_memory_age_hours,
         "anchor_count_project": anchor_signals["anchor_count_project"],
+        "roadmap_update_lag_hours": roadmap_update_lag_hours,
         "recommended_actions": recommended_actions,
     }
     # Omit empty candidate lists to stay within 100-token budget.
