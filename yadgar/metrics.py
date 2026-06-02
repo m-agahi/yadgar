@@ -162,6 +162,17 @@ yadgar_wiki_add_rejected_total = Counter(
     registry=_registry,
 )
 
+# ── v5.42.0 — DLQ rejection count gauge (I23, plan §7) ───────────────────────
+# Gauge: current count of DLQ entries with failure_reason in rejection taxonomy.
+# Ops visibility without per-directory cardinality (plan §13 Q1: total count only).
+
+yadgar_dlq_rejection_count = Gauge(
+    "yadgar_dlq_rejection_count",
+    "Current count of DLQ entries with failure_reason in the rejection taxonomy "
+    "(duplicate_detected, policy_rejected)",
+    registry=_registry,
+)
+
 # ── P11 — read path ─────────────────────────────────────────────────────────
 
 yadgar_recall_duration_ms = Histogram(
