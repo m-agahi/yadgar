@@ -424,6 +424,37 @@ def _migration_013_wiki_page_version(storage) -> None:
             )
 
 
+def _migration_014_wiki_page_embedding_backfill(storage) -> None:
+    """Register schema migration slot for wiki_page embedding backfill (v5.42.1).
+
+    This migration marks the version slot so the framework records it as applied.
+    The actual backfill — encoding NULL-embedding wiki_page rows with the live
+    embedding model — cannot run here because storage migrations execute before
+    the EmbeddingEngine is initialised in init_engines().
+
+    The real backfill runs via WikiStore.backfill_null_embeddings(), called from
+    server/lifecycle.py after both StorageEngine and EmbeddingEngine are ready.
+    This split is intentional (I1: thin request path; backfill is a one-time
+    startup cost, not an in-handler operation).
+
+    Idempotent: re-running this migration is a no-op (version already in
+    schema_version table prevents re-entry). The backfill itself is also
+    idempotent — subsequent calls find 0 NULL rows and exit immediately.
+    """
+    # Count NULL-embedding rows and emit a diagnostic log.
+    # This runs only once (on first startup after upgrade).
+    rows = storage._q("SELECT count() AS c FROM wiki_page WHERE embedding IS NONE GROUP ALL")
+    null_count = int(rows[0].get("c", 0)) if rows else 0
+    if null_count > 0:
+        _log.warning(
+            "migration_014: %d wiki_page rows have embedding=NULL — "
+            "backfill will run after EmbeddingEngine is ready",
+            null_count,
+        )
+    else:
+        _log.info("migration_014: no NULL-embedding wiki_page rows found — nothing to backfill")
+
+
 _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {"version": "001_hnsw_indexes", "fn": _migration_001_hnsw_indexes},
     {"version": "002_relationship_indexes", "fn": _migration_002_relationship_indexes},
@@ -467,6 +498,10 @@ _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {
         "version": "013_wiki_page_version",
         "fn": _migration_013_wiki_page_version,
+    },
+    {
+        "version": "014_wiki_page_embedding_backfill",
+        "fn": _migration_014_wiki_page_embedding_backfill,
     },
 ]
 
