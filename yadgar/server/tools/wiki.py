@@ -584,8 +584,11 @@ def wiki_history(slug: str, limit: int = 20) -> dict:
     Returns metadata for each version (no content — use wiki_read_version for that).
     Each entry includes: version, created_at, change_summary, size_bytes, provenance_agent.
 
-    Note: wiki_add uses an async file queue. Calling wiki_history immediately after
-    wiki_add may return a stale list until the queue drains.
+    Note: wiki_add uses an async file queue by default. Calling wiki_history immediately
+    after wiki_add(wait=False) may return a stale list until the queue drains (typically
+    within 30s). Use wiki_add(wait=True) on the preceding write to guarantee
+    read-your-writes consistency without sleep — wait=True writes synchronously so the
+    version row is visible immediately.
 
     Args:
         slug: Wiki page slug.

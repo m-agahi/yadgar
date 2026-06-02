@@ -247,6 +247,8 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_EMBED_CACHE_MAX_ENTRIES", "100000", "int"),
     ConfigEntry("YADGAR_CACHE_SNAPSHOT_INTERVAL_SEC", "600", "int"),
     ConfigEntry("YADGAR_CACHE_SNAPSHOT_DIR", "/data/cache", "string"),
+    # ── v5.41.2 wiki write wait timeout ─────────────────────────────────────
+    ConfigEntry("YADGAR_WIKI_WRITE_WAIT_TIMEOUT_SECONDS", "5.0", "float"),
     # ── v5.39.0 wiki similarity gate knobs ───────────────────────────────────
     ConfigEntry("YADGAR_WIKI_SIM_GATE_ENABLED", "true", "bool"),
     ConfigEntry("YADGAR_WIKI_SIM_CONTENT_THRESHOLD", "0.80", "float"),

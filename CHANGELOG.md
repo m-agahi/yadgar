@@ -6,6 +6,26 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.41.2] — 2026-06-02
+
+`wiki_add` / `wiki_update` / `wiki_restore` / `wiki_append_section` wait flag for read-your-writes consistency.
+See `MIGRATION_NOTES.md` v5.41.2.
+
+- **feat(wiki):** `wiki_add(wait=True)` — bypasses async queue and writes synchronously; returns `{"committed": true, "queued": false}`. Eliminates need for `sleep(N)` before `wiki_history` in tests and interactive callers.
+- **feat(wiki):** `wiki_update`, `wiki_restore`, `wiki_append_section` now accept `wait=True` for API symmetry (no-op — all three are already synchronous).
+- **feat(queue):** `FileQueue.enqueue()` now returns `job_id` (UUID) instead of file path. `register_wait()` / `signal_complete()` / `wait_for_job()` added for per-job completion tracking infrastructure.
+- **feat(config):** `WIKI_WRITE_WAIT_TIMEOUT_SECONDS` (default 5.0) — I25 three-way registered.
+- **docs:** `wiki_history` docstring updated: use `wait=True` on preceding write to avoid stale reads.
+- **tests:** 21 new tests (10 Phase 1 queue + 11 Phase 2 wait flag); all 45 v5.41.0+v5.41.1 tests still green.
+
+## [5.41.1] — 2026-06-02
+
+Wiki versioning transactional atomicity hotfix.
+See `MIGRATION_NOTES.md` v5.41.1.
+
+- **fix(wiki/storage):** `insert_wiki_page` and `update_wiki_page` now wrap `wiki_page` + `wiki_page_version` mutations in a single `BEGIN TRANSACTION … COMMIT TRANSACTION` compound statement. Either both rows commit or both roll back.
+- **tests:** 7 atomicity regression tests in `test_wiki_versioning_atomicity.py` (RED in v5.41.0, GREEN after fix).
+
 ## [5.41.0] — 2026-06-01
 
 Wiki versioning + section-patching — closes the 2026-05-31 corruption class.

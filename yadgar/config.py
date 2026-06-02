@@ -260,6 +260,11 @@ class Settings(BaseSettings):
     DUAL_VECTORS_ENABLED: bool = False
     IMPLICIT_EMBEDDING_MODEL: str = ""
 
+    # v5.41.2: wiki write wait timeout (opt-in read-your-writes path)
+    # Maximum seconds wiki_add(wait=True) may block before returning a timeout error.
+    # Only applies when wait=True is passed explicitly; default async path is unaffected.
+    WIKI_WRITE_WAIT_TIMEOUT_SECONDS: float = 5.0
+
     # v5.39.0: wiki similarity gate knobs
     # Master switch — set to False to disable the gate entirely (WIKI_SIM_GATE_ENABLED=0).
     WIKI_SIM_GATE_ENABLED: bool = True
