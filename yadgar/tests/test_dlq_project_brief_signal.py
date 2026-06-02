@@ -65,12 +65,13 @@ class TestPendingRejectionsSignal:
     """pending_rejections_count in project_brief(mode='signals')."""
 
     def test_signals_mode_includes_pending_rejections_count_key(self, _engines, tmp_path):
+        # Key is omitted when 0 to stay within 100-token budget; callers treat absence as 0.
         result = server.project_brief("/tmp/myproject", mode="signals")
-        assert "pending_rejections_count" in result
+        assert result.get("pending_rejections_count", 0) == 0
 
     def test_count_is_zero_when_no_dlq_entries(self, _engines, tmp_path):
         result = server.project_brief("/tmp/myproject", mode="signals")
-        assert result["pending_rejections_count"] == 0
+        assert result.get("pending_rejections_count", 0) == 0
 
     def test_count_reflects_rejection_entries_for_current_directory(
         self, _engines, tmp_path, monkeypatch
@@ -98,7 +99,7 @@ class TestPendingRejectionsSignal:
         }
         (fq.dlq_dir / (fname + ".error.json")).write_text(json.dumps(perm_meta))
         result = server.project_brief("/tmp/myproject", mode="signals")
-        assert result["pending_rejections_count"] == 0
+        assert result.get("pending_rejections_count", 0) == 0
 
     def test_review_rejections_action_fires_when_count_gt_0(self, _engines, tmp_path):
         """review_rejections recommended_action fires when pending_rejections_count > 0."""
@@ -145,7 +146,7 @@ class TestCrossDirectoryIsolation:
         # We test that it doesn't count cross-directory rejections by seeding ONLY other-dir.
         # Result depends on how filtering is implemented. The key contract:
         # if only other-dir rejections exist, count for /tmp/myproject = 0.
-        assert result["pending_rejections_count"] == 0
+        assert result.get("pending_rejections_count", 0) == 0
 
     def test_rejection_for_current_directory_counted(self, _engines, tmp_path):
         """Seed rejections for both /tmp/myproject and /other — only /tmp/myproject counted."""
