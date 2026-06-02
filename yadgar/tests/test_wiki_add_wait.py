@@ -229,7 +229,13 @@ class TestWaitTimeout:
 
 class TestWaitFalsePerf:
     def test_wait_default_still_async_for_perf(self):
-        """wiki_add(wait=False) returns in <50ms — async path not accidentally slowed."""
+        """wiki_add(wait=False) returns in <50ms — async path not accidentally slowed.
+
+        I9 budget: ≤5ms p50 at MCP handler layer (2x margin = 10ms ceiling).
+        BLOCKED: tightening to 10ms would fail — actual p50 ~48ms as of v5.41.2.
+        See v5.41.2 I9 violation: wait=False path running ~48ms p50 (9.6x over budget).
+        Tracked for fix in v5.41.x. Assertion kept at 50ms to preserve green suite.
+        """
         from yadgar.file_queue import FileQueue
 
         # Warm up
