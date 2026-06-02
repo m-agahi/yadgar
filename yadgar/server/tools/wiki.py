@@ -157,6 +157,7 @@ def wiki_add(
     branch_hint: str | None = None,
     force: bool = False,
     replace_slug: str | None = None,
+    wait: bool = False,
 ) -> dict:
     """Create or update a wiki page. Content can include [[slug]] cross-references.
 
@@ -182,6 +183,13 @@ def wiki_add(
     3. Both omitted / None — page stored with branch IS NULL, the canonical slot
        resolved by wiki_read step 3. DO NOT fall back to _detect_branch(os.getcwd());
        the daemon CWD is not the caller's repo and would always resolve to "master".
+
+    wait=False (default): async fast path — returns immediately with {"queued": True}.
+    wait=True: synchronous path — bypasses the queue and writes directly to storage,
+      then returns {"committed": True, "queued": False}. Use when the caller needs
+      immediate read-your-writes consistency (e.g. wiki_history immediately after
+      wiki_add). I9 latency budget does NOT apply to wait=True (opt-in slow path).
+      Storage errors propagate immediately rather than being buried in queue retries.
     """
     assert _st._wiki is not None, "WikiStore not initialized"
 
@@ -222,29 +230,49 @@ def wiki_add(
     if _gate_result is not None:
         return _gate_result
 
-    # Async path: enqueue and return immediately (skip during drain replay)
-    if not is_draining():
-        try:
-            _get_file_queue().enqueue(
-                "wiki_add",
-                {
-                    "wiki_schema_version": 2,
-                    "slug": _new_slug,
-                    "title": title,
-                    "content": content,
-                    "category": category or "reference",
-                    "tags": tags,
-                    "source_memory_ids": source_memory_ids,
-                    "confidence": confidence,
-                    "append": append,
-                    "branch": branch,
-                },
-            )
-            return {"stored": True, "queued": True, "slug": _new_slug, "title": title}
-        except Exception as _fq_exc:
-            logger.warning("File queue enqueue failed, falling back to sync write: %s", _fq_exc)
+    # wait=True: synchronous path — skip queue and write directly for read-your-writes.
+    # Also used by QueueDrainer replay (is_draining=True) and queue fallback.
+    if wait or is_draining():
+        result = _wiki_add_sync_write(
+            title,
+            content,
+            category,
+            tags,
+            source_memory_ids,
+            confidence,
+            branch,
+            append,
+            replace_slug,
+        )
+        if wait and not is_draining():
+            # Annotate response to make the contract explicit.
+            result["stored"] = True
+            result["queued"] = False
+            result["committed"] = True
+        return result
 
-    # Sync path: called by QueueDrainer (is_draining=True) or queue fallback
+    # Async path (wait=False default): enqueue and return immediately.
+    try:
+        _get_file_queue().enqueue(
+            "wiki_add",
+            {
+                "wiki_schema_version": 2,
+                "slug": _new_slug,
+                "title": title,
+                "content": content,
+                "category": category or "reference",
+                "tags": tags,
+                "source_memory_ids": source_memory_ids,
+                "confidence": confidence,
+                "append": append,
+                "branch": branch,
+            },
+        )
+        return {"stored": True, "queued": True, "slug": _new_slug, "title": title}
+    except Exception as _fq_exc:
+        logger.warning("File queue enqueue failed, falling back to sync write: %s", _fq_exc)
+
+    # Queue fallback sync path
     return _wiki_add_sync_write(
         title, content, category, tags, source_memory_ids, confidence, branch, append, replace_slug
     )
@@ -618,7 +646,7 @@ def wiki_diff(slug: str, v1: int, v2: int, fmt: str = "unified") -> dict:
 
 
 @_tool(power=True)
-def wiki_restore(slug: str, version: int) -> dict:
+def wiki_restore(slug: str, version: int, wait: bool = False) -> dict:
     """Restore a wiki page to a previous version by creating a new version.
 
     Creates a NEW version (N+1) whose content matches the specified historical version.
@@ -639,6 +667,8 @@ def wiki_restore(slug: str, version: int) -> dict:
     Args:
         slug: Wiki page slug.
         version: Version number to restore from (use wiki_history to list).
+        wait: Accepted for API symmetry with wiki_add. This tool writes
+            synchronously (no queue) — wait=True is a no-op.
 
     Returns: {"page_id": N, "restored_from_version": V, "new_version": N+1, "note": "..."}
     """
@@ -657,6 +687,7 @@ def wiki_append_section(
     section_heading: str,
     content: str,
     position: str = "end_of_section",
+    wait: bool = False,
 ) -> dict:
     """Section-atomic wiki write: patch a specific section without replacing entire content.
 
@@ -679,6 +710,9 @@ def wiki_append_section(
       {"error": "section_exists"} — heading already present + new_section_* position
       {"error": "ambiguous_section"} — multiple headings + non-replace position
         (use "Heading#2" syntax to address 2nd occurrence)
+
+    wait: Accepted for API symmetry with wiki_add. This tool writes
+        synchronously (no queue) — wait=True is a no-op.
 
     Returns: {"page_id": N, "new_version": M, "section_heading": "...",
               "action": "appended", "size_before": X, "size_after": Y}
