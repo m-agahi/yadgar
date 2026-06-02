@@ -7,6 +7,50 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.41.5] - 2026-06-02
+
+Hotfix: move v5.39 similarity gate from MCP handler to drainer. Handler p50: 27ms → <1ms (I9 budget ≤5ms restored). **Breaking:** `wait=False` callers get `{queued: true, similarity_check: "deferred"}` instead of sync candidate list; use `wait=True` for sync rejection.
+
+### Fixed
+- **I9 budget violation** (`yadgar/server/tools/wiki.py`, `yadgar/file_queue/`):
+  `wiki_add(wait=False)` handler p50 was 27ms (5.4× over 5ms I9 budget). Root
+  cause: `find_similar_wiki_pages()` (embed + KNN) ran on the MCP request thread.
+  Phase 0 profiling confirmed similarity gate = 102% of e2e handler time.
+  Fix: gate moved to `QueueDrainer._apply_with_stage_metrics()` as a pre-apply
+  stage (`_sim_gate_for_drainer()`). Handler now: secret-gate + slug-gen + enqueue
+  = p50 < 1ms.
+
+### Changed
+- **Similarity gate timing (v5.39 contract change)**: gate now runs in drainer,
+  not on request thread. `wait=False` path no longer returns sync rejection dict.
+  `wait=True` path still returns rejection synchronously (DP-B preserved).
+- **`wait=False` response shape** (BREAKING): adds `similarity_check: "deferred"`
+  field. Callers checking for `{stored: False, reason: "duplicate_detected"}` on
+  the async path must switch to `wait=True`. See MIGRATION_NOTES §v5.41.5.
+- **Drainer extends pre-apply stage**: new `_sim_gate_for_drainer()` method in
+  `_DLQMixin`. Force, replace_slug, append bypass conditions carried through
+  enqueue payload and respected in drainer.
+
+### Added
+- **`yadgar_wiki_add_rejected_total{reason}`** Prometheus counter (I23): emitted
+  by `_sim_gate_for_drainer()` on hard-mode rejection.
+- **`FileQueue.get_job_result(job_id)`**: returns drainer-stored rejection payload
+  for `wait=True` callers. `_signal_complete_with_result()` stores it.
+- **`docs/V5_41_5_PROFILING_REPORT.md`**: Phase 0 per-substep profiling report.
+- **8 new tests** (`yadgar/tests/test_wiki_sim_gate_drainer.py`):
+  deferred-check response shape, wait=True sync rejection, force/replace_slug/append
+  bypass in drainer, rejection metric increment.
+- **7 updated tests** (`yadgar/tests/test_wiki_similarity_gate.py`):
+  `TestWikiAddSimilarityGate` now tests `_sim_gate_for_drainer()` directly.
+- **Perf test** (`yadgar/tests/test_wiki_mcp_handler_perf.py`):
+  `xfail` marker removed — test now passes GREEN. Baseline updated to <1ms.
+
+### Technical
+- `wait_for_job()` defers cleanup to caller (no longer calls `_cleanup_job`
+  internally) so result payload survives the wait call.
+- `.complexity-baseline.json` updated for moved/modified functions.
+- Plan: `docs/PLAN_V5_41_5_HANDLER_I9_FIX.md`; DPs A–E resolved.
+
 ## [5.41.4] - 2026-06-02
 
 Tiny patch: roadmap-update-lag signal + `wiki_append_section` convention for ship entries.
