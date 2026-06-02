@@ -1,92 +1,170 @@
-# PLAN — v5.43.0: memory_archive retention (SKELETON)
+# PLAN — v5.43.0: memory_archive retention
 
-**Status:** SKELETON — 2026-06-01. Placeholder for discussion. NOT ready for impl.
+**Status:** drafted 2026-06-02. DPs resolved. READY for impl.
 
-**Origin:** 2026-06-01 user observation — viz reports total > visible by ~1300 memories. Investigation (caveman investigator, 2026-06-01) confirmed `memory_archive` table has **zero permanent-deletion policy**:
-
+**Origin:** 2026-06-01 user observation — viz reports total > visible by ~1300 memories. Investigation confirmed `memory_archive` table has zero permanent-deletion policy:
 - `prune_old_rows()` allowlist EXCLUDES `memory_archive` (`yadgar/storage/ops.py:110-118`)
-- Schemaless table, no TTL, no retention window config (`yadgar/storage/migrations.py:434`)
+- Schemaless table, no TTL (`yadgar/storage/migrations.py:434`)
 - Cascade delete only fires when parent memory explicitly DELETEd (`yadgar/storage/memory.py:290-336`)
-- v6 LLM curator was planned to handle scope-limited deletion (heat<0.2 + age>30d + max 20/night soft-delete) — not shipped
+- v6 LLM curator was planned to handle scope-limited deletion — not shipped
 
-Current state: ~1300 heat=0 memories accumulating with no auto-prune path. Will grow unbounded.
+Current state: ~1300 heat=0 memories accumulating with no auto-prune path.
 
-**Slot:** v5.43.0 — odd-minor, free slot between v5.41 (wiki versioning) and v5.45 (setup foundation). No conflict.
+**Slot:** v5.43.0 — between v5.41.x patches and v5.45 setup foundation.
 
 **Effort estimate:** 1.5-2 calendar days.
+
+**Branch:** `feat/v5.43.0-archive-retention` off master.
+
+---
+
+## Resolved decisions (2026-06-02 user-confirmed)
+
+| DP | Decision | Rationale |
+|---|---|---|
+| **A — default retention** | **90 days** | 3 months grace. Conservative. User-tunable via `MEMORY_ARCHIVE_RETENTION_DAYS`. |
+| **B — delete strategy** | **Hard delete + vacuum-snapshot recovery** | DELETE row. Existing vacuum snapshots in `~/.yadgar/archive/` provide recovery path. Simpler code, no soft-delete state machine. |
+| **C — circuit breaker** | **500 / cycle (CRITICAL log + tunable)** | Bulk cleanup needs higher cap than v6 curator's 20/night. 500 reasonable for nightly cycle. |
+| **D — anchor-tag exclusion** | **Skip `is_protected=true` AND any memory carrying `_anchor` tag** | Both flags treated as "do not touch." Covers legacy anchored memories that lost `is_protected=true`. |
+| **E — thrash protection** | **Skip if memory `created_at` <7d ago** | Recent creation = re-archival cycle in progress. Wait until baseline stabilizes. |
+
+Also: `archived_at` is the age anchor (not `created_at`). `migration_grace=true` excluded until grace deadline (PD-23 logic). `_active_work` blocks not affected (they're `memory_block` table, not `memory_archive`).
 
 ---
 
 ## 1. Problem
 
-`memory_archive` rows accumulate forever once heat hits 0. No retention. SurrealKV grows. Vacuum reclaims dead-version bytes but not row count. Viz total-vs-visible gap reflects this.
+`memory_archive` rows accumulate forever once heat hits 0. No retention. SurrealKV grows. Viz total-vs-visible gap reflects this.
 
 ## 2. Goal
 
-Auto-purge `memory_archive` rows older than configurable threshold. Default conservative (preserve user data); easy to tune.
+Auto-purge `memory_archive` rows older than configurable threshold during nightly consolidation. Default conservative. Protected/anchored memories never touched. Thrash-safe.
 
 ## 3. Scope
 
-- New config: `MEMORY_ARCHIVE_RETENTION_DAYS: int = 90` (default 90d — 3 months grace).
-- New consolidation phase or extend `_run_retention_tasks()` in `yadgar/consolidation/cleanup.py:184-211`.
-- DELETE `memory_archive` WHERE `archived_at < (now - retention_days)` AND `is_protected=false`.
-- Soft-delete window? See open-question §5.
-- Telemetry: `yadgar_archive_purged_total` counter; CRITICAL log on >N purged in a single cycle (circuit breaker).
-- New MCP tool? `archive_purge(dry_run=True)` for manual + audit. Power-gated.
+### Config knobs (I25 registered)
+
+- `MEMORY_ARCHIVE_RETENTION_DAYS: int = 90` — 0 disables retention entirely.
+- `MEMORY_ARCHIVE_RETENTION_CIRCUIT_BREAKER: int = 500` — max purges per cycle. CRITICAL log if hit.
+- `MEMORY_ARCHIVE_RETENTION_THRASH_GUARD_DAYS: int = 7` — skip purge if `created_at` younger than this.
+
+### Storage layer
+
+`yadgar/storage/ops.py`:
+- New function `purge_expired_archives(dry_run: bool = False) -> dict` — returns `{candidates: N, purged: M, skipped_protected: K, skipped_anchor: L, skipped_recent: P, circuit_breaker_hit: bool}`.
+- Query:
+  ```surql
+  SELECT * FROM memory_archive
+  WHERE archived_at < (time::now() - $retention_days * 24h)
+    AND is_protected != true
+    AND NOT array::contains(tags, '_anchor')
+    AND created_at < (time::now() - $thrash_guard_days * 24h)
+    AND (migration_grace != true OR valid_until < time::now())
+  LIMIT $circuit_breaker
+  ```
+- DELETE matched rows unless `dry_run=True`.
+
+### Consolidation phase
+
+`yadgar/consolidation/cleanup.py:184-211`:
+- Extend `_run_retention_tasks()` to call `purge_expired_archives()` if `MEMORY_ARCHIVE_RETENTION_DAYS > 0`.
+- Telemetry: `yadgar_archive_purged_total` counter, `yadgar_archive_retention_skipped` counter (per-reason labels: protected/anchor/recent/grace).
+
+### MCP tool: `archive_purge`
+
+`yadgar/server/tools/admin_archive.py` (new):
+- `archive_purge(dry_run: bool = True, retention_days: int | None = None)` — `power=True`, secret-gated.
+- `dry_run=True` (default): returns expected purge count + sample of 10 affected slugs. No deletion.
+- `dry_run=False`: performs purge. Circuit breaker enforced.
+- `retention_days=None`: use configured default. Otherwise override for one-off cleanup.
+
+Return: same dict as storage layer.
 
 ## 4. Non-goals
 
 - Not changing heat decay formula.
-- Not changing `COLD_THRESHOLD` (the heat<0.02 → archive transition).
-- Not building the v6 LLM curator (separate scope).
-- Not retroactively deleting protected/anchored memories regardless of age.
+- Not changing `COLD_THRESHOLD` (heat<0.02 → archive transition).
+- Not building v6 LLM curator (separate v6.0 scope).
+- Not retroactively deleting protected/anchored memories.
+- No soft-delete state machine.
+- No retroactive UI for restoring purged memories (vacuum snapshot is the recovery path; manual restore).
 
-## 5. Open design questions
+## 5. Test plan (TDD — failing tests first)
 
-1. **Default retention.** 30d / 60d / 90d / 180d / 365d? Lean: 90d. Conservative; user-tunable. Considerations: user may genuinely want long-tail recall for "things I discussed once 6 months ago".
-2. **Soft-delete vs hard-delete.** Soft (mark `pending_delete_at` + grace window like the v6 plan, then hard-delete N days later) gives recovery option but doubles row count temporarily. Lean: hard-delete with vacuum snapshot as recovery (existing infrastructure).
-3. **Circuit breaker.** Max purged per cycle. v6 plan said 20/night. For this purpose probably higher (e.g. 200/cycle) — purpose is bulk historical cleanup. Lean: 500/cycle default, CRITICAL log + tunable.
-4. **Anchored memory protection.** `is_protected=true` excluded by default (matches v6 plan). What about memories with `_anchor` tag but `is_protected=false` (legacy state)? Probably exclude any memory carrying `_anchor` tag. Confirm during impl.
-5. **Manual override.** New MCP tool `archive_purge(dry_run=True, retention_days=N)` for one-off cleanup. Power-gated. Recommend dry_run default True.
-6. **`migration_grace=true` interplay.** v5.21.0 added grace handler for `valid_until` expiry. Memories with grace flag should be excluded until grace deadline. Re-check the PD-23 logic before impl.
-7. **What counts as "age"?** `archived_at` is the right anchor (`yadgar/models.py:188`). `created_at` would erase too aggressively (a memory created 5y ago but accessed yesterday is still hot).
-8. **Re-archival race.** If a memory archives → purged → another part of system recreates similar memory → re-archived → purged again. Could thrash. Mitigation: rate-limit + dedup-aware (skip purge if memory created within last 7d). Lean: simple cap, observe in prod.
-9. **Interaction with v6 curator.** When v6 lands, does it own this scope, or does this stay as the "stupid age-based" backstop and v6 adds smart proposals? Lean: keep this as backstop; v6 LLM proposes earlier deletes within its 20/night cap.
+`yadgar/tests/test_archive_retention.py`:
+
+### Storage layer
+
+1. `test_purge_respects_retention_age` — insert 3 archives at ages 30d/91d/180d; purge with default 90d; assert only 91d + 180d removed.
+2. `test_purge_skips_protected` — `is_protected=true` archive at 180d; assert NOT purged.
+3. `test_purge_skips_anchor_tag` — `_anchor` tag archive at 180d; assert NOT purged.
+4. `test_purge_skips_recent_creation` — archived_at 91d ago BUT `created_at` 3d ago; assert NOT purged (thrash guard).
+5. `test_purge_skips_migration_grace` — `migration_grace=true` + `valid_until` future; assert NOT purged.
+6. `test_purge_migration_grace_after_expiry` — `migration_grace=true` + `valid_until` past; assert PURGED.
+7. `test_circuit_breaker_caps_purge_count` — 600 archives all eligible; assert only 500 purged + CRITICAL log fired.
+8. `test_circuit_breaker_returns_indicator` — same; assert return dict has `circuit_breaker_hit: True`.
+9. `test_dry_run_no_delete` — eligible archives; `dry_run=True`; assert nothing deleted + count reported.
+10. `test_retention_disabled` — `MEMORY_ARCHIVE_RETENTION_DAYS=0`; assert function early-returns with 0 candidates.
+
+### Consolidation integration
+
+11. `test_nightly_cycle_invokes_purge` — run `_run_retention_tasks()`; assert `purge_expired_archives()` called.
+12. `test_metrics_emitted` — after purge, assert `yadgar_archive_purged_total` counter increments by expected count, `yadgar_archive_retention_skipped{reason="protected"}` etc.
+
+### MCP tool
+
+13. `test_archive_purge_dry_run_default` — invoke `archive_purge()`; assert no deletion, sample slugs returned.
+14. `test_archive_purge_explicit_run` — `archive_purge(dry_run=False)`; assert deletion.
+15. `test_archive_purge_retention_override` — `archive_purge(retention_days=30)`; assert 30d threshold used, not config default.
+16. `test_archive_purge_power_gated` — without power, returns 403/refusal.
+17. `test_archive_purge_secret_gated` — secret-gate runs on payload (I26).
+
+### I25 config
+
+18. `test_three_config_knobs_registered` — assert all 3 knobs in config.py + config_registry.py + config_yaml.py.
 
 ## 6. Acceptance criteria
 
-1. New config `MEMORY_ARCHIVE_RETENTION_DAYS` (default 90).
-2. Retention phase (or extended `_run_retention_tasks()`) purges `memory_archive` rows older than threshold during nightly consolidation.
-3. Protected + anchored memories never purged.
-4. New `yadgar_archive_purged_total` counter + cycle CRITICAL log on >500 purged.
-5. New MCP tool `archive_purge(dry_run=True, retention_days=None)` for manual + audit.
-6. Tests: TDD failing first. Cover age threshold, protected exclusion, anchor exclusion, dry_run, circuit breaker, telemetry.
+1. 3 new knobs registered three-way (I25).
+2. `purge_expired_archives()` storage function with all 5 DPs enforced (90d / hard / 500 cap / `_anchor`+protected skip / 7d thrash guard).
+3. Nightly consolidation invokes purge.
+4. `archive_purge` MCP tool (power-gated, secret-gated, dry_run default True).
+5. 18 tests green; all existing tests still pass.
+6. Telemetry: 2 new counters (`yadgar_archive_purged_total`, `yadgar_archive_retention_skipped` w/ reason labels).
 7. CHANGELOG + MIGRATION_NOTES + README + config docs updated.
-8. Operator validation: dry-run prod 1300-row purge before opt-in; confirm count matches expectation.
+8. Operator dry-run on user prod: confirm ≈1300 candidate count matches earlier viz observation. Document delta in MIGRATION_NOTES.
 
-## 7. Risks
+## 7. Rollout
 
-- Aggressive default deletes user data they wanted. Mitigation: 90d is conservative; opt-out via `MEMORY_ARCHIVE_RETENTION_DAYS=0` (disable).
-- Re-archival thrash. See §5 Q8.
-- v6 curator collision. See §5 Q9.
-- SurrealDB DELETE creates more vlog garbage. Vacuum schedule already covers this (anchor: vacuum every 1-2 weeks).
+1. Ship v5.43.0 with retention OFF by default (`MEMORY_ARCHIVE_RETENTION_DAYS=0` ships off; doc says "set to 90 to enable").
+2. User runs `archive_purge(dry_run=True)` to validate candidate set.
+3. User runs `archive_purge(dry_run=False)` for one-time cleanup of the 1300 backlog.
+4. User flips `MEMORY_ARCHIVE_RETENTION_DAYS=90` in config to enable nightly auto-purge going forward.
 
-## 8. Dependencies
+**Rationale for ship-off-by-default:** auto-purge on first nightly cycle could delete ~1300 rows in one shot, hit circuit breaker, fire CRITICAL log. Better to gate behind explicit user opt-in after dry-run validation.
 
-- None. Standalone retention work.
-- Optional but nice: v5.41.0 wiki versioning (no overlap but ships first in pipeline).
+## 8. Risks
 
-## 9. Decision points to resolve before impl
+- Aggressive default risks data loss. Mitigation: ships disabled; user opts in after dry-run.
+- Re-archival thrash. Mitigation: DP-E 7-day thrash guard.
+- v6 curator collision. Mitigation: v5.43 stays as backstop. v6 LLM proposes earlier deletes within its own 20/night cap. Document layering.
+- SurrealDB DELETE creates vlog garbage. Existing vacuum schedule covers.
+- Anchored memory with neither `_anchor` tag nor `is_protected=true` slips through. Mitigation: audit_anchors finds these; document migration in MIGRATION_NOTES.
 
-- DP-A: default retention days (30/60/90/180/365)
-- DP-B: soft-delete vs hard-delete
-- DP-C: circuit-breaker cap per cycle
-- DP-D: include `_anchor`-tagged but `is_protected=false` in exclusion?
-- DP-E: re-archival thrash handling
+## 9. Dependencies
 
----
+- None hard. v5.41.x patches can ship in any order; v5.43 starts after they're done.
+- Soft: v6 LLM curator will compose on top of v5.43 backstop when v6.x lands.
 
-## References
+## 10. Phases (agent dispatch)
+
+1. **Storage function + tests RED first.** `purge_expired_archives()` w/ all 5 DPs. 10 storage tests. → COMMIT `feat(storage): purge_expired_archives helper w/ thrash guard + anchor skip`
+2. **Config knobs (I25).** 3 knobs three-way. 1 test. → COMMIT `feat(config): I25 env knobs for MEMORY_ARCHIVE_RETENTION_*`
+3. **Consolidation integration + telemetry.** Wire into `_run_retention_tasks()`. 2 tests + 2 Prometheus counters. → COMMIT `feat(consolidation): wire archive retention into nightly cycle + metrics`
+4. **MCP tool.** `archive_purge` power-gated + secret-gated. 5 tests. → COMMIT `feat(mcp): archive_purge tool (dry_run default True)`
+5. **Version bump + docs.** 5.41.4 → 5.43.0 (skip 5.42 per odd-only convention). CHANGELOG + MIGRATION_NOTES + README + config docs. Note: ships OFF (retention_days=0). → COMMIT `chore: bump version 5.41.4 → 5.43.0 + docs (retention ships disabled)`
+
+## 11. References
 
 - `yadgar/consolidation/heat_decay.py:14-16` — decay constants
 - `yadgar/storage/ops.py:110-118` — `prune_old_rows()` allowlist (the gap)
@@ -95,12 +173,6 @@ Auto-purge `memory_archive` rows older than configurable threshold. Default cons
 - `yadgar/models.py:188` — `archived_at` timestamp
 - `yadgar/server/tools/admin_invariants.py:168-188` — dangling-archive detection
 - `yadgar/storage/migrations.py:434` — `memory_archive` schemaless table
-- Memory 484431 — v6 LLM curator decisions (scope overlap)
-
-## Next steps when picking this up
-
-1. Re-read this skeleton.
-2. Confirm investigation findings still hold (`prune_old_rows` allowlist unchanged, `_run_retention_tasks` location unchanged).
-3. Resolve DP-A through DP-E with user.
-4. Convert skeleton → full plan with §Implementation, §Test plan, §Rollout.
-5. Verify no v6 LLM curator landed in between (if it did, scope changes).
+- Memory 484431 — v6 LLM curator decisions (will layer on top)
+- v5.21.0 PD-23 — `migration_grace` handler (exclusion logic)
+- Investigation 2026-06-01 — caveman investigator report on the gap
