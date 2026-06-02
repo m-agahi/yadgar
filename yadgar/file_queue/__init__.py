@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import re as _re
 import threading
 import time
@@ -169,20 +170,8 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         now = time.time()
         logger.info("Queue drain pass: %d pending files", len(files))
 
-        # P11: update queue/dlq depth gauges
-        try:
-            from yadgar.metrics import yadgar_dlq_size, yadgar_queue_depth  # noqa: PLC0415
-
-            yadgar_queue_depth.labels(queue="queue").set(len(files))
-            dlq_count = sum(
-                1
-                for _f in self._queue.dlq_dir.iterdir()
-                if _f.suffix == ".json" and not _f.name.endswith(".error.json")
-            )
-            yadgar_dlq_size.set(dlq_count)
-            yadgar_queue_depth.labels(queue="dlq").set(dlq_count)
-        except Exception:
-            pass
+        # P11: update queue/dlq depth gauges (v5.42.0: also rejection count)
+        self._update_dlq_gauges(len(files))
 
         if files:
             for path in files:
@@ -329,6 +318,84 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
             except Exception:
                 pass
 
+    # ── v5.42.0 helpers ───────────────────────────────────────────────────────
+
+    def _update_dlq_gauges(self, queue_depth: int) -> None:
+        """Update P11 queue/dlq depth gauges and v5.42.0 rejection count gauge (I23).
+
+        Extracted from _drain_once to keep cyclomatic complexity bounded (I13).
+        """
+        try:
+            from yadgar.metrics import (  # noqa: PLC0415
+                yadgar_dlq_rejection_count,
+                yadgar_dlq_size,
+                yadgar_queue_depth,
+            )
+
+            yadgar_queue_depth.labels(queue="queue").set(queue_depth)
+            dlq_count = 0
+            rejection_count = 0
+            for _f in self._queue.dlq_dir.iterdir():
+                if _f.suffix == ".json" and not _f.name.endswith(".error.json"):
+                    dlq_count += 1
+                    _sidecar = self._queue.dlq_dir / (_f.name + ".error.json")
+                    if _sidecar.exists():
+                        try:
+                            _meta = json.loads(_sidecar.read_text())
+                            if _meta.get("failure_reason", "permanent_error") not in (
+                                "permanent_error",
+                                None,
+                            ):
+                                rejection_count += 1
+                        except Exception:
+                            pass
+            yadgar_dlq_size.set(dlq_count)
+            yadgar_queue_depth.labels(queue="dlq").set(dlq_count)
+            yadgar_dlq_rejection_count.set(rejection_count)
+        except Exception:
+            pass
+
+    def _handle_sim_rejection(self, path, rejection: dict, job_id: str | None) -> None:
+        """Route a drainer similarity-gate rejection to DLQ (v5.42.0).
+
+        Extracted from _apply_with_stage_metrics to keep function complexity bounded.
+        Builds failure_metadata from rejection dict and calls _move_to_dlq with
+        failure_reason="duplicate_detected". Signals wait=True callers via
+        _signal_complete_with_result so the v5.41.5 contract is preserved.
+        """
+        try:
+            _cwd = os.getcwd()
+        except Exception:
+            _cwd = ""
+        try:
+            from yadgar.config import get_settings as _get_settings  # noqa: PLC0415
+
+            _threshold = getattr(_get_settings(), "WIKI_SIM_CONTENT_THRESHOLD", 0.80)
+        except Exception:
+            _threshold = 0.80
+        failure_metadata = {
+            "candidates": rejection.get("candidates", []),
+            "rejection_threshold_used": _threshold,
+            "caller_context": {"directory": _cwd},
+        }
+        _rej_attempt = _Attempt(
+            count=1,
+            last_error="duplicate_detected",
+            classification="permanent",
+            first_failed_at=time.time(),
+        )
+        self._move_to_dlq(
+            path,
+            _rej_attempt,
+            "wiki_add",
+            failure_reason="duplicate_detected",
+            failure_metadata=failure_metadata,
+        )
+        if job_id:
+            self._queue._signal_complete_with_result(job_id, rejection)
+
+    # ── end v5.42.0 helpers ───────────────────────────────────────────────────
+
     def _apply_with_stage_metrics(self, data: dict, path) -> None:
         """Apply one queue item and archive it, timing each stage for PR-E metrics.
 
@@ -338,16 +405,19 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         wait=True callers with the rejection payload, skips _apply(). I6: gate runs
         once here, not again when _apply() re-invokes wiki_add (is_draining=True takes
         _wiki_add_sync_write path which skips the gate entirely).
+
+        v5.42.0: similarity gate rejections are now routed to DLQ with
+        failure_reason="duplicate_detected" instead of archive. wait=True
+        callers still receive the rejection payload via _signal_complete_with_result.
         """
         job_id = data.get("id")
 
         # v5.41.5: similarity gate pre-apply check (wiki_add only).
+        # v5.42.0: rejection → DLQ (not archive) via _handle_sim_rejection().
         if data.get("op") == "wiki_add":
             rejection = self._sim_gate_for_drainer(data.get("payload", {}))
             if rejection is not None:
-                self._archive_with_metrics(path)
-                if job_id:
-                    self._queue._signal_complete_with_result(job_id, rejection)
+                self._handle_sim_rejection(path, rejection, job_id)
                 return
 
         # PR-E: time the insert stage
