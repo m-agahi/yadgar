@@ -6,6 +6,19 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.42.1] — 2026-06-02
+
+Critical hotfix: wiki_page embedding backfill + embed-failure surfacing.
+See `MIGRATION_NOTES.md` v5.42.1 and `docs/PLAN_V5_42_1_WIKI_EMBEDDING_BACKFILL.md`.
+
+- **fix(storage):** migration_014 — backfill wiki_page embeddings on NULL rows. ~1.9k production rows shipped pre-v5.39 with `embedding=NULL`. SurrealDB KNN silently excludes NULL rows → `find_similar_wiki_pages` returned 0 candidates → similarity gate never fired.
+- **fix(storage):** `get_wiki_pages_without_embedding()` handles both SurrealDB `NONE` and JSON `null` (distinct types — null from Python params, NONE from SQL literal). `update_wiki_page_embedding_only()` sets embedding without creating version row (backfill is not a content change).
+- **feat(wiki):** `WikiStore.backfill_null_embeddings()` — idempotent, per-row exception handling, batch-able (default batch_size=50), logs progress. Called from `lifecycle.py` post-`init_engines()` after both StorageEngine + EmbeddingEngine ready.
+- **feat(wiki):** `_compute_embedding` now emits WARN log + `yadgar_wiki_embedding_compute_failed_total{reason}` Prometheus counter on failure (reason: `exception` | `returned_none`). Was previously a silent debug log.
+- **feat(config):** `WIKI_EMBED_FAILURE_BLOCKS_WRITE: bool = False` — I25 three-way registered. Default False preserves backward compat. Set True to enforce embedding-on-write.
+- **feat(lifecycle):** post-backfill CRITICAL log if NULL-embedding rows remain (embed service unavailable → similarity gate still degraded).
+- **tests:** 38 new tests across 3 test files (RED bug reproduction + migration 014 + embed failure surfacing). 1 new `@pytest.mark.integration` E2E smoke test confirming gate fires on real near-clone post-backfill.
+
 ## [5.42.0] — 2026-06-02
 
 Async rejection tracking via DLQ + Stop hook signal.
