@@ -1,5 +1,70 @@
 # Migration Notes
 
+## v5.42.1 — wiki_page embedding backfill + embed-failure surfacing (2026-06-02)
+
+**Critical hotfix.** Core 5.42.0 → 5.42.1. Backend unchanged at 5.4.0.
+
+### The problem
+
+v5.39 added the wiki similarity gate (`find_similar_wiki_pages` + `_compute_embedding`).
+v5.41.5 moved the gate to the drainer. v5.42.0 added DLQ tracking. All three releases
+inherited a silent bug: `wiki_page` rows shipped pre-v5.39 have `embedding=NULL`.
+SurrealDB KNN operator `<|fetch_k,40|>` silently excludes NULL rows → gate finds 0
+candidates → always passes → never fires in production.
+
+Two failure modes compounded:
+1. Pre-v5.39 rows (~1.9k): `embedding=NULL` by construction (no migration to backfill).
+2. New writes may also silently skip embedding: `_compute_embedding` catch-all swallowed
+   all exceptions (debug log only), so a flaky embed service caused NULL embeddings on
+   new pages too.
+
+### What changed
+
+**Migration 014 — wiki_page embedding backfill:**
+- `_migration_014_wiki_page_embedding_backfill()` registers the schema version slot.
+  The actual backfill runs via `WikiStore.backfill_null_embeddings()` in `init_engines()`,
+  AFTER both StorageEngine and EmbeddingEngine are initialised (migrations run before
+  embeddings are available, so the backfill is split from the schema migration).
+- `backfill_null_embeddings()` is idempotent. Re-running finds 0 NULL rows and returns 0.
+- Per-row exception handling: if the embed service is unavailable for a specific row,
+  that row is skipped with a WARN log. Progress is preserved — rows that succeed are
+  committed even if later rows fail.
+- Post-backfill: CRITICAL log if any NULL-embedding rows remain (embed service unavailable
+  → gate still degraded until next startup).
+
+**Embed-failure surfacing:**
+- `_compute_embedding` now emits WARN log + `yadgar_wiki_embedding_compute_failed_total`
+  Prometheus counter (`reason=exception | returned_none`) instead of silent debug log.
+- New knob `WIKI_EMBED_FAILURE_BLOCKS_WRITE: bool = False` (I25 three-way registered):
+  - `False` (default): backward compat — WARN + counter, write proceeds with NULL embedding.
+  - `True`: write fails with explicit `RuntimeError` when embed unavailable.
+
+### Operator runbook
+
+**At startup (automatic):**
+1. `_migration_014_wiki_page_embedding_backfill` marks the schema version slot.
+2. `backfill_null_embeddings()` encodes all NULL-embedding wiki_page rows.
+   Duration: ~50-150ms/row × ~1.9k rows ≈ 1.5-5 min (one-time cost).
+3. If embed service is unavailable → WARN per row + post-backfill CRITICAL log.
+   Rows are retried at next startup (idempotent).
+
+**Post-startup verification (optional but recommended):**
+Run `V5_42_1_GATE_VERIFICATION.md` procedure to confirm gate fires on a real near-clone.
+
+**Flip the block knob (later, optional):**
+Once monitoring shows `yadgar_wiki_embedding_compute_failed_total` is consistently 0,
+set `WIKI_EMBED_FAILURE_BLOCKS_WRITE=true` in config.yaml to enforce embedding-on-write
+and surface any future embed service failures immediately.
+
+### Cost estimate
+
+- **Backfill duration:** ~50-150ms per row × ~1.9k rows = 1.5-5 min at startup.
+  Daemon is fully functional during backfill (non-blocking).
+- **Memory:** ~8MB for sentence-transformer model already loaded (no extra cost).
+- **DB writes:** 1 `UPDATE wiki_page SET embedding=...` per row, no version rows created.
+
+---
+
 ## v5.42.0 — DLQ-based async rejection tracking (2026-06-02)
 
 Core 5.41.5 → 5.42.0. Backend unchanged at 5.4.0. **No DB migration required.**
