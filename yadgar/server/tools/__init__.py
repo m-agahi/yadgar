@@ -58,6 +58,7 @@ from yadgar.server.tools.admin import (
     wiki_update,
     dlq_inspect,
     dlq_requeue,
+    dlq_dismiss,
     _run_check_invariants,
 )
 from yadgar.server.tools.wiki import (
@@ -136,6 +137,7 @@ __all__ = [
     "wiki_update",
     "dlq_inspect",
     "dlq_requeue",
+    "dlq_dismiss",
     "_run_check_invariants",
     "wiki_add",
     "wiki_query",

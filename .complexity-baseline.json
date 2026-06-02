@@ -12902,8 +12902,13 @@
     "inh_depth": 0,
     "methods": 1
   },
+  "yadgar/server/__init__.py::_ServerModule@222": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
   "yadgar/server/__init__.py::__file__": {
-    "loc": 247
+    "loc": 253
   },
   "yadgar/server/__init__.py::__getattr__@191": {
     "cyclo": 2,
@@ -12917,6 +12922,12 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/server/__init__.py::__getattr__@200": {
+    "cyclo": 2,
+    "loc": 13,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/server/__init__.py::__setattr__@229": {
     "cyclo": 3,
     "loc": 12,
@@ -12924,6 +12935,12 @@
     "params": 3
   },
   "yadgar/server/__init__.py::__setattr__@232": {
+    "cyclo": 3,
+    "loc": 12,
+    "nesting": 1,
+    "params": 3
+  },
+  "yadgar/server/__init__.py::__setattr__@238": {
     "cyclo": 3,
     "loc": 12,
     "nesting": 1,
@@ -15650,19 +15667,43 @@
     "params": 0
   },
   "yadgar/server/tools/__init__.py::__file__": {
-    "loc": 168
+    "loc": 197
   },
   "yadgar/server/tools/admin.py::__file__": {
-    "loc": 57
+    "loc": 58
   },
   "yadgar/server/tools/admin_dlq.py::__file__": {
-    "loc": 92
+    "loc": 198
+  },
+  "yadgar/server/tools/admin_dlq.py::_matches_filter@24": {
+    "cyclo": 6,
+    "loc": 10,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/server/tools/admin_dlq.py::dlq_dismiss@163": {
+    "cyclo": 6,
+    "loc": 32,
+    "nesting": 2,
+    "params": 1
   },
   "yadgar/server/tools/admin_dlq.py::dlq_inspect@15": {
     "cyclo": 7,
     "loc": 39,
     "nesting": 3,
     "params": 0
+  },
+  "yadgar/server/tools/admin_dlq.py::dlq_inspect@37": {
+    "cyclo": 12,
+    "loc": 57,
+    "nesting": 3,
+    "params": 1
+  },
+  "yadgar/server/tools/admin_dlq.py::dlq_requeue@106": {
+    "cyclo": 12,
+    "loc": 54,
+    "nesting": 3,
+    "params": 1
   },
   "yadgar/server/tools/admin_dlq.py::dlq_requeue@57": {
     "cyclo": 8,
