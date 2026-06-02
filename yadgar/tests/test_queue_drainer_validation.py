@@ -81,8 +81,12 @@ def queue_and_drainer(tmp_path):
 # ── branch fill ───────────────────────────────────────────────────────────────
 
 
-def test_branch_filled_with_master_when_absent(queue_and_drainer, flush_queue):
-    """wiki_add ops without branch field get branch='master' filled in."""
+def test_branch_left_as_none_when_absent(queue_and_drainer, flush_queue):
+    """wiki_add ops without branch field get branch=None (canonical slot, v5.42.2).
+
+    v5.42.2 fix: drainer no longer injects branch='master'. Absent branch stays None,
+    matching the wiki_add direct handler's canonical-slot behavior.
+    """
     fq, drainer = queue_and_drainer
 
     op = _make_wiki_op(branch=None)
@@ -94,8 +98,8 @@ def test_branch_filled_with_master_when_absent(queue_and_drainer, flush_queue):
     storage = server._get_storage()
     rows = storage._q("SELECT slug, branch FROM wiki_page WHERE slug = 'test-slug'")
     assert rows, "wiki page should have been inserted"
-    assert rows[0].get("branch") == "master", (
-        f"expected branch='master', got {rows[0].get('branch')!r}"
+    assert rows[0].get("branch") is None, (
+        f"expected branch=None (canonical slot), got {rows[0].get('branch')!r}"
     )
 
 

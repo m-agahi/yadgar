@@ -127,11 +127,15 @@ class _DLQMixin:
     def _fill_wiki_add_defaults(self, payload: dict) -> dict:
         """Fill fields that the export-yadgar skill cannot know (§26 Option Z).
 
-        - branch: set to 'master' if absent (Stage 10 will source from git).
+        - branch: leave as None if absent (canonical slot; matches wiki_add direct path).
         - confidence: set to 'medium' if absent.
+
+        v5.42.2: changed from hardcoded "master" → None to match the wiki_add direct
+        handler's canonical-slot behavior. Callers that need an explicit branch must pass
+        it themselves; the drainer no longer injects a default branch value.
         """
-        if "branch" not in payload or payload.get("branch") is None:
-            payload["branch"] = "master"
+        if "branch" not in payload:
+            payload["branch"] = None
         if not payload.get("confidence"):
             payload["confidence"] = "medium"
         return payload
