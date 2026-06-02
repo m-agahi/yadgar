@@ -30,7 +30,7 @@
 - **Auto-capture hook** — records tool usage with per-source token-bucket rate limit and sanitization (ANSI, control chars, bidi-override stripped).
 - **db-lockdown 2026 hook schema** — PreToolUse hook ships as `yadgar/hooks/db-lockdown-check.py` (installed globally by `install_hooks`); emits `hookEventName` field required by Claude Code 2026 schema.
 - **Stop-hook signal-eval prompt** — fires every 25 messages, asking the running session to evaluate stale-wiki and active-work signals.
-- **Async write queue** — retry/backoff, dead-letter for permanent failures, schema-version validation on drain, DLQ inspection tools.
+- **Async write queue** — retry/backoff, dead-letter for permanent failures, schema-version validation on drain, DLQ inspection tools. v5.42.0: similarity gate rejections land in DLQ with `failure_reason="duplicate_detected"`; `dlq_inspect(filter="rejections")` lists them; `project_brief(mode="signals")` surfaces `pending_rejections_count` at Stop hook checkpoints.
 - **Bearer-token MCP auth** — default-deny CORS, timing-safe token compare, always-on secret patterns blocking AWS/GCP/Stripe/Slack/OpenAI/Anthropic keys, JWT, PATs, private keys, DB URIs. Context-aware allowlist (`~/.yadgar/secret-gate-allowlist.yaml`) for known-good fixtures.
 - **Knowledge-graph viz** — `yadgar viz` serves a Three.js graph of memories, entities, and relationships at `http://localhost:42069` with live filtering by tag, age, and store type. All 35 viz constants configurable via `config.yaml` without redeploy.
 - **Prometheus `/metrics`** — structured JSON logs, per-phase consolidation duration markers, CRITICAL alert on phase exceeding `PHASE_DURATION_WARN_MS`, loopback-only by default.
