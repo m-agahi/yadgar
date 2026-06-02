@@ -71,7 +71,13 @@ The aesthetic target is **"terminal cartography"** — dark chart-at-night, hair
 | `yadgar/server/static/js/home.js` | Extract Home tab logic from `index.html`. Hosts the 3D ForceGraph canvas + 5 floating overlays (heat slider, graph stats, node types, edge legend, optional CPU mini). |
 | `yadgar/server/static/js/stats.js` | Detail panels (existing stats content). 30s fixed poll on this tab only. Visibility-aware deferred to v5.51. |
 | `yadgar/server/static/js/health.js` | New tab. CPU / RSS / threads / FDs / daemon stats. Replaces footer + side-panel health surface. |
-| `yadgar/server/static/js/bookmarks.js` | Migrate from `bookmarks.html`. Preserve v5.24.2 marked-fix verbatim. |
+| `yadgar/server/static/js/bookmarks-tab.js` | NEW — orchestrator for the refactored Bookmarks tab (see Addendum 2026-06-02). Replaces standalone `bookmarks.js`. Preserves v5.24.2 marked-fix verbatim inside the new `preview-pane.js` component. |
+| `yadgar/server/static/css/bookmarks-tab.css` | NEW — layout, palette extension, diff colors, typography registers (Mono/Sans/Serif). |
+| `yadgar/server/static/js/components/search-bar.js` | NEW — sticky semantic-first search w/ inline mode toggle (semantic / keyword / slug). |
+| `yadgar/server/static/js/components/preview-pane.js` | NEW — markdown render via marked.js v15 + star button header (toggles bookmark). Used for current + historical versions. |
+| `yadgar/server/static/js/components/versions-rail.js` | NEW — vertical timeline of `VersionLozenge` entries; click-to-preview historical; shift-click multi-select for compare. Composes v5.41 `wiki_history` / `wiki_read_version`. |
+| `yadgar/server/static/js/components/diff-view.js` | NEW — split-pane synced scroll, unified-diff color tokens. Composes v5.41 `wiki_diff`. |
+| `yadgar/server/static/js/components/bookmark-spine.js` | NEW — bookmark-shelf entry on empty-search landing. Drag-reorder, j/k nav. |
 | `yadgar/server/static/js/info.js` | New tab. Version + commit SHA + build date / license + 3rd-party libs + SRI hashes / MCP tool catalogue (live `/api/tools`) / keyboard shortcuts / repo links / debug panel entrypoint / **author bio + photo + belts/whistles placeholder card**. |
 | `yadgar/server/static/js/control.js` | New tab. Action triggers + config editor + update button + restart buttons. All gated on `YADGAR_DEBUG_APIS_ENABLED=on`. |
 | `yadgar/server/static/bookmarks.html` | Replace body with a JS 302 to `/#bookmarks`. Mark deprecated. Remove in a later minor. |
@@ -88,6 +94,8 @@ The aesthetic target is **"terminal cartography"** — dark chart-at-night, hair
 | `yadgar/server/api/control.py` | NEW. Endpoints: `GET /api/control/config` (full knob table with current/default/reload metadata), `POST /api/control/config` (set single knob; validates type; returns 400 on type mismatch or out-of-range), `POST /api/control/action/{consolidate\|vacuum\|reembed}` (internally calls existing MCP tools), `POST /api/control/restart/{yadgar\|backend}` (body `{"confirm": "yadgar"}` must match service name verbatim). All gated on `YADGAR_DEBUG_APIS_ENABLED`. Returns 403 with `{"error": "debug APIs disabled"}` when off. |
 | `yadgar/server/api/info.py` | NEW. `GET /api/info` → `{version, commit_sha, build_date, license, third_party: [{name, version, license, sri}], shortcuts: [...]}`. |
 | `yadgar/server/api/tools.py` | NEW (if not present). `GET /api/tools` → list MCP tools with 1-line descriptions, read from the tool registry. |
+| `yadgar/server/api/wiki_query.py` | EXTEND — add `?mode=semantic\|keyword\|slug` query param. Semantic default. Returns score per hit. Reuses existing wiki embedding index. |
+| `yadgar/server/api/wiki_versions.py` | NEW (or extend existing wiki route). HTTP wrappers for v5.41 MCP tools: `GET /api/wiki_history?slug=…`, `GET /api/wiki_read_version?slug=…&version=N`, `GET /api/wiki_diff?slug=…&v1=A&v2=B`, `POST /api/wiki_restore` (confirmation-gated). |
 | `yadgar/server/auth.py` | Extend bearer-token middleware to ALSO require `YADGAR_DEBUG_APIS_ENABLED=on` for the `/api/control/*` paths. Bearer-token alone is insufficient. |
 | `yadgar/settings.py` | Register `YADGAR_DEBUG_APIS_ENABLED` (bool, default `False`), `viz.edge.variant` (str enum, default `"C"`), `viz.wiki.shape` (str enum, default `"octahedron"`). Three-way per I25 (yaml + Settings + registry). |
 | `config.yaml` | Update defaults: `viz.edge.width_3d_multiplier=1.8`, `viz.edge.arrow_len=5`, `viz.edge.opacity=0.9`, `viz.wiki.shape="octahedron"`, `viz.physics.charge_strength=-18.0`. Add `viz.edge.variant="C"` (informational, not behavioral). Add `debug.apis_enabled=false`. |
@@ -100,6 +108,8 @@ The aesthetic target is **"terminal cartography"** — dark chart-at-night, hair
 | `yadgar/tests/test_control_api.py` | NEW. `/api/control/*` returns 403 when `YADGAR_DEBUG_APIS_ENABLED=off`. Returns 200 when on. Restart confirmation mismatch returns 400. Config GET/POST round-trip. Type mismatch returns 400. |
 | `yadgar/tests/test_overlays_persist.py` | NEW. `localStorage` round-trip for position + collapse state. Jsdom. |
 | `yadgar/tests/test_bookmarks_migration.py` | NEW. `bookmarks.html` redirects to `#bookmarks`. Existing bookmark functionality (mark rendering, list, add, remove, reorder) intact under tab. |
+| `yadgar/tests/test_bookmarks_search.py` | NEW. Semantic / keyword / slug mode toggle. Empty-search shows bookmark shelf. Search returns scored hits. Click result loads preview. Star toggle round-trips with `/api/bookmark_add` + `/api/bookmark_remove`. |
+| `yadgar/tests/test_bookmarks_versions.py` | NEW. Preview pane shows VersionsRail. Click historical version → preview switches. Shift-click two versions → compare button → DiffView renders. Restore button → confirmation → new version created. Composes v5.41 endpoints. |
 
 ---
 
@@ -160,6 +170,113 @@ The aesthetic target is **"terminal cartography"** — dark chart-at-night, hair
 │  └──────────────────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
+
+### Bookmarks tab (Addendum 2026-06-02)
+
+**Aesthetic direction:** forensic library dashboard. Knowledge as strata you sift through. Three modes: shelf (landing), microfiche reader (preview), forensic compare (diff). Mono caret + serif body + sans chrome — three typographic registers reinforce the three roles of text (input / chrome / payload).
+
+**Typography (extends locked palette):**
+- Chrome (UI labels, titles, tabs): IBM Plex Sans 400/500
+- Mono (slug, version timestamps, search caret, code): IBM Plex Mono 400
+- Body (markdown-rendered wiki content in preview): IBM Plex Serif 400 — gives "library" feel
+- Self-hosted via `@font-face` (static-file site)
+
+**New design tokens (extend v5.50's locked 15):**
+```css
+--star: #e6b800;              /* filled bookmark — non-blue emotional pop */
+--scope-current: #58a6ffb3;   /* current version highlight (accent + alpha) */
+--diff-add: #1a4d2eaa;
+--diff-del: #4d1a1aaa;
+--diff-ctx: var(--text-mute);
+--surface-2: <surface + 6/6/6>; /* preview bg one step lighter than chrome */
+```
+
+**Landing state — bookmark shelf:**
+```
+┌─────────────────────────────────────────────────────────┐
+│ ╱   search wiki…              semantic │ keyword │ slug │  ← sticky
+├─────────────────────────────────────────────────────────┤
+│  BOOKMARKED                                    ⋮⋮⋮      │
+│  ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐          │
+│  │ road │ │comp- │ │arch- │ │bench │ │decis-│  ★ filled│
+│  │ map  │ │etitor│ │inv   │ │marks │ │ions  │  per spine
+│  └──────┘ └──────┘ └──────┘ └──────┘ └──────┘          │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Search active, no preview:**
+```
+┌─────────────────────────────────────────────────────────┐
+│ ╱   benchmark│                semantic │ keyword │ slug │
+├─────────────────────────────────────────────────────────┤
+│ ▸ benchmarks-current                          0.94      │ ← cosine score
+│   yadgar/competitors  yadgar/longmemeval                │
+│   v5.26.0 Sonnet 4.6 full 500q result. 69.4%...         │
+│                                                         │
+│ ▸ yadgar-competitor-catalog                   0.81      │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Preview open (3-col: results | preview | versions rail):**
+```
+┌──────────┬────────────────────────────┬──────────────┐
+│ RESULTS  │ benchmarks-current      ★  │ HISTORY      │
+│ ━━━━━━━  │                            │ ━━━━━━━━━━━━ │
+│ ▸ bench  │ # Benchmarks (current)     │ ◉ v4 · now   │ ← current
+│ ▸ comp   │                            │ ◯ v3 · 2h    │
+│ ▸ arch   │ ## v5.26.0 results         │   ▁▃▂  +12   │ ← size sparkline
+│          │                            │ ◯ v2 · 5h    │
+│          │ Sonnet 4.6 hit 69.4%...    │ ◯ v1 · 1d    │
+│          │                            │              │
+│          │                            │ [⇄ compare]  │
+│          │                            │ [↶ restore]  │ ← non-current selected
+└──────────┴────────────────────────────┴──────────────┘
+```
+
+**Diff mode (two versions selected, versions rail collapses):**
+```
+┌──┬────────────────────┬────────────────────┐
+│R │ v2 · 5h ago        │ v4 · now           │
+│E │ # Benchmarks       │ # Benchmarks (curr)│
+│S │ - Phase 1 deferred │ + 69.4% on 500q    │  ← --diff-add / --diff-del per line
+└──┴────────────────────┴────────────────────┘
+```
+
+**Components (vanilla, web-component-style):**
+
+| Component | Behavior |
+|---|---|
+| `SearchBar` | Sticky top. Mono caret (`╱`). 200ms debounce. `/` focuses. Live result count. |
+| `ModeToggle` | 3 inline chips: semantic (default) / keyword / slug. Tab cycles. State persists in localStorage. |
+| `BookmarksShelf` | Empty-search landing. Spine grid (2-col blocks). HTML5 DnD reorder. Each spine: slug-abbrev + star-filled. Click → preview. |
+| `ResultCard` | Title (Plex Sans 16) + slug (Plex Mono 12 dim) + tag chips (`--accent-dim` bg) + 2-line snippet (`-webkit-line-clamp:2`) + score chip right. |
+| `PreviewPane` | Renders via marked.js v15 (PRESERVE v5.24.2 fix verbatim). Body Plex Serif. Star button top-right (24px, fills `--star` on toggle). Close top-left. |
+| `VersionsRail` | Vertical timeline. Each `VersionLozenge` = ◉/◯ marker + `v{N} · {relative-time}` (Plex Mono) + size-delta sparkline (mini `<canvas>` 40×8) + change_summary truncated. Click selects, shift-click multi-selects. Current = `--scope-current` border. |
+| `DiffView` | Split-pane synced scroll. Headers show v1/v2 + timestamp. Unified diff via `--diff-add`/`--diff-del`. Toggle from VersionsRail compare button. |
+| `ConfirmModal` | Restore action: "Restore v{N} as new v{current+1}?" cancel/confirm. |
+
+**Keyboard:**
+`/` focus search · `j/k` nav results · `Enter` open preview · `Esc` close preview/diff · `⌘B`/`Ctrl+B` toggle star · `[`/`]` cycle versions · `Shift+Click` multi-select for compare · `Tab` cycle search modes
+
+**API surface (composes v5.41 + v5.39 + v5.23):**
+- `GET /api/wiki_query?q=…&mode=semantic|keyword|slug` — search (semantic default)
+- `GET /api/wiki_read?slug=…` — current version
+- `GET /api/wiki_history?slug=…` — versions list (v5.41)
+- `GET /api/wiki_read_version?slug=…&version=N` — historical content (v5.41)
+- `GET /api/wiki_diff?slug=…&v1=A&v2=B` — diff (v5.41)
+- `POST /api/wiki_restore` — restore (v5.41, confirmation-gated)
+- `GET /api/bookmarks` · `POST /api/bookmark_add` · `POST /api/bookmark_remove` · `POST /api/bookmark_reorder` (v5.23)
+
+**Differentiating moves:**
+1. Three typographic registers (Mono/Sans/Serif) make text role visually unambiguous — chrome vs query vs payload.
+2. Vertical versions rail with size-delta sparklines turns history into a glanceable shape, not a list of dates.
+3. Bookmark shelf as spines on empty search — feels like a library, not a hamburger menu.
+4. Mode toggle inline in search bar — no hidden settings, no separate filter row. State always visible.
+5. `--star` gold accent breaks the blue monochrome at the one emotional decision point (save/unsave) — single non-blue token in the palette.
+
+**Wiki node detail in 3D graph (composes):** clicking a wiki node in the Home tab graph opens the same `PreviewPane` + `VersionsRail` overlay (drag-positionable, click-through-to-canvas). Reuses the same components — single source of truth for wiki rendering across tabs.
+
+---
 
 ### Logo V1 — Synapse
 
