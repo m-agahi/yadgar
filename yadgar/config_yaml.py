@@ -853,6 +853,15 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Max candidate duplicate pages returned in rejection response (default 5).",
         "section": "wiki_similarity_gate",
     },
+    # v5.42.1: embed failure knob
+    "wiki_embed_failure_blocks_write": {
+        "desc": (
+            "When True, wiki_add fails if _compute_embedding returns None or raises. "
+            "Default False: emit WARN log + metric, proceed with NULL embedding (backward compat). "
+            "Flip to True once embed service is confirmed reliable."
+        ),
+        "section": "wiki_similarity_gate",
+    },
 }
 
 
