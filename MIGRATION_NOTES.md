@@ -1,5 +1,60 @@
 # Migration Notes
 
+## v5.41.4 — roadmap-update-lag signal + wiki_append_section convention (2026-06-02)
+
+Core 5.41.3 → 5.41.4. Backend unchanged at 5.4.0. **No DB migration required.**
+
+### New signal: `roadmap_update_lag_hours`
+
+`project_brief(mode="signals")` now includes:
+
+```json
+{
+  "roadmap_update_lag_hours": 14.7,
+  "recommended_actions": [
+    {
+      "action": "update_roadmap",
+      "reason": "master moved 14.7h ago; roadmap not updated since",
+      "suggested_call": "wiki_append_section('yadgar-roadmap-future-improvements', ...)"
+    }
+  ]
+}
+```
+
+Sentinel: `-1.0` if the roadmap wiki page is not found (no action emitted).
+
+### Convention shift: wiki_append_section for ship entries
+
+Old rule: "After EACH ship: read-modify-write the roadmap wiki."
+
+New rule (v5.41.4+): use `wiki_append_section` for `Recently shipped` entries.
+Reserve full RMW for restructures, table-row edits, or closing open items.
+
+Template:
+
+```python
+wiki_append_section(
+    slug="yadgar-roadmap-future-improvements",
+    section_heading="Recently shipped",
+    content="- **vX.Y.Z (YYYY-MM-DD):** summary. N/N tests.",
+    position="start_of_section",
+)
+```
+
+Full details in `docs/WORKFLOW_ROADMAP_UPDATE.md`.
+
+### CLAUDE.md note (out of scope for this release)
+
+The workflow rule change is documented in the roadmap wiki and `docs/WORKFLOW_ROADMAP_UPDATE.md`.
+Global `~/.claude/CLAUDE.md` is nix-managed. To propagate the new convention there, update
+`~/git/nix/modules/home/claude.nix` (or wherever CLAUDE.md content is sourced) separately.
+
+### No operator action required
+
+No schema change. No config change. No binary migration. Suite: 7 new tests (all green).
+
+---
+
 ## v5.41.3 — MCP-handler perf test + I9 attribution correction (2026-06-02)
 
 Core 5.41.2 → 5.41.3. Backend unchanged at 5.4.0. **No DB migration required.**

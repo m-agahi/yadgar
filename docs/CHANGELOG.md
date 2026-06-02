@@ -7,6 +7,35 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.41.4] - 2026-06-02
+
+Tiny patch: roadmap-update-lag signal + `wiki_append_section` convention for ship entries.
+
+### Added
+- **`roadmap_update_lag_hours` signal** (`yadgar/server/tools/project.py`):
+  `project_brief(mode="signals")` now returns `roadmap_update_lag_hours: float` —
+  hours between roadmap wiki `updated_at` and master HEAD committer timestamp.
+  `0` = roadmap is fresh. `-1.0` = roadmap wiki page not found (sentinel).
+- **`update_roadmap` recommended action**: emitted when lag > 0 and a ship is
+  detected. Ship detection: PRIMARY = `pyproject.toml` version changed between
+  roadmap's `updated_at` and HEAD; FALLBACK = commit message matches
+  `^merge: v\d+\.\d+\.\d+` or `chore: bump version`. Handles squash-merge commits
+  that lack the `merge:` prefix.
+- **`docs/WORKFLOW_ROADMAP_UPDATE.md`**: template and rationale for using
+  `wiki_append_section` for routine ship entries instead of full RMW.
+- **Roadmap wiki updated**: `wiki_append_section` dogfooded — new convention bullet
+  appended to "Workflow rules (anchored)" section (version 3).
+- **7 tests** (`yadgar/tests/test_roadmap_update_signal.py`):
+  lag-positive, lag-zero, action-fires-on-ship, action-skips-non-ship,
+  feature-branch-uses-master-head, wiki-not-found-sentinel, squash-merge-no-prefix.
+
+### Technical
+- New helpers: `_get_master_head_info`, `_get_pyproject_version_at_ts`,
+  `_detect_ship`, `_compute_roadmap_signal`, `_apply_roadmap_signal`.
+  Complexity-capped: each function ≤ cyclo 10, `_project_brief_signals` ≤ 15.
+- `.complexity-baseline.json` updated for new helpers + `project.py` LOC growth.
+- Ship-detection uses committer date (`%ct`) not author date — robust to rebases.
+
 ## [5.41.1] - 2026-06-02
 
 Hotfix: wiki versioning transactional atomicity. Closes the silent version-hole
