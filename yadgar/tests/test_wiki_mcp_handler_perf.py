@@ -11,12 +11,13 @@ Layer model:
                                         See test_wiki_versioning_atomicity.py
                                         ::TestStorageUpdatePerfRegressionGuard
 
-CONCRETE BASELINE (measured v5.41.2, 2026-06-02): wait=False p50 ≈ 48ms.
-9.6× over I9 budget. Root cause investigation slot: v5.41.5.
+CONCRETE BASELINES:
+  v5.41.2 (pre-fix): wait=False p50 ≈ 28.89ms (task header) / ~48ms (xfail).
+  v5.41.5 (post-fix): wait=False p50 < 1ms. Similarity gate moved to drainer.
+  Root cause: find_similar_wiki_pages (embed+KNN) ran on request thread.
+  Fix: gate deferred to drainer pre-apply stage. Handler now ~0.04ms total.
 
-This test is marked xfail(strict=True) — it MUST fail on the v5.41.2 baseline
-(p50 ≈ 48ms >> 5ms). When v5.41.5 lands the fix, the test will start passing
-and strict=True will turn the xpass into a GREEN signal, removing the marker.
+v5.41.5: xfail REMOVED — test now passes GREEN. Budget ≤5ms met.
 
 Drainer strategy:
   - Real tmp_path for the queue dir (Path.write_text cost is in I9 scope).
@@ -24,8 +25,8 @@ Drainer strategy:
     spawn processing on the request thread.
   - Explicit assert_not_called() on QueueDrainer._apply_with_stage_metrics
     confirms drainer did not run on the request thread during measurement.
-  - Similarity gate: each call gets a UUID-suffixed title to avoid duplicate
-    detection short-circuiting the measured path.
+  - Similarity gate: gate no longer on request thread (v5.41.5). UUID-suffix
+    titles still used so test is self-documenting.
 """
 
 from __future__ import annotations
@@ -91,23 +92,18 @@ def _unique_title(base: str = "MCP Perf Test") -> str:
 # ── Test ──────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(
-    reason=(
-        "I9 violation: wiki_add(wait=False) MCP handler p50 ≈ 48ms "
-        "(9.6× over ≤5ms I9 budget). Fix slot: v5.41.5. "
-        "BASELINE 2026-06-02: ~48ms p50 on the same machine."
-    ),
-    strict=True,
-)
 def test_wiki_add_handler_p50_within_i9_budget(tmp_path):
     """wiki_add(wait=False) handler must return in ≤5ms p50 (I9 budget).
 
-    Measures the HANDLER path: secret-gate + rules check + sim-gate + enqueue.
+    v5.41.5: xfail removed. Similarity gate moved to drainer — handler now
+    ~0.04ms p50 (secret-gate + slug-gen + enqueue). Budget ≤5ms met.
+
+    Measures the HANDLER path: secret-gate + rules check + slug-gen + enqueue.
+    Similarity gate NOT on handler path anymore (moved to drainer, I9 fix).
     File write to tmp_path queue dir IS included (it is in I9 scope).
     Drainer is NOT started — storage write NOT included (not I9).
 
-    EXPECTED TO FAIL on v5.41.2 baseline: p50 ≈ 48ms >> 5ms budget.
-    xfail(strict=True): suite stays green; xpass after v5.41.5 fix removes marker.
+    BASELINE v5.41.5: p50 < 1ms. PASSES GREEN.
 
     Drainer assertion: QueueDrainer._apply_with_stage_metrics must NOT be called
     on the request thread during measurement (confirms handler returns before
@@ -182,10 +178,11 @@ def test_wiki_add_handler_p50_within_i9_budget(tmp_path):
     # Surface baseline in the failure message for v5.41.5 "before" reference.
     assert p50 <= 5.0, (
         f"wiki_add(wait=False) MCP handler p50={p50:.2f}ms exceeds I9 budget of 5ms. "
-        f"[BASELINE v5.41.2: ~48ms] "
+        f"[BASELINE v5.41.5: <1ms — gate moved to drainer] "
         f"p90={p90:.2f}ms min={p_min:.2f}ms max={p_max:.2f}ms "
         f"n=100 calls. "
-        f"I9 governs the handler only (enqueue + gate checks). "
+        f"I9 governs the handler only (secret-gate + slug-gen + enqueue). "
+        f"Similarity gate now in drainer — not on request thread. "
         f"Storage-layer latency is a separate concern — see "
         f"test_wiki_versioning_atomicity.py::TestStorageUpdatePerfRegressionGuard."
     )
