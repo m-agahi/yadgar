@@ -6,6 +6,15 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.41.3] — 2026-06-02
+
+MCP-handler perf test + I9 attribution correction.
+See `MIGRATION_NOTES.md` v5.41.3.
+
+- **test(wiki):** `test_wiki_mcp_handler_perf.py` — new test times `wiki_add(wait=False)` MCP handler directly (100 calls, real file queue dir). Asserts p50 ≤5ms (true I9 budget). Marked `xfail(strict=True)`: current baseline p50 ≈ 28–48ms (5.8–9.6× over budget). Real fix slot: v5.41.5.
+- **refactor(tests):** `TestUpdatePerfUnder5msP50` → `TestStorageUpdatePerfRegressionGuard`. Docstring corrected: storage-layer latency (~89ms embedded SurrealKV) is a queue-worker concern, NOT an I9 violation. I9 governs MCP handlers only.
+- **docs:** MIGRATION_NOTES v5.41.3 clarifies the layer model (handler vs. storage) and attributes the ~89ms baseline correctly.
+
 ## [5.41.2] — 2026-06-02
 
 `wiki_add` / `wiki_update` / `wiki_restore` / `wiki_append_section` wait flag for read-your-writes consistency.
