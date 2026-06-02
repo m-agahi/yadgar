@@ -173,6 +173,17 @@ yadgar_dlq_rejection_count = Gauge(
     registry=_registry,
 )
 
+# ── v5.42.1 — wiki embedding compute failure counter (I23) ───────────────────
+# Emitted by wiki.py::_compute_embedding on exception.
+# reason labels: "exception" (encode_document raised), "returned_none" (None returned)
+
+yadgar_wiki_embedding_compute_failed_total = Counter(
+    "yadgar_wiki_embedding_compute_failed_total",
+    "wiki_page embedding computation failures (silent previously; surfaced v5.42.1)",
+    ["reason"],
+    registry=_registry,
+)
+
 # ── P11 — read path ─────────────────────────────────────────────────────────
 
 yadgar_recall_duration_ms = Histogram(

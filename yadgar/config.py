@@ -283,6 +283,12 @@ class Settings(BaseSettings):
     # How many candidate duplicates to return in the rejection response.
     WIKI_SIM_TOP_K: int = 5
 
+    # v5.42.1: embedding failure behaviour knob (I25 three-way registered).
+    # Default False: log WARN + counter, wiki_add proceeds with NULL embedding (backward compat).
+    # True: wiki_add fails when _compute_embedding returns None / raises.
+    # Flip to True after operator confidence that embed service is reliable.
+    WIKI_EMBED_FAILURE_BLOCKS_WRITE: bool = False
+
     # File queue — async write queue base directory
     DATA_DIR: str = str(Path.home() / ".yadgar")
     # Optional prefix for wiki .md archive filenames (e.g. "myproject" → "myproject-overview.md")

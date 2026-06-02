@@ -207,6 +207,9 @@ def _run_wiki_embedding_backfill(wiki) -> None:
     Extracted from init_engines to keep cyclomatic complexity within I13 cap.
     Called after both StorageEngine and EmbeddingEngine are ready. Idempotent.
     Failures are non-fatal — logged as WARNING; startup proceeds normally.
+
+    Post-backfill: if NULL-embedding rows remain (embed service unavailable),
+    emits a CRITICAL log so operators know the similarity gate is degraded.
     """
     try:
         null_count = wiki.backfill_null_embeddings()
@@ -217,6 +220,19 @@ def _run_wiki_embedding_backfill(wiki) -> None:
             )
     except Exception as exc:
         logger.warning("migration_014 backfill failed (non-fatal): %s", exc)
+
+    # Post-backfill audit: CRITICAL if NULL rows remain (gate still degraded).
+    try:
+        remaining = wiki._storage.get_wiki_pages_without_embedding()
+        if remaining:
+            logger.critical(
+                "%d wiki_page rows still have embedding=NULL after backfill attempt — "
+                "similarity gate is degraded (embed service may be unavailable). "
+                "Re-run will retry automatically at next startup.",
+                len(remaining),
+            )
+    except Exception:
+        pass
 
 
 # ── Startup ────────────────────────────────────────────────────────────

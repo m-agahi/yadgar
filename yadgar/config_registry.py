@@ -255,6 +255,8 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_WIKI_SIM_TITLE_THRESHOLD", "0.85", "float"),
     ConfigEntry("YADGAR_WIKI_SIM_MODE", "hard", "string"),
     ConfigEntry("YADGAR_WIKI_SIM_TOP_K", "5", "int"),
+    # ── v5.42.1 embed failure behaviour knob ─────────────────────────────────
+    ConfigEntry("YADGAR_WIKI_EMBED_FAILURE_BLOCKS_WRITE", "false", "bool"),
 ]
 
 

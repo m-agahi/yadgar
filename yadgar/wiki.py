@@ -25,6 +25,16 @@ def _wiki_observe_stage(stage: str, elapsed_ms: float) -> None:
 WIKI_STALE_DAYS = 90
 
 
+def _inc_embed_failure(reason: str) -> None:
+    """Increment yadgar_wiki_embedding_compute_failed_total counter. Never raises."""
+    try:
+        from yadgar.metrics import yadgar_wiki_embedding_compute_failed_total  # noqa: PLC0415
+
+        yadgar_wiki_embedding_compute_failed_total.labels(reason=reason).inc()
+    except Exception:
+        pass
+
+
 # ── Section-parsing helpers (wiki_append_section) ─────────────────────────────
 
 
@@ -873,13 +883,47 @@ class WikiStore:
         return list(dict.fromkeys(self._slugify(r) for r in raw))  # dedupe, preserve order
 
     def _compute_embedding(self, title: str, content: str) -> bytes | None:
-        """Semantic anchoring: prepend title to content before embedding."""
+        """Semantic anchoring: prepend title to content before embedding.
+
+        v5.42.1: failures are surfaced via WARN log + Prometheus counter instead
+        of being silently swallowed. The WIKI_EMBED_FAILURE_BLOCKS_WRITE knob
+        (default False) controls whether a failure aborts the write or is tolerated.
+        """
+        from yadgar.config import get_settings  # noqa: PLC0415
+
         try:
             text = f"{title}\n{content[:2000]}"
-            return self._embeddings.encode_document(text)
-        except Exception:
-            logger.debug("Wiki embedding computation failed for '%s'", title)
+            result = self._embeddings.encode_document(text)
+        except Exception as exc:
+            _inc_embed_failure("exception")
+            settings = get_settings()
+            if settings.WIKI_EMBED_FAILURE_BLOCKS_WRITE:
+                raise RuntimeError(
+                    f"wiki embedding failed for '{title}' "
+                    f"(WIKI_EMBED_FAILURE_BLOCKS_WRITE=True): {exc}"
+                ) from exc
+            logger.warning(
+                "wiki embedding computation failed for '%s': %s — proceeding with NULL embedding",
+                title,
+                exc,
+            )
             return None
+
+        if result is None:
+            _inc_embed_failure("returned_none")
+            settings = get_settings()
+            if settings.WIKI_EMBED_FAILURE_BLOCKS_WRITE:
+                raise RuntimeError(
+                    f"wiki embedding returned None for '{title}' "
+                    "(WIKI_EMBED_FAILURE_BLOCKS_WRITE=True)"
+                )
+            logger.warning(
+                "wiki embedding returned None for '%s' — proceeding with NULL embedding",
+                title,
+            )
+            return None
+
+        return result
 
     def backfill_null_embeddings(self, batch_size: int = 50) -> int:
         """Backfill embeddings for all wiki_page rows where embedding IS NULL.
