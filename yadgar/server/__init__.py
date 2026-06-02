@@ -148,6 +148,7 @@ from yadgar.server.tools import (  # noqa: F401
     wiki_update,
     dlq_inspect,
     dlq_requeue,
+    dlq_dismiss,
     _run_check_invariants,
     wiki_add,
     wiki_query,

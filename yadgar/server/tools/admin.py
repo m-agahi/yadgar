@@ -15,7 +15,7 @@ Submodules:
 # ruff: noqa: F401, E402  — all imports are re-exports; order is load-order-significant
 
 # Import submodules to trigger @_tool decorator registration
-from yadgar.server.tools.admin_dlq import dlq_inspect, dlq_requeue
+from yadgar.server.tools.admin_dlq import dlq_dismiss, dlq_inspect, dlq_requeue
 from yadgar.server.tools.admin_invariants import (
     _run_check_invariants,
     check_invariants,
@@ -43,6 +43,7 @@ __all__ = [
     "vacuum_now",
     "dlq_inspect",
     "dlq_requeue",
+    "dlq_dismiss",
     "forget",
     "validate_memory",
     "consolidate_now",
