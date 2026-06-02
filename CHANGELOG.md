@@ -6,6 +6,20 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.42.2] — 2026-06-02
+
+Critical hotfix: wiki branch-default scope mismatch — silence similarity gate in production (real root cause).
+See `MIGRATION_NOTES.md` v5.42.2 and `docs/PLAN_V5_42_2_WIKI_BRANCH_DEFAULT_FIX.md`.
+
+- **fix(file_queue):** `_fill_wiki_add_defaults` — drainer no longer injects hardcoded `branch="master"` when payload omits branch. Now stores `branch=None` (canonical slot), matching the `wiki_add` direct-write path. Both writer paths now agree on the canonical slot. (`yadgar/file_queue/dlq.py:133`)
+- **fix(wiki):** `wiki_check_duplicate` — auto-detects current/default branch via `_detect_branch` / `_get_default_branch` when `branch` arg is `None`, mirroring `wiki_query`. Passes `_default_branch` to `find_similar_wiki_pages` so scope = `{None, default_branch}` covers both canonical-slot pages (post-fix) and legacy `branch="master"` pages (pre-fix). (`yadgar/server/tools/wiki.py:695-720`)
+- **test(wiki):** `test_v5_42_2_branch_default_e2e.py` — new `@pytest.mark.integration` E2E test reproducing the production sequence: drainer write (no branch) → `wiki_check_duplicate` (no branch) → assert candidate found. RED before this fix, GREEN after.
+- **chore(tests):** `test_branch_filled_with_master_when_absent` → renamed to `test_branch_left_as_none_when_absent`; assertion updated to `branch is None`. (`yadgar/tests/test_queue_drainer_validation.py:84`)
+
+**Breaking change (no known callers):** drainer no longer sets `branch="master"` as a default. Any external caller that relied on the drainer to inject `branch="master"` must now pass `branch="master"` explicitly. No callers in this codebase depend on the old behavior.
+
+**Root cause summary:** four prior fix attempts (v5.39.0, v5.41.5, v5.42.0, v5.42.1) targeted the wrong layers (embedding gaps, gate location, backfill). The actual bug: writer asymmetry. Drainer wrote `branch="master"`; `wiki_check_duplicate` searched `{None}`. The two canonical slots never overlapped. Live probe 2026-06-02 confirmed: same content, `branch=None` → 0 candidates, `branch="master"` → 1 candidate at similarity 0.9055.
+
 ## [5.42.1] — 2026-06-02
 
 Critical hotfix: wiki_page embedding backfill + embed-failure surfacing.
