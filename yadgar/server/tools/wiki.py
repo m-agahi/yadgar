@@ -286,6 +286,7 @@ def wiki_add(
        the daemon CWD is not the caller's repo and would always resolve to "master".
 
     wait=False (default): async fast path — returns immediately with {"queued": True}.
+    Default async. Only set wait=True when callers depend on next-call read-your-writes.
     wait=True: read-your-writes path — enqueues then blocks until the drainer
       commits the write, then returns {"committed": True, "queued": False}.
       Preserves FIFO ordering (earlier queued writes to the same slug still land
