@@ -198,6 +198,27 @@ def _load_default_rules(engine: RulesEngine) -> None:
         logger.debug("Failed to load default rules", exc_info=True)
 
 
+# ── Startup helpers ────────────────────────────────────────────────────
+
+
+def _run_wiki_embedding_backfill(wiki) -> None:
+    """Backfill NULL-embedding wiki_page rows (migration_014, v5.42.1).
+
+    Extracted from init_engines to keep cyclomatic complexity within I13 cap.
+    Called after both StorageEngine and EmbeddingEngine are ready. Idempotent.
+    Failures are non-fatal — logged as WARNING; startup proceeds normally.
+    """
+    try:
+        null_count = wiki.backfill_null_embeddings()
+        if null_count > 0:
+            logger.info(
+                "migration_014 backfill: %d wiki_page embeddings computed at startup",
+                null_count,
+            )
+    except Exception as exc:
+        logger.warning("migration_014 backfill failed (non-fatal): %s", exc)
+
+
 # ── Startup ────────────────────────────────────────────────────────────
 
 
@@ -327,6 +348,10 @@ def init_engines(
 
     # Eagerly warm up the embedding model so the first recall isn't slow.
     _st._embeddings._ensure_model()
+
+    # migration_014 backfill: encode NULL-embedding wiki_page rows.
+    # Runs after both StorageEngine + EmbeddingEngine are ready. Idempotent.
+    _run_wiki_embedding_backfill(_st._wiki)
 
     # Start file queue drainer — processes any pending writes from previous sessions
     try:
