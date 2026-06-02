@@ -1,6 +1,6 @@
 # PLAN — v5.42.0: Async drainer-rejection MCP notification
 
-**Status:** drafted 2026-06-02. Even-minor convention exception (per anchored rule: user may break deliberately).
+**Status:** drafted 2026-06-02. **Even-minor convention-correct slot** — even minors were reserved precisely for surprise/insert features that emerge between planned odd-minor work. Not a convention exception; using as designed. (Corrected 2026-06-02; earlier framing as "exception" was wrong.)
 
 **Origin:** v5.41.5 moved similarity gate (and any future drainer-side rejections) OFF the MCP handler request path to restore I9. Side effect: `wait=False` callers lose sync rejection signal. v5.41.5 documented 3 migration options (`wait=True` sync, fire-and-forget, pre-flight `wiki_check_duplicate`). User flagged that `wait=True` materially increases write latency (handler <1ms → ~100-200ms under load), defeating the I9 win for safety-conscious callers.
 
@@ -171,7 +171,7 @@ After ship: update v5.41.5 MIGRATION_NOTES Migration options section to add Opti
 ## 14. Open questions (for opus reviewer + user)
 
 1. Phase 0 outcome dependency: should v5.42.0 hold until Claude Code 2026 hook surface confirmed? OR ship server-emit independently and accept client-side TBD?
-2. Even-minor convention exception: anchored rule permits but creates ambiguity. Slot v5.49.0 (odd) instead?
+2. Even-minor slot: convention-correct per design intent (even minors reserved for surprise inserts between planned odd-minor work). No question to resolve.
 3. Session-id propagation through queue: needs schema field on job metadata. Migration concern for existing in-flight jobs at upgrade time?
 4. DP-A scope (wiki_add vs all wiki writes vs all async writes): reviewer's call on minimum-viable.
 5. Telemetry detail: per-method counter sufficient OR per-session label too?
