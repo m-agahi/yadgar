@@ -1,5 +1,83 @@
 # Migration Notes
 
+## v5.41.5 — similarity gate moved to drainer (I9 fix) (2026-06-02)
+
+Core 5.41.4 → 5.41.5. Backend unchanged at 5.4.0. **No DB migration required.**
+
+### What changed
+
+**v5.39** added a similarity gate to `wiki_add` that checked for near-duplicate pages
+before writing. The gate (`find_similar_wiki_pages` = embed + KNN) ran on the MCP
+request thread, costing p50=27ms — 5.4× over the 5ms I9 budget.
+
+**v5.41.5** moves the gate to the drainer's pre-apply stage. The handler now returns
+in <1ms. The gate fires asynchronously (or synchronously for `wait=True`).
+
+### Breaking change: `wait=False` no longer returns sync rejection
+
+**Before (v5.39–v5.41.4):**
+```python
+result = wiki_add(title="...", content="...", wait=False)
+if result.get("reason") == "duplicate_detected":
+    # Gate fired — page rejected.
+    candidates = result["candidates"]
+```
+
+**After (v5.41.5+):**
+```python
+result = wiki_add(title="...", content="...", wait=False)
+# result is now: {"stored": True, "queued": True, "similarity_check": "deferred", ...}
+# Gate check is deferred — NO sync rejection on this path.
+```
+
+### Migration options
+
+**Option 1 (recommended): switch to `wait=True` for sync rejection feedback.**
+```python
+result = wiki_add(title="...", content="...", wait=True)
+if result.get("reason") == "duplicate_detected":
+    # Gate fired in drainer — rejection is synchronous.
+    candidates = result["candidates"]
+elif result.get("committed"):
+    # Success.
+    pass
+```
+`wait=True` preserves the v5.39 sync rejection contract. Use this when you need
+immediate feedback about duplicates before proceeding.
+
+**Option 2: accept async rejection (fire-and-forget).**
+```python
+result = wiki_add(title="...", content="...", wait=False)
+# result["similarity_check"] == "deferred" — gate runs in background.
+# If gate fires, job is archived (not inserted). No DLQ entry.
+# Prometheus counter yadgar_wiki_add_rejected_total{reason="duplicate_detected"} increments.
+```
+Use this for bulk writes where duplicate rejection is acceptable to observe later.
+
+**Option 3: use `wiki_check_duplicate` before writing (unchanged).**
+```python
+check = wiki_check_duplicate(title="...", content="...")
+if check["candidates"]:
+    # Near-duplicate found — decide to force or skip.
+    pass
+else:
+    wiki_add(title="...", content="...", wait=False)
+```
+`wiki_check_duplicate` is a dry-run tool and is unaffected by this change.
+
+### Bypass flags still work (unchanged)
+
+- `force=True`: bypasses gate in drainer (page written regardless of similarity).
+- `replace_slug=<slug>`: overwrite semantics — gate skipped in drainer.
+- `append=True`: update semantics — gate skipped in drainer.
+
+### No external consumers
+
+v5.39 shipped 2026-05-31 (2 days before this fix). No external deployments consume
+the breaking shape. Internal callers (tests, dogfood hooks) updated in this patch.
+
+---
+
 ## v5.41.4 — roadmap-update-lag signal + wiki_append_section convention (2026-06-02)
 
 Core 5.41.3 → 5.41.4. Backend unchanged at 5.4.0. **No DB migration required.**

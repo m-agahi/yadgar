@@ -314,8 +314,42 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
             self._backoff_max, self._backoff_base * (2.0 ** (attempt.count - 1))
         )
 
+    def _archive_with_metrics(self, path) -> None:
+        """Archive a queue file and record stage timing."""
+        _t0 = time.perf_counter()
+        try:
+            self._queue.archive(path)
+        finally:
+            try:
+                from yadgar.metrics import yadgar_drain_stage_ms  # noqa: PLC0415
+
+                yadgar_drain_stage_ms.labels(stage="archive").observe(
+                    (time.perf_counter() - _t0) * 1000
+                )
+            except Exception:
+                pass
+
     def _apply_with_stage_metrics(self, data: dict, path) -> None:
-        """Apply one queue item and archive it, timing each stage for PR-E metrics."""
+        """Apply one queue item and archive it, timing each stage for PR-E metrics.
+
+        v5.41.5: for wiki_add ops, runs the v5.39 similarity gate BEFORE _apply()
+        (I9 fix — gate moved from MCP handler to drainer, per I1/I6/I9 invariants).
+        On gate rejection: archives the file (so it doesn't replay), signals
+        wait=True callers with the rejection payload, skips _apply(). I6: gate runs
+        once here, not again when _apply() re-invokes wiki_add (is_draining=True takes
+        _wiki_add_sync_write path which skips the gate entirely).
+        """
+        job_id = data.get("id")
+
+        # v5.41.5: similarity gate pre-apply check (wiki_add only).
+        if data.get("op") == "wiki_add":
+            rejection = self._sim_gate_for_drainer(data.get("payload", {}))
+            if rejection is not None:
+                self._archive_with_metrics(path)
+                if job_id:
+                    self._queue._signal_complete_with_result(job_id, rejection)
+                return
+
         # PR-E: time the insert stage
         _insert_t0 = time.perf_counter()
         try:
@@ -330,22 +364,9 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
             except Exception:
                 pass
 
-        # PR-E: time the archive stage
-        _archive_t0 = time.perf_counter()
-        try:
-            self._queue.archive(path)
-        finally:
-            try:
-                from yadgar.metrics import yadgar_drain_stage_ms  # noqa: PLC0415
-
-                yadgar_drain_stage_ms.labels(stage="archive").observe(
-                    (time.perf_counter() - _archive_t0) * 1000
-                )
-            except Exception:
-                pass
+        self._archive_with_metrics(path)
 
         # v5.41.2: signal per-job completion after archive so wait_for_job() callers unblock.
-        job_id = data.get("id")
         if job_id:
             self._queue.signal_complete(job_id)
 
@@ -353,6 +374,11 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         """Block until job_id has been committed to the DB, or until timeout.
 
         Returns True if the job committed within timeout, False on timeout.
+
+        v5.41.5: does NOT clean up the job entry — callers that need the
+        drainer result payload must call queue.get_job_result(job_id) then
+        queue._cleanup_job(job_id) themselves. The raw cleanup is safe to
+        call multiple times (idempotent pop).
 
         Triggers drain_now() once immediately so callers don't wait a full
         drain-interval cycle (default 30s). The event wait is a backstop for
@@ -364,7 +390,6 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         event = self._queue.register_wait(job_id)
         if event.is_set():
             # Already completed before we got here (signal_complete fired first).
-            self._queue._cleanup_job(job_id)
             return True
         # Trigger an immediate drain so we don't wait a full drain interval.
         try:
@@ -372,6 +397,4 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         except Exception as exc:  # noqa: BLE001
             logger.warning("wait_for_job: drain_now() failed: %s", exc)
         # Wait for the event (set by signal_complete after archive).
-        result = event.wait(timeout=timeout)
-        self._queue._cleanup_job(job_id)
-        return result
+        return event.wait(timeout=timeout)

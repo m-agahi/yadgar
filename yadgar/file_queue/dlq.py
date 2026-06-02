@@ -123,3 +123,100 @@ class _DLQMixin:
         return payload
 
     # ── end §26 ──────────────────────────────────────────────────────────────
+
+    # ── v5.41.5: similarity gate in drainer (I9 fix) ─────────────────────────
+
+    def _sim_gate_for_drainer(self, payload: dict) -> dict | None:
+        """Run the v5.39 similarity gate in the drainer pre-apply stage (I9 fix).
+
+        Called for wiki_add jobs BEFORE _apply() so the embed+KNN cost runs on
+        the drainer thread, not the MCP request thread (I1 thin-request-path).
+
+        Returns a rejection dict {stored: False, reason: "duplicate_detected", ...}
+        if the gate fires in hard mode. Returns None if gate passes or is bypassed.
+
+        Bypass conditions (I6 no-double-pay):
+        - force=True in payload
+        - replace_slug set in payload
+        - append=True in payload
+        - WIKI_SIM_GATE_ENABLED=False config
+        - WIKI_SIM_MODE=soft (allows write, logs warning)
+        """
+        # Bypass: force, replace_slug, append
+        if payload.get("force"):
+            return None
+        if payload.get("replace_slug") is not None:
+            return None
+        if payload.get("append"):
+            return None
+
+        try:
+            from yadgar.config import get_settings as _get_settings  # noqa: PLC0415
+
+            cfg = _get_settings()
+            if not getattr(cfg, "WIKI_SIM_GATE_ENABLED", True):
+                return None
+
+            sim_mode = getattr(cfg, "WIKI_SIM_MODE", "hard")
+            sim_threshold = getattr(cfg, "WIKI_SIM_CONTENT_THRESHOLD", 0.80)
+            sim_top_k = getattr(cfg, "WIKI_SIM_TOP_K", 5)
+        except Exception as exc:
+            logger.debug("_sim_gate_for_drainer: config error (non-fatal): %s", exc)
+            return None
+
+        try:
+            import yadgar.server._state as _st  # noqa: PLC0415
+
+            if _st._wiki is None:
+                return None
+
+            title = payload.get("title", "")
+            content = payload.get("content", "")
+            branch = payload.get("branch")
+            slug = payload.get("slug", "")
+
+            candidates = _st._wiki.find_similar_wiki_pages(
+                title=title,
+                content=content,
+                branch=branch,
+                threshold=sim_threshold,
+                top_k=sim_top_k,
+                exclude_slug=slug,
+            )
+            if not candidates:
+                return None
+
+            if sim_mode == "soft":
+                logger.warning(
+                    "_sim_gate_for_drainer (soft): near-duplicate for '%s', "
+                    "candidates=%s — allowing",
+                    title,
+                    [c["slug"] for c in candidates],
+                )
+                return None
+
+            # hard mode: reject
+            logger.info(
+                "_sim_gate_for_drainer: rejecting '%s' as duplicate (candidates=%s)",
+                title,
+                [c["slug"] for c in candidates],
+            )
+            try:
+                from yadgar.metrics import yadgar_wiki_add_rejected_total  # noqa: PLC0415
+
+                yadgar_wiki_add_rejected_total.labels(reason="duplicate_detected").inc()
+            except Exception:
+                pass
+            return {
+                "stored": False,
+                "reason": "duplicate_detected",
+                "candidates": candidates,
+                "hint": (
+                    "Similarity gate fired in drainer (async path). "
+                    "Use force=True to bypass, or replace_slug=<existing-slug> "
+                    "to overwrite the existing page."
+                ),
+            }
+        except Exception as exc:
+            logger.debug("_sim_gate_for_drainer: gate error (non-fatal): %s", exc)
+            return None
