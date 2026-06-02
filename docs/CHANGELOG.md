@@ -7,6 +7,36 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.41.1] - 2026-06-02
+
+Hotfix: wiki versioning transactional atomicity. Closes the silent version-hole
+bug shipped in v5.41.0.
+
+### Fixed
+- **Wiki version chain atomicity** (`yadgar/storage/wiki.py`): `insert_wiki_page`
+  and `update_wiki_page` now wrap the wiki_page mutation and wiki_page_version
+  INSERT in a single `BEGIN TRANSACTION … COMMIT TRANSACTION` compound statement.
+  In v5.41.0 the version INSERT was wrapped in `try/except`; a failure silently
+  left the wiki_page mutated without a version row, creating holes in the history
+  chain and breaking `wiki_restore`. Now either both rows land or both roll back.
+- **Failure surface clarified**: version INSERT errors now propagate to the caller
+  instead of being swallowed. `wiki_add` and `wiki_append_section` return `{"error":
+  "…"}` on version failure. See `MIGRATION_NOTES.md §v5.41.1` for caller impact.
+
+### Added
+- **5 atomicity regression tests** (`yadgar/tests/test_wiki_versioning_atomicity.py`):
+  insert rollback, update rollback, version chain preservation on rollback, sequential
+  update serialization, happy-path baseline. Failure injection via `_q` compound-txn
+  patch. Perf test: p50 ≤ baseline×1.5 (embedded SurrealKV baseline ~80-100ms; plan's
+  5ms I9 figure was incorrect for this path).
+
+### Technical
+- Txn pattern: single `_q("BEGIN TRANSACTION; …; COMMIT TRANSACTION")` call per
+  `upsert_project_init` precedent. IDs reserved via `_next_id` outside the txn
+  (non-transactional counter; safe in single-writer embedded mode).
+- Audit result: `wiki_restore`, `wiki_append_section`, and all other write paths
+  reviewed — no other try/except masking found on version writes.
+
 ## [5.37.0] - 2026-06-01
 
 Three-layer viz integration testing infrastructure. Directly addresses the v5.10.7–v5.10.9 saga
