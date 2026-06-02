@@ -692,6 +692,36 @@ def wiki_check_duplicate(  # secret-gate: skip — read-only dry-run, never writ
         threshold if threshold is not None else getattr(cfg, "WIKI_SIM_CONTENT_THRESHOLD", 0.80)
     )
 
+    # v5.42.2: auto-detect default branch when caller does not supply one,
+    # mirroring wiki_query (lines 462-483). Without this, find_similar_wiki_pages
+    # builds scope = {None} which excludes all branch="master" legacy pages
+    # written by the pre-v5.42.2 drainer, making the gate silent in production.
+    #
+    # We pass _default_branch (not _current_branch) so that find_similar_wiki_pages
+    # builds scope = {None, default_branch} — covering both the post-v5.42.2
+    # canonical-slot pages (branch=None) and the pre-v5.42.2 legacy pages
+    # (branch="master"). On a feature branch the scope still covers all real data.
+    if branch is None:
+        try:
+            import sys as _sys  # noqa: PLC0415
+
+            _cwd = os.getcwd()
+            _srv = _sys.modules.get("yadgar.server")
+            _detect_branch = getattr(_srv, "_detect_branch", None) if _srv else None
+            _get_default_branch = getattr(_srv, "_get_default_branch", None) if _srv else None
+            if _detect_branch is None or _get_default_branch is None:
+                from yadgar.server.tools.project import (  # noqa: PLC0415
+                    _detect_branch,
+                    _get_default_branch,
+                )
+            _current_branch = _detect_branch(_cwd)
+            _default_branch = _get_default_branch(_cwd)
+        except Exception:
+            _current_branch = None
+            _default_branch = "master"
+
+        branch = _default_branch
+
     candidates = _st._wiki.find_similar_wiki_pages(
         title=title,
         content=content,
