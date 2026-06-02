@@ -6,6 +6,20 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.42.0] — 2026-06-02
+
+Async rejection tracking via DLQ + Stop hook signal.
+See `MIGRATION_NOTES.md` v5.42.0 and `docs/PLAN_V5_42_0_ASYNC_REJECTION_NOTIFICATION.md`.
+
+- **feat(dlq):** `failure_reason` taxonomy in DLQ entry schema (`permanent_error` default; new `duplicate_detected`). `failure_metadata` carries candidates, threshold, and `caller_context.directory`.
+- **feat(drainer):** Similarity gate rejections now route to DLQ (not archive) with `failure_reason="duplicate_detected"`. `wait=True` callers still receive sync rejection payload (v5.41.5 contract preserved).
+- **feat(metrics):** `yadgar_dlq_rejection_count` Gauge — current count of DLQ rejection entries. Written per drain cycle.
+- **feat(dlq):** `dlq_inspect(filter=...)` — new optional param: `"all"` (default), `"rejections"`, `"failures"`. Result includes `failure_reason` field.
+- **feat(dlq):** `dlq_requeue` blocks rejection entries (`duplicate_detected`) with helpful error pointing to `force=True`, `wiki_delete`, or `dlq_dismiss` alternatives.
+- **feat(dlq):** `dlq_dismiss(filename)` — new power-gated MCP tool. Removes DLQ entry without retry. I26: no user content, no secret scan needed.
+- **feat(project_brief):** `pending_rejections_count` signal in `mode="signals"`. Counts DLQ rejections filtered by `caller_context.directory`. `review_rejections` recommended action fires when count > 0.
+- **tests:** 33 new tests across 3 test files covering taxonomy, drainer push, filter, requeue block, dismiss, signal, action, cross-directory isolation.
+
 ## [5.41.3] — 2026-06-02
 
 MCP-handler perf test + I9 attribution correction.

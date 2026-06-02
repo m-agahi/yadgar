@@ -1,5 +1,88 @@
 # Migration Notes
 
+## v5.42.0 — DLQ-based async rejection tracking (2026-06-02)
+
+Core 5.41.5 → 5.42.0. Backend unchanged at 5.4.0. **No DB migration required.**
+
+### What changed
+
+v5.41.5 moved the similarity gate to the drainer (I9 fix). `wait=False` callers lost
+sync rejection signal. This release adds async rejection tracking via the existing DLQ
+infrastructure: rejections land in DLQ with `failure_reason="duplicate_detected"`,
+and `project_brief(mode="signals")` surfaces a `pending_rejections_count` signal at
+the next Stop hook checkpoint.
+
+### New tools / fields
+
+**`dlq_inspect(filter=...)`** — extended:
+```python
+dlq_inspect()                   # all entries (default, unchanged)
+dlq_inspect(filter="all")       # same as above
+dlq_inspect(filter="rejections")  # only similarity gate rejections
+dlq_inspect(filter="failures")    # only permanent_error entries
+```
+Result now includes `failure_reason` field on every entry.
+
+**`dlq_dismiss(filename)`** — new power-gated tool:
+```python
+# Acknowledge and drop a DLQ rejection without retry.
+dlq_dismiss("0001778139482800_<uuid>.json")
+```
+
+**`dlq_requeue` now blocks rejection entries:**
+```python
+result = dlq_requeue("0001778139482800_<uuid>.json")
+# For duplicate_detected entries:
+# {"requeued": False, "error": "rejection entry — cannot auto-requeue. Options: ..."}
+```
+Permanent error entries (`permanent_error`) still requeue normally.
+
+**`project_brief(mode="signals")` new field:**
+```python
+result = project_brief(directory="/home/max/git/yadgar", mode="signals")
+result["pending_rejections_count"]  # int — rejections for current directory
+# If > 0, recommended_actions includes:
+# {"action": "review_rejections", "suggested_call": "dlq_inspect(filter='rejections')"}
+```
+
+### v5.41.5 migration options — updated (Option 4 added)
+
+Callers that relied on `wiki_add(wait=False)` returning sync rejection now have four options:
+
+**Option 1: `wait=True` — synchronous but slow (~228ms p50)**
+```python
+result = wiki_add(title="...", content="...", wait=True)
+if result.get("reason") == "duplicate_detected":
+    candidates = result["candidates"]
+```
+
+**Option 2: accept async rejection (fire-and-forget, no feedback)**
+```python
+result = wiki_add(title="...", content="...", wait=False)
+# Gate fires async; no DLQ in v5.41.5. (v5.42.0: lands in DLQ — use Option 4.)
+```
+
+**Option 3: `wiki_check_duplicate` pre-flight (unchanged)**
+```python
+check = wiki_check_duplicate(title="...", content="...")
+if not check["candidates"]:
+    wiki_add(title="...", content="...", wait=False)
+```
+
+**Option 4 (NEW, recommended for bulk callers): trust Stop hook + explicit poll**
+```python
+wiki_add(title="...", content="...", wait=False)
+# ... later at session boundary / explicit poll:
+rejections = dlq_inspect(filter="rejections")
+for entry in rejections:
+    # entry["failure_metadata"]["candidates"] has the duplicate candidates
+    # resolve: wiki_add(force=True, ...) or wiki_delete + retry or dlq_dismiss
+    pass
+# Or: rely on Stop hook surfacing pending_rejections_count > 0 automatically.
+```
+
+---
+
 ## v5.41.5 — similarity gate moved to drainer (I9 fix) (2026-06-02)
 
 Core 5.41.4 → 5.41.5. Backend unchanged at 5.4.0. **No DB migration required.**
