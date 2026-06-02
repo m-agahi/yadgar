@@ -4,6 +4,8 @@
 
 **Status:** DEFERRED on 2026-05-30. Originally drafted + implemented as v5.10.4 on 2026-05-29; deferred to v5.30.0 after encountering fundamental design issues with yadgar's async wiki write queue; renumbered to v5.99.0 under skip-1 convention. Discussion required before resuming.
 
+**Update note (2026-06-02 post-opus-review):** v5.41.0 `wiki_append_section` MCP tool + v5.41.4 `roadmap_update_lag` signal partially close the original drift problem. v5.99.0 deferral remains correct; resume ONLY if drift persists after v5.41.4 ships and the new convention is exercised across multiple ships.
+
 **Master at deferral time:** core v5.10.3 (unchanged — no v5.10.4 release shipped).
 
 **Sequencing:** v5.99.0 slot — far future / indefinite. Pick up after active pipeline (v5.11.0–v5.37.0) clears and the issues below are resolved by either (a) new yadgar primitive `flush_only`, (b) explicit design choice on splice-vs-full-render, or (c) different architecture entirely.

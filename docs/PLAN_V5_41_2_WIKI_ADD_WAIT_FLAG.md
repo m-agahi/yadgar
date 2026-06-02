@@ -1,6 +1,12 @@
 # PLAN — v5.41.2: `wiki_add` `wait` flag for read-your-writes consistency
 
-**Status:** drafted 2026-06-02. Hotfix patch (minor UX).
+**Status:** drafted 2026-06-02. CODE COMMITTED on `fix/v5.41.2-wiki-add-wait` (3 phases shipped). REVISED 2026-06-02 post-opus-review. Pending small follow-up fix before merge.
+
+**Revision notes (opus reviewer):**
+- `test_wait_default_still_async_for_perf` assertion TIGHTENED from `<50ms` to `<10ms` (2x margin over I9 ≤5ms). Original `<50ms` hides 10x I9 regression. **Fix dispatched 2026-06-02.**
+- `wait=True` timeout MUST raise explicit error (ValueError/TimeoutError), NOT return silently-queued result. Test must assert hard-fail.
+- MCP tool docstring guidance: "Default async. Only set `wait=True` when callers depend on next-call read-your-writes." (Anti-pattern: agents defaulting to `wait=True` for "safety" would cause throughput regression.)
+- `wait=True` path: handler still must enqueue ≤5ms; only post-enqueue wait inflates latency. State explicitly so v5.41.3's MCP perf test catches handler regressions.
 
 **Origin:** v5.41.0 smoke-test (2026-06-02) showed expected stale read: `wiki_history(slug)` called immediately after `wiki_add` returns the pre-write version list because writes go through the async file queue. Existing doc string warns about this, but it forces every test / interactive caller to insert a `sleep(N)` — fragile.
 

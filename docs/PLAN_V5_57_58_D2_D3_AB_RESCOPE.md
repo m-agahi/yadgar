@@ -1,6 +1,11 @@
 # PLAN — D2/D3 A/B benchmark runs (re-scoped to use v5.31 plugin arch)
 
-**Status:** drafted 2026-06-01. Supersedes `docs/PLAN_V5_25_X_D2_NLI_AB.md` + `docs/PLAN_V5_25_X_D3_PC_AB.md` (both drafted pre-v5.31 plugin arch).
+**Status:** drafted 2026-06-01. Supersedes `docs/PLAN_V5_25_X_D2_NLI_AB.md` + `docs/PLAN_V5_25_X_D3_PC_AB.md` (both drafted pre-v5.31 plugin arch). REVISED 2026-06-02 post-opus-review (minor).
+
+**Revision notes (opus reviewer — ship-as-is verdict):**
+- LOCK slot numbers: D2 = v5.55, D3 = v5.57 (odd-only convention). Previous notes used v5.57/v5.58 — v5.58 even-minor was reviewer concern.
+- ADD wall-clock + Max-quota delta tracking to acceptance criteria. Track actual cost per arm.
+- D3 pre-flight 20q gate already documented. Good.
 
 **Why re-scope:** v5.31.0 shipped recall pipeline plugin architecture with profiles + `stage_overrides=` + `recall_compare()` A/B harness. The original D2/D3 plans assumed full benchmark re-runs (~470 min wall-clock each). The plugin arch makes A/B trivial: run one benchmark with `profile="balanced"`, then re-run with `stage_overrides={"nli": {"enabled": False}}` (D2) or `WRRF_PPR_WEIGHT > 0` (D3). Same gold context, single config diff.
 

@@ -1,6 +1,16 @@
 # PLAN — v5.47.0: Update Mechanism (`yadgar update` CLI + Auto-Check + Control-Tab API)
 
-**Status:** drafted 2026-05-31. Plan-first per I27.
+**Status:** drafted 2026-05-31. REVISED 2026-06-02 post-opus-review (MAJOR cut). Plan-first per I27.
+
+**Revision notes (opus reviewer):**
+- DROP `action=install` from v5.47.0 — `pipx upgrade yadgar` while daemon RUNNING kills daemon process. DEFER to **v5.48** once daemon-graceful-restart primitive exists.
+- v5.47.0 ships CHECK-ONLY: `POST /api/control/update action=check`, CLI prints upgrade command, user runs manually.
+- DROP unused `check_interval_hours` knob (Open Q5 placeholder) — don't ship dead config.
+- Auto-check thread MUST be `daemon=True` + startup-completion barrier (no "log WARNING + continue" hiding real bugs).
+- Phase-commit reorg: dispatch 1 (CLI + detection + probe + API gate) + dispatch 2 (auto-check + docs + bump).
+- Drop `can_self_install` heuristic (only needed for `action=install`).
+- Scope cut: 34 tests → ~22.
+- HARD SEQUENCING: v5.47 MUST ship before v5.50.0 Step 6 (Control tab UI depends on Control API).
 
 **Audit lineage:** prior Explore agent (post-v5.25.0 setup audit) flagged "Update mechanism: BLOCKED — No `yadgar update`." Users on PyPI / Homebrew / Nix / container install paths each need a different upgrade incantation; no unified UX.
 

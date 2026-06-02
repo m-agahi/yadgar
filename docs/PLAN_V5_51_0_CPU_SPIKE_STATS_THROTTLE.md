@@ -1,6 +1,12 @@
 # PLAN — v5.51.0: Hooks fast-profile tuning + latency budget
 
-**Status:** DRAFT — 2026-05-31. Plan-first per I27.
+**Status:** DRAFT — 2026-05-31. REVISED 2026-06-02 post-opus-review (minor). Plan-first per I27.
+
+**Revision notes (opus reviewer — ship-as-is verdict):**
+- ADD Prometheus counter `yadgar_hook_recall_timeout_total{handler}` — I23 requires writer for every metric. Plan said "WARN log" only; operators need metric.
+- Document recall-quality regression in MIGRATION_NOTES: `HOOK_RECALL_TIMEOUT_S` returning `{"text": ""}` on timeout silently degrades recall under load.
+- DROP "may fold into v5.52.0" note — unrelated scopes.
+- I25 three-way registration for `FAST_PROFILE_CANDIDATE_MULTIPLIER` + `HOOK_RECALL_TIMEOUT_S` (already called out — confirm in acceptance).
 
 **Supersedes:** prior `/api/stats` CPU-spike target (committed d688db6 2026-05-31).
 Investigation showed `/api/stats` cadence is 0.6% sustained CPU — not a burst source.

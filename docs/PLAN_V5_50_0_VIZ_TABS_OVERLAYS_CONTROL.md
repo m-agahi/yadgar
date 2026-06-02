@@ -1,6 +1,17 @@
-# PLAN — v5.50.0: Viz UI Restructure — Tabs, Floating Overlays, Control Tab, Branding
+# PLAN — v5.50.0: Viz UI Restructure — Tabs, Floating Overlays, Branding (CORE only)
 
-**Status:** drafted 2026-05-31. Plan-first per I27.
+**Status:** drafted 2026-05-31. REVISED 2026-06-02 post-opus-review (MAJOR split). Plan-first per I27.
+
+**Revision notes (opus reviewer):**
+- SPLIT into THREE plans — current scope (557 lines + Bookmarks addendum) is phase-commit-infeasible:
+  - **v5.50.0** (this plan) — tab router + overlays + Home/Stats/Health/Info tabs + zoom regression bisect + logos + branding. Drop Bookmarks tab + Control tab.
+  - **v5.50.1** (NEW plan needed) — Bookmarks tab refactor (full Addendum 2026-06-02 content — search/preview/versions rail/diff view). Composes v5.41 + v5.39 + v5.23. Separate dispatch.
+  - **v5.50.2** (NEW plan needed) — Control tab + restart endpoints (depends on v5.47 API + sidecar restart unit). Holds until v5.47 lands.
+- Hold restart-endpoint design until v5.47 lands + v5.45-v5.46 daemon mechanism stabilizes.
+- `YADGAR_DEBUG_APIS_ENABLED` introduced HERE — I25 three-way registration explicit in acceptance. v5.52 must NOT re-register.
+- Tighten test coverage in v5.50.1: minimum 10 tests per JS file in Bookmarks addendum.
+- v5.50.0 acceptance: Control tab debug panel placeholder container exists (v5.52 fills it; v5.50.0 ships empty container).
+- Bookmark URL preservation (Open Q5 — `/#bookmarks/<id>`) addressed in v5.50.1, not here.
 
 **Renumbered:** v5.41.0 → v5.50.0 on 2026-05-31. Reason: user explicitly bumped the viz train forward so the setup-refactor (v5.45-v5.47) ships first. Numbering is locked at v5.50 / v5.51 / v5.52 across this train. Do NOT revert to v5.41-v5.43 anywhere in file names, content, CHANGELOG, or git messages.
 
