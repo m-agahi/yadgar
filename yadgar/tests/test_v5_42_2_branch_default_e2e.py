@@ -7,6 +7,14 @@ Reproduces the production sequence that causes the silent similarity gate:
    Pre-fix: scope = {None}, excludes branch="master" pages → 0 candidates (bug).
    Post-fix: auto-detects current/default branch → scope includes stored page → >=1 candidate.
 
+Two tests:
+- test_check_duplicate_finds_drainer_written_page: exercises Phase 2 (drainer fix).
+  Validates that scope={None} now finds the post-fix canonical page (branch=None).
+- test_check_duplicate_finds_legacy_master_page: exercises Phase 3 (auto-detect fix).
+  Manually inserts a legacy page with branch="master", then asserts wiki_check_duplicate
+  (no branch arg) finds it via the auto-detected scope={None, default_branch}.
+  This is the production regression case: pre-v5.42.2 pages all have branch="master".
+
 Marker: integration (requires sentence-transformers; run via .venv-test).
 
 RED phase:  fails because drainer sets branch="master", check_duplicate filters {None}.
@@ -104,8 +112,22 @@ def _drainer_env(tmp_path, monkeypatch):
     server.shutdown()
 
 
+def _write_sync(title: str, content: str, **kwargs) -> dict:
+    """Write via is_draining=True sync path — bypasses queue and gate.
+
+    Allows explicit branch= to simulate legacy pages written before v5.42.2.
+    """
+    import yadgar.file_queue._locals as _loc
+
+    _loc._drain_local.active = True
+    try:
+        return server.wiki_add(title=title, content=content, **kwargs)
+    finally:
+        _loc._drain_local.active = False
+
+
 # ---------------------------------------------------------------------------
-# E2E branch-default scope mismatch test
+# E2E branch-default scope mismatch tests
 # ---------------------------------------------------------------------------
 
 
@@ -165,4 +187,59 @@ def test_check_duplicate_finds_drainer_written_page(_drainer_env):
     assert seed_candidate["similarity"] >= 0.80, (
         f"Seed candidate similarity too low: {seed_candidate['similarity']:.4f} < 0.80\n"
         f"Candidate: {seed_candidate}"
+    )
+
+
+@pytest.mark.integration
+def test_check_duplicate_finds_legacy_master_page(_drainer_env):
+    """wiki_check_duplicate finds a pre-v5.42.2 legacy page with branch='master'.
+
+    Exercises the Phase 3 fix (wiki_check_duplicate auto-detect).
+    Legacy production pages all have branch='master' from the pre-fix drainer.
+    Without auto-detect: scope={None} → excludes branch='master' → 0 candidates.
+    With auto-detect: scope={None, default_branch} → includes branch='master' → found.
+
+    This is the actual production regression case — all pre-v5.42.2 data has
+    branch='master'. Phase 2 (drainer fix) alone doesn't help those pages.
+    """
+    drainer, fq = _drainer_env
+
+    # Write a legacy page with branch="master" explicitly — simulating pre-fix drainer output.
+    legacy_result = _write_sync(
+        _SEED_TITLE,
+        _SEED_CONTENT,
+        branch="master",
+        force=True,
+    )
+    assert legacy_result.get("stored") is not False, (
+        f"Legacy page write failed unexpectedly: {legacy_result}"
+    )
+
+    # wiki_check_duplicate with no explicit branch — exercises auto-detect.
+    check_result = server.wiki_check_duplicate(
+        title=_PROBE_TITLE,
+        content=_PROBE_CONTENT,
+    )
+    candidates = check_result.get("candidates", [])
+
+    seed_slug = server._wiki._slugify(_SEED_TITLE)
+
+    assert len(candidates) >= 1, (
+        f"wiki_check_duplicate returned 0 candidates for legacy branch='master' page.\n"
+        f"seed_slug={seed_slug!r}\n"
+        f"This means the Phase 3 fix (auto-detect in wiki_check_duplicate) is not working.\n"
+        f"Scope must include 'master' to find pre-v5.42.2 production pages.\n"
+        f"Full check_result: {check_result}"
+    )
+
+    slugs = [c["slug"] for c in candidates]
+    assert seed_slug in slugs, (
+        f"Legacy seed slug {seed_slug!r} not in candidates: {slugs}\n"
+        f"Full check_result: {check_result}"
+    )
+
+    legacy_candidate = next(c for c in candidates if c["slug"] == seed_slug)
+    assert legacy_candidate["similarity"] >= 0.80, (
+        f"Legacy candidate similarity too low: {legacy_candidate['similarity']:.4f} < 0.80\n"
+        f"Candidate: {legacy_candidate}"
     )
