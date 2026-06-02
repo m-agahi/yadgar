@@ -226,10 +226,9 @@ def memorize(  # noqa: C901, PLR0913 — pre-existing complexity + v5.10.x reaso
                 _enqueue_payload["tier"] = tier
             if _computed_valid_until is not None:
                 _enqueue_payload["valid_until"] = _computed_valid_until
-            _fq_path = _get_file_queue().enqueue("memorize", _enqueue_payload)
-            from pathlib import Path as _Path
-
-            return {"stored": True, "queued": True, "queue_id": _Path(_fq_path).name}
+            _job_id = _get_file_queue().enqueue("memorize", _enqueue_payload)
+            # v5.41.2: enqueue() now returns the job_id (UUID) instead of file path.
+            return {"stored": True, "queued": True, "queue_id": _job_id}
         except Exception as _fq_exc:
             logger.warning(
                 "enqueue_failed",
