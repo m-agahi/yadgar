@@ -90,16 +90,24 @@ def _wiki_add_wait_path(
     append: bool,
     replace_slug: str | None,
     new_slug: str,
+    force: bool = False,
 ) -> dict:
     """Handle wiki_add(wait=True): enqueue + wait_for_job to preserve FIFO ordering.
+
+    v5.41.5: similarity gate runs in the drainer pre-apply stage. On rejection,
+    the drainer signals wait_for_job with the rejection payload; this function
+    retrieves it via get_job_result() and returns the rejection dict to the caller
+    (synchronous rejection, same observable contract as v5.39 for wait=True callers).
 
     Falls back to sync write when no drainer is running or replace_slug is set
     (queue path doesn't carry replace_slug semantics; named overwrite has no
     FIFO hazard anyway).
 
-    Returns {"committed": True} on success, {"reason": "wait_timeout"} on
-    drainer timeout, or the sync-write result annotated with committed=True
-    on fallback.
+    Returns:
+      {"committed": True}                          — success
+      {"stored": False, "reason": "duplicate_detected", "candidates": [...]} — gate rejected
+      {"stored": False, "reason": "wait_timeout"}  — drainer timeout
+      sync-write result + committed=True           — fallback (no drainer)
     """
     drainer = _st._queue_drainer
 
@@ -122,6 +130,7 @@ def _wiki_add_wait_path(
         return result
 
     # Enqueue like the async path so FIFO ordering is preserved.
+    # v5.41.5: include force + replace_slug so drainer knows when to bypass gate.
     try:
         job_id = _get_file_queue().enqueue(
             "wiki_add",
@@ -136,6 +145,8 @@ def _wiki_add_wait_path(
                 "confidence": confidence,
                 "append": append,
                 "branch": branch,
+                "force": force,
+                "replace_slug": replace_slug,
             },
         )
     except Exception as fq_exc:
@@ -163,20 +174,30 @@ def _wiki_add_wait_path(
     except Exception:
         timeout = 5.0
 
-    if drainer.wait_for_job(job_id, timeout=timeout):
+    completed = drainer.wait_for_job(job_id, timeout=timeout)
+    # v5.41.5: always retrieve result before cleanup (may carry rejection payload).
+    rejection = _get_file_queue().get_job_result(job_id)
+    _get_file_queue()._cleanup_job(job_id)
+
+    if not completed:
         return {
-            "stored": True,
-            "queued": False,
-            "committed": True,
+            "stored": False,
+            "reason": "wait_timeout",
+            "queued": True,
             "slug": new_slug,
-            "title": title,
+            "hint": "Write still queued — will commit on next drain or hit DLQ on repeated failure.",
         }
+
+    if rejection is not None:
+        # Gate fired in drainer — return rejection synchronously (DP-B).
+        return rejection
+
     return {
-        "stored": False,
-        "reason": "wait_timeout",
-        "queued": True,
+        "stored": True,
+        "queued": False,
+        "committed": True,
         "slug": new_slug,
-        "hint": "Write still queued — will commit on next drain or hit DLQ on repeated failure.",
+        "title": title,
     }
 
 
@@ -266,13 +287,21 @@ def wiki_add(
     append=True: merge content into an existing page (appends with timestamp,
       merges tags and source_memory_ids). Use for accumulating knowledge over time.
 
-    v5.39.0 similarity gate: wiki_add now checks for near-duplicate pages before
-    writing. If a similar page exists (combined cosine similarity >= threshold),
-    the call is rejected with {"stored": False, "reason": "duplicate_detected", "candidates": [...]}.
+    v5.39.0 similarity gate: wiki_add checks for near-duplicate pages before writing.
+    v5.41.5 BREAKING CHANGE: gate moved from request thread to drainer (I9 fix).
 
-    Use force=True to bypass the gate (logs warning). Use replace_slug=<existing-slug>
-    to explicitly update an existing page by a different slug (treated as overwrite,
-    gate is skipped).
+    wait=False (default): gate check is DEFERRED — handler returns immediately.
+      Response: {"stored": True, "queued": True, "similarity_check": "deferred", ...}
+      Duplicate detection happens asynchronously in the drainer. If the gate fires,
+      the job is archived (not inserted) and a rejection metric is emitted. Caller
+      will NOT receive a sync rejection — use wait=True if rejection feedback needed.
+
+    wait=True: gate runs in drainer, rejection surfaces synchronously.
+      Gate fires  → {"stored": False, "reason": "duplicate_detected", "candidates": [...]}
+      Gate passes → {"committed": True, "queued": False, "slug": ..., "title": ...}
+
+    Use force=True to bypass the gate. Use replace_slug=<existing-slug> to overwrite
+    an existing page by a different slug (gate is skipped for both).
 
     Categories: architecture, decision, pattern, debugging, reference, convention, fact, analysis.
     Confidence: high, medium, low.
@@ -324,16 +353,17 @@ def wiki_add(
         branch = branch_hint
     # If both are falsy (None / ""), branch stays None → canonical NULL slot.
 
-    # v5.39.0: similarity gate — runs AFTER secret-gate, BEFORE enqueue (I26 ordering).
+    # v5.39.0 slug generation (O(1), needed for enqueue payload and wait path).
     import re as _re_slug  # noqa: PLC0415
 
     _new_slug = (_re_slug.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "untitled")[:64]
 
-    _gate_result = _check_similarity_gate(
-        title, content, branch, force, replace_slug, append, _new_slug
-    )
-    if _gate_result is not None:
-        return _gate_result
+    # v5.41.5: similarity gate REMOVED from request path (I9 fix).
+    # Gate now runs in the drainer pre-apply stage (_sim_gate_for_drainer).
+    # wait=False callers get {queued: True, similarity_check: "deferred"} — see below.
+    # wait=True callers get sync rejection via wait_for_job + get_job_result.
+    # I26: secret-gate (above) still runs on request thread (cheap regex, stays here).
+    # I6 no-double-pay: gate runs once in drainer; is_draining()=True path below skips it.
 
     # QueueDrainer replay path: is_draining() means we're inside _apply().
     # Must not re-enqueue — write directly and return.
@@ -351,7 +381,8 @@ def wiki_add(
         )
 
     # wait=True: enqueue first (preserves FIFO), then block until drainer commits.
-    # See _wiki_add_wait_path for fallback semantics (no drainer, replace_slug).
+    # v5.41.5: drainer runs similarity gate; rejection surfaces synchronously via
+    # get_job_result() inside _wiki_add_wait_path. See DP-B in plan.
     if wait:
         return _wiki_add_wait_path(
             title,
@@ -364,9 +395,12 @@ def wiki_add(
             append,
             replace_slug,
             _new_slug,
+            force=force,
         )
 
     # Async path (wait=False default): enqueue and return immediately.
+    # v5.41.5: similarity gate is deferred to drainer — caller gets
+    # {similarity_check: "deferred"} and must use wait=True for sync rejection.
     try:
         _get_file_queue().enqueue(
             "wiki_add",
@@ -381,9 +415,18 @@ def wiki_add(
                 "confidence": confidence,
                 "append": append,
                 "branch": branch,
+                # v5.41.5: pass bypass flags so drainer can skip gate for these paths
+                "force": force,
+                "replace_slug": replace_slug,
             },
         )
-        return {"stored": True, "queued": True, "slug": _new_slug, "title": title}
+        return {
+            "stored": True,
+            "queued": True,
+            "similarity_check": "deferred",
+            "slug": _new_slug,
+            "title": title,
+        }
     except Exception as _fq_exc:
         logger.warning("File queue enqueue failed, falling back to sync write: %s", _fq_exc)
 
