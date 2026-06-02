@@ -881,6 +881,61 @@ class WikiStore:
             logger.debug("Wiki embedding computation failed for '%s'", title)
             return None
 
+    def backfill_null_embeddings(self, batch_size: int = 50) -> int:
+        """Backfill embeddings for all wiki_page rows where embedding IS NULL.
+
+        Called from server/lifecycle.py after both StorageEngine and
+        EmbeddingEngine are ready. Idempotent: re-running finds 0 rows and
+        returns 0 immediately.
+
+        Per-batch transactional (each batch is a separate encode + update).
+        Embed-service unavailable: logs warning + skips batch, returns count
+        of rows successfully backfilled so far (incremental progress preserved).
+
+        Returns:
+            Number of rows that were successfully backfilled.
+        """
+        rows = self._storage.get_wiki_pages_without_embedding()
+        if not rows:
+            return 0
+
+        _total = len(rows)
+        logger.info("backfill_null_embeddings: backfilling %d wiki_page rows...", _total)
+
+        backfilled = 0
+        for i in range(0, _total, batch_size):
+            batch = rows[i : i + batch_size]
+            for row in batch:
+                pid = row["id"]
+                title = row["title"]
+                content = row["content"]
+                try:
+                    emb = self._compute_embedding(title, content)
+                    if emb is None:
+                        logger.warning(
+                            "backfill_null_embeddings: embed returned None for page_id=%d "
+                            "slug='%s' — skipping",
+                            pid,
+                            self._slugify(title),
+                        )
+                        continue
+                    self._storage.update_wiki_page_embedding_only(pid, emb)
+                    backfilled += 1
+                except Exception as exc:
+                    logger.warning(
+                        "backfill_null_embeddings: failed for page_id=%d title=%r: %s — skipping",
+                        pid,
+                        title,
+                        exc,
+                    )
+
+        logger.info(
+            "backfill_null_embeddings: done — %d/%d rows backfilled",
+            backfilled,
+            _total,
+        )
+        return backfilled
+
     def _sync_crossrefs(self, slug: str, links: list[str]) -> None:
         """Update wiki_crossref table to match extracted links."""
         self._storage.replace_wiki_crossrefs(slug, links)
