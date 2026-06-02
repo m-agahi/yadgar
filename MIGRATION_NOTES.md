@@ -1,5 +1,53 @@
 # Migration Notes
 
+## v5.42.2 — wiki branch-default scope mismatch fix (2026-06-02)
+
+**Critical hotfix.** Core 5.42.1 → 5.42.2. Backend unchanged at 5.4.0. No schema migration, no data migration.
+
+### The problem
+
+Four prior fix attempts (v5.39–v5.42.1) targeted embedding gaps and backfill. The real bug was a
+**branch-scope filter mismatch** discovered via live probe 2026-06-02:
+
+- `wiki_check_duplicate(content, branch=None)`   → candidates: []     (bug)
+- `wiki_check_duplicate(content, branch="master")` → candidates: [{sim: 0.9055, slug: ...}]  (works)
+
+Root cause — writer asymmetry:
+1. `_fill_wiki_add_defaults` in `yadgar/file_queue/dlq.py` hardcoded `branch="master"` when payload omits branch. Every wiki write via the drainer (the production path since v5.41.5) stored pages with `branch="master"`.
+2. `wiki_check_duplicate` in `yadgar/server/tools/wiki.py` defaulted `branch=None` and passed it straight through to `find_similar_wiki_pages`, which built scope `{None}`.
+3. `{None}` ∩ `{"master"}` = ∅ → zero candidates → gate silent.
+
+### What changed
+
+**Two single-line fixes:**
+
+1. `yadgar/file_queue/dlq.py:133` — drainer now stores `branch=None` (not `"master"`) when branch is absent from payload. Matches `wiki_add` direct-write path behavior. Both writer paths agree on the canonical slot.
+
+2. `yadgar/server/tools/wiki.py:695-720` — `wiki_check_duplicate` auto-detects `_get_default_branch(cwd)` when `branch` arg is `None`. Passes `_default_branch` to `find_similar_wiki_pages` so scope = `{None, default_branch}`. On a `master`-default repo this is `{None, "master"}`, catching both post-fix canonical pages and pre-fix legacy pages.
+
+### No migration required
+
+No schema changes. No data migration.
+
+Pages written before this fix retain `branch="master"`. After the v5.42.2 `wiki_check_duplicate` fix, scope = `{None, "master"}` so those legacy pages remain visible to the gate. On a `main`-default repo, pre-fix `branch="master"` pages become invisible — this is tracked as a deferred item in v5.42.3 alongside the hardcoded-fallback cleanup.
+
+### Breaking change
+
+**Drainer no longer injects `branch="master"`.** Any external caller that sent wiki payloads through the drainer without an explicit `branch` field, and relied on the drainer to set `branch="master"`, must now pass `branch="master"` explicitly. **No callers in this codebase depend on this behavior.** This note is defensive documentation only.
+
+### Verify after deploy
+
+```python
+# 1. Write a near-clone of an existing prod page (force=True bypasses gate)
+wiki_add(title="test-branch-fix-probe", content=<near-clone of existing>, force=True)
+
+# 2. Check duplicate without explicit branch
+result = wiki_check_duplicate(title="test-branch-fix-probe", content=<same near-clone>)
+assert len(result["candidates"]) >= 1  # gate is functional
+```
+
+---
+
 ## v5.42.1 — wiki_page embedding backfill + embed-failure surfacing (2026-06-02)
 
 **Critical hotfix.** Core 5.42.0 → 5.42.1. Backend unchanged at 5.4.0.
