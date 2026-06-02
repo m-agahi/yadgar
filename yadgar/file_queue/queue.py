@@ -46,7 +46,9 @@ class FileQueue:
         self.dlq_dir.mkdir(parents=True, exist_ok=True)
         # Per-job completion tracking (v5.41.2 wait flag).
         # Only populated when a caller opts in via register_wait(job_id).
-        self._job_futures: dict[str, threading.Event] = {}
+        # v5.41.5: value is tuple[Event, dict | None] — result payload for
+        # drainer-side rejections (e.g. similarity gate) returned to wait=True callers.
+        self._job_futures: dict[str, tuple[threading.Event, dict | None]] = {}
         self._job_lock: threading.Lock = threading.Lock()
 
     def _memories_archive_dir(self) -> Path:
@@ -86,11 +88,11 @@ class FileQueue:
         """
         with self._job_lock:
             if job_id not in self._job_futures:
-                self._job_futures[job_id] = threading.Event()
-            return self._job_futures[job_id]
+                self._job_futures[job_id] = (threading.Event(), None)
+            return self._job_futures[job_id][0]
 
     def signal_complete(self, job_id: str) -> None:
-        """Mark job_id as committed. Sets the event registered via register_wait().
+        """Mark job_id as committed (success). Sets the event for wait=True callers.
 
         Safe to call even if no caller registered a wait for this job — no-op.
         Called by QueueDrainer._apply_with_stage_metrics after archive succeeds.
@@ -99,10 +101,44 @@ class FileQueue:
         so callers that call signal_complete before wait_for_job() still see the
         pre-set event in register_wait().
         """
+        self._signal_complete_with_result(job_id, None)
+
+    def _signal_complete_with_result(self, job_id: str, result: dict | None) -> None:
+        """Mark job_id as complete with an optional result payload.
+
+        v5.41.5: used by the drainer similarity-gate rejection path to pass
+        the rejection dict back to wait=True callers via get_job_result().
+        result=None means success (same semantics as signal_complete).
+        """
         with self._job_lock:
-            event = self._job_futures.get(job_id)
-        if event is not None:
-            event.set()
+            entry = self._job_futures.get(job_id)
+            if entry is None:
+                # No waiter registered — allocate a pre-set entry so late
+                # register_wait() calls see the completed state immediately.
+                event = threading.Event()
+                event.set()
+                self._job_futures[job_id] = (event, result)
+                return
+            event, _ = entry
+            self._job_futures[job_id] = (event, result)
+        event.set()
+
+    def get_job_result(self, job_id: str) -> dict | None:
+        """Return the result payload stored by the drainer for job_id.
+
+        Returns None if job committed successfully (no rejection).
+        Returns a rejection dict (e.g. {stored: False, reason: "duplicate_detected"})
+        if the drainer's pre-apply check rejected the job.
+
+        Called by wait=True callers AFTER wait_for_job() returns True.
+        Safe to call before _cleanup_job().
+        """
+        with self._job_lock:
+            entry = self._job_futures.get(job_id)
+        if entry is None:
+            return None
+        _, result = entry
+        return result
 
     def _cleanup_job(self, job_id: str) -> None:
         """Remove a job from tracking after wait_for_job() has consumed it."""

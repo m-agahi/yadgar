@@ -151,6 +151,17 @@ yadgar_writegate_outcome = Counter(
     registry=_registry,
 )
 
+# ── v5.41.5 — wiki_add rejection counter (I23) ───────────────────────────────
+# Emitted by drainer similarity gate (moved from request path, I9 fix).
+# reason labels: "duplicate_detected"
+
+yadgar_wiki_add_rejected_total = Counter(
+    "yadgar_wiki_add_rejected_total",
+    "wiki_add calls rejected by the similarity gate (drainer stage)",
+    ["reason"],
+    registry=_registry,
+)
+
 # ── P11 — read path ─────────────────────────────────────────────────────────
 
 yadgar_recall_duration_ms = Histogram(
