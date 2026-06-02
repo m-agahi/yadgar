@@ -284,18 +284,19 @@ class TestHappyPathBothSucceed:
 # ── Perf: no catastrophic regression vs baseline (I9 guard) ──────────────────
 
 
-class TestUpdatePerfUnder5msP50:
+class TestStorageUpdatePerfRegressionGuard:
     def test_update_under_5ms_p50(self):
-        """100 sequential update_wiki_page calls; assert p50 ≤ baseline × 1.5.
+        """Regression guard at storage layer (queue-worker path). I9 does NOT apply here.
 
-        Plan §Tests specified ≤5ms p50 (I9 budget), but embedded SurrealKV
-        actual baseline is ~80-100ms. I9 applies to the write-path code budget
-        (no LLM/embed), not to raw DB I/O. This test guards against catastrophic
-        regression from the compound-txn refactor (e.g. accidental nested loop or
-        extra _q round-trips) rather than enforcing an unreachable absolute limit.
+        I9 governs MCP handlers only (the wiki_add file-enqueue path).
+        See test_wiki_mcp_handler_perf.py for the I9 test.
 
-        Pre-existing I9 violation (DB I/O >> 5ms) is a known pre-v5.41.1 issue.
+        This test guards against catastrophic regression from the compound-txn
+        refactor (e.g. accidental nested loop or extra _q round-trips) at the
+        storage layer — the queue-worker path where heavy work is allowed (I2/I4).
+        The ~89ms baseline is embedded SurrealKV I/O, unrelated to I9.
 
+        Asserts p50 ≤ baseline × 1.5 (relative guard, not absolute I9 limit).
         Measures wall-clock time per update_wiki_page call (storage layer only).
         """
         _apply_migration()
