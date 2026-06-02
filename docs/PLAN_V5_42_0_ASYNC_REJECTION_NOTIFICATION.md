@@ -1,177 +1,187 @@
-# PLAN — v5.42.0: Async drainer-rejection MCP notification
+# PLAN — v5.42.0: Async rejection tracking via DLQ + Stop hook signal
 
-**Status:** drafted 2026-06-02. **Even-minor convention-correct slot** — even minors were reserved precisely for surprise/insert features that emerge between planned odd-minor work. Not a convention exception; using as designed. (Corrected 2026-06-02; earlier framing as "exception" was wrong.)
+**Status:** REWRITTEN 2026-06-02 evening (3rd revision). DPs resolved. READY for impl.
 
-**Origin:** v5.41.5 moved similarity gate (and any future drainer-side rejections) OFF the MCP handler request path to restore I9. Side effect: `wait=False` callers lose sync rejection signal. v5.41.5 documented 3 migration options (`wait=True` sync, fire-and-forget, pre-flight `wiki_check_duplicate`). User flagged that `wait=True` materially increases write latency (handler <1ms → ~100-200ms under load), defeating the I9 win for safety-conscious callers.
+**Slot:** v5.42.0 — even-minor convention-correct slot (even minors reserved for surprise-insert features between planned odd-minor work).
 
-**v5.42.0 closes the loop:** drainer emits MCP notification on rejection; Claude Code routes it back to the agent's next-turn context. Best-of-both — handler fast AND caller hears about rejections.
+**Origin:** v5.41.5 moved similarity gate to drainer (restored I9, handler 28.89ms → ≤5ms). `wait=False` callers lost sync rejection signal. v5.41.5 documented `wait=True` as alternative — but bench (2026-06-02) measured `wait=True` p50 = 228ms, p99 = 607ms, worst-cell 542ms. Real UX problem for safety-conscious callers.
 
-**Effort estimate:** 1.5-2 calendar days.
+**Revision history:**
+- v1 (2026-06-02 afternoon): MCP server-initiated JSON-RPC notification. **Blocked** by opus reviewer — yadgar transport is `stateless_http=True` (no server-push substrate) + Claude Code 2026 has no `NotificationReceived` hook.
+- v2 (2026-06-02 evening, hypothetical): server-side per-caller pending queue + piggyback `_pending_rejections` field on next tool-result. Required new infrastructure.
+- **v3 (2026-06-02 evening, THIS): reuse existing DLQ + new Stop hook signal.** Almost zero new infra. User-suggested.
 
-**Branch:** `feat/v5.42.0-async-rejection-notification` off master.
+**Effort estimate:** 0.5-1 calendar day.
+
+**Branch:** `feat/v5.42.0-rejection-dlq` off master.
 
 ---
 
-## 1. Problem
+## 1. Problem (post-bench, post-v5.41.5)
 
-v5.41.5 trade-off:
-- `wait=False` handler: <1ms (I9 restored), BUT rejections invisible to caller until next yadgar interaction
-- `wait=True` handler: ~100-200ms (drainer round-trip + gate + storage), restores sync rejection contract but undoes I9
+| Scenario | Pre-v5.41.5 | v5.41.5 wait=False | v5.41.5 wait=True | Target |
+|---|---|---|---|---|
+| Handler p50 | 27ms (I9 violation) | 0.5ms ✓ | 228ms (block) | ≤5ms |
+| Rejection feedback | sync candidate list | NONE — lost | sync (with block) | async after-the-fact OK |
 
-Either option leaves a meaningful caller cohort under-served:
-- Bulk-write callers (skill-installers, batch wiki imports) want async/fast
-- Safety-conscious callers (interactive agents creating canonical pages) want rejection feedback
-- Currently must choose latency-vs-feedback
+v5.41.5 forced caller to choose:
+- Fast (`wait=False`) → no rejection visibility ever
+- Visibility (`wait=True`) → 228ms block per call
+
+Need a third path: fast handler + eventual rejection visibility without per-call block.
 
 ## 2. Goal
 
-Add a third path: handler fast + async rejection notification back to client. Caller sees rejection in next agent turn without paying drainer round-trip per call.
+Drainer rejections (similarity gate, future gates) routed to existing DLQ infrastructure with a clear `failure_reason` taxonomy. Stop hook surfaces pending rejections to the agent at natural checkpoints. Caller can also poll explicitly via existing `dlq_inspect()`.
 
-## 3. Mechanism
+## 3. Mechanism — reuse existing DLQ
 
-**MCP server-initiated notification** (JSON-RPC `notifications/` method, standards-aligned).
+**Existing infrastructure** (shipped v4.5+):
+- DLQ table — disk-backed via SurrealKV, survives restart
+- `dlq_inspect()` MCP tool — list entries
+- `dlq_requeue()` MCP tool — retry from DLQ
+- Drainer push-to-DLQ on permanent failure already in place
 
+**v5.42.0 adds:**
+
+### 3.1 Failure-reason taxonomy on DLQ entries
+
+Existing entries: `failure_reason: "permanent_error"` (current default).
+New values:
+- `failure_reason: "duplicate_detected"` — similarity gate rejection
+- (Future) `failure_reason: "policy_rejected"` — any other gate
+
+Each entry carries `failure_metadata` JSON:
 ```json
 {
-  "jsonrpc": "2.0",
-  "method": "notifications/yadgar/wiki_rejected",
-  "params": {
-    "job_id": "abc123",
-    "slug": "yadgar-roadmap-future-improvements",
-    "reason": "duplicate_detected",
-    "candidates": [{"slug": "...", "score": 0.94, ...}],
-    "session_id": "<original-caller-session>"
-  }
+  "candidates": [{"slug": "...", "score": 0.94, ...}],
+  "rejection_threshold_used": 0.80,
+  "caller_context": {"directory": "/home/max/git/yadgar", ...}
 }
 ```
 
-**Transport:** streamable-http already supports server-initiated frames (SSE-style). Reuse existing yadgar HTTP MCP transport.
+### 3.2 Drainer pushes rejection to DLQ
 
-**Client routing:** Claude Code hook intercepts the notification and injects the content into the agent's next-turn context. Exact hook depends on Claude Code 2026 schema — pre-flight verification required (Phase 0).
+`yadgar/file_queue/dlq.py` similarity-gate code path (already exists post-v5.41.5):
+- On rejection → instead of archive-and-emit-metric, push to DLQ with `failure_reason="duplicate_detected"`
+- Existing metric `yadgar_wiki_add_rejected_total{reason}` continues firing (ops visibility)
 
-## 4. Pre-flight (Phase 0 — MANDATORY)
+### 3.3 Stop hook signal
 
-Verify Claude Code 2026 supports the routing path via `claude-code-guide` agent:
+`yadgar/server/tools/project.py::project_brief(mode="signals")`:
+- New signal: `pending_rejections_count: int` — count of DLQ entries with `failure_reason` ∈ {"duplicate_detected", future "policy_rejected"} filtered by caller directory if available
+- New `recommended_action: "review_rejections"` when count > 0:
+  ```json
+  {
+    "action": "review_rejections",
+    "reason": "{count} write rejection(s) pending review",
+    "suggested_call": "dlq_inspect(filter='rejections')"
+  }
+  ```
 
-1. Does a `NotificationReceived` hook event exist? (or similar — `OnNotification`, `MessageReceived`, etc.)
-2. If yes: documented schema for `params` field?
-3. If no: what's the closest workaround?
-   - **Workaround A:** server-side queue; piggyback notifications into next response to that session (yadgar transport injects `_pending_notifications` field into next tool-result envelope)
-   - **Workaround B:** Claude Code agent SDK Notification subscriber — register handler at SDK level (Python SDK only)
-   - **Workaround C:** ship server-emit side now; wait for Claude Code to add hook; document as planned-incomplete
+### 3.4 `dlq_inspect` filter param
 
-Output: `docs/V5_42_0_PREFLIGHT_REPORT.md` with verification + recommended path. Commit as Phase 0 deliverable BEFORE writing implementation.
+Extend existing `dlq_inspect(limit=20)` MCP tool:
+- New optional param: `filter: str | None = None` — values: `"all"` (default, current behavior), `"rejections"` (failure_reason in rejection taxonomy), `"failures"` (permanent_error only)
+- Returns same shape; just narrows the result set
 
-## 5. Scope (assumes Phase 0 confirms feasibility)
+### 3.5 `dlq_requeue` blocks rejection entries
 
-### Drainer side
+`dlq_requeue(entry_id)`:
+- If entry's `failure_reason` ∈ rejection taxonomy → return error: `{"requeued": false, "error": "rejection entry — use wiki_add(force=True, ...) to override gate, or wiki_delete the existing duplicate, then retry"}`
+- Keeps requeue semantics for permanent_error entries unchanged.
 
-- Extend drainer's similarity-gate stage (added in v5.41.5) to emit notification on rejection
-- New emit function: `emit_mcp_notification(method, params, session_id)` — routes via the streamable-http transport's notification channel
-- Per-job session_id tracking: when MCP handler enqueues, capture session_id of caller; drainer reads it from job metadata
-- Reuses existing `wait_for_job` infrastructure from v5.41.2 (which already tracks job_id ↔ session)
+### 3.6 New MCP tool (optional): `dlq_dismiss(entry_id)`
 
-### Transport side
+Removes entry from DLQ without retry. Useful for "I acknowledged this rejection, drop it." Power-gated.
 
-- Transport buffers notifications keyed by session_id while no active stream
-- On next request from that session: deliver buffered notifications BEFORE the response
-- OR if active stream: deliver immediately
-- Per-session buffer cap (e.g. 100 notifications) to prevent unbounded growth
+Alternative: extend `dlq_requeue` with `dismiss=True` flag. Lean: separate tool — clearer intent.
 
-### Client side (depends on Phase 0)
+## 4. Decision points (resolved per user direction)
 
-Most likely path: PostToolUse-equivalent hook on incoming notification frames. Hook content:
-- Parse notification params
-- Format human-readable line: "Wiki write rejected: '{slug}' duplicate of '{existing_slug}' (score {score}). Job {job_id}. Use force=True to override."
-- Inject into next-turn context (mechanism depends on hook surface)
+- **DP-A** scope: wiki_add similarity rejections only (narrow). Future taxonomy values added as new gates ship.
+- **DP-B** delivery mechanism: DLQ (disk-backed, persistent) + Stop hook signal (auto-surface) + explicit `dlq_inspect()` (synchronous poll).
+- **DP-C** rejection-entry semantics: distinct `failure_reason` taxonomy, blocked from auto-requeue.
+- **DP-D** persistence: DLQ is disk-backed (existing) — survives restart for free.
+- **DP-E** caller-identity correlation: include `caller_context.directory` in `failure_metadata`. Stop hook filters by current directory. Cross-session rejections still findable via `dlq_inspect(filter='rejections')`.
 
-### Scope expansion (DP-E)
+## 5. Acceptance criteria
 
-Should this cover ONLY `wiki_add` rejections OR all async write failures?
+1. New `failure_reason` taxonomy: `"duplicate_detected"` added, code paths updated.
+2. Drainer similarity-gate rejection routes to DLQ instead of archive (existing metric still fires).
+3. `dlq_inspect(filter="rejections")` works (filter param added).
+4. `dlq_requeue` blocks rejection entries with helpful error message.
+5. `dlq_dismiss(entry_id)` MCP tool ships (power-gated, secret-gated per I26).
+6. `project_brief(mode="signals")` returns `pending_rejections_count`.
+7. `recommended_action: "review_rejections"` fires when count > 0.
+8. Stop hook surfaces signal in agent context at next checkpoint.
+9. 12 tests covering: drainer push, taxonomy, filter, requeue block, dismiss, signal, recommended action, restart persistence, cross-directory isolation, metric continuation, secret-gate, edge cases.
+10. CHANGELOG + MIGRATION_NOTES updated. v5.41.5 migration options doc references v5.42 as recommended async path.
+11. Version bumped 5.41.5 → 5.42.0.
 
-Options:
-- Just `wiki_add` similarity rejections (narrow, v5.42 scope)
-- All wiki writes (incl. `wiki_update` similarity if gate ever applies)
-- All async writes (memorize, block_create, etc.) — generic notification framework
+## 6. Non-goals
 
-Lean: narrow to `wiki_add` first; document generic notification framework as v5.42.x or v5.50+ follow-up if other callers ask for it.
+- No replacement of `wait=True` semantics — still available for sync-block callers.
+- No real-time push to agent (Stop hook latency acceptable; explicit polling via `dlq_inspect` for sync-enough cases).
+- No automatic rejection resolution (user/agent decides: force, delete existing, dismiss).
+- No retroactive DLQ entries for past pre-v5.42.0 rejections (forward-only).
+- No cross-write-tool scope (wiki_add only; memorize / block_create / etc. follow if/when they grow gates).
 
-## 6. Decision points (resolve before impl)
+## 7. Risks
 
-- **DP-A** notification scope: `wiki_add` only / all wiki writes / all async writes? Lean: `wiki_add` only.
-- **DP-B** client routing path (depends on Phase 0): hook event / piggyback / SDK subscriber / wait-for-hook? Lean: pick best per Phase 0.
-- **DP-C** server-side buffer cap per session: 10 / 100 / 1000? Lean: 100 with CRITICAL log on overflow.
-- **DP-D** notification persistence across reconnects: persist to disk OR memory-only? Lean: memory-only for v5.42; revisit if drops are observed.
-- **DP-E** handler missing fallback: log + Prometheus only / error queue read at SessionStart / both? Lean: both (defense in depth — Prometheus for ops + queue replay for missed-notification recovery).
+- **Semantic stretching of DLQ:** historically "permanent error." Adding "rejection" widens. Mitigation: clear `failure_reason` taxonomy; tooling filters by reason; documentation.
+- **Stop hook delivery latency:** signal surfaces at ~12-24h checkpoint windows or session boundaries. For interactive bulk writes, rejections accumulate before being seen. Mitigation: explicit `dlq_inspect()` for sync-enough; OR caller flips to `wait=True` if synchronous matters.
+- **DLQ growth under rejection storms:** many duplicate writes → DLQ bloats. Existing DLQ row-ceiling check (v4.5) catches this. Add Prometheus gauge `yadgar_dlq_rejection_count` for ops visibility.
+- **Cross-directory rejection visibility:** Stop hook filters by directory; rejections from other directories invisible. Mitigation: `dlq_inspect(filter='rejections', directory=None)` lists all.
+- **`dlq_requeue` user surprise on blocked rejection:** error message must clearly explain the alternative (`force=True` or delete existing).
 
-## 7. Acceptance criteria
+## 8. Dependencies
 
-1. Phase 0 verification report committed.
-2. Drainer emits `notifications/yadgar/wiki_rejected` on similarity gate rejection.
-3. Transport correctly tags + routes notification to the original caller's session.
-4. Per-session buffer with cap enforced.
-5. Client-side mechanism (per Phase 0 outcome) surfaces notification in next agent turn.
-6. E2E test: `wiki_add(wait=False)` against existing duplicate → drainer rejects → next agent message contains rejection notice.
-7. `wait=False` handler latency remains ≤5ms p50 (no regression from notification machinery).
-8. Prometheus counters: `yadgar_notifications_emitted_total{method}` + `yadgar_notifications_buffered_dropped_total` (overflow).
-9. Version bumped 5.41.5 → 5.42.0.
-10. CHANGELOG + MIGRATION_NOTES updated; document new opt-in pattern.
+- v5.41.5 drainer-side similarity gate (✓ shipped — emission point exists)
+- v4.5 DLQ infrastructure (✓ shipped, anchor [116496])
+- v5.41.4 `project_brief(mode="signals")` extensible signal pattern (✓ shipped — same pattern as `roadmap_update_lag`)
 
-## 8. Non-goals
+No new transport / hook / MCP-protocol work. Purely composing existing surfaces.
 
-- No retroactive notification for events that occurred BEFORE caller's session started.
-- No exact-once delivery guarantee (best-effort; overflow + reconnect drops are acceptable with telemetry).
-- No new MCP tool — entirely server-push.
-- No replacement of `wait=True` semantics — still available for callers that prefer sync block.
-- No generic notification framework for ALL yadgar events — scoped to wiki_add rejections in v5.42.
+## 9. Phases (4 commits)
 
-## 9. Risks
+1. **Failure-reason taxonomy + drainer rerouting.** Extend DLQ entry schema with `failure_reason` enum + `failure_metadata` JSON. Drainer similarity-gate code routes to DLQ with `failure_reason="duplicate_detected"` instead of archive. Existing metric continues firing. Tests for taxonomy + drainer push. → COMMIT `feat(dlq): add failure_reason taxonomy + route similarity rejections to DLQ`
 
-- **Phase 0 reveals no hook surface in Claude Code:** ship server-emit side; document client-side as TBD. Slot v5.42.x follow-up when hook lands. Caller gains nothing in agent context until then but ops gains Prometheus visibility.
-- **Notification ordering:** multiple in-flight writes may produce out-of-order notifications. Mitigation: include job_id + timestamp; caller responsible for ordering if it matters.
-- **Session-id leak across multi-session deployments:** transport must NOT broadcast notifications to other sessions. Test explicitly.
-- **Buffer overflow under load:** CRITICAL log + counter; caller missed notifications recoverable via job-status endpoint OR error queue.
-- **Notification storms:** many duplicates in one batch → many notifications → agent context bloat. Mitigation: client-side dedup (group by slug); document as agent-side concern.
+2. **`dlq_inspect` filter + `dlq_requeue` block + `dlq_dismiss` tool.** Filter param on inspect. Block requeue on rejection entries (helpful error). New dismiss tool (power-gated, secret-gated). Tests. → COMMIT `feat(dlq): inspect filter + requeue block on rejections + dismiss tool`
 
-## 10. Dependencies
+3. **Stop hook signal + recommended action.** `pending_rejections_count` signal in `project_brief(mode="signals")`. `review_rejections` recommended action. Filtered by current directory. Tests. → COMMIT `feat(project_brief): pending_rejections_count signal + review_rejections action`
 
-- v5.41.2 wait_for_job infrastructure (✓ shipped)
-- v5.41.5 drainer similarity gate placement (✓ shipped — gate emit point already exists)
-- Streamable-http transport notification frame support (verify in Phase 0)
-- Claude Code 2026 client-side hook OR SDK subscriber (verify in Phase 0)
+4. **Version bump + docs.** 5.41.5 → 5.42.0. CHANGELOG entry. MIGRATION_NOTES: update v5.41.5 migration options to add Option 4 (DLQ-based async). README docs DLQ rejection pattern. → COMMIT `chore: bump version 5.41.5 → 5.42.0 + DLQ rejection tracking docs`
 
-## 11. Phases
+## 10. References
 
-0. **Phase 0 pre-flight** — verify Claude Code hook surface; output `docs/V5_42_0_PREFLIGHT_REPORT.md`. → COMMIT `docs(v5.42.0): pre-flight Claude Code notification routing verification`
+- v5.41.5 bench: `docs/V5_42_LATENCY_BENCHMARK_REPORT.md` — concrete numbers (wait=True p50=228ms etc.)
+- v5.41.5 plan + drainer code path: `yadgar/file_queue/dlq.py` (existing similarity-gate emit point)
+- v4.5 DLQ infrastructure: `yadgar/file_queue/__init__.py` (DLQ implementation), anchor [116496]
+- v5.41.4 signal pattern: `yadgar/server/tools/project.py::project_brief` (roadmap_update_lag as template)
+- Existing MCP tools: `dlq_inspect`, `dlq_requeue` — extending, not replacing
+- Opus reviewer reports (2026-06-02) — blockers documented + DLQ alternative validated
+- User suggestion 2026-06-02 evening — DLQ reuse insight (this revision)
 
-1. **Drainer-emit + session tracking** — extend similarity-gate stage to emit; add session_id to job metadata; reuse wait_for_job tracking. → COMMIT `feat(drainer): emit notifications/yadgar/wiki_rejected on similarity gate fire`
+## 11. Coordination
 
-2. **Transport routing + buffer** — per-session notification buffer; cap enforcement; deliver-on-next-response OR active-stream paths. → COMMIT `feat(transport): MCP server-initiated notification routing with per-session buffer`
+Single agent dispatch. Sonnet. NO worktree isolation. Main thread parks on master.
 
-3. **Client-side hook (per Phase 0)** — implement chosen path (hook event / piggyback / SDK subscriber). → COMMIT `feat(client): inject async rejection notifications into next agent turn`
+After ship:
+- v5.41.5 MIGRATION_NOTES gets Option 4 added: "DLQ-based async (v5.42.0+): use `wait=False`, check `dlq_inspect(filter='rejections')` when needed, OR rely on Stop hook signal at session boundaries."
+- Roadmap wiki Pipeline section updated to mark v5.42.0 shipped.
 
-4. **Tests** — unit (drainer emit, buffer cap), integration (E2E rejection flow), regression (wait=False latency stays ≤5ms p50, wait=True still works). → COMMIT `test(v5.42.0): async rejection notification e2e + regression`
+## 12. Migration path for v5.39 contract change carriers
 
-5. **Docs + version bump** — CHANGELOG + MIGRATION_NOTES + README. Update v5.41.5 migration options to highlight v5.42.0 as preferred async path. Version 5.41.5 → 5.42.0. → COMMIT `chore: bump version 5.41.5 → 5.42.0 + async rejection docs`
+Callers that previously relied on `wiki_add(wait=False)` returning sync rejection now have FOUR options:
 
-## 12. References
+1. `wait=True` — sync (slow: 228ms p50)
+2. `wiki_check_duplicate` pre-flight (unchanged from v5.39)
+3. `force=True` / `replace_slug=...` to bypass gate explicitly
+4. **NEW: trust Stop hook signal + `dlq_inspect(filter="rejections")` for retrospective review** ← v5.42.0
 
-- v5.41.2 plan `wait_for_job` — `yadgar/queue/drainer.py`
-- v5.41.5 plan — similarity gate drainer placement
-- MCP spec — JSON-RPC notification methods
-- Anchor 491682 — Claude Code 2026 hook event schemas (verify via claude-code-guide for `NotificationReceived` equivalent)
-- Streamable-http transport — `yadgar/server/http.py` (server-initiated frame support)
+## 13. Open questions
 
-## 13. Coordination
-
-Single agent dispatch after Phase 0 completes (or split: Phase 0 standalone → dispatch impl agent after user reviews verification report). Sonnet for impl. NO worktree isolation.
-
-After ship: update v5.41.5 MIGRATION_NOTES Migration options section to add Option 4: "v5.42.0+ async notification pattern — `wait=False` + drainer notification routes rejection to next agent turn. Best for safety-conscious callers that can't afford `wait=True` latency."
-
-## 14. Open questions (for opus reviewer + user)
-
-1. Phase 0 outcome dependency: should v5.42.0 hold until Claude Code 2026 hook surface confirmed? OR ship server-emit independently and accept client-side TBD?
-2. Even-minor slot: convention-correct per design intent (even minors reserved for surprise inserts between planned odd-minor work). No question to resolve.
-3. Session-id propagation through queue: needs schema field on job metadata. Migration concern for existing in-flight jobs at upgrade time?
-4. DP-A scope (wiki_add vs all wiki writes vs all async writes): reviewer's call on minimum-viable.
-5. Telemetry detail: per-method counter sufficient OR per-session label too?
+1. Should rejections also fire as Prometheus gauge per-directory? Or just total count? Lean: total count only (cardinality limit).
+2. Should `dlq_dismiss` require confirmation (typed entry_id)? Lean: no — power-gating is the safety; agents calling power tools accept responsibility.
+3. TTL on rejection entries — should they auto-purge after N days? Lean: yes, compose with v5.43 memory_archive retention pattern (separate `DLQ_REJECTION_RETENTION_DAYS` default 30d). Add as follow-up note, not blocker for v5.42.0.
