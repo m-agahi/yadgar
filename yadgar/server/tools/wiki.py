@@ -7,12 +7,62 @@ import os
 
 import yadgar.server._state as _st
 from yadgar.file_queue import is_draining
+from yadgar.file_queue.dlq import _enforcement_on, _inc_relaxed
 from yadgar.secrets import gate_or_reject
 from yadgar.server._app import _tool
 from yadgar.server._helpers import _has_unpaired_surrogate, _push_event
 from yadgar.server.lifecycle import _get_file_queue, _get_storage
 
 logger = logging.getLogger(__name__)
+
+
+def _check_wiki_add_context(branch: str | None, directory: str | None) -> dict | None:
+    """Check branch + directory enforcement at MCP boundary.
+
+    Returns an error dict if enforcement is ON and a required field is absent,
+    else None (caller may proceed).  Logs WARN + increments metric when
+    enforcement is OFF and a field is missing.  is_draining() callers are
+    exempt — this helper should only be called when not is_draining().
+
+    v5.42.6 (I-C1): extracted from wiki_add to keep cyclomatic complexity ≤ 15.
+    """
+    if not branch:
+        if _enforcement_on("YADGAR_BRANCH_ENFORCEMENT"):
+            return {
+                "error": "missing_branch",
+                "stored": False,
+                "message": (
+                    "Branch context required. Supply branch=<branch> or branch_hint=<branch-name>. "
+                    "Agents should pass branch_hint=$(git branch --show-current) before wiki_add."
+                ),
+                "field": "branch_hint",
+                "op_type": "wiki_add",
+            }
+        logger.warning(
+            "wiki_add: branch enforcement OFF — proceeding without branch context "
+            "(YADGAR_BRANCH_ENFORCEMENT=false)"
+        )
+        _inc_relaxed("branch")
+
+    _effective_dir: str | None = (directory or "").strip() or None
+    if not _effective_dir:
+        if _enforcement_on("YADGAR_DIRECTORY_ENFORCEMENT"):
+            return {
+                "error": "missing_directory",
+                "stored": False,
+                "message": (
+                    "directory required and must be non-empty. "
+                    "Pass the absolute project path or 'global'."
+                ),
+                "field": "directory",
+                "op_type": "wiki_add",
+            }
+        logger.warning(
+            "wiki_add: directory enforcement OFF — proceeding without directory context "
+            "(YADGAR_DIRECTORY_ENFORCEMENT=false)"
+        )
+        _inc_relaxed("directory")
+    return None
 
 
 def _wiki_add_sync_write(
@@ -372,35 +422,15 @@ def wiki_add(
     # Branch resolution — O(1), no subprocess. See docstring for priority order.
     if not branch and branch_hint:
         branch = branch_hint
-    # v5.42.3: if both are falsy after resolution, hard-reject at MCP boundary.
-    # Drainer provides defense-in-depth for direct file_queue writes that bypass MCP.
-    # is_draining() path is exempt — drainer has already validated or set _internal=True.
-    if not branch and not is_draining():
-        return {
-            "error": "missing_branch",
-            "stored": False,
-            "message": (
-                "Branch context required. Supply branch=<branch> or branch_hint=<branch-name>. "
-                "Agents should pass branch_hint=$(git branch --show-current) before wiki_add."
-            ),
-            "field": "branch_hint",
-            "op_type": "wiki_add",
-        }
-
-    # v5.42.5: directory validation — reject empty/whitespace at MCP boundary.
+    # v5.42.3/v5.42.6: MCP boundary context check — branch + directory.
     # is_draining() path is exempt (drainer validates at its own boundary).
+    # _check_wiki_add_context gates enforcement; YADGAR_*_ENFORCEMENT=false relaxes.
+    if not is_draining():
+        _ctx_err = _check_wiki_add_context(branch, directory)
+        if _ctx_err is not None:
+            return _ctx_err
+
     _effective_dir: str | None = (directory or "").strip() or None
-    if not _effective_dir and not is_draining():
-        return {
-            "error": "missing_directory",
-            "stored": False,
-            "message": (
-                "directory required and must be non-empty. "
-                "Pass the absolute project path or 'global'."
-            ),
-            "field": "directory",
-            "op_type": "wiki_add",
-        }
     # DP-3: strip trailing slash (preserve "global" sentinel as-is)
     if _effective_dir and _effective_dir != "global":
         _effective_dir = _effective_dir.rstrip("/") or _effective_dir
@@ -572,14 +602,23 @@ def wiki_query(
 
 
 @_tool(power=True)
-def wiki_read(slug: str, directory: str | None = None) -> dict:
+def wiki_read(
+    slug: str,
+    directory: str | None = None,
+    branch_hint: str | None = None,
+) -> dict:
     """Read a specific wiki page by slug.
 
     §25 Resolution order (v5.42.5 — directory-aware):
-    1. directory=$caller_dir AND branch=$current_branch  (project-branch-scoped)
-    2. directory=$caller_dir AND branch IS NULL           (project-canonical)
-    3. directory='global'    AND branch IS NULL           (global fallback)
+    1. directory=$caller_dir AND branch=$effective_branch  (project-branch-scoped)
+    2. directory=$caller_dir AND branch IS NULL            (project-canonical)
+    3. directory='global'    AND branch IS NULL            (global fallback)
     4. Not found → error dict.
+
+    branch_hint: caller-supplied branch (v5.42.6 F1 fix, symmetric with wiki_add).
+    Uses branch_hint if _detect_branch returns None (container scenario).
+    Without branch_hint, falls through to steps 2+3 (permissive default —
+    reads are more permissive than writes per §25 design).
 
     When directory is not supplied, falls back to legacy branch-only resolution
     (backward-compat mode; WARNING logged).
@@ -606,10 +645,15 @@ def wiki_read(slug: str, directory: str | None = None) -> dict:
         _current_branch = None
         _default_branch = None  # v5.42.4: canonical slot
 
+    # v5.42.6 F1 fix: use branch_hint when daemon-side detection returns None.
+    # This mirrors _resolve_page_id_by_slug (v5.42.5) and wiki_add (v5.42.3).
+    # The effective branch for §25 step 1 uses branch_hint if _detect_branch failed.
+    _effective_branch = branch_hint or _current_branch
+
     if directory is not None:
         # v5.42.5: 4-step directory-aware resolution
         caller_dir = directory.strip().rstrip("/") or None
-        page = _st._wiki.read_by_directory_branch(slug, caller_dir, _current_branch)
+        page = _st._wiki.read_by_directory_branch(slug, caller_dir, _effective_branch)
     else:
         # Legacy fallback — no directory supplied; backward-compat mode.
         logger.warning(
@@ -617,7 +661,7 @@ def wiki_read(slug: str, directory: str | None = None) -> dict:
             "Pass directory= for project-scoped results (v5.42.5).",
             slug,
         )
-        page = _st._wiki.read_by_branch(slug, _current_branch, _default_branch)
+        page = _st._wiki.read_by_branch(slug, _effective_branch, _default_branch)
 
     if page is None:
         return {"error": f"Wiki page '{slug}' not found"}

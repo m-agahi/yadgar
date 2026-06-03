@@ -257,6 +257,9 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_WIKI_SIM_TOP_K", "5", "int"),
     # ── v5.42.1 embed failure behaviour knob ─────────────────────────────────
     ConfigEntry("YADGAR_WIKI_EMBED_FAILURE_BLOCKS_WRITE", "false", "bool"),
+    # ── v5.42.6 enforcement knobs ─────────────────────────────────────────────
+    ConfigEntry("YADGAR_DIRECTORY_ENFORCEMENT", "true", "bool"),
+    ConfigEntry("YADGAR_BRANCH_ENFORCEMENT", "true", "bool"),
 ]
 
 

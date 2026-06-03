@@ -862,6 +862,23 @@ FIELD_META: dict[str, dict[str, str]] = {
         ),
         "section": "wiki_similarity_gate",
     },
+    # v5.42.6: enforcement knobs
+    "directory_enforcement": {
+        "desc": (
+            "When True (default), wiki_add rejects payloads missing directory_context. "
+            "Set to False as a migration escape hatch. "
+            "Emits WARN log + yadgar_writes_with_enforcement_relaxed metric when off."
+        ),
+        "section": "wiki_similarity_gate",
+    },
+    "branch_enforcement": {
+        "desc": (
+            "When True (default), wiki_add and memorize reject payloads missing branch. "
+            "Set to False as a migration escape hatch. "
+            "Emits WARN log + yadgar_writes_with_enforcement_relaxed metric when off."
+        ),
+        "section": "wiki_similarity_gate",
+    },
 }
 
 
