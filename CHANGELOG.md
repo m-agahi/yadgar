@@ -6,6 +6,19 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.42.6] — 2026-06-03
+
+Directory backfill repair + wiki_read resolution hole + enforcement knobs. Three production bugs fixed: (Bug 1) migration 016 Phase A missed all field-absent rows via `IS NONE` — migration 018 re-backfills using a Python-side filter + numeric ID extraction; (Bug 2) `wiki_read` called daemon-side `_detect_branch` (returns None in containers) making branch="master" rows unreachable — `branch_hint` parameter added symmetric with `wiki_add`; (Bug 3) `wiki_update`/`wiki_append_section`/`wiki_restore` failed on legacy rows with ASSERT coerce error — schema temporarily relaxed during migration 018 backfill. Two new operator escape-hatch knobs added.
+
+- **feat(storage):** migration 018 — re-backfill field-absent `wiki_page.directory_context` rows using tag heuristic + Python-side filter (fixes `IS NONE` miss from migration 016)
+- **fix(storage):** migration 016 Phase A source fix — replaced `WHERE directory_context IS NONE` query with fetch-all + Python filter to catch field-absent rows; numeric ID extraction via `_extract_id()` to fix silent `type::record()` failures
+- **feat(wiki):** `wiki_read` gains `branch_hint: str | None = None` — when daemon `_detect_branch` returns None (container), `branch_hint` supplies the branch for §25 step 1 lookup
+- **feat(config):** `YADGAR_DIRECTORY_ENFORCEMENT` (default true) — set to false to relax directory_context requirement in drainer; emits WARN + `yadgar_writes_with_enforcement_relaxed{enforcement="directory"}` metric
+- **feat(config):** `YADGAR_BRANCH_ENFORCEMENT` (default true) — set to false to relax branch requirement in drainer for wiki_add and memorize; emits WARN + `yadgar_writes_with_enforcement_relaxed{enforcement="branch"}` metric
+- **feat(metrics):** `yadgar_writes_with_enforcement_relaxed{enforcement}` Counter — tracks relaxation events per enforcement type (I23)
+
+---
+
 ## [5.42.5] — 2026-06-03
 
 Directory contract — every wiki_page and memory row now has `directory_context` NOT NULL. MCP boundary rejects wiki_add / block_* / agent_prompt_save without `directory`. Drainer pre-apply validates and routes missing-directory records to DLQ. §25 4-step resolution extended with directory scoping. Three bug fixes: F1 `_resolve_page_id_by_slug` uses caller directory instead of daemon CWD; F2 `agent_prompt_save` routes through wiki machinery; F3 block tools enforce directory for `scope='project'`.
