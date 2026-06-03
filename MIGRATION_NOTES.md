@@ -1,5 +1,39 @@
 # Migration Notes
 
+## v5.42.3 — drainer branch enforcement + memory branch_hint parity (2026-06-03)
+
+Core 5.42.2 → 5.42.3. Backend unchanged at 5.4.0.
+
+### Schema migration
+
+Migration 015 adds `wiki_draft.branch` column (nullable text). Runs automatically on server start. No manual step required.
+
+### Breaking change — write tools now require branch context
+
+All write tools (`memorize`, `anchor`, `checkpoint`, `update_active_work`, `wiki_add`) now hard-reject at the MCP boundary when branch context is absent:
+
+```json
+{"error": "missing_branch", "stored": false, "field": "branch_hint", "op_type": "<tool>"}
+```
+
+**Resolution order:** `_detect_branch(directory)` → `branch_hint` parameter → hard-reject.
+
+**Impact:** Any caller that did not supply `branch_hint` and whose `directory` is not accessible to the yadgar daemon (e.g., containerized setups) will now receive an error. Fix: pass `branch_hint=<current-branch-name>` to affected tools.
+
+**`is_draining()` carve-out:** drainer replay path is exempt. DLQ records that lack branch are rejected by `_validate_wiki_add` / `_validate_branch_context` before apply and routed to DLQ with `failure_reason=missing_branch`.
+
+### DLQ `missing_branch` entries
+
+`dlq_requeue` blocks entries with `failure_reason=missing_branch` without `force=True`. To manually replay a missing-branch DLQ entry:
+
+1. `dlq_inspect()` — find the entry id
+2. Edit payload to add `branch: "<branch-name>"`
+3. `dlq_requeue(id, force=True)`
+
+### New metric
+
+`yadgar_dlq_rejection_count` (Gauge) — tracks DLQ rejection counts by `failure_reason` label.
+
 ## v5.42.2 — wiki branch-default scope mismatch fix (2026-06-02)
 
 **Critical hotfix.** Core 5.42.1 → 5.42.2. Backend unchanged at 5.4.0. No schema migration, no data migration.
