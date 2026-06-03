@@ -488,7 +488,7 @@ def wiki_query(
             _default_branch = _get_default_branch(_cwd)
         except Exception:
             _current_branch = None
-            _default_branch = "master"
+            _default_branch = None  # v5.42.4: canonical slot
 
         _allowed_branches: set[str | None] = {_default_branch, None}
         if _current_branch is not None:
@@ -550,7 +550,7 @@ def wiki_read(slug: str) -> dict:
         _default_branch = _get_default_branch(_cwd)
     except Exception:
         _current_branch = None
-        _default_branch = "master"
+        _default_branch = None  # v5.42.4: canonical slot
 
     page = _st._wiki.read_by_branch(slug, _current_branch, _default_branch)
     if page is None:
@@ -736,7 +736,7 @@ def wiki_check_duplicate(  # secret-gate: skip — read-only dry-run, never writ
                 from yadgar.server.tools.project import _get_default_branch  # noqa: PLC0415
             _default_branch = _get_default_branch(_cwd)
         except Exception:
-            _default_branch = "master"
+            _default_branch = None  # v5.42.4: canonical slot
 
         branch = _default_branch
 
@@ -775,7 +775,7 @@ def _resolve_page_id_by_slug(slug: str) -> tuple[int | None, dict | None]:
         default_branch = _get_default_branch(_cwd)
     except Exception:
         current_branch = None
-        default_branch = "master"
+        default_branch = None  # v5.42.4: canonical slot
 
     page = _st._wiki.read_by_branch(slug, current_branch, default_branch)
     if page is None:
