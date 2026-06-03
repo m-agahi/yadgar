@@ -1,4 +1,4 @@
-# PLAN — v5.43.0: memory_archive retention
+# PLAN — v5.49.0: memory_archive retention
 
 **Status:** drafted 2026-06-02. DPs resolved. REVISED 2026-06-02 post-opus-review. READY for impl.
 
@@ -15,11 +15,11 @@
 
 Current state: ~1300 heat=0 memories accumulating with no auto-prune path.
 
-**Slot:** v5.43.0 — between v5.41.x patches and v5.45 setup foundation.
+**Slot:** v5.49.0 — between v5.41.x patches and v5.45 setup foundation.
 
 **Effort estimate:** 1.5-2 calendar days.
 
-**Branch:** `feat/v5.43.0-archive-retention` off master.
+**Branch:** `feat/v5.49.0-archive-retention` off master.
 
 ---
 
@@ -141,7 +141,7 @@ Return: same dict as storage layer.
 
 ## 7. Rollout
 
-1. Ship v5.43.0 with retention OFF by default (`MEMORY_ARCHIVE_RETENTION_DAYS=0` ships off; doc says "set to 90 to enable").
+1. Ship v5.49.0 with retention OFF by default (`MEMORY_ARCHIVE_RETENTION_DAYS=0` ships off; doc says "set to 90 to enable").
 2. User runs `archive_purge(dry_run=True)` to validate candidate set.
 3. User runs `archive_purge(dry_run=False)` for one-time cleanup of the 1300 backlog.
 4. User flips `MEMORY_ARCHIVE_RETENTION_DAYS=90` in config to enable nightly auto-purge going forward.
@@ -152,18 +152,18 @@ Return: same dict as storage layer.
 
 - Aggressive default risks data loss. Mitigation: ships disabled; user opts in after dry-run.
 - Re-archival thrash. Mitigation: DP-E 7-day thrash guard.
-- v6 curator collision. Mitigation: v5.43 stays as backstop. v6 LLM proposes earlier deletes within its own 20/night cap. Document layering.
+- v6 curator collision. Mitigation: v5.49 stays as backstop. v6 LLM proposes earlier deletes within its own 20/night cap. Document layering.
 - SurrealDB DELETE creates vlog garbage. Existing vacuum schedule covers.
 - Anchored memory with neither `_anchor` tag nor `is_protected=true` slips through. Mitigation: audit_anchors finds these; document migration in MIGRATION_NOTES.
 
 ## 9. Dependencies
 
-- None hard. v5.41.x patches can ship in any order; v5.43 starts after they're done.
-- Soft: v6 LLM curator will compose on top of v5.43 backstop when v6.x lands.
+- None hard. v5.41.x patches can ship in any order; v5.49 starts after they're done.
+- Soft: v6 LLM curator will compose on top of v5.49 backstop when v6.x lands.
 
 ## 10. Phases (agent dispatch)
 
-0. **`audit_anchors` extension — anchored-by-prose detection.** Extend `yadgar/server/tools/anchors.py::audit_anchors` to detect memories with: `_anchor` tag absent + `is_protected=false` + heat=0 + present in `memory_archive`. Returns a candidate-list dict. Add as recommended_action when count > 0. 4 tests (positive/negative/empty/threshold). → COMMIT `feat(anchors): detect anchored-by-prose-only memories at-risk from v5.43 retention`
+0. **`audit_anchors` extension — anchored-by-prose detection.** Extend `yadgar/server/tools/anchors.py::audit_anchors` to detect memories with: `_anchor` tag absent + `is_protected=false` + heat=0 + present in `memory_archive`. Returns a candidate-list dict. Add as recommended_action when count > 0. 4 tests (positive/negative/empty/threshold). → COMMIT `feat(anchors): detect anchored-by-prose-only memories at-risk from v5.49 retention`
 1. **Storage function + tests RED first.** `purge_expired_archives()` w/ all 5 DPs + the legacy `tags CONTAINS 'anchor'` no-underscore exclusion. 10 storage tests. → COMMIT `feat(storage): purge_expired_archives helper w/ thrash guard + anchor skip`
 2. **Config knobs (I25).** 3 knobs three-way. 1 test. → COMMIT `feat(config): I25 env knobs for MEMORY_ARCHIVE_RETENTION_*`
 3. **Consolidation integration + telemetry.** Wire into `_run_retention_tasks()`. 2 tests + 2 Prometheus counters. → COMMIT `feat(consolidation): wire archive retention into nightly cycle + metrics`
