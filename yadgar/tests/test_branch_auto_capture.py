@@ -19,6 +19,8 @@ import pytest
 
 from yadgar import server
 
+_TEST_DIR = "/home/max/git/yadgar"
+
 
 @pytest.fixture(autouse=True)
 def _engines(tmp_path):
@@ -354,6 +356,7 @@ class TestQueuePayloadBranch:
             title="Wiki Queue Branch Test",
             content="wiki content for queue test",
             branch_hint="feat/wiki-queue",
+            directory=_TEST_DIR,
         )
         for op, payload in captured_payloads:
             if op == "wiki_add":

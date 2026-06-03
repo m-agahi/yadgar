@@ -23,6 +23,7 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
     min_heat: float = 0.0,
     profile: str | None = None,
     stage_overrides: dict[str, dict] | None = None,
+    directory: str | None = None,
 ) -> list[dict]:
     """Semantic + keyword search filtered by heat. Boosts accessed memories.
 
@@ -159,6 +160,22 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
         if retriever is None:
             # Fallback path: apply Python-side filter (retriever path uses SurrealQL filter)
             merged = [m for m in merged if m.get("branch") in _allowed_branches]
+
+        # v5.42.5: directory filter — scope results to caller directory + 'global'.
+        # Applied as a Python-side post-filter (retriever pipeline threading is v5.44+).
+        # When directory is None: legacy mode — no filter, all directories returned.
+        if directory is not None:
+            caller_dir = directory.strip().rstrip("/") or None
+            if caller_dir:
+                merged = [
+                    m
+                    for m in merged
+                    if m.get("directory_context") in (caller_dir, "global", "", "system", None)
+                ]
+            else:
+                logger.warning(
+                    "recall: directory supplied but empty after strip — skipping directory filter"
+                )
 
         # §25 C4: convex-combination boost for current-branch results.
         # boosted = score + (1 - score) * BRANCH_BOOST_WEIGHT — keeps scores in [0,1].

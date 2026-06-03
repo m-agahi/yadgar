@@ -19,6 +19,8 @@ import pytest
 from yadgar import server
 from yadgar.file_queue import FileQueue
 
+_TEST_DIR = "/home/max/git/yadgar"
+
 
 @pytest.fixture()
 def _profile_env(tmp_path):
@@ -133,6 +135,8 @@ def _measure_e2e() -> list[float]:
             content="MCP handler I9 profiling end-to-end content measurement",
             tags=["perf"],
             wait=False,
+            branch_hint="feat/test-branch",
+            directory=_TEST_DIR,
         )
         latencies.append((time.perf_counter() - t0) * 1000)
         assert result.get("queued") is True, f"Fell to sync path: {result}"
@@ -233,7 +237,14 @@ def test_wiki_add_phase0_profiling(_profile_env, tmp_path):
 
     # Warmup
     for _ in range(5):
-        server.wiki_add(title=_uid("Warmup"), content="warmup", tags=["perf-warmup"], wait=False)
+        server.wiki_add(
+            title=_uid("Warmup"),
+            content="warmup",
+            tags=["perf-warmup"],
+            wait=False,
+            branch_hint="feat/test-branch",
+            directory=_TEST_DIR,
+        )
 
     timings = _measure_substeps(real_fq)
     e2e_latencies = _measure_e2e()

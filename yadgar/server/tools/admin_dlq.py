@@ -13,11 +13,13 @@ logger = logging.getLogger(__name__)
 # v5.42.0: failure_reason taxonomy — failure_reason values treated as "rejections"
 # (i.e. similarity gate, policy rejected). "permanent_error" is the legacy/default.
 # v5.42.3: added "missing_branch" — queue entry lacks branch context.
+# v5.42.5: added "missing_directory" — queue entry lacks directory_context.
 _REJECTION_TAXONOMY: frozenset[str] = frozenset(
     {
         "duplicate_detected",
         "policy_rejected",
         "missing_branch",  # v5.42.3: queue entry lacks branch context
+        "missing_directory",  # v5.42.5: queue entry lacks directory_context
     }
 )
 

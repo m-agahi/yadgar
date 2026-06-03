@@ -65,6 +65,8 @@ def _next_version(storage, pattern: str) -> int:
 def agent_prompt_save(
     pattern: str,
     content: str,
+    directory: str | None = None,
+    branch_hint: str | None = None,
     storage=None,
 ) -> dict:
     """Save a new version of an agent-prompt for the given task pattern.
@@ -72,10 +74,15 @@ def agent_prompt_save(
     Creates a new wiki page with slug agent-prompt-<pattern>-v<N> where N is
     auto-incremented. Existing versions are never modified.
 
+    v5.42.5: routes through wiki_add machinery to inherit branch + directory
+    validation and similarity gate. Accepts directory + branch_hint params.
+
     Args:
         pattern: Task pattern identifier (e.g. "dispatch-fix-bug").
                  ASCII alphanumeric, hyphens, underscores only.
         content: The prompt text content.
+        directory: Absolute project path or 'global'. Required (v5.42.5).
+        branch_hint: Caller branch context (optional).
         storage: StorageEngine instance (injected for testing; otherwise
                  resolved from server lifecycle).
 
@@ -87,6 +94,20 @@ def agent_prompt_save(
 
         storage = _get_storage()
 
+    # v5.42.5: directory required — reject at MCP boundary (same contract as wiki_add)
+    _effective_dir = (directory or "").strip() or None
+    if not _effective_dir:
+        return {
+            "error": "missing_directory",
+            "saved": False,
+            "message": (
+                "directory required and must be non-empty. "
+                "Pass the absolute project path or 'global'."
+            ),
+            "field": "directory",
+            "op_type": "agent_prompt_save",
+        }
+
     _gate = gate_or_reject(content)
     if _gate is not None:
         return _gate
@@ -95,18 +116,38 @@ def agent_prompt_save(
     slug = _slug_for(pattern, version)
     tags = ["agent-prompt", f"task:{pattern}"]
 
-    page_id = storage.insert_wiki_page(
-        {
-            "slug": slug,
-            "title": f"Agent Prompt: {pattern} v{version}",
-            "content": content,
-            "tags": tags,
-            "links": [],
-            "category": "reference",
-            "confidence": "high",
-            "source_memory_ids": [],
-        }
-    )
+    # v5.42.5: route through wiki_add machinery (branch + directory + similarity gate).
+    # Option A: call _wiki.add() directly — inherits branch + directory provenance.
+    import yadgar.server._state as _st_mod  # noqa: PLC0415
+
+    wiki = _st_mod._wiki
+    if wiki is not None:
+        result = wiki.add(
+            title=f"Agent Prompt: {pattern} v{version}",
+            content=content,
+            category="reference",
+            tags=tags,
+            source_memory_ids=[],
+            confidence="high",
+            branch=branch_hint,
+            directory_context=_effective_dir,
+        )
+        page_id = result.get("id")
+    else:
+        # Fallback: direct storage insert when wiki not initialised (tests)
+        page_id = storage.insert_wiki_page(
+            {
+                "slug": slug,
+                "title": f"Agent Prompt: {pattern} v{version}",
+                "content": content,
+                "tags": tags,
+                "links": [],
+                "category": "reference",
+                "confidence": "high",
+                "source_memory_ids": [],
+                "directory_context": _effective_dir,
+            }
+        )
 
     return {
         "saved": True,

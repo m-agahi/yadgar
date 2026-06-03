@@ -146,6 +146,11 @@ class _WikiMixin:
         if branch is not None:
             page_set += ", branch = $branch"
             params["branch"] = branch
+        # v5.42.5: directory_context — NOT NULL per migration 016 schema constraint.
+        # Value comes from page dict (preferred) or falls back to "global".
+        directory_context = page.get("directory_context") or "global"
+        page_set += ", directory_context = $directory_context"
+        params["directory_context"] = directory_context
 
         # Single compound transaction: wiki_page + wiki_page_version version=1.
         # I1: no LLM/embed inside txn — pure DB writes only.
@@ -300,6 +305,58 @@ class _WikiMixin:
         )
         return self._row_to_dict(rows[0]) if rows else None
 
+    def get_wiki_page_by_slug_directory_branch(
+        self,
+        slug: str,
+        caller_directory: str | None,
+        current_branch: str | None,
+    ) -> dict | None:
+        """§25 4-step directory-aware wiki page resolution (v5.42.5).
+
+        Resolution order:
+        1. directory = $caller_dir  AND  branch = $current_branch  (project-branch-scoped)
+        2. directory = $caller_dir  AND  branch IS NONE            (project-canonical)
+        3. directory = 'global'     AND  branch IS NONE            (global fallback)
+        4. Returns None if not found.
+
+        When caller_directory is None (legacy / no caller context), falls back to
+        the old 3-step branch-only resolution via get_wiki_page_by_slug_and_branch.
+
+        DP-3: trailing slash stripped from caller_directory before comparison.
+        """
+        if caller_directory is None:
+            # Legacy fallback — no directory context supplied.
+            return self.get_wiki_page_by_slug_and_branch(slug, current_branch, None)
+
+        caller_dir = caller_directory.rstrip("/")
+
+        # Step 1: project-branch-scoped (directory + current branch)
+        if current_branch is not None:
+            rows = self._q(
+                "SELECT * FROM wiki_page WHERE slug = $slug "
+                "AND directory_context = $dir AND branch = $branch LIMIT 1",
+                {"slug": slug, "dir": caller_dir, "branch": current_branch},
+            )
+            if rows:
+                return self._row_to_dict(rows[0])
+
+        # Step 2: project-canonical (directory + branch IS NULL)
+        rows = self._q(
+            "SELECT * FROM wiki_page WHERE slug = $slug "
+            "AND directory_context = $dir AND branch IS NONE LIMIT 1",
+            {"slug": slug, "dir": caller_dir},
+        )
+        if rows:
+            return self._row_to_dict(rows[0])
+
+        # Step 3: global fallback (directory='global' + branch IS NULL)
+        rows = self._q(
+            "SELECT * FROM wiki_page WHERE slug = $slug "
+            "AND directory_context = 'global' AND branch IS NONE LIMIT 1",
+            {"slug": slug},
+        )
+        return self._row_to_dict(rows[0]) if rows else None
+
     @trace_span("storage.wiki.delete_wiki_page")
     def delete_wiki_page(self, page_id: int) -> bool:
         """Delete a wiki page by ID. Return True if deleted."""
@@ -330,8 +387,14 @@ class _WikiMixin:
         category: str | None = None,
         slug_prefix: str | None = None,
         limit: int | None = None,
+        directory: str | None = None,
     ) -> list[dict]:
-        """List wiki pages, optionally filtered and limited at the DB layer."""
+        """List wiki pages, optionally filtered and limited at the DB layer.
+
+        v5.42.5: when directory is supplied, scope to that directory + 'global'.
+        When absent (legacy call), return all pages (backward-compat; WARNING logged
+        at MCP layer). DP-3: trailing slash stripped.
+        """
         conditions: list[str] = []
         params: dict = {}
 
@@ -342,6 +405,11 @@ class _WikiMixin:
         if slug_prefix:
             conditions.append("string::starts_with(slug, $slug_prefix)")
             params["slug_prefix"] = slug_prefix
+
+        if directory is not None:
+            caller_dir = directory.rstrip("/")
+            conditions.append("(directory_context = $dir OR directory_context = 'global')")
+            params["dir"] = caller_dir
 
         where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         limit_clause = "LIMIT $lim" if (limit is not None and limit > 0) else ""

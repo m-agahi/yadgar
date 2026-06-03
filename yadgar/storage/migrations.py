@@ -473,6 +473,125 @@ def _migration_015_wiki_draft_branch(storage) -> None:
     _log.info("migration_015: added branch column to wiki_draft (option<string>)")
 
 
+# ── tag sets for migration_016 backfill heuristic ────────────────────────────
+_AWS_TAGS: frozenset[str] = frozenset(
+    {"s3", "iam", "lambda", "sns", "sqs", "cloudfront", "route53", "rds", "ec2", "dynamodb", "aws"}
+)
+
+
+def _migration_016_directory_context(storage) -> None:  # noqa: C901
+    """Add directory_context NOT NULL to wiki_page + memory (v5.42.5).
+
+    Phase A — backfill wiki_page rows (tag-based heuristic):
+      - tag contains 'yadgar' → /home/max/git/yadgar
+      - tag contains aws/cloud infra terms → /home/max/git/aws-work
+      - otherwise → 'global'
+    Backfill runs BEFORE the schema constraint so existing rows remain readable.
+
+    Phase B — define schema constraint for wiki_page (NOT NULL, len > 0).
+    Phase C — add index on wiki_page.directory_context.
+
+    Phase D — backfill memory rows (NULL / empty '' → 'global').
+              Preserves 'system' and existing non-empty values.
+    Phase E — define schema constraint for memory.directory_context.
+
+    Phase F — add directory_context (option<string>) to wiki_draft for future use.
+
+    DP-2 (open design point): directory values are not validated against disk
+    — arbitrary non-empty strings accepted (including deleted-repo archaeology).
+    DP-3: trailing slashes normalised at write time (rstrip("/")); no symlink
+    resolution; no case-folding.
+
+    Idempotent: DEFINE FIELD IF NOT EXISTS is safe to re-run.
+    """
+    # Phase A: backfill wiki_page rows that have no directory_context yet
+    rows = storage._q("SELECT id, tags FROM wiki_page WHERE directory_context IS NONE")
+    backfilled = 0
+    for row in rows:
+        tags = set(row.get("tags") or [])
+        try:
+            if "yadgar" in tags:
+                dc = "/home/max/git/yadgar"
+            elif tags & _AWS_TAGS:
+                dc = "/home/max/git/aws-work"
+            else:
+                dc = "global"
+            storage._q(
+                "UPDATE type::record('wiki_page', $id) SET directory_context = $dc",
+                {"id": row["id"], "dc": dc},
+            )
+            backfilled += 1
+        except Exception as _e:
+            _log.warning(
+                "migration_016: backfill failed for wiki_page id=%s (%s) — defaulting to 'global'",
+                row.get("id"),
+                _e,
+            )
+            try:
+                storage._q(
+                    "UPDATE type::record('wiki_page', $id) SET directory_context = 'global'",
+                    {"id": row["id"]},
+                )
+                backfilled += 1
+            except Exception as _e2:
+                _log.error(
+                    "migration_016: fallback backfill also failed for id=%s: %s",
+                    row.get("id"),
+                    _e2,
+                )
+    _log.info("migration_016: backfilled %d wiki_page rows with directory_context", backfilled)
+
+    # Phase B: define wiki_page.directory_context schema constraint (NOT NULL)
+    storage._q(
+        "DEFINE FIELD IF NOT EXISTS directory_context ON TABLE wiki_page TYPE string "
+        "ASSERT $value != NONE AND string::len($value) > 0;"
+    )
+
+    # Phase C: add index for wiki_page.directory_context
+    storage._q(
+        "DEFINE INDEX IF NOT EXISTS wiki_page_directory_context_idx "
+        "ON TABLE wiki_page FIELDS directory_context;"
+    )
+
+    # Phase D: backfill memory rows with empty/None directory_context
+    mem_rows = storage._q(
+        "SELECT id FROM memory WHERE directory_context IS NONE OR directory_context = ''"
+    )
+    mem_backfilled = 0
+    for row in mem_rows:
+        try:
+            storage._q(
+                "UPDATE type::record('memory', $id) SET directory_context = 'global'",
+                {"id": row["id"]},
+            )
+            mem_backfilled += 1
+        except Exception as _e:
+            _log.warning(
+                "migration_016: memory backfill failed for id=%s: %s",
+                row.get("id"),
+                _e,
+            )
+    _log.info(
+        "migration_016: backfilled %d memory rows with directory_context='global'", mem_backfilled
+    )
+
+    # Phase E: define memory.directory_context schema constraint (NOT NULL)
+    storage._q(
+        "DEFINE FIELD IF NOT EXISTS directory_context ON TABLE memory TYPE string "
+        "ASSERT $value != NONE AND string::len($value) > 0;"
+    )
+
+    # Phase F: add directory_context to wiki_draft (option<string> — nullable for
+    # legacy rows; explicit backward-compat path). NOT NULL deferred to v5.43+.
+    storage._q(
+        "DEFINE FIELD IF NOT EXISTS directory_context ON TABLE wiki_draft TYPE option<string>;"
+    )
+
+    _log.info(
+        "migration_016: directory_context schema constraints applied to wiki_page + memory + wiki_draft"
+    )
+
+
 _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {"version": "001_hnsw_indexes", "fn": _migration_001_hnsw_indexes},
     {"version": "002_relationship_indexes", "fn": _migration_002_relationship_indexes},
@@ -524,6 +643,10 @@ _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {
         "version": "015_wiki_draft_branch",
         "fn": _migration_015_wiki_draft_branch,
+    },
+    {
+        "version": "016_directory_context",
+        "fn": _migration_016_directory_context,
     },
 ]
 

@@ -23,6 +23,8 @@ import pytest
 
 from yadgar import server
 
+_TEST_DIR = "/home/max/git/yadgar"
+
 # ── fixtures ──────────────────────────────────────────────────────────────────
 
 
@@ -104,6 +106,8 @@ def _insert_roadmap_wiki(updated_at_ts: float) -> None:
         confidence="high",
         source_memory_ids=[],
         wait=True,
+        branch_hint="feat/test-branch",
+        directory=_TEST_DIR,
     )
     # Patch updated_at directly in storage to simulate wiki being refreshed at updated_at_ts
     from yadgar.server.lifecycle import _get_storage

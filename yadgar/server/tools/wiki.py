@@ -25,17 +25,26 @@ def _wiki_add_sync_write(
     branch: str | None,
     append: bool,
     replace_slug: str | None,
+    directory_context: str | None = None,
 ) -> dict:
     """Execute the sync wiki_add write path (QueueDrainer or fallback).
 
     Handles replace_slug overwrite, append merge, and normal upsert.
+    v5.42.5: directory_context threaded through to WikiStore.add().
     """
     # replace_slug: overwrite a named existing page (gate already bypassed)
     if replace_slug is not None:
         existing = _st._wiki._storage.get_wiki_page_by_slug(replace_slug)
         if existing is not None:
             result = _st._wiki.add(
-                title, content, category, tags or [], source_memory_ids, confidence, branch=branch
+                title,
+                content,
+                category,
+                tags or [],
+                source_memory_ids,
+                confidence,
+                branch=branch,
+                directory_context=directory_context,
             )
             result.pop("embedding", None)
             _push_event(
@@ -58,7 +67,14 @@ def _wiki_add_sync_write(
         result = _st._wiki.ingest(content, title, tags, source_memory_ids)
     else:
         result = _st._wiki.add(
-            title, content, category, tags or [], source_memory_ids, confidence, branch=branch
+            title,
+            content,
+            category,
+            tags or [],
+            source_memory_ids,
+            confidence,
+            branch=branch,
+            directory_context=directory_context,
         )
     result.pop("embedding", None)
     event_type = "wiki_updated" if result.get("_merged") else "wiki_added"
@@ -91,6 +107,7 @@ def _wiki_add_wait_path(
     replace_slug: str | None,
     new_slug: str,
     force: bool = False,
+    directory_context: str | None = None,
 ) -> dict:
     """Handle wiki_add(wait=True): enqueue + wait_for_job to preserve FIFO ordering.
 
@@ -123,6 +140,7 @@ def _wiki_add_wait_path(
             branch,
             append,
             replace_slug,
+            directory_context=directory_context,
         )
         result["stored"] = True
         result["queued"] = False
@@ -147,6 +165,7 @@ def _wiki_add_wait_path(
                 "branch": branch,
                 "force": force,
                 "replace_slug": replace_slug,
+                "directory_context": directory_context,
             },
         )
     except Exception as fq_exc:
@@ -161,6 +180,7 @@ def _wiki_add_wait_path(
             branch,
             append,
             replace_slug,
+            directory_context=directory_context,
         )
         result["stored"] = True
         result["queued"] = False
@@ -280,6 +300,7 @@ def wiki_add(
     force: bool = False,
     replace_slug: str | None = None,
     wait: bool = False,
+    directory: str | None = None,
 ) -> dict:
     """Create or update a wiki page. Content can include [[slug]] cross-references.
 
@@ -366,6 +387,24 @@ def wiki_add(
             "op_type": "wiki_add",
         }
 
+    # v5.42.5: directory validation — reject empty/whitespace at MCP boundary.
+    # is_draining() path is exempt (drainer validates at its own boundary).
+    _effective_dir: str | None = (directory or "").strip() or None
+    if not _effective_dir and not is_draining():
+        return {
+            "error": "missing_directory",
+            "stored": False,
+            "message": (
+                "directory required and must be non-empty. "
+                "Pass the absolute project path or 'global'."
+            ),
+            "field": "directory",
+            "op_type": "wiki_add",
+        }
+    # DP-3: strip trailing slash (preserve "global" sentinel as-is)
+    if _effective_dir and _effective_dir != "global":
+        _effective_dir = _effective_dir.rstrip("/") or _effective_dir
+
     # v5.39.0 slug generation (O(1), needed for enqueue payload and wait path).
     import re as _re_slug  # noqa: PLC0415
 
@@ -391,6 +430,7 @@ def wiki_add(
             branch,
             append,
             replace_slug,
+            directory_context=_effective_dir,
         )
 
     # wait=True: enqueue first (preserves FIFO), then block until drainer commits.
@@ -409,6 +449,7 @@ def wiki_add(
             replace_slug,
             _new_slug,
             force=force,
+            directory_context=_effective_dir,
         )
 
     # Async path (wait=False default): enqueue and return immediately.
@@ -431,6 +472,7 @@ def wiki_add(
                 # v5.41.5: pass bypass flags so drainer can skip gate for these paths
                 "force": force,
                 "replace_slug": replace_slug,
+                "directory_context": _effective_dir,
             },
         )
         return {
@@ -445,7 +487,16 @@ def wiki_add(
 
     # Queue fallback sync path
     return _wiki_add_sync_write(
-        title, content, category, tags, source_memory_ids, confidence, branch, append, replace_slug
+        title,
+        content,
+        category,
+        tags,
+        source_memory_ids,
+        confidence,
+        branch,
+        append,
+        replace_slug,
+        directory_context=_effective_dir,
     )
 
 
@@ -521,18 +572,21 @@ def wiki_query(
 
 
 @_tool(power=True)
-def wiki_read(slug: str) -> dict:
+def wiki_read(slug: str, directory: str | None = None) -> dict:
     """Read a specific wiki page by slug.
 
-    §25 Resolution order:
-    1. Exact slug match on current branch.
-    2. Exact slug match on default branch.
-    3. Exact slug match with branch IS NONE (legacy/canonical).
+    §25 Resolution order (v5.42.5 — directory-aware):
+    1. directory=$caller_dir AND branch=$current_branch  (project-branch-scoped)
+    2. directory=$caller_dir AND branch IS NULL           (project-canonical)
+    3. directory='global'    AND branch IS NULL           (global fallback)
     4. Not found → error dict.
+
+    When directory is not supplied, falls back to legacy branch-only resolution
+    (backward-compat mode; WARNING logged).
     """
     assert _st._wiki is not None, "WikiStore not initialized"
 
-    # Detect current and default branch for resolution order.
+    # Detect current branch for resolution order.
     # Look up via yadgar.server so monkeypatches on "yadgar.server._detect_branch" etc. apply.
     try:
         import sys as _sys  # noqa: PLC0415
@@ -552,7 +606,19 @@ def wiki_read(slug: str) -> dict:
         _current_branch = None
         _default_branch = None  # v5.42.4: canonical slot
 
-    page = _st._wiki.read_by_branch(slug, _current_branch, _default_branch)
+    if directory is not None:
+        # v5.42.5: 4-step directory-aware resolution
+        caller_dir = directory.strip().rstrip("/") or None
+        page = _st._wiki.read_by_directory_branch(slug, caller_dir, _current_branch)
+    else:
+        # Legacy fallback — no directory supplied; backward-compat mode.
+        logger.warning(
+            "wiki_read('%s'): no directory supplied — using legacy branch-only resolution. "
+            "Pass directory= for project-scoped results (v5.42.5).",
+            slug,
+        )
+        page = _st._wiki.read_by_branch(slug, _current_branch, _default_branch)
+
     if page is None:
         return {"error": f"Wiki page '{slug}' not found"}
     page.pop("embedding", None)
@@ -579,15 +645,31 @@ def wiki_list(
     category: str | None = None,
     limit: int = 100,
     slug_prefix: str | None = None,
+    directory: str | None = None,
 ) -> list[dict]:
     """List wiki pages by metadata only (no content). Use wiki_read(slug) for full content.
 
     Categories: architecture, decision, pattern, debugging, reference, convention, fact, analysis.
+
+    v5.42.5: when directory is supplied, results are scoped to that directory + 'global'.
+    When absent (legacy call pattern), all pages are returned with a WARNING.
     """
     assert _st._wiki is not None, "WikiStore not initialized"
-    # Push LIMIT, category, and slug_prefix filters to the DB layer
+
+    if directory is None:
+        logger.warning(
+            "wiki_list: no directory supplied — returning all pages (backward-compat mode). "
+            "Pass directory= for project-scoped results (v5.42.5)."
+        )
+
+    # Push LIMIT, category, slug_prefix, and directory filters to the DB layer
     db_limit = limit if (limit is not None and limit > 0) else None
-    pages = _st._wiki.list_pages(category=category, slug_prefix=slug_prefix, limit=db_limit)
+    pages = _st._wiki.list_pages(
+        category=category,
+        slug_prefix=slug_prefix,
+        limit=db_limit,
+        directory=directory,
+    )
     out = []
     for p in pages:
         out.append(
@@ -690,6 +772,7 @@ def wiki_check_duplicate(  # secret-gate: skip — read-only dry-run, never writ
     branch: str | None = None,
     threshold: float | None = None,
     top_k: int = 5,
+    directory: str | None = None,
 ) -> dict:
     """Dry-run similarity check: returns candidate duplicate pages without writing anything.
 
@@ -756,12 +839,24 @@ def wiki_check_duplicate(  # secret-gate: skip — read-only dry-run, never writ
 # ── v5.41.0: Versioning + section-patching tools ──────────────────────────────
 
 
-def _resolve_page_id_by_slug(slug: str) -> tuple[int | None, dict | None]:
-    """Branch-resolve slug → page dict. Returns (page_id, page) or (None, None)."""
+def _resolve_page_id_by_slug(
+    slug: str,
+    directory: str | None = None,
+    branch_hint: str | None = None,
+) -> tuple[int | None, dict | None]:
+    """Directory+branch-resolve slug → page dict. Returns (page_id, page) or (None, None).
+
+    v5.42.5 (F1 fix): accepts directory + branch_hint from caller so resolution uses
+    caller context instead of daemon os.getcwd(). When directory is None, falls back
+    to legacy branch-only resolution (backward-compat).
+    """
     assert _st._wiki is not None, "WikiStore not initialized"
     try:
         import sys as _sys  # noqa: PLC0415
 
+        # Use caller-supplied branch_hint if available; otherwise detect from daemon CWD.
+        # With directory supplied (v5.42.5), daemon CWD is irrelevant for branch detection
+        # but we still resolve it as a secondary signal.
         _cwd = os.getcwd()
         _srv = _sys.modules.get("yadgar.server")
         _detect_branch = getattr(_srv, "_detect_branch", None) if _srv else None
@@ -771,20 +866,26 @@ def _resolve_page_id_by_slug(slug: str) -> tuple[int | None, dict | None]:
                 _detect_branch,
                 _get_default_branch,
             )
-        current_branch = _detect_branch(_cwd)
+        current_branch = branch_hint or _detect_branch(_cwd)
         default_branch = _get_default_branch(_cwd)
     except Exception:
-        current_branch = None
+        current_branch = branch_hint
         default_branch = None  # v5.42.4: canonical slot
 
-    page = _st._wiki.read_by_branch(slug, current_branch, default_branch)
+    if directory is not None:
+        # v5.42.5: use directory-aware 4-step resolution
+        page = _st._wiki.read_by_directory_branch(slug, directory, current_branch)
+    else:
+        page = _st._wiki.read_by_branch(slug, current_branch, default_branch)
     if page is None:
         return None, None
     return page.get("id"), page
 
 
 @_tool()
-def wiki_history(slug: str, limit: int = 20) -> dict:
+def wiki_history(
+    slug: str, limit: int = 20, directory: str | None = None, branch_hint: str | None = None
+) -> dict:
     """List version history for a wiki page, newest first.
 
     Returns metadata for each version (no content — use wiki_read_version for that).
@@ -799,9 +900,11 @@ def wiki_history(slug: str, limit: int = 20) -> dict:
     Args:
         slug: Wiki page slug.
         limit: Max versions to return (default 20).
+        directory: Caller directory for §25 resolution (v5.42.5 F1 fix).
+        branch_hint: Caller branch for §25 resolution (v5.42.5 F1 fix).
     """
     assert _st._wiki is not None, "WikiStore not initialized"
-    page_id, page = _resolve_page_id_by_slug(slug)
+    page_id, page = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
     if page_id is None:
         return {"error": f"Wiki page '{slug}' not found"}
     versions = _st._wiki.history(page_id, limit=limit)
@@ -810,12 +913,16 @@ def wiki_history(slug: str, limit: int = 20) -> dict:
 
 
 @_tool()
-def wiki_read_version(slug: str, version: int) -> dict:
+def wiki_read_version(
+    slug: str, version: int, directory: str | None = None, branch_hint: str | None = None
+) -> dict:
     """Read a specific historical version of a wiki page (full content + snapshot fields).
 
     Args:
         slug: Wiki page slug.
         version: Version number (1-based; use wiki_history to find version numbers).
+        directory: Caller directory for §25 resolution (v5.42.5 F1 fix).
+        branch_hint: Caller branch for §25 resolution (v5.42.5 F1 fix).
 
     Returns the full snapshot including: version, title, content, category, tags,
     confidence, source_memory_ids, branch, change_summary, created_at.
@@ -823,7 +930,7 @@ def wiki_read_version(slug: str, version: int) -> dict:
     Error: {"error": "...", "max_version": N} if version not found.
     """
     assert _st._wiki is not None, "WikiStore not initialized"
-    page_id, _ = _resolve_page_id_by_slug(slug)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
     if page_id is None:
         return {"error": f"Wiki page '{slug}' not found"}
     result = _st._wiki.read_version(page_id, version)
@@ -832,7 +939,14 @@ def wiki_read_version(slug: str, version: int) -> dict:
 
 
 @_tool()
-def wiki_diff(slug: str, v1: int, v2: int, fmt: str = "unified") -> dict:
+def wiki_diff(
+    slug: str,
+    v1: int,
+    v2: int,
+    fmt: str = "unified",
+    directory: str | None = None,
+    branch_hint: str | None = None,
+) -> dict:
     """Diff two versions of a wiki page.
 
     Args:
@@ -840,13 +954,15 @@ def wiki_diff(slug: str, v1: int, v2: int, fmt: str = "unified") -> dict:
         v1: First (older) version number.
         v2: Second (newer) version number.
         fmt: "unified" (default, human-readable text diff) or "json" (structured).
+        directory: Caller directory for §25 resolution (v5.42.5 F1 fix).
+        branch_hint: Caller branch for §25 resolution (v5.42.5 F1 fix).
 
     unified format returns: {"diff": "<unified diff text>", "v1": N, "v2": M, ...}
     json format returns: {"hunks": [...], "added_lines": N, "removed_lines": M,
                           "sections_changed": [...], ...}
     """
     assert _st._wiki is not None, "WikiStore not initialized"
-    page_id, _ = _resolve_page_id_by_slug(slug)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
     if page_id is None:
         return {"error": f"Wiki page '{slug}' not found"}
     result = _st._wiki.diff(page_id, v1, v2, fmt=fmt)
@@ -855,7 +971,13 @@ def wiki_diff(slug: str, v1: int, v2: int, fmt: str = "unified") -> dict:
 
 
 @_tool(power=True)
-def wiki_restore(slug: str, version: int, wait: bool = False) -> dict:
+def wiki_restore(
+    slug: str,
+    version: int,
+    wait: bool = False,
+    directory: str | None = None,
+    branch_hint: str | None = None,
+) -> dict:
     """Restore a wiki page to a previous version by creating a new version.
 
     Creates a NEW version (N+1) whose content matches the specified historical version.
@@ -878,11 +1000,13 @@ def wiki_restore(slug: str, version: int, wait: bool = False) -> dict:
         version: Version number to restore from (use wiki_history to list).
         wait: Accepted for API symmetry with wiki_add. This tool writes
             synchronously (no queue) — wait=True is a no-op.
+        directory: Caller directory for §25 resolution (v5.42.5 F1 fix).
+        branch_hint: Caller branch for §25 resolution (v5.42.5 F1 fix).
 
     Returns: {"page_id": N, "restored_from_version": V, "new_version": N+1, "note": "..."}
     """
     assert _st._wiki is not None, "WikiStore not initialized"
-    page_id, _ = _resolve_page_id_by_slug(slug)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
     if page_id is None:
         return {"error": f"Wiki page '{slug}' not found"}
     result = _st._wiki.restore_version(page_id, version)
@@ -897,6 +1021,8 @@ def wiki_append_section(
     content: str,
     position: str = "end_of_section",
     wait: bool = False,
+    directory: str | None = None,
+    branch_hint: str | None = None,
 ) -> dict:
     """Section-atomic wiki write: patch a specific section without replacing entire content.
 
@@ -933,7 +1059,7 @@ def wiki_append_section(
     if _gate is not None:
         return _gate
 
-    page_id, _ = _resolve_page_id_by_slug(slug)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
     if page_id is None:
         return {"error": f"Wiki page '{slug}' not found"}
 

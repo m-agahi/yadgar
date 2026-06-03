@@ -29,6 +29,8 @@ from yadgar import server
 from yadgar.server.tools.wiki import wiki_append_section, wiki_history, wiki_restore
 from yadgar.storage.migrations import _migration_013_wiki_page_version
 
+_TEST_DIR = "/home/max/git/yadgar"
+
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 
@@ -73,7 +75,13 @@ class TestWaitFalseDefault:
     def test_wait_false_default_returns_immediately(self):
         """wiki_add with default wait=False returns queued=True without blocking."""
         title = _make_unique_title("Async Default Page")
-        result = server.wiki_add(title=title, content="content", tags=["test"])
+        result = server.wiki_add(
+            title=title,
+            content="content",
+            tags=["test"],
+            branch_hint="feat/test-branch",
+            directory=_TEST_DIR,
+        )
         assert result.get("stored") is True
         assert result.get("queued") is True
         # Default: no committed field or committed=False
@@ -82,7 +90,14 @@ class TestWaitFalseDefault:
     def test_wait_false_explicit_returns_immediately(self):
         """wiki_add(wait=False) explicit — same async behavior."""
         title = _make_unique_title("Async Explicit Page")
-        result = server.wiki_add(title=title, content="content", wait=False, tags=["test2"])
+        result = server.wiki_add(
+            title=title,
+            content="content",
+            wait=False,
+            tags=["test2"],
+            branch_hint="feat/test-branch",
+            directory=_TEST_DIR,
+        )
         assert result.get("stored") is True
         assert result.get("queued") is True
         assert not result.get("committed", False)
@@ -96,7 +111,14 @@ class TestWaitTrueBlocking:
         """wiki_add(wait=True) — wiki_history shows new version immediately after return."""
         _apply_migration()
         title = _make_unique_title("Wait True Page")
-        result = server.wiki_add(title=title, content="version one", wait=True, tags=["waitflag"])
+        result = server.wiki_add(
+            title=title,
+            content="version one",
+            wait=True,
+            tags=["waitflag"],
+            branch_hint="feat/test-branch",
+            directory=_TEST_DIR,
+        )
         # Must be committed (not just queued)
         assert result.get("stored") is True
         assert result.get("committed") is True
@@ -104,7 +126,7 @@ class TestWaitTrueBlocking:
 
         slug = result.get("slug")
         assert slug is not None
-        history = wiki_history(slug=slug)
+        history = wiki_history(slug=slug, directory=_TEST_DIR, branch_hint="feat/test-branch")
         assert "error" not in history, f"wiki_history error: {history}"
         assert history.get("total_versions", 0) >= 1, (
             "wait=True should ensure at least 1 version is visible without sleep"
@@ -214,6 +236,8 @@ class TestWaitTimeout:
                     content="timeout test",
                     wait=True,
                     tags=["timeout-test"],
+                    branch_hint="feat/test-branch",
+                    directory=_TEST_DIR,
                 )
         elapsed = time.perf_counter() - t0
 
@@ -240,7 +264,13 @@ class TestWaitFalsePerf:
 
         # Warm up
         title0 = _make_unique_title("Warmup Page")
-        server.wiki_add(title=title0, content="warmup", tags=["warmup"])
+        server.wiki_add(
+            title=title0,
+            content="warmup",
+            tags=["warmup"],
+            branch_hint="feat/test-branch",
+            directory=_TEST_DIR,
+        )
 
         # Mock enqueue to avoid disk I/O for pure latency measurement
         original_enqueue = FileQueue.enqueue
@@ -258,7 +288,13 @@ class TestWaitFalsePerf:
             for _ in range(5):
                 title = _make_unique_title("Perf Test Page")
                 t0 = time.perf_counter()
-                server.wiki_add(title=title, content="perf test", tags=["perf"])
+                server.wiki_add(
+                    title=title,
+                    content="perf test",
+                    tags=["perf"],
+                    branch_hint="feat/test-branch",
+                    directory=_TEST_DIR,
+                )
                 elapsed_ms = (time.perf_counter() - t0) * 1000
                 samples.append(elapsed_ms)
 
@@ -278,12 +314,24 @@ class TestWaitComposesWithOtherParams:
         _apply_migration()
         title = _make_unique_title("Force Wait Page")
         # First write
-        r1 = server.wiki_add(title=title, content="first write", tags=["force-wait"])
+        r1 = server.wiki_add(
+            title=title,
+            content="first write",
+            tags=["force-wait"],
+            branch_hint="feat/test-branch",
+            directory=_TEST_DIR,
+        )
         assert r1.get("stored") is True
 
         # Second write with same/similar title — use force=True to bypass sim gate
         r2 = server.wiki_add(
-            title=title, content="second write", wait=True, force=True, tags=["force-wait"]
+            title=title,
+            content="second write",
+            wait=True,
+            force=True,
+            tags=["force-wait"],
+            branch_hint="feat/test-branch",
+            directory=_TEST_DIR,
         )
         assert r2.get("stored") is True
         assert r2.get("committed") is True
@@ -295,7 +343,14 @@ class TestWaitComposesWithOtherParams:
         slug = title.lower().replace(" ", "-")[:64]
 
         # Pre-create page
-        server.wiki_add(title=title, content="original", wait=True, tags=["replace-wait"])
+        server.wiki_add(
+            title=title,
+            content="original",
+            wait=True,
+            tags=["replace-wait"],
+            branch_hint="feat/test-branch",
+            directory=_TEST_DIR,
+        )
 
         # Overwrite via replace_slug
         result = server.wiki_add(
@@ -304,6 +359,8 @@ class TestWaitComposesWithOtherParams:
             wait=True,
             replace_slug=slug,
             tags=["replace-wait"],
+            branch_hint="feat/test-branch",
+            directory=_TEST_DIR,
         )
         assert result.get("stored") is True
         assert result.get("committed") is True

@@ -60,7 +60,10 @@ class TestDispatchHelperAgentPrompt:
         from yadgar.server.tools.dispatch_helper import agent_dispatch_prelude
 
         agent_prompt_save(
-            "dispatch-fix-bug", "Focus on root cause. Check test suite.", storage=storage
+            "dispatch-fix-bug",
+            "Focus on root cause. Check test suite.",
+            storage=storage,
+            directory="global",
         )
 
         prelude = agent_dispatch_prelude("dispatch-fix-bug", "fix the thing", storage=storage)
@@ -70,8 +73,12 @@ class TestDispatchHelperAgentPrompt:
         from yadgar.server.tools.agent_prompts import agent_prompt_save
         from yadgar.server.tools.dispatch_helper import agent_dispatch_prelude
 
-        agent_prompt_save("dispatch-review", "Review carefully.", storage=storage)
-        agent_prompt_save("dispatch-review", "Review even more carefully.", storage=storage)
+        agent_prompt_save(
+            "dispatch-review", "Review carefully.", storage=storage, directory="global"
+        )
+        agent_prompt_save(
+            "dispatch-review", "Review even more carefully.", storage=storage, directory="global"
+        )
 
         prelude = agent_dispatch_prelude("dispatch-review", "review task", storage=storage)
         # Should reference v2 (latest)
@@ -121,7 +128,7 @@ class TestDispatchHelperSizeBudget:
 
         # Save a very long agent prompt
         long_content = "x" * 5000
-        agent_prompt_save("long-pattern", long_content, storage=storage)
+        agent_prompt_save("long-pattern", long_content, storage=storage, directory="global")
 
         prelude = agent_dispatch_prelude("long-pattern", "long topic", storage=storage)
         assert len(prelude) <= 2000
