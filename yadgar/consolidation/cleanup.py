@@ -155,6 +155,10 @@ class _CleanupMixin:
                     "is_stale": False,
                     "file_hash": None,
                     "embedding_model": self._embeddings.get_model_name(),
+                    # v5.42.3: _internal carve-out — consolidation writes directly to storage,
+                    # bypassing the file_queue drainer. branch=None is intentional (action-log
+                    # summaries are cross-branch facts; storing in canonical NULL-branch slot).
+                    "branch": None,  # _internal-only: explicit canonical-slot write
                 }
             )
             return 1

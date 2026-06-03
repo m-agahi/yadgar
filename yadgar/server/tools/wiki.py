@@ -351,7 +351,20 @@ def wiki_add(
     # Branch resolution — O(1), no subprocess. See docstring for priority order.
     if not branch and branch_hint:
         branch = branch_hint
-    # If both are falsy (None / ""), branch stays None → canonical NULL slot.
+    # v5.42.3: if both are falsy after resolution, hard-reject at MCP boundary.
+    # Drainer provides defense-in-depth for direct file_queue writes that bypass MCP.
+    # is_draining() path is exempt — drainer has already validated or set _internal=True.
+    if not branch and not is_draining():
+        return {
+            "error": "missing_branch",
+            "stored": False,
+            "message": (
+                "Branch context required. Supply branch=<branch> or branch_hint=<branch-name>. "
+                "Agents should pass branch_hint=$(git branch --show-current) before wiki_add."
+            ),
+            "field": "branch_hint",
+            "op_type": "wiki_add",
+        }
 
     # v5.39.0 slug generation (O(1), needed for enqueue payload and wait path).
     import re as _re_slug  # noqa: PLC0415
@@ -623,12 +636,22 @@ def wiki_approve(slug: str) -> dict:
 
     Moves the draft into the wiki knowledge base with all its metadata,
     then deletes the draft. Fails if no draft with that slug exists.
+
+    v5.42.3: reads branch from draft row (migration 015). If the draft carries
+    a branch value, it is propagated to the wiki page. Legacy NULL-branch drafts
+    (pre-v5.42.3 or explicit canonical-slot drafts) write to the NULL-branch
+    canonical slot — this is now explicit rather than accidental.
     """
     assert _st._wiki is not None, "WikiStore not initialized"
     storage = _get_storage()
     draft = storage.get_wiki_draft_by_slug(slug)
     if draft is None:
         return {"approved": False, "error": f"Draft '{slug}' not found"}
+
+    # v5.42.3: propagate branch from draft to wiki page.
+    # branch=None → canonical slot (backward-compat for legacy drafts).
+    draft_branch: str | None = draft.get("branch")
+
     result = _st._wiki.add(
         title=draft["title"],
         content=draft["content"],
@@ -636,6 +659,7 @@ def wiki_approve(slug: str) -> dict:
         tags=draft.get("tags", []),
         source_memory_ids=draft.get("source_memory_ids", []),
         confidence=draft.get("confidence", "medium"),
+        branch=draft_branch,
     )
     result.pop("embedding", None)
     storage.delete_wiki_draft(slug)

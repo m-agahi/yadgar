@@ -12,7 +12,14 @@ logger = logging.getLogger(__name__)
 
 # v5.42.0: failure_reason taxonomy — failure_reason values treated as "rejections"
 # (i.e. similarity gate, policy rejected). "permanent_error" is the legacy/default.
-_REJECTION_TAXONOMY: frozenset[str] = frozenset({"duplicate_detected", "policy_rejected"})
+# v5.42.3: added "missing_branch" — queue entry lacks branch context.
+_REJECTION_TAXONOMY: frozenset[str] = frozenset(
+    {
+        "duplicate_detected",
+        "policy_rejected",
+        "missing_branch",  # v5.42.3: queue entry lacks branch context
+    }
+)
 
 # Map of filter values to predicate functions on failure_reason.
 # "all" and None: return everything (default behavior).
@@ -103,9 +110,17 @@ _REQUEUE_REJECTION_ERROR = (
     "(3) call dlq_dismiss(filename) to acknowledge and drop this entry."
 )
 
+# v5.42.3: missing_branch rejection error message.
+_REQUEUE_MISSING_BRANCH_ERROR = (
+    "missing_branch rejection — cannot auto-requeue. "
+    "Edit the payload file to add a 'branch' key with the correct branch value, "
+    "then call dlq_requeue(filename, force=True) to retry. "
+    "Or call dlq_dismiss(filename) to drop this entry."
+)
+
 
 @_tool(power=True)
-def dlq_requeue(filename: str) -> dict:
+def dlq_requeue(filename: str, force: bool = False) -> dict:
     """Move a DLQ item back to the queue so it will be retried on the next drain pass.
 
     Call after fixing the root cause of the failure. The item's retry counter is reset.
@@ -116,14 +131,21 @@ def dlq_requeue(filename: str) -> dict:
     - wiki_delete the existing duplicate first, then retry
     - dlq_dismiss(filename) to acknowledge and drop the entry
 
+    v5.42.3: missing_branch entries require operator action before requeue:
+    1. Edit the payload file to add "branch": "<correct-branch>"
+    2. Call dlq_requeue(filename, force=True) to bypass taxonomy blocking
+    Note: force=True bypasses the taxonomy gate ONLY. The drainer still re-validates
+    the payload content — a payload still missing branch after force=True is rejected again.
+
     filename: exact filename from dlq_inspect() (e.g. "0001778139482800_<uuid>.json")
+    force: if True, bypass taxonomy blocking (for missing_branch entries after operator fix)
     """
     import json as _json
 
     # §4: Reject null bytes, Unicode separators, path traversal chars.
     # U+202F NARROW NO-BREAK SPACE, U+200B ZERO WIDTH SPACE,
     # U+2028 LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR
-    _FORBIDDEN_IN_FILENAME = ("/", "\\", "\x00", " ", " ", "​", " ", " ")
+    _FORBIDDEN_IN_FILENAME = ("/", "\\", "\x00", "\u202f", "\u200b", "\u2028", "\u2029")
     if filename.startswith(".") or any(c in filename for c in _FORBIDDEN_IN_FILENAME):
         return {"requeued": False, "error": "Invalid filename — must be a plain filename"}
     fq = _get_file_queue()
@@ -131,12 +153,15 @@ def dlq_requeue(filename: str) -> dict:
     if not src.exists():
         return {"requeued": False, "error": f"Not found in DLQ: {filename}"}
 
-    # v5.42.0: block requeue for rejection taxonomy entries.
+    # v5.42.0 / v5.42.3: block requeue for rejection taxonomy entries unless force=True.
+    # missing_branch entries require operator to add branch to payload before requeuing.
     sidecar = fq.dlq_dir / (filename + ".error.json")
-    if sidecar.exists():
+    if sidecar.exists() and not force:
         try:
             meta = _json.loads(sidecar.read_text())
             failure_reason = meta.get("failure_reason") or "permanent_error"
+            if failure_reason == "missing_branch":
+                return {"requeued": False, "error": _REQUEUE_MISSING_BRANCH_ERROR}
             if failure_reason in _REJECTION_TAXONOMY:
                 return {"requeued": False, "error": _REQUEUE_REJECTION_ERROR}
         except Exception:

@@ -42,13 +42,25 @@ _SENTINEL_MAX_RETRIES = 3
 
 
 def _sentinel_memorize(content: str, directory_context: str) -> None:
-    """Import one sentinel record into memory. Extracted for patching in tests."""
+    """Import one sentinel record into memory. Extracted for patching in tests.
+
+    v5.42.3: passes branch_hint from daemon-side _detect_branch so the sentinel
+    memorize carries branch context. Internal path — daemon has access to cwd git.
+    """
     import yadgar.server as _srv  # noqa: PLC0415
+
+    # v5.42.3: detect branch for internal path; pass as branch_hint  # _internal-only
+    _branch_hint: str | None = None
+    try:
+        _branch_hint = _srv._detect_branch(directory_context)
+    except Exception:
+        pass
 
     result = _srv.memorize(
         content=content,
         context=directory_context,
         tags=["_session_end_sentinel", "session_end"],
+        branch_hint=_branch_hint,
     )
     if not result.get("stored") and not result.get("queued"):
         # Raise so the caller's retry logic triggers
@@ -674,6 +686,15 @@ async def hook_subagent_stop(request: Request) -> JSONResponse:
         stored = 0
         errors = []
 
+        # v5.42.3: detect branch for internal path  # _internal-only
+        _branch_hint: str | None = None
+        try:
+            import yadgar.server as _srv_mod  # noqa: PLC0415
+
+            _branch_hint = _srv_mod._detect_branch(cwd)
+        except Exception:
+            pass
+
         for finding in findings:
             if not isinstance(finding, str) or not finding.strip():
                 continue
@@ -688,6 +709,7 @@ async def hook_subagent_stop(request: Request) -> JSONResponse:
                     tags=tags,
                     is_protected=False,
                     provenance_agent=agent_type,
+                    branch_hint=_branch_hint,
                 )
                 if result.get("stored", True):  # queued=True counts as stored
                     stored += 1
@@ -942,6 +964,15 @@ async def _handle_plan_file(file_path: str, match, storage) -> JSONResponse:
         if _memorize is None:
             from yadgar.server.tools.memorize import memorize as _memorize  # noqa: PLC0415
 
+        # v5.42.3: detect branch for internal path  # _internal-only
+        _plan_branch_hint: str | None = None
+        try:
+            import yadgar.server as _srv_mod2  # noqa: PLC0415
+
+            _plan_branch_hint = _srv_mod2._detect_branch(str(p.parent))
+        except Exception:
+            pass
+
         try:
             result = await _asyncio.to_thread(
                 _memorize,
@@ -949,6 +980,7 @@ async def _handle_plan_file(file_path: str, match, storage) -> JSONResponse:
                 context=str(p.parent),
                 tags=["_plan", "plan-file"],
                 is_protected=False,
+                branch_hint=_plan_branch_hint,
             )
             return JSONResponse(
                 {"status": "ok", "memorized": True, "file": filename, "git_ref": git_ref}
