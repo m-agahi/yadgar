@@ -1,5 +1,73 @@
 # Migration Notes
 
+## v5.42.5 — directory contract (2026-06-03)
+
+Core 5.42.4 → 5.42.5. Backend unchanged at 5.4.0.
+
+### Schema migration
+
+Migration 016 runs automatically on server start. Steps:
+
+1. Backfill `wiki_page.directory_context` for existing rows using tag heuristic:
+   - tag `yadgar` → `/home/max/git/yadgar`
+   - AWS tags (`aws`, `ecr`, `cloudfront`, etc.) → `/home/max/git/aws-work`
+   - else → `"global"`
+2. `DEFINE FIELD directory_context ON wiki_page TYPE string ASSERT $value != NONE AND string::len($value) > 0`
+3. `DEFINE INDEX wiki_page_directory_context_idx ON wiki_page FIELDS directory_context`
+4. Backfill `memory.directory_context` NULL rows → `"global"`
+5. `DEFINE FIELD directory_context ON memory TYPE string ASSERT $value != NONE AND string::len($value) > 0`
+6. `wiki_draft.directory_context` column added (nullable) for draft staging
+
+No manual step required.
+
+### Breaking change — write tools now require directory
+
+`wiki_add`, `block_create`, `block_get`, `block_update`, `block_delete`, `block_replace`, `block_append` (scope='project'), and `agent_prompt_save` now hard-reject at the MCP boundary when `directory` is absent:
+
+```json
+{"error": "missing_directory", "stored": false, "field": "directory", "op_type": "<tool>"}
+```
+
+**Accepted values:** any non-empty string — absolute project path (e.g. `/home/max/git/myproject`) or the literal `"global"` for cross-project content. No disk-existence check is performed (DP-2).
+
+**Normalization:** trailing slash stripped only (DP-3). No symlink resolution, no case folding.
+
+**`is_draining()` carve-out:** drainer replay path and `_internal=True` writes bypass the directory check.
+
+### Hook update requirement
+
+SessionStart hooks and any integration that calls write tools must now pass `directory`:
+
+```bash
+# wiki_add example
+wiki_add(title="...", content="...", branch_hint="$(git branch --show-current)", directory="$(git rev-parse --show-toplevel)")
+```
+
+For global/cross-project content use `directory="global"`.
+
+### §25 4-step resolution (v5.42.5)
+
+When `wiki_read`, `wiki_history`, etc. are called with `directory` and `branch_hint`:
+
+1. `directory=$caller AND branch=$current` — project+branch-scoped page
+2. `directory=$caller AND branch IS NULL` — project canonical page
+3. `directory="global" AND branch IS NULL` — global fallback
+4. Not found
+
+Legacy calls without `directory` return all results + log WARNING (backward-compat mode; will tighten in v5.43+).
+
+### DLQ `missing_directory` entries
+
+`dlq_requeue` passes `missing_directory` entries through normally. To manually replay:
+
+1. `dlq_inspect()` — find the entry id
+2. Edit payload to add `directory_context: "<path>"`
+3. `dlq_requeue(id)`
+
+### DP-4 legacy branch="master" rows
+
+Pre-v5.42.2 rows have `branch="master"` and `directory_context` backfilled to `"global"` or project path. These are still reachable via §25 step 2/3 when querying from the matching directory or `"global"`. No data loss.
+
 ## v5.42.3 — drainer branch enforcement + memory branch_hint parity (2026-06-03)
 
 Core 5.42.2 → 5.42.3. Backend unchanged at 5.4.0.
