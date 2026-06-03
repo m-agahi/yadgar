@@ -455,6 +455,24 @@ def _migration_014_wiki_page_embedding_backfill(storage) -> None:
         _log.info("migration_014: no NULL-embedding wiki_page rows found — nothing to backfill")
 
 
+def _migration_015_wiki_draft_branch(storage) -> None:
+    """Add branch column to wiki_draft table (v5.42.3).
+
+    DDL: DEFINE FIELD IF NOT EXISTS is idempotent — safe to run twice.
+    Backfill: existing rows get branch=None (canonical slot) implicitly since
+    the field is option<string> and absent = NULL in SurrealDB.
+
+    Rationale: wiki_approve previously lost the originating branch — drafts
+    had no branch column so every approval wrote to the NULL-branch canonical
+    slot regardless of the branch context at draft-creation time. Migration 015
+    adds the column; wiki_add draft path now stores branch; wiki_approve reads
+    and propagates it. Legacy NULL-branch drafts use _internal=True carve-out
+    (backward-compat path, now explicit rather than accidental).
+    """
+    storage._q("DEFINE FIELD IF NOT EXISTS branch ON TABLE wiki_draft TYPE option<string>;")
+    _log.info("migration_015: added branch column to wiki_draft (option<string>)")
+
+
 _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {"version": "001_hnsw_indexes", "fn": _migration_001_hnsw_indexes},
     {"version": "002_relationship_indexes", "fn": _migration_002_relationship_indexes},
@@ -502,6 +520,10 @@ _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {
         "version": "014_wiki_page_embedding_backfill",
         "fn": _migration_014_wiki_page_embedding_backfill,
+    },
+    {
+        "version": "015_wiki_draft_branch",
+        "fn": _migration_015_wiki_draft_branch,
     },
 ]
 

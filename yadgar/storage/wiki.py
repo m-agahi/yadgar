@@ -564,25 +564,39 @@ class _WikiMixin:
 
     @trace_span("storage.wiki.insert_wiki_draft")
     def insert_wiki_draft(self, draft: dict) -> int:
-        """Insert a wiki draft. Returns draft ID."""
+        """Insert a wiki draft. Returns draft ID.
+
+        v5.42.3: branch field added (migration 015). Pass branch=<value> to associate
+        the draft with a specific branch context; branch=None (default) for legacy/canonical
+        writes. wiki_approve reads this field and propagates it to the stored wiki page.
+        """
         now = self._now_iso()
         did = self._next_id("wiki_draft")
-        self._q(
-            "CREATE type::record('wiki_draft', $id) SET "
+        branch = draft.get("branch")
+        # v5.42.3: only include branch in SET when non-None.
+        # SurrealDB option<string> requires NONE (omission), not JSON null.
+        draft_set = (
             "title = $title, slug = $slug, content = $content, "
             "category = $category, tags = $tags, confidence = $confidence, "
-            "source_memory_ids = $source_memory_ids, created_at = $created_at",
-            {
-                "id": did,
-                "title": draft.get("title", ""),
-                "slug": draft["slug"],
-                "content": draft.get("content", ""),
-                "category": draft.get("category", "reference"),
-                "tags": draft.get("tags", []),
-                "confidence": draft.get("confidence", "medium"),
-                "source_memory_ids": draft.get("source_memory_ids", []),
-                "created_at": draft.get("created_at", now),
-            },
+            "source_memory_ids = $source_memory_ids, created_at = $created_at"
+        )
+        params: dict = {
+            "id": did,
+            "title": draft.get("title", ""),
+            "slug": draft["slug"],
+            "content": draft.get("content", ""),
+            "category": draft.get("category", "reference"),
+            "tags": draft.get("tags", []),
+            "confidence": draft.get("confidence", "medium"),
+            "source_memory_ids": draft.get("source_memory_ids", []),
+            "created_at": draft.get("created_at", now),
+        }
+        if branch is not None:
+            draft_set += ", branch = $branch"
+            params["branch"] = branch
+        self._q(
+            f"CREATE type::record('wiki_draft', $id) SET {draft_set}",
+            params,
         )
         return did
 
