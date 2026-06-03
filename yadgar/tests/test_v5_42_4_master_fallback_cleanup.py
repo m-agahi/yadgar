@@ -44,6 +44,7 @@ import re
 import pytest
 
 from yadgar import server
+from yadgar.server.tools.wiki import wiki_history as _wiki_history
 
 # ---------------------------------------------------------------------------
 # Shared fixture
@@ -358,7 +359,7 @@ class TestResolvePageIdBySlugNoGitContext:
 
         monkeypatch.setattr(wiki_store, "read_by_branch", _spy_rbr)
 
-        server.wiki_history(slug=slug)
+        _wiki_history(slug=slug)
 
         assert captured_default_branch, "read_by_branch was never called"
         db_used = captured_default_branch[0]
