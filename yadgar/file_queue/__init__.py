@@ -204,9 +204,46 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
                         attempt.last_error = reject_reason
                         attempt.classification = "permanent"
                         attempt.first_failed_at = now
-                        self._move_to_dlq(path, attempt, op_type)
+                        _fm = (
+                            self._build_missing_branch_metadata(data, op_type)
+                            if reject_reason.startswith("missing_branch")
+                            else None
+                        )
+                        _fr = (
+                            "missing_branch"
+                            if reject_reason.startswith("missing_branch")
+                            else "policy_rejected"
+                        )
+                        self._move_to_dlq(
+                            path, attempt, op_type, failure_reason=_fr, failure_metadata=_fm
+                        )
                         self._attempts.pop(fname, None)
                         logger.warning("wiki_add rejected (DLQ): %s — %s", fname, reject_reason)
+                        continue
+
+                # v5.42.3: memory-op branch validation (defense-in-depth, symmetric with wiki)
+                if op_type in self._MEMORY_OP_TYPES:
+                    reject_reason = self._validate_branch_context(data)
+                    if reject_reason:
+                        attempt.count = self._max_permanent
+                        attempt.last_error = reject_reason
+                        attempt.classification = "permanent"
+                        attempt.first_failed_at = now
+                        _fm = self._build_missing_branch_metadata(data, op_type)
+                        self._move_to_dlq(
+                            path,
+                            attempt,
+                            op_type,
+                            failure_reason="missing_branch",
+                            failure_metadata=_fm,
+                        )
+                        self._attempts.pop(fname, None)
+                        logger.warning(
+                            "%s rejected (DLQ, missing_branch): %s — %s",
+                            op_type,
+                            fname,
+                            reject_reason,
+                        )
                         continue
 
                 try:

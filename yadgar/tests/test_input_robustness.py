@@ -1,6 +1,7 @@
 """Robustness tests: Unicode edge cases, volume limits, and response schema contracts."""
 
 import json
+from unittest.mock import patch
 
 import pytest
 from hypothesis import given
@@ -16,7 +17,13 @@ def _engines(tmp_path):
         db_path=str(tmp_path / "robustness.db"),
         embedding_model="all-MiniLM-L6-v2",
     )
-    yield
+    # v5.42.3: /tmp is not a git repo; patch _detect_branch so calls to
+    # memorize/wiki_add without branch_hint don't get rejected.
+    with (
+        patch("yadgar.server.tools.project._detect_branch", return_value="feat/test-branch"),
+        patch("yadgar.server._detect_branch", return_value="feat/test-branch"),
+    ):
+        yield
     server.shutdown()
 
 
@@ -77,6 +84,7 @@ def test_wiki_list_response_bounded_at_scale(flush_queue):
             title=f"Test page {i}",
             content=f"content {i} " * 5,
             category="reference",
+            branch_hint="feat/test-branch",
         )
     flush_queue()
     result = server.wiki_list()
@@ -88,7 +96,11 @@ def test_wiki_list_response_bounded_at_scale(flush_queue):
 
 def test_wiki_list_returns_no_content(flush_queue):
     """wiki_list must never return content field in any item."""
-    server.wiki_add(title="Check page", content="This content should not appear in list")
+    server.wiki_add(
+        title="Check page",
+        content="This content should not appear in list",
+        branch_hint="feat/test-branch",
+    )
     flush_queue()
     result = server.wiki_list()
     for p in result:
@@ -98,7 +110,9 @@ def test_wiki_list_returns_no_content(flush_queue):
 def test_wiki_list_respects_limit(flush_queue):
     """wiki_list limit parameter must cap results."""
     for i in range(20):
-        server.wiki_add(title=f"Limit page {i}", content=f"content {i}")
+        server.wiki_add(
+            title=f"Limit page {i}", content=f"content {i}", branch_hint="feat/test-branch"
+        )
     flush_queue()
     result = server.wiki_list(limit=5)
     assert len(result) <= 5
@@ -106,9 +120,9 @@ def test_wiki_list_respects_limit(flush_queue):
 
 def test_wiki_list_slug_prefix_filter(flush_queue):
     """slug_prefix filters to matching slugs only."""
-    server.wiki_add(title="alpha one", content="content a1")
-    server.wiki_add(title="alpha two", content="content a2")
-    server.wiki_add(title="beta one", content="content b1")
+    server.wiki_add(title="alpha one", content="content a1", branch_hint="feat/test-branch")
+    server.wiki_add(title="alpha two", content="content a2", branch_hint="feat/test-branch")
+    server.wiki_add(title="beta one", content="content b1", branch_hint="feat/test-branch")
     flush_queue()
     result = server.wiki_list(slug_prefix="alpha")
     for p in result:
@@ -118,7 +132,12 @@ def test_wiki_list_slug_prefix_filter(flush_queue):
 def test_wiki_list_negative_limit_returns_all(flush_queue):
     """wiki_list with negative limit must return all pages (no cap)."""
     for i in range(5):
-        server.wiki_add(title=f"Neg limit page {i}", content=f"content neg {i}")
+        server.wiki_add(
+            title=f"Neg limit page {i}",
+            content=f"content neg {i}",
+            branch_hint="feat/test-branch",
+            force=True,
+        )
     flush_queue()
     result = server.wiki_list(limit=-1)
     assert len(result) >= 5, "Negative limit must not truncate results"
@@ -127,7 +146,12 @@ def test_wiki_list_negative_limit_returns_all(flush_queue):
 def test_wiki_list_zero_limit_returns_all(flush_queue):
     """wiki_list with limit=0 must return all pages (no cap)."""
     for i in range(5):
-        server.wiki_add(title=f"Zero limit page {i}", content=f"content zero {i}")
+        server.wiki_add(
+            title=f"Zero limit page {i}",
+            content=f"content zero {i}",
+            branch_hint="feat/test-branch",
+            force=True,
+        )
     flush_queue()
     result = server.wiki_list(limit=0)
     assert len(result) >= 5, "Zero limit must not truncate results"
@@ -136,7 +160,12 @@ def test_wiki_list_zero_limit_returns_all(flush_queue):
 def test_wiki_list_huge_limit_returns_all(flush_queue):
     """wiki_list with limit larger than page count must return all pages."""
     for i in range(5):
-        server.wiki_add(title=f"Huge limit page {i}", content=f"content huge {i}")
+        server.wiki_add(
+            title=f"Huge limit page {i}",
+            content=f"content huge {i}",
+            branch_hint="feat/test-branch",
+            force=True,
+        )
     flush_queue()
     result = server.wiki_list(limit=1_000_000)
     assert len(result) >= 5, "Huge limit must return all pages"

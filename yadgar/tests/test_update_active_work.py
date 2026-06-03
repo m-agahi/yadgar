@@ -1,5 +1,7 @@
 """Tests for §24 update_active_work — _active_work memory pattern."""
 
+from unittest.mock import patch
+
 import pytest
 
 from yadgar import server
@@ -9,7 +11,10 @@ from yadgar import server
 def _engines(tmp_path):
     db_path = str(tmp_path / "test.db")
     server.init_engines(db_path=db_path, embedding_model="all-MiniLM-L6-v2")
-    yield
+    # v5.42.3: /tmp/aw_test is not a git repo; patch _detect_branch so tests
+    # pass branch context without needing every call to supply branch_hint.
+    with patch("yadgar.server.tools.project._detect_branch", return_value="feat/test-branch"):
+        yield
     server.shutdown()
 
 

@@ -374,11 +374,10 @@ class TestMemorizeHardReject:
                 context="/tmp/no-git",
                 tags=["test"],
             )
-        assert result.get("error") == "missing_branch" or result.get("stored") is False, (
+        assert result.get("error") == "missing_branch", (
             f"Expected missing_branch error but got: {result}"
         )
-        if result.get("stored") is False:
-            assert "branch" in result.get("reason", "").lower()
+        assert result.get("stored") is False
 
     def test_memorize_with_branch_hint_passes(self, patched_drainer):
         """memorize with _detect_branch=None but branch_hint supplied → queued."""

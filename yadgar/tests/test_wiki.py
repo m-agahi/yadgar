@@ -374,6 +374,7 @@ class TestRecallIntegration:
             content="Yadgar uses SurrealDB for storage.",
             context="/tmp/test",
             tags=["test"],
+            branch_hint="feat/test-branch",
         )
         flush_queue()
         results = server.recall(query="yadgar architecture", max_results=5)
@@ -386,6 +387,7 @@ class TestRecallIntegration:
             content="A plain memory without any wiki pages related.",
             context="/tmp/test",
             tags=["test"],
+            branch_hint="feat/test-branch",
         )
         flush_queue()
         results = server.recall(query="plain memory", max_results=5)
