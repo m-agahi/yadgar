@@ -6,6 +6,19 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.42.4] — 2026-06-03
+
+Hardcoded `"master"` exception-fallback cleanup. 5 sites previously fell back to `"master"` when `_get_default_branch()` raised — wrong on `main`-default repos and on no-git contexts. All replaced with `None` (canonical slot, reachable via §25 step 3).
+
+- **fix(wiki):** `wiki_query` / `wiki_read` / `wiki_check_duplicate` / `_resolve_page_id_by_slug` default-branch fallback `"master"` → `None`
+- **fix(recall):** same fallback `"master"` → `None`
+- **fix(export):** `v_branch_distribution` view `COALESCE(branch, 'master')` → `COALESCE(branch, '(canonical)')` for display correctness
+- **test:** 6 new RED tests in `test_v5_42_4_master_fallback_cleanup.py` simulating `_get_default_branch` failure; all GREEN post-fix
+
+Deferred: `_get_default_branch_cached` final fallback (project.py:185) — return type cascade to all callers; defer to v5.43+.
+
+---
+
 ## [5.42.3] — 2026-06-03
 
 Drainer branch enforcement + memory write branch_hint parity. All write tools (memorize, anchor, checkpoint, update_active_work, wiki_add) now hard-reject at MCP boundary when branch context is absent. Drainer pre-apply stage validates branch on queued records and routes to DLQ with `missing_branch` reason if absent. `dlq_requeue` blocks `missing_branch` entries without `force=True`.
