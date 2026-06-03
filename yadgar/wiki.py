@@ -233,8 +233,14 @@ class WikiStore:
         source_memory_ids: list[int] | None = None,
         confidence: str = "medium",
         branch: str | None = None,
+        directory_context: str | None = None,
     ) -> dict:
-        """Create or update a wiki page. Upserts by slug."""
+        """Create or update a wiki page. Upserts by slug.
+
+        v5.42.5: directory_context — absolute project path or 'global'.
+        Defaults to 'global' when None (backward-compat for callers that pre-date
+        the directory contract). DP-3: trailing slash stripped.
+        """
         slug = self._slugify(title)
         if category not in self.CATEGORIES:
             category = "reference"
@@ -242,6 +248,8 @@ class WikiStore:
             confidence = "medium"
         tags = tags or []
         source_memory_ids = source_memory_ids or []
+        # v5.42.5: normalise directory (DP-3 — strip trailing slash only)
+        effective_dir = (directory_context or "global").rstrip("/") or "global"
 
         existing = self._storage.get_wiki_page_by_slug(slug)
         now = datetime.now(UTC).isoformat()
@@ -270,6 +278,7 @@ class WikiStore:
                 "links": links,
                 "embedding": embedding,
                 "updated_at": now,
+                "directory_context": effective_dir,
             }
             self._storage.update_wiki_page(existing["id"], updates)
             self._sync_crossrefs(slug, links)
@@ -290,6 +299,7 @@ class WikiStore:
             "embedding": embedding,
             "created_at": now,
             "updated_at": now,
+            "directory_context": effective_dir,
         }
         page_id = self._storage.insert_wiki_page(page, branch=branch)
         page["id"] = page_id
@@ -315,6 +325,25 @@ class WikiStore:
         4. Returns None if not found.
         """
         return self._storage.get_wiki_page_by_slug_and_branch(slug, current_branch, default_branch)
+
+    def read_by_directory_branch(
+        self,
+        slug: str,
+        caller_directory: str | None,
+        current_branch: str | None,
+    ) -> dict | None:
+        """Read a wiki page with §25 4-step directory-aware resolution (v5.42.5).
+
+        1. directory=$caller_dir  AND  branch=$current_branch  (project-branch-scoped)
+        2. directory=$caller_dir  AND  branch IS NULL          (project-canonical)
+        3. directory='global'     AND  branch IS NULL          (global fallback)
+        4. Returns None if not found.
+
+        When caller_directory is None: delegates to read_by_branch (legacy path).
+        """
+        return self._storage.get_wiki_page_by_slug_directory_branch(
+            slug, caller_directory, current_branch
+        )
 
     def _collect_wiki_fts_scores(
         self, query: str, scores: dict[int, float], max_results: int
@@ -429,10 +458,14 @@ class WikiStore:
         category: str | None = None,
         slug_prefix: str | None = None,
         limit: int | None = None,
+        directory: str | None = None,
     ) -> list[dict]:
-        """List wiki pages, optionally filtered by category/slug_prefix and limited."""
+        """List wiki pages, optionally filtered by category/slug_prefix, limited, and directory-scoped.
+
+        v5.42.5: directory filter added. When supplied, scopes to that dir + 'global'.
+        """
         return self._storage.list_wiki_pages(
-            category=category, slug_prefix=slug_prefix, limit=limit
+            category=category, slug_prefix=slug_prefix, limit=limit, directory=directory
         )
 
     def find_similar_wiki_pages(
