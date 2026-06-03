@@ -41,6 +41,8 @@ import pytest
 from yadgar import server
 from yadgar.file_queue import FileQueue
 
+_TEST_DIR = "/home/max/git/yadgar"
+
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 
@@ -144,6 +146,8 @@ def test_wiki_add_handler_p50_within_i9_budget(tmp_path):
                     content="warmup content",
                     tags=["perf-warmup"],
                     wait=False,
+                    branch_hint="feat/test-branch",
+                    directory=_TEST_DIR,
                 )
 
             # Measure 100 calls.
@@ -155,6 +159,8 @@ def test_wiki_add_handler_p50_within_i9_budget(tmp_path):
                     content="MCP handler I9 perf measurement content",
                     tags=["perf"],
                     wait=False,
+                    branch_hint="feat/test-branch",
+                    directory=_TEST_DIR,
                 )
                 latencies_ms.append((time.perf_counter() - t0) * 1000)
 

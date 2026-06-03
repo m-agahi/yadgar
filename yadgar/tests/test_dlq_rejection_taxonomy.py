@@ -207,6 +207,7 @@ class TestDrainerReroutesRejectionToDLQ:
             content=_ROADMAP_CONTENT_B,
             wait=False,
             branch_hint="feat/test-branch",
+            directory="/home/max/git/yadgar",
         )
         assert len(fq.pending()) == 1
 
@@ -243,6 +244,7 @@ class TestDrainerReroutesRejectionToDLQ:
             content=_ROADMAP_CONTENT_B,
             wait=True,
             branch_hint="feat/test-branch",
+            directory="/home/max/git/yadgar",
         )
         # Either committed (gate didn't fire) or rejected
         if result.get("stored") is False:
@@ -274,6 +276,7 @@ class TestDrainerReroutesRejectionToDLQ:
             content=_ROADMAP_CONTENT_B,
             wait=False,
             branch_hint="feat/test-branch",
+            directory="/home/max/git/yadgar",
         )
         drainer.drain_now()
 
@@ -291,6 +294,7 @@ class TestDrainerReroutesRejectionToDLQ:
             force=True,
             wait=False,
             branch_hint="feat/test-branch",
+            directory="/home/max/git/yadgar",
         )
         assert len(fq.pending()) == 1
 

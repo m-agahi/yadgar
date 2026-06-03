@@ -21,6 +21,8 @@ import pytest
 from yadgar import server
 from yadgar.file_queue import FileQueue, QueueDrainer
 
+_TEST_DIR = "/home/max/git/yadgar"
+
 # ---------------------------------------------------------------------------
 # Content fixtures (same as test_wiki_similarity_gate.py)
 # ---------------------------------------------------------------------------
@@ -148,6 +150,7 @@ class TestWaitFalseDeferredPath:
                 content="warmup content",
                 wait=False,
                 branch_hint="feat/test-branch",
+                directory=_TEST_DIR,
             )
 
         t0 = time.perf_counter()
@@ -156,6 +159,7 @@ class TestWaitFalseDeferredPath:
             content="Content for testing the deferred similarity check path.",
             wait=False,
             branch_hint="feat/test-branch",
+            directory=_TEST_DIR,
         )
         elapsed_ms = (time.perf_counter() - t0) * 1000
         assert result.get("queued") is True
@@ -177,6 +181,7 @@ class TestWaitFalseDeferredPath:
             content=_ROADMAP_CONTENT_B,
             wait=False,
             branch_hint="feat/test-branch",
+            directory=_TEST_DIR,
         )
         # Must NOT return sync rejection.
         assert result.get("reason") != "duplicate_detected", (
@@ -207,6 +212,7 @@ class TestWaitTrueSyncRejection:
             content=_ROADMAP_CONTENT_B,
             wait=True,
             branch_hint="feat/test-branch",
+            directory=_TEST_DIR,
         )
         assert r2.get("stored") is False, (
             f"Gate should have blocked near-duplicate via wait=True. Got: {r2}"
@@ -236,6 +242,7 @@ class TestWaitTrueSyncRejection:
 """,
             wait=True,
             branch_hint="feat/test-branch",
+            directory=_TEST_DIR,
         )
         assert r2.get("reason") != "duplicate_detected", (
             f"False positive: distinct page blocked by gate. Got: {r2}"
@@ -262,6 +269,7 @@ class TestDrainerGateBypass:
             force=True,
             wait=True,
             branch_hint="feat/test-branch",
+            directory=_TEST_DIR,
         )
         assert r2.get("reason") != "duplicate_detected", (
             f"force=True should bypass drainer gate. Got: {r2}"
@@ -279,6 +287,7 @@ class TestDrainerGateBypass:
             replace_slug="yadgar-roadmap-future-improvements",
             wait=True,
             branch_hint="feat/test-branch",
+            directory=_TEST_DIR,
         )
         assert r2.get("reason") != "duplicate_detected", (
             f"replace_slug should bypass drainer gate. Got: {r2}"
@@ -295,6 +304,7 @@ class TestDrainerGateBypass:
             append=True,
             wait=True,
             branch_hint="feat/test-branch",
+            directory=_TEST_DIR,
         )
         assert r2.get("reason") != "duplicate_detected", (
             f"append=True should bypass drainer gate. Got: {r2}"
@@ -334,6 +344,7 @@ class TestDrainerRejectionMetric:
             content=_ROADMAP_CONTENT_B,
             wait=True,
             branch_hint="feat/test-branch",
+            directory=_TEST_DIR,
         )
         assert r2.get("reason") == "duplicate_detected"
 
