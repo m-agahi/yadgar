@@ -1,5 +1,44 @@
 # Migration Notes
 
+## v5.42.6 — directory backfill repair + resolution hole fix (2026-06-03)
+
+Core 5.42.5 → 5.42.6. Backend unchanged at 5.4.0.
+
+### Bug fixes (no manual action required)
+
+**Bug 1 — migration 016 backfill missed all existing rows (field-absent IS NONE)**
+
+SurrealDB 3.0.5 `WHERE directory_context IS NONE` matches only explicit-NULL rows, not field-absent rows (rows created before `DEFINE FIELD` ran). All ~200 pre-migration-016 rows had field-absent `directory_context`, so the backfill was silently skipped. Migration 018 re-backfills using a Python-side filter that catches both explicit-NULL and field-absent rows.
+
+Migration 018 runs automatically on server start (no manual step required).
+
+**Bug 2 — wiki_read resolution hole in container deployments**
+
+Daemon-side `_detect_branch(os.getcwd())` returns None inside a container (no `.git` directory). With `_current_branch=None`, §25 step 1 was skipped and only canonical-slot (branch=NULL) rows were reachable. Any post-v5.42.3 write stored with `branch="master"` was unreachable via `wiki_read`.
+
+Fix: `wiki_read` now accepts `branch_hint: str | None = None` (symmetric with `wiki_add`). Pass the known branch when calling from a container context:
+
+```python
+wiki_read(slug, directory="/abs/project/path", branch_hint="master")
+```
+
+**Bug 3 — wiki_update/wiki_append_section/wiki_restore coerce error on legacy rows**
+
+SurrealDB ASSERT constraint fires on every UPDATE touching a row, even when the UPDATE sets the constrained field to a valid value — if the row was field-absent at update time, the coerce check failed before the SET was applied. Migration 018 temporarily relaxes the schema to `option<string>` before the backfill and re-tightens after.
+
+### New operator knobs (I25 three-way registered)
+
+| Env var | Default | Effect when `false` |
+|---|---|---|
+| `YADGAR_DIRECTORY_ENFORCEMENT` | `true` | drainer passes `wiki_add` records missing `directory_context` instead of routing to DLQ |
+| `YADGAR_BRANCH_ENFORCEMENT` | `true` | drainer passes `wiki_add` / `memorize` records missing `branch` instead of routing to DLQ |
+
+When either knob is off: WARN log emitted + `yadgar_writes_with_enforcement_relaxed{enforcement=...}` counter incremented. Default-on — existing behavior unchanged unless explicitly opted out.
+
+Use these as migration escape hatches if legacy callers cannot be updated to supply `directory` or `branch` immediately.
+
+---
+
 ## v5.42.5 — directory contract (2026-06-03)
 
 Core 5.42.4 → 5.42.5. Backend unchanged at 5.4.0.
