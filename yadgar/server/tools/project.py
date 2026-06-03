@@ -1576,7 +1576,7 @@ def _register_active_work_directory(resolved: str) -> None:
 
 
 @_tool(power=True)
-def update_active_work(directory: str, content: str) -> dict:
+def update_active_work(directory: str, content: str, branch_hint: str | None = None) -> dict:
     """Replace this directory's _active_work memory atomically.
 
     Deletes any existing _active_work memory(ies) for the directory,
@@ -1585,12 +1585,38 @@ def update_active_work(directory: str, content: str) -> dict:
     v5.10.1: also writes a marker to ~/.yadgar/active-work-tracked/ so the
     watchdog timer knows which directories to poll.
 
+    v5.42.3: branch_hint added for parity with memorize/anchor/checkpoint.
+    Hard-rejects when branch context cannot be determined and no branch_hint supplied.
+    Resolution order: _detect_branch(directory) → branch_hint → hard-reject.
+
     Returns: {previous_content: str | None, new_memory: dict}
     """
     # v5.10.2: secret gate — scan content before any state mutation
     _gate = gate_or_reject(content)
     if _gate is not None:
         return _gate
+
+    # v5.42.3: branch context validation (MCP boundary).
+    _branch = None
+    try:
+        _branch = _detect_branch(directory)
+    except Exception:
+        pass
+
+    if not _branch and branch_hint:
+        _branch = branch_hint
+
+    if not _branch:
+        return {
+            "error": "missing_branch",
+            "stored": False,
+            "message": (
+                "Branch context required. Supply branch_hint=<current-branch-name> or ensure "
+                "the working directory is a git repo accessible to the yadgar daemon."
+            ),
+            "field": "branch_hint",
+            "op_type": "update_active_work",
+        }
 
     resolved = _resolve_project_root(directory)
     storage = _get_storage()

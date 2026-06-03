@@ -99,11 +99,13 @@ def _drainer_env(tmp_path):
         return real_fq
 
     # Patch _get_file_queue in all the places that hold a direct reference.
+    # v5.42.3: also patch _detect_branch so wiki_add calls without branch_hint work.
     with (
         patch.object(_lc, "_get_file_queue", _get_fq),
         patch("yadgar.server.tools.wiki._get_file_queue", _get_fq),
         patch.object(_state_mod, "_queue_drainer", drainer),
         patch.object(_state_mod, "_file_queue", real_fq),
+        patch("yadgar.server._detect_branch", return_value="feat/test-branch"),
     ):
         yield drainer, real_fq
 
@@ -145,6 +147,7 @@ class TestWaitFalseDeferredPath:
                 title=f"Warmup {uuid.uuid4().hex}",
                 content="warmup content",
                 wait=False,
+                branch_hint="feat/test-branch",
             )
 
         t0 = time.perf_counter()
@@ -152,6 +155,7 @@ class TestWaitFalseDeferredPath:
             title=f"Deferred Path Test {uuid.uuid4().hex}",
             content="Content for testing the deferred similarity check path.",
             wait=False,
+            branch_hint="feat/test-branch",
         )
         elapsed_ms = (time.perf_counter() - t0) * 1000
         assert result.get("queued") is True
@@ -172,6 +176,7 @@ class TestWaitFalseDeferredPath:
             title="Yadgar Future Roadmap",
             content=_ROADMAP_CONTENT_B,
             wait=False,
+            branch_hint="feat/test-branch",
         )
         # Must NOT return sync rejection.
         assert result.get("reason") != "duplicate_detected", (
@@ -201,6 +206,7 @@ class TestWaitTrueSyncRejection:
             title="Yadgar Future Roadmap",
             content=_ROADMAP_CONTENT_B,
             wait=True,
+            branch_hint="feat/test-branch",
         )
         assert r2.get("stored") is False, (
             f"Gate should have blocked near-duplicate via wait=True. Got: {r2}"
@@ -229,6 +235,7 @@ class TestWaitTrueSyncRejection:
 3. Built-in defaults in config.py
 """,
             wait=True,
+            branch_hint="feat/test-branch",
         )
         assert r2.get("reason") != "duplicate_detected", (
             f"False positive: distinct page blocked by gate. Got: {r2}"
@@ -254,6 +261,7 @@ class TestDrainerGateBypass:
             content=_ROADMAP_CONTENT_B,
             force=True,
             wait=True,
+            branch_hint="feat/test-branch",
         )
         assert r2.get("reason") != "duplicate_detected", (
             f"force=True should bypass drainer gate. Got: {r2}"
@@ -270,6 +278,7 @@ class TestDrainerGateBypass:
             content=_ROADMAP_CONTENT_B,
             replace_slug="yadgar-roadmap-future-improvements",
             wait=True,
+            branch_hint="feat/test-branch",
         )
         assert r2.get("reason") != "duplicate_detected", (
             f"replace_slug should bypass drainer gate. Got: {r2}"
@@ -285,6 +294,7 @@ class TestDrainerGateBypass:
             content=_ROADMAP_CONTENT_B,
             append=True,
             wait=True,
+            branch_hint="feat/test-branch",
         )
         assert r2.get("reason") != "duplicate_detected", (
             f"append=True should bypass drainer gate. Got: {r2}"
@@ -323,6 +333,7 @@ class TestDrainerRejectionMetric:
             title="Yadgar Future Roadmap",
             content=_ROADMAP_CONTENT_B,
             wait=True,
+            branch_hint="feat/test-branch",
         )
         assert r2.get("reason") == "duplicate_detected"
 

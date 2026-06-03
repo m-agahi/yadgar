@@ -33,7 +33,7 @@ settings = get_settings()
 
 
 @_tool()
-def checkpoint(
+def checkpoint(  # noqa: PLR0913 — v5.42.3 added branch_hint param; pre-existing 8-param fn
     directory: str,
     current_task: str = "",
     files_being_edited: list[str] = None,
@@ -42,12 +42,16 @@ def checkpoint(
     next_steps: list[str] = None,
     active_errors: list[str] = None,
     custom_context: str = "",
+    branch_hint: str | None = None,
 ) -> dict:
     """Snapshot your current working state for post-compaction recovery.
 
     Call this periodically during long sessions. After context compaction,
     the restore tool uses this checkpoint to reconstruct what you were doing.
     Checkpoints auto-supersede — only the latest one matters.
+
+    branch_hint: host-supplied branch name (v5.42.3). Used when daemon-side
+      _detect_branch() cannot reach the host .git directory.
     """
     for _field in (current_task, custom_context):
         if _has_unpaired_surrogate(_field):
@@ -80,13 +84,31 @@ def checkpoint(
         return _gate
 
     # Capture branch at API boundary for payload tagging and future filter use.
+    # v5.42.3: resolution order: _detect_branch(directory) → branch_hint → hard-reject.
     _branch = None
     try:
         import yadgar.server as _srv
 
         _branch = _srv._detect_branch(directory)
     except Exception:
-        pass  # non-fatal — checkpoint proceeds without branch context
+        pass  # non-fatal — fall through to branch_hint
+
+    # v5.42.3: branch_hint fallback
+    if not _branch and branch_hint:
+        _branch = branch_hint
+
+    # v5.42.3: hard-reject at MCP boundary when branch context is absent.
+    if not _branch and not is_draining():
+        return {
+            "error": "missing_branch",
+            "stored": False,
+            "message": (
+                "Branch context required. Supply branch_hint=<current-branch-name> or ensure "
+                "the working directory is a git repo accessible to the yadgar daemon."
+            ),
+            "field": "branch_hint",
+            "op_type": "checkpoint",
+        }
 
     # Async path: enqueue and return immediately (skip during drain replay)
     if not is_draining():
@@ -156,13 +178,14 @@ _VALID_ANCHOR_TIERS = frozenset({"semantic_immortal", "conditional", "ephemeral"
 
 
 @_tool()
-def anchor(
+def anchor(  # noqa: C901 — v5.42.3 added branch enforcement; pre-existing cyclo-15 fn
     content: str,
     context: str,
     reason: str = "",
     tier: str | None = None,
     valid_until: str | None = None,
     ttl_days: int | None = None,
+    branch_hint: str | None = None,
 ) -> dict:
     """Mark critical context as compaction-resistant.
 
@@ -178,6 +201,10 @@ def anchor(
 
     valid_until: ISO-8601 UTC explicit expiry. Mutually exclusive with ttl_days.
     ttl_days: shorthand valid_until = now() + ttl_days. Mutually exclusive with valid_until.
+
+    branch_hint: host-supplied branch name (v5.42.3). Used when daemon-side
+      _detect_branch() cannot reach the host .git directory. Agents should pass
+      branch_hint=<current-branch> from SessionStart hook context.
     """
     for _field in (content, context, reason):
         if _has_unpaired_surrogate(_field):
@@ -223,13 +250,31 @@ def anchor(
         return {"stored": False, "reason": str(_vu_exc)}
 
     # Capture branch at API boundary — enqueue-time value used by drainer.
+    # v5.42.3: resolution order: _detect_branch(context) → branch_hint → hard-reject.
     _branch = None
     try:
         import yadgar.server as _srv
 
         _branch = _srv._detect_branch(context)
     except Exception:
-        pass  # non-fatal — anchor inserts with branch=NONE
+        pass  # non-fatal — fall through to branch_hint
+
+    # v5.42.3: branch_hint fallback
+    if not _branch and branch_hint:
+        _branch = branch_hint
+
+    # v5.42.3: hard-reject at MCP boundary when branch context is absent.
+    if not _branch and not is_draining():
+        return {
+            "error": "missing_branch",
+            "stored": False,
+            "message": (
+                "Branch context required. Supply branch_hint=<current-branch-name> or ensure "
+                "the working directory is a git repo accessible to the yadgar daemon."
+            ),
+            "field": "branch_hint",
+            "op_type": "anchor",
+        }
 
     # Async path: enqueue and return immediately (skip during drain replay)
     if not is_draining():
