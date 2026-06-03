@@ -2,13 +2,16 @@
 YADGAR_BRANCH_ENFORCEMENT).
 
 TDD: written BEFORE implementation. Tests start RED and go GREEN once the two
-knobs are wired into _validate_wiki_add and _validate_branch_context.
+knobs are wired into _validate_wiki_add, _validate_branch_context, AND the
+MCP boundary rejection sites in wiki.py, misc.py, memorize.py, project.py.
 
 Design:
 - YADGAR_DIRECTORY_ENFORCEMENT (default true) — when false, _validate_wiki_add
   skips the directory_context check (step 5) and logs WARN instead of rejecting.
-- YADGAR_BRANCH_ENFORCEMENT (default true) — when false, _validate_wiki_add
-  and _validate_branch_context skip the branch check and log WARN instead.
+  MCP boundary in wiki_add also consults this knob.
+- YADGAR_BRANCH_ENFORCEMENT (default true) — when false, _validate_wiki_add,
+  _validate_branch_context, and MCP boundary checks skip the branch check and
+  log WARN instead.
 - Both defaults true: existing 122+ tests are unaffected (default-ON = current
   behavior).
 - Metric: yadgar_writes_with_enforcement_relaxed{enforcement="directory"|"branch"}
@@ -31,6 +34,8 @@ K11. Env parsing: YADGAR_DIRECTORY_ENFORCEMENT=false/0/FALSE/False → OFF.
 K12. Env parsing: YADGAR_BRANCH_ENFORCEMENT=false/0/FALSE/False → OFF.
 K13. Env parsing: unset (no env var) → defaults ON for both knobs.
 K14. Env parsing: garbage value "banana" → fails-safe to ON.
+K15. MCP wiki_add: YADGAR_BRANCH_ENFORCEMENT=false → does NOT return missing_branch error.
+K16. MCP wiki_add: YADGAR_DIRECTORY_ENFORCEMENT=false → does NOT return missing_directory error.
 """
 
 from __future__ import annotations
@@ -351,4 +356,80 @@ class TestEnforcementEnvParsing:
         )
         assert branch_result is not None, (
             f"YADGAR_BRANCH_ENFORCEMENT={val!r} should be ON (fail-safe)"
+        )
+
+
+# ── K15-K16: MCP boundary enforcement knobs ───────────────────────────────────
+
+
+class TestMCPBoundaryEnforcementKnobs:
+    """K15-K16: enforcement knobs gate MCP boundary rejection sites in wiki.py.
+
+    Tests call wiki_add() directly (not via drainer). is_draining() is patched
+    to False so the MCP boundary code runs. The file-queue enqueue is patched
+    out so no real queue write occurs.
+    """
+
+    def test_branch_enforcement_off_skips_mcp_missing_branch_rejection(self):
+        """K15: YADGAR_BRANCH_ENFORCEMENT=false → wiki_add does not return missing_branch."""
+        from unittest.mock import MagicMock, patch
+
+        import yadgar.server._state as _st
+        from yadgar.server.tools.wiki import wiki_add
+
+        _fake_queue = MagicMock()
+        _fake_queue.enqueue.return_value = None
+        _fake_wiki = MagicMock()
+
+        with (
+            patch.dict(os.environ, {"YADGAR_BRANCH_ENFORCEMENT": "false"}),
+            patch("yadgar.server.tools.wiki.is_draining", return_value=False),
+            patch("yadgar.server.tools.wiki._get_file_queue", return_value=_fake_queue),
+            patch.object(_st, "_wiki", _fake_wiki),
+        ):
+            result = wiki_add(
+                title="Test Page",
+                content="Test content for MCP boundary knob test.",
+                category="reference",
+                tags=["test"],
+                # branch omitted — would normally hard-reject
+                branch=None,
+                branch_hint=None,
+                directory="global",
+            )
+
+        assert result.get("error") != "missing_branch", (
+            f"YADGAR_BRANCH_ENFORCEMENT=false should skip MCP missing_branch rejection; got: {result!r}"
+        )
+
+    def test_directory_enforcement_off_skips_mcp_missing_directory_rejection(self):
+        """K16: YADGAR_DIRECTORY_ENFORCEMENT=false → wiki_add does not return missing_directory."""
+        from unittest.mock import MagicMock, patch
+
+        import yadgar.server._state as _st
+        from yadgar.server.tools.wiki import wiki_add
+
+        _fake_queue = MagicMock()
+        _fake_queue.enqueue.return_value = None
+        _fake_wiki = MagicMock()
+
+        with (
+            patch.dict(os.environ, {"YADGAR_DIRECTORY_ENFORCEMENT": "false"}),
+            patch("yadgar.server.tools.wiki.is_draining", return_value=False),
+            patch("yadgar.server.tools.wiki._get_file_queue", return_value=_fake_queue),
+            patch.object(_st, "_wiki", _fake_wiki),
+        ):
+            result = wiki_add(
+                title="Test Page",
+                content="Test content for MCP boundary knob test.",
+                category="reference",
+                tags=["test"],
+                branch="master",
+                branch_hint=None,
+                # directory omitted — would normally hard-reject
+                directory=None,
+            )
+
+        assert result.get("error") != "missing_directory", (
+            f"YADGAR_DIRECTORY_ENFORCEMENT=false should skip MCP missing_directory rejection; got: {result!r}"
         )

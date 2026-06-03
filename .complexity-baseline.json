@@ -19682,7 +19682,7 @@
     "params": 6
   },
   "yadgar/server/tools/wiki.py::__file__": {
-    "loc": 1082
+    "loc": 1112
   },
   "yadgar/server/tools/wiki.py::_check_similarity_gate@183": {
     "cyclo": 9,
@@ -19702,11 +19702,29 @@
     "nesting": 2,
     "params": 7
   },
+  "yadgar/server/tools/wiki.py::_check_similarity_gate@225": {
+    "cyclo": 9,
+    "loc": 63,
+    "nesting": 2,
+    "params": 7
+  },
+  "yadgar/server/tools/wiki.py::_check_similarity_gate@274": {
+    "cyclo": 9,
+    "loc": 63,
+    "nesting": 2,
+    "params": 7
+  },
   "yadgar/server/tools/wiki.py::_check_similarity_gate@82": {
     "cyclo": 9,
     "loc": 63,
     "nesting": 2,
     "params": 7
+  },
+  "yadgar/server/tools/wiki.py::_check_wiki_add_context@19": {
+    "cyclo": 7,
+    "loc": 47,
+    "nesting": 2,
+    "params": 2
   },
   "yadgar/server/tools/wiki.py::_resolve_page_id_by_slug@553": {
     "cyclo": 8,
@@ -19750,11 +19768,41 @@
     "nesting": 2,
     "params": 3
   },
+  "yadgar/server/tools/wiki.py::_resolve_page_id_by_slug@871": {
+    "cyclo": 10,
+    "loc": 41,
+    "nesting": 2,
+    "params": 3
+  },
+  "yadgar/server/tools/wiki.py::_resolve_page_id_by_slug@886": {
+    "cyclo": 10,
+    "loc": 41,
+    "nesting": 2,
+    "params": 3
+  },
   "yadgar/server/tools/wiki.py::_wiki_add_sync_write@18": {
     "cyclo": 9,
     "loc": 78,
     "nesting": 4,
     "params": 10
+  },
+  "yadgar/server/tools/wiki.py::_wiki_add_sync_write@19": {
+    "cyclo": 9,
+    "loc": 78,
+    "nesting": 4,
+    "params": 10
+  },
+  "yadgar/server/tools/wiki.py::_wiki_add_sync_write@68": {
+    "cyclo": 9,
+    "loc": 78,
+    "nesting": 4,
+    "params": 10
+  },
+  "yadgar/server/tools/wiki.py::_wiki_add_wait_path@148": {
+    "cyclo": 8,
+    "loc": 124,
+    "nesting": 2,
+    "params": 12
   },
   "yadgar/server/tools/wiki.py::_wiki_add_wait_path@82": {
     "cyclo": 8,
@@ -19763,6 +19811,12 @@
     "params": 11
   },
   "yadgar/server/tools/wiki.py::_wiki_add_wait_path@98": {
+    "cyclo": 8,
+    "loc": 124,
+    "nesting": 2,
+    "params": 12
+  },
+  "yadgar/server/tools/wiki.py::_wiki_add_wait_path@99": {
     "cyclo": 8,
     "loc": 124,
     "nesting": 2,
@@ -19798,6 +19852,18 @@
     "nesting": 2,
     "params": 13
   },
+  "yadgar/server/tools/wiki.py::wiki_add@291": {
+    "cyclo": 29,
+    "loc": 225,
+    "nesting": 2,
+    "params": 13
+  },
+  "yadgar/server/tools/wiki.py::wiki_add@340": {
+    "cyclo": 25,
+    "loc": 191,
+    "nesting": 2,
+    "params": 13
+  },
   "yadgar/server/tools/wiki.py::wiki_append_section@1001": {
     "cyclo": 4,
     "loc": 51,
@@ -19811,6 +19877,18 @@
     "params": 7
   },
   "yadgar/server/tools/wiki.py::wiki_append_section@1032": {
+    "cyclo": 4,
+    "loc": 51,
+    "nesting": 1,
+    "params": 7
+  },
+  "yadgar/server/tools/wiki.py::wiki_append_section@1047": {
+    "cyclo": 4,
+    "loc": 51,
+    "nesting": 1,
+    "params": 7
+  },
+  "yadgar/server/tools/wiki.py::wiki_append_section@1062": {
     "cyclo": 4,
     "loc": 51,
     "nesting": 1,
@@ -19912,6 +19990,18 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/server/tools/wiki.py::wiki_approve@745": {
+    "cyclo": 4,
+    "loc": 37,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/server/tools/wiki.py::wiki_approve@760": {
+    "cyclo": 4,
+    "loc": 37,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/server/tools/wiki.py::wiki_check_duplicate@477": {
     "cyclo": 3,
     "loc": 43,
@@ -19955,6 +20045,18 @@
     "params": 6
   },
   "yadgar/server/tools/wiki.py::wiki_check_duplicate@783": {
+    "cyclo": 7,
+    "loc": 68,
+    "nesting": 3,
+    "params": 6
+  },
+  "yadgar/server/tools/wiki.py::wiki_check_duplicate@798": {
+    "cyclo": 7,
+    "loc": 68,
+    "nesting": 3,
+    "params": 6
+  },
+  "yadgar/server/tools/wiki.py::wiki_check_duplicate@813": {
     "cyclo": 7,
     "loc": 68,
     "nesting": 3,
@@ -20026,6 +20128,18 @@
     "nesting": 3,
     "params": 1
   },
+  "yadgar/server/tools/wiki.py::wiki_delete@658": {
+    "cyclo": 4,
+    "loc": 12,
+    "nesting": 3,
+    "params": 1
+  },
+  "yadgar/server/tools/wiki.py::wiki_delete@673": {
+    "cyclo": 4,
+    "loc": 12,
+    "nesting": 3,
+    "params": 1
+  },
   "yadgar/server/tools/wiki.py::wiki_diff@626": {
     "cyclo": 3,
     "loc": 20,
@@ -20069,6 +20183,18 @@
     "params": 6
   },
   "yadgar/server/tools/wiki.py::wiki_diff@956": {
+    "cyclo": 3,
+    "loc": 29,
+    "nesting": 1,
+    "params": 6
+  },
+  "yadgar/server/tools/wiki.py::wiki_diff@971": {
+    "cyclo": 3,
+    "loc": 29,
+    "nesting": 1,
+    "params": 6
+  },
+  "yadgar/server/tools/wiki.py::wiki_diff@986": {
     "cyclo": 3,
     "loc": 29,
     "nesting": 1,
@@ -20140,6 +20266,18 @@
     "nesting": 1,
     "params": 1
   },
+  "yadgar/server/tools/wiki.py::wiki_discard@785": {
+    "cyclo": 2,
+    "loc": 10,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/server/tools/wiki.py::wiki_discard@800": {
+    "cyclo": 2,
+    "loc": 10,
+    "nesting": 1,
+    "params": 1
+  },
   "yadgar/server/tools/wiki.py::wiki_drafts@278": {
     "cyclo": 3,
     "loc": 12,
@@ -20206,6 +20344,18 @@
     "nesting": 2,
     "params": 0
   },
+  "yadgar/server/tools/wiki.py::wiki_drafts@730": {
+    "cyclo": 3,
+    "loc": 12,
+    "nesting": 2,
+    "params": 0
+  },
+  "yadgar/server/tools/wiki.py::wiki_drafts@745": {
+    "cyclo": 3,
+    "loc": 12,
+    "nesting": 2,
+    "params": 0
+  },
   "yadgar/server/tools/wiki.py::wiki_history@581": {
     "cyclo": 3,
     "loc": 20,
@@ -20243,6 +20393,18 @@
     "params": 4
   },
   "yadgar/server/tools/wiki.py::wiki_history@900": {
+    "cyclo": 3,
+    "loc": 27,
+    "nesting": 1,
+    "params": 4
+  },
+  "yadgar/server/tools/wiki.py::wiki_history@915": {
+    "cyclo": 3,
+    "loc": 27,
+    "nesting": 1,
+    "params": 4
+  },
+  "yadgar/server/tools/wiki.py::wiki_history@930": {
     "cyclo": 3,
     "loc": 27,
     "nesting": 1,
@@ -20314,6 +20476,18 @@
     "nesting": 0,
     "params": 0
   },
+  "yadgar/server/tools/wiki.py::wiki_lint@720": {
+    "cyclo": 2,
+    "loc": 7,
+    "nesting": 0,
+    "params": 0
+  },
+  "yadgar/server/tools/wiki.py::wiki_lint@735": {
+    "cyclo": 2,
+    "loc": 7,
+    "nesting": 0,
+    "params": 0
+  },
   "yadgar/server/tools/wiki.py::wiki_list@237": {
     "cyclo": 6,
     "loc": 28,
@@ -20380,6 +20554,18 @@
     "nesting": 1,
     "params": 4
   },
+  "yadgar/server/tools/wiki.py::wiki_list@673": {
+    "cyclo": 7,
+    "loc": 44,
+    "nesting": 1,
+    "params": 4
+  },
+  "yadgar/server/tools/wiki.py::wiki_list@688": {
+    "cyclo": 7,
+    "loc": 44,
+    "nesting": 1,
+    "params": 4
+  },
   "yadgar/server/tools/wiki.py::wiki_query@128": {
     "cyclo": 14,
     "loc": 68,
@@ -20429,6 +20615,18 @@
     "params": 4
   },
   "yadgar/server/tools/wiki.py::wiki_query@504": {
+    "cyclo": 14,
+    "loc": 68,
+    "nesting": 4,
+    "params": 4
+  },
+  "yadgar/server/tools/wiki.py::wiki_query@519": {
+    "cyclo": 14,
+    "loc": 68,
+    "nesting": 4,
+    "params": 4
+  },
+  "yadgar/server/tools/wiki.py::wiki_query@534": {
     "cyclo": 14,
     "loc": 68,
     "nesting": 4,
@@ -20494,6 +20692,18 @@
     "nesting": 2,
     "params": 3
   },
+  "yadgar/server/tools/wiki.py::wiki_read@590": {
+    "cyclo": 11,
+    "loc": 65,
+    "nesting": 2,
+    "params": 3
+  },
+  "yadgar/server/tools/wiki.py::wiki_read@605": {
+    "cyclo": 11,
+    "loc": 65,
+    "nesting": 2,
+    "params": 3
+  },
   "yadgar/server/tools/wiki.py::wiki_read_version@604": {
     "cyclo": 3,
     "loc": 19,
@@ -20541,6 +20751,30 @@
     "loc": 23,
     "nesting": 1,
     "params": 4
+  },
+  "yadgar/server/tools/wiki.py::wiki_read_version@945": {
+    "cyclo": 3,
+    "loc": 23,
+    "nesting": 1,
+    "params": 4
+  },
+  "yadgar/server/tools/wiki.py::wiki_read_version@960": {
+    "cyclo": 3,
+    "loc": 23,
+    "nesting": 1,
+    "params": 4
+  },
+  "yadgar/server/tools/wiki.py::wiki_restore@1003": {
+    "cyclo": 3,
+    "loc": 41,
+    "nesting": 1,
+    "params": 5
+  },
+  "yadgar/server/tools/wiki.py::wiki_restore@1018": {
+    "cyclo": 3,
+    "loc": 41,
+    "nesting": 1,
+    "params": 5
   },
   "yadgar/server/tools/wiki.py::wiki_restore@649": {
     "cyclo": 3,

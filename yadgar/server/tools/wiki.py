@@ -7,12 +7,62 @@ import os
 
 import yadgar.server._state as _st
 from yadgar.file_queue import is_draining
+from yadgar.file_queue.dlq import _enforcement_on, _inc_relaxed
 from yadgar.secrets import gate_or_reject
 from yadgar.server._app import _tool
 from yadgar.server._helpers import _has_unpaired_surrogate, _push_event
 from yadgar.server.lifecycle import _get_file_queue, _get_storage
 
 logger = logging.getLogger(__name__)
+
+
+def _check_wiki_add_context(branch: str | None, directory: str | None) -> dict | None:
+    """Check branch + directory enforcement at MCP boundary.
+
+    Returns an error dict if enforcement is ON and a required field is absent,
+    else None (caller may proceed).  Logs WARN + increments metric when
+    enforcement is OFF and a field is missing.  is_draining() callers are
+    exempt — this helper should only be called when not is_draining().
+
+    v5.42.6 (I-C1): extracted from wiki_add to keep cyclomatic complexity ≤ 15.
+    """
+    if not branch:
+        if _enforcement_on("YADGAR_BRANCH_ENFORCEMENT"):
+            return {
+                "error": "missing_branch",
+                "stored": False,
+                "message": (
+                    "Branch context required. Supply branch=<branch> or branch_hint=<branch-name>. "
+                    "Agents should pass branch_hint=$(git branch --show-current) before wiki_add."
+                ),
+                "field": "branch_hint",
+                "op_type": "wiki_add",
+            }
+        logger.warning(
+            "wiki_add: branch enforcement OFF — proceeding without branch context "
+            "(YADGAR_BRANCH_ENFORCEMENT=false)"
+        )
+        _inc_relaxed("branch")
+
+    _effective_dir: str | None = (directory or "").strip() or None
+    if not _effective_dir:
+        if _enforcement_on("YADGAR_DIRECTORY_ENFORCEMENT"):
+            return {
+                "error": "missing_directory",
+                "stored": False,
+                "message": (
+                    "directory required and must be non-empty. "
+                    "Pass the absolute project path or 'global'."
+                ),
+                "field": "directory",
+                "op_type": "wiki_add",
+            }
+        logger.warning(
+            "wiki_add: directory enforcement OFF — proceeding without directory context "
+            "(YADGAR_DIRECTORY_ENFORCEMENT=false)"
+        )
+        _inc_relaxed("directory")
+    return None
 
 
 def _wiki_add_sync_write(
@@ -372,35 +422,15 @@ def wiki_add(
     # Branch resolution — O(1), no subprocess. See docstring for priority order.
     if not branch and branch_hint:
         branch = branch_hint
-    # v5.42.3: if both are falsy after resolution, hard-reject at MCP boundary.
-    # Drainer provides defense-in-depth for direct file_queue writes that bypass MCP.
-    # is_draining() path is exempt — drainer has already validated or set _internal=True.
-    if not branch and not is_draining():
-        return {
-            "error": "missing_branch",
-            "stored": False,
-            "message": (
-                "Branch context required. Supply branch=<branch> or branch_hint=<branch-name>. "
-                "Agents should pass branch_hint=$(git branch --show-current) before wiki_add."
-            ),
-            "field": "branch_hint",
-            "op_type": "wiki_add",
-        }
-
-    # v5.42.5: directory validation — reject empty/whitespace at MCP boundary.
+    # v5.42.3/v5.42.6: MCP boundary context check — branch + directory.
     # is_draining() path is exempt (drainer validates at its own boundary).
+    # _check_wiki_add_context gates enforcement; YADGAR_*_ENFORCEMENT=false relaxes.
+    if not is_draining():
+        _ctx_err = _check_wiki_add_context(branch, directory)
+        if _ctx_err is not None:
+            return _ctx_err
+
     _effective_dir: str | None = (directory or "").strip() or None
-    if not _effective_dir and not is_draining():
-        return {
-            "error": "missing_directory",
-            "stored": False,
-            "message": (
-                "directory required and must be non-empty. "
-                "Pass the absolute project path or 'global'."
-            ),
-            "field": "directory",
-            "op_type": "wiki_add",
-        }
     # DP-3: strip trailing slash (preserve "global" sentinel as-is)
     if _effective_dir and _effective_dir != "global":
         _effective_dir = _effective_dir.rstrip("/") or _effective_dir
