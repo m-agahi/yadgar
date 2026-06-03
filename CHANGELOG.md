@@ -6,6 +6,21 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.42.5] — 2026-06-03
+
+Directory contract — every wiki_page and memory row now has `directory_context` NOT NULL. MCP boundary rejects wiki_add / block_* / agent_prompt_save without `directory`. Drainer pre-apply validates and routes missing-directory records to DLQ. §25 4-step resolution extended with directory scoping. Three bug fixes: F1 `_resolve_page_id_by_slug` uses caller directory instead of daemon CWD; F2 `agent_prompt_save` routes through wiki machinery; F3 block tools enforce directory for `scope='project'`.
+
+- **feat(storage):** migration 016 — `directory_context` NOT NULL on `wiki_page` and `memory`; backfill via tag heuristic; `wiki_draft.directory_context` nullable column
+- **feat(wiki):** `wiki_add` / `wiki_read` / `wiki_list` / `wiki_check_duplicate` + derivative tools gain `directory` param; §25 4-step resolution: project+branch → project+canonical → global+canonical → not found
+- **feat(boundary):** hard-reject `missing_directory` when `wiki_add` / `block_create` / `block_get` / `block_update` / `block_delete` / `block_replace` / `block_append` (scope='project') called without directory
+- **feat(drainer):** `_validate_wiki_add` check #5 — DLQ routing with `failure_reason=missing_directory` for external writes lacking `directory_context`
+- **feat(recall):** `recall` post-filter scopes to caller directory when supplied
+- **fix(F1):** `_resolve_page_id_by_slug` accepts `directory`+`branch_hint` from caller — fixes daemon-CWD lookup bug
+- **fix(F2):** `agent_prompt_save` routes through `_wiki.add()` machinery, storing `directory_context`
+- **fix(F3):** block tools return `{"ok": false, "error": "missing_directory"}` for `scope='project'` without directory
+
+---
+
 ## [5.42.4] — 2026-06-03
 
 Hardcoded `"master"` exception-fallback cleanup. 5 sites previously fell back to `"master"` when `_get_default_branch()` raised — wrong on `main`-default repos and on no-git contexts. All replaced with `None` (canonical slot, reachable via §25 step 3).
