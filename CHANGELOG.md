@@ -6,6 +6,17 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.42.3] — 2026-06-03
+
+Drainer branch enforcement + memory write branch_hint parity. All write tools (memorize, anchor, checkpoint, update_active_work, wiki_add) now hard-reject at MCP boundary when branch context is absent. Drainer pre-apply stage validates branch on queued records and routes to DLQ with `missing_branch` reason if absent. `dlq_requeue` blocks `missing_branch` entries without `force=True`.
+
+- **feat(v5.42.3):** hard-reject gate on all write ops — `memorize`, `anchor`, `checkpoint`, `update_active_work`, `wiki_add` return `{"error": "missing_branch", "stored": false}` when `_detect_branch()` fails and no `branch_hint` supplied
+- **feat(dlq):** `_validate_wiki_add` + `_validate_branch_context` mixin on `QueueDrainer` — drainer pre-apply validates branch presence, routes missing-branch records to DLQ
+- **feat(storage):** migration 015 — `wiki_draft.branch` column; `insert_wiki_draft` stores branch; `wiki_approve` reads and propagates it
+- **feat(metrics):** `yadgar_dlq_rejection_count` Gauge — tracks DLQ rejection counts by `failure_reason`
+- **feat(admin):** `dlq_requeue` blocks `missing_branch` entries without `force=True`; `force=True` allowed only after operator patches branch into payload
+- **test:** 28 TDD tests in `test_v5_42_3_drainer_branch_enforcement.py` covering full branch enforcement contract
+
 ## [5.42.2] — 2026-06-02
 
 Critical hotfix: wiki branch-default scope mismatch — silence similarity gate in production (real root cause).

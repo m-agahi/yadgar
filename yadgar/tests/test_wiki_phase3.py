@@ -8,6 +8,8 @@ Covers:
   - Wiki draft MCP tools: wiki_drafts, wiki_approve, wiki_discard
 """
 
+from unittest.mock import patch
+
 import pytest
 
 from yadgar import server
@@ -24,7 +26,9 @@ def _engines(tmp_path):
         db_path=str(tmp_path / "p3_test.db"),
         embedding_model="all-MiniLM-L6-v2",
     )
-    yield
+    # v5.42.3: /tmp is not a git repo; patch _detect_branch for test isolation.
+    with patch("yadgar.server._detect_branch", return_value="feat/test-branch"):
+        yield
     server.shutdown()
 
 

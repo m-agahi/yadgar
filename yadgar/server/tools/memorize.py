@@ -83,6 +83,7 @@ def memorize(  # noqa: C901, PLR0913 — pre-existing complexity + v5.10.x reaso
     valid_until: str | None = None,
     ttl_days: int | None = None,
     reason: str = "",
+    branch_hint: str | None = None,
 ) -> dict:
     """Store a new memory with embedding.
 
@@ -112,6 +113,11 @@ def memorize(  # noqa: C901, PLR0913 — pre-existing complexity + v5.10.x reaso
     reason: human-readable justification for why this memory is protected.
       Only meaningful when is_protected=True. Adds 'anchor:<reason>' tag.
       Required when tier='semantic_immortal' and ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON=True.
+
+    branch_hint: host-supplied branch name. Used when daemon-side _detect_branch() fails
+      (e.g., daemon runs in a container without access to the host .git directory).
+      Resolution order: _detect_branch(context) → branch_hint → hard-reject (v5.42.3).
+      SessionStart hooks should always pass branch_hint=<current-branch>.
     """
     # v5.8.0: tier validation
     if tier is not None and tier not in _VALID_TIERS:
@@ -202,13 +208,32 @@ def memorize(  # noqa: C901, PLR0913 — pre-existing complexity + v5.10.x reaso
 
     # Capture branch at API boundary — must happen before any enqueue so
     # the drainer replays with the branch value from write time.
+    # v5.42.3: resolution order: _detect_branch(context) → branch_hint → hard-reject.
     _branch = None
     try:
         import yadgar.server as _srv
 
         _branch = _srv._detect_branch(context)
     except Exception:
-        pass  # non-fatal — memory inserts with branch=NONE
+        pass  # non-fatal — fall through to branch_hint
+
+    # v5.42.3: branch_hint fallback — host-supplied when daemon cannot detect git branch.
+    if not _branch and branch_hint:
+        _branch = branch_hint
+
+    # v5.42.3: hard-reject at MCP boundary when branch context is absent.
+    # _internal flag is never accepted from MCP input — agents cannot supply it.
+    if not _branch and not is_draining():
+        return {
+            "error": "missing_branch",
+            "stored": False,
+            "message": (
+                "Branch context required. Supply branch_hint=<current-branch-name> or ensure "
+                "the working directory is a git repo accessible to the yadgar daemon."
+            ),
+            "field": "branch_hint",
+            "op_type": "memorize",
+        }
 
     # Async path: enqueue and return immediately (skip during drain replay)
     if not is_draining():

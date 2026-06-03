@@ -82,15 +82,18 @@ def queue_and_drainer(tmp_path):
 
 
 def test_branch_left_as_none_when_absent(queue_and_drainer, flush_queue):
-    """wiki_add ops without branch field get branch=None (canonical slot, v5.42.2).
+    """wiki_add ops with _internal=True + no branch go to canonical slot (branch=None).
 
-    v5.42.2 fix: drainer no longer injects branch='master'. Absent branch stays None,
-    matching the wiki_add direct handler's canonical-slot behavior.
+    v5.42.2: drainer no longer injects branch='master'. Absent branch = None (canonical slot).
+    v5.42.3: external payloads without branch are rejected. _internal=True is the carve-out
+    for system/migration writes that legitimately target the canonical NULL-branch slot.
     """
     fq, drainer = queue_and_drainer
 
+    # v5.42.3: use _internal=True for canonical-slot writes without branch context
     op = _make_wiki_op(branch=None)
     assert "branch" not in op["payload"]
+    op["payload"]["_internal"] = True  # explicit canonical-slot write carve-out
 
     fq.enqueue("wiki_add", op["payload"])
     drainer.drain_now()
@@ -204,10 +207,10 @@ def test_schema_version_0_goes_to_dlq(queue_and_drainer):
 
 
 def test_schema_version_2_accepted(queue_and_drainer, flush_queue):
-    """wiki_schema_version=2 is accepted and inserted."""
+    """wiki_schema_version=2 is accepted and inserted (with branch, v5.42.3)."""
     fq, drainer = queue_and_drainer
 
-    op = _make_wiki_op(schema_version=2, slug="v2-slug")
+    op = _make_wiki_op(schema_version=2, slug="v2-slug", branch="feat/schema-test")
     fq.enqueue("wiki_add", op["payload"])
     drainer.drain_now()
 
@@ -217,10 +220,10 @@ def test_schema_version_2_accepted(queue_and_drainer, flush_queue):
 
 
 def test_schema_version_3_accepted(queue_and_drainer, flush_queue):
-    """wiki_schema_version >= 2 (e.g. 3) is accepted."""
+    """wiki_schema_version >= 2 (e.g. 3) is accepted (with branch, v5.42.3)."""
     fq, drainer = queue_and_drainer
 
-    op = _make_wiki_op(schema_version=3, slug="v3-slug")
+    op = _make_wiki_op(schema_version=3, slug="v3-slug", branch="feat/schema-test")
     fq.enqueue("wiki_add", op["payload"])
     drainer.drain_now()
 

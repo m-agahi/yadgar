@@ -201,8 +201,13 @@ class TestDrainerReroutesRejectionToDLQ:
         # Write a page to DB directly (sync path, no gate)
         _write_sync("Yadgar Roadmap A", _ROADMAP_CONTENT_A)
 
-        # Enqueue a near-duplicate
-        server.wiki_add(title="Yadgar Roadmap B", content=_ROADMAP_CONTENT_B, wait=False)
+        # Enqueue a near-duplicate (v5.42.3: branch_hint required)
+        server.wiki_add(
+            title="Yadgar Roadmap B",
+            content=_ROADMAP_CONTENT_B,
+            wait=False,
+            branch_hint="feat/test-branch",
+        )
         assert len(fq.pending()) == 1
 
         drainer.drain_now()
@@ -232,8 +237,13 @@ class TestDrainerReroutesRejectionToDLQ:
         # Write original
         _write_sync("Roadmap Original", _ROADMAP_CONTENT_A)
 
-        # wait=True should still get sync rejection
-        result = server.wiki_add(title="Roadmap Clone", content=_ROADMAP_CONTENT_B, wait=True)
+        # wait=True should still get sync rejection (v5.42.3: branch_hint required)
+        result = server.wiki_add(
+            title="Roadmap Clone",
+            content=_ROADMAP_CONTENT_B,
+            wait=True,
+            branch_hint="feat/test-branch",
+        )
         # Either committed (gate didn't fire) or rejected
         if result.get("stored") is False:
             assert result["reason"] == "duplicate_detected"
@@ -259,7 +269,12 @@ class TestDrainerReroutesRejectionToDLQ:
             pytest.skip("Metrics not available in this env")
 
         _write_sync("Metrics Test A", _ROADMAP_CONTENT_A)
-        server.wiki_add(title="Metrics Test B", content=_ROADMAP_CONTENT_B, wait=False)
+        server.wiki_add(
+            title="Metrics Test B",
+            content=_ROADMAP_CONTENT_B,
+            wait=False,
+            branch_hint="feat/test-branch",
+        )
         drainer.drain_now()
 
         # If gate fired, metric should have been counted
@@ -270,7 +285,13 @@ class TestDrainerReroutesRejectionToDLQ:
         drainer, fq = _drainer_env
 
         _write_sync("Force Test A", _ROADMAP_CONTENT_A)
-        server.wiki_add(title="Force Test B", content=_ROADMAP_CONTENT_B, force=True, wait=False)
+        server.wiki_add(
+            title="Force Test B",
+            content=_ROADMAP_CONTENT_B,
+            force=True,
+            wait=False,
+            branch_hint="feat/test-branch",
+        )
         assert len(fq.pending()) == 1
 
         drainer.drain_now()

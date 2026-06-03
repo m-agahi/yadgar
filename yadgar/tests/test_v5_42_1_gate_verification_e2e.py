@@ -177,6 +177,7 @@ def test_v5_42_1_gate_fires_post_backfill_e2e(_drainer_env):
         title=_NEAR_CLONE_TITLE,
         content=_NEAR_CLONE_CONTENT,
         wait=False,
+        branch_hint="feat/test-branch",
     )
     assert enqueue_result.get("queued") is True, (
         f"wiki_add(wait=False) did not queue: {enqueue_result}"
