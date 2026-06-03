@@ -572,14 +572,23 @@ def wiki_query(
 
 
 @_tool(power=True)
-def wiki_read(slug: str, directory: str | None = None) -> dict:
+def wiki_read(
+    slug: str,
+    directory: str | None = None,
+    branch_hint: str | None = None,
+) -> dict:
     """Read a specific wiki page by slug.
 
     §25 Resolution order (v5.42.5 — directory-aware):
-    1. directory=$caller_dir AND branch=$current_branch  (project-branch-scoped)
-    2. directory=$caller_dir AND branch IS NULL           (project-canonical)
-    3. directory='global'    AND branch IS NULL           (global fallback)
+    1. directory=$caller_dir AND branch=$effective_branch  (project-branch-scoped)
+    2. directory=$caller_dir AND branch IS NULL            (project-canonical)
+    3. directory='global'    AND branch IS NULL            (global fallback)
     4. Not found → error dict.
+
+    branch_hint: caller-supplied branch (v5.42.6 F1 fix, symmetric with wiki_add).
+    Uses branch_hint if _detect_branch returns None (container scenario).
+    Without branch_hint, falls through to steps 2+3 (permissive default —
+    reads are more permissive than writes per §25 design).
 
     When directory is not supplied, falls back to legacy branch-only resolution
     (backward-compat mode; WARNING logged).
@@ -606,10 +615,15 @@ def wiki_read(slug: str, directory: str | None = None) -> dict:
         _current_branch = None
         _default_branch = None  # v5.42.4: canonical slot
 
+    # v5.42.6 F1 fix: use branch_hint when daemon-side detection returns None.
+    # This mirrors _resolve_page_id_by_slug (v5.42.5) and wiki_add (v5.42.3).
+    # The effective branch for §25 step 1 uses branch_hint if _detect_branch failed.
+    _effective_branch = branch_hint or _current_branch
+
     if directory is not None:
         # v5.42.5: 4-step directory-aware resolution
         caller_dir = directory.strip().rstrip("/") or None
-        page = _st._wiki.read_by_directory_branch(slug, caller_dir, _current_branch)
+        page = _st._wiki.read_by_directory_branch(slug, caller_dir, _effective_branch)
     else:
         # Legacy fallback — no directory supplied; backward-compat mode.
         logger.warning(
@@ -617,7 +631,7 @@ def wiki_read(slug: str, directory: str | None = None) -> dict:
             "Pass directory= for project-scoped results (v5.42.5).",
             slug,
         )
-        page = _st._wiki.read_by_branch(slug, _current_branch, _default_branch)
+        page = _st._wiki.read_by_branch(slug, _effective_branch, _default_branch)
 
     if page is None:
         return {"error": f"Wiki page '{slug}' not found"}
