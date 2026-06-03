@@ -23300,8 +23300,19 @@
     "inh_depth": 0,
     "methods": 4
   },
+  "yadgar/storage/migrations.py::_MigrationsMixin@843": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 4
+  },
   "yadgar/storage/migrations.py::__file__": {
-    "loc": 879
+    "loc": 1072
+  },
+  "yadgar/storage/migrations.py::_classify_directory_by_tags@504": {
+    "cyclo": 6,
+    "loc": 21,
+    "nesting": 1,
+    "params": 1
   },
   "yadgar/storage/migrations.py::_init_schema@246": {
     "cyclo": 7,
@@ -23330,6 +23341,18 @@
   "yadgar/storage/migrations.py::_init_schema@695": {
     "cyclo": 6,
     "loc": 140,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/storage/migrations.py::_init_schema@888": {
+    "cyclo": 6,
+    "loc": 140,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/storage/migrations.py::_init_wiki_indexes@1029": {
+    "cyclo": 2,
+    "loc": 44,
     "nesting": 1,
     "params": 1
   },
@@ -23453,6 +23476,18 @@
     "nesting": 5,
     "params": 1
   },
+  "yadgar/storage/migrations.py::_migration_016_directory_context@527": {
+    "cyclo": 11,
+    "loc": 123,
+    "nesting": 5,
+    "params": 1
+  },
+  "yadgar/storage/migrations.py::_migration_018_directory_context_backfill_repair@652": {
+    "cyclo": 11,
+    "loc": 125,
+    "nesting": 5,
+    "params": 1
+  },
   "yadgar/storage/migrations.py::_run_migrations@206": {
     "cyclo": 3,
     "loc": 24,
@@ -23483,6 +23518,12 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/storage/migrations.py::_run_migrations@848": {
+    "cyclo": 3,
+    "loc": 24,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/storage/migrations.py::_run_migrations_locked@231": {
     "cyclo": 3,
     "loc": 14,
@@ -23508,6 +23549,12 @@
     "params": 1
   },
   "yadgar/storage/migrations.py::_run_migrations_locked@680": {
+    "cyclo": 3,
+    "loc": 14,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/storage/migrations.py::_run_migrations_locked@873": {
     "cyclo": 3,
     "loc": 14,
     "nesting": 2,
