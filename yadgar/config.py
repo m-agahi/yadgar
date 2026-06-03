@@ -289,6 +289,13 @@ class Settings(BaseSettings):
     # Flip to True after operator confidence that embed service is reliable.
     WIKI_EMBED_FAILURE_BLOCKS_WRITE: bool = False
 
+    # v5.42.6: enforcement knobs (I25 three-way registered).
+    # Default True: strict enforcement — missing directory/branch rejects the write.
+    # False: relax enforcement, emit WARN log + metric instead of rejecting.
+    # Set to False as a migration escape hatch if legacy callers lack branch/directory.
+    DIRECTORY_ENFORCEMENT: bool = True
+    BRANCH_ENFORCEMENT: bool = True
+
     # File queue — async write queue base directory
     DATA_DIR: str = str(Path.home() / ".yadgar")
     # Optional prefix for wiki .md archive filenames (e.g. "myproject" → "myproject-overview.md")

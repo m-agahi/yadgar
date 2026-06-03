@@ -173,6 +173,18 @@ yadgar_dlq_rejection_count = Gauge(
     registry=_registry,
 )
 
+# ── v5.42.6 — enforcement-relaxed writes counter (I23) ───────────────────────
+# Emitted by dlq.py::_validate_wiki_add / _validate_branch_context when
+# YADGAR_DIRECTORY_ENFORCEMENT or YADGAR_BRANCH_ENFORCEMENT is false.
+# enforcement labels: "directory" | "branch"
+
+yadgar_writes_with_enforcement_relaxed = Counter(
+    "yadgar_writes_with_enforcement_relaxed",
+    "Writes that bypassed enforcement because the relevant knob is off (v5.42.6)",
+    ["enforcement"],
+    registry=_registry,
+)
+
 # ── v5.42.1 — wiki embedding compute failure counter (I23) ───────────────────
 # Emitted by wiki.py::_compute_embedding on exception.
 # reason labels: "exception" (encode_document raised), "returned_none" (None returned)

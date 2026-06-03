@@ -237,10 +237,6 @@ class TestEnforcementRelaxedMetric:
         drainer = _make_drainer(tmp_path)
         record = _missing_directory_record()
 
-        # Import metric — RED: this attribute does not exist yet
-
-        from yadgar.metrics import yadgar_writes_with_enforcement_relaxed  # noqa: F401
-
         before = _get_counter_value(
             "yadgar_writes_with_enforcement_relaxed_total", {"enforcement": "directory"}
         )
@@ -258,8 +254,6 @@ class TestEnforcementRelaxedMetric:
         drainer = _make_drainer(tmp_path)
         record = _missing_branch_record()
 
-        from yadgar.metrics import yadgar_writes_with_enforcement_relaxed  # noqa: F401
-
         before = _get_counter_value(
             "yadgar_writes_with_enforcement_relaxed_total", {"enforcement": "branch"}
         )
@@ -274,14 +268,16 @@ class TestEnforcementRelaxedMetric:
 
 
 def _get_counter_value(metric_name: str, labels: dict) -> float:
-    """Read a prometheus counter value by metric name and label set."""
-    from prometheus_client import REGISTRY
+    """Read a prometheus counter value from yadgar's private registry.
 
-    for metric in REGISTRY.collect():
-        if metric.name == metric_name:
-            for sample in metric.samples:
-                if sample.labels == labels and sample.name.endswith("_total"):
-                    return sample.value
+    metric_name should include the _total suffix (e.g. 'foo_total').
+    """
+    from yadgar.metrics import _registry  # noqa: PLC0415
+
+    for metric in _registry.collect():
+        for sample in metric.samples:
+            if sample.name == metric_name and sample.labels == labels:
+                return sample.value
     return 0.0
 
 
