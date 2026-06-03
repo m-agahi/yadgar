@@ -475,8 +475,53 @@ def _migration_015_wiki_draft_branch(storage) -> None:
 
 # ── tag sets for migration_016 backfill heuristic ────────────────────────────
 _AWS_TAGS: frozenset[str] = frozenset(
-    {"s3", "iam", "lambda", "sns", "sqs", "cloudfront", "route53", "rds", "ec2", "dynamodb", "aws"}
+    {
+        "s3",
+        "iam",
+        "lambda",
+        "sns",
+        "sqs",
+        "cloudfront",
+        "route53",
+        "rds",
+        "ec2",
+        "dynamodb",
+        "aws",
+        # Extended tags from corpus analysis (v5.42.6)
+        "eks",
+        "eventbridge",
+        "kafka",
+        "msk",
+        "cloudformation",
+    }
 )
+
+_YADGAR_TAGS: frozenset[str] = frozenset({"yadgar"})
+_NIX_TAGS: frozenset[str] = frozenset({"nix"})
+_LEDGER_TAGS: frozenset[str] = frozenset({"ledger"})
+
+
+def _classify_directory_by_tags(tags: set[str]) -> str:
+    """Apply tag-based heuristic to assign a directory_context value.
+
+    Priority order (first match wins):
+    1. 'yadgar' tag → /home/max/git/yadgar
+    2. 'nix' tag (without aws) → /home/max/git/nix
+    3. 'ledger' tag → /home/max/git/ledger
+    4. Any AWS infra tag → /home/max/aws-work
+    5. otherwise → 'global'
+
+    Used by both migration 016 (original, now fixed) and migration 018 (repair).
+    """
+    if tags & _YADGAR_TAGS:
+        return "/home/max/git/yadgar"
+    if tags & _NIX_TAGS and not (tags & _AWS_TAGS):
+        return "/home/max/git/nix"
+    if tags & _LEDGER_TAGS:
+        return "/home/max/git/ledger"
+    if tags & _AWS_TAGS:
+        return "/home/max/aws-work"
+    return "global"
 
 
 def _migration_016_directory_context(storage) -> None:  # noqa: C901
@@ -504,39 +549,45 @@ def _migration_016_directory_context(storage) -> None:  # noqa: C901
 
     Idempotent: DEFINE FIELD IF NOT EXISTS is safe to re-run.
     """
-    # Phase A: backfill wiki_page rows that have no directory_context yet
-    rows = storage._q("SELECT id, tags FROM wiki_page WHERE directory_context IS NONE")
+    # Phase A: backfill wiki_page rows that have no directory_context yet.
+    # v5.42.6 fix: fetch ALL rows + Python-filter for absent/empty directory_context.
+    # SurrealDB `IS NONE` matches explicit-NULL only — NOT field-absent rows from pre-DEFINE
+    # records. Python-side filter catches both field-absent (key missing) and explicit-NULL.
+    all_wiki_rows = storage._q("SELECT id, tags, directory_context FROM wiki_page")
+    rows = [r for r in all_wiki_rows if r.get("directory_context") in (None, "")]
     backfilled = 0
     for row in rows:
         tags = set(row.get("tags") or [])
+        dc = _classify_directory_by_tags(tags)
+        raw_id = row.get("id")
+        # Extract numeric ID — SurrealDB HTTP returns "wiki_page:N"; type::record() needs N.
         try:
-            if "yadgar" in tags:
-                dc = "/home/max/git/yadgar"
-            elif tags & _AWS_TAGS:
-                dc = "/home/max/git/aws-work"
-            else:
-                dc = "global"
+            num_id = storage._extract_id(raw_id)
+        except Exception:
+            _log.warning("migration_016: could not parse id %r — skipping", raw_id)
+            continue
+        try:
             storage._q(
                 "UPDATE type::record('wiki_page', $id) SET directory_context = $dc",
-                {"id": row["id"], "dc": dc},
+                {"id": num_id, "dc": dc},
             )
             backfilled += 1
         except Exception as _e:
             _log.warning(
                 "migration_016: backfill failed for wiki_page id=%s (%s) — defaulting to 'global'",
-                row.get("id"),
+                raw_id,
                 _e,
             )
             try:
                 storage._q(
                     "UPDATE type::record('wiki_page', $id) SET directory_context = 'global'",
-                    {"id": row["id"]},
+                    {"id": num_id},
                 )
                 backfilled += 1
             except Exception as _e2:
                 _log.error(
                     "migration_016: fallback backfill also failed for id=%s: %s",
-                    row.get("id"),
+                    raw_id,
                     _e2,
                 )
     _log.info("migration_016: backfilled %d wiki_page rows with directory_context", backfilled)
@@ -553,22 +604,28 @@ def _migration_016_directory_context(storage) -> None:  # noqa: C901
         "ON TABLE wiki_page FIELDS directory_context;"
     )
 
-    # Phase D: backfill memory rows with empty/None directory_context
-    mem_rows = storage._q(
-        "SELECT id FROM memory WHERE directory_context IS NONE OR directory_context = ''"
-    )
+    # Phase D: backfill memory rows with empty/None directory_context.
+    # v5.42.6 fix: Python-side filter (same IS NONE bug as Phase A).
+    all_mem_rows = storage._q("SELECT id, directory_context FROM memory")
+    mem_rows = [r for r in all_mem_rows if r.get("directory_context") in (None, "")]
     mem_backfilled = 0
     for row in mem_rows:
+        raw_mem_id = row.get("id")
+        try:
+            num_mem_id = storage._extract_id(raw_mem_id)
+        except Exception:
+            _log.warning("migration_016: could not parse memory id %r — skipping", raw_mem_id)
+            continue
         try:
             storage._q(
                 "UPDATE type::record('memory', $id) SET directory_context = 'global'",
-                {"id": row["id"]},
+                {"id": num_mem_id},
             )
             mem_backfilled += 1
         except Exception as _e:
             _log.warning(
                 "migration_016: memory backfill failed for id=%s: %s",
-                row.get("id"),
+                raw_mem_id,
                 _e,
             )
     _log.info(
@@ -589,6 +646,133 @@ def _migration_016_directory_context(storage) -> None:  # noqa: C901
 
     _log.info(
         "migration_016: directory_context schema constraints applied to wiki_page + memory + wiki_draft"
+    )
+
+
+def _migration_018_directory_context_backfill_repair(storage) -> None:  # noqa: C901
+    """Repair directory_context backfill for deployed databases (v5.42.6).
+
+    Migration 016 (v5.42.5) had a bug: its SurrealDB `WHERE directory_context IS NONE`
+    query only matched rows with an *explicit* NULL value — not rows where the field
+    is entirely absent (pre-DEFINE records). All 200+ legacy wiki_page rows were missed.
+
+    This migration re-applies the tag-based heuristic backfill using the corrected
+    Python-side filter (fetch-all + `row.get("directory_context") in (None, "")`).
+
+    Empirical finding (v5.42.6): SurrealDB throws a coerce error even on
+    `UPDATE ... SET directory_context = $value` when the DEFINE FIELD ASSERT was
+    applied (migration 016 Phase B) and the row has a field-absent value. SurrealDB
+    validates ALL defined fields on every UPDATE, causing:
+        "Couldn't coerce value for field `directory_context`: Expected `string` but found `NONE`"
+
+    Workaround: temporarily relax the schema to `option<string>` before the backfill
+    (Phase A), do the UPDATE, then re-tighten to `string NOT NULL` after (Phase C).
+
+    Idempotent: rows already having a non-empty directory_context are skipped.
+
+    Note: migration 017 is reserved for v5.61 (wiki_source_hash). This migration
+    takes number 018 as the next available slot.
+    """
+    # Phase A: temporarily relax wiki_page.directory_context to allow NONE during UPDATE.
+    # This is required because SurrealDB validates ASSERT on every UPDATE, not just the
+    # updated field — field-absent rows trigger coerce errors without this relaxation.
+    # OVERWRITE is required: migration 016 already defined this field; without OVERWRITE
+    # SurrealDB v3 rejects the redefinition.
+    storage._q("DEFINE FIELD OVERWRITE directory_context ON TABLE wiki_page TYPE option<string>;")
+
+    # Phase B: backfill wiki_page rows with missing/empty directory_context.
+    all_wiki_rows = storage._q("SELECT id, tags, directory_context FROM wiki_page")
+    wiki_rows_to_fix = [r for r in all_wiki_rows if r.get("directory_context") in (None, "")]
+    wiki_backfilled = 0
+    wiki_buckets: dict[str, int] = {}
+
+    for row in wiki_rows_to_fix:
+        tags = set(row.get("tags") or [])
+        dc = _classify_directory_by_tags(tags)
+        # Extract the numeric part of the record ID.
+        # SurrealDB HTTP returns id as "wiki_page:N"; type::record() requires just N (int).
+        raw_id = row.get("id")
+        try:
+            num_id = storage._extract_id(raw_id)
+        except Exception:
+            _log.warning("migration_018: could not parse id %r — skipping", raw_id)
+            continue
+        try:
+            storage._q(
+                "UPDATE type::record('wiki_page', $id) SET directory_context = $dc",
+                {"id": num_id, "dc": dc},
+            )
+            wiki_backfilled += 1
+            wiki_buckets[dc] = wiki_buckets.get(dc, 0) + 1
+        except Exception as _e:
+            _log.warning(
+                "migration_018: backfill failed for wiki_page id=%s (%s) — defaulting to 'global'",
+                raw_id,
+                _e,
+            )
+            try:
+                storage._q(
+                    "UPDATE type::record('wiki_page', $id) SET directory_context = 'global'",
+                    {"id": num_id},
+                )
+                wiki_backfilled += 1
+                wiki_buckets["global"] = wiki_buckets.get("global", 0) + 1
+            except Exception as _e2:
+                _log.error(
+                    "migration_018: fallback backfill also failed for wiki_page id=%s: %s",
+                    raw_id,
+                    _e2,
+                )
+
+    _log.info(
+        "migration_018: backfilled %d wiki_page rows — buckets: %s",
+        wiki_backfilled,
+        wiki_buckets,
+    )
+
+    # Phase C: re-tighten wiki_page.directory_context to NOT NULL string.
+    storage._q(
+        "DEFINE FIELD OVERWRITE directory_context ON TABLE wiki_page TYPE string "
+        "ASSERT $value != NONE AND string::len($value) > 0;"
+    )
+
+    # Phase D: temporarily relax memory.directory_context similarly.
+    storage._q("DEFINE FIELD OVERWRITE directory_context ON TABLE memory TYPE option<string>;")
+
+    # Phase E: backfill memory rows with missing/empty directory_context.
+    all_mem_rows = storage._q("SELECT id, directory_context FROM memory")
+    mem_rows_to_fix = [r for r in all_mem_rows if r.get("directory_context") in (None, "")]
+    mem_backfilled = 0
+
+    for row in mem_rows_to_fix:
+        raw_mem_id = row.get("id")
+        try:
+            num_mem_id = storage._extract_id(raw_mem_id)
+        except Exception:
+            _log.warning("migration_018: could not parse memory id %r — skipping", raw_mem_id)
+            continue
+        try:
+            storage._q(
+                "UPDATE type::record('memory', $id) SET directory_context = 'global'",
+                {"id": num_mem_id},
+            )
+            mem_backfilled += 1
+        except Exception as _e:
+            _log.warning(
+                "migration_018: memory backfill failed for id=%s: %s",
+                raw_mem_id,
+                _e,
+            )
+
+    _log.info(
+        "migration_018: backfilled %d memory rows with directory_context='global'",
+        mem_backfilled,
+    )
+
+    # Phase F: re-tighten memory.directory_context to NOT NULL string.
+    storage._q(
+        "DEFINE FIELD OVERWRITE directory_context ON TABLE memory TYPE string "
+        "ASSERT $value != NONE AND string::len($value) > 0;"
     )
 
 
@@ -647,6 +831,11 @@ _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {
         "version": "016_directory_context",
         "fn": _migration_016_directory_context,
+    },
+    # NOTE: 017 is RESERVED for v5.61 (wiki_source_hash table). Do not use.
+    {
+        "version": "018_directory_context_backfill_repair",
+        "fn": _migration_018_directory_context_backfill_repair,
     },
 ]
 

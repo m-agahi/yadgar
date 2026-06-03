@@ -48,6 +48,10 @@ def _insert_legacy_wiki_page(title: str, tags: list[str], slug: str | None = Non
     Uses raw SurrealDB query to bypass the application-level insert_wiki_page helper
     (which always writes directory_context).  The resulting row is field-absent —
     not directory_context=NONE but literally lacking the key — matching the bug.
+
+    Temporarily relaxes the schema constraint (from migration 016) to allow the
+    field-absent insert — this mirrors the real-world situation where the rows were
+    created before migration 016 ran.
     """
     st = _storage()
     pid = st._next_id("wiki_page")
@@ -55,28 +59,48 @@ def _insert_legacy_wiki_page(title: str, tags: list[str], slug: str | None = Non
         import re
 
         slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:64]
-    # Intentionally omit directory_context to simulate pre-016 field-absent state.
-    st._q(
-        "CREATE type::record('wiki_page', $pid) SET "
-        "title = $title, slug = $slug, content = $content, "
-        "category = 'reference', tags = $tags, links = [], "
-        "confidence = 'medium', source_memory_ids = [], "
-        "created_at = time::now(), updated_at = time::now()",
-        {"pid": pid, "title": title, "slug": slug, "content": "test content", "tags": tags},
-    )
+
+    # Temporarily relax schema so we can insert a row without directory_context
+    # (simulates rows created before migration 016 was applied).
+    st._q("DEFINE FIELD OVERWRITE directory_context ON TABLE wiki_page TYPE option<string>")
+    try:
+        st._q(
+            "CREATE type::record('wiki_page', $pid) SET "
+            "title = $title, slug = $slug, content = $content, "
+            "category = 'reference', tags = $tags, links = [], "
+            "confidence = 'medium', source_memory_ids = [], "
+            "created_at = time::now(), updated_at = time::now()",
+            {"pid": pid, "title": title, "slug": slug, "content": "test content", "tags": tags},
+        )
+    finally:
+        # Restore the strict schema (as migration 016 left it).
+        st._q(
+            "DEFINE FIELD OVERWRITE directory_context ON TABLE wiki_page TYPE string "
+            "ASSERT $value != NONE AND string::len($value) > 0"
+        )
     return slug
 
 
 def _insert_legacy_memory(content: str = "legacy mem") -> None:
-    """Insert a memory row WITHOUT directory_context (field-absent)."""
+    """Insert a memory row WITHOUT directory_context (field-absent).
+
+    Temporarily relaxes the schema constraint to allow the field-absent insert.
+    """
     st = _storage()
     pid = st._next_id("memory")
-    st._q(
-        "CREATE type::record('memory', $pid) SET "
-        "content = $content, heat = 1.0, "
-        "created_at = time::now(), updated_at = time::now()",
-        {"pid": pid, "content": content},
-    )
+    st._q("DEFINE FIELD OVERWRITE directory_context ON TABLE memory TYPE option<string>")
+    try:
+        st._q(
+            "CREATE type::record('memory', $pid) SET "
+            "content = $content, heat = 1.0, "
+            "created_at = time::now(), updated_at = time::now()",
+            {"pid": pid, "content": content},
+        )
+    finally:
+        st._q(
+            "DEFINE FIELD OVERWRITE directory_context ON TABLE memory TYPE string "
+            "ASSERT $value != NONE AND string::len($value) > 0"
+        )
 
 
 # ── T1: field-absent wiki_page row gets correct heuristic value ───────────────
@@ -194,8 +218,7 @@ class TestMigration018UnbricksWikiList:
         st = _storage()
 
         # Before migration: this page has no directory_context, so wiki_list returns empty
-        result_before = wiki_list(directory="/home/max/git/yadgar")
-        pages_before = result_before.get("pages", [])
+        pages_before = wiki_list(directory="/home/max/git/yadgar")
         slugs_before = [p["slug"] for p in pages_before]
         assert "legacy-yadgar-doc" not in slugs_before, (
             "Pre-migration: legacy row should not appear in directory-scoped list"
@@ -203,8 +226,7 @@ class TestMigration018UnbricksWikiList:
 
         _migration_018_directory_context_backfill_repair(st)
 
-        result_after = wiki_list(directory="/home/max/git/yadgar")
-        pages_after = result_after.get("pages", [])
+        pages_after = wiki_list(directory="/home/max/git/yadgar")
         slugs_after = [p["slug"] for p in pages_after]
         assert "legacy-yadgar-doc" in slugs_after, (
             "Post-migration: backfilled row should appear in wiki_list"
