@@ -88,6 +88,7 @@ class _ApplyMixin:
                 confidence=p.get("confidence", "medium"),
                 append=p.get("append", False),
                 branch=p.get("branch"),
+                directory=p.get("directory_context") or p.get("directory"),
             )
         else:
             logger.debug("Unknown queue op %r — skipping", op)
