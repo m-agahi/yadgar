@@ -156,7 +156,7 @@ COMMENT ON VIEW v_tool_call_volume IS
 -- 10. Branch distribution
 CREATE OR REPLACE VIEW v_branch_distribution AS
 SELECT
-    coalesce(branch, 'master') AS branch,
+    coalesce(branch, '(canonical)') AS branch,
     count(*) AS memory_count,
     avg(heat) AS avg_heat,
     min(created_at) AS oldest,
