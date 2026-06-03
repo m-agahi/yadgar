@@ -4,10 +4,32 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+_FALSY = frozenset({"false", "0", "no", "off"})
+
+
+def _enforcement_on(env_var: str) -> bool:
+    """Return True (enforcement ON) unless env var is explicitly falsy.
+
+    Fail-safe: unknown/garbage values default to True (ON).
+    """
+    val = os.environ.get(env_var, "").strip().lower()
+    return val not in _FALSY
+
+
+def _inc_relaxed(enforcement: str) -> None:
+    """Increment yadgar_writes_with_enforcement_relaxed counter. Never raises."""
+    try:
+        from yadgar.metrics import yadgar_writes_with_enforcement_relaxed  # noqa: PLC0415
+
+        yadgar_writes_with_enforcement_relaxed.labels(enforcement=enforcement).inc()
+    except Exception:
+        pass
 
 
 def _json_default(obj):
@@ -134,17 +156,29 @@ class _DLQMixin:
         if not p.get("_internal"):
             branch_val = p.get("branch")
             if not branch_val:
-                return (
-                    "missing_branch: wiki_add payload lacks branch context. "
-                    "Supply branch or branch_hint. Use _internal=True for system writes."
+                if _enforcement_on("YADGAR_BRANCH_ENFORCEMENT"):
+                    return (
+                        "missing_branch: wiki_add payload lacks branch context. "
+                        "Supply branch or branch_hint. Use _internal=True for system writes."
+                    )
+                logger.warning(
+                    "wiki_add: branch enforcement OFF — missing branch allowed "
+                    "(YADGAR_BRANCH_ENFORCEMENT=false)"
                 )
+                _inc_relaxed("branch")
 
         # 5. v5.42.5: directory_context required for all writes.
         # _internal=True carve-out applies here too.
         if not p.get("_internal"):
             dc = p.get("directory_context") or p.get("directory")
             if not dc or not str(dc).strip():
-                return "missing_directory: wiki_add payload lacks directory_context."
+                if _enforcement_on("YADGAR_DIRECTORY_ENFORCEMENT"):
+                    return "missing_directory: wiki_add payload lacks directory_context."
+                logger.warning(
+                    "wiki_add: directory enforcement OFF — missing directory_context allowed "
+                    "(YADGAR_DIRECTORY_ENFORCEMENT=false)"
+                )
+                _inc_relaxed("directory")
 
         return None
 
@@ -163,12 +197,18 @@ class _DLQMixin:
         if not p.get("_internal"):  # _internal-only
             branch_val = p.get("branch")
             if not branch_val:
-                op = record.get("op", "memory-op")
-                return (
-                    f"missing_branch: {op} payload lacks branch context. "
-                    "Supply branch_hint=<branch> or ensure daemon can detect git branch. "
-                    "Use _internal=True for system writes."
+                if _enforcement_on("YADGAR_BRANCH_ENFORCEMENT"):
+                    op = record.get("op", "memory-op")
+                    return (
+                        f"missing_branch: {op} payload lacks branch context. "
+                        "Supply branch_hint=<branch> or ensure daemon can detect git branch. "
+                        "Use _internal=True for system writes."
+                    )
+                logger.warning(
+                    "memory-op: branch enforcement OFF — missing branch allowed "
+                    "(YADGAR_BRANCH_ENFORCEMENT=false)"
                 )
+                _inc_relaxed("branch")
         return None
 
     def _build_missing_branch_metadata(self, record: dict, op_type: str) -> dict:
