@@ -83,7 +83,7 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
             _default_branch = _get_default_branch_fn(_cwd)
         except Exception:
             _current_branch = None
-            _default_branch = "master"
+            _default_branch = None  # v5.42.4: canonical slot
 
         # Use HippoRetriever for unified 4-signal recall
         retriever = _st._retriever
