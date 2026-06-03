@@ -27,7 +27,9 @@ class TestAgentPromptSave:
     def test_first_save_creates_v1(self, storage):
         from yadgar.server.tools.agent_prompts import agent_prompt_save
 
-        result = agent_prompt_save("dispatch-fix-bug", "Dispatch a bug-fix agent.", storage=storage)
+        result = agent_prompt_save(
+            "dispatch-fix-bug", "Dispatch a bug-fix agent.", directory="global", storage=storage
+        )
         assert result["saved"] is True
         assert result["version"] == 1
         assert result["slug"] == "agent-prompt-dispatch-fix-bug-v1"
@@ -35,8 +37,10 @@ class TestAgentPromptSave:
     def test_second_save_creates_v2(self, storage):
         from yadgar.server.tools.agent_prompts import agent_prompt_save
 
-        agent_prompt_save("dispatch-fix-bug", "First version.", storage=storage)
-        result = agent_prompt_save("dispatch-fix-bug", "Second version.", storage=storage)
+        agent_prompt_save("dispatch-fix-bug", "First version.", directory="global", storage=storage)
+        result = agent_prompt_save(
+            "dispatch-fix-bug", "Second version.", directory="global", storage=storage
+        )
         assert result["saved"] is True
         assert result["version"] == 2
         assert result["slug"] == "agent-prompt-dispatch-fix-bug-v2"
@@ -44,8 +48,12 @@ class TestAgentPromptSave:
     def test_save_different_patterns_are_independent(self, storage):
         from yadgar.server.tools.agent_prompts import agent_prompt_save
 
-        r1 = agent_prompt_save("dispatch-fix-bug", "Bug fix prompt.", storage=storage)
-        r2 = agent_prompt_save("dispatch-research", "Research prompt.", storage=storage)
+        r1 = agent_prompt_save(
+            "dispatch-fix-bug", "Bug fix prompt.", directory="global", storage=storage
+        )
+        r2 = agent_prompt_save(
+            "dispatch-research", "Research prompt.", directory="global", storage=storage
+        )
         assert r1["version"] == 1
         assert r2["version"] == 1
         assert r1["slug"] != r2["slug"]
@@ -57,8 +65,10 @@ class TestAgentPromptGet:
     def test_get_returns_latest_version(self, storage):
         from yadgar.server.tools.agent_prompts import agent_prompt_get, agent_prompt_save
 
-        agent_prompt_save("dispatch-fix-bug", "First version.", storage=storage)
-        agent_prompt_save("dispatch-fix-bug", "Second version — updated.", storage=storage)
+        agent_prompt_save("dispatch-fix-bug", "First version.", directory="global", storage=storage)
+        agent_prompt_save(
+            "dispatch-fix-bug", "Second version — updated.", directory="global", storage=storage
+        )
 
         result = agent_prompt_get("dispatch-fix-bug", storage=storage)
         assert result is not None
@@ -75,7 +85,9 @@ class TestAgentPromptGet:
     def test_get_returns_v1_when_only_v1_exists(self, storage):
         from yadgar.server.tools.agent_prompts import agent_prompt_get, agent_prompt_save
 
-        agent_prompt_save("dispatch-review-code", "Review code carefully.", storage=storage)
+        agent_prompt_save(
+            "dispatch-review-code", "Review code carefully.", directory="global", storage=storage
+        )
 
         result = agent_prompt_get("dispatch-review-code", storage=storage)
         assert result is not None
@@ -86,7 +98,9 @@ class TestAgentPromptGet:
         from yadgar.server.tools.agent_prompts import agent_prompt_get, agent_prompt_save
 
         for i in range(1, 6):
-            agent_prompt_save("multi-version-test", f"Prompt version {i}.", storage=storage)
+            agent_prompt_save(
+                "multi-version-test", f"Prompt version {i}.", directory="global", storage=storage
+            )
 
         result = agent_prompt_get("multi-version-test", storage=storage)
         assert result is not None

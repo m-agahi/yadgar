@@ -204,16 +204,16 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
                         attempt.last_error = reject_reason
                         attempt.classification = "permanent"
                         attempt.first_failed_at = now
-                        _fm = (
-                            self._build_missing_branch_metadata(data, op_type)
-                            if reject_reason.startswith("missing_branch")
-                            else None
-                        )
-                        _fr = (
-                            "missing_branch"
-                            if reject_reason.startswith("missing_branch")
-                            else "policy_rejected"
-                        )
+                        if reject_reason.startswith("missing_branch"):
+                            _fm = self._build_missing_branch_metadata(data, op_type)
+                            _fr = "missing_branch"
+                        elif reject_reason.startswith("missing_directory"):
+                            # v5.42.5: directory_context missing → DLQ with missing_directory
+                            _fm = self._build_missing_directory_metadata(data, op_type)
+                            _fr = "missing_directory"
+                        else:
+                            _fm = None
+                            _fr = "policy_rejected"
                         self._move_to_dlq(
                             path, attempt, op_type, failure_reason=_fr, failure_metadata=_fm
                         )

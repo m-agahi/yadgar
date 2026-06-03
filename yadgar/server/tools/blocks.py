@@ -27,6 +27,20 @@ from yadgar.server.lifecycle import _get_storage
 
 logger = logging.getLogger(__name__)
 
+# v5.42.5: F3 — guard for scope='project' requiring directory
+_MISSING_DIRECTORY_RESPONSE: dict = {
+    "ok": False,
+    "error": "missing_directory",
+    "message": "directory is required when scope='project'. Pass the absolute project path.",
+}
+
+
+def _require_directory_for_project_scope(scope: str, directory: str | None) -> dict | None:
+    """Return an error dict if scope='project' and directory is absent/empty, else None."""
+    if scope == "project" and not (directory and directory.strip()):
+        return _MISSING_DIRECTORY_RESPONSE
+    return None
+
 
 @_tool(power=True)
 def block_create(
@@ -52,6 +66,11 @@ def block_create(
     storage = _get_storage()
     if storage is None:
         return {"ok": False, "error": "storage_not_initialized"}
+
+    # v5.42.5 F3: directory required for scope='project'
+    _dir_guard = _require_directory_for_project_scope(scope, directory)
+    if _dir_guard is not None:
+        return _dir_guard
 
     # Secret gate — scan before any state mutation (I26)
     gate = gate_or_reject(content)
@@ -91,6 +110,11 @@ def block_get(
     if storage is None:
         return {"ok": False, "error": "storage_not_initialized"}
 
+    # v5.42.5 F3: directory required for scope='project'
+    _dir_guard = _require_directory_for_project_scope(scope, directory)
+    if _dir_guard is not None:
+        return _dir_guard
+
     try:
         result = storage.get_block(name=name, scope=scope, directory=directory)
     except Exception as exc:
@@ -128,6 +152,11 @@ def block_update(
     storage = _get_storage()
     if storage is None:
         return {"ok": False, "error": "storage_not_initialized"}
+
+    # v5.42.5 F3: directory required for scope='project'
+    _dir_guard = _require_directory_for_project_scope(scope, directory)
+    if _dir_guard is not None:
+        return _dir_guard
 
     # Secret gate (I26)
     gate = gate_or_reject(content)
@@ -168,6 +197,11 @@ def block_delete(
     storage = _get_storage()
     if storage is None:
         return {"ok": False, "error": "storage_not_initialized"}
+
+    # v5.42.5 F3: directory required for scope='project'
+    _dir_guard = _require_directory_for_project_scope(scope, directory)
+    if _dir_guard is not None:
+        return _dir_guard
 
     try:
         storage.delete_block(name=name, scope=scope, directory=directory)
@@ -244,6 +278,11 @@ def block_replace(
     if storage is None:
         return {"ok": False, "error": "storage_not_initialized"}
 
+    # v5.42.5 F3: directory required for scope='project'
+    _dir_guard = _require_directory_for_project_scope(scope, directory)
+    if _dir_guard is not None:
+        return _dir_guard
+
     # Secret gate on new_text (I26)
     gate = gate_or_reject(new_text)
     if gate is not None:
@@ -289,6 +328,11 @@ def block_append(
     storage = _get_storage()
     if storage is None:
         return {"ok": False, "error": "storage_not_initialized"}
+
+    # v5.42.5 F3: directory required for scope='project'
+    _dir_guard = _require_directory_for_project_scope(scope, directory)
+    if _dir_guard is not None:
+        return _dir_guard
 
     # Secret gate (I26)
     gate = gate_or_reject(text)
