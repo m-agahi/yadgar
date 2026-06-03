@@ -43,6 +43,7 @@ def _make_wiki_add_record(
     slug: str = "test-slug",
     branch: str | None = "ABSENT",  # ABSENT sentinel means don't include the key
     internal: bool = False,
+    directory_context: str | None = "ABSENT",  # ABSENT sentinel means don't include the key
 ) -> dict:
     """Build a wiki_add queue record dict."""
     payload: dict = {
@@ -57,6 +58,8 @@ def _make_wiki_add_record(
         payload["branch"] = branch
     if internal:
         payload["_internal"] = True
+    if directory_context != "ABSENT":
+        payload["directory_context"] = directory_context
     return {"op": "wiki_add", "id": "test-id", "payload": payload}
 
 
@@ -150,9 +153,9 @@ class TestValidateWikiAddBranchCheck:
         assert result.startswith("missing_branch")
 
     def test_branch_present_passes(self, bare_drainer):
-        """Record with explicit branch value → passes (returns None)."""
+        """Record with explicit branch value and directory_context → passes (returns None)."""
         drainer, _ = bare_drainer
-        record = _make_wiki_add_record(branch="feat/my-feature")
+        record = _make_wiki_add_record(branch="feat/my-feature", directory_context="/proj/test")
         result = drainer._validate_wiki_add(record)
         assert result is None, f"Expected None but got: {result!r}"
 
@@ -567,12 +570,13 @@ class TestMcpBoundaryValidators:
         ), f"Expected missing_branch error dict, got: {result}"
 
     def test_wiki_add_with_branch_hint_passes(self):
-        """wiki_add with branch_hint → succeeds (no error dict)."""
+        """wiki_add with branch_hint and directory → succeeds (no error dict)."""
         result = server.wiki_add(
             title="Branch Hint Wiki Page",
             content="Content with branch hint provided.",
             branch=None,
             branch_hint="feat/my-branch",
+            directory="/proj/test",
         )
         # Should NOT be an error
         assert result.get("error") != "missing_branch"

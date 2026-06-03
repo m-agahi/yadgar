@@ -10,6 +10,8 @@ from hypothesis import strategies as st
 
 from yadgar import server
 
+_TEST_DIR = "/home/max/git/yadgar"
+
 
 @pytest.fixture(autouse=True)
 def _engines(tmp_path):
@@ -85,6 +87,7 @@ def test_wiki_list_response_bounded_at_scale(flush_queue):
             content=f"content {i} " * 5,
             category="reference",
             branch_hint="feat/test-branch",
+            directory=_TEST_DIR,
         )
     flush_queue()
     result = server.wiki_list()
@@ -100,6 +103,7 @@ def test_wiki_list_returns_no_content(flush_queue):
         title="Check page",
         content="This content should not appear in list",
         branch_hint="feat/test-branch",
+        directory=_TEST_DIR,
     )
     flush_queue()
     result = server.wiki_list()
@@ -111,7 +115,10 @@ def test_wiki_list_respects_limit(flush_queue):
     """wiki_list limit parameter must cap results."""
     for i in range(20):
         server.wiki_add(
-            title=f"Limit page {i}", content=f"content {i}", branch_hint="feat/test-branch"
+            title=f"Limit page {i}",
+            content=f"content {i}",
+            branch_hint="feat/test-branch",
+            directory=_TEST_DIR,
         )
     flush_queue()
     result = server.wiki_list(limit=5)
@@ -120,9 +127,15 @@ def test_wiki_list_respects_limit(flush_queue):
 
 def test_wiki_list_slug_prefix_filter(flush_queue):
     """slug_prefix filters to matching slugs only."""
-    server.wiki_add(title="alpha one", content="content a1", branch_hint="feat/test-branch")
-    server.wiki_add(title="alpha two", content="content a2", branch_hint="feat/test-branch")
-    server.wiki_add(title="beta one", content="content b1", branch_hint="feat/test-branch")
+    server.wiki_add(
+        title="alpha one", content="content a1", branch_hint="feat/test-branch", directory=_TEST_DIR
+    )
+    server.wiki_add(
+        title="alpha two", content="content a2", branch_hint="feat/test-branch", directory=_TEST_DIR
+    )
+    server.wiki_add(
+        title="beta one", content="content b1", branch_hint="feat/test-branch", directory=_TEST_DIR
+    )
     flush_queue()
     result = server.wiki_list(slug_prefix="alpha")
     for p in result:
@@ -137,6 +150,7 @@ def test_wiki_list_negative_limit_returns_all(flush_queue):
             content=f"content neg {i}",
             branch_hint="feat/test-branch",
             force=True,
+            directory=_TEST_DIR,
         )
     flush_queue()
     result = server.wiki_list(limit=-1)
@@ -151,6 +165,7 @@ def test_wiki_list_zero_limit_returns_all(flush_queue):
             content=f"content zero {i}",
             branch_hint="feat/test-branch",
             force=True,
+            directory=_TEST_DIR,
         )
     flush_queue()
     result = server.wiki_list(limit=0)
@@ -165,6 +180,7 @@ def test_wiki_list_huge_limit_returns_all(flush_queue):
             content=f"content huge {i}",
             branch_hint="feat/test-branch",
             force=True,
+            directory=_TEST_DIR,
         )
     flush_queue()
     result = server.wiki_list(limit=1_000_000)

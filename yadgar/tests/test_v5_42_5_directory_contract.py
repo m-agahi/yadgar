@@ -111,14 +111,15 @@ def _insert_wiki_direct(
 
 
 def _insert_memory_direct(storage, content: str, directory_context: str) -> None:
-    """Insert a memory record directly to storage with a directory_context."""
-    import numpy as np
+    """Insert a memory record directly to storage with a directory_context.
 
-    embedding = list(np.zeros(384, dtype=float))
+    Embedding left as None — embedded DB (surrealdb-python) does not require
+    it for FTS search; test only verifies directory-scoped recall exclusion.
+    """
     storage.insert_memory(
         {
             "content": content,
-            "embedding": embedding,
+            "embedding": None,
             "tags": ["test"],
             "directory_context": directory_context,
             "heat": 0.8,
@@ -481,7 +482,7 @@ class TestBlocksProjectScopeRequiresDirectory:
         from yadgar.server.tools.blocks import block_create
 
         result = block_create(
-            name="test-global-block", content="global content", scope="global", directory=None
+            name="testglobalblock", content="global content", scope="global", directory=None
         )
         # Should succeed — global blocks don't require directory
         assert result.get("ok") is True or result.get("id") is not None, (
