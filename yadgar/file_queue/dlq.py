@@ -139,6 +139,13 @@ class _DLQMixin:
                     "Supply branch or branch_hint. Use _internal=True for system writes."
                 )
 
+        # 5. v5.42.5: directory_context required for all writes.
+        # _internal=True carve-out applies here too.
+        if not p.get("_internal"):
+            dc = p.get("directory_context") or p.get("directory")
+            if not dc or not str(dc).strip():
+                return "missing_directory: wiki_add payload lacks directory_context."
+
         return None
 
     def _validate_branch_context(self, record: dict) -> str | None:
@@ -172,6 +179,32 @@ class _DLQMixin:
             "hint": (
                 "Add 'branch' key to payload with the correct branch name, "
                 "then call dlq_requeue(filename, force=True) to retry."
+            ),
+        }
+
+    def _validate_directory_context(self, record: dict) -> str | None:
+        """Return failure_reason string if directory_context is missing/empty, else None.
+
+        v5.42.5: defense-in-depth for the MCP boundary validator. Called for
+        wiki_add ops that bypass the MCP layer (direct file_queue writes).
+        _internal=True is the carve-out for system/migration paths.
+        """
+        p = record.get("payload", {})
+        if p.get("_internal"):
+            return None
+        dc = p.get("directory_context") or p.get("directory")
+        if not dc or not str(dc).strip():
+            return "missing_directory"
+        return None
+
+    def _build_missing_directory_metadata(self, record: dict, op_type: str) -> dict:
+        """Build failure_metadata dict for missing_directory DLQ entries (v5.42.5)."""
+        return {
+            "field": "directory_context",
+            "payload_op_type": op_type,
+            "hint": (
+                "Add directory_context key (absolute project path or 'global') "
+                "and requeue with force=True."
             ),
         }
 
