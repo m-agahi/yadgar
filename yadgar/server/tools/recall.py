@@ -24,6 +24,7 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
     profile: str | None = None,
     stage_overrides: dict[str, dict] | None = None,
     directory: str | None = None,
+    branch_hint: str | None = None,
 ) -> list[dict]:
     """Semantic + keyword search filtered by heat. Boosts accessed memories.
 
@@ -35,6 +36,12 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
     stage_overrides (v5.31.1): per-call stage disable map, e.g.
     {"nli": {"enabled": False}}. Only used when profile is set. Passed
     through to Retriever.recall_via_pipeline(stage_overrides=...).
+
+    branch_hint (v5.43.0): caller-supplied branch name. Used when daemon-side
+    _detect_branch returns None (container scenario). Allows long-running agents
+    to supply branch context for each recall call. Secondary to directory-based
+    detection per DP-1 (directory is canonical; branch_hint is fallback).
+    Resolution order: _detect_branch(directory or os.getcwd()) → branch_hint → None.
 
     Raises ValueError immediately (before any retrieval work) if profile is
     set to an unrecognised value.
@@ -62,12 +69,15 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
 
         # §25 Branch context — detect before retrieval so we can push the filter into
         # SurrealQL (C2) rather than post-filtering in Python.
+        # v5.43.0: use caller-supplied directory for detection (avoids daemon-CWD bug).
+        # branch_hint supplies branch when _detect_branch returns None (container scenario).
+        # Resolution: _detect_branch(directory or os.getcwd()) → branch_hint → None.
         # Look up via yadgar.server (where tests patch these) so monkeypatches on
         # "yadgar.server._detect_branch" / "yadgar.server._get_default_branch" take effect.
         try:
             import sys as _sys  # noqa: PLC0415
 
-            _cwd = os.getcwd()
+            _cwd = directory if directory else os.getcwd()
             _srv = _sys.modules.get("yadgar.server")
             if _srv is not None:
                 _detect_branch_fn = getattr(_srv, "_detect_branch", None)
@@ -85,6 +95,12 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
         except Exception:
             _current_branch = None
             _default_branch = None  # v5.42.4: canonical slot
+
+        # v5.43.0: branch_hint fallback — mirrors wiki_read (v5.42.6 F1) and
+        # _resolve_page_id_by_slug (v5.42.5). Use branch_hint when daemon-side
+        # detection returns None (container scenario / no .git in _cwd).
+        if not _current_branch and branch_hint:
+            _current_branch = branch_hint
 
         # Use HippoRetriever for unified 4-signal recall
         retriever = _st._retriever

@@ -1,5 +1,68 @@
 # Migration Notes
 
+## v5.43.0 — MCP schema discipline: caller-context enforcement (2026-06-04)
+
+Core 5.42.6 → 5.43.0. Backend unchanged at 5.4.0.
+
+### Design points resolved
+
+**DP-1 (canonical caller-context mechanism):** `directory` is canonical and always non-NULL. `branch_hint` is secondary — used when `_detect_branch(directory)` returns None (container scenario). Resolution order: `_detect_branch(directory)` → `branch_hint` → `None` (canonical slot).
+
+**DP-2 (wiki_approve branch inheritance):** `wiki_approve` inherits the draft's branch from the `wiki_draft.branch` column (stored since v5.42.3 migration 015). The approved `wiki_page` row carries the draft's branch. Legacy drafts (branch=NULL) write to the canonical NULL slot. The `wiki.add()` return dict now includes `branch` for downstream callers.
+
+**DP-3 (Phase 2 enforcement — immediate):** Hard-reject from v5.43.0. No deprecation window. External callers that don't pass `directory` to write tools get `{"error": "missing_directory"}`. The `_internal=True` carve-out (migrations, drainer replay, consolidation `_try_store_action_summary`) is preserved.
+
+### New parameters (non-breaking additions)
+
+**`wiki_query`** gains two new optional parameters:
+
+```python
+wiki_query(
+    query,
+    tags=None,
+    category=None,
+    max_results=5,
+    directory=None,          # NEW: scope results to caller dir + 'global'
+    branch_hint=None,        # NEW: branch for §25 filter when daemon CWD unreliable
+)
+```
+
+Without `directory`, all pages are returned with a WARNING (backward-compat). Without `branch_hint`, branch detected from `_detect_branch(directory or os.getcwd())`.
+
+**`recall`** gains one new optional parameter:
+
+```python
+recall(
+    query,
+    max_results=5,
+    min_heat=0.0,
+    profile=None,
+    stage_overrides=None,
+    directory=None,          # existing
+    branch_hint=None,        # NEW: branch when daemon-side detection returns None
+)
+```
+
+Resolution order: `_detect_branch(directory or os.getcwd())` → `branch_hint` → `None`.
+
+### Action required for external callers
+
+None for read tools — `wiki_query` and `recall` remain permissive (warn-only when directory absent).
+
+For write tools — the Phase 2 hard-reject established in v5.42.5 continues unchanged. If you're already passing `directory` to `wiki_add`, `block_*`, `agent_prompt_save`, you're compliant.
+
+### _internal carve-out
+
+Daemon-internal write paths (`_internal=True`) bypass directory enforcement:
+- `QueueDrainer` replay path
+- `_try_store_action_summary` (consolidation)
+- Migration-time backfill writes
+- Hook callback writes that predate the directory contract
+
+These paths write to the canonical NULL slot and are exempt from the external caller requirement.
+
+---
+
 ## v5.42.6 — directory backfill repair + resolution hole fix (2026-06-03)
 
 Core 5.42.5 → 5.42.6. Backend unchanged at 5.4.0.

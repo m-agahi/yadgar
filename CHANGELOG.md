@@ -6,6 +6,17 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.43.0] — 2026-06-04
+
+MCP schema discipline — caller-context enforcement across the full MCP surface. Two primary fixes: (1) `wiki_query` gains `directory` + `branch_hint` parameters, eliminating daemon-CWD branch resolution and scoping results to caller directory; (2) `recall` gains `branch_hint` parameter, enabling container-deployed agents to supply branch context for memory retrieval. Both fixes use the established resolution chain: `_detect_branch(directory)` → `branch_hint` → `None`. Phase 3: `wiki_approve` branch inheritance confirmed and returned in result dict (DP-2). Design points resolved: DP-1 (directory canonical, branch_hint secondary), DP-2 (wiki_approve inherits draft branch), DP-3 (hard-reject from v5.43.0, no warn period).
+
+- **feat(wiki):** `wiki_query` gains `directory: str | None = None` + `branch_hint: str | None = None` — scopes results to caller directory, uses branch_hint for §25 filter when daemon CWD unreliable (v5.43.0)
+- **feat(recall):** `recall` gains `branch_hint: str | None = None` — enables container agents to pass branch context; resolution order: `_detect_branch(directory or os.getcwd())` → `branch_hint` → `None` (DP-1)
+- **fix(wiki):** `wiki.add()` now includes `branch` in returned page dict — `wiki_approve` result carries propagated branch (DP-2 branch inheritance)
+- **test:** 19 new tests in `test_v5_43_0_mcp_schema_discipline.py` covering Q1-Q4 (wiki_query), R1-R4 (recall), A1-A3 (wiki_approve inheritance), V1-V5 (v5.42.5 regression guards), B1-B2 (v5.42.5 boundary guards), I1 (long-running agent integration)
+
+---
+
 ## [5.42.6] — 2026-06-03
 
 Directory backfill repair + wiki_read resolution hole + enforcement knobs. Three production bugs fixed: (Bug 1) migration 016 Phase A missed all field-absent rows via `IS NONE` — migration 018 re-backfills using a Python-side filter + numeric ID extraction; (Bug 2) `wiki_read` called daemon-side `_detect_branch` (returns None in containers) making branch="master" rows unreachable — `branch_hint` parameter added symmetric with `wiki_add`; (Bug 3) `wiki_update`/`wiki_append_section`/`wiki_restore` failed on legacy rows with ASSERT coerce error — schema temporarily relaxed during migration 018 backfill. Two new operator escape-hatch knobs added.
