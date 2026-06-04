@@ -96,7 +96,7 @@ consolidation/orchestrator.py (ConsolidationScheduler)
 8. **Multi-passage aggregation** — evidence clusters formed for open-domain queries
 9. **Adversarial filter** — score-gap and diversity checks before return
 
-`recall()` accepts a `profile` kwarg (`"fast"`, `"balanced"`, `"full"`, `"debug"`) and `stage_overrides` (v5.31.0) to route through the `RetrievalPipeline` stage orchestrator (`retrieval/pipeline.py`) instead of the monolithic path. Each stage is a `RetrievalStage` instance composable via plugin registry.
+`recall()` accepts a `profile` kwarg (`"fast"`, `"balanced"`, `"full"`, `"debug"`) + `stage_overrides` (v5.31.0), plus `directory` and `branch_hint` (v5.43.0) for caller-context-driven branch detection — same daemon-CWD-avoidance pattern as `wiki_read`. Profile routes through the `RetrievalPipeline` stage orchestrator (`retrieval/pipeline.py`) instead of the monolithic path. Each stage is a `RetrievalStage` instance composable via plugin registry.
 
 `wiki_read(slug)` uses §25 4-step directory-aware resolution (v5.42.5, `storage/wiki.py:314`): (1) `directory=caller_dir AND branch=current_branch`, (2) `directory=caller_dir AND branch IS NULL`, (3) `directory='global' AND branch IS NULL`, (4) not found → error dict. When no `directory` is supplied, falls back to legacy 3-step branch-only resolution. `branch_hint` parameter (v5.42.3/v5.42.6) supplies the caller's branch when daemon-side `_detect_branch` returns None (container scenario).
 
@@ -234,12 +234,12 @@ Configuration can be injected via environment variables (`YADGAR_*`) without reb
 **Resolution (§25, 4-step post-v5.42.5):**
 - `wiki_read(slug)` resolves via: (1) `directory=caller_dir AND branch=current_branch`; (2) `directory=caller_dir AND branch IS NULL`; (3) `directory='global' AND branch IS NULL`; (4) not found → error dict.
 - When no `directory` is supplied, falls back to legacy 3-step branch-only resolution (WARNING logged).
-- `branch_hint` parameter (v5.42.3/v5.42.6) supplies caller branch when daemon-side detection returns None.
+- `branch_hint` parameter (v5.42.3 `wiki_add` → v5.42.6 `wiki_read` → v5.43.0 `recall` + `wiki_query`) supplies caller branch when daemon-side detection returns None.
 
 **Retrieval filter + boost:**
 - Default branch resolved via `git symbolic-ref refs/remotes/origin/HEAD` (5-minute LRU cache).
-- `recall()` filters `branch IN (current, default, NULL)` post-fetch + boosts current-branch results via convex combination (`score + (1 - score) * BRANCH_BOOST_WEIGHT`, default 0.2, v5.1.0; replaced earlier hard 1.5× multiplier).
-- `wiki_query()` filters identically but still applies the legacy **1.5× hard multiplier** to current-branch results (`server/tools/wiki.py:584`) — not the convex combination used by `recall`. Discrepancy unchanged since v5.1.
+- `recall(directory, branch_hint)` (v5.43.0) filters `branch IN (current, default, NULL)` post-fetch + boosts current-branch results via convex combination (`score + (1 - score) * BRANCH_BOOST_WEIGHT`, default 0.2, v5.1.0; replaced earlier hard 1.5× multiplier). Branch detection: `_detect_branch(directory or os.getcwd())` → `branch_hint` → `None`.
+- `wiki_query(directory, branch_hint)` (v5.43.0) filters identically but still applies the legacy **1.5× hard multiplier** to current-branch results (`server/tools/wiki.py:584`) — not the convex combination used by `recall`. Same branch detection resolution as `recall`. Discrepancy on multiplier unchanged since v5.1.
 - Non-git directories degenerate to `branch IN (default, NULL)` with no boost.
 
 **Lifecycle:**
