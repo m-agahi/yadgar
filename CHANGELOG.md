@@ -6,6 +6,22 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.45.1] — 2026-06-04
+
+macOS launchd plist generation + install. **Paper-only implementation** — no macOS host available at time of shipping; runtime verification deferred. Fix-ups via hotfix once host is available. See `MIGRATION_NOTES.md` v5.45.1 for the 5 verification probes to run on first macOS access.
+
+- **feat(install):** `scripts/install/launchd/com.openfantasy.yadgar.plist.in` — core LaunchAgent plist template
+- **feat(install):** `scripts/install/launchd/com.openfantasy.yadgar-backend.plist.in` — backend LaunchAgent plist template
+- **feat(install):** `scripts/install/generate_launchd.sh` — renders `.in` templates via sed; `plutil -lint` on macOS, skip on Linux with warning; `YADGAR_LAUNCHD_OUTPUT_DIR` default `~/Library/LaunchAgents`; creates `~/Library/Logs/yadgar/`
+- **feat(install):** `scripts/install/detect_os.sh` — adds `YADGAR_TEST_OS_MARKER=macos` test hook for cross-platform macOS spoofing
+- **feat(install):** `scripts/install/detect_runtime.sh` — adds `YADGAR_TEST_PODMAN_MACHINE_SOCKET` sentinel (DP-C); macOS-specific podman-machine failure message
+- **feat(install):** `Makefile` — `setup` target routes to `generate_systemd.sh` (linux) vs `generate_launchd.sh` (macos); `enable-units-macos` target with `launchctl bootstrap gui/$UID` (macOS 11+) / `launchctl load -w` (10.15) fallback; `_enable-units-auto` dispatcher
+- **feat(install):** `scripts/install/uninstall.sh` — macOS path: `launchctl unload` + rm plists; `--purge` also removes `~/Library/Logs/yadgar/`; `YADGAR_TEST_OS_MARKER` test hook
+- **chore:** bump version 5.45.0 → 5.45.1
+- **test:** 54 new tests in `test_v5_45_1_*.py` (cross-platform render + install + detect + uninstall + Makefile routing); 5 skipped (darwin-only runtime probes); `defusedxml` added to test dependencies for safe plist XML validation
+
+---
+
 ## [5.45.0] — 2026-06-04
 
 Setup Foundation (Linux-only, make-canonical). `make setup` is the single install entrypoint. Container runtime detection: podman-first → docker → error with `YADGAR_CONTAINER_RUNTIME` override. NixOS guard: refuses install with nix flake suggestion. systemd unit templates (`.in` files) rendered by `generate_systemd.sh`. `check_docker()` → `check_runtime()` in daemon (backward-compat alias kept). Seed anchors: `yadgar seed --anchors <file>` with content-hash dedup. CLAUDE.md fragment with idempotent append. Uninstall preserves data by default; `make uninstall-purge` for full wipe. 64 new tests.

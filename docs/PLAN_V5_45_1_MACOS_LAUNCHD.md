@@ -1,6 +1,26 @@
 # PLAN — v5.45.1: macOS launchd Plist Generation + Install
 
-**Status:** skeleton drafted 2026-06-04. Split from v5.45.0 per opus-reviewer. Plan-first per I27.
+## Implementation status
+
+**SHIPPED PAPER-ONLY — 2026-06-04.**
+
+All Steps 1–5 implemented. Cross-platform render tests pass on Linux (54 pass, 5 skipif darwin). Runtime verification deferred: no macOS host was available. Fix-ups via hotfix.
+
+**Deferred verification:** Run the 5 probes in `MIGRATION_NOTES.md` v5.45.1 section on first macOS host access. See `docs/DECISIONS.md` PD-38 for formal deferral record.
+
+**Delivered files:**
+- `scripts/install/launchd/com.openfantasy.yadgar.plist.in`
+- `scripts/install/launchd/com.openfantasy.yadgar-backend.plist.in`
+- `scripts/install/generate_launchd.sh`
+- `scripts/install/detect_os.sh` — added `YADGAR_TEST_OS_MARKER` hook
+- `scripts/install/detect_runtime.sh` — added `YADGAR_TEST_PODMAN_MACHINE_SOCKET` sentinel (DP-C)
+- `scripts/install/uninstall.sh` — macOS path (launchctl + rm plists + logs on --purge)
+- `Makefile` — `enable-units-macos`, `_enable-units-auto`, OS-routing in `setup`
+- `yadgar/tests/test_v5_45_1_*.py` — 6 test modules (54 pass, 5 darwin-skipif)
+
+---
+
+**Status (original):** skeleton drafted 2026-06-04. Split from v5.45.0 per opus-reviewer. Plan-first per I27.
 
 **Parent plan:** `docs/PLAN_V5_45_0_SETUP_FOUNDATION.md` (Step 4 — macOS launchd path, scope-cut out).
 
