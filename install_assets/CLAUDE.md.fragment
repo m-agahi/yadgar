@@ -1,0 +1,21 @@
+<!-- YADGAR-RULES-BEGIN -->
+## Yadgar Memory System
+
+This project uses **yadgar** — a persistent memory engine for Claude Code.
+
+### Quick Reference
+
+- **Recall context:** `mcp__yadgar__recall(query="...")`
+- **Remember something:** `mcp__yadgar__remember(content="...", tags=[...])`
+- **Memorize with decay:** `mcp__yadgar__memorize(content="...", context="/abs/path")`
+- **Wiki lookup:** `mcp__yadgar__wiki_query(query="...", tags=[...])`
+- **Restore session:** `mcp__yadgar__restore(directory="/abs/path")`
+
+### Rules
+
+1. Always check yadgar before answering questions about project structure, AWS resources, or past decisions.
+2. Write back to yadgar after discovering non-obvious, reusable facts.
+3. Use `restore(directory=...)` after `/clear` or `/compact` — not `recall`.
+4. Tag all writes; `wiki_query` accuracy degrades on untagged pages.
+5. Never write to `memory/` dirs or `MEMORY.md` — use yadgar MCP tools only.
+<!-- YADGAR-RULES-END -->

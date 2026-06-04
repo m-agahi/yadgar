@@ -90,14 +90,21 @@ def test_dockerfile_no_root_root_defaults():
     )
 
 
-def test_setup_sh_no_hardcoded_root_pass():
-    """scripts/setup.sh must not contain hardcoded ROOT_PASS=root defaults."""
-    setup = __import__("pathlib").Path(__file__).parent.parent.parent / "scripts" / "setup.sh"
-    if not setup.exists():
-        pytest.skip("scripts/setup.sh not found")
-    content = setup.read_text()
-    # ROOT_PASS="root" should be removed in favor of a required parameter
-    assert 'ROOT_PASS="root"' not in content, 'setup.sh must not contain ROOT_PASS="root" default'
+def test_bootstrap_secrets_sh_no_hardcoded_root_pass():
+    """scripts/install/bootstrap_secrets.sh must not contain hardcoded ROOT_PASS=root defaults."""
+    bootstrap = (
+        __import__("pathlib").Path(__file__).parent.parent.parent
+        / "scripts"
+        / "install"
+        / "bootstrap_secrets.sh"
+    )
+    if not bootstrap.exists():
+        pytest.skip("scripts/install/bootstrap_secrets.sh not found")
+    content = bootstrap.read_text()
+    # ROOT_PASS="root" must not appear as a hardcoded default
+    assert 'ROOT_PASS="root"' not in content, (
+        'bootstrap_secrets.sh must not contain ROOT_PASS="root" default'
+    )
 
 
 import pytest  # noqa: E402 — must come after the test functions that use it

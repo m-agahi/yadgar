@@ -1,0 +1,29 @@
+[Unit]
+Description=Yadgar Backend (SurrealDB + Embeddings)
+After=network.target
+
+[Service]
+Environment=DOCKER_HOST=unix:///run/podman/podman.sock
+EnvironmentFile=@SECRETS_ENV_FILE@
+ExecStartPre=-@RUNTIME@ stop yadgar-backend
+ExecStartPre=-@RUNTIME@ rm yadgar-backend
+ExecStartPre=-@RUNTIME@ network create yadgar-net
+ExecStart=@RUNTIME@ run --name yadgar-backend --rm --user root \
+    --network yadgar-net \
+    -p 127.0.0.1:8001:8001 \
+    -v @DATA_DIR@:/data \
+    -e SURREAL_USER=${SURREAL_USER} \
+    -e SURREAL_PASS=${SURREAL_PASS} \
+    -e YADGAR_RW_USER=${YADGAR_RW_USER} \
+    -e YADGAR_RW_PASS=${YADGAR_RW_PASS} \
+    -e YADGAR_RO_USER=${YADGAR_RO_USER} \
+    -e YADGAR_RO_PASS=${YADGAR_RO_PASS} \
+    --memory 4g --cpus 2 --stop-timeout 30 \
+    @BACKEND_IMAGE@
+ExecStop=@RUNTIME@ stop yadgar-backend
+Restart=on-failure
+RestartSec=5
+Type=simple
+
+[Install]
+WantedBy=default.target

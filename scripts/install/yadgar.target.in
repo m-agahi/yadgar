@@ -1,0 +1,7 @@
+[Unit]
+Description=Yadgar Memory Engine — full stack
+Wants=yadgar.service yadgar-backend.service
+After=yadgar.service yadgar-backend.service
+
+[Install]
+WantedBy=default.target

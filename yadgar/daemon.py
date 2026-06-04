@@ -34,6 +34,36 @@ DEFAULT_PORT = 8765
 DEFAULT_DEV_PORT = 8766
 _HEALTH_TIMEOUT = 60.0  # Docker startup takes longer than a local process
 
+# Container runtime detected at first check_runtime() call.
+# v5.45.0: only check_runtime() + highest-traffic callsites migrated.
+# TODO(v5.46): propagate _RUNTIME through all ~20 remaining subprocess callsites:
+#   start_backend(), pull(), push(), build(), exec_in_container(), _image_exists(),
+#   _container_running(), _container_exists(), _ensure_network(), status(), logs()
+_RUNTIME: str | None = None
+
+
+def _get_runtime() -> str:
+    """Return the active container runtime name (podman or docker).
+
+    Uses YADGAR_CONTAINER_RUNTIME env if set; otherwise uses cached _RUNTIME
+    from last check_runtime() call; otherwise probes once.
+    v5.45.0: replaces hardcoded "docker" in highest-traffic callsites.
+    """
+    env_rt = os.environ.get("YADGAR_CONTAINER_RUNTIME", "").strip()
+    if env_rt:
+        return env_rt
+    if _RUNTIME is not None:
+        return _RUNTIME
+    # Lazy probe: first invocation before check_runtime() called explicitly
+    for rt in ("podman", "docker"):
+        try:
+            r = subprocess.run([rt, "--version"], capture_output=True, timeout=5)
+            if r.returncode == 0:
+                return rt
+        except FileNotFoundError, subprocess.TimeoutExpired:
+            continue
+    return "docker"  # final fallback keeps backward compat
+
 
 def _default_image(repo: str) -> str:
     """Return repo:version using the installed package version, fallback to :latest."""
@@ -208,7 +238,7 @@ class YadgarDaemon:
         mem_mb = _container_memory_mb()
 
         cmd = [
-            "docker",
+            _get_runtime(),
             "run",
             "-d",
             "--name",
@@ -299,7 +329,7 @@ class YadgarDaemon:
         mem_mb = _container_memory_mb()
 
         cmd = [
-            "docker",
+            _get_runtime(),
             "run",
             "-d",
             "--name",
@@ -660,28 +690,63 @@ WantedBy=default.target
     # ── Docker availability ─────────────────────────────────────────────────
 
     @staticmethod
+    def check_runtime() -> dict:
+        """Detect and verify container runtime (podman or docker).
+
+        Detection order (DP2 resolution):
+          1. YADGAR_CONTAINER_RUNTIME env override
+          2. podman (rootless-friendly)
+          3. docker
+          4. Neither → ok=False
+
+        Returns: {ok, runtime, version} on success; {ok, reason} on failure.
+        Populates module-level _RUNTIME on first successful call.
+        """
+        global _RUNTIME  # noqa: PLW0603
+
+        # Check env override first
+        env_rt = os.environ.get("YADGAR_CONTAINER_RUNTIME", "").strip()
+        candidates = [env_rt] if env_rt else ["podman", "docker"]
+
+        for rt in candidates:
+            try:
+                result = subprocess.run(
+                    [rt, "version", "--format", "{{.Server.Version}}"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if result.returncode == 0:
+                    version = result.stdout.strip() or "?"
+                    _RUNTIME = rt
+                    return {"ok": True, "runtime": rt, "version": version}
+                # Binary exists but daemon not running
+                exist = subprocess.run([rt, "--version"], capture_output=True, timeout=5)
+                if exist.returncode == 0:
+                    return {
+                        "ok": False,
+                        "runtime": rt,
+                        "reason": f"{rt} installed but daemon not running",
+                    }
+            except FileNotFoundError:
+                continue
+            except subprocess.TimeoutExpired:
+                return {
+                    "ok": False,
+                    "reason": f"{rt} version timed out (is the daemon running?)",
+                }
+
+        if env_rt:
+            return {
+                "ok": False,
+                "reason": f"{env_rt!r} not found in PATH — check YADGAR_CONTAINER_RUNTIME",
+            }
+        return {"ok": False, "reason": "No container runtime found — install podman or docker"}
+
+    @staticmethod
     def check_docker() -> dict:
-        """Verify Docker is available and the daemon is running."""
-        try:
-            result = subprocess.run(
-                ["docker", "version", "--format", "{{.Server.Version}}"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode == 0:
-                version = result.stdout.strip() or "?"
-                return {"ok": True, "version": version}
-            # docker version exits non-zero when daemon isn't running;
-            # check if the binary exists at all
-            exist = subprocess.run(["docker", "--version"], capture_output=True, timeout=5)
-            if exist.returncode == 0:
-                return {"ok": False, "reason": "Docker installed but daemon not running"}
-            return {"ok": False, "reason": result.stderr.strip() or "docker version failed"}
-        except FileNotFoundError:
-            return {"ok": False, "reason": "docker not found in PATH — install Docker first"}
-        except subprocess.TimeoutExpired:
-            return {"ok": False, "reason": "docker version timed out (is Docker running?)"}
+        """Backward-compat alias for check_runtime(). Deprecated since v5.45.0."""
+        return YadgarDaemon.check_runtime()
 
     # ── internals ───────────────────────────────────────────────────────────
 
@@ -697,14 +762,19 @@ WantedBy=default.target
 
     def _container_running(self, name: str) -> bool:
         result = subprocess.run(
-            ["docker", "inspect", "--format", "{{.State.Running}}", name],
+            [_get_runtime(), "inspect", "--format", "{{.State.Running}}", name],
             capture_output=True,
             text=True,
         )
         return result.returncode == 0 and result.stdout.strip() == "true"
 
     def _container_exists(self, name: str) -> bool:
-        return subprocess.run(["docker", "inspect", name], capture_output=True).returncode == 0
+        return (
+            subprocess.run([_get_runtime(), "inspect", name], capture_output=True).returncode == 0
+        )
+        # TODO(v5.46): propagate _get_runtime() through remaining ~16 callsites:
+        #   stop(), status(), pull(), push(), build(), exec_in_container(),
+        #   _image_exists(), _ensure_network(), start() rm/log lines, start_backend() rm/log lines
 
     def _health_ok(self, port: int) -> bool:
         try:
