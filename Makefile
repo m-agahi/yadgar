@@ -21,9 +21,13 @@ INSTALL_NONINTERACTIVE ?= 0
 YADGAR_CONTAINER_RUNTIME ?=
 YADGAR_DIR   ?= $(HOME)/.yadgar
 
+# Version — read once from server.json at parse time
+YADGAR_VERSION := $(shell grep -m1 '"version"' $(REPO_ROOT)server.json | cut -d'"' -f4)
+
 .PHONY: all help pre-setup setup uninstall uninstall-purge \
         install-hooks install-agents config-sync install-rules \
-        seed-anchors detect-runtime detect-os clean check
+        seed-anchors detect-runtime detect-os clean check \
+        pull-images bootstrap-secrets enable-units restore
 
 all: setup
 
@@ -77,18 +81,46 @@ install-rules:
 seed-anchors:
 	python3 -m yadgar seed --anchors $(ANCHORS_YAML)
 
-## setup: Full install (pre-setup → runtime → systemd units → hooks → agents → config → rules → anchors)
+## pull-images: Pull yadgar core + backend container images
+pull-images:
+	@RUNTIME=$$(bash $(SCRIPTS_DIR)/detect_runtime.sh); \
+	  echo "==> Pulling images @ v$(YADGAR_VERSION) using $$RUNTIME..."; \
+	  $$RUNTIME pull docker.io/openfantasy/yadgar:$(YADGAR_VERSION); \
+	  $$RUNTIME pull docker.io/openfantasy/yadgar-backend:$(YADGAR_VERSION)
+
+## bootstrap-secrets: Generate ~/.yadgar/secrets.env (interactive prompt for missing creds)
+bootstrap-secrets:
+	@INSTALL_NONINTERACTIVE=$(INSTALL_NONINTERACTIVE) \
+	  bash $(SCRIPTS_DIR)/bootstrap_secrets.sh
+
+## enable-units: systemctl daemon-reload + enable --now yadgar.target
+enable-units:
+	systemctl --user daemon-reload
+	systemctl --user enable --now yadgar.target
+	@echo "==> Verifying services..."
+	@sleep 2
+	@systemctl --user --no-pager status yadgar.service yadgar-backend.service | head -20 || true
+
+## restore: Restore from .surql backup + archive (advanced; set YADGAR_RESTORE_DB=... env var)
+restore:
+	@bash $(SCRIPTS_DIR)/restore.sh
+
+## setup: Full install (pre-setup → pull-images → bootstrap-secrets → systemd units → enable-units → hooks → agents → config → rules → anchors)
 setup: pre-setup
 	@echo "==> Detecting container runtime..."
 	@RUNTIME=$$(bash $(SCRIPTS_DIR)/detect_runtime.sh); \
-	  echo "    Runtime: $$RUNTIME"; \
+	  echo "    Runtime: $$RUNTIME"
+	@$(MAKE) pull-images
+	@$(MAKE) bootstrap-secrets
+	@RUNTIME=$$(bash $(SCRIPTS_DIR)/detect_runtime.sh); \
 	  YADGAR_RUNTIME=$$RUNTIME \
 	  YADGAR_INSTALL_PREFIX="$(YADGAR_DIR)" \
 	  YADGAR_SECRETS_ENV_FILE="$(YADGAR_DIR)/secrets.env" \
-	  YADGAR_BACKEND_IMAGE="openfantasy/yadgar-backend:latest" \
-	  YADGAR_CORE_IMAGE="openfantasy/yadgar:latest" \
+	  YADGAR_BACKEND_IMAGE="docker.io/openfantasy/yadgar-backend:$(YADGAR_VERSION)" \
+	  YADGAR_CORE_IMAGE="docker.io/openfantasy/yadgar:$(YADGAR_VERSION)" \
 	  YADGAR_SYSTEMD_OUTPUT_DIR="$(HOME)/.config/systemd/user" \
 	  bash $(SCRIPTS_DIR)/generate_systemd.sh
+	@$(MAKE) enable-units
 	@$(MAKE) install-hooks
 	@$(MAKE) install-agents
 	@$(MAKE) config-sync
@@ -96,7 +128,6 @@ setup: pre-setup
 	@$(MAKE) seed-anchors
 	@echo ""
 	@echo "==> Yadgar setup complete!"
-	@echo "    Run: systemctl --user start yadgar.target"
 
 ## uninstall: Remove daemon units; preserve ~/.yadgar/ data
 uninstall:
