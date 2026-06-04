@@ -6,6 +6,21 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.44.0] — 2026-06-04
+
+Subagent MCP wiring + 5 automation extensions (X1-X5). Base: per-agent allowlist via bundled agent templates (`yadgar/install_assets/agents/`). X1: `agent_dispatch_prelude` extended with `branch_hint`/`directory`/`subagent_type`/`include_context` params for auto-prefetch (opt-in per DP-X1-1). X2: `SubagentStop` hook extended with `_parse_directive` (memorize/wiki_add/anchor grammar) + `branch_hint` forwarding in POST payload (regression guard for v5.42.2 precedent). X3: `platform_paths.py` — OS-detection helpers for Linux/macOS/Windows Claude Code config paths, no hardcoded `/home/max` paths. X4: `yadgar install-subagents` CLI subcommand — copies bundled agent templates to `~/.claude/agents/`, idempotent, `--check`/`--force`/`--dry-run`, nix carve-out. X5: `yadgar config sync` CLI subcommand — incremental YAML sync adds missing Settings fields with defaults + FIELD_META comments, preserves user values, idempotent, `--check`/`--dry-run`.
+
+- **feat(install):** bundled agent templates at `yadgar/install_assets/agents/` — `general-purpose.md`, `Explore.md`, `cavecrew-investigator.md`, `cavecrew-builder.md`, `cavecrew-reviewer.md`
+- **feat(dispatch):** `agent_dispatch_prelude` + `_build_context_block` — X1 auto-prefetch context using v5.43.0 `recall(directory, branch_hint)` + `wiki_query(directory, branch_hint)` signatures; opt-in via `include_context=True` (DP-X1-1)
+- **feat(hooks):** `subagent_stop.py` gains `_parse_directive` + `_detect_branch_from_cwd` + `branch_hint` in POST payload (X2); structured directive grammar: `memorize:`, `wiki_add:`, `anchor:` per DP-X2-1
+- **feat(platform):** `yadgar/platform_paths.py` — `get_claude_config_dir()`, `get_claude_agents_dir()`, `get_claude_settings_path()`, `is_nix_managed()` (X3)
+- **feat(cli):** `yadgar install-subagents` subcommand via `yadgar/cli/install_subagents.py` + `yadgar/install_subagents_lib.py` (X4)
+- **feat(config):** `yadgar config sync` subcommand via `cmd_config_sync` in `config_yaml.py` — fixes recurring knob-invisibility bug class (X5)
+- **chore:** bump version 5.43.0 → 5.44.0 (pyproject.toml, docker-compose.yml, server.json, uv.lock)
+- **test:** 48 new tests in `test_v5_44_0_subagent_mcp_wiring.py` covering base templates, X1-X5, production write-path
+
+---
+
 ## [5.43.0] — 2026-06-04
 
 MCP schema discipline — caller-context enforcement across the full MCP surface. Two primary fixes: (1) `wiki_query` gains `directory` + `branch_hint` parameters, eliminating daemon-CWD branch resolution and scoping results to caller directory; (2) `recall` gains `branch_hint` parameter, enabling container-deployed agents to supply branch context for memory retrieval. Both fixes use the established resolution chain: `_detect_branch(directory)` → `branch_hint` → `None`. Phase 3: `wiki_approve` branch inheritance confirmed and returned in result dict (DP-2). Design points resolved: DP-1 (directory canonical, branch_hint secondary), DP-2 (wiki_approve inherits draft branch), DP-3 (hard-reject from v5.43.0, no warn period).

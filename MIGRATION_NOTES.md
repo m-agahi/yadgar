@@ -1,5 +1,87 @@
 # Migration Notes
 
+## v5.44.0 — Subagent MCP wiring + automation extensions (2026-06-04)
+
+Core 5.43.0 → 5.44.0. Backend unchanged at 5.4.0. No DB migrations.
+
+### Who needs to act
+
+**Nix users (this project):** No action required. Agent templates and hook config are delivered via the nix repo (home-manager module update). Nix rebuild picks up the new `general-purpose.md` etc.
+
+**Non-nix users:** Run the new install script to get per-agent allowlists and SubagentStop hook registration:
+
+```bash
+yadgar install-subagents          # install agent templates to ~/.claude/agents/
+yadgar install-hooks --scope global  # register SubagentStop hook (already does this)
+```
+
+### New commands
+
+**`yadgar install-subagents`** — copies bundled agent `.md` templates from the yadgar package to `~/.claude/agents/`. Idempotent (safe to re-run). Options: `--dry-run`, `--force`, `--check`. Skips on NixOS (detected via `/etc/NIXOS` or `nixos-version`).
+
+**`yadgar config sync`** — incrementally updates `~/.yadgar/config.yaml` with any new Settings fields added since the file was last written. Fixes the bug where `yadgar config init` is one-shot and new release knobs are invisible in existing configs. Options: `--check`, `--dry-run`, `--remove-unknown`.
+
+```bash
+yadgar config sync --check    # list missing keys, exit 1 if any
+yadgar config sync            # add missing keys with defaults + comments
+yadgar config sync --dry-run  # preview diff without writing
+```
+
+### Bundled agent templates
+
+Five agent templates now ship with the yadgar package at `yadgar/install_assets/agents/`:
+
+| File | Model | Yadgar tools |
+|------|-------|--------------|
+| `general-purpose.md` | inherit | recall, wiki_query, wiki_read, memorize, remember, anchor |
+| `Explore.md` | haiku | none (Haiku, ToolSearch disabled) |
+| `cavecrew-investigator.md` | sonnet | read-only: recall, wiki_query, wiki_read, wiki_list, restore |
+| `cavecrew-builder.md` | sonnet | read + memorize |
+| `cavecrew-reviewer.md` | sonnet | none (output is the review) |
+
+### X1: agent_dispatch_prelude — auto-prefetch context (opt-in)
+
+`agent_dispatch_prelude` gains optional params: `branch_hint`, `directory`, `subagent_type`, `include_context`. When `include_context=True`, the prelude includes an auto-fetched context block (recent memories + wiki pages) using `recall(directory, branch_hint)` + `wiki_query(directory, branch_hint)` (v5.43.0 signatures). Default `False` per DP-X1-1.
+
+### X2: SubagentStop hook — structured directive parsing
+
+`yadgar/hooks/subagent_stop.py` gains `_parse_directive()` which recognizes:
+
+```markdown
+## Yadgar Findings
+
+- memorize: content="...", tags=["a","b"], context="..."
+- wiki_add: title="...", content="...", category="...", tags=[], directory="...", branch_hint="..."
+- anchor: content="...", reason="...", tier="conditional"
+```
+
+Malformed directives are skipped with a warning (lenient per DP-X2-2). `branch_hint` is now forwarded in the POST payload to the daemon (regression guard: v5.42.2 precedent — writer and checker must use the same branch).
+
+### X3: Platform portability
+
+`yadgar/platform_paths.py` resolves Claude Code config paths per OS:
+- Linux: `~/.claude/`
+- macOS: `~/Library/Application Support/Claude/`
+- Windows: `%APPDATA%\Claude\`
+
+No hardcoded `/home/max` paths in any module.
+
+### Design points resolved (v5.44.0)
+
+**DP-1:** general-purpose subagents may call `memorize` directly with `provenance_agent` set. Long-running carve-out documented in agent template.
+
+**DP-2:** Explore + cavecrew-reviewer use `tools:` allowlist without `mcp__yadgar__*` (Haiku / no-write agents).
+
+**DP-3:** optimistic concurrency for multi-agent writes; similarity gate deduplicates async.
+
+**DP-X1-1:** `include_context=False` default — opt-in per caller.
+
+**DP-X2-1:** SubagentStop hook is PRIMARY writer for non-long_running agents.
+
+**DP-X4-1:** standalone `yadgar install-subagents` ships independently of v5.45.
+
+---
+
 ## v5.43.0 — MCP schema discipline: caller-context enforcement (2026-06-04)
 
 Core 5.42.6 → 5.43.0. Backend unchanged at 5.4.0.
