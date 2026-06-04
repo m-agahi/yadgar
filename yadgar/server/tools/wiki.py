@@ -536,10 +536,18 @@ def wiki_query(
     tags: list[str] | None = None,
     category: str | None = None,
     max_results: int = 5,
+    directory: str | None = None,
+    branch_hint: str | None = None,
 ) -> list[dict]:
     """Search wiki pages by keyword + semantic similarity.
 
     Returns matching pages with relevance scores. Use tags and category to filter.
+
+    directory: Absolute project path for scoping results to caller directory + 'global'.
+        When absent, all directories are returned (legacy mode; WARNING logged).
+    branch_hint: Caller branch for §25 branch filter (v5.43.0).
+        Uses branch_hint when daemon-side _detect_branch returns None (container scenario).
+        Resolution order: _detect_branch(directory) → branch_hint → None (canonical slot).
     """
     import time as _time  # noqa: PLC0415
 
@@ -552,11 +560,13 @@ def wiki_query(
         results = _st._wiki.query(query, tags, category, max_results * 3)
 
         # §25 Branch filter + current-branch 1.5x score boost.
+        # v5.43.0: accept caller-supplied directory + branch_hint to avoid daemon-CWD bug.
+        # Resolution: _detect_branch(directory or os.getcwd()) → branch_hint → None.
         # Look up via yadgar.server so monkeypatches on "yadgar.server._detect_branch" etc. apply.
         try:
             import sys as _sys  # noqa: PLC0415
 
-            _cwd = os.getcwd()
+            _cwd = directory if directory else os.getcwd()
             _srv = _sys.modules.get("yadgar.server")
             _detect_branch = getattr(_srv, "_detect_branch", None) if _srv else None
             _get_default_branch = getattr(_srv, "_get_default_branch", None) if _srv else None
@@ -571,15 +581,39 @@ def wiki_query(
             _current_branch = None
             _default_branch = None  # v5.42.4: canonical slot
 
+        # v5.43.0: use branch_hint when daemon-side detection returns None (container scenario).
+        # Mirrors the pattern in wiki_read (v5.42.6 F1) and _resolve_page_id_by_slug (v5.42.5).
+        _effective_branch = _current_branch or branch_hint
+
         _allowed_branches: set[str | None] = {_default_branch, None}
-        if _current_branch is not None:
-            _allowed_branches.add(_current_branch)
+        if _effective_branch is not None:
+            _allowed_branches.add(_effective_branch)
 
         results = [r for r in results if r.get("branch") in _allowed_branches]
 
-        if _current_branch is not None:
+        # v5.43.0: directory scoping — scope to caller directory + 'global'.
+        # Applied as Python-side post-filter (mirrors recall directory filter from v5.42.5).
+        if directory is not None:
+            caller_dir = directory.strip().rstrip("/") or None
+            if caller_dir:
+                results = [
+                    r
+                    for r in results
+                    if r.get("directory_context") in (caller_dir, "global", "", None)
+                ]
+            else:
+                logger.warning(
+                    "wiki_query: directory supplied but empty after strip — skipping directory filter"
+                )
+        else:
+            logger.warning(
+                "wiki_query: no directory supplied — returning results from all directories "
+                "(backward-compat mode). Pass directory= for project-scoped results (v5.43.0)."
+            )
+
+        if _effective_branch is not None:
             for r in results:
-                if r.get("branch") == _current_branch:
+                if r.get("branch") == _effective_branch:
                     base = r.get("_retrieval_score", 0.0)
                     r["_retrieval_score"] = base * 1.5
             results.sort(key=lambda r: r.get("_retrieval_score", 0.0), reverse=True)
