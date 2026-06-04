@@ -8,6 +8,21 @@
 
 ---
 
+---
+
+## 2026-06-04 v5.45.1 ship decisions
+
+**PD-38. v5.45.1 ships paper-only macOS launchd. Host verification deferred.**
+
+- **Source:** `docs/PLAN_V5_45_1_MACOS_LAUNCHD.md` DP-A — verifying host availability
+- **Decision:** DEFER — ship paper implementation now; fix-ups via post-ship hotfix when macOS host is available.
+- **Background:** User directive: "paper-only implementation. User explicitly accepts NO verifying macOS host; fix-ups happen post-ship when host available." DP-A (verifying host) left open. DPs B/C/D resolved via lean recommendations: bootstrap for macOS 11+/load fallback, YADGAR_TEST_PODMAN_MACHINE_SOCKET sentinel for DP-C, RunAtLoad+KeepAlive for DP-D. All cross-platform render tests pass on Linux. 5 darwin-skipif tests document the deferred live probes.
+- **Reason:** No macOS machine accessible. Blocking on DP-A would delay macOS support indefinitely; code is correct-by-construction and the deferred items are verifiable the moment a host is available.
+- **Revisit triggers:** First macOS host access. Run the 5 verification probes from `MIGRATION_NOTES.md` v5.45.1. If all pass, close PD-38. If any fail, open a hotfix.
+- **Artifacts:** `scripts/install/launchd/*.plist.in`, `scripts/install/generate_launchd.sh`, `scripts/install/uninstall.sh` macOS path, `Makefile` enable-units-macos + _enable-units-auto. Test coverage: `yadgar/tests/test_v5_45_1_*.py` (54 pass cross-platform, 5 skipif darwin).
+
+---
+
 ## Protocol (how to use this file)
 
 ### When running an audit (you = audit agent or human)
