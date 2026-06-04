@@ -1,16 +1,18 @@
 """v5.45.0 Step 1 TDD — uninstall.sh + data preservation (RED)."""
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 UNINSTALL_SH = REPO_ROOT / "scripts" / "install" / "uninstall.sh"
+BASH = shutil.which("bash") or "/run/current-system/sw/bin/bash"
 
 
 def _run_uninstall(yadgar_dir: Path, purge: bool = False) -> subprocess.CompletedProcess:
     """Run uninstall.sh with YADGAR_DIR pointing to tmp location."""
-    cmd = ["bash", str(UNINSTALL_SH)]
+    cmd = [BASH, str(UNINSTALL_SH)]
     if purge:
         cmd.append("--purge")
     env = {

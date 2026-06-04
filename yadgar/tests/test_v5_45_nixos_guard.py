@@ -1,6 +1,7 @@
 """v5.45.0 Step 1 TDD — NixOS guard tests (RED)."""
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -9,6 +10,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DETECT_OS_SH = REPO_ROOT / "scripts" / "install" / "detect_os.sh"
 GENERATE_SYSTEMD_SH = REPO_ROOT / "scripts" / "install" / "generate_systemd.sh"
+BASH = shutil.which("bash") or "/run/current-system/sw/bin/bash"
 
 
 class TestV5_45NixOSGuard:
@@ -19,7 +21,7 @@ class TestV5_45NixOSGuard:
         nixos_marker = tmp_path / "NIXOS"
         nixos_marker.touch()
         result = subprocess.run(
-            ["bash", str(DETECT_OS_SH)],
+            [BASH, str(DETECT_OS_SH)],
             capture_output=True,
             text=True,
             env={
@@ -52,7 +54,7 @@ class TestV5_45NixOSGuard:
         (systemd_dir / "yadgar.service").symlink_to(nix_unit)
 
         result = subprocess.run(
-            ["bash", str(GENERATE_SYSTEMD_SH)],
+            [BASH, str(GENERATE_SYSTEMD_SH)],
             capture_output=True,
             text=True,
             env={
@@ -75,7 +77,7 @@ class TestV5_45NixOSGuard:
         nixos_marker = tmp_path / "NIXOS"
         nixos_marker.touch()
         result = subprocess.run(
-            ["bash", str(DETECT_OS_SH)],
+            [BASH, str(DETECT_OS_SH)],
             capture_output=True,
             text=True,
             env={

@@ -1,6 +1,7 @@
 """v5.45.0 Step 1 TDD — detect_runtime.sh tests (RED: script does not exist yet)."""
 
 import os
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -8,6 +9,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DETECT_RUNTIME_SH = REPO_ROOT / "scripts" / "install" / "detect_runtime.sh"
 DETECT_OS_SH = REPO_ROOT / "scripts" / "install" / "detect_os.sh"
+
+# Resolve bash at import time — worktree may not have /run/current-system/sw/bin on PATH
+BASH = shutil.which("bash") or "/run/current-system/sw/bin/bash"
 
 
 def _run_detect_runtime(
@@ -20,7 +24,7 @@ def _run_detect_runtime(
     if extra_env is not None:
         base_env.update(extra_env)
     return subprocess.run(
-        ["bash", str(DETECT_RUNTIME_SH)],
+        [BASH, str(DETECT_RUNTIME_SH)],
         capture_output=True,
         text=True,
         env=base_env,
@@ -141,7 +145,7 @@ class TestV5_45DetectOS:
         nixos_marker = tmp_path / "NIXOS"
         nixos_marker.touch()
         result = subprocess.run(
-            ["bash", str(DETECT_OS_SH)],
+            [BASH, str(DETECT_OS_SH)],
             capture_output=True,
             text=True,
             env={**os.environ, "YADGAR_TEST_NIXOS_MARKER": str(nixos_marker)},
@@ -155,7 +159,7 @@ class TestV5_45DetectOS:
         """Non-NixOS Linux → emits 'linux' or 'linux-other'."""
         # Empty marker path = no NIXOS file
         result = subprocess.run(
-            ["bash", str(DETECT_OS_SH)],
+            [BASH, str(DETECT_OS_SH)],
             capture_output=True,
             text=True,
             env={**os.environ, "YADGAR_TEST_NIXOS_MARKER": str(tmp_path / "nonexistent")},

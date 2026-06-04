@@ -1,12 +1,14 @@
 """v5.45.0 Step 1 TDD — generate_systemd.sh + systemd unit templates (RED)."""
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 GENERATE_SYSTEMD_SH = REPO_ROOT / "scripts" / "install" / "generate_systemd.sh"
 SYSTEMD_TEMPLATES_DIR = REPO_ROOT / "scripts" / "install"
+BASH = shutil.which("bash") or "/run/current-system/sw/bin/bash"
 
 
 def _run_generate_systemd(
@@ -24,7 +26,7 @@ def _run_generate_systemd(
     if extra_env:
         env.update(extra_env)
     return subprocess.run(
-        ["bash", str(GENERATE_SYSTEMD_SH)],
+        [BASH, str(GENERATE_SYSTEMD_SH)],
         capture_output=True,
         text=True,
         env=env,
