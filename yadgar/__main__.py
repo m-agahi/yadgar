@@ -68,6 +68,7 @@ def cli():
         drain,
         export,
         install_hooks,
+        install_subagents,
         restore,
         rules,
         seed,
@@ -91,6 +92,7 @@ def cli():
     setup.register(subparsers)
     daemon.register(subparsers)
     install_hooks.register(subparsers)
+    install_subagents.register(subparsers)
 
     args = parser.parse_args()
 

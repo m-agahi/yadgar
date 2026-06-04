@@ -3,6 +3,7 @@
 
 def _config_dispatch_table() -> dict:
     """Lazy import: build sub-command → handler mapping on first call."""
+    from yadgar.config_sync import cmd_config_sync
     from yadgar.config_yaml import (
         cmd_config_edit,
         cmd_config_get,
@@ -17,6 +18,7 @@ def _config_dispatch_table() -> dict:
         "get": cmd_config_get,
         "set": cmd_config_set,
         "edit": cmd_config_edit,
+        "sync": cmd_config_sync,
     }
 
 
@@ -50,5 +52,24 @@ def register(subparsers):
     config_set_p.add_argument("key", help="Setting name")
     config_set_p.add_argument("value", help="New value")
     config_sub.add_parser("edit", help="Open config.yaml in $EDITOR")
+    config_sync_p = config_sub.add_parser(
+        "sync",
+        help="Incrementally sync config.yaml with current Settings model fields",
+    )
+    config_sync_p.add_argument(
+        "--check",
+        action="store_true",
+        help="List missing keys without writing (exits nonzero if any found)",
+    )
+    config_sync_p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print diff to stdout, no file change",
+    )
+    config_sync_p.add_argument(
+        "--remove-unknown",
+        action="store_true",
+        help="Delete yaml keys not in current Settings (default: preserve)",
+    )
     config_parser.set_defaults(func=lambda args: cmd_config(args, config_parser))
     return config_parser
