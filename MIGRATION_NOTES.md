@@ -1,5 +1,58 @@
 # Migration Notes
 
+## v5.45.0 — Setup Foundation: make-canonical, multi-runtime, seed anchors (2026-06-04)
+
+Core 5.44.0 → 5.45.0. Backend unchanged at 5.4.0. No DB migrations.
+
+### Who needs to act
+
+**New Linux installs (non-NixOS):** Run `make setup` from the repo root — this is now the canonical install entrypoint. It detects your container runtime (podman preferred, docker fallback), generates systemd user units, installs hooks + subagents, syncs config, appends CLAUDE.md rules, and seeds canonical anchors.
+
+**NixOS users:** `make setup` will refuse on NixOS with a "use nix flake" message. Continue using the existing home-manager activation path. NixOS nix flake install ships in v5.46.0.
+
+**Existing installs:** No breaking changes. `check_docker()` is still callable (backward-compat alias for `check_runtime()`). `scripts/setup.sh` still works. `make setup` is the new canonical path but is NOT mandatory for existing working installs.
+
+### New commands
+
+```bash
+make setup            # Full install (detect runtime → systemd units → hooks → agents → config → rules → anchors)
+make uninstall        # Remove systemd units; preserve ~/.yadgar/ data
+make uninstall-purge  # Remove systemd units AND ~/.yadgar/ data directory
+make install-hooks    # Install Claude Code hooks only (daemon-independent)
+make install-agents   # Install subagents to ~/.claude/agents/
+make config-sync      # Sync yadgar config
+make install-rules    # Append yadgar rules fragment to ~/.claude/CLAUDE.md (idempotent)
+make seed-anchors     # Seed canonical anchor memories
+make detect-runtime   # Print detected container runtime
+make detect-os        # Print detected OS
+```
+
+### `yadgar seed --anchors <file>` (new CLI flag)
+
+Seeds anchor entries from a YAML file into yadgar memory. Idempotent: content-hash dedup prevents duplicates on re-run.
+
+```bash
+yadgar seed --anchors install_assets/seeds/anchors.yaml
+yadgar seed --anchors my-custom-anchors.yaml --dry-run
+```
+
+YAML format:
+```yaml
+anchors:
+  - content: "Your anchor text here"
+    tags: ["_anchor", "your-tag"]
+```
+
+### `check_docker()` → `check_runtime()` deprecation notice
+
+`YadgarDaemon.check_docker()` is now an alias for `check_runtime()`. Both remain callable. `check_docker()` will be removed in v5.47.0. Update callers to use `check_runtime()`.
+
+### `YADGAR_CONTAINER_RUNTIME` env override
+
+Set `YADGAR_CONTAINER_RUNTIME=docker` (or `podman`) to bypass auto-detection. Useful in CI or when both runtimes are installed but you want to force a specific one.
+
+---
+
 ## v5.44.0 — Subagent MCP wiring + automation extensions (2026-06-04)
 
 Core 5.43.0 → 5.44.0. Backend unchanged at 5.4.0. No DB migrations.
