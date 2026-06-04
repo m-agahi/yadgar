@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openfantasy.yadgar-backend</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>WorkingDirectory</key>
+    <string>${YADGAR_INSTALL_PREFIX}</string>
+
+    <!-- Log paths — created by generate_launchd.sh (mkdir -p) -->
+    <key>StandardOutPath</key>
+    <string>${YADGAR_HOME}/Library/Logs/yadgar/backend.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>${YADGAR_HOME}/Library/Logs/yadgar/backend.err.log</string>
+
+    <!--
+        PATH must include /usr/local/bin (Intel podman) and /opt/homebrew/bin (Apple Silicon).
+        No DOCKER_HOST: podman-machine manages its own socket lookup on macOS.
+    -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>YADGAR_SECRETS_ENV_FILE</key>
+        <string>${YADGAR_SECRETS_ENV_FILE}</string>
+    </dict>
+
+    <!--
+        ProgramArguments: /bin/sh -c wrap — same pattern as systemd ExecStart.
+        Backend starts first; core depends on it (no Requires= equivalent in launchd;
+        KeepAlive + RunAtLoad ensures both start at agent load time).
+    -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/sh</string>
+        <string>-c</string>
+        <string>${YADGAR_RUNTIME} run --name yadgar-backend --rm --user root --network yadgar-net -p 127.0.0.1:8001:8001 -v ${YADGAR_INSTALL_PREFIX}:/data --memory 4g --cpus 2 --stop-timeout 30 ${YADGAR_BACKEND_IMAGE}</string>
+    </array>
+</dict>
+</plist>
