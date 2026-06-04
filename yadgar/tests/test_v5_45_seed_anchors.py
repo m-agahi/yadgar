@@ -1,8 +1,11 @@
 """v5.45.0 Step 1 TDD — seed anchors + yadgar seed --anchors flag (RED)."""
 
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+BASH = shutil.which("bash") or "/run/current-system/sw/bin/bash"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 ANCHORS_YAML = REPO_ROOT / "install_assets" / "seeds" / "anchors.yaml"
@@ -126,7 +129,7 @@ class TestV5_45InstallRulesDedup:
         target_claude.write_text("# Existing CLAUDE.md\n\nSome existing content.\n")
 
         result = subprocess.run(
-            ["bash", str(self.APPEND_RULES_SH)],
+            [BASH, str(self.APPEND_RULES_SH)],
             capture_output=True,
             text=True,
             env={
@@ -155,7 +158,7 @@ class TestV5_45InstallRulesDedup:
         # Run twice
         for _ in range(2):
             subprocess.run(
-                ["bash", str(self.APPEND_RULES_SH)],
+                [BASH, str(self.APPEND_RULES_SH)],
                 capture_output=True,
                 text=True,
                 env=env,

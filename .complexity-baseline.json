@@ -4208,15 +4208,31 @@
     "inh_depth": 0,
     "methods": 0
   },
+  "yadgar/daemon.py::ContainerProfile@139": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 0
+  },
   "yadgar/daemon.py::YadgarDaemon@163": {
     "attrs": 2,
     "inh_depth": 0,
     "methods": 17
   },
+  "yadgar/daemon.py::YadgarDaemon@193": {
+    "attrs": 2,
+    "inh_depth": 0,
+    "methods": 18
+  },
   "yadgar/daemon.py::__file__": {
-    "loc": 714
+    "loc": 784
   },
   "yadgar/daemon.py::__init__@164": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 3
+  },
+  "yadgar/daemon.py::__init__@194": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
@@ -4227,6 +4243,18 @@
     "loc": 2,
     "nesting": 0,
     "params": 2
+  },
+  "yadgar/daemon.py::_container_exists@771": {
+    "cyclo": 1,
+    "loc": 4,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/daemon.py::_container_memory_mb@117": {
+    "cyclo": 1,
+    "loc": 4,
+    "nesting": 0,
+    "params": 0
   },
   "yadgar/daemon.py::_container_memory_mb@87": {
     "cyclo": 1,
@@ -4240,7 +4268,19 @@
     "nesting": 0,
     "params": 2
   },
+  "yadgar/daemon.py::_container_running@763": {
+    "cyclo": 2,
+    "loc": 7,
+    "nesting": 0,
+    "params": 2
+  },
   "yadgar/daemon.py::_default_image@38": {
+    "cyclo": 2,
+    "loc": 8,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/daemon.py::_default_image@68": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 2,
@@ -4252,13 +4292,37 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/daemon.py::_dev_profile@161": {
+    "cyclo": 1,
+    "loc": 10,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/daemon.py::_ensure_network@146": {
     "cyclo": 2,
     "loc": 12,
     "nesting": 1,
     "params": 0
   },
+  "yadgar/daemon.py::_ensure_network@176": {
+    "cyclo": 2,
+    "loc": 12,
+    "nesting": 1,
+    "params": 0
+  },
+  "yadgar/daemon.py::_get_runtime@45": {
+    "cyclo": 6,
+    "loc": 21,
+    "nesting": 3,
+    "params": 0
+  },
   "yadgar/daemon.py::_health_ok@709": {
+    "cyclo": 2,
+    "loc": 6,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/daemon.py::_health_ok@779": {
     "cyclo": 2,
     "loc": 6,
     "nesting": 2,
@@ -4270,7 +4334,19 @@
     "nesting": 5,
     "params": 0
   },
+  "yadgar/daemon.py::_host_memory_bytes@89": {
+    "cyclo": 9,
+    "loc": 26,
+    "nesting": 5,
+    "params": 0
+  },
   "yadgar/daemon.py::_image_exists@688": {
+    "cyclo": 1,
+    "loc": 9,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/daemon.py::_image_exists@753": {
     "cyclo": 1,
     "loc": 9,
     "nesting": 0,
@@ -4282,11 +4358,23 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/daemon.py::_prod_profile@149": {
+    "cyclo": 1,
+    "loc": 10,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/daemon.py::_safe_urlopen@25": {
     "cyclo": 2,
     "loc": 6,
     "nesting": 1,
     "params": 2
+  },
+  "yadgar/daemon.py::_source_root@126": {
+    "cyclo": 3,
+    "loc": 7,
+    "nesting": 2,
+    "params": 0
   },
   "yadgar/daemon.py::_source_root@96": {
     "cyclo": 3,
@@ -4300,13 +4388,37 @@
     "nesting": 2,
     "params": 4
   },
+  "yadgar/daemon.py::build@635": {
+    "cyclo": 10,
+    "loc": 32,
+    "nesting": 2,
+    "params": 4
+  },
   "yadgar/daemon.py::check_docker@663": {
     "cyclo": 7,
     "loc": 22,
     "nesting": 2,
     "params": 0
   },
+  "yadgar/daemon.py::check_docker@747": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 0
+  },
+  "yadgar/daemon.py::check_runtime@693": {
+    "cyclo": 9,
+    "loc": 52,
+    "nesting": 3,
+    "params": 0
+  },
   "yadgar/daemon.py::configure_mcp@425": {
+    "cyclo": 5,
+    "loc": 29,
+    "nesting": 3,
+    "params": 2
+  },
+  "yadgar/daemon.py::configure_mcp@455": {
     "cyclo": 5,
     "loc": 29,
     "nesting": 3,
@@ -4318,7 +4430,19 @@
     "nesting": 1,
     "params": 4
   },
+  "yadgar/daemon.py::exec_in_container@668": {
+    "cyclo": 5,
+    "loc": 21,
+    "nesting": 1,
+    "params": 4
+  },
   "yadgar/daemon.py::install_systemd_service@455": {
+    "cyclo": 4,
+    "loc": 103,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/daemon.py::install_systemd_service@485": {
     "cyclo": 4,
     "loc": 103,
     "nesting": 0,
@@ -4330,7 +4454,19 @@
     "nesting": 1,
     "params": 1
   },
+  "yadgar/daemon.py::pull@589": {
+    "cyclo": 2,
+    "loc": 7,
+    "nesting": 1,
+    "params": 1
+  },
   "yadgar/daemon.py::push@567": {
+    "cyclo": 8,
+    "loc": 37,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/daemon.py::push@597": {
     "cyclo": 8,
     "loc": 37,
     "nesting": 2,
@@ -4342,7 +4478,19 @@
     "nesting": 0,
     "params": 2
   },
+  "yadgar/daemon.py::restart@450": {
+    "cyclo": 1,
+    "loc": 4,
+    "nesting": 0,
+    "params": 2
+  },
   "yadgar/daemon.py::start@170": {
+    "cyclo": 13,
+    "loc": 110,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/daemon.py::start@200": {
     "cyclo": 13,
     "loc": 110,
     "nesting": 2,
@@ -4354,13 +4502,31 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/daemon.py::start_backend@311": {
+    "cyclo": 7,
+    "loc": 73,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/daemon.py::status@385": {
     "cyclo": 4,
     "loc": 34,
     "nesting": 2,
     "params": 2
   },
+  "yadgar/daemon.py::status@415": {
+    "cyclo": 4,
+    "loc": 34,
+    "nesting": 2,
+    "params": 2
+  },
   "yadgar/daemon.py::stop@355": {
+    "cyclo": 6,
+    "loc": 29,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/daemon.py::stop@385": {
     "cyclo": 6,
     "loc": 29,
     "nesting": 1,
