@@ -20,6 +20,8 @@ CLAUDE_MD    := $(HOME)/.claude/CLAUDE.md
 INSTALL_NONINTERACTIVE ?= 0
 YADGAR_CONTAINER_RUNTIME ?=
 YADGAR_DIR   ?= $(HOME)/.yadgar
+# OS spoofing for cross-platform testing (set YADGAR_TEST_OS_MARKER=macos to simulate macOS)
+YADGAR_TEST_OS_MARKER ?=
 
 # Version — read once from server.json at parse time
 YADGAR_VERSION := $(shell grep -m1 '"version"' $(REPO_ROOT)server.json | cut -d'"' -f4)
@@ -27,7 +29,8 @@ YADGAR_VERSION := $(shell grep -m1 '"version"' $(REPO_ROOT)server.json | cut -d'
 .PHONY: all help pre-setup setup uninstall uninstall-purge \
         install-hooks install-agents config-sync install-rules \
         seed-anchors detect-runtime detect-os clean check \
-        pull-images bootstrap-secrets enable-units restore
+        pull-images bootstrap-secrets enable-units enable-units-linux enable-units-macos \
+        _enable-units-auto restore
 
 all: setup
 
@@ -93,7 +96,7 @@ bootstrap-secrets:
 	@INSTALL_NONINTERACTIVE=$(INSTALL_NONINTERACTIVE) \
 	  bash $(SCRIPTS_DIR)/bootstrap_secrets.sh
 
-## enable-units: systemctl daemon-reload + enable --now yadgar.target
+## enable-units: systemctl daemon-reload + enable --now yadgar.target (Linux)
 enable-units:
 	systemctl --user daemon-reload
 	systemctl --user enable --now yadgar.target
@@ -101,26 +104,89 @@ enable-units:
 	@sleep 2
 	@systemctl --user --no-pager status yadgar.service yadgar-backend.service | head -20 || true
 
+## enable-units-linux: alias for enable-units (Linux systemd path)
+enable-units-linux: enable-units
+
+## enable-units-macos: launchctl bootstrap gui/$UID for macOS 11+; load -w fallback for 10.15
+enable-units-macos:
+	@echo "==> Loading launchd agents..."
+	@LAUNCHD_DIR="$(HOME)/Library/LaunchAgents"; \
+	  MACOS_MAJOR=$$(sw_vers -productVersion 2>/dev/null | cut -d. -f1 || echo "11"); \
+	  for plist in "$${LAUNCHD_DIR}/com.openfantasy.yadgar.plist" \
+	               "$${LAUNCHD_DIR}/com.openfantasy.yadgar-backend.plist"; do \
+	    [ -f "$$plist" ] || { echo "ERROR: $$plist not found. Run 'make setup' first." >&2; exit 1; }; \
+	    launchctl unload "$$plist" 2>/dev/null || true; \
+	    if [ "$${MACOS_MAJOR}" -ge 11 ] 2>/dev/null; then \
+	      launchctl bootstrap "gui/$$(id -u)" "$$plist"; \
+	    else \
+	      launchctl load -w "$$plist"; \
+	    fi; \
+	    echo "    Loaded: $$(basename $$plist)"; \
+	  done
+	@echo "==> Verifying launchd agents..."
+	@launchctl list | grep com.openfantasy.yadgar || true
+
+## _enable-units-auto: Internal — routes enable-units to systemd or launchd based on OS (used by setup)
+_enable-units-auto:
+	@OS=$$(YADGAR_TEST_OS_MARKER="$(YADGAR_TEST_OS_MARKER)" bash $(SCRIPTS_DIR)/detect_os.sh); \
+	  case "$$OS" in \
+	    linux|linux-other) \
+	      systemctl --user daemon-reload; \
+	      systemctl --user enable --now yadgar.target; \
+	      ;; \
+	    macos) \
+	      LAUNCHD_DIR="$(HOME)/Library/LaunchAgents"; \
+	      MACOS_MAJOR=$$(sw_vers -productVersion 2>/dev/null | cut -d. -f1 || echo "11"); \
+	      for plist in "$${LAUNCHD_DIR}/com.openfantasy.yadgar.plist" \
+	                   "$${LAUNCHD_DIR}/com.openfantasy.yadgar-backend.plist"; do \
+	        launchctl unload "$$plist" 2>/dev/null || true; \
+	        if [ "$${MACOS_MAJOR}" -ge 11 ] 2>/dev/null; then \
+	          launchctl bootstrap "gui/$$(id -u)" "$$plist"; \
+	        else \
+	          launchctl load -w "$$plist"; \
+	        fi; \
+	      done; \
+	      ;; \
+	    linux-nixos) echo "NixOS: use nix flake." >&2; exit 1 ;; \
+	    *) echo "Unsupported OS: $$OS" >&2; exit 1 ;; \
+	  esac
+
 ## restore: Restore from .surql backup + archive (advanced; set YADGAR_RESTORE_DB=... env var)
 restore:
 	@bash $(SCRIPTS_DIR)/restore.sh
 
-## setup: Full install (pre-setup → pull-images → bootstrap-secrets → systemd units → enable-units → hooks → agents → config → rules → anchors)
+## setup: Full install (pre-setup → pull-images → bootstrap-secrets → units → enable-units → hooks → agents → config → rules → anchors)
 setup: pre-setup
 	@echo "==> Detecting container runtime..."
 	@RUNTIME=$$(bash $(SCRIPTS_DIR)/detect_runtime.sh); \
 	  echo "    Runtime: $$RUNTIME"
 	@$(MAKE) pull-images
 	@$(MAKE) bootstrap-secrets
-	@RUNTIME=$$(bash $(SCRIPTS_DIR)/detect_runtime.sh); \
-	  YADGAR_RUNTIME=$$RUNTIME \
-	  YADGAR_INSTALL_PREFIX="$(YADGAR_DIR)" \
-	  YADGAR_SECRETS_ENV_FILE="$(YADGAR_DIR)/secrets.env" \
-	  YADGAR_BACKEND_IMAGE="docker.io/openfantasy/yadgar-backend:$(YADGAR_VERSION)" \
-	  YADGAR_CORE_IMAGE="docker.io/openfantasy/yadgar:$(YADGAR_VERSION)" \
-	  YADGAR_SYSTEMD_OUTPUT_DIR="$(HOME)/.config/systemd/user" \
-	  bash $(SCRIPTS_DIR)/generate_systemd.sh
-	@$(MAKE) enable-units
+	@OS=$$(YADGAR_TEST_OS_MARKER="$(YADGAR_TEST_OS_MARKER)" bash $(SCRIPTS_DIR)/detect_os.sh); \
+	  RUNTIME=$$(bash $(SCRIPTS_DIR)/detect_runtime.sh); \
+	  case "$$OS" in \
+	    linux|linux-other) \
+	      YADGAR_RUNTIME=$$RUNTIME \
+	      YADGAR_INSTALL_PREFIX="$(YADGAR_DIR)" \
+	      YADGAR_SECRETS_ENV_FILE="$(YADGAR_DIR)/secrets.env" \
+	      YADGAR_BACKEND_IMAGE="docker.io/openfantasy/yadgar-backend:$(YADGAR_VERSION)" \
+	      YADGAR_CORE_IMAGE="docker.io/openfantasy/yadgar:$(YADGAR_VERSION)" \
+	      YADGAR_SYSTEMD_OUTPUT_DIR="$(HOME)/.config/systemd/user" \
+	      bash $(SCRIPTS_DIR)/generate_systemd.sh \
+	      ;; \
+	    macos) \
+	      YADGAR_RUNTIME=$$RUNTIME \
+	      YADGAR_INSTALL_PREFIX="$(YADGAR_DIR)" \
+	      YADGAR_SECRETS_ENV_FILE="$(YADGAR_DIR)/secrets.env" \
+	      YADGAR_BACKEND_IMAGE="docker.io/openfantasy/yadgar-backend:$(YADGAR_VERSION)" \
+	      YADGAR_CORE_IMAGE="docker.io/openfantasy/yadgar:$(YADGAR_VERSION)" \
+	      YADGAR_LAUNCHD_OUTPUT_DIR="$(HOME)/Library/LaunchAgents" \
+	      bash $(SCRIPTS_DIR)/generate_launchd.sh \
+	      ;; \
+	    linux-nixos) echo "NixOS detected. Use nix flake." >&2; exit 1 ;; \
+	    *) echo "Unsupported OS: $$OS" >&2; exit 1 ;; \
+	  esac
+	@$(MAKE) _enable-units-auto
 	@$(MAKE) install-hooks
 	@$(MAKE) install-agents
 	@$(MAKE) config-sync
