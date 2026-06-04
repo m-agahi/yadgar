@@ -154,6 +154,9 @@ test = [
     "pytest-timeout>=2.3",
     "pytest-rerunfailures>=14",
     "hypothesis>=6",
+    # v5.45.1 — safe XML parsing in tests (plist validation); defends against XXE
+    # even though we only parse our own generated output (defence-in-depth)
+    "defusedxml>=0.7.1",
 ]
 dev = [
     "yadgar[test]",
