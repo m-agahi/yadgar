@@ -36,7 +36,7 @@ All Steps 1–5 implemented. Cross-platform render tests pass on Linux (54 pass,
 
 Generate and install launchd plists for the yadgar core + backend daemons on macOS. Provides the macOS equivalent of v5.45.0's `generate_systemd.sh`.
 
-- `yadgar install` on macOS auto-detects OS (`detect_os.sh` → `macos`) and runs `generate_launchd.sh`.
+- `yadgar-setup` on macOS auto-detects OS (`detect_os.sh` → `macos`) and runs `generate_launchd.sh`. (`make setup` on macOS via repo checkout also routes through this path.)
 - Plists install to `~/Library/LaunchAgents/` (per-user, no root required).
 - `launchctl bootstrap gui/$UID` (Catalina+) with `launchctl load` fallback.
 - Auto-restart on crash (`KeepAlive=true`).
@@ -95,7 +95,7 @@ None. v5.45.0 already specifies the launchd asset paths in the install layout.
 | Invariant | Verb | Notes |
 |---|---|---|
 | I9 (daemon start latency budget) | **preserves** | Launchd load is async; daemon start latency governed by existing `--transport streamable-http` startup path, not launchd mechanics. |
-| I23 (Prometheus metric availability post-start) | **preserves** | `/metrics` endpoint available after daemon starts. macOS path must verify `/metrics` responds before `yadgar install` reports success (same as Linux acceptance check). |
+| I23 (Prometheus metric availability post-start) | **preserves** | `/metrics` endpoint available after daemon starts. macOS path must verify `/metrics` responds before `yadgar-setup` (or `make setup`) reports success (same as Linux acceptance check). |
 | I25 (three-way-sync registry) | **preserves** | No new config knobs in v5.45.1. `YADGAR_CONTAINER_RUNTIME` knob (from v5.45.0) applies unchanged. |
 
 ---
@@ -123,7 +123,7 @@ No MCP changes. CLI-side only.
 | Plan | Relationship |
 |---|---|
 | `docs/PLAN_V5_45_0_SETUP_FOUNDATION.md` | Parent. `generate_launchd.sh` is Step 4 deliverable from v5.45.0 — shipped as a stub in v5.45.0 or deferred entirely to v5.45.1. Coordinate: v5.45.0 implementer should leave `scripts/install/generate_launchd.sh` as an empty stub (not panic) when `macos` is detected, so v5.45.1 can fill it in without a breaking change. |
-| `docs/PLAN_V5_46_0_DISTRIBUTION.md` | Homebrew formula (`Formula/yadgar.rb`) `post_install` step calls `yadgar install`. Launchd daemon must work before brew users get the formula. Sequence: v5.45.1 MUST ship before v5.46.0 brew tap creation. |
+| `docs/PLAN_V5_46_0_DISTRIBUTION.md` | Homebrew formula (`Formula/yadgar.rb`) `caveats` block tells users to run `yadgar-setup`. On macOS, `yadgar-setup` calls `generate_launchd.sh` (v5.45.1 deliverable). Launchd daemon must be runtime-verified before brew users run `yadgar-setup` on macOS. Post-v5.46.0: brew formula does NOT call `yadgar-setup` automatically; user runs manually per brew caveat. Sequence: v5.45.1 macOS runtime verification MUST complete before v5.46.0 brew tap creation. |
 
 No migration number conflicts.
 
@@ -136,7 +136,7 @@ No migration number conflicts.
 **Precedent 2 — `plutil` validation gap:** systemd has `systemd-analyze verify`; launchd has `plutil -lint`. v5.45.0 acceptance criterion requires `plutil -lint` pass. Tests on Linux can render the plist (template substitution is OS-agnostic) but only macOS can `plutil -lint`. Mark `plutil` test as `skipif(sys.platform != "darwin")` but keep the render test on all platforms.
 
 **Verification Probes (post-ship):**
-1. On macOS: `yadgar install --non-interactive` → `launchctl list | grep com.openfantasy.yadgar` returns active job.
+1. On macOS: `yadgar-setup --noninteractive` (or `make setup INSTALL_NONINTERACTIVE=1`) → `launchctl list | grep com.openfantasy.yadgar` returns active job.
 2. `plutil -lint ~/Library/LaunchAgents/com.openfantasy.yadgar.plist` exits 0.
 3. Kill core container → launchd auto-restarts within 30s (KeepAlive behavior).
 4. `curl http://localhost:8765/health` responds after restart.
@@ -169,7 +169,7 @@ N/A — no agent dispatch for benchmark work. Standard implementer dispatch; est
 | Step 0 — pre-flight (host confirm + DP-B/C/D resolution) | 0.25 |
 | Step 1 — TDD scaffolding | 0.25 |
 | Step 2 — plist templates + `generate_launchd.sh` | 0.25 |
-| Step 3 — `yadgar install` macOS wiring | 0.25 |
+| Step 3 — `yadgar-setup` / `make setup` macOS wiring | 0.25 |
 | Step 4 — macOS smoke test + `uninstall.sh` macOS path | 0.25 |
 | Step 5 — CHANGELOG + MIGRATION_NOTES | 0.1 |
 | **Total** | **~1 calendar day** |
@@ -178,10 +178,10 @@ N/A — no agent dispatch for benchmark work. Standard implementer dispatch; est
 
 ## Acceptance Criteria
 
-- [ ] `yadgar install --non-interactive` on macOS generates + loads both plists.
+- [ ] `yadgar-setup --noninteractive` (or `make setup INSTALL_NONINTERACTIVE=1`) on macOS generates + loads both plists.
 - [ ] Both plists pass `plutil -lint`.
 - [ ] Auto-restart on crash (KeepAlive) verified via kill-and-wait.
-- [ ] `yadgar install` on Linux is unaffected (macOS path gated by `detect_os.sh`).
+- [ ] `yadgar-setup` / `make setup` on Linux is unaffected (macOS launchd path gated by `detect_os.sh`).
 - [ ] `scripts/install/uninstall.sh` on macOS unloads + removes plists.
 - [ ] `pytest yadgar/tests/test_install.py` green (macOS tests pass on macOS; render tests pass everywhere).
 - [ ] CHANGELOG.md v5.45.1 entry.
