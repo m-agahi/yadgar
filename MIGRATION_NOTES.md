@@ -1,5 +1,66 @@
 # Migration Notes
 
+## v5.45.1 — macOS launchd plist generation + install (2026-06-04)
+
+**PAPER-ONLY IMPLEMENTATION.** No macOS host was available at time of shipping. All code paths are implemented and cross-platform render/template tests pass on Linux. Runtime behavior (launchctl load/unload, plutil lint, podman-machine socket) is deferred. Fix-ups via hotfix once macOS host is accessible.
+
+See `docs/DECISIONS.md` PD-38 for the formal deferral record.
+
+### Who needs to act
+
+**macOS users (when available):** Run `make setup` from the repo root. `detect_os.sh` returns `macos` and `generate_launchd.sh` is invoked automatically, writing plists to `~/Library/LaunchAgents/`.
+
+**Linux users:** No change. `make setup` is unaffected; it routes to `generate_systemd.sh` as before.
+
+### New macOS commands
+
+```bash
+make setup                 # Full install — routes to generate_launchd.sh on macOS
+make enable-units-macos    # launchctl bootstrap gui/$UID (macOS 11+) or launchctl load -w
+make uninstall             # launchctl unload + rm plists on macOS
+make uninstall-purge       # uninstall + rm ~/.yadgar/ + ~/Library/Logs/yadgar/
+```
+
+### Post-ship verification probes (run on first macOS host access)
+
+**These probes are REQUIRED to confirm paper implementation is correct. Run them in order.**
+
+1. `yadgar install --non-interactive` → `launchctl list | grep com.openfantasy.yadgar` — both jobs listed as active.
+2. `plutil -lint ~/Library/LaunchAgents/com.openfantasy.yadgar.plist` exits 0.
+3. `plutil -lint ~/Library/LaunchAgents/com.openfantasy.yadgar-backend.plist` exits 0.
+4. Kill the core container: `podman stop yadgar` → wait 30s → `launchctl list | grep com.openfantasy.yadgar` — job restarted (KeepAlive behavior).
+5. `curl http://localhost:8765/health` responds after restart. `curl http://localhost:8765/metrics | grep yadgar_` returns results.
+
+**Deferred verification items (paper-only gaps):**
+
+- `plutil -lint` output: templates are XML-valid (cross-platform verified) but Apple-specific plist semantics (key ordering, type coercion) not tested.
+- `launchctl bootstrap gui/$UID` vs `launchctl load -w` branch selection (macOS 11+ check): `sw_vers -productVersion` probe logic untested live.
+- podman-machine port forwarding: `ProgramArguments` uses `-p 127.0.0.1:8765:8765` — verify this reaches the container through podman-machine's VM port forward on macOS (different from Linux direct socket).
+- No `DOCKER_HOST` in plist `EnvironmentVariables`: podman-machine manages its own socket lookup. If podman commands fail, add `DOCKER_HOST=unix:///path/to/podman.sock` to the plist's `EnvironmentVariables` dict.
+- `YADGAR_SECRETS_ENV_FILE` env passthrough in launchd: plist sets it as `EnvironmentVariables` key — verify the container runtime actually picks it up (launchd env injection differs from systemd `EnvironmentFile=`).
+
+### Plist install locations
+
+| File | Path |
+|------|------|
+| Core plist | `~/Library/LaunchAgents/com.openfantasy.yadgar.plist` |
+| Backend plist | `~/Library/LaunchAgents/com.openfantasy.yadgar-backend.plist` |
+| Core stdout log | `~/Library/Logs/yadgar/core.out.log` |
+| Core stderr log | `~/Library/Logs/yadgar/core.err.log` |
+| Backend stdout log | `~/Library/Logs/yadgar/backend.out.log` |
+| Backend stderr log | `~/Library/Logs/yadgar/backend.err.log` |
+
+### `YADGAR_TEST_OS_MARKER=macos` env var
+
+Cross-platform testing hook. Set this to spoof macOS detection on Linux:
+
+```bash
+YADGAR_TEST_OS_MARKER=macos bash scripts/install/detect_os.sh   # → macos
+YADGAR_TEST_OS_MARKER=macos make setup                          # dry-run macOS path
+```
+
+---
+
 ## v5.45.0 — Setup Foundation: make-canonical, multi-runtime, seed anchors (2026-06-04)
 
 Core 5.44.0 → 5.45.0. Backend unchanged at 5.4.0. No DB migrations.
