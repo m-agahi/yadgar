@@ -11,6 +11,7 @@
 # NixOS behaviour depends on env variables:
 #   YADGAR_NIXOS_ABORT=1         — exits non-zero when NixOS detected
 #   YADGAR_TEST_NIXOS_MARKER=<p> — override /etc/NIXOS marker path (testing)
+#   YADGAR_TEST_OS_MARKER=macos  — spoof macOS detection (testing on Linux)
 #
 # Exits 0 normally. Exits 1 when YADGAR_NIXOS_ABORT=1 and NixOS detected.
 
@@ -18,6 +19,13 @@ set -euo pipefail
 
 # Test hook: allow overriding the nixos marker path for unit tests
 NIXOS_MARKER="${YADGAR_TEST_NIXOS_MARKER:-/etc/NIXOS}"
+
+# ── Test hook: spoof macOS for cross-platform testing ─────────────────────────
+
+if [[ "${YADGAR_TEST_OS_MARKER:-}" == "macos" ]]; then
+    echo "macos"
+    exit 0
+fi
 
 # ── macOS / Darwin ────────────────────────────────────────────────────────────
 
