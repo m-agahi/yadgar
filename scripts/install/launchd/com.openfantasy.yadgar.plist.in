@@ -28,7 +28,7 @@
     <!--
         PATH must include /usr/local/bin (Intel podman) and /opt/homebrew/bin (Apple Silicon).
         No DOCKER_HOST: podman-machine manages its own socket lookup on macOS.
-        Deferred: verify YADGAR_SECRETS_ENV_FILE env passthrough on first macOS host (P7 probe #4).
+        YADGAR_SECRETS_ENV_FILE is set here so the env-file flag can reference it in ProgramArguments.
     -->
     <key>EnvironmentVariables</key>
     <dict>
@@ -46,7 +46,7 @@
     <array>
         <string>/bin/sh</string>
         <string>-c</string>
-        <string>${YADGAR_RUNTIME} run --name yadgar --rm --user root --network yadgar-net -p 127.0.0.1:8765:8765 -p 127.0.0.1:42069:42069 -v ${YADGAR_INSTALL_PREFIX}:/data -e YADGAR_DB_URL=http://yadgar-backend:8000 -e YADGAR_EMBED_URL=http://yadgar-backend:8001 -e YADGAR_HOST=127.0.0.1 -e YADGAR_PORT=8765 -e YADGAR_DATA_DIR=/data --memory 1g --cpus 1 --stop-timeout 30 ${YADGAR_CORE_IMAGE}</string>
+        <string>${YADGAR_RUNTIME} run --name yadgar --rm --user root --network yadgar-net --env-file ${YADGAR_SECRETS_ENV_FILE} -p 127.0.0.1:8765:8765 -p 127.0.0.1:42069:42069 -v ${YADGAR_INSTALL_PREFIX}:/data -e YADGAR_DB_URL=http://yadgar-backend:8000 -e YADGAR_EMBED_URL=http://yadgar-backend:8001 -e YADGAR_HOST=127.0.0.1 -e YADGAR_PORT=8765 -e YADGAR_DATA_DIR=/data --memory 1g --cpus 1 --stop-timeout 30 ${YADGAR_CORE_IMAGE}</string>
     </array>
 </dict>
 </plist>
