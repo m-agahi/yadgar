@@ -303,6 +303,9 @@ class WikiStore:
         }
         page_id = self._storage.insert_wiki_page(page, branch=branch)
         page["id"] = page_id
+        # v5.43.0 (DP-2): include branch in returned dict so callers (e.g. wiki_approve)
+        # can propagate branch context without a round-trip read.
+        page["branch"] = branch
         self._sync_crossrefs(slug, links)
         self._link_memories(slug, source_memory_ids)
         return page
