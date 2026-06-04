@@ -1,6 +1,6 @@
 # PLAN — v5.46.1: Cross-Repo PR Auto-Open (Brew Tap + Nix Repo)
 
-**Status:** skeleton drafted 2026-06-04. Split from v5.46.0 per opus-reviewer. Plan-first per I27.
+**Status:** skeleton drafted 2026-06-04. REMEDIATED 2026-06-04 per V5_46_AUDIT_2026_06_04.md (P8 implementer detail — Forgejo PR body, script skeletons, auth path, idempotency). Split from v5.46.0 per opus-reviewer. Plan-first per I27.
 
 **Parent plan:** `docs/PLAN_V5_46_0_DISTRIBUTION.md` (Step 7 jobs `open-brew-pr` + `open-nix-pr` — split out for token-rotation security surface).
 
@@ -143,14 +143,75 @@ N/A — no benchmark agent dispatch. Standard implementer dispatch; 1-2 calendar
 - Test: pre-release version → skipped.
 
 ### Step 2 — Forgejo PR-open script
-- `scripts/open_brew_pr.sh` + `scripts/open_nix_pr.sh` — shell scripts called by CI workflow.
-- Idempotency check via Forgejo `GET /pulls`.
-- Exit 0 on skip (idempotent), non-zero on actual failure.
+
+`scripts/install/open_brew_pr.sh` skeleton:
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+VERSION="${1:?Usage: open_brew_pr.sh <version>}"
+BRANCH="bump-v${VERSION}"
+REPO="maxagahi/homebrew-yadgar"
+API="https://codeberg.org/api/v1"
+TOKEN="${BREW_BUMP_TOKEN:?BREW_BUMP_TOKEN not set}"
+
+# Idempotency: check for existing open PR on this branch
+EXISTING=$(curl -sf -H "Authorization: token ${TOKEN}" \
+  "${API}/repos/${REPO}/pulls?state=open&head=${BRANCH}&limit=1" | \
+  python3 -c "import sys,json; prs=json.load(sys.stdin); print(len(prs))")
+if [ "${EXISTING}" -gt 0 ]; then
+  echo "PR already open for ${BRANCH} — skipping (idempotent)."
+  exit 0
+fi
+
+# Also check merged: if merged PR exists for branch, skip too
+MERGED=$(curl -sf -H "Authorization: token ${TOKEN}" \
+  "${API}/repos/${REPO}/pulls?state=closed&head=${BRANCH}&limit=1" | \
+  python3 -c "import sys,json; prs=json.load(sys.stdin); print(len([p for p in prs if p.get('merged')]))")
+if [ "${MERGED}" -gt 0 ]; then
+  echo "PR already merged for ${BRANCH} — skipping."
+  exit 0
+fi
+
+# Edge: branch pushed but PR-open failed on prior retry — re-open PR
+PR_BODY=$(cat <<EOF
+## Bump yadgar to v${VERSION}
+
+Automated PR opened by yadgar release workflow.
+
+- Version: ${VERSION}
+- Source: https://codeberg.org/maxagahi/yadgar/releases/tag/v${VERSION}
+- Formula: update \`url\`, \`sha256\`, \`version\` fields.
+
+Merge after verifying \`brew audit --strict yadgar\` passes in CI.
+EOF
+)
+
+curl -sf -X POST \
+  -H "Authorization: token ${TOKEN}" \
+  -H "Content-Type: application/json" \
+  "${API}/repos/${REPO}/pulls" \
+  -d "{\"title\":\"Bump yadgar to v${VERSION}\",\"body\":$(python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))" <<< "${PR_BODY}"),\"head\":\"${BRANCH}\",\"base\":\"main\"}"
+
+echo "PR opened on ${REPO} for ${BRANCH}."
+```
+
+`scripts/install/open_nix_pr.sh` skeleton (same structure; `REPO="maxagahi/nix"`, branch `"bump-yadgar-v${VERSION}"`, `TOKEN="${NIX_BUMP_TOKEN}"`, body references `yadger_core_version` in `modules/home/yadgar.nix`).
+
+**Auth token path:** `op://Private/Codeberg/Security/PAT` (1Password anchor 15). Tokens stored as Forgejo repo secrets `BREW_BUMP_TOKEN` + `NIX_BUMP_TOKEN`. Scoped to PR-create only on respective repos — verify in Codeberg PAT settings before dispatch (Step 0).
+
+**Idempotency retry case (branch pushed, no PR):** if branch exists on remote but no PR is open and no PR is merged, the script proceeds to open a new PR. This handles the case where a prior retry pushed the branch but the PR-open curl call failed (network error). The script will re-attempt the PR create — idempotent at the branch level via `head=` filter.
+
+**Error handling:**
+- Codeberg API rate limit: curl exits non-zero on HTTP 429; `set -e` aborts script; CI job fails explicitly (non-zero exit).
+- Auth failure: curl exits non-zero on HTTP 401/403; same abort.
+- Branch conflict (branch already at same commit): `git push` exits non-zero; handle by checking if branch tip matches expected commit before push.
 
 ### Step 3 — Wire into `.forgejo/workflows/release.yaml`
-- Uncomment stubs + fill in with actual scripts.
-- Secrets: `BREW_BUMP_TOKEN`, `NIX_BUMP_TOKEN`.
-- Conditional: skip pre-release tags.
+- Locate stubs (`if: false`-gated jobs `open-brew-pr` + `open-nix-pr` added by v5.46.0).
+- Replace `if: false` with `if: "!contains(github.ref, '-alpha') && !contains(github.ref, '-beta')"`.
+- Fill in job steps: `git clone` tap repo, render formula template, `git push`, call `scripts/install/open_brew_pr.sh $VERSION`.
+- Secrets: confirm `BREW_BUMP_TOKEN` + `NIX_BUMP_TOKEN` are set in Codeberg repo settings before activating.
+- Conditional: skip pre-release tags (already in `if:` condition above).
 
 ### Step 4 — MIGRATION_NOTES + CHANGELOG
 - Document token setup steps (user-action; cannot be automated).
