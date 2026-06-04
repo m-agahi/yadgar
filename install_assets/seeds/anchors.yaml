@@ -1,0 +1,24 @@
+anchors:
+  - content: "yadgar stores memories in ~/.yadgar/memories.db (SQLite). Embeddings in ~/.yadgar/embeddings/. Config at ~/.yadgar/config.yaml."
+    tags: ["_anchor", "yadgar", "storage", "paths"]
+
+  - content: "yadgar MCP server runs on localhost:8765 by default. Daemon managed via systemd user units: yadgar.service (MCP) + yadgar-backend.service (container). yadgar.target groups both."
+    tags: ["_anchor", "yadgar", "daemon", "mcp", "systemd"]
+
+  - content: "Container runtime detection order: YADGAR_CONTAINER_RUNTIME env override → podman (rootless-friendly) → docker → error. Use scripts/install/detect_runtime.sh."
+    tags: ["_anchor", "yadgar", "container", "runtime", "podman", "docker"]
+
+  - content: "yadgar seed --anchors <file> loads YAML anchor entries. Each entry requires 'content' and 'tags' fields. Dedup by content-hash — idempotent on re-run."
+    tags: ["_anchor", "yadgar", "seed", "anchors", "cli"]
+
+  - content: "make setup is the ONLY canonical install entrypoint. Targets: pre-setup, install-hooks, install-subagents, config-sync, install-rules, seed-anchors. GNU make required."
+    tags: ["_anchor", "yadgar", "install", "make", "setup"]
+
+  - content: "NixOS users: yadgar v5.45.0 Linux install via make setup. NixOS nix flake install deferred to v5.46.0. scripts/install/detect_os.sh outputs linux-nixos for NixOS detection."
+    tags: ["_anchor", "yadgar", "nixos", "install", "linux"]
+
+  - content: "yadgar uses heat decay: memories accessed frequently stay hot; cold memories consolidate or expire. Sleep consolidation runs nightly. Surprise gate controls what gets stored."
+    tags: ["_anchor", "yadgar", "memory", "heat-decay", "consolidation"]
+
+  - content: "HARD RULE — No Terraform: never execute terraform/tofu/tfp by any mechanism. All terraform subcommands forbidden. Document commands in MIGRATION_NOTES.md for user to run."
+    tags: ["_anchor", "rules", "terraform", "hard-rule"]
