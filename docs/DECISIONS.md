@@ -499,6 +499,12 @@ Items extracted from "What does NOT ship" / "Non-goals" / "Out of scope" section
   - Anonymous version-check payload exact wire shape — corporate firewalls + privacy auditors (resolved during v5.47 Step 0 implementation; documented in `docs/PRIVACY.md`).
 - **Revisit triggers:** macOS launchd path proves unreliable in field; OR compose v3 spec deprecates a depended-on feature; OR user demand for FreeBSD / Windows-native paths; OR Codeberg releases API rate-limits the update-check probe; OR privacy posture must extend (e.g. SBOM transparency on update check); OR multi-host / multi-user yadgar deployment becomes a real use case (current scope: single-user).
 
+**v5.45.0 implementation amendments (2026-06-04):**
+- DP3 override: `yadgar install` CLI subcommand DEFERRED — `make setup` is the ONLY canonical install entrypoint for v5.45.0. No `cmd_install` / `yadgar install` command shipped. Plan's Step 5 "interactive installer" reduced to Makefile targets only.
+- DP6 fold-back: seed anchors + CLAUDE.md fragment folded INTO v5.45.0 (originally split to v5.45.1). Ships as `install_assets/seeds/anchors.yaml` + `install_assets/CLAUDE.md.fragment` + `make seed-anchors` + `make install-rules`.
+- macOS launchd: deferred to v5.45.1 / v5.46.0 per scope cut (no macOS host for verification).
+- `yadgar install` as CLI entry-point deferred to v5.46.0 when interactive install prompt is designed.
+
 ---
 
 ## 2026-05-30 — Open architectural questions

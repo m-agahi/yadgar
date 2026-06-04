@@ -1,0 +1,31 @@
+[Unit]
+Description=Yadgar Memory Engine / MCP Server
+After=network.target yadgar-backend.service
+Requires=yadgar-backend.service
+
+[Service]
+Environment=DOCKER_HOST=unix:///run/podman/podman.sock
+EnvironmentFile=@SECRETS_ENV_FILE@
+ExecStartPre=-@RUNTIME@ stop yadgar
+ExecStartPre=-@RUNTIME@ rm yadgar
+ExecStart=@RUNTIME@ run --name yadgar --rm --user root \
+    --network yadgar-net \
+    -p 127.0.0.1:8765:8765 \
+    -p 127.0.0.1:42069:42069 \
+    -v @DATA_DIR@:/data \
+    -e YADGAR_DB_URL=http://yadgar-backend:8000 \
+    -e YADGAR_EMBED_URL=http://yadgar-backend:8001 \
+    -e YADGAR_HOST=127.0.0.1 \
+    -e YADGAR_PORT=8765 \
+    -e YADGAR_DATA_DIR=/data \
+    -e YADGAR_DB_USER=${YADGAR_DB_USER} \
+    -e YADGAR_DB_PASS=${YADGAR_DB_PASS} \
+    --memory 1g --cpus 1 --stop-timeout 30 \
+    @IMAGE@
+ExecStop=@RUNTIME@ stop yadgar
+Restart=on-failure
+RestartSec=5
+Type=simple
+
+[Install]
+WantedBy=default.target
