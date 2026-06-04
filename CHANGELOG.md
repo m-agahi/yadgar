@@ -6,6 +6,26 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.45.0] — 2026-06-04
+
+Setup Foundation (Linux-only, make-canonical). `make setup` is the single install entrypoint. Container runtime detection: podman-first → docker → error with `YADGAR_CONTAINER_RUNTIME` override. NixOS guard: refuses install with nix flake suggestion. systemd unit templates (`.in` files) rendered by `generate_systemd.sh`. `check_docker()` → `check_runtime()` in daemon (backward-compat alias kept). Seed anchors: `yadgar seed --anchors <file>` with content-hash dedup. CLAUDE.md fragment with idempotent append. Uninstall preserves data by default; `make uninstall-purge` for full wipe. 64 new tests.
+
+- **feat(install):** top-level `Makefile` with GNU make guard + NixOS refusal in `pre-setup`
+- **feat(install):** `scripts/install/detect_runtime.sh` — podman-first detection, `YADGAR_CONTAINER_RUNTIME` env override
+- **feat(install):** `scripts/install/detect_os.sh` — linux-nixos / linux / macos output, `YADGAR_TEST_NIXOS_MARKER` test hook
+- **feat(install):** `scripts/install/generate_systemd.sh` — renders `.in` templates; nix-symlink guard rejects managed units
+- **feat(install):** systemd unit templates: `yadgar.service.in`, `yadgar-backend.service.in`, `yadgar.target.in`
+- **feat(install):** `scripts/install/uninstall.sh` — preserves `~/.yadgar/` by default; `--purge` removes it
+- **feat(install):** `scripts/install/append_claude_rules.sh` — idempotent CLAUDE.md fragment append via `YADGAR-RULES-BEGIN` marker
+- **feat(assets):** `install_assets/CLAUDE.md.fragment` with begin/end markers; `install_assets/seeds/anchors.yaml` (8 canonical anchors)
+- **feat(cli):** `yadgar seed --anchors <file>` flag; content-hash dedup; `--dry-run` support
+- **feat(daemon):** `YadgarDaemon.check_runtime()` replaces `check_docker()`; `_RUNTIME` module var + `_get_runtime()` helper; `check_docker()` kept as alias
+- **chore:** `pyproject.toml` `[tool.hatch.build.targets.wheel.shared-data]` — ships `install_assets/` in wheel
+- **chore:** bump version 5.44.0 → 5.45.0
+- **test:** 64 new tests in `test_v5_45_*.py` covering all shell scripts, daemon migration, CLI flags
+
+---
+
 ## [5.44.0] — 2026-06-04
 
 Subagent MCP wiring + 5 automation extensions (X1-X5). Base: per-agent allowlist via bundled agent templates (`yadgar/install_assets/agents/`). X1: `agent_dispatch_prelude` extended with `branch_hint`/`directory`/`subagent_type`/`include_context` params for auto-prefetch (opt-in per DP-X1-1). X2: `SubagentStop` hook extended with `_parse_directive` (memorize/wiki_add/anchor grammar) + `branch_hint` forwarding in POST payload (regression guard for v5.42.2 precedent). X3: `platform_paths.py` — OS-detection helpers for Linux/macOS/Windows Claude Code config paths, no hardcoded `/home/max` paths. X4: `yadgar install-subagents` CLI subcommand — copies bundled agent templates to `~/.claude/agents/`, idempotent, `--check`/`--force`/`--dry-run`, nix carve-out. X5: `yadgar config sync` CLI subcommand — incremental YAML sync adds missing Settings fields with defaults + FIELD_META comments, preserves user values, idempotent, `--check`/`--dry-run`.
