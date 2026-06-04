@@ -21,7 +21,7 @@
 
 ### Background
 
-NLI (Natural Language Inference) reranker filters contradictory candidates from recall results. Default-ON since v5.x. **No NLI-OFF arm has ever run.** Decision deferred 2026-05-30 audit.
+NLI (Natural Language Inference) reranker filters contradictory candidates from recall results. **Update 2026-06-04 night:** code default was flipped to `NLI_RERANKING_ENABLED: bool = False` without a re-run benchmark — comment in `yadgar/config.py` reads "no quality gain over CE alone." Production has been NLI-OFF since the flip; v5.55.0 is the formal A/B closing the loop. Pre-flip baseline (v5.26.0): NLI ON. **No NLI-OFF arm has ever run on LongMemEval-s.** Decision deferred 2026-05-30 audit, confirmed-for-test 2026-06-04.
 
 Question: does NLI improve QA accuracy, or does it remove useful candidates?
 
