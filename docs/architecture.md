@@ -102,7 +102,7 @@ consolidation/orchestrator.py (ConsolidationScheduler)
 
 ### Consolidation path (background daemon)
 
-Fires after `IDLE_THRESHOLD_SECONDS` of no activity:
+`consolidation/orchestrator.py::ConsolidationScheduler` (v5.1 subpackage decomposition) fires after `IDLE_THRESHOLD_SECONDS` of no activity:
 
 1. **Decay** (`apply_decay`) — heat reduced per-memory using `DECAY_FACTOR^hours_elapsed` with modifiers for importance, emotional valence, confidence
 2. **Episode processing** (`process_episodes`) — new episodes parsed for file paths, function names, imports, errors; co-occurring entities get `co_occurrence` edges
@@ -213,7 +213,7 @@ The included `Dockerfile` and `docker-compose.yml` run yadgar as two containers:
 
 `yadgar-core` waits for `yadgar-backend` healthcheck before starting (`depends_on: condition: service_healthy`).
 
-On non-Docker hosts, `yadgar-vacuum.service` (systemd oneshot, v4.8+) runs `yadgar vacuum --service-mode=systemd` on a weekly timer (`yadgar-vacuum.timer`). It is not a Docker service — it runs on the host and connects to the MCP daemon over HTTP.
+On non-Docker hosts, `yadgar-vacuum.service` (systemd oneshot) runs `yadgar vacuum --service-mode=systemd` on a weekly timer (`yadgar-vacuum.timer`). It is not a Docker service — it runs on the host and connects to the MCP daemon over HTTP.
 
 Configuration can be injected via environment variables (`YADGAR_*`) without rebuilding the image, or by mounting a `config.yaml` at `/root/.yadgar/config.yaml`.
 
@@ -261,6 +261,8 @@ Configuration can be injected via environment variables (`YADGAR_*`) without reb
 
 `causal_discovery.py::pc_algorithm` similarly decomposed: Meek R1, R2, R3 each extracted as methods. Behavior pinned by characterization tests in `yadgar/tests/test_retrieval_core_characterization.py` and `yadgar/tests/test_causal_discovery_characterization.py`.
 
+v5.31.0 added a parallel **plugin pipeline** (`retrieval/pipeline.py::RetrievalPipeline`) that wraps each stage as a `RetrievalStage` object under `retrieval/stages/` (12 stage files: `fts`, `knn`, `ppr`, `spreading`, `temporal`, `fusion`, `ce_rerank`, `nli`, `mmr`, `adversarial`, `rules`, `query_analysis`). Activated when `recall(profile=...)` kwarg is set (`"fast"` / `"balanced"` / `"full"` / `"debug"`). Per-stage telemetry via `yadgar_recall_stage_duration_seconds` + `yadgar_recall_stage_candidates_in/out`. The monolithic 8-stage path remains the default for callers that do not supply `profile`.
+
 ## Security (v5.0)
 
 Bearer-token middleware (`yadgar/auth_middleware.py`) wraps `/api/*`, `/hooks/*`, and `/mcp` routes. `/health` and `/metrics` are exempt on loopback. Token comparison uses `hmac.compare_digest` for timing-safety.
@@ -273,10 +275,118 @@ Default-deny CORS — loopback origins only (`http://127.0.0.1:*`, `http://local
 
 Secret patterns block storage of AWS, GCP service-account JSON, Stripe (`sk_live_`), Slack (`xoxb-`/`xoxa-`/`xoxp-`), OpenAI (legacy + `sk-proj-`), Anthropic, JWT, GitHub PATs, private keys, DB connection URIs. Always-on, not user-configurable.
 
+`yadgar/security/allowlist.py` (v5.13.0) provides a tag-based + pattern-based allowlist bypass for the secret gate, reducing false positives on test fixtures, plan documents, and CHANGELOG-style content. Configured via `YADGAR_SECRET_GATE_ALLOWLIST_PATH` (YAML). Every bypass hit is appended to `YADGAR_SECRET_GATE_AUDIT_DIR/<date>.jsonl` for auditability. `secrets.py` accepts `tags=` and `source=` kwargs; allowlist check runs BEFORE pattern scan.
+
 ## Observability (v5.0)
 
-`/metrics` Prometheus endpoint (gated by `YADGAR_METRICS_ENABLED`, loopback-only by bind). Collectors: consolidation phase durations, queue depths (`queue/` `archive/` `dlq/`), DB query p50/p95, embedding cache hit ratio, request counts by route, action-batch size.
+`/metrics` Prometheus endpoint (gated by `YADGAR_METRICS_ENABLED`, loopback-only by bind). Collectors: consolidation phase durations, queue depths (`queue/` `archive/` `dlq/`), DB query p50/p95, embedding cache hit ratio, request counts by route, action-batch size, `wiki_add` rejection rate by reason (`yadgar_wiki_add_rejected_total`, labels: `reason={duplicate_detected, policy_rejected}`), DLQ taxonomy gauge (`yadgar_dlq_rejection_count`), enforcement-relaxed write counter (`yadgar_writes_with_enforcement_relaxed_total`, v5.42.6), per-stage recall pipeline duration + candidate count histograms (`yadgar_recall_stage_duration_seconds`, `yadgar_recall_stage_candidates_in/out`, v5.31.0).
 
 Structured JSON logs via `YADGAR_LOG_FORMAT=json`. `RequestLoggingMiddleware` (in `yadgar/log_config.py`) emits one INFO line per request with `request_id`, `tool_name`, `duration_ms`, `status`, `trace_id` (from `x-request-id` header).
 
 Consolidation phase markers use `phase_start: <name>` / `phase_end: <name> duration_ms=N`. Wiki snapshot loop in `entrypoint-backend.sh` writes `/data/wiki_*.jsonl` every 6 hours with 14-day retention.
+
+## Secret Gate Allowlist (v5.13.0)
+
+`yadgar/security/allowlist.py` provides a tag-based + pattern-based bypass for the secret gate to reduce false positives on test fixtures, plan documents, and CHANGELOG-style content. Without this layer, every `wiki_add` containing example tokens (`ghp_…`, `sk-proj-…`, etc.) was blocked.
+
+- **Allowlist source:** YAML at `YADGAR_SECRET_GATE_ALLOWLIST_PATH`. Each entry: `tag` (matches if write tagged with it) OR `regex` (matches against content).
+- **Audit:** every bypass appended to `YADGAR_SECRET_GATE_AUDIT_DIR/<date>.jsonl` with caller_agent + source + matched_rule + content_hash. Powers I28 invariant (every allowlist hit must have audit entry) enforced by pre-commit hook.
+- **Order:** allowlist check runs BEFORE pattern scan. Matched → bypass + audit + proceed. Unmatched → fall through to pattern scan.
+- **Source detection:** `inspect.stack()` heuristic identifies caller — distinguishes "user wrote a fixture" from "memorize captured a real prod log line."
+
+## Retrieval Profiles (v5.31.0)
+
+`retrieval/pipeline.py::RetrievalPipeline` orchestrates `RetrievalStage` plugin instances under `retrieval/stages/` (12 stage files). Each stage exposes a `run(candidates, ctx) → candidates` interface. Pipeline composition + per-stage telemetry enable A/B routing without touching `recall()`.
+
+- **Profiles** (callers select via `recall(profile=...)`):
+  - `"fast"` — FTS + KNN + WRRF; skips PPR, spreading, reranking, NLI. Lowest latency.
+  - `"balanced"` — Default-equivalent; adds PPR + reranker.
+  - `"full"` — All 12 stages including NLI + adversarial.
+  - `"debug"` — Full + per-stage candidate dump for analysis.
+- **Per-stage overrides:** `recall(stage_overrides={"nli": {"enabled": False}})` disables a single stage without changing profile. Used for benchmarks and incident bypass.
+- **Metrics per stage:** `yadgar_recall_stage_duration_seconds`, `yadgar_recall_stage_candidates_in/out`. Surfaces hot spots.
+- **Backward compat:** callers without `profile=` route through the legacy monolithic `recall.py` 8-stage path (unchanged since v5.0).
+
+## In-Context Memory Blocks (v5.33.0)
+
+`memory_block` table (migration 012) stores named char-capped text containers always injected into `restore()`. Two scope categories:
+
+- **`project` scope** — keyed by directory; visible only to that project.
+- **`global` scope** — visible across all projects.
+
+**MCP tools** (`block_create`, `block_get`, `block_update`, `block_delete`, `block_list`): per-block `max_chars` enforced server-side; total `MEMORY_BLOCKS_TOTAL_BUDGET_CHARS` ceiling reserved at restore time. Block content rendered by `blocks_render.py`. Use cases: persistent task lists, decision logs, semi-permanent context that should never decay.
+
+v5.42.5 F3 enforces: `block_create(scope="project", directory=None)` rejected at MCP boundary (`blocks.py:33` — directory required when scope is project).
+
+## Similarity Gate (v5.39.0, drainer-deferred v5.41.5)
+
+`wiki_add` calls `find_similar_wiki_pages` before commit to catch near-duplicate writes. Threshold calibrated via real-embedding measurement (`WIKI_SIM_CONTENT_THRESHOLD` default `0.80`; near-dup cluster scores 0.956-0.993; distinct content 0.439-0.713; separation margin 0.24).
+
+- **Async (v5.41.5 default):** `wait=False` returns immediately with `{"queued": True, "similarity_check": "deferred"}`. Drainer pre-apply runs the gate; rejections route to DLQ with `failure_reason=duplicate_detected` (not stored). Restores I9 ≤5ms p50 on the request path.
+- **Sync (opt-in):** `wait=True` blocks until drainer completes. Gate fires → `{"stored": False, "reason": "duplicate_detected", "candidates": [...]}` returned to caller. Bypass via `force=True` (skip gate) or `replace_slug=...` (overwrite existing).
+- **Auto-detect on read:** `wiki_check_duplicate` (dry-run) auto-detects caller branch via `_get_default_branch(cwd)` (v5.42.2 fix). Scope becomes `{None, default_branch}` so both new canonical pages AND pre-v5.42.2 legacy `branch="master"` pages are considered.
+
+## Wiki Versioning (v5.41.0)
+
+`wiki_page_version` table (migration 013) holds immutable per-write snapshots:
+
+- **Trigger:** every successful `wiki_add` / `wiki_update` / `wiki_restore` / `wiki_append_section` inserts a `wiki_page_version` row in the same compound `BEGIN; CREATE wiki_page; CREATE wiki_page_version; COMMIT` transaction (v5.41.1 atomicity).
+- **Auto change_summary:** `"+N -M lines | sections: ... | size: X → Y"` computed at write time.
+- **Snapshot fields:** full content (immutable), `version_number`, `change_summary`, `created_at`, `parent_page_id`.
+
+**MCP tools** (5 total): `wiki_history(slug)` returns version chain; `wiki_read_version(slug, version)` reads a specific snapshot; `wiki_diff(slug, v1, v2)` produces unified diff; `wiki_restore(slug, version)` reverts to a snapshot (creates new version); `wiki_append_section(slug, section_heading, content, position)` section-atomic write that prevents the 2026-05-31 corruption pattern (short-snippet overwrites).
+
+`wait` flag (v5.41.2): both async (default) + sync paths supported; sync uses `wait_for_job` queue future.
+
+## DLQ Taxonomy (v5.42.0 + extensions)
+
+Dead-letter queue holds writes that failed validation or exhausted retries. Located at `~/.yadgar/queue/dlq/`. Each entry carries:
+
+- `op_type` — `wiki_add`, `memorize`, etc.
+- `attempts` — retry count
+- `classification` — `transient` / `permanent` / `rejection`
+- `failure_reason` — taxonomy value (below)
+- `last_error` — string error message
+- `moved_to_dlq_at` — timestamp
+
+**`failure_reason` values:**
+- `permanent_error` (or absent) — unrecoverable error during apply
+- `duplicate_detected` — similarity gate fired (v5.39 / v5.41.5 drainer-deferred)
+- `policy_rejected` — rules engine rejected
+- `missing_branch` — drainer enforced branch contract (v5.42.3)
+- `missing_directory` — drainer enforced directory contract (v5.42.5)
+
+**MCP tools:** `dlq_inspect(filter)` lists entries (filter: `all`/`rejections`/`failures`); `dlq_requeue(filename, force)` re-sends through queue (blocks on `missing_branch` / `missing_directory` unless `force=True`); `dlq_dismiss(filename)` acknowledges + drops.
+
+**Metric:** `yadgar_dlq_rejection_count` gauge — current count of rejection-taxonomy entries.
+
+## Directory Contract (v5.42.5)
+
+Detailed semantics for `directory_context` field — companion to the Branch + Directory Contract section above.
+
+**Required value:** absolute project path (e.g., `/home/max/git/yadgar`) OR literal `"global"`. NEVER empty / NULL / undefined.
+
+**Three semantic categories** (combining `directory` + `branch`):
+
+| Category | `directory` | `branch` | Use case |
+|---|---|---|---|
+| project-canonical | `"/path/to/proj"` | `NULL` | Project fact valid across all branches (architecture, conventions, infra) |
+| project-branch-scoped | `"/path/to/proj"` | `"feat/x"` | WIP/exploratory work; GC'd on merge via `wiki_cleanup_merged_branches` |
+| global | `"global"` | `NULL` | Cross-project knowledge (LLM API references, shared conventions) |
+
+The fourth combination (`directory="global", branch=non-NULL`) is intentionally undefined — global facts are branch-invariant.
+
+**Enforcement layers** (both gated by `YADGAR_DIRECTORY_ENFORCEMENT` env knob):
+
+1. MCP boundary — Pydantic validator rejects empty/None/whitespace `directory` parameter on every write tool. Error response: `{"error": "missing_directory", "stored": false, "message": "...", "field": "directory"}`.
+2. Drainer pre-apply — re-validates queued payloads (defense-in-depth for direct-file_queue writes). Missing → DLQ with `failure_reason=missing_directory`.
+
+**Knob behavior:** `YADGAR_DIRECTORY_ENFORCEMENT=true` (default) — strict. `false` — accept missing, fall back to `"global"`, WARN log, `yadgar_writes_with_enforcement_relaxed_total{enforcement="directory"}` increment. Knob is for debug/old-schema recovery only.
+
+**Carve-out:** payload field `_internal=True` bypasses validation for system writes (migrations, wiki_approve internals, consolidation `_try_store_action_summary`, hook callbacks). Tagged in code with `# _internal-only` comment.
+
+**Migration history:**
+- 016 (v5.42.5): added `directory_context` NOT NULL to `wiki_page` / `memory` / `wiki_draft` with tag-based heuristic backfill.
+- 018 (v5.42.6): repair for 016 — Python-side filter caught field-absent rows that `WHERE directory_context IS NONE` SurrealDB query missed. Backfilled the remaining 200 legacy rows.
+
+See `[[yadgar-directory-branch-contract-v5-42-3-5-architecture]]` wiki page for the full semantic model + decision history.
