@@ -40785,6 +40785,11 @@
     "inh_depth": 0,
     "methods": 1
   },
+  "yadgar/tests/test_integration.py::TestRememberProspectiveTrigger@1071": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 1
+  },
   "yadgar/tests/test_integration.py::TestRememberWithAstrocyteAssignment@1029": {
     "attrs": 0,
     "inh_depth": 0,
@@ -40846,7 +40851,7 @@
     "methods": 1
   },
   "yadgar/tests/test_integration.py::__file__": {
-    "loc": 1097
+    "loc": 1098
   },
   "yadgar/tests/test_integration.py::buffer@50": {
     "cyclo": 1,
@@ -41018,7 +41023,7 @@
   },
   "yadgar/tests/test_integration.py::test_consolidate_runs_sleep_cycle@1055": {
     "cyclo": 7,
-    "loc": 13,
+    "loc": 14,
     "nesting": 1,
     "params": 3
   },
@@ -41269,6 +41274,12 @@
     "params": 3
   },
   "yadgar/tests/test_integration.py::test_todo_creates_trigger_and_fires@1071": {
+    "cyclo": 6,
+    "loc": 27,
+    "nesting": 0,
+    "params": 3
+  },
+  "yadgar/tests/test_integration.py::test_todo_creates_trigger_and_fires@1072": {
     "cyclo": 6,
     "loc": 27,
     "nesting": 0,

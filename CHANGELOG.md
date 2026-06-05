@@ -6,6 +6,19 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.46.5] — 2026-06-05
+
+Missing functions, endpoints, hook files (CI green cycle slot 3). Fixes B3 (hook_db_lockdown_check import), B12 (consolidate_now sleep_cycle key). B4/B5/B16/B22 discovered pre-fixed.
+
+- **fix(scripts):** B3 — restore `hook_db_lockdown_check()` to `yadgar/scripts/hook_runner.py`. Function was removed in v5.20.0 (migrated to standalone `yadgar/hooks/db-lockdown-check.py`) but `test_hook_runner_pretooluse_schema.py` still imports it. Restored with correct Python 3 `except` syntax.
+- **fix(test):** B12 — `TestConsolidateNowWithSleepCycle::test_consolidate_runs_sleep_cycle` now calls `consolidate_now(mode='full')`. The `sleep_cycle` key is only emitted by mode='full' (v5.10.4+); test was calling default mode='light' and asserting sleep_cycle present.
+- **discovery:** B4 (session-start-context.py + stop-memory-checkpoint.py), B5 (/hooks/session-context route), B16 (/viz/config route), B22 (os.walk mock) — all already fixed in prior commits; tests pass with conftest. No code changes needed.
+- **test:** 2 RED scaffolding files `test_v5_46_5_*.py` (7 tests).
+- **chore:** bump `.complexity-baseline.json` for test_integration.py (+1 LOC).
+- **chore:** bump version 5.46.4 → 5.46.5 + uv.lock sync
+
+---
+
 ## [5.46.4] — 2026-06-05
 
 Test fixture refactor layer: B1/B8/B9/B10/B11/B13 CI green cycle slot 2. Fixes wiki_page fixtures missing directory_context, 4-dim vector fixtures, token budget overage, hardcoded paths, stale migration assertion, DLQ backoff pre-validation bypass.
