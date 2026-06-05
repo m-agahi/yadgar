@@ -26,15 +26,20 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Workflow-level env: YADGAR_CI_BRANCH tells the yadgar daemon which branch
+# context to use in the CI runner (B2 fix — CI runner paths are anonymised
+# so git branch detection fails without this hint). See docs/DECISIONS.md PD-42.
+env:
+  YADGAR_CI_BRANCH: master
+
 jobs:
   test:
     runs-on: ubuntu-latest
-    # Run in the python:3.14-slim image rather than via actions/setup-python —
-    # the self-hosted runner's tool cache doesn't reliably have a 3.14 build
-    # ("Version '3.14' ... was not found for this operating system"). The slim
-    # image pins the exact interpreter.
+    # Run in the yadgar-ci image which pins Python 3.14 + includes make, git,
+    # curl, and pre-installed test deps. Replaces python:3.14-slim (B6 fix).
+    # Image built locally and pushed to dockerhub per PD-42 carve-out.
     container:
-      image: python:3.14-slim
+      image: docker.io/openfantasy/yadgar-ci:5.46.3
     # PRs (gates the merge) and version tags (gates the PyPI publish) only.
     # NOT on pushes to master (already tested on the PR) and NOT on
     # workflow_dispatch (manual dispatch is "rebuild from latest master" — the
@@ -43,9 +48,8 @@ jobs:
       github.event_name == 'pull_request' ||
       startsWith(github.ref, 'refs/tags/v')
     steps:
-      - name: Install system deps
-        # nodejs+git for the JS actions runtime; curl for the SurrealDB download.
-        run: apt-get update -qq && apt-get install -y --no-install-recommends nodejs git curl ca-certificates
+      # make, git, curl, ca-certificates, nodejs are pre-installed in yadgar-ci image.
+      # No apt-get install step needed for these system deps.
 
       - uses: https://data.forgejo.org/actions/checkout@v6
 
@@ -109,19 +113,19 @@ jobs:
   viz-tests:
     runs-on: ubuntu-latest
     container:
-      image: python:3.14-slim
+      image: docker.io/openfantasy/yadgar-ci:5.46.3
     # Same gate as `test` — PRs + version tags only.
     if: >-
       github.event_name == 'pull_request' ||
       startsWith(github.ref, 'refs/tags/v')
     steps:
-      - name: Install system deps
-        # nodejs for vitest; chromium for Playwright Layer 2 smoke tests;
-        # git+curl for actions runtime and SurrealDB download.
+      - name: Install Playwright + chromium deps
+        # yadgar-ci image has make/git/curl/nodejs pre-installed.
+        # Add chromium + Playwright-specific system libraries here.
         run: |
           apt-get update -qq
           apt-get install -y --no-install-recommends \
-            nodejs npm git curl ca-certificates \
+            npm \
             chromium chromium-driver \
             libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
             libxcomposite1 libxdamage1 libxrandr2 libgbm1 libpango-1.0-0 \
