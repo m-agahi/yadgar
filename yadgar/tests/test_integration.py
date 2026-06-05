@@ -1059,7 +1059,8 @@ class TestConsolidateNowWithSleepCycle:
             server.memorize(f"consolidation test memory {i}", "/proj", ["test"])
         flush_queue()
 
-        result = server.consolidate_now()
+        # mode='full' is required for sleep_cycle to run (v5.10.4+)
+        result = server.consolidate_now(mode="full")
         assert result["status"] == "completed"
         assert "memories_archived" in result or "memories_updated" in result
         # Sleep cycle should have run
