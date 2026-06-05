@@ -1,4 +1,8 @@
-# PLAN — v5.46.2: Cross-Repo PR Auto-Open (RETIRED)
+# PLAN — v5.46.2: Cross-Repo PR Auto-Open (RETIRED — ARCHAEOLOGY)
+
+<!-- ARCHIVE NOTE: File renamed from PLAN_V5_46_2_CROSS_REPO_PR_AUTO_OPEN.md 2026-06-05 per PD-41.
+     Slot v5.46.2 vacated and reused for runtime detection UX hotfix.
+     Content below preserved as archaeological reference only — all steps SUPERSEDED. -->
 
 **Status:** RETIRED 2026-06-05 per `docs/DECISIONS.md` PD-40. After v5.46.0 ship + brew lane drop (PD-39) + nix PR drop (PD-40 — replaced with pre-commit flake.nix sync), v5.46.2 has no remaining deliverables. Original content preserved as historical artifact.
 
