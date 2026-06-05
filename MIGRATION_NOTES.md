@@ -1,5 +1,73 @@
 # Migration Notes
 
+## v5.46.2 — Runtime detection UX hotfix (2026-06-05)
+
+### No user action required for upgrade
+
+Users on v5.46.1 → v5.46.2: no configuration changes needed. Container images and MCP
+protocol are unchanged. This is a UX-only fix for fresh installs on systems without podman.
+
+### What changed
+
+`yadgar-setup` and `make setup` no longer fail abruptly when no container runtime is found.
+Instead, they print an OS-aware install command and (in interactive mode) offer to run it.
+
+### New yadgar-setup flags
+
+| Flag | Effect |
+|------|--------|
+| `--install-runtime` | Skip prompt; run podman install directly (yes-mode). |
+| `--no-install-runtime` | Skip prompt; print install hint + exit 1 (no-mode). |
+
+Existing `--noninteractive` behaviour unchanged (print hint + exit 1 when no runtime found).
+
+### Fresh install on a system without podman
+
+**Interactive (default):**
+```
+yadgar-setup
+# ==> Step 1/10: Detecting runtime + OS...
+# ERROR: No container runtime (podman or docker) found.
+#     Install podman with:
+#       sudo apt-get install -y podman
+# Install podman now? [Y/n]
+```
+Answer `Y` (or press Enter) to install. `yadgar-setup` re-verifies and continues.
+
+**Non-interactive (CI/automation):**
+```bash
+yadgar-setup --noninteractive
+# Prints install command and exits 1. No prompt.
+```
+
+**Auto-install (unattended):**
+```bash
+yadgar-setup --install-runtime
+# Runs: sudo apt-get install -y podman (or distro equivalent)
+# Then continues setup.
+```
+
+### make install-runtime (new target)
+
+```bash
+make install-runtime
+# Equivalent to yadgar-setup --install-runtime from a repo checkout.
+
+INSTALL_NONINTERACTIVE=1 make install-runtime
+# Non-interactive: print command + exit 1.
+```
+
+### macOS note
+
+On macOS, the install command is `brew install podman`. After install, you must also run:
+```bash
+podman machine init && podman machine start
+```
+`yadgar-setup` prints this as follow-up guidance but does not execute it automatically
+(state-dependent; deferred per PD-38 precedent).
+
+---
+
 ## v5.46.1 — Distribution infrastructure prep (2026-06-05)
 
 ### No user action required for upgrade
