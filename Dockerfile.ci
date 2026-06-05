@@ -1,0 +1,51 @@
+# ── yadgar-ci: Custom CI runner image ─────────────────────────────────────────
+# Base: python:3.14-slim (matches pyproject.toml requires-python>=3.14)
+# Purpose: used by .forgejo/workflows/{ci.yaml,release.yaml} container jobs
+#          so CI runners can pull from dockerhub (PD-42 carve-out).
+# Contains: system deps (make, git, curl, ca-certificates, build-essential)
+#           + pre-installed yadgar test + ml extras to speed CI start.
+# Version: updated each CI infrastructure release (v5.46.3+).
+FROM python:3.14-slim
+
+LABEL org.opencontainers.image.source="https://codeberg.org/maxagahi/yadgar"
+LABEL org.opencontainers.image.description="yadgar CI runner image — Python 3.14 + make + git + test deps"
+LABEL org.opencontainers.image.version="5.46.3"
+
+# System deps needed in CI:
+#   make       — Makefile integration tests (B6 fix)
+#   git        — branch detection, checkout actions
+#   curl       — SurrealDB binary download + health checks
+#   ca-certificates — TLS for curl + pip installs
+#   build-essential — C extension builds (scipy, numpy, etc.)
+#   nodejs     — JS actions runtime used by Forgejo actions checkout
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends \
+        make \
+        git \
+        curl \
+        ca-certificates \
+        build-essential \
+        nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+# Pre-install test + ml extras to speed CI pip installs.
+# Copies pyproject.toml only so this layer caches across source changes.
+WORKDIR /app
+COPY pyproject.toml /app/pyproject.toml
+
+# Install test + ml dependencies without the package itself (just deps).
+# --no-cache-dir keeps layer small; deps are re-resolved on cache miss.
+RUN pip install --no-cache-dir \
+        pytest \
+        pytest-asyncio \
+        anyio \
+        pytest-xdist \
+        pytest-timeout \
+        pytest-rerunfailures \
+        hypothesis \
+        defusedxml \
+        sentence-transformers \
+        hf-xet && \
+    rm -rf /root/.cache/pip
+
+ENV PYTHONUNBUFFERED=1
