@@ -6,6 +6,18 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.46.1] — 2026-06-05
+
+Distribution infrastructure prep: PyPI publish via CI on tag push; `scripts/bump_version.py` helper; pre-commit flake.nix sync (already in @53de97a). Brew lane retired (PD-39); nix cross-repo PR retired (PD-40).
+
+- **feat(dist):** `scripts/bump_version.py` — minimal version bumper helper (~90 LOC). Flags: `--new <VERSION>`, `--bump patch|minor|major`, `--dry-run`, `--current-version`, `--project-root`. Pre-commit hooks (sync_version + check_versions) cascade bump to server.json, flake.nix, uv.lock automatically on next commit.
+- **feat(ci):** `.forgejo/workflows/release.yaml` — `publish-pypi` job: runs twine upload on tag push only (`if: startsWith(github.ref, 'refs/tags/v')`); depends on `build-wheel`; uses `PYPI_API_TOKEN` Forgejo secret (project-scoped); `--skip-existing` for idempotent re-tag.
+- **docs:** `MIGRATION_NOTES.md` v5.46.1 section — no user action required for upgrade; `pipx install yadgar` from PyPI is primary non-nix install path (replaces brew per PD-39); nix users continue with flake (pre-commit auto-syncs flake.nix per PD-40).
+- **chore:** bump version 5.46.0 → 5.46.1
+- **test:** 3 new test files in `test_v5_46_1_*.py` (23 tests: bump_version script, publish-pypi job, flake sync regression)
+
+---
+
 ## [5.46.0] — 2026-06-05
 
 Distribution: pipx + Homebrew + Nix flake + SBOM + Codeberg release automation. `yadgar-setup` binary for non-repo users.
