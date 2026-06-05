@@ -23,7 +23,7 @@ Distribution: pipx + Homebrew + Nix flake + SBOM + Codeberg release automation. 
 - **docs:** `README.md` four install paths (pipx/brew/nix/repo checkout)
 - **docs:** `MIGRATION_NOTES.md` v5.46.0 section: install paths + tap creation + secrets + SBOM + deferred items
 - **chore:** bump version 5.45.1 → 5.46.0
-- **test:** 8 new test files in `test_v5_46_0_*.py` covering all distribution artifacts (55 tests, 6 skipped)
+- **test:** 8 new test files in `test_v5_46_0_*.py` covering all distribution artifacts (68 tests, 3 skipped)
 
 ---
 
