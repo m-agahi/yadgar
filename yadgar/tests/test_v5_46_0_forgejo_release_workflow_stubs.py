@@ -3,8 +3,9 @@
 Validates release.yaml:
 - Exists and is valid YAML
 - Has build-wheel (active) and build-sbom (active) jobs
-- Has open-nix-pr job with if: false gate (v5.46.2 stub contract)
 - open-brew-pr removed per PD-39 (brew lane retired 2026-06-05)
+- open-nix-pr removed per PD-40 (nix cross-repo PR retired 2026-06-05;
+  replaced by pre-commit flake.nix sync @53de97a)
 - Triggers on tags: ["v*"]
 
 RED phase: fails until .forgejo/workflows/release.yaml is created.
@@ -85,20 +86,20 @@ def test_release_yaml_open_brew_pr_absent():
 
 
 @pytest.mark.skipif(not HAS_YAML, reason="PyYAML not installed")
-def test_release_yaml_open_nix_pr_is_stub():
-    """release.yaml must have open-nix-pr job with if: false (v5.46.2 stub)."""
+def test_release_yaml_open_nix_pr_absent():
+    """release.yaml must NOT have open-nix-pr job (nix cross-repo PR retired per PD-40 2026-06-05)."""
     parsed = yaml.safe_load(RELEASE_YAML.read_text())
     jobs = parsed.get("jobs", {})
-    assert "open-nix-pr" in jobs, f"Missing 'open-nix-pr' job; jobs: {list(jobs)}"
-    job = jobs["open-nix-pr"]
-    if_condition = job.get("if", "")
-    assert str(if_condition).lower() == "false", (
-        f"open-nix-pr must have 'if: false' (v5.46.2 stub contract); got: {if_condition!r}"
+    assert "open-nix-pr" not in jobs, (
+        "open-nix-pr job must be removed (nix cross-repo PR retired per PD-40 2026-06-05; "
+        "replaced by pre-commit flake.nix sync @53de97a)"
     )
 
 
 @pytest.mark.skipif(not HAS_YAML, reason="PyYAML not installed")
-def test_release_yaml_nix_stub_has_v5462_comment():
-    """Nix stub job must contain '# v5.46.2 fills this stub' comment."""
+def test_release_yaml_pd40_comment_present():
+    """release.yaml must contain PD-40 reference (nix stub removal marker)."""
     content = RELEASE_YAML.read_text()
-    assert "v5.46.2" in content, "release.yaml nix stub must mention v5.46.2 (coordination marker)"
+    assert "PD-40" in content, (
+        "release.yaml must reference PD-40 (nix stub removal decision marker)"
+    )

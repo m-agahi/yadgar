@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check version consistency across pyproject.toml, server.json, and docker-compose.yml."""
+"""Check version consistency across pyproject.toml, server.json, docker-compose.yml, uv.lock, and flake.nix."""
 
 import json
 import re
@@ -36,6 +36,14 @@ if uv_lock_path.exists():
     if m_uv:
         uv_version = m_uv.group(1)
 
+flake_nix_path = root / "flake.nix"
+flake_version = ""
+if flake_nix_path.exists():
+    flake_text = flake_nix_path.read_text()
+    m_flake = re.search(r'^\s*version\s*=\s*"([^"]+)";', flake_text, re.MULTILINE)
+    if m_flake:
+        flake_version = m_flake.group(1)
+
 # --- build comparison table ---
 
 rows = [
@@ -47,6 +55,8 @@ rows = [
 ]
 if uv_version:
     rows.append(("uv.lock", "core", uv_version))
+if flake_version:
+    rows.append(("flake.nix", "core", flake_version))
 for i, pkg_ver in enumerate(server_pkg_versions):
     rows.append((f"server.json packages[{i}]", "core", pkg_ver))
 
