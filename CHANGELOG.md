@@ -6,6 +6,27 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.46.0] — 2026-06-05
+
+Distribution: pipx + Homebrew + Nix flake + SBOM + Codeberg release automation. `yadgar-setup` binary for non-repo users.
+
+- **feat(dist):** `scripts/install/yadgar-setup.sh` — ~230 LOC standalone setup script for pipx/brew/nix users (Option C: not a CLI subcommand). Flags: `--noninteractive`, `--dryrun`, `--doctor`. Parallels `make setup` chain.
+- **feat(dist):** `yadgar/scripts/yadgar_setup.py` — Python shim for `yadgar-setup` pipx entry point (`[project.scripts]`)
+- **feat(dist):** `Formula/yadgar.rb.in` — Homebrew formula template with `@VERSION@`/`@SHA256@`/`@PYTHON_VERSION@` placeholders. Caveats-only (no `post_install` auto-exec). `depends_on python@3.13` fallback.
+- **feat(dist):** `flake.nix` + `flake.lock` — Nix flake with `packages.default` (yadgar wheel + yadgar-setup binary), `nixosModules.default` stub, `homeManagerModules.default` stub. Channel: `nixos-unstable` (Python 3.14). `nix flake check --no-build` passes.
+- **feat(dist):** `scripts/generate_sbom.sh` — CycloneDX 1.5 SBOM via `cyclonedx-bom environment`; writes `dist/yadgar-<version>-sbom.cdx.json`
+- **feat(ci):** `.forgejo/workflows/release.yaml` — release automation on `tags: v*`. Active: `build-wheel`, `build-sbom`, `attach-to-release` (Forgejo REST API). Stub (`if: false`): `open-brew-pr`, `open-nix-pr` (v5.46.1 fills).
+- **fix(meta):** `pyproject.toml` license classifier: `MIT License` → `Apache Software License` (was pre-existing metadata error; LICENSE file is Apache-2.0)
+- **feat(meta):** `pyproject.toml` new classifiers: `POSIX Linux`, `MacOS`, `Console`, `Filesystems`
+- **feat(meta):** `pyproject.toml` new extras: `[dist]` + `[sbom]` with `cyclonedx-bom==7.3.0` (pinned exact; resolved 2026-06-05)
+- **feat(meta):** `pyproject.toml` `[project.scripts]` `yadgar-setup` entry + `wheel.shared-data` for `yadgar-setup.sh`
+- **docs:** `README.md` four install paths (pipx/brew/nix/repo checkout)
+- **docs:** `MIGRATION_NOTES.md` v5.46.0 section: install paths + tap creation + secrets + SBOM + deferred items
+- **chore:** bump version 5.45.1 → 5.46.0
+- **test:** 8 new test files in `test_v5_46_0_*.py` covering all distribution artifacts (68 tests, 3 skipped)
+
+---
+
 ## [5.45.1] — 2026-06-04
 
 macOS launchd plist generation + install. **Paper-only implementation** — no macOS host available at time of shipping; runtime verification deferred. Fix-ups via hotfix once host is available. See `MIGRATION_NOTES.md` v5.45.1 for the 5 verification probes to run on first macOS access.

@@ -1,0 +1,188 @@
+name: Release
+
+# Triggers on version tags (v*). Pre-release tags (alpha/beta) still trigger
+# but the stub jobs (open-brew-pr, open-nix-pr) skip via their if: conditions.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# Cancel superseded runs on the same tag (re-push scenario).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false  # Don't cancel in-progress releases
+
+jobs:
+  # ── ACTIVE: Build wheel sdist ──────────────────────────────────────────────
+  build-wheel:
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.14-slim
+    steps:
+      - name: Install system deps
+        run: apt-get update -qq && apt-get install -y --no-install-recommends nodejs git curl ca-certificates
+
+      - uses: https://data.forgejo.org/actions/checkout@v6
+
+      - name: Install build tools
+        run: pip install build
+
+      - name: Get version from pyproject.toml
+        id: get-version
+        run: |
+          echo "version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" >> "$GITHUB_OUTPUT"
+
+      - name: Build sdist + wheel
+        run: python -m build
+
+      - name: Upload dist artifacts
+        uses: https://data.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: dist-${{ steps.get-version.outputs.version }}
+          path: dist/
+          retention-days: 7
+
+  # ── ACTIVE: Generate SBOM ─────────────────────────────────────────────────
+  build-sbom:
+    needs: build-wheel
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.14-slim
+    steps:
+      - name: Install system deps
+        run: apt-get update -qq && apt-get install -y --no-install-recommends nodejs git
+
+      - uses: https://data.forgejo.org/actions/checkout@v6
+
+      - name: Get version
+        id: get-version
+        run: |
+          echo "version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" >> "$GITHUB_OUTPUT"
+
+      - name: Download dist artifacts
+        uses: https://data.forgejo.org/actions/download-artifact@v3.1.0
+        with:
+          name: dist-${{ steps.get-version.outputs.version }}
+          path: dist/
+
+      - name: Install yadgar with sbom extra
+        run: |
+          pip install "yadgar[sbom]==${{ steps.get-version.outputs.version }}" || pip install -e ".[sbom]"
+
+      - name: Generate CycloneDX SBOM
+        env:
+          SBOM_VERSION: ${{ steps.get-version.outputs.version }}
+          SBOM_OUTPUT: dist/yadgar-${{ steps.get-version.outputs.version }}-sbom.cdx.json
+        run: bash scripts/generate_sbom.sh
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > CHECKSUMS.txt
+          echo "==> Checksums:"
+          cat CHECKSUMS.txt
+
+      - name: Upload dist + sbom + checksums
+        uses: https://data.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: release-assets-${{ steps.get-version.outputs.version }}
+          path: dist/
+          retention-days: 30
+
+  # ── ACTIVE: Attach release assets to Codeberg release ─────────────────────
+  attach-to-release:
+    needs: build-sbom
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.14-slim
+    steps:
+      - name: Install system deps
+        run: apt-get update -qq && apt-get install -y --no-install-recommends curl jq nodejs
+
+      - uses: https://data.forgejo.org/actions/checkout@v6
+
+      - name: Get version
+        id: get-version
+        run: |
+          echo "version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" >> "$GITHUB_OUTPUT"
+
+      - name: Download release assets
+        uses: https://data.forgejo.org/actions/download-artifact@v3.1.0
+        with:
+          name: release-assets-${{ steps.get-version.outputs.version }}
+          path: dist/
+
+      - name: Create or update Codeberg release
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          VERSION: ${{ steps.get-version.outputs.version }}
+          REPO: maxagahi/yadgar
+          API: https://codeberg.org/api/v1
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+
+          # Check if release already exists
+          RELEASE_ID=$(curl -sf -H "Authorization: token ${FORGEJO_TOKEN}" \
+            "${API}/repos/${REPO}/releases/tags/${TAG}" 2>/dev/null | \
+            python3 -c "import json,sys; d=json.load(sys.stdin); print(d['id'])" 2>/dev/null || echo "")
+
+          if [ -z "$RELEASE_ID" ]; then
+            # Create new release
+            RELEASE_ID=$(curl -sf -X POST \
+              -H "Authorization: token ${FORGEJO_TOKEN}" \
+              -H "Content-Type: application/json" \
+              "${API}/repos/${REPO}/releases" \
+              -d "{\"tag_name\":\"${TAG}\",\"name\":\"yadgar ${VERSION}\",\"body\":\"Release ${VERSION}. See CHANGELOG.md for details.\",\"draft\":false,\"prerelease\":$(python3 -c "print('true' if 'alpha' in '${VERSION}' or 'beta' in '${VERSION}' else 'false')")}" | \
+              python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+            echo "Created release ${RELEASE_ID} for ${TAG}"
+          else
+            echo "Release ${RELEASE_ID} already exists for ${TAG}"
+          fi
+
+          # Upload all dist/ files as release assets
+          for f in dist/*; do
+            filename=$(basename "$f")
+            echo "Uploading ${filename}..."
+            curl -sf -X POST \
+              -H "Authorization: token ${FORGEJO_TOKEN}" \
+              -F "attachment=@${f}" \
+              "${API}/repos/${REPO}/releases/${RELEASE_ID}/assets?name=${filename}" || \
+              echo "WARN: Failed to upload ${filename} (may already exist)"
+          done
+          echo "==> Release assets attached."
+
+  # ── STUB (if: false): Open brew tap PR — v5.46.1 fills this stub ──────────
+  open-brew-pr:
+    needs: attach-to-release
+    runs-on: ubuntu-latest
+    # v5.46.1 fills this stub — cross-repo PAT required (BREW_BUMP_TOKEN)
+    # Activation condition will be: !contains(github.ref, '-alpha') && !contains(github.ref, '-beta')
+    if: false
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+      # v5.46.1 fills this stub
+      # Steps: clone homebrew-yadgar tap, render Formula/yadgar.rb from yadgar.rb.in,
+      # push to bump-v<version> branch, open PR via Forgejo API.
+      # Requires: BREW_BUMP_TOKEN secret (scoped to PR-create on homebrew-yadgar only).
+      - name: Open brew tap PR (stub)
+        run: |
+          echo "TODO v5.46.1 fills this stub"
+
+  # ── STUB (if: false): Open nix repo PR — v5.46.1 fills this stub ─────────
+  open-nix-pr:
+    needs: attach-to-release
+    runs-on: ubuntu-latest
+    # v5.46.1 fills this stub — cross-repo PAT required (NIX_BUMP_TOKEN)
+    # Activation condition will be: !contains(github.ref, '-alpha') && !contains(github.ref, '-beta')
+    if: false
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+      # v5.46.1 fills this stub
+      # Steps: clone nix repo, bump yadger_core_version in modules/home/yadgar.nix,
+      # push to bump-yadgar-v<version> branch, open PR via Forgejo API.
+      # Requires: NIX_BUMP_TOKEN secret (scoped to PR-create on nix repo only).
+      - name: Open nix repo PR (stub)
+        run: |
+          echo "TODO v5.46.1 fills this stub"
