@@ -10,7 +10,38 @@
 
 ---
 
-## 2026-06-05 v5.46.2 slot reuse — runtime detection UX hotfix
+## 2026-06-05 v5.46.3 → v5.46.6 CI-green cycle (chained release plan)
+
+## PD-42 — Chained CI-failure remediation v5.46.3 → v5.46.6 + custom yadgar-ci image (2026-06-05)
+
+**Decision:** v5.46.2 CI run surfaced 27 issue classes (24 BLOCKING + 3 WARNING) per `docs/CI_ISSUES_2026_06_05.md` @706e61d. Fix in a chained release cycle v5.46.3 → v5.46.6 before v5.47.0 dispatch. Umbrella plan at `docs/PLAN_V5_46_CI_GREEN_CYCLE.md`.
+
+**Rationale:** User direction 2026-06-05 evening — "i need proper planning to fix all the tests (i mean all i need clean 100 percent results) before we move to 5.47. so plan then implement. only build and push when you get to the last one. do it automatically." 12 directional questions answered via AskUserQuestion (release shape, pass def, CI image strategy, tag policy, fixture authority, B2 mechanism, deploy semantics, budget overrun, SBOM fold, self-test coverage, PyPI failure handling, plan doc shape).
+
+**Cycle strategy:**
+- v5.46.3 — CI infrastructure (yadgar-ci image + YADGAR_CI_BRANCH env + make availability + pytest-asyncio + SBOM wheel install)
+- v5.46.4 — Test fixture refactor (directory_context + vector-dim + harness hardening + migration assertion + DLQ fixtures + token budget)
+- v5.46.5 — Missing functions, endpoints, hook files (hook_db_lockdown_check, session-start-context.py, /hooks/session-context, /viz/config, sleep_cycle, dbsize mock)
+- v5.46.6 — Behavior fixes + final cleanup + SHIP (circuit breaker probe state, NLI default-OFF test alignment, health endpoint, B18-B21 cascade verification, optional W1+W2 fold, amd64 build + nix bump + tag + PyPI publish + post-ship verification)
+
+**Workflow-rule exception (documented):** `docker.io/openfantasy/yadgar-ci` image PUSHES to dockerhub. Normal yadgar/yadgar-backend images do not push (per workflow rule 2026-05-19). CI consumer images need registry presence so CI runners can pull. PD-42 records the carve-out; rule does NOT change for daily build images.
+
+**Deploy gating:** Only the final release (v5.46.6) gets amd64 build + nix repo bump + tag push + user-applied home-manager switch + post-ship probes. Intermediate v5.46.3/.4/.5 merge to master + push code only. PyPI publish fires only on v5.46.6 tag push.
+
+**Removed/added artifacts:**
+- ADD: `Dockerfile.ci` at repo root (custom yadgar-ci image spec)
+- ADD: `docker.io/openfantasy/yadgar-ci:5.46.3+` image on dockerhub
+- ADD: `YADGAR_CI_BRANCH=master` env var in workflows
+- ADD: ~30 LOC light self-tests across the chain
+- MODIFY: `.forgejo/workflows/{ci.yaml,release.yaml}` image refs + SBOM install step
+- MODIFY: ~50 test files (fixture refactor per B1/B8/B13/B9/B10/B11)
+- MODIFY: `yadgar/scripts/hook_runner.py` (B3), `yadgar/hooks/*.py` (B4), `yadgar/server/http.py` (B5+B16), `yadgar/ml_client.py` (B14)
+
+**Reversibility:** Per-release git revert restores prior state. Pre-commit auto-syncs flake.nix on revert. PyPI only gets v5.46.6 so no cleanup needed if cycle aborted before final ship.
+
+**Estimated effort:** ~3 calendar days total. Continue + report at completion if overrun (per Q9 answer).
+
+
 
 ## PD-41 — Reuse v5.46.2 slot for runtime detection UX hotfix (2026-06-05)
 
