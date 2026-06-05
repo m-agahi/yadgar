@@ -10,6 +10,51 @@
 
 ---
 
+## 2026-06-05 v6/v7/v8 LLM inference strategy (cross-cutting architecture)
+
+## PD-43 — Pluggable LLM inference; default OFF for personal mode; 4 backend paths (2026-06-05)
+
+**Decision:** v6 (LLM curator scaffolding) + v7 (real-time synthesis) + v8 (team mode) all depend on LLM inference for curator + synthesis tasks. Hardware barrier for local LLM (DeepSeek 22+ GB RAM minimum, GPU usually needed for usable latency) makes "local LLM required" a gatekeeping anti-feature for individual users. Instead: **inference is pluggable; default OFF for personal mode; 4 backend paths, user picks**.
+
+**Rationale:** User direction 2026-06-05 evening — "the llm curator and realtime synthesis is major problem in my mind. it needs massive hardware on users side. so they should be optional to enable. otherwise its useless but in team mode if the backend is in a strong server, we can pull it off unless we can somehow use the claude or whatever agent the user uses to overcome the challenge. running even a deepseek needs like 22 gb ram minimum"
+
+**Four inference paths (curator config: `inference.backend = ...`):**
+
+| Path | Backend ID | User cost | Latency | Privacy | Nightly background OK? |
+|---|---|---|---|---|---|
+| Local LLM | `local:<model>` | hardware (22+ GB RAM, GPU recommended) | sub-100ms | full local | yes |
+| Remote API | `api:<provider>` (claude, groq, together, fireworks) | $0.001-0.01/inference | 200-2000ms | API provider sees data | yes |
+| Claude pass-through (interactive) | `claude-passthrough:interactive` | $0 (existing sub) | conversational pace | Anthropic sees data | NO (requires open session) |
+| Claude pass-through (background, OAuth) | `claude-passthrough:headless` | $0 (existing sub) | seconds | Anthropic sees data | YES (via `claude -p` + shared OAuth) |
+| Team backend (v8 only) | `team-backend` | team pays infra | sub-100ms | within team | yes |
+
+**Claude pass-through clarification (per user 2026-06-05):** interactive pass-through (dispatching subagents from open Claude session) doesn't work for nightly curation since user's session isn't always open. Resolution: yadgar daemon needs access to user's OAuth credentials so `claude -p` (programmatic non-interactive Claude Code) can run in the background with user's auth. Claude Code stores credentials at `~/.claude/credentials.json` (or equivalent); yadgar daemon reads them to authenticate `claude -p` invocations. Trust model: yadgar daemon already holds other secrets (DB passwords, MCP auth token); OAuth share is a continuation of existing trust boundary.
+
+**OAuth share security considerations:**
+- Token stored on user's machine only (yadgar daemon runs locally for personal mode)
+- Yadgar daemon scope-restricts use: ONLY for curator/synthesis inference; never for arbitrary `claude -p` runs
+- User can revoke at any time by signing out of Claude Code (invalidates the OAuth token at provider)
+- Per-team mode: team admin decides whether team server uses team's shared Claude account OR each user's OAuth (with explicit per-user consent flow)
+- Audit log: every `claude -p` invocation logged with timestamp + task type
+
+**Default state:** v6 curator + v7 synthesis features are OFF in personal mode by default. User explicitly enables via config + picks an inference path. Team mode (v8) defaults ON with team-backend (centralized inference).
+
+**Implications for v6/v7/v8 plans:**
+
+- **v6 (LLM curator scaffolding):** MUST ship pluggable backend abstraction + at minimum 2 reference backends (Claude API + Claude pass-through headless). Local LLM backend ships as optional drop-in (community-maintained or v6.x sub-release). Curator default OFF; explicit `yadgar config set curator.enabled true` + `curator.backend = ...` required.
+- **v7 (real-time synthesis):** rename concept — "real-time" assumed sub-100ms which only works for local LLM or team backend. Better framing: "asynchronous synthesis with progressive results." User-facing UX: synthesis runs in background; results surface when ready. Latency budget governed by chosen backend.
+- **v8 (team usability):** team-backend path becomes the natural home for the heavier features. Personal mode supports them with effort; team mode supports them by default. Strengthens v8 value prop ("team gets curator/synthesis without per-user hardware cost").
+
+**Reversibility:** Plan-only decision at this stage. Affects future v6/v7/v8 plan drafts. Can be revisited when v6 plan is written if better architecture emerges.
+
+**Cross-references:**
+- `docs/PLAN_V8_TEAM_USABILITY_SKELETON.md` — updated to reference PD-43
+- Future `docs/PLAN_V6_*.md` — MUST cite PD-43 + ship 4-backend abstraction
+- Future `docs/PLAN_V7_*.md` — MUST cite PD-43 + drop "real-time" framing
+- v5.44.0 X2 SubagentStop machinery — extends naturally to interactive pass-through dispatch
+
+---
+
 ## 2026-06-05 v5.46.3 → v5.46.6 CI-green cycle (chained release plan)
 
 ## PD-42 — Chained CI-failure remediation v5.46.3 → v5.46.6 + custom yadgar-ci image (2026-06-05)

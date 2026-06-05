@@ -6,6 +6,8 @@
 
 **Scope:** team collaboration on shared knowledge + memory while preserving the personal-memory contract that gives yadgar its identity. Multi-tenant + federated identity + auth/authz + sharing UX + conflict resolution + privacy/compliance.
 
+**Cross-cutting dependency:** `docs/DECISIONS.md` PD-43 — LLM inference is pluggable, default OFF for personal mode, 4 backend paths (local LLM / remote API / Claude pass-through interactive or headless via OAuth share / team backend). v6 (curator) + v7 (synthesis) + v8 (team) all inherit this strategy. v8 team-backend path is the natural home for curator/synthesis features — strengthens v8 value prop (team gets these features without per-user hardware cost).
+
 **Estimated effort:** 2-3 months engineering for v8.0 foundational layer alone. Multi-quarter cycle for full v8.0-v8.4 chain.
 
 ---
@@ -152,6 +154,30 @@ Why federated personal-first wins:
 - Opt-in granularity: user controls which personal anchors push to team
 
 **Effort:** ~2 months.
+
+---
+
+### v8.2.5 — Team-backend inference (per PD-43)
+
+**Goal:** team server hosts curator + synthesis inference (LLM backend) for the team. Unblocks v6+v7 features for users without local hardware.
+
+**Deliverables:**
+- Team server runs curator/synthesis backend (local LLM on team infra OR remote API with team's pooled budget)
+- Per-team config: `inference.backend = local:<model> | api:<provider> | claude-shared-account`
+- Team members opt into using team backend vs their own (per-user override)
+- Audit log: per-inference attribution (which user's task triggered it)
+- Cost accounting: per-user metering for budget/billing
+- Curator runs nightly on team-shared knowledge with team-server inference (personal yadgar may opt to sync curator outputs into personal recall)
+
+**Effort:** ~2 months. Could overlap with v8.2 federated-sync.
+
+**Inference path matrix (per PD-43, applies to all v8 deployments):**
+
+| User has | Personal mode default | Team mode default |
+|---|---|---|
+| Local hardware (22+ GB RAM, GPU) | OFF (opt-in `local:<model>`) | inherit team-backend OR override `local:<model>` |
+| No local hardware | OFF (opt-in `api:<provider>` or `claude-passthrough`) | inherit team-backend (no per-user cost) |
+| Heavy Claude usage | OFF (opt-in `claude-passthrough:headless` — needs OAuth share to daemon) | irrelevant if team-backend handles inference |
 
 ---
 
@@ -329,7 +355,11 @@ Total: 11-14 months for full v8.0 → v8.4 chain. Concurrent dispatches possible
 
 ## Hard things you'll inherit
 
-1. **Wiki conflict resolution at multi-author scale.** v5.42-v5.46 cycle showed how rough single-author RMW is. Multi-author 10x harder. v5.64 surgical edit primitives are the foundation but not the whole solution.
+1. **LLM inference hardware barrier (PD-43).** v6 curator + v7 synthesis require LLM inference. Local LLM gates out individual users (22+ GB RAM minimum for usable model). Per PD-43: pluggable backend with 4 paths (local / API / Claude pass-through interactive or headless / team backend). v8 team-backend is the value-prop pivot — feature parity for users who don't have hardware, at team-shared infra cost. Personal mode keeps features default-OFF; explicit opt-in + backend choice.
+
+2. **OAuth share for headless Claude pass-through (per PD-43).** Background curation requires non-interactive Claude — `claude -p` needs OAuth credential access. Yadgar daemon reads `~/.claude/credentials.json` (or equivalent); scope-restricts use to curator/synthesis only. Trust boundary continuation (daemon already holds secrets). Audit log per invocation.
+
+3. **Wiki conflict resolution at multi-author scale.** v5.42-v5.46 cycle showed how rough single-author RMW is. Multi-author 10x harder. v5.64 surgical edit primitives are the foundation but not the whole solution.
 
 2. **Auth/authz at MCP boundary.** Every tool call needs identity context. Bearer tokens are simple but enterprises want SSO. Audit log required for compliance.
 
