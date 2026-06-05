@@ -173,11 +173,44 @@ yadgar stats                # any mode — prints memory counts
 
 ## Install
 
+Four install paths — all reach the same `yadgar-setup` post-install step:
+
+**pipx (recommended for isolated install):**
+```bash
+pipx install yadgar
+yadgar-setup
+```
+
+**Homebrew (macOS / Linux with brew):**
+```bash
+brew tap maxagahi/yadgar https://codeberg.org/maxagahi/homebrew-yadgar
+brew install yadgar
+yadgar-setup          # follow the caveats output
+```
+
+**Nix flake:**
+```bash
+nix profile install codeberg:maxagahi/yadgar
+yadgar-setup
+```
+
+**Repo checkout (make-canonical):**
+```bash
+git clone https://codeberg.org/maxagahi/yadgar.git
+cd yadgar
+make setup            # no yadgar-setup needed; make is canonical for repo users
+```
+
+**Plain pip:**
 ```bash
 pip install yadgar
 ```
 
 Needs Python 3.14+ on the host. For zero host Python see [Docker](#docker).
+
+`yadgar-setup` configures: `~/.yadgar/`, daemon units (systemd/launchd), Claude Code hooks,
+subagent templates, config, rules, and seed anchors. Re-run after upgrades. See `docs/INSTALL.md`
+for per-platform detail and the `yadgar-setup --doctor` verification probe.
 
 ## Quick setup
 

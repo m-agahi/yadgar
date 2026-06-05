@@ -1,5 +1,82 @@
 # Migration Notes
 
+## v5.46.0 — Distribution: pipx + Homebrew + Nix flake + SBOM + release automation (2026-06-05)
+
+### New install paths
+
+| Path | Command |
+|------|---------|
+| pipx | `pipx install yadgar && yadgar-setup` |
+| Homebrew | `brew tap maxagahi/yadgar https://codeberg.org/maxagahi/homebrew-yadgar && brew install yadgar && yadgar-setup` |
+| Nix flake | `nix profile install codeberg:maxagahi/yadgar && yadgar-setup` |
+| Repo checkout | `git clone ... && make setup` (unchanged) |
+
+`yadgar-setup` is a new standalone binary (not a `yadgar` CLI subcommand) that parallels `make setup`
+for users without a repo checkout. Source: `scripts/install/yadgar-setup.sh`.
+Entry point: `[project.scripts] yadgar-setup = yadgar.scripts.yadgar_setup:main`.
+
+### Homebrew tap repo (user-action required)
+
+Create the tap repo `homebrew-yadgar` on Codeberg manually:
+
+1. Create `codeberg.org/maxagahi/homebrew-yadgar` as a public repository.
+2. Add `Formula/yadgar.rb` (rendered from `Formula/yadgar.rb.in` in this repo).
+3. Users tap via: `brew tap maxagahi/yadgar https://codeberg.org/maxagahi/homebrew-yadgar`
+
+The release workflow (`release.yaml`) ships `open-brew-pr` + `open-nix-pr` jobs as `if: false` stubs.
+v5.46.1 activates them once `BREW_BUMP_TOKEN` + `NIX_BUMP_TOKEN` Forgejo repo secrets are configured.
+
+### Codeberg repo secrets (user-action, before v5.46.1)
+
+Add these secrets to the `maxagahi/yadgar` Codeberg repo settings:
+
+| Secret | Scope | Notes |
+|--------|-------|-------|
+| `FORGEJO_TOKEN` | release create + asset upload on `maxagahi/yadgar` | Used by attach-to-release job (v5.46.0 active) |
+| `BREW_BUMP_TOKEN` | PR-create only on `maxagahi/homebrew-yadgar` | Used by open-brew-pr job (v5.46.1) |
+| `NIX_BUMP_TOKEN` | PR-create only on `maxagahi/nix` | Used by open-nix-pr job (v5.46.1) |
+
+`BREW_BUMP_TOKEN` and `NIX_BUMP_TOKEN` must be scoped to PR-create only. DO NOT grant push-to-main access.
+Rotation policy: rotate on any personnel change or if token appears in CI logs.
+
+### SBOM tooling
+
+SBOM generation uses `cyclonedx-bom==7.3.0` (pinned exact version; alias package `cyclonedx-py` avoided).
+Install: `pip install 'yadgar[sbom]'` or `pip install cyclonedx-bom==7.3.0`.
+Generate: `bash scripts/generate_sbom.sh` → `dist/yadgar-<version>-sbom.cdx.json`.
+Release workflow attaches SBOM + CHECKSUMS.txt to each Codeberg release automatically.
+
+### License classifier fix
+
+`pyproject.toml` classifier corrected from `License :: OSI Approved :: MIT License` to
+`License :: OSI Approved :: Apache Software License`. The `LICENSE` file is Apache-2.0 —
+this was a pre-existing metadata error. PyPI will show the correct license on next publish.
+
+### pyproject.toml new optional dependencies
+
+```toml
+[project.optional-dependencies]
+dist = ["cyclonedx-bom==7.3.0"]
+sbom = ["cyclonedx-bom==7.3.0"]
+```
+
+### nix flake
+
+`flake.nix` added at repo root. Channel: `nixos-unstable` (Python 3.14 not yet in stable nixpkgs).
+`flake.lock` pins nixpkgs@331800de (2026-05-31).
+
+NixOS users: the `yadgar-setup` script refuses on NixOS (linux-nixos guard). Use `nixosModules.default`
+instead. The home-manager module migration from `~/git/nix/modules/home/yadgar.nix` is opt-in;
+backward-compat shim is a user-action item documented in the module's own migration notes.
+
+### Deferred verifications (same pattern as v5.45.1)
+
+- macOS Homebrew smoke test: `brew install maxagahi/yadgar/yadgar` requires macOS host.
+- `nix run codeberg:maxagahi/yadgar#yadgar -- --version` requires published flake registry entry.
+- `yadgar-setup --dryrun` container integration test (parity with `make setup --dry-run`) deferred.
+
+---
+
 ## v5.45.1 — macOS launchd plist generation + install (2026-06-04)
 
 **PAPER-ONLY IMPLEMENTATION.** No macOS host was available at time of shipping. All code paths are implemented and cross-platform render/template tests pass on Linux. Runtime behavior (launchctl load/unload, plutil lint, podman-machine socket) is deferred. Fix-ups via hotfix once macOS host is accessible.
