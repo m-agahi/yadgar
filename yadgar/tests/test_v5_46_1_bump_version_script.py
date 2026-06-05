@@ -16,6 +16,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).parent.parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "bump_version.py"
 
@@ -123,3 +125,52 @@ def test_new_and_bump_mutually_exclusive():
     """--new and --bump together must fail (mutually exclusive)."""
     r = _run(["--new", "5.2.0", "--bump", "patch"])
     assert r.returncode != 0, "--new + --bump should be mutually exclusive"
+
+
+def test_dirty_tree_guard_refuses_unstaged_edits(tmp_path):
+    """Must refuse to write when pyproject.toml has unstaged edits (git dirty)."""
+    import shutil
+
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("git not available")
+
+    # Set up a real git repo with pyproject.toml committed
+    subprocess.run([git, "init", str(tmp_path)], check=True, capture_output=True)
+    subprocess.run(
+        [git, "config", "user.email", "test@test.com"],
+        check=True,
+        capture_output=True,
+        cwd=str(tmp_path),
+    )
+    subprocess.run(
+        [git, "config", "user.name", "Test"],
+        check=True,
+        capture_output=True,
+        cwd=str(tmp_path),
+    )
+    _write_pyproject(tmp_path, "5.1.0")
+    subprocess.run(
+        [git, "add", "pyproject.toml"], check=True, capture_output=True, cwd=str(tmp_path)
+    )
+    subprocess.run(
+        [git, "commit", "-m", "init", "--no-gpg-sign"],
+        check=True,
+        capture_output=True,
+        cwd=str(tmp_path),
+    )
+
+    # Dirty the file (unstaged edit)
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "yadgar"\nversion = "5.1.0"\ndescription = "dirty"\n'
+    )
+
+    r = _run(["--new", "5.2.0", "--project-root", str(tmp_path)])
+    assert r.returncode != 0, "Must refuse when pyproject.toml has unstaged edits"
+    assert "unstaged" in (r.stderr + r.stdout).lower() or "dirty" in (r.stderr + r.stdout).lower()
+
+    # --force overrides the guard
+    r_force = _run(["--new", "5.2.0", "--project-root", str(tmp_path), "--force"])
+    assert r_force.returncode == 0, f"--force should succeed: {r_force.stderr}"
+    content = (tmp_path / "pyproject.toml").read_text()
+    assert 'version = "5.2.0"' in content
