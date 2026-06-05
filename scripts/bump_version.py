@@ -19,6 +19,7 @@ The script refuses to proceed if pyproject.toml has unstaged edits
 
 import argparse
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -144,6 +145,27 @@ def main() -> None:
     if args.dry_run:
         print(f"DRY-RUN: {current} → {new_version}  ({pyproject})")
         sys.exit(0)
+
+    # Dirty-tree guard: refuse if pyproject.toml has unstaged edits.
+    # Skip gracefully when not inside a git repo (e.g. CI workspace, tmp tests).
+    if not args.force:
+        try:
+            r_diff = subprocess.run(
+                ["git", "diff", "--quiet", "--", str(pyproject)],
+                cwd=root,
+                capture_output=True,
+            )
+            # git diff --quiet exits 0 = clean, 1 = has diff.
+            # A fatal git error (not a git repo) uses exit 128 — skip guard.
+            if r_diff.returncode == 1:
+                print(
+                    "ERROR: pyproject.toml has unstaged edits. "
+                    "Stage/stash first, or pass --force to override.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+        except FileNotFoundError:
+            pass  # git not installed — skip guard
 
     _write_version(pyproject, current, new_version)
     print(f"Bumped: {current} → {new_version}  ({pyproject})")
