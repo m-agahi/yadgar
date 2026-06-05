@@ -1,5 +1,27 @@
 # Migration Notes
 
+## v5.46.3 — CI infrastructure layer (2026-06-05)
+
+### No user action required for upgrade
+
+Users on v5.46.2 → v5.46.3: no configuration changes needed. Container images, MCP protocol, and runtime configuration are unchanged. This release only affects CI workflow execution.
+
+### What changed
+
+- **Custom CI runner image:** `docker.io/openfantasy/yadgar-ci:5.46.3` is now used as the workflow container for all test/build/release jobs. The image includes `make`, `git`, `curl`, `ca-certificates`, `build-essential`, `nodejs`, and pre-installed Python test deps. Forgejo CI runners pull this image from dockerhub automatically — no setup required.
+
+- **YADGAR_CI_BRANCH env var:** Both `ci.yaml` and `release.yaml` now set `YADGAR_CI_BRANCH: master` at workflow level. This allows the yadgar daemon to resolve branch context in CI runners where git branch detection fails (anonymised workdir paths). No impact on local dev.
+
+- **SBOM workflow:** `release.yaml` `build-sbom` job now installs from the local wheel (`dist/yadgar-<version>-py3-none-any.whl[sbom]`) instead of a PyPI roundtrip. SBOM generation now matches the exact release artifact. No user-facing change.
+
+- **pytest-asyncio + anyio:** Added to `[project.optional-dependencies].test`. `asyncio_mode = "auto"` set in `[tool.pytest.ini_options]`. This unblocks async tests (`test_loop_heartbeats.py`, `test_viz_daemon_health.py`). No action needed — installed automatically with `pip install -e ".[test]"`.
+
+### For CI users (self-hosted Forgejo runners)
+
+The workflow container image changed from `python:3.14-slim` to `docker.io/openfantasy/yadgar-ci:5.46.3`. If your runner has image caching configured, it will pull the new image on the next run. Ensure your runner has network access to `docker.io`.
+
+---
+
 ## v5.46.2 — Runtime detection UX hotfix (2026-06-05)
 
 ### No user action required for upgrade
