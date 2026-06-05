@@ -34,7 +34,7 @@ repos:
         name: Check version consistency
         language: system
         entry: python3 scripts/check_versions.py
-        files: ^(pyproject\.toml|server\.json|docker-compose\.yml|uv\.lock)$
+        files: ^(pyproject\.toml|server\.json|docker-compose\.yml|uv\.lock|flake\.nix)$
         pass_filenames: false
 
       - id: check-backend-bump
