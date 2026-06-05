@@ -33,15 +33,31 @@ def test_package_install_assets_has_agents():
 
 
 def test_package_install_assets_has_claude_fragment():
-    """yadgar/install_assets/CLAUDE.md.fragment must exist."""
-    fragment = Path(__file__).parent.parent / "install_assets" / "CLAUDE.md.fragment"
-    assert fragment.exists(), f"CLAUDE.md.fragment missing: {fragment}"
+    """CLAUDE.md.fragment exists in yadgar/install_assets/ OR top-level install_assets/.
+
+    v5.45.0 ships CLAUDE.md.fragment in the top-level install_assets/ (shared-data);
+    the package-level yadgar/install_assets/ holds agent templates.
+    Either location is acceptable for the asset to be wheel-discoverable.
+    """
+    # Check top-level first (v5.45.0 location via wheel.shared-data)
+    fragment_top = REPO_ROOT / "install_assets" / "CLAUDE.md.fragment"
+    # Check package-level (yadgar/install_assets/)
+    fragment_pkg = Path(__file__).parent.parent / "install_assets" / "CLAUDE.md.fragment"
+    assert fragment_top.exists() or fragment_pkg.exists(), (
+        f"CLAUDE.md.fragment missing from both:\n  {fragment_top}\n  {fragment_pkg}"
+    )
 
 
 def test_package_install_assets_has_seeds():
-    """yadgar/install_assets/seeds/ must exist."""
-    seeds_dir = Path(__file__).parent.parent / "install_assets" / "seeds"
-    assert seeds_dir.is_dir(), f"seeds/ dir missing: {seeds_dir}"
+    """seeds/anchors.yaml exists in yadgar/install_assets/ OR top-level install_assets/.
+
+    v5.45.0 ships seeds/ in the top-level install_assets/ (shared-data).
+    """
+    seeds_top = REPO_ROOT / "install_assets" / "seeds"
+    seeds_pkg = Path(__file__).parent.parent / "install_assets" / "seeds"
+    assert seeds_top.is_dir() or seeds_pkg.is_dir(), (
+        f"seeds/ dir missing from both:\n  {seeds_top}\n  {seeds_pkg}"
+    )
 
 
 # ── shared-data (top-level install_assets/, wheel.shared-data) ───────────────
