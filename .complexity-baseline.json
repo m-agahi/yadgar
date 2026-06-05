@@ -1,4 +1,289 @@
 {
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::__file__": {
+    "loc": 1924
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_apply_rejection_signal@1215": {
+    "cyclo": 3,
+    "loc": 19,
+    "nesting": 2,
+    "params": 2
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_apply_roadmap_signal@1147": {
+    "cyclo": 4,
+    "loc": 15,
+    "nesting": 2,
+    "params": 3
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_build_anchor_rows_catalog@454": {
+    "cyclo": 9,
+    "loc": 54,
+    "nesting": 2,
+    "params": 2
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_build_anchor_rows_restore@510": {
+    "cyclo": 10,
+    "loc": 53,
+    "nesting": 3,
+    "params": 2
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_build_checkpoint_dict@406": {
+    "cyclo": 4,
+    "loc": 10,
+    "nesting": 1,
+    "params": 1
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_build_hot_memories@431": {
+    "cyclo": 3,
+    "loc": 21,
+    "nesting": 0,
+    "params": 4
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_build_recommended_actions@1037": {
+    "cyclo": 12,
+    "loc": 108,
+    "nesting": 3,
+    "params": 8
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_build_wiki_pages@418": {
+    "cyclo": 3,
+    "loc": 11,
+    "nesting": 0,
+    "params": 2
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_check_session_end_sentinel@970": {
+    "cyclo": 6,
+    "loc": 65,
+    "nesting": 2,
+    "params": 2
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_compute_anchor_signals@932": {
+    "cyclo": 4,
+    "loc": 36,
+    "nesting": 2,
+    "params": 3
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_compute_pending_rejections@1170": {
+    "cyclo": 11,
+    "loc": 43,
+    "nesting": 4,
+    "params": 1
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_compute_roadmap_signal@893": {
+    "cyclo": 5,
+    "loc": 37,
+    "nesting": 1,
+    "params": 2
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_compute_row_age_hours@347": {
+    "cyclo": 7,
+    "loc": 30,
+    "nesting": 3,
+    "params": 1
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_compute_source_hash@1659": {
+    "cyclo": 4,
+    "loc": 18,
+    "nesting": 3,
+    "params": 2
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_cosine_similarity@575": {
+    "cyclo": 6,
+    "loc": 8,
+    "nesting": 1,
+    "params": 2
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_count_markdown_headers@565": {
+    "cyclo": 1,
+    "loc": 8,
+    "nesting": 0,
+    "params": 1
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_detect_branch@132": {
+    "cyclo": 4,
+    "loc": 24,
+    "nesting": 3,
+    "params": 1
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_detect_branch_cached@110": {
+    "cyclo": 4,
+    "loc": 20,
+    "nesting": 2,
+    "params": 2
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_detect_ship@879": {
+    "cyclo": 5,
+    "loc": 12,
+    "nesting": 1,
+    "params": 3
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_fetch_anchor_promote_ids@635": {
+    "cyclo": 8,
+    "loc": 32,
+    "nesting": 3,
+    "params": 4
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_fetch_anchor_redundancy_pairs@585": {
+    "cyclo": 10,
+    "loc": 48,
+    "nesting": 4,
+    "params": 4
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_fetch_cross_project_candidates_for_signals@686": {
+    "cyclo": 2,
+    "loc": 15,
+    "nesting": 2,
+    "params": 3
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_fetch_expired_anchor_count@669": {
+    "cyclo": 3,
+    "loc": 15,
+    "nesting": 2,
+    "params": 2
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_fetch_presence_rows@384": {
+    "cyclo": 1,
+    "loc": 20,
+    "nesting": 0,
+    "params": 2
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_get_active_work_tracked_dir@1550": {
+    "cyclo": 2,
+    "loc": 10,
+    "nesting": 1,
+    "params": 0
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_get_current_branch@89": {
+    "cyclo": 5,
+    "loc": 18,
+    "nesting": 2,
+    "params": 1
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_get_default_branch@188": {
+    "cyclo": 3,
+    "loc": 19,
+    "nesting": 2,
+    "params": 1
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_get_default_branch_cached@159": {
+    "cyclo": 4,
+    "loc": 27,
+    "nesting": 2,
+    "params": 2
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_get_master_head_info@715": {
+    "cyclo": 5,
+    "loc": 85,
+    "nesting": 3,
+    "params": 1
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_get_max_anchors@379": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 0
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_get_pyproject_version_at_ts@802": {
+    "cyclo": 4,
+    "loc": 46,
+    "nesting": 2,
+    "params": 2
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_get_roadmap_wiki_updated_at@850": {
+    "cyclo": 6,
+    "loc": 27,
+    "nesting": 2,
+    "params": 1
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_git_safe_env@37": {
+    "cyclo": 1,
+    "loc": 15,
+    "nesting": 0,
+    "params": 0
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_parse_frontmatter@1634": {
+    "cyclo": 9,
+    "loc": 23,
+    "nesting": 3,
+    "params": 2
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_project_brief_catalog_full@1364": {
+    "cyclo": 4,
+    "loc": 50,
+    "nesting": 1,
+    "params": 1
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_project_brief_restore@1347": {
+    "cyclo": 1,
+    "loc": 15,
+    "nesting": 0,
+    "params": 4
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_project_brief_signals@1236": {
+    "cyclo": 16,
+    "loc": 109,
+    "nesting": 4,
+    "params": 8
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_register_active_work_directory@1562": {
+    "cyclo": 2,
+    "loc": 17,
+    "nesting": 2,
+    "params": 1
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_render_project_brief@212": {
+    "cyclo": 32,
+    "loc": 108,
+    "nesting": 3,
+    "params": 1
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_resolve_project_root@66": {
+    "cyclo": 3,
+    "loc": 21,
+    "nesting": 2,
+    "params": 1
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_seed_default_blocks@1525": {
+    "cyclo": 4,
+    "loc": 23,
+    "nesting": 3,
+    "params": 2
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::_wiki_refresh_stale_impl@1679": {
+    "cyclo": 23,
+    "loc": 100,
+    "nesting": 3,
+    "params": 3
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::bootstrap_project@1493": {
+    "cyclo": 3,
+    "loc": 30,
+    "nesting": 1,
+    "params": 2
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::project_brief@1417": {
+    "cyclo": 4,
+    "loc": 73,
+    "nesting": 1,
+    "params": 3
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::update_active_work@1582": {
+    "cyclo": 6,
+    "loc": 47,
+    "nesting": 2,
+    "params": 3
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::wiki_cleanup_merged_branches@1820": {
+    "cyclo": 19,
+    "loc": 105,
+    "nesting": 5,
+    "params": 2
+  },
+  ".claude/worktrees/agent-a9d0af209a7aded80/yadgar/server/tools/project.py::wiki_refresh_stale@1782": {
+    "cyclo": 2,
+    "loc": 35,
+    "nesting": 2,
+    "params": 3
+  },
   ".claude/worktrees/agent-ae40d82fc0eda7dd8/yadgar/server/http.py::__file__": {
     "loc": 1282
   },
