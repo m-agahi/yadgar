@@ -21,6 +21,10 @@ MIN_WIKI_SCHEMA = 2
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
+# Default directory_context injected by _make_wiki_op (v5.42.5 NOT NULL constraint).
+_DEFAULT_DIR_CTX = "/test/sandbox"
+
+
 def _make_wiki_op(
     *,
     slug: str = "test-slug",
@@ -37,6 +41,9 @@ def _make_wiki_op(
     NOTE: wiki_add derives slug from title via slugify(title). To get a
     predictable slug, pass a title that slugifies to the desired value:
     e.g. title="test-slug" → slug="test-slug".
+
+    directory_context defaults to _DEFAULT_DIR_CTX to satisfy the schema NOT NULL
+    constraint (migration 018). Override via extra={"directory_context": "..."}.
     """
     if title is None:
         # Build a title that slugifies to the given slug
@@ -47,6 +54,7 @@ def _make_wiki_op(
         "content": content,
         "category": category,
         "tags": tags or [],
+        "directory_context": _DEFAULT_DIR_CTX,
     }
     if branch is not None:
         payload["branch"] = branch
@@ -158,6 +166,8 @@ def test_missing_required_field_goes_to_dlq(queue_and_drainer, missing_field, tm
         "content": "Some content",
         "category": "reference",
         "wiki_schema_version": 2,
+        "directory_context": "/test/sandbox",
+        "branch": "feat/test",
     }
     del payload[missing_field]
     # Use a unique slug (or no slug) so we can check absence

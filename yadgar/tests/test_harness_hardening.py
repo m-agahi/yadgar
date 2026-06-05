@@ -21,9 +21,13 @@ import subprocess
 import sys
 import textwrap
 import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+# Repo root: tests/ → yadgar/ → repo root
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -480,7 +484,7 @@ class TestGlobalTimeout:
             ],
             capture_output=True,
             text=True,
-            cwd="/home/max/git/yadgar",
+            cwd=str(_REPO_ROOT),
             timeout=15,
         )
         # Not a hard failure if no tests collected; just verify no import errors
@@ -491,7 +495,7 @@ class TestGlobalTimeout:
         """timeout_method should be 'thread' in ini options."""
         import tomllib
 
-        with open("/home/max/git/yadgar/pyproject.toml", "rb") as f:
+        with open(_REPO_ROOT / "pyproject.toml", "rb") as f:
             data = tomllib.load(f)
         ini = data.get("tool", {}).get("pytest", {}).get("ini_options", {})
         # After c2 lands, this should be 300

@@ -35,6 +35,7 @@ def _insert_wiki_page(storage, slug: str, content: str, branch: str | None) -> i
         "slug = $slug, title = $title, content = $content, "
         "tags = $tags, links = $links, confidence = $conf, "
         "source_memory_ids = [], "
+        "directory_context = $dir_ctx, "
         "created_at = $ts, updated_at = $ts",
         {
             "id": pid,
@@ -44,6 +45,7 @@ def _insert_wiki_page(storage, slug: str, content: str, branch: str | None) -> i
             "tags": [],
             "links": [],
             "conf": "medium",
+            "dir_ctx": "/test/sandbox",
             "ts": now,
         },
     )

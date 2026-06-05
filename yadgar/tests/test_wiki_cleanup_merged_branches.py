@@ -80,8 +80,8 @@ def test_identifies_orphaned_branch_page(tmp_path, flush_queue):
 
     # Directly insert a wiki page with a now-merged branch
     storage._q(
-        "INSERT INTO wiki_page (slug, title, content, category, branch, tags) VALUES "
-        "($slug, $title, $content, $cat, $branch, $tags)",
+        "INSERT INTO wiki_page (slug, title, content, category, branch, tags, directory_context) VALUES "
+        "($slug, $title, $content, $cat, $branch, $tags, $dir_ctx)",
         {
             "slug": "old-feat-page",
             "title": "Old Feature Page",
@@ -89,6 +89,7 @@ def test_identifies_orphaned_branch_page(tmp_path, flush_queue):
             "cat": "reference",
             "branch": "feat/old-done",
             "tags": [],
+            "dir_ctx": "/test/sandbox",
         },
     )
 
@@ -106,8 +107,8 @@ def test_live_branch_pages_not_candidates(tmp_path, flush_queue):
     storage = server._get_storage()
 
     storage._q(
-        "INSERT INTO wiki_page (slug, title, content, category, branch, tags) VALUES "
-        "($slug, $title, $content, $cat, $branch, $tags)",
+        "INSERT INTO wiki_page (slug, title, content, category, branch, tags, directory_context) VALUES "
+        "($slug, $title, $content, $cat, $branch, $tags, $dir_ctx)",
         {
             "slug": "active-feat-page",
             "title": "Active Feature Page",
@@ -115,6 +116,7 @@ def test_live_branch_pages_not_candidates(tmp_path, flush_queue):
             "cat": "reference",
             "branch": "feat/still-active",
             "tags": [],
+            "dir_ctx": "/test/sandbox",
         },
     )
 
@@ -132,8 +134,8 @@ def test_master_tagged_pages_never_candidates(tmp_path, flush_queue):
     storage = server._get_storage()
 
     storage._q(
-        "INSERT INTO wiki_page (slug, title, content, category, branch, tags) VALUES "
-        "($slug, $title, $content, $cat, $branch, $tags)",
+        "INSERT INTO wiki_page (slug, title, content, category, branch, tags, directory_context) VALUES "
+        "($slug, $title, $content, $cat, $branch, $tags, $dir_ctx)",
         {
             "slug": "master-page",
             "title": "Master Page",
@@ -141,6 +143,7 @@ def test_master_tagged_pages_never_candidates(tmp_path, flush_queue):
             "cat": "reference",
             "branch": "master",
             "tags": [],
+            "dir_ctx": "/test/sandbox",
         },
     )
 
@@ -156,8 +159,8 @@ def test_main_tagged_pages_never_candidates(tmp_path, flush_queue):
     storage = server._get_storage()
 
     storage._q(
-        "INSERT INTO wiki_page (slug, title, content, category, branch, tags) VALUES "
-        "($slug, $title, $content, $cat, $branch, $tags)",
+        "INSERT INTO wiki_page (slug, title, content, category, branch, tags, directory_context) VALUES "
+        "($slug, $title, $content, $cat, $branch, $tags, $dir_ctx)",
         {
             "slug": "main-page",
             "title": "Main Page",
@@ -165,6 +168,7 @@ def test_main_tagged_pages_never_candidates(tmp_path, flush_queue):
             "cat": "reference",
             "branch": "main",
             "tags": [],
+            "dir_ctx": "/test/sandbox",
         },
     )
 
@@ -183,8 +187,8 @@ def test_dry_run_false_deletes_orphaned_pages(tmp_path, flush_queue):
     storage = server._get_storage()
 
     storage._q(
-        "INSERT INTO wiki_page (slug, title, content, category, branch, tags) VALUES "
-        "($slug, $title, $content, $cat, $branch, $tags)",
+        "INSERT INTO wiki_page (slug, title, content, category, branch, tags, directory_context) VALUES "
+        "($slug, $title, $content, $cat, $branch, $tags, $dir_ctx)",
         {
             "slug": "to-delete",
             "title": "Orphaned",
@@ -192,6 +196,7 @@ def test_dry_run_false_deletes_orphaned_pages(tmp_path, flush_queue):
             "cat": "reference",
             "branch": "feat/merged-long-ago",
             "tags": [],
+            "dir_ctx": "/test/sandbox",
         },
     )
 
@@ -213,8 +218,8 @@ def test_dry_run_false_returns_correct_count(tmp_path, flush_queue):
 
     for i in range(3):
         storage._q(
-            "INSERT INTO wiki_page (slug, title, content, category, branch, tags) VALUES "
-            "($slug, $title, $content, $cat, $branch, $tags)",
+            "INSERT INTO wiki_page (slug, title, content, category, branch, tags, directory_context) VALUES "
+            "($slug, $title, $content, $cat, $branch, $tags, $dir_ctx)",
             {
                 "slug": f"orphan-{i}",
                 "title": f"Orphan {i}",
@@ -222,6 +227,7 @@ def test_dry_run_false_returns_correct_count(tmp_path, flush_queue):
                 "cat": "reference",
                 "branch": "feat/old-branch",
                 "tags": [],
+                "dir_ctx": "/test/sandbox",
             },
         )
 
@@ -240,8 +246,8 @@ def test_git_failure_returns_error_dict(tmp_path, flush_queue):
 
     # Insert an orphaned-branch page that WOULD be a candidate
     storage._q(
-        "INSERT INTO wiki_page (slug, title, content, category, branch, tags) VALUES "
-        "($slug, $title, $content, $cat, $branch, $tags)",
+        "INSERT INTO wiki_page (slug, title, content, category, branch, tags, directory_context) VALUES "
+        "($slug, $title, $content, $cat, $branch, $tags, $dir_ctx)",
         {
             "slug": "should-not-be-deleted",
             "title": "Protected Page",
@@ -249,6 +255,7 @@ def test_git_failure_returns_error_dict(tmp_path, flush_queue):
             "cat": "reference",
             "branch": "feat/merged",
             "tags": [],
+            "dir_ctx": "/test/sandbox",
         },
     )
 
