@@ -94,10 +94,27 @@ and (on macOS) plist validity.
 
 ```
 yadgar-setup [--noninteractive] [--dryrun] [--doctor]
+             [--install-runtime] [--no-install-runtime]
 
-  --noninteractive   Use defaults; skip interactive prompts (CI/automation).
-  --dryrun           Print commands without executing them.
-  --doctor           Run verification probes (metrics endpoint, launchd plint, etc.).
+  --noninteractive       Use defaults; skip interactive prompts (CI/automation).
+  --dryrun               Print commands without executing them.
+  --doctor               Run verification probes (metrics endpoint, launchd plint, etc.).
+  --install-runtime      Auto-install podman without prompting (yes-mode).
+  --no-install-runtime   Skip podman install; print hint and exit 1 if not found.
+```
+
+**First-run on a clean system (no container runtime installed):** `yadgar-setup` detects
+the missing runtime, prints a distro-specific install command, and offers to run it
+interactively. Supported distros: Debian/Ubuntu, Fedora/RHEL/CentOS, Arch/Manjaro,
+Alpine, openSUSE/SUSE, macOS (brew). Unknown distros show a link to podman.io.
+
+For CI/automation with no TTY:
+```bash
+# Option A: allow auto-install
+yadgar-setup --install-runtime
+
+# Option B: fail fast with hint
+yadgar-setup --noninteractive
 ```
 
 ---

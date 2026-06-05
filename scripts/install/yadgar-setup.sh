@@ -29,20 +29,26 @@ set -euo pipefail
 NONINTERACTIVE=0
 DRYRUN=0
 DOCTOR=0
+INSTALL_RUNTIME_FLAG=0    # 0=default, 1=--install-runtime, 2=--no-install-runtime
 
 for arg in "$@"; do
     case "$arg" in
-        --noninteractive) NONINTERACTIVE=1 ;;
-        --dryrun)         DRYRUN=1 ;;
-        --doctor)         DOCTOR=1 ;;
+        --noninteractive)      NONINTERACTIVE=1 ;;
+        --dryrun)              DRYRUN=1 ;;
+        --doctor)              DOCTOR=1 ;;
+        --install-runtime)     INSTALL_RUNTIME_FLAG=1 ;;
+        --no-install-runtime)  INSTALL_RUNTIME_FLAG=2 ;;
         --help|-h)
             cat <<'EOF'
 Usage: yadgar-setup [--noninteractive] [--dryrun] [--doctor]
+                    [--install-runtime] [--no-install-runtime]
 
-  --noninteractive   Use defaults; skip interactive prompts.
-  --dryrun           Print commands without executing them.
-  --doctor           Run verification probes (metrics, launchd, etc.).
-  --help             Show this message.
+  --noninteractive       Use defaults; skip interactive prompts.
+  --dryrun               Print commands without executing them.
+  --doctor               Run verification probes (metrics, launchd, etc.).
+  --install-runtime      Auto-install podman without prompting (yes-mode).
+  --no-install-runtime   Skip podman install; print hint and exit 1 if not found.
+  --help                 Show this message.
 
 yadgar-setup configures Yadgar for users installed via pipx, Homebrew, or nix profile.
 Parallels `make setup` for users without a repo checkout.
@@ -170,6 +176,34 @@ _detect_runtime() {
     fi
 }
 
+_offer_install_runtime() {
+    # Called when _detect_runtime fails. Delegates to install_runtime.sh shared helper
+    # (same helper the Makefile install-runtime target uses — DRY).
+    local scripts_dir
+    scripts_dir="$(_locate_setup_scripts)"
+
+    local install_sh=""
+    if [ -n "$scripts_dir" ] && [ -f "$scripts_dir/install_runtime.sh" ]; then
+        install_sh="$scripts_dir/install_runtime.sh"
+    fi
+
+    if [ -z "$install_sh" ]; then
+        # Fallback when install_runtime.sh not available (pipx/nix install without scripts_dir)
+        die "No container runtime found. Install podman or docker, then re-run: yadgar-setup"
+    fi
+
+    # Map yadgar-setup flags to install_runtime.sh flags + env
+    local install_args=()
+    case "$INSTALL_RUNTIME_FLAG" in
+        1) install_args+=("--install-runtime") ;;
+        2) install_args+=("--no-install-runtime") ;;
+    esac
+
+    INSTALL_NONINTERACTIVE="$NONINTERACTIVE" \
+        bash "$install_sh" "${install_args[@]+"${install_args[@]}"}" || \
+        die "Runtime detection failed. Install podman or docker, then re-run: yadgar-setup"
+}
+
 _detect_os() {
     if [ -n "${YADGAR_TEST_OS_MARKER:-}" ]; then
         echo "$YADGAR_TEST_OS_MARKER"
@@ -197,7 +231,14 @@ _detect_os() {
 
 _step_detect() {
     log "Step 1/10: Detecting runtime + OS..."
-    RUNTIME=$(_detect_runtime)
+
+    # Try to detect runtime; on failure offer to install
+    if ! RUNTIME=$(_detect_runtime 2>/dev/null); then
+        _offer_install_runtime
+        # After successful install, re-run detection
+        RUNTIME=$(_detect_runtime) || die "Runtime still not found after install attempt."
+    fi
+
     OS=$(_detect_os)
     info "Runtime: $RUNTIME"
     info "OS: $OS"

@@ -10,6 +10,22 @@
 
 ---
 
+## 2026-06-05 v5.46.2 slot reuse — runtime detection UX hotfix
+
+## PD-41 — Reuse v5.46.2 slot for runtime detection UX hotfix (2026-06-05)
+
+**Decision:** v5.46.2 slot reused for `detect_runtime.sh` + `yadgar-setup.sh` + `Makefile` runtime-detection UX hotfix. Original retired v5.46.2 (cross-repo PR auto-open per PD-40) plan archived to `docs/PLAN_V5_46_2_CROSS_REPO_PR_AUTO_OPEN_RETIRED.md`.
+
+**Rationale:** User testing in fresh VM 2026-06-05 found `yadgar-setup.sh` fails abruptly with stale "Run: yadgar install" message (DP-3 override post-make-canonical) and no install guidance. Per strict-version-order rule, hotfix slots between v5.46.1 and v5.47.0; v5.46.2 was empty (retired by PD-40 with no shipped artifacts). Slot reuse is clean — RETIRED plan archaeology preserved via rename.
+
+**Scope:** `detect_runtime.sh` fixes stale message + adds OS-aware install hints; new `install_runtime.sh` shared helper for interactive podman install prompt (Debian/Ubuntu/Fedora/Arch/Alpine/SUSE/macOS); `yadgar-setup.sh` + `Makefile` both call shared helper (DRY); `--install-runtime` / `--no-install-runtime` flags added to `yadgar-setup.sh`; `INSTALL_NONINTERACTIVE=1` non-interactive gate (existing Makefile var).
+
+**Test seams added:** `YADGAR_TEST_OS_RELEASE`, `YADGAR_TEST_INSTALL_DRYRUN`, `YADGAR_TEST_TTY` — allow pytest to exercise all distro branches without root or TTY.
+
+**macOS scope:** `brew install podman` only; `podman machine init && podman machine start` printed as follow-up guidance, not executed. Full macOS podman-machine automation deferred per PD-38 precedent.
+
+---
+
 ## 2026-06-05 v5.46.x scope reduction — drop cross-repo nix PR lane
 
 ## PD-40 — Drop cross-repo nix PR auto-open lane (2026-06-05)

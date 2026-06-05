@@ -6,6 +6,20 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.46.2] — 2026-06-05
+
+Runtime detection UX hotfix: OS-aware install hints + optional interactive install + Makefile/yadgar-setup sync. Triggered by user fresh-VM test finding abrupt failure with stale error message.
+
+- **fix(install):** `scripts/install/detect_runtime.sh` — replace stale `"Run: yadgar install"` message with `"yadgar-setup"`; add `YADGAR_TEST_OS_RELEASE` test seam; add OS-aware install hints for 7 distros (Debian/Ubuntu, Fedora/RHEL, Arch, Alpine, openSUSE, macOS) + `ID_LIKE` fallback for derivatives; `--quiet` flag to suppress verbose hints in chained calls; use bash-native `/etc/os-release` sourcing (no grep/sed dependency — NixOS-safe)
+- **feat(install):** `scripts/install/install_runtime.sh` — new shared helper (~235 LOC). Interactive prompt ("Install podman now? [Y/n]"); `--install-runtime` (yes-mode) + `--no-install-runtime` (no-mode) flags; `INSTALL_NONINTERACTIVE=1` gate; `YADGAR_TEST_INSTALL_DRYRUN=1` + `YADGAR_TEST_TTY=0|1` test seams; post-install `detect_runtime.sh` retry; DRY — single implementation used by both `yadgar-setup.sh` and `Makefile`
+- **feat(install):** `scripts/install/yadgar-setup.sh` — `_offer_install_runtime()` wrapper delegates to `install_runtime.sh`; `_step_detect()` calls it on detection failure; new `--install-runtime` + `--no-install-runtime` flags wired through
+- **feat(build):** `Makefile` — `install-runtime` target (calls `install_runtime.sh` with `INSTALL_NONINTERACTIVE` pass-through); `YADGAR_TEST_OS_RELEASE`, `YADGAR_TEST_INSTALL_DRYRUN`, `YADGAR_TEST_TTY` defaults added; `check` target updated to include `test_v5_46_*.py`
+- **docs:** `docs/PLAN_V5_46_2_RUNTIME_DETECTION_HOTFIX.md` + `docs/DECISIONS.md` PD-41 + `docs/PLAN_V5_46_2_CROSS_REPO_PR_AUTO_OPEN_RETIRED.md` archaeology rename
+- **chore:** bump version 5.46.1 → 5.46.2
+- **test:** 3 new test files `test_v5_46_2_*.py` (40 tests: detect_runtime hints, install_runtime interactive/noninteractive/flags/retry, Makefile install-runtime)
+
+---
+
 ## [5.46.1] — 2026-06-05
 
 Distribution infrastructure prep: PyPI publish via CI on tag push; `scripts/bump_version.py` helper; pre-commit flake.nix sync (already in @53de97a). Brew lane retired (PD-39); nix cross-repo PR retired (PD-40).
