@@ -1,8 +1,9 @@
 name: Release
 
-# Triggers on version tags (v*). Pre-release tags (alpha/beta) still trigger
-# but the stub job (open-nix-pr) skips via its if: condition.
+# Triggers on version tags (v*). Active jobs: build-wheel, build-sbom, attach-to-release.
 # Note: open-brew-pr removed per PD-39 (brew lane retired 2026-06-05).
+# Note: open-nix-pr removed per PD-40 (nix cross-repo PR retired 2026-06-05;
+#       pre-commit hook now syncs flake.nix on pyproject.toml bump).
 on:
   push:
     tags:
@@ -154,19 +155,8 @@ jobs:
           done
           echo "==> Release assets attached."
 
-  # ── STUB (if: false): Open nix repo PR — v5.46.2 fills this stub ────────
-  open-nix-pr:
-    needs: attach-to-release
-    runs-on: ubuntu-latest
-    # v5.46.2 fills this stub — cross-repo PAT required (NIX_BUMP_TOKEN)
-    # Activation condition will be: !contains(github.ref, '-alpha') && !contains(github.ref, '-beta')
-    if: false
-    steps:
-      - uses: https://data.forgejo.org/actions/checkout@v6
-      # v5.46.2 fills this stub
-      # Steps: clone nix repo, bump yadger_core_version in modules/home/yadgar.nix,
-      # push to bump-yadgar-v<version> branch, open PR via Forgejo API.
-      # Requires: NIX_BUMP_TOKEN secret (scoped to PR-create on nix repo only).
-      - name: Open nix repo PR (stub)
-        run: |
-          echo "TODO v5.46.2 fills this stub"
+  # open-nix-pr stub REMOVED per PD-40 (2026-06-05).
+  # Cross-repo nix PR auto-open retired; replaced by pre-commit hook:
+  # scripts/sync_version.py auto-updates flake.nix line 41 on pyproject.toml bump.
+  # scripts/check_versions.py verifies consistency on every commit.
+  # Committed @53de97a. See docs/DECISIONS.md PD-40.
