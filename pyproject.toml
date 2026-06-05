@@ -25,11 +25,15 @@ keywords = [
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries",
+    "Topic :: System :: Filesystems",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Environment :: Console",
 ]
 dependencies = [
     "fastapi>=0.109.1",
@@ -70,6 +74,7 @@ dependencies = [
 [project.scripts]
 yadgar = "yadgar.__main__:cli"
 yadgar-nightly-cycle = "yadgar.scripts.nightly_cycle:main"
+yadgar-setup = "yadgar.scripts.yadgar_setup:main"
 
 [project.urls]
 Homepage = "https://codeberg.org/maxagahi/yadgar"
@@ -82,6 +87,8 @@ packages = ["yadgar"]
 [tool.hatch.build.targets.wheel.shared-data]
 # Ship install assets inside the wheel so pipx-installed users can run setup
 "install_assets" = "share/yadgar/install_assets"
+# Ship yadgar-setup.sh so the yadgar-setup Python shim can exec it
+"scripts/install/yadgar-setup.sh" = "share/yadgar/scripts/yadgar-setup.sh"
 
 [tool.ruff]
 target-version = "py314"
@@ -161,6 +168,15 @@ test = [
 dev = [
     "yadgar[test]",
     "ruff>=0.4.0",
+]
+# Distribution tooling: SBOM generation via CycloneDX (cyclonedx-py is an alias; use cyclonedx-bom directly)
+# Pin exact version — OWASP supply-chain; no auto-upgrade without review.
+# cyclonedx-bom==7.3.0 resolved 2026-06-05 as latest stable.
+dist = [
+    "cyclonedx-bom==7.3.0",
+]
+sbom = [
+    "cyclonedx-bom==7.3.0",
 ]
 
 [tool.pytest.ini_options]
