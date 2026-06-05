@@ -29,11 +29,12 @@ class TestCIBranchEnvVar:
     def test_ci_yaml_branch_value_is_master(self):
         content = CI_YAML.read_text()
         assert "YADGAR_CI_BRANCH" in content
-        # Find the line and check for 'master'
+        # Find the non-comment line that sets YADGAR_CI_BRANCH and check for 'master'
         for line in content.splitlines():
-            if "YADGAR_CI_BRANCH" in line:
-                assert "master" in line, (
-                    f"YADGAR_CI_BRANCH must be set to 'master' in ci.yaml, got: {line.strip()!r}"
+            stripped = line.strip()
+            if "YADGAR_CI_BRANCH" in stripped and not stripped.startswith("#"):
+                assert "master" in stripped, (
+                    f"YADGAR_CI_BRANCH must be set to 'master' in ci.yaml, got: {stripped!r}"
                 )
                 break
 
@@ -45,9 +46,10 @@ class TestCIBranchEnvVar:
         content = RELEASE_YAML.read_text()
         assert "YADGAR_CI_BRANCH" in content
         for line in content.splitlines():
-            if "YADGAR_CI_BRANCH" in line:
-                assert "master" in line, (
-                    f"YADGAR_CI_BRANCH must be set to 'master' in release.yaml, got: {line.strip()!r}"
+            stripped = line.strip()
+            if "YADGAR_CI_BRANCH" in stripped and not stripped.startswith("#"):
+                assert "master" in stripped, (
+                    f"YADGAR_CI_BRANCH must be set to 'master' in release.yaml, got: {stripped!r}"
                 )
                 break
 
