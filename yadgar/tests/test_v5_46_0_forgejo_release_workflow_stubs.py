@@ -3,7 +3,8 @@
 Validates release.yaml:
 - Exists and is valid YAML
 - Has build-wheel (active) and build-sbom (active) jobs
-- Has open-brew-pr and open-nix-pr jobs with if: false gate (v5.46.1 stub contract)
+- Has open-nix-pr job with if: false gate (v5.46.2 stub contract)
+- open-brew-pr removed per PD-39 (brew lane retired 2026-06-05)
 - Triggers on tags: ["v*"]
 
 RED phase: fails until .forgejo/workflows/release.yaml is created.
@@ -74,33 +75,30 @@ def test_release_yaml_has_build_sbom_job():
 
 
 @pytest.mark.skipif(not HAS_YAML, reason="PyYAML not installed")
-def test_release_yaml_open_brew_pr_is_stub():
-    """release.yaml must have open-brew-pr job with if: false (v5.46.1 stub)."""
+def test_release_yaml_open_brew_pr_absent():
+    """release.yaml must NOT have open-brew-pr job (brew lane retired per PD-39)."""
     parsed = yaml.safe_load(RELEASE_YAML.read_text())
     jobs = parsed.get("jobs", {})
-    assert "open-brew-pr" in jobs, f"Missing 'open-brew-pr' job; jobs: {list(jobs)}"
-    job = jobs["open-brew-pr"]
-    if_condition = job.get("if", "")
-    assert str(if_condition).lower() == "false", (
-        f"open-brew-pr must have 'if: false' (v5.46.1 stub contract); got: {if_condition!r}"
+    assert "open-brew-pr" not in jobs, (
+        "open-brew-pr job must be removed (brew lane retired per PD-39 2026-06-05)"
     )
 
 
 @pytest.mark.skipif(not HAS_YAML, reason="PyYAML not installed")
 def test_release_yaml_open_nix_pr_is_stub():
-    """release.yaml must have open-nix-pr job with if: false (v5.46.1 stub)."""
+    """release.yaml must have open-nix-pr job with if: false (v5.46.2 stub)."""
     parsed = yaml.safe_load(RELEASE_YAML.read_text())
     jobs = parsed.get("jobs", {})
     assert "open-nix-pr" in jobs, f"Missing 'open-nix-pr' job; jobs: {list(jobs)}"
     job = jobs["open-nix-pr"]
     if_condition = job.get("if", "")
     assert str(if_condition).lower() == "false", (
-        f"open-nix-pr must have 'if: false' (v5.46.1 stub contract); got: {if_condition!r}"
+        f"open-nix-pr must have 'if: false' (v5.46.2 stub contract); got: {if_condition!r}"
     )
 
 
 @pytest.mark.skipif(not HAS_YAML, reason="PyYAML not installed")
-def test_release_yaml_stubs_have_v5461_comment():
-    """Stub jobs must contain '# v5.46.1 fills this stub' comment."""
+def test_release_yaml_nix_stub_has_v5462_comment():
+    """Nix stub job must contain '# v5.46.2 fills this stub' comment."""
     content = RELEASE_YAML.read_text()
-    assert "v5.46.1" in content, "release.yaml stub jobs must mention v5.46.1 (coordination marker)"
+    assert "v5.46.2" in content, "release.yaml nix stub must mention v5.46.2 (coordination marker)"

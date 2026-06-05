@@ -1,3 +1,5 @@
+> **BREW LANE RETIRED 2026-06-05 per PD-39** — original plan content retained as historical artifact. See `docs/DECISIONS.md` PD-39.
+
 # PLAN — v5.46.0: Distribution (PyPI Polish + Homebrew + Nix Flake + Codeberg Release Automation + SBOM)
 
 **Status:** drafted 2026-05-31. REVISED 2026-06-02 post-opus-review (MAJOR cut). REMEDIATED 2026-06-04 per V5_46_AUDIT_2026_06_04.md (R1-R6: yadgar-setup, Option C, stub-split, dedup, cyclonedx pin, P1-P11). Plan-first per I27.

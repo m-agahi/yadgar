@@ -181,13 +181,6 @@ pipx install yadgar
 yadgar-setup
 ```
 
-**Homebrew (macOS / Linux with brew):**
-```bash
-brew tap maxagahi/yadgar https://codeberg.org/maxagahi/homebrew-yadgar
-brew install yadgar
-yadgar-setup          # follow the caveats output
-```
-
 **Nix flake:**
 ```bash
 nix profile install codeberg:maxagahi/yadgar
