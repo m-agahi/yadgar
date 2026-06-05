@@ -6,6 +6,20 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.46.3] — 2026-06-05
+
+CI infrastructure layer: custom yadgar-ci image, YADGAR_CI_BRANCH env var, SBOM workflow fix, pytest-asyncio. Addresses B2 (missing branch in CI), B6 (make not in CI), B7 (pytest-asyncio missing), and SBOM PyPI roundtrip.
+
+- **feat(ci):** `Dockerfile.ci` — new custom CI runner image (`docker.io/openfantasy/yadgar-ci:5.46.3`). Base: `python:3.14-slim`. System deps: `make`, `git`, `curl`, `ca-certificates`, `build-essential`, `nodejs`. Pre-installs pytest, pytest-asyncio, anyio, pytest-xdist, pytest-timeout, pytest-rerunfailures, hypothesis, defusedxml, sentence-transformers, hf-xet. OCI labels. (B6 fix: `make` now available in CI runners)
+- **feat(ci):** `.forgejo/workflows/{ci.yaml,release.yaml}` — all `image: python:3.14-slim` job containers replaced with `image: docker.io/openfantasy/yadgar-ci:5.46.3`. Redundant apt-get install steps for make/git/curl removed (now in image). `viz-tests` job keeps chromium-specific apt-get.
+- **feat(env):** `YADGAR_CI_BRANCH: master` workflow-level env var added to both workflow files. (B2 fix: daemon branch detection fails on anonymised CI runner paths — env var provides fallback)
+- **fix(ci):** `release.yaml` `build-sbom` job: replace PyPI roundtrip (`pip install "yadgar[sbom]==<version>"`) with local wheel install (`pip install "dist/yadgar-<version>-py3-none-any.whl[sbom]"`). Guarantees SBOM is generated from the exact release artifact.
+- **feat(deps):** `pyproject.toml` `[project.optional-dependencies].test`: add `pytest-asyncio>=1.4.0` + `anyio>=4.0`. `[tool.pytest.ini_options]`: add `asyncio_mode = "auto"`. (B7 fix: async tests unblocked without per-test `@pytest.mark.asyncio`)
+- **test:** 5 new self-test files `test_v5_46_3_*.py` (31 tests covering CI image content, env var, SBOM wheel pattern, image ref, pytest-asyncio extra)
+- **chore:** bump version 5.46.2 → 5.46.3 + uv.lock sync
+
+---
+
 ## [5.46.2] — 2026-06-05
 
 Runtime detection UX hotfix: OS-aware install hints + optional interactive install + Makefile/yadgar-setup sync. Triggered by user fresh-VM test finding abrupt failure with stale error message.

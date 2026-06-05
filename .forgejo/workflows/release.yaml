@@ -15,15 +15,21 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false  # Don't cancel in-progress releases
 
+# Workflow-level env: YADGAR_CI_BRANCH tells the yadgar daemon which branch
+# context to use in the CI runner (B2 fix — CI runner paths are anonymised
+# so git branch detection fails without this hint). See docs/DECISIONS.md PD-42.
+env:
+  YADGAR_CI_BRANCH: master
+
 jobs:
   # ── ACTIVE: Build wheel sdist ──────────────────────────────────────────────
   build-wheel:
     runs-on: ubuntu-latest
     container:
-      image: python:3.14-slim
+      image: docker.io/openfantasy/yadgar-ci:5.46.3
     steps:
-      - name: Install system deps
-        run: apt-get update -qq && apt-get install -y --no-install-recommends nodejs git curl ca-certificates
+      # make, git, curl, ca-certificates, nodejs are pre-installed in yadgar-ci image.
+      # No apt-get install step needed for these system deps.
 
       - uses: https://data.forgejo.org/actions/checkout@v6
 
@@ -50,10 +56,9 @@ jobs:
     needs: build-wheel
     runs-on: ubuntu-latest
     container:
-      image: python:3.14-slim
+      image: docker.io/openfantasy/yadgar-ci:5.46.3
     steps:
-      - name: Install system deps
-        run: apt-get update -qq && apt-get install -y --no-install-recommends nodejs git
+      # make, git, nodejs are pre-installed in yadgar-ci image.
 
       - uses: https://data.forgejo.org/actions/checkout@v6
 
@@ -69,8 +74,12 @@ jobs:
           path: dist/
 
       - name: Install yadgar with sbom extra
+        # Install from the local wheel built by build-wheel job (already in dist/).
+        # This avoids a PyPI roundtrip and guarantees we test the exact artifact
+        # being released. Wheel filename: yadgar-<version>-py3-none-any.whl.
         run: |
-          pip install "yadgar[sbom]==${{ steps.get-version.outputs.version }}" || pip install -e ".[sbom]"
+          pip install --upgrade pip
+          pip install "dist/yadgar-${{ steps.get-version.outputs.version }}-py3-none-any.whl[sbom]"
 
       - name: Generate CycloneDX SBOM
         env:
@@ -97,10 +106,11 @@ jobs:
     needs: build-sbom
     runs-on: ubuntu-latest
     container:
-      image: python:3.14-slim
+      image: docker.io/openfantasy/yadgar-ci:5.46.3
     steps:
-      - name: Install system deps
-        run: apt-get update -qq && apt-get install -y --no-install-recommends curl jq nodejs
+      - name: Install jq
+        # curl, nodejs pre-installed in yadgar-ci; jq is not — install here.
+        run: apt-get update -qq && apt-get install -y --no-install-recommends jq
 
       - uses: https://data.forgejo.org/actions/checkout@v6
 
@@ -165,10 +175,9 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     container:
-      image: python:3.14-slim
+      image: docker.io/openfantasy/yadgar-ci:5.46.3
     steps:
-      - name: Install system deps
-        run: apt-get update -qq && apt-get install -y --no-install-recommends nodejs git
+      # make, git, nodejs are pre-installed in yadgar-ci image.
 
       - uses: https://data.forgejo.org/actions/checkout@v6
 
