@@ -1,5 +1,68 @@
 # Migration Notes
 
+## v5.46.1 — Distribution infrastructure prep (2026-06-05)
+
+### No user action required for upgrade
+
+Users on v5.46.0 → v5.46.1: no configuration changes needed. The container images
+and MCP protocol are unchanged.
+
+### Non-nix install path: `pipx install yadgar` from PyPI
+
+As of v5.46.1 the primary non-nix install path is:
+
+```bash
+pipx install yadgar
+yadgar-setup
+```
+
+This replaces the Homebrew lane, which was retired per PD-39 (2026-06-05).
+Existing Homebrew installs continue to work; `brew tap maxagahi/yadgar` is
+deprecated — no further formula updates will be published.
+
+### Nix: pre-commit hook auto-syncs flake.nix (PD-40)
+
+Cross-repo nix PR auto-open was retired per PD-40 (2026-06-05).
+`NIX_BUMP_TOKEN` is no longer needed — remove it from Forgejo secrets.
+The pre-commit hook (`scripts/sync_version.py`, committed @53de97a)
+now auto-updates `flake.nix` version on every `pyproject.toml` bump commit.
+
+Nix users continue to install via:
+```bash
+nix profile install codeberg:maxagahi/yadgar
+```
+
+### PyPI publish: CI on tag push (new Forgejo secret required)
+
+A `publish-pypi` job is now active in `.forgejo/workflows/release.yaml`.
+It triggers on tag push matching `v*.*.*` (not `workflow_dispatch`).
+
+**Required secret (one-time setup):**
+
+| Secret | Scope | Notes |
+|--------|-------|-------|
+| `PYPI_API_TOKEN` | Project-scoped to `yadgar` on pypi.org | Add in Forgejo Settings → Actions → Secrets |
+
+Token rotation policy: rotate before expiry (PyPI default 365d); set a
+90-day-before-expiry reminder. Revoke the bootstrap account-scoped token
+(`op://Private/PyPI/api-token`) once the project-scoped token is verified.
+
+### `scripts/bump_version.py` — version bump helper
+
+New helper for bumping the pyproject.toml version before tagging a release:
+
+```bash
+python3 scripts/bump_version.py --bump patch      # 5.46.1 → 5.46.2
+python3 scripts/bump_version.py --new 5.47.0      # explicit version
+python3 scripts/bump_version.py --dry-run --bump minor   # preview only
+python3 scripts/bump_version.py --current-version # print current version
+```
+
+Pre-commit hooks cascade the bump automatically to `server.json`, `flake.nix`,
+and `uv.lock` — no manual editing of those files required.
+
+---
+
 ## v5.46.0 — Distribution: pipx + Homebrew + Nix flake + SBOM + release automation (2026-06-05)
 
 ### New install paths
