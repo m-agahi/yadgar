@@ -50,14 +50,19 @@ def _insert_bare_memory(storage, content: str) -> int:
 
 
 def _insert_bare_wiki_page(storage, slug: str) -> int:
-    """Insert a wiki page without setting the branch field, simulating pre-v5 data."""
+    """Insert a wiki page without setting the branch field, simulating pre-v5 data.
+
+    Note: directory_context is required by the migration_016 DEFINE FIELD ASSERT on wiki_page.
+    We supply it here because this test targets branch-field migration (migration_004), not
+    the directory_context constraint; inserting without it would violate the active schema.
+    """
     pid = storage._next_id("wiki_page")
     now = storage._now_iso()
     storage._q(
         "CREATE type::record('wiki_page', $id) SET "
         "slug = $slug, title = $title, content = $content, "
         "tags = $tags, links = $links, confidence = 1.0, "
-        "source_memory_ids = [], "
+        "source_memory_ids = [], directory_context = $dc, "
         "created_at = $ts, updated_at = $ts",
         {
             "id": pid,
@@ -66,6 +71,7 @@ def _insert_bare_wiki_page(storage, slug: str) -> int:
             "content": "pre-v5 content",
             "tags": [],
             "links": [],
+            "dc": "global",
             "ts": now,
         },
     )

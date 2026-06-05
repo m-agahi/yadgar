@@ -153,15 +153,14 @@ class TestGetAnchoredMemoriesScoped:
         assert "expired global anchor" not in contents, "expired anchor should not surface"
         assert "active global anchor" in contents, "active anchor should surface"
 
-    @pytest.mark.skip(
-        reason=(
-            "v5.46.4: schema now rejects empty-string directory_context "
-            "($value != NONE AND string::len($value) > 0). "
-            "Behavior change (treat '' as global bucket) deferred to v5.46.6."
-        )
-    )
     def test_empty_string_directory_context_treated_as_global(self, storage):
-        """Anchors with directory_context='' are treated as global (included for all dirs)."""
+        """Anchors with directory_context='' are treated as global (included for all dirs).
+
+        v5.46.6: skip removed — insert_memory now normalises '' → 'global' before
+        writing, so queries that check directory_context = '' still surface these
+        via the global-bucket WHERE clause.  Schema ASSERT on wiki_page does not
+        apply to the memory table.
+        """
         _seed_anchor(storage, "empty-context global", "")
 
         result = storage.get_anchored_memories_scoped(directory="/some/project", limit=20)

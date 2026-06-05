@@ -627,6 +627,7 @@ class RemoteMLClient:
                     f"/rerank/{mode}",
                     _threshold,
                     _duration,
+                    time_fn=self._now,
                     max_open_duration_sec=_max_duration,
                     backoff_factor=_backoff,
                 )

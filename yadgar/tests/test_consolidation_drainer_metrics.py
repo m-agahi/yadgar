@@ -112,7 +112,9 @@ class TestDrainStageMsMetric:
         before = _labeled_hist_sum(yadgar_drain_stage_ms, stage="insert")
 
         q = FileQueue(base_dir=tmp_path)
-        q.enqueue("memorize", {"content": "x", "context": "y", "tags": []})
+        # _internal=True: approved carve-out — bypasses branch-context pre-validation
+        # so the item reaches _apply_inner (which is patched) and the stage metric fires.
+        q.enqueue("memorize", {"content": "x", "context": "y", "tags": [], "_internal": True})
 
         with patch.object(QueueDrainer, "_apply_inner"):
             drainer = QueueDrainer(queue=q, storage_factory=MagicMock(), drain_interval=999)
@@ -133,7 +135,9 @@ class TestDrainStageMsMetric:
         before = _labeled_hist_sum(yadgar_drain_stage_ms, stage="archive")
 
         q = FileQueue(base_dir=tmp_path)
-        q.enqueue("memorize", {"content": "x", "context": "y", "tags": []})
+        # _internal=True: approved carve-out — bypasses branch-context pre-validation
+        # so the item reaches _apply_inner (which is patched) and the stage metric fires.
+        q.enqueue("memorize", {"content": "x", "context": "y", "tags": [], "_internal": True})
 
         with patch.object(QueueDrainer, "_apply_inner"):
             drainer = QueueDrainer(queue=q, storage_factory=MagicMock(), drain_interval=999)
