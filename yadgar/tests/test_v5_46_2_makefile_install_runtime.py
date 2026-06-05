@@ -145,3 +145,51 @@ class TestV5_46_2MakefileNonInteractiveGate:
         assert "INSTALL_NONINTERACTIVE" in content, (
             "Makefile must reference INSTALL_NONINTERACTIVE variable"
         )
+
+
+def _extract_makefile_recipe(content: str, target: str) -> str:
+    """Return lines of a Makefile recipe body (tab-indented lines after target:)."""
+    recipe_lines = []
+    in_recipe = False
+    for line in content.splitlines():
+        if line.startswith(f"{target}:"):
+            in_recipe = True
+            continue
+        if not in_recipe:
+            continue
+        # Recipe ends at next non-indented, non-blank, non-comment line
+        if line and line[0] not in ("\t", " ", "#"):
+            break
+        recipe_lines.append(line)
+    return "\n".join(recipe_lines)
+
+
+class TestV5_46_2MakefilePreSetupChain:
+    """make pre-setup must chain to install-runtime on detect failure (matches yadgar-setup.sh)."""
+
+    def test_pre_setup_chains_install_runtime_on_detect_failure_noninteractive(self):
+        """pre-setup recipe must branch to install-runtime on detect failure (static check).
+
+        Verifies Makefile recipe structure:
+        1. pre-setup calls detect_runtime.sh in a conditional (if ! ...).
+        2. When INSTALL_NONINTERACTIVE=1 and no runtime, it calls detect_runtime.sh
+           (to print hint) and exits 1.
+        3. Otherwise (interactive), it delegates to $(MAKE) install-runtime.
+        Both branches must be present in the pre-setup recipe.
+        """
+        content = MAKEFILE.read_text()
+        assert content.find("pre-setup:") != -1, "pre-setup target must exist"
+        recipe_text = _extract_makefile_recipe(content, "pre-setup")
+
+        assert "detect_runtime.sh" in recipe_text, (
+            f"pre-setup recipe must call detect_runtime.sh\nrecipe: {recipe_text!r}"
+        )
+        assert "install-runtime" in recipe_text, (
+            f"pre-setup recipe must chain to install-runtime target\nrecipe: {recipe_text!r}"
+        )
+        assert "INSTALL_NONINTERACTIVE" in recipe_text, (
+            f"pre-setup recipe must check INSTALL_NONINTERACTIVE\nrecipe: {recipe_text!r}"
+        )
+        assert "exit 1" in recipe_text, (
+            f"pre-setup recipe must exit 1 when no runtime + non-interactive\nrecipe: {recipe_text!r}"
+        )
