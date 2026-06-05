@@ -100,7 +100,7 @@ def _advance_all_backoffs(drainer: QueueDrainer) -> None:
 class TestPermanentFailureDLQ:
     def test_moves_to_dlq_after_max_permanent_attempts(self, tmp_path):
         fq, drainer = _make_drainer(tmp_path, max_permanent_attempts=3, backoff_base_s=0.0)
-        fq.enqueue("memorize", {"content": "test", "context": "/tmp"})
+        fq.enqueue("memorize", {"content": "test", "context": "/tmp", "branch": "master"})
 
         err = Exception("Client error '400 Bad Request'")
         with patch.object(drainer, "_apply", side_effect=err):
@@ -124,6 +124,8 @@ class TestPermanentFailureDLQ:
                 "title": "T",
                 "content": "C",
                 "category": "reference",
+                "branch": "master",
+                "directory_context": "/test/sandbox",
             },
         )
 
@@ -144,7 +146,7 @@ class TestPermanentFailureDLQ:
 
     def test_events_log_appended(self, tmp_path):
         fq, drainer = _make_drainer(tmp_path, max_permanent_attempts=1, backoff_base_s=0.0)
-        fq.enqueue("memorize", {"content": "t", "context": "/tmp"})
+        fq.enqueue("memorize", {"content": "t", "context": "/tmp", "branch": "master"})
 
         with patch.object(
             drainer, "_apply", side_effect=Exception("Client error '400 Bad Request'")
@@ -166,7 +168,7 @@ class TestTransientFailureSurvives:
             max_transient_attempts=10,
             backoff_base_s=0.0,
         )
-        fq.enqueue("memorize", {"content": "t", "context": "/tmp"})
+        fq.enqueue("memorize", {"content": "t", "context": "/tmp", "branch": "master"})
 
         err = Exception("Server error '503 Service Unavailable'")
         for _ in range(4):
@@ -182,7 +184,7 @@ class TestTransientFailureSurvives:
 class TestBackoffBehavior:
     def test_file_skipped_within_backoff_window(self, tmp_path):
         fq, drainer = _make_drainer(tmp_path, backoff_base_s=3600.0)
-        fq.enqueue("memorize", {"content": "t", "context": "/tmp"})
+        fq.enqueue("memorize", {"content": "t", "context": "/tmp", "branch": "master"})
 
         err = Exception("Client error '400 Bad Request'")
         with patch.object(drainer, "_apply", side_effect=err):
@@ -197,7 +199,7 @@ class TestBackoffBehavior:
         fq, drainer = _make_drainer(
             tmp_path, max_permanent_attempts=10, backoff_base_s=30.0, backoff_max_s=3600.0
         )
-        fq.enqueue("memorize", {"content": "t", "context": "/tmp"})
+        fq.enqueue("memorize", {"content": "t", "context": "/tmp", "branch": "master"})
 
         err = Exception("Client error '400 Bad Request'")
         now = time.time()
@@ -218,7 +220,7 @@ class TestBackoffBehavior:
         fq, drainer = _make_drainer(
             tmp_path, max_permanent_attempts=20, backoff_base_s=30.0, backoff_max_s=100.0
         )
-        fq.enqueue("memorize", {"content": "t", "context": "/tmp"})
+        fq.enqueue("memorize", {"content": "t", "context": "/tmp", "branch": "master"})
 
         fname = list(fq.pending())[0].name
         # Simulate 10 previous failures
@@ -238,7 +240,7 @@ class TestBackoffBehavior:
 class TestSuccessAndReset:
     def test_success_clears_tracker(self, tmp_path):
         fq, drainer = _make_drainer(tmp_path)
-        fq.enqueue("memorize", {"content": "t", "context": "/tmp"})
+        fq.enqueue("memorize", {"content": "t", "context": "/tmp", "branch": "master"})
         fname = list(fq.pending())[0].name
         drainer._attempts[fname] = _Attempt(count=2, last_error="old error")
 

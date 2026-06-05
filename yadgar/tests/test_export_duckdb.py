@@ -42,7 +42,7 @@ def seeded_storage(tmp_db: str):
     """
     from yadgar.storage import StorageEngine
 
-    storage = StorageEngine(tmp_db, embedding_dim=4)
+    storage = StorageEngine(tmp_db, embedding_dim=384)
 
     # memory — core table, one row with a known embedding
     storage._q(
@@ -55,14 +55,15 @@ def seeded_storage(tmp_db: str):
             "c": "test memory content",
             "h": 0.8,
             "t": ["tag1", "tag2"],
-            "e": [0.1, 0.2, 0.3, 0.4],
+            "e": [0.0] * 384,
             "d": "/test/project",
         },
     )
     # wiki_page
     storage._q(
         "CREATE wiki_page SET slug = $s, content = $c, title = $t, "
-        "tags = ['wiki'], approved = true, created_at = time::now()",
+        "tags = ['wiki'], approved = true, created_at = time::now(), "
+        "directory_context = '/test/sandbox'",
         {"s": "test-page", "c": "wiki content", "t": "Test Page"},
     )
     # wiki_draft
@@ -159,7 +160,7 @@ def exported_db(seeded_storage, tmp_duckdb: Path, tmp_db: str):
 
     from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig
 
-    cfg = ExportConfig(embedding_dim=4)
+    cfg = ExportConfig(embedding_dim=384)
     exporter = DuckDBExporter(db_path=tmp_db, output_path=str(tmp_duckdb), config=cfg)
     exporter.run()
     return tmp_duckdb
@@ -264,7 +265,7 @@ class TestExporterRespectsSecretGate:
 
         from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig
 
-        cfg = ExportConfig(include_secrets=False, embedding_dim=4)
+        cfg = ExportConfig(include_secrets=False, embedding_dim=384)
         exporter = DuckDBExporter(db_path=tmp_db, output_path=str(tmp_duckdb), config=cfg)
         exporter.run()
         con = duckdb.connect(str(tmp_duckdb), read_only=True)
@@ -279,7 +280,7 @@ class TestExporterRespectsSecretGate:
 
         from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig
 
-        cfg = ExportConfig(include_secrets=True, embedding_dim=4)
+        cfg = ExportConfig(include_secrets=True, embedding_dim=384)
         exporter = DuckDBExporter(db_path=tmp_db, output_path=str(tmp_duckdb), config=cfg)
         exporter.run()
         con = duckdb.connect(str(tmp_duckdb), read_only=True)
@@ -312,7 +313,7 @@ class TestExporterActionLogWindow:
 
         from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig
 
-        cfg = ExportConfig(action_log_limit=0, embedding_dim=4)
+        cfg = ExportConfig(action_log_limit=0, embedding_dim=384)
         exporter = DuckDBExporter(db_path=tmp_db, output_path=str(tmp_duckdb), config=cfg)
         exporter.run()
         con = duckdb.connect(str(tmp_duckdb), read_only=True)
@@ -327,7 +328,7 @@ class TestExporterActionLogWindow:
 
         from yadgar.storage import StorageEngine
 
-        storage = StorageEngine(tmp_db, embedding_dim=4)
+        storage = StorageEngine(tmp_db, embedding_dim=384)
         # Insert old row: 60 days ago (ISO string — SurrealDB accepts it)
         storage._q(
             "CREATE action_log SET tool = 'recall', processed = false, "
@@ -341,7 +342,7 @@ class TestExporterActionLogWindow:
 
         from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig
 
-        cfg = ExportConfig(action_log_since="30d", embedding_dim=4, create_views=False)
+        cfg = ExportConfig(action_log_since="30d", embedding_dim=384, create_views=False)
         exporter = DuckDBExporter(db_path=tmp_db, output_path=str(tmp_duckdb), config=cfg)
         exporter.run()
 
@@ -379,7 +380,7 @@ class TestExporterEmbeddingRoundtrip:
         con = duckdb.connect(str(exported_db), read_only=True)
         # array_cosine_similarity is available natively in DuckDB >= 0.10
         result = con.execute(
-            "SELECT list_cosine_similarity(embedding, [0.1, 0.2, 0.3, 0.4]::FLOAT[4]) "
+            f"SELECT list_cosine_similarity(embedding, {[0.0] * 384}::FLOAT[384]) "
             "FROM memory LIMIT 1"
         ).fetchone()
         con.close()
@@ -407,14 +408,14 @@ class TestExporterExtraFields:
         # Insert a memory row with an unknown field
         seeded_storage._q(
             "CREATE memory SET content = $c, heat = 0.5, "
-            "embedding = [0.1, 0.2, 0.3, 0.4], "
+            f"embedding = {[0.0] * 384}, "
             "directory_context = '/test', "
             "created_at = time::now(), last_accessed = time::now(), "
             "tags = [], is_stale = false, "
             "unknown_future_field = 'surprise_value'",
             {"c": "extra field test"},
         )
-        cfg = ExportConfig(action_log_since="all", embedding_dim=4)
+        cfg = ExportConfig(action_log_since="all", embedding_dim=384)
         exporter = DuckDBExporter(db_path=tmp_db, output_path=str(tmp_duckdb), config=cfg)
         exporter.run()
         con = duckdb.connect(str(tmp_duckdb), read_only=True)
@@ -444,10 +445,10 @@ class TestExporterHandlesMissingTable:
 
         from yadgar.storage import StorageEngine
 
-        storage = StorageEngine(tmp_db, embedding_dim=4)
+        storage = StorageEngine(tmp_db, embedding_dim=384)
         storage._q(
-            "CREATE memory SET content = 'minimal', heat = 0.5, "
-            "embedding = [0.1, 0.2, 0.3, 0.4], "
+            f"CREATE memory SET content = 'minimal', heat = 0.5, "
+            f"embedding = {[0.0] * 384}, "
             "directory_context = '/test', "
             "created_at = time::now(), last_accessed = time::now(), "
             "tags = [], is_stale = false",
@@ -456,7 +457,7 @@ class TestExporterHandlesMissingTable:
 
         from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig
 
-        cfg = ExportConfig(create_views=False, embedding_dim=4)
+        cfg = ExportConfig(create_views=False, embedding_dim=384)
         exporter = DuckDBExporter(db_path=tmp_db, output_path=str(tmp_duckdb), config=cfg)
         exporter.run()  # must not raise
 
@@ -538,7 +539,7 @@ class TestNoViewsFlag:
 
         from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig
 
-        cfg = ExportConfig(create_views=False, embedding_dim=4)
+        cfg = ExportConfig(create_views=False, embedding_dim=384)
         exporter = DuckDBExporter(db_path=tmp_db, output_path=str(tmp_duckdb), config=cfg)
         exporter.run()
         con = duckdb.connect(str(tmp_duckdb), read_only=True)
@@ -603,7 +604,7 @@ class TestForceFlag:
         from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig
 
         with pytest.raises((SystemExit, FileExistsError)) as exc:
-            cfg = ExportConfig(force=False, embedding_dim=4)
+            cfg = ExportConfig(force=False, embedding_dim=384)
             exporter = DuckDBExporter(db_path=tmp_db, output_path=str(tmp_duckdb), config=cfg)
             exporter.run()
 
@@ -618,7 +619,7 @@ class TestForceFlag:
 
         from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig
 
-        cfg = ExportConfig(force=True, embedding_dim=4)
+        cfg = ExportConfig(force=True, embedding_dim=384)
         exporter = DuckDBExporter(db_path=tmp_db, output_path=str(tmp_duckdb), config=cfg)
         exporter.run()
 
@@ -642,7 +643,7 @@ class TestExportFullCorpusSmoke:
 
         from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig
 
-        cfg = ExportConfig(embedding_dim=4)
+        cfg = ExportConfig(embedding_dim=384)
         exporter = DuckDBExporter(db_path=tmp_db, output_path=str(tmp_duckdb), config=cfg)
         exporter.run()
 

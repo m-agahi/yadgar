@@ -1233,6 +1233,12 @@ def _apply_rejection_signal(resolved: str, actions: list) -> int:
         return 0
 
 
+def _omit_sentinel(d: dict, key: str, value: object, sentinel: object) -> None:
+    """Set d[key]=value only when value != sentinel (for budget-trimming optional fields)."""
+    if value != sentinel:
+        d[key] = value
+
+
 def _project_brief_signals(
     resolved: str,
     mode: str,
@@ -1309,9 +1315,11 @@ def _project_brief_signals(
         "active_work_age_hours": active_work_age_hours,
         "init_memory_age_hours": init_memory_age_hours,
         "anchor_count_project": anchor_signals["anchor_count_project"],
-        "roadmap_update_lag_hours": roadmap_update_lag_hours,
         "recommended_actions": recommended_actions,
     }
+    # v5.46.4: omit roadmap_update_lag_hours when -1.0 (roadmap page not found) to
+    # stay within 100-token budget. Callers treat absent key as -1 (no roadmap).
+    _omit_sentinel(result, "roadmap_update_lag_hours", roadmap_update_lag_hours, -1.0)
     # v5.42.0: omit pending_rejections_count when 0 to stay within 100-token budget.
     # Non-zero count is always included; callers treat absent key as 0.
     if pending_rejections_count > 0:
