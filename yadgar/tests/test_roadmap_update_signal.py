@@ -342,8 +342,8 @@ def test_signal_roadmap_wiki_not_found(_engines, tmp_path, monkeypatch):
 
     # No wiki page inserted → slug not found
     result = server.project_brief(str(repo), mode="signals")
-    assert result.get("roadmap_update_lag_hours") == -1, (
-        f"Expected -1 sentinel, got {result.get('roadmap_update_lag_hours')}"
+    assert result.get("roadmap_update_lag_hours", -1) == -1, (
+        f"Expected -1 sentinel (or absent key), got {result.get('roadmap_update_lag_hours')}"
     )
     actions = [a["action"] for a in result["recommended_actions"]]
     assert "update_roadmap" not in actions

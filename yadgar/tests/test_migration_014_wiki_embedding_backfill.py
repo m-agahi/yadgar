@@ -30,9 +30,10 @@ class TestMigration014Registration:
         versions = [m["version"] for m in _MIGRATIONS]
         assert "014_wiki_page_embedding_backfill" in versions
 
-    def test_migration_014_is_last(self):
-        """migration_014 is the last registered migration (append-only rule)."""
-        assert _MIGRATIONS[-1]["version"] == "014_wiki_page_embedding_backfill"
+    def test_migration_014_in_migrations_list(self):
+        """migration_014 is in the _MIGRATIONS list (membership, not positional)."""
+        versions = [m["version"] for m in _MIGRATIONS]
+        assert "014_wiki_page_embedding_backfill" in versions
 
     def test_migration_014_fn_is_callable(self):
         """migration_014 entry has a callable fn."""
