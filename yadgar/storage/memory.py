@@ -120,7 +120,10 @@ class _MemoryMixin:
             "embedding": emb_floats,
             "tags": memory.get("tags", []),
             "source_episode_id": memory.get("source_episode_id"),
-            "directory_context": memory["directory_context"],
+            # v5.46.6: normalise empty-string directory_context to 'global' so it
+            # surfaces in the global anchor bucket without relying on '' equality
+            # (SurrealDB 2 embedded may not round-trip '' reliably in comparisons).
+            "directory_context": memory["directory_context"] or "global",
             "created_at": memory.get("created_at", now),
             "last_accessed": memory.get("last_accessed", now),
             "heat": memory.get("heat", 1.0),
