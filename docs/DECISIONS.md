@@ -10,6 +10,56 @@
 
 ---
 
+## 2026-06-05 v7 "real-time synthesis" reframe + usefulness audit
+
+## PD-44 — v7 reframe: "Asynchronous Progressive Synthesis"; usefulness audit raises retire-vs-keep question (2026-06-05 evening)
+
+**Decision:** v7 framing "Real-time synthesis" is dead after PD-43 (LLM inference is pluggable; sub-100ms only realistic for local LLM hardware or team backend). For personal mode the best-case latency with pre-built `yadgar-curator` image + warm container pool + Claude pass-through OAuth is ~3-5s per inference. NOT real-time. Reframe to **"Asynchronous Progressive Synthesis"**.
+
+**Rationale + usefulness audit:**
+
+User direction 2026-06-05 evening — "im getting more causius about the usability of v7. i mean its usefullness". Honest audit follows.
+
+**Why "real-time" framing was attractive originally:** assumed local LLM (sub-100ms inference) was realistic. PD-43 surfaced that local LLM gates out individual users (22+ GB RAM minimum). Without sub-100ms, "real-time" becomes "async with ~3-5s budget" — fundamentally different UX.
+
+**Concrete use cases v7 was supposed to enable + honest assessment:**
+
+| Original v7 use case | Does it actually need <5s synthesis? | v6 nightly curator covers? |
+|---|---|---|
+| Surface emerging patterns immediately | NO — patterns aren't actionable within 5s window | YES (batch finds same patterns) |
+| Cross-pollinate memories as they arrive | NO — user isn't watching memory engine in real-time | YES (nightly cross-correlation) |
+| Real-time relevance scoring | NO — recall already does this on demand | N/A (already in v5.x recall) |
+| Active debugging suggestions | MAYBE — but rare + user can manually trigger recall | Partial (debugging is interactive) |
+| Contradiction detection | YES — but THIS already exists at write-time in v5.39+ | N/A (v5.x boundary validation, not v7 synthesis) |
+| Wiki page auto-update suggestions | NO — nightly cadence acceptable | YES (curator generates suggestions) |
+
+**Conclusion: v7's distinct value over v6 nightly curator + v5.x write-time gates is thin.** The "real-time" promise was the differentiator; without it, v7 risks being speculative-infrastructure pattern (same anti-pattern class as branch-on-wiki original rationale archaeology — built because the concept sounded compelling, not because users demand it).
+
+**Three options going forward:**
+
+**Option A — Keep v7 as low-priority slot, rename + downscale:** ship v7 as "Asynchronous Progressive Synthesis" with queue+scheduler+container-pool for ~3-5s latency. Personal mode benefits when user explicitly wants live feedback. Risk: 2-3 months engineering for marginal UX gain over v6 batch.
+
+**Option B — Retire v7 entirely:** v6 LLM curator at batch cadence covers 90%+ of synthesis value. Write-time contradiction detection (v5.39+) covers the only "must be sub-second" use case. Move any remaining v7 concepts into v6.x sub-releases as opt-in enhancements. Free up v7.0.0 slot for something with proven user demand. Recommend.
+
+**Option C — Scope v7 as team-only:** v7 ships only in team mode (v8). Centralized warm-pool + shared inference makes ~1-2s realistic. Personal users never get v7; v6 nightly is canonical for them. Compromise: keeps v7 alive but limits scope to where the infra justifies it.
+
+**LEAN: Option B (retire v7).** Brutal honesty: v7 was speculative. v6 nightly + v5.x write-time gates + v8 team backend cover the use cases. Engineering effort better spent elsewhere (v8 team rollout, v6 curator quality, v5 ongoing).
+
+**Deferred final decision:** user evaluates Option A vs B vs C and confirms. If Option B chosen, v7 slot retires + roadmap pipeline renumbers (v7 row in pipeline becomes ~RETIRED PD-44~). If Option C chosen, v7 plan written after v8.0 ships + scope limited to team mode. If Option A chosen, v7 plan written as standalone with reframing.
+
+**Implications for v8 plan:**
+
+- v8.2.5 (team-backend inference) absorbs the "fast inference" value even without v7 — team users get sub-second curator + synthesis via centralized inference regardless of v7 status.
+- If Option B chosen, v8 plan does NOT need to coordinate with a separate v7 plan.
+- If Option C chosen, v7 plan slots BETWEEN v8.2.5 and v8.3.
+
+**Cross-references:**
+- `docs/PLAN_V8_TEAM_USABILITY_SKELETON.md` — references PD-43; will be updated based on Option choice
+- Future `docs/PLAN_V7_*.md` — write only if Option A or C selected
+- Roadmap pipeline (`docs/yadgar-roadmap-future-improvements.md`) — v7.0.0 row needs update based on Option
+
+---
+
 ## 2026-06-05 v6/v7/v8 LLM inference strategy (cross-cutting architecture)
 
 ## PD-43 — Pluggable LLM inference; default OFF for personal mode; 4 backend paths (2026-06-05)
