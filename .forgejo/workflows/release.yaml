@@ -61,7 +61,7 @@ jobs:
           echo "version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" >> "$GITHUB_OUTPUT"
 
       - name: Download dist artifacts
-        uses: https://data.forgejo.org/actions/download-artifact@v3
+        uses: https://data.forgejo.org/actions/download-artifact@v3.1.0
         with:
           name: dist-${{ steps.get-version.outputs.version }}
           path: dist/
@@ -108,7 +108,7 @@ jobs:
           echo "version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" >> "$GITHUB_OUTPUT"
 
       - name: Download release assets
-        uses: https://data.forgejo.org/actions/download-artifact@v3
+        uses: https://data.forgejo.org/actions/download-artifact@v3.1.0
         with:
           name: release-assets-${{ steps.get-version.outputs.version }}
           path: dist/
