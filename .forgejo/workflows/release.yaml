@@ -1,7 +1,8 @@
 name: Release
 
 # Triggers on version tags (v*). Pre-release tags (alpha/beta) still trigger
-# but the stub jobs (open-brew-pr, open-nix-pr) skip via their if: conditions.
+# but the stub job (open-nix-pr) skips via its if: condition.
+# Note: open-brew-pr removed per PD-39 (brew lane retired 2026-06-05).
 on:
   push:
     tags:
@@ -153,36 +154,19 @@ jobs:
           done
           echo "==> Release assets attached."
 
-  # ── STUB (if: false): Open brew tap PR — v5.46.1 fills this stub ──────────
-  open-brew-pr:
-    needs: attach-to-release
-    runs-on: ubuntu-latest
-    # v5.46.1 fills this stub — cross-repo PAT required (BREW_BUMP_TOKEN)
-    # Activation condition will be: !contains(github.ref, '-alpha') && !contains(github.ref, '-beta')
-    if: false
-    steps:
-      - uses: https://data.forgejo.org/actions/checkout@v6
-      # v5.46.1 fills this stub
-      # Steps: clone homebrew-yadgar tap, render Formula/yadgar.rb from yadgar.rb.in,
-      # push to bump-v<version> branch, open PR via Forgejo API.
-      # Requires: BREW_BUMP_TOKEN secret (scoped to PR-create on homebrew-yadgar only).
-      - name: Open brew tap PR (stub)
-        run: |
-          echo "TODO v5.46.1 fills this stub"
-
-  # ── STUB (if: false): Open nix repo PR — v5.46.1 fills this stub ─────────
+  # ── STUB (if: false): Open nix repo PR — v5.46.2 fills this stub ────────
   open-nix-pr:
     needs: attach-to-release
     runs-on: ubuntu-latest
-    # v5.46.1 fills this stub — cross-repo PAT required (NIX_BUMP_TOKEN)
+    # v5.46.2 fills this stub — cross-repo PAT required (NIX_BUMP_TOKEN)
     # Activation condition will be: !contains(github.ref, '-alpha') && !contains(github.ref, '-beta')
     if: false
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v6
-      # v5.46.1 fills this stub
+      # v5.46.2 fills this stub
       # Steps: clone nix repo, bump yadger_core_version in modules/home/yadgar.nix,
       # push to bump-yadgar-v<version> branch, open PR via Forgejo API.
       # Requires: NIX_BUMP_TOKEN secret (scoped to PR-create on nix repo only).
       - name: Open nix repo PR (stub)
         run: |
-          echo "TODO v5.46.1 fills this stub"
+          echo "TODO v5.46.2 fills this stub"
