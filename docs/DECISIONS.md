@@ -10,6 +10,30 @@
 
 ---
 
+## 2026-06-05 v5.46.x scope reduction — drop cross-repo nix PR lane
+
+## PD-40 — Drop cross-repo nix PR auto-open lane (2026-06-05)
+
+**Decision:** v5.46.2 cross-repo nix PR auto-open RETIRED. Replaced with pre-commit hook approach.
+
+**Rationale:** User assessment 2026-06-05 — "leave the nix repo out of scope, instead add precommit to check the versions and also update nix flake version before we commit. much easier." Cross-repo PAT (NIX_BUMP_TOKEN) + workflow job + auto-PR machinery was speculative-infrastructure for a problem better solved at commit-time: when pyproject.toml version bumps, `scripts/sync_version.py` auto-updates flake.nix line 41 + `scripts/check_versions.py` verifies consistency on commit. No cross-repo write needed; yadgar repo's flake.nix IS the public nix distribution surface (nix users install via `nix profile install git+https://codeberg.org/maxagahi/yadgar`).
+
+**User's personal `~/git/nix` (home-manager config):** remains a separate concern outside yadgar v5.46.x cycle. Manual bump + home-manager switch per existing workflow (anchor 490140 + 491179).
+
+**Removed artifacts:**
+- v5.46.1 USER_CHECKLIST steps 1+2 (NIX_BUMP_TOKEN PAT + Forgejo secret).
+- v5.46.2 plan RETIRED (preserved as archaeological artifact); deliverables nil after PD-39 brew drop + PD-40 nix drop.
+- `.forgejo/workflows/release.yaml` open-nix-pr stub: deleted.
+
+**Added artifacts (committed @53de97a):**
+- `scripts/sync_version.py` extended to auto-update flake.nix line 41 on pyproject.toml change.
+- `scripts/check_versions.py` extended to verify flake.nix consistency.
+- `.pre-commit-config.yaml` updated: sync-version + check-versions hooks now include flake.nix in files pattern.
+
+**Reversibility:** If real demand surfaces for cross-repo nix PR (e.g., third-party nix overlay maintenance), can re-add ~1d. Pre-commit hook approach handles >95% of realistic version-sync needs.
+
+---
+
 ## 2026-06-05 v5.46.x scope reduction — drop Homebrew lane
 
 ## PD-39 — Drop Homebrew lane (2026-06-05)

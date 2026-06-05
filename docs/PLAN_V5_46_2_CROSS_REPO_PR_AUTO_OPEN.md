@@ -1,6 +1,18 @@
-# PLAN — v5.46.2: Cross-Repo PR Auto-Open (Nix) + PyPI publish
+# PLAN — v5.46.2: Cross-Repo PR Auto-Open (RETIRED)
 
-**Status:** skeleton drafted 2026-06-04. REMEDIATED 2026-06-04 per V5_46_AUDIT_2026_06_04.md (P8 implementer detail — Forgejo PR body, script skeletons, auth path, idempotency). Split from v5.46.0 per opus-reviewer. Plan-first per I27. RENUMBERED 2026-06-05 from v5.46.1 → v5.46.2 — original slot reassigned to infrastructure prep (see `docs/PLAN_V5_46_1_DISTRIBUTION_INFRA.md`). **BREW LANE RETIRED 2026-06-05 per PD-39** — scope reduced to nix-pr + PyPI publish only. See `docs/DECISIONS.md` PD-39.
+**Status:** RETIRED 2026-06-05 per `docs/DECISIONS.md` PD-40. After v5.46.0 ship + brew lane drop (PD-39) + nix PR drop (PD-40 — replaced with pre-commit flake.nix sync), v5.46.2 has no remaining deliverables. Original content preserved as historical artifact.
+
+**What replaced this plan:** pre-commit hook extensions to `scripts/sync_version.py` + `scripts/check_versions.py` + `.pre-commit-config.yaml` (committed 2026-06-05 @53de97a). On any pyproject.toml version bump, hook auto-syncs flake.nix line 41 + verifies consistency across all version-pinned files (pyproject.toml, server.json, docker-compose.yml, uv.lock, flake.nix). No cross-repo PAT, no Forgejo secret, no PR workflow needed.
+
+**What this plan was originally for (preserved below):**
+
+---
+
+*[Original plan content follows as archaeological reference. All implementation notes below are SUPERSEDED.]*
+
+---
+
+**Original status (2026-06-04):** skeleton drafted 2026-06-04. REMEDIATED 2026-06-04 per V5_46_AUDIT_2026_06_04.md (P8 implementer detail — Forgejo PR body, script skeletons, auth path, idempotency). Split from v5.46.0 per opus-reviewer. Plan-first per I27. RENUMBERED 2026-06-05 from v5.46.1 → v5.46.2 — original slot reassigned to infrastructure prep (see `docs/PLAN_V5_46_1_DISTRIBUTION_INFRA.md`). **BREW LANE RETIRED 2026-06-05 per PD-39** — scope reduced to nix-pr + PyPI publish only. See `docs/DECISIONS.md` PD-39.
 
 **Parent plan:** `docs/PLAN_V5_46_0_DISTRIBUTION.md` (Step 7 job `open-nix-pr` — split out for token-rotation security surface).
 
