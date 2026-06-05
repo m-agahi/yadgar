@@ -240,7 +240,7 @@ Concrete step-by-step. Each item ~2-5 min. Total ~30-45 min.
 - Token name: `yadgar-codeberg-release`.
 - Scope: `Project: yadgar` (DO NOT pick "Entire account" — least-privilege).
 - Generate → copy token (one-time display, starts with `pypi-`).
-- SAVE in 1Password: vault `Private`, item `PyPI/yadgar-codeberg-release-token`.
+- SAVE in 1Password at `op://Private/PyPI/api-token` (canonical reference; retrievable in scripts via `op read "op://Private/PyPI/api-token"`).
 - **Note OIDC alternative:** if codeberg/Forgejo gain OIDC trusted publisher support (currently uncertain — verify before dispatch), use that instead of long-lived API token. Track via https://pypi.org/help/#trusted-publishers.
 
 **8. Add `PYPI_API_TOKEN` to Forgejo secrets:**
