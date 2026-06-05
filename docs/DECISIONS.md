@@ -10,6 +10,22 @@
 
 ---
 
+## 2026-06-05 v5.46.x scope reduction — drop Homebrew lane
+
+## PD-39 — Drop Homebrew lane (2026-06-05)
+
+**Decision:** Homebrew tap distribution lane retired from v5.46.x cycle. Continue distributing via PyPI (mandatory, covers macOS+Linux+Windows via pipx) + nix flake (already in v5.46.0 flake.nix, zero ongoing maintenance).
+
+**Rationale:** User assessment 2026-06-05 — "if pip works then why do i need homebrew? i think pip works in arch as well so why complicate it i just need nix and pip." Brew added zero functional capability beyond PyPI for a Python CLI/daemon tool; speculative-infrastructure pattern (same anti-pattern class as branch-on-wiki original rationale archaeology 2026-06-03). Brew formula maintenance per release (SHA256 + version updates) cost not justified by macOS UX polish gain.
+
+**Removed artifacts:** Formula/yadgar.rb.in (deleted), `.forgejo/workflows/release.yaml` open-brew-pr stub (deleted), v5.46.1 user actions 1+2 (tap repo + BREW_BUMP_TOKEN PAT) + secret step (BREW_BUMP_TOKEN forgejo secret), v5.46.2 open_brew_pr.sh deliverable.
+
+**Preserved:** docs/PLAN_V5_46_0_DISTRIBUTION.md historical brew sections (archaeological reference); PD-39 cross-referenced from all touched plans.
+
+**Reversibility:** Brew lane can be re-added later if real macOS user demand surfaces. Cost: ~1d to rebuild tap repo + Formula + PAT + workflow job.
+
+---
+
 ## 2026-06-04 v5.45.1 ship decisions
 
 **PD-38. v5.45.1 ships paper-only macOS launchd. Host verification deferred.**

@@ -1,6 +1,6 @@
 # Installing Yadgar
 
-Four install paths. All end with `yadgar-setup` to complete configuration.
+Three install paths. All end with `yadgar-setup` to complete configuration.
 
 ---
 
@@ -21,29 +21,7 @@ yadgar-setup --noninteractive
 
 ---
 
-## 2. Homebrew (macOS and Linux with brew)
-
-```bash
-brew tap maxagahi/yadgar https://codeberg.org/maxagahi/homebrew-yadgar
-brew install yadgar
-yadgar-setup
-```
-
-The tap lives at `codeberg.org/maxagahi/homebrew-yadgar`. Follow the caveats printed
-after `brew install` — they will remind you to run `yadgar-setup`.
-
-macOS note: `yadgar-setup` uses launchd (v5.45.1 path). Run `yadgar-setup --doctor`
-to verify the daemon loaded correctly.
-
-After upgrades:
-```bash
-brew upgrade yadgar
-yadgar-setup          # re-run to pick up new defaults
-```
-
----
-
-## 3. Nix flake
+## 2. Nix flake
 
 ```bash
 nix profile install codeberg:maxagahi/yadgar
@@ -72,7 +50,7 @@ Then run `yadgar-setup` manually to configure Claude Code hooks and seed anchors
 
 ---
 
-## 4. Repo checkout (make-canonical)
+## 3. Repo checkout (make-canonical)
 
 ```bash
 git clone https://codeberg.org/maxagahi/yadgar.git
@@ -128,10 +106,8 @@ yadgar-setup [--noninteractive] [--dryrun] [--doctor]
 
 Yadgar requires Python 3.14+.
 
-- pipx: resolved from your system Python. Install 3.14 via `brew install python@3.14` or
+- pipx: resolved from your system Python. Install 3.14 via your package manager or
   from [python.org](https://www.python.org/downloads/).
-- Homebrew: formula uses `python@3.13` as fallback if `python@3.14` is not yet in
-  Homebrew core (typical 1-2 month lag after CPython release).
 - Nix: uses `python314` from `nixos-unstable`. NixOS stable channel may not have it yet.
 
 ---
