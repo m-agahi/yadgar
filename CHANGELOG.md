@@ -6,6 +6,22 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.46.6] — 2026-06-05
+
+Fixes B14 (circuit breaker clock skew), B15 (NLI spy wrong module binding), B18–B21 (SurrealDB missing → install unblocks downstream), carryover (empty-string directory_context normalization). CI green cycle slot 4.
+
+- **fix(ml_client):** B14 — `RemoteMLClient._CircuitBreaker` construction now passes `time_fn=self._now` for all three mode breakers (`ce`, `nli`, `pair`). Without this, test-injected fake clocks diverged from the breaker's internal clock (real monotonic ≈1.1M s vs. fake ≈1.0M+N s), causing premature OPEN→HALF_OPEN transitions in `test_breaker_reopens_on_probe_failure`.
+- **fix(test):** B15 — `test_write_time_contradiction.py::test_default_on_fires_detector` spy now patches `yadgar.curation.detect_contradictions` (the bound name from `__init__` import), NOT `yadgar.curation.contradiction.detect_contradictions` (source module). Patching the source module does not intercept calls made via the imported bound name.
+- **fix(deps):** B18–B21 — `surrealdb>=1.0.0` added to `[project.optional-dependencies].test` in `pyproject.toml`. SurrealDB 2.0.0 installed into `.venv-test`. This unblocks B17 (health endpoint), B18 (anchor_scope_split), B19 (project_brief_modes), B20 (consolidate_anchor_pass), B21 (consolidation_drainer_metrics) — all previously failing due to `StorageEngine` import error (no surrealdb module).
+- **fix(test):** B19 — `test_project_brief_modes.py`: `update_active_work`, `checkpoint`, and `anchor` calls on non-git `tmp_path` directories now pass `branch_hint='master'` so branch-context pre-validation passes.
+- **fix(test):** B21 — `test_consolidation_drainer_metrics.py`: drainer test payloads now include `_internal=True` to bypass branch-context pre-validation and reach the patched `_apply_inner`, allowing stage metrics to fire.
+- **fix(storage):** Carryover — `insert_memory` normalises `directory_context=''` → `'global'` at write time. SurrealDB 2.x embedded does not reliably round-trip `''` in equality comparisons; this ensures empty-string directory_context anchors surface via the global anchor bucket query. Skip-mark removed from `test_anchor_surfacing.test_empty_string_directory_context_treated_as_global`.
+- **fix(test):** Extra — `test_branch_schema_migration.py::_insert_bare_wiki_page` now supplies `directory_context='global'` to comply with migration_016 `DEFINE FIELD ... ASSERT $value != NONE` on `wiki_page`. Without it, SurrealDB rejects the INSERT.
+- **test:** 4 TDD scaffolding files `test_v5_46_6_*.py` guarding B14 clock injection, B15 module binding, carryover normalization, B19/B21 branch_hint regression.
+- **chore:** bump version 5.46.5 → 5.46.6 + uv.lock sync
+
+---
+
 ## [5.46.5] — 2026-06-05
 
 Missing functions, endpoints, hook files (CI green cycle slot 3). Fixes B3 (hook_db_lockdown_check import), B12 (consolidate_now sleep_cycle key). B4/B5/B16/B22 discovered pre-fixed.

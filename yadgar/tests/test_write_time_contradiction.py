@@ -140,7 +140,11 @@ def test_default_on_fires_detector(curator, storage, embeddings, monkeypatch):
     conf_before = _conf(storage, old_id)
     assert conf_before == 1.0, f"reset failed; got {conf_before}"
 
-    # Spy on detect_contradictions to confirm the wiring runs it
+    # Spy on detect_contradictions to confirm the wiring runs it.
+    # Must patch the name in yadgar.curation (where __init__ imported it),
+    # NOT in yadgar.curation.contradiction — that bound name is not used
+    # by _run_write_time_contradiction.
+    import yadgar.curation as _curation_mod
     import yadgar.curation.contradiction as _cmod
 
     _calls: list = []
@@ -150,7 +154,7 @@ def test_default_on_fires_detector(curator, storage, embeddings, monkeypatch):
         _calls.append((args, kwargs))
         return _orig(*args, **kwargs)
 
-    monkeypatch.setattr(_cmod, "detect_contradictions", _spy)
+    monkeypatch.setattr(_curation_mod, "detect_contradictions", _spy)
 
     curator.curate_on_remember(
         content=new_content,

@@ -1,5 +1,31 @@
 # Migration Notes
 
+## v5.46.6 — Circuit breaker clock fix, NLI spy wiring, SurrealDB install, carryover (2026-06-05)
+
+### No user action required for upgrade
+
+Users on v5.46.5 → v5.46.6: no configuration changes needed for standard deployments. One behavior change in `insert_memory` (see below).
+
+### What changed
+
+**yadgar/ml_client.py:** `RemoteMLClient` now passes `time_fn=self._now` to all three `_CircuitBreaker` constructors. This ensures the breaker's internal clock is the same clock as the client's `_now()` method, which tests can inject by setting `client._fake_now`. No runtime behavior change in production (both clocks return monotonic time from the same base).
+
+**yadgar/storage/memory.py (BEHAVIOR CHANGE):** `insert_memory` now normalises `directory_context=''` (empty string) to `'global'` before writing to SurrealDB. Previously, an empty string was stored verbatim; SurrealDB 2.x embedded does not reliably evaluate `= ''` equality in queries, causing anchors with `directory_context=''` to silently fail to surface via the global bucket. After this change, any caller passing `directory_context=''` will see `'global'` stored. Callers that explicitly rely on reading back an empty string from this field must update to `'global'` as the canonical sentinel.
+
+**yadgar/tests/test_write_time_contradiction.py:** `test_default_on_fires_detector` spy registration moved from `yadgar.curation.contradiction` to `yadgar.curation` (the package's bound name). No production change.
+
+**pyproject.toml:** `surrealdb>=1.0.0` added to `[project.optional-dependencies].test`. This ensures `pytest` setups using `pip install -e ".[test]"` include the SurrealDB Python client, which is required for `StorageEngine` to function in tests. Previously, SurrealDB had to be installed separately.
+
+**yadgar/tests/test_branch_schema_migration.py:** `_insert_bare_wiki_page` now supplies a `directory_context` value when simulating pre-v5 wiki pages. This is required by the migration_016 `wiki_page` schema constraint (active for all new SurrealDB sessions). The test still exercises branch-field migration (migration_004), not the directory_context constraint.
+
+### For contributors
+
+- When writing tests that call `update_active_work`, `checkpoint`, or `anchor` from non-git temporary directories, always pass `branch_hint='master'` to bypass branch-context pre-validation.
+- When writing consolidation drainer tests that patch `_apply_inner`, include `_internal=True` in the enqueue payload so items are not DLQ'd before reaching the patched method.
+- Empty-string `directory_context` is now silently normalised at write time — do not test for `directory_context == ''` after `insert_memory`; check for `'global'` instead.
+
+---
+
 ## v5.46.5 — Missing functions, endpoints, hook files (2026-06-05)
 
 ### No user action required for upgrade
