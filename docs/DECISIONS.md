@@ -45,7 +45,13 @@ User direction 2026-06-05 evening — "im getting more causius about the usabili
 
 **LEAN: Option B (retire v7).** Brutal honesty: v7 was speculative. v6 nightly + v5.x write-time gates + v8 team backend cover the use cases. Engineering effort better spent elsewhere (v8 team rollout, v6 curator quality, v5 ongoing).
 
-**Deferred final decision:** user evaluates Option A vs B vs C and confirms. If Option B chosen, v7 slot retires + roadmap pipeline renumbers (v7 row in pipeline becomes ~RETIRED PD-44~). If Option C chosen, v7 plan written after v8.0 ships + scope limited to team mode. If Option A chosen, v7 plan written as standalone with reframing.
+**RESOLVED 2026-06-05 night — Option B chosen.** User direction: "im thinkig b as well then v8 becomes v7." Consequences applied:
+- Original v7 ("real-time synthesis") RETIRED. Slot vacated. Concepts absorbed by v6 batch curator (covers ~5 of 6 original use cases) + v5.x write-time gates (already cover contradiction detection).
+- v8 ("team usability") RENUMBERED to v7. Plan file renamed: `docs/PLAN_V8_TEAM_USABILITY_SKELETON.md` → `docs/PLAN_V7_TEAM_USABILITY_SKELETON.md`. Sub-slots renamed: v8.0 → v7.0, v8.1 → v7.1, v8.2 → v7.2, v8.2.5 → v7.2.5, v8.3 → v7.3, v8.4 → v7.4.
+- Roadmap pipeline `docs/yadgar-roadmap-future-improvements.md`: "v7.0.0 Real-time synthesis" row deleted; "v8.0.0 Team usability" row renamed → "v7.0.0 Team usability"; cross-references updated.
+- PD-43 still applies — "v6 + v7" (team) + "v8" (no longer exists in this nomenclature). Where PD-43 references v8, treat as "v7" post-renumber. Historical PD body left intact per DECISIONS.md convention (append-only log; renumber is the resolution recorded HERE in PD-44).
+
+**Effort freed:** ~2-3 months engineering that would have gone to v7 real-time synthesis. Redirect to v7 (formerly v8) team rollout + v6 curator quality + ongoing v5.x.
 
 **Implications for v8 plan:**
 

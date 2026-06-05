@@ -1,14 +1,14 @@
-# PLAN — v8: Team usability (SKELETON / architecture spec)
+# PLAN — v7: Team usability (SKELETON / architecture spec)
 
-**Status:** SKELETON drafted 2026-06-05 evening. Hypothetical / architecture-only at this stage. NOT dispatch-ready. Will revisit after v6 (LLM curator scaffolding) + v7 (real-time synthesis) architectures crystallize — v7 sync semantics inform v8.2 federated-sync protocol design.
+**Status:** SKELETON drafted 2026-06-05 evening as "v8 team usability"; RENUMBERED 2026-06-05 night to v7 after PD-44 retired the original v7 ("real-time synthesis" Option B — see DECISIONS.md PD-44 for retire rationale). Hypothetical / architecture-only at this stage. NOT dispatch-ready. Will revisit after v6 (LLM curator scaffolding) crystallizes — v6 batch curator + v5.x write-time gates cover the synthesis use cases the retired v7 was supposed to solve.
 
-**Origin:** User discussion 2026-06-05 — "i need to discuss v8 which is making this beautiful product usable by teams." Personal-memory engine value translates into "team second brain" if the architectural tensions are resolved up front.
+**Origin:** User discussion 2026-06-05 — "i need to discuss v8 which is making this beautiful product usable by teams" (original v8 framing; subsequently renumbered to v7 after PD-44 retired old v7). Personal-memory engine value translates into "team second brain" if the architectural tensions are resolved up front.
 
 **Scope:** team collaboration on shared knowledge + memory while preserving the personal-memory contract that gives yadgar its identity. Multi-tenant + federated identity + auth/authz + sharing UX + conflict resolution + privacy/compliance.
 
-**Cross-cutting dependency:** `docs/DECISIONS.md` PD-43 — LLM inference is pluggable, default OFF for personal mode, 4 backend paths (local LLM / remote API / Claude pass-through interactive or headless via OAuth share / team backend). v6 (curator) + v7 (synthesis) + v8 (team) all inherit this strategy. v8 team-backend path is the natural home for curator/synthesis features — strengthens v8 value prop (team gets these features without per-user hardware cost).
+**Cross-cutting dependency:** `docs/DECISIONS.md` PD-43 — LLM inference is pluggable, default OFF for personal mode, 4 backend paths (local LLM / remote API / Claude pass-through interactive or headless via OAuth share / team backend). v6 (curator) + v7 (team) inherit this strategy. v7 team-backend path (slot v7.2.5) is the natural home for curator features — strengthens v7 value prop (team gets curator without per-user hardware cost).
 
-**Estimated effort:** 2-3 months engineering for v8.0 foundational layer alone. Multi-quarter cycle for full v8.0-v8.4 chain.
+**Estimated effort:** 2-3 months engineering for v7.0 foundational layer alone. Multi-quarter cycle for full v7.0-v7.4 chain.
 
 ---
 
@@ -30,13 +30,13 @@ Why federated personal-first wins:
 
 ---
 
-## Decision points (must resolve before v8.0 dispatch)
+## Decision points (must resolve before v7.0 dispatch)
 
 ### DP-A — Architecture model
 
 **Decided (skeleton):** Federated personal-first (per rationale above).
 
-**To re-confirm at dispatch time:** has v7 real-time synthesis introduced anything that changes the sync substrate? If v7 ships a peer-to-peer sync layer, v8 reuses it; if v7 stays single-process, v8.2 needs its own.
+**To re-confirm at dispatch time:** has v7 real-time synthesis introduced anything that changes the sync substrate? If v7 ships a peer-to-peer sync layer, v7 reuses it; if v7 stays single-process, v7.2 needs its own.
 
 ### DP-B — Default privacy
 
@@ -46,7 +46,7 @@ Why federated personal-first wins:
 - Default-private: lower friction for individuals; less default value for new team members joining (no team context to discover until peers explicitly share)
 - Default-team: higher discoverability; risk of leaking WIP personal context (e.g., debugging notes with credentials)
 
-**Decision before v8.0:** stay default-private. Provide tooling for bulk-promote-by-tag if onboarding pain real.
+**Decision before v7.0:** stay default-private. Provide tooling for bulk-promote-by-tag if onboarding pain real.
 
 ### DP-C — Identity provider
 
@@ -55,7 +55,7 @@ Why federated personal-first wins:
 - **Forgejo PAT-style bearer tokens** — simple, dev-friendly, no SSO integration cost
 - **SAML enterprise** — large org requirement, heaviest integration
 
-**Lean:** Ship Forgejo-style bearer tokens FIRST (v8.0), add OIDC for v8.1+ once team UX validated. SAML only if enterprise customers request.
+**Lean:** Ship Forgejo-style bearer tokens FIRST (v7.0), add OIDC for v7.1+ once team UX validated. SAML only if enterprise customers request.
 
 ### DP-D — Conflict resolution on concurrent writes
 
@@ -64,7 +64,7 @@ Why federated personal-first wins:
 - **Merge-request pattern** — explicit human review of conflicting edits. Slower, predictable, low engineering cost.
 - **Last-write-wins (LWW)** — simplest, lossy. v5.46.x cycle already showed how rough this is for wiki RMW.
 
-**Lean:** Merge-request for wiki (matches v5.64 surgical edit primitives; explicit promote workflow); LWW + version history for memory (CRDT v8.3+ if peer-to-peer sync ships).
+**Lean:** Merge-request for wiki (matches v5.64 surgical edit primitives; explicit promote workflow); LWW + version history for memory (CRDT v7.3+ if peer-to-peer sync ships).
 
 ### DP-E — Sharing UX
 
@@ -73,16 +73,16 @@ Why federated personal-first wins:
 - **Shadow-mirror with annotations:** all writes optionally mirror to team with auto-anonymization. Discoverable by team without owner action. Risk: privacy leak.
 - **Auto-promote heuristics:** signal-based (high heat + multiple access + cross-session) auto-suggests "looks like team-relevant — promote?". Best UX if heuristics accurate; risk of bad suggestions.
 
-**Lean:** Explicit (v8.0) → add auto-suggest in v8.1 once team usage patterns observable.
+**Lean:** Explicit (v7.0) → add auto-suggest in v7.1 once team usage patterns observable.
 
 ### DP-F — Cost model
 
 **Options:**
 - **Self-hosted only** — open source, deploy on own infra. Lowest support burden, lowest revenue path.
 - **Managed SaaS only** — yadgar runs team servers, customers pay per team/user/seat. Higher support burden, revenue path.
-- **Hybrid** — self-hosted free, managed paid tier with SSO + audit log + SLA. Most ambitious; affects v8 scope by orders of magnitude.
+- **Hybrid** — self-hosted free, managed paid tier with SSO + audit log + SLA. Most ambitious; affects v7 scope by orders of magnitude.
 
-**Lean:** Self-hosted for v8.0 (validate architecture works); decide on managed offering after.
+**Lean:** Self-hosted for v7.0 (validate architecture works); decide on managed offering after.
 
 ### DP-G — Migration from v5/v6/v7 single-user
 
@@ -101,9 +101,9 @@ Why federated personal-first wins:
 
 ---
 
-## Slot allocation (v8.0 → v8.4)
+## Slot allocation (v7.0 → v7.4)
 
-### v8.0 — Team server foundational
+### v7.0 — Team server foundational
 
 **Goal:** multi-tenant yadgar daemon with shared knowledge layer.
 
@@ -127,7 +127,7 @@ Why federated personal-first wins:
 
 ---
 
-### v8.1 — Team wiki + curation
+### v7.1 — Team wiki + curation
 
 **Goal:** human-in-the-loop curation of team knowledge.
 
@@ -142,7 +142,7 @@ Why federated personal-first wins:
 
 ---
 
-### v8.2 — Federated personal-team sync
+### v7.2 — Federated personal-team sync
 
 **Goal:** personal yadgar pulls team facts; team yadgar can pull opt-in personal anchors.
 
@@ -157,7 +157,7 @@ Why federated personal-first wins:
 
 ---
 
-### v8.2.5 — Team-backend inference (per PD-43)
+### v7.2.5 — Team-backend inference (per PD-43)
 
 **Goal:** team server hosts curator + synthesis inference (LLM backend) for the team. Unblocks v6+v7 features for users without local hardware.
 
@@ -169,9 +169,9 @@ Why federated personal-first wins:
 - Cost accounting: per-user metering for budget/billing
 - Curator runs nightly on team-shared knowledge with team-server inference (personal yadgar may opt to sync curator outputs into personal recall)
 
-**Effort:** ~2 months. Could overlap with v8.2 federated-sync.
+**Effort:** ~2 months. Could overlap with v7.2 federated-sync.
 
-**Inference path matrix (per PD-43, applies to all v8 deployments):**
+**Inference path matrix (per PD-43, applies to all v7 deployments):**
 
 | User has | Personal mode default | Team mode default |
 |---|---|---|
@@ -181,7 +181,7 @@ Why federated personal-first wins:
 
 ---
 
-### v8.3 — Multi-agent coordination
+### v7.3 — Multi-agent coordination
 
 **Goal:** concurrent Claude instances on the same team work coherently.
 
@@ -191,11 +191,11 @@ Why federated personal-first wins:
 - Lock-free conflict resolution: CRDT-lite for wiki (limited to v5.64 surgical edit primitives — text-anchor + positional with version guards); LWW for memory writes (rare for the same record to be concurrently written)
 - Multi-agent SubagentStop coordination: team subagents flush to team queue, not personal
 
-**Effort:** ~2 months. Possibly subsumes v8.2 federated-sync work.
+**Effort:** ~2 months. Possibly subsumes v7.2 federated-sync work.
 
 ---
 
-### v8.4 — Privacy + compliance
+### v7.4 — Privacy + compliance
 
 **Goal:** enterprise-ready privacy + compliance posture.
 
@@ -217,11 +217,11 @@ Cites future `docs/architecture.md` updates needed:
 
 - **§ Multi-tenancy model** — NEW section documenting team server, personal-first federation, namespace mapping
 - **§ Identity + auth at MCP boundary** — NEW section, expands existing YADGAR_MCP_AUTH_TOKEN model to per-team scope
-- **§ Sync protocol (v8.2)** — NEW section once sync substrate decided (HTTP poll vs webhook)
+- **§ Sync protocol (v7.2)** — NEW section once sync substrate decided (HTTP poll vs webhook)
 - **§ Visibility scoping** — NEW section, expands existing branch + directory context model with team + role
 - **§ Audit trail** — NEW section
 
-Architecture updates land BEFORE v8.0 dispatch per P1 invariant.
+Architecture updates land BEFORE v7.0 dispatch per P1 invariant.
 
 ---
 
@@ -237,13 +237,13 @@ Architecture updates land BEFORE v8.0 dispatch per P1 invariant.
 | P4 (schema constraint lifecycle) | **applies** | NEW: team_id NOT NULL on shared records; visibility NOT NULL with default 'private'; audit_log table |
 | P5 (MCP contract changes) | **applies** | NEW MCP tools (share_memory, team_recall, etc.); existing tools gain optional team_id param |
 | P7 (production write-path test) | **applies** | Every new MCP tool MUST have a drainer-write production-path test |
-| Workflow rule "every doc on master" | preserves | v8 plan lands on master once architecture committed |
+| Workflow rule "every doc on master" | preserves | v7 plan lands on master once architecture committed |
 
 ---
 
 ## Config Knob Lifecycle (P3)
 
-NEW knobs for v8.0:
+NEW knobs for v7.0:
 
 - `YADGAR_TEAM_ENABLED` (bool, default `false`) — opt-in flag for team-aware mode
 - `YADGAR_TEAM_SERVER_URL` (str, default empty) — URL of team yadgar instance
@@ -257,7 +257,7 @@ All knobs need yaml incremental-sync logic per X5 pattern (`yadgar config sync`)
 
 ## Schema Constraint Lifecycle (P4)
 
-NEW migration (v8.0, post-v5.46.x cycle close + post-v6 + post-v7):
+NEW migration (v7.0, post-v5.46.x cycle close + post-v6 + post-v7):
 
 - `wiki_page.team_id` NOT NULL (default `"personal"` for existing rows; backfill before constraint)
 - `wiki_page.visibility` NOT NULL DEFAULT 'private'
@@ -266,7 +266,7 @@ NEW migration (v8.0, post-v5.46.x cycle close + post-v6 + post-v7):
 - NEW table `team` (team_id PRIMARY KEY, name str, created_at, audit_log_enabled bool)
 - NEW table `team_member` (team_id, user_id, role str, added_at)
 - NEW table `audit_log` (team_id, user_id, action, target_id, timestamp, metadata)
-- NEW table `share_request` (id, team_id, source_record_id, requested_by, status, reviewed_by) — for merge-request workflow in v8.1
+- NEW table `share_request` (id, team_id, source_record_id, requested_by, status, reviewed_by) — for merge-request workflow in v7.1
 
 Per P4 invariant: backfill existing rows BEFORE applying NOT NULL constraint. Verify SurrealDB `IS NONE` semantics before designing migration (v5.42.5 Bug 1 precedent).
 
@@ -295,22 +295,22 @@ EXISTING tools (v5.x) gain optional `team_id` param:
 
 | Plan | Relationship |
 |---|---|
-| `docs/PLAN_V5_64_WIKI_EDIT_PRIMITIVES.md` | v8.1 merge-request workflow reuses v5.64 surgical edit primitives for collaborative wiki editing |
-| `docs/PLAN_V6_*.md` (LLM curator scaffolding) | v6 ships before v8; team server can opt into curator suggestions for team knowledge |
-| `docs/PLAN_V7_*.md` (real-time synthesis, TBD) | v7 sync semantics inform v8.2 federated-sync design |
-| Future `docs/PLAN_V8_0_TEAM_SERVER.md` | TBD when dispatch-ready; ships AFTER v7 |
+| `docs/PLAN_V5_64_WIKI_EDIT_PRIMITIVES.md` | v7.1 merge-request workflow reuses v5.64 surgical edit primitives for collaborative wiki editing |
+| `docs/PLAN_V6_*.md` (LLM curator scaffolding) | v6 ships before v7; team server can opt into curator suggestions for team knowledge |
+| `docs/PLAN_V7_*.md` (real-time synthesis, TBD) | v7 sync semantics inform v7.2 federated-sync design |
+| Future `docs/PLAN_V7_0_TEAM_SERVER.md` | TBD when dispatch-ready; ships AFTER v7 |
 
 ---
 
 ## Bug Class Precedent (P7)
 
-**Precedent 1 — branch-on-wiki rationale (v5.0 → v5.50+ archaeology):** speculative-infrastructure pattern. v8 must not ship team features that have zero users. Mitigation: every v8 tool gets a usage-metric counter pre-dispatch; if zero non-test usage after 1 month live, evaluate retire.
+**Precedent 1 — branch-on-wiki rationale (v5.0 → v5.50+ archaeology):** speculative-infrastructure pattern. v7 must not ship team features that have zero users. Mitigation: every v7 tool gets a usage-metric counter pre-dispatch; if zero non-test usage after 1 month live, evaluate retire.
 
-**Precedent 2 — wiki RMW corruption class:** multi-author wiki edits 10x harder than single-author. Mitigation: v8.1 explicit merge-request workflow (no auto-merge) + v5.64 surgical edits as foundation.
+**Precedent 2 — wiki RMW corruption class:** multi-author wiki edits 10x harder than single-author. Mitigation: v7.1 explicit merge-request workflow (no auto-merge) + v5.64 surgical edits as foundation.
 
 **Precedent 3 — secret leak class (v5.42.x cycle):** auth tokens at MCP boundary need defense-in-depth; never log token contents.
 
-**Verification probes (post-v8.0 ship):**
+**Verification probes (post-v7.0 ship):**
 1. Multi-tenant SurrealDB namespace isolation: write to team A, query as team B, verify no leakage
 2. Bearer token enforcement: invalid token returns 401, not 200-with-empty-result
 3. Visibility scoping: personal record never appears in team_recall output
@@ -333,29 +333,29 @@ EXISTING tools (v5.x) gain optional `team_id` param:
 NEW external deps (resolve at dispatch):
 
 - Identity library: `python-jose` (JWT validation) — pin major
-- OIDC client (v8.1+): `authlib` or similar — pin major
-- (v8.4+) SAML enterprise: `python-saml` or similar
-- Encryption at rest (v8.4): `cryptography` (already in yadgar) for KMS integration
+- OIDC client (v7.1+): `authlib` or similar — pin major
+- (v7.4+) SAML enterprise: `python-saml` or similar
+- Encryption at rest (v7.4): `cryptography` (already in yadgar) for KMS integration
 
 ---
 
 ## Agent Dispatch Budget (P11)
 
-v8 plan dispatch is months out. Per-slot estimates:
+v7 plan dispatch is months out. Per-slot estimates:
 
-- v8.0: ~3-4 months engineering, multi-cycle dispatches
-- v8.1: ~1.5-2 months
-- v8.2: ~2 months
-- v8.3: ~2 months (overlap possible with v8.2)
-- v8.4: ~2-3 months
+- v7.0: ~3-4 months engineering, multi-cycle dispatches
+- v7.1: ~1.5-2 months
+- v7.2: ~2 months
+- v7.3: ~2 months (overlap possible with v7.2)
+- v7.4: ~2-3 months
 
-Total: 11-14 months for full v8.0 → v8.4 chain. Concurrent dispatches possible across slots once v8.0 architecture stable.
+Total: 11-14 months for full v7.0 → v7.4 chain. Concurrent dispatches possible across slots once v7.0 architecture stable.
 
 ---
 
 ## Hard things you'll inherit
 
-1. **LLM inference hardware barrier (PD-43).** v6 curator + v7 synthesis require LLM inference. Local LLM gates out individual users (22+ GB RAM minimum for usable model). Per PD-43: pluggable backend with 4 paths (local / API / Claude pass-through interactive or headless / team backend). v8 team-backend is the value-prop pivot — feature parity for users who don't have hardware, at team-shared infra cost. Personal mode keeps features default-OFF; explicit opt-in + backend choice.
+1. **LLM inference hardware barrier (PD-43).** v6 curator + v7 synthesis require LLM inference. Local LLM gates out individual users (22+ GB RAM minimum for usable model). Per PD-43: pluggable backend with 4 paths (local / API / Claude pass-through interactive or headless / team backend). v7 team-backend is the value-prop pivot — feature parity for users who don't have hardware, at team-shared infra cost. Personal mode keeps features default-OFF; explicit opt-in + backend choice.
 
 2. **OAuth share for headless Claude pass-through (per PD-43, VALIDATED 2026-06-05).** Background curation requires non-interactive Claude — `claude -p` runs in ephemeral container with bind-mounted `~/.claude/.credentials.json:ro`. Proof-of-concept probe succeeded. Yadgar daemon scope-restricts use to curator/synthesis only. Trust boundary continuation (daemon already holds secrets). Audit log per invocation. Production needs pre-built `docker.io/openfantasy/yadgar-curator:VER` image with claude-code baked in (drops cold-start from ~20-30s npm install to ~1-2s) — v6 plan deliverable, parallel to yadgar-ci image (PD-42).
 
@@ -371,12 +371,12 @@ Total: 11-14 months for full v8.0 → v8.4 chain. Concurrent dispatches possible
 
 6. **Privacy posture for the default-private model.** If a user accidentally writes a personal record marked `visibility=team`, it's leaked. Need confirmation prompts + dry-run modes + post-write audit.
 
-7. **Real-time synthesis (v7) sync substrate may or may not extend to v8.2.** Coupling decision affects v8 architecture deeply.
+7. **Real-time synthesis (v7) sync substrate may or may not extend to v7.2.** Coupling decision affects v7 architecture deeply.
 
 ---
 
 ## Defer rationale
 
-v8 is 2 majors away. v6 LLM curator + v7 real-time synthesis must ship first. v7 in particular informs sync substrate decisions for v8.2. This skeleton parks the architectural thinking now so v8 dispatch isn't a cold start.
+v7 is 2 majors away. v6 LLM curator + v7 real-time synthesis must ship first. v7 in particular informs sync substrate decisions for v7.2. This skeleton parks the architectural thinking now so v7 dispatch isn't a cold start.
 
-When v8 becomes the next major: re-read this skeleton, resolve DP-A through DP-H, decompose into per-slot plans following the v8.0 → v8.4 outline, dispatch.
+When v7 becomes the next major: re-read this skeleton, resolve DP-A through DP-H, decompose into per-slot plans following the v7.0 → v7.4 outline, dispatch.
