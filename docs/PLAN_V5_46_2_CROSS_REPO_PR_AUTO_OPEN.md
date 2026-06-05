@@ -1,6 +1,6 @@
-# PLAN — v5.46.1: Cross-Repo PR Auto-Open (Brew Tap + Nix Repo)
+# PLAN — v5.46.2: Cross-Repo PR Auto-Open (Brew Tap + Nix Repo)
 
-**Status:** skeleton drafted 2026-06-04. REMEDIATED 2026-06-04 per V5_46_AUDIT_2026_06_04.md (P8 implementer detail — Forgejo PR body, script skeletons, auth path, idempotency). Split from v5.46.0 per opus-reviewer. Plan-first per I27.
+**Status:** skeleton drafted 2026-06-04. REMEDIATED 2026-06-04 per V5_46_AUDIT_2026_06_04.md (P8 implementer detail — Forgejo PR body, script skeletons, auth path, idempotency). Split from v5.46.0 per opus-reviewer. Plan-first per I27. RENUMBERED 2026-06-05 from v5.46.1 → v5.46.2 — original slot reassigned to infrastructure prep (see `docs/PLAN_V5_46_1_DISTRIBUTION_INFRA.md`) because tap repo + Forgejo secrets + `scripts/bump_version.py` were unmet dependencies for the script-authoring scope.
 
 **Parent plan:** `docs/PLAN_V5_46_0_DISTRIBUTION.md` (Step 7 jobs `open-brew-pr` + `open-nix-pr` — split out for token-rotation security surface).
 
@@ -8,7 +8,7 @@
 
 **Split rationale:** v5.46.0 ships manual bump workflow (release workflow attaches assets + creates Codeberg release). Auto-open PRs against `homebrew-yadgar` + `nix` repo require cross-repo PATs (`BREW_BUMP_TOKEN`, `NIX_BUMP_TOKEN`) — separate security surface worth a dedicated dispatch once v5.46.0 manual workflow is proven.
 
-**Depends on:** v5.46.0 shipped (Homebrew formula template + `homebrew-yadgar` tap repo created + `scripts/bump_version.py` operational).
+**Depends on:** v5.46.1 SHIPPED (homebrew-yadgar tap repo exists + BREW_BUMP_TOKEN/NIX_BUMP_TOKEN configured in yadgar Forgejo secrets + `scripts/bump_version.py` operational + optional PyPI account/token if pipx-PyPI lane is in scope).
 
 ---
 
@@ -83,8 +83,8 @@ No MCP changes. CI workflow only.
 
 | Plan | Relationship |
 |---|---|
-| `docs/PLAN_V5_46_0_DISTRIBUTION.md` | Parent. v5.46.0 ships `.forgejo/workflows/release.yaml` with `open-brew-pr` + `open-nix-pr` jobs as stubs (commented out or `if: false` gated). v5.46.1 fills in those jobs. Coordinate: v5.46.0 must leave the stub + document token secrets in MIGRATION_NOTES. |
-| `docs/PLAN_V5_47_0_UPDATE_MECHANISM.md` | Downstream. `yadgar update --check` calls Codeberg releases API — format aligned with release automation output from v5.46.0/v5.46.1. No conflict. |
+| `docs/PLAN_V5_46_0_DISTRIBUTION.md` | Parent. v5.46.0 ships `.forgejo/workflows/release.yaml` with `open-brew-pr` + `open-nix-pr` jobs as stubs (commented out or `if: false` gated). v5.46.2 fills in those jobs. Coordinate: v5.46.0 must leave the stub + document token secrets in MIGRATION_NOTES. |
+| `docs/PLAN_V5_47_0_UPDATE_MECHANISM.md` | Downstream. `yadgar update --check` calls Codeberg releases API — format aligned with release automation output from v5.46.0/v5.46.2. No conflict. |
 
 No migration number conflicts.
 
@@ -97,9 +97,9 @@ No migration number conflicts.
 **Precedent 2 — Token scope leak:** if `BREW_BUMP_TOKEN` has write access beyond PR-create (e.g., push to `main`), a compromised CI job could push directly to the tap. Token MUST be scoped to PR-create only; verify token permissions in Step 0.
 
 **Verification Probes (post-ship):**
-1. Push `v5.46.1` tag → confirm PR opens on `homebrew-yadgar` at `bump-v5.46.1` → confirm PR title includes version.
+1. Push `v5.46.2` tag → confirm PR opens on `homebrew-yadgar` at `bump-v5.46.2` → confirm PR title includes version.
 2. Push same tag again (retry scenario) → confirm no duplicate PR opened (idempotency).
-3. Push alpha tag `v5.46.1-alpha.1` → confirm NO PR opened (conditional gate).
+3. Push alpha tag `v5.46.2-alpha.1` → confirm NO PR opened (conditional gate).
 4. Revoke `BREW_BUMP_TOKEN` → push tag → confirm job fails with explicit error (not silent).
 
 ---
@@ -139,7 +139,7 @@ N/A — no benchmark agent dispatch. Standard implementer dispatch; 1-2 calendar
 ### Step 1 — TDD scaffolding
 - `yadgar/tests/test_cross_repo_pr.py`: test idempotency logic (mock Forgejo API).
 - Test: `open_brew_pr(version="5.46.1", existing_prs=[])` → API called once.
-- Test: `open_brew_pr(version="5.46.1", existing_prs=["bump-v5.46.1"])` → skipped.
+- Test: `open_brew_pr(version="5.46.1", existing_prs=["bump-v5.46.2"])` → skipped.
 - Test: pre-release version → skipped.
 
 ### Step 2 — Forgejo PR-open script
@@ -221,10 +221,10 @@ echo "PR opened on ${REPO} for ${BRANCH}."
 
 ## Acceptance Criteria
 
-- [ ] Push `v5.46.1` tag → PR auto-opens on `homebrew-yadgar`.
-- [ ] Push `v5.46.1` tag a second time → no duplicate PR.
-- [ ] Push `v5.46.1-alpha.1` → no PR opened.
+- [ ] Push `v5.46.2` tag → PR auto-opens on `homebrew-yadgar`.
+- [ ] Push `v5.46.2` tag a second time → no duplicate PR.
+- [ ] Push `v5.46.2-alpha.1` → no PR opened.
 - [ ] `BREW_BUMP_TOKEN` revoked → CI job fails with non-zero exit + explicit error message.
 - [ ] `pytest yadgar/tests/test_cross_repo_pr.py` green.
-- [ ] CHANGELOG.md v5.46.1 entry.
-- [ ] MIGRATION_NOTES.md v5.46.1 section: token setup + fallback procedure.
+- [ ] CHANGELOG.md v5.46.2 entry.
+- [ ] MIGRATION_NOTES.md v5.46.2 section: token setup + fallback procedure.
