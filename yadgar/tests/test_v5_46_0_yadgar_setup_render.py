@@ -18,6 +18,8 @@ SHELLCHECK = shutil.which("shellcheck")
 def _run_setup(*args, env_extra=None):
     env = os.environ.copy()
     env["YADGAR_CONTAINER_RUNTIME"] = "echo"  # no-op runtime for dryrun
+    # Spoof Linux to bypass NixOS guard (test environment may be NixOS)
+    env["YADGAR_TEST_OS_MARKER"] = "linux"
     if env_extra:
         env.update(env_extra)
     return subprocess.run(

@@ -1,0 +1,449 @@
+#!/usr/bin/env bash
+# yadgar-setup — distribution-side setup entrypoint for pipx/brew/nix users.
+# Parallels `make setup` for users without a repo checkout.
+# Option C (v5.46.0): standalone script, NOT a yadgar CLI subcommand.
+#
+# Usage:
+#   yadgar-setup [--noninteractive] [--dryrun] [--doctor]
+#
+# Flags:
+#   --noninteractive   Use defaults; no interactive prompts.
+#   --dryrun           Print commands without executing them.
+#   --doctor           Run verification probes (macOS launchd + metrics endpoint).
+#
+# Exit codes:
+#   0  success
+#   1  setup failure (message printed to stderr)
+#
+# Install asset resolution:
+#   Locates wheel-shipped install_assets/ via importlib.resources (sys.prefix fallback).
+#   Works under pipx, brew virtualenv, and nix profile installs.
+#
+# Idempotency:
+#   Re-runnable. Each building block is idempotent. Skips already-applied steps.
+
+set -euo pipefail
+
+# ── flag parsing ──────────────────────────────────────────────────────────────
+
+NONINTERACTIVE=0
+DRYRUN=0
+DOCTOR=0
+
+for arg in "$@"; do
+    case "$arg" in
+        --noninteractive) NONINTERACTIVE=1 ;;
+        --dryrun)         DRYRUN=1 ;;
+        --doctor)         DOCTOR=1 ;;
+        --help|-h)
+            cat <<'EOF'
+Usage: yadgar-setup [--noninteractive] [--dryrun] [--doctor]
+
+  --noninteractive   Use defaults; skip interactive prompts.
+  --dryrun           Print commands without executing them.
+  --doctor           Run verification probes (metrics, launchd, etc.).
+  --help             Show this message.
+
+yadgar-setup configures Yadgar for users installed via pipx, Homebrew, or nix profile.
+Parallels `make setup` for users without a repo checkout.
+
+Building blocks (in order):
+  1. detect_runtime + detect_os
+  2. pull-images
+  3. bootstrap-secrets
+  4. generate_systemd (Linux) / generate_launchd (macOS)
+  5. enable-units (systemctl / launchctl)
+  6. install-hooks
+  7. install-agents
+  8. config-sync
+  9. install-rules (append CLAUDE.md fragment)
+  10. seed-anchors
+
+See https://codeberg.org/maxagahi/yadgar for full documentation.
+EOF
+            exit 0
+            ;;
+        *)
+            echo "ERROR: Unknown flag: $arg" >&2
+            echo "Run 'yadgar-setup --help' for usage." >&2
+            exit 1
+            ;;
+    esac
+done
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+log()  { echo "==> $*"; }
+info() { echo "    $*"; }
+warn() { echo "WARN: $*" >&2; }
+die()  { echo "ERROR: $*" >&2; exit 1; }
+
+run() {
+    # In dryrun mode: print the command. Otherwise: execute it.
+    if [ "$DRYRUN" -eq 1 ]; then
+        echo "[dryrun] $*"
+    else
+        "$@"
+    fi
+}
+
+run_sh() {
+    # Run a shell script with run() wrapping (prints command in dryrun).
+    if [ "$DRYRUN" -eq 1 ]; then
+        echo "[dryrun] bash $*"
+    else
+        bash "$@"
+    fi
+}
+
+# ── asset resolution ──────────────────────────────────────────────────────────
+
+# Locate wheel-shipped install_assets via importlib.resources (sys.prefix path).
+# Fallback: check if we are running from a repo checkout (SCRIPTS_DIR/../install_assets).
+_locate_install_assets() {
+    # Try importlib.resources path first (wheel/pipx/brew/nix install)
+    local share_path
+    share_path=$(python3 -c "
+import sys, os
+prefix = sys.prefix
+candidate = os.path.join(prefix, 'share', 'yadgar', 'install_assets')
+print(candidate)
+" 2>/dev/null || true)
+
+    if [ -n "$share_path" ] && [ -d "$share_path" ]; then
+        echo "$share_path"
+        return
+    fi
+
+    # Fallback: repo checkout (script lives at scripts/install/yadgar-setup.sh)
+    local repo_candidate
+    repo_candidate="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/install_assets"
+    if [ -d "$repo_candidate" ]; then
+        echo "$repo_candidate"
+        return
+    fi
+
+    die "Cannot locate install_assets/. Is yadgar installed correctly? (sys.prefix=$share_path)"
+}
+
+_locate_setup_scripts() {
+    # Locate the scripts/install/ dir (contains detect_runtime.sh, etc.)
+    # The wheel only ships yadgar-setup.sh; all other building-block scripts require
+    # a repo checkout. In pipx/brew/nix installs those scripts are called via
+    # `python3 -m yadgar` CLI subcommands instead.
+
+    # Try repo checkout (script lives at scripts/install/yadgar-setup.sh)
+    local repo_scripts
+    repo_scripts="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [ -f "$repo_scripts/detect_runtime.sh" ]; then
+        echo "$repo_scripts"
+        return
+    fi
+
+    # Not a repo checkout — building-block scripts unavailable (expected for pipx/brew/nix)
+    echo ""
+}
+
+# ── runtime + OS detection ────────────────────────────────────────────────────
+
+_detect_runtime() {
+    # Check YADGAR_CONTAINER_RUNTIME override first
+    if [ -n "${YADGAR_CONTAINER_RUNTIME:-}" ]; then
+        echo "$YADGAR_CONTAINER_RUNTIME"
+        return
+    fi
+
+    local scripts_dir
+    scripts_dir="$(_locate_setup_scripts)"
+
+    if [ -n "$scripts_dir" ] && [ -f "$scripts_dir/detect_runtime.sh" ]; then
+        bash "$scripts_dir/detect_runtime.sh"
+    else
+        # Inline detection (used when building-block scripts unavailable)
+        if command -v podman &>/dev/null && podman info &>/dev/null 2>&1; then
+            echo "podman"
+        elif command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+            echo "docker"
+        else
+            die "No container runtime found. Install podman or docker, or set YADGAR_CONTAINER_RUNTIME."
+        fi
+    fi
+}
+
+_detect_os() {
+    if [ -n "${YADGAR_TEST_OS_MARKER:-}" ]; then
+        echo "$YADGAR_TEST_OS_MARKER"
+        return
+    fi
+
+    local scripts_dir
+    scripts_dir="$(_locate_setup_scripts)"
+
+    if [ -n "$scripts_dir" ] && [ -f "$scripts_dir/detect_os.sh" ]; then
+        bash "$scripts_dir/detect_os.sh"
+    else
+        # Inline detection
+        if [ -f /etc/NIXOS ] || command -v nixos-version &>/dev/null 2>&1; then
+            echo "linux-nixos"
+        elif [ "$(uname -s)" = "Darwin" ]; then
+            echo "macos"
+        else
+            echo "linux"
+        fi
+    fi
+}
+
+# ── setup steps ───────────────────────────────────────────────────────────────
+
+_step_detect() {
+    log "Step 1/10: Detecting runtime + OS..."
+    RUNTIME=$(_detect_runtime)
+    OS=$(_detect_os)
+    info "Runtime: $RUNTIME"
+    info "OS: $OS"
+
+    if [ "$OS" = "linux-nixos" ]; then
+        die "NixOS detected. Use the nix flake install instead: nix profile install codeberg:maxagahi/yadgar && yadgar-setup"
+    fi
+}
+
+_step_pull_images() {
+    log "Step 2/10: Pulling container images..."
+    local version
+    version=$(python3 -c "import yadgar; print(yadgar.__version__)" 2>/dev/null || echo "latest")
+    run "$RUNTIME" pull "docker.io/openfantasy/yadgar:${version}"
+    run "$RUNTIME" pull "docker.io/openfantasy/yadgar-backend:${version}"
+}
+
+_step_bootstrap_secrets() {
+    log "Step 3/10: Bootstrapping secrets..."
+    local scripts_dir
+    scripts_dir="$(_locate_setup_scripts)"
+
+    if [ -n "$scripts_dir" ] && [ -f "$scripts_dir/bootstrap_secrets.sh" ]; then
+        run_sh "$scripts_dir/bootstrap_secrets.sh"
+    else
+        warn "bootstrap_secrets.sh not found in scripts dir; skipping (run manually)"
+        info "Manual: set ANTHROPIC_API_KEY in ~/.yadgar/secrets.env"
+        if [ "$DRYRUN" -eq 1 ]; then
+            echo "[dryrun] bash bootstrap_secrets.sh (INSTALL_NONINTERACTIVE=${NONINTERACTIVE})"
+        fi
+    fi
+}
+
+_step_generate_units() {
+    log "Step 4/10: Generating daemon units (${OS})..."
+    local scripts_dir
+    scripts_dir="$(_locate_setup_scripts)"
+    local yadgar_dir="${YADGAR_DIR:-${HOME}/.yadgar}"
+    local version
+    version=$(python3 -c "import yadgar; print(yadgar.__version__)" 2>/dev/null || echo "latest")
+
+    case "$OS" in
+        linux|linux-other)
+            local systemd_dir="${YADGAR_SYSTEMD_OUTPUT_DIR:-${HOME}/.config/systemd/user}"
+            if [ -n "$scripts_dir" ] && [ -f "$scripts_dir/generate_systemd.sh" ]; then
+                run env \
+                    YADGAR_RUNTIME="$RUNTIME" \
+                    YADGAR_INSTALL_PREFIX="$yadgar_dir" \
+                    YADGAR_SECRETS_ENV_FILE="${yadgar_dir}/secrets.env" \
+                    YADGAR_BACKEND_IMAGE="docker.io/openfantasy/yadgar-backend:${version}" \
+                    YADGAR_CORE_IMAGE="docker.io/openfantasy/yadgar:${version}" \
+                    YADGAR_SYSTEMD_OUTPUT_DIR="$systemd_dir" \
+                    bash "$scripts_dir/generate_systemd.sh"
+            else
+                warn "generate_systemd.sh not found; skipping unit generation"
+                if [ "$DRYRUN" -eq 1 ]; then
+                    echo "[dryrun] generate_systemd.sh (systemd to $systemd_dir)"
+                fi
+            fi
+            ;;
+        macos)
+            local launchd_dir="${YADGAR_LAUNCHD_OUTPUT_DIR:-${HOME}/Library/LaunchAgents}"
+            if [ -n "$scripts_dir" ] && [ -f "$scripts_dir/generate_launchd.sh" ]; then
+                run env \
+                    YADGAR_RUNTIME="$RUNTIME" \
+                    YADGAR_INSTALL_PREFIX="$yadgar_dir" \
+                    YADGAR_SECRETS_ENV_FILE="${yadgar_dir}/secrets.env" \
+                    YADGAR_BACKEND_IMAGE="docker.io/openfantasy/yadgar-backend:${version}" \
+                    YADGAR_CORE_IMAGE="docker.io/openfantasy/yadgar:${version}" \
+                    YADGAR_LAUNCHD_OUTPUT_DIR="$launchd_dir" \
+                    bash "$scripts_dir/generate_launchd.sh"
+            else
+                warn "generate_launchd.sh not found; skipping plist generation"
+                if [ "$DRYRUN" -eq 1 ]; then
+                    echo "[dryrun] generate_launchd.sh (launchd to $launchd_dir)"
+                fi
+            fi
+            ;;
+        *)
+            die "Unsupported OS: $OS"
+            ;;
+    esac
+}
+
+_step_enable_units() {
+    log "Step 5/10: Enabling daemon units..."
+    case "$OS" in
+        linux|linux-other)
+            run systemctl --user daemon-reload
+            run systemctl --user enable --now yadgar.target
+            ;;
+        macos)
+            local launchd_dir="${YADGAR_LAUNCHD_OUTPUT_DIR:-${HOME}/Library/LaunchAgents}"
+            local macos_major
+            macos_major=$(sw_vers -productVersion 2>/dev/null | cut -d. -f1 || echo "11")
+            for plist in "${launchd_dir}/com.openfantasy.yadgar.plist" \
+                         "${launchd_dir}/com.openfantasy.yadgar-backend.plist"; do
+                if [ ! -f "$plist" ] && [ "$DRYRUN" -eq 0 ]; then
+                    warn "$plist not found — did generate_launchd.sh fail?"
+                    continue
+                fi
+                run launchctl unload "$plist" 2>/dev/null || true
+                if [ "${macos_major}" -ge 11 ] 2>/dev/null; then
+                    run launchctl bootstrap "gui/$(id -u)" "$plist"
+                else
+                    run launchctl load -w "$plist"
+                fi
+            done
+            ;;
+    esac
+}
+
+_step_install_hooks() {
+    log "Step 6/10: Installing Claude Code git hooks..."
+    run python3 -m yadgar install-hooks --scope global
+}
+
+_step_install_agents() {
+    log "Step 7/10: Installing subagent templates..."
+    run python3 -m yadgar install-subagents
+}
+
+_step_config_sync() {
+    log "Step 8/10: Syncing config..."
+    run python3 -m yadgar config sync
+}
+
+_step_install_rules() {
+    log "Step 9/10: Appending CLAUDE.md rules fragment..."
+    local assets_dir
+    assets_dir="$(_locate_install_assets)"
+    local fragment="${assets_dir}/CLAUDE.md.fragment"
+    local claude_md="${HOME}/.claude/CLAUDE.md"
+
+    if [ ! -f "$fragment" ]; then
+        warn "CLAUDE.md.fragment not found at $fragment; skipping"
+        return
+    fi
+
+    local scripts_dir
+    scripts_dir="$(_locate_setup_scripts)"
+    if [ -n "$scripts_dir" ] && [ -f "$scripts_dir/append_claude_rules.sh" ]; then
+        run env \
+            YADGAR_CLAUDE_MD_TARGET="$claude_md" \
+            YADGAR_FRAGMENT_PATH="$fragment" \
+            bash "$scripts_dir/append_claude_rules.sh"
+    else
+        if [ "$DRYRUN" -eq 1 ]; then
+            echo "[dryrun] append_claude_rules.sh ($fragment -> $claude_md)"
+        else
+            warn "append_claude_rules.sh not found; skipping rules install"
+        fi
+    fi
+}
+
+_step_seed_anchors() {
+    log "Step 10/10: Seeding canonical anchors..."
+    local assets_dir
+    assets_dir="$(_locate_install_assets)"
+    local anchors_yaml="${assets_dir}/seeds/anchors.yaml"
+
+    if [ ! -f "$anchors_yaml" ] && [ "$DRYRUN" -eq 0 ]; then
+        warn "anchors.yaml not found at $anchors_yaml; skipping"
+        return
+    fi
+
+    run python3 -m yadgar seed --anchors "$anchors_yaml"
+}
+
+# ── doctor probes ─────────────────────────────────────────────────────────────
+
+_run_doctor() {
+    log "Doctor: Running verification probes..."
+
+    case "$OS" in
+        macos)
+            local launchd_dir="${YADGAR_LAUNCHD_OUTPUT_DIR:-${HOME}/Library/LaunchAgents}"
+            for plist in "${launchd_dir}/com.openfantasy.yadgar.plist" \
+                         "${launchd_dir}/com.openfantasy.yadgar-backend.plist"; do
+                if [ -f "$plist" ]; then
+                    run plutil -lint "$plist" && info "OK: $plist"
+                else
+                    warn "Plist not found: $plist"
+                fi
+            done
+            run launchctl list | grep com.openfantasy.yadgar && info "OK: launchd agents listed" || warn "launchd agents not found"
+            ;;
+        linux|linux-other)
+            run systemctl --user --no-pager status yadgar.target 2>&1 | head -5 || warn "yadgar.target not active"
+            ;;
+    esac
+
+    # Metrics endpoint probe
+    info "Checking metrics endpoint (http://localhost:8765/metrics)..."
+    if command -v curl &>/dev/null; then
+        if curl -sf http://localhost:8765/metrics >/dev/null 2>&1; then
+            info "OK: /metrics responding"
+        else
+            warn "/metrics not responding — is the daemon running?"
+        fi
+    fi
+}
+
+# ── main ──────────────────────────────────────────────────────────────────────
+
+main() {
+    if [ "$DRYRUN" -eq 1 ]; then
+        echo "=== yadgar-setup --dryrun ==="
+        echo "    Commands will be printed but NOT executed."
+        echo ""
+    fi
+
+    # Phase 1: Detect runtime and OS
+    _step_detect
+
+    if [ "$DOCTOR" -eq 1 ]; then
+        _run_doctor
+        exit 0
+    fi
+
+    # Phase 2: Pull images
+    _step_pull_images
+
+    # Phase 3: Bootstrap secrets
+    _step_bootstrap_secrets
+
+    # Phase 4: Generate daemon units
+    _step_generate_units
+
+    # Phase 5: Enable units
+    _step_enable_units
+
+    # Phase 6-10: Application-level setup (yadgar CLI building blocks)
+    _step_install_hooks
+    _step_install_agents
+    _step_config_sync
+    _step_install_rules
+    _step_seed_anchors
+
+    echo ""
+    if [ "$DRYRUN" -eq 1 ]; then
+        echo "==> [dryrun] yadgar-setup complete — no changes made."
+    else
+        echo "==> Yadgar setup complete!"
+        echo "    Run 'yadgar-setup --doctor' to verify."
+    fi
+}
+
+main

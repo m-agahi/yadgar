@@ -35,6 +35,7 @@ def test_setup_sh_dryrun_covers_make_setup_chain():
     """yadgar-setup --dryrun output must mention all make setup building blocks."""
     env = os.environ.copy()
     env["YADGAR_CONTAINER_RUNTIME"] = "echo"
+    env["YADGAR_TEST_OS_MARKER"] = "linux"  # bypass NixOS guard on NixOS test hosts
     result = subprocess.run(
         ["bash", str(SETUP_SH), "--dryrun"],
         capture_output=True,
@@ -53,6 +54,7 @@ def test_setup_sh_unit_generation_step_present():
     """yadgar-setup --dryrun must mention unit generation (systemd or launchd)."""
     env = os.environ.copy()
     env["YADGAR_CONTAINER_RUNTIME"] = "echo"
+    env["YADGAR_TEST_OS_MARKER"] = "linux"  # bypass NixOS guard on NixOS test hosts
     result = subprocess.run(
         ["bash", str(SETUP_SH), "--dryrun"],
         capture_output=True,
@@ -70,6 +72,7 @@ def test_setup_sh_dryrun_exits_clean():
     """yadgar-setup --dryrun must exit 0."""
     env = os.environ.copy()
     env["YADGAR_CONTAINER_RUNTIME"] = "echo"
+    env["YADGAR_TEST_OS_MARKER"] = "linux"  # bypass NixOS guard on NixOS test hosts
     result = subprocess.run(
         ["bash", str(SETUP_SH), "--dryrun"],
         capture_output=True,
