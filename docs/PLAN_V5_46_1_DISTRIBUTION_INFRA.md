@@ -46,7 +46,7 @@ See USER ACTION CHECKLIST below.
 
 `docs/architecture.md` sections:
 - **Release lifecycle**: this plan stands up the cross-repo distribution surface referenced by v5.46.0's release workflow.
-- **Secret management**: Forgejo secrets are the canonical store for cross-repo PATs (matches existing `NIX_BUMP_TOKEN` placeholder comment at `.forgejo/workflows/release.yaml`).
+- **Secret management**: Forgejo secrets are the canonical store for CI PATs. `PYPI_API_TOKEN` follows this pattern. `NIX_BUMP_TOKEN` removed from scope per PD-40; `open-nix-pr` stub deleted from release.yaml.
 
 No architecture changes proposed.
 
