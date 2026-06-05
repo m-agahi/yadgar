@@ -22,13 +22,17 @@ YADGAR_CONTAINER_RUNTIME ?=
 YADGAR_DIR   ?= $(HOME)/.yadgar
 # OS spoofing for cross-platform testing (set YADGAR_TEST_OS_MARKER=macos to simulate macOS)
 YADGAR_TEST_OS_MARKER ?=
+# Test seams for install_runtime.sh
+YADGAR_TEST_OS_RELEASE ?=
+YADGAR_TEST_INSTALL_DRYRUN ?=
+YADGAR_TEST_TTY ?=
 
 # Version — read once from server.json at parse time
 YADGAR_VERSION := $(shell grep -m1 '"version"' $(REPO_ROOT)server.json | cut -d'"' -f4)
 
 .PHONY: all help pre-setup setup uninstall uninstall-purge \
         install-hooks install-agents config-sync install-rules \
-        seed-anchors detect-runtime detect-os clean check \
+        seed-anchors detect-runtime detect-os install-runtime clean check \
         pull-images bootstrap-secrets enable-units enable-units-linux enable-units-macos \
         _enable-units-auto restore
 
@@ -61,6 +65,14 @@ detect-runtime:
 ## detect-os: Probe and print host OS
 detect-os:
 	@bash $(SCRIPTS_DIR)/detect_os.sh
+
+## install-runtime: Install a container runtime (podman) interactively or print hint in CI
+install-runtime:
+	@INSTALL_NONINTERACTIVE=$(INSTALL_NONINTERACTIVE) \
+	  YADGAR_TEST_OS_RELEASE="$(YADGAR_TEST_OS_RELEASE)" \
+	  YADGAR_TEST_INSTALL_DRYRUN="$(YADGAR_TEST_INSTALL_DRYRUN)" \
+	  YADGAR_TEST_TTY="$(YADGAR_TEST_TTY)" \
+	  bash $(SCRIPTS_DIR)/install_runtime.sh
 
 ## install-hooks: Install Claude Code git hooks (daemon-independent)
 install-hooks:
@@ -214,6 +226,6 @@ clean:
 	        $(HOME)/.config/systemd/user/yadgar.target
 	@echo "Cleaned generated systemd units."
 
-## check: Run v5.45.0 tests
+## check: Run v5.45.x + v5.46.x tests
 check:
-	python3 -m pytest yadgar/tests/test_v5_45_*.py --noconftest --override-ini="addopts=" -q
+	python3 -m pytest yadgar/tests/test_v5_45_*.py yadgar/tests/test_v5_46_*.py --noconftest --override-ini="addopts=" -q
