@@ -1,5 +1,19 @@
 # Migration Notes
 
+## v5.46.5 — Missing functions, endpoints, hook files (2026-06-05)
+
+### No user action required for upgrade
+
+Users on v5.46.4 → v5.46.5: no configuration changes needed. Container images, MCP protocol, server API, and runtime configuration are unchanged. This release only restores a removed test-compatibility function and fixes a test calling wrong consolidation mode.
+
+### What changed
+
+- `hook_db_lockdown_check()` restored to `yadgar/scripts/hook_runner.py` for test compatibility (B3).
+- `consolidate_now()` integration test now calls `mode='full'` as intended (B12).
+- B4/B5/B16/B22 already fixed in prior commits — no-ops in this slot.
+
+---
+
 ## v5.46.4 — Test fixture refactor layer (2026-06-05)
 
 ### No user action required for upgrade

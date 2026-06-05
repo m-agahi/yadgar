@@ -191,6 +191,49 @@ def hook_prompt_recall() -> None:
             print(text)
 
 
+_BLOCKED_EXEC_PATTERNS = (
+    "docker exec yadgar-backend",
+    "docker exec yadgar-db",
+)
+
+
+def hook_db_lockdown_check() -> None:
+    """PreToolUse (Bash) — block direct docker exec into yadgar containers.
+
+    Restored in v5.46.5: the standalone yadgar/hooks/db-lockdown-check.py
+    replaced this function in v5.20.0, but test_hook_runner_pretooluse_schema.py
+    still imports hook_db_lockdown_check from this module (B3 CI fix).
+    This function exports the same logic for test compatibility.
+    """
+    try:
+        data = json.load(sys.stdin)
+    except json.JSONDecodeError, ValueError:
+        print(json.dumps({"hookSpecificOutput": {"permissionDecision": "allow"}}))
+        return
+
+    cmd = ""
+    tool_input = data.get("tool_input", {})
+    if isinstance(tool_input, dict):
+        cmd = tool_input.get("command", "")
+
+    for pattern in _BLOCKED_EXEC_PATTERNS:
+        if pattern in cmd:
+            print(
+                json.dumps(
+                    {
+                        "hookSpecificOutput": {"permissionDecision": "deny"},
+                        "systemMessage": (
+                            "Direct docker exec into yadgar DB/backend containers is blocked "
+                            "to prevent data corruption. Use yadgar MCP tools instead."
+                        ),
+                    }
+                )
+            )
+            return
+
+    print(json.dumps({"hookSpecificOutput": {"permissionDecision": "allow"}}))
+
+
 _BLOCK_REFLECT_TOOLS = frozenset(
     {
         "mcp__yadgar__block_create",
