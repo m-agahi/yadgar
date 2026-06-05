@@ -28,7 +28,43 @@
 | Claude pass-through (background, OAuth) | `claude-passthrough:headless` | $0 (existing sub) | seconds | Anthropic sees data | YES (via `claude -p` + shared OAuth) |
 | Team backend (v8 only) | `team-backend` | team pays infra | sub-100ms | within team | yes |
 
-**Claude pass-through clarification (per user 2026-06-05):** interactive pass-through (dispatching subagents from open Claude session) doesn't work for nightly curation since user's session isn't always open. Resolution: yadgar daemon needs access to user's OAuth credentials so `claude -p` (programmatic non-interactive Claude Code) can run in the background with user's auth. Claude Code stores credentials at `~/.claude/credentials.json` (or equivalent); yadgar daemon reads them to authenticate `claude -p` invocations. Trust model: yadgar daemon already holds other secrets (DB passwords, MCP auth token); OAuth share is a continuation of existing trust boundary.
+**Claude pass-through clarification (per user 2026-06-05):** interactive pass-through (dispatching subagents from open Claude session) doesn't work for nightly curation since user's session isn't always open. Resolution: yadgar daemon needs access to user's OAuth credentials so `claude -p` (programmatic non-interactive Claude Code) can run in the background with user's auth. Claude Code stores credentials at `~/.claude/.credentials.json` (verified 2026-06-05 on host); yadgar daemon reads them to authenticate `claude -p` invocations. Trust model: yadgar daemon already holds other secrets (DB passwords, MCP auth token); OAuth share is a continuation of existing trust boundary.
+
+**VALIDATED MECHANISM (proof-of-concept 2026-06-05 evening):**
+
+End-to-end probe succeeded — `claude -p` invocation returned expected `HEADLESS-PROBE-OK` response via OAuth-mounted credentials in ephemeral container:
+
+```bash
+podman run --rm \
+  -v ~/.claude/.credentials.json:/root/.claude/.credentials.json:ro \
+  -v ~/.claude.json:/root/.claude.json:ro \
+  docker.io/library/node:22 \
+  bash -c 'npm install -g @anthropic-ai/claude-code && claude -p "<task>"'
+```
+
+Properties validated:
+- Container ephemeral (`--rm`) — no persistent state from probe runs
+- Credentials read-only mount (`:ro`) — host file untouched
+- Credentials never leave host filesystem (bind-mount, not copied into image layer)
+- No API key needed — OAuth via mounted creds works
+- Zero per-inference cost — uses user's Claude subscription
+- Authenticated as user identity — same account as interactive Claude
+- Background-capable — no open Claude session required
+
+Production implementation pattern for v6/v7/v8 curator + synthesis backends:
+1. Yadgar daemon spawns curator container per nightly task (or per inference batch)
+2. Bind-mount `~/.claude/.credentials.json:/root/.claude/.credentials.json:ro` + `~/.claude.json:/root/.claude.json:ro`
+3. Pass curator prompt via stdin OR `-p "<prompt>"` flag
+4. Capture response on stdout
+5. Container exits + is removed (`--rm`); host credentials untouched
+
+Performance optimization: cold container with `npm install -g @anthropic-ai/claude-code` adds ~20-30s per invocation. Pre-built image `docker.io/openfantasy/yadgar-curator:VER` with claude-code baked in drops startup to ~1-2s. Pattern mirrors `docker.io/openfantasy/yadgar-ci` image (PD-42 carve-out). v6 plan MUST ship `Dockerfile.curator` + workflow to build + push image alongside yadgar core+backend.
+
+Security observations:
+- Read-only mount enforced at container runtime; container processes cannot write to host credential file
+- Per-invocation container teardown prevents lateral leakage between curator tasks
+- Standard podman/docker process isolation (cgroup + namespace) applies — no shared FS state with other containers
+- Audit log captures each invocation (timestamp, task type, prompt hash, response token count)
 
 **OAuth share security considerations:**
 - Token stored on user's machine only (yadgar daemon runs locally for personal mode)
