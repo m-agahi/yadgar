@@ -28,8 +28,20 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
-def _reload_es(monkeypatch, *, allow_root: bool = True, ttl: int | None = None):
-    """Reload embed_service with clean state; return module."""
+def _reload_es(
+    monkeypatch,
+    *,
+    allow_root: bool = True,
+    ttl: int | None = None,
+    db_path: str | None = None,
+):
+    """Reload embed_service with clean state; return module.
+
+    db_path: if set, configures YADGAR_DB_PATH to an existing directory so
+    admin_dbsize calls _walk_db_sizes() rather than the early-return path for
+    non-existent directories. Required for any test that checks os.walk call
+    counts (P7 fix v5.46.7 — _walk_db_sizes only runs when db_path.exists()).
+    """
     import yadgar.config as cfg
 
     monkeypatch.setenv("YADGAR_ALLOW_ROOT", "1" if allow_root else "0")
@@ -37,6 +49,10 @@ def _reload_es(monkeypatch, *, allow_root: bool = True, ttl: int | None = None):
         monkeypatch.setenv("YADGAR_DBSIZE_CACHE_TTL_SEC", str(ttl))
     else:
         monkeypatch.delenv("YADGAR_DBSIZE_CACHE_TTL_SEC", raising=False)
+    if db_path is not None:
+        monkeypatch.setenv("YADGAR_DB_PATH", db_path)
+    else:
+        monkeypatch.delenv("YADGAR_DB_PATH", raising=False)
     cfg.get_settings.cache_clear()
 
     import yadgar.embed_service as es
@@ -66,7 +82,9 @@ def _fake_walk(root, call_counter: list):
 class TestDbsizeCache:
     def test_two_rapid_calls_walk_once(self, monkeypatch, tmp_path):
         """A1: Two calls within TTL window → os.walk called once."""
-        es = _reload_es(monkeypatch, ttl=60)
+        # P7 fix v5.46.7: set YADGAR_DB_PATH to tmp_path so db_path.exists() is True
+        # and _walk_db_sizes() is invoked rather than the early-return path.
+        es = _reload_es(monkeypatch, ttl=60, db_path=str(tmp_path))
         call_counter: list = []
 
         def _patched_walk(root):
@@ -84,7 +102,7 @@ class TestDbsizeCache:
 
     def test_call_after_ttl_recomputes(self, monkeypatch, tmp_path):
         """A2: After TTL expires (monkeypatched time.time), second call recomputes."""
-        es = _reload_es(monkeypatch, ttl=60)
+        es = _reload_es(monkeypatch, ttl=60, db_path=str(tmp_path))
         call_counter: list = []
 
         def _patched_walk(root):
@@ -139,9 +157,9 @@ class TestDbsizeCache:
             assert age2 > age1, f"age should increase: {age2} > {age1}"
             assert age2 == pytest.approx(10.0, abs=1.0), f"expected ~10s, got {age2}"
 
-    def test_ttl_zero_disables_cache(self, monkeypatch):
+    def test_ttl_zero_disables_cache(self, monkeypatch, tmp_path):
         """A4: YADGAR_DBSIZE_CACHE_TTL_SEC=0 → every call recomputes (no cache)."""
-        es = _reload_es(monkeypatch, ttl=0)
+        es = _reload_es(monkeypatch, ttl=0, db_path=str(tmp_path))
         call_counter: list = []
 
         def _patched_walk(root):
@@ -165,10 +183,15 @@ class TestDbsizeCache:
         """
         config_file = tmp_path / "config.yaml"
         config_file.write_text("dbsize_cache_ttl_sec: 5\n")
+        db_dir = tmp_path / "db"
+        db_dir.mkdir()
 
         monkeypatch.setenv("YADGAR_CONFIG_FILE", str(config_file))
         monkeypatch.delenv("YADGAR_DBSIZE_CACHE_TTL_SEC", raising=False)
         monkeypatch.setenv("YADGAR_ALLOW_ROOT", "1")
+        # P7 fix v5.46.7: YADGAR_DB_PATH must point to an existing dir so
+        # admin_dbsize invokes _walk_db_sizes (not the early-return path).
+        monkeypatch.setenv("YADGAR_DB_PATH", str(db_dir))
 
         import yadgar.config as cfg
 
