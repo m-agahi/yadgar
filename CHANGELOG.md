@@ -6,6 +6,19 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.46.11] — 2026-06-06
+
+Hotfix: `yadgar-setup` step 6 fails on pipx fresh install — CLI invocations used system `python3` instead of pipx venv via shim.
+
+- **fix(install):** `yadgar-setup.sh` — replace `run python3 -m yadgar X` with `run yadgar X` at steps 6/7/8/10 (install-hooks, install-subagents, config sync, seed). `python3 -m yadgar` resolves to system python on Rocky Linux / bare Debian; the `yadgar` shim shebang points to the pipx venv python.
+- **fix(install):** `yadgar-setup.sh` — add `_resolve_yadgar_version()` helper. Version detection at steps 2/4 (`python3 -c "import yadgar; print(yadgar.__version__)"`) replaced with shim-shebang extraction. Falls back to `"latest"` when shim absent or venv python unusable.
+- **fix(install):** `yadgar-setup.sh` — update `_locate_setup_scripts` comment to reflect shim-based design (was: `python3 -m yadgar CLI subcommands instead`).
+- **test:** `test_v5_46_11_pipx_cli_invocation.py` — 10 static-analysis tests (4 classes) verify no forbidden invocations remain and helper is wired correctly.
+- **chore:** bump version 5.46.10 → 5.46.11
+- **note:** `yadgar` CLI lacks `--version` flag; version detection uses shim-shebang workaround. Proper `--version` flag deferred to v5.46.12.
+
+---
+
 ## [5.46.10] — 2026-06-06
 
 Hotfix: pipx distribution wheel bundle gap — `yadgar-setup` broken on fresh hosts since v5.45.0.
