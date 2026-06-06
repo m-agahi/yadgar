@@ -124,7 +124,7 @@ async def api_bookmarks_reorder(request: Request) -> JSONResponse:
 
     try:
         pos = int(body.get("position", 0))
-    except TypeError, ValueError:
+    except (TypeError, ValueError):  # fmt: skip
         return JSONResponse(
             {"reordered": False, "reason": "position_must_be_int"},
             status_code=400,
@@ -157,7 +157,7 @@ async def api_wiki_search(request: Request) -> JSONResponse:
     tags = [t.strip() for t in tags_raw.split(",") if t.strip()] if tags_raw else None
     try:
         limit = int(request.query_params.get("limit", 10))
-    except ValueError, TypeError:
+    except (ValueError, TypeError):  # fmt: skip
         limit = 10
 
     wiki = _st._wiki

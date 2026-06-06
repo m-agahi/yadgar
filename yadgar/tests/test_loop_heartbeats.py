@@ -225,7 +225,7 @@ async def test_sse_stream_updates_heartbeat():
         try:
             # Advance the generator one or two steps
             await asyncio.wait_for(anext_or_stop(gen), timeout=2.0)
-        except StopAsyncIteration, TimeoutError:
+        except (StopAsyncIteration, TimeoutError):  # fmt: skip
             pass
 
     value = yadgar_loop_last_run_unix_timestamp.labels(loop="sse_event_stream")._value.get()
