@@ -6,6 +6,20 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.46.18] — 2026-06-06
+
+New: `yadgar --version` global flag shows core, backend, and daemon probe result.
+
+- **feat(cli):** `yadgar --version` prints three-line version summary: core (pip package), backend (docker image track), daemon (live probe of `localhost:8765/health`). JSON mode via `--json` flag.
+- **feat(cli):** New `yadgar/cli/version.py` module with `print_version_summary(json_mode)`. Daemon probe: 1s timeout, swallows all exceptions (not running = graceful fallback line). Reads `YADGAR_MCP_AUTH_TOKEN` from env or `~/.yadgar/secrets.env`.
+- **feat(cli):** `yadgar/__main__.py` — `--version` + `--json` as `store_true` flags. Version check fires immediately after `parse_args()`, before any MCP server boot.
+- **fix(__init__):** `yadgar/__version__` falls back to `pyproject.toml` when package not installed (dev/uninstalled environments previously returned "unknown").
+- **fix(setup.sh):** `_resolve_yadgar_version()` and `_resolve_backend_version()` use `yadgar --version | awk` as primary extraction. Shim-shebang fallback preserved for staged upgrades from pre-5.46.18 installs.
+- **test:** `test_v5_46_18_version_flag.py` — 8 tests covering exit code, line format, daemon section, JSON mode, --help text, setup.sh awk checks, and module existence.
+- **chore:** bump version 5.46.17 → 5.46.18.
+
+---
+
 ## [5.46.17] — 2026-06-06
 
 Hotfix: `bootstrap_secrets.sh` wrote duplicate `YADGAR_DB_USER/PASS` legacy alias alongside canonical `YADGAR_RW_USER/PASS`. Generated-mode called `$(_gen)` twice — divergent values for same credential. Interactive mode masked the bug by using same shell var for both.

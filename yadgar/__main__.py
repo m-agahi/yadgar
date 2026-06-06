@@ -58,6 +58,18 @@ def cli():
         action="store_true",
         help="Suppress startup banner",
     )
+    parser.add_argument(
+        "--version",
+        action="store_true",
+        default=False,
+        help="Show yadgar core, backend, and daemon versions, then exit.",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="With --version: emit JSON instead of plain text.",
+    )
 
     # Register all subcommands in original order
     from yadgar.cli import (  # noqa: E402
@@ -95,6 +107,12 @@ def cli():
     install_subagents.register(subparsers)
 
     args = parser.parse_args()
+
+    if args.version:
+        from yadgar.cli.version import print_version_summary
+
+        print_version_summary(json_mode=args.json)
+        sys.exit(0)
 
     if args.command is None:
         # Default: run MCP server

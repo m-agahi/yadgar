@@ -1,5 +1,45 @@
 # Migration Notes
 
+## v5.46.18 — yadgar --version flag (core + backend + daemon probe) (2026-06-06)
+
+### Context
+
+`yadgar --version` did not exist. `setup.sh` resolved package version by reading the shebang of the `yadgar` pipx shim to locate the venv python, then running `python -c "import yadgar; print(yadgar.__version__)"`. This broke on systems where the shim shebang path was unavailable or non-executable (brew install on macOS, nix environments, system python path drift).
+
+Additionally, `yadgar.__version__` returned "unknown" in uninstalled dev environments because `importlib.metadata.version()` raised `PackageNotFoundError` with no fallback.
+
+### Fix
+
+**New flag:** `yadgar --version` prints:
+```
+yadgar core       5.46.18
+yadgar backend    5.4.0
+yadgar daemon     5.46.18 (uptime 142s, db ok, embed ok)
+```
+Or if daemon not running:
+```
+yadgar core       5.46.18
+yadgar backend    5.4.0
+yadgar daemon     not running (start with `systemctl --user start yadgar.target`)
+```
+
+**JSON mode:** `yadgar --version --json` emits:
+```json
+{"core": "5.46.18", "backend": "5.4.0", "daemon": {"running": true, "version": "5.46.18", "uptime_seconds": 142, "db": true, "embed": true}}
+```
+
+**setup.sh** `_resolve_yadgar_version()` / `_resolve_backend_version()` now use `yadgar --version | awk` as primary extraction. Shim-shebang approach preserved as fallback for staged upgrades.
+
+**`yadgar/__version__`** now falls back to reading `pyproject.toml` when the package is not installed (dev environments, repo checkouts without `pip install -e .`).
+
+### Operator action
+
+**No action required.** `yadgar --version` is additive. Existing installs will gain the flag after upgrading to 5.46.18.
+
+**setup.sh users:** `_resolve_yadgar_version` and `_resolve_backend_version` auto-use `yadgar --version` if available; shim-shebang fallback fires transparently on pre-5.46.18 installs during staged upgrade.
+
+---
+
 ## v5.46.17 — secrets dedup: drop YADGAR_DB_USER/PASS from bootstrap (2026-06-06)
 
 ### Context
