@@ -1,5 +1,54 @@
 # Migration Notes
 
+## v5.46.13 — step 8 config init-if-missing fix (2026-06-06)
+
+### Context
+
+v5.46.12 fixed backend image versioning. v5.46.13 fixes the remaining fresh-install failure at step 8 on Rocky Linux (and any bare system without a pre-existing `~/.yadgar/config.yaml`):
+
+```
+Step 8/10: Syncing config...
+Config file not found: /root/.yadgar/config.yaml. Run 'yadgar config init' to create it.
+```
+
+`yadgar config sync` increments an existing config file against the current Settings model. On a fresh install there is no file to increment against — it exits non-zero and setup aborts.
+
+### What changed
+
+**`scripts/install/yadgar-setup.sh` — `_step_config_sync()` (lines 463-472):**
+
+```bash
+_step_config_sync() {
+    log "Step 8/10: Syncing config..."
+    local yadgar_dir="${YADGAR_DIR:-${HOME}/.yadgar}"
+    local config_file="${yadgar_dir}/config.yaml"
+    if [ ! -f "$config_file" ]; then
+        log "  config.yaml not found — running 'yadgar config init' first"
+        run yadgar config init
+    fi
+    run yadgar config sync
+}
+```
+
+- Fresh install: `init` creates default `config.yaml` with all fields commented, then `sync` adds any new fields from the current Settings model.
+- Reinstall: `init` is skipped — `sync` only increments, preserving user edits.
+- Data dir: `${YADGAR_DIR:-${HOME}/.yadgar}` — consistent with `_step_generate_units` and other setup.sh functions.
+
+### User migration
+
+```bash
+pipx upgrade yadgar
+yadgar-setup
+```
+
+Step 8 should now complete cleanly on fresh installs. No manual intervention required.
+
+### Pending
+
+- `yadgar --version` flag (v5.46.14).
+
+---
+
 ## v5.46.12 — backend version canonical source fix (2026-06-06)
 
 ### Context

@@ -462,6 +462,12 @@ _step_install_agents() {
 
 _step_config_sync() {
     log "Step 8/10: Syncing config..."
+    local yadgar_dir="${YADGAR_DIR:-${HOME}/.yadgar}"
+    local config_file="${yadgar_dir}/config.yaml"
+    if [ ! -f "$config_file" ]; then
+        log "  config.yaml not found — running 'yadgar config init' first"
+        run yadgar config init
+    fi
     run yadgar config sync
 }
 
