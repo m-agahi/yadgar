@@ -213,25 +213,31 @@ _locate_setup_scripts() {
     echo ""
 }
 
-# Resolve the installed yadgar version via the pipx-aware shim shebang.
+# Resolve the installed yadgar core version.
 #
-# Problem: `python3 -c "import yadgar; print(yadgar.__version__)"` breaks when
-# /usr/bin/python3 is system python (Rocky Linux, bare Debian, etc.) that cannot
-# see the yadgar package living in the pipx venv.
+# v5.46.18+: primary path uses `yadgar --version` (new flag) and extracts the
+# core version with awk.  This avoids the shim-shebang workaround needed on
+# systems where /usr/bin/python3 cannot see the pipx venv.
 #
-# Solution: read the shebang of the `yadgar` shim installed by pipx
-# (e.g. /root/.local/bin/yadgar). The shebang is
-#   #!/root/.local/share/pipx/venvs/yadgar/bin/python
-# which resolves to the venv python that does have yadgar on sys.path.
+# Fallback (staged upgrades where installed yadgar is pre-5.46.18):
+# read the shebang of the `yadgar` shim installed by pipx to locate the venv
+# python, then import yadgar.__version__ directly.
 #
-# Fallback: if no shim is found or the extracted python is unusable, return "latest"
-# so docker pull falls back to the :latest tag rather than failing.
+# Final fallback: "latest" so docker pull falls back to :latest rather than
+# failing.
 _resolve_yadgar_version() {
-    local yadgar_shim venv_python version
+    local version
+    # Primary: yadgar --version (v5.46.18+)
+    version=$(yadgar --version 2>/dev/null | awk '/^yadgar[[:space:]]+core/ {print $3}')
+    if [ -n "$version" ] && [ "$version" != "unknown" ]; then
+        echo "$version"
+        return
+    fi
+    # Fallback: shim-shebang approach (pre-5.46.18 installs)
+    local yadgar_shim venv_python
     yadgar_shim=$(command -v yadgar 2>/dev/null) || yadgar_shim=""
     if [ -n "$yadgar_shim" ] && [ -f "$yadgar_shim" ]; then
         venv_python=$(head -1 "$yadgar_shim" | sed 's|^#!||')
-        # Sanity-check the extracted python path is executable and has yadgar
         if [ -n "$venv_python" ] && [ -x "$venv_python" ] && \
            "$venv_python" -c "import sys" 2>/dev/null; then
             version=$("$venv_python" -c "import yadgar; print(yadgar.__version__)" 2>/dev/null || echo "latest")
@@ -244,15 +250,23 @@ _resolve_yadgar_version() {
     echo "$version"
 }
 
-# Resolve the installed yadgar backend image version via the pipx-aware shim shebang.
+# Resolve the installed yadgar backend image version.
 #
-# Mirrors _resolve_yadgar_version() — reads the venv python from the yadgar shim
-# shebang, then imports yadgar.BACKEND_VERSION (independent backend image track).
-#
+# v5.46.18+: primary path uses `yadgar --version` + awk to extract backend.
 # Canonical source: yadgar/__init__.py BACKEND_VERSION constant.
-# Fallback: "5.4.0" (current backend track) if shim unavailable.
+#
+# Fallback: shim-shebang approach for pre-5.46.18 installs.
+# Final fallback: "5.4.0" (current backend track).
 _resolve_backend_version() {
-    local yadgar_shim venv_python backend_version
+    local backend_version
+    # Primary: yadgar --version (v5.46.18+)
+    backend_version=$(yadgar --version 2>/dev/null | awk '/^yadgar[[:space:]]+backend/ {print $3}')
+    if [ -n "$backend_version" ] && [ "$backend_version" != "unknown" ]; then
+        echo "$backend_version"
+        return
+    fi
+    # Fallback: shim-shebang approach (pre-5.46.18 installs)
+    local yadgar_shim venv_python
     yadgar_shim=$(command -v yadgar 2>/dev/null) || yadgar_shim=""
     if [ -n "$yadgar_shim" ] && [ -f "$yadgar_shim" ]; then
         venv_python=$(head -1 "$yadgar_shim" | sed 's|^#!||')
