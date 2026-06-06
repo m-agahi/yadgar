@@ -6,6 +6,20 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.46.15] — 2026-06-06
+
+Hotfix: `yadgar seed --anchors` crashes with `ModuleNotFoundError: No module named 'yadgar.db'` at setup step 10 on Rocky VM.
+
+- **fix(seed):** `yadgar/cli/seed.py` — remove dead `from yadgar.db import get_db` (pre-SurrealDB SQLite path, line 48). Rewrite `_seed_anchors` to POST `/hooks/seed-anchor` on the daemon via `urllib.request`. Probes `/health` first; daemon unreachable → `reason="daemon_unreachable"`, exit 0, instructional message. Auth token from env then `~/.yadgar/secrets.env`. No new deps (stdlib only).
+- **feat(http):** `yadgar/server/http.py` — add `POST /hooks/seed-anchor` route (same pattern as `/hooks/subagent-stop`). Body: `{content, tags, is_protected, context}`. Calls `_srv.memorize()` via `asyncio.to_thread`. Injects `_anchor` tag if missing.
+- **fix(install):** `scripts/install/yadgar-setup.sh` — add `_wait_for_daemon()` helper (30s poll of `localhost:8765/health`; auto-starts via `systemctl --user` on Linux; probe-only on macOS). `_step_seed_anchors` now calls `_wait_for_daemon` before `yadgar seed --anchors`; graceful skip + instructional message on timeout.
+- **test:** `test_v5_46_15_seed_via_mcp.py` — 18 tests: T1 no dead import (source regex), T2 HTTP POST shape (is_protected, _anchor, content), T3 daemon-unreachable graceful exit, T4 dry-run no HTTP calls, T5 setup.sh static checks.
+- **chore:** bump version 5.46.14 → 5.46.15; update `.complexity-baseline.json`.
+- **note:** Architecture deviation — uses `/hooks/seed-anchor` REST wrapper instead of JSON-RPC POST `/mcp` (SSE framing complexity; no existing call-site). Write path ownership unchanged: daemon owns all SurrealDB writes.
+- **note:** macOS launchctl auto-start in `_wait_for_daemon` deferred to v5.46.16. Probe-only for now.
+
+---
+
 ## [5.46.14] — 2026-06-06
 
 Hotfix: `yadgar-setup` step 9 fails on fresh pipx install — `_locate_install_assets` used bare `python3` whose `sys.prefix=/usr` on Rocky Linux; wheel assets live in the pipx venv, not `/usr`.

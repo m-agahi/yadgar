@@ -1,5 +1,56 @@
 # Migration Notes
 
+## v5.46.15 — seed anchors via daemon REST endpoint (2026-06-06)
+
+### Context
+
+v5.46.14 fixed step 9 install-rules. v5.46.15 fixes the step 10 crash on Rocky VM:
+
+```
+==> Step 10/10: Seeding canonical anchors...
+Loading anchors from: /root/.local/share/pipx/venvs/yadgar/share/yadgar/install_assets/seeds/anchors.yaml
+Traceback ...
+  File "yadgar/cli/seed.py", line 48, in _seed_anchors
+    from yadgar.db import get_db
+ModuleNotFoundError: No module named 'yadgar.db'
+```
+
+Root cause: `_seed_anchors` in `cli/seed.py` imported `yadgar.db.get_db` — a dead SQLite API from the pre-SurrealDB era. The `yadgar.db` module was removed when the daemon migrated to SurrealDB via a backend container. The import was never cleaned up.
+
+### Fix
+
+`_seed_anchors` now POSTs to the daemon's `/hooks/seed-anchor` endpoint (new in v5.46.15) instead of writing to SQLite directly. The daemon handles SurrealDB write, similarity-gate dedup, and branch resolution — CLI is a thin HTTP client.
+
+**Why `/hooks/seed-anchor` and not JSON-RPC `POST /mcp`?**
+The MCP tools use streamable-HTTP transport at `POST /mcp` with JSON-RPC 2.0 envelope and SSE-framed responses. No existing CLI call-site uses this path; parsing SSE responses adds complexity and fragility for a hotfix. The `/hooks/seed-anchor` REST wrapper is the same pattern as `/hooks/subagent-stop` — used by all existing daemon hook callers. Write path ownership is unchanged: daemon owns all SurrealDB writes.
+
+### setup.sh step 10 changes
+
+New `_wait_for_daemon()` helper polls `localhost:8765/health` for up to 30 seconds. On Linux it first attempts `systemctl --user start yadgar.target`. On macOS it probes only (launchctl auto-start deferred to v5.46.16).
+
+If the daemon fails to start within 30 seconds, step 10 prints:
+```
+WARN: Daemon failed to start in 30s. Skipping anchor seed.
+After daemon starts, run manually:
+  yadgar seed --anchors <path/to/anchors.yaml>
+```
+and returns exit 0 (setup continues, anchors are not seeded).
+
+### User migration
+
+```bash
+pipx upgrade yadgar
+yadgar-setup
+```
+
+Step 10 now starts the daemon (Linux) or waits for it (macOS), then POSTs anchors via daemon. If daemon never starts, step 10 skips gracefully and prints the manual command.
+
+### macOS note
+
+`_wait_for_daemon` on macOS probes `/health` only — no launchctl auto-start. Daemon must be running before `yadgar-setup` for step 10 to seed anchors. launchctl auto-start ships in v5.46.16.
+
+---
+
 ## v5.46.14 — step 9 install-rules venv python fix (2026-06-06)
 
 ### Context
