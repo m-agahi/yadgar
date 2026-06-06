@@ -431,7 +431,7 @@ async def lifespan(app: FastAPI):
     _snap_task.cancel()
     try:
         await _snap_task
-    except asyncio.CancelledError, Exception:
+    except (asyncio.CancelledError, Exception):  # fmt: skip
         pass
 
     # Final cache snapshot on shutdown

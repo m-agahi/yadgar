@@ -110,7 +110,7 @@ def _fetch_similar(candidate: dict, k: int) -> list[dict]:
                     rid = int(raw_id.id)
                 else:
                     rid = int(str(raw_id).rsplit(":", 1)[-1].strip("'\""))
-            except ValueError, TypeError:
+            except (ValueError, TypeError):  # fmt: skip
                 continue
             results.append({"id": rid, "content": str(row.get("content") or "")[:200]})
         return results

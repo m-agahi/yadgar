@@ -1570,7 +1570,7 @@ async def api_viz_search(request: Request) -> JSONResponse:
                     if raw_id is not None:
                         try:
                             node_ids.append(f"mem:{int(raw_id)}")
-                        except TypeError, ValueError:
+                        except (TypeError, ValueError):  # fmt: skip
                             pass
             except Exception as _exc:
                 logger.debug("viz_search recall error: %s", _exc)

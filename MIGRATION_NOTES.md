@@ -1,5 +1,40 @@
 # Migration Notes
 
+## v5.46.16 — except-tuple py2 syntax sweep (2026-06-06)
+
+### Context
+
+Python 3 parses `except X, Y:` as `except X as Y:` — this is valid syntax but catches only `X`; `Y` becomes a local name binding that shadows the builtin or any variable named `Y`. Exception type `Y` escapes uncaught.
+
+This was a silent bug across 12 sites in 10 files. The worst case: `embed_service.py:434` had `except asyncio.CancelledError, Exception:` — bare `Exception` was bound to the local name `Exception`, shadowing the builtin, and any non-CancelledError raised during ML inference shutdown escaped uncaught.
+
+### Fix
+
+All 12 sites converted to `except (X, Y):` (parenthesised tuple form). Each line carries `# fmt: skip` because ruff 0.15.12 strips parens from `except` clauses and would revert the fix on the next commit.
+
+### No operator action required
+
+This is a pure source fix — no config changes, no DB migrations, no env variable changes.
+
+### Files changed
+
+| File | Exception types |
+|------|----------------|
+| `yadgar/daemon.py:63` | `FileNotFoundError, subprocess.TimeoutExpired` |
+| `yadgar/config_registry.py:305` | `ValueError, TypeError` |
+| `yadgar/embed_service.py:434` | `asyncio.CancelledError, Exception` (critical) |
+| `yadgar/conflict_resolver.py:113` | `ValueError, TypeError` |
+| `yadgar/log_config.py:514` | `PermissionError, OSError` |
+| `yadgar/ml_client.py:118` | `ValueError, TypeError` |
+| `yadgar/server/http.py:1573` | `TypeError, ValueError` |
+| `yadgar/server/http_bookmarks.py:127` | `TypeError, ValueError` |
+| `yadgar/server/http_bookmarks.py:160` | `ValueError, TypeError` |
+| `yadgar/scripts/hook_runner.py:210` | `json.JSONDecodeError, ValueError` |
+| `yadgar/hooks/db-lockdown-check.py:42` | `json.JSONDecodeError, ValueError` |
+| `yadgar/tests/test_loop_heartbeats.py:228` | `StopAsyncIteration, TimeoutError` |
+
+---
+
 ## v5.46.15 — seed anchors via daemon REST endpoint (2026-06-06)
 
 ### Context

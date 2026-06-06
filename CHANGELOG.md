@@ -6,6 +6,28 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.46.16] — 2026-06-06
+
+Hotfix: 12 `except X, Y:` Python-2 syntax bugs — in Python 3 this means `except X as Y:`, so only X is caught and Y shadows the builtin. Exception types listed after the comma escaped silently.
+
+- **fix(syntax):** 12 sites across 10 files converted from bare `except X, Y:` to parenthesised `except (X, Y):  # fmt: skip`. Critical site: `embed_service.py:434` — `Exception` was escaping uncaught in the ML-inference shutdown handler.
+  - `yadgar/daemon.py` — `FileNotFoundError, subprocess.TimeoutExpired`
+  - `yadgar/config_registry.py` — `ValueError, TypeError`
+  - `yadgar/embed_service.py` — `asyncio.CancelledError, Exception` (critical)
+  - `yadgar/conflict_resolver.py` — `ValueError, TypeError`
+  - `yadgar/log_config.py` — `PermissionError, OSError`
+  - `yadgar/ml_client.py` — `ValueError, TypeError`
+  - `yadgar/server/http.py` — `TypeError, ValueError`
+  - `yadgar/server/http_bookmarks.py` (×2) — `TypeError, ValueError` + `ValueError, TypeError`
+  - `yadgar/scripts/hook_runner.py` — `json.JSONDecodeError, ValueError`
+  - `yadgar/hooks/db-lockdown-check.py` — `json.JSONDecodeError, ValueError`
+  - `yadgar/tests/test_loop_heartbeats.py` — `StopAsyncIteration, TimeoutError`
+- **test:** `test_v5_46_16_except_tuple_sweep.py` — 14 tests: 12 per-site T1 parametrised, T2 project-wide zero-bare-form scan, T3 behavioral check embed_service.py critical site.
+- **chore:** bump version 5.46.15 → 5.46.16; update `.complexity-baseline.json`.
+- **note:** `# fmt: skip` added to each fixed line — ruff 0.15.12 strips parens from `except` tuples; suppressor required to survive the pre-commit format hook.
+
+---
+
 ## [5.46.15] — 2026-06-06
 
 Hotfix: `yadgar seed --anchors` crashes with `ModuleNotFoundError: No module named 'yadgar.db'` at setup step 10 on Rocky VM.

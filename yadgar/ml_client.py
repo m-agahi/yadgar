@@ -115,7 +115,7 @@ def _idle_eviction_seconds() -> int:
     raw = os.environ.get("YADGAR_MODEL_IDLE_EVICTION_SECONDS", "0")
     try:
         return int(raw)
-    except ValueError, TypeError:
+    except (ValueError, TypeError):  # fmt: skip
         logger.warning(
             "YADGAR_MODEL_IDLE_EVICTION_SECONDS=%r is not a valid integer; "
             "defaulting to 0 (never evict)",
