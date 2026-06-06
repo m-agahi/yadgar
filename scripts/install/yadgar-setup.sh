@@ -177,7 +177,7 @@ _locate_setup_scripts() {
     # Locate the scripts/install/ dir (contains detect_runtime.sh, etc.)
     # The wheel only ships yadgar-setup.sh; all other building-block scripts require
     # a repo checkout. In pipx/brew/nix installs those scripts are called via
-    # `python3 -m yadgar` CLI subcommands instead.
+    # the `yadgar` CLI shim (pipx-aware, shebang points to venv python) instead.
 
     # Try repo checkout (script lives at scripts/install/yadgar-setup.sh)
     local repo_scripts
@@ -189,6 +189,37 @@ _locate_setup_scripts() {
 
     # Not a repo checkout — building-block scripts unavailable (expected for pipx/brew/nix)
     echo ""
+}
+
+# Resolve the installed yadgar version via the pipx-aware shim shebang.
+#
+# Problem: `python3 -c "import yadgar; print(yadgar.__version__)"` breaks when
+# /usr/bin/python3 is system python (Rocky Linux, bare Debian, etc.) that cannot
+# see the yadgar package living in the pipx venv.
+#
+# Solution: read the shebang of the `yadgar` shim installed by pipx
+# (e.g. /root/.local/bin/yadgar). The shebang is
+#   #!/root/.local/share/pipx/venvs/yadgar/bin/python
+# which resolves to the venv python that does have yadgar on sys.path.
+#
+# Fallback: if no shim is found or the extracted python is unusable, return "latest"
+# so docker pull falls back to the :latest tag rather than failing.
+_resolve_yadgar_version() {
+    local yadgar_shim venv_python version
+    yadgar_shim=$(command -v yadgar 2>/dev/null) || yadgar_shim=""
+    if [ -n "$yadgar_shim" ] && [ -f "$yadgar_shim" ]; then
+        venv_python=$(head -1 "$yadgar_shim" | sed 's|^#!||')
+        # Sanity-check the extracted python path is executable and has yadgar
+        if [ -n "$venv_python" ] && [ -x "$venv_python" ] && \
+           "$venv_python" -c "import sys" 2>/dev/null; then
+            version=$("$venv_python" -c "import yadgar; print(yadgar.__version__)" 2>/dev/null || echo "latest")
+        else
+            version="latest"
+        fi
+    else
+        version="latest"
+    fi
+    echo "$version"
 }
 
 # ── runtime + OS detection ────────────────────────────────────────────────────
@@ -292,7 +323,7 @@ _step_detect() {
 _step_pull_images() {
     log "Step 2/10: Pulling container images..."
     local version
-    version=$(python3 -c "import yadgar; print(yadgar.__version__)" 2>/dev/null || echo "latest")
+    version=$(_resolve_yadgar_version)
     run "$RUNTIME" pull "docker.io/openfantasy/yadgar:${version}"
     run "$RUNTIME" pull "docker.io/openfantasy/yadgar-backend:${version}"
 }
@@ -319,7 +350,7 @@ _step_generate_units() {
     scripts_dir="$(_locate_setup_scripts)"
     local yadgar_dir="${YADGAR_DIR:-${HOME}/.yadgar}"
     local version
-    version=$(python3 -c "import yadgar; print(yadgar.__version__)" 2>/dev/null || echo "latest")
+    version=$(_resolve_yadgar_version)
 
     case "$OS" in
         linux|linux-other)
@@ -394,17 +425,17 @@ _step_enable_units() {
 
 _step_install_hooks() {
     log "Step 6/10: Installing Claude Code git hooks..."
-    run python3 -m yadgar install-hooks --scope global
+    run yadgar install-hooks --scope global
 }
 
 _step_install_agents() {
     log "Step 7/10: Installing subagent templates..."
-    run python3 -m yadgar install-subagents
+    run yadgar install-subagents
 }
 
 _step_config_sync() {
     log "Step 8/10: Syncing config..."
-    run python3 -m yadgar config sync
+    run yadgar config sync
 }
 
 _step_install_rules() {
@@ -446,7 +477,7 @@ _step_seed_anchors() {
         return
     fi
 
-    run python3 -m yadgar seed --anchors "$anchors_yaml"
+    run yadgar seed --anchors "$anchors_yaml"
 }
 
 # ── doctor probes ─────────────────────────────────────────────────────────────
