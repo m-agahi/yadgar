@@ -60,6 +60,17 @@ make setup
 **Repo-checkout installs (`make setup`) are NOT affected** — the setup
 script finds helpers via the local repo directory fallback path.
 
+### Nix install path note
+
+The `flake.nix` `postInstall` copies only `yadgar-setup.sh` to `$out/bin/yadgar-setup`
+(helpers not adjacent). When invoked from `$out/bin/yadgar-setup`, the fail-fast
+check will fire and exit 2. This is intentional and **better than silent partial
+setup** — it surfaces the bundle gap with actionable instructions. A full nix formula
+fix (copying helpers to `$out/libexec/yadgar/scripts/` or reading from the wheel's
+`share/yadgar/scripts/`) is deferred to a future version.
+
+Nix flake users: use `make setup` from repo checkout (unaffected path).
+
 ### Deviations from v5.46.10 spec
 
 - **Step 3 (install_assets systemd/launchd subdir move):** No-op. Templates
@@ -71,6 +82,9 @@ script finds helpers via the local repo directory fallback path.
 - **Fail-fast helper list excludes `uninstall.sh` and `restore.sh`:** These
   are standalone user entrypoints, not called by the setup flow. Bundle
   test still asserts they're present in the wheel.
+- **Test sentinel mechanism:** Spec suggested a `YADGAR_TEST_FORCE_MISSING_HELPER`
+  env var to force fail-path in tests; instead, tests copy only `yadgar-setup.sh`
+  to a temp dir (no helpers present). Cleaner and doesn't require new env var.
 
 ---
 
