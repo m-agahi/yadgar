@@ -52,7 +52,7 @@ jobs:
     # curl, and pre-installed test deps. Replaces python:3.14-slim (B6 fix).
     # Image built locally and pushed to dockerhub per PD-42 carve-out.
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.46.3
+      image: docker.io/openfantasy/yadgar-ci:5.46.9
     # PRs (gates the merge) and version tags (gates the PyPI publish) only.
     # NOT on pushes to master (already tested on the PR) and NOT on
     # workflow_dispatch (manual dispatch is "rebuild from latest master" — the
@@ -73,38 +73,11 @@ jobs:
           key: pip-${{ hashFiles('pyproject.toml') }}
           restore-keys: pip-
 
-      - name: Cache HuggingFace models
-        uses: actions/cache@v4
-        with:
-          path: /root/.cache/huggingface
-          # Key includes model name literal so cache invalidates on EMBEDDING_MODEL change.
-          # Bump the v-number when upgrading the model (roadmap: HF model cache key fix).
-          key: hf-models-v2-all-MiniLM-L6-v2
-          restore-keys: |
-            hf-models-v2-
-            hf-models-v
-
-      - name: Cache SurrealDB binary
-        id: cache-surreal
-        uses: actions/cache@v4
-        with:
-          path: /usr/local/bin/surreal
-          key: surrealdb-v3.0.5
-
-      - name: Install SurrealDB v3.0.5
-        if: steps.cache-surreal.outputs.cache-hit != 'true'
-        run: |
-          SURREAL_VERSION="v3.0.5"
-          SURREAL_SHA256="48dbeba4896765f33e07acc25224073f0850c190872052b917ebda1f7b4375cb"
-          curl -fsSL "https://github.com/surrealdb/surrealdb/releases/download/${SURREAL_VERSION}/surreal-${SURREAL_VERSION}.linux-amd64.tgz" -o /tmp/surreal.tgz
-          echo "${SURREAL_SHA256}  /tmp/surreal.tgz" | sha256sum -c -
-          tar -xzf /tmp/surreal.tgz -C /usr/local/bin surreal
-          chmod +x /usr/local/bin/surreal
-
       - name: Install dependencies
-        # No --no-cache-dir: the actions/cache step above mounts a persistent
-        # pip cache at /root/.cache/pip; bypassing it re-downloads torch +
-        # sentence-transformers (~1 GB) on every run.
+        # SurrealDB v3.0.5 and HuggingFace all-MiniLM-L6-v2 are baked into
+        # yadgar-ci:5.46.9 — no cache/install steps needed.
+        # No --no-cache-dir: pip cache at /root/.cache/pip avoids re-downloading
+        # torch + sentence-transformers (~1 GB) on every run.
         run: pip install -e ".[test,ml]"
 
       - name: Run tests
@@ -125,24 +98,17 @@ jobs:
 
   viz-tests:
     runs-on: ubuntu-latest
+    # Use yadgar-ci-viz which extends yadgar-ci with Playwright + Chromium pre-baked.
+    # Saves ~75s vs inline apt-get install on every run (v5.46.9 CI speedup).
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.46.3
+      image: docker.io/openfantasy/yadgar-ci-viz:5.46.9
     # Same gate as `test` — PRs + version tags only.
     if: >-
       github.event_name == 'pull_request' ||
       startsWith(github.ref, 'refs/tags/v')
     steps:
-      - name: Install Playwright + chromium deps
-        # yadgar-ci image has make/git/curl/nodejs pre-installed.
-        # Add chromium + Playwright-specific system libraries here.
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends \
-            npm \
-            chromium chromium-driver \
-            libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
-            libxcomposite1 libxdamage1 libxrandr2 libgbm1 libpango-1.0-0 \
-            libcairo2 libasound2
+      # Playwright + Chromium + SurrealDB + HF model pre-baked in yadgar-ci-viz.
+      # No apt-get install or binary download steps needed.
 
       - uses: https://data.forgejo.org/actions/checkout@v6
 
@@ -153,31 +119,15 @@ jobs:
           key: pip-viz-${{ hashFiles('pyproject.toml') }}
           restore-keys: pip-viz-
 
-      - name: Cache SurrealDB binary
-        id: cache-surreal-viz
+      - name: Cache npm (viz-tests)
         uses: actions/cache@v4
         with:
-          path: /usr/local/bin/surreal
-          key: surrealdb-v3.0.5
-
-      - name: Install SurrealDB v3.0.5
-        if: steps.cache-surreal-viz.outputs.cache-hit != 'true'
-        run: |
-          SURREAL_VERSION="v3.0.5"
-          SURREAL_SHA256="48dbeba4896765f33e07acc25224073f0850c190872052b917ebda1f7b4375cb"
-          curl -fsSL "https://github.com/surrealdb/surrealdb/releases/download/${SURREAL_VERSION}/surreal-${SURREAL_VERSION}.linux-amd64.tgz" -o /tmp/surreal.tgz
-          echo "${SURREAL_SHA256}  /tmp/surreal.tgz" | sha256sum -c -
-          tar -xzf /tmp/surreal.tgz -C /usr/local/bin surreal
-          chmod +x /usr/local/bin/surreal
+          path: viz-tests/node_modules
+          key: npm-viz-${{ hashFiles('viz-tests/package-lock.json') }}
+          restore-keys: npm-viz-
 
       - name: Install Python dependencies
-        run: pip install -e ".[test,ml]" playwright pytest-playwright
-
-      - name: Install Playwright browsers
-        # Use system chromium to avoid 200 MB Playwright Chromium download.
-        # PLAYWRIGHT_BROWSERS_PATH=0 tells Playwright to skip its bundled install.
-        # The system chromium package installs at /usr/bin/chromium.
-        run: PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 playwright install-deps || true
+        run: pip install -e ".[test,ml]"
 
       - name: Layer 1 — API contract integrity (Python)
         run: |
@@ -185,9 +135,8 @@ jobs:
             -v --tb=short -q --reruns 1
 
       - name: Layer 2 — Playwright headless smoke
-        # Pass system chromium path via env so conftest.py can use it.
-        env:
-          PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: /usr/bin/chromium
+        # System chromium path pre-set via PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+        # env in yadgar-ci-viz image. No extra env needed here.
         run: |
           python -m pytest yadgar/tests/integration/viz/ \
             -m integration -v --tb=short -q --reruns 1
