@@ -39,8 +39,13 @@ YADGAR_ROOT = REPO_ROOT / "yadgar"
 # Regex: parenthesised form — the FIXED form we require
 _PAREN_FORM = re.compile(r"except\s+\(\s*[A-Za-z_.]+(\s*,\s*[A-Za-z_.]+)+\s*\)\s*:")
 
-# Regex: bare-tuple old syntax — must be ABSENT everywhere after fix
-_BARE_FORM = re.compile(r"except\s+[A-Za-z_][A-Za-z_.]*\s*,\s*[A-Za-z_][A-Za-z_.]*\s*:")
+# Regex: bare-tuple old syntax — must be ABSENT everywhere after fix.
+# Anchored with (?:$|#|\s*#) to avoid matching docstring examples like
+# ``except X, Y:`` (where the colon is followed by a backtick, not end-of-line).
+_BARE_FORM = re.compile(
+    r"except\s+[A-Za-z_][A-Za-z_.]*\s*,\s*[A-Za-z_][A-Za-z_.]*\s*:(?:\s*(?:#.*)?\s*$)",
+    re.MULTILINE,
+)
 
 # ---------------------------------------------------------------------------
 # Sites to fix — (relative path from REPO_ROOT, approximate line, description)
