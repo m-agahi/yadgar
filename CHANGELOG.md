@@ -6,6 +6,22 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.46.12] — 2026-06-06
+
+Hotfix: `yadgar-setup` step 2 fails on fresh install — backend image pulled with core version tag instead of independent backend track version.
+
+- **fix(install):** `yadgar-setup.sh` — add `_resolve_backend_version()` (mirrors `_resolve_yadgar_version` shim pattern). Reads `yadgar.BACKEND_VERSION` from pipx venv via shim shebang. Fallback: `"5.4.0"`.
+- **fix(install):** `yadgar-setup.sh` — `_step_pull_images` + `_step_generate_units` now call `backend_version=$(_resolve_backend_version)`. All 3 `yadgar-backend:` image references use `${backend_version}` (was `${version}`).
+- **fix(Makefile):** Add `YADGAR_BACKEND_VERSION := $(shell grep -m1 '^BACKEND_VERSION' yadgar/__init__.py | cut -d'"' -f2)`. All 3 `yadgar-backend:$(YADGAR_VERSION)` → `$(YADGAR_BACKEND_VERSION)`.
+- **feat:** `yadgar/__init__.py` — `BACKEND_VERSION = "5.4.0"` constant. Single canonical source for backend image version consumed by setup.sh + Makefile. Bumping requires CHANGELOG update + nix module sync.
+- **test:** `test_v5_46_12_backend_version_canonical.py` — 11 static-analysis tests covering BACKEND_VERSION import, setup.sh function + image refs, Makefile variable + image refs, drift guards (pyproject ↔ server.json ↔ BACKEND_VERSION).
+- **drift-guard:** pyproject `[project].version` == server.json `version` (file-to-file, install-state-independent).
+- **drift-guard:** `yadgar.BACKEND_VERSION` == `server.json` `backend_version`.
+- **chore:** bump version 5.46.11 → 5.46.12
+- **note:** `yadgar --version` flag still pending (v5.46.13).
+
+---
+
 ## [5.46.11] — 2026-06-06
 
 Hotfix: `yadgar-setup` step 6 fails on pipx fresh install — CLI invocations used system `python3` instead of pipx venv via shim.
