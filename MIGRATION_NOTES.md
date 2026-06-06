@@ -1,5 +1,65 @@
 # Migration Notes
 
+## v5.46.11 — pipx CLI invocation fix (2026-06-06)
+
+### Context
+
+v5.46.10 fixed the wheel bundle gap (helpers now ship correctly; steps 3–5 pass on
+fresh Rocky Linux VM). v5.46.11 fixes the next failure: steps 6–10 invoked
+`python3 -m yadgar <subcommand>` which resolves to system python (`/usr/bin/python3`
+on Rocky Linux / bare Debian). System python has no `yadgar` package — it lives in
+the pipx venv. Step 6 failed with:
+
+```
+==> Step 6/10: Installing Claude Code git hooks...
+/usr/bin/python3: No module named yadgar
+```
+
+### What changed
+
+**`scripts/install/yadgar-setup.sh`:**
+
+1. **Steps 6/7/8/10 CLI calls** — `run python3 -m yadgar X` → `run yadgar X`.
+   The `yadgar` shim at `~/.local/bin/yadgar` has shebang
+   `#!/root/.local/share/pipx/venvs/yadgar/bin/python` — resolves to the
+   correct venv python automatically via PATH.
+
+2. **Version detection (steps 2/4)** — `python3 -c "import yadgar; print(yadgar.__version__)"`
+   replaced with new `_resolve_yadgar_version()` helper. The helper:
+   - Locates the `yadgar` shim via `command -v yadgar`
+   - Reads its shebang (`head -1 | sed 's|^#!||'`) to get venv python path
+   - Sanity-checks the path is executable
+   - Calls `"$venv_python" -c "import yadgar; print(yadgar.__version__)"`
+   - Falls back to `"latest"` if shim absent or venv python unusable
+
+3. **Comment update** — `_locate_setup_scripts` docblock updated from
+   `python3 -m yadgar CLI subcommands instead` to `yadgar CLI shim (pipx-aware)`.
+
+### User action required
+
+```bash
+pipx upgrade yadgar    # upgrades to v5.46.11
+yadgar-setup           # steps 6-10 now use yadgar shim correctly
+```
+
+### Residual concern
+
+`yadgar` CLI has no `--version` flag (confirmed: argument parser doesn't
+register it). Version detection uses the shim-shebang workaround above.
+A proper `--version` flag should be added in v5.46.12 via `yadgar/__main__.py`.
+
+### Deviations from v5.46.11 spec
+
+- **`_SHIM_CALL_PATTERN` regex unused:** The `_SHIM_CALL_PATTERN` compiled
+  regex in the test module is defined but not used in a parametrized assertion
+  (individual tests use inline `re.compile`). Not a gap — all four subcommands
+  are covered by `TestShimUsage` parametrize.
+- **Comment-line exclusion in tests:** Tests skip pure comment lines (`#`-prefixed)
+  when checking for forbidden invocations, to allow `_resolve_yadgar_version`'s
+  docblock to reference the old form as context.
+
+---
+
 ## v5.46.10 — pipx wheel bundle gap fix (2026-06-06)
 
 ### IMPACT: pipx users on v5.45.0–v5.46.9 broken on fresh hosts
