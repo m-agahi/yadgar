@@ -10,6 +10,41 @@
 
 ---
 
+## 2026-06-06 Internal dev workflow vs production CI separation
+
+## PD-45 — Internal dev workflow vs production CI separation (2026-06-06)
+
+**Decision:** All Forgejo Actions workflow jobs gated to `workflow_dispatch`-only triggers during internal development phase. Push events (master pushes + tag pushes) DO NOT fire jobs. Manual UI trigger required to run any workflow.
+
+**Rationale:** User direction 2026-06-06: "no our internal development workflow is different from ci workflow. internal was put in place to prevent burning minutes while we fast developing. ... when pushing tags, tests start to run. that is wrong. tests should ONLY run in pr."
+
+Forgejo workflows currently consume 500 prepaid Docker Build Cloud minutes per multi-arch image build (linux/amd64+linux/arm64 in single buildx run). v5.46.7 tag push hit the limit. Internal dev workflow per anchors 490140 + 491179 already established local-only amd64 build + skip dockerhub push. PD-45 codifies that the Forgejo CI surface is PRODUCTION-only and stays disabled until production-ready.
+
+**Affected workflows:**
+- `.forgejo/workflows/ci.yaml` — `on.push.tags` removed (tests no longer fire on tag push); `build` job gated to `workflow_dispatch`
+- `.forgejo/workflows/release.yaml` — all 4 jobs (build-wheel, build-sbom, attach-to-release, publish-pypi) gated to `workflow_dispatch`
+- Header comment blocks added to both workflows documenting the gate
+
+**Internal dev workflow (current):**
+1. Code change → merge to master → push code only (no tag)
+2. amd64 local build via build agent (`podman build --arch amd64 -t docker.io/openfantasy/yadgar:VER`)
+3. Manual nix repo bump (`modules/home/yadgar.nix`)
+4. User applies via `home-manager switch`
+5. Manual PyPI publish via `twine upload` (when desired) using `op://Private/PyPI/yadgar-api-token`
+
+**Production transition (future):**
+1. Remove `if: github.event_name == 'workflow_dispatch'` gates from job definitions in both workflows
+2. Remove the gate header comment block (or update to "production-active")
+3. Re-add `tags: ["v*"]` to ci.yaml `on.push` block if test runs on tag are desired
+4. Verify SBOM cyclonedx-bom install (deferred to production transition)
+5. Verify Build Cloud quota refresh / budget
+
+**Reversibility:** Per-workflow per-job — remove `if:` gates to restore push/tag triggers. Per-event — re-add `tags: ["v*"]` to ci.yaml.
+
+**Deferred:** SBOM cyclonedx-bom install issue in release.yaml build-sbom job. Production-transition concern, not internal-dev. v5.46.8 does NOT fix this; documented in CHANGELOG + here.
+
+---
+
 ## 2026-06-05 v7 "real-time synthesis" reframe + usefulness audit
 
 ## PD-44 — v7 reframe: "Asynchronous Progressive Synthesis"; usefulness audit raises retire-vs-keep question (2026-06-05 evening)

@@ -6,6 +6,20 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.46.8] — 2026-06-06
+
+Hotfix: gate Forgejo CI workflows to `workflow_dispatch`-only — internal dev workflow vs production CI separation (PD-45).
+
+- **fix(ci):** ci.yaml `on.push.tags` removed — tag pushes no longer fire any CI jobs. `build` job (multi-arch Docker Build Cloud + dockerhub push) gated to `workflow_dispatch` only.
+- **fix(ci):** release.yaml all 4 jobs (build-wheel, build-sbom, attach-to-release, publish-pypi) gated to `workflow_dispatch`. Tag-push trigger subscription kept for future production handoff.
+- **docs:** Header comment `WORKFLOW STATE: GATED FOR INTERNAL DEV` added to both workflow files explaining the gate.
+- **docs:** PD-45 added to `docs/DECISIONS.md` — codifies internal dev workflow (local amd64 build + nix bump + home-manager switch + manual twine upload) vs production CI (Forgejo, manual-trigger only).
+- **deferred:** SBOM cyclonedx-bom install issue in release.yaml build-sbom job — production-transition concern, not internal-dev scope.
+- **test:** TDD scaffolding `test_v5_46_8_workflow_triggers.py` — 14 assertions guard trigger gate and header comment.
+- **chore:** bump version 5.46.7 → 5.46.8
+
+---
+
 ## [5.46.7] — 2026-06-06
 
 Hotfix: daemon-side YADGAR_CI_BRANCH wiring (P1 CRITICAL), hardcoded path removal (P2), os.walk mock target (P7), Makefile runtime-check skip guard (P8), health endpoint empty-body race (P6), export_duckdb unique-pair guarantee (N1), viz_daemon env override reliability (N2), anchor surfacing skip marker (N3).
