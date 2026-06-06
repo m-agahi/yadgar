@@ -11,7 +11,7 @@ ExecStartPre=-@RUNTIME@ network create yadgar-net
 ExecStart=@RUNTIME@ run --name yadgar-backend --rm --user root \
     --network yadgar-net \
     -p 127.0.0.1:8001:8001 \
-    -v @DATA_DIR@:/data \
+    -v @DATA_DIR@:/data:Z \
     -e SURREAL_USER=${SURREAL_USER} \
     -e SURREAL_PASS=${SURREAL_PASS} \
     -e YADGAR_RW_USER=${YADGAR_RW_USER} \
