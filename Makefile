@@ -29,6 +29,8 @@ YADGAR_TEST_TTY ?=
 
 # Version — read once from server.json at parse time
 YADGAR_VERSION := $(shell grep -m1 '"version"' $(REPO_ROOT)server.json | cut -d'"' -f4)
+# Backend image version — independent track; canonical source: yadgar/__init__.py BACKEND_VERSION
+YADGAR_BACKEND_VERSION := $(shell grep -m1 '^BACKEND_VERSION' $(REPO_ROOT)yadgar/__init__.py | cut -d'"' -f2)
 
 .PHONY: all help pre-setup setup uninstall uninstall-purge \
         install-hooks install-agents config-sync install-rules \
@@ -120,9 +122,9 @@ seed-anchors:
 ## pull-images: Pull yadgar core + backend container images
 pull-images:
 	@RUNTIME=$$(bash $(SCRIPTS_DIR)/detect_runtime.sh); \
-	  echo "==> Pulling images @ v$(YADGAR_VERSION) using $$RUNTIME..."; \
+	  echo "==> Pulling images: core=v$(YADGAR_VERSION) backend=v$(YADGAR_BACKEND_VERSION) using $$RUNTIME..."; \
 	  $$RUNTIME pull docker.io/openfantasy/yadgar:$(YADGAR_VERSION); \
-	  $$RUNTIME pull docker.io/openfantasy/yadgar-backend:$(YADGAR_VERSION)
+	  $$RUNTIME pull docker.io/openfantasy/yadgar-backend:$(YADGAR_BACKEND_VERSION)
 
 ## bootstrap-secrets: Generate ~/.yadgar/secrets.env (interactive prompt for missing creds)
 bootstrap-secrets:
@@ -202,7 +204,7 @@ setup: pre-setup
 	      YADGAR_RUNTIME=$$RUNTIME \
 	      YADGAR_INSTALL_PREFIX="$(YADGAR_DIR)" \
 	      YADGAR_SECRETS_ENV_FILE="$(YADGAR_DIR)/secrets.env" \
-	      YADGAR_BACKEND_IMAGE="docker.io/openfantasy/yadgar-backend:$(YADGAR_VERSION)" \
+	      YADGAR_BACKEND_IMAGE="docker.io/openfantasy/yadgar-backend:$(YADGAR_BACKEND_VERSION)" \
 	      YADGAR_CORE_IMAGE="docker.io/openfantasy/yadgar:$(YADGAR_VERSION)" \
 	      YADGAR_SYSTEMD_OUTPUT_DIR="$(HOME)/.config/systemd/user" \
 	      bash $(SCRIPTS_DIR)/generate_systemd.sh \
@@ -211,7 +213,7 @@ setup: pre-setup
 	      YADGAR_RUNTIME=$$RUNTIME \
 	      YADGAR_INSTALL_PREFIX="$(YADGAR_DIR)" \
 	      YADGAR_SECRETS_ENV_FILE="$(YADGAR_DIR)/secrets.env" \
-	      YADGAR_BACKEND_IMAGE="docker.io/openfantasy/yadgar-backend:$(YADGAR_VERSION)" \
+	      YADGAR_BACKEND_IMAGE="docker.io/openfantasy/yadgar-backend:$(YADGAR_BACKEND_VERSION)" \
 	      YADGAR_CORE_IMAGE="docker.io/openfantasy/yadgar:$(YADGAR_VERSION)" \
 	      YADGAR_LAUNCHD_OUTPUT_DIR="$(HOME)/Library/LaunchAgents" \
 	      bash $(SCRIPTS_DIR)/generate_launchd.sh \
