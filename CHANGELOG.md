@@ -6,6 +6,22 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.46.9] — 2026-06-06
+
+Hotfix: bake yadgar-ci Docker image (CI speedup) + F1/F6 test regression fixes from v5.46.7 CI log analysis.
+
+- **fix(test/F1):** `test_branch_auto_capture.py` — add `monkeypatch.delenv('YADGAR_CI_BRANCH', raising=False)` to `test_memorize_branch_none_when_detect_returns_none` and `test_anchor_branch_none_when_non_git`. YADGAR_CI_BRANCH set by CI at workflow level caused env fallback to fire even when tests mocked `detect_branch → None` to assert reject behavior.
+- **fix(test/F1):** `test_v5_42_3_drainer_branch_enforcement.py` — same `monkeypatch.delenv` fix added to `test_memorize_missing_branch_hard_rejects`, `test_memorize_hard_reject_no_queue_entry`, `test_memorize_no_branch_returns_error_dict`. Each gains `monkeypatch` fixture parameter.
+- **fix(test/F6):** `test_subagent_stop_hook.py::test_endpoint_stores_findings_with_provenance` — `_fake_memorize` lacked `branch_hint=None` parameter; production endpoint calls `memorize(..., branch_hint=...)` causing TypeError → caught silently → `stored=0`. Added `branch_hint=None` to fake signature.
+- **feat(ci):** `Dockerfile.ci` updated to v5.46.9: adds `bsdmainutils` (fixes F5 `make help` failure from missing `column` binary), bakes SurrealDB v3.0.5 (saves 15-30s CI per run), bakes HuggingFace `all-MiniLM-L6-v2` weights (saves 30-60s CI per run).
+- **feat(ci):** New `Dockerfile.ci-viz` — extends `yadgar-ci:5.46.9` with Playwright + Chromium pre-installed. Splits viz browser layer from core test image (saves ~75s pull time on core jobs).
+- **feat(ci):** `ci.yaml` viz-tests job migrated to `yadgar-ci-viz:5.46.9` image; removes 15-line inline `apt-get install` step; adds npm cache step for `viz-tests/node_modules`.
+- **feat(ci):** `ci.yaml` + `release.yaml` image refs bumped from `yadgar-ci:5.46.3` → `yadgar-ci:5.46.9`.
+- **test:** TDD regression guards — `test_v5_46_9_branch_fallback_conditional.py` (F1 doc), `test_v5_46_9_subagent_stop_findings.py` (F6 guard with correct `branch_hint` param).
+- **chore:** bump version 5.46.8 → 5.46.9
+
+---
+
 ## [5.46.8] — 2026-06-06
 
 Hotfix: gate Forgejo CI workflows to `workflow_dispatch`-only — internal dev workflow vs production CI separation (PD-45).
