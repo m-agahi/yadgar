@@ -143,7 +143,12 @@ def seeded_storage(tmp_db: str):
         "trigger_condition = $t, is_active = true, triggered_count = 0",
         {"c": "future task", "t": "when_needed"},
     )
-    # memory_similarity_link
+    # memory_similarity_link — N1 fix v5.46.7: delete before insert to avoid
+    # unique index memory_sim_link_pair_idx violation on repeated fixture use.
+    storage._q(
+        "DELETE memory_similarity_link WHERE source_memory_id = 'memory:1' "
+        "AND target_memory_id = 'memory:2'",
+    )
     storage._q(
         "CREATE memory_similarity_link SET source_memory_id = 'memory:1', "
         "target_memory_id = 'memory:2', similarity = 0.95",
