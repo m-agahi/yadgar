@@ -47,10 +47,12 @@ pre-setup:
 	@echo "==> Preflight checks..."
 	@$(MAKE) --version | grep -q "GNU Make" || { echo "ERROR: GNU Make required"; exit 1; }
 	@echo "    GNU Make: OK"
-	@if ! YADGAR_TEST_OS_RELEASE="$(YADGAR_TEST_OS_RELEASE)" \
-	      YADGAR_TEST_INSTALL_DRYRUN="$(YADGAR_TEST_INSTALL_DRYRUN)" \
-	      YADGAR_TEST_TTY="$(YADGAR_TEST_TTY)" \
-	      bash $(SCRIPTS_DIR)/detect_runtime.sh --quiet >/dev/null 2>&1; then \
+	@if [ "$(YADGAR_TEST_SKIP_RUNTIME_CHECK)" = "1" ]; then \
+	    echo "    Container runtime: SKIP (YADGAR_TEST_SKIP_RUNTIME_CHECK=1)"; \
+	  elif ! YADGAR_TEST_OS_RELEASE="$(YADGAR_TEST_OS_RELEASE)" \
+	        YADGAR_TEST_INSTALL_DRYRUN="$(YADGAR_TEST_INSTALL_DRYRUN)" \
+	        YADGAR_TEST_TTY="$(YADGAR_TEST_TTY)" \
+	        bash $(SCRIPTS_DIR)/detect_runtime.sh --quiet >/dev/null 2>&1; then \
 	    if [ "$(INSTALL_NONINTERACTIVE)" = "1" ]; then \
 	      YADGAR_TEST_OS_RELEASE="$(YADGAR_TEST_OS_RELEASE)" \
 	        bash $(SCRIPTS_DIR)/detect_runtime.sh; exit 1; \
@@ -61,12 +63,13 @@ pre-setup:
 	        YADGAR_TEST_INSTALL_DRYRUN="$(YADGAR_TEST_INSTALL_DRYRUN)" \
 	        YADGAR_TEST_TTY="$(YADGAR_TEST_TTY)"; \
 	    fi; \
+	  else \
+	    RUNTIME=$$(YADGAR_TEST_OS_RELEASE="$(YADGAR_TEST_OS_RELEASE)" \
+	                YADGAR_TEST_INSTALL_DRYRUN="$(YADGAR_TEST_INSTALL_DRYRUN)" \
+	                YADGAR_TEST_TTY="$(YADGAR_TEST_TTY)" \
+	                bash $(SCRIPTS_DIR)/detect_runtime.sh); \
+	    echo "    Container runtime: $$RUNTIME"; \
 	  fi
-	@RUNTIME=$$(YADGAR_TEST_OS_RELEASE="$(YADGAR_TEST_OS_RELEASE)" \
-	              YADGAR_TEST_INSTALL_DRYRUN="$(YADGAR_TEST_INSTALL_DRYRUN)" \
-	              YADGAR_TEST_TTY="$(YADGAR_TEST_TTY)" \
-	              bash $(SCRIPTS_DIR)/detect_runtime.sh); \
-	  echo "    Container runtime: $$RUNTIME"
 	@OS=$$(bash $(SCRIPTS_DIR)/detect_os.sh); \
 	  echo "    Host OS: $$OS"; \
 	  if [ "$$OS" = "linux-nixos" ]; then \

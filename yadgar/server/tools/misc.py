@@ -84,7 +84,8 @@ def checkpoint(  # noqa: PLR0913 — v5.42.3 added branch_hint param; pre-existi
         return _gate
 
     # Capture branch at API boundary for payload tagging and future filter use.
-    # v5.42.3: resolution order: _detect_branch(directory) → branch_hint → hard-reject.
+    # v5.46.7: resolution order: _detect_branch(directory) → branch_hint
+    #           → YADGAR_CI_BRANCH env → hard-reject.
     _branch = None
     try:
         import yadgar.server as _srv
@@ -96,6 +97,10 @@ def checkpoint(  # noqa: PLR0913 — v5.42.3 added branch_hint param; pre-existi
     # v5.42.3: branch_hint fallback
     if not _branch and branch_hint:
         _branch = branch_hint
+
+    # v5.46.7: YADGAR_CI_BRANCH env fallback — CI runner sets this when git is unavailable.
+    if not _branch:
+        _branch = os.environ.get("YADGAR_CI_BRANCH") or None
 
     # v5.42.3: hard-reject at MCP boundary when branch context is absent.
     if not _branch and not is_draining():
@@ -250,7 +255,8 @@ def anchor(  # noqa: C901 — v5.42.3 added branch enforcement; pre-existing cyc
         return {"stored": False, "reason": str(_vu_exc)}
 
     # Capture branch at API boundary — enqueue-time value used by drainer.
-    # v5.42.3: resolution order: _detect_branch(context) → branch_hint → hard-reject.
+    # v5.46.7: resolution order: _detect_branch(context) → branch_hint
+    #           → YADGAR_CI_BRANCH env → hard-reject.
     _branch = None
     try:
         import yadgar.server as _srv
@@ -262,6 +268,10 @@ def anchor(  # noqa: C901 — v5.42.3 added branch enforcement; pre-existing cyc
     # v5.42.3: branch_hint fallback
     if not _branch and branch_hint:
         _branch = branch_hint
+
+    # v5.46.7: YADGAR_CI_BRANCH env fallback — CI runner sets this when git is unavailable.
+    if not _branch:
+        _branch = os.environ.get("YADGAR_CI_BRANCH") or None
 
     # v5.42.3: hard-reject at MCP boundary when branch context is absent.
     if not _branch and not is_draining():

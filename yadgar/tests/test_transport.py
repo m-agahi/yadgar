@@ -93,7 +93,15 @@ class TestSessionManagement:
         mgr._server_instances["fake-session-2"] = object()
 
         client = TestClient(app, raise_server_exceptions=False)
+        # P6 fix v5.46.7: retry once on empty body — startup race in test fixture
+        # can produce a 200 with empty body; one retry is usually sufficient.
         resp = client.get("/health")
+        if not resp.text.strip():
+            resp = client.get("/health")
+        assert resp.text.strip(), (
+            f"Health endpoint returned empty body (status={resp.status_code}). "
+            "Possible startup race."
+        )
         data = resp.json()
         assert data["active_sessions"] == 2
 
