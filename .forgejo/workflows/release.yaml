@@ -43,7 +43,7 @@ jobs:
     # when going production and re-enable tag-push-triggered releases.
     if: github.event_name == 'workflow_dispatch'
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.46.3
+      image: docker.io/openfantasy/yadgar-ci:5.46.9
     steps:
       # make, git, curl, ca-certificates, nodejs are pre-installed in yadgar-ci image.
       # No apt-get install step needed for these system deps.
@@ -75,7 +75,7 @@ jobs:
     # GATED: only fire on manual workflow_dispatch (PD-45).
     if: github.event_name == 'workflow_dispatch'
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.46.3
+      image: docker.io/openfantasy/yadgar-ci:5.46.9
     steps:
       # make, git, nodejs are pre-installed in yadgar-ci image.
 
@@ -127,7 +127,7 @@ jobs:
     # GATED: only fire on manual workflow_dispatch (PD-45).
     if: github.event_name == 'workflow_dispatch'
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.46.3
+      image: docker.io/openfantasy/yadgar-ci:5.46.9
     steps:
       - name: Install jq
         # curl, nodejs pre-installed in yadgar-ci; jq is not — install here.
@@ -199,7 +199,7 @@ jobs:
     # GATED: only fire on manual workflow_dispatch (PD-45).
     if: github.event_name == 'workflow_dispatch'
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.46.3
+      image: docker.io/openfantasy/yadgar-ci:5.46.9
     steps:
       # make, git, nodejs are pre-installed in yadgar-ci image.
 
