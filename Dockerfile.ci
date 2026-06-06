@@ -3,21 +3,25 @@
 # Purpose: used by .forgejo/workflows/{ci.yaml,release.yaml} container jobs
 #          so CI runners can pull from dockerhub (PD-42 carve-out).
 # Contains: system deps (make, git, curl, ca-certificates, build-essential)
-#           + pre-installed yadgar test + ml extras to speed CI start.
-# Version: updated each CI infrastructure release (v5.46.3+).
+#           + pre-installed yadgar test + ml extras to speed CI start
+#           + SurrealDB v3.0.5 baked in (saves 15-30s CI per run, v5.46.9)
+#           + HuggingFace all-MiniLM-L6-v2 baked in (saves 30-60s, v5.46.9)
+#           + bsdmainutils for `column` binary (fixes F5 make help failure, v5.46.9)
+# Version: updated each CI infrastructure release (v5.46.9+).
 FROM python:3.14-slim
 
 LABEL org.opencontainers.image.source="https://codeberg.org/maxagahi/yadgar"
-LABEL org.opencontainers.image.description="yadgar CI runner image — Python 3.14 + make + git + test deps"
-LABEL org.opencontainers.image.version="5.46.3"
+LABEL org.opencontainers.image.description="yadgar CI runner image — Python 3.14 + make + git + test deps + SurrealDB + HF model"
+LABEL org.opencontainers.image.version="5.46.9"
 
 # System deps needed in CI:
-#   make       — Makefile integration tests (B6 fix)
-#   git        — branch detection, checkout actions
-#   curl       — SurrealDB binary download + health checks
-#   ca-certificates — TLS for curl + pip installs
-#   build-essential — C extension builds (scipy, numpy, etc.)
-#   nodejs     — JS actions runtime used by Forgejo actions checkout
+#   make             — Makefile integration tests (B6 fix)
+#   git              — branch detection, checkout actions
+#   curl             — SurrealDB binary download + health checks
+#   ca-certificates  — TLS for curl + pip installs
+#   build-essential  — C extension builds (scipy, numpy, etc.)
+#   nodejs           — JS actions runtime used by Forgejo actions checkout
+#   bsdmainutils     — provides `column` binary used by `make help` (F5 fix, v5.46.9)
 RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends \
         make \
@@ -25,8 +29,21 @@ RUN apt-get update -qq && \
         curl \
         ca-certificates \
         build-essential \
-        nodejs && \
+        nodejs \
+        bsdmainutils && \
     rm -rf /var/lib/apt/lists/*
+
+# Bake SurrealDB v3.0.5 into image (saves 15-30s CI per run — no download step).
+# SHA256 verified at build time. Binary placed at /usr/local/bin/surreal (on PATH).
+ARG SURREAL_VERSION=v3.0.5
+ARG SURREAL_SHA256=48dbeba4896765f33e07acc25224073f0850c190872052b917ebda1f7b4375cb
+RUN curl -fsSL \
+        "https://github.com/surrealdb/surrealdb/releases/download/${SURREAL_VERSION}/surreal-${SURREAL_VERSION}.linux-amd64.tgz" \
+        -o /tmp/surreal.tgz && \
+    echo "${SURREAL_SHA256}  /tmp/surreal.tgz" | sha256sum -c - && \
+    tar -xzf /tmp/surreal.tgz -C /usr/local/bin surreal && \
+    chmod +x /usr/local/bin/surreal && \
+    rm /tmp/surreal.tgz
 
 # Pre-install test + ml extras to speed CI pip installs.
 # Copies pyproject.toml only so this layer caches across source changes.
@@ -47,5 +64,13 @@ RUN pip install --no-cache-dir \
         sentence-transformers \
         hf-xet && \
     rm -rf /root/.cache/pip
+
+# Bake HuggingFace all-MiniLM-L6-v2 model weights into image
+# (saves 30-60s CI per run — no HF download step needed in test jobs).
+# Model stored at default HF cache path /root/.cache/huggingface/hub.
+RUN python -c "\
+from sentence_transformers import SentenceTransformer; \
+SentenceTransformer('all-MiniLM-L6-v2'); \
+print('HF model all-MiniLM-L6-v2 baked successfully')"
 
 ENV PYTHONUNBUFFERED=1

@@ -182,7 +182,9 @@ class TestSubagentStopEndpoint:
 
         stored_calls = []
 
-        def _fake_memorize(content, context, tags, is_protected=False, provenance_agent="default"):
+        def _fake_memorize(
+            content, context, tags, is_protected=False, provenance_agent="default", branch_hint=None
+        ):
             stored_calls.append(
                 {
                     "content": content,
