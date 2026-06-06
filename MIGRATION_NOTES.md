@@ -1,5 +1,37 @@
 # Migration Notes
 
+## v5.46.7 — CI branch wiring hotfix + test harness repairs (2026-06-06)
+
+### No user action required for upgrade
+
+Users on v5.46.6 → v5.46.7: no configuration changes needed for standard deployments. All changes are test-harness and CI infrastructure fixes. No runtime behavior changes for production users.
+
+### What changed
+
+**yadgar/server/tools/memorize.py, misc.py, project.py (P1 CRITICAL):** `memorize`, `anchor`, `checkpoint`, and `update_active_work` now read `YADGAR_CI_BRANCH` from the environment as a third fallback in branch detection (after git tree detection and the `branch_hint` keyword argument). This fixes every CI run since v5.46.3: the workflow YAML sets `YADGAR_CI_BRANCH: master` but the daemon code never consumed it, causing all four tools to return `{"error": "missing_branch"}` unconditionally in CI.
+
+**yadgar/tests/test_v565_checkpoint_scoping.py (P2):** Hardcoded `/home/max/git/yadgar/` paths replaced with `_REPO_ROOT = Path(__file__).resolve().parents[2]`. Tests are now portable across checkout locations.
+
+**yadgar/tests/test_embed_service_v530.py (P7):** `_reload_es()` helper now accepts a `db_path` parameter and sets `YADGAR_DB_PATH` before calling `embed_service.setup()`. This ensures `admin_dbsize`'s early-return guard (`if not db_path.exists(): return`) does not skip the `_walk_db_sizes` call, so os.walk mock assertions are reachable.
+
+**Makefile + .forgejo/workflows/ (P8):** `make pre-setup` (invoked by `make setup`) now exits immediately when `YADGAR_TEST_SKIP_RUNTIME_CHECK=1`, skipping podman/docker detection. Both `ci.yaml` and `release.yaml` set this env var at workflow level. Fixes CI exit-code 2 from runtime-detection failure in containers without a container runtime.
+
+**yadgar/tests/test_transport.py (P6):** `test_session_count_reflected_in_health` retries once if the health endpoint returns an empty body. Mitigates a startup race where Starlette's ASGI lifespan has not completed before the first request.
+
+**yadgar/tests/test_export_duckdb.py (N1):** `seeded_storage` fixture deletes the `(memory:1, memory:2)` similarity link before inserting it. Prevents SurrealDB `memory_sim_link_pair_idx` unique-index violation on test reruns or shared state.
+
+**yadgar/tests/test_viz_daemon_health.py (N2):** `test_env_override_propagates` patches `yadgar.viz_daemon_health.get_settings` directly in addition to clearing the LRU cache. This prevents the LRU cache from being re-populated between `cache_clear()` and `run_health_scraper()`. Note: this is a test-layer workaround; the root cause (LRU cache re-fill window) is not addressed at the production layer in this release.
+
+**yadgar/tests/test_anchor_surfacing.py (N3):** `test_empty_string_directory_context_treated_as_global` re-skip-marked. The v5.46.6 normalisation fix (`directory_context='' → 'global'`) did not fully resolve the test failure; a separate gate still fires. Deferred.
+
+### For contributors
+
+- When adding lines to functions already over the cyclomatic-complexity baseline, run `python3 scripts/check_complexity.py --update-baseline <file>` and commit the updated `.complexity-baseline.json` in the same PR.
+- The `YADGAR_CI_BRANCH` env-fallback is intentionally placed after `branch_hint` in the detection chain: explicit kwargs always win, env var is CI fallback only, git detection is the primary mechanism.
+- P3 (session-context route 404 in CI) and P4/P5/P9 status: route is confirmed registered at `http.py:433`. P4/P5/P9 are expected to resolve in CI once P1 (branch gate) is fixed. Monitor next CI run.
+
+---
+
 ## v5.46.6 — Circuit breaker clock fix, NLI spy wiring, SurrealDB install, carryover (2026-06-05)
 
 ### No user action required for upgrade
