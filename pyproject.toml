@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.46.9"
+version = "5.46.10"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "Apache-2.0"
@@ -87,8 +87,11 @@ packages = ["yadgar"]
 [tool.hatch.build.targets.wheel.shared-data]
 # Ship install assets inside the wheel so pipx-installed users can run setup
 "install_assets" = "share/yadgar/install_assets"
-# Ship yadgar-setup.sh so the yadgar-setup Python shim can exec it
-"scripts/install/yadgar-setup.sh" = "share/yadgar/scripts/yadgar-setup.sh"
+# v5.46.10 fix: ship ALL scripts/install/ helpers (not just yadgar-setup.sh).
+# Previously only yadgar-setup.sh was bundled; helpers it calls were absent,
+# breaking pipx installs on fresh hosts since v5.45.0.
+# Directory-wide mapping ships helpers + systemd .in templates + launchd/ subdir.
+"scripts/install" = "share/yadgar/scripts"
 
 [tool.ruff]
 target-version = "py314"
