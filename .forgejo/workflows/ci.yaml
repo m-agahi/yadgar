@@ -1,9 +1,19 @@
+# WORKFLOW STATE: GATED FOR INTERNAL DEV (v5.46.8 hotfix, 2026-06-06)
+#
+# Per anchors 490140 (2026-05-18) + 491179 (2026-05-19) + PD-45 (2026-06-06):
+# Internal dev workflow = local amd64 build + nix bump + home-manager switch
+# + manual `twine upload` to PyPI. Forgejo CI is for PRODUCTION ONLY.
+#
+# All push/tag triggers gated to workflow_dispatch — only manual UI clicks
+# fire jobs. When going production, remove the workflow_dispatch-only `if:`
+# gates from job definitions.
+#
+# Do NOT remove this gate without re-checking with anchored workflow rules.
 name: CI
 
 on:
   push:
     branches: [master]
-    tags: ["v*"]
   pull_request:
     branches: [master]
     # Only run CI on PRs that touch code/build inputs — not workflow-only or
@@ -284,12 +294,9 @@ jobs:
     # (alpine), then apk-install the bits the JS actions / scripts need.
     container:
       image: docker:cli
-    # Skip the whole job if neither image needs rebuilding (saves Build Cloud
-    # minutes). Tags always rebuild both via the changes job.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' &&
-       (needs.changes.outputs.core == 'true' || needs.changes.outputs.backend == 'true'))
+    # GATED: only fire on manual workflow_dispatch (PD-45). Remove this gate
+    # when going production and re-enable push-triggered builds.
+    if: github.event_name == 'workflow_dispatch'
     steps:
       - name: Install minimal tools
         # docker:cli already has the docker CLI. bash for heredocs, python3 for
