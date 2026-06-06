@@ -1,5 +1,85 @@
 # Migration Notes
 
+## v5.46.12 — backend version canonical source fix (2026-06-06)
+
+### Context
+
+v5.46.11 fixed CLI invocation on fresh installs. v5.46.12 fixes the remaining step 2 failure on a fresh Rocky Linux VM: both `yadgar-setup.sh` and `Makefile` resolved the backend container image tag from the core (pip package) version instead of the independent backend image track.
+
+Symptom on Rocky VM:
+```
+Step 2/10: Pulling container images...
+  core=5.46.11  backend=5.46.11   ← WRONG: backend tag is 5.4.0
+docker.io/openfantasy/yadgar:5.46.11   OK
+docker.io/openfantasy/yadgar-backend:5.46.11   FAIL (tag does not exist)
+```
+
+The backend image track (`docker.io/openfantasy/yadgar-backend`) uses independent versioning — currently `5.4.0`. It is not bumped on every core release.
+
+### What changed
+
+**`yadgar/__init__.py`:**
+
+```python
+BACKEND_VERSION = "5.4.0"
+```
+
+Added immediately after the `__version__` try/except block. This is the single canonical source for the backend image version. Both `setup.sh` and `Makefile` derive the backend tag from here.
+
+**`scripts/install/yadgar-setup.sh`:**
+
+1. New `_resolve_backend_version()` function (parallels `_resolve_yadgar_version`):
+   - Locates `yadgar` shim via `command -v yadgar`
+   - Reads shebang to get venv python
+   - Calls `$venv_python -c "import yadgar; print(yadgar.BACKEND_VERSION)"`
+   - Fallback: `"5.4.0"` if shim absent or venv python unusable
+
+2. `_step_pull_images` now resolves both versions:
+   ```bash
+   version=$(_resolve_yadgar_version)
+   backend_version=$(_resolve_backend_version)
+   ```
+   Pull line: `yadgar-backend:${backend_version}` (was `${version}`).
+
+3. `_step_generate_units` likewise — `YADGAR_BACKEND_IMAGE` now uses `${backend_version}` at both systemd + launchd sites.
+
+**`Makefile`:**
+
+```makefile
+YADGAR_BACKEND_VERSION := $(shell grep -m1 '^BACKEND_VERSION' $(REPO_ROOT)yadgar/__init__.py | cut -d'"' -f2)
+```
+
+All 3 `yadgar-backend:$(YADGAR_VERSION)` → `yadgar-backend:$(YADGAR_BACKEND_VERSION)`.
+
+### User action required
+
+```bash
+pipx upgrade yadgar
+yadgar-setup
+```
+
+Step 2 should now pull `yadgar-backend:5.4.0` successfully.
+
+### Bumping backend version (maintainer)
+
+1. Edit `yadgar/__init__.py` — update `BACKEND_VERSION = "X.Y.Z"`.
+2. Update `server.json` `backend_version` field (drift guard test enforces this).
+3. Update nix module `yadger_backend_version` (manually, via release notes — nix is downstream consumer).
+4. Rebuild + push `docker.io/openfantasy/yadgar-backend:X.Y.Z`.
+
+### Drift guards added
+
+- `pyproject.toml [project].version` must equal `server.json version` (file-to-file).
+- `yadgar.BACKEND_VERSION` must equal `server.json backend_version`.
+
+Both enforced by `test_v5_46_12_backend_version_canonical.py` (CI + pre-commit).
+
+### Pending
+
+- `yadgar --version` CLI flag still missing (deferred to v5.46.13). Current workaround: version detection uses shim-shebang extraction.
+
+---
+
 ## v5.46.11 — pipx CLI invocation fix (2026-06-06)
 
 ### Context

@@ -222,6 +222,30 @@ _resolve_yadgar_version() {
     echo "$version"
 }
 
+# Resolve the installed yadgar backend image version via the pipx-aware shim shebang.
+#
+# Mirrors _resolve_yadgar_version() — reads the venv python from the yadgar shim
+# shebang, then imports yadgar.BACKEND_VERSION (independent backend image track).
+#
+# Canonical source: yadgar/__init__.py BACKEND_VERSION constant.
+# Fallback: "5.4.0" (current backend track) if shim unavailable.
+_resolve_backend_version() {
+    local yadgar_shim venv_python backend_version
+    yadgar_shim=$(command -v yadgar 2>/dev/null) || yadgar_shim=""
+    if [ -n "$yadgar_shim" ] && [ -f "$yadgar_shim" ]; then
+        venv_python=$(head -1 "$yadgar_shim" | sed 's|^#!||')
+        if [ -n "$venv_python" ] && [ -x "$venv_python" ] && \
+           "$venv_python" -c "import sys" 2>/dev/null; then
+            backend_version=$("$venv_python" -c "import yadgar; print(yadgar.BACKEND_VERSION)" 2>/dev/null || echo "5.4.0")
+        else
+            backend_version="5.4.0"
+        fi
+    else
+        backend_version="5.4.0"
+    fi
+    echo "$backend_version"
+}
+
 # ── runtime + OS detection ────────────────────────────────────────────────────
 
 _detect_runtime() {
@@ -322,10 +346,12 @@ _step_detect() {
 
 _step_pull_images() {
     log "Step 2/10: Pulling container images..."
-    local version
+    local version backend_version
     version=$(_resolve_yadgar_version)
+    backend_version=$(_resolve_backend_version)
+    log "  core=${version}  backend=${backend_version}"
     run "$RUNTIME" pull "docker.io/openfantasy/yadgar:${version}"
-    run "$RUNTIME" pull "docker.io/openfantasy/yadgar-backend:${version}"
+    run "$RUNTIME" pull "docker.io/openfantasy/yadgar-backend:${backend_version}"
 }
 
 _step_bootstrap_secrets() {
@@ -349,8 +375,9 @@ _step_generate_units() {
     local scripts_dir
     scripts_dir="$(_locate_setup_scripts)"
     local yadgar_dir="${YADGAR_DIR:-${HOME}/.yadgar}"
-    local version
+    local version backend_version
     version=$(_resolve_yadgar_version)
+    backend_version=$(_resolve_backend_version)
 
     case "$OS" in
         linux|linux-other)
@@ -360,7 +387,7 @@ _step_generate_units() {
                     YADGAR_RUNTIME="$RUNTIME" \
                     YADGAR_INSTALL_PREFIX="$yadgar_dir" \
                     YADGAR_SECRETS_ENV_FILE="${yadgar_dir}/secrets.env" \
-                    YADGAR_BACKEND_IMAGE="docker.io/openfantasy/yadgar-backend:${version}" \
+                    YADGAR_BACKEND_IMAGE="docker.io/openfantasy/yadgar-backend:${backend_version}" \
                     YADGAR_CORE_IMAGE="docker.io/openfantasy/yadgar:${version}" \
                     YADGAR_SYSTEMD_OUTPUT_DIR="$systemd_dir" \
                     bash "$scripts_dir/generate_systemd.sh"
@@ -378,7 +405,7 @@ _step_generate_units() {
                     YADGAR_RUNTIME="$RUNTIME" \
                     YADGAR_INSTALL_PREFIX="$yadgar_dir" \
                     YADGAR_SECRETS_ENV_FILE="${yadgar_dir}/secrets.env" \
-                    YADGAR_BACKEND_IMAGE="docker.io/openfantasy/yadgar-backend:${version}" \
+                    YADGAR_BACKEND_IMAGE="docker.io/openfantasy/yadgar-backend:${backend_version}" \
                     YADGAR_CORE_IMAGE="docker.io/openfantasy/yadgar:${version}" \
                     YADGAR_LAUNCHD_OUTPUT_DIR="$launchd_dir" \
                     bash "$scripts_dir/generate_launchd.sh"
