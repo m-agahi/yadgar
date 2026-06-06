@@ -6,6 +6,18 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.46.10] — 2026-06-06
+
+Hotfix: pipx distribution wheel bundle gap — `yadgar-setup` broken on fresh hosts since v5.45.0.
+
+- **fix(packaging):** `pyproject.toml` `[tool.hatch.build.targets.wheel.shared-data]` — replace single-file `yadgar-setup.sh` mapping with directory-wide `"scripts/install" = "share/yadgar/scripts"`. Wheel now ships all 9 helper scripts (`detect_runtime.sh`, `detect_os.sh`, `install_runtime.sh`, `generate_systemd.sh`, `generate_launchd.sh`, `bootstrap_secrets.sh`, `restore.sh`, `uninstall.sh`, `append_claude_rules.sh`) plus systemd `.in` templates and `launchd/` plist templates.
+- **fix(install):** `yadgar-setup.sh` — add fail-fast bundle-integrity check at startup. When any required helper is absent, exits code 2 (vs previous silent fall-through to unhelpful error) with explicit message naming the missing file and actionable workarounds.
+- **test:** `test_v5_46_10_wheel_bundle.py` — 18 parametrized assertions verify all required files present in built wheel archive.
+- **test:** `test_v5_46_10_yadgar_setup_helper_check.py` — 4 tests verify exit code 2 + explicit error on missing helper.
+- **chore:** bump version 5.46.9 → 5.46.10
+
+---
+
 ## [5.46.9] — 2026-06-06
 
 Hotfix: bake yadgar-ci Docker image (CI speedup) + F1/F6 test regression fixes from v5.46.7 CI log analysis.
