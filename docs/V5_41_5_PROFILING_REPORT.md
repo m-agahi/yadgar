@@ -53,3 +53,42 @@
 - I9 invariant: `docs/ARCHITECTURE_INVARIANTS.md`
 - Baseline (v5.41.2): ~28.89ms p50 (task header) / ~48ms p50 (xfail comment)
 - This measurement: 27.09ms p50
+
+---
+
+## Phase 2 — Post-fix verification (re-measured 2026-06-06)
+
+**Date:** 2026-06-06
+**Phase:** 2 — post-fix verification (similarity gate moved to drainer pre-apply per v5.41.5)
+**Yadgar version:** v5.46.x cycle (similarity-gate-at-drainer architecture stable since v5.41.5)
+
+### Per-Substep Timings (n=100 each)
+
+| Substep | p50 (ms) | p90 (ms) | p99 (ms) | min (ms) | max (ms) |
+|---------|----------|----------|----------|----------|----------|
+| Secret-gate regex scan (I26) | 0.004 | 0.004 | 0.009 | 0.004 | 0.011 |
+| Rules engine write-policy check | 0.000 | 0.000 | 0.001 | 0.000 | 0.003 |
+| Branch resolution + slug generation | 0.001 | 0.002 | 0.003 | 0.001 | 0.006 |
+| Similarity gate (embed + KNN, drainer-side) | 31.009 | 39.683 | 49.634 | 26.302 | 114.486 |
+| File queue enqueue (Path.write\_text) | 0.031 | 0.049 | 0.176 | 0.029 | 0.333 |
+| **E2E handler (server.wiki\_add)** | **0.059** | **0.095** | **0.190** | **0.054** | **0.251** |
+
+### Key Findings (Phase 2)
+
+- **E2E p50 = 0.06ms** → **PASS** — 451× under budget (vs Phase 0 27.09ms FAIL)
+- Similarity gate p50 = 31.01ms — STILL slow but now off the request thread (drainer pre-apply per v5.41.5 fix). Not visible to MCP handler latency.
+- Net handler-path improvement: **27.09ms → 0.06ms (451× faster)**.
+- Secret-gate + rules + branch + enqueue = sub-millisecond total, as Phase 0 predicted.
+
+### Comparison vs Phase 0
+
+| Metric | Phase 0 (pre-fix) | Phase 2 (post-fix) | Change |
+|---|---|---|---|
+| E2E handler p50 | 27.09ms FAIL | 0.06ms PASS | **−27.03ms (451×)** |
+| E2E handler p99 | 48.84ms | 0.19ms | −48.65ms (257×) |
+| Similarity gate (location) | request thread | drainer pre-apply | architecturally relocated |
+| File queue enqueue p50 | 0.027ms | 0.031ms | +0.004ms (noise) |
+
+### Verdict
+
+v5.41.5 fix VERIFIED. I9 budget (≤5ms p50) restored. Similarity gate cost preserved at the drainer (no quality loss), just no longer blocking the MCP handler thread. Breaking-change contract for `wait=False` callers (synchronous candidate list → deferred) documented in MIGRATION_NOTES + v5.41.5 plan.

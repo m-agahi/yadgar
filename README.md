@@ -44,7 +44,7 @@ v5 ships bearer-token auth, branch-tagged retrieval, layered session bootstrap, 
 
 Yadgar is evaluated on [**LongMemEval**](https://arxiv.org/abs/2410.10813) (ICLR 2025) — the standard academic benchmark for long-term conversational memory. The `longmemeval_s` variant runs 500 questions across 6 categories (single-session-user, single-session-assistant, knowledge-update, temporal-reasoning, multi-session, single-session-preference) against ~50 sessions of synthetic history per query. Each question is scored on two axes: **Phase 1 retrieval** (does the memory layer surface gold-context sessions in top-k?) and **Phase 2 QA accuracy** (does the reader produce the gold answer, judged by an LLM grader?).
 
-**Headline (v5.26.0, full 500q, Sonnet 4.6 reader + judge):**
+**Headline (v5.26.0, full 500q, Sonnet 4.6 reader + judge — run 2026-05-31 → 2026-06-01; NOT re-run for v5.27 → v5.46.x since changes targeted infrastructure not retrieval quality):**
 
 | System | Reader | LongMemEval-s QA | vs yadgar |
 |---|---|---|---|
@@ -91,6 +91,9 @@ Personal deployment — first commit 2026-04-20, ~41 days runtime as of 2026-05-
 - Hook-driven recall: **p50 ~2.3s, p95 ~2.7s** (down 20× from 4.7s/53s pre-v5.6.6 fix)
 - Vector search: **p50 21ms, p95 58ms**
 - Embedding RPC: **p50 2ms, p95 50ms**
+- **wiki_add MCP handler: p50 0.06ms, p99 0.19ms** (v5.41.5 fix verified 2026-06-06 — similarity gate moved to drainer pre-apply; I9 ≤5ms budget restored 451× over). See [`docs/V5_41_5_PROFILING_REPORT.md`](docs/V5_41_5_PROFILING_REPORT.md).
+
+Canonical benchmark entry point (LongMemEval + handler perf + runtime tracing + production scale): wiki page `yadgar-benchmark-summary`.
 
 ### Continuity
 
