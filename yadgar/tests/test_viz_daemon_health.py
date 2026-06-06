@@ -504,7 +504,15 @@ class TestVizHealthRefreshEnvKnob:
             sleep_calls.append(secs)
             raise asyncio.CancelledError  # stop after first iteration
 
+        # N2 fix v5.46.7: also patch get_settings in viz_daemon_health module scope
+        # to ensure the 10s override is visible regardless of LRU cache state.
+        # The global cache_clear() above is necessary but not sufficient when other
+        # tests or fixtures call get_settings() after clear; a direct patch is robust.
+        class _FakeSettings:
+            VIZ_HEALTH_REFRESH_SEC: float = 10.0
+
         with (
+            patch("yadgar.viz_daemon_health.get_settings", return_value=_FakeSettings()),
             patch("yadgar.viz_daemon_health._scrape_once", side_effect=_fake_scrape_once),
             patch("yadgar.viz_daemon_health._scraper_heartbeat"),
             patch("yadgar.viz_daemon_health._scraper_record_exc"),

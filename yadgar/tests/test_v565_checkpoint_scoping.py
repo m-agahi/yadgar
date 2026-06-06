@@ -15,11 +15,16 @@ from __future__ import annotations
 import io
 import json
 import logging
+from pathlib import Path
 
 import pytest
 
 from yadgar.restoration import CheckpointContext, CheckpointRestore
 from yadgar.storage import StorageEngine
+
+# Dynamic repo root — replaces hardcoded /home/max/git/yadgar paths (P2 fix v5.46.7).
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_HOOKS_DIR = _REPO_ROOT / "yadgar" / "hooks"
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -359,7 +364,7 @@ class TestSessionStartHint:
 
     def test_no_auto_restore_called(self):
         """SessionStart hook must NOT call restore() — only emit hint text."""
-        hook_path = "/home/max/git/yadgar/yadgar/hooks/session-start-context.py"
+        hook_path = str(_HOOKS_DIR / "session-start-context.py")
         with open(hook_path) as f:
             source = f.read()
 
@@ -379,7 +384,7 @@ class TestStopHookStdout:
         import subprocess
         import tempfile
 
-        hook_path = "/home/max/git/yadgar/yadgar/hooks/stop-memory-checkpoint.py"
+        hook_path = str(_HOOKS_DIR / "stop-memory-checkpoint.py")
 
         # Write a minimal JSONL transcript with 30 human messages (> INTERVAL=25)
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as tf:
@@ -430,7 +435,7 @@ class TestStopHookStdout:
         import subprocess
         import tempfile
 
-        hook_path = "/home/max/git/yadgar/yadgar/hooks/stop-memory-checkpoint.py"
+        hook_path = str(_HOOKS_DIR / "stop-memory-checkpoint.py")
 
         # Write transcript with only 5 messages (< INTERVAL=25)
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as tf:

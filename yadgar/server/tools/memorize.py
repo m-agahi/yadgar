@@ -208,7 +208,11 @@ def memorize(  # noqa: C901, PLR0913 — pre-existing complexity + v5.10.x reaso
 
     # Capture branch at API boundary — must happen before any enqueue so
     # the drainer replays with the branch value from write time.
-    # v5.42.3: resolution order: _detect_branch(context) → branch_hint → hard-reject.
+    # v5.46.7: resolution order: _detect_branch(context) → branch_hint
+    #           → YADGAR_CI_BRANCH env → hard-reject.
+    # (v5.46.3 set YADGAR_CI_BRANCH in workflows but never wired daemon-side read.)
+    import os as _os
+
     _branch = None
     try:
         import yadgar.server as _srv
@@ -220,6 +224,10 @@ def memorize(  # noqa: C901, PLR0913 — pre-existing complexity + v5.10.x reaso
     # v5.42.3: branch_hint fallback — host-supplied when daemon cannot detect git branch.
     if not _branch and branch_hint:
         _branch = branch_hint
+
+    # v5.46.7: YADGAR_CI_BRANCH env fallback — CI runner sets this when git is unavailable.
+    if not _branch:
+        _branch = _os.environ.get("YADGAR_CI_BRANCH") or None
 
     # v5.42.3: hard-reject at MCP boundary when branch context is absent.
     # _internal flag is never accepted from MCP input — agents cannot supply it.
