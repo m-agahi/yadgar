@@ -145,12 +145,34 @@ run_sh() {
 
 # ── asset resolution ──────────────────────────────────────────────────────────
 
+# Resolve the venv python interpreter via the yadgar shim's shebang line.
+#
+# Problem: bare ``python3`` resolves to /usr/bin/python3 on Rocky Linux / bare
+# Debian. That interpreter has sys.prefix=/usr, so any path constructed from
+# sys.prefix won't find wheel assets (which live in the pipx venv, not /usr).
+#
+# Solution: read the shebang of the ``yadgar`` shim installed by pipx/brew/nix.
+# The shebang points directly to the venv python, e.g.
+#   #!/root/.local/share/pipx/venvs/yadgar/bin/python
+# which resolves sys.prefix to the pipx venv where the wheel assets are shipped.
+#
+# Fallback: echo "python3" when the yadgar shim is absent (repo-checkout dev).
+_get_venv_python() {
+    local yadgar_shim
+    yadgar_shim=$(command -v yadgar 2>/dev/null) || { echo "python3"; return; }
+    [ -f "$yadgar_shim" ] || { echo "python3"; return; }
+    head -1 "$yadgar_shim" | sed 's|^#!||'
+}
+
 # Locate wheel-shipped install_assets via importlib.resources (sys.prefix path).
 # Fallback: check if we are running from a repo checkout (SCRIPTS_DIR/../install_assets).
 _locate_install_assets() {
-    # Try importlib.resources path first (wheel/pipx/brew/nix install)
-    local share_path
-    share_path=$(python3 -c "
+    # Use venv python (via _get_venv_python) so sys.prefix resolves to the pipx
+    # venv rather than /usr (the system python prefix on Rocky Linux / bare Debian).
+    # Fix for v5.46.14: same class of bug as v5.46.11 (_resolve_yadgar_version).
+    local venv_python share_path
+    venv_python=$(_get_venv_python)
+    share_path=$("$venv_python" -c "
 import sys, os
 prefix = sys.prefix
 candidate = os.path.join(prefix, 'share', 'yadgar', 'install_assets')
