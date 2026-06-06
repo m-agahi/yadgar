@@ -511,7 +511,7 @@ def _resolve_log_dir() -> str:
         )
         try:
             os.makedirs(_FALLBACK_LOG_DIR, mode=0o750, exist_ok=True)
-        except PermissionError, OSError:
+        except (PermissionError, OSError):  # fmt: skip
             pass  # last resort — caller will discover dir is missing
         return _FALLBACK_LOG_DIR
 

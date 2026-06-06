@@ -207,7 +207,7 @@ def hook_db_lockdown_check() -> None:
     """
     try:
         data = json.load(sys.stdin)
-    except json.JSONDecodeError, ValueError:
+    except (json.JSONDecodeError, ValueError):  # fmt: skip
         print(json.dumps({"hookSpecificOutput": {"permissionDecision": "allow"}}))
         return
 

@@ -60,7 +60,7 @@ def _get_runtime() -> str:
             r = subprocess.run([rt, "--version"], capture_output=True, timeout=5)
             if r.returncode == 0:
                 return rt
-        except FileNotFoundError, subprocess.TimeoutExpired:
+        except (FileNotFoundError, subprocess.TimeoutExpired):  # fmt: skip
             continue
     return "docker"  # final fallback keeps backward compat
 

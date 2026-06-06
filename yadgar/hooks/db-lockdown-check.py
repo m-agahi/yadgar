@@ -39,7 +39,7 @@ def _deny(message: str) -> dict:
 def main() -> None:
     try:
         data = json.load(sys.stdin)
-    except json.JSONDecodeError, ValueError:
+    except (json.JSONDecodeError, ValueError):  # fmt: skip
         print(json.dumps(_allow()))
         return
 

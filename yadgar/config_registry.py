@@ -302,7 +302,7 @@ def _set_config_gauges() -> None:
             else:
                 numeric = float(raw)
             yadgar_config_value.labels(name=entry.name).set(numeric)
-        except ValueError, TypeError:
+        except (ValueError, TypeError):  # fmt: skip
             pass  # bad env value — skip rather than crash
 
 
