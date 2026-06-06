@@ -51,8 +51,8 @@ if [[ "${YADGAR_TEST_DRYRUN:-0}" == "1" ]]; then
 
     # Generate dummy credentials for test dryrun.
     # YADGAR_RW_USER/PASS is the canonical credential name (post-rename).
-    # YADGAR_DB_USER/PASS legacy aliases are NOT written on new installs —
-    # runtime consumers read RW first and fall back to DB_USER for old hosts.
+    # Legacy DB_USER/PASS aliases are NOT written on new installs —
+    # runtime consumers read RW first and fall back to the legacy name for old hosts.
     _gen() { python3 -c 'import secrets; print(secrets.token_urlsafe(24))'; }
     umask 177
     cat > "${SECRETS_ENV_FILE}" <<SECRETS
@@ -192,9 +192,9 @@ fi  # end interactive/non-interactive
 
 # ── Write secrets file ────────────────────────────────────────────────────────
 # YADGAR_RW_USER/PASS is the canonical credential name (post v5.46.17 rename).
-# YADGAR_DB_USER/PASS legacy aliases are NOT written on new installs.
+# Legacy DB_USER/PASS aliases are NOT written on new installs.
 # Runtime consumers (daemon.py, vacuum) read YADGAR_RW_USER first and fall back
-# to YADGAR_DB_USER for existing hosts that haven't re-bootstrapped.
+# to the legacy alias name for existing hosts that haven't re-bootstrapped.
 
 umask 177
 cat > "${SECRETS_ENV_FILE}" <<SECRETS
