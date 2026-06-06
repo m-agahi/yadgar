@@ -728,6 +728,90 @@ async def hook_subagent_stop(request: Request) -> JSONResponse:
         _hook_observe("subagent_stop", _t0, _caught_exc)
 
 
+@mcp_server.custom_route("/hooks/seed-anchor", methods=["POST"])
+@trace_span("hook.seed_anchor")
+async def hook_seed_anchor(request: Request) -> JSONResponse:
+    """Seed a single protected anchor into memory (v5.46.15).
+
+    Called by `yadgar seed --anchors` CLI to write canonical anchors via the
+    daemon rather than in-process SQLite (dead pre-SurrealDB path removed).
+
+    Accepts JSON body:
+        {
+            "content": "anchor text",
+            "tags": ["_anchor", "..."],
+            "is_protected": true,
+            "context": "/path/to/project"
+        }
+
+    Response:
+        {"status": "ok", "created": 1}   — new anchor stored
+        {"status": "ok", "created": 0}   — deduped by similarity gate (skipped)
+        {"status": "error", ...}          — on validation failure (400)
+    """
+    _t0 = time.perf_counter()
+    _caught_exc: BaseException | None = None
+    try:
+        try:
+            body = await request.json()
+        except Exception:
+            _resp = JSONResponse({"status": "error", "message": "Invalid JSON"}, status_code=400)
+            _hook_observe_response("seed_anchor", _resp.status_code)
+            return _resp
+
+        content = sanitize_log_field(str(body.get("content", "")), max_len=10000)
+        if not content:
+            _resp = JSONResponse(
+                {"status": "error", "message": "content is required"}, status_code=400
+            )
+            _hook_observe_response("seed_anchor", _resp.status_code)
+            return _resp
+
+        raw_tags = body.get("tags", [])
+        if not isinstance(raw_tags, list):
+            raw_tags = []
+        tags = [sanitize_log_field(str(t), max_len=200) for t in raw_tags if t]
+        if "_anchor" not in tags:
+            tags.append("_anchor")
+
+        is_protected = bool(body.get("is_protected", True))
+        context = sanitize_log_field(str(body.get("context", os.getcwd())), max_len=500)
+
+        import sys as _sys
+
+        _srv = _sys.modules.get("yadgar.server")
+        _memorize = getattr(_srv, "memorize", None) if _srv else None
+        if _memorize is None:
+            from yadgar.server.tools.memorize import memorize as _memorize  # noqa: PLC0415
+
+        result = await asyncio.to_thread(
+            _memorize,
+            content=content,
+            context=context,
+            tags=tags,
+            is_protected=is_protected,
+            tier="conditional",
+        )
+
+        created = 0
+        if isinstance(result, dict):
+            status = result.get("status", "")
+            if status in ("stored", "created", "ok"):
+                created = 1
+            elif status in ("duplicate", "skipped", "deduped"):
+                created = 0
+            else:
+                # Treat any non-error response as stored
+                created = 1 if "error" not in str(status).lower() else 0
+
+        return JSONResponse({"status": "ok", "created": created})
+    except Exception as _exc:
+        _caught_exc = _exc
+        raise
+    finally:
+        _hook_observe("seed_anchor", _t0, _caught_exc)
+
+
 @mcp_server.custom_route("/hooks/file-changed", methods=["POST"])
 @trace_span("hook.file_changed")
 async def hook_file_changed(request: Request) -> JSONResponse:

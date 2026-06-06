@@ -521,6 +521,35 @@ _step_install_rules() {
     fi
 }
 
+_wait_for_daemon() {
+    # Poll localhost:8765/health until it responds or timeout (seconds) elapses.
+    # On Linux: attempt to start yadgar.target via systemctl --user first.
+    # On macOS: probe only (launchctl auto-start deferred to v5.46.16).
+    local timeout="${1:-30}"
+
+    # Try to start daemon if not already active (Linux only)
+    case "${OS:-}" in
+        linux|linux-other)
+            systemctl --user is-active yadgar.target >/dev/null 2>&1 || \
+                systemctl --user start yadgar.target >/dev/null 2>&1 || true
+            ;;
+        macos)
+            # macOS: daemon auto-start via launchctl deferred to v5.46.16+
+            # User must start daemon manually before running yadgar-setup
+            : ;;
+    esac
+
+    local elapsed=0
+    while [ "$elapsed" -lt "$timeout" ]; do
+        if curl -fsS "http://localhost:8765/health" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    return 1
+}
+
 _step_seed_anchors() {
     log "Step 10/10: Seeding canonical anchors..."
     local assets_dir
@@ -529,7 +558,17 @@ _step_seed_anchors() {
 
     if [ ! -f "$anchors_yaml" ] && [ "$DRYRUN" -eq 0 ]; then
         warn "anchors.yaml not found at $anchors_yaml; skipping"
-        return
+        return 0
+    fi
+
+    # Ensure daemon is running before attempting seed (v5.46.15)
+    if [ "$DRYRUN" -eq 0 ]; then
+        if ! _wait_for_daemon 30; then
+            warn "Daemon failed to start in 30s. Skipping anchor seed."
+            info "After daemon starts, run manually:"
+            info "  yadgar seed --anchors $anchors_yaml"
+            return 0
+        fi
     fi
 
     run yadgar seed --anchors "$anchors_yaml"
