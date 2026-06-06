@@ -49,7 +49,10 @@ if [[ "${YADGAR_TEST_DRYRUN:-0}" == "1" ]]; then
         fi
     fi
 
-    # Generate dummy credentials for test dryrun
+    # Generate dummy credentials for test dryrun.
+    # YADGAR_RW_USER/PASS is the canonical credential name (post-rename).
+    # YADGAR_DB_USER/PASS legacy aliases are NOT written on new installs —
+    # runtime consumers read RW first and fall back to DB_USER for old hosts.
     _gen() { python3 -c 'import secrets; print(secrets.token_urlsafe(24))'; }
     umask 177
     cat > "${SECRETS_ENV_FILE}" <<SECRETS
@@ -60,8 +63,6 @@ YADGAR_RW_USER=yadgar-rw
 YADGAR_RW_PASS=$(_gen)
 YADGAR_RO_USER=yadgar-ro
 YADGAR_RO_PASS=$(_gen)
-YADGAR_DB_USER=yadgar-rw
-YADGAR_DB_PASS=$(_gen)
 SECRETS
     umask 022
     chmod 600 "${SECRETS_ENV_FILE}"
@@ -190,6 +191,10 @@ else
 fi  # end interactive/non-interactive
 
 # ── Write secrets file ────────────────────────────────────────────────────────
+# YADGAR_RW_USER/PASS is the canonical credential name (post v5.46.17 rename).
+# YADGAR_DB_USER/PASS legacy aliases are NOT written on new installs.
+# Runtime consumers (daemon.py, vacuum) read YADGAR_RW_USER first and fall back
+# to YADGAR_DB_USER for existing hosts that haven't re-bootstrapped.
 
 umask 177
 cat > "${SECRETS_ENV_FILE}" <<SECRETS
@@ -200,8 +205,6 @@ YADGAR_RW_USER=${RW_USER}
 YADGAR_RW_PASS=${RW_PASS}
 YADGAR_RO_USER=${RO_USER}
 YADGAR_RO_PASS=${RO_PASS}
-YADGAR_DB_USER=${RW_USER}
-YADGAR_DB_PASS=${RW_PASS}
 SECRETS
 umask 022
 chmod 600 "${SECRETS_ENV_FILE}"

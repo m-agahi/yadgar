@@ -559,8 +559,8 @@ ExecStart=docker run --rm \\
     -e YADGAR_EMBED_URL=http://{backend_name}:8001 \\
     -e YADGAR_DATA_DIR=/data \\
     -e YADGAR_MCP_AUTH_TOKEN=${{YADGAR_MCP_AUTH_TOKEN}} \\
-    -e YADGAR_DB_USER=${{YADGAR_DB_USER:-${{SURREAL_USER}}}} \\
-    -e YADGAR_DB_PASS=${{YADGAR_DB_PASS:-${{SURREAL_PASS}}}} \\
+    -e YADGAR_DB_USER=${{YADGAR_RW_USER:-${{YADGAR_DB_USER:-${{SURREAL_USER}}}}}} \\
+    -e YADGAR_DB_PASS=${{YADGAR_RW_PASS:-${{YADGAR_DB_PASS:-${{SURREAL_PASS}}}}}} \\
     {profile.image_name}
 ExecStop=docker stop {profile.container_name}
 Restart=on-failure
