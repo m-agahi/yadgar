@@ -1604,7 +1604,8 @@ def update_active_work(directory: str, content: str, branch_hint: str | None = N
     if _gate is not None:
         return _gate
 
-    # v5.42.3: branch context validation (MCP boundary).
+    # v5.46.7: branch context validation (MCP boundary).
+    # Resolution order: _detect_branch(directory) → branch_hint → YADGAR_CI_BRANCH env → reject.
     _branch = None
     try:
         _branch = _detect_branch(directory)
@@ -1613,6 +1614,10 @@ def update_active_work(directory: str, content: str, branch_hint: str | None = N
 
     if not _branch and branch_hint:
         _branch = branch_hint
+
+    # v5.46.7: YADGAR_CI_BRANCH env fallback — CI runner sets this when git is unavailable.
+    if not _branch:
+        _branch = os.environ.get("YADGAR_CI_BRANCH") or None
 
     if not _branch:
         return {
