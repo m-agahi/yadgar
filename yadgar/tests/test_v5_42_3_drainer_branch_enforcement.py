@@ -369,8 +369,9 @@ class TestDlqRequeueMissingBranch:
 class TestMemorizeHardReject:
     """memorize hard-rejects when branch detection fails and no branch_hint supplied."""
 
-    def test_memorize_missing_branch_hard_rejects(self, patched_drainer):
+    def test_memorize_missing_branch_hard_rejects(self, patched_drainer, monkeypatch):
         """memorize with _detect_branch=None + no branch_hint → error dict returned."""
+        monkeypatch.delenv("YADGAR_CI_BRANCH", raising=False)  # v5.46.9 F1: strip env fallback
         with patch("yadgar.server._detect_branch", return_value=None):
             result = server.memorize(
                 content="Test content for branch reject",
@@ -397,8 +398,9 @@ class TestMemorizeHardReject:
             f"Expected success but got: {result}"
         )
 
-    def test_memorize_hard_reject_no_queue_entry(self, patched_drainer):
+    def test_memorize_hard_reject_no_queue_entry(self, patched_drainer, monkeypatch):
         """memorize hard-reject does NOT create a queue entry (fail-fast, not DLQ)."""
+        monkeypatch.delenv("YADGAR_CI_BRANCH", raising=False)  # v5.46.9 F1: strip env fallback
         _, fq = patched_drainer
         initial_queue = list(fq.pending())
 
@@ -582,8 +584,9 @@ class TestMcpBoundaryValidators:
         assert result.get("error") != "missing_branch"
         assert result.get("stored") is not False or result.get("queued") is True
 
-    def test_memorize_no_branch_returns_error_dict(self):
+    def test_memorize_no_branch_returns_error_dict(self, monkeypatch):
         """memorize without branch context returns synchronous missing_branch error."""
+        monkeypatch.delenv("YADGAR_CI_BRANCH", raising=False)  # v5.46.9 F1: strip env fallback
         with patch("yadgar.server._detect_branch", return_value=None):
             result = server.memorize(
                 content="Memory without any branch context.",

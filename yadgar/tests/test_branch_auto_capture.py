@@ -133,6 +133,7 @@ class TestMemoriseBranchCapture:
 
     def test_memorize_branch_none_when_detect_returns_none(self, monkeypatch):
         """When branch detection returns None, memory is inserted with branch=NONE."""
+        monkeypatch.delenv("YADGAR_CI_BRANCH", raising=False)  # v5.46.9 F1: strip env fallback
         monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
         monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
         result = server.memorize(
@@ -187,6 +188,7 @@ class TestAnchorBranchCapture:
         assert rows[0].get("branch") == "feat/anchor-branch"
 
     def test_anchor_branch_none_when_non_git(self, monkeypatch):
+        monkeypatch.delenv("YADGAR_CI_BRANCH", raising=False)  # v5.46.9 F1: strip env fallback
         monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
         monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
         result = server.anchor(
