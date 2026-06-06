@@ -458,12 +458,30 @@ _step_generate_units() {
     esac
 }
 
+_step_pre_create_dirs() {
+    # Pre-create data subdirectories before service start.
+    # Prevents first-run mkdir failures inside the container on hostile
+    # filesystems (e.g. Rocky Linux SELinux enforcing before relabel).
+    local yadgar_dir="${YADGAR_DIR:-${HOME}/.yadgar}"
+    log "Pre-creating ${yadgar_dir}/logs..."
+    run mkdir -p "${yadgar_dir}/logs"
+    run chmod 700 "${yadgar_dir}/logs"
+}
+
 _step_enable_units() {
     log "Step 5/10: Enabling daemon units..."
     case "$OS" in
         linux|linux-other)
             run systemctl --user daemon-reload
-            run systemctl --user enable --now yadgar.target
+            run systemctl --user enable yadgar.target
+            # Reinstall scenario: if target already active, restart so regenerated
+            # unit file (new image tag, :Z mount flag, etc.) takes effect immediately.
+            if systemctl --user is-active --quiet yadgar.target 2>/dev/null; then
+                log "  Reinstall detected — restarting yadgar.target"
+                run systemctl --user restart yadgar.target
+            else
+                run systemctl --user start yadgar.target
+            fi
             ;;
         macos)
             local launchd_dir="${YADGAR_LAUNCHD_OUTPUT_DIR:-${HOME}/Library/LaunchAgents}"
@@ -647,6 +665,9 @@ main() {
 
     # Phase 4: Generate daemon units
     _step_generate_units
+
+    # Phase 4b: Pre-create data directories (before unit start)
+    _step_pre_create_dirs
 
     # Phase 5: Enable units
     _step_enable_units
