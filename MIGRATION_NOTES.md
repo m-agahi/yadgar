@@ -1,5 +1,52 @@
 # Migration Notes
 
+## v5.46.9 — CI bake speedup + F1/F6 test regression fixes (2026-06-06)
+
+### No user action required for upgrade
+
+Users on v5.46.8 → v5.46.9: no runtime changes. This is a CI infrastructure + test-isolation hotfix.
+
+### What changed
+
+**Test fixes (F1):** 5 tests in `test_branch_auto_capture.py` and `test_v5_42_3_drainer_branch_enforcement.py` that assert `missing_branch` hard-reject behavior now call `monkeypatch.delenv('YADGAR_CI_BRANCH', raising=False)` before patching `_detect_branch`. The workflow-level `YADGAR_CI_BRANCH: master` env var was leaking into these tests, causing the daemon env fallback to return `'master'` instead of `None`, masking the hard-reject.
+
+**Test fix (F6):** `_fake_memorize` in `test_subagent_stop_hook.py::test_endpoint_stores_findings_with_provenance` lacked `branch_hint=None` parameter. The production endpoint calls `memorize(..., branch_hint=...)` which raised `TypeError` in the fake → caught silently → `stored=0` instead of `stored=2`.
+
+**`Dockerfile.ci` (v5.46.9):**
+- Added `bsdmainutils` apt package — provides `column` binary needed by `make help` (was missing, caused 2 test failures in CI)
+- Baked SurrealDB v3.0.5 binary (SHA256 verified at build time) — eliminates per-run download (saves 15-30s)
+- Baked HuggingFace `all-MiniLM-L6-v2` model weights — eliminates per-run HF download (saves 30-60s)
+
+**`Dockerfile.ci-viz` (new):** Extends `yadgar-ci:5.46.9` with Playwright + Chromium + required system libs pre-installed. Splits the browser layer from the core test image, saving ~75s on core test job image pull.
+
+**`ci.yaml` viz-tests job:** Migrated from `yadgar-ci:5.46.3` to `yadgar-ci-viz:5.46.9`. Removed the 15-line inline `apt-get install` step. Added `npm cache` step for `viz-tests/node_modules`.
+
+**`ci.yaml` + `release.yaml`:** All image refs updated from `yadgar-ci:5.46.3` → `yadgar-ci:5.46.9`.
+
+### CI image rebuild required
+
+The `yadgar-ci-viz:5.46.9` image must be built and pushed before Forgejo CI will work for viz-tests jobs. See the commands below.
+
+### Build and push commands (operator, not CI)
+
+```bash
+# Build yadgar-ci:5.46.9 (amd64 only — internal dev)
+docker buildx build \
+  --platform linux/amd64 \
+  -f Dockerfile.ci \
+  -t docker.io/openfantasy/yadgar-ci:5.46.9 \
+  --push .
+
+# Build yadgar-ci-viz:5.46.9 (amd64 only — requires yadgar-ci:5.46.9 pushed first)
+docker buildx build \
+  --platform linux/amd64 \
+  -f Dockerfile.ci-viz \
+  -t docker.io/openfantasy/yadgar-ci-viz:5.46.9 \
+  --push .
+```
+
+---
+
 ## v5.46.8 — Forgejo workflow trigger gate (internal dev vs production CI) (2026-06-06)
 
 ### No user action required for upgrade
