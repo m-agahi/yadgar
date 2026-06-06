@@ -58,15 +58,19 @@ def _build_http_client(backend_url: str) -> httpx.Client:
     """Build an httpx.Client with SurrealDB root credentials.
 
     Credential precedence (vacuum is an admin operation, needs root IAM):
-      1. SURREAL_USER / SURREAL_PASS  (preferred — same creds used by entrypoint)
-      2. YADGAR_DB_USER / YADGAR_DB_PASS  (backward compat)
-      3. root / root  (built-in SurrealDB default)
+      1. SURREAL_USER / SURREAL_PASS  (preferred — root IAM, same creds used by entrypoint)
+      2. YADGAR_RW_USER / YADGAR_RW_PASS  (canonical post-rename; new installs only write RW)
+      3. YADGAR_DB_USER / YADGAR_DB_PASS  (legacy alias — backward compat for old installs)
+      4. root / root  (built-in SurrealDB default)
     """
     import base64
 
     if os.environ.get("SURREAL_USER"):
         user = os.environ["SURREAL_USER"]
         password = os.environ.get("SURREAL_PASS", "root")
+    elif os.environ.get("YADGAR_RW_USER"):
+        user = os.environ["YADGAR_RW_USER"]
+        password = os.environ.get("YADGAR_RW_PASS", "root")
     elif os.environ.get("YADGAR_DB_USER"):
         user = os.environ["YADGAR_DB_USER"]
         password = os.environ.get("YADGAR_DB_PASS", "root")

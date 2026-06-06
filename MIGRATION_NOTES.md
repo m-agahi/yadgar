@@ -1,5 +1,42 @@
 # Migration Notes
 
+## v5.46.17 — secrets dedup: drop YADGAR_DB_USER/PASS from bootstrap (2026-06-06)
+
+### Context
+
+`bootstrap_secrets.sh` wrote two credential pairs to `secrets.env`:
+- `YADGAR_RW_USER/PASS` — canonical name after post-rename
+- `YADGAR_DB_USER/PASS` — legacy alias with the same intended value
+
+The generated-mode path (test dryrun heredoc) called `$(_gen)` **twice** — once for `YADGAR_RW_PASS` and once for `YADGAR_DB_PASS` — producing **different passwords** on every fresh install. Interactive mode happened to assign both from the same shell variable (`${RW_PASS}`), masking the divergence. Net effect: fresh installs via `YADGAR_TEST_DRYRUN=1` or `INSTALL_NONINTERACTIVE=1` got divergent RW vs DB credentials.
+
+### Fix
+
+**New installs (v5.46.17+):** `secrets.env` contains only `YADGAR_RW_USER/PASS` (+ SURREAL and RO). `YADGAR_DB_USER/PASS` is not written.
+
+**Runtime consumers updated** to prefer canonical `YADGAR_RW_USER`:
+- `daemon.py` systemd unit: `-e YADGAR_DB_USER` resolves `${YADGAR_RW_USER:-${YADGAR_DB_USER:-${SURREAL_USER}}}` and same for `PASS`.
+- `vacuum/__init__.py` `_build_http_client`: chain is SURREAL_USER → YADGAR_RW_USER → YADGAR_DB_USER → hardcoded root.
+- `vacuum/phases.py` `_surreal_headers`: same chain.
+
+**NOTE:** Vacuum is a root-level admin operation (DEFINE NAMESPACE, DEFINE USER ON ROOT). `SURREAL_USER` is preserved as the first preference — removing it would break vacuum on hosts where only root creds are injected. `YADGAR_RW_USER` is secondary.
+
+### Operator action
+
+**Existing installs:** no action needed. Runtime consumers fall back to `YADGAR_DB_USER` if present, so old `secrets.env` files continue working as-is.
+
+**Fresh installs:** run `bootstrap_secrets.sh` — new `secrets.env` will have only `YADGAR_RW_USER/PASS`. Clean and correct.
+
+**Hosts with divergent RW vs DB passwords** (generated-mode installs before v5.46.17): re-run bootstrap or manually set `YADGAR_RW_PASS` to the correct value. Check which password the running daemon accepted and use that.
+
+### Follow-up (not in scope for v5.46.17)
+
+`storage/__init__.py` reads `YADGAR_DB_USER` directly — it receives this value via the container env var set by the daemon systemd unit (which now sources from `YADGAR_RW_USER` first). No code change needed in storage for now. Once all legacy hosts have re-bootstrapped, `YADGAR_DB_USER` pass-through in the systemd unit can be simplified to `YADGAR_RW_USER` directly.
+
+The core container (`yadgar.service`) currently does not receive `-e YADGAR_RW_USER=` — only the backend does. The RW-first branch in `daemon.py` is forward-looking; in production the RW value arrives as `YADGAR_DB_USER` via shell expansion. A follow-up cleanup can add `-e YADGAR_RW_USER=` to the core service unit.
+
+---
+
 ## v5.46.16 — except-tuple py2 syntax sweep (2026-06-06)
 
 ### Context
