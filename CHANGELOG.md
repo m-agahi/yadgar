@@ -6,6 +6,18 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.46.14] — 2026-06-06
+
+Hotfix: `yadgar-setup` step 9 fails on fresh pipx install — `_locate_install_assets` used bare `python3` whose `sys.prefix=/usr` on Rocky Linux; wheel assets live in the pipx venv, not `/usr`.
+
+- **fix(install):** `yadgar-setup.sh` — add `_get_venv_python()` helper (mirrors `_resolve_yadgar_version` shim-shebang pattern). Reads shebang from the `yadgar` shim to get the venv python; falls back to `python3` for repo-checkout dev. Update `_locate_install_assets()` to call `venv_python=$(_get_venv_python)` and use `"$venv_python" -c "..."` instead of bare `python3 -c`.
+- **test:** `test_v5_46_14_install_assets_venv_python.py` — 5 static-analysis tests: helper defined, fallback present, function uses helper, no bare `python3 -c` in body, global count assertion.
+- **chore:** bump version 5.46.13 → 5.46.14
+- **note:** DRY refactor of `_resolve_yadgar_version`/`_resolve_backend_version` skipped — v5.46.12 test body-scope assertion requires `"command -v yadgar"` literal in `_resolve_backend_version` body. Scope: new helper + `_locate_install_assets` call site only.
+- **note:** `yadgar --version` flag still pending (v5.46.15).
+
+---
+
 ## [5.46.13] — 2026-06-06
 
 Hotfix: `yadgar-setup` step 8 fails on fresh install — `yadgar config sync` requires existing `~/.yadgar/config.yaml` but fresh installs don't have one.
