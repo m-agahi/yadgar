@@ -1,5 +1,35 @@
 # Migration Notes
 
+## v5.46.8 — Forgejo workflow trigger gate (internal dev vs production CI) (2026-06-06)
+
+### No user action required for upgrade
+
+Users on v5.46.7 → v5.46.8: no runtime changes. This is a CI infrastructure hotfix only.
+
+### What changed
+
+**`.forgejo/workflows/ci.yaml`:** `on.push.tags: ["v*"]` removed. Tag pushes no longer fire any CI jobs. `build` job (multi-arch Docker Build Cloud + dockerhub push, the 500-minute consumer) gated to `if: github.event_name == 'workflow_dispatch'` only. Header comment block added explaining gate state.
+
+**`.forgejo/workflows/release.yaml`:** All 4 jobs (build-wheel, build-sbom, attach-to-release, publish-pypi) gated to `if: github.event_name == 'workflow_dispatch'`. The `on.push.tags: ["v*"]` trigger subscription is kept so production handoff requires only removing the job-level `if:` gates (not re-adding a trigger).
+
+### Decision reference
+
+PD-45 (`docs/DECISIONS.md`): codifies internal dev workflow vs production CI separation. Anchors 490140 (2026-05-18) + 491179 (2026-05-19) established the local-amd64-only build flow. PD-45 extends this to the Forgejo CI surface.
+
+### Production transition checklist (when ready)
+
+1. Remove `if: github.event_name == 'workflow_dispatch'` from all gated jobs in ci.yaml and release.yaml
+2. Remove (or update) header comment block from both workflow files
+3. Re-add `tags: ["v*"]` to ci.yaml `on.push` if tag-triggered test runs are desired
+4. Verify SBOM cyclonedx-bom install (deferred from v5.46.8 — see PD-45)
+5. Verify Docker Build Cloud quota refresh before first production build
+
+### Deferred
+
+SBOM cyclonedx-bom install issue in `release.yaml` `build-sbom` job: the `[sbom]` extra requires `cyclonedx-bom` which may not be available in the runner environment. Deferred to production transition — no impact while workflows are gated to `workflow_dispatch`.
+
+---
+
 ## v5.46.7 — CI branch wiring hotfix + test harness repairs (2026-06-06)
 
 ### No user action required for upgrade
