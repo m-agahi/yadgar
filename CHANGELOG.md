@@ -6,6 +6,18 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.46.17] — 2026-06-06
+
+Hotfix: `bootstrap_secrets.sh` wrote duplicate `YADGAR_DB_USER/PASS` legacy alias alongside canonical `YADGAR_RW_USER/PASS`. Generated-mode called `$(_gen)` twice — divergent values for same credential. Interactive mode masked the bug by using same shell var for both.
+
+- **fix(bootstrap):** Remove `YADGAR_DB_USER=` + `YADGAR_DB_PASS=` from both heredoc blocks (test-dryrun and final write). Generated-mode now has 3 `$(_gen)` calls (ROOT, RW, RO) — not 4.
+- **fix(daemon):** `daemon.py` systemd unit template: `-e YADGAR_DB_USER` now resolves `${YADGAR_RW_USER:-${YADGAR_DB_USER:-${SURREAL_USER}}}` — RW takes precedence on new installs; DB_USER fallback for legacy hosts.
+- **fix(vacuum):** `vacuum/__init__.py` + `vacuum/phases.py` credential chain: SURREAL_USER → YADGAR_RW_USER → YADGAR_DB_USER → hardcoded root.
+- **test:** `test_v5_46_17_secrets_dedup.py` — 7 tests: T1-T3 bootstrap static checks, T4 daemon template, T5-T6 vacuum chain, T7 REQUIRED_KEYS guard.
+- **chore:** bump version 5.46.16 → 5.46.17.
+
+---
+
 ## [5.46.16] — 2026-06-06
 
 Hotfix: 12 `except X, Y:` Python-2 syntax bugs — in Python 3 this means `except X as Y:`, so only X is caught and Y shadows the builtin. Exception types listed after the comma escaped silently.
