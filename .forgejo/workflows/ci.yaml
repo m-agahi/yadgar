@@ -29,8 +29,11 @@ concurrency:
 # Workflow-level env: YADGAR_CI_BRANCH tells the yadgar daemon which branch
 # context to use in the CI runner (B2 fix — CI runner paths are anonymised
 # so git branch detection fails without this hint). See docs/DECISIONS.md PD-42.
+# YADGAR_TEST_SKIP_RUNTIME_CHECK: skip container-runtime detection in Makefile
+# pre-setup target when podman/docker is absent in CI runner (P8 fix v5.46.7).
 env:
   YADGAR_CI_BRANCH: master
+  YADGAR_TEST_SKIP_RUNTIME_CHECK: "1"
 
 jobs:
   test:
