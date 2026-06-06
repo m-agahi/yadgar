@@ -24,6 +24,47 @@
 
 set -euo pipefail
 
+# ── helper bundle check (fail-fast) ──────────────────────────────────────────
+# v5.46.10: guard against incomplete wheel bundles (e.g. pipx installs before
+# v5.46.10 where only yadgar-setup.sh was shipped, not its helper scripts).
+# This check runs before flag parsing so --help still works (--help exits 0
+# from the argparse block without calling any helper scripts).
+#
+# Exit code 2 = bundle gap (distinct from exit 1 = runtime/setup failure).
+#
+# NOTE: This check is skipped when invoked with --help or -h (no helpers needed).
+_SETUP_SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_REQUIRED_HELPERS=(
+    detect_runtime.sh
+    detect_os.sh
+    install_runtime.sh
+    generate_systemd.sh
+    generate_launchd.sh
+    bootstrap_secrets.sh
+    append_claude_rules.sh
+)
+
+# Only run the bundle check when NOT in --help mode
+_IS_HELP_MODE=0
+for _arg in "$@"; do
+    case "$_arg" in --help|-h) _IS_HELP_MODE=1 ;; esac
+done
+
+if [[ "$_IS_HELP_MODE" -eq 0 ]]; then
+    for _h in "${_REQUIRED_HELPERS[@]}"; do
+        if [[ ! -f "$_SETUP_SCRIPTS_DIR/$_h" ]]; then
+            echo "ERROR: yadgar-setup wheel bundle is incomplete — missing helper '$_h'." >&2
+            echo "  This is a yadgar packaging bug (affects pipx installs before v5.46.10)." >&2
+            echo "  Workarounds:" >&2
+            echo "    1. Upgrade:       pipx upgrade yadgar   (requires yadgar >= v5.46.10)" >&2
+            echo "    2. Repo checkout: git clone https://codeberg.org/maxagahi/yadgar && cd yadgar && make setup" >&2
+            echo "    3. Report at:     https://codeberg.org/maxagahi/yadgar/issues" >&2
+            exit 2
+        fi
+    done
+fi
+unset _SETUP_SCRIPTS_DIR _REQUIRED_HELPERS _IS_HELP_MODE _arg _h
+
 # ── flag parsing ──────────────────────────────────────────────────────────────
 
 NONINTERACTIVE=0

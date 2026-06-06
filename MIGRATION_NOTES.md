@@ -1,5 +1,93 @@
 # Migration Notes
 
+## v5.46.10 — pipx wheel bundle gap fix (2026-06-06)
+
+### IMPACT: pipx users on v5.45.0–v5.46.9 broken on fresh hosts
+
+Every PyPI release from v5.45.0 through v5.46.9 shipped a wheel where
+`yadgar-setup` (`share/yadgar/scripts/yadgar-setup.sh`) is present but all
+helper scripts it calls are **absent**. On a fresh host with no prior yadgar
+checkout, running `yadgar-setup` aborted with a short unhelpful error instead
+of completing setup.
+
+Affected installs:
+- `pipx install yadgar` or `pip install yadgar` on a fresh host, any version v5.45.0–v5.46.9
+- Hosts that had yadgar previously installed from a repo checkout are NOT affected
+  (helpers found via repo fallback path in `_locate_setup_scripts()`)
+
+### What changed
+
+**`pyproject.toml` (`[tool.hatch.build.targets.wheel.shared-data]`):**
+Single-file mapping replaced with directory-wide mapping:
+```toml
+# Before (broken — only ships yadgar-setup.sh)
+"scripts/install/yadgar-setup.sh" = "share/yadgar/scripts/yadgar-setup.sh"
+
+# After (fixed — ships entire scripts/install/ recursively)
+"scripts/install" = "share/yadgar/scripts"
+```
+This ships all helper scripts, systemd `.in` unit templates, and the
+`launchd/` plist template subdirectory.
+
+**`scripts/install/yadgar-setup.sh`:**
+Added fail-fast bundle-integrity check at top of script (after shebang,
+before flag parsing). On missing helper, exits code 2 (distinct from setup
+failure exit code 1) with explicit error:
+```
+ERROR: yadgar-setup wheel bundle is incomplete — missing helper 'detect_runtime.sh'.
+  This is a yadgar packaging bug (affects pipx installs before v5.46.10).
+  Workarounds:
+    1. Upgrade:       pipx upgrade yadgar   (requires yadgar >= v5.46.10)
+    2. Repo checkout: git clone ... && make setup
+    3. Report at:     https://codeberg.org/maxagahi/yadgar/issues
+```
+
+### User action required
+
+**If you installed via `pipx` or `pip install` on a fresh host:**
+```bash
+pipx upgrade yadgar     # upgrades to v5.46.10+
+yadgar-setup            # now works correctly
+```
+
+**If `pipx upgrade` is not yet available (PyPI upload pending):**
+```bash
+git clone https://codeberg.org/maxagahi/yadgar
+cd yadgar
+make setup
+```
+
+**Repo-checkout installs (`make setup`) are NOT affected** — the setup
+script finds helpers via the local repo directory fallback path.
+
+### Nix install path note
+
+The `flake.nix` `postInstall` copies only `yadgar-setup.sh` to `$out/bin/yadgar-setup`
+(helpers not adjacent). When invoked from `$out/bin/yadgar-setup`, the fail-fast
+check will fire and exit 2. This is intentional and **better than silent partial
+setup** — it surfaces the bundle gap with actionable instructions. A full nix formula
+fix (copying helpers to `$out/libexec/yadgar/scripts/` or reading from the wheel's
+`share/yadgar/scripts/`) is deferred to a future version.
+
+Nix flake users: use `make setup` from repo checkout (unaffected path).
+
+### Deviations from v5.46.10 spec
+
+- **Step 3 (install_assets systemd/launchd subdir move):** No-op. Templates
+  live in `scripts/install/` (systemd `.in` at root, launchd `.in` in
+  `scripts/install/launchd/` subdir). `generate_systemd.sh` uses
+  `${SCRIPT_DIR}/yadgar.service.in` and `generate_launchd.sh` uses
+  `${SCRIPT_DIR}/launchd/...`. Directory-wide mapping ships both correctly
+  with zero helper-script changes.
+- **Fail-fast helper list excludes `uninstall.sh` and `restore.sh`:** These
+  are standalone user entrypoints, not called by the setup flow. Bundle
+  test still asserts they're present in the wheel.
+- **Test sentinel mechanism:** Spec suggested a `YADGAR_TEST_FORCE_MISSING_HELPER`
+  env var to force fail-path in tests; instead, tests copy only `yadgar-setup.sh`
+  to a temp dir (no helpers present). Cleaner and doesn't require new env var.
+
+---
+
 ## v5.46.9 — CI bake speedup + F1/F6 test regression fixes (2026-06-06)
 
 ### No user action required for upgrade
