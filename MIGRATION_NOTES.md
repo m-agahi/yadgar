@@ -1,5 +1,56 @@
 # Migration Notes
 
+## v5.46.14 — step 9 install-rules venv python fix (2026-06-06)
+
+### Context
+
+v5.46.13 fixed step 8 config init-if-missing. v5.46.14 fixes the step 9 failure on fresh Rocky Linux pipx installs:
+
+```
+Step 9/10: Installing rules (CLAUDE.md fragment)...
+ERROR: Cannot locate install_assets/. Is yadgar installed correctly? (sys.prefix=/usr/share/yadgar/install_assets)
+```
+
+Root cause: `_locate_install_assets()` called bare `python3 -c "import sys; ..."`. On Rocky Linux (and other bare Linux VMs), `/usr/bin/python3` is the system python with `sys.prefix=/usr`. The candidate path `/usr/share/yadgar/install_assets/` does not exist — wheel assets are shipped into the pipx venv (`~/.local/share/pipx/venvs/yadgar/`), not `/usr`.
+
+Same class of bug as v5.46.11 (`_resolve_yadgar_version`) and v5.46.12 (`_resolve_backend_version`).
+
+### Fix
+
+New `_get_venv_python()` helper reads the shebang of the `yadgar` pipx shim (e.g. `/root/.local/bin/yadgar`) to get the venv python path:
+
+```bash
+_get_venv_python() {
+    local yadgar_shim
+    yadgar_shim=$(command -v yadgar 2>/dev/null) || { echo "python3"; return; }
+    [ -f "$yadgar_shim" ] || { echo "python3"; return; }
+    head -1 "$yadgar_shim" | sed 's|^#!||'
+}
+```
+
+`_locate_install_assets()` now calls `venv_python=$(_get_venv_python)` and uses `"$venv_python" -c "..."` so `sys.prefix` resolves to the venv root where the wheel shipped its `share/yadgar/install_assets/` data.
+
+Fallback: if the `yadgar` shim is absent (repo-checkout dev environment), the helper echoes `python3` — identical behaviour to before the fix.
+
+### DRY refactor scope
+
+`_resolve_yadgar_version` and `_resolve_backend_version` were **not** refactored to call `_get_venv_python`. Reason: `test_v5_46_12_backend_version_canonical.py::test_resolve_backend_version_uses_shim_pattern` extracts the function body and asserts the literal `"command -v yadgar"` is present — delegating to `_get_venv_python` removes that literal and breaks the v5.46.12 test. The fix scope is minimal: new helper + `_locate_install_assets` call site only.
+
+### User migration
+
+```bash
+pipx upgrade yadgar
+yadgar-setup
+```
+
+Step 9 now finds `CLAUDE.md` fragment via the venv python and appends it cleanly.
+
+### Pending
+
+- `yadgar --version` CLI flag deferred to v5.46.15.
+
+---
+
 ## v5.46.13 — step 8 config init-if-missing fix (2026-06-06)
 
 ### Context
