@@ -579,6 +579,13 @@ _wait_for_daemon() {
         sleep 1
         elapsed=$((elapsed + 1))
     done
+    # Health check timed out — print diagnostic hints for common failure modes.
+    warn "Daemon /health did not respond within ${timeout}s."
+    info "Diagnose with:"
+    info "  journalctl --user -u yadgar-backend.service -n 30"
+    info "  journalctl --user -u yadgar.service -n 30"
+    info "  systemctl --user status yadgar.target"
+    info "On Rocky Linux / RHEL (SELinux enforcing): run 'chcon -Rt container_file_t ~/.yadgar/' if above shows Permission denied."
     return 1
 }
 
