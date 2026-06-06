@@ -187,12 +187,21 @@ def test_t4_daemon_rw_user_before_db_user() -> None:
         f"Lines with YADGAR_DB_USER (no YADGAR_RW_USER): {db_user_lines}"
     )
 
-    # Verify the line starts RW before DB (positional check in the string)
+    # Verify RW_USER appears before DB_USER in the *value* side of the assignment.
+    # The line is:  -e YADGAR_DB_USER=${YADGAR_RW_USER:-${YADGAR_DB_USER:-...}}
+    # Skip past the first '=' to get the value, then check positional order.
     for line in db_user_with_rw:
-        rw_pos = line.find("YADGAR_RW_USER")
-        db_pos = line.find("YADGAR_DB_USER")
+        eq_pos = line.find("=")
+        assert eq_pos != -1, f"No '=' found in line: {line}"
+        value = line[eq_pos + 1 :]
+        rw_pos = value.find("YADGAR_RW_USER")
+        db_pos = value.find("YADGAR_DB_USER")
+        assert rw_pos != -1, f"YADGAR_RW_USER not found in value side: {value}"
         assert rw_pos < db_pos, (
-            f"YADGAR_RW_USER must appear before YADGAR_DB_USER in assignment:\n  {line}"
+            f"YADGAR_RW_USER must appear before YADGAR_DB_USER in value side of assignment.\n"
+            f"  Full line: {line}\n"
+            f"  Value:     {value}\n"
+            f"  RW at {rw_pos}, DB at {db_pos}"
         )
 
 
