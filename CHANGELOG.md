@@ -6,6 +6,17 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.46.13] — 2026-06-06
+
+Hotfix: `yadgar-setup` step 8 fails on fresh install — `yadgar config sync` requires existing `~/.yadgar/config.yaml` but fresh installs don't have one.
+
+- **fix(install):** `yadgar-setup.sh` — `_step_config_sync()` now checks `${YADGAR_DIR:-${HOME}/.yadgar}/config.yaml` existence. If absent, runs `yadgar config init` first (creates default config), then runs `yadgar config sync`. Idempotent on reinstall (user-edited config preserved).
+- **test:** `test_v5_46_13_config_init_idempotent.py` — 9 static-analysis tests covering existence check, init-before-sync ordering, conditional guard (reinstall safety), global static checks, data-dir variable convention.
+- **chore:** bump version 5.46.12 → 5.46.13
+- **note:** `yadgar --version` flag still pending (v5.46.14).
+
+---
+
 ## [5.46.12] — 2026-06-06
 
 Hotfix: `yadgar-setup` step 2 fails on fresh install — backend image pulled with core version tag instead of independent backend track version.
