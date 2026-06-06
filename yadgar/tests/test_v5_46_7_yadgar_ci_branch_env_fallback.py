@@ -77,7 +77,12 @@ def _checkpoint_with_no_git_no_hint(monkeypatch, env_branch: str | None = None):
 
 
 def _update_active_work_with_no_git_no_hint(monkeypatch, env_branch: str | None = None):
-    """Call update_active_work with detect_branch returning None and no branch_hint."""
+    """Call update_active_work with detect_branch returning None and no branch_hint.
+
+    Returns either a dict result or a sentinel {'_passed_branch_gate': True} when
+    the function proceeds past the branch gate but fails on storage not initialized
+    (expected in unit-test context without a live StorageEngine).
+    """
     if env_branch is not None:
         monkeypatch.setenv("YADGAR_CI_BRANCH", env_branch)
     else:
@@ -85,12 +90,18 @@ def _update_active_work_with_no_git_no_hint(monkeypatch, env_branch: str | None 
 
     from yadgar.server.tools.project import update_active_work
 
-    with patch("yadgar.server.tools.project._detect_branch", return_value=None):
-        return update_active_work(
-            directory="/tmp/test-no-git",
-            content="active work content",
-            branch_hint=None,
-        )
+    try:
+        with patch("yadgar.server.tools.project._detect_branch", return_value=None):
+            return update_active_work(
+                directory="/tmp/test-no-git",
+                content="active work content",
+                branch_hint=None,
+            )
+    except AssertionError as exc:
+        # StorageEngine not initialized — branch gate passed, execution continued.
+        if "StorageEngine not initialized" in str(exc):
+            return {"_passed_branch_gate": True}
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +167,9 @@ class TestUpdateActiveWorkEnvBranchFallback:
 
     def test_env_branch_resolves_to_not_missing_branch(self, monkeypatch):
         result = _update_active_work_with_no_git_no_hint(monkeypatch, env_branch="master")
+        # Either the function succeeded, OR it passed the branch gate and failed on
+        # StorageEngine not initialized (sentinel {'_passed_branch_gate': True}).
+        # Both outcomes confirm the branch gate did NOT reject with missing_branch.
         assert result.get("error") != "missing_branch", (
             f"YADGAR_CI_BRANCH=master must prevent missing_branch in update_active_work. "
             f"Got: {result}"
