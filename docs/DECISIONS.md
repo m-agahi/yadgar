@@ -109,7 +109,7 @@ User direction 2026-06-05 evening — "im getting more causius about the usabili
 
 **Rationale:** User direction 2026-06-05 evening — "the llm curator and realtime synthesis is major problem in my mind. it needs massive hardware on users side. so they should be optional to enable. otherwise its useless but in team mode if the backend is in a strong server, we can pull it off unless we can somehow use the claude or whatever agent the user uses to overcome the challenge. running even a deepseek needs like 22 gb ram minimum"
 
-**Four inference paths (curator config: `inference.backend = ...`):**
+**Five inference paths (curator config: `inference.backend = ...`):**
 
 | Path | Backend ID | User cost | Latency | Privacy | Nightly background OK? |
 |---|---|---|---|---|---|
@@ -117,7 +117,12 @@ User direction 2026-06-05 evening — "im getting more causius about the usabili
 | Remote API | `api:<provider>` (claude, groq, together, fireworks) | $0.001-0.01/inference | 200-2000ms | API provider sees data | yes |
 | Claude pass-through (interactive) | `claude-passthrough:interactive` | $0 (existing sub) | conversational pace | Anthropic sees data | NO (requires open session) |
 | Claude pass-through (background, OAuth) | `claude-passthrough:headless` | $0 (existing sub) | seconds | Anthropic sees data | YES (via `claude -p` + shared OAuth) |
-| Team backend (v8 only) | `team-backend` | team pays infra | sub-100ms | within team | yes |
+| Claude Code via Ollama | `claude-via-ollama:<model>` | $0 (local) OR free (cloud variants) | seconds | full local OR Ollama Cloud sees data | YES |
+| Team backend (v7 only) | `team-backend` | team pays infra | sub-100ms | within team | yes |
+
+**Ollama-via-Claude-Code path added 2026-06-06 (per user pointer to https://docs.ollama.com/integrations/claude-code).** Mechanism: Ollama exposes Anthropic-compatible API locally on `http://localhost:11434`; Claude Code talks to it via three env vars (`ANTHROPIC_AUTH_TOKEN=ollama` + `ANTHROPIC_API_KEY=""` + `ANTHROPIC_BASE_URL=http://localhost:11434`) OR via `ollama launch claude --model <name> --yes -- -p "<prompt>"` simplified launcher. Headless `claude -p` mode supported — viable for nightly curator. Recommended models per Ollama docs: kimi-k2.5:cloud, glm-5:cloud, minimax-m2.7:cloud, qwen3.5:cloud, glm-4.7-flash, qwen3.5. "Cloud" variants relay through Ollama's cloud (free remote inference, no local hardware) — strong fit for hardware-constrained personal users who want curator quality without API costs. Context window: Claude Code recommends 64k+ tokens (some small local models may not meet without truncation; cloud variants fine).
+
+**Why this matters for v6/v7:** lowers hardware barrier dramatically. Local hardware path (22+ GB RAM) → free Ollama-cloud variant (no hardware) gives users a third "free + decent quality" lane between paid API and Claude pass-through OAuth. Quality lower than Claude proper but acceptable for bounded curator tasks (summarize, extract entities, find contradictions, propose anchors).
 
 **Claude pass-through clarification (per user 2026-06-05):** interactive pass-through (dispatching subagents from open Claude session) doesn't work for nightly curation since user's session isn't always open. Resolution: yadgar daemon needs access to user's OAuth credentials so `claude -p` (programmatic non-interactive Claude Code) can run in the background with user's auth. Claude Code stores credentials at `~/.claude/.credentials.json` (verified 2026-06-05 on host); yadgar daemon reads them to authenticate `claude -p` invocations. Trust model: yadgar daemon already holds other secrets (DB passwords, MCP auth token); OAuth share is a continuation of existing trust boundary.
 
