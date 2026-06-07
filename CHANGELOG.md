@@ -6,6 +6,21 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.46.20] — 2026-06-07
+
+Hotfix: 6-bug install path cleanup discovered via Rocky VM SSH session.
+
+- **fix(yadgar.service.in):** Add `-e YADGAR_MCP_AUTH_TOKEN=${YADGAR_MCP_AUTH_TOKEN}` to ExecStart env block. Token was loaded from `secrets.env` (EnvironmentFile) but never forwarded to container — caused `RuntimeError: REQUIRE_AUTH=1 requires YADGAR_MCP_AUTH_TOKEN to be set` on every daemon start. (BUG 1)
+- **fix(templates):** Replace `:Z` bind-mount flag with `--security-opt label=disable` in both `yadgar.service.in` and `yadgar-backend.service.in`. `:Z` insufficient on Rocky 9 with `admin_home_t` context on `/root/.yadgar`; `--security-opt label=disable` bypasses SELinux MAC for personal-mode root install. Trade-off documented in MIGRATION_NOTES. (BUG 2)
+- **fix(setup.sh):** `_wait_for_daemon` default timeout bumped 30 → 120s. Embed model load + SurrealDB schema migration can take 60s+ on cold start. Progress log every 10s so user sees wait status. (BUG 3)
+- **fix(setup.sh):** `_step_seed_anchors` updated to call `_wait_for_daemon 120` (was hardcoded 30). (BUG 3 call-site)
+- **fix(setup.sh):** `_step_pull_images` now stops running containers (`yadgar`, `yadgar-backend`) before pulling new images. Prevents upgrade leaving stale container on old image. (BUG 4)
+- **fix(seed.py / server):** Seed idempotency confirmed via similarity gate. Second seed run with same anchors returns `created=0`, `skipped=N` — no duplicate writes. 409 Conflict responses counted as skipped. (BUG 6)
+- **test:** `test_v5_46_20_install_fixes.py` — 17 tests covering all 6 bugs. `test_v5_46_19_selinux_and_restart.py` updated: T1-T3/T6 now assert `--security-opt label=disable` instead of `:Z` (v5.46.20 supersedes v5.46.19 SELinux approach).
+- **chore:** bump version 5.46.19 → 5.46.20.
+
+---
+
 ## [5.46.19] — 2026-06-06
 
 Hotfix: Rocky Linux SELinux enforcing blocks podman bind-mount writes; setup re-runs don't restart units after regenerate.

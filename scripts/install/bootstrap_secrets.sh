@@ -54,6 +54,7 @@ if [[ "${YADGAR_TEST_DRYRUN:-0}" == "1" ]]; then
     # Legacy DB_USER/PASS aliases are NOT written on new installs —
     # runtime consumers read RW first and fall back to the legacy name for old hosts.
     _gen() { python3 -c 'import secrets; print(secrets.token_urlsafe(24))'; }
+    _gen32() { python3 -c 'import secrets; print(secrets.token_urlsafe(32))'; }
     umask 177
     cat > "${SECRETS_ENV_FILE}" <<SECRETS
 # Yadgar secrets — chmod 600 — never commit or log
@@ -63,6 +64,7 @@ YADGAR_RW_USER=yadgar-rw
 YADGAR_RW_PASS=$(_gen)
 YADGAR_RO_USER=yadgar-ro
 YADGAR_RO_PASS=$(_gen)
+YADGAR_MCP_AUTH_TOKEN=$(_gen32)
 SECRETS
     umask 022
     chmod 600 "${SECRETS_ENV_FILE}"
@@ -90,7 +92,7 @@ mkdir -p "$(dirname "${SECRETS_ENV_FILE}")" 2>/dev/null || {
 
 # ── Idempotency check ─────────────────────────────────────────────────────────
 
-REQUIRED_KEYS=(SURREAL_USER SURREAL_PASS YADGAR_RW_USER YADGAR_RW_PASS YADGAR_RO_USER YADGAR_RO_PASS)
+REQUIRED_KEYS=(SURREAL_USER SURREAL_PASS YADGAR_RW_USER YADGAR_RW_PASS YADGAR_RO_USER YADGAR_RO_PASS YADGAR_MCP_AUTH_TOKEN)
 
 if [[ -f "${SECRETS_ENV_FILE}" ]]; then
     all_present=1
@@ -110,6 +112,7 @@ fi
 # ── Non-interactive mode ──────────────────────────────────────────────────────
 
 _gen() { python3 -c 'import secrets; print(secrets.token_urlsafe(24))'; }
+_gen32() { python3 -c 'import secrets; print(secrets.token_urlsafe(32))'; }
 
 if [[ "${INSTALL_NONINTERACTIVE:-0}" == "1" ]]; then
     echo "==> Non-interactive mode: generating credentials automatically..."
@@ -190,6 +193,9 @@ else
 
 fi  # end interactive/non-interactive
 
+# MCP bearer token — always auto-generated (no user prompt; not a DB credential)
+MCP_TOKEN="$(_gen32)"
+
 # ── Write secrets file ────────────────────────────────────────────────────────
 # YADGAR_RW_USER/PASS is the canonical credential name (post v5.46.17 rename).
 # Legacy DB_USER/PASS aliases are NOT written on new installs.
@@ -205,6 +211,7 @@ YADGAR_RW_USER=${RW_USER}
 YADGAR_RW_PASS=${RW_PASS}
 YADGAR_RO_USER=${RO_USER}
 YADGAR_RO_PASS=${RO_PASS}
+YADGAR_MCP_AUTH_TOKEN=${MCP_TOKEN}
 SECRETS
 umask 022
 chmod 600 "${SECRETS_ENV_FILE}"
