@@ -205,12 +205,15 @@ class TestPullImagesStopsFirst:
         )
         assert m is not None
         body = m.group(1)
-        # Find position of stop and pull within the function body
-        # stop could be 'stop "$ctr"' or '"$RUNTIME" stop'
-        stop_match = re.search(r"\bstop\b", body)
-        pull_match = re.search(r"\bpull\b", body)
-        assert stop_match is not None, f"No 'stop' found in _step_pull_images body:\n{body}"
-        assert pull_match is not None, f"No 'pull' found in _step_pull_images body:\n{body}"
+        # Use RUNTIME pull (the actual pull invocation, not comments or function names)
+        stop_match = re.search(r'"\$RUNTIME"\s+stop|RUNTIME\s+stop|\bstop\s+"?\$ctr', body)
+        pull_match = re.search(r'"\$RUNTIME"\s+pull|run\s+"\$RUNTIME"\s+pull', body)
+        assert stop_match is not None, (
+            f"No container stop command in _step_pull_images body:\n{body}"
+        )
+        assert pull_match is not None, (
+            f"No '$RUNTIME pull' command in _step_pull_images body:\n{body}"
+        )
         assert stop_match.start() < pull_match.start(), (
             f"Container stop appears AFTER pull in _step_pull_images body:\n{body}"
         )

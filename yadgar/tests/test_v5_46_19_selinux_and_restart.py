@@ -2,10 +2,14 @@
 
 Bugs fixed
 ----------
-1. Rocky Linux SELinux enforcing: bind-mount ``-v /root/.yadgar:/data`` lacks
-   ``:Z`` private-relabel flag → container's ``container_file_t`` context can't
-   write to default-labeled host dir.  Fix: append ``:Z`` to all volume mount
-   lines in service templates.
+1. Rocky Linux SELinux enforcing: bind-mount ``-v /root/.yadgar:/data`` caused
+   "Permission denied" inside container on RHEL/Rocky with SELinux Enforcing.
+
+   v5.46.19 initial fix: append ``:Z`` private-relabel flag.
+   v5.46.20 superseded: ``:Z`` insufficient on Rocky 9 with admin_home_t context
+   on /root/.yadgar.  Fix updated to use ``--security-opt label=disable`` instead
+   (Option A: simplest for personal-mode root install; SELinux MAC adds no
+   isolation when container and host user are both root).  See MIGRATION_NOTES.
 
 2. Setup re-runs regenerate the unit file but don't reload/restart systemd →
    backend container stays on the stale unit (stale image tag, old flags) until
@@ -18,14 +22,15 @@ Bugs fixed
 
 Test structure
 --------------
-T1  yadgar-backend.service.in volume line matches ``-v @DATA_DIR@:/data:Z``.
-T2  yadgar.service.in volume line matches ``-v @DATA_DIR@:/data:Z``.
-T3  No bare ``-v <path>:/data`` (without ``:Z``) in either template.
+T1  yadgar-backend.service.in has ``--security-opt label=disable`` (v5.46.20).
+T2  yadgar.service.in has ``--security-opt label=disable`` (v5.46.20).
+T3  No bare ``-v <path>:/data:Z`` (old :Z form) in either template (v5.46.20).
 T4  setup.sh ``_step_enable_units`` (or named helper) contains restart-if-active
     block: ``is-active --quiet yadgar.target`` AND ``restart yadgar.target``.
 T5  setup.sh contains ``mkdir -p`` for a ``logs`` path under YADGAR_DIR.
-T6  Rendered unit (generate_systemd.sh with test fixtures) contains ``:Z`` on
-    the volume mount line in both yadgar.service and yadgar-backend.service.
+T6  Rendered unit (generate_systemd.sh with test fixtures) contains
+    ``--security-opt label=disable`` in both yadgar.service and
+    yadgar-backend.service (v5.46.20).
 """
 
 import re
@@ -48,59 +53,65 @@ GENERATE_SYSTEMD = SCRIPTS_DIR / "generate_systemd.sh"
 # Helpers
 # ---------------------------------------------------------------------------
 
-# Matches the :Z form on the /data mount (trailing whitespace or end-of-line)
-_Z_MOUNT_RE = re.compile(r"-v\s+\S+:/data:Z(\s|$)", re.MULTILINE)
+# v5.46.20: SELinux fix changed from :Z to --security-opt label=disable.
+# Matches --security-opt label=disable in ExecStart line
+_LABEL_DISABLE_RE = re.compile(r"--security-opt\s+label=disable", re.MULTILINE)
 
-# Matches a bare /data mount WITHOUT :Z — any trailing char except ':'
-# Must NOT match when only :Z form is present
-_BARE_MOUNT_RE = re.compile(r"-v\s+\S+:/data(?!:Z)(?!\S)", re.MULTILINE)
+# Matches old :Z form on /data mount — must NOT appear in v5.46.20+ templates
+_Z_MOUNT_RE = re.compile(r"-v\s+\S+:/data:Z(\s|$)", re.MULTILINE)
 
 
 # ---------------------------------------------------------------------------
-# T1 — yadgar-backend.service.in has :Z on /data mount
+# T1 — yadgar-backend.service.in has --security-opt label=disable (v5.46.20)
 # ---------------------------------------------------------------------------
 
 
 def test_t1_backend_template_has_selinux_z_flag() -> None:
-    """`yadgar-backend.service.in` must have ``:Z`` on the ``/data`` volume mount."""
+    """`yadgar-backend.service.in` must have ``--security-opt label=disable``.
+
+    v5.46.20: :Z insufficient on Rocky 9 admin_home_t context. Replaced with
+    --security-opt label=disable (SELinux MAC bypass for personal-mode root install).
+    """
     assert BACKEND_TEMPLATE.exists(), f"Template not found: {BACKEND_TEMPLATE}"
     content = BACKEND_TEMPLATE.read_text(encoding="utf-8")
-    assert _Z_MOUNT_RE.search(content), (
-        f"No ':Z' SELinux flag found on /data mount in {BACKEND_TEMPLATE.name}.\n"
-        f"Expected pattern: {_Z_MOUNT_RE.pattern!r}\n"
-        f"Content:\n{content}"
+    assert _LABEL_DISABLE_RE.search(content), (
+        f"No '--security-opt label=disable' found in {BACKEND_TEMPLATE.name}.\nContent:\n{content}"
     )
 
 
 # ---------------------------------------------------------------------------
-# T2 — yadgar.service.in has :Z on /data mount
+# T2 — yadgar.service.in has --security-opt label=disable (v5.46.20)
 # ---------------------------------------------------------------------------
 
 
 def test_t2_core_template_has_selinux_z_flag() -> None:
-    """`yadgar.service.in` must have ``:Z`` on the ``/data`` volume mount."""
+    """`yadgar.service.in` must have ``--security-opt label=disable``.
+
+    v5.46.20: :Z replaced by --security-opt label=disable. See T1 for rationale.
+    """
     assert CORE_TEMPLATE.exists(), f"Template not found: {CORE_TEMPLATE}"
     content = CORE_TEMPLATE.read_text(encoding="utf-8")
-    assert _Z_MOUNT_RE.search(content), (
-        f"No ':Z' SELinux flag found on /data mount in {CORE_TEMPLATE.name}.\n"
-        f"Expected pattern: {_Z_MOUNT_RE.pattern!r}\n"
-        f"Content:\n{content}"
+    assert _LABEL_DISABLE_RE.search(content), (
+        f"No '--security-opt label=disable' found in {CORE_TEMPLATE.name}.\nContent:\n{content}"
     )
 
 
 # ---------------------------------------------------------------------------
-# T3 — No bare /data mount (without :Z) in either template
+# T3 — No old :Z mount form in either template (v5.46.20)
 # ---------------------------------------------------------------------------
 
 
 def test_t3_no_bare_data_mount_in_templates() -> None:
-    """Neither template may contain a bare ``-v X:/data`` without ``:Z``."""
+    """Neither template may use the old ``:Z`` form on the ``/data`` mount.
+
+    v5.46.20: :Z removed in favour of --security-opt label=disable.
+    """
     for template in (BACKEND_TEMPLATE, CORE_TEMPLATE):
         assert template.exists(), f"Template not found: {template}"
         content = template.read_text(encoding="utf-8")
-        match = _BARE_MOUNT_RE.search(content)
+        match = _Z_MOUNT_RE.search(content)
         assert match is None, (
-            f"Bare /data mount without ':Z' found in {template.name}.\n"
+            f"Old ':Z' mount form still present in {template.name} (removed in v5.46.20).\n"
             f"Matched: {match.group()!r}\n"
             f"Content:\n{content}"
         )
@@ -188,7 +199,7 @@ def test_t6_rendered_units_contain_z_flag() -> None:
             f"stderr: {result.stderr!r}"
         )
 
-        # Check both rendered units contain :Z
+        # v5.46.20: check both rendered units contain --security-opt label=disable
         for unit_name in ("yadgar.service", "yadgar-backend.service"):
             unit_path = Path(tmpdir) / unit_name
             assert unit_path.exists(), (
@@ -196,7 +207,7 @@ def test_t6_rendered_units_contain_z_flag() -> None:
                 f"generate_systemd.sh stdout: {result.stdout!r}"
             )
             unit_content = unit_path.read_text(encoding="utf-8")
-            assert _Z_MOUNT_RE.search(unit_content), (
-                f"No ':Z' SELinux flag found on /data mount in rendered {unit_name}.\n"
+            assert _LABEL_DISABLE_RE.search(unit_content), (
+                f"No '--security-opt label=disable' found in rendered {unit_name}.\n"
                 f"Content:\n{unit_content}"
             )
