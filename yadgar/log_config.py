@@ -60,6 +60,8 @@ import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
+import yadgar.paths as _paths
+
 # I14 — max chars for traceback in structured JSON (constant for test import)
 TRACEBACK_MAX_CHARS: int = 2000
 
@@ -491,7 +493,7 @@ _FALLBACK_LOG_DIR: str = "/tmp/yadgar-logs"
 def _resolve_log_dir() -> str:
     """Resolve the log directory, creating it if needed.
 
-    Priority: YADGAR_LOG_DIR env var → ~/.yadgar/logs (OS-agnostic default).
+    Priority: YADGAR_LOG_DIR env var → ~/.local/share/yadgar/logs (XDG default).
 
     If the resolved directory cannot be created (PermissionError or OSError),
     emits a warning to stderr and falls back to /tmp/yadgar-logs/. The fallback
@@ -499,7 +501,7 @@ def _resolve_log_dir() -> str:
 
     Returns the resolved (and created) directory path.
     """
-    log_dir = os.environ.get("YADGAR_LOG_DIR", os.path.expanduser("~/.yadgar/logs"))
+    log_dir = os.environ.get("YADGAR_LOG_DIR", str(_paths.LOG_DIR))
     try:
         os.makedirs(log_dir, mode=0o750, exist_ok=True)
         return log_dir
@@ -786,7 +788,7 @@ def _install_file_handler(
     YADGAR_LOG_DIR, YADGAR_LOG_FILE_PATH, or YADGAR_BACKEND_LOG_FILE_PATH
     must be set for the file handler to install. When none are set, the
     process uses stdout-only logging (preserves dev-machine behavior where
-    /data/logs does not exist and ~/.yadgar/logs would otherwise auto-create).
+    /data/logs does not exist and ~/.local/share/yadgar/logs would otherwise auto-create).
     Container entrypoints set YADGAR_LOG_DIR=/data/logs explicitly.
     """
     _FILE_HANDLER_GATES = ("YADGAR_LOG_DIR", "YADGAR_LOG_FILE_PATH", "YADGAR_BACKEND_LOG_FILE_PATH")

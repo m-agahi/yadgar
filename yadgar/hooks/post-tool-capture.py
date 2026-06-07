@@ -14,6 +14,8 @@ import os
 import sys
 from pathlib import Path
 
+import yadgar.paths as _paths
+
 # Tool name prefixes that are self-referential — never capture
 _SKIP_PREFIXES = (
     "mcp__yadgar__",
@@ -72,7 +74,7 @@ def main():
     else:
         summary = str(tool_input)[:200]
 
-    Path(os.environ.get("YADGAR_DB_PATH", "~/.yadgar/surreal_db")).expanduser()
+    Path(os.environ.get("YADGAR_DB_PATH", str(_paths.DB_PATH))).expanduser()
 
     # Try HTTP endpoint first — works in daemon mode where DB lock is always held
     _port = os.environ.get("YADGAR_PORT", "8765")

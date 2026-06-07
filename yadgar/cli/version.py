@@ -3,17 +3,18 @@
 import json
 import sys
 import urllib.request
-from pathlib import Path
+
+import yadgar.paths as _paths
 
 
 def _read_auth_token() -> str | None:
-    """Read YADGAR_MCP_AUTH_TOKEN from env or ~/.yadgar/secrets.env."""
+    """Read YADGAR_MCP_AUTH_TOKEN from env or ~/.config/yadgar/secrets.env."""
     import os
 
     token = os.environ.get("YADGAR_MCP_AUTH_TOKEN")
     if token:
         return token
-    secrets_path = Path.home() / ".yadgar" / "secrets.env"
+    secrets_path = _paths.SECRETS_ENV_PATH
     if secrets_path.exists():
         try:
             for line in secrets_path.read_text(encoding="utf-8").splitlines():

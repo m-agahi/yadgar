@@ -7,6 +7,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import yadgar.paths as _paths
+
 _DAEMON_PORT = os.environ.get("YADGAR_PORT", "8765")
 _DAEMON_BASE = f"http://127.0.0.1:{_DAEMON_PORT}"
 
@@ -44,7 +46,7 @@ def _read_auth_token() -> str:
     if token:
         return token
 
-    secrets_env = Path.home() / ".yadgar" / "secrets.env"
+    secrets_env = _paths.SECRETS_ENV_PATH
     if not secrets_env.exists():
         return ""
 

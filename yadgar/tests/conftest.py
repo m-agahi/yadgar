@@ -111,6 +111,31 @@ def pytest_sessionfinish(session, exitstatus):
     kill_all_spawned_surreal()
 
 
+@pytest.fixture(autouse=True)
+def isolate_yadgar_paths(tmp_path, monkeypatch):
+    """Redirect all yadgar path env vars to tmp_path subdirs.
+
+    Autouse so every test is hermetic — no test writes to real XDG or
+    ~/.yadgar directories.  Added v5.47.0 (Phase A2 of XDG migration).
+
+    Tests that need specific paths can override individual env vars via their
+    own monkeypatch calls after this fixture runs (function scope wins).
+    """
+    config_dir = tmp_path / "config" / "yadgar"
+    data_dir = tmp_path / "data" / "yadgar"
+    state_dir = tmp_path / "state" / "yadgar"
+    config_dir.mkdir(parents=True)
+    data_dir.mkdir(parents=True)
+    state_dir.mkdir(parents=True)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("YADGAR_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("YADGAR_CONFIG_FILE", str(config_dir / "config.yaml"))
+    monkeypatch.setenv("YADGAR_LOG_DIR", str(data_dir / "logs"))
+    monkeypatch.delenv("YADGAR_DB_PATH", raising=False)
+
+
 def _find_free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))

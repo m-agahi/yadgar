@@ -18,6 +18,8 @@ import sys
 import time
 from pathlib import Path
 
+import yadgar.paths as _paths
+
 
 def _db_locked(db_path: Path) -> bool:
     """Check if the MCP server holds the surrealkv DB lock."""
@@ -193,7 +195,7 @@ def main():
 
     directory = data.get("cwd", "") or os.getcwd()
 
-    Path(os.environ.get("YADGAR_DB_PATH", "~/.yadgar/surreal_db")).expanduser()
+    Path(os.environ.get("YADGAR_DB_PATH", str(_paths.DB_PATH))).expanduser()
 
     # Try HTTP endpoint first — works in daemon mode where DB lock is always held
     _port = os.environ.get("YADGAR_PORT", "8765")
