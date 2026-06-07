@@ -386,6 +386,13 @@ _step_pull_images() {
     version=$(_resolve_yadgar_version)
     backend_version=$(_resolve_backend_version)
     log "  core=${version}  backend=${backend_version}"
+    # Stop running containers before pull so new image is picked up on restart.
+    for ctr in yadgar yadgar-backend; do
+        if "$RUNTIME" ps --format '{{.Names}}' 2>/dev/null | grep -qx "$ctr"; then
+            log "  Stopping running container: $ctr"
+            "$RUNTIME" stop "$ctr" 2>/dev/null || true
+        fi
+    done
     run "$RUNTIME" pull "docker.io/openfantasy/yadgar:${version}"
     run "$RUNTIME" pull "docker.io/openfantasy/yadgar-backend:${backend_version}"
 }
@@ -557,7 +564,9 @@ _wait_for_daemon() {
     # Poll localhost:8765/health until it responds or timeout (seconds) elapses.
     # On Linux: attempt to start yadgar.target via systemctl --user first.
     # On macOS: probe only (launchctl auto-start deferred to v5.46.16).
-    local timeout="${1:-30}"
+    # v5.46.20: default timeout bumped 30 → 120s (embed model load + SurrealDB
+    # schema migration can take 60s+ on cold start). Progress log every 10s.
+    local timeout="${1:-120}"
 
     # Try to start daemon if not already active (Linux only)
     case "${OS:-}" in
@@ -574,10 +583,14 @@ _wait_for_daemon() {
     local elapsed=0
     while [ "$elapsed" -lt "$timeout" ]; do
         if curl -fsS "http://localhost:8765/health" >/dev/null 2>&1; then
+            log "  Daemon ready after ${elapsed}s."
             return 0
         fi
-        sleep 1
-        elapsed=$((elapsed + 1))
+        sleep 2
+        elapsed=$((elapsed + 2))
+        if [ $((elapsed % 10)) -eq 0 ]; then
+            log "  Waiting for daemon... (${elapsed}s / ${timeout}s)"
+        fi
     done
     # Health check timed out — print diagnostic hints for common failure modes.
     warn "Daemon /health did not respond within ${timeout}s."
@@ -585,7 +598,6 @@ _wait_for_daemon() {
     info "  journalctl --user -u yadgar-backend.service -n 30"
     info "  journalctl --user -u yadgar.service -n 30"
     info "  systemctl --user status yadgar.target"
-    info "On Rocky Linux / RHEL (SELinux enforcing): run 'chcon -Rt container_file_t ~/.yadgar/' if above shows Permission denied."
     return 1
 }
 
@@ -601,9 +613,10 @@ _step_seed_anchors() {
     fi
 
     # Ensure daemon is running before attempting seed (v5.46.15)
+    # v5.46.20: timeout bumped to 120s to allow embed model load + schema migration.
     if [ "$DRYRUN" -eq 0 ]; then
-        if ! _wait_for_daemon 30; then
-            warn "Daemon failed to start in 30s. Skipping anchor seed."
+        if ! _wait_for_daemon 120; then
+            warn "Daemon failed to start in 120s. Skipping anchor seed."
             info "After daemon starts, run manually:"
             info "  yadgar seed --anchors $anchors_yaml"
             return 0
