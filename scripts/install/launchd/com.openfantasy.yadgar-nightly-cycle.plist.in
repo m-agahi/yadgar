@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openfantasy.yadgar-nightly-cycle</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!-- Oneshot: do NOT run at agent load — timer drives this job. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- Oneshot: no relaunch after exit (D7). Bare false, not the dict form. -->
+    <key>KeepAlive</key>
+    <false/>
+
+    <!--
+        NOTE: StartCalendarInterval fires in LOCAL TIME, not UTC.
+        Nix systemd uses 'OnCalendar=*-*-* 19:00:00 UTC'.
+        On a Mac in non-UTC timezone, this fires at a different wall-clock hour.
+        Document mitigation: user should set Mac TZ to UTC for headless use.
+    -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>19</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>@YADGAR_INSTALL_PREFIX@</string>
+
+    <!--
+        ProgramArguments: invoke wrapper script.
+        Wrapper sources secrets.env + sets DYLD_LIBRARY_PATH for numpy .so on macOS.
+        Wall-clock timeout (3600s = 1h) enforced inside wrapper via gtimeout/timeout (D3).
+    -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>@YADGAR_SCRIPTS_DIR@/yadgar-nightly-cycle-wrapper.sh</string>
+    </array>
+
+    <!--
+        PATH: homebrew (Intel + Apple Silicon) + ~/.local/bin for pipx yadgar binary.
+    -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:@YADGAR_HOME@/.local/bin</string>
+        <key>YADGAR_SECRETS_ENV_FILE</key>
+        <string>@YADGAR_SECRETS_ENV_FILE@</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>@YADGAR_HOME@/Library/Logs/yadgar/nightly-cycle.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>@YADGAR_HOME@/Library/Logs/yadgar/nightly-cycle.err.log</string>
+</dict>
+</plist>

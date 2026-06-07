@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openfantasy.yadgar-worktree-sweep</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!-- Oneshot: do NOT run at agent load — timer drives this job. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- Oneshot: no relaunch after exit (D7). Bare false, not the dict form. -->
+    <key>KeepAlive</key>
+    <false/>
+
+    <!--
+        NOTE: StartCalendarInterval fires in LOCAL TIME, not UTC.
+        Nix systemd uses 'OnCalendar=Sun *-*-* 02:00:00 UTC'.
+        On a Mac in non-UTC timezone, this fires at a different wall-clock hour.
+        Document mitigation: user should set Mac TZ to UTC for headless use.
+    -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>2</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>@YADGAR_INSTALL_PREFIX@</string>
+
+    <!--
+        ProgramArguments: invoke wrapper script.
+        Wrapper calls scripts/cleanup-merged-branches.sh.
+        Wall-clock timeout (600s = 10 min) enforced inside wrapper via gtimeout/timeout (D3).
+    -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>@YADGAR_SCRIPTS_DIR@/yadgar-worktree-sweep-wrapper.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:@YADGAR_HOME@/.local/bin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>@YADGAR_HOME@/Library/Logs/yadgar/worktree-sweep.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>@YADGAR_HOME@/Library/Logs/yadgar/worktree-sweep.err.log</string>
+</dict>
+</plist>

@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openfantasy.yadgar-vacuum-trigger</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!-- Oneshot: do NOT run at agent load — WatchPaths drives this job. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- Oneshot: no relaunch after exit (D7). Bare false, not the dict form. -->
+    <key>KeepAlive</key>
+    <false/>
+
+    <!--
+        WatchPaths: watch the triggers directory, not the file itself.
+        The file (vacuum_requested) is created anew each time; WatchPaths on a
+        non-existent file path may not fire on creation. Watching the directory
+        fires on any inode change within it.
+        launchd fires on ANY directory change — wrapper must filter (D5 Q5):
+        check for vacuum_requested, atomically mv to .handling, kick vacuum job.
+    -->
+    <key>WatchPaths</key>
+    <array>
+        <string>@YADGAR_HOME@/.yadgar/triggers</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>@YADGAR_INSTALL_PREFIX@</string>
+
+    <!--
+        ProgramArguments: invoke wrapper script.
+        Wrapper checks trigger file idempotently: if vacuum_requested exists,
+        atomically mv + launchctl kickstart yadgar-vacuum; else exit 0.
+    -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>@YADGAR_SCRIPTS_DIR@/yadgar-vacuum-trigger-wrapper.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:@YADGAR_HOME@/.local/bin</string>
+        <key>YADGAR_SECRETS_ENV_FILE</key>
+        <string>@YADGAR_SECRETS_ENV_FILE@</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>@YADGAR_HOME@/Library/Logs/yadgar/vacuum-trigger.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>@YADGAR_HOME@/Library/Logs/yadgar/vacuum-trigger.err.log</string>
+</dict>
+</plist>
