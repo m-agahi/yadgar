@@ -15,7 +15,7 @@ ExecStart=@RUNTIME@ run --name yadgar --rm --security-opt label=disable --user r
     -v @DATA_DIR@:/data \
     -e YADGAR_DB_URL=http://yadgar-backend:8000 \
     -e YADGAR_EMBED_URL=http://yadgar-backend:8001 \
-    -e YADGAR_HOST=127.0.0.1 \
+    -e YADGAR_HOST=0.0.0.0 \
     -e YADGAR_PORT=8765 \
     -e YADGAR_DATA_DIR=/data \
     -e YADGAR_DB_USER=${YADGAR_DB_USER} \
