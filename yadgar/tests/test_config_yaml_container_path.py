@@ -11,12 +11,13 @@ class TestGetConfigPath:
     """get_config_path() respects YADGAR_CONFIG_FILE env override."""
 
     def test_default_path_when_env_unset(self, monkeypatch):
-        """Env unset → returns ~/.yadgar/config.yaml expanded."""
+        """Env unset → returns ~/.config/yadgar/config.yaml expanded."""
         monkeypatch.delenv("YADGAR_CONFIG_FILE", raising=False)
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
         from yadgar.config_yaml import get_config_path
 
         result = get_config_path()
-        assert result == Path("~/.yadgar/config.yaml").expanduser()
+        assert result == Path("~/.config/yadgar/config.yaml").expanduser()
 
     def test_env_override_returned(self, monkeypatch, tmp_path):
         """YADGAR_CONFIG_FILE set → returns that exact path."""
@@ -30,18 +31,20 @@ class TestGetConfigPath:
     def test_env_override_empty_string_uses_default(self, monkeypatch):
         """YADGAR_CONFIG_FILE='' (empty) → falls through to default."""
         monkeypatch.setenv("YADGAR_CONFIG_FILE", "")
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
         from yadgar.config_yaml import get_config_path
 
         result = get_config_path()
-        assert result == Path("~/.yadgar/config.yaml").expanduser()
+        assert result == Path("~/.config/yadgar/config.yaml").expanduser()
 
     def test_env_override_whitespace_uses_default(self, monkeypatch):
         """YADGAR_CONFIG_FILE='   ' (whitespace) → falls through to default."""
         monkeypatch.setenv("YADGAR_CONFIG_FILE", "   ")
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
         from yadgar.config_yaml import get_config_path
 
         result = get_config_path()
-        assert result == Path("~/.yadgar/config.yaml").expanduser()
+        assert result == Path("~/.config/yadgar/config.yaml").expanduser()
 
 
 class TestYamlConfigSourceLoad:

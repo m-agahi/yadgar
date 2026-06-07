@@ -21,6 +21,7 @@ from pathlib import Path
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, StreamingResponse
 
+import yadgar.paths as _paths
 import yadgar.server._state as _st
 import yadgar.viz_daemon_health as _vdh  # noqa: F401 — V1c: SSE daemon_health push
 from yadgar import __version__
@@ -465,9 +466,7 @@ async def hook_session_context(request: Request) -> JSONResponse:
 
     # v5.10.6: import any pending session-end sentinel files before project_brief query.
     _sentinel_dir_env = os.environ.get("YADGAR_SESSION_END_DIR", "")
-    _sentinel_dir = (
-        _sentinel_dir_env if _sentinel_dir_env else str(Path.home() / ".yadgar" / "session-ends")
-    )
+    _sentinel_dir = _sentinel_dir_env if _sentinel_dir_env else str(_paths.SESSION_ENDS_DIR)
     try:
         _import_pending_sentinels(_sentinel_dir)
     except Exception as _se:

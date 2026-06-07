@@ -10,7 +10,7 @@
 #   YADGAR_TEST_SECRETS_PATH        Target path when YADGAR_TEST_DRYRUN=1 is set
 #   INSTALL_NONINTERACTIVE=1        Skip prompts; fail-closed if creds missing and no file exists
 #
-# Output file (default): ~/.yadgar/secrets.env  (mode 600)
+# Output file (default): ~/.config/yadgar/secrets.env  (mode 600)
 # With --system flag:    /etc/yadgar/secrets.env (mode 600 via sudo)
 
 set -euo pipefail
@@ -77,18 +77,18 @@ fi
 if [[ "${SYSTEM_INSTALL}" == "1" ]]; then
     SECRETS_ENV_FILE="/etc/yadgar/secrets.env"
 else
-    SECRETS_ENV_FILE="${HOME}/.yadgar/secrets.env"
+    SECRETS_ENV_FILE="${HOME}/.config/yadgar/secrets.env"
 fi
 
 mkdir -p "$(dirname "${SECRETS_ENV_FILE}")" 2>/dev/null || {
     if sudo mkdir -p "$(dirname "${SECRETS_ENV_FILE}")" 2>/dev/null; then
         : # sudo mkdir succeeded
     else
-        echo "Cannot create $(dirname "${SECRETS_ENV_FILE}") — falling back to ${HOME}/.yadgar/secrets.env" >&2
-        SECRETS_ENV_FILE="${HOME}/.yadgar/secrets.env"
-        mkdir -p "$(dirname "${SECRETS_ENV_FILE}")"
+        echo "Cannot create $(dirname "${SECRETS_ENV_FILE}") — check permissions on ${HOME}/.config/yadgar/" >&2
+        exit 1
     fi
 }
+chmod 700 "$(dirname "${SECRETS_ENV_FILE}")" 2>/dev/null || true
 
 # ── Idempotency check ─────────────────────────────────────────────────────────
 

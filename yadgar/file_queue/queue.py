@@ -10,6 +10,8 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+import yadgar.paths as _paths
+
 _QUEUE_DIR = "queue"
 _ARCHIVE_DIR = "archive"
 _DLQ_DIR = "dlq"
@@ -34,7 +36,7 @@ class FileQueue:
     """Atomic file-based write queue."""
 
     def __init__(self, base_dir: str | Path | None = None, wiki_prefix: str = "") -> None:
-        base = Path(base_dir or Path.home() / ".yadgar")
+        base = Path(base_dir) if base_dir else _paths.DATA_DIR
         self.queue_dir = base / _QUEUE_DIR
         self.archive_dir = base / _ARCHIVE_DIR
         self.wiki_dir = base / _ARCHIVE_DIR / "wiki"

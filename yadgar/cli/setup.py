@@ -1,10 +1,10 @@
 """setup subcommand — first-run setup."""
 
-from pathlib import Path
+import yadgar.paths as _paths
 
 
 def cmd_setup(args):
-    """First-run setup: check Docker, create config dir, generate credentials,
+    """First-run setup: check Docker, create config dirs, generate credentials,
     print MCP snippet + secrets.env template."""
     import json
     import secrets as _secrets
@@ -22,8 +22,10 @@ def cmd_setup(args):
         print("  Install Docker Desktop or Docker Engine and re-run setup.")
         # Don't exit — let the rest of setup complete so config is written
 
-    yadgar_dir = Path("~/.yadgar").expanduser()
-    yadgar_dir.mkdir(parents=True, exist_ok=True)
+    # Create XDG dirs
+    _paths.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    _paths.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    _paths.STATE_DIR.mkdir(parents=True, exist_ok=True)
 
     # Write default config.yaml if not present
     from yadgar.config_yaml import cmd_config_init, get_config_path
@@ -40,7 +42,7 @@ def cmd_setup(args):
 
     # ── Credential bootstrap (v5.0) ──
     # Generate strong defaults; operator copies template to secrets.env.
-    secrets_path = yadgar_dir / "secrets.env"
+    secrets_path = _paths.SECRETS_ENV_PATH
     if secrets_path.exists():
         print(f"Secrets:        {secrets_path} (exists — keeping)")
     else:

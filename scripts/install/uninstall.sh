@@ -6,12 +6,12 @@
 # OS is auto-detected via uname or YADGAR_TEST_OS_MARKER (test hook).
 #
 # Environment variables:
-#   YADGAR_DIR                  Data directory (default: $HOME/.yadgar)
+#   YADGAR_DIR                  Data directory (default: $HOME/.local/share/yadgar)
 #   YADGAR_TEST_MODE            Set to 1 to skip systemctl/launchctl calls
 #   YADGAR_TEST_OS_MARKER       Set to 'macos' to spoof macOS detection (testing)
-#   YADGAR_SYSTEMD_OUTPUT_DIR   Override systemd unit directory (default: $YADGAR_DIR/systemd_user)
+#   YADGAR_SYSTEMD_OUTPUT_DIR   Override systemd unit directory (default: $HOME/.config/systemd/user)
 #   YADGAR_LAUNCHD_OUTPUT_DIR   Override LaunchAgents dir (default: ~/Library/LaunchAgents)
-#   YADGAR_LOGS_DIR             Override yadgar logs dir (default: ~/Library/Logs/yadgar) [macOS]
+#   YADGAR_LOGS_DIR             Override yadgar logs dir (default: ~/.local/share/yadgar/logs)
 set -euo pipefail
 
 PURGE=0
@@ -22,10 +22,10 @@ for arg in "$@"; do
     esac
 done
 
-YADGAR_DIR="${YADGAR_DIR:-${HOME}/.yadgar}"
-SYSTEMD_OUTPUT_DIR="${YADGAR_SYSTEMD_OUTPUT_DIR:-${YADGAR_DIR}/systemd_user}"
+YADGAR_DIR="${YADGAR_DIR:-${HOME}/.local/share/yadgar}"
+SYSTEMD_OUTPUT_DIR="${YADGAR_SYSTEMD_OUTPUT_DIR:-${HOME}/.config/systemd/user}"
 LAUNCHD_OUTPUT_DIR="${YADGAR_LAUNCHD_OUTPUT_DIR:-${HOME}/Library/LaunchAgents}"
-YADGAR_LOGS_DIR="${YADGAR_LOGS_DIR:-${HOME}/Library/Logs/yadgar}"
+YADGAR_LOGS_DIR="${YADGAR_LOGS_DIR:-${HOME}/.local/share/yadgar/logs}"
 TEST_MODE="${YADGAR_TEST_MODE:-0}"
 
 # ── OS detection ──────────────────────────────────────────────────────────────

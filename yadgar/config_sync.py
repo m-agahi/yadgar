@@ -92,7 +92,7 @@ def _atomic_yaml_write(path: Path, y: YAML, data: CommentedMap) -> None:
 
 
 def cmd_config_sync(args) -> None:
-    """Incrementally sync ~/.yadgar/config.yaml with current Settings model fields.
+    """Incrementally sync ~/.config/yadgar/config.yaml with current Settings model fields.
 
     Adds missing keys with defaults + FIELD_META comments. Preserves all existing
     user-set values. Idempotent — running twice is a no-op.
