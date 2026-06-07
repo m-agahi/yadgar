@@ -6,6 +6,15 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.46.22] — 2026-06-07
+
+Hotfix: v5.46.17 dropped `YADGAR_DB_USER/PASS` from `bootstrap_secrets.sh` and updated `daemon.py` (nix dev unit), but missed the parallel update in `scripts/install/yadgar.service.in` (pip-installed template). Fresh Rocky 10 install hit `httpx.HTTPStatusError: 401 Unauthorized for url 'http://yadgar-backend:8000/sql'` because the unit's ExecStart `-e YADGAR_DB_USER=${YADGAR_DB_USER}` expanded to empty (secrets.env doesn't write that var anymore).
+
+- **fix(yadgar.service.in):** `${YADGAR_DB_USER}` → `${YADGAR_RW_USER:-${YADGAR_DB_USER}}` (and same for `_PASS`). RW canonical, DB as legacy fallback. Matches the v5.46.17 daemon.py chain.
+- **chore:** bump version 5.46.21 → 5.46.22.
+
+---
+
 ## [5.46.21] — 2026-06-07
 
 Hotfix: v5.46.20 wheel was built before BUG 1 completeness commit (bootstrap_secrets.sh didn't write MCP token) + YADGAR_HOST inside container needs 0.0.0.0 not 127.0.0.1.
