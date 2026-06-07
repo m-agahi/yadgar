@@ -16,14 +16,14 @@
     <true/>
 
     <key>WorkingDirectory</key>
-    <string>${YADGAR_INSTALL_PREFIX}</string>
+    <string>@YADGAR_INSTALL_PREFIX@</string>
 
     <!-- Log paths — sed-substituted by generate_launchd.sh (mkdir -p creates the dir) -->
     <key>StandardOutPath</key>
-    <string>${YADGAR_HOME}/.local/share/yadgar/logs/core.out.log</string>
+    <string>@YADGAR_HOME@/.local/share/yadgar/logs/core.out.log</string>
 
     <key>StandardErrorPath</key>
-    <string>${YADGAR_HOME}/.local/share/yadgar/logs/core.err.log</string>
+    <string>@YADGAR_HOME@/.local/share/yadgar/logs/core.err.log</string>
 
     <!--
         PATH must include /usr/local/bin (Intel podman) and /opt/homebrew/bin (Apple Silicon).
@@ -35,7 +35,7 @@
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>YADGAR_SECRETS_ENV_FILE</key>
-        <string>${YADGAR_SECRETS_ENV_FILE}</string>
+        <string>@YADGAR_SECRETS_ENV_FILE@</string>
     </dict>
 
     <!--
@@ -46,7 +46,7 @@
     <array>
         <string>/bin/sh</string>
         <string>-c</string>
-        <string>${YADGAR_RUNTIME} run --name yadgar --rm --user root --network yadgar-net --env-file ${YADGAR_SECRETS_ENV_FILE} -p 127.0.0.1:8765:8765 -p 127.0.0.1:42069:42069 -v ${YADGAR_INSTALL_PREFIX}:/data -e YADGAR_DB_URL=http://yadgar-backend:8000 -e YADGAR_EMBED_URL=http://yadgar-backend:8001 -e YADGAR_HOST=127.0.0.1 -e YADGAR_PORT=8765 -e YADGAR_DATA_DIR=/data --memory 1g --cpus 1 --stop-timeout 30 ${YADGAR_CORE_IMAGE}</string>
+        <string>@YADGAR_RUNTIME@ run --name yadgar --rm --user root --network yadgar-net --env-file @YADGAR_SECRETS_ENV_FILE@ -p 127.0.0.1:8765:8765 -p 127.0.0.1:42069:42069 -v @YADGAR_INSTALL_PREFIX@:/data -e YADGAR_DB_URL=http://yadgar-backend:8000 -e YADGAR_EMBED_URL=http://yadgar-backend:8001 -e YADGAR_HOST=127.0.0.1 -e YADGAR_PORT=8765 -e YADGAR_DATA_DIR=/data --memory 1g --cpus 1 --stop-timeout 30 @YADGAR_CORE_IMAGE@</string>
     </array>
 </dict>
 </plist>
