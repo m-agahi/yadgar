@@ -1,6 +1,6 @@
 # PLAN — v5.48.0: Update Mechanism (`yadgar update` CLI + Auto-Check + Control-Tab API)
 
-**Status:** drafted 2026-05-31. REVISED 2026-06-02 post-opus-review (MAJOR cut). Plan-first per I27.
+**Status:** drafted 2026-05-31. REVISED 2026-06-02 post-opus-review (MAJOR cut). Plan-first per I27. **IMPLEMENTED 2026-06-07** — feat/v5.48.0-update-mechanism.
 
 **Amended:** 2026-06-07. v5.47 slot taken by XDG migration + macOS launchd (shipped). Source-of-truth switched from Codeberg releases REST API to PyPI JSON API (PD-45 invalidated Codeberg tags as canonical — internal-dev no-tag policy ships via twine only).
 

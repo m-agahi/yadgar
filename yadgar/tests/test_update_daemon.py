@@ -35,28 +35,29 @@ class TestDaemonAutoCheck:
         mock_probe.assert_not_called()
 
     def test_check_on_start_true_spawns_update_thread(self, monkeypatch):
-        """When UPDATE_CHECK_ON_START=True, a named update-check thread appears."""
+        """When UPDATE_CHECK_ON_START=True, the named update-check thread runs."""
         monkeypatch.setenv("YADGAR_UPDATE_CHECK_ON_START", "true")
 
-        from yadgar.update.check import LatestVersionInfo
+        # Use slow probe so thread is still alive when we look for it
+        barrier = threading.Event()
+        ran = threading.Event()
 
-        mock_result = LatestVersionInfo(available_version="9.99.0")
+        def _probe(**kwargs):
+            ran.set()
+            barrier.wait(timeout=2.0)
+            from yadgar.update.check import LatestVersionInfo
 
-        # Record thread names before and after
-        names_before = {t.name for t in threading.enumerate()}
+            return LatestVersionInfo(available_version="9.99.0")
 
-        with patch("yadgar.update.check.probe_latest_version", return_value=mock_result):
+        with patch("yadgar.update.check.probe_latest_version", side_effect=_probe):
             from yadgar.server.lifecycle import _maybe_auto_check_for_update
 
             _maybe_auto_check_for_update()
             time.sleep(0.05)  # let thread register
+            update_threads = [t for t in threading.enumerate() if t.name == "yadgar-update-check"]
+            barrier.set()
 
-        names_after = {t.name for t in threading.enumerate()}
-        names_after - names_before
-        # Thread may already have finished (fast mock), so check all-threads too
-        {t.name for t in threading.enumerate()}
-        # Accept that thread ran (may have finished) — just verify no exception
-        # Primary assertion: _maybe_auto_check_for_update() returned without error
+        assert update_threads, "Expected 'yadgar-update-check' thread to be running"
 
     def test_check_on_start_true_thread_is_daemon(self, monkeypatch):
         """The spawned thread has daemon=True so it doesn't prevent daemon shutdown."""
@@ -132,14 +133,18 @@ class TestDaemonAutoCheck:
                 completed.wait(timeout=3.0)
                 time.sleep(0.1)  # let log flush
 
-        # Should not have raised — only logged
-        any(
-            "update" in r.message.lower() or "check" in r.message.lower()
+        # Primary: no exception propagated (reaching here means no crash)
+        # Secondary: warning logged about the failure
+        warning_records = [
+            r
             for r in caplog.records
             if r.levelno >= logging.WARNING
+            and ("update" in r.message.lower() or "check" in r.message.lower())
+        ]
+        assert warning_records, (
+            "Expected WARNING log about update check failure; got records: "
+            + str([(r.levelno, r.message) for r in caplog.records])
         )
-        # Accept either a warning OR no crash (probe failure is non-fatal)
-        # Primary assertion: no exception propagated (test reaching here means no crash)
 
     def test_settings_update_check_on_start_default_is_false(self):
         """UPDATE_CHECK_ON_START default is False — no opt-in by default."""
