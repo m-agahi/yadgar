@@ -6,6 +6,21 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [Unreleased — v5.47.0] — launchd port (merged from feat/macos-launchd-port)
+
+macOS launchd port: 4 remaining oneshot/timer/path plists + wrapper scripts + secrets activation. Log paths use XDG (`~/.local/share/yadgar/logs/`) per v5.47 decision.
+
+- **feat(launchd):** `com.openfantasy.yadgar-vacuum.plist.in` — Sunday 04:00 local time. Oneshot: `RunAtLoad=false`, `KeepAlive=false`. D8 UTC-warning comment.
+- **feat(launchd):** `com.openfantasy.yadgar-nightly-cycle.plist.in` — daily 19:00 local time. Oneshot. D8 UTC-warning comment.
+- **feat(launchd):** `com.openfantasy.yadgar-vacuum-trigger.plist.in` — `WatchPaths` on `~/.local/state/yadgar/triggers/` (XDG). No timer. Wrapper handles atomic mv + idempotency guard.
+- **feat(launchd):** `com.openfantasy.yadgar-worktree-sweep.plist.in` — Sunday 02:00 local time. Oneshot. D8 UTC-warning.
+- **feat(launchd):** wrapper scripts — D3 gtimeout/timeout detection; D4 explicit per-key export; D6 `--service-mode=manual`. XDG data dir defaults.
+- **feat(launchd):** `yadgar-secrets-activation.sh` — install-time `op inject`; writes `~/.config/yadgar/secrets.env` mode 600.
+- **refactor(launchd):** Migrate plists from `${TOKEN}` to `@TOKEN@` style (aligns with systemd `.in` convention).
+- **feat(generate_launchd.sh):** Renders all 6 plists; installs 5 wrapper/activation scripts to `~/.local/share/yadgar/scripts/`; XDG paths throughout.
+- **feat(yadgar-setup.sh):** `_step_inject_secrets` (macOS-only, gated on `op`); extended macOS doctor/enable-units branches to cover all 6 LaunchAgents.
+- **test:** `test_macos_launchd_plists.py` — 79 tests; XDG paths asserted.
+
 ## [5.46.22] — 2026-06-07
 
 Hotfix: v5.46.17 dropped `YADGAR_DB_USER/PASS` from `bootstrap_secrets.sh` and updated `daemon.py` (nix dev unit), but missed the parallel update in `scripts/install/yadgar.service.in` (pip-installed template). Fresh Rocky 10 install hit `httpx.HTTPStatusError: 401 Unauthorized for url 'http://yadgar-backend:8000/sql'` because the unit's ExecStart `-e YADGAR_DB_USER=${YADGAR_DB_USER}` expanded to empty (secrets.env doesn't write that var anymore).

@@ -413,6 +413,30 @@ _step_bootstrap_secrets() {
     fi
 }
 
+_step_inject_secrets() {
+    # macOS only: run op inject to resolve 1Password secrets into secrets.env.
+    # Requires op CLI and an interactive session (biometric/Touch ID prompt).
+    # Skipped on Linux (systemd uses EnvironmentFile= natively; no inject needed).
+    [ "$OS" = "macos" ] || return 0
+
+    local scripts_dir
+    scripts_dir="$(_locate_setup_scripts)"
+    local activation="${scripts_dir}/launchd/yadgar-secrets-activation.sh"
+
+    if [ ! -f "$activation" ]; then
+        warn "yadgar-secrets-activation.sh not found; skipping op inject step"
+        return 0
+    fi
+
+    if ! command -v op &>/dev/null; then
+        info "1Password CLI (op) not installed — skipping secrets injection."
+        info "  Install: brew install 1password-cli, then re-run yadgar-setup."
+        return 0
+    fi
+
+    run bash "$activation"
+}
+
 _step_generate_units() {
     log "Step 4/10: Generating daemon units (${OS})..."
     local scripts_dir
@@ -443,11 +467,13 @@ _step_generate_units() {
             ;;
         macos)
             local launchd_dir="${YADGAR_LAUNCHD_OUTPUT_DIR:-${HOME}/Library/LaunchAgents}"
+            # Canonical secrets path: XDG ~/.config/yadgar/secrets.env (Q3 unification).
+            local secrets_env="${YADGAR_SECRETS_ENV_FILE:-${HOME}/.config/yadgar/secrets.env}"
             if [ -n "$scripts_dir" ] && [ -f "$scripts_dir/generate_launchd.sh" ]; then
                 run env \
                     YADGAR_RUNTIME="$RUNTIME" \
                     YADGAR_INSTALL_PREFIX="$yadgar_dir" \
-                    YADGAR_SECRETS_ENV_FILE="${HOME}/.config/yadgar/secrets.env" \
+                    YADGAR_SECRETS_ENV_FILE="$secrets_env" \
                     YADGAR_BACKEND_IMAGE="docker.io/openfantasy/yadgar-backend:${backend_version}" \
                     YADGAR_CORE_IMAGE="docker.io/openfantasy/yadgar:${version}" \
                     YADGAR_LAUNCHD_OUTPUT_DIR="$launchd_dir" \
@@ -500,8 +526,13 @@ _step_enable_units() {
             local launchd_dir="${YADGAR_LAUNCHD_OUTPUT_DIR:-${HOME}/Library/LaunchAgents}"
             local macos_major
             macos_major=$(sw_vers -productVersion 2>/dev/null | cut -d. -f1 || echo "11")
-            for plist in "${launchd_dir}/com.openfantasy.yadgar.plist" \
-                         "${launchd_dir}/com.openfantasy.yadgar-backend.plist"; do
+            for plist in \
+                "${launchd_dir}/com.openfantasy.yadgar.plist" \
+                "${launchd_dir}/com.openfantasy.yadgar-backend.plist" \
+                "${launchd_dir}/com.openfantasy.yadgar-vacuum.plist" \
+                "${launchd_dir}/com.openfantasy.yadgar-nightly-cycle.plist" \
+                "${launchd_dir}/com.openfantasy.yadgar-vacuum-trigger.plist" \
+                "${launchd_dir}/com.openfantasy.yadgar-worktree-sweep.plist"; do
                 if [ ! -f "$plist" ] && [ "$DRYRUN" -eq 0 ]; then
                     warn "$plist not found — did generate_launchd.sh fail?"
                     continue
@@ -580,8 +611,8 @@ _wait_for_daemon() {
                 systemctl --user start yadgar.target >/dev/null 2>&1 || true
             ;;
         macos)
-            # macOS: daemon auto-start via launchctl deferred to v5.46.16+
-            # User must start daemon manually before running yadgar-setup
+            # macOS: daemons auto-start via launchctl bootstrap in _step_enable_units.
+            # Nothing to do here — _wait_for_daemon polls the health endpoint.
             : ;;
     esac
 
@@ -639,8 +670,13 @@ _run_doctor() {
     case "$OS" in
         macos)
             local launchd_dir="${YADGAR_LAUNCHD_OUTPUT_DIR:-${HOME}/Library/LaunchAgents}"
-            for plist in "${launchd_dir}/com.openfantasy.yadgar.plist" \
-                         "${launchd_dir}/com.openfantasy.yadgar-backend.plist"; do
+            for plist in \
+                "${launchd_dir}/com.openfantasy.yadgar.plist" \
+                "${launchd_dir}/com.openfantasy.yadgar-backend.plist" \
+                "${launchd_dir}/com.openfantasy.yadgar-vacuum.plist" \
+                "${launchd_dir}/com.openfantasy.yadgar-nightly-cycle.plist" \
+                "${launchd_dir}/com.openfantasy.yadgar-vacuum-trigger.plist" \
+                "${launchd_dir}/com.openfantasy.yadgar-worktree-sweep.plist"; do
                 if [ -f "$plist" ]; then
                     run plutil -lint "$plist" && info "OK: $plist"
                 else
@@ -687,6 +723,9 @@ main() {
 
     # Phase 3: Bootstrap secrets
     _step_bootstrap_secrets
+
+    # Phase 3b: op inject — resolve 1Password secrets into secrets.env (macOS only)
+    _step_inject_secrets
 
     # Phase 4: Generate daemon units
     _step_generate_units
