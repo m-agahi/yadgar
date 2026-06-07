@@ -406,7 +406,7 @@ _step_bootstrap_secrets() {
         run_sh "$scripts_dir/bootstrap_secrets.sh"
     else
         warn "bootstrap_secrets.sh not found in scripts dir; skipping (run manually)"
-        info "Manual: set ANTHROPIC_API_KEY in ~/.yadgar/secrets.env"
+        info "Manual: set ANTHROPIC_API_KEY in ~/.config/yadgar/secrets.env"
         if [ "$DRYRUN" -eq 1 ]; then
             echo "[dryrun] bash bootstrap_secrets.sh (INSTALL_NONINTERACTIVE=${NONINTERACTIVE})"
         fi
@@ -417,7 +417,7 @@ _step_generate_units() {
     log "Step 4/10: Generating daemon units (${OS})..."
     local scripts_dir
     scripts_dir="$(_locate_setup_scripts)"
-    local yadgar_dir="${YADGAR_DIR:-${HOME}/.yadgar}"
+    local yadgar_dir="${YADGAR_DIR:-${HOME}/.local/share/yadgar}"
     local version backend_version
     version=$(_resolve_yadgar_version)
     backend_version=$(_resolve_backend_version)
@@ -429,7 +429,7 @@ _step_generate_units() {
                 run env \
                     YADGAR_RUNTIME="$RUNTIME" \
                     YADGAR_INSTALL_PREFIX="$yadgar_dir" \
-                    YADGAR_SECRETS_ENV_FILE="${yadgar_dir}/secrets.env" \
+                    YADGAR_SECRETS_ENV_FILE="${HOME}/.config/yadgar/secrets.env" \
                     YADGAR_BACKEND_IMAGE="docker.io/openfantasy/yadgar-backend:${backend_version}" \
                     YADGAR_CORE_IMAGE="docker.io/openfantasy/yadgar:${version}" \
                     YADGAR_SYSTEMD_OUTPUT_DIR="$systemd_dir" \
@@ -447,7 +447,7 @@ _step_generate_units() {
                 run env \
                     YADGAR_RUNTIME="$RUNTIME" \
                     YADGAR_INSTALL_PREFIX="$yadgar_dir" \
-                    YADGAR_SECRETS_ENV_FILE="${yadgar_dir}/secrets.env" \
+                    YADGAR_SECRETS_ENV_FILE="${HOME}/.config/yadgar/secrets.env" \
                     YADGAR_BACKEND_IMAGE="docker.io/openfantasy/yadgar-backend:${backend_version}" \
                     YADGAR_CORE_IMAGE="docker.io/openfantasy/yadgar:${version}" \
                     YADGAR_LAUNCHD_OUTPUT_DIR="$launchd_dir" \
@@ -466,13 +466,19 @@ _step_generate_units() {
 }
 
 _step_pre_create_dirs() {
-    # Pre-create data subdirectories before service start.
+    # Pre-create XDG directories before service start.
     # Prevents first-run mkdir failures inside the container on hostile
     # filesystems (e.g. Rocky Linux SELinux enforcing before relabel).
-    local yadgar_dir="${YADGAR_DIR:-${HOME}/.yadgar}"
-    log "Pre-creating ${yadgar_dir}/logs..."
-    run mkdir -p "${yadgar_dir}/logs"
-    run chmod 700 "${yadgar_dir}/logs"
+    local yadgar_data="${YADGAR_DIR:-${HOME}/.local/share/yadgar}"
+    local yadgar_config="${HOME}/.config/yadgar"
+    local yadgar_state="${HOME}/.local/state/yadgar"
+    log "Pre-creating XDG dirs (data/config/state)..."
+    run mkdir -p "${yadgar_data}/logs"
+    run chmod 700 "${yadgar_data}/logs"
+    run mkdir -p "${yadgar_config}"
+    run chmod 700 "${yadgar_config}"
+    run mkdir -p "${yadgar_state}"
+    run chmod 700 "${yadgar_state}"
 }
 
 _step_enable_units() {
@@ -523,8 +529,7 @@ _step_install_agents() {
 
 _step_config_sync() {
     log "Step 8/10: Syncing config..."
-    local yadgar_dir="${YADGAR_DIR:-${HOME}/.yadgar}"
-    local config_file="${yadgar_dir}/config.yaml"
+    local config_file="${YADGAR_CONFIG_FILE:-${HOME}/.config/yadgar/config.yaml}"
     if [ ! -f "$config_file" ]; then
         log "  config.yaml not found — running 'yadgar config init' first"
         run yadgar config init
