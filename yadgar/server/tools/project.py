@@ -21,6 +21,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+import yadgar.paths as _paths
 from yadgar.config import get_settings
 from yadgar.secrets import gate_or_reject
 from yadgar.server._app import _tool
@@ -1555,13 +1556,13 @@ def _seed_default_blocks(storage, directory: str) -> None:
 def _get_active_work_tracked_dir() -> Path:
     """Return the base path for the active-work directory registry.
 
-    Default: ~/.yadgar/active-work-tracked/
+    Default: ~/.local/state/yadgar/active-work-tracked/
     Override via YADGAR_ACTIVE_WORK_TRACKED_DIR env var (used in tests for isolation).
     """
     override = os.environ.get("YADGAR_ACTIVE_WORK_TRACKED_DIR")
     if override:
         return Path(override)
-    return Path.home() / ".yadgar" / "active-work-tracked"
+    return _paths.ACTIVE_WORK_TRACKED_DIR
 
 
 def _register_active_work_directory(resolved: str) -> None:
@@ -1590,7 +1591,7 @@ def update_active_work(directory: str, content: str, branch_hint: str | None = N
     Deletes any existing _active_work memory(ies) for the directory,
     then inserts the new one in a single transaction.
 
-    v5.10.1: also writes a marker to ~/.yadgar/active-work-tracked/ so the
+    v5.10.1: also writes a marker to ~/.local/state/yadgar/active-work-tracked/ so the
     watchdog timer knows which directories to poll.
 
     v5.42.3: branch_hint added for parity with memorize/anchor/checkpoint.
