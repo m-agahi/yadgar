@@ -477,7 +477,7 @@ def cmd_vacuum_impl(args) -> int:  # type: ignore[no-untyped-def]
     args attributes consumed:
       - backend_url (str)     default: YADGAR_DB_URL env, else http://127.0.0.1:8080
       - service_mode (str)    "systemd" | "docker" | "manual" | None (auto-detect)
-      - db_path (str | None)  override default ~/.yadgar/surreal_db
+      - db_path (str | None)  override default ~/.local/share/yadgar/surreal_db
       - yes (bool)            skip confirmation prompt
     """
     from yadgar.config import Settings

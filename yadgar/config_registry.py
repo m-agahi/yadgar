@@ -31,6 +31,8 @@ import os
 import re
 from dataclasses import dataclass
 
+import yadgar.paths as _paths
+
 logger = logging.getLogger(__name__)
 
 _REDACT_RE = re.compile(r"(secret|token|key|password|auth)", re.IGNORECASE)
@@ -89,7 +91,7 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_PORT", "8765", "int"),
     ConfigEntry("YADGAR_DB_URL", "http://127.0.0.1:8000", "string"),
     ConfigEntry("YADGAR_EMBED_URL", "", "string"),
-    ConfigEntry("YADGAR_DATA_DIR", "~/.yadgar", "string"),
+    ConfigEntry("YADGAR_DATA_DIR", str(_paths.DATA_DIR), "string"),
     ConfigEntry("YADGAR_HOST", "127.0.0.1", "string"),
     # ── Auth ────────────────────────────────────────────────────────────────
     ConfigEntry("YADGAR_MCP_AUTH_TOKEN", "", "string", redact=True),
@@ -108,7 +110,7 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_BACKEND_LOG_LEVEL", "warn", "string"),
     ConfigEntry("YADGAR_CORE_LOG_LEVEL", "WARNING", "string"),
     ConfigEntry("YADGAR_LOG_FORMAT", "json", "string"),
-    ConfigEntry("YADGAR_LOG_DIR", "~/.yadgar/logs", "string"),
+    ConfigEntry("YADGAR_LOG_DIR", str(_paths.LOG_DIR), "string"),
     ConfigEntry("YADGAR_LOG_FILE_PATH", "", "string"),
     ConfigEntry("YADGAR_BACKEND_LOG_FILE_PATH", "", "string"),
     ConfigEntry("YADGAR_LOG_RATE_LIMIT_ENABLED", "1", "bool"),
@@ -190,7 +192,7 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_VIZ_SEARCH_PINNED_COLOR", "#ffd700", "string"),
     ConfigEntry("YADGAR_VIZ_SEARCH_DIM_OPACITY", "0.18", "float"),
     # ── DB path (embedded mode) ──────────────────────────────────────────────
-    ConfigEntry("YADGAR_DB_PATH", "~/.yadgar/surreal_db", "string"),
+    ConfigEntry("YADGAR_DB_PATH", str(_paths.DB_PATH), "string"),
     # ── OTLP / Tempo exporter ────────────────────────────────────────────────
     ConfigEntry("YADGAR_OTLP_ENDPOINT", "", "string"),
     ConfigEntry("YADGAR_OTLP_HEADERS", "", "string"),

@@ -18,7 +18,7 @@ Env knobs:
   SESSION_END_CAPTURE_ENABLED  true   Kill switch
   SESSION_END_MIN_MESSAGES     2      Min human messages before writing sentinel
   SESSION_END_SNIPPET_TURNS    5      Max human turns to embed in sentinel
-  YADGAR_SESSION_END_DIR       ~/.yadgar/session-ends  Override sentinel dir (testing)
+  YADGAR_SESSION_END_DIR       ~/.local/state/yadgar/session-ends  Override sentinel dir (testing)
 """
 
 from __future__ import annotations
@@ -28,6 +28,8 @@ import json
 import os
 import sys
 from pathlib import Path
+
+import yadgar.paths as _paths
 
 # ---------------------------------------------------------------------------
 # Kill switch
@@ -258,10 +260,7 @@ last_touched_files = _extract_last_touched_files(transcript_path, n=3) if transc
 # ---------------------------------------------------------------------------
 
 sentinel_dir_env = os.environ.get("YADGAR_SESSION_END_DIR", "")
-if sentinel_dir_env:
-    sentinel_dir = Path(sentinel_dir_env)
-else:
-    sentinel_dir = Path.home() / ".yadgar" / "session-ends"
+sentinel_dir = Path(sentinel_dir_env) if sentinel_dir_env else _paths.SESSION_ENDS_DIR
 
 sentinel_dir.mkdir(parents=True, exist_ok=True)
 

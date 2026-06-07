@@ -1,6 +1,6 @@
 """YAML config file management for Yadgar.
 
-Config file location: ~/.yadgar/config.yaml
+Config file location: ~/.config/yadgar/config.yaml
 Priority: env vars > YAML file > defaults
 """
 # Module size justified: single-responsibility config loader — large LoC is schema data (FIELD_META), not logic.
@@ -13,6 +13,8 @@ from typing import Any
 
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
+
+import yadgar.paths as _paths
 
 FIELD_META: dict[str, dict[str, str]] = {
     # core
@@ -921,16 +923,13 @@ def get_config_path() -> Path:
 
     Resolution order:
       1. ``YADGAR_CONFIG_FILE`` env var (container bind-mount override).
-      2. Default ``~/.yadgar/config.yaml``.
+      2. Default ``~/.config/yadgar/config.yaml`` (XDG_CONFIG_HOME).
 
     The env override lets the container image pass ``-e YADGAR_CONFIG_FILE=/data/config.yaml``
     so the yaml file is read from the bind-mounted ``/data`` volume rather than
-    ``/root/.yadgar/`` (which doesn't exist inside ``--user root`` containers).
+    inside the container's home directory (which may not exist with ``--user root``).
     """
-    override = os.environ.get("YADGAR_CONFIG_FILE", "").strip()
-    if override:
-        return Path(override)
-    return Path("~/.yadgar/config.yaml").expanduser()
+    return _paths.CONFIG_YAML_PATH
 
 
 def load_yaml(path: Path) -> dict:
@@ -1067,7 +1066,7 @@ def cmd_config_init(args) -> None:
                         field_lower,
                         before=(
                             f"Yadgar configuration file\n"
-                            f" Location: ~/.yadgar/config.yaml\n"
+                            f" Location: ~/.config/yadgar/config.yaml\n"
                             f" Priority: environment variables (YADGAR_*) > this file > defaults\n"
                             f" Edit values below or use: yadgar config set <key> <value>\n"
                             f"\n"
@@ -1181,7 +1180,7 @@ def cmd_config_get(args) -> None:
 
 
 def cmd_config_set(args) -> None:
-    """Update a key in ~/.yadgar/config.yaml.
+    """Update a key in ~/.config/yadgar/config.yaml.
 
     Loads the existing file with ruamel.yaml (preserving comments),
     sets the value with proper type coercion, saves back.

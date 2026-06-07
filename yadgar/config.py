@@ -7,6 +7,8 @@ from pydantic import field_validator
 from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
+import yadgar.paths as _paths
+
 
 class YamlConfigSource(PydanticBaseSettingsSource):
     def __init__(self, settings_cls: type[BaseSettings]):
@@ -60,7 +62,7 @@ class Settings(BaseSettings):
     OVERLAP_TOKENS: int = 2000
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
     DAEMON_CHECK_INTERVAL: float = 30
-    DB_PATH: str = "~/.yadgar/surreal_db"
+    DB_PATH: str = str(_paths.DB_PATH)
 
     # v2 settings
     IMPORTANCE_DECAY_FACTOR: float = 0.9999  # ~81% heat after 3 months for important memories
@@ -297,7 +299,7 @@ class Settings(BaseSettings):
     BRANCH_ENFORCEMENT: bool = True
 
     # File queue — async write queue base directory
-    DATA_DIR: str = str(Path.home() / ".yadgar")
+    DATA_DIR: str = str(_paths.DATA_DIR)
     # Optional prefix for wiki .md archive filenames (e.g. "myproject" → "myproject-overview.md")
     WIKI_SLUG_PREFIX: str = ""
     # Drain interval in seconds — how long queue entries stay visible before being flushed to DB

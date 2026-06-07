@@ -7,11 +7,11 @@ recorded to an append-only JSONL audit log.
 
 Configuration (env vars):
   YADGAR_SECRET_GATE_ALLOWLIST_PATH   Path to user YAML allowlist.
-                                      Default: ~/.yadgar/secret-gate-allowlist.yaml
+                                      Default: ~/.config/yadgar/secret-gate-allowlist.yaml
                                       Set to /nonexistent or unset → default-deny
                                       (zero allowlisted patterns).
   YADGAR_SECRET_GATE_AUDIT_DIR        Directory for JSONL audit logs.
-                                      Default: ~/.yadgar/secret-gate-audit/
+                                      Default: ~/.local/state/yadgar/secret-gate-audit/
                                       Logs named YYYY-MM-DD.jsonl (date-based rotation).
 
 Allowlist YAML schema (version 1):
@@ -49,6 +49,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+import yadgar.paths as _paths
+
 _log = logging.getLogger(__name__)
 
 _LOCK = threading.Lock()
@@ -74,14 +76,14 @@ def _get_allowlist_path() -> Path:
     env = os.environ.get("YADGAR_SECRET_GATE_ALLOWLIST_PATH", "")
     if env:
         return Path(env)
-    return Path.home() / ".yadgar" / "secret-gate-allowlist.yaml"
+    return _paths.SECRET_GATE_ALLOWLIST_PATH
 
 
 def _get_audit_dir() -> Path:
     env = os.environ.get("YADGAR_SECRET_GATE_AUDIT_DIR", "")
     if env:
         return Path(env)
-    return Path.home() / ".yadgar" / "secret-gate-audit"
+    return _paths.SECRET_GATE_AUDIT_DIR
 
 
 def _reload_allowlist() -> None:
