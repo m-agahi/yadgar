@@ -6,6 +6,24 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [Unreleased — feat/macos-launchd-port] — 2026-06-07
+
+macOS launchd port: 4 remaining oneshot/timer/path plists + wrapper scripts + secrets activation.
+
+- **feat(launchd):** `com.openfantasy.yadgar-vacuum.plist.in` — Sunday 04:00 local time (mirrors nix `OnCalendar=Sun *-*-* 04:00:00`). Oneshot: `RunAtLoad=false`, `KeepAlive=false`. D8 UTC-warning comment included.
+- **feat(launchd):** `com.openfantasy.yadgar-nightly-cycle.plist.in` — daily 19:00 local time. Oneshot. D8 UTC-warning comment.
+- **feat(launchd):** `com.openfantasy.yadgar-vacuum-trigger.plist.in` — `WatchPaths` on `~/.yadgar/triggers/` dir. No timer. Wrapper handles atomic mv + idempotency guard (Q5 flowchart).
+- **feat(launchd):** `com.openfantasy.yadgar-worktree-sweep.plist.in` — Sunday 02:00 local time. Oneshot. D8 UTC-warning.
+- **feat(launchd):** `yadgar-vacuum-wrapper.sh`, `yadgar-nightly-cycle-wrapper.sh`, `yadgar-vacuum-trigger-wrapper.sh`, `yadgar-worktree-sweep-wrapper.sh` — D3 gtimeout/timeout detection; D4 explicit per-key export (no `set -a` env leak); D6 `--service-mode=manual`.
+- **feat(launchd):** `yadgar-secrets-activation.sh` — install-time `op inject` secrets resolution; writes `~/.config/yadgar/secrets.env` mode 600; graceful skip if no template or no `op` CLI.
+- **refactor(launchd):** Migrate existing `com.openfantasy.yadgar.plist.in` + `yadgar-backend.plist.in` from `${TOKEN}` to `@TOKEN@` style (D1; aligns with systemd `.in` convention).
+- **feat(generate_launchd.sh):** Renders all 6 plists; installs 5 wrapper/activation scripts to `~/.local/share/yadgar/scripts/`; canonical secrets path `~/.config/yadgar/secrets.env` (Q3).
+- **feat(yadgar-setup.sh):** `_step_inject_secrets` (macOS-only, gated on `op`); extend `_step_enable_units` + `_run_doctor` macOS branches to cover all 6 LaunchAgents; fix stale `_wait_for_daemon` comment.
+- **test:** `test_macos_launchd_plists.py` — 79 tests: template existence, required keys, D8 UTC warnings, oneshot properties, XML/plistlib parseability, generator substitution, wrapper D3/D4 checks, secrets script smoke tests.
+- **coverage:** launchd port 7/7 nix unit groups covered (2 daemons existing + 4 oneshot/timer/path new + secrets activation script).
+
+---
+
 ## [5.46.21] — 2026-06-07
 
 Hotfix: v5.46.20 wheel was built before BUG 1 completeness commit (bootstrap_secrets.sh didn't write MCP token) + YADGAR_HOST inside container needs 0.0.0.0 not 127.0.0.1.
