@@ -86,6 +86,7 @@ def cli():
         seed,
         setup,
         stats,
+        update,
         vacuum,
         viz,
     )
@@ -105,6 +106,7 @@ def cli():
     daemon.register(subparsers)
     install_hooks.register(subparsers)
     install_subagents.register(subparsers)
+    update.register(subparsers)
 
     args = parser.parse_args()
 

@@ -881,6 +881,42 @@ FIELD_META: dict[str, dict[str, str]] = {
         ),
         "section": "wiki_similarity_gate",
     },
+    # v5.48.0 — update mechanism
+    "update_check_on_start": {
+        "desc": (
+            "Opt-in: probe PyPI for a newer yadgar version on daemon start (default false). "
+            "Anonymous version-only check. No user-ID, no telemetry. "
+            "Respects HTTPS_PROXY env for corporate firewalls."
+        ),
+        "section": "update",
+    },
+    "update_check_timeout_seconds": {
+        "desc": "HTTP timeout in seconds for the PyPI version probe (default 5).",
+        "section": "update",
+    },
+    "update_pypi_url": {
+        "desc": (
+            "PyPI JSON API endpoint used for version probes "
+            "(default https://pypi.org/pypi/yadgar/json). "
+            "Override for air-gapped environments with a local PyPI mirror."
+        ),
+        "section": "update",
+    },
+    "update_user_agent_template": {
+        "desc": (
+            "User-Agent header template for version probe requests. "
+            "{version} is replaced with the running yadgar version (default 'yadgar/{version}')."
+        ),
+        "section": "update",
+    },
+    "update_debug_apis_enabled": {
+        "desc": (
+            "Enable /api/control/update endpoint (default 'off'). "
+            "Set to 'on' for Control-tab integration (v5.50) or power-user CLI use. "
+            "Also requires bearer token auth (YADGAR_REQUIRE_AUTH + YADGAR_MCP_AUTH_TOKEN)."
+        ),
+        "section": "update",
+    },
 }
 
 
@@ -912,6 +948,7 @@ SECTION_TITLES: dict[str, str] = {
     "memory_blocks": "Memory Blocks (v5.35.1)",
     "wiki_similarity_gate": "Wiki Similarity Gate (v5.39.0)",
     "wiki_write_wait": "Wiki Write Wait / Read-Your-Writes (v5.41.2)",
+    "update": "Update Mechanism (v5.48.0)",
 }
 
 # Ordered list of sections for deterministic output
