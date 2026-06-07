@@ -8,7 +8,7 @@ Flow:
   2. If SESSION_END_CAPTURE_ENABLED=false → exit 0 immediately.
   3. If end_reason in ("clear", "resume") → exit 0 (not a true exit).
   4. If message_count < SESSION_END_MIN_MESSAGES → exit 0 (trivial session).
-  5. Write sentinel to YADGAR_SESSION_END_DIR (or ~/.yadgar/session-ends/) atomically.
+  5. Write sentinel to YADGAR_SESSION_END_DIR (or ~/.local/state/yadgar/session-ends/) atomically.
 
 The sentinel is read-once: SessionStart's hook_session_context imports it into memory
 and deletes it. If the daemon is down at exit time, the filesystem write survives —

@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import fcntl
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING
+
+import yadgar.paths as _paths
 
 if TYPE_CHECKING:
     pass  # StorageEngine referenced only in annotations below — no import needed
@@ -859,8 +860,8 @@ class _MigrationsMixin:
             return  # embedded mode: no migrations needed
 
         # Serialize concurrent daemon starts — flock for duration of migrations
-        # Use ~/.yadgar as lock directory regardless of DB mode
-        lock_dir = Path("~/.yadgar").expanduser()
+        # Use XDG state dir for lock regardless of DB mode
+        lock_dir = _paths.STATE_DIR
         lock_dir.mkdir(parents=True, exist_ok=True)
         lock_path = lock_dir / ".migration.lock"
         with open(lock_path, "w") as _lock_fh:

@@ -48,7 +48,7 @@ def register(subparsers):
         "--db-path",
         type=str,
         default=_default_db_path(),
-        help="Database path override (default: $YADGAR_DATA_DIR/surreal_db, else ~/.yadgar/surreal_db)",
+        help="Database path override (default: $YADGAR_DATA_DIR/surreal_db, else ~/.local/share/yadgar/surreal_db)",
     )
     p.add_argument(
         "--backend-url",

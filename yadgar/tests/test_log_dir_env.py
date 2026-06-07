@@ -27,13 +27,15 @@ def _import_helpers():
 
 
 def test_resolve_log_dir_default_is_home_dir(monkeypatch, tmp_path):
-    """Without YADGAR_LOG_DIR, returns os.path.expanduser('~/.yadgar/logs')."""
+    """Without YADGAR_LOG_DIR, returns ~/.local/share/yadgar/logs (XDG default)."""
     _resolve_log_dir, _ = _import_helpers()
     monkeypatch.delenv("YADGAR_LOG_DIR", raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.delenv("YADGAR_DATA_DIR", raising=False)
     # Patch makedirs so no real dir is created during test
     with patch("os.makedirs"):
         result = _resolve_log_dir()
-    expected = os.path.expanduser("~/.yadgar/logs")
+    expected = os.path.expanduser("~/.local/share/yadgar/logs")
     assert result == expected
 
 

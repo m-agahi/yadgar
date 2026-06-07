@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import yadgar.paths as _paths
 import yadgar.server._state as _st
 from yadgar.causal_discovery import CausalDiscovery
 from yadgar.cognitive_map import CognitiveMap
@@ -421,7 +422,7 @@ def shutdown():
 
     # Remove PID file on clean shutdown
     try:
-        Path("~/.yadgar/yadgar.pid").expanduser().unlink(missing_ok=True)
+        _paths.PID_PATH.unlink(missing_ok=True)
     except Exception:
         pass
 
@@ -448,7 +449,7 @@ def main(
 
     # Self-register PID file so `yadgar daemon stop/restart/status` can find us
     # regardless of how the process was started (systemd, direct CLI, etc.).
-    _pid_path = Path("~/.yadgar/yadgar.pid").expanduser()
+    _pid_path = _paths.PID_PATH
     try:
         _pid_path.parent.mkdir(parents=True, exist_ok=True)
         _pid_path.write_text(str(os.getpid()))

@@ -3,7 +3,8 @@
 import json
 import logging
 from datetime import UTC, datetime
-from pathlib import Path
+
+import yadgar.paths as _paths
 
 logger = logging.getLogger("yadgar.consolidation")
 
@@ -24,11 +25,11 @@ def _quarantine_action_group(action_ids: list, reason: str, directory: str) -> N
     Best-effort: any I/O error is swallowed so the quarantine write never
     re-poisons the consolidation cycle.
 
-    File: ~/.yadgar/quarantine/action_log_poison.jsonl
+    File: ~/.local/state/yadgar/quarantine/action_log_poison.jsonl
     Format: one JSON object per line — {timestamp, action_ids, reason, directory}
     """
     try:
-        quarantine_dir = Path.home() / ".yadgar" / "quarantine"
+        quarantine_dir = _paths.QUARANTINE_DIR
         quarantine_dir.mkdir(parents=True, exist_ok=True)
         entry = {
             "timestamp": datetime.now(tz=UTC).isoformat(),
