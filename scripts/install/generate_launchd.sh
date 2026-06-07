@@ -6,8 +6,8 @@
 # Environment variables (all have defaults):
 #   YADGAR_LAUNCHD_OUTPUT_DIR   Target dir (default: ~/Library/LaunchAgents)
 #   YADGAR_RUNTIME              Container runtime: podman|docker (default: auto-detected)
-#   YADGAR_INSTALL_PREFIX       Data dir mounted at /data (default: ~/.yadgar)
-#   YADGAR_SECRETS_ENV_FILE     Path to secrets.env (default: ~/.yadgar/secrets.env)
+#   YADGAR_INSTALL_PREFIX       Data dir mounted at /data (default: ~/.local/share/yadgar)
+#   YADGAR_SECRETS_ENV_FILE     Path to secrets.env (default: ~/.config/yadgar/secrets.env)
 #   YADGAR_BACKEND_IMAGE        Backend image tag (default: openfantasy/yadgar-backend:latest)
 #   YADGAR_CORE_IMAGE           Core image tag (default: openfantasy/yadgar:latest)
 #   YADGAR_TEST_OS_MARKER       Override OS detection for testing (set to 'macos' to spoof)
@@ -32,11 +32,11 @@ TEMPLATE_DIR="${SCRIPT_DIR}/launchd"
 
 OUTPUT_DIR="${YADGAR_LAUNCHD_OUTPUT_DIR:-${HOME}/Library/LaunchAgents}"
 RUNTIME="${YADGAR_RUNTIME:-}"
-DATA_DIR="${YADGAR_INSTALL_PREFIX:-${HOME}/.yadgar}"
-SECRETS_ENV_FILE="${YADGAR_SECRETS_ENV_FILE:-${DATA_DIR}/secrets.env}"
+DATA_DIR="${YADGAR_INSTALL_PREFIX:-${HOME}/.local/share/yadgar}"
+SECRETS_ENV_FILE="${YADGAR_SECRETS_ENV_FILE:-${HOME}/.config/yadgar/secrets.env}"
 BACKEND_IMAGE="${YADGAR_BACKEND_IMAGE:-openfantasy/yadgar-backend:latest}"
 CORE_IMAGE="${YADGAR_CORE_IMAGE:-openfantasy/yadgar:latest}"
-LOG_DIR="${HOME}/Library/Logs/yadgar"
+LOG_DIR="${HOME}/.local/share/yadgar/logs"
 
 # ── Runtime detection (if not set) ───────────────────────────────────────────
 

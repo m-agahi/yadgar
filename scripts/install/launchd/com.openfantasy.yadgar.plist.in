@@ -20,10 +20,10 @@
 
     <!-- Log paths — sed-substituted by generate_launchd.sh (mkdir -p creates the dir) -->
     <key>StandardOutPath</key>
-    <string>${YADGAR_HOME}/Library/Logs/yadgar/core.out.log</string>
+    <string>${YADGAR_HOME}/.local/share/yadgar/logs/core.out.log</string>
 
     <key>StandardErrorPath</key>
-    <string>${YADGAR_HOME}/Library/Logs/yadgar/core.err.log</string>
+    <string>${YADGAR_HOME}/.local/share/yadgar/logs/core.err.log</string>
 
     <!--
         PATH must include /usr/local/bin (Intel podman) and /opt/homebrew/bin (Apple Silicon).

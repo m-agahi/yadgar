@@ -10,7 +10,7 @@
 #
 # Environment variables (optional):
 #   YADGAR_RESTORE_ARCHIVE  Archive directory (memories/ + wiki/) to restore alongside
-#   YADGAR_DIR              Yadgar data dir (default: ~/.yadgar)
+#   YADGAR_DIR              Yadgar data dir (default: ~/.local/share/yadgar)
 #   YADGAR_RESTORE_DRY_RUN  Set to 1 for a no-op dry run (test/preview mode)
 #
 # What this does:
@@ -35,7 +35,7 @@ fi
 
 DB_FILE="${YADGAR_RESTORE_DB}"
 ARCHIVE_DIR="${YADGAR_RESTORE_ARCHIVE:-}"
-YADGAR_DIR="${YADGAR_DIR:-${HOME}/.yadgar}"
+YADGAR_DIR="${YADGAR_DIR:-${HOME}/.local/share/yadgar}"
 DRY_RUN="${YADGAR_RESTORE_DRY_RUN:-0}"
 
 # ── Detect container runtime ──────────────────────────────────────────────────
@@ -57,7 +57,7 @@ fi
 
 # ── Load config from secrets.env ─────────────────────────────────────────────
 
-SECRETS_ENV_FILE="${YADGAR_SECRETS_ENV_FILE:-${YADGAR_DIR}/secrets.env}"
+SECRETS_ENV_FILE="${YADGAR_SECRETS_ENV_FILE:-${HOME}/.config/yadgar/secrets.env}"
 if [[ ! -f "${SECRETS_ENV_FILE}" ]]; then
     SECRETS_ENV_FILE="/etc/yadgar/secrets.env"
 fi

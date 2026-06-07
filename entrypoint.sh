@@ -7,7 +7,7 @@ set -e
 # Default inside containers: /data/logs (bind-mounted by compose or systemd).
 # Operators on Linux hosts with an external log shipper (e.g. Alloy) can set
 # YADGAR_LOG_DIR=/var/log/yadgar (world-readable path) to avoid home-dir 700
-# traversal issues. On macOS / bare-metal dev: leave unset → ~/.yadgar/logs.
+# traversal issues. On bare-metal dev: leave unset → ~/.local/share/yadgar/logs.
 # ---------------------------------------------------------------------------
 YADGAR_LOG_DIR="${YADGAR_LOG_DIR:-/data/logs}"
 export YADGAR_LOG_DIR
