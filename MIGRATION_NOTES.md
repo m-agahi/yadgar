@@ -1,5 +1,100 @@
 # Migration Notes
 
+## v5.46.20 — Comprehensive install path fixes (2026-06-07)
+
+### Context
+
+Six bugs discovered via Rocky Linux VM SSH diagnostic session. Backend daemon failed with:
+```
+RuntimeError: REQUIRE_AUTH=1 requires YADGAR_MCP_AUTH_TOKEN to be set
+```
+Once SELinux was set Permissive, daemon started but auth token was still missing.
+Root cause investigation revealed 5 additional issues in the same install path.
+
+### Bug Summary
+
+| # | P | Symptom | Root cause |
+|---|---|---------|------------|
+| 1 | P0 | `RuntimeError: REQUIRE_AUTH=1 requires YADGAR_MCP_AUTH_TOKEN to be set` | `yadgar.service.in` ExecStart missing `-e YADGAR_MCP_AUTH_TOKEN=…` passthrough |
+| 2 | P0 Rocky | `Permission denied` inside container even with SELinux Enforcing | `:Z` relabel flag insufficient on Rocky 9 `admin_home_t` context on `/root/.yadgar` |
+| 3 | UX | Silent 30s wait timeout with no feedback; cold-start exceeds 30s | `_wait_for_daemon` timeout 30s too short; no progress log |
+| 4 | UX | Upgrade: old container still running after pull | `_step_pull_images` didn't stop running containers before pull |
+| 5 | UX | (covered by BUG 3 fix — no separate change needed) | — |
+| 6 | correctness | Re-seed should be idempotent | Similarity gate confirmed dedup; 409/`created=0` both handled |
+
+### Fixes
+
+**BUG 1 — `yadgar.service.in`:** Added to ExecStart env block:
+```ini
+-e YADGAR_MCP_AUTH_TOKEN=${YADGAR_MCP_AUTH_TOKEN} \
+```
+`secrets.env` is loaded via `EnvironmentFile=` so `${YADGAR_MCP_AUTH_TOKEN}` expands at start time. Without this line the value never reached the container.
+
+**BUG 2 — SELinux fix (Option A):**
+
+Removed `:Z` from both service templates. Added `--security-opt label=disable` before `--user root`:
+```ini
+ExecStart=@RUNTIME@ run --name yadgar --rm --security-opt label=disable --user root \
+    …
+    -v @DATA_DIR@:/data \
+```
+Rationale: personal-mode installs run as root; container also runs as root. SELinux MAC adds no isolation in this configuration. `--security-opt label=disable` prevents all SELinux policy checks for these containers — simpler and more reliable than per-directory relabeling.
+
+Trade-off: SELinux MAC is disabled for yadgar containers. Multi-tenant or shared-host deployments should use a dedicated data directory, run as a non-root user, and apply `chcon -Rt container_file_t` or keep `:Z` with a non-`/root` data path.
+
+Note: `_step_pre_create_dirs` (v5.46.19) still runs before service start — belt-and-suspenders for first-write race conditions.
+
+**BUG 3 — `_wait_for_daemon` timeout + progress:**
+```bash
+local timeout="${1:-120}"   # was 30
+…
+sleep 2
+elapsed=$((elapsed + 2))
+if [ $((elapsed % 10)) -eq 0 ]; then
+    log "  Waiting for daemon... (${elapsed}s / ${timeout}s)"
+fi
+```
+`_step_seed_anchors` call site updated from `_wait_for_daemon 30` to `_wait_for_daemon 120`.
+
+**BUG 4 — Stop containers before pull:**
+```bash
+for ctr in yadgar yadgar-backend; do
+    if "$RUNTIME" ps --format '{{.Names}}' 2>/dev/null | grep -qx "$ctr"; then
+        log "  Stopping running container: $ctr"
+        "$RUNTIME" stop "$ctr" 2>/dev/null || true
+    fi
+done
+```
+Added at start of `_step_pull_images` before the pull commands.
+
+**BUG 6 — Seed idempotency:**
+The `/hooks/seed-anchor` route calls `memorize()` which goes through the similarity gate. On second seed:
+- Gate returns `status=duplicate/skipped/deduped` → route returns `{"created": 0}` → `seed.py` increments `skipped`.
+- 409 Conflict responses also counted as `skipped`.
+No client-side change required. Confirmed by test `TestSeedIdempotency`.
+
+### Operator action — Rocky Linux users
+
+With v5.46.20, SELinux can stay Enforcing. The `:Z` relabel is no longer attempted:
+```bash
+pipx upgrade yadgar
+setenforce 1        # re-enable SELinux Enforcing if previously set Permissive
+yadgar-setup        # regenerates units with label=disable; restarts services
+yadgar --version    # should show daemon alive
+```
+
+If `yadgar --version` still shows daemon down, check:
+```bash
+journalctl --user -u yadgar.service -n 30
+journalctl --user -u yadgar-backend.service -n 30
+```
+
+### Operator action — new installs
+
+No action needed. `pipx install yadgar && yadgar-setup` gets all fixes automatically.
+
+---
+
 ## v5.46.19 — Rocky Linux SELinux + restart-on-regen hotfix (2026-06-06)
 
 ### Context
