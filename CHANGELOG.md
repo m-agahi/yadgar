@@ -6,6 +6,24 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.48.0] — 2026-06-07
+
+### Update mechanism (`yadgar update` CLI + `/api/control/update` API)
+
+CHECK-ONLY release. `--install` flag deferred to v5.49 (graceful-restart primitive needed).
+
+- **`yadgar update --check`** — new CLI subcommand. Detects install method (pipx/brew/nix-flake/container/source), probes PyPI JSON API for latest version, prints upgrade command for user to run manually.
+- **PyPI version probe** — anonymous GET to `https://pypi.org/pypi/yadgar/json`. `User-Agent: yadgar/<version>`, no other identifying headers. Respects `HTTPS_PROXY` env. 5s timeout.
+- **`POST /api/control/update`** — new HTTP endpoint. Auth-gated via existing `BearerAuthMiddleware` (`/api/` prefix) + `YADGAR_UPDATE_DEBUG_APIS_ENABLED=on` gate (default off). Returns `current_version`, `available_version`, `update_available`, `install_method`, `upgrade_command`, `release_notes_url`, `checked_at`. `action=install` returns 400 (deferred to v5.49).
+- **Auto-check on daemon start** — opt-in (`update.check_on_start: false` default). Background thread (`daemon=True`). Logs update-available at WARNING. No blocking of daemon startup. Probe failure logs WARNING; daemon continues.
+- **New config knobs (I25 three-way):** `UPDATE_CHECK_ON_START`, `UPDATE_CHECK_TIMEOUT_SECONDS`, `UPDATE_PYPI_URL`, `UPDATE_USER_AGENT_TEMPLATE`, `UPDATE_DEBUG_APIS_ENABLED`.
+- **New files:** `yadgar/update/check.py`, `yadgar/update/install_methods.py`, `yadgar/cli/update.py`, `yadgar/server/routes/control_update.py`, `scripts/install/detect_install_method.sh`.
+- **Privacy:** no user-ID, no telemetry, no IP collection. Version-only probe. `docs/PRIVACY.md` documents exact wire format.
+
+See `MIGRATION_NOTES.md` § v5.48.0 for opt-in instructions.
+
+---
+
 ## [5.47.0] — 2026-06-07
 
 **BREAKING CHANGE: XDG-compliant path layout + macOS launchd ship.** Drops legacy `~/.yadgar/` directory entirely. No backward-compat fallback. Migration script provided for existing installs.

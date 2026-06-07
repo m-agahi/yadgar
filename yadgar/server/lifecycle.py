@@ -434,6 +434,61 @@ def _signal_handler(signum, frame):
     sys.exit(0)
 
 
+def _run_update_check() -> None:
+    """Background thread target: probe PyPI for a newer yadgar version.
+
+    Non-fatal: any exception is logged at WARNING and swallowed so the
+    calling thread (daemon startup) is not affected.
+
+    Runs once on daemon start when UPDATE_CHECK_ON_START=True.
+    No periodic scheduling — v5.49+ candidate.
+    """
+    try:
+        from yadgar import __version__  # noqa: PLC0415
+        from yadgar.update.check import probe_latest_version  # noqa: PLC0415
+
+        _settings = settings  # module-level singleton
+        result = probe_latest_version(
+            url=_settings.UPDATE_PYPI_URL,
+            timeout=_settings.UPDATE_CHECK_TIMEOUT_SECONDS,
+        )
+        if result.available_version != __version__:
+            logger.warning(
+                "yadgar update available: %s → %s  |  run: %s",
+                __version__,
+                result.available_version,
+                "yadgar update --check  (for upgrade command)",
+            )
+        else:
+            logger.info("yadgar is up to date (%s)", __version__)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("update check failed (non-fatal): %s", exc)
+
+
+def _maybe_auto_check_for_update() -> None:
+    """Spawn a background update-check thread if UPDATE_CHECK_ON_START=True.
+
+    The thread is daemon=True so it does not prevent process exit.
+    Returns immediately — probe latency does NOT block daemon startup.
+
+    Reads env directly (bypasses lru_cache) so tests can monkeypatch the env
+    and observe the correct behavior without restarting the process.
+    """
+    # Read env directly to bypass lru_cache (important for testability)
+    raw = os.environ.get("YADGAR_UPDATE_CHECK_ON_START", "false").lower()
+    check_on_start = raw in ("1", "true", "yes")
+    if not check_on_start:
+        return
+
+    t = threading.Thread(
+        target=_run_update_check,
+        name="yadgar-update-check",
+        daemon=True,
+    )
+    t.start()
+    logger.debug("update check thread started (daemon=True)")
+
+
 def main(
     port: int | None = None,
     db_path: str | None = None,
@@ -510,6 +565,9 @@ def main(
         logger.info("Hippocampal Replay hooks installed for %s", os.getcwd())
     except Exception:
         logger.debug("Auto-install of hooks failed (non-fatal)")
+
+    # v5.48.0: opt-in auto-check for updates on daemon start (default OFF)
+    _maybe_auto_check_for_update()
 
     if port is not None:
         mcp_server.settings.port = port
