@@ -6,7 +6,7 @@ import sys
 
 def _default_db_path() -> str | None:
     """Default for --db-path: $YADGAR_DATA_DIR/surreal_db if the env var is set,
-    else None (vacuum_impl falls back to ~/.yadgar/surreal_db).
+    else None (vacuum_impl falls back to ~/.local/share/yadgar/surreal_db).
     Containers set YADGAR_DATA_DIR=/data and need that honored without
     redundant CLI flags in the systemd unit.
     """

@@ -23,6 +23,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, field_validator
 
+import yadgar.paths as _paths
 from yadgar.embed_service_metrics import (
     cache_snapshot_age_seconds as _cache_snapshot_age_seconds,
 )
@@ -375,7 +376,7 @@ async def lifespan(app: FastAPI):
 
     # v5.3.0: restart attribution — inspect previous shutdown state before model load.
     _marker = _shutdown_marker_path()
-    _db_path = os.environ.get("YADGAR_DB_PATH", "~/.yadgar/surreal_db")
+    _db_path = os.environ.get("YADGAR_DB_PATH", str(_paths.DB_PATH))
     _marker_path = Path(_marker)
     _db_dir = Path(_db_path).expanduser()
     if _marker_path.exists():
@@ -762,7 +763,7 @@ async def admin_dbsize(_: None = Depends(_require_admin_token)):
     db_path = (
         Path(_container_db)
         if Path(_container_db).exists()
-        else Path(os.environ.get("YADGAR_DB_PATH", "~/.yadgar/surreal_db")).expanduser()
+        else Path(os.environ.get("YADGAR_DB_PATH", str(_paths.DB_PATH))).expanduser()
     )
 
     known_subdirs = {"vlog", "sstables", "wal"}

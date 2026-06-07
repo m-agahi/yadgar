@@ -7,7 +7,7 @@ via project_brief() and take action (wiki regen, active_work refresh, etc.).
 This hook is a DUMB PIPE — no Python signal detection, no API calls.
 All evaluation happens in the Claude session via tool calls.
 
-State: ~/.yadgar/stop-hook-state.json (keyed by session_id, atomic writes).
+State: ~/.local/state/yadgar/stop-hook-state.json (keyed by session_id, atomic writes).
 
 Output: JSON to stdout.
   {"decision": "block", "reason": "..."} — inject signal-eval prompt
@@ -18,6 +18,8 @@ import json
 import os
 import sys
 from pathlib import Path
+
+import yadgar.paths as _paths
 
 INTERVAL = 25  # human messages between checkpoints
 
@@ -95,9 +97,8 @@ def _count_human_messages(transcript_path: str) -> int:
 
 
 def _state_file_path() -> Path:
-    """Return path to stop-hook-state.json under ~/.yadgar/."""
-    home = Path(os.environ.get("HOME", Path.home()))
-    return home / ".yadgar" / "stop-hook-state.json"
+    """Return path to stop-hook-state.json under XDG state dir."""
+    return _paths.STOP_HOOK_STATE_PATH
 
 
 def _load_state() -> dict:
