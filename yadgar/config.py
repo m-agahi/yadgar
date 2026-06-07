@@ -669,6 +669,18 @@ class Settings(BaseSettings):
     VIZ_SEARCH_PINNED_COLOR: str = "#ffd700"  # stroke for pinned (clicked-to-pin) nodes
     VIZ_SEARCH_DIM_OPACITY: float = 0.18  # opacity for non-matched dimmed nodes
 
+    # v5.48.0 — Update mechanism (I25 three-way registered)
+    # Privacy: auto-check is OFF by default. Enable explicitly in config.yaml.
+    UPDATE_CHECK_ON_START: bool = False  # opt-in: probe PyPI on daemon start
+    UPDATE_CHECK_TIMEOUT_SECONDS: int = 5  # httpx timeout for PyPI probe
+    UPDATE_PYPI_URL: str = "https://pypi.org/pypi/yadgar/json"  # PyPI JSON API URL
+    UPDATE_USER_AGENT_TEMPLATE: str = (
+        "yadgar/{version}"  # UA template; {version} replaced at runtime
+    )
+    # Gate for /api/control/update endpoint. Set to "on" to enable.
+    # Default OFF — endpoint is for power users and Control-tab integration (v5.50).
+    UPDATE_DEBUG_APIS_ENABLED: str = "off"
+
     model_config = {"env_prefix": "YADGAR_"}
 
     @field_validator("VACUUM_AUTO_WINDOW_START", "VACUUM_AUTO_WINDOW_END")
