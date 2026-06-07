@@ -1,5 +1,84 @@
 # Migration Notes
 
+## v5.48.0 — Update mechanism: `yadgar update` CLI + auto-check + `/api/control/update` (2026-06-07)
+
+### What's new
+
+Check-only update mechanism. `--install` deferred to v5.49.
+
+### Opt-in: auto-check on daemon start
+
+Add to `~/.config/yadgar/config.yaml`:
+
+```yaml
+update_check_on_start: true
+```
+
+Default is `false`. When enabled, a background thread probes PyPI on every daemon start and logs the result at WARNING if an update is available.
+
+**Privacy posture:** anonymous GET to `https://pypi.org/pypi/yadgar/json` with `User-Agent: yadgar/<version>`. No user-ID, no telemetry, no IP collection beyond standard PyPI server logs. See `docs/PRIVACY.md` for exact wire format.
+
+### `yadgar update --check` CLI
+
+```bash
+yadgar update          # same as --check
+yadgar update --check  # probe PyPI, print upgrade command, exit 0
+```
+
+Output example:
+```
+yadgar 5.47.0
+Install method: pipx
+Update available: 5.48.0
+Release notes: https://pypi.org/project/yadgar/5.48.0/
+Upgrade command:
+  pipx upgrade yadgar
+```
+
+### `/api/control/update` HTTP endpoint
+
+Requires:
+1. `YADGAR_REQUIRE_AUTH=1` + `YADGAR_MCP_AUTH_TOKEN=<token>` (existing auth).
+2. `YADGAR_UPDATE_DEBUG_APIS_ENABLED=on` (new gate, default off).
+
+```bash
+curl -X POST http://localhost:8765/api/control/update \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"action": "check"}'
+```
+
+Response:
+```json
+{
+  "current_version": "5.47.0",
+  "available_version": "5.48.0",
+  "update_available": true,
+  "install_method": "pipx",
+  "upgrade_command": "pipx upgrade yadgar",
+  "release_notes_url": "https://pypi.org/project/yadgar/5.48.0/",
+  "checked_at": "2026-06-07T10:00:00+00:00"
+}
+```
+
+`action=install` returns 400 in v5.48 (deferred to v5.49 — pipx upgrade kills daemon mid-call).
+
+### Corporate firewall handling
+
+Set `HTTPS_PROXY` env var. httpx will route the probe through the proxy:
+
+```bash
+HTTPS_PROXY=http://proxy.corp:3128 yadgar daemon start
+```
+
+Disable auto-check in air-gapped environments: keep `update_check_on_start: false` (the default).
+
+### No action required for existing installs
+
+All new config knobs have safe defaults (auto-check OFF, API gate OFF). No BREAKING CHANGES.
+
+---
+
 ## v5.46.20 — Comprehensive install path fixes (2026-06-07)
 
 ### Context

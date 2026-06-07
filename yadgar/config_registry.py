@@ -262,6 +262,12 @@ _REGISTRY: list[ConfigEntry] = [
     # ── v5.42.6 enforcement knobs ─────────────────────────────────────────────
     ConfigEntry("YADGAR_DIRECTORY_ENFORCEMENT", "true", "bool"),
     ConfigEntry("YADGAR_BRANCH_ENFORCEMENT", "true", "bool"),
+    # ── v5.48.0 update mechanism knobs ────────────────────────────────────────
+    ConfigEntry("YADGAR_UPDATE_CHECK_ON_START", "false", "bool"),
+    ConfigEntry("YADGAR_UPDATE_CHECK_TIMEOUT_SECONDS", "5", "int"),
+    ConfigEntry("YADGAR_UPDATE_PYPI_URL", "https://pypi.org/pypi/yadgar/json", "string"),
+    ConfigEntry("YADGAR_UPDATE_USER_AGENT_TEMPLATE", "yadgar/{version}", "string"),
+    ConfigEntry("YADGAR_UPDATE_DEBUG_APIS_ENABLED", "off", "string"),
 ]
 
 
