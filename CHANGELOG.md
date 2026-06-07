@@ -6,6 +6,16 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.46.21] — 2026-06-07
+
+Hotfix: v5.46.20 wheel was built before BUG 1 completeness commit (bootstrap_secrets.sh didn't write MCP token) + YADGAR_HOST inside container needs 0.0.0.0 not 127.0.0.1.
+
+- **fix(yadgar.service.in):** `YADGAR_HOST=127.0.0.1` → `YADGAR_HOST=0.0.0.0`. Container's loopback is unreachable through podman's `127.0.0.1:8765:8765` port forward. Daemon must bind to all container interfaces for the host-side `:8765` to work. Host-side restriction still enforced by `-p 127.0.0.1:8765:8765` (publish to host loopback only).
+- **fix(wheel):** Rebuild v5.46.20 BUG 1 completeness fix (bootstrap_secrets.sh writes `YADGAR_MCP_AUTH_TOKEN`). The commit was on master but v5.46.20 wheel was built before it landed — re-roll as v5.46.21.
+- **chore:** bump version 5.46.20 → 5.46.21.
+
+---
+
 ## [5.46.20] — 2026-06-07
 
 Hotfix: 6-bug install path cleanup discovered via Rocky VM SSH session.
