@@ -21,6 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SERVICE_IN = REPO_ROOT / "scripts" / "install" / "yadgar.service.in"
 BACKEND_SERVICE_IN = REPO_ROOT / "scripts" / "install" / "yadgar-backend.service.in"
 SETUP_SH = REPO_ROOT / "scripts" / "install" / "yadgar-setup.sh"
+BOOTSTRAP_SH = REPO_ROOT / "scripts" / "install" / "bootstrap_secrets.sh"
 SEED_PY = REPO_ROOT / "yadgar" / "cli" / "seed.py"
 
 
@@ -65,6 +66,63 @@ class TestAuthTokenPassthrough:
         content = BACKEND_SERVICE_IN.read_text()
         assert "SURREAL_USER" in content, (
             "yadgar-backend.service.in unexpectedly missing SURREAL_USER"
+        )
+
+
+# ── T1b: BUG 1 completeness — bootstrap_secrets.sh writes YADGAR_MCP_AUTH_TOKEN ──
+
+
+class TestBootstrapSecretsWritesToken:
+    """T1b: bootstrap_secrets.sh must write YADGAR_MCP_AUTH_TOKEN to secrets.env.
+
+    BUG 1 fix is only complete if the token is generated and written by bootstrap_secrets.sh.
+    The service template passthrough (T1) is inert if secrets.env never contains the token.
+    """
+
+    def test_bootstrap_secrets_heredoc_contains_auth_token(self):
+        """Main write heredoc in bootstrap_secrets.sh must include YADGAR_MCP_AUTH_TOKEN."""
+        content = BOOTSTRAP_SH.read_text()
+        assert "YADGAR_MCP_AUTH_TOKEN" in content, (
+            "bootstrap_secrets.sh does not write YADGAR_MCP_AUTH_TOKEN to secrets.env. "
+            "Service template passthrough is inert without this token in secrets.env."
+        )
+
+    def test_bootstrap_secrets_test_dryrun_includes_auth_token(self):
+        """Test dryrun heredoc in bootstrap_secrets.sh must also include YADGAR_MCP_AUTH_TOKEN."""
+        content = BOOTSTRAP_SH.read_text()
+        # Find the YADGAR_TEST_DRYRUN block — it starts with the conditional
+        dryrun_start = content.find('YADGAR_TEST_DRYRUN:-0}" == "1"')
+        assert dryrun_start != -1, "YADGAR_TEST_DRYRUN block not found in bootstrap_secrets.sh"
+        # The dryrun block's main heredoc write ('cat > ...') appears after the idempotency skip.
+        # Find 'cat >' inside the dryrun block — that's where the heredoc starts.
+        cat_pos = content.find("cat >", dryrun_start)
+        assert cat_pos != -1, "Heredoc write (cat >) not found in dryrun block"
+        # The final 'exit 0' of the dryrun block terminates it
+        dryrun_exit = content.find("exit 0", cat_pos)
+        assert dryrun_exit != -1, "Dryrun block final exit 0 not found"
+        dryrun_heredoc = content[cat_pos:dryrun_exit]
+        assert "YADGAR_MCP_AUTH_TOKEN" in dryrun_heredoc, (
+            "bootstrap_secrets.sh test dryrun heredoc missing YADGAR_MCP_AUTH_TOKEN. "
+            "Tests that exercise bootstrap via YADGAR_TEST_DRYRUN=1 won't write the token."
+        )
+
+    def test_bootstrap_secrets_required_keys_includes_auth_token(self):
+        """REQUIRED_KEYS array in bootstrap_secrets.sh must include YADGAR_MCP_AUTH_TOKEN."""
+        content = BOOTSTRAP_SH.read_text()
+        m = re.search(r"REQUIRED_KEYS=\(([^)]+)\)", content)
+        assert m is not None, "REQUIRED_KEYS array not found in bootstrap_secrets.sh"
+        keys_str = m.group(1)
+        assert "YADGAR_MCP_AUTH_TOKEN" in keys_str, (
+            f"REQUIRED_KEYS does not include YADGAR_MCP_AUTH_TOKEN: {keys_str!r}. "
+            "Idempotency check will skip regeneration even if token is missing."
+        )
+
+    def test_bootstrap_secrets_gen32_function_exists(self):
+        """bootstrap_secrets.sh must define _gen32() for 32-byte token generation."""
+        content = BOOTSTRAP_SH.read_text()
+        assert "_gen32" in content, (
+            "bootstrap_secrets.sh missing _gen32() function. "
+            "MCP auth token requires 32-byte (256-bit) entropy, not 24-byte."
         )
 
 
