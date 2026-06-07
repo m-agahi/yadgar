@@ -6,6 +6,18 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.46.19] — 2026-06-06
+
+Hotfix: Rocky Linux SELinux enforcing blocks podman bind-mount writes; setup re-runs don't restart units after regenerate.
+
+- **fix(templates):** Add `:Z` private-relabel flag to all `-v @DATA_DIR@:/data` volume mounts in `yadgar-backend.service.in` and `yadgar.service.in`. Prevents `container_file_t` SELinux denial on Rocky Linux / RHEL systems.
+- **fix(setup.sh):** `_step_enable_units` — after `daemon-reload` + `enable`, checks `is-active --quiet yadgar.target`; if active (reinstall scenario), runs `systemctl --user restart yadgar.target` so regenerated unit takes effect immediately.
+- **fix(setup.sh):** New `_step_pre_create_dirs()` — runs before unit start. `mkdir -p ${YADGAR_DIR}/logs && chmod 700` prevents container's first-run mkdir failure on SELinux-enforcing filesystems.
+- **test:** `test_v5_46_19_selinux_and_restart.py` — 6 tests covering `:Z` flag in templates, no-bare-mount guard, restart-if-active block, logs pre-create, and rendered-unit verification via generate_systemd.sh fixture.
+- **chore:** bump version 5.46.18 → 5.46.19.
+
+---
+
 ## [5.46.18] — 2026-06-06
 
 New: `yadgar --version` global flag shows core, backend, and daemon probe result.

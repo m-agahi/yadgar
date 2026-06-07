@@ -12,7 +12,7 @@ ExecStart=@RUNTIME@ run --name yadgar --rm --user root \
     --network yadgar-net \
     -p 127.0.0.1:8765:8765 \
     -p 127.0.0.1:42069:42069 \
-    -v @DATA_DIR@:/data \
+    -v @DATA_DIR@:/data:Z \
     -e YADGAR_DB_URL=http://yadgar-backend:8000 \
     -e YADGAR_EMBED_URL=http://yadgar-backend:8001 \
     -e YADGAR_HOST=127.0.0.1 \

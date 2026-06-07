@@ -1,5 +1,71 @@
 # Migration Notes
 
+## v5.46.19 — Rocky Linux SELinux + restart-on-regen hotfix (2026-06-06)
+
+### Context
+
+Two bugs observed on Rocky Linux (SELinux enforcing):
+
+1. Backend container failed immediately after start:
+   ```
+   mkdir: cannot create directory '/data/logs': Permission denied
+   surrealdb_server: IO error: Permission denied (os error 13)
+   Goodbye!
+   ```
+   Cause: podman bind-mount `-v /root/.yadgar:/data` lacks `:Z` (private-relabel) flag.
+   SELinux denies `container_file_t` process writes to default-labeled host directory.
+   `systemd Restart=on-failure` caused infinite restart loop.
+
+2. After `yadgar-setup` re-run (upgrade or config change), the backend unit file was
+   regenerated with the correct image tag but systemd was not reloaded/restarted.
+   The running container continued on the stale unit (old image, old volume flags).
+
+### Fix
+
+**Service templates** (`yadgar-backend.service.in`, `yadgar.service.in`):
+- All `-v @DATA_DIR@:/data` lines now read `-v @DATA_DIR@:/data:Z`.
+- `:Z` instructs podman/docker to relabel the host directory with `container_file_t`
+  (private to this container) before mounting. No manual `chcon` needed on fresh installs.
+
+**`yadgar-setup.sh` — `_step_pre_create_dirs()`** (new, runs before unit start):
+```bash
+mkdir -p "${YADGAR_DIR}/logs"
+chmod 700 "${YADGAR_DIR}/logs"
+```
+Prevents the container's own `mkdir /data/logs` from being the first write operation
+on an unlabeled directory (belt-and-suspenders with `:Z`).
+
+**`yadgar-setup.sh` — `_step_enable_units()`** (reinstall path):
+```bash
+run systemctl --user daemon-reload
+run systemctl --user enable yadgar.target
+if systemctl --user is-active --quiet yadgar.target 2>/dev/null; then
+    log "  Reinstall detected — restarting yadgar.target"
+    run systemctl --user restart yadgar.target
+else
+    run systemctl --user start yadgar.target
+fi
+```
+
+### Operator action — existing broken Rocky install
+
+```bash
+systemctl --user stop yadgar.target
+mkdir -p ~/.yadgar/logs
+chcon -Rt container_file_t ~/.yadgar/   # one-time SELinux relabel (if needed)
+pipx upgrade yadgar
+yadgar-setup   # regenerates unit with :Z + correct backend version; reloads + restarts
+```
+
+After `yadgar-setup` completes, `yadgar --version` should show daemon running.
+
+### Operator action — new installs
+
+No action required. Fresh installs via `pipx install yadgar && yadgar-setup` will get
+`:Z` in the generated unit automatically.
+
+---
+
 ## v5.46.18 — yadgar --version flag (core + backend + daemon probe) (2026-06-06)
 
 ### Context
