@@ -314,6 +314,30 @@ See `MIGRATION_NOTES.md` for the step-by-step deployment procedure.
 
 ---
 
+## Memory Archive Retention (v5.49.0)
+
+Auto-purge of heat=0 `memory_archive` rows. Ships disabled (`MEMORY_ARCHIVE_RETENTION_DAYS=0`). Read `MIGRATION_NOTES.md` § Archive retention rollout before enabling.
+
+| Key | Env var | Type | Default | Description |
+|---|---|---|---|---|
+| `memory_archive_retention_days` | `YADGAR_MEMORY_ARCHIVE_RETENTION_DAYS` | int | `0` | Days after which a heat=0 archive row is eligible for purge. `0` = disabled. Set to e.g. `90` to enable nightly auto-purge. Anchored memories (`_anchor` tag or `is_protected=True`) are never purged regardless of this setting. |
+| `memory_archive_retention_circuit_breaker` | `YADGAR_MEMORY_ARCHIVE_RETENTION_CIRCUIT_BREAKER` | int | `500` | Maximum rows purged in a single nightly cycle. Prevents runaway deletion. Applies to both `archive_purge` MCP tool and nightly consolidation invocation. |
+| `memory_archive_retention_thrash_guard_days` | `YADGAR_MEMORY_ARCHIVE_RETENTION_THRASH_GUARD_DAYS` | int | `7` | Minimum days since a memory was last archived before it is eligible for purge. Prevents rapid re-archival → purge → re-memorize thrash cycles. |
+
+---
+
+## Update / Upgrade Orchestrator (v5.49.0)
+
+Controls for `yadgar update --install`. Ships disabled. Read `MIGRATION_NOTES.md` § Upgrade orchestrator rollout before enabling.
+
+| Key | Env var | Type | Default | Description |
+|---|---|---|---|---|
+| `update.install_enabled` | `YADGAR_UPDATE_INSTALL_ENABLED` | bool | `false` | Enable `yadgar update --install`. When `false`, the orchestrator refuses with an opt-in message. Flip to `true` only after reading the rollback recovery section in `MIGRATION_NOTES.md`. |
+| `update.lock_max_age_seconds` | `YADGAR_UPDATE_LOCK_MAX_AGE_SECONDS` | int | `3600` | Stale-lock threshold in seconds. If `~/.config/yadgar/upgrade.lock` references a dead PID and the lock is older than this, it is treated as stale and overwritten. Prevents permanent lock after a killed orchestrator process. |
+| `update.snapshot_retention` | `YADGAR_UPDATE_SNAPSHOT_RETENTION` | int | `3` | Number of upgrade snapshots to retain in `~/.config/yadgar/upgrade-snapshots/`. Older snapshots are pruned after each successful upgrade. Set to `0` to disable retention pruning. |
+
+---
+
 ## Database Schema
 
 These fields exist on the SurrealDB tables but have no corresponding env var or config key — they are written by storage helpers and read by queries.
