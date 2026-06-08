@@ -1743,17 +1743,23 @@
     "params": 1
   },
   "yadgar/cli/daemon.py::__file__": {
-    "loc": 183
+    "loc": 239
   },
   "yadgar/cli/daemon.py::cmd_daemon@8": {
-    "cyclo": 35,
-    "loc": 138,
-    "nesting": 12,
+    "cyclo": 42,
+    "loc": 184,
+    "nesting": 13,
     "params": 1
   },
   "yadgar/cli/daemon.py::register@148": {
     "cyclo": 1,
     "loc": 36,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/cli/daemon.py::register@194": {
+    "cyclo": 1,
+    "loc": 46,
     "nesting": 0,
     "params": 1
   },
@@ -6534,7 +6540,7 @@
   "yadgar/file_queue/__init__.py::QueueDrainer@109": {
     "attrs": 11,
     "inh_depth": 0,
-    "methods": 12
+    "methods": 13
   },
   "yadgar/file_queue/__init__.py::QueueDrainer@70": {
     "attrs": 11,
@@ -6582,7 +6588,7 @@
     "methods": 0
   },
   "yadgar/file_queue/__init__.py::__file__": {
-    "loc": 507
+    "loc": 527
   },
   "yadgar/file_queue/__init__.py::__init__@106": {
     "cyclo": 1,
@@ -6662,6 +6668,12 @@
     "nesting": 3,
     "params": 3
   },
+  "yadgar/file_queue/__init__.py::_apply_with_stage_metrics@456": {
+    "cyclo": 5,
+    "loc": 43,
+    "nesting": 3,
+    "params": 3
+  },
   "yadgar/file_queue/__init__.py::_archive_with_metrics@306": {
     "cyclo": 2,
     "loc": 14,
@@ -6675,6 +6687,12 @@
     "params": 2
   },
   "yadgar/file_queue/__init__.py::_archive_with_metrics@343": {
+    "cyclo": 2,
+    "loc": 14,
+    "nesting": 3,
+    "params": 2
+  },
+  "yadgar/file_queue/__init__.py::_archive_with_metrics@363": {
     "cyclo": 2,
     "loc": 14,
     "nesting": 3,
@@ -6752,6 +6770,12 @@
     "nesting": 7,
     "params": 1
   },
+  "yadgar/file_queue/__init__.py::_drain_once@186": {
+    "cyclo": 23,
+    "loc": 163,
+    "nesting": 7,
+    "params": 1
+  },
   "yadgar/file_queue/__init__.py::_drainer_heartbeat@51": {
     "cyclo": 2,
     "loc": 7,
@@ -6795,6 +6819,12 @@
     "params": 4
   },
   "yadgar/file_queue/__init__.py::_handle_sim_rejection@395": {
+    "cyclo": 4,
+    "loc": 38,
+    "nesting": 2,
+    "params": 4
+  },
+  "yadgar/file_queue/__init__.py::_handle_sim_rejection@415": {
     "cyclo": 4,
     "loc": 38,
     "nesting": 2,
@@ -6854,6 +6884,12 @@
     "nesting": 1,
     "params": 5
   },
+  "yadgar/file_queue/__init__.py::_record_failure@350": {
+    "cyclo": 2,
+    "loc": 12,
+    "nesting": 1,
+    "params": 5
+  },
   "yadgar/file_queue/__init__.py::_update_dlq_gauges@323": {
     "cyclo": 8,
     "loc": 34,
@@ -6861,6 +6897,12 @@
     "params": 2
   },
   "yadgar/file_queue/__init__.py::_update_dlq_gauges@360": {
+    "cyclo": 8,
+    "loc": 34,
+    "nesting": 6,
+    "params": 2
+  },
+  "yadgar/file_queue/__init__.py::_update_dlq_gauges@380": {
     "cyclo": 8,
     "loc": 34,
     "nesting": 6,
@@ -6907,6 +6949,18 @@
     "loc": 3,
     "nesting": 0,
     "params": 1
+  },
+  "yadgar/file_queue/__init__.py::drain_now@177": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/file_queue/__init__.py::flush_barrier@157": {
+    "cyclo": 3,
+    "loc": 19,
+    "nesting": 2,
+    "params": 2
   },
   "yadgar/file_queue/__init__.py::is_draining@36": {
     "cyclo": 1,
@@ -6975,6 +7029,12 @@
     "params": 2
   },
   "yadgar/file_queue/__init__.py::reset_attempt@161": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/file_queue/__init__.py::reset_attempt@181": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
@@ -7071,6 +7131,12 @@
     "params": 3
   },
   "yadgar/file_queue/__init__.py::wait_for_job@480": {
+    "cyclo": 3,
+    "loc": 28,
+    "nesting": 2,
+    "params": 3
+  },
+  "yadgar/file_queue/__init__.py::wait_for_job@500": {
     "cyclo": 3,
     "loc": 28,
     "nesting": 2,

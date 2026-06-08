@@ -292,6 +292,17 @@ class YadgarDaemon:
                 ).stdout
                 return {"status": "failed", "reason": f"container exited. Logs:\n{logs}"}
             if self._health_ok(profile.port):
+                # v5.49.0 Phase 6: emit READY=1 once health check confirms the
+                # container is serving. This signals systemd (Type=notify in
+                # the service unit) that the daemon is ready.  The host CLI is
+                # what systemd exec-watches — not the container process — so
+                # READY=1 belongs here, not inside the container.
+                try:
+                    from yadgar import sd_notify as _sd  # noqa: PLC0415
+
+                    _sd.ready()
+                except Exception:
+                    pass
                 return {
                     "status": "started",
                     "container": profile.container_name,
