@@ -143,8 +143,15 @@ class _OpsMixin:
 
     # ------------------------------------------------------------------ Archive Retention
 
-    def purge_expired_archives(self, dry_run: bool = False) -> dict:
+    def purge_expired_archives(
+        self,
+        dry_run: bool = False,
+        retention_days_override: int | None = None,
+    ) -> dict:
         """Purge memory_archive rows older than retention threshold.
+
+        retention_days_override: if provided, use this value instead of
+            MEMORY_ARCHIVE_RETENTION_DAYS for this call only.
 
         Returns dict:
           {
@@ -154,6 +161,7 @@ class _OpsMixin:
             "skipped_anchor": int,
             "skipped_recent": int,
             "circuit_breaker_hit": bool,
+            "candidate_ids": list[int],   # first 10 candidate IDs (for MCP sample)
           }
         """
         from datetime import UTC, datetime, timedelta
@@ -161,7 +169,11 @@ class _OpsMixin:
         from yadgar.config import get_settings
 
         cfg = get_settings()
-        retention_days: int = cfg.MEMORY_ARCHIVE_RETENTION_DAYS
+        retention_days: int = (
+            retention_days_override
+            if retention_days_override is not None
+            else cfg.MEMORY_ARCHIVE_RETENTION_DAYS
+        )
         circuit_breaker: int = cfg.MEMORY_ARCHIVE_RETENTION_CIRCUIT_BREAKER
         thrash_guard_days: int = cfg.MEMORY_ARCHIVE_RETENTION_THRASH_GUARD_DAYS
 
@@ -219,15 +231,17 @@ class _OpsMixin:
         skipped_anchor = self._count_archive_skip_anchor(archived_cutoff)
         skipped_recent = self._count_archive_skip_recent(archived_cutoff, thrash_cutoff)
 
+        all_ids = [int(r["rid"]) for r in eligible_rows]
+        candidate_ids = all_ids[:10]
+
         purged = 0
-        if not dry_run and eligible_rows:
-            ids = [int(r["rid"]) for r in eligible_rows]
-            for aid in ids:
+        if not dry_run and all_ids:
+            for aid in all_ids:
                 self._q(
                     "DELETE type::record('memory_archive', $id)",
                     {"id": aid},
                 )
-            purged = len(ids)
+            purged = len(all_ids)
 
         return {
             "candidates": candidates,
@@ -236,6 +250,7 @@ class _OpsMixin:
             "skipped_anchor": skipped_anchor,
             "skipped_recent": skipped_recent,
             "circuit_breaker_hit": circuit_breaker_hit,
+            "candidate_ids": candidate_ids,
         }
 
     def _count_archive_skip_protected(self, archived_cutoff: str) -> int:
@@ -427,7 +442,11 @@ class _OpsMixin:
 # ── Module-level helpers ────────────────────────────────────────────────────
 
 
-def purge_expired_archives(storage, dry_run: bool = False) -> dict:
+def purge_expired_archives(
+    storage,
+    dry_run: bool = False,
+    retention_days_override: int | None = None,
+) -> dict:
     """Purge memory_archive rows older than retention threshold.
 
     Thin wrapper around storage.purge_expired_archives() for callers that
@@ -441,9 +460,13 @@ def purge_expired_archives(storage, dry_run: bool = False) -> dict:
         "skipped_anchor": int,
         "skipped_recent": int,
         "circuit_breaker_hit": bool,
+        "candidate_ids": list[int],   # first 10 candidate IDs
       }
     """
-    return storage.purge_expired_archives(dry_run=dry_run)
+    return storage.purge_expired_archives(
+        dry_run=dry_run,
+        retention_days_override=retention_days_override,
+    )
 
 
 def vacuum_checkpoints(storage, *, dry_run: bool = True) -> dict:
