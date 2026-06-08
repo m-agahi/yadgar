@@ -42,8 +42,8 @@
         <string>@YADGAR_CORE_IMAGE@</string>
     </dict>
 
-    <!-- ExitTimeOut: graceful SIGTERM window before SIGKILL. Default is 20s — too short for
-         queue flush. 30s mirrors the --stop-timeout 30 passed to the container runtime. -->
+    <!-- ExitTimeOut: graceful SIGTERM window before SIGKILL. Default is 20s, too short for
+         queue flush. 30s mirrors the stop-timeout passed to the container runtime. -->
     <key>ExitTimeOut</key>
     <integer>30</integer>
 
