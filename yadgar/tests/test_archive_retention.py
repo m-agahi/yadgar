@@ -376,3 +376,168 @@ def test_three_config_knobs_registered_three_way():
     assert "memory_archive_retention_thrash_guard_days" in FIELD_META, (
         "memory_archive_retention_thrash_guard_days missing from FIELD_META"
     )
+
+
+# ---------------------------------------------------------------------------
+# Helpers (metric reads)
+# ---------------------------------------------------------------------------
+
+
+def _counter_total(counter) -> float:
+    """Sum _value across all labeled/unlabeled children of a counter."""
+    # Labeled counter: children live in _metrics dict
+    if hasattr(counter, "_metrics") and counter._metrics:
+        return sum(c._value.get() for c in counter._metrics.values())
+    # Unlabeled counter: single _value
+    if hasattr(counter, "_value"):
+        return counter._value.get()
+    return 0.0
+
+
+def _labeled_counter_value(counter, **labels) -> float:
+    """Current _value for a labeled counter child (0.0 if not yet incremented)."""
+    key = tuple(labels[k] for k in counter._labelnames)
+    child = counter._metrics.get(key)
+    return child._value.get() if child is not None else 0.0
+
+
+# ---------------------------------------------------------------------------
+# 12. Nightly cycle invokes purge_expired_archives
+# ---------------------------------------------------------------------------
+
+
+def test_nightly_cycle_invokes_purge(storage, monkeypatch):
+    """_run_retention_tasks() calls purge_expired_archives when retention enabled.
+
+    Seeds 3 eligible archives (archived 180d ago), enables retention=90d,
+    drives _run_retention_tasks(), then asserts:
+    - purge_expired_archives was called exactly once.
+    - yadgar_archive_purged_total incremented by >=3.
+    """
+    import yadgar.config as _cfg
+    from yadgar.metrics import yadgar_archive_purged_total
+
+    # Seed eligible archives
+    _insert_archive(storage, archived_at=_ago(180))
+    _insert_archive(storage, archived_at=_ago(200))
+    _insert_archive(storage, archived_at=_ago(365))
+
+    # Patch settings: retention=90d (enabled)
+    original_get = _cfg.get_settings
+
+    def _patched():
+        return original_get().model_copy(update={"MEMORY_ARCHIVE_RETENTION_DAYS": 90})
+
+    monkeypatch.setattr(_cfg, "get_settings", _patched)
+
+    # Spy on the storage method
+    call_count = []
+    original_method = storage.purge_expired_archives
+
+    def _spy(dry_run=False):
+        call_count.append(1)
+        return original_method(dry_run=dry_run)
+
+    monkeypatch.setattr(storage, "purge_expired_archives", _spy)
+
+    # Build minimal consolidator with our storage
+    from yadgar.consolidation.cleanup import _CleanupMixin  # noqa: PLC0415
+
+    class _FakeConsolidator(_CleanupMixin):
+        def __init__(self, st, settings):
+            self._storage = st
+            self._settings = settings
+
+    settings = _patched()
+    consolidator = _FakeConsolidator(storage, settings)
+
+    before = _counter_total(yadgar_archive_purged_total)
+    consolidator._run_retention_tasks()
+    after = _counter_total(yadgar_archive_purged_total)
+
+    assert len(call_count) == 1, f"expected purge called once, got {len(call_count)}"
+    assert (after - before) >= 3, (
+        f"yadgar_archive_purged_total expected +3, got delta={after - before}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 13. Prometheus metrics emitted correctly after purge
+# ---------------------------------------------------------------------------
+
+
+def test_metrics_emitted(storage, monkeypatch):
+    """Verify all 4 metric increments after a purge run via _run_retention_tasks().
+
+    Seeds:
+    - 2 eligible archives (purged)
+    - 1 protected (skipped_protected)
+    - 1 anchor-tagged (skipped_anchor)
+    - 1 recently created (skipped_recent)
+
+    Asserts counter deltas match result dict.
+    """
+    import yadgar.config as _cfg
+    from yadgar.metrics import (
+        yadgar_archive_purged_total,
+        yadgar_archive_retention_skipped_total,
+    )
+
+    # Eligible — will be purged
+    _insert_archive(storage, archived_at=_ago(180))
+    _insert_archive(storage, archived_at=_ago(200))
+
+    # Protected
+    _insert_archive(storage, archived_at=_ago(180), is_protected=True)
+
+    # Anchor-tagged
+    _insert_archive(storage, archived_at=_ago(180), tags=["_anchor"])
+
+    # Thrash-guard (archived_at old, created_at recent)
+    _insert_archive(storage, archived_at=_ago(180), created_at=_ago(3))
+
+    original_get = _cfg.get_settings
+
+    def _patched():
+        return original_get().model_copy(update={"MEMORY_ARCHIVE_RETENTION_DAYS": 90})
+
+    monkeypatch.setattr(_cfg, "get_settings", _patched)
+
+    from yadgar.consolidation.cleanup import _CleanupMixin  # noqa: PLC0415
+
+    class _FakeConsolidator(_CleanupMixin):
+        def __init__(self, st, settings):
+            self._storage = st
+            self._settings = settings
+
+    settings = _patched()
+    consolidator = _FakeConsolidator(storage, settings)
+
+    before_purged = _counter_total(yadgar_archive_purged_total)
+    before_protected = _labeled_counter_value(
+        yadgar_archive_retention_skipped_total, reason="protected"
+    )
+    before_anchor = _labeled_counter_value(yadgar_archive_retention_skipped_total, reason="anchor")
+    before_recent = _labeled_counter_value(yadgar_archive_retention_skipped_total, reason="recent")
+
+    consolidator._run_retention_tasks()
+
+    after_purged = _counter_total(yadgar_archive_purged_total)
+    after_protected = _labeled_counter_value(
+        yadgar_archive_retention_skipped_total, reason="protected"
+    )
+    after_anchor = _labeled_counter_value(yadgar_archive_retention_skipped_total, reason="anchor")
+    after_recent = _labeled_counter_value(yadgar_archive_retention_skipped_total, reason="recent")
+
+    assert (after_purged - before_purged) == 2, (
+        f"purged counter: expected +2, got {after_purged - before_purged}"
+    )
+    assert (after_protected - before_protected) >= 1, (
+        f"skipped_protected: expected >=1, got {after_protected - before_protected}"
+    )
+    assert (after_anchor - before_anchor) >= 1, (
+        f"skipped_anchor: expected >=1, got {after_anchor - before_anchor}"
+    )
+    assert (after_recent - before_recent) >= 1, (
+        f"skipped_recent: expected >=1, got {after_recent - before_recent}"
+    )
