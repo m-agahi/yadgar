@@ -146,6 +146,31 @@ def _chunk_by_bytes(
 
 
 # ---------------------------------------------------------------------------
+# DB credential resolution
+# ---------------------------------------------------------------------------
+
+
+def _resolve_db_credentials() -> tuple[str, str]:
+    """Return (user, password) for SurrealDB authentication.
+
+    Fallback chain (v5.49.3: fall back to RW credentials when explicit DB_USER
+    not set — ``yadgar setup`` emits RW vars only):
+
+    1. YADGAR_DB_USER / YADGAR_DB_PASS   — explicit DB credential (preferred)
+    2. YADGAR_RW_USER / YADGAR_RW_PASS   — RW credentials (fallback; RW has write access)
+    3. raise ValueError naming both var names + how to set them
+    """
+    _user = os.environ.get("YADGAR_DB_USER") or os.environ.get("YADGAR_RW_USER")
+    _pass = os.environ.get("YADGAR_DB_PASS") or os.environ.get("YADGAR_RW_PASS")
+    if not _user or not _pass:
+        raise ValueError(
+            "Missing database credentials. Set YADGAR_DB_USER + YADGAR_DB_PASS "
+            "(preferred) or YADGAR_RW_USER + YADGAR_RW_PASS (fallback) in "
+            "secrets.env or environment. Re-run 'yadgar setup' to regenerate secrets.env."
+        )
+    return _user, _pass
+
+
 # StorageEngine
 # ---------------------------------------------------------------------------
 
@@ -204,8 +229,7 @@ class StorageEngine(
                         "for production set YADGAR_DB_USER / YADGAR_DB_PASS"
                     )
             else:
-                _user = os.environ["YADGAR_DB_USER"]
-                _pass = os.environ["YADGAR_DB_PASS"]
+                _user, _pass = _resolve_db_credentials()
             _auth = base64.b64encode(f"{_user}:{_pass}".encode()).decode()
             from yadgar.config import get_settings as _get_settings
 
