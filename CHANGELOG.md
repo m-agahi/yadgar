@@ -29,8 +29,8 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 - **`yadgar update --rollback`** — operator recovery. Restores `prev_image_tag` from latest snapshot, rewrites `upgrade.env`, restarts daemon.
 - **`yadgar daemon graceful-stop [--timeout=30]`** — explicit pre-shutdown drain barrier: sd_notify STOPPING=1 → close HTTP listener → wait in-flight requests → flush file_queue → snapshot embed cache → close SurrealDB. Exit 0 on clean drain; exit 1 on timeout.
 - **`yadgar/sd_notify.py`** — minimal sd_notify helper (READY=1, STOPPING=1, RELOADING=1). No libsystemd dependency.
-- **`yadgar/update/snapshot.py`** — atomic upgrade snapshots at `~/.config/yadgar/upgrade-snapshots/` with retention pruning.
-- **systemd unit template** — `Type=simple` → `Type=notify`. `ExecStart` references `${YADGAR_IMAGE_TAG}` from `EnvironmentFile=-%h/.config/yadgar/upgrade.env`. `TimeoutStartSec=120`, `TimeoutStopSec=45`.
+- **`yadgar/update/snapshot.py`** — atomic upgrade snapshots at `~/.local/state/yadgar/upgrade-snapshots/` with retention pruning.
+- **systemd unit template** — `Type=simple` → `Type=notify`. `ExecStart` references `${YADGAR_IMAGE_TAG}` from `EnvironmentFile=-%h/.local/state/yadgar/upgrade.env`. `TimeoutStartSec=120`, `TimeoutStopSec=45`.
 - **launchd plist** — added `ExitTimeOut=30` + `YADGAR_IMAGE_TAG` env var.
 - **New I25 knobs:** `YADGAR_UPDATE_INSTALL_ENABLED` (default false), `YADGAR_UPDATE_LOCK_MAX_AGE_SECONDS` (3600), `YADGAR_UPDATE_SNAPSHOT_RETENTION` (3).
 - **New files:** `yadgar/sd_notify.py`, `yadgar/update/snapshot.py`, `yadgar/update/orchestrator.py`.

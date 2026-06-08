@@ -190,7 +190,7 @@ By default `yadgar update --install` is disabled (`update.install_enabled: false
 
 The orchestrator coordinates: PyPI probe → snapshot → image pull → graceful daemon stop (drains in-flight requests, flushes write queue, snapshots embed cache) → service restart → health-check → CLI upgrade → finalize verification. Automatic rollback on any image-pull or health-check failure. Operator recovery: `yadgar update --rollback`.
 
-Upgrade snapshots live at `~/.config/yadgar/upgrade-snapshots/`; the most recent 3 are retained (configurable via `update.snapshot_retention`).
+Upgrade snapshots live at `~/.local/state/yadgar/upgrade-snapshots/`; the most recent 3 are retained (configurable via `update.snapshot_retention`).
 
 ## Docker
 

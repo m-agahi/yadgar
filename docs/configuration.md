@@ -333,8 +333,8 @@ Controls for `yadgar update --install`. Ships disabled. Read `MIGRATION_NOTES.md
 | Key | Env var | Type | Default | Description |
 |---|---|---|---|---|
 | `update.install_enabled` | `YADGAR_UPDATE_INSTALL_ENABLED` | bool | `false` | Enable `yadgar update --install`. When `false`, the orchestrator refuses with an opt-in message. Flip to `true` only after reading the rollback recovery section in `MIGRATION_NOTES.md`. |
-| `update.lock_max_age_seconds` | `YADGAR_UPDATE_LOCK_MAX_AGE_SECONDS` | int | `3600` | Stale-lock threshold in seconds. If `~/.config/yadgar/upgrade.lock` references a dead PID and the lock is older than this, it is treated as stale and overwritten. Prevents permanent lock after a killed orchestrator process. |
-| `update.snapshot_retention` | `YADGAR_UPDATE_SNAPSHOT_RETENTION` | int | `3` | Number of upgrade snapshots to retain in `~/.config/yadgar/upgrade-snapshots/`. Older snapshots are pruned after each successful upgrade. Set to `0` to disable retention pruning. |
+| `update.lock_max_age_seconds` | `YADGAR_UPDATE_LOCK_MAX_AGE_SECONDS` | int | `3600` | Stale-lock threshold in seconds. If `~/.local/state/yadgar/upgrade.lock` references a dead PID and the lock is older than this, it is treated as stale and overwritten. Prevents permanent lock after a killed orchestrator process. |
+| `update.snapshot_retention` | `YADGAR_UPDATE_SNAPSHOT_RETENTION` | int | `3` | Number of upgrade snapshots to retain in `~/.local/state/yadgar/upgrade-snapshots/`. Older snapshots are pruned after each successful upgrade. Set to `0` to disable retention pruning. |
 
 ---
 

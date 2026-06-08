@@ -472,3 +472,7 @@ Retention: keep last `update.snapshot_retention` (default 3) snapshots; older pu
 - `yadgar/file_queue/queue.py` — drainer `.stop()` (needs explicit barrier).
 - 2026-06-08 empirical repro (this plan, § 1.B).
 - 2026-06-08 user decisions: bundle both strands, full scope (Type=notify + sd_notify + launchd + zero-downtime intent).
+
+---
+
+**POST-IMPL HOTFIX 2026-06-08: paths corrected to XDG (`~/.local/state/yadgar/`) — initial plan referenced legacy `~/.yadgar/`.**

@@ -27,10 +27,12 @@ import sys
 import urllib.request
 from pathlib import Path
 
+from yadgar import paths
+
 # Default paths (may be monkeypatched in tests)
-_DEFAULT_LOCK_PATH: Path = Path.home() / ".yadgar" / "upgrade.lock"
-_DEFAULT_UPGRADE_ENV_PATH: Path = Path.home() / ".yadgar" / "upgrade.env"
-_DEFAULT_SNAPSHOTS_BASE_DIR: Path = Path.home() / ".yadgar" / "upgrade-snapshots"
+_DEFAULT_LOCK_PATH: Path = paths.STATE_DIR / "upgrade.lock"
+_DEFAULT_UPGRADE_ENV_PATH: Path = paths.STATE_DIR / "upgrade.env"
+_DEFAULT_SNAPSHOTS_BASE_DIR: Path = paths.STATE_DIR / "upgrade-snapshots"
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -57,7 +59,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         default=False,
         help=(
             "Run the routine-upgrade orchestrator. "
-            "Requires update.install_enabled=true in ~/.yadgar/config.yaml."
+            f"Requires update.install_enabled=true in {paths.CONFIG_YAML_PATH}."
         ),
     )
     parser.add_argument(
@@ -194,7 +196,7 @@ def _install_msg_code(result: object) -> tuple[str, int]:  # noqa: PLR0911
     if fs == S.IDLE and result.error and "disabled" in result.error.lower():
         return (
             "yadgar update --install is disabled.\n"
-            "To opt in: set update.install_enabled: true in ~/.yadgar/config.yaml\n"
+            f"To opt in: set update.install_enabled: true in {paths.CONFIG_YAML_PATH}\n"
             "See docs/PLAN_V5_49_0.md § Rollout for prerequisites and risks.",
             3,
         )

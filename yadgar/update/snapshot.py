@@ -4,7 +4,7 @@ Manages pre-upgrade state snapshots used by the upgrade orchestrator (Phase 9)
 to record context for rollback and forward-log tracking.
 
 Snapshot directory layout:
-  ~/.yadgar/upgrade-snapshots/<timestamp>/
+  ~/.local/state/yadgar/upgrade-snapshots/<timestamp>/
     prev_image_tag         — plain text, single line: docker image tag
     prev_unit_file         — full systemd unit file content (or empty)
     prev_cli_version       — plain text, single line: version string
@@ -29,9 +29,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from yadgar import paths
+
 logger = logging.getLogger(__name__)
 
-DEFAULT_SNAPSHOTS_DIR = Path.home() / ".yadgar" / "upgrade-snapshots"
+DEFAULT_SNAPSHOTS_DIR = paths.STATE_DIR / "upgrade-snapshots"
 
 # Timestamp format used for snapshot directory names.
 # Microsecond resolution prevents collisions even in tight loops.

@@ -38,8 +38,8 @@ If `yadgar update --check` reports "already at latest," use a pinned older versi
 ```bash
 yadgar daemon status
 yadgar --version
-cat ~/.config/yadgar/upgrade.env   # shows current YADGAR_IMAGE_TAG
-ls ~/.config/yadgar/upgrade-snapshots/ 2>/dev/null && echo "(existing snapshots above)"
+cat ~/.local/state/yadgar/upgrade.env   # shows current YADGAR_IMAGE_TAG
+ls ~/.local/state/yadgar/upgrade-snapshots/ 2>/dev/null && echo "(existing snapshots above)"
 ```
 
 Record the current version string. You will verify it changed after upgrade.
@@ -54,7 +54,7 @@ Expected output progression:
 
 ```
 [PROBING_PYPI] Checking latest version on PyPI...
-[CREATING_SNAPSHOT] Writing upgrade snapshot to ~/.config/yadgar/upgrade-snapshots/<ts>/
+[CREATING_SNAPSHOT] Writing upgrade snapshot to ~/.local/state/yadgar/upgrade-snapshots/<ts>/
 [PULLING_IMAGE] Pulling docker.io/openfantasy/yadgar:<new-version>...
 [REWRITING_ENV] Writing YADGAR_IMAGE_TAG=<new-version> to upgrade.env...
 [STOPPING_DAEMON] Running yadgar daemon graceful-stop --timeout=30...
@@ -70,12 +70,12 @@ Upgrade complete: 5.48.0 → 5.49.0
 
 ```bash
 # Snapshot directory should exist
-ls -la ~/.config/yadgar/upgrade-snapshots/
+ls -la ~/.local/state/yadgar/upgrade-snapshots/
 # Inspect the latest snapshot
-SNAP=$(ls ~/.config/yadgar/upgrade-snapshots/ | sort | tail -1)
-ls ~/.config/yadgar/upgrade-snapshots/$SNAP/
-cat ~/.config/yadgar/upgrade-snapshots/$SNAP/prev_image_tag
-cat ~/.config/yadgar/upgrade-snapshots/$SNAP/forward_log.json
+SNAP=$(ls ~/.local/state/yadgar/upgrade-snapshots/ | sort | tail -1)
+ls ~/.local/state/yadgar/upgrade-snapshots/$SNAP/
+cat ~/.local/state/yadgar/upgrade-snapshots/$SNAP/prev_image_tag
+cat ~/.local/state/yadgar/upgrade-snapshots/$SNAP/forward_log.json
 ```
 
 ### Step 4 — Verify post-upgrade
@@ -83,7 +83,7 @@ cat ~/.config/yadgar/upgrade-snapshots/$SNAP/forward_log.json
 ```bash
 yadgar --version          # must show new version
 yadgar daemon status      # must report new version + recent uptime (reset by restart)
-cat ~/.config/yadgar/upgrade.env   # YADGAR_IMAGE_TAG must match new version
+cat ~/.local/state/yadgar/upgrade.env   # YADGAR_IMAGE_TAG must match new version
 ```
 
 ### Step 5 — Rollback drill
@@ -148,13 +148,13 @@ pipx install --force yadgar==<prev-version>
 
 ### Stuck lock from killed orchestrator
 
-If `yadgar update --install` was killed mid-run, `~/.config/yadgar/upgrade.lock` may remain.
+If `yadgar update --install` was killed mid-run, `~/.local/state/yadgar/upgrade.lock` may remain.
 
 Next `--install` invocation auto-detects stale lock: reads PID from lock file, runs `kill -0 <pid>` — if process is dead (or lock age > `update.lock_max_age_seconds`, default 3600s), lock is overwritten and orchestrator proceeds.
 
 If you need to force-clear immediately:
 ```bash
-rm ~/.config/yadgar/upgrade.lock
+rm ~/.local/state/yadgar/upgrade.lock
 ```
 
 ---
