@@ -1,5 +1,136 @@
 # Migration Notes
 
+## v5.49.0 — Upgrade orchestrator + memory archive retention (2026-06-08)
+
+Both strands ship OFF by default. No action required unless you want to opt in.
+
+### Archive retention rollout (Strand A)
+
+Follow these steps in order. Do not skip the dry-run.
+
+1. **Ship v5.49.0.** `MEMORY_ARCHIVE_RETENTION_DAYS` defaults to 0. Auto-purge is disabled. No data deleted automatically.
+
+2. **Dry-run first.** Validate the candidate set before any real deletion:
+
+   ```bash
+   # MCP call
+   archive_purge(dry_run=True)
+   # Returns: {"candidates": N, "would_delete": N, "protected": M, "dry_run": true}
+   ```
+
+   Confirm the candidate count looks reasonable (~1300 for existing installs with accumulated heat=0 archives).
+
+3. **One-time explicit cleanup** (optional, clears the backlog):
+
+   ```bash
+   archive_purge(dry_run=False)
+   ```
+
+   This deletes heat=0 archives older than the default thrash guard (7 days). Anchored memories (`_anchor` tag or `is_protected=True`) are never deleted.
+
+4. **Enable nightly auto-purge** (optional):
+
+   Add to `~/.config/yadgar/config.yaml`:
+
+   ```yaml
+   memory_archive_retention_days: 90
+   ```
+
+   The nightly consolidation cycle will now purge archives older than 90 days. Circuit breaker caps a single cycle at 500 deletions.
+
+5. **Audit anchors-by-prose** before enabling nightly purge:
+
+   ```bash
+   audit_anchors()
+   ```
+
+   Look for the `"anchored_by_prose_only"` bucket in the report. These memories carry anchor language in their content but lack the `_anchor` tag or `is_protected=True` — the purge helper cannot identify them as protected. Add `is_protected=True` via `memory_update` if you want them preserved.
+
+### Upgrade orchestrator rollout (Strand B)
+
+Follow these steps in order. Read the rollback section before running `--install`.
+
+1. **Ship v5.49.0.** `update.install_enabled` defaults to `false`. `yadgar update --install` refuses with an opt-in message.
+
+2. **Confirm update available:**
+
+   ```bash
+   yadgar update --check
+   ```
+
+   Verify the new version is what you expect before proceeding.
+
+3. **Read the rollback recovery section below.** Understand what happens on each failure terminal before flipping the knob.
+
+4. **Enable the orchestrator:**
+
+   Add to `~/.config/yadgar/config.yaml`:
+
+   ```yaml
+   update:
+     install_enabled: true
+   ```
+
+5. **Run the upgrade:**
+
+   ```bash
+   yadgar update --install
+   ```
+
+   Orchestrator will: probe PyPI → write snapshot to `~/.config/yadgar/upgrade-snapshots/` → pull new image → rewrite `upgrade.env` → graceful-stop daemon → restart via systemd → health-check → `pipx upgrade yadgar` → re-exec to `--finalize`.
+
+   Snapshot retention: keeps the 3 most recent (configurable via `update.snapshot_retention`).
+
+### Rollback recovery procedures
+
+#### `ROLLED_BACK_OK` (exit 1)
+
+Orchestrator caught a failure at image-pull or health-check and successfully reverted. Old image tag restored in `upgrade.env`. Daemon restarted on old image. Nothing more needed. Retry after investigating the failure.
+
+#### `ROLLED_BACK_FAILED` (exit 2)
+
+Orchestrator caught a failure AND the subsequent rollback also failed. Daemon may be in an inconsistent state.
+
+Recovery:
+
+```bash
+yadgar update --rollback
+```
+
+This reads `prev_image_tag` from the latest snapshot in `~/.config/yadgar/upgrade-snapshots/`, rewrites `upgrade.env`, and restarts the daemon.
+
+#### `DONE_CLI_ROLLBACK_FAILED` (exit 2)
+
+Orchestrator succeeded on image + restart + health-check. `pipx upgrade yadgar` succeeded. But re-exec or `--finalize` failed AND the subsequent `pipx install --force yadgar==<prev>` also failed (prior version may not be on PyPI — see PD-45 note).
+
+Daemon is on the new image (healthy). CLI version mismatch.
+
+Manual recovery:
+
+```bash
+pipx install --force yadgar==<prev-version>
+```
+
+Check `https://pypi.org/project/yadgar/#history` for available versions. If the prior version is absent from PyPI (PD-45 internal-dev no-tag policy), you cannot auto-pin. Use `make setup` to regenerate a consistent state.
+
+#### `DONE_BUT_FINALIZE_FAILED` (exit 4)
+
+Daemon is healthy on new image. New CLI is installed. Only the `--finalize` version-verification handshake failed.
+
+Recovery:
+
+```bash
+yadgar update --rollback
+```
+
+Then investigate daemon logs:
+
+```bash
+journalctl --user -u yadgar.service -n 100
+```
+
+---
+
 ## v5.48.0 — Update mechanism: `yadgar update` CLI + auto-check + `/api/control/update` (2026-06-07)
 
 ### What's new
