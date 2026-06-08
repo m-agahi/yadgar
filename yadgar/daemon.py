@@ -547,6 +547,9 @@ WantedBy=default.target
 
         # yadgar.service — core (MCP server)
         suffix = "-dev" if dev else ""
+        # Phase 7 follow-up: Type=notify + upgrade.env EnvironmentFile to match yadgar.service.in template.
+        # sd_notify signals (READY=1, STOPPING=1) require Type=notify.
+        # EnvironmentFile leading '-' makes missing file non-fatal (first install).
         core_unit = f"""\
 [Unit]
 Description=Yadgar Memory Engine — MCP Core Server
@@ -554,8 +557,10 @@ Requires=docker.service yadgar-db{suffix}.service
 After=docker.service yadgar-db{suffix}.service
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=all
 EnvironmentFile=/etc/yadgar/secrets.env
+EnvironmentFile=-{Path.home()}/.yadgar/upgrade.env
 ExecStartPre=-docker stop {profile.container_name}
 ExecStartPre=-docker rm {profile.container_name}
 ExecStart=docker run --rm \\

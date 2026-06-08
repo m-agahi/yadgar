@@ -948,6 +948,22 @@ FIELD_META: dict[str, dict[str, str]] = {
         ),
         "section": "update",
     },
+    # v5.49.0 Phase 9 — orchestrator knobs
+    "update_install_enabled": {
+        "desc": (
+            "Enable the yadgar update --install routine-upgrade orchestrator (default false). "
+            "Set to true after reading docs/PLAN_V5_49_0.md § Rollout. "
+            "When false, run_install() refuses immediately with a clear message."
+        ),
+        "section": "update",
+    },
+    "update_lock_max_age_seconds": {
+        "desc": (
+            "Maximum age in seconds for an upgrade lock before it is treated as stale (default 3600). "
+            "If the upgrader process was killed mid-run, the lock will be recycled after this period."
+        ),
+        "section": "update",
+    },
 }
 
 

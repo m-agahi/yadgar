@@ -2753,6 +2753,11 @@
     "inh_depth": 0,
     "methods": 0
   },
+  "yadgar/config_yaml.py::_FakeArgs@1323": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 0
+  },
   "yadgar/config_yaml.py::_FakeArgs@853": {
     "attrs": 0,
     "inh_depth": 0,
@@ -2769,7 +2774,7 @@
     "methods": 0
   },
   "yadgar/config_yaml.py::__file__": {
-    "loc": 1325
+    "loc": 1341
   },
   "yadgar/config_yaml.py::cmd_config_edit@1001": {
     "cyclo": 7,
@@ -2820,6 +2825,12 @@
     "params": 1
   },
   "yadgar/config_yaml.py::cmd_config_edit@1278": {
+    "cyclo": 7,
+    "loc": 25,
+    "nesting": 3,
+    "params": 1
+  },
+  "yadgar/config_yaml.py::cmd_config_edit@1317": {
     "cyclo": 7,
     "loc": 25,
     "nesting": 3,
@@ -2891,6 +2902,12 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/config_yaml.py::cmd_config_get@1229": {
+    "cyclo": 6,
+    "loc": 36,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/config_yaml.py::cmd_config_get@759": {
     "cyclo": 6,
     "loc": 36,
@@ -2922,6 +2939,12 @@
     "params": 1
   },
   "yadgar/config_yaml.py::cmd_config_init@1050": {
+    "cyclo": 11,
+    "loc": 89,
+    "nesting": 4,
+    "params": 1
+  },
+  "yadgar/config_yaml.py::cmd_config_init@1089": {
     "cyclo": 11,
     "loc": 89,
     "nesting": 4,
@@ -3029,6 +3052,12 @@
     "nesting": 3,
     "params": 1
   },
+  "yadgar/config_yaml.py::cmd_config_list@1180": {
+    "cyclo": 12,
+    "loc": 47,
+    "nesting": 3,
+    "params": 1
+  },
   "yadgar/config_yaml.py::cmd_config_list@710": {
     "cyclo": 12,
     "loc": 47,
@@ -3107,6 +3136,12 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/config_yaml.py::cmd_config_set@1267": {
+    "cyclo": 8,
+    "loc": 48,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/config_yaml.py::cmd_config_set@797": {
     "cyclo": 8,
     "loc": 48,
@@ -3132,6 +3167,12 @@
     "params": 1
   },
   "yadgar/config_yaml.py::coerce_value@1007": {
+    "cyclo": 13,
+    "loc": 41,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/config_yaml.py::coerce_value@1046": {
     "cyclo": 13,
     "loc": 41,
     "nesting": 2,
@@ -3202,6 +3243,12 @@
     "loc": 41,
     "nesting": 2,
     "params": 2
+  },
+  "yadgar/config_yaml.py::get_config_path@1006": {
+    "cyclo": 1,
+    "loc": 12,
+    "nesting": 0,
+    "params": 0
   },
   "yadgar/config_yaml.py::get_config_path@545": {
     "cyclo": 1,
@@ -3281,6 +3328,12 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/config_yaml.py::get_field_section@1040": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/config_yaml.py::get_field_section@570": {
     "cyclo": 2,
     "loc": 4,
@@ -3345,6 +3398,12 @@
     "cyclo": 2,
     "loc": 4,
     "nesting": 0,
+    "params": 1
+  },
+  "yadgar/config_yaml.py::load_yaml@1020": {
+    "cyclo": 4,
+    "loc": 8,
+    "nesting": 1,
     "params": 1
   },
   "yadgar/config_yaml.py::load_yaml@550": {
@@ -3418,6 +3477,12 @@
     "loc": 8,
     "nesting": 1,
     "params": 1
+  },
+  "yadgar/config_yaml.py::save_yaml@1030": {
+    "cyclo": 2,
+    "loc": 8,
+    "nesting": 1,
+    "params": 2
   },
   "yadgar/config_yaml.py::save_yaml@560": {
     "cyclo": 2,
@@ -57685,6 +57750,165 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/tests/test_upgrade_orchestrator.py::__file__": {
+    "loc": 518
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::_failing_health_check@49": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 0
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::_noop_cli_upgrade@54": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::_noop_graceful_stop@36": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::_noop_image_pull@32": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::_noop_re_exec@58": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::_noop_service_restart@40": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 0
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::_passing_health_check@44": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 0
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::_patched_path@516": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 3
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::_run@62": {
+    "cyclo": 1,
+    "loc": 22,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::capturing_re_exec@424": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::capturing_write@482": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 4
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::failing_cli_upgrade@223": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::failing_pull@144": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::flipping_health@182": {
+    "cyclo": 2,
+    "loc": 6,
+    "nesting": 1,
+    "params": 0
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::mock_cli_rollback@226": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::test_install_systemd_service_type_notify@452": {
+    "cyclo": 13,
+    "loc": 62,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::test_orchestrator_cli_upgrade_fail_attempts_pipx_force_install_prev@215": {
+    "cyclo": 4,
+    "loc": 28,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::test_orchestrator_concurrent_run_blocked@348": {
+    "cyclo": 7,
+    "loc": 37,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::test_orchestrator_happy_path@91": {
+    "cyclo": 10,
+    "loc": 38,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::test_orchestrator_health_check_fail_triggers_rollback@175": {
+    "cyclo": 7,
+    "loc": 33,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::test_orchestrator_image_pull_fail_rollback@136": {
+    "cyclo": 6,
+    "loc": 32,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::test_orchestrator_install_disabled_refuses@304": {
+    "cyclo": 6,
+    "loc": 37,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::test_orchestrator_records_re_exec_state@418": {
+    "cyclo": 6,
+    "loc": 27,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::test_orchestrator_snapshot_retention@278": {
+    "cyclo": 3,
+    "loc": 19,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::test_orchestrator_snapshot_written@250": {
+    "cyclo": 8,
+    "loc": 21,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_upgrade_orchestrator.py::test_orchestrator_stale_lock_taken_over@392": {
+    "cyclo": 3,
+    "loc": 19,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/tests/test_v546_parity.py::__file__": {
     "loc": 223
   },
@@ -65841,6 +66065,209 @@
     "loc": 57,
     "nesting": 4,
     "params": 2
+  },
+  "yadgar/update/orchestrator.py::OrchestratorResult@64": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 0
+  },
+  "yadgar/update/orchestrator.py::OrchestratorState@39": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 0
+  },
+  "yadgar/update/orchestrator.py::_Hooks@75": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 0
+  },
+  "yadgar/update/orchestrator.py::_RunCtx@88": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 4
+  },
+  "yadgar/update/orchestrator.py::__file__": {
+    "loc": 677
+  },
+  "yadgar/update/orchestrator.py::_acquire_lock@151": {
+    "cyclo": 7,
+    "loc": 55,
+    "nesting": 4,
+    "params": 4
+  },
+  "yadgar/update/orchestrator.py::_build_hooks@280": {
+    "cyclo": 8,
+    "loc": 19,
+    "nesting": 0,
+    "params": 7
+  },
+  "yadgar/update/orchestrator.py::_default_cli_rollback@602": {
+    "cyclo": 1,
+    "loc": 5,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/update/orchestrator.py::_default_cli_upgrade@598": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/update/orchestrator.py::_default_graceful_stop@568": {
+    "cyclo": 1,
+    "loc": 5,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/update/orchestrator.py::_default_health_check@579": {
+    "cyclo": 5,
+    "loc": 17,
+    "nesting": 4,
+    "params": 0
+  },
+  "yadgar/update/orchestrator.py::_default_image_pull@561": {
+    "cyclo": 1,
+    "loc": 5,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/update/orchestrator.py::_default_re_exec@609": {
+    "cyclo": 1,
+    "loc": 5,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/update/orchestrator.py::_default_service_restart@575": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 0
+  },
+  "yadgar/update/orchestrator.py::_disabled_result@263": {
+    "cyclo": 2,
+    "loc": 15,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/update/orchestrator.py::_extract_version_from_tag@674": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/update/orchestrator.py::_get_current_cli_version@627": {
+    "cyclo": 2,
+    "loc": 7,
+    "nesting": 2,
+    "params": 0
+  },
+  "yadgar/update/orchestrator.py::_handle_cli_rollback@468": {
+    "cyclo": 3,
+    "loc": 16,
+    "nesting": 2,
+    "params": 3
+  },
+  "yadgar/update/orchestrator.py::_now_isoformat@621": {
+    "cyclo": 1,
+    "loc": 4,
+    "nesting": 0,
+    "params": 0
+  },
+  "yadgar/update/orchestrator.py::_phase_cli_upgrade@249": {
+    "cyclo": 2,
+    "loc": 7,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/update/orchestrator.py::_phase_probe_pypi@220": {
+    "cyclo": 2,
+    "loc": 8,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/update/orchestrator.py::_phase_snapshot@230": {
+    "cyclo": 8,
+    "loc": 17,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/update/orchestrator.py::_prev_tag@140": {
+    "cyclo": 3,
+    "loc": 4,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/update/orchestrator.py::_read_current_image_tag@636": {
+    "cyclo": 4,
+    "loc": 8,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/update/orchestrator.py::_read_unit_file@646": {
+    "cyclo": 2,
+    "loc": 5,
+    "nesting": 2,
+    "params": 0
+  },
+  "yadgar/update/orchestrator.py::_release_lock@208": {
+    "cyclo": 2,
+    "loc": 5,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/update/orchestrator.py::_rlog@503": {
+    "cyclo": 2,
+    "loc": 5,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/update/orchestrator.py::_rollback_daemon@491": {
+    "cyclo": 8,
+    "loc": 54,
+    "nesting": 3,
+    "params": 6
+  },
+  "yadgar/update/orchestrator.py::_rollback_final_state@547": {
+    "cyclo": 3,
+    "loc": 7,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/update/orchestrator.py::_run_forward@378": {
+    "cyclo": 12,
+    "loc": 88,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/update/orchestrator.py::_write_env_file@653": {
+    "cyclo": 5,
+    "loc": 19,
+    "nesting": 4,
+    "params": 3
+  },
+  "yadgar/update/orchestrator.py::log@106": {
+    "cyclo": 2,
+    "loc": 6,
+    "nesting": 1,
+    "params": 3
+  },
+  "yadgar/update/orchestrator.py::result@113": {
+    "cyclo": 2,
+    "loc": 16,
+    "nesting": 0,
+    "params": 4
+  },
+  "yadgar/update/orchestrator.py::rollback_daemon@130": {
+    "cyclo": 1,
+    "loc": 9,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/update/orchestrator.py::run_install@301": {
+    "cyclo": 9,
+    "loc": 75,
+    "nesting": 1,
+    "params": 16
   },
   "yadgar/vacuum/__init__.py::__file__": {
     "loc": 588
