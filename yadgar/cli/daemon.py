@@ -172,7 +172,7 @@ def cmd_daemon(args):
 
     elif sub == "install-service":
         result = daemon.install_systemd_service(dev=dev)
-        print(f"Systemd service written: {result['service_file']}")
+        print(f"Backend: {result['backend_service']}  Core: {result['core_service']}")
         print(f"  Enable:  {result['enable']}")
         print(f"  Start:   {result['start']}")
         print(f"  Status:  {result['status']}")
