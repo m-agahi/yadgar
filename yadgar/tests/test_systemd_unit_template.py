@@ -41,7 +41,7 @@ def test_unit_template_uses_image_tag_env_var():
     content = SERVICE_IN.read_text()
     assert "${YADGAR_IMAGE_TAG}" in content, (
         "yadgar.service.in ExecStart missing ${YADGAR_IMAGE_TAG}. "
-        "Image tag must come from EnvironmentFile (~/.yadgar/upgrade.env) "
+        "Image tag must come from EnvironmentFile (~/.local/state/yadgar/upgrade.env) "
         "so routine upgrades rewrite only the env-file, not the unit."
     )
     # Must NOT contain a literal versioned image tag like docker.io/openfantasy/yadgar:5.x
@@ -69,8 +69,8 @@ def test_unit_template_has_timeoutstopsec():
 def test_unit_template_environmentfile_optional_prefix():
     """T40: EnvironmentFile must use leading '-' so missing file is non-fatal."""
     content = SERVICE_IN.read_text()
-    assert "EnvironmentFile=-%h/.yadgar/upgrade.env" in content, (
-        "yadgar.service.in missing EnvironmentFile=-%h/.yadgar/upgrade.env. "
+    assert "EnvironmentFile=-%h/.local/state/yadgar/upgrade.env" in content, (
+        "yadgar.service.in missing EnvironmentFile=-%h/.local/state/yadgar/upgrade.env. "
         "Leading '-' required — first install has no env-file yet."
     )
 

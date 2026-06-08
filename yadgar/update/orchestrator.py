@@ -28,11 +28,13 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
+from yadgar import paths
+
 logger = logging.getLogger(__name__)
 
 # Default paths (overridable via DI parameters for tests)
-_DEFAULT_LOCK_PATH = Path.home() / ".yadgar" / "upgrade.lock"
-_DEFAULT_UPGRADE_ENV_PATH = Path.home() / ".yadgar" / "upgrade.env"
+_DEFAULT_LOCK_PATH = paths.STATE_DIR / "upgrade.lock"
+_DEFAULT_UPGRADE_ENV_PATH = paths.STATE_DIR / "upgrade.env"
 _DEFAULT_UNIT_FILE_PATH = Path.home() / ".config" / "systemd" / "user" / "yadgar.service"
 
 
@@ -271,7 +273,7 @@ def _disabled_result(target_version: str | None) -> OrchestratorResult:
         rollback_log=None,
         error=(
             "yadgar update --install is disabled. "
-            "Set update.install_enabled=true in ~/.yadgar/config.yaml "
+            f"Set update.install_enabled=true in {paths.CONFIG_YAML_PATH} "
             "after reading docs/PLAN_V5_49_0.md § Rollout."
         ),
     )
@@ -351,7 +353,7 @@ def run_install(  # noqa: PLR0913 — inject-everything DI pattern; all params a
         env_path=upgrade_env_path if upgrade_env_path is not None else _DEFAULT_UPGRADE_ENV_PATH,
         snaps_dir=snapshots_base_dir
         if snapshots_base_dir is not None
-        else (Path.home() / ".yadgar" / "upgrade-snapshots"),
+        else (paths.STATE_DIR / "upgrade-snapshots"),
         retention=snapshot_retention
         if snapshot_retention is not None
         else settings.UPDATE_SNAPSHOT_RETENTION,

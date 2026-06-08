@@ -9,7 +9,7 @@ NotifyAccess=all
 Environment=DOCKER_HOST=unix:///run/podman/podman.sock
 EnvironmentFile=@SECRETS_ENV_FILE@
 # upgrade.env carries YADGAR_IMAGE_TAG; leading '-' makes missing file non-fatal (first install).
-EnvironmentFile=-%h/.yadgar/upgrade.env
+EnvironmentFile=-%h/.local/state/yadgar/upgrade.env
 ExecStartPre=-@RUNTIME@ stop yadgar
 ExecStartPre=-@RUNTIME@ rm yadgar
 ExecStart=@RUNTIME@ run --name yadgar --rm --security-opt label=disable --user root \

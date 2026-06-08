@@ -77,7 +77,7 @@ Follow these steps in order. Read the rollback section before running `--install
    yadgar update --install
    ```
 
-   Orchestrator will: probe PyPI → write snapshot to `~/.config/yadgar/upgrade-snapshots/` → pull new image → rewrite `upgrade.env` → graceful-stop daemon → restart via systemd → health-check → `pipx upgrade yadgar` → re-exec to `--finalize`.
+   Orchestrator will: probe PyPI → write snapshot to `~/.local/state/yadgar/upgrade-snapshots/` → pull new image → rewrite `upgrade.env` → graceful-stop daemon → restart via systemd → health-check → `pipx upgrade yadgar` → re-exec to `--finalize`.
 
    Snapshot retention: keeps the 3 most recent (configurable via `update.snapshot_retention`).
 
@@ -97,7 +97,7 @@ Recovery:
 yadgar update --rollback
 ```
 
-This reads `prev_image_tag` from the latest snapshot in `~/.config/yadgar/upgrade-snapshots/`, rewrites `upgrade.env`, and restarts the daemon.
+This reads `prev_image_tag` from the latest snapshot in `~/.local/state/yadgar/upgrade-snapshots/`, rewrites `upgrade.env`, and restarts the daemon.
 
 #### `DONE_CLI_ROLLBACK_FAILED` (exit 2)
 
