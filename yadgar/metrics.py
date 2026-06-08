@@ -16,6 +16,8 @@ Collectors:
 - yadgar_loop_last_run_unix_timestamp{loop}  Gauge   — unix timestamp of last loop iteration start
 - yadgar_loop_errors_total{loop,error_type}  Counter — exceptions caught in each background loop
 - yadgar_signals_payload_oversized_total     Counter — signals mode payload exceeded SIGNALS_TOKEN_BUDGET_SOFT
+- yadgar_archive_purged_total               Counter — memory_archive rows deleted by nightly retention purge
+- yadgar_archive_retention_skipped_total{reason} Counter — rows skipped by retention purge (protected|anchor|recent)
 """
 
 from __future__ import annotations
@@ -597,6 +599,22 @@ yadgar_loop_errors_total = Counter(
 yadgar_signals_payload_oversized_total = Counter(
     "yadgar_signals_payload_oversized_total",
     "Total project_brief(mode='signals') calls where payload exceeded SIGNALS_TOKEN_BUDGET_SOFT",
+    registry=_registry,
+)
+
+# ── v5.49.0 — archive retention telemetry ────────────────────────────────────
+
+yadgar_archive_purged_total = Counter(
+    "yadgar_archive_purged_total",
+    "Total memory_archive rows deleted by nightly retention purge",
+    registry=_registry,
+)
+
+yadgar_archive_retention_skipped_total = Counter(
+    "yadgar_archive_retention_skipped_total",
+    "Total memory_archive rows skipped by nightly retention purge, by skip reason "
+    "(reason = protected | anchor | recent)",
+    ["reason"],
     registry=_registry,
 )
 

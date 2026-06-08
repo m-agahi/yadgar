@@ -86,6 +86,22 @@ render_template "${SCRIPT_DIR}/yadgar.service.in"         "${OUTPUT_DIR}/yadgar.
 render_template "${SCRIPT_DIR}/yadgar-backend.service.in" "${OUTPUT_DIR}/yadgar-backend.service"
 render_template "${SCRIPT_DIR}/yadgar.target.in"          "${OUTPUT_DIR}/yadgar.target"
 
+# ── Seed ~/.local/state/yadgar/upgrade.env with initial image tag ─────────────
+# yadgar.service uses EnvironmentFile=-%h/.local/state/yadgar/upgrade.env to read
+# YADGAR_IMAGE_TAG at runtime. The leading '-' makes a missing file non-fatal,
+# but the orchestrator (Phase 9) requires the file to exist before first upgrade.
+# We seed it here with the image tag used at install time.
+# The orchestrator atomically rewrites this file on each routine upgrade.
+UPGRADE_ENV_DIR="${HOME}/.local/state/yadgar"
+UPGRADE_ENV_FILE="${UPGRADE_ENV_DIR}/upgrade.env"
+mkdir -p "${UPGRADE_ENV_DIR}"
+if [[ ! -f "${UPGRADE_ENV_FILE}" ]]; then
+    printf 'YADGAR_IMAGE_TAG=%s\n' "${CORE_IMAGE}" > "${UPGRADE_ENV_FILE}"
+    echo "Seeded ${UPGRADE_ENV_FILE} with YADGAR_IMAGE_TAG=${CORE_IMAGE}"
+else
+    echo "Note: ${UPGRADE_ENV_FILE} already exists — not overwritten (orchestrator manages it)."
+fi
+
 echo "Systemd units written to ${OUTPUT_DIR}/"
 echo "  yadgar.service"
 echo "  yadgar-backend.service"

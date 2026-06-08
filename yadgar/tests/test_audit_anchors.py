@@ -635,3 +635,95 @@ class TestMigrationGraceHandler:
         assert "migration_grace" in rationale.lower() or "grace" in rationale.lower(), (
             "rationale must mention grace period for clarity"
         )
+
+
+# ---------------------------------------------------------------------------
+# 8. v5.49 Phase 0 — anchored-by-prose-only detection
+# ---------------------------------------------------------------------------
+
+
+def _insert_prose_only_archive(storage, content: str, **kw) -> int:
+    """Insert a memory_archive row that looks like an anchored-by-prose-only memory.
+
+    By default: no _anchor tag, is_protected=false, heat=0.
+    kwargs: tags, is_protected, heat.
+    """
+    now = storage._now_iso()
+    aid = storage._next_id("memory_archive")
+    tags = kw.get("tags") or []
+    is_protected = kw.get("is_protected", False)
+    heat = kw.get("heat", 0)
+    storage._q(
+        "CREATE type::record('memory_archive', $id) SET "
+        "content = $content, original_memory_id = $orig, "
+        "archived_at = $now, tags = $tags, "
+        "is_protected = $is_protected, heat = $heat",
+        {
+            "id": aid,
+            "content": content,
+            "orig": 0,
+            "now": now,
+            "tags": tags,
+            "is_protected": is_protected,
+            "heat": heat,
+        },
+    )
+    return aid
+
+
+class TestAnchoredByProseOnly:
+    """v5.49 Phase 0 — audit_anchors detects prose-only anchored archives at-risk from retention."""
+
+    def test_audit_anchors_detects_prose_only(self, storage):
+        """Archive with no _anchor tag + is_protected=false + heat=0 → count==1, sample contains ID,
+        recommended_action present."""
+        from yadgar.server.tools.audit import audit_anchors
+
+        aid = _insert_prose_only_archive(storage, "prose-only anchor content")
+
+        result = audit_anchors(directory=_DIR, dry_run=True)
+        prose = result["anchored_by_prose_only"]
+        assert prose["count"] == 1
+        assert aid in prose["sample"]
+        assert "recommended_action" in prose, "recommended_action must be present when count > 0"
+
+    def test_audit_anchors_skips_tagged_anchor(self, storage):
+        """Archive with _anchor tag → not counted as prose-only (count == 0)."""
+        from yadgar.server.tools.audit import audit_anchors
+
+        _insert_prose_only_archive(storage, "tagged anchor", tags=["_anchor"])
+
+        result = audit_anchors(directory=_DIR, dry_run=True)
+        prose = result["anchored_by_prose_only"]
+        assert prose["count"] == 0
+
+    def test_audit_anchors_skips_protected(self, storage):
+        """Archive with is_protected=true → not counted as prose-only (count == 0)."""
+        from yadgar.server.tools.audit import audit_anchors
+
+        _insert_prose_only_archive(storage, "protected archive", is_protected=True)
+
+        result = audit_anchors(directory=_DIR, dry_run=True)
+        prose = result["anchored_by_prose_only"]
+        assert prose["count"] == 0
+
+    def test_audit_anchors_empty_archive(self):
+        """No archive rows at all → count == 0 and no recommended_action key."""
+        from yadgar.server.tools.audit import audit_anchors
+
+        result = audit_anchors(directory=_DIR, dry_run=True)
+        prose = result["anchored_by_prose_only"]
+        assert prose["count"] == 0
+        assert "recommended_action" not in prose, (
+            "recommended_action must be absent when count == 0"
+        )
+
+    def test_audit_anchors_skips_hot_archive(self, storage):
+        """Archive with heat > 0 → not counted (recently accessed, not stale)."""
+        from yadgar.server.tools.audit import audit_anchors
+
+        _insert_prose_only_archive(storage, "hot archive", heat=0.5)
+
+        result = audit_anchors(directory=_DIR, dry_run=True)
+        prose = result["anchored_by_prose_only"]
+        assert prose["count"] == 0

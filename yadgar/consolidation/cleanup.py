@@ -19,6 +19,24 @@ def _observe_action_batch(n: int) -> None:
         pass
 
 
+def _observe_archive_purge(result: dict) -> None:
+    """Emit Prometheus counters for a completed archive purge. Non-fatal."""
+    try:
+        from yadgar.metrics import (  # noqa: PLC0415
+            yadgar_archive_purged_total,
+            yadgar_archive_retention_skipped_total,
+        )
+
+        yadgar_archive_purged_total.inc(result["purged"])
+        yadgar_archive_retention_skipped_total.labels(reason="protected").inc(
+            result["skipped_protected"]
+        )
+        yadgar_archive_retention_skipped_total.labels(reason="anchor").inc(result["skipped_anchor"])
+        yadgar_archive_retention_skipped_total.labels(reason="recent").inc(result["skipped_recent"])
+    except Exception:
+        pass
+
+
 def _quarantine_action_group(action_ids: list, reason: str, directory: str) -> None:
     """Append a quarantine entry for a poison-pill action-log group.
 
@@ -214,3 +232,25 @@ class _CleanupMixin:
                     logger.info("retention: pruned %d old rows from %s", pruned, _table)
             except Exception:
                 logger.debug("retention prune failed for %s (non-fatal)", _table, exc_info=True)
+
+        # v5.49.0: archive retention — only when enabled
+        if self._settings.MEMORY_ARCHIVE_RETENTION_DAYS > 0:
+            try:
+                result = self._storage.purge_expired_archives(dry_run=False)
+                if result["circuit_breaker_hit"]:
+                    logger.warning(
+                        "retention: archive purge circuit-breaker hit during nightly cycle "
+                        "(purged=%d); see storage-layer CRITICAL for details",
+                        result["purged"],
+                    )
+                if result["purged"]:
+                    logger.info(
+                        "retention: purged %d expired archives (protected=%d anchor=%d recent=%d)",
+                        result["purged"],
+                        result["skipped_protected"],
+                        result["skipped_anchor"],
+                        result["skipped_recent"],
+                    )
+                _observe_archive_purge(result)
+            except Exception:
+                logger.debug("retention: archive purge failed (non-fatal)", exc_info=True)

@@ -18,8 +18,8 @@ def cmd_daemon(args):
     sub = args.daemon_command
     if sub is None:
         print(
-            "Usage: yadgar daemon [--dev] <pull|build|push|start|stop|restart|status|"
-            "configure-mcp|install-service|test|lint|shell>"
+            "Usage: yadgar daemon [--dev] <pull|build|push|start|stop|graceful-stop|restart|"
+            "status|configure-mcp|install-service|test|lint|shell>"
         )
         return
 
@@ -94,6 +94,52 @@ def cmd_daemon(args):
         else:
             print("Yadgar daemon is not running.")
 
+    elif sub == "graceful-stop":
+        # v5.49.0 Phase 6: graceful-stop with SIGTERM + drain barriers.
+        # Uses `docker stop --time=<timeout>` which sends SIGTERM to container
+        # PID 1 and waits up to <timeout> seconds before sending SIGKILL.
+        # The daemon's shutdown() handles the actual drain (sd_notify.stopping(),
+        # flush_barrier, drain_in_flight_requests) — this CLI just signals it
+        # and polls until stopped or timeout exceeded.
+        import subprocess as _sp  # noqa: PLC0415
+
+        timeout = int(getattr(args, "timeout", 30) or 30)
+        from yadgar.daemon import _dev_profile, _prod_profile  # noqa: PLC0415
+
+        profile = _dev_profile() if dev else _prod_profile(port)
+        container = profile.container_name
+
+        # Check container is running first
+        check = YadgarDaemon.check_docker()
+        if not check["ok"]:
+            print(f"Docker not available: {check['reason']}", file=sys.stderr)
+            sys.exit(1)
+
+        result_running = _sp.run(
+            ["docker", "inspect", "--format", "{{.State.Running}}", container],
+            capture_output=True,
+            text=True,
+        )
+        if result_running.returncode != 0 or result_running.stdout.strip() != "true":
+            print(f"Container {container!r} is not running.")
+            sys.exit(0)
+
+        print(f"Gracefully stopping {container!r} (timeout={timeout}s)…")
+        result_stop = _sp.run(
+            ["docker", "stop", f"--time={timeout}", container],
+            capture_output=True,
+            text=True,
+        )
+        if result_stop.returncode == 0:
+            print(f"Yadgar daemon stopped gracefully (container: {container})")
+            sys.exit(0)
+        else:
+            print(
+                f"Graceful stop failed (rc={result_stop.returncode}): {result_stop.stderr.strip()}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     elif sub == "restart":
         result = daemon.restart(dev=dev)
         start = result["started"]
@@ -165,7 +211,17 @@ def register(subparsers):
         "--tag", type=str, default=None, help="Override version tag (default: package version)"
     )
     daemon_sub.add_parser("start", help="Start the daemon container")
-    daemon_sub.add_parser("stop", help="Stop the running daemon container")
+    daemon_sub.add_parser("stop", help="Stop the running daemon container (immediate SIGKILL)")
+    graceful_stop_p = daemon_sub.add_parser(
+        "graceful-stop",
+        help="Gracefully stop the daemon (SIGTERM + drain barriers, then SIGKILL after timeout)",
+    )
+    graceful_stop_p.add_argument(
+        "--timeout",
+        type=int,
+        default=30,
+        help="Seconds to wait for in-flight requests + queue flush before SIGKILL (default: 30)",
+    )
     daemon_sub.add_parser("restart", help="Restart the daemon container")
     daemon_sub.add_parser("status", help="Show daemon container status")
     daemon_sub.add_parser(

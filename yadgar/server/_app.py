@@ -85,6 +85,33 @@ def _instrument_starlette_app(app) -> None:
         pass  # OTel not available or app already instrumented — no-op
 
 
+class InFlightRequestMiddleware:
+    """ASGI middleware that tracks active HTTP requests for graceful drain (v5.49.0).
+
+    Wraps the outermost middleware layer so ALL HTTP requests (MCP, control,
+    health, metrics) are counted. Decrements on scope exit (normal or error).
+
+    Stack position: outermost — wraps BearerAuth so every request increments
+    the counter before auth filtering.  This is intentional: we want the drain
+    barrier to wait for all in-flight TCP flows, not just authenticated ones.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        from yadgar.drain import _request_counter  # noqa: PLC0415
+
+        if scope["type"] == "http":
+            _request_counter.increment()
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                _request_counter.decrement()
+        else:
+            await self.app(scope, receive, send)
+
+
 class MCPTraceSpanMiddleware:
     """ASGI middleware that opens an OTel span for every HTTP request.
 
@@ -150,7 +177,9 @@ def _cors_wrapped_http_app(self):
     from yadgar.auth_middleware import BearerAuthMiddleware
     from yadgar.log_config import RequestLoggingMiddleware
 
-    # Stack: BearerAuth (outermost) → MCPTrace → RequestLogging → CORS → MCP
+    # Stack: InFlightRequest (outermost) → BearerAuth → MCPTrace → RequestLogging → CORS → MCP
+    # v5.49.0 Phase 6: InFlightRequestMiddleware wraps outermost so drain barrier
+    # counts all in-flight HTTP flows before graceful shutdown.
     # v5.7.8 Bug 4 residual: MCPTraceSpanMiddleware opens a span before
     # RequestLoggingMiddleware so trace_id is present in the log line.
     inner = _orig_streamable_http_app(self)
@@ -164,7 +193,8 @@ def _cors_wrapped_http_app(self):
     )
     logged_app = RequestLoggingMiddleware(cors_app)
     spanned_app = MCPTraceSpanMiddleware(logged_app)
-    return BearerAuthMiddleware(spanned_app)
+    auth_app = BearerAuthMiddleware(spanned_app)
+    return InFlightRequestMiddleware(auth_app)
 
 
 def _auth_wrapped_sse_app(self, mount_path=None):
@@ -183,7 +213,9 @@ def _auth_wrapped_sse_app(self, mount_path=None):
     # v5.7.8 Bug 4 residual: open a span above RequestLogging so trace_id is
     # present in the log line (same fix as the streamable-HTTP path).
     spanned_app = MCPTraceSpanMiddleware(logged_app)
-    return BearerAuthMiddleware(spanned_app)
+    auth_app = BearerAuthMiddleware(spanned_app)
+    # v5.49.0 Phase 6: InFlightRequestMiddleware outermost for drain barrier
+    return InFlightRequestMiddleware(auth_app)
 
 
 _orig_streamable_http_app = mcp_server.streamable_http_app.__func__

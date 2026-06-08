@@ -151,6 +151,7 @@ from yadgar.server.tools import (  # noqa: F401
     dlq_requeue,
     dlq_dismiss,
     _run_check_invariants,
+    archive_purge,
     wiki_add,
     wiki_query,
     wiki_read,

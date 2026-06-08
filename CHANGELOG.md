@@ -6,6 +6,45 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.49.0] — 2026-06-08
+
+### Memory archive retention (Strand A)
+
+`purge_expired_archives` storage helper + `archive_purge` MCP tool (dry-run default) + nightly auto-purge wired into consolidation cycle. Both strands ship OFF by default.
+
+- **`purge_expired_archives(retention_days, dry_run=True)`** — storage helper. Skips anchored memories (`_anchor` tag OR `is_protected=true`), respects 7-day thrash guard (DP-E), caps at circuit-breaker limit.
+- **`archive_purge` MCP tool** — power + secret gated. `dry_run=True` by default; returns candidate count. Explicit `dry_run=False` required for real deletion.
+- **Nightly consolidation** now invokes `purge_expired_archives` when `MEMORY_ARCHIVE_RETENTION_DAYS > 0`.
+- **`audit_anchors` extended** — detects anchored-by-prose-only memories (anchor status from `content` keywords, not `_anchor` tag or `is_protected=True`) that are at risk of purge.
+- **New I25 knobs:** `YADGAR_MEMORY_ARCHIVE_RETENTION_DAYS` (default 0 = disabled), `YADGAR_MEMORY_ARCHIVE_RETENTION_CIRCUIT_BREAKER` (500), `YADGAR_MEMORY_ARCHIVE_RETENTION_THRASH_GUARD_DAYS` (7).
+- **New Prometheus counters:** `yadgar_archive_purged_total`, `yadgar_archive_retention_skipped{reason}`.
+- **18 new tests** in `yadgar/tests/test_archive_retention.py` + 5 in `test_audit_anchors.py`.
+
+### Upgrade orchestrator (Strand B)
+
+`yadgar update --install` runs a multi-step coordinated upgrade. `update.install_enabled` defaults to `false` (opt-in).
+
+- **`yadgar update --install`** — orchestrator state machine: PyPI probe → snapshot → image pull → env-file rewrite → graceful-stop → service restart → health-check → CLI upgrade → re-exec to `--finalize`. Automatic rollback on image-pull or health-check failure.
+- **`yadgar update --finalize`** — internal re-exec target. New CLI process verifies daemon serves new version; exits non-zero with recovery hint on mismatch.
+- **`yadgar update --rollback`** — operator recovery. Restores `prev_image_tag` from latest snapshot, rewrites `upgrade.env`, restarts daemon.
+- **`yadgar daemon graceful-stop [--timeout=30]`** — explicit pre-shutdown drain barrier: sd_notify STOPPING=1 → close HTTP listener → wait in-flight requests → flush file_queue → snapshot embed cache → close SurrealDB. Exit 0 on clean drain; exit 1 on timeout.
+- **`yadgar/sd_notify.py`** — minimal sd_notify helper (READY=1, STOPPING=1, RELOADING=1). No libsystemd dependency.
+- **`yadgar/update/snapshot.py`** — atomic upgrade snapshots at `~/.local/state/yadgar/upgrade-snapshots/` with retention pruning.
+- **systemd unit template** — `Type=simple` → `Type=notify`. `ExecStart` references `${YADGAR_IMAGE_TAG}` from `EnvironmentFile=-%h/.local/state/yadgar/upgrade.env`. `TimeoutStartSec=120`, `TimeoutStopSec=45`.
+- **launchd plist** — added `ExitTimeOut=30` + `YADGAR_IMAGE_TAG` env var.
+- **New I25 knobs:** `YADGAR_UPDATE_INSTALL_ENABLED` (default false), `YADGAR_UPDATE_LOCK_MAX_AGE_SECONDS` (3600), `YADGAR_UPDATE_SNAPSHOT_RETENTION` (3).
+- **New files:** `yadgar/sd_notify.py`, `yadgar/update/snapshot.py`, `yadgar/update/orchestrator.py`.
+- **38 new tests** across `test_sd_notify.py`, `test_graceful_stop.py`, `test_systemd_unit_template.py`, `test_upgrade_snapshot.py`, `test_upgrade_orchestrator.py`, `test_cli_update.py`.
+- **Manual upgrade-test runbook:** `docs/UPGRADE_TEST.md` + `make upgrade-test`.
+
+### Operator notes
+
+Both strands ship OFF by default. Set `MEMORY_ARCHIVE_RETENTION_DAYS=90` to enable nightly auto-purge; set `update.install_enabled: true` to enable `yadgar update --install`. Read `MIGRATION_NOTES.md` sections "Archive retention rollout" and "Upgrade orchestrator rollout" before flipping either knob.
+
+See `MIGRATION_NOTES.md` § v5.49.0 for opt-in instructions and rollback recovery procedures.
+
+---
+
 ## [5.48.0] — 2026-06-07
 
 ### Update mechanism (`yadgar update` CLI + `/api/control/update` API)
