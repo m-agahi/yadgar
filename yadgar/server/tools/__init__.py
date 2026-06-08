@@ -60,6 +60,7 @@ from yadgar.server.tools.admin import (
     dlq_requeue,
     dlq_dismiss,
     _run_check_invariants,
+    archive_purge,
 )
 from yadgar.server.tools.wiki import (
     wiki_add,
@@ -181,6 +182,7 @@ __all__ = [
     "block_list",
     "block_replace",
     "block_update",
+    "archive_purge",
     # Private helpers re-exported for test access
     "_detect_branch",
     "_detect_branch_cached",

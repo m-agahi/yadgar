@@ -10,11 +10,13 @@ Submodules:
 - admin_other:      forget, validate_memory, consolidate_now, reembed_all,
                     memory_stats, add_rule, get_rules, memory_get, wiki_get,
                     memory_update, wiki_update
+- admin_archive:    archive_purge tool (v5.49.0 Phase 4)
 """
 
 # ruff: noqa: F401, E402  — all imports are re-exports; order is load-order-significant
 
 # Import submodules to trigger @_tool decorator registration
+from yadgar.server.tools.admin_archive import archive_purge
 from yadgar.server.tools.admin_dlq import dlq_dismiss, dlq_inspect, dlq_requeue
 from yadgar.server.tools.admin_invariants import (
     _run_check_invariants,
@@ -55,4 +57,5 @@ __all__ = [
     "wiki_get",
     "memory_update",
     "wiki_update",
+    "archive_purge",
 ]

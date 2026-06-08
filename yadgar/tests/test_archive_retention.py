@@ -541,3 +541,92 @@ def test_metrics_emitted(storage, monkeypatch):
     assert (after_recent - before_recent) >= 1, (
         f"skipped_recent: expected >=1, got {after_recent - before_recent}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 tests — archive_purge MCP tool
+# ---------------------------------------------------------------------------
+
+
+# 14. archive_purge() default dry_run=True
+def test_archive_purge_dry_run_default(storage):
+    """archive_purge() with no args: dry_run=True in result, no deletion, sample populated."""
+    from yadgar.server.tools.admin_archive import archive_purge
+
+    _insert_archive(storage, archived_at=_ago(180))
+    _insert_archive(storage, archived_at=_ago(200))
+
+    result = archive_purge()
+
+    assert result["dry_run"] is True
+    assert result["purged"] == 0
+    assert result["candidates"] >= 2
+    assert isinstance(result["sample"], list)
+    assert len(result["sample"]) <= 10
+    assert _count_archives(storage) == 2
+
+
+# 15. archive_purge(dry_run=False) performs deletion
+def test_archive_purge_explicit_run(storage):
+    """archive_purge(dry_run=False): deletion occurs, purged>0, dry_run=False in result."""
+    from yadgar.server.tools.admin_archive import archive_purge
+
+    _insert_archive(storage, archived_at=_ago(180))
+    _insert_archive(storage, archived_at=_ago(200))
+
+    result = archive_purge(dry_run=False)
+
+    assert result["dry_run"] is False
+    assert result["purged"] >= 2
+    assert _count_archives(storage) == 0
+
+
+# 16. retention_days override
+def test_archive_purge_retention_override(storage):
+    """retention_days=40 → 45d + 91d archives purged; 30d untouched."""
+    from yadgar.server.tools.admin_archive import archive_purge
+
+    aid_30 = _insert_archive(storage, archived_at=_ago(30))  # kept
+    _insert_archive(storage, archived_at=_ago(45))  # purged (>40d)
+    _insert_archive(storage, archived_at=_ago(91))  # purged (>40d)
+
+    result = archive_purge(dry_run=False, retention_days=40)
+
+    assert result["purged"] == 2, f"expected 2 purged, got {result}"
+    assert result["retention_days"] == 40
+    # 30d archive still present
+    rows = storage._q(
+        "SELECT meta::id(id) AS rid FROM memory_archive WHERE meta::id(id) = $id",
+        {"id": aid_30},
+    )
+    assert rows, "30d archive should remain after retention_days=40 override"
+
+
+# 17. Power gate — tool exported from server module
+def test_archive_purge_power_gated():
+    """archive_purge must be accessible from the server module (power-gated pattern)."""
+    from yadgar import server
+
+    assert hasattr(server, "archive_purge"), (
+        "archive_purge must be exported from yadgar.server (power tool registration)"
+    )
+
+
+# 18. Secret gate — gate_or_reject called
+def test_archive_purge_secret_gated(monkeypatch):
+    """gate_or_reject must be called when archive_purge is invoked."""
+    import importlib
+
+    _mod = importlib.import_module("yadgar.server.tools.admin_archive")
+
+    captured_calls = []
+
+    def fake_gate(*args, tags=None, source=None):
+        captured_calls.append({"args": args, "tags": tags})
+        return None  # allow through
+
+    monkeypatch.setattr(_mod, "gate_or_reject", fake_gate)
+
+    _mod.archive_purge()
+
+    assert captured_calls, "gate_or_reject was never called in archive_purge()"
