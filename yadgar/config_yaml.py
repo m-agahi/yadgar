@@ -939,6 +939,15 @@ FIELD_META: dict[str, dict[str, str]] = {
         ),
         "section": "update",
     },
+    # v5.49.0 — upgrade snapshot retention
+    "update_snapshot_retention": {
+        "desc": (
+            "Number of upgrade snapshots to retain after each upgrade (default 3). "
+            "Older snapshots are pruned by the orchestrator. "
+            "Set to 0 to keep all snapshots (no pruning)."
+        ),
+        "section": "update",
+    },
 }
 
 

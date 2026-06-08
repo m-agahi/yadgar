@@ -2748,6 +2748,11 @@
     "inh_depth": 0,
     "methods": 0
   },
+  "yadgar/config_yaml.py::_FakeArgs@1284": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 0
+  },
   "yadgar/config_yaml.py::_FakeArgs@853": {
     "attrs": 0,
     "inh_depth": 0,
@@ -2764,7 +2769,7 @@
     "methods": 0
   },
   "yadgar/config_yaml.py::__file__": {
-    "loc": 1316
+    "loc": 1325
   },
   "yadgar/config_yaml.py::cmd_config_edit@1001": {
     "cyclo": 7,
@@ -2809,6 +2814,12 @@
     "params": 1
   },
   "yadgar/config_yaml.py::cmd_config_edit@1233": {
+    "cyclo": 7,
+    "loc": 25,
+    "nesting": 3,
+    "params": 1
+  },
+  "yadgar/config_yaml.py::cmd_config_edit@1278": {
     "cyclo": 7,
     "loc": 25,
     "nesting": 3,
@@ -2874,6 +2885,12 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/config_yaml.py::cmd_config_get@1190": {
+    "cyclo": 6,
+    "loc": 36,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/config_yaml.py::cmd_config_get@759": {
     "cyclo": 6,
     "loc": 36,
@@ -2899,6 +2916,12 @@
     "params": 1
   },
   "yadgar/config_yaml.py::cmd_config_init@1005": {
+    "cyclo": 11,
+    "loc": 89,
+    "nesting": 4,
+    "params": 1
+  },
+  "yadgar/config_yaml.py::cmd_config_init@1050": {
     "cyclo": 11,
     "loc": 89,
     "nesting": 4,
@@ -3000,6 +3023,12 @@
     "nesting": 3,
     "params": 1
   },
+  "yadgar/config_yaml.py::cmd_config_list@1141": {
+    "cyclo": 12,
+    "loc": 47,
+    "nesting": 3,
+    "params": 1
+  },
   "yadgar/config_yaml.py::cmd_config_list@710": {
     "cyclo": 12,
     "loc": 47,
@@ -3072,6 +3101,12 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/config_yaml.py::cmd_config_set@1228": {
+    "cyclo": 8,
+    "loc": 48,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/config_yaml.py::cmd_config_set@797": {
     "cyclo": 8,
     "loc": 48,
@@ -3095,6 +3130,12 @@
     "loc": 48,
     "nesting": 2,
     "params": 1
+  },
+  "yadgar/config_yaml.py::coerce_value@1007": {
+    "cyclo": 13,
+    "loc": 41,
+    "nesting": 2,
+    "params": 2
   },
   "yadgar/config_yaml.py::coerce_value@576": {
     "cyclo": 13,
@@ -3228,6 +3269,18 @@
     "nesting": 1,
     "params": 0
   },
+  "yadgar/config_yaml.py::get_config_path@967": {
+    "cyclo": 1,
+    "loc": 12,
+    "nesting": 0,
+    "params": 0
+  },
+  "yadgar/config_yaml.py::get_field_section@1001": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/config_yaml.py::get_field_section@570": {
     "cyclo": 2,
     "loc": 4,
@@ -3360,6 +3413,12 @@
     "nesting": 1,
     "params": 1
   },
+  "yadgar/config_yaml.py::load_yaml@981": {
+    "cyclo": 4,
+    "loc": 8,
+    "nesting": 1,
+    "params": 1
+  },
   "yadgar/config_yaml.py::save_yaml@560": {
     "cyclo": 2,
     "loc": 8,
@@ -3421,6 +3480,12 @@
     "params": 2
   },
   "yadgar/config_yaml.py::save_yaml@946": {
+    "cyclo": 2,
+    "loc": 8,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/config_yaml.py::save_yaml@991": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 1,

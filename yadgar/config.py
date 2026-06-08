@@ -689,6 +689,9 @@ class Settings(BaseSettings):
     # Gate for /api/control/update endpoint. Set to "on" to enable.
     # Default OFF — endpoint is for power users and Control-tab integration (v5.50).
     UPDATE_DEBUG_APIS_ENABLED: str = "off"
+    # v5.49.0 — Upgrade snapshot retention (I25 three-way registered)
+    # Keep the N most recent upgrade snapshots; older snapshots are pruned on next upgrade.
+    UPDATE_SNAPSHOT_RETENTION: int = 3
 
     model_config = {"env_prefix": "YADGAR_"}
 
