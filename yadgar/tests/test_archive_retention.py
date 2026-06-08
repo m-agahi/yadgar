@@ -329,3 +329,50 @@ def test_retention_disabled(storage, monkeypatch):
         "circuit_breaker_hit": False,
     }
     assert _count_archives(storage) == 1
+
+
+# ---------------------------------------------------------------------------
+# 11. I25 three-way config registration (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+def test_three_config_knobs_registered_three_way():
+    """All 3 MEMORY_ARCHIVE_RETENTION_* knobs appear in Settings, registry, and FIELD_META."""
+    from yadgar.config import Settings
+    from yadgar.config_registry import list_config
+    from yadgar.config_yaml import FIELD_META
+
+    # Settings (Phase 1 added these)
+    fields = Settings.model_fields
+    assert "MEMORY_ARCHIVE_RETENTION_DAYS" in fields, (
+        "MEMORY_ARCHIVE_RETENTION_DAYS missing from Settings"
+    )
+    assert "MEMORY_ARCHIVE_RETENTION_CIRCUIT_BREAKER" in fields, (
+        "MEMORY_ARCHIVE_RETENTION_CIRCUIT_BREAKER missing from Settings"
+    )
+    assert "MEMORY_ARCHIVE_RETENTION_THRASH_GUARD_DAYS" in fields, (
+        "MEMORY_ARCHIVE_RETENTION_THRASH_GUARD_DAYS missing from Settings"
+    )
+
+    # _REGISTRY
+    registry_names = {e.name for e in list_config()}
+    assert "YADGAR_MEMORY_ARCHIVE_RETENTION_DAYS" in registry_names, (
+        "YADGAR_MEMORY_ARCHIVE_RETENTION_DAYS missing from _REGISTRY"
+    )
+    assert "YADGAR_MEMORY_ARCHIVE_RETENTION_CIRCUIT_BREAKER" in registry_names, (
+        "YADGAR_MEMORY_ARCHIVE_RETENTION_CIRCUIT_BREAKER missing from _REGISTRY"
+    )
+    assert "YADGAR_MEMORY_ARCHIVE_RETENTION_THRASH_GUARD_DAYS" in registry_names, (
+        "YADGAR_MEMORY_ARCHIVE_RETENTION_THRASH_GUARD_DAYS missing from _REGISTRY"
+    )
+
+    # FIELD_META
+    assert "memory_archive_retention_days" in FIELD_META, (
+        "memory_archive_retention_days missing from FIELD_META"
+    )
+    assert "memory_archive_retention_circuit_breaker" in FIELD_META, (
+        "memory_archive_retention_circuit_breaker missing from FIELD_META"
+    )
+    assert "memory_archive_retention_thrash_guard_days" in FIELD_META, (
+        "memory_archive_retention_thrash_guard_days missing from FIELD_META"
+    )
