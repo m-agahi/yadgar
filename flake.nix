@@ -13,13 +13,13 @@
 #
 # home-manager users (recommended): import homeManagerModules.default and set
 # `programs.yadgar.enable = true;` to get systemd user units (yadgar.service
-# + yadgar-backend.service) wired with sensible defaults — Type=simple,
-# 45s stop-timeout for the v5.49 graceful-stop drain barrier, and
-# EnvironmentFile=upgrade.env so the upgrade orchestrator can compose.
-# (Type=notify with podman `--sdnotify=healthy` was attempted but rejected
-# by podman in --rm + rootless-user mode; pinned at Type=simple until a
-# working sd_notify path is identified.)
-# See programs.yadgar.* options below for version + registry overrides.
+# + yadgar-backend.service) wired with the v5.49 Phase 7 design:
+# Type=notify + podman --sdnotify=healthy + explicit --health-cmd flags
+# (Dockerfile HEALTHCHECK is NOT propagated to Config.Healthcheck by podman
+# build — known quirk — so the healthcheck is supplied at run time instead),
+# NotifyAccess=all so the host CLI subprocess can emit STOPPING=1 for the
+# v5.49 graceful-stop drain barrier, and EnvironmentFile=upgrade.env so the
+# upgrade orchestrator can compose. See programs.yadgar.* options below.
 #
 # NixOS users: yadgar-setup refuses on NixOS (detect_os.sh linux-nixos guard).
 # The nixosModules.default ships the package only — use home-manager
@@ -236,19 +236,21 @@
                 After = [ "network.target" ];
               };
               Service = {
-                # Type=simple — Type=notify with `--sdnotify=healthy` was
-                # attempted in v5.49 Phase 7 but rejected by podman in --rm
-                # mode ("sdnotify policy 'healthy' requires a healthcheck to
-                # be set" — the Dockerfile HEALTHCHECK isn't surfaced to
-                # podman in this configuration). Stays Type=simple until a
-                # working sd_notify path is identified.
-                Type = "simple";
+                # v5.49 Phase 7: Type=notify + podman --sdnotify=healthy.
+                # Dockerfile HEALTHCHECK isn't propagated by podman build
+                # (known quirk — lands in history.created_by only), so the
+                # healthcheck is passed at run time via --health-cmd. Embed
+                # model warm-up needs --health-start-period=60s;
+                # TimeoutStartSec=180 covers cold model load.
+                Type = "notify";
+                NotifyAccess = "all";
                 Environment = [
                   "CUDA_VISIBLE_DEVICES=-1"
                   "DOCKER_HOST=unix:///run/podman/podman.sock"
                   "SURREAL_RUNTIME_STACK_SIZE=536870912"
                 ];
                 EnvironmentFile = "-${cfg.secretsEnvFile}";
+                TimeoutStartSec = 180;
                 TimeoutStopSec = 45;
                 ExecStartPre = [
                   "-${cfg.runtime} stop yadgar-backend"
@@ -258,7 +260,9 @@
                 ];
                 ExecStart = lib.concatStringsSep " " [
                   cfg.runtime "run --name yadgar-backend --rm --user root"
-                  "--network ${cfg.network}"
+                  "--network ${cfg.network} --sdnotify=healthy"
+                  "--health-cmd 'curl -f http://localhost:8001/health || exit 1'"
+                  "--health-interval 30s --health-timeout 5s --health-start-period 60s"
                   "-p 127.0.0.1:${toString cfg.backendSurrealPort}:8000"
                   "-p 127.0.0.1:${toString cfg.backendEmbedPort}:8001"
                   "-v ${dataDir}:/data"
@@ -288,8 +292,11 @@
                 Wants = [ "yadgar-backend.service" ];
               };
               Service = {
-                # Type=simple — same rationale as yadgar-backend above.
-                Type = "simple";
+                # v5.49 Phase 7: same Type=notify + --sdnotify=healthy +
+                # --health-cmd story as yadgar-backend above. NotifyAccess=all
+                # lets the host CLI emit STOPPING=1 for graceful-stop.
+                Type = "notify";
+                NotifyAccess = "all";
                 Environment = [
                   "DOCKER_HOST=unix:///run/podman/podman.sock"
                 ];
@@ -304,6 +311,7 @@
                   "-${cfg.secretsEnvFile}"
                   "-${upgradeEnvPath}"
                 ];
+                TimeoutStartSec = 120;
                 TimeoutStopSec = 45;
                 ExecStartPre = [
                   "-${cfg.runtime} stop yadgar"
@@ -312,7 +320,9 @@
                 ];
                 ExecStart = lib.concatStringsSep " " [
                   cfg.runtime "run --name yadgar --rm --user root"
-                  "--network ${cfg.network}"
+                  "--network ${cfg.network} --sdnotify=healthy"
+                  "--health-cmd 'curl -f http://localhost:8765/health || exit 1'"
+                  "--health-interval 30s --health-timeout 5s --health-start-period 10s"
                   "--add-host=host.containers.internal:host-gateway"
                   "-p 127.0.0.1:${toString cfg.corePort}:8765"
                   "-p 127.0.0.1:${toString cfg.vizPort}:42069"
