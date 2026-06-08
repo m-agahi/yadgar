@@ -6,6 +6,16 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.49.3] — 2026-06-08
+
+### Hotfix: Bug 14 — DB credential fallback + setup alias keys (Rocky VM iter-3)
+
+- **Bug 14 / Path A:** `yadgar/storage/__init__.py` — extracted `_resolve_db_credentials()` module-level helper replacing bare `os.environ["YADGAR_DB_USER"]` / `os.environ["YADGAR_DB_PASS"]` with a fallback chain: explicit `YADGAR_DB_USER` → `YADGAR_RW_USER` → `ValueError` naming both vars. No more `KeyError` when `yadgar setup` has only emitted RW vars.
+- **Bug 14 / Path B:** `yadgar/cli/setup.py` — extracted `_render_secrets_env()` helper; generated `secrets.env` now includes `YADGAR_DB_USER=yadgar` and `YADGAR_DB_PASS=<rw_pass>` alias lines (hardcoded literal values for systemd `EnvironmentFile` compat — no `${VAR:-default}` shell expansion).
+- **5 new tests** in `yadgar/tests/test_v5_49_3_db_user_fallback.py`.
+
+---
+
 ## [5.49.2] — 2026-06-08
 
 ### Hotfix: 2 carry-over bugs from Rocky VM fresh-install dogfood (iter-2)
