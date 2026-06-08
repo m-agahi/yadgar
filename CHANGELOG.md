@@ -6,6 +6,16 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.49.2] — 2026-06-08
+
+### Hotfix: 2 carry-over bugs from Rocky VM fresh-install dogfood (iter-2)
+
+- **Bug 12:** `DOCKERHUB_BACKEND_IMAGE` now uses `_backend_version()` (reads `backend_version` from `server.json`) instead of `_default_image()` (which read the core pip version). Fixes container pull failure: `yadgar-backend:5.49.2` does not exist — correct tag is `:5.4.0`. `install_systemd_service()` refactored to call the same helper. Fix: `yadgar/daemon.py` lines 78–113.
+- **Bug 13:** `YadgarDaemon.start()` (core container) now passes `-e YADGAR_DB_USER -e YADGAR_DB_PASS -e YADGAR_RW_USER -e YADGAR_RW_PASS -e YADGAR_RO_USER -e YADGAR_RO_PASS` + `--env-file <SECRETS_ENV_PATH>` (when file exists). Fixes `KeyError: YADGAR_DB_USER` in `yadgar/storage/__init__.py:207`. Fix: `yadgar/daemon.py` lines 283–299.
+- **7 new tests** in `yadgar/tests/test_v5_49_2_hotfix.py`.
+
+---
+
 ## [5.49.1] — 2026-06-08
 
 ### Hotfix: 11 daemon CLI + systemd generator bugs from Rocky VM fresh-install dogfood
