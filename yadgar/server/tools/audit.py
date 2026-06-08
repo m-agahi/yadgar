@@ -413,6 +413,48 @@ def _group_cross_project_pairs(storage, raw_pairs: list[tuple[dict, dict, float]
     return candidates
 
 
+def _fetch_anchored_by_prose_only_archives(storage) -> list[int]:
+    """Fetch memory_archive IDs that are at risk from retention purge.
+
+    Criteria (ALL must hold):
+      - _anchor tag ABSENT  (no explicit anchor signal in tags)
+      - is_protected = false (or absent — schemaless rows default to absent)
+      - heat = 0            (or absent — cold, not recently accessed)
+
+    These archives lack any structural anchor signal; their anchor intent is
+    encoded only in prose content. The upcoming retention purge (v5.49 Strand A)
+    will delete them unless the user intervenes before enabling
+    MEMORY_ARCHIVE_RETENTION_DAYS.
+    """
+    try:
+        rows = storage._q(
+            "SELECT id FROM memory_archive "
+            "WHERE (tags IS NONE OR '_anchor' NOTINSIDE tags) "
+            "AND (is_protected IS NONE OR is_protected = false) "
+            "AND (heat IS NONE OR heat = 0)"
+        )
+        return [storage._extract_id(r.get("id")) for r in rows if r.get("id") is not None]
+    except Exception:
+        logger.debug("_fetch_anchored_by_prose_only_archives failed", exc_info=True)
+        return []
+
+
+def _build_anchored_by_prose_only_result(ids: list[int]) -> dict:
+    """Build the anchored_by_prose_only audit sub-dict.
+
+    Returns {"count": 0, "sample": []} when no matches.
+    Adds "recommended_action" only when count > 0.
+    """
+    count = len(ids)
+    sample = ids[:10]
+    result: dict = {"count": count, "sample": sample}
+    if count > 0:
+        result["recommended_action"] = (
+            "review before enabling MEMORY_ARCHIVE_RETENTION_DAYS — these will be purged"
+        )
+    return result
+
+
 def _fetch_promote_rows(storage, directory: str, _now: str, cfg) -> list[dict]:
     """Fetch promote candidates: oversized anchors with wiki-worthy tags."""
     try:
@@ -727,12 +769,18 @@ def audit_anchors(
     _now_global = storage._now_iso()
     cross_candidates = _fetch_cross_project_candidates(storage, _now_global, cross_threshold)
 
+    # Phase 0 (v5.49) — prose-only archives at risk from upcoming retention purge.
+    # Computed globally: memory_archive has no directory_context column.
+    prose_only_ids = _fetch_anchored_by_prose_only_archives(storage)
+    anchored_by_prose_only = _build_anchored_by_prose_only_result(prose_only_ids)
+
     result: dict = {
         "scanned": scanned,
         "actions": actions,
         "dry_run": dry_run,
         "applied": applied,
         "cross_project_redundancy_candidates": cross_candidates,
+        "anchored_by_prose_only": anchored_by_prose_only,
     }
     if truncated:
         result["_truncated"] = True
