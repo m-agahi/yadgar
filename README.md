@@ -9,7 +9,9 @@
 
 </div>
 
-[Changelog](docs/CHANGELOG.md) · [Benchmark](#benchmark) · [Roadmap](#roadmap) · [Architecture](docs/architecture.md) · [JS/TS SDK](docs/sdk-js.md)
+[Changelog](docs/CHANGELOG.md) · [Benchmark](#benchmark) · [Roadmap](#roadmap) · [Architecture](docs/architecture.md) · [JS/TS SDK](docs/sdk-js.md) · [Agents guide](AGENTS.md)
+
+> **AI coding agents:** the operational guide lives in [`AGENTS.md`](AGENTS.md) — setup commands, dev environment, test runner, code style, PR rules, security gates. This README is the human overview.
 
 **JavaScript/TypeScript SDK available** — [`@yadgar/sdk`](sdk-js/) wraps all 53 MCP tools as typed async methods. Works in Node.js, Vercel Edge, Cloudflare Workers, and Deno. See [`sdk-js/README.md`](sdk-js/README.md) for install instructions and quick start.
 
@@ -110,123 +112,67 @@ Canonical benchmark entry point (LongMemEval + handler perf + runtime tracing + 
 
 ---
 
-## For AI agents setting up Yadgar
-
-> Canonical setup spec. Read this section; skip the rest of the README.
-
-**Pick a mode:**
-
-| Mode | Auth | When |
-|---|---|---|
-| `stdio` | none | Single Claude session. No daemon. |
-| `http` | bearer | Multi-session. Docker required (daemon runs SurrealDB + embed service in containers). |
-| `docker-manual` | bearer | Operator-managed two-container deploy without `yadgar daemon`. |
-
-**Mode: stdio — minimum viable.**
-
-Prereq: `pip install yadgar` (Python 3.14+ on host).
-
-Add to `~/.claude.json`:
-
-```json
-{
-  "mcpServers": {
-    "yadgar": {
-      "command": "yadgar",
-      "args": []
-    }
-  }
-}
-```
-
-Restart Claude Code. Done.
-
-**Mode: http (recommended) — three commands.**
-
-Prereq: Docker installed. Python 3.14+ only needed for `pip install yadgar` (no host Python at all if using `docker-manual` below).
-
-```bash
-pip install yadgar
-yadgar setup        # generates ~/.yadgar/secrets.env (chmod 600) with random token + DB pass
-set -a && . ~/.yadgar/secrets.env && set +a
-yadgar daemon start
-yadgar daemon configure-mcp   # writes ~/.claude.json with Authorization: Bearer header
-```
-
-Restart Claude Code. `configure-mcp` reads `$YADGAR_MCP_AUTH_TOKEN` from env at the time it runs; if unset, the header is omitted and `/mcp` returns 401.
-
-**Mode: docker-manual** — see [Docker](#docker) below.
-
-**Required env vars (http + docker modes):**
-
-| Var | Required when | Source |
-|---|---|---|
-| `YADGAR_MCP_AUTH_TOKEN` | `YADGAR_REQUIRE_AUTH=1` (v5 default) | `~/.yadgar/secrets.env` via `yadgar setup` |
-| `SURREAL_USER` / `SURREAL_PASS` | backend container starts | Same |
-| `YADGAR_DB_URL` / `YADGAR_EMBED_URL` | core container starts | Defaults in `yadgar daemon`; explicit in `docker-manual` |
-
-**Verify the install:**
-
-```bash
-yadgar daemon status        # http mode
-yadgar stats                # any mode — prints memory counts
-```
-
----
-
 ## Install
 
-Four install paths — all reach the same `yadgar-setup` post-install step:
+Python 3.14+ on the host (or use the Docker path below for zero host Python). Four install paths — all reach the same `yadgar setup` post-install step.
 
 **pipx (recommended for isolated install):**
 ```bash
 pipx install yadgar
-yadgar-setup
+yadgar setup
 ```
 
-**Nix flake:**
+**Nix flake (v5.46.0+):**
 ```bash
 nix profile install codeberg:maxagahi/yadgar
-yadgar-setup
+yadgar setup
 ```
 
-**Repo checkout (make-canonical):**
+**Repo checkout (development, make-canonical):**
 ```bash
 git clone https://codeberg.org/maxagahi/yadgar.git
 cd yadgar
-make setup            # no yadgar-setup needed; make is canonical for repo users
+make setup            # bundles install + hooks + agents + units + seed anchors
 ```
 
 **Plain pip:**
 ```bash
 pip install yadgar
+yadgar setup
 ```
 
-Needs Python 3.14+ on the host. For zero host Python see [Docker](#docker).
+`yadgar setup` writes `~/.yadgar/config.yaml`, generates `~/.yadgar/secrets.env` (chmod 600) with random `YADGAR_MCP_AUTH_TOKEN` + `SURREAL_PASS` + `YADGAR_RW_PASS` + `YADGAR_RO_PASS`, installs Claude Code hooks + subagent templates + rules, seeds anchors, and prepares systemd (Linux) or launchd (macOS) user units. Idempotent — re-run after upgrades.
 
-`yadgar-setup` configures: `~/.yadgar/`, daemon units (systemd/launchd), Claude Code hooks,
-subagent templates, config, rules, and seed anchors. Re-run after upgrades. See `docs/INSTALL.md`
-for per-platform detail and the `yadgar-setup --doctor` verification probe.
-
-## Quick setup
-
-`yadgar setup` does three things:
-
-1. Checks Docker (warns if missing — `stdio` mode still works without it).
-2. Writes `~/.yadgar/config.yaml` with defaults if absent.
-3. Generates random `YADGAR_MCP_AUTH_TOKEN` + `SURREAL_PASS` + `YADGAR_RW_PASS` + `YADGAR_RO_PASS` into `~/.yadgar/secrets.env` (chmod 600) if the file doesn't already exist.
-
-Then source the env file and start the daemon:
+Then start the daemon and register it with Claude Code:
 
 ```bash
 set -a && . ~/.yadgar/secrets.env && set +a
 yadgar daemon start
-yadgar daemon configure-mcp
+yadgar daemon configure-mcp   # writes ~/.claude.json with Authorization: Bearer header
 ```
+
+Restart Claude Code. Verify:
+
+```bash
+yadgar daemon status
+yadgar stats
+```
+
+Per-platform detail and the `yadgar setup --doctor` verification probe: [`docs/INSTALL.md`](docs/INSTALL.md).
+
+### Stdio-only (no daemon, no Docker)
+
+Single-session use. Skip `yadgar setup`. Add to `~/.claude.json`:
+
+```json
+{ "mcpServers": { "yadgar": { "command": "yadgar", "args": [] } } }
+```
+
+Restart Claude Code. No bearer auth; embed/rerank degrade gracefully without the backend.
 
 ## Docker
 
-Two containers. Backend = SurrealDB + embed service; core = MCP server.
+Two containers — backend (SurrealDB + embed service) and core (MCP server). Use this path when you want zero host Python or a fully operator-managed deploy.
 
 ```bash
 docker network create yadgar-net
@@ -243,10 +189,10 @@ docker run -d --name yadgar --network yadgar-net \
   -e YADGAR_DB_URL=http://yadgar-backend:8000 \
   -e YADGAR_EMBED_URL=http://yadgar-backend:8001 \
   -e YADGAR_MCP_AUTH_TOKEN=$YADGAR_MCP_AUTH_TOKEN \
-  openfantasy/yadgar:5.25.0
+  openfantasy/yadgar:5.48.0
 ```
 
-Containers bundle Python 3.14 — no host Python required.
+Containers bundle Python 3.14 — no host Python required. Source `~/.yadgar/secrets.env` (or generate the four required vars yourself) before launching.
 
 <details><summary><b>Auto-start on login (systemd user units)</b></summary>
 
@@ -464,6 +410,7 @@ subagents just won't auto-write their findings.
 
 ## Documentation
 
+- [AGENTS.md](AGENTS.md) — operational guide for AI coding agents (setup, dev env, tests, code style, PR rules)
 - [Architecture](docs/architecture.md) — component map, branch-aware retrieval, security, observability
 - [Memory lifecycle](docs/memory-lifecycle.md) — heat, archiving, pruning, project-state memories
 - [Retrieval](docs/retrieval.md) — fusion, rerank, branch filter, pipeline stages
@@ -481,7 +428,7 @@ subagents just won't auto-write their findings.
 
 ## Contributing
 
-Every change to `yadgar/**` must update `README.md` and `docs/` in the same PR. Conventional Commits format. No `Co-Authored-By:` trailers.
+Every change to `yadgar/**` must update `README.md` and `docs/` in the same PR. Conventional Commits format. No `Co-Authored-By:` trailers. AI coding agents working on this repo: read [`AGENTS.md`](AGENTS.md) for the full dev/test/PR contract.
 
 ## Related projects
 
