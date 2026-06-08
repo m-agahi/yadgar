@@ -292,6 +292,17 @@ class YadgarDaemon:
                 ).stdout
                 return {"status": "failed", "reason": f"container exited. Logs:\n{logs}"}
             if self._health_ok(profile.port):
+                # v5.49.0 Phase 6: emit READY=1 once health check confirms the
+                # container is serving. This signals systemd (Type=notify in
+                # the service unit) that the daemon is ready.  The host CLI is
+                # what systemd exec-watches — not the container process — so
+                # READY=1 belongs here, not inside the container.
+                try:
+                    from yadgar import sd_notify as _sd  # noqa: PLC0415
+
+                    _sd.ready()
+                except Exception:
+                    pass
                 return {
                     "status": "started",
                     "container": profile.container_name,
@@ -536,6 +547,9 @@ WantedBy=default.target
 
         # yadgar.service — core (MCP server)
         suffix = "-dev" if dev else ""
+        # Phase 7 follow-up: Type=notify + upgrade.env EnvironmentFile to match yadgar.service.in template.
+        # sd_notify signals (READY=1, STOPPING=1) require Type=notify.
+        # EnvironmentFile leading '-' makes missing file non-fatal (first install).
         core_unit = f"""\
 [Unit]
 Description=Yadgar Memory Engine — MCP Core Server
@@ -543,8 +557,10 @@ Requires=docker.service yadgar-db{suffix}.service
 After=docker.service yadgar-db{suffix}.service
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=all
 EnvironmentFile=/etc/yadgar/secrets.env
+EnvironmentFile=-{Path.home()}/.yadgar/upgrade.env
 ExecStartPre=-docker stop {profile.container_name}
 ExecStartPre=-docker rm {profile.container_name}
 ExecStart=docker run --rm \\

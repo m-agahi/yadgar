@@ -170,6 +170,28 @@ Single-session use. Skip `yadgar setup`. Add to `~/.claude.json`:
 
 Restart Claude Code. No bearer auth; embed/rerank degrade gracefully without the backend.
 
+## Updating
+
+Check for an available update:
+
+```bash
+yadgar update --check   # probes PyPI; prints upgrade command; exit 0
+```
+
+For `pipx` installs the suggested command is `pipx upgrade yadgar`. Run it manually, then `yadgar setup` (idempotent) to refresh hooks and units.
+
+### Automatic update (v5.49.0+)
+
+By default `yadgar update --install` is disabled (`update.install_enabled: false`). To enable:
+
+1. Read `MIGRATION_NOTES.md` § Upgrade orchestrator rollout.
+2. Set `update.install_enabled: true` in `~/.config/yadgar/config.yaml`.
+3. Run `yadgar update --install`.
+
+The orchestrator coordinates: PyPI probe → snapshot → image pull → graceful daemon stop (drains in-flight requests, flushes write queue, snapshots embed cache) → service restart → health-check → CLI upgrade → finalize verification. Automatic rollback on any image-pull or health-check failure. Operator recovery: `yadgar update --rollback`.
+
+Upgrade snapshots live at `~/.local/state/yadgar/upgrade-snapshots/`; the most recent 3 are retained (configurable via `update.snapshot_retention`).
+
 ## Docker
 
 Two containers — backend (SurrealDB + embed service) and core (MCP server). Use this path when you want zero host Python or a fully operator-managed deploy.

@@ -338,6 +338,15 @@ class Settings(BaseSettings):
     # Default 1 GiB.  The warning fires at most once per hour.
     DB_SIZE_WARNING_BYTES: int = 1_073_741_824
 
+    # memory_archive retention — v5.49.0 Phase 1 (purge_expired_archives).
+    # Set to 0 to disable permanent deletion entirely.
+    MEMORY_ARCHIVE_RETENTION_DAYS: int = 90
+    # Maximum rows purged in a single purge_expired_archives() call (circuit-breaker).
+    MEMORY_ARCHIVE_RETENTION_CIRCUIT_BREAKER: int = 500
+    # Skip archives whose created_at is more recent than this many days ago
+    # (prevents thrash-purging recently-created archives that landed old archived_at).
+    MEMORY_ARCHIVE_RETENTION_THRASH_GUARD_DAYS: int = 7
+
     # action_log retention — processed rows older than this are pruned each
     # consolidation cycle to prevent unbounded table growth.
     ACTION_LOG_RETENTION_DAYS: int = 7
@@ -680,6 +689,16 @@ class Settings(BaseSettings):
     # Gate for /api/control/update endpoint. Set to "on" to enable.
     # Default OFF — endpoint is for power users and Control-tab integration (v5.50).
     UPDATE_DEBUG_APIS_ENABLED: str = "off"
+    # v5.49.0 — Upgrade snapshot retention (I25 three-way registered)
+    # Keep the N most recent upgrade snapshots; older snapshots are pruned on next upgrade.
+    UPDATE_SNAPSHOT_RETENTION: int = 3
+    # v5.49.0 Phase 9 — Orchestrator knobs (I25 three-way registered)
+    # Gate for run_install(). Default OFF (opt-in safety: avoid accidental self-upgrades).
+    # Set to true in ~/.yadgar/config.yaml after reading docs/PLAN_V5_49_0.md § Rollout.
+    UPDATE_INSTALL_ENABLED: bool = False
+    # Maximum age in seconds for an upgrade lock before it's treated as stale.
+    # Default 3600 = 1 hour.  Allows recovery if the upgrader process was killed mid-run.
+    UPDATE_LOCK_MAX_AGE_SECONDS: int = 3600
 
     model_config = {"env_prefix": "YADGAR_"}
 

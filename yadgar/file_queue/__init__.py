@@ -154,6 +154,26 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         self._stop_event.set()
         self.join(timeout=5.0)
 
+    def flush_barrier(self, timeout: float) -> bool:
+        """Block until in-memory queue is drained to storage or timeout expires.
+
+        Returns True if drained cleanly, False if timed out. Caller must still
+        call stop() to terminate the drainer thread; flush_barrier guarantees
+        the IN-PROGRESS items have been applied.
+
+        Implementation: polls queue depth (checking pending files) at
+        50ms intervals. The background drainer thread continues to run and
+        process items. flush_barrier does NOT call _drain_once itself to
+        avoid concurrent access with the running drainer thread.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not self._queue.pending():
+                return True
+            time.sleep(0.05)
+        # Final check after timeout
+        return not bool(self._queue.pending())
+
     def drain_now(self) -> int:
         """Force an immediate drain pass. Returns number of items processed."""
         return self._drain_once()

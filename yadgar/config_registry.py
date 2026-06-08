@@ -268,6 +268,15 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_UPDATE_PYPI_URL", "https://pypi.org/pypi/yadgar/json", "string"),
     ConfigEntry("YADGAR_UPDATE_USER_AGENT_TEMPLATE", "yadgar/{version}", "string"),
     ConfigEntry("YADGAR_UPDATE_DEBUG_APIS_ENABLED", "off", "string"),
+    # ── v5.49.0 memory archive retention knobs ────────────────────────────────
+    ConfigEntry("YADGAR_MEMORY_ARCHIVE_RETENTION_DAYS", "90", "int"),
+    ConfigEntry("YADGAR_MEMORY_ARCHIVE_RETENTION_CIRCUIT_BREAKER", "500", "int"),
+    ConfigEntry("YADGAR_MEMORY_ARCHIVE_RETENTION_THRASH_GUARD_DAYS", "7", "int"),
+    # ── v5.49.0 upgrade snapshot retention ───────────────────────────────────
+    ConfigEntry("YADGAR_UPDATE_SNAPSHOT_RETENTION", "3", "int"),
+    # ── v5.49.0 Phase 9 orchestrator knobs ───────────────────────────────────
+    ConfigEntry("YADGAR_UPDATE_INSTALL_ENABLED", "false", "bool"),
+    ConfigEntry("YADGAR_UPDATE_LOCK_MAX_AGE_SECONDS", "3600", "int"),
 ]
 
 

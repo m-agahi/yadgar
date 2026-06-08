@@ -132,6 +132,9 @@ yadgar rules add|export|import        # retrieval / write policy rules
 yadgar config init|list|get|set|edit  # ~/.yadgar/config.yaml
 yadgar install_hooks --scope global   # wire Claude Code hooks; injects bearer token
 yadgar update --check                 # PyPI version probe (v5.48.0+)
+yadgar update --install               # multi-step coordinated upgrade (gated; opt-in)
+yadgar update --rollback              # restore prior image from latest snapshot
+yadgar daemon graceful-stop --timeout=30   # explicit drain barrier before stop
 ```
 
 HTTP smoke checks (loopback, unauthenticated):
@@ -143,6 +146,7 @@ curl -s http://127.0.0.1:8765/metrics | head
 
 ## Security considerations
 
+- **Upgrade orchestrator is opt-in** (`update.install_enabled: false` by default). Snapshot artefacts at `~/.local/state/yadgar/upgrade-snapshots/` may contain prior systemd unit content — chmod 700, do not commit to VCS.
 - **Never bypass auth.** Bearer middleware guards `/api/*`, `/hooks/*`, `/mcp`. `YADGAR_REQUIRE_AUTH=0` is initial-rollout only — production must run with `1`.
 - **Never log secrets.** Always-on secret patterns block AWS, GCP, Stripe, Slack, OpenAI, Anthropic keys, JWT, GitHub PATs, private keys, DB URIs at write time — adding an exception requires the context-aware allowlist (`~/.yadgar/secret-gate-allowlist.yaml`) plus the `check-secret-gate` pre-commit gate.
 - **Never query SurrealDB directly** (no `docker exec` into `yadgar-backend`, no raw `surreal sql`, no opening the surrealkv file). Use MCP tools (`recall`, `memory_stats`, `project_brief`) or the HTTP API.

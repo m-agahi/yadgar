@@ -881,6 +881,28 @@ FIELD_META: dict[str, dict[str, str]] = {
         ),
         "section": "wiki_similarity_gate",
     },
+    # v5.49.0 — memory_archive retention
+    "memory_archive_retention_days": {
+        "desc": (
+            "Purge memory_archive rows whose archived_at exceeds this age (days, default 90). "
+            "Set to 0 to disable permanent deletion entirely."
+        ),
+        "section": "memory_archive_retention",
+    },
+    "memory_archive_retention_circuit_breaker": {
+        "desc": (
+            "Maximum rows deleted in a single purge_expired_archives() call (default 500). "
+            "Fires a CRITICAL log when the cap is hit."
+        ),
+        "section": "memory_archive_retention",
+    },
+    "memory_archive_retention_thrash_guard_days": {
+        "desc": (
+            "Skip archives whose created_at is more recent than this many days ago (default 7). "
+            "Prevents thrash-purging recently-created archives that carry an old archived_at."
+        ),
+        "section": "memory_archive_retention",
+    },
     # v5.48.0 — update mechanism
     "update_check_on_start": {
         "desc": (
@@ -917,6 +939,31 @@ FIELD_META: dict[str, dict[str, str]] = {
         ),
         "section": "update",
     },
+    # v5.49.0 — upgrade snapshot retention
+    "update_snapshot_retention": {
+        "desc": (
+            "Number of upgrade snapshots to retain after each upgrade (default 3). "
+            "Older snapshots are pruned by the orchestrator. "
+            "Set to 0 to keep all snapshots (no pruning)."
+        ),
+        "section": "update",
+    },
+    # v5.49.0 Phase 9 — orchestrator knobs
+    "update_install_enabled": {
+        "desc": (
+            "Enable the yadgar update --install routine-upgrade orchestrator (default false). "
+            "Set to true after reading docs/PLAN_V5_49_0.md § Rollout. "
+            "When false, run_install() refuses immediately with a clear message."
+        ),
+        "section": "update",
+    },
+    "update_lock_max_age_seconds": {
+        "desc": (
+            "Maximum age in seconds for an upgrade lock before it is treated as stale (default 3600). "
+            "If the upgrader process was killed mid-run, the lock will be recycled after this period."
+        ),
+        "section": "update",
+    },
 }
 
 
@@ -949,6 +996,7 @@ SECTION_TITLES: dict[str, str] = {
     "wiki_similarity_gate": "Wiki Similarity Gate (v5.39.0)",
     "wiki_write_wait": "Wiki Write Wait / Read-Your-Writes (v5.41.2)",
     "update": "Update Mechanism (v5.48.0)",
+    "memory_archive_retention": "Memory Archive Retention (v5.49.0)",
 }
 
 # Ordered list of sections for deterministic output

@@ -36,7 +36,16 @@
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>YADGAR_SECRETS_ENV_FILE</key>
         <string>@YADGAR_SECRETS_ENV_FILE@</string>
+        <!-- Initial image tag at install time. Orchestrator rewrites ~/.yadgar/upgrade.env on upgrade;
+             launchctl setenv or plist edit required to propagate new tag to running launchd job. -->
+        <key>YADGAR_IMAGE_TAG</key>
+        <string>@YADGAR_CORE_IMAGE@</string>
     </dict>
+
+    <!-- ExitTimeOut: graceful SIGTERM window before SIGKILL. Default is 20s, too short for
+         queue flush. 30s mirrors the stop-timeout passed to the container runtime. -->
+    <key>ExitTimeOut</key>
+    <integer>30</integer>
 
     <!--
         ProgramArguments: /bin/sh -c wrap allows multi-flag podman run without

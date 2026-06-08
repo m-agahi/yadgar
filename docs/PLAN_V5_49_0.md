@@ -1,6 +1,6 @@
 # PLAN — v5.49.0: Upgrade Orchestrator + Memory Archive Retention
 
-**Status:** drafted 2026-06-08. Bundles two strands the user explicitly merged into one release. **READY for impl** (Phase-0 audit-anchor extension already drafted; pipx file-replacement repro completed 2026-06-08 — see § 1.B).
+**Status:** drafted 2026-06-08. Bundles two strands the user explicitly merged into one release. **IMPLEMENTED 2026-06-08** — feat/v5.49.0-bundle.
 
 **Strand A — Memory archive retention.** Carry-over of the original 2026-06-02 archive-retention plan (DPs A–E resolved; phase 0 `audit_anchors` extension already drafted). Backstop for the ~1300 heat=0 archives accumulating in `memory_archive` until v6 LLM curator ships.
 
@@ -472,3 +472,7 @@ Retention: keep last `update.snapshot_retention` (default 3) snapshots; older pu
 - `yadgar/file_queue/queue.py` — drainer `.stop()` (needs explicit barrier).
 - 2026-06-08 empirical repro (this plan, § 1.B).
 - 2026-06-08 user decisions: bundle both strands, full scope (Type=notify + sd_notify + launchd + zero-downtime intent).
+
+---
+
+**POST-IMPL HOTFIX 2026-06-08: paths corrected to XDG (`~/.local/state/yadgar/`) — initial plan referenced legacy `~/.yadgar/`.**
