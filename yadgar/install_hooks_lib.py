@@ -147,8 +147,15 @@ def _build_core_hooks(
 ) -> None:
     """Populate the four core (replace-always) hook event entries."""
 
+    # Pin the python interpreter to sys.executable — settings.json carries
+    # literal command strings, so `python3` would resolve on Claude Code's
+    # PATH at hook-fire time (often a system python without yadgar
+    # importable, e.g. on NixOS). The installer's python IS the one that
+    # can resolve `import yadgar.paths`, so pin to it.
+    _python = shlex.quote(sys.executable)
+
     def _runner_entry(hook_type: str, matcher: str = "") -> dict:
-        cmd = f"python3 {shlex.quote(runner)} {hook_type}"
+        cmd = f"{_python} {shlex.quote(runner)} {hook_type}"
         return _make_hook_entry(cmd, matcher, env_block)
 
     hooks_config["PreCompact"] = [_runner_entry("pre-compact-drain")]
@@ -166,7 +173,7 @@ def _build_core_hooks(
     hooks_config["UserPromptSubmit"] = [_runner_entry("prompt-recall")]
 
     # v5.20.0: direct-command entry so hookEventName is always emitted
-    db_cmd = f'python3 "{db_lockdown_dst}"'
+    db_cmd = f"{_python} {shlex.quote(str(db_lockdown_dst))}"
     hooks_config["PreToolUse"] = [_make_hook_entry(db_cmd, "Bash", env_block)]
 
 
@@ -184,10 +191,13 @@ def _install_append_hooks(
         ("subagent-start.py", "yadgar-subagent-start.py", "SubagentStart", ""),
         ("file-changed.py", "yadgar-file-changed.py", "FileChanged", ""),
     ]
+    _python = shlex.quote(sys.executable)
     for src_name, dst_name, event, matcher in _append_specs:
         dst = hooks_dir / dst_name
         _copy_hook(package_hooks / src_name, dst, dry_run)
-        _append_if_absent(hooks_config, event, f'python3 "{dst}"', env_block, matcher)
+        _append_if_absent(
+            hooks_config, event, f"{_python} {shlex.quote(str(dst))}", env_block, matcher
+        )
 
 
 def _write_global_stop_hooks(
@@ -332,11 +342,20 @@ def install_hooks_impl(
 
     settings_data["hooks"] = hooks_config
 
+    _python = shlex.quote(sys.executable)
     _stop_entry = [
-        {"matcher": "", "hooks": [{"type": "command", "command": f'python3 "{stop_dst}"'}]}
+        {
+            "matcher": "",
+            "hooks": [{"type": "command", "command": f"{_python} {shlex.quote(str(stop_dst))}"}],
+        }
     ]
     _session_end_entry = [
-        {"matcher": "", "hooks": [{"type": "command", "command": f'python3 "{session_end_dst}"'}]}
+        {
+            "matcher": "",
+            "hooks": [
+                {"type": "command", "command": f"{_python} {shlex.quote(str(session_end_dst))}"}
+            ],
+        }
     ]
 
     if scope == "global":
