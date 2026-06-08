@@ -3681,13 +3681,18 @@
     "inh_depth": 0,
     "methods": 4
   },
+  "yadgar/consolidation/cleanup.py::_CleanupMixin@65": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 4
+  },
   "yadgar/consolidation/cleanup.py::_CleanupMixin@9": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 3
   },
   "yadgar/consolidation/cleanup.py::__file__": {
-    "loc": 216
+    "loc": 256
   },
   "yadgar/consolidation/cleanup.py::_observe_action_batch@11": {
     "cyclo": 2,
@@ -3704,6 +3709,12 @@
   "yadgar/consolidation/cleanup.py::_observe_action_batch@9": {
     "cyclo": 2,
     "loc": 8,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/consolidation/cleanup.py::_observe_archive_purge@22": {
+    "cyclo": 2,
+    "loc": 16,
     "nesting": 2,
     "params": 1
   },
@@ -3726,6 +3737,12 @@
     "params": 1
   },
   "yadgar/consolidation/cleanup.py::_process_action_log@50": {
+    "cyclo": 19,
+    "loc": 83,
+    "nesting": 3,
+    "params": 1
+  },
+  "yadgar/consolidation/cleanup.py::_process_action_log@68": {
     "cyclo": 19,
     "loc": 83,
     "nesting": 3,
@@ -3761,6 +3778,12 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/consolidation/cleanup.py::_prune_old_episodes_safe@197": {
+    "cyclo": 3,
+    "loc": 9,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/consolidation/cleanup.py::_quarantine_action_group@21": {
     "cyclo": 3,
     "loc": 23,
@@ -3768,6 +3791,12 @@
     "params": 3
   },
   "yadgar/consolidation/cleanup.py::_quarantine_action_group@22": {
+    "cyclo": 3,
+    "loc": 23,
+    "nesting": 2,
+    "params": 3
+  },
+  "yadgar/consolidation/cleanup.py::_quarantine_action_group@40": {
     "cyclo": 3,
     "loc": 23,
     "nesting": 2,
@@ -3803,6 +3832,12 @@
     "nesting": 3,
     "params": 1
   },
+  "yadgar/consolidation/cleanup.py::_run_retention_tasks@207": {
+    "cyclo": 8,
+    "loc": 50,
+    "nesting": 3,
+    "params": 1
+  },
   "yadgar/consolidation/cleanup.py::_try_store_action_summary@133": {
     "cyclo": 2,
     "loc": 44,
@@ -3810,6 +3845,12 @@
     "params": 4
   },
   "yadgar/consolidation/cleanup.py::_try_store_action_summary@134": {
+    "cyclo": 2,
+    "loc": 44,
+    "nesting": 2,
+    "params": 4
+  },
+  "yadgar/consolidation/cleanup.py::_try_store_action_summary@152": {
     "cyclo": 2,
     "loc": 44,
     "nesting": 2,
