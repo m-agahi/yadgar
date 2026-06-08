@@ -36,7 +36,7 @@ YADGAR_BACKEND_VERSION := $(shell grep -m1 '^BACKEND_VERSION' $(REPO_ROOT)yadgar
         install-hooks install-agents config-sync install-rules \
         seed-anchors detect-runtime detect-os install-runtime clean check \
         pull-images bootstrap-secrets enable-units enable-units-linux enable-units-macos \
-        _enable-units-auto restore
+        _enable-units-auto restore upgrade-test
 
 all: setup
 
@@ -252,3 +252,8 @@ clean:
 ## check: Run v5.45.x + v5.46.x tests
 check:
 	python3 -m pytest yadgar/tests/test_v5_45_*.py yadgar/tests/test_v5_46_*.py --noconftest --override-ini="addopts=" -q
+
+## upgrade-test: Print the manual upgrade-test runbook (see docs/UPGRADE_TEST.md)
+upgrade-test:
+	@echo "Manual recipe — see docs/UPGRADE_TEST.md for the runbook."
+	@cat docs/UPGRADE_TEST.md
