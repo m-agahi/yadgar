@@ -400,6 +400,7 @@ def _run_forward(ctx: _RunCtx, target_version: str | None) -> OrchestratorResult
     _phase_snapshot(ctx)
     prev_tag = ctx.snapshot.read_prev_image_tag() or ""  # type: ignore[union-attr]
     prev_cli = ctx.snapshot.read_prev_cli_version() or ctx.from_version  # type: ignore[union-attr]
+    ctx.snapshot.write_target_version(ctx.to_version)  # type: ignore[union-attr]
     ctx.log(OrchestratorState.SNAPSHOTTING, {"prev_image_tag": prev_tag})
 
     # Step 4: PULLING_IMAGE
