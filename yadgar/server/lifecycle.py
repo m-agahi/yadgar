@@ -385,13 +385,30 @@ def shutdown():
         return
     _st._shutdown_done = True
 
+    # v5.49.0 Phase 6: signal sd_notify STOPPING=1 immediately
+    try:
+        from yadgar import sd_notify as _sd_notify  # noqa: PLC0415
+
+        _sd_notify.stopping()
+    except Exception:  # noqa: BLE001
+        pass
+
+    # v5.49.0 Phase 6: flush file queue before tearing down storage
     if _st._queue_drainer is not None:
+        _st._queue_drainer.flush_barrier(timeout=10.0)
         _st._queue_drainer.stop()
     # v5.7.0 PR-0: consolidation daemon removed; no stop() needed.
     if _st._staleness is not None:
         _st._staleness.stop()
     if _st._buffer is not None:
         _st._buffer.flush()
+    # v5.49.0 Phase 6: snapshot embed caches before closing storage
+    try:
+        from yadgar.drain import snapshot_embed_caches as _snap  # noqa: PLC0415
+
+        _snap()
+    except Exception:  # noqa: BLE001
+        pass
     if _st._storage is not None:
         _st._storage.close()
 
