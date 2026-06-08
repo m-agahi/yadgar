@@ -6,6 +6,25 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.49.1] — 2026-06-08
+
+### Hotfix: 11 daemon CLI + systemd generator bugs from Rocky VM fresh-install dogfood
+
+- **Bug 1:** `start_backend()` now passes `--env-file <SECRETS_ENV_PATH>` + explicit `-e` flags for `SURREAL_USER/PASS`, `YADGAR_RW_USER/PASS`, `YADGAR_RO_USER/PASS`, `YADGAR_MCP_AUTH_TOKEN` — backend no longer fails with "SURREAL_USER is required".
+- **Bug 2:** Added `--user root` to both `start_backend()` and `start()` (core) `docker run` argv — fixes `/data/logs: Permission denied` with rootless podman + named volumes.
+- **Bug 3:** `cmd_daemon install-service` no longer raises `KeyError: 'service_file'` — CLI handler updated to use `result['backend_service']` + `result['core_service']` keys.
+- **Bug 4:** Default `YADGAR_IMAGE` changed from `looseking/yadgar:latest` → `docker.io/openfantasy/yadgar:latest`. Same for `YADGAR_BACKEND_IMAGE` → `docker.io/openfantasy/yadgar-backend:latest`.
+- **Bug 5:** Generated backend unit now reads `backend_version` from `server.json` for image tag instead of using the core version.
+- **Bug 6:** Generated unit `EnvironmentFile` changed from `/etc/yadgar/secrets.env` → `~/.config/yadgar/secrets.env` (XDG `SECRETS_ENV_PATH`).
+- **Bug 7:** Generated core unit `EnvironmentFile` for `upgrade.env` changed from `/root/.yadgar/upgrade.env` → `~/.local/state/yadgar/upgrade.env` (XDG `STATE_DIR`).
+- **Bug 8:** Generated backend unit changed from `Type=simple` → `Type=notify` + `--sdnotify=healthy` + explicit `--health-cmd curl -f http://localhost:8001/health` flag.
+- **Bug 9:** Generated unit filename renamed from `yadgar-db.service` → `yadgar-backend.service` to match Phase 7 templates. Core unit `Requires=/After=` updated to match.
+- **Bug 10:** Generated backend unit `--memory` changed from dynamic `{mem_mb}m` → fixed `4g` — enough headroom for sentence-transformers/all-MiniLM-L6-v2 (~500MB model + SurrealDB).
+- **Bug 11:** Generated backend unit `-v` changed from named volume `yadgar-db-data:/data` → host bind mount `~/.local/share/yadgar:/data` (XDG `DATA_DIR`) — data survives container removal.
+- **16 new tests** in `yadgar/tests/test_daemon_cli_fixes_v5_49_1.py` covering all 11 bugs.
+
+---
+
 ## [5.49.0] — 2026-06-08
 
 ### Memory archive retention (Strand A)
