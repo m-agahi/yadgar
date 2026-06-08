@@ -3,6 +3,38 @@
 import yadgar.paths as _paths
 
 
+def _render_secrets_env(token: str, db_pass: str, rw_pass: str, ro_pass: str) -> str:
+    """Return the secrets.env file content as a string.
+
+    v5.49.3: emits YADGAR_DB_USER / YADGAR_DB_PASS alias keys (hardcoded
+    duplicate of YADGAR_RW_USER / YADGAR_RW_PASS) so that the storage layer
+    does not KeyError when YADGAR_ALLOW_ROOT is not set.  systemd EnvironmentFile
+    does not evaluate shell expressions, so we duplicate the value directly.
+    """
+    return (
+        "# Yadgar v5 secrets — do NOT commit. chmod 600 enforced below.\n"
+        "# For HTTP/Docker mode the daemon reads these via EnvironmentFile.\n"
+        "\n"
+        "# MCP bearer token (required when YADGAR_REQUIRE_AUTH=1, the v5 default)\n"
+        f"YADGAR_MCP_AUTH_TOKEN={token}\n"
+        "\n"
+        "# SurrealDB root (required by backend container)\n"
+        "SURREAL_USER=root\n"
+        f"SURREAL_PASS={db_pass}\n"
+        "\n"
+        "# Three-tier DB users (optional; backend provisions on first start)\n"
+        "YADGAR_RW_USER=yadgar\n"
+        f"YADGAR_RW_PASS={rw_pass}\n"
+        "YADGAR_RO_USER=viewer\n"
+        f"YADGAR_RO_PASS={ro_pass}\n"
+        "\n"
+        "# v5.49.3: DB credential aliases — fall back to RW user\n"
+        "# Duplicated literally (not shell expansion) for systemd EnvironmentFile compat.\n"
+        f"YADGAR_DB_USER=yadgar\n"
+        f"YADGAR_DB_PASS={rw_pass}\n"
+    )
+
+
 def cmd_setup(args):
     """First-run setup: check Docker, create config dirs, generate credentials,
     print MCP snippet + secrets.env template."""
@@ -50,23 +82,7 @@ def cmd_setup(args):
         db_pass = _secrets.token_urlsafe(24)
         rw_pass = _secrets.token_urlsafe(24)
         ro_pass = _secrets.token_urlsafe(24)
-        secrets_path.write_text(
-            "# Yadgar v5 secrets — do NOT commit. chmod 600 enforced below.\n"
-            "# For HTTP/Docker mode the daemon reads these via EnvironmentFile.\n"
-            "\n"
-            "# MCP bearer token (required when YADGAR_REQUIRE_AUTH=1, the v5 default)\n"
-            f"YADGAR_MCP_AUTH_TOKEN={token}\n"
-            "\n"
-            "# SurrealDB root (required by backend container)\n"
-            "SURREAL_USER=root\n"
-            f"SURREAL_PASS={db_pass}\n"
-            "\n"
-            "# Three-tier DB users (optional; backend provisions on first start)\n"
-            "YADGAR_RW_USER=yadgar\n"
-            f"YADGAR_RW_PASS={rw_pass}\n"
-            "YADGAR_RO_USER=viewer\n"
-            f"YADGAR_RO_PASS={ro_pass}\n"
-        )
+        secrets_path.write_text(_render_secrets_env(token, db_pass, rw_pass, ro_pass))
         try:
             secrets_path.chmod(0o600)
         except OSError:
