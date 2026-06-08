@@ -2758,7 +2758,7 @@
     "methods": 0
   },
   "yadgar/config_yaml.py::__file__": {
-    "loc": 1293
+    "loc": 1316
   },
   "yadgar/config_yaml.py::cmd_config_edit@1001": {
     "cyclo": 7,
