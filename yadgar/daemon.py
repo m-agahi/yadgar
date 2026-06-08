@@ -75,8 +75,32 @@ def _default_image(repo: str) -> str:
         return f"{repo}:latest"
 
 
+def _backend_version() -> str:
+    """Return the backend image version from the bundled server.json.
+
+    v5.49.2 Bug 12: backend image track is independent of the core (pip) version.
+    server.json is the single source of truth for backend_version.
+    Falls back to yadgar.BACKEND_VERSION (also from server.json), then 'latest'.
+    """
+    try:
+        import json as _json  # noqa: PLC0415
+
+        _server_json = _source_root() / "server.json"
+        _data = _json.loads(_server_json.read_text())
+        return _data.get("backend_version", "latest")
+    except Exception:
+        pass
+    try:
+        from yadgar import BACKEND_VERSION  # noqa: PLC0415
+
+        return BACKEND_VERSION
+    except Exception:
+        return "latest"
+
+
 DOCKERHUB_IMAGE = _default_image("docker.io/openfantasy/yadgar")
-DOCKERHUB_BACKEND_IMAGE = _default_image("docker.io/openfantasy/yadgar-backend")
+# v5.49.2 Bug 12: use _backend_version() — backend image is on an independent version track.
+DOCKERHUB_BACKEND_IMAGE = f"docker.io/openfantasy/yadgar-backend:{_backend_version()}"
 DEFAULT_BACKEND_EMBED_PORT = 8001
 _BACKEND_CONTAINER = "yadgar-backend"
 _BACKEND_VOLUME = "yadgar-db-data"
@@ -91,9 +115,9 @@ def _host_memory_bytes() -> int:
     if platform.system() == "Linux":
         try:
             with open("/proc/meminfo") as f:
-                for line in f:
-                    if line.startswith("MemTotal:"):
-                        return int(line.split()[1]) * 1024
+                mem_line = next((ln for ln in f if ln.startswith("MemTotal:")), None)
+            if mem_line:
+                return int(mem_line.split()[1]) * 1024
         except OSError:
             pass
     if platform.system() == "Darwin":
@@ -267,7 +291,29 @@ class YadgarDaemon:
             "YADGAR_DATA_DIR=/data",
             "-e",
             "YADGAR_MCP_AUTH_TOKEN",
+            # v5.49.2 Bug 13: pass all 6 secret DB env vars so storage layer
+            # doesn't KeyError on YADGAR_DB_USER / YADGAR_DB_PASS.
+            "-e",
+            "YADGAR_DB_USER",
+            "-e",
+            "YADGAR_DB_PASS",
+            "-e",
+            "YADGAR_RW_USER",
+            "-e",
+            "YADGAR_RW_PASS",
+            "-e",
+            "YADGAR_RO_USER",
+            "-e",
+            "YADGAR_RO_PASS",
         ]
+
+        # v5.49.2 Bug 13: pass secrets file to core container (mirrors start_backend).
+        from yadgar import paths as _paths  # noqa: PLC0415
+
+        _secrets_path = _paths.SECRETS_ENV_PATH
+        if _secrets_path.exists():
+            # Insert --env-file before image name (append position is fine; image appended later)
+            cmd += ["--env-file", str(_secrets_path)]
 
         if profile.is_dev:
             source = _source_root()
@@ -527,7 +573,6 @@ class YadgarDaemon:
 
     def install_systemd_service(self, dev: bool = False) -> dict:
         """Write two systemd user service units: yadgar-backend.service and yadgar.service."""
-        import json as _json  # noqa: PLC0415
 
         from yadgar import paths as _paths  # noqa: PLC0415
 
@@ -541,21 +586,17 @@ class YadgarDaemon:
         backend_data_dir = _paths.DATA_DIR
 
         # Bug 5: load backend_version from server.json (not core version)
-        _server_json = _source_root() / "server.json"
-        try:
-            _server_data = _json.loads(_server_json.read_text())
-            _backend_version = _server_data.get("backend_version", "latest")
-        except Exception:
-            _backend_version = "latest"
+        # v5.49.2: refactored to call module-level _backend_version() helper.
+        _bv = _backend_version()
 
         # Resolve actual backend image with correct version tag
         # If image already has a tag (from env), use as-is; otherwise append backend_version
         if ":" not in backend_image.split("/")[-1]:
-            backend_image_tagged = f"{backend_image}:{_backend_version}"
+            backend_image_tagged = f"{backend_image}:{_bv}"
         else:
             # Replace the tag portion with backend_version
             _base = backend_image.rsplit(":", 1)[0]
-            backend_image_tagged = f"{_base}:{_backend_version}"
+            backend_image_tagged = f"{_base}:{_bv}"
 
         # Bug 6: use XDG secrets path (not /etc/yadgar/secrets.env)
         secrets_env_path = _paths.SECRETS_ENV_PATH
