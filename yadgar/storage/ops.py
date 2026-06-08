@@ -141,6 +141,131 @@ class _OpsMixin:
         self._q(f"DELETE FROM {table} WHERE {where}", {"cutoff": cutoff})
         return n
 
+    # ------------------------------------------------------------------ Archive Retention
+
+    def purge_expired_archives(self, dry_run: bool = False) -> dict:
+        """Purge memory_archive rows older than retention threshold.
+
+        Returns dict:
+          {
+            "candidates": int,            # total matched (before circuit-breaker cap)
+            "purged": int,                # actual rows deleted (0 if dry_run)
+            "skipped_protected": int,
+            "skipped_anchor": int,
+            "skipped_recent": int,
+            "circuit_breaker_hit": bool,
+          }
+        """
+        from datetime import UTC, datetime, timedelta
+
+        from yadgar.config import get_settings
+
+        cfg = get_settings()
+        retention_days: int = cfg.MEMORY_ARCHIVE_RETENTION_DAYS
+        circuit_breaker: int = cfg.MEMORY_ARCHIVE_RETENTION_CIRCUIT_BREAKER
+        thrash_guard_days: int = cfg.MEMORY_ARCHIVE_RETENTION_THRASH_GUARD_DAYS
+
+        _zero: dict = {
+            "candidates": 0,
+            "purged": 0,
+            "skipped_protected": 0,
+            "skipped_anchor": 0,
+            "skipped_recent": 0,
+            "circuit_breaker_hit": False,
+        }
+
+        if retention_days == 0:
+            return _zero
+
+        now = datetime.now(UTC)
+        archived_cutoff = (now - timedelta(days=retention_days)).isoformat()
+        thrash_cutoff = (now - timedelta(days=thrash_guard_days)).isoformat()
+
+        # Eligible rows: old enough, not protected, not anchor-tagged,
+        # not recently created, and not in active migration grace.
+        # Uses INSIDE/NOTINSIDE — the operator convention for SurrealDB v2 embedded mode.
+        eligible_rows = self._q(
+            "SELECT meta::id(id) AS rid FROM memory_archive "
+            "WHERE archived_at < $archived_cutoff "
+            "AND is_protected != true "
+            "AND '_anchor' NOTINSIDE tags "
+            "AND 'anchor' NOTINSIDE tags "
+            "AND created_at < $thrash_cutoff "
+            "AND (migration_grace != true OR valid_until < $now_iso) "
+            "LIMIT $limit",
+            {
+                "archived_cutoff": archived_cutoff,
+                "thrash_cutoff": thrash_cutoff,
+                "now_iso": now.isoformat(),
+                "limit": circuit_breaker + 1,
+            },
+        )
+
+        candidates = len(eligible_rows)
+        circuit_breaker_hit = candidates > circuit_breaker
+        if circuit_breaker_hit:
+            _log.critical(
+                "purge_expired_archives: circuit-breaker hit — %d candidates exceed limit %d; "
+                "capping purge to %d rows",
+                candidates,
+                circuit_breaker,
+                circuit_breaker,
+            )
+            eligible_rows = eligible_rows[:circuit_breaker]
+            candidates = circuit_breaker
+
+        # Count skip categories over the same archived_at window (before exclusions).
+        skipped_protected = self._count_archive_skip_protected(archived_cutoff)
+        skipped_anchor = self._count_archive_skip_anchor(archived_cutoff)
+        skipped_recent = self._count_archive_skip_recent(archived_cutoff, thrash_cutoff)
+
+        purged = 0
+        if not dry_run and eligible_rows:
+            ids = [int(r["rid"]) for r in eligible_rows]
+            for aid in ids:
+                self._q(
+                    "DELETE type::record('memory_archive', $id)",
+                    {"id": aid},
+                )
+            purged = len(ids)
+
+        return {
+            "candidates": candidates,
+            "purged": purged,
+            "skipped_protected": skipped_protected,
+            "skipped_anchor": skipped_anchor,
+            "skipped_recent": skipped_recent,
+            "circuit_breaker_hit": circuit_breaker_hit,
+        }
+
+    def _count_archive_skip_protected(self, archived_cutoff: str) -> int:
+        """Count protected archives older than cutoff."""
+        rows = self._q(
+            "SELECT count() AS c FROM memory_archive "
+            "WHERE archived_at < $cutoff AND is_protected = true GROUP ALL",
+            {"cutoff": archived_cutoff},
+        )
+        return int(rows[0]["c"]) if rows and rows[0].get("c") else 0
+
+    def _count_archive_skip_anchor(self, archived_cutoff: str) -> int:
+        """Count anchor-tagged archives older than cutoff."""
+        rows = self._q(
+            "SELECT count() AS c FROM memory_archive "
+            "WHERE archived_at < $cutoff "
+            "AND ('_anchor' INSIDE tags OR 'anchor' INSIDE tags) GROUP ALL",
+            {"cutoff": archived_cutoff},
+        )
+        return int(rows[0]["c"]) if rows and rows[0].get("c") else 0
+
+    def _count_archive_skip_recent(self, archived_cutoff: str, thrash_cutoff: str) -> int:
+        """Count archives older than archived_cutoff but recently created (thrash-guard)."""
+        rows = self._q(
+            "SELECT count() AS c FROM memory_archive "
+            "WHERE archived_at < $cutoff AND created_at >= $thrash GROUP ALL",
+            {"cutoff": archived_cutoff, "thrash": thrash_cutoff},
+        )
+        return int(rows[0]["c"]) if rows and rows[0].get("c") else 0
+
     # ------------------------------------------------------------------ Engram Slots
 
     def init_engram_slots(self, num_slots: int):
@@ -300,6 +425,25 @@ class _OpsMixin:
 
 
 # ── Module-level helpers ────────────────────────────────────────────────────
+
+
+def purge_expired_archives(storage, dry_run: bool = False) -> dict:
+    """Purge memory_archive rows older than retention threshold.
+
+    Thin wrapper around storage.purge_expired_archives() for callers that
+    prefer the standalone-function calling convention.
+
+    Returns dict:
+      {
+        "candidates": int,            # total matched (before circuit-breaker cap)
+        "purged": int,                # actual rows deleted (0 if dry_run)
+        "skipped_protected": int,
+        "skipped_anchor": int,
+        "skipped_recent": int,
+        "circuit_breaker_hit": bool,
+      }
+    """
+    return storage.purge_expired_archives(dry_run=dry_run)
 
 
 def vacuum_checkpoints(storage, *, dry_run: bool = True) -> dict:

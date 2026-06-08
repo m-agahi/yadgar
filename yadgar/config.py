@@ -338,6 +338,15 @@ class Settings(BaseSettings):
     # Default 1 GiB.  The warning fires at most once per hour.
     DB_SIZE_WARNING_BYTES: int = 1_073_741_824
 
+    # memory_archive retention — v5.49.0 Phase 1 (purge_expired_archives).
+    # Set to 0 to disable permanent deletion entirely.
+    MEMORY_ARCHIVE_RETENTION_DAYS: int = 90
+    # Maximum rows purged in a single purge_expired_archives() call (circuit-breaker).
+    MEMORY_ARCHIVE_RETENTION_CIRCUIT_BREAKER: int = 500
+    # Skip archives whose created_at is more recent than this many days ago
+    # (prevents thrash-purging recently-created archives that landed old archived_at).
+    MEMORY_ARCHIVE_RETENTION_THRASH_GUARD_DAYS: int = 7
+
     # action_log retention — processed rows older than this are pruned each
     # consolidation cycle to prevent unbounded table growth.
     ACTION_LOG_RETENTION_DAYS: int = 7
