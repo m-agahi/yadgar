@@ -23,10 +23,31 @@ import logging
 import os
 import shlex
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_python_shebang() -> str:
+    """Return the shebang line to pin yadgar-bundled hooks at install time.
+
+    Hooks that `import yadgar.paths` (stop-memory-checkpoint, session-end-capture,
+    post-tool-capture, prompt-recall) need a Python that has yadgar on its path.
+    `#!/usr/bin/env python3` resolves to whichever python3 is first on PATH,
+    which on many systems (notably NixOS with a pipx-installed yadgar) is a
+    system python that does NOT have yadgar importable.
+
+    Strategy: at copy time, pin the shebang to `sys.executable` — the same
+    interpreter running install_hooks. Since users invoke `yadgar install_hooks`
+    from the venv that has yadgar, this is the interpreter that can resolve
+    `import yadgar.paths`.
+
+    Returns the literal shebang line including the leading `#!` and trailing
+    newline.
+    """
+    return f"#!{sys.executable}\n"
 
 
 # ── Container detection ────────────────────────────────────────────────────
@@ -46,12 +67,27 @@ def is_running_in_container() -> bool:
 
 
 def _copy_hook(src: Path, dst: Path, dry_run: bool) -> None:
-    """Copy a hook script and mark it executable (no-op on dry_run)."""
+    """Copy a hook script, rewrite its shebang to the installer's python,
+    and mark it executable. No-op on dry_run.
+
+    Shebang rewrite: any `#!/usr/bin/env python3` (or `#!/usr/bin/env python`)
+    first line is replaced with `#!<sys.executable>` so yadgar-bundled hooks
+    that `import yadgar.paths` find a python that has yadgar on its path.
+    Other shebang forms are preserved.
+    """
     if dry_run:
         return
-    if src.exists():
-        shutil.copy2(src, dst)
-        dst.chmod(0o755)
+    if not src.exists():
+        return
+    text = src.read_text()
+    lines = text.splitlines(keepends=True)
+    if lines and lines[0].startswith("#!") and "python" in lines[0]:
+        first = lines[0].strip()
+        if first in ("#!/usr/bin/env python3", "#!/usr/bin/env python"):
+            lines[0] = _resolve_python_shebang()
+            text = "".join(lines)
+    dst.write_text(text)
+    dst.chmod(0o755)
 
 
 def _make_hook_entry(cmd: str, matcher: str, env_block: dict) -> dict:
