@@ -1,0 +1,4 @@
+{
+  "reason": "invalid tier: 'bogus_tier'. Must be one of ['conditional', 'ephemeral', 'semantic_immortal']",
+  "stored": false
+}
