@@ -6,6 +6,26 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.49.6] — 2026-06-09
+
+### Coverage Wave 1: 315 new unit tests across 10 modules
+
+- **Audit tooling:** added `pytest-cov>=6.0` and `coverage>=7.0` to test extras. Initial audit (`docs/UNTESTED_MODULES_V5_49_6.md`) identified 59 modules at <10% line coverage.
+- **Wave 1 (10 modules):** test files added for top-10 untested modules by LOC. 7 of 10 reach ≥60% line coverage; 3 have documented untestable floors.
+  - `yadgar/seed/_analysis.py` → 99% (33 tests — pure functions)
+  - `yadgar/scripts/hook_runner.py` → 89% (35 tests)
+  - `yadgar/scripts/nightly_cycle.py` → 72% (21 tests)
+  - `yadgar/server/tools/admin_invariants.py` → 67% (24 tests)
+  - `yadgar/seed/_generate.py` → 64% (27 tests)
+  - `yadgar/causal_discovery/pc.py` → 63% (30 tests — pure numpy PC algorithm)
+  - `yadgar/install_hooks_lib.py` → 58% (35 tests; floor: install_hooks_impl needs real hooks dir)
+  - `yadgar/daemon.py` → 41% (63 tests; floor: Docker/subprocess methods excluded)
+  - `yadgar/consolidation/cls.py` → 21% (40 tests; floor: mixin methods need full engine)
+  - `yadgar/cli/stats.py` → 15% (7 tests; floor: direct DB path requires live SurrealDB)
+- **Total new tests:** 315. All existing tests remain green.
+
+---
+
 ## [5.49.5] — 2026-06-09
 
 ### Refactor: memorize() phase extraction (cyclo 114 → orchestrator ≤ 10)
