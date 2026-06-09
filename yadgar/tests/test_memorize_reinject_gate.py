@@ -46,43 +46,62 @@ def _make_settings_stub(reinject_on_write: bool) -> MagicMock:
 
 
 def _run_memorize_with_settings(settings_stub: MagicMock, retriever_mock: MagicMock) -> float:
-    """Run memorize() with fully-stubbed sync path; return wall-clock seconds."""
+    """Run memorize() with fully-stubbed sync path; return wall-clock seconds.
+
+    After v5.49.5 refactor, phase functions live in _memorize_phases subpackage.
+    Patch lifecycle functions where the phases import them, and patch _state directly.
+    """
+    import importlib
+
+    import yadgar.file_queue as _fq
+    import yadgar.server._state as _state_mod
+    import yadgar.server.tools._memorize_phases._phase_embed as _pe
+    import yadgar.server.tools._memorize_phases._phase_post_write as _pp
+    import yadgar.server.tools._memorize_phases._phase_store as _ps
+
+    _mem_mod = importlib.import_module("yadgar.server.tools.memorize")
+    _validate_mod = importlib.import_module("yadgar.server.tools._memorize_phases._phase_validate")
+
+    mock_storage = MagicMock()
+    mock_storage.insert_memory.return_value = "memory:test000"
+    mock_storage.get_memory.return_value = _FAKE_MEMORY
+
+    mock_emb = MagicMock()
+    mock_emb.encode.return_value = [0.1] * 384
+    mock_emb.get_model_name.return_value = "test-model"
+
+    mock_buffer = MagicMock()
+
     with (
-        patch("yadgar.server.tools.memorize.is_draining", return_value=True),
-        patch("yadgar.server.tools.memorize.gate_or_reject", return_value=None),
-        patch("yadgar.server.tools.memorize.settings", settings_stub),
-        patch("yadgar.server.tools.memorize._st") as mock_st,
-        patch("yadgar.server.tools.memorize._get_storage") as mock_get_storage,
-        patch("yadgar.server.tools.memorize._get_embeddings") as mock_get_emb,
-        patch("yadgar.server.tools.memorize._get_buffer"),
-        patch("yadgar.server.tools.memorize._get_file_queue"),
+        patch.object(_fq, "is_draining", return_value=True),
+        patch.object(_validate_mod, "gate_or_reject", return_value=None),
+        patch.object(_mem_mod, "settings", settings_stub),
+        # patch lifecycle getters in each phase module
+        patch.object(_pe, "_get_embeddings", return_value=mock_emb),
+        patch.object(_ps, "_get_storage", return_value=mock_storage),
+        patch.object(_ps, "_get_embeddings", return_value=mock_emb),
+        patch.object(_ps, "_get_buffer", return_value=mock_buffer),
+        patch.object(_pp, "_get_storage", return_value=mock_storage),
+        patch.object(_pp, "_get_buffer", return_value=mock_buffer),
+        # patch _state attributes via the actual state module
+        patch.object(_state_mod, "_rules_engine", None),
+        patch.object(_state_mod, "_write_gate", None),
+        patch.object(_state_mod, "_thermo", None),
+        patch.object(_state_mod, "_curator", None),
+        patch.object(_state_mod, "_pool", None),
+        patch.object(_state_mod, "_consolidation", None),
+        patch.object(_state_mod, "_prospective", None),
+        patch.object(_state_mod, "_engram", None),
+        patch.object(_state_mod, "_replay", None),
+        patch.object(_state_mod, "_retriever", retriever_mock),
     ):
-        mock_st._retriever = retriever_mock
-        mock_st._replay = None
-        mock_st._buffer = None
-        mock_st._write_gate = None
-        mock_st._rules_engine = None
-        mock_st._thermo = None
-        mock_st._curator = None
-        mock_st._pool = None
-        mock_st._consolidation = None
-        mock_st._prospective = None
-        mock_st._engram = None
+        # also patch settings in post_write path
+        with patch("yadgar.server.tools._memorize_phases._phase_post_write._push_event"):
+            from yadgar.server.tools.memorize import memorize
 
-        mock_storage = MagicMock()
-        mock_storage.insert_memory.return_value = "memory:test000"
-        mock_storage.get_memory.return_value = _FAKE_MEMORY
-        mock_get_storage.return_value = mock_storage
-
-        mock_emb = MagicMock()
-        mock_emb.encode.return_value = [0.1] * 384
-        mock_get_emb.return_value = mock_emb
-
-        from yadgar.server.tools.memorize import memorize
-
-        start = time.perf_counter()
-        memorize("hello world", context="test", tags=[])
-        return time.perf_counter() - start
+            start = time.perf_counter()
+            memorize("hello world", context="test", tags=[], branch_hint="test-branch")
+            return time.perf_counter() - start
 
 
 # ---------------------------------------------------------------------------

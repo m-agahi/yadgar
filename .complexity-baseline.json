@@ -18303,6 +18303,209 @@
   "yadgar/server/tools/__init__.py::__file__": {
     "loc": 197
   },
+  "yadgar/server/tools/_memorize_phases/__init__.py::__file__": {
+    "loc": 24
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_contradiction.py::__file__": {
+    "loc": 79
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_contradiction.py::_handle_delete@72": {
+    "cyclo": 2,
+    "loc": 8,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_contradiction.py::_handle_update@56": {
+    "cyclo": 2,
+    "loc": 14,
+    "nesting": 2,
+    "params": 3
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_contradiction.py::phase_contradiction@19": {
+    "cyclo": 8,
+    "loc": 35,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_embed.py::__file__": {
+    "loc": 73
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_embed.py::phase_embed@16": {
+    "cyclo": 8,
+    "loc": 58,
+    "nesting": 4,
+    "params": 2
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_post_write.py::__file__": {
+    "loc": 245
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_post_write.py::_build_response@181": {
+    "cyclo": 9,
+    "loc": 65,
+    "nesting": 1,
+    "params": 3
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_post_write.py::_run_engram@65": {
+    "cyclo": 3,
+    "loc": 8,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_post_write.py::_run_prospective@51": {
+    "cyclo": 2,
+    "loc": 12,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_post_write.py::_run_synaptic_boost@44": {
+    "cyclo": 3,
+    "loc": 5,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_post_write.py::_run_tool_call_record@175": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 1,
+    "params": 0
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_post_write.py::_run_zero_gap@75": {
+    "cyclo": 1,
+    "loc": 8,
+    "nesting": 0,
+    "params": 4
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_post_write.py::_zero_gap_1_write_gate@85": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_post_write.py::_zero_gap_2_protection@91": {
+    "cyclo": 6,
+    "loc": 14,
+    "nesting": 2,
+    "params": 3
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_post_write.py::_zero_gap_3_session_coherence@107": {
+    "cyclo": 5,
+    "loc": 10,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_post_write.py::_zero_gap_4_micro_checkpoint@119": {
+    "cyclo": 6,
+    "loc": 14,
+    "nesting": 3,
+    "params": 2
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_post_write.py::_zero_gap_5_action_stream@135": {
+    "cyclo": 2,
+    "loc": 5,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_post_write.py::_zero_gap_6_reinjection@142": {
+    "cyclo": 10,
+    "loc": 31,
+    "nesting": 4,
+    "params": 2
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_post_write.py::phase_post_write@27": {
+    "cyclo": 1,
+    "loc": 15,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_resolve_branch.py::__file__": {
+    "loc": 102
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_resolve_branch.py::_enqueue@73": {
+    "cyclo": 4,
+    "loc": 30,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_resolve_branch.py::phase_resolve_branch@22": {
+    "cyclo": 9,
+    "loc": 49,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_store.py::__file__": {
+    "loc": 127
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_store.py::_direct_insert@110": {
+    "cyclo": 1,
+    "loc": 18,
+    "nesting": 0,
+    "params": 4
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_store.py::_store_direct@95": {
+    "cyclo": 2,
+    "loc": 13,
+    "nesting": 1,
+    "params": 4
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_store.py::_store_via_curator@57": {
+    "cyclo": 6,
+    "loc": 36,
+    "nesting": 2,
+    "params": 4
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_store.py::phase_store@16": {
+    "cyclo": 9,
+    "loc": 39,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_validate.py::__file__": {
+    "loc": 151
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_validate.py::_apply_tag_injection@96": {
+    "cyclo": 5,
+    "loc": 10,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_validate.py::_validate_content_and_provenance@108": {
+    "cyclo": 4,
+    "loc": 15,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_validate.py::_validate_gate_and_policy@125": {
+    "cyclo": 8,
+    "loc": 27,
+    "nesting": 3,
+    "params": 1
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_validate.py::_validate_tier_and_parity@45": {
+    "cyclo": 8,
+    "loc": 24,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_validate.py::_validate_valid_until@71": {
+    "cyclo": 8,
+    "loc": 23,
+    "nesting": 3,
+    "params": 2
+  },
+  "yadgar/server/tools/_memorize_phases/_phase_validate.py::phase_validate@18": {
+    "cyclo": 4,
+    "loc": 25,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/server/tools/_memorize_phases/context.py::MemorizeContext@9": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 0
+  },
+  "yadgar/server/tools/_memorize_phases/context.py::__file__": {
+    "loc": 54
+  },
   "yadgar/server/tools/admin.py::__file__": {
     "loc": 58
   },
@@ -19060,7 +19263,19 @@
     "params": 3
   },
   "yadgar/server/tools/memorize.py::__file__": {
-    "loc": 697
+    "loc": 161
+  },
+  "yadgar/server/tools/memorize.py::_compute_valid_until@29": {
+    "cyclo": 8,
+    "loc": 35,
+    "nesting": 3,
+    "params": 4
+  },
+  "yadgar/server/tools/memorize.py::_compute_valid_until@30": {
+    "cyclo": 8,
+    "loc": 35,
+    "nesting": 3,
+    "params": 4
   },
   "yadgar/server/tools/memorize.py::_compute_valid_until@38": {
     "cyclo": 8,
@@ -19074,11 +19289,41 @@
     "nesting": 6,
     "params": 5
   },
+  "yadgar/server/tools/memorize.py::memorize@67": {
+    "cyclo": 5,
+    "loc": 79,
+    "nesting": 1,
+    "params": 10
+  },
+  "yadgar/server/tools/memorize.py::memorize@68": {
+    "cyclo": 5,
+    "loc": 80,
+    "nesting": 1,
+    "params": 10
+  },
   "yadgar/server/tools/memorize.py::memorize@76": {
     "cyclo": 114,
     "loc": 608,
     "nesting": 6,
     "params": 10
+  },
+  "yadgar/server/tools/memorize.py::remember@149": {
+    "cyclo": 1,
+    "loc": 11,
+    "nesting": 0,
+    "params": 4
+  },
+  "yadgar/server/tools/memorize.py::remember@150": {
+    "cyclo": 1,
+    "loc": 11,
+    "nesting": 0,
+    "params": 4
+  },
+  "yadgar/server/tools/memorize.py::remember@151": {
+    "cyclo": 1,
+    "loc": 11,
+    "nesting": 0,
+    "params": 4
   },
   "yadgar/server/tools/memorize.py::remember@523": {
     "cyclo": 1,
