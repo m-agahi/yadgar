@@ -557,6 +557,55 @@ def _find_baseline(start: str = ".") -> str:
     return str(Path(start) / ".complexity-baseline.json")
 
 
+def _collect_live_keys(filepaths: list[str]) -> set[str]:
+    """Collect all live baseline keys from the given source files.
+
+    A live key is one that actually exists in current code:
+    - ``<rel_path>::__file__`` (file-level entry)
+    - ``<rel_path>::<name>@<lineno>`` (function or class entry)
+
+    Keys for paths outside the repo root use the absolute path (same
+    fallback as ``_baseline_key``).
+    """
+    live: set[str] = set()
+    all_classes: dict = {}
+    for filepath in filepaths:
+        filepath = str(Path(filepath).resolve())
+        is_test = _is_test_file(filepath)
+        try:
+            fn_results, file_result, cls_results = analyze_file(filepath, is_test, all_classes)
+        except Exception:  # noqa: BLE001 — skip unreadable/unparseable files silently
+            continue
+        live.add(_baseline_key(filepath, "__file__"))
+        for r in fn_results:
+            live.add(_baseline_key(r.filepath, r.name, r.lineno))
+        for c in cls_results:
+            live.add(_baseline_key(c.filepath, c.name, c.lineno))
+    return live
+
+
+def gc_baseline(filepaths: list[str], baseline_path: str) -> int:
+    """Remove stale baseline entries whose symbol no longer exists in code.
+
+    Scans ``filepaths`` to build the set of live keys, then removes any
+    baseline entry not in that set.  Returns the count of removed entries.
+
+    Stale entries arise when a function is renamed, moved, or deleted —
+    the old ``<file>::<name>@<lineno>`` key is left behind.
+    """
+    baseline = load_baseline(baseline_path)
+    if not baseline:
+        return 0
+    live_keys = _collect_live_keys(filepaths)
+    stale = [k for k in baseline if k not in live_keys]
+    for k in stale:
+        del baseline[k]
+    if stale:
+        p = Path(baseline_path)
+        p.write_text(json.dumps(baseline, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return len(stale)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="I13 complexity cap enforcer (pre-commit hook)")
     parser.add_argument(
@@ -568,6 +617,14 @@ def main() -> None:
         "--update-baseline",
         action="store_true",
         help="Regenerate .complexity-baseline.json and exit 0",
+    )
+    parser.add_argument(
+        "--gc",
+        action="store_true",
+        help=(
+            "Remove stale baseline entries whose <symbol>@<line> no longer exists in current code. "
+            "Combine with --update-baseline to GC then refresh in one pass."
+        ),
     )
     parser.add_argument(
         "--baseline",
@@ -593,6 +650,12 @@ def main() -> None:
         ]
     else:
         filenames = args.filenames
+
+    if args.gc:
+        removed = gc_baseline(filenames, baseline_path)
+        print(f"GC: removed {removed} stale baseline entries from {baseline_path}", file=sys.stderr)
+        if not args.update_baseline:
+            sys.exit(0)
 
     if args.update_baseline:
         update_baseline(filenames, baseline_path)
