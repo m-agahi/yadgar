@@ -1,0 +1,19 @@
+{
+  "enqueue_count": 1,
+  "payload_fields": [
+    "branch",
+    "content",
+    "context",
+    "is_protected",
+    "provenance_agent",
+    "tags"
+  ],
+  "payload_op": "memorize",
+  "result_keys": [
+    "queue_id",
+    "queued",
+    "stored"
+  ],
+  "result_queued": true,
+  "result_stored": true
+}
