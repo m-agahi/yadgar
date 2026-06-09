@@ -444,9 +444,27 @@ subagents just won't auto-write their findings.
 
 ## Roadmap
 
+### Active tracks (v5.49.x patch line)
+
+- **Coverage waves.** Per-release sweep of untested modules. Each wave covers ~10 modules to ≥60% line coverage. v5.49.6 = wave 1 (10 modules, 315 tests). v5.49.7 = wave 2 (10 modules, 303 tests). v5.49.8+ continue until the floor is reached. See `docs/UNTESTED_MODULES_V5_49_6.md` for the rolling audit + per-module deltas.
+
+### Paused tracks
+
+- **v5.90.x — Grandfathered complexity cleanup.** 259 cyclomatic-cap violations + 766 function-LOC violations + 76 file-LOC violations grandfathered in `.complexity-baseline.json`. v5.49.5 cleared the worst (`memorize` cyclo 114 → 5 via 6-phase split). Track paused thereafter — resumes only on explicit re-open. Each future v5.90.x release tackles 10–20 cyclo violations per module-clustered batch. Plan: [docs/PLAN_V5_90.md](docs/PLAN_V5_90.md).
+
+### Major upcoming
+
 - **v6 — Nightly LLM curator.** A local agent (Ollama, deepseek-r1 + qwen3:8b two-tier routing) runs every night to detect staleness, annotate contradictions, find semantic correlations beyond co-occurrence, propose merges and forgets, and dedupe wiki pages. Two-phase consolidation: tier 1 (existing) plus tier 2 (LLM, skips if Ollama offline). Plan: [docs/roadmap/v6.md](docs/roadmap/v6.md).
 - **v7 — Real-time synthesis.** `recall(synthesize=True)` and `wiki_query(synthesize=True)` append a synthesized answer alongside raw records. New `ask()` tool returns synthesis-only output for conversational callers. Depends on a sub-10s local synthesis model. Plan: [docs/roadmap/v7.md](docs/roadmap/v7.md).
-- **v5.0.0–v5.49.x shipped.** See [CHANGELOG.md](docs/CHANGELOG.md) for full release history.
+
+### Already shipped
+
+- **v5.0.0–v5.49.x.** Full release history: [CHANGELOG.md](docs/CHANGELOG.md). Recent highlights:
+  - **v5.49.0** — Upgrade orchestrator + memory archive retention. Archive auto-purge runs nightly via the consolidation cycle. Default retention = 90 days (set `MEMORY_ARCHIVE_RETENTION_DAYS=0` to disable). NOTE: the v5.49.0 plan listed an OFF-by-default ship for safety; the actual code default ships as 90, so daemons auto-purge by default — flip to 0 if that's not what you want.
+  - **v5.49.1–.3** — Rocky VM fresh-install dogfood hotfixes (15 daemon CLI bugs).
+  - **v5.49.4** — README + RELEASE.md + container sd_notify + pre-existing test bisect.
+  - **v5.49.5** — `memorize()` refactor (cyclo 114 → 5) — first batch of v5.90 grandfathered cleanup track.
+  - **v5.49.6/.7** — Coverage waves 1+2 (20 modules covered, 618 new tests).
 
 ## Contributing
 
