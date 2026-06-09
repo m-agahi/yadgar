@@ -133,6 +133,53 @@ OTEL_SDK_DISABLED=true uv run pytest \
 
 ---
 
+## Wave 2 picks — top 10 by LOC (from DEFERRED list)
+
+| # | Module | Stmts | Pre-cov % | Test file |
+|---|---|---|---|---|
+| 1 | yadgar/metacognition/cognitive_load.py | 148 | 6.1% | yadgar/tests/test_cognitive_load_module.py |
+| 2 | yadgar/models.py | 142 | 0.0% | yadgar/tests/test_models_module.py |
+| 3 | yadgar/hooks/session-end-capture.py | 142 | 0.0% | yadgar/tests/test_session_end_capture_module.py |
+| 4 | yadgar/cli/seed.py | 142 | 0.0% | yadgar/tests/test_cli_seed_module.py |
+| 5 | yadgar/cli/daemon.py | 153 | 0.0% | yadgar/tests/test_cli_daemon_module.py |
+| 6 | yadgar/curation/prune_passes.py | 109 | 6.4% | yadgar/tests/test_prune_passes_module.py |
+| 7 | yadgar/remote_embeddings.py | 104 | 0.0% | yadgar/tests/test_remote_embeddings_module.py |
+| 8 | yadgar/config_sync.py | 100 | 0.0% | yadgar/tests/test_config_sync_module.py |
+| 9 | yadgar/hooks/prompt-recall.py | 126 | 0.0% | yadgar/tests/test_prompt_recall_module.py |
+| 10 | yadgar/hooks/subagent-stop.py | 94 | 0.0% | yadgar/tests/test_subagent_stop_script_module.py |
+
+---
+
+## Wave 2 results (post-wave — Phase 11 re-audit, 2026-06-09)
+
+**Re-audit command:** 10 wave-2 test files isolated, `--override-ini="addopts="`, `pytest-cov 7.1.0`.
+
+| Module | Pre-cov % | Post-cov % | Delta | New tests | Notes |
+|---|---|---|---|---|---|
+| yadgar/metacognition/cognitive_load.py | 6.1% | 95% | +89% | 30 tests | Meets ≥60% target |
+| yadgar/models.py | 0.0% | 100% | +100% | 42 tests | All 17 pydantic models fully covered |
+| yadgar/hooks/session-end-capture.py | 0.0% | 91% | +91% | 32 tests | Meets ≥60% target; runpy+importlib pattern for module-level sys.exit |
+| yadgar/cli/seed.py | 0.0% | 89% | +89% | 28 tests | Meets ≥60% target |
+| yadgar/cli/daemon.py | 0.0% | 96% | +96% | 32 tests | Meets ≥60% target |
+| yadgar/curation/prune_passes.py | 6.4% | 100% | +94% | 27 tests | All 6 prune passes fully covered |
+| yadgar/remote_embeddings.py | 0.0% | 98% | +98% | 36 tests | Meets ≥60% target |
+| yadgar/config_sync.py | 0.0% | 93% | +93% | 28 tests | Meets ≥60% target |
+| yadgar/hooks/prompt-recall.py | 0.0% | 81% | +81% | 30 tests | Meets ≥60% target |
+| yadgar/hooks/subagent-stop.py | 0.0% | 84% | +84% | 17 tests | Meets ≥60% target |
+
+**Summary:**
+- 10 of 10 modules reach ≥60% coverage
+- 0 modules below target
+- Total new tests: 302
+- Total delta coverage for targeted modules: avg +91.5% per module
+
+**Project-wide delta (subset baseline):**
+- Wave 1 baseline: 22.9% coverage (14,915 / 65,036 stmts)
+- Wave 2 adds ~1,200 newly covered stmts across 10 modules
+- Estimated project coverage after Wave 2: ~24.7% (lower bound, subset run)
+
+---
+
 ## Notes on untestable floors
 
 - **hook scripts** (`yadgar/hooks/*.py`): tested via integration tests that spin up
