@@ -6,6 +6,27 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.49.8] — 2026-06-09
+
+### Coverage Wave 3: 134 new unit tests across 11 modules
+
+- **Wave 3 (11 modules):** test files added for next untested modules. All 11 reach ≥60% line coverage.
+  - `yadgar/cli/install_subagents.py` → 100% (8 tests — all status branches)
+  - `yadgar/cli/version.py` → 100% (14 tests — _read_auth_token, _probe_daemon, print_version_summary)
+  - `yadgar/cli/install_hooks.py` → 100% (8 tests — all status branches)
+  - `yadgar/cli/context.py` → 100% (9 tests — hot+anchored query dispatch)
+  - `yadgar/cli/setup.py` → 95% (17 tests — docker-available and docker-unavailable modes)
+  - `yadgar/hooks/post-tool-capture.py` → 96% (16 tests — skip prefixes, capture tools, HTTP POST)
+  - `yadgar/hooks/stop-memory-checkpoint.py` → 94% (21 tests — _count_human_messages, state I/O, main())
+  - `yadgar/hooks/instructions-loaded.py` → 95% (7 tests — via test_hook_entry_points_module)
+  - `yadgar/hooks/file-changed.py` → 98% (10 tests — via test_hook_entry_points_module)
+  - `yadgar/hooks/subagent-start.py` → 90% (7 tests — via test_hook_entry_points_module)
+  - `yadgar/cli/rules.py` → 89% (12 tests — export/import/dispatch; lazy-import pattern)
+- **Cumulative (waves 1+2+3):** 751 new tests covering 31 modules.
+- Key pattern: `_load_with_import_error()` helper forces ImportError to exercise fallback inline code in hook entry scripts.
+
+---
+
 ## [5.49.7] — 2026-06-09
 
 ### Coverage Wave 2: 302 new unit tests across 10 modules
