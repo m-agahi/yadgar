@@ -1,0 +1,20 @@
+{
+  "content": "snapshot test content",
+  "created_at": "<TIMESTAMP>",
+  "curation_action": "created",
+  "directory_context": "/tmp/snapshot-test",
+  "embedding_model": "test-model",
+  "file_hash": null,
+  "heat": 1.0,
+  "id": 42,
+  "is_protected": false,
+  "provenance_agent": "default",
+  "tags": [
+    "test",
+    "snapshot"
+  ],
+  "tier": null,
+  "updated_at": "<TIMESTAMP>",
+  "valid_until": null,
+  "vector_clock": "{\"test-agent\": 1}"
+}
