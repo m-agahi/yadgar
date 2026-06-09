@@ -41,21 +41,34 @@
 
 ## 2. Release schedule — Tier 1 (cyclomatic)
 
-Each release is a patch (5.49.x). Scoped per-module to bound blast radius. Order picks by leverage × isolation.
+**v5.49.5 = first batch (memorize). All subsequent refactor batches are v5.90.x — deferred indefinitely; resumed only on explicit user direction.**
+
+After v5.49.5 ships, the v5.49.x string returns to its normal cadence (bugfix/feature patches). Refactor work pauses; the v5.90.x track parks until user re-opens.
+
+Scoped per-module to bound blast radius. Order picks by leverage × isolation.
 
 | Release | Functions | Module focus | Notes |
 |---|---|---|---|
-| **v5.49.5** | `memorize@76` (cyclo=114), `memorize@36` (cyclo=84) | `yadgar/server/tools/memorize.py` | Hot path. Highest defect-density. Single file — easier to test in isolation. Likely splits into pre-write gate + write helpers + post-write hooks. |
-| **v5.49.6** | `_run_check_invariants@18` (cyclo=98) | `yadgar/server/tools/admin_invariants.py` | Single function. Split per-check-helper pattern. Test fixture per check. |
-| **v5.49.7** | `cmd_stats@15` (cyclo=68) | `yadgar/cli/stats.py` | CLI dispatcher — easier than hot-path. Per-subcommand split. |
-| **v5.49.8** | `get_full_graph@{19,22,56,57}` (4 instances, cyclo=56–60) | `yadgar/graph_api.py` | Multiple instances of same function name at different line numbers suggests overload/version drift; investigate + consolidate. |
-| **v5.49.9** | `_memify_prune@13` (cyclo=56), `recall@20` (cyclo=55) | `yadgar/curation/prune_passes.py` + `yadgar/server/tools/recall.py` | Pair: write-path + read-path complexity. Different modules but related domain. |
-| **v5.49.10** | `pc_algorithm@105` (cyclo=53), `install_hooks_impl@48` (cyclo=49) | `yadgar/causal_discovery/pc.py` + `yadgar/install_hooks_lib.py` | Algorithm + install — both have natural phase splits. |
-| **v5.49.11** | `_derive_implied_fact_passages@{285,286}` (cyclo=46×2), `cmd_daemon@8` (cyclo=42) | `yadgar/retrieval/query_analysis.py` + `yadgar/cli/daemon.py` | Retrieval helper + daemon CLI dispatcher. |
-| **v5.49.12** | `insert_memory@92` (cyclo=40), `_format_restoration@{319,334,339,345}` (cyclo=37×4) | `yadgar/storage/memory.py` + `yadgar/restoration.py` | Storage + restoration formatter. Formatter has 4 same-name instances — likely template-format dispatch, can split per-template. |
-| **v5.49.13–v5.49.20** | 8 batches of ~15 cyclo-violations each | mixed | Remaining 200+ cyclo violations. Per-batch module clustering. |
+| **v5.49.5** (in flight 2026-06-09) | `memorize@76` (cyclo=114), `memorize@36` (cyclo=84) | `yadgar/server/tools/memorize.py` | Hot path. Highest defect-density. Single file — easier to test in isolation. Splits into orchestrator + 6 phase functions. |
+| — refactor track pauses here — | | | After v5.49.5 ships, v5.49.x patches go back to bugfix/feature work. v5.90.x track resumes only on explicit user direction. |
+| **v5.90.0** | `_run_check_invariants@18` (cyclo=98) | `yadgar/server/tools/admin_invariants.py` | Single function. Split per-check-helper pattern. Test fixture per check. |
+| **v5.90.1** | `cmd_stats@15` (cyclo=68) | `yadgar/cli/stats.py` | CLI dispatcher — easier than hot-path. Per-subcommand split. |
+| **v5.90.2** | `get_full_graph@{19,22,56,57}` (4 instances, cyclo=56–60) | `yadgar/graph_api.py` | Multiple instances of same function name at different line numbers suggests overload/version drift; investigate + consolidate. |
+| **v5.90.3** | `_memify_prune@13` (cyclo=56), `recall@20` (cyclo=55) | `yadgar/curation/prune_passes.py` + `yadgar/server/tools/recall.py` | Pair: write-path + read-path complexity. Different modules but related domain. |
+| **v5.90.4** | `pc_algorithm@105` (cyclo=53), `install_hooks_impl@48` (cyclo=49) | `yadgar/causal_discovery/pc.py` + `yadgar/install_hooks_lib.py` | Algorithm + install — both have natural phase splits. |
+| **v5.90.5** | `_derive_implied_fact_passages@{285,286}` (cyclo=46×2), `cmd_daemon@8` (cyclo=42) | `yadgar/retrieval/query_analysis.py` + `yadgar/cli/daemon.py` | Retrieval helper + daemon CLI dispatcher. |
+| **v5.90.6** | `insert_memory@92` (cyclo=40), `_format_restoration@{319,334,339,345}` (cyclo=37×4) | `yadgar/storage/memory.py` + `yadgar/restoration.py` | Storage + restoration formatter. Formatter has 4 same-name instances — likely template-format dispatch, can split per-template. |
+| **v5.90.7–v5.90.14** | 8 batches of ~15 cyclo-violations each | mixed | Remaining 200+ cyclo violations. Per-batch module clustering. |
 
-After v5.49.20: **cyclo backlog cleared**. Bump major to v5.50 (next feature release).
+After v5.90.14: **cyclo backlog cleared**. Bump major to v5.50 (next feature release).
+
+### Version-number rationale
+
+`v5.90.x` is an out-of-band track:
+- Sits well above the normal v5.49.x cadence so the pre-commit `check-versions` hook doesn't confuse refactor-track patches with feature-track patches.
+- Doesn't claim `v5.50.x` (reserved for actual feature work like viz overhaul).
+- Visually announces "tech debt" in version-history lists — easier to skip when reading CHANGELOG for behavior changes.
+- Reverts to normal cadence (v5.50.x or v5.51.x) once the entire grandfathered baseline is cleared.
 
 ---
 
@@ -63,7 +76,7 @@ After v5.49.20: **cyclo backlog cleared**. Bump major to v5.50 (next feature rel
 
 Coordination with Tier 1: many T2 violations auto-resolve when T1 functions are split. Re-scan baseline after each T1 release.
 
-Once cyclo-clean: dedicated T2 sweep over 4–6 patch releases (~150 functions per release at the easier end). Target: v5.50.0+ patch slots.
+Once cyclo-clean: dedicated T2 sweep over 4–6 patch releases (~150 functions per release at the easier end). Target: v5.90.15+ patch slots (continuing the refactor track).
 
 ---
 
@@ -80,7 +93,7 @@ Each file split requires:
 - Re-run full test suite.
 - Verify no public API changes (anything imported externally stays in the package `__init__.py`).
 
-~10 files per release. Target: v5.51.x+ (after T2 clean).
+~10 files per release. Target: end of v5.90.x track (after T2 clean), then bump to v5.50.x for next feature release.
 
 ---
 
