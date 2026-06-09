@@ -191,3 +191,54 @@ OTEL_SDK_DISABLED=true uv run pytest \
   class methods that call `subprocess.run` require mocking.
 - **cli/stats.py**: requires mocking `urllib.request.urlopen` (HTTP path) or
   `surrealdb.Surreal` (embedded DB path). Both branches are testable.
+
+---
+
+## Wave 3 picks — top candidates by stmt count (v5.49.8)
+
+| # | Module | Stmts | Pre-cov % | Test file |
+|---|---|---|---|---|
+| 1 | yadgar/hooks/stop-memory-checkpoint.py | 80 | 0% | yadgar/tests/test_stop_memory_checkpoint_module.py |
+| 2 | yadgar/cli/setup.py | 64 | ~8% | yadgar/tests/test_cli_setup_module.py |
+| 3 | yadgar/cli/rules.py | 71 | 0% | yadgar/tests/test_cli_rules_module.py |
+| 4 | yadgar/hooks/post-tool-capture.py | 48 | 0% | yadgar/tests/test_post_tool_capture_module.py |
+| 5 | yadgar/cli/version.py | 49 | 0% | yadgar/tests/test_cli_version_module.py |
+| 6 | yadgar/cli/install_subagents.py | 33 | 0% | yadgar/tests/test_cli_install_subagents_module.py |
+| 7 | yadgar/cli/install_hooks.py | 20 | 0% | yadgar/tests/test_cli_install_hooks_module.py |
+| 8 | yadgar/cli/context.py | 38 | 0% | yadgar/tests/test_cli_context_module.py |
+| 9 | yadgar/hooks/file-changed.py | 46 | 0% | yadgar/tests/test_hook_entry_points_module.py |
+| 10 | yadgar/hooks/subagent-start.py | 40 | 0% | yadgar/tests/test_hook_entry_points_module.py |
+| 11 | yadgar/hooks/instructions-loaded.py | 39 | 0% | yadgar/tests/test_hook_entry_points_module.py |
+
+Note: modules 9–11 covered in a single test file (`test_hook_entry_points_module.py`).
+
+---
+
+## Wave 3 results (post-wave — Phase 11 re-audit, 2026-06-09)
+
+**Re-audit command:** 9 wave-3 test files isolated, `--override-ini="addopts="`, `pytest-cov 7.1.0`.
+
+| Module | Pre-cov % | Post-cov % | Delta | New tests | Notes |
+|---|---|---|---|---|---|
+| yadgar/hooks/stop-memory-checkpoint.py | 0% | 94% | +94% | 21 tests | importlib.module_from_spec + STOP_HOOK_STATE_PATH patch |
+| yadgar/cli/setup.py | ~8% | 95% | +87% | 17 tests | Meets ≥60% target |
+| yadgar/cli/rules.py | 0% | 89% | +89% | 12 tests | Lazy-import patching at yadgar.storage/yadgar.rules_engine |
+| yadgar/hooks/post-tool-capture.py | 0% | 96% | +96% | 16 tests | _SUMMARY_FIELDS priority + HTTP POST fields |
+| yadgar/cli/version.py | 0% | 100% | +100% | 14 tests | Fully covered |
+| yadgar/cli/install_subagents.py | 0% | 100% | +100% | 8 tests | Fully covered |
+| yadgar/cli/install_hooks.py | 0% | 100% | +100% | 8 tests | Fully covered |
+| yadgar/cli/context.py | 0% | 100% | +100% | 9 tests | Fully covered |
+| yadgar/hooks/file-changed.py | 0% | 98% | +98% | 10 tests | _load_with_import_error() for fallback branch |
+| yadgar/hooks/subagent-start.py | 0% | 90% | +90% | 7 tests | _load_with_import_error() for fallback branch |
+| yadgar/hooks/instructions-loaded.py | 0% | 95% | +95% | 7 tests | _load_with_import_error() for fallback branch |
+
+**Summary:**
+- 11 of 11 modules reach ≥60% coverage (0 below target)
+- Total new tests: 134
+- Average delta: +95% per module
+
+**Cumulative cross-wave totals (waves 1+2+3):**
+- Wave 1 (v5.49.6): 315 new tests, 10 modules
+- Wave 2 (v5.49.7): 302 new tests, 10 modules
+- Wave 3 (v5.49.8): 134 new tests, 11 modules
+- **Total: 751 new tests, 31 modules covered**
