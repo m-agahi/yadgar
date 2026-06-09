@@ -239,6 +239,20 @@ def _run_wiki_embedding_backfill(wiki) -> None:
 # ── Startup ────────────────────────────────────────────────────────────
 
 
+def _emit_sd_ready() -> None:
+    """v5.49.4: emit READY=1 via sd_notify after init_engines() completes.
+
+    Extracted to keep init_engines() under the I13 cyclomatic-complexity cap (≤15).
+    Silent no-op when NOTIFY_SOCKET is unset (outside systemd / container surrogate).
+    """
+    try:
+        from yadgar import sd_notify as _sd_notify  # noqa: PLC0415
+
+        _sd_notify.ready()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def init_engines(
     db_path: str | None = None,
     embedding_model: str | None = None,
@@ -375,6 +389,9 @@ def init_engines(
         _get_file_queue()
     except Exception as exc:
         logger.warning("File queue init failed (non-fatal): %s", exc)
+
+    # v5.49.4: emit READY=1 — all engines initialised, server accepting requests.
+    _emit_sd_ready()
 
     return _st._storage, _st._embeddings, _st._buffer, _st._consolidation, _st._staleness
 

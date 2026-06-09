@@ -153,7 +153,14 @@ class TestPruneSnapshots:
 
         removed = prune_snapshots(tmp_path, "surreal_db.nightly-*", retention=3)
 
-        remaining = sorted(tmp_path.iterdir(), key=lambda p: p.stat().st_mtime)
+        # Filter to only snapshot-matching paths (isolate_yadgar_paths fixture
+        # adds config/, data/, state/ to tmp_path; must not count those).
+        import glob as _glob
+
+        remaining = sorted(
+            (Path(p) for p in _glob.glob(str(tmp_path / "surreal_db.nightly-*"))),
+            key=lambda p: p.stat().st_mtime,
+        )
         assert len(remaining) == 3
         assert len(removed) == 2
         # Removed paths must no longer exist
@@ -225,7 +232,12 @@ class TestPruneSnapshots:
 
         removed = prune_snapshots(tmp_path, "surreal_db.nightly-*", retention=10)
         assert removed == []
-        assert len(list(tmp_path.iterdir())) == 3
+        # Filter to only snapshot-matching paths (isolate_yadgar_paths adds
+        # config/, data/, state/ to tmp_path; must not count those).
+        import glob as _glob
+
+        matching = list(_glob.glob(str(tmp_path / "surreal_db.nightly-*")))
+        assert len(matching) == 3
 
     def test_missing_snapshot_dir_returns_empty(self, tmp_path: Path) -> None:
         """Missing snapshot_dir returns [] rather than raising."""
