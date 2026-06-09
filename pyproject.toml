@@ -160,6 +160,8 @@ ml = [
 test = [
     # CVE-2025-71176 (MEDIUM)
     "pytest>=9.0.3",
+    "pytest-cov>=6.0",
+    "coverage>=7.0",
     "pytest-xdist>=3.0",
     "pytest-timeout>=2.3",
     "pytest-rerunfailures>=14",
