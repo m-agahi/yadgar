@@ -6,6 +6,18 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.49.5] — 2026-06-09
+
+### Refactor: memorize() phase extraction (cyclo 114 → orchestrator ≤ 10)
+
+- **Phase extraction:** `yadgar/server/tools/memorize.py` (608 LOC, cyclo=114) split into slim orchestrator + 6 phase functions in `yadgar/server/tools/_memorize_phases/`: `phase_validate`, `phase_resolve_branch`, `phase_embed`, `phase_contradiction`, `phase_store`, `phase_post_write`. Each phase ≤ 15 cyclo; orchestrator ≤ 10.
+- **`MemorizeContext` dataclass:** shared mutable state threaded through all phases; eliminates 40+ parameter hand-offs.
+- **`--gc` flag for `scripts/check_complexity.py`:** removes stale baseline orphans from line-shift noise. Ran on full repo: 4839 stale entries removed.
+- **18 new tests:** 6 snapshot (golden-output), 10 phase-level unit tests, 2 GC tool tests. All 55 memorize tests green.
+- **Public API frozen:** `memorize()` MCP signature unchanged; backward-compatible with all callers and existing tests.
+
+---
+
 ## [5.49.3] — 2026-06-08
 
 ### Hotfix: Bug 14 — DB credential fallback + setup alias keys (Rocky VM iter-3)
