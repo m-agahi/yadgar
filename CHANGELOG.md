@@ -6,6 +6,25 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.49.7] — 2026-06-09
+
+### Coverage Wave 2: 302 new unit tests across 10 modules
+
+- **Wave 2 (10 modules):** test files added for the next 10 untested modules by LOC. All 10 reach ≥60% line coverage — no untestable floors this wave.
+  - `yadgar/models.py` → 100% (42 tests — all 17 pydantic models)
+  - `yadgar/curation/prune_passes.py` → 100% (27 tests — all 6 prune passes)
+  - `yadgar/remote_embeddings.py` → 98% (36 tests — mock httpx.Client at construction)
+  - `yadgar/cli/daemon.py` → 96% (32 tests — lazy-import patch pattern)
+  - `yadgar/metacognition/cognitive_load.py` → 95% (30 tests — concrete stub subclass)
+  - `yadgar/config_sync.py` → 93% (28 tests — patch Settings class + FIELD_META)
+  - `yadgar/hooks/session-end-capture.py` → 91% (32 tests — runpy+importlib pattern)
+  - `yadgar/cli/seed.py` → 89% (28 tests)
+  - `yadgar/hooks/subagent-stop.py` → 84% (17 tests)
+  - `yadgar/hooks/prompt-recall.py` → 81% (30 tests)
+- **Total new tests:** 302. All existing tests remain green. Wave 2 results documented in `docs/UNTESTED_MODULES_V5_49_6.md`.
+
+---
+
 ## [5.49.6] — 2026-06-09
 
 ### Coverage Wave 1: 315 new unit tests across 10 modules
