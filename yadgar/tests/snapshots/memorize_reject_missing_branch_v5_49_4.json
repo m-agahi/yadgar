@@ -1,0 +1,7 @@
+{
+  "error": "missing_branch",
+  "field": "branch_hint",
+  "message": "Branch context required. Supply branch_hint=<current-branch-name> or ensure the working directory is a git repo accessible to the yadgar daemon.",
+  "op_type": "memorize",
+  "stored": false
+}

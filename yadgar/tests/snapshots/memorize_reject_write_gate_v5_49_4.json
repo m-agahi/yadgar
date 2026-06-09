@@ -1,0 +1,6 @@
+{
+  "message": "Memory below surprisal threshold, skipped",
+  "reason": "low_surprise",
+  "stored": false,
+  "surprisal": 0.05
+}
