@@ -211,7 +211,7 @@ docker run -d --name yadgar --network yadgar-net \
   -e YADGAR_DB_URL=http://yadgar-backend:8000 \
   -e YADGAR_EMBED_URL=http://yadgar-backend:8001 \
   -e YADGAR_MCP_AUTH_TOKEN=$YADGAR_MCP_AUTH_TOKEN \
-  openfantasy/yadgar:5.48.0
+  openfantasy/yadgar:5.49.4
 ```
 
 Containers bundle Python 3.14 — no host Python required. Source `~/.yadgar/secrets.env` (or generate the four required vars yourself) before launching.
@@ -446,7 +446,7 @@ subagents just won't auto-write their findings.
 
 - **v6 — Nightly LLM curator.** A local agent (Ollama, deepseek-r1 + qwen3:8b two-tier routing) runs every night to detect staleness, annotate contradictions, find semantic correlations beyond co-occurrence, propose merges and forgets, and dedupe wiki pages. Two-phase consolidation: tier 1 (existing) plus tier 2 (LLM, skips if Ollama offline). Plan: [docs/roadmap/v6.md](docs/roadmap/v6.md).
 - **v7 — Real-time synthesis.** `recall(synthesize=True)` and `wiki_query(synthesize=True)` append a synthesized answer alongside raw records. New `ask()` tool returns synthesis-only output for conversational callers. Depends on a sub-10s local synthesis model. Plan: [docs/roadmap/v7.md](docs/roadmap/v7.md).
-- **v5.x pipeline.** v5.26.0 benchmark QA + publication (LongMemEval results); v5.27.0 DuckDB analytics export; v5.29.0 bi-temporal edges; v5.31.0 recall pipeline plugin architecture (A/B-testable stages); v5.33.0 in-context memory blocks; v5.35.0 JS/TS SDK. See `docs/roadmap/` for full plans.
+- **v5.0.0–v5.49.x shipped.** See [CHANGELOG.md](docs/CHANGELOG.md) for full release history.
 
 ## Contributing
 
