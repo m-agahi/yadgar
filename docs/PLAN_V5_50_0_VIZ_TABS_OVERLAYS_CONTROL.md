@@ -1,6 +1,6 @@
 # PLAN — v5.50.0: Viz UI Restructure — Tabs, Floating Overlays, Branding (CORE only)
 
-**Status:** drafted 2026-05-31. REVISED 2026-06-02 post-opus-review (MAJOR split). Plan-first per I27.
+**Status:** drafted 2026-05-31. REVISED 2026-06-02 post-opus-review (MAJOR split). **PATCHED 2026-06-10** — repo-path drift corrected throughout (`server/static/`→`static/`, `server/api/`→`server/routes/`, `settings.py`/`config.yaml`→Python three-way registry, `auth.py`→`auth_middleware.py`), env-var collision reconciled, and the 2026-06-02 split made authoritative via the **Scope Lock** below. **READY for v5.50.0 impl.**
 
 **Revision notes (opus reviewer):**
 - SPLIT into THREE plans — current scope (557 lines + Bookmarks addendum) is phase-commit-infeasible:
@@ -15,13 +15,43 @@
 
 **Renumbered:** v5.41.0 → v5.50.0 on 2026-05-31. Reason: user explicitly bumped the viz train forward so the setup-refactor (v5.45-v5.47) ships first. Numbering is locked at v5.50 / v5.51 / v5.52 across this train. Do NOT revert to v5.41-v5.43 anywhere in file names, content, CHANGELOG, or git messages.
 
-**Audit lineage:** continues the viz-knob system shipped in v5.11.0 (35 visual knobs in `config.yaml`), the edge-tuning slot from v5.10.11, the bookmarks subsystem shipped in v5.23/v5.24, and the marked-rendering fix in v5.24.2.
+**Audit lineage:** continues the viz-knob system shipped in v5.11.0 (35 visual knobs in the Python three-way config registry), the edge-tuning slot from v5.10.11, the bookmarks subsystem shipped in v5.23/v5.24, and the marked-rendering fix in v5.24.2.
 
 **Depends on:** v5.25.0 shipped (benchmark infra not on the critical path; this is purely viz/frontend). **Soft-coupled to v5.47:** the Control tab's `[⬆ update]` button calls `/api/control/update`, which the setup-refactor train introduces. If v5.47 has not shipped at viz cut-time, the button must be greyed out with the tooltip "requires v5.47 update endpoint" — DO NOT delete it from the layout.
 
 **Downstream:** v5.51.0 (CPU spike profile + Stats throttle), v5.52.0 (debug viz interaction APIs + console capture) both extend the Control / Info debug surfaces shipped here.
 
-**Effort estimate:** 4-6 calendar days. Largest item is the Control tab config editor (knob hot-reload vs restart flag, validation, save round-trip).
+**Effort estimate (v5.50.0 ONLY, post-scope-lock):** ~2.75–3.5 calendar days. (The original 4.75–6d covered Bookmarks + Control, now split to v5.50.1 / v5.50.2 — see Scope Lock.)
+
+---
+
+## ⚠ SCOPE LOCK (PATCHED 2026-06-10) — read this first; it overrides the body
+
+The revision notes (above) split this into three plans on 2026-06-02, but the **body below was never updated** — its scope tables, mockups, steps, acceptance criteria, and test list still describe the pre-split everything-in-one plan. **This Scope Lock is authoritative. Where any section below conflicts, this wins.**
+
+### v5.50.0 ships (and ONLY this)
+- Hash-router tab bar with all 6 tab containers present (`#home #stats #health #bookmarks #info #control`).
+- **`#bookmarks` and `#control` are EMPTY placeholder containers** in v5.50.0 (inert shells; filled by .1 / .2). `bookmarks.html` → 302 redirect stub to `#bookmarks`.
+- Full content for **Home / Stats / Health / Info** tabs.
+- Floating overlays: drag-reposition, collapse, `localStorage` persist, auto-fade.
+- Zoom-regression bisect + surgical fix.
+- Branding: 3 logo SVGs + `favicon.svg`. (Note: `yadgar/static/favicon.svg` ALREADY EXISTS — replace its contents, do not create a `.ico`.)
+- Default-value changes: edge variant C, wiki octahedron, physics charge −18.0.
+
+### Deferred — do NOT implement in v5.50.0
+- **v5.50.1 — Bookmarks tab:** the entire "Bookmarks tab (Addendum 2026-06-02)" section below, all `bookmarks-tab.js` / `components/*` files, `bookmarks-tab.css`, and tests `test_bookmarks_search.py` / `test_bookmarks_versions.py`. (`test_bookmarks_migration.py` stays in .0 — it only checks the redirect + that legacy bookmark CRUD survives.)
+- **v5.50.2 — Control tab + backend control APIs:** `control.js`, the entire **Backend** scope table (`control.py`, `info.py`*, `tools.py`*, `wiki_query.py` extend, `wiki_versions.py`, auth extension), restart endpoints, and `test_control_api.py`. (*`info.py` + `tools.py` may land in .0 ONLY if the Info tab needs them; if so, they are read-only GETs with no debug gate. Prefer serving Info-tab data from existing routes.)
+
+### Env-var reconciliation (resolves audit finding)
+- An existing gate **`YADGAR_UPDATE_DEBUG_APIS_ENABLED`** (default `off`) already ships in `yadgar/server/routes/control_update.py` and `config_registry.py:270` — it was added anticipating this v5.50 UI.
+- The broader **`YADGAR_DEBUG_APIS_ENABLED`** gate is **NOT introduced in v5.50.0** (it gates the Control APIs, which move to v5.50.2). Introduce it in **v5.50.2**, registered three-way, and document there that `YADGAR_UPDATE_DEBUG_APIS_ENABLED` remains the narrower update-route gate (the update button checks the update gate; all other control APIs check the umbrella gate).
+- v5.50.0 introduces **no new env var**. The placeholder `#control` shell is inert and needs no gate.
+
+### Path corrections applied 2026-06-10 (body had a stale layout)
+- Static dir: `yadgar/server/static/` → **`yadgar/static/`** (the `server/static/` path does not exist).
+- Backend routes: `yadgar/server/routes/*` → **`yadgar/server/routes/*`** (no `api/` subdir exists).
+- Config registration: there is **no `config.yaml` file**. Viz knobs are a Python three-way registry — `yadgar/config.py` (Settings) + `yadgar/config_yaml.py` (section `viz_config`) + `yadgar/config_registry.py`. Wherever the body says "`config.yaml`" or "`settings.py`", read it as this three-way registry.
+- Auth: `yadgar/server/auth.py` → **`yadgar/auth_middleware.py`**.
 
 ---
 
@@ -56,16 +86,16 @@ The aesthetic target is **"terminal cartography"** — dark chart-at-night, hair
 
 | Asset | Path | Status |
 |---|---|---|
-| Viz entrypoint | `yadgar/server/static/index.html` | Single-page, monolithic. Footer (CPU/RSS/threads/FDs/daemon). Right side panel (heat slider + graph stats + node types). No tab routing. |
-| Bookmarks | `yadgar/server/static/bookmarks.html` | Standalone page. v5.23 functionality, v5.24.2 marked-fix shipped. Linked from footer. |
-| Viz config | `config.yaml` `viz:` section | 35 knobs (v5.11.0). Three-way registered (yaml + Settings + registry). |
+| Viz entrypoint | `yadgar/static/index.html` | Single-page, monolithic. Footer (CPU/RSS/threads/FDs/daemon). Right side panel (heat slider + graph stats + node types). No tab routing. |
+| Bookmarks | `yadgar/static/bookmarks.html` | Standalone page. v5.23 functionality, v5.24.2 marked-fix shipped. Linked from footer. |
+| Viz config | three-way Python registry (`config.py` Settings + `config_yaml.py` section `viz_config` + `config_registry.py`) | 35 knobs (v5.11.0). **No `config.yaml` file** — registration is all Python. |
 | Stats poll | `index.html` `pollStats()` | 5s interval, no visibility-awareness, no throttle. Suspected CPU contributor (see v5.51.0). |
 | Edge defaults | `viz.edge.width_3d_multiplier=1.5`, `arrow_len=4`, `opacity=0.85` | v5.10.11 ship — locked variant A. **v5.50.0 changes to variant C: 1.8 / 5 / 0.9 (both brightness + thickness).** |
 | Wiki shape | `viz.wiki.shape="sphere"` | Default. **v5.50.0 changes to `"octahedron"`** (`THREE.OctahedronGeometry`). |
 | Edge repulsion | `viz.physics.charge_strength=-12.0` | **v5.50.0 bumps to `-18.0`** (+50% absolute). |
 | Zoom regression | unconfirmed, suspected v5.10.4-v5.11.0 function-breakdown | Loads zoomed-in then zooms-out automatically. Bisect required (Step 1 below). |
-| Debug API gate | `YADGAR_DEBUG_APIS_ENABLED` | Does NOT exist yet. Introduced here as part of Control tab auth. |
-| Logo / favicon | `static/favicon.ico` (16×16 placeholder) | No SVG. No OG image. No documentation header. |
+| Debug API gate | `YADGAR_UPDATE_DEBUG_APIS_ENABLED` (exists, default `off`, in `control_update.py` + `config_registry.py:270`) | Narrow update-route gate, already shipped (built anticipating this v5.50 UI). The broader `YADGAR_DEBUG_APIS_ENABLED` does NOT exist yet — introduced in **v5.50.2** with the Control APIs, not here. |
+| Logo / favicon | `yadgar/static/favicon.svg` (EXISTS — 729-byte SVG, gradient-Y) | Real SVG already present; v5.50.0 replaces its contents. No `.ico`. No OG image. No documentation header. |
 
 ---
 
@@ -73,45 +103,51 @@ The aesthetic target is **"terminal cartography"** — dark chart-at-night, hair
 
 ### Frontend
 
+> ⚠ Per Scope Lock: `bookmarks-tab.js`, `bookmarks-tab.css`, and all `components/*` rows are **v5.50.1**. `control.js` is **v5.50.2**. In v5.50.0 the `#bookmarks` and `#control` containers are empty shells. Everything else (router, overlays, home/stats/health/info, logos) is v5.50.0.
+
 | File | Change |
 |---|---|
-| `yadgar/server/static/index.html` | Restructure: hash router (`#home`, `#stats`, `#health`, `#bookmarks`, `#info`, `#control`). Default `#home`. History API. Tab bar above viewport. |
-| `yadgar/server/static/css/yadgar.css` | New stylesheet. Replaces inline styles. Implements the 15-token palette + typography stack below. |
-| `yadgar/server/static/js/tabs.js` | New. Hash router, tab switch animation (250ms), back/forward integration. |
-| `yadgar/server/static/js/overlays.js` | New. Drag-to-reposition (per-overlay `localStorage` key `viz.overlay.<name>.position`), collapse state (`viz.overlay.<name>.collapsed`), auto-fade on drag/zoom of graph. `pointer-events: none` on overlay body, `auto` on title-bar + controls. |
-| `yadgar/server/static/js/home.js` | Extract Home tab logic from `index.html`. Hosts the 3D ForceGraph canvas + 5 floating overlays (heat slider, graph stats, node types, edge legend, optional CPU mini). |
-| `yadgar/server/static/js/stats.js` | Detail panels (existing stats content). 30s fixed poll on this tab only. Visibility-aware deferred to v5.51. |
-| `yadgar/server/static/js/health.js` | New tab. CPU / RSS / threads / FDs / daemon stats. Replaces footer + side-panel health surface. |
-| `yadgar/server/static/js/bookmarks-tab.js` | NEW — orchestrator for the refactored Bookmarks tab (see Addendum 2026-06-02). Replaces standalone `bookmarks.js`. Preserves v5.24.2 marked-fix verbatim inside the new `preview-pane.js` component. |
-| `yadgar/server/static/css/bookmarks-tab.css` | NEW — layout, palette extension, diff colors, typography registers (Mono/Sans/Serif). |
-| `yadgar/server/static/js/components/search-bar.js` | NEW — sticky semantic-first search w/ inline mode toggle (semantic / keyword / slug). |
-| `yadgar/server/static/js/components/preview-pane.js` | NEW — markdown render via marked.js v15 + star button header (toggles bookmark). Used for current + historical versions. |
-| `yadgar/server/static/js/components/versions-rail.js` | NEW — vertical timeline of `VersionLozenge` entries; click-to-preview historical; shift-click multi-select for compare. Composes v5.41 `wiki_history` / `wiki_read_version`. |
-| `yadgar/server/static/js/components/diff-view.js` | NEW — split-pane synced scroll, unified-diff color tokens. Composes v5.41 `wiki_diff`. |
-| `yadgar/server/static/js/components/bookmark-spine.js` | NEW — bookmark-shelf entry on empty-search landing. Drag-reorder, j/k nav. |
-| `yadgar/server/static/js/info.js` | New tab. Version + commit SHA + build date / license + 3rd-party libs + SRI hashes / MCP tool catalogue (live `/api/tools`) / keyboard shortcuts / repo links / debug panel entrypoint / **author bio + photo + belts/whistles placeholder card**. |
-| `yadgar/server/static/js/control.js` | New tab. Action triggers + config editor + update button + restart buttons. All gated on `YADGAR_DEBUG_APIS_ENABLED=on`. |
-| `yadgar/server/static/bookmarks.html` | Replace body with a JS 302 to `/#bookmarks`. Mark deprecated. Remove in a later minor. |
-| `yadgar/server/static/img/logo-synapse.svg` | NEW. Inline SVG from this plan. |
-| `yadgar/server/static/img/logo-knot.svg` | NEW. Inline SVG from this plan. |
-| `yadgar/server/static/img/logo-y.svg` | NEW. Inline SVG from this plan. |
-| `yadgar/server/static/img/favicon.svg` | NEW. Mirrors `logo-y.svg`. Browsers that don't render SVG favicons fall back to existing `favicon.ico`. |
-| `yadgar/server/static/img/og-image.png` | NEW. 1200×630 export of `logo-knot.svg` on `--bg-base`. Generated at build, not committed. Build script in `scripts/build-og-image.sh`. |
+| `yadgar/static/index.html` | Restructure: hash router (`#home`, `#stats`, `#health`, `#bookmarks`, `#info`, `#control`). Default `#home`. History API. Tab bar above viewport. |
+| `yadgar/static/css/yadgar.css` | New stylesheet. Replaces inline styles. Implements the 15-token palette + typography stack below. |
+| `yadgar/static/js/tabs.js` | New. Hash router, tab switch animation (250ms), back/forward integration. |
+| `yadgar/static/js/overlays.js` | New. Drag-to-reposition (per-overlay `localStorage` key `viz.overlay.<name>.position`), collapse state (`viz.overlay.<name>.collapsed`), auto-fade on drag/zoom of graph. `pointer-events: none` on overlay body, `auto` on title-bar + controls. |
+| `yadgar/static/js/home.js` | Extract Home tab logic from `index.html`. Hosts the 3D ForceGraph canvas + 5 floating overlays (heat slider, graph stats, node types, edge legend, optional CPU mini). |
+| `yadgar/static/js/stats.js` | Detail panels (existing stats content). 30s fixed poll on this tab only. Visibility-aware deferred to v5.51. |
+| `yadgar/static/js/health.js` | New tab. CPU / RSS / threads / FDs / daemon stats. Replaces footer + side-panel health surface. |
+| `yadgar/static/js/bookmarks-tab.js` | NEW — orchestrator for the refactored Bookmarks tab (see Addendum 2026-06-02). Replaces standalone `bookmarks.js`. Preserves v5.24.2 marked-fix verbatim inside the new `preview-pane.js` component. |
+| `yadgar/static/css/bookmarks-tab.css` | NEW — layout, palette extension, diff colors, typography registers (Mono/Sans/Serif). |
+| `yadgar/static/js/components/search-bar.js` | NEW — sticky semantic-first search w/ inline mode toggle (semantic / keyword / slug). |
+| `yadgar/static/js/components/preview-pane.js` | NEW — markdown render via marked.js v15 + star button header (toggles bookmark). Used for current + historical versions. |
+| `yadgar/static/js/components/versions-rail.js` | NEW — vertical timeline of `VersionLozenge` entries; click-to-preview historical; shift-click multi-select for compare. Composes v5.41 `wiki_history` / `wiki_read_version`. |
+| `yadgar/static/js/components/diff-view.js` | NEW — split-pane synced scroll, unified-diff color tokens. Composes v5.41 `wiki_diff`. |
+| `yadgar/static/js/components/bookmark-spine.js` | NEW — bookmark-shelf entry on empty-search landing. Drag-reorder, j/k nav. |
+| `yadgar/static/js/info.js` | New tab. Version + commit SHA + build date / license + 3rd-party libs + SRI hashes / MCP tool catalogue (live `/api/tools`) / keyboard shortcuts / repo links / debug panel entrypoint / **author bio + photo + belts/whistles placeholder card**. |
+| `yadgar/static/js/control.js` | New tab. Action triggers + config editor + update button + restart buttons. All gated on `YADGAR_DEBUG_APIS_ENABLED=on`. |
+| `yadgar/static/bookmarks.html` | Replace body with a JS 302 to `/#bookmarks`. Mark deprecated. Remove in a later minor. |
+| `yadgar/static/img/logo-synapse.svg` | NEW. Inline SVG from this plan. |
+| `yadgar/static/img/logo-knot.svg` | NEW. Inline SVG from this plan. |
+| `yadgar/static/img/logo-y.svg` | NEW. Inline SVG from this plan. |
+| `yadgar/static/favicon.svg` | REPLACE contents (file already exists). Mirrors `logo-y.svg`. (No `.ico` exists; SVG favicon is the only one.) |
+| `yadgar/static/img/og-image.png` | NEW. 1200×630 export of `logo-knot.svg` on `--bg-base`. Generated at build, not committed. Build script in `scripts/build-og-image.sh`. |
 
 ### Backend
 
+> ⚠ **v5.50.2 material** (per Scope Lock) — the control/restart endpoints + the `YADGAR_DEBUG_APIS_ENABLED` gate are NOT in v5.50.0. Paths corrected here for whenever they land. The Info tab (v5.50.0) should prefer existing routes; only add read-only `info`/`tools` GETs if unavoidable.
+
 | File | Change |
 |---|---|
-| `yadgar/server/api/control.py` | NEW. Endpoints: `GET /api/control/config` (full knob table with current/default/reload metadata), `POST /api/control/config` (set single knob; validates type; returns 400 on type mismatch or out-of-range), `POST /api/control/action/{consolidate\|vacuum\|reembed}` (internally calls existing MCP tools), `POST /api/control/restart/{yadgar\|backend}` (body `{"confirm": "yadgar"}` must match service name verbatim). All gated on `YADGAR_DEBUG_APIS_ENABLED`. Returns 403 with `{"error": "debug APIs disabled"}` when off. |
-| `yadgar/server/api/info.py` | NEW. `GET /api/info` → `{version, commit_sha, build_date, license, third_party: [{name, version, license, sri}], shortcuts: [...]}`. |
-| `yadgar/server/api/tools.py` | NEW (if not present). `GET /api/tools` → list MCP tools with 1-line descriptions, read from the tool registry. |
-| `yadgar/server/api/wiki_query.py` | EXTEND — add `?mode=semantic\|keyword\|slug` query param. Semantic default. Returns score per hit. Reuses existing wiki embedding index. |
-| `yadgar/server/api/wiki_versions.py` | NEW (or extend existing wiki route). HTTP wrappers for v5.41 MCP tools: `GET /api/wiki_history?slug=…`, `GET /api/wiki_read_version?slug=…&version=N`, `GET /api/wiki_diff?slug=…&v1=A&v2=B`, `POST /api/wiki_restore` (confirmation-gated). |
-| `yadgar/server/auth.py` | Extend bearer-token middleware to ALSO require `YADGAR_DEBUG_APIS_ENABLED=on` for the `/api/control/*` paths. Bearer-token alone is insufficient. |
-| `yadgar/settings.py` | Register `YADGAR_DEBUG_APIS_ENABLED` (bool, default `False`), `viz.edge.variant` (str enum, default `"C"`), `viz.wiki.shape` (str enum, default `"octahedron"`). Three-way per I25 (yaml + Settings + registry). |
-| `config.yaml` | Update defaults: `viz.edge.width_3d_multiplier=1.8`, `viz.edge.arrow_len=5`, `viz.edge.opacity=0.9`, `viz.wiki.shape="octahedron"`, `viz.physics.charge_strength=-18.0`. Add `viz.edge.variant="C"` (informational, not behavioral). Add `debug.apis_enabled=false`. |
+| `yadgar/server/routes/control.py` | NEW. Endpoints: `GET /api/control/config` (full knob table with current/default/reload metadata), `POST /api/control/config` (set single knob; validates type; returns 400 on type mismatch or out-of-range), `POST /api/control/action/{consolidate\|vacuum\|reembed}` (internally calls existing MCP tools), `POST /api/control/restart/{yadgar\|backend}` (body `{"confirm": "yadgar"}` must match service name verbatim). All gated on `YADGAR_DEBUG_APIS_ENABLED`. Returns 403 with `{"error": "debug APIs disabled"}` when off. |
+| `yadgar/server/routes/info.py` | NEW. `GET /api/info` → `{version, commit_sha, build_date, license, third_party: [{name, version, license, sri}], shortcuts: [...]}`. |
+| `yadgar/server/routes/tools.py` | NEW (if not present). `GET /api/tools` → list MCP tools with 1-line descriptions, read from the tool registry. |
+| `yadgar/server/routes/wiki_query.py` | EXTEND — add `?mode=semantic\|keyword\|slug` query param. Semantic default. Returns score per hit. Reuses existing wiki embedding index. |
+| `yadgar/server/routes/wiki_versions.py` | NEW (or extend existing wiki route). HTTP wrappers for v5.41 MCP tools: `GET /api/wiki_history?slug=…`, `GET /api/wiki_read_version?slug=…&version=N`, `GET /api/wiki_diff?slug=…&v1=A&v2=B`, `POST /api/wiki_restore` (confirmation-gated). |
+| `yadgar/auth_middleware.py` | **[v5.50.2]** Extend bearer-token middleware to ALSO require `YADGAR_DEBUG_APIS_ENABLED=on` for the `/api/control/*` paths. Bearer-token alone is insufficient. |
+| three-way config registry (`yadgar/config.py` Settings + `yadgar/config_yaml.py` section `viz_config` + `yadgar/config_registry.py`) | **[v5.50.0]** Register `viz.edge.variant` (str enum, default `"C"`) + `viz.wiki.shape` (str enum, default `"octahedron"`) three-way per I25. **[v5.50.2]** add `YADGAR_DEBUG_APIS_ENABLED` (bool, default `False`). There is NO `config.yaml` file — all three legs are Python. |
+| config defaults (`config_yaml.py` + `config_registry.py` + `config.py`) | **[v5.50.0]** Update viz defaults via the three-way registry: `viz_edge_width_3d_multiplier=1.8`, `viz_edge_arrow_len=5`, `viz_edge_opacity=0.9`, `viz_wiki_shape="octahedron"`, `viz_physics_charge_strength=-18.0`, `viz_edge_variant="C"` (informational). |
 
 ### Tests
+
+> ⚠ v5.50.0 tests = `test_viz_routes.py`, `test_overlays_persist.py`, `test_bookmarks_migration.py` (redirect + legacy CRUD only). `test_control_api.py` → **v5.50.2**. `test_bookmarks_search.py` + `test_bookmarks_versions.py` → **v5.50.1**.
 
 | File | Change |
 |---|---|
@@ -159,6 +195,8 @@ The aesthetic target is **"terminal cartography"** — dark chart-at-night, hair
 
 ### Control tab
 
+> ⚠ **v5.50.2 material** (per Scope Lock). v5.50.0 ships only an empty `#control` placeholder container. Mockup + API kept here as the v5.50.2 design source.
+
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ ⚠ CONTROL — requires YADGAR_DEBUG_APIS_ENABLED=on                            │
@@ -183,6 +221,8 @@ The aesthetic target is **"terminal cartography"** — dark chart-at-night, hair
 ```
 
 ### Bookmarks tab (Addendum 2026-06-02)
+
+> ⚠ **ENTIRE SECTION = v5.50.1 material** (per Scope Lock). Not implemented in v5.50.0 — kept here as the v5.50.1 design source. v5.50.0 ships only an empty `#bookmarks` container + the `bookmarks.html` 302 redirect.
 
 **Aesthetic direction:** forensic library dashboard. Knowledge as strata you sift through. Three modes: shelf (landing), microfiche reader (preview), forensic compare (diff). Mono caret + serif body + sans chrome — three typographic registers reinforce the three roles of text (input / chrome / payload).
 
@@ -291,7 +331,7 @@ The aesthetic target is **"terminal cartography"** — dark chart-at-night, hair
 
 ### Logo V1 — Synapse
 
-Inline SVG, ships at `yadgar/server/static/img/logo-synapse.svg`:
+Inline SVG, ships at `yadgar/static/img/logo-synapse.svg`:
 
 ```svg
 <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="yadgar synapse mark">
@@ -310,7 +350,7 @@ Tagline: *Three signals in, one decision out.*
 
 ### Logo V2 — Knot
 
-Inline SVG, ships at `yadgar/server/static/img/logo-knot.svg`:
+Inline SVG, ships at `yadgar/static/img/logo-knot.svg`:
 
 ```svg
 <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="yadgar knot mark">
@@ -330,7 +370,7 @@ Tagline: *Edges cross, the node persists.*
 
 ### Logo V3 — Letterform Y
 
-Inline SVG, ships at `yadgar/server/static/img/logo-y.svg`:
+Inline SVG, ships at `yadgar/static/img/logo-y.svg`:
 
 ```svg
 <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="yadgar Y mark">
@@ -433,11 +473,11 @@ Existing `-12.0` produces clumpy clusters on graphs >500 nodes. +50% absolute (`
 - Implement `tabs.js`, `yadgar.css` with the 15-token palette + typography stack.
 - Tabs render empty containers — content extraction follows in Step 3.
 
-### Step 3 — Extract Home / Stats / Health / Bookmarks tabs (≤ 1 day)
+### Step 3 — Extract Home / Stats / Health tabs (≤ 1 day)
 - Move existing `index.html` 3D canvas + overlays into `home.js`.
 - Move existing stats panel logic into `stats.js`. 30s fixed poll (visibility-aware deferred to v5.51).
 - Move footer + side-panel health surface into `health.js`.
-- Migrate `bookmarks.html` body into `bookmarks.js`. Preserve marked-fix verbatim. Add 302 redirect from old URL.
+- Bookmarks: v5.50.0 ships an EMPTY `#bookmarks` container + a 302 redirect from `bookmarks.html` → `#bookmarks` only. Do NOT migrate `bookmarks.js` content here (that is v5.50.1). The legacy `bookmarks.html` page keeps working until the redirect lands.
 - TDD: each tab's test asserts its container renders the expected DOM under the route.
 
 ### Step 4 — Overlay drag + collapse + persistence (≤ 0.5 day)
@@ -450,7 +490,9 @@ Existing `-12.0` produces clumpy clusters on graphs >500 nodes. +50% absolute (`
 - Generate OG image via `scripts/build-og-image.sh` (rsvg-convert). NOT committed.
 - Implement `info.js` rendering version, license, 3rd-party libs (read from `pyproject.toml` + `package.json` via `GET /api/info`), MCP tool catalogue (`GET /api/tools`), keyboard shortcuts, repo links, author bio placeholder card.
 
-### Step 6 — Control tab (≤ 1.5 day, largest single chunk)
+### Step 6 — Control tab — ⚠ DEFERRED to v5.50.2 (NOT in v5.50.0)
+
+> Per Scope Lock, v5.50.0 ships an empty `#control` container only. The steps below are the v5.50.2 implementation plan. Skip in v5.50.0.
 - TDD: `test_control_api.py` — 403 gating, 200 unlock, restart confirmation typed-name match, config round-trip with type validation.
 - Implement `/api/control/config` GET + POST.
 - Implement `/api/control/action/*` (calls existing MCP tools internally).
@@ -459,7 +501,7 @@ Existing `-12.0` produces clumpy clusters on graphs >500 nodes. +50% absolute (`
 - Update button stub — if `/api/control/update` returns 404, the button greys out with "requires v5.47". If it returns 200, the button is live.
 
 ### Step 7 — Edge variant C + wiki octahedron + physics bump (≤ 0.25 day)
-- Update `config.yaml` defaults.
+- Update viz defaults via the three-way registry (`config.py` + `config_yaml.py` + `config_registry.py`) — no `config.yaml` file.
 - Update frontend renderer: `OctahedronGeometry` branch in the wiki node factory.
 - Snapshot regression test: render a fixed seed graph, assert edge thickness pixel count within ±5% of expected for variant C.
 
@@ -488,6 +530,8 @@ Existing `-12.0` produces clumpy clusters on graphs >500 nodes. +50% absolute (`
 ---
 
 ## Acceptance criteria
+
+> ⚠ Per Scope Lock, the Control-tab criteria (gating, config editor, update button, restart buttons) and `test_control_api.py` are **v5.50.2**; full Bookmarks-tab criteria are **v5.50.1**. For v5.50.0, the `#bookmarks`/`#control` criteria reduce to "empty container renders under route". The list below is the pre-split superset.
 
 v5.50.0 ships when ALL are true:
 
@@ -530,6 +574,8 @@ v5.50.0 ships when ALL are true:
 ---
 
 ## TDD test list (write red, then implement green)
+
+> ⚠ Tests 7–12 (`test_control_api.py`) are **v5.50.2**, not v5.50.0. v5.50.0 writes tests 1–6 (routes), 13–18 (overlays + bookmarks migration). Route tests 4 + 6 (`#bookmarks`, `#control`) assert the EMPTY container renders.
 
 1. `test_viz_routes.py::test_route_home_renders` — hash `#home` shows the canvas container.
 2. `test_viz_routes.py::test_route_stats_renders` — hash `#stats` shows the stats container.
