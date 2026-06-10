@@ -290,3 +290,53 @@ Three parallel worktree groups (PLAN_V5_49_9.md). 10 modules.
 - Wave 3 (v5.49.8): 134 new tests, 11 modules
 - Wave 4 (v5.49.9): 291 new tests, 10 modules
 - **Total: 1042 new tests, 41 modules covered**
+
+---
+
+## Wave 5 re-audit (2026-06-10) — backlog tail verification
+
+Re-audited the 18 modules from the original `<10%` list not picked in waves 1-4. Method: `coverage run --include=<path> -m pytest ... -n 0` (per-module, xdist disabled — pytest-cov breaks on this env's Py3.14/numpy). Result: **only 6 genuinely needed tests**; the other 12 were false positives or already-covered underscore-lib modules.
+
+| Module | Pre-cov % | Verdict |
+|---|---|---|
+| yadgar/platform_paths.py | 88% | already covered (false positive) |
+| yadgar/scripts/wiki_snapshot.py | 100% | already covered |
+| yadgar/hooks/session-start-context.py | 83% | already covered |
+| yadgar/hooks/subagent_stop.py | 87% | already covered (underscore lib) |
+| yadgar/hooks/instructions_loaded.py | 72% | already covered (underscore lib) |
+| yadgar/hooks/file_changed.py | 63% | already covered (underscore lib) |
+| yadgar/hooks/subagent_start.py | 75% | already covered (underscore lib) |
+| yadgar/cli/config.py | 68% | already covered |
+| yadgar/cli/vacuum.py | 95% | already covered |
+| yadgar/update/check.py | 100% | already covered |
+| yadgar/storage/bitemporal.py | 94% | already covered |
+| yadgar/cli/viz.py | 78% | already covered |
+
+Note: wave-3 hyphen entry scripts (file-changed.py etc.) are SEPARATE files from the underscore library modules (file_changed.py etc.); both are now covered.
+
+## Wave 5 picks + results (v5.49.10)
+
+Two parallel worktree groups. 6 modules, 114 stmts.
+
+| Group | Module | Pre-cov % | Post-cov % | New tests | Notes |
+|---|---|---|---|---|---|
+| A | yadgar/cli/_shared.py | 0% | 100% | — | imported by drain+restore; engine-init mocked |
+| A | yadgar/cli/restore.py | 40% | 100% | — | |
+| A | yadgar/cli/capture.py | 48% | 100% | — | |
+| A | yadgar/cli/drain.py | 43% | 100% | — | |
+| B | yadgar/hooks/db-lockdown-check.py | 0% | 96% | — | importlib spec_from_file_location (hyphen filename); floor: `__main__` guard |
+| B | yadgar/scripts/yadgar_setup.py | 0% | 100% | — | import the Python shim, not the .sh script |
+
+Group A: 54 tests total. Group B: 33 tests total. Wave 5 total: 87 tests.
+
+**Summary:**
+- 6 of 6 modules ≥96% coverage (0 below ≥80% target)
+- **Original `<10%` backlog (59 modules) EXHAUSTED.** No untested production modules remain from the audit.
+
+**Cumulative cross-wave totals (waves 1-5):**
+- Wave 1 (v5.49.6): 315 new tests, 10 modules
+- Wave 2 (v5.49.7): 302 new tests, 10 modules
+- Wave 3 (v5.49.8): 134 new tests, 11 modules
+- Wave 4 (v5.49.9): 291 new tests, 10 modules
+- Wave 5 (v5.49.10): 87 new tests, 6 modules
+- **Total: 1129 new tests, 47 modules covered**
