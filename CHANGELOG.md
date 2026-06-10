@@ -6,6 +6,29 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.49.9] — 2026-06-10
+
+### Coverage Wave 4: 291 new unit tests across 10 modules
+
+- **Wave 4 (10 modules, 3 parallel worktree groups):** test files added for the next untested modules. All 10 reach ≥96% line coverage.
+  - **Group A:**
+    - `yadgar/seed/_scan.py` → 100% (56 tests)
+    - `yadgar/metacognition/coverage.py` → 98% (33 tests — floor: `_extract_entities` body mocked)
+    - `yadgar/metacognition/gap_detection.py` → 100% (31 tests)
+    - `yadgar/curation/strengthen.py` → 100% (32 tests)
+  - **Group B:**
+    - `yadgar/observability/timing.py` → 96% (26 tests — floor: prometheus-unavailable no-op branches)
+    - `yadgar/__main__.py` → 99% (20 tests — floor: `__main__` guard line)
+    - `yadgar/update/install_methods.py` → 100% (29 tests)
+    - `yadgar/install_subagents_lib.py` → 100% (21 tests)
+  - **Group C:**
+    - `yadgar/retrieval/_reranking_heuristic.py` → 100% (25 tests)
+    - `yadgar/retrieval/_reranking_mmr.py` → 100% (18 tests)
+- **Cumulative (waves 1+2+3+4):** 1042 new tests covering 41 modules.
+- 3 documented floors, all dead/guard/mocked branches — no real coverage gaps.
+
+---
+
 ## [5.49.8] — 2026-06-09
 
 ### Coverage Wave 3: 134 new unit tests across 11 modules

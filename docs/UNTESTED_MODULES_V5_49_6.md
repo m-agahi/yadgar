@@ -242,3 +242,51 @@ Note: modules 9–11 covered in a single test file (`test_hook_entry_points_modu
 - Wave 2 (v5.49.7): 302 new tests, 10 modules
 - Wave 3 (v5.49.8): 134 new tests, 11 modules
 - **Total: 751 new tests, 31 modules covered**
+
+---
+
+## Wave 4 picks — top candidates by stmt count (v5.49.9)
+
+Three parallel worktree groups (PLAN_V5_49_9.md). 10 modules.
+
+| Group | Module | Test file |
+|---|---|---|
+| A | yadgar/seed/_scan.py | yadgar/tests/test_seed_scan.py |
+| A | yadgar/metacognition/coverage.py | yadgar/tests/test_metacognition_coverage.py |
+| A | yadgar/metacognition/gap_detection.py | yadgar/tests/test_metacognition_gap_detection.py |
+| A | yadgar/curation/strengthen.py | yadgar/tests/test_curation_strengthen.py |
+| B | yadgar/observability/timing.py | yadgar/tests/test_observability_timing.py |
+| B | yadgar/__main__.py | yadgar/tests/test_main_module.py |
+| B | yadgar/update/install_methods.py | yadgar/tests/test_update_install_methods.py |
+| B | yadgar/install_subagents_lib.py | yadgar/tests/test_install_subagents_lib.py |
+| C | yadgar/retrieval/_reranking_heuristic.py | yadgar/tests/test_reranking_heuristic.py |
+| C | yadgar/retrieval/_reranking_mmr.py | yadgar/tests/test_reranking_mmr.py |
+
+---
+
+## Wave 4 results (post-wave, 2026-06-10)
+
+| Group | Module | Post-cov % | New tests | Notes |
+|---|---|---|---|---|
+| A | yadgar/seed/_scan.py | 100% | 56 | Fully covered |
+| A | yadgar/metacognition/coverage.py | 98% | 33 | Floor: lines 8–10 `_extract_entities` body (mocked in every test) |
+| A | yadgar/metacognition/gap_detection.py | 100% | 31 | Fully covered |
+| A | yadgar/curation/strengthen.py | 100% | 32 | Fully covered |
+| B | yadgar/observability/timing.py | 96% | 26 | Floor: lines 94/105/147 `_PROMETHEUS_AVAILABLE` no-op branches (prometheus installed → dead) |
+| B | yadgar/__main__.py | 99% | 20 | Floor: line 161 `if __name__ == "__main__"` guard |
+| B | yadgar/update/install_methods.py | 100% | 29 | Fully covered |
+| B | yadgar/install_subagents_lib.py | 100% | 21 | Fully covered |
+| C | yadgar/retrieval/_reranking_heuristic.py | 100% | 25 | Fully covered |
+| C | yadgar/retrieval/_reranking_mmr.py | 100% | 18 | Fully covered |
+
+**Summary:**
+- 10 of 10 modules ≥96% coverage (0 below ≥80% target)
+- Total new tests: 291
+- 3 documented floors (all dead/guard/mocked branches, not real gaps)
+
+**Cumulative cross-wave totals (waves 1+2+3+4):**
+- Wave 1 (v5.49.6): 315 new tests, 10 modules
+- Wave 2 (v5.49.7): 302 new tests, 10 modules
+- Wave 3 (v5.49.8): 134 new tests, 11 modules
+- Wave 4 (v5.49.9): 291 new tests, 10 modules
+- **Total: 1042 new tests, 41 modules covered**
