@@ -662,11 +662,15 @@ class Settings(BaseSettings):
     VIZ_EDGE_COLOR_TRANSITION: str = "#3fb950"
     VIZ_EDGE_COLOR_WIKI_CROSSREF: str = "#d2a8ff"
     VIZ_EDGE_COLOR_MEMORY_WIKI: str = "#ffa657"
-    # Edge sizing
-    VIZ_EDGE_WIDTH_3D_MULTIPLIER: float = 1.5  # _linkWidth(l) * N in 3D mode
+    # Edge sizing — v5.50.0 Variant C defaults (width 1.8, opacity 0.9)
+    VIZ_EDGE_WIDTH_3D_MULTIPLIER: float = 1.8  # _linkWidth(l) * N in 3D mode
     VIZ_EDGE_ARROW_LEN: int = 5  # arrowLen for directional edge types
-    # Physics
-    VIZ_PHYSICS_CHARGE_STRENGTH: float = -12.0
+    VIZ_EDGE_OPACITY: float = 0.9  # linkOpacity for all edges (Variant C)
+    VIZ_EDGE_VARIANT: str = "C"  # informational: edge style variant in use
+    # Node shape — v5.50.0 (config only; mesh renderer deferred, see PLAN_V5_10_7_3)
+    VIZ_WIKI_SHAPE: str = "octahedron"  # desired shape for wiki nodes; renderer not wired pending v5.10.7.3 resolution
+    # Physics — v5.50.0: charge -18.0 (from -12.0) for better node spread
+    VIZ_PHYSICS_CHARGE_STRENGTH: float = -18.0
     VIZ_PHYSICS_LINK_DISTANCE_2D: float = 30.0
     VIZ_PHYSICS_LINK_DISTANCE_3D: float = 36.0
     # Layout / zoom-fit
