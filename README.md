@@ -465,6 +465,8 @@ subagents just won't auto-write their findings.
   - **v5.49.4** — README + RELEASE.md + container sd_notify + pre-existing test bisect.
   - **v5.49.5** — `memorize()` refactor (cyclo 114 → 5) — first batch of v5.90 grandfathered cleanup track.
   - **v5.49.6/.7** — Coverage waves 1+2 (20 modules covered, 618 new tests).
+  - **v5.49.8** — Coverage wave 3 (11 modules covered, 134 new tests).
+  - **v5.49.9** — Planned: coverage wave 4 (~10 modules from DEFERRED audit, 3 parallel worktree groups). Target: 2026-06-10.
 
 ## Contributing
 
