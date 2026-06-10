@@ -6,6 +6,24 @@ Format: terse one-line subject per change. Versions ordered newest-first. Tagged
 
 ---
 
+## [5.49.10] — 2026-06-10
+
+### Coverage Wave 5: 87 new unit tests across 6 modules — backlog tail cleared
+
+- **Wave 5 (6 modules, 2 parallel worktree groups):** the final modules from the original `<10%` audit list. All reach ≥96%.
+  - **Group A (cli cluster):**
+    - `yadgar/cli/_shared.py` → 100% (was 0%)
+    - `yadgar/cli/restore.py` → 100% (was 40%)
+    - `yadgar/cli/capture.py` → 100% (was 48%)
+    - `yadgar/cli/drain.py` → 100% (was 43%)
+  - **Group B (hook + script):**
+    - `yadgar/hooks/db-lockdown-check.py` → 96% (importlib-loaded; floor: `__main__` guard)
+    - `yadgar/scripts/yadgar_setup.py` → 100% (was 0%)
+- **Original `<10%` backlog (59 modules) now exhausted.** A v5.49.6-era re-audit confirmed the remaining candidates beyond wave 5 were already covered (false positives or underscore-lib modules tested 63-87% via dedicated hook test files).
+- **Cumulative (waves 1-5):** 1129 new tests covering 47 modules.
+
+---
+
 ## [5.49.9] — 2026-06-10
 
 ### Coverage Wave 4: 291 new unit tests across 10 modules

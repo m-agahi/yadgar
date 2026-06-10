@@ -43,7 +43,7 @@
 
         yadgar-pkg = python.pkgs.buildPythonApplication {
           pname = "yadgar";
-          version = "5.49.9";
+          version = "5.49.10";
           format = "pyproject";
 
           src = ./.;
