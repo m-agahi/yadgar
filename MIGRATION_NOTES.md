@@ -1,5 +1,48 @@
 # Migration Notes
 
+## v5.50.0 — Tab router, viz Variant C, bookmarks redirect (2026-06-10)
+
+### Tab router (frontend change)
+
+`yadgar/static/index.html` now uses a hash-router with 6 tabs. The viz server (`viz_server.py`) serves it unchanged — the SPA handles routing in the browser. No backend changes required.
+
+**Tabs shipped:**
+- `#home` — full-canvas 3D graph (default).
+- `#stats` — memory stats panel.
+- `#health` — daemon health / process / queue metrics.
+- `#info` — version info, viz config summary, keyboard shortcuts.
+- `#bookmarks` — EMPTY placeholder (v5.50.1 adds content).
+- `#control` — EMPTY placeholder (v5.50.2 adds content + API gate).
+
+### bookmarks.html redirect
+
+`GET /static/bookmarks.html` now returns **302 → /#bookmarks** instead of serving the standalone page. The HTML file itself also has a JS redirect as fallback. The file will be removed in **v5.52.0** — do not depend on it after v5.50.x.
+
+If you bookmarked `http://localhost:42069/static/bookmarks.html` directly, update your browser bookmark to `/#bookmarks`.
+
+### Viz Variant C defaults
+
+Three viz knobs changed defaults in v5.50.0. If your `~/.yadgar/config.yaml` sets these explicitly, your overrides take precedence — no action needed. If you rely on the defaults, the new values take effect immediately:
+
+| Knob | v5.49.x default | v5.50.0 default |
+|---|---|---|
+| `viz_edge_width_3d_multiplier` | 1.5 | **1.8** |
+| `viz_physics_charge_strength` | -12.0 | **-18.0** |
+| `viz_edge_opacity` | (new) | **0.9** |
+
+New config knobs added (three-way registry):
+- `YADGAR_VIZ_EDGE_OPACITY` (float, default 0.9) — wired to `.linkOpacity()` in 3D graph init.
+- `YADGAR_VIZ_EDGE_VARIANT` (string, default `"C"`) — informational; no renderer consumer in v5.50.0.
+- `YADGAR_VIZ_WIKI_SHAPE` (string, default `"octahedron"`) — config only; renderer deferred (see below).
+
+### Deferred: wiki-node octahedron renderer
+
+`VIZ_WIKI_SHAPE = "octahedron"` is registered in the config system but the mesh renderer is NOT wired in v5.50.0. Three prior implementation attempts (v5.10.7, v5.10.7.1, v5.10.7.2) produced "fragmented triangle shard" rendering and were reverted in v5.10.7.3. The guards in `test_viz_static_assets.py::TestV510703RevertCustomMesh` remain in place. The config default registers the intent; wiring the renderer requires deeper ForceGraph3D + Three.js investigation (tracked for a future minor).
+
+### Deferred: zoom regression bisect
+
+The spec identified a suspected zoom regression in the v5.10.4–v5.11.0 range (graph loads zoomed-in then auto-zooms out). Bisect requires a headless browser to assert `camera.position.z` — not available in the worktree environment. Deferred to v5.50.1. Suspected commit range based on code inspection: `966c9a4` (v5.10.10, `auto-zoom-fit on initial load`) added `zoomToFit()` logic using `_engineTickCount`; `280828d` (v5.11.0, `await loadVizConfig() before initGraph()`) changed boot order. If zoom appears incorrect, check `YADGAR_VIZ_LAYOUT_ZOOM_FIT_TICK` (default 80) — reducing it triggers zoom earlier; increasing it delays.
+
 ## v5.49.0 — Upgrade orchestrator + memory archive retention (2026-06-08)
 
 Both strands ship OFF by default. No action required unless you want to opt in.

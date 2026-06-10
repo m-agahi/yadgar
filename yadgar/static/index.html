@@ -507,6 +507,94 @@ body.dh-open #dh-toggle { right: 480px; }
   text-align: center;
   padding: 6px 0;
 }
+
+/* ── v5.50.0 Tab bar ──────────────────────────────────────── */
+#tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  flex-shrink: 0;
+  padding: 0 8px;
+}
+#tab-bar a.tab-link {
+  display: inline-block;
+  padding: 6px 14px;
+  font-size: 11px;
+  font-family: inherit;
+  color: #8b949e;
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+#tab-bar a.tab-link:hover { color: #c9d1d9; }
+#tab-bar a.tab-link.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+
+/* ── v5.50.0 Tab containers ───────────────────────────────── */
+.tab-pane {
+  display: none;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+.tab-pane.active { display: flex; }
+
+/* Home tab: contains the graph canvas layout */
+#tab-home {
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Stats, Health, Info tabs: scrollable content */
+#tab-stats, #tab-health, #tab-info {
+  overflow-y: auto;
+  padding: 16px;
+}
+
+/* Placeholder tabs (empty shells — content in v5.50.1/v5.50.2) */
+#tab-bookmarks, #tab-control {
+  justify-content: center;
+  align-items: center;
+  color: #444;
+  font-size: 13px;
+}
+
+/* Health / Info / Stats tab content styles */
+.tab-section-title {
+  color: #58a6ff;
+  font-size: 11px;
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+  margin-top: 16px;
+}
+.tab-section-title:first-child { margin-top: 0; }
+.tab-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.tab-card {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 10px 12px;
+}
+.tab-card-title { color: #8b949e; font-size: 10px; margin-bottom: 6px; }
+.tab-kv { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; margin: 2px 0; }
+.tab-kv .k { color: #8b949e; }
+.tab-kv .v { color: #e6edf3; font-variant-numeric: tabular-nums; }
+
+/* App container must be flex column to hold tab-bar + tab-panes */
+#app-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
 </style>
 </head>
 <body>
@@ -524,11 +612,25 @@ body.dh-open #dh-toggle { right: 480px; }
   <button class="btn" id="stats-btn" onclick="openStats()">📊 Stats</button>
   <button class="btn" id="debug-btn" onclick="openDebug()">⚙ Debug</button>
   <button class="btn" id="dh-btn" onclick="toggleDaemonPanel()">⬡ Daemons</button>
-  <a class="btn" href="bookmarks.html" style="text-decoration:none">📑 Bookmarks</a>
   <span id="status-dot"></span>
   <span id="status-text">Connecting…</span>
 </div>
 
+<!-- v5.50.0: Hash-router tab bar -->
+<div id="tab-bar">
+  <a href="#home" class="tab-link" data-tab="home">Home</a>
+  <a href="#stats" class="tab-link" data-tab="stats">Stats</a>
+  <a href="#health" class="tab-link" data-tab="health">Health</a>
+  <a href="#bookmarks" class="tab-link" data-tab="bookmarks">Bookmarks</a>
+  <a href="#info" class="tab-link" data-tab="info">Info</a>
+  <a href="#control" class="tab-link" data-tab="control">Control</a>
+</div>
+
+<!-- v5.50.0: App container holds all tab panes -->
+<div id="app-container">
+
+<!-- ── Tab: Home (graph canvas + overlays) ─── -->
+<div id="tab-home" class="tab-pane">
 <div id="content-area">
 <div id="main">
   <!-- Controls -->
@@ -652,7 +754,99 @@ body.dh-open #dh-toggle { right: 480px; }
       </div>
     </div>
   </div>
-</div>
+</div><!-- /#sys-bar -->
+</div><!-- /#tab-home -->
+
+<!-- ── Tab: Stats ─────────────────────────────────────────── -->
+<div id="tab-stats" class="tab-pane">
+  <div class="tab-section-title">Memory Statistics</div>
+  <div id="tab-stats-body">
+    <div class="tab-grid">
+      <div class="tab-card">
+        <div class="tab-card-title">Heat Distribution</div>
+        <canvas id="tab-chart-heat" height="180"></canvas>
+      </div>
+      <div class="tab-card">
+        <div class="tab-card-title">Consolidation Activity (last 30 cycles)</div>
+        <canvas id="tab-chart-consol" height="180"></canvas>
+      </div>
+    </div>
+    <div id="tab-stats-detail" style="color:#8b949e;font-size:11px;padding:8px 0">
+      Loading stats…
+    </div>
+  </div>
+</div><!-- /#tab-stats -->
+
+<!-- ── Tab: Health ────────────────────────────────────────── -->
+<div id="tab-health" class="tab-pane">
+  <div class="tab-section-title">Daemon Health</div>
+  <div class="tab-grid" id="tab-health-grid">
+    <div class="tab-card">
+      <div class="tab-card-title">Core Daemon</div>
+      <div class="tab-kv"><span class="k">CPU %</span><span class="v" id="th-cpu">—</span></div>
+      <div class="tab-kv"><span class="k">RSS</span><span class="v" id="th-rss">—</span></div>
+      <div class="tab-kv"><span class="k">Threads</span><span class="v" id="th-threads">—</span></div>
+      <div class="tab-kv"><span class="k">FDs</span><span class="v" id="th-fds">—</span></div>
+      <div class="tab-kv"><span class="k">Uptime</span><span class="v" id="th-uptime">—</span></div>
+    </div>
+    <div class="tab-card">
+      <div class="tab-card-title">DB &amp; Queue</div>
+      <div class="tab-kv"><span class="k">DB Size</span><span class="v" id="th-db">—</span></div>
+      <div class="tab-kv"><span class="k">Queue Depth</span><span class="v" id="th-qdepth">—</span></div>
+      <div class="tab-kv"><span class="k">DLQ</span><span class="v" id="th-dlq">—</span></div>
+      <div class="tab-kv"><span class="k">Lag p95</span><span class="v" id="th-lag">—</span></div>
+    </div>
+    <div class="tab-card">
+      <div class="tab-card-title">System</div>
+      <div class="tab-kv"><span class="k">RAM Free</span><span class="v" id="th-ram">—</span></div>
+      <div class="tab-kv"><span class="k">Load avg</span><span class="v" id="th-load">—</span></div>
+    </div>
+  </div>
+  <div id="tab-health-status" style="color:#8b949e;font-size:10px;margin-top:8px">Waiting for data…</div>
+</div><!-- /#tab-health -->
+
+<!-- ── Tab: Bookmarks (EMPTY — v5.50.1) ──────────────────── -->
+<div id="tab-bookmarks" class="tab-pane">
+  <!-- v5.50.1: bookmarks tab content (search, list, preview) comes here -->
+</div><!-- /#tab-bookmarks -->
+
+<!-- ── Tab: Info ──────────────────────────────────────────── -->
+<div id="tab-info" class="tab-pane">
+  <div class="tab-section-title">About Yadgar</div>
+  <div class="tab-grid">
+    <div class="tab-card">
+      <div class="tab-card-title">Version</div>
+      <div class="tab-kv"><span class="k">Version</span><span class="v" id="ti-version">—</span></div>
+      <div class="tab-kv"><span class="k">Python</span><span class="v" id="ti-python">—</span></div>
+    </div>
+    <div class="tab-card">
+      <div class="tab-card-title">Keyboard Shortcuts</div>
+      <div class="tab-kv"><span class="k">Fit graph</span><span class="v">F</span></div>
+      <div class="tab-kv"><span class="k">Reload</span><span class="v">R</span></div>
+      <div class="tab-kv"><span class="k">Toggle 2D/3D</span><span class="v">D</span></div>
+      <div class="tab-kv"><span class="k">Search</span><span class="v">/ or Ctrl-K</span></div>
+    </div>
+    <div class="tab-card">
+      <div class="tab-card-title">Links</div>
+      <div class="tab-kv"><span class="k">Repo</span><span class="v"><a href="https://github.com/max-sixty/yadgar" target="_blank" style="color:#58a6ff">GitHub</a></span></div>
+    </div>
+  </div>
+  <div class="tab-section-title">Viz Config (active)</div>
+  <div class="tab-card" style="max-width:400px">
+    <div class="tab-kv"><span class="k">Edge variant</span><span class="v" id="ti-variant">—</span></div>
+    <div class="tab-kv"><span class="k">Edge opacity</span><span class="v" id="ti-opacity">—</span></div>
+    <div class="tab-kv"><span class="k">Edge width ×</span><span class="v" id="ti-width">—</span></div>
+    <div class="tab-kv"><span class="k">Charge strength</span><span class="v" id="ti-charge">—</span></div>
+    <div class="tab-kv"><span class="k">Wiki shape (cfg)</span><span class="v" id="ti-wiki-shape">—</span></div>
+  </div>
+</div><!-- /#tab-info -->
+
+<!-- ── Tab: Control (EMPTY — v5.50.2) ────────────────────── -->
+<div id="tab-control" class="tab-pane">
+  <!-- v5.50.2: control tab content (config editor, actions, restart) comes here -->
+</div><!-- /#tab-control -->
+
+</div><!-- /#app-container -->
 
 <!-- Debug drawer (hidden by default) -->
 <div id="debug-overlay" style="display:none">
@@ -777,6 +971,8 @@ const DAEMON = '';  // empty = same-origin; viz_server proxies /api/* to the dae
 let YADGAR_VIZ_CONFIG = {
   node: {
     size_3d: 8, size_2d: 4,
+    // wiki_shape: config default only; renderer deferred — see PLAN_V5_10_7_3_VIZ_REVERT_TO_DEFAULTS
+    wiki_shape: 'octahedron',
     category_colors: {
       architecture: '#58a6ff', decision: '#ffa657', pattern: '#3fb950',
       debugging: '#f85149', reference: '#8b949e', convention: '#d2a8ff',
@@ -786,9 +982,9 @@ let YADGAR_VIZ_CONFIG = {
   },
   edge: {
     color: { semantic: '#1f6feb', temporal: '#6e40c9', transition: '#3fb950', wiki_crossref: '#d2a8ff', memory_wiki: '#ffa657' },
-    width_3d_multiplier: 1.5, arrow_len: 5,
+    width_3d_multiplier: 1.8, arrow_len: 5, opacity: 0.9, variant: 'C',
   },
-  physics: { charge_strength: -12, link_distance_2d: 30, link_distance_3d: 36 },
+  physics: { charge_strength: -18, link_distance_2d: 30, link_distance_3d: 36 },
   layout: { auto_zoom_fit_tick_threshold: 80, zoom_fit_padding: 50, zoom_fit_transition_ms: 800 },
   search: { match_color: '#ffffff', pinned_color: '#ffd700', dim_opacity: 0.18 },
 };
@@ -804,6 +1000,7 @@ async function loadVizConfig() {
     if (cfg.node) {
       if (cfg.node.size_3d != null) YADGAR_VIZ_CONFIG.node.size_3d = cfg.node.size_3d;
       if (cfg.node.size_2d != null) YADGAR_VIZ_CONFIG.node.size_2d = cfg.node.size_2d;
+      if (cfg.node.wiki_shape != null) YADGAR_VIZ_CONFIG.node.wiki_shape = cfg.node.wiki_shape;
       if (cfg.node.category_colors) Object.assign(YADGAR_VIZ_CONFIG.node.category_colors, cfg.node.category_colors);
       if (cfg.node.heat) Object.assign(YADGAR_VIZ_CONFIG.node.heat, cfg.node.heat);
     }
@@ -811,6 +1008,8 @@ async function loadVizConfig() {
       if (cfg.edge.color) Object.assign(YADGAR_VIZ_CONFIG.edge.color, cfg.edge.color);
       if (cfg.edge.width_3d_multiplier != null) YADGAR_VIZ_CONFIG.edge.width_3d_multiplier = cfg.edge.width_3d_multiplier;
       if (cfg.edge.arrow_len != null) YADGAR_VIZ_CONFIG.edge.arrow_len = cfg.edge.arrow_len;
+      if (cfg.edge.opacity != null) YADGAR_VIZ_CONFIG.edge.opacity = cfg.edge.opacity;
+      if (cfg.edge.variant != null) YADGAR_VIZ_CONFIG.edge.variant = cfg.edge.variant;
     }
     if (cfg.physics) Object.assign(YADGAR_VIZ_CONFIG.physics, cfg.physics);
     if (cfg.layout) Object.assign(YADGAR_VIZ_CONFIG.layout, cfg.layout);
@@ -909,6 +1108,7 @@ function initGraph(mode) {
       // ForceGraph3D's default solid sphere rendering. Last-known-good visual.
       .linkColor(_linkColor)
       .linkWidth(l => _linkWidth(l) * YADGAR_VIZ_CONFIG.edge.width_3d_multiplier)  // v5.10.11: 3D-only; v5.11.0: config-driven
+      .linkOpacity(YADGAR_VIZ_CONFIG.edge.opacity)  // v5.50.0 Variant C: 0.9
       .linkDirectionalArrowLength(_arrowLen)
       .linkDirectionalArrowRelPos(1)
       .nodeVisibility(n => n.__visible !== false)
@@ -2075,11 +2275,107 @@ async function _dhFetchOnce() {
   } catch (_) {}
 }
 
+// ── v5.50.0 Hash Router ───────────────────────────────────────────────────────
+// Six tabs: home, stats, health, bookmarks, info, control.
+// Default: #home when hash is empty or unrecognised.
+const _VALID_TABS = new Set(['home', 'stats', 'health', 'bookmarks', 'info', 'control']);
+
+function _getActiveTab() {
+  const hash = (window.location.hash || '#home').replace(/^#/, '').split('/')[0];
+  return _VALID_TABS.has(hash) ? hash : 'home';
+}
+
+function _switchTab(tabName) {
+  if (!_VALID_TABS.has(tabName)) tabName = 'home';
+  // Hide all panes
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('#tab-bar .tab-link').forEach(a => a.classList.remove('active'));
+  // Show active pane
+  const pane = document.getElementById('tab-' + tabName);
+  if (pane) pane.classList.add('active');
+  const link = document.querySelector('#tab-bar a[data-tab="' + tabName + '"]');
+  if (link) link.classList.add('active');
+  // Tab-specific init on first visit
+  if (tabName === 'stats') _tabStatsRefresh();
+  if (tabName === 'health') _tabHealthRefresh();
+  if (tabName === 'info') _tabInfoRefresh();
+}
+
+// Stats tab: fetch /api/stats
+let _statsTabInited = false;
+function _tabStatsRefresh() {
+  const el = document.getElementById('tab-stats-detail');
+  if (!el) return;
+  fetch(DAEMON + '/api/stats').then(r => r.ok ? r.json() : null).then(d => {
+    if (!d) { el.textContent = 'Failed to load stats.'; return; }
+    el.innerHTML = '';
+    const rows = [
+      ['Memories', d.total_memories], ['Wiki pages', d.total_wiki_pages],
+      ['Embeddings', d.total_embeddings], ['Hot (heat>0.5)', d.hot_memories],
+      ['Orphan edges', d.orphan_edge_count != null ? d.orphan_edge_count : '—'],
+    ];
+    rows.forEach(([k, v]) => {
+      const row = document.createElement('div');
+      row.className = 'tab-kv';
+      row.innerHTML = '<span class="k">' + esc(k) + '</span><span class="v">' + esc(String(v ?? '—')) + '</span>';
+      el.appendChild(row);
+    });
+  }).catch(() => { if (el) el.textContent = 'Stats unavailable.'; });
+}
+
+// Health tab: populate from /api/system + /api/daemon-health
+function _tabHealthRefresh() {
+  const status = document.getElementById('tab-health-status');
+  Promise.all([
+    fetch(DAEMON + '/api/system').then(r => r.ok ? r.json() : {}),
+    fetch(DAEMON + '/api/daemon-health').then(r => r.ok ? r.json() : {}),
+  ]).then(([sys, dh]) => {
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v ?? '—'; };
+    const c = dh.core || {};
+    const cp = c.process || {};
+    const cq = c.queue || {};
+    set('th-cpu', cp.cpu_pct != null ? cp.cpu_pct + '%' : '—');
+    set('th-rss', cp.rss_bytes != null ? _fmtBytes(cp.rss_bytes) : '—');
+    set('th-threads', cp.thread_count ?? '—');
+    set('th-fds', cp.open_fds ?? '—');
+    set('th-uptime', cp.uptime_s != null ? _fmtUptime(cp.uptime_s) : '—');
+    set('th-qdepth', cq.depth ?? '—');
+    set('th-dlq', cq.dlq_size ?? '—');
+    set('th-lag', cq.drainer_lag_p95_ms != null ? cq.drainer_lag_p95_ms + 'ms' : '—');
+    set('th-db', sys.db_size_bytes != null ? _fmtBytes(sys.db_size_bytes) : '—');
+    set('th-ram', sys.ram_free_bytes != null ? _fmtBytes(sys.ram_free_bytes) : '—');
+    const load = sys.load_avg;
+    set('th-load', Array.isArray(load) ? load.join(' / ') : '—');
+    if (status) status.textContent = 'Last updated: ' + new Date().toLocaleTimeString();
+  }).catch(() => { if (status) status.textContent = 'Health data unavailable.'; });
+}
+
+// Info tab: populate version + active viz config
+function _tabInfoRefresh() {
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v ?? '—'; };
+  // Try /api/stats for version info
+  fetch(DAEMON + '/api/stats').then(r => r.ok ? r.json() : {}).then(d => {
+    set('ti-version', d.version ?? '—');
+    set('ti-python', d.python_version ?? '—');
+  }).catch(() => {});
+  // Viz config from live YADGAR_VIZ_CONFIG
+  set('ti-variant', YADGAR_VIZ_CONFIG.edge.variant ?? '—');
+  set('ti-opacity', YADGAR_VIZ_CONFIG.edge.opacity ?? '—');
+  set('ti-width', YADGAR_VIZ_CONFIG.edge.width_3d_multiplier ?? '—');
+  set('ti-charge', YADGAR_VIZ_CONFIG.physics.charge_strength ?? '—');
+  set('ti-wiki-shape', YADGAR_VIZ_CONFIG.node.wiki_shape ?? '—');
+}
+
+// Listen for hash changes (back/forward navigation)
+window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
+
 // ── Boot ─────────────────────────────────────────────────────────────────────
 // v5.11.0: fetch viz config before initGraph so value-based ForceGraph setters
 // (nodeRelSize, d3Force distances, charge strength) apply config overrides.
 (async () => {
   await loadVizConfig();
+  // Activate the correct tab before initGraph (so #tab-home is visible)
+  _switchTab(_getActiveTab());
   initGraph(_graphMode);
   loadGraph();
   connectSSE();
