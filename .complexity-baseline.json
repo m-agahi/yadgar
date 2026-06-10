@@ -1505,21 +1505,161 @@
     "nesting": 1,
     "params": 1
   },
+  "yadgar/config.py::Settings@50": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 4
+  },
+  "yadgar/config.py::YamlConfigSource@13": {
+    "attrs": 1,
+    "inh_depth": 0,
+    "methods": 4
+  },
+  "yadgar/config.py::__call__@42": {
+    "cyclo": 3,
+    "loc": 6,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/config.py::__file__": {
-    "loc": 710
+    "loc": 747
+  },
+  "yadgar/config.py::__init__@14": {
+    "cyclo": 1,
+    "loc": 4,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/config.py::_load@19": {
+    "cyclo": 6,
+    "loc": 18,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/config.py::_validate_hhmm@711": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/config.py::_validate_log_format@718": {
+    "cyclo": 2,
+    "loc": 5,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/config.py::db_path_resolved@741": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/config.py::get_field_value@38": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 3
+  },
+  "yadgar/config.py::get_settings@746": {
+    "cyclo": 1,
+    "loc": 2,
+    "nesting": 0,
+    "params": 0
+  },
+  "yadgar/config.py::settings_customise_sources@725": {
+    "cyclo": 1,
+    "loc": 14,
+    "nesting": 0,
+    "params": 6
+  },
+  "yadgar/config_registry.py::ConfigEntry@44": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 5
   },
   "yadgar/config_registry.py::__file__": {
-    "loc": 324
+    "loc": 347
+  },
+  "yadgar/config_registry.py::_raw_value@56": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/config_registry.py::_raw_value_str@79": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/config_registry.py::_set_config_gauges@301": {
+    "cyclo": 8,
+    "loc": 26,
+    "nesting": 3,
+    "params": 0
+  },
+  "yadgar/config_registry.py::_should_redact@60": {
+    "cyclo": 2,
+    "loc": 2,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/config_registry.py::as_dict@69": {
+    "cyclo": 1,
+    "loc": 8,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/config_registry.py::build_config_table@291": {
+    "cyclo": 2,
+    "loc": 3,
+    "nesting": 0,
+    "params": 0
+  },
+  "yadgar/config_registry.py::emit_startup_config_log@334": {
+    "cyclo": 1,
+    "loc": 14,
+    "nesting": 0,
+    "params": 0
+  },
+  "yadgar/config_registry.py::list_config@286": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 0
+  },
+  "yadgar/config_registry.py::source@52": {
+    "cyclo": 2,
+    "loc": 3,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/config_registry.py::value@63": {
+    "cyclo": 2,
+    "loc": 5,
+    "nesting": 1,
+    "params": 1
   },
   "yadgar/config_yaml.py::_FakeArgs@1323": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 0
   },
+  "yadgar/config_yaml.py::_FakeArgs@1335": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 0
+  },
   "yadgar/config_yaml.py::__file__": {
-    "loc": 1341
+    "loc": 1353
   },
   "yadgar/config_yaml.py::cmd_config_edit@1317": {
+    "cyclo": 7,
+    "loc": 25,
+    "nesting": 3,
+    "params": 1
+  },
+  "yadgar/config_yaml.py::cmd_config_edit@1329": {
     "cyclo": 7,
     "loc": 25,
     "nesting": 3,
@@ -1531,7 +1671,19 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/config_yaml.py::cmd_config_get@1241": {
+    "cyclo": 6,
+    "loc": 36,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/config_yaml.py::cmd_config_init@1089": {
+    "cyclo": 11,
+    "loc": 89,
+    "nesting": 4,
+    "params": 1
+  },
+  "yadgar/config_yaml.py::cmd_config_init@1101": {
     "cyclo": 11,
     "loc": 89,
     "nesting": 4,
@@ -1543,7 +1695,19 @@
     "nesting": 3,
     "params": 1
   },
+  "yadgar/config_yaml.py::cmd_config_list@1192": {
+    "cyclo": 12,
+    "loc": 47,
+    "nesting": 3,
+    "params": 1
+  },
   "yadgar/config_yaml.py::cmd_config_set@1267": {
+    "cyclo": 8,
+    "loc": 48,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/config_yaml.py::cmd_config_set@1279": {
     "cyclo": 8,
     "loc": 48,
     "nesting": 2,
@@ -1555,7 +1719,19 @@
     "nesting": 2,
     "params": 2
   },
+  "yadgar/config_yaml.py::coerce_value@1058": {
+    "cyclo": 13,
+    "loc": 41,
+    "nesting": 2,
+    "params": 2
+  },
   "yadgar/config_yaml.py::get_config_path@1006": {
+    "cyclo": 1,
+    "loc": 12,
+    "nesting": 0,
+    "params": 0
+  },
+  "yadgar/config_yaml.py::get_config_path@1018": {
     "cyclo": 1,
     "loc": 12,
     "nesting": 0,
@@ -1567,13 +1743,31 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/config_yaml.py::get_field_section@1052": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/config_yaml.py::load_yaml@1020": {
     "cyclo": 4,
     "loc": 8,
     "nesting": 1,
     "params": 1
   },
+  "yadgar/config_yaml.py::load_yaml@1032": {
+    "cyclo": 4,
+    "loc": 8,
+    "nesting": 1,
+    "params": 1
+  },
   "yadgar/config_yaml.py::save_yaml@1030": {
+    "cyclo": 2,
+    "loc": 8,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/config_yaml.py::save_yaml@1042": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 1,
@@ -6003,7 +6197,7 @@
     "params": 1
   },
   "yadgar/server/http.py::__file__": {
-    "loc": 1684
+    "loc": 1688
   },
   "yadgar/server/http.py::_compute@1349": {
     "cyclo": 6,
@@ -6127,7 +6321,7 @@
   },
   "yadgar/server/http.py::api_viz_config@1612": {
     "cyclo": 1,
-    "loc": 65,
+    "loc": 69,
     "nesting": 0,
     "params": 1
   },
@@ -6144,6 +6338,12 @@
     "params": 1
   },
   "yadgar/server/http.py::graph_view@1681": {
+    "cyclo": 1,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/server/http.py::graph_view@1685": {
     "cyclo": 1,
     "loc": 4,
     "nesting": 0,
@@ -6230,15 +6430,33 @@
   "yadgar/server/http_bookmarks.py::__file__": {
     "loc": 224
   },
+  "yadgar/server/http_bookmarks.py::api_bookmarks_add@57": {
+    "cyclo": 6,
+    "loc": 28,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/server/http_bookmarks.py::api_bookmarks_add@58": {
     "cyclo": 6,
     "loc": 28,
     "nesting": 2,
     "params": 1
   },
+  "yadgar/server/http_bookmarks.py::api_bookmarks_list@42": {
+    "cyclo": 1,
+    "loc": 11,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/server/http_bookmarks.py::api_bookmarks_list@43": {
     "cyclo": 1,
     "loc": 11,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/server/http_bookmarks.py::api_bookmarks_remove@89": {
+    "cyclo": 1,
+    "loc": 12,
     "nesting": 0,
     "params": 1
   },
@@ -6248,9 +6466,21 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/server/http_bookmarks.py::api_bookmarks_reorder@105": {
+    "cyclo": 3,
+    "loc": 30,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/server/http_bookmarks.py::api_bookmarks_reorder@106": {
     "cyclo": 3,
     "loc": 30,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/server/http_bookmarks.py::api_wiki_list@180": {
+    "cyclo": 8,
+    "loc": 26,
     "nesting": 2,
     "params": 1
   },
@@ -6260,10 +6490,22 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/server/http_bookmarks.py::api_wiki_search@144": {
+    "cyclo": 11,
+    "loc": 32,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/server/http_bookmarks.py::api_wiki_search@145": {
     "cyclo": 11,
     "loc": 32,
     "nesting": 2,
+    "params": 1
+  },
+  "yadgar/server/http_bookmarks.py::bookmarks_view@215": {
+    "cyclo": 1,
+    "loc": 10,
+    "nesting": 0,
     "params": 1
   },
   "yadgar/server/http_bookmarks.py::bookmarks_view@216": {
@@ -12777,6 +13019,84 @@
     "loc": 6,
     "nesting": 0,
     "params": 2
+  },
+  "yadgar/tests/test_bookmarks_migration.py::TestBookmarkCRUDPreservation@99": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 4
+  },
+  "yadgar/tests/test_bookmarks_migration.py::TestBookmarksHtmlRedirect@25": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 3
+  },
+  "yadgar/tests/test_bookmarks_migration.py::TestBookmarksRouteRedirect@62": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 2
+  },
+  "yadgar/tests/test_bookmarks_migration.py::__file__": {
+    "loc": 124
+  },
+  "yadgar/tests/test_bookmarks_migration.py::_bookmarks_html_path@20": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 0
+  },
+  "yadgar/tests/test_bookmarks_migration.py::test_api_bookmarks_add_route_present@111": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_bookmarks_migration.py::test_api_bookmarks_list_route_present@102": {
+    "cyclo": 3,
+    "loc": 8,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_bookmarks_migration.py::test_api_bookmarks_remove_route_present@116": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_bookmarks_migration.py::test_api_bookmarks_reorder_route_present@121": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_bookmarks_migration.py::test_bookmarks_html_contains_redirect_to_hash_bookmarks@31": {
+    "cyclo": 4,
+    "loc": 17,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_bookmarks_migration.py::test_bookmarks_html_file_exists@28": {
+    "cyclo": 2,
+    "loc": 2,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_bookmarks_migration.py::test_bookmarks_html_marked_deprecated@49": {
+    "cyclo": 3,
+    "loc": 6,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_bookmarks_migration.py::test_bookmarks_route_is_redirect@65": {
+    "cyclo": 4,
+    "loc": 16,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_bookmarks_migration.py::test_bookmarks_route_targets_hash_bookmarks@82": {
+    "cyclo": 2,
+    "loc": 10,
+    "nesting": 0,
+    "params": 1
   },
   "yadgar/tests/test_bootstrap_project.py::__file__": {
     "loc": 159
@@ -36151,6 +36471,166 @@
     "cyclo": 3,
     "loc": 14,
     "nesting": 1,
+    "params": 1
+  },
+  "yadgar/tests/test_viz_config_defaults.py::TestConfigRegistryEntries@89": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 6
+  },
+  "yadgar/tests/test_viz_config_defaults.py::TestConfigYamlFieldMeta@146": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 4
+  },
+  "yadgar/tests/test_viz_config_defaults.py::TestSettingsDefaults@26": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 5
+  },
+  "yadgar/tests/test_viz_config_defaults.py::TestVizConfigApiResponse@183": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 3
+  },
+  "yadgar/tests/test_viz_config_defaults.py::TestVizConfigJsDefaults@228": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 4
+  },
+  "yadgar/tests/test_viz_config_defaults.py::__file__": {
+    "loc": 260
+  },
+  "yadgar/tests/test_viz_config_defaults.py::_field_meta@149": {
+    "cyclo": 1,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_viz_config_defaults.py::_html@231": {
+    "cyclo": 1,
+    "loc": 5,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_viz_config_defaults.py::_registry@92": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_viz_config_defaults.py::test_api_viz_config_includes_edge_opacity@186": {
+    "cyclo": 2,
+    "loc": 11,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_viz_config_defaults.py::test_api_viz_config_includes_edge_variant@210": {
+    "cyclo": 2,
+    "loc": 11,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_viz_config_defaults.py::test_api_viz_config_includes_node_wiki_shape@198": {
+    "cyclo": 2,
+    "loc": 11,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_viz_config_defaults.py::test_edge_width_3d_multiplier_default_is_1_8@29": {
+    "cyclo": 2,
+    "loc": 10,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_viz_config_defaults.py::test_edge_width_3d_multiplier_registry_default_is_1_8@97": {
+    "cyclo": 3,
+    "loc": 7,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_viz_config_defaults.py::test_js_default_edge_opacity_present@254": {
+    "cyclo": 3,
+    "loc": 7,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_viz_config_defaults.py::test_js_default_edge_width_3d_is_1_8@237": {
+    "cyclo": 3,
+    "loc": 8,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_viz_config_defaults.py::test_js_default_physics_charge_is_minus_18@246": {
+    "cyclo": 3,
+    "loc": 7,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_viz_config_defaults.py::test_physics_charge_strength_default_is_minus_18@40": {
+    "cyclo": 2,
+    "loc": 9,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_viz_config_defaults.py::test_physics_charge_strength_registry_default_is_minus_18@105": {
+    "cyclo": 3,
+    "loc": 5,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_viz_config_defaults.py::test_viz_edge_opacity_exists_and_defaults_to_0_9@50": {
+    "cyclo": 3,
+    "loc": 10,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_viz_config_defaults.py::test_viz_edge_opacity_in_field_meta@154": {
+    "cyclo": 3,
+    "loc": 8,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_viz_config_defaults.py::test_viz_edge_opacity_in_registry@111": {
+    "cyclo": 4,
+    "loc": 8,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_viz_config_defaults.py::test_viz_edge_variant_exists_and_defaults_to_C@72": {
+    "cyclo": 3,
+    "loc": 10,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_viz_config_defaults.py::test_viz_edge_variant_in_field_meta@170": {
+    "cyclo": 3,
+    "loc": 6,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_viz_config_defaults.py::test_viz_edge_variant_in_registry@131": {
+    "cyclo": 4,
+    "loc": 8,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_viz_config_defaults.py::test_viz_wiki_shape_exists_and_defaults_to_octahedron@61": {
+    "cyclo": 3,
+    "loc": 10,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_viz_config_defaults.py::test_viz_wiki_shape_in_field_meta@163": {
+    "cyclo": 3,
+    "loc": 6,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_viz_config_defaults.py::test_viz_wiki_shape_in_registry@120": {
+    "cyclo": 4,
+    "loc": 10,
+    "nesting": 0,
     "params": 1
   },
   "yadgar/tests/test_viz_config_endpoint.py::__file__": {

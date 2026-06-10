@@ -7,6 +7,32 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.50.0] — 2026-06-10
+
+### Added
+- **Hash-router tab bar** — `yadgar/static/index.html` restructured with 6 tabs: `#home`, `#stats`, `#health`, `#bookmarks`, `#info`, `#control`. `#home` is the default and contains the full-canvas 3D graph. `#stats`, `#health`, and `#info` have basic content panels. `#bookmarks` and `#control` are empty placeholder shells (content in v5.50.1 and v5.50.2 respectively).
+- **Logo SVGs** — 3 new SVG logo variants committed to `yadgar/static/img/`: `logo-synapse.svg` (three-signals-in / concept piece), `logo-knot.svg` (edges-cross / OG image candidate), `logo-y.svg` (letterform / favicon).
+- **favicon.svg replaced** — now mirrors `logo-y.svg` (letterform Y with cyan accent); previous orange-gradient design retired.
+- **bookmarks.html → 302 redirect** — standalone bookmarks page now redirects browsers to `/#bookmarks`. HTTP route updated from `FileResponse` to `RedirectResponse`. Deprecation notice added; file removed in v5.52.0+.
+- **Viz three-way config additions** (via Python three-way registry: `config.py` + `config_yaml.py` + `config_registry.py`):
+  - `VIZ_EDGE_OPACITY` (float, default 0.9) — Variant C edge opacity, wired to `.linkOpacity()` in 3D init.
+  - `VIZ_EDGE_VARIANT` (string, default `"C"`) — informational metadata; no renderer consumer.
+  - `VIZ_WIKI_SHAPE` (string, default `"octahedron"`) — config default only; mesh renderer deferred pending PLAN_V5_10_7_3 resolution (custom mesh attempts rendered as fragmented shards in v5.10.7–v5.10.7.2).
+- **`/api/viz/config` extended** — response now includes `node.wiki_shape`, `edge.opacity`, `edge.variant`.
+- **YADGAR_VIZ_CONFIG JS defaults updated** — `index.html` hardcoded fallback now reflects Variant C values.
+
+### Changed
+- **Viz defaults — Variant C** (three-way registry update):
+  - `VIZ_EDGE_WIDTH_3D_MULTIPLIER`: 1.5 → **1.8**
+  - `VIZ_PHYSICS_CHARGE_STRENGTH`: -12.0 → **-18.0** (better node spread)
+- **Version bump**: 5.49.10 → 5.50.0.
+
+### Deferred
+- `#bookmarks` tab content (`bookmarks-tab.js`, search, preview, versions rail) → **v5.50.1**.
+- `#control` tab + control/restart APIs + `YADGAR_DEBUG_APIS_ENABLED` gate → **v5.50.2**.
+- Wiki-node octahedron mesh renderer — `VIZ_WIKI_SHAPE` config registers the intent; renderer not wired (three prior attempts produced fragmented shards, v5.10.7–v5.10.7.2; see PLAN_V5_10_7_3). Deferred until deeper ForceGraph3D + Three.js investigation.
+- Zoom-regression bisect — unconfirmed regression suspected in v5.10.4–v5.11.0 range. Cannot pin headless without a browser. Documented in MIGRATION_NOTES.md; deferred to v5.50.1.
+
 ## [5.49.4] — 2026-06-09
 
 ### Changed

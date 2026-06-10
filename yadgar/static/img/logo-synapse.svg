@@ -1,0 +1,10 @@
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="yadgar synapse mark">
+  <g fill="none" stroke="#58a6ff" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M6 32 H22"/>
+    <path d="M22 32 L28 24 M22 32 L28 32 M22 32 L28 40"/>
+    <path d="M30 24 L36 24 M30 32 L36 32 M30 40 L36 40"/>
+    <path d="M36 24 L42 32 L36 40 Z"/>
+    <path d="M42 32 H58"/>
+  </g>
+  <circle cx="33" cy="32" r="1.5" fill="#58a6ff"/>
+</svg>
