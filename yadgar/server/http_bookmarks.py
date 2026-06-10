@@ -17,10 +17,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from pathlib import Path
 
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse
+from starlette.responses import JSONResponse, RedirectResponse
 
 import yadgar.server._state as _st
 from yadgar.server._app import mcp_server
@@ -213,12 +212,13 @@ async def api_wiki_list(request: Request) -> JSONResponse:
 
 @mcp_server.custom_route("/static/bookmarks.html", methods=["GET"])
 @trace_span("api.bookmarks_view")
-async def bookmarks_view(request: Request) -> FileResponse:
-    """Serve the wiki bookmarks UI page (v5.24.0 frontend).
+async def bookmarks_view(request: Request) -> RedirectResponse:
+    """Redirect to the #bookmarks tab in the main SPA (v5.50.0 migration).
 
-    GET /static/bookmarks.html
+    GET /static/bookmarks.html → 302 /#bookmarks
 
-    Returns the bookmarks.html static file from yadgar/static/.
+    bookmarks.html is deprecated as a standalone page (v5.50.0).
+    The bookmarks tab now lives inside the main SPA at /#bookmarks.
+    This redirect will be kept for one minor cycle; removed in v5.52.0 or later.
     """
-    static_dir = Path(__file__).parent.parent / "static"
-    return FileResponse(static_dir / "bookmarks.html")
+    return RedirectResponse("/#bookmarks", status_code=302)

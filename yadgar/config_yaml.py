@@ -742,15 +742,27 @@ FIELD_META: dict[str, dict[str, str]] = {
         "section": "viz_config",
     },
     "viz_edge_width_3d_multiplier": {
-        "desc": "3D edge width multiplier over 2D base (default 1.5)",
+        "desc": "3D edge width multiplier over 2D base (default 1.8 — Variant C)",
         "section": "viz_config",
     },
     "viz_edge_arrow_len": {
         "desc": "Arrow length for directional edge types (default 5)",
         "section": "viz_config",
     },
+    "viz_edge_opacity": {
+        "desc": "Link opacity for all edges (default 0.9 — Variant C)",
+        "section": "viz_config",
+    },
+    "viz_edge_variant": {
+        "desc": "Informational: edge style variant in use (default C)",
+        "section": "viz_config",
+    },
+    "viz_wiki_shape": {
+        "desc": "Desired shape for wiki nodes — config only; renderer not wired pending v5.10.7.3 (default octahedron)",
+        "section": "viz_config",
+    },
     "viz_physics_charge_strength": {
-        "desc": "D3 charge (repulsion) strength (default -12)",
+        "desc": "D3 charge (repulsion) strength (default -18.0 — v5.50.0)",
         "section": "viz_config",
     },
     "viz_physics_link_distance_2d": {

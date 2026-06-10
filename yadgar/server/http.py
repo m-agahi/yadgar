@@ -1627,6 +1627,8 @@ async def api_viz_config(request: Request) -> JSONResponse:
         "node": {
             "size_3d": s.VIZ_NODE_SIZE_3D,
             "size_2d": s.VIZ_NODE_SIZE_2D,
+            # wiki_shape: config default only; mesh renderer deferred (see PLAN_V5_10_7_3)
+            "wiki_shape": s.VIZ_WIKI_SHAPE,
             "category_colors": {
                 "architecture": s.VIZ_CAT_COLOR_ARCHITECTURE,
                 "decision": s.VIZ_CAT_COLOR_DECISION,
@@ -1656,6 +1658,8 @@ async def api_viz_config(request: Request) -> JSONResponse:
             },
             "width_3d_multiplier": s.VIZ_EDGE_WIDTH_3D_MULTIPLIER,
             "arrow_len": s.VIZ_EDGE_ARROW_LEN,
+            "opacity": s.VIZ_EDGE_OPACITY,
+            "variant": s.VIZ_EDGE_VARIANT,
         },
         "physics": {
             "charge_strength": s.VIZ_PHYSICS_CHARGE_STRENGTH,

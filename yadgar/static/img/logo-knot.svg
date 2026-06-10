@@ -1,0 +1,11 @@
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="yadgar knot mark">
+  <g fill="none" stroke="#58a6ff" stroke-width="2.5" stroke-linecap="square">
+    <path d="M32 8 C 14 8, 8 26, 16 38"/>
+    <path d="M16 38 C 22 50, 42 50, 48 38"/>
+    <path d="M48 38 C 56 26, 50 8, 32 8"/>
+    <path d="M22 22 L42 42"/>
+    <path d="M42 22 L34 30"/>
+    <path d="M30 34 L22 42"/>
+  </g>
+  <rect x="30" y="30" width="4" height="4" fill="#58a6ff"/>
+</svg>
