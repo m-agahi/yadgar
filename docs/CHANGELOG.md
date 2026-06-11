@@ -7,6 +7,17 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.50.3] — 2026-06-11
+
+### Fixed
+- **Tab routing was visually broken** — every tab pane rendered stacked down the page instead of showing one at a time. Root cause: `bookmarks-tab.css` set `#tab-bookmarks { display: flex }` and `index.html` set `#tab-control { display: block }` — bare `#id` selectors outrank `.tab-pane { display: none }` / `.tab-pane.active`, forcing those panes always-visible. Removed the unconditional `display` from `#tab-bookmarks` (visibility now owned by `.tab-pane.active`) and scoped Control's to `#tab-control.active { display: block }`. Verified in a real headless-chromium screenshot (the jsdom unit tests can't apply the CSS cascade, which is how this shipped in v5.50.1/.2).
+
+### Tests
+- `yadgar/tests/test_viz_tab_pane_display.py` — regression guard: scans the viz CSS and fails if any `#tab-<pane>` selector sets `display` without an `.active` qualifier (the exact bug class), plus asserts the `.tab-pane` / `.tab-pane.active` toggle rules exist.
+
+### Changed
+- **Version bump**: 5.50.2 → 5.50.3.
+
 ## [5.50.2] — 2026-06-11
 
 ### Added
