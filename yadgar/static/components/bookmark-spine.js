@@ -125,8 +125,9 @@ export class BookmarkShelf {
 
     const slugEl = document.createElement('span');
     slugEl.className = 'bm-spine-slug';
-    // Display as truncated slug text — safe, no HTML
-    slugEl.textContent = truncateSlug(bm.label_override || bm.slug);
+    // Full name — the list row is full-width; CSS text-overflow handles any
+    // genuine overflow with an ellipsis (no JS pre-truncation).
+    slugEl.textContent = bm.label_override || bm.slug;
     slugEl.title = bm.slug;
 
     const star = document.createElement('span');
