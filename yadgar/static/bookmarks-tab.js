@@ -285,8 +285,19 @@ function _buildResultCard(r, idx) {
   const snippet = document.createElement('div');
   snippet.className = 'bm-result-snippet';
   const rawContent = typeof r.content === 'string' ? r.content : '';
-  // Show first 200 chars of content as plain-text snippet
-  snippet.textContent = rawContent.slice(0, 200).replace(/#+\s*/g, '').trim();
+  // Strip markdown: headings, table rows (|...|), separator lines (|---|), bold/italic, code
+  const plainText = rawContent
+    .split('\n')
+    .filter(line => !/^\s*\|/.test(line))  // drop table rows and separator lines
+    .join('\n')
+    .replace(/#+\s*/g, '')          // headings
+    .replace(/\*\*(.+?)\*\*/g, '$1') // bold
+    .replace(/\*(.+?)\*/g, '$1')     // italic
+    .replace(/`(.+?)`/g, '$1')       // inline code
+    .replace(/\n{2,}/g, ' ')         // collapse blank lines
+    .replace(/\s+/g, ' ')
+    .trim();
+  snippet.textContent = plainText.slice(0, 200);
 
   card.appendChild(title);
   card.appendChild(slug);

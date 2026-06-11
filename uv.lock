@@ -2350,7 +2350,7 @@ wheels = [
 
 [[package]]
 name = "yadgar"
-version = "5.50.3"
+version = "5.50.4"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
