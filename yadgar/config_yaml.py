@@ -951,6 +951,16 @@ FIELD_META: dict[str, dict[str, str]] = {
         ),
         "section": "update",
     },
+    # v5.50.2 — umbrella control API gate
+    "debug_apis_enabled": {
+        "desc": (
+            "Enable /api/control/{config,action,restart}/* endpoints (default false). "
+            "Bearer token alone is insufficient — this gate must also be true. "
+            "Set to true to enable the Control tab config editor, action triggers, and restart endpoints. "
+            "YADGAR_UPDATE_DEBUG_APIS_ENABLED remains the narrower gate for /api/control/update."
+        ),
+        "section": "update",
+    },
     # v5.49.0 — upgrade snapshot retention
     "update_snapshot_retention": {
         "desc": (

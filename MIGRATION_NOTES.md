@@ -1,5 +1,116 @@
 # Migration Notes
 
+## v5.50.2 — Control tab + backend control APIs (2026-06-11)
+
+### New env var: `YADGAR_DEBUG_APIS_ENABLED`
+
+The Control tab's config editor, action triggers, and restart endpoints are all gated behind a new
+umbrella env var introduced in v5.50.2:
+
+```
+YADGAR_DEBUG_APIS_ENABLED=on   # or true / 1 / yes
+```
+
+Set this in `~/.config/yadgar/config.yaml`:
+
+```yaml
+debug_apis_enabled: true
+```
+
+**Important:** bearer token (`YADGAR_MCP_AUTH_TOKEN`) is ALSO required — the debug gate is a
+second layer on top of auth, not a replacement.
+
+`YADGAR_UPDATE_DEBUG_APIS_ENABLED` remains the narrower gate for `/api/control/update` only.
+Do not confuse the two.
+
+### Restart endpoints: sentinel-file design (non-negotiable)
+
+`POST /api/control/restart/yadgar` and `POST /api/control/restart/backend` write a sentinel file
+to `$XDG_STATE_HOME/yadgar/restart-<service>.request` (default: `~/.local/state/yadgar/`).
+
+**The daemon does NOT restart itself.** Until you install the systemd watcher units below,
+these endpoints are **inert** — they write a file and nothing else. This is the safe default.
+
+#### Required systemd unit files (user session units)
+
+Install these in `~/.config/systemd/user/` (or your nix home-manager config):
+
+**`yadgar-restart-watcher.path`** — watches the sentinel for the `yadgar` daemon:
+
+```ini
+[Unit]
+Description=Watch for yadgar restart sentinel
+ConditionPathExists=%h/.local/state/yadgar/
+
+[Path]
+PathChanged=%h/.local/state/yadgar/restart-yadgar.request
+Unit=yadgar-restart-actor.service
+
+[Install]
+WantedBy=default.target
+```
+
+**`yadgar-restart-actor.service`** — performs the actual restart:
+
+```ini
+[Unit]
+Description=Restart yadgar daemon on sentinel
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl --user restart yadgar.service
+ExecStartPost=/bin/rm -f %h/.local/state/yadgar/restart-yadgar.request
+```
+
+**`yadgar-backend-restart-watcher.path`** — watches for the `yadgar-backend` sentinel:
+
+```ini
+[Unit]
+Description=Watch for yadgar-backend restart sentinel
+ConditionPathExists=%h/.local/state/yadgar/
+
+[Path]
+PathChanged=%h/.local/state/yadgar/restart-yadgar-backend.request
+Unit=yadgar-backend-restart-actor.service
+
+[Install]
+WantedBy=default.target
+```
+
+**`yadgar-backend-restart-actor.service`**:
+
+```ini
+[Unit]
+Description=Restart yadgar-backend on sentinel
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl --user restart yadgar-backend.service
+ExecStartPost=/bin/rm -f %h/.local/state/yadgar/restart-yadgar-backend.request
+```
+
+Enable the path units after creating them:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now yadgar-restart-watcher.path
+systemctl --user enable --now yadgar-backend-restart-watcher.path
+```
+
+**nix home-manager:** add the four unit stanzas to `systemd.user.services` /
+`systemd.user.paths` in your `home.nix`. Do not apply directly — hand this file to the user.
+
+### Restart confirmation protocol
+
+Both restart endpoints require `{"confirm": "<service-name>"}` in the JSON body:
+
+- `/api/control/restart/yadgar` → `{"confirm": "yadgar"}`
+- `/api/control/restart/backend` → `{"confirm": "yadgar-backend"}` ← note the full name
+
+Any mismatch returns 400. The UI enforces typed confirmation before enabling the button.
+
+---
+
 ## v5.50.0 — Tab router, viz Variant C, bookmarks redirect (2026-06-10)
 
 ### Tab router (frontend change)

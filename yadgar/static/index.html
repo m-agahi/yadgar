@@ -554,13 +554,155 @@ body.dh-open #dh-toggle { right: 480px; }
   padding: 16px;
 }
 
-/* Placeholder tabs (empty shells — content in v5.50.1/v5.50.2) */
-#tab-bookmarks, #tab-control {
+/* Placeholder tab (empty shell — content in v5.50.1) */
+#tab-bookmarks {
   justify-content: center;
   align-items: center;
   color: #444;
   font-size: 13px;
 }
+
+/* ── Control tab — v5.50.2 ─────────────────────────────────── */
+#tab-control {
+  padding: 16px 20px;
+  overflow-y: auto;
+  display: block;
+  font-size: 12px;
+}
+
+.ctrl-banner {
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+.ctrl-banner--warn  { background: #2d2a1a; color: #d29922; border: 1px solid #d29922; }
+.ctrl-banner--error { background: #2a1a1a; color: #f85149; border: 1px solid #f85149; }
+.ctrl-banner--info  { background: #1a2a2a; color: #58a6ff; border: 1px solid #58a6ff; }
+
+.ctrl-section {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+
+.ctrl-section-title {
+  color: #58a6ff;
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+.ctrl-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ctrl-btn {
+  background: #21262d;
+  border: 1px solid #30363d;
+  color: #c9d1d9;
+  padding: 5px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  transition: background 150ms ease-out;
+}
+.ctrl-btn:hover:not(:disabled) { background: #2d333b; border-color: #58a6ff; }
+.ctrl-btn:disabled, .ctrl-btn--disabled { opacity: 0.45; cursor: not-allowed; }
+.ctrl-btn--save   { color: #3fb950; border-color: #3fb950; }
+.ctrl-btn--cancel { color: #f85149; border-color: #f85149; }
+.ctrl-btn--restart { color: #f85149; }
+
+.ctrl-config-controls {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.ctrl-filter, .ctrl-group {
+  background: #010409;
+  border: 1px solid #30363d;
+  color: #c9d1d9;
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-family: inherit;
+}
+.ctrl-filter { flex: 1; }
+
+.ctrl-config-table-wrap { overflow-x: auto; }
+
+.ctrl-config-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.ctrl-config-table th {
+  color: #8b949e;
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid #30363d;
+  font-weight: normal;
+  letter-spacing: 0.5px;
+  font-size: 10px;
+}
+.ctrl-config-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid #21262d;
+  vertical-align: middle;
+}
+.ctrl-knob-name { color: #c9d1d9; font-family: monospace; }
+.ctrl-knob-type { color: #8b949e; }
+.ctrl-knob-current { color: #58a6ff; }
+.ctrl-knob-default { color: #484f58; }
+
+.ctrl-pill {
+  font-size: 9px;
+  padding: 2px 5px;
+  border-radius: 10px;
+  letter-spacing: 0.5px;
+}
+.ctrl-pill--hot     { background: #1a3a2a; color: #3fb950; }
+.ctrl-pill--restart { background: #2a1a2a; color: #a371f7; }
+
+.ctrl-edit-input {
+  background: #010409;
+  border: 1px solid #58a6ff;
+  color: #c9d1d9;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-family: monospace;
+  width: 120px;
+}
+.ctrl-edit-hint { font-size: 10px; color: #8b949e; margin-left: 4px; }
+.ctrl-edit-hint--error { color: #f85149; }
+
+.ctrl-restart-item {
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.ctrl-restart-label { color: #8b949e; font-size: 11px; display: flex; align-items: center; gap: 6px; }
+.ctrl-restart-confirm-input {
+  background: #010409;
+  border: 1px solid #30363d;
+  color: #c9d1d9;
+  padding: 3px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-family: monospace;
+  width: 160px;
+}
+.ctrl-restart-confirm-input:focus { border-color: #f85149; outline: none; }
 
 /* Health / Info / Stats tab content styles */
 .tab-section-title {
@@ -967,9 +1109,9 @@ body.dh-open #dh-toggle { right: 480px; }
   </div>
 </div><!-- /#tab-info -->
 
-<!-- ── Tab: Control (EMPTY — v5.50.2) ────────────────────── -->
+<!-- ── Tab: Control (v5.50.2) ────────────────────────────── -->
 <div id="tab-control" class="tab-pane">
-  <!-- v5.50.2: control tab content (config editor, actions, restart) comes here -->
+  <!-- Filled by control.js initControlTab() on DOMContentLoaded -->
 </div><!-- /#tab-control -->
 
 </div><!-- /#app-container -->
@@ -2556,6 +2698,7 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
   import * as Info from './info.js';
   import * as Overlays from './overlays.js';
   import { initBookmarksTab } from './bookmarks-tab.js';
+  import { initControlTab } from './control.js';
   window.YadgarTabs    = Tabs;
   window.YadgarInfo    = Info;
   window.YadgarOverlays = Overlays;
@@ -2565,6 +2708,12 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
   // until the user navigates to #bookmarks.
   const _bmTab = document.getElementById('tab-bookmarks');
   if (_bmTab) initBookmarksTab(_bmTab);
+
+  // ── v5.50.2: Init Control tab ─────────────────────────────────────────────
+  // Tab is hidden until the user navigates to #control. initControlTab probes
+  // GET /api/control/config and shows a banner if the debug gate is off.
+  const _ctrlTab = document.getElementById('tab-control');
+  if (_ctrlTab) initControlTab(_ctrlTab);
 
   // ── v5.50.0: Init floating overlays at DOMContentLoaded ──────────────────
   // DOMContentLoaded already fired by the time module scripts run, so call
