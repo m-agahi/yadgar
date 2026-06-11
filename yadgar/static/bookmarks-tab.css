@@ -27,7 +27,7 @@
   --font-serif: 'IBM Plex Serif', Georgia, serif;
 }
 
-/* ── Layout (v5.50.5 redesign) ─────────────────────────────────────────────── */
+/* ── Layout (v5.50.6 redesign: splitters + list shelf + 1/3 split) ────────── */
 /* NOTE: do NOT set `display` here — the `#id` selector would outrank
    `.tab-pane{display:none}` and force the pane always-visible. Visibility is
    owned by `.tab-pane` / `.tab-pane.active`; this rule only carries layout. */
@@ -49,33 +49,80 @@
   overflow: hidden;
 }
 
-/* ── LEFT column: search (top) + bookmarks shelf (bottom) ─────────────────── */
+/* ── LEFT column: search (top 1/3) + bookmarks list (bottom 2/3) ──────────── */
+/* v5.50.6: width is splitter-driven; default 280px stored in localStorage.
+   min-width:0 prevents intrinsic-content bleed into viewer panel. */
 .bm-left-col {
-  width: 260px;
+  width: var(--bm-left-width, 280px);
   flex-shrink: 0;
+  /* min-width 0 so flex item can shrink to explicit width without bleed;
+     JS clamps drag to 160px–520px so effective minimum is maintained */
+  min-width: 0;
   border-right: 1px solid var(--border, #30363d);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  overflow-x: hidden;
   background: var(--bg-base, #0d1117);
 }
 
-/* TOP of left col: search bar + results list */
+/* TOP of left col: search bar + results list (1/3 of col height by default) */
+/* v5.50.6: height driven by --bm-search-height CSS var (splitter-adjustable) */
 .bm-search-section {
   display: flex;
   flex-direction: column;
-  flex: 1;
-  min-height: 0;
+  flex: 0 0 var(--bm-search-height, 33%);
+  min-height: 80px;
   overflow: hidden;
 }
 
-/* BOTTOM of left col: bookmarks shelf */
-.bm-shelf-section {
-  flex-shrink: 0;
-  border-top: 1px solid var(--border, #30363d);
-  max-height: 40%;
+/* Results list independently scrollable */
+.bm-search-section .bm-results {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+}
+
+/* BOTTOM of left col: bookmarks list (2/3 of col height by default) */
+/* v5.50.6: flex:1 takes remaining height after search section */
+.bm-shelf-section {
+  flex: 1;
+  min-height: 0;
+  border-top: none;        /* splitter handle provides visual separation */
+  overflow-y: auto;
+  overflow-x: hidden;
   background: var(--bg-base, #0d1117);
+}
+
+/* ── Splitter handles ────────────────────────────────────────────────────────── */
+/* v5.50.6: vertical splitter (between left-col and main area) */
+.bm-vsplitter {
+  width: 5px;
+  flex-shrink: 0;
+  background: var(--border, #30363d);
+  cursor: col-resize;
+  position: relative;
+  z-index: 5;
+  transition: background 0.1s;
+}
+.bm-vsplitter:hover,
+.bm-vsplitter.dragging {
+  background: var(--accent, #58a6ff);
+}
+
+/* v5.50.6: horizontal splitter (between search and shelf sections inside left-col) */
+.bm-hsplitter {
+  height: 5px;
+  flex-shrink: 0;
+  background: var(--border, #30363d);
+  cursor: row-resize;
+  position: relative;
+  z-index: 5;
+  transition: background 0.1s;
+}
+.bm-hsplitter:hover,
+.bm-hsplitter.dragging {
+  background: var(--accent, #58a6ff);
 }
 
 /* ── MAIN area: preview + versions rail ─────────────────────────────────────── */
@@ -206,23 +253,29 @@
   justify-content: space-between;
 }
 
+/* v5.50.6: single-column vertical list (was 2-col grid, overflowed left-col width) */
 .bm-spine-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
 }
 
+/* v5.50.6: full-width row (was a tile card) */
 .bm-spine {
-  background: var(--bg-panel, #161b22);
-  border: 1px solid var(--border, #30363d);
-  border-radius: 4px;
-  padding: 10px 12px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border, #30363d);
+  border-radius: 0;
+  padding: 8px 12px;
   cursor: pointer;
   display: flex;
   align-items: center;
   gap: 8px;
-  transition: background 0.1s, border-color 0.1s;
-  min-height: 48px;
+  transition: background 0.1s;
+  min-height: 36px;
+  width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .bm-spine:hover,
