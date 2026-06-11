@@ -21,7 +21,7 @@ _CSS_SOURCES = [
 # `(?![\w-])` so the pane name must END here — a hyphenated child like
 # `#tab-stats-body` (a legit content container) is NOT treated as the pane.
 _RULE = re.compile(
-    r"(#tab-(?:home|stats|health|bookmarks|info|control)(?![\w-])[^\{]*?)\{([^}]*)\}",
+    r"(#tab-(?:home|stats|health|bookmarks|info|control|debug)(?![\w-])[^\{]*?)\{([^}]*)\}",
     re.DOTALL,
 )
 
