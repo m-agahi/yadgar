@@ -1,13 +1,21 @@
 /**
- * bookmarks-tab.js — v5.50.1 Bookmarks Tab orchestrator
+ * bookmarks-tab.js — v5.50.5 Bookmarks Tab orchestrator (layout redesign)
+ *
+ * Layout (v5.50.5):
+ *   LEFT column (fixed ~260px, flex column):
+ *     TOP section:  search bar + results list (bounded height, scrolls)
+ *     BOTTOM section: bookmarks shelf (persistent)
+ *   MAIN area (right, flex: 1):
+ *     preview pane + versions rail (both always mounted; version-click
+ *     updates preview only — rail stays visible, bug fix v5.50.5)
  *
  * Wires together:
  *   SearchBar + ModeToggle
- *   BookmarkShelf (empty-search landing)
- *   ResultCards   (active search)
- *   PreviewPane   (wiki content)
- *   VersionsRail  (version history)
- *   DiffView      (compare two versions)
+ *   BookmarkShelf (persistent in left-bottom)
+ *   ResultCards   (active search, in left-top)
+ *   PreviewPane   (wiki content, in main area)
+ *   VersionsRail  (version history, in main area — ALWAYS visible when preview open)
+ *   DiffView      (compare two versions, replaces preview in main area)
  *   ConfirmModal  (restore confirmation)
  *
  * API consumed:
@@ -47,7 +55,7 @@ let _bookmarkSlugs = new Set(); // for fast O(1) lookup
 let _resultCards = [];      // current search results [{slug, title, score, ...}]
 let _activeSlug = null;     // slug currently in preview
 let _navIdx = -1;           // keyboard nav index into results
-let _mode = 'shelf';        // 'shelf' | 'results' | 'preview' | 'diff'
+let _mode = 'idle';         // 'idle' | 'results' | 'preview' | 'diff'
 
 // Component instances
 let _searchBar = null;
@@ -57,11 +65,14 @@ let _versionsRail = null;
 let _diffView = null;
 
 // DOM refs
-let _resultsPanel = null;
+let _leftCol = null;        // left column container
+let _searchSection = null;  // top of left col: search bar + results
+let _resultsPanel = null;   // results list (inside _searchSection)
+let _shelfSection = null;   // bottom of left col: bookmarks shelf
+let _mainArea = null;       // right area: preview + rail
 let _previewContainer = null;
 let _versionsContainer = null;
 let _diffContainer = null;
-let _bodyEl = null;
 
 // ── Init ────────────────────────────────────────────────────────────────────
 
@@ -83,39 +94,57 @@ export function initBookmarksTab(tabContainer) {
     document.head.appendChild(link);
   }
 
-  // ── Search bar (sticky top) ────────────────────────────────────────────────
+  // ── v5.50.5 layout: outer flex row ────────────────────────────────────────
+  const outerFlex = document.createElement('div');
+  outerFlex.className = 'bm-outer';
+  tabContainer.appendChild(outerFlex);
+
+  // ── LEFT column ──────────────────────────────────────────────────────────
+  _leftCol = document.createElement('div');
+  _leftCol.className = 'bm-left-col';
+  outerFlex.appendChild(_leftCol);
+
+  // LEFT TOP: search bar + results
+  _searchSection = document.createElement('div');
+  _searchSection.className = 'bm-search-section';
+  _leftCol.appendChild(_searchSection);
+
+  // Search bar
   const searchBarEl = document.createElement('div');
   _searchBar = new SearchBar({
     container: searchBarEl,
     onSearch: _onSearch,
     debounceMs: 200,
   });
-  tabContainer.appendChild(searchBarEl);
+  _searchSection.appendChild(searchBarEl);
 
-  // ── Body area ──────────────────────────────────────────────────────────────
-  _bodyEl = document.createElement('div');
-  _bodyEl.className = 'bm-body';
-  tabContainer.appendChild(_bodyEl);
+  // Results list
+  _resultsPanel = document.createElement('div');
+  _resultsPanel.className = 'bm-results';
+  _resultsPanel.style.display = 'none';
+  _searchSection.appendChild(_resultsPanel);
 
-  // ── Shelf (hidden when search active) ─────────────────────────────────────
+  // LEFT BOTTOM: bookmarks shelf
+  _shelfSection = document.createElement('div');
+  _shelfSection.className = 'bm-shelf-section';
+  _leftCol.appendChild(_shelfSection);
+
   const shelfEl = document.createElement('div');
   _shelf = new BookmarkShelf({
     container: shelfEl,
     onSpineClick: _loadPreview,
     onReorder: _onReorder,
   });
-  _bodyEl.appendChild(shelfEl);
+  _shelfSection.appendChild(shelfEl);
 
-  // ── Results panel (hidden when shelf visible) ──────────────────────────────
-  _resultsPanel = document.createElement('div');
-  _resultsPanel.className = 'bm-results';
-  _resultsPanel.style.display = 'none';
-  _bodyEl.appendChild(_resultsPanel);
+  // ── MAIN area ─────────────────────────────────────────────────────────────
+  _mainArea = document.createElement('div');
+  _mainArea.className = 'bm-main-area';
+  outerFlex.appendChild(_mainArea);
 
-  // ── Preview container ──────────────────────────────────────────────────────
+  // Preview container (hidden until a page is loaded)
   _previewContainer = document.createElement('div');
-  _previewContainer.style.display = 'none';
-  _previewContainer.style.flex = '1';
+  _previewContainer.className = 'bm-preview-wrap';
   _previewContainer.style.display = 'none';
   _preview = new PreviewPane({
     container: _previewContainer,
@@ -123,9 +152,9 @@ export function initBookmarksTab(tabContainer) {
     onStarToggle: _onStarToggle,
     onXrefClick: _loadPreview,
   });
-  _bodyEl.appendChild(_previewContainer);
+  _mainArea.appendChild(_previewContainer);
 
-  // ── Versions rail ──────────────────────────────────────────────────────────
+  // Versions rail — always alongside preview; NEVER hidden while preview is open
   _versionsContainer = document.createElement('div');
   _versionsContainer.style.display = 'none';
   _versionsRail = new VersionsRail({
@@ -135,22 +164,28 @@ export function initBookmarksTab(tabContainer) {
     onCompare: _onCompare,
     onRestore: _onRestoreRequest,
   });
-  _bodyEl.appendChild(_versionsContainer);
+  _mainArea.appendChild(_versionsContainer);
 
-  // ── Diff view ──────────────────────────────────────────────────────────────
+  // Diff view — replaces preview in main area (rail stays hidden during diff)
   _diffContainer = document.createElement('div');
   _diffContainer.style.display = 'none';
   _diffView = new DiffView({
     container: _diffContainer,
     onClose: _closeDiff,
   });
-  _bodyEl.appendChild(_diffContainer);
+  _mainArea.appendChild(_diffContainer);
+
+  // Empty state for main area
+  const emptyMain = document.createElement('div');
+  emptyMain.className = 'bm-main-empty';
+  emptyMain.textContent = 'Select a bookmark or search result to preview';
+  _mainArea.appendChild(emptyMain);
 
   // ── Keyboard handler ───────────────────────────────────────────────────────
   document.addEventListener('keydown', _onKeyDown);
 
   // ── Initial load ───────────────────────────────────────────────────────────
-  _setMode('shelf');
+  _setMode('idle');
   _fetchBookmarks();
 }
 
@@ -159,18 +194,23 @@ export function initBookmarksTab(tabContainer) {
 function _setMode(m) {
   _mode = m;
 
-  // Visibility rules:
-  //   shelf:   shelf visible, results hidden, preview hidden, diff hidden
-  //   results: shelf hidden, results visible, preview hidden, diff hidden
-  //   preview: shelf hidden, results visible, preview+versions visible, diff hidden
-  //   diff:    shelf hidden, results visible, preview hidden, diff visible
+  // v5.50.5 layout rules:
+  //   idle:    results hidden
+  //   results: results visible
+  //   preview: results visible (left col shows results); preview+rail visible in main
+  //   diff:    results visible; diff visible in main; preview hidden; rail hidden
 
-  const shelfEl = _shelf && _shelf._container;
-  _show(shelfEl, m === 'shelf');
   _show(_resultsPanel, m === 'results' || m === 'preview' || m === 'diff');
+
+  // Main area — preview + rail are ALWAYS TOGETHER (version-rail-stays-visible fix)
   _show(_previewContainer, m === 'preview');
+  // Rail: show alongside preview, hide during diff (diff takes full main area)
   _show(_versionsContainer, m === 'preview');
   _show(_diffContainer, m === 'diff');
+
+  // Show/hide main empty state
+  const emptyMain = _mainArea && _mainArea.querySelector('.bm-main-empty');
+  if (emptyMain) _show(emptyMain, m === 'idle' || m === 'results');
 }
 
 function _show(el, visible) {
@@ -182,11 +222,11 @@ function _show(el, visible) {
 
 async function _onSearch(query, mode) {
   if (!query.trim()) {
-    // Empty search: return to shelf
+    // Empty search: back to idle (shelf visible, no results)
     _resultCards = [];
     _navIdx = -1;
     _searchBar && _searchBar.setCount(null);
-    _setMode('shelf');
+    _setMode(_activeSlug ? 'preview' : 'idle');
     return;
   }
 
@@ -335,13 +375,7 @@ async function _loadPreview(slug) {
   if (!slug) return;
   _activeSlug = slug;
 
-  // Show results + preview layout
-  if (_mode === 'shelf' || _mode === 'results' || _mode === 'diff') {
-    _setMode('preview');
-  } else {
-    _setMode('preview');
-  }
-
+  _setMode('preview');
   _preview.showLoading();
 
   try {
@@ -375,6 +409,10 @@ async function _loadHistory(slug) {
 
 async function _onVersionClick(version) {
   if (!_activeSlug) return;
+  // v5.50.5 fix: update ONLY the preview body — do NOT call _setMode or
+  // hide/show containers. Rail stays mounted and visible. This fixes the
+  // "version click makes rail disappear" bug.
+  _preview.showLoading();
 
   try {
     const params = new URLSearchParams({
@@ -392,6 +430,7 @@ async function _onVersionClick(version) {
       title: data.title || _activeSlug,
       content: data.content || '',
     }, isStarred);
+    // Rail container stays visible — _setMode NOT called here (bug fix)
   } catch (err) {
     _preview.showError(`Failed to load v${version.version}: ${err.message}`);
   }
@@ -571,7 +610,7 @@ function _closePreview() {
   if (_searchBar && _searchBar.query) {
     _setMode('results');
   } else {
-    _setMode('shelf');
+    _setMode('idle');
   }
 }
 
@@ -614,7 +653,7 @@ function _onKeyDown(e) {
     // j/k navigation
     if (e.key === 'j') {
       e.preventDefault();
-      if (_mode === 'shelf') {
+      if (_mode === 'idle') {
         _shelf && _shelf.navigate(1);
       } else if (_mode === 'results' || _mode === 'preview') {
         _navIdx = Math.min(_resultCards.length - 1, _navIdx + 1);
@@ -624,7 +663,7 @@ function _onKeyDown(e) {
     }
     if (e.key === 'k') {
       e.preventDefault();
-      if (_mode === 'shelf') {
+      if (_mode === 'idle') {
         _shelf && _shelf.navigate(-1);
       } else if (_mode === 'results' || _mode === 'preview') {
         _navIdx = Math.max(0, _navIdx - 1);
@@ -634,7 +673,7 @@ function _onKeyDown(e) {
     }
     // Enter → open preview for nav-active result
     if (e.key === 'Enter') {
-      if (_mode === 'shelf') {
+      if (_mode === 'idle') {
         _shelf && _shelf.activateNav();
       } else if (_mode === 'results' && _navIdx >= 0 && _resultCards[_navIdx]) {
         _loadPreview(_resultCards[_navIdx].slug);
