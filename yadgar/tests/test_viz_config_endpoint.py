@@ -116,7 +116,7 @@ def test_viz_config_defaults_physics_and_layout(tmp_path, monkeypatch):
     """Default physics and layout values match v5.10.11 hardcoded values."""
     data = _get_default_config(tmp_path, monkeypatch)
     assert data["node"]["size_3d"] == 8
-    assert data["physics"]["charge_strength"] == -12
+    assert data["physics"]["charge_strength"] == -18  # v5.50.0 Variant C (was -12)
     assert data["physics"]["link_distance_2d"] == 30
     assert data["physics"]["link_distance_3d"] == 36
     assert data["layout"]["auto_zoom_fit_tick_threshold"] == 80
