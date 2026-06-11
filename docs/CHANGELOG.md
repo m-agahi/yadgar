@@ -7,6 +7,21 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.50.1] — 2026-06-11
+
+### Added
+- **Bookmarks tab** — the `#bookmarks` shell (placeholder in v5.50.0) is now a full wiki browser with three modes: **shelf** (bookmark landing grid with HTML5 drag-reorder + j/k nav), **preview** (microfiche reader — markdown via marked.js with the v5.24.2 fix preserved + DOMPurify sanitization + star toggle + versions rail with size-delta sparklines), and **diff** (split-pane synced-scroll forensic compare). Vanilla ES-module components: `bookmarks-tab.js` + `components/{search-bar,preview-pane,versions-rail,diff-view,bookmark-spine}.js` + `bookmarks-tab.css`. Search bar with semantic/keyword/slug mode toggle (localStorage-persisted).
+- **Wiki versioning HTTP routes** (`yadgar/server/http_wiki_versioning.py`) — CORE HTTP wrappers over the v5.41 wiki MCP tools: `GET /api/wiki_query?q=&mode=semantic|keyword|slug` (semantic = embedding path; keyword = Python substring; slug = prefix list — deliberately avoids SurrealDB FULLTEXT, unsupported by the embedded test DB), `GET /api/wiki_history`, `GET /api/wiki_read_version`, `GET /api/wiki_diff`, `POST /api/wiki_restore` (confirmation-gated). Bookmarks CRUD reused from v5.23.
+- **Tests** — 121 new jsdom behavioral tests across the 5 components (JS suite 92 → 213) + 30 Python route tests (search modes, history/read_version/diff happy + error paths, restore confirmation gate). XSS-guarded: diff lines via `textContent`, preview via DOMPurify.
+
+### Changed
+- **Version bump**: 5.50.0 → 5.50.1.
+
+### Deferred
+- `/#bookmarks/<slug>` deep-linking (spec Open Q5) — router splits the hash but `initBookmarksTab` does not yet parse it on load.
+- Self-hosted IBM Plex `@font-face` — tab currently falls back to `system-ui`/Georgia/monospace; fonts to be added under `yadgar/static/lib/`.
+- Live-daemon API integration smoke (browser smoke verified DOM rendering against the static file server only).
+
 ## [5.50.0] — 2026-06-10
 
 ### Added
