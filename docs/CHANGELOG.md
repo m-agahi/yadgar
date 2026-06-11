@@ -7,6 +7,22 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.50.4] — 2026-06-11
+
+### Fixed
+- **Viz tabs showed empty `—` everywhere** — the tab data-mappers used invented field names instead of the real API shapes. Reconciled against the live daemon:
+  - **Health tab** — `mapHealthData` now reads the real `/api/system` keys (`rss_bytes`, `daemon_threads`, `open_fds`, `db_size_mb`, `system_ram_available_mb`, `load_avg_1m/5m/15m`). Added `uptime_s` to the `/api/system` route to populate Uptime.
+  - **Stats tab** — now fetches + renders the Heat Distribution histogram (`/api/metrics/heat-histogram`) and Consolidation line (`/api/metrics/consolidation-log`), and populates Memories/Wiki-pages from `/api/graph/stats`. (Embeddings/Hot/Orphan rows had no API source and were removed rather than left dangling.)
+  - **Info tab** — added a CORE `GET /api/info` route (`{version, python_version}`); the tab now populates Version + Python (previously `/api/info` was 404).
+  - **Daemons modal** — `err 503` label corrected to `err 5xx`; fallback field names fixed.
+  - **Bookmarks search snippets** — strip markdown table/heading/emphasis syntax so result cards show readable text (the full preview pane still renders markdown).
+- **Removed the duplicate Stats system** — the old toolbar `📊 Stats` button opened a modal *over* the Home graph, colliding with the floating overlays. Deleted the button + `#stats-overlay` modal + its 5 render functions + CSS; the Stats nav tab is now the single home for stats.
+
+### Tests
+- `info.test.js` rewritten against the real API field names (the previous mocks invented keys — which is how the mismatch shipped). Retired `test_viz_bookmarks_static.py` (tested the standalone `bookmarks.html` page, gutted to a redirect in v5.50.1). Fixed stale `charge_strength` assertion (`-12` → `-18`, v5.50.0 Variant C).
+
+> Note: Uptime, Version, and Python populate only after the daemon restarts onto this build (new `/api/system` field + `/api/info` route).
+
 ## [5.50.3] — 2026-06-11
 
 ### Fixed
