@@ -595,6 +595,64 @@ body.dh-open #dh-toggle { right: 480px; }
   flex: 1;
   min-height: 0;
 }
+
+/* ── v5.50.0 Floating overlays ────────────────────────────────────────────── */
+/* Hide the old fixed left panel — overlays float over canvas instead */
+#left { display: none; }
+
+.floating-overlay {
+  position: absolute;
+  z-index: 50;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 3px;
+  min-width: 160px;
+  max-width: 240px;
+  /* pointer-events set to auto on grip/controls by initOverlays(); body=none */
+  pointer-events: none;
+  transition: opacity 0.1s ease;
+  user-select: none;
+}
+
+.overlay-grip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  background: #21262d;
+  border-bottom: 1px solid #30363d;
+  cursor: grab;
+  font-size: 10px;
+  color: #58a6ff;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  gap: 6px;
+}
+.overlay-grip:active { cursor: grabbing; }
+
+.overlay-collapse {
+  background: none;
+  border: none;
+  color: #8b949e;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+  font-family: inherit;
+  flex-shrink: 0;
+}
+.overlay-collapse:hover { color: #c9d1d9; }
+
+.overlay-body {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Collapsed: hide body */
+.floating-overlay.collapsed .overlay-body { display: none; }
+.floating-overlay.collapsed { border-bottom: none; }
 </style>
 </head>
 <body>
@@ -633,7 +691,7 @@ body.dh-open #dh-toggle { right: 480px; }
 <div id="tab-home" class="tab-pane">
 <div id="content-area">
 <div id="main">
-  <!-- Controls -->
+  <!-- Controls (hidden — overlays float over canvas; IDs preserved for filter bindings) -->
   <div id="left">
     <div>
       <div class="sec-title">Edge Types</div>
@@ -683,6 +741,74 @@ body.dh-open #dh-toggle { right: 480px; }
     <div id="det-title"></div>
     <div class="heat-bar"><div class="heat-fill" id="det-heat-fill"></div></div>
     <div id="det-body"></div>
+  </div>
+</div>
+
+<!-- ── v5.50.0 Floating overlays (drag-repositionable chrome over canvas) ── -->
+
+<!-- Heat Filter overlay -->
+<div class="floating-overlay" data-overlay-name="heat-slider" style="left:16px;top:16px">
+  <div class="overlay-grip">
+    ⋮ Heat Filter
+    <button class="overlay-collapse" title="Collapse">−</button>
+  </div>
+  <div class="overlay-body">
+    <div class="heat-val-row"><span style="color:#8b949e;font-size:10px">Min heat</span><span id="fo-heat-val" style="color:#58a6ff;font-size:10px">0.00</span></div>
+    <input type="range" id="fo-heat-slider" min="0" max="1" step="0.01" value="0" style="width:100%;accent-color:#58a6ff;cursor:pointer">
+  </div>
+</div>
+
+<!-- Graph Stats overlay -->
+<div class="floating-overlay" data-overlay-name="graph-stats" style="left:220px;top:16px">
+  <div class="overlay-grip">
+    ⋮ Graph Stats
+    <button class="overlay-collapse" title="Collapse">−</button>
+  </div>
+  <div class="overlay-body">
+    <div class="stat-row"><span class="stat-lbl">Memories</span><span class="stat-val" id="fo-s-mem">—</span></div>
+    <div class="stat-row"><span class="stat-lbl">Temporal</span><span class="stat-val" id="fo-s-tmp">—</span></div>
+    <div class="stat-row"><span class="stat-lbl">Transitions</span><span class="stat-val" id="fo-s-trn">—</span></div>
+    <div class="stat-row"><span class="stat-lbl">Wiki</span><span class="stat-val" id="fo-s-wiki">—</span></div>
+    <div class="stat-row"><span class="stat-lbl">Visible</span><span class="stat-val" id="fo-s-vis">—</span></div>
+  </div>
+</div>
+
+<!-- Node Types overlay -->
+<div class="floating-overlay" data-overlay-name="node-types" style="left:420px;top:16px">
+  <div class="overlay-grip">
+    ⋮ Node Types
+    <button class="overlay-collapse" title="Collapse">−</button>
+  </div>
+  <div class="overlay-body">
+    <label style="pointer-events:auto"><input type="checkbox" id="fo-show-wiki" checked> <span style="color:#d2a8ff">⬡</span> Wiki</label>
+  </div>
+</div>
+
+<!-- Edge Legend overlay -->
+<div class="floating-overlay" data-overlay-name="edge-legend" style="left:16px;top:160px">
+  <div class="overlay-grip">
+    ⋮ Edge Types
+    <button class="overlay-collapse" title="Collapse">−</button>
+  </div>
+  <div class="overlay-body">
+    <label style="pointer-events:auto"><input type="checkbox" id="fo-show-semantic" checked> <span style="color:#1f6feb">■</span> Semantic</label>
+    <label style="pointer-events:auto"><input type="checkbox" id="fo-show-temporal" checked> <span style="color:#6e40c9">■</span> Temporal</label>
+    <label style="pointer-events:auto"><input type="checkbox" id="fo-show-transition" checked> <span style="color:#3fb950">■</span> Transitions</label>
+    <label style="pointer-events:auto"><input type="checkbox" id="fo-show-wiki-crossref" checked> <span style="color:#d2a8ff">■</span> Wiki Links</label>
+    <label style="pointer-events:auto"><input type="checkbox" id="fo-show-memory-wiki" checked> <span style="color:#ffa657">■</span> Mem→Wiki</label>
+  </div>
+</div>
+
+<!-- Clusters overlay -->
+<div class="floating-overlay" data-overlay-name="clusters" style="left:220px;top:180px">
+  <div class="overlay-grip">
+    ⋮ Clusters
+    <button class="overlay-collapse" title="Collapse">−</button>
+  </div>
+  <div class="overlay-body">
+    <div id="fo-cluster-list" style="display:flex;flex-direction:column;gap:3px">
+      <span id="fo-cluster-none" style="color:#8b949e;font-size:10px">None detected</span>
+    </div>
   </div>
 </div>
 
@@ -2428,6 +2554,83 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
   window.YadgarTabs    = Tabs;
   window.YadgarInfo    = Info;
   window.YadgarOverlays = Overlays;
+
+  // ── v5.50.0: Init floating overlays at DOMContentLoaded ──────────────────
+  // DOMContentLoaded already fired by the time module scripts run, so call
+  // immediately (modules execute after the parser has processed the document).
+  Overlays.initOverlays({ canvasSelector: '#canvas-wrap', fadeDebounceMs: 200 });
+
+  // ── Bridge floating overlay inputs → hidden originals (filter bindings) ──
+  // The main <script> block wires applyFilters() to #heat-slider and #show-*.
+  // Mirror overlay inputs so the filters still fire without touching the bindings.
+
+  // Heat slider
+  const foHeatSlider = document.getElementById('fo-heat-slider');
+  const origHeatSlider = document.getElementById('heat-slider');
+  const foHeatVal = document.getElementById('fo-heat-val');
+  if (foHeatSlider && origHeatSlider) {
+    foHeatSlider.addEventListener('input', () => {
+      origHeatSlider.value = foHeatSlider.value;
+      if (foHeatVal) foHeatVal.textContent = parseFloat(foHeatSlider.value).toFixed(2);
+      origHeatSlider.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    // Also mirror updates from original (e.g. programmatic resets) back to overlay
+    origHeatSlider.addEventListener('input', () => {
+      foHeatSlider.value = origHeatSlider.value;
+      if (foHeatVal) foHeatVal.textContent = parseFloat(origHeatSlider.value).toFixed(2);
+    });
+  }
+
+  // Edge type checkboxes
+  const edgePairs = [
+    ['fo-show-semantic',    'show-semantic'],
+    ['fo-show-temporal',    'show-temporal'],
+    ['fo-show-transition',  'show-transition'],
+    ['fo-show-wiki-crossref','show-wiki-crossref'],
+    ['fo-show-memory-wiki', 'show-memory-wiki'],
+  ];
+  for (const [foId, origId] of edgePairs) {
+    const fo   = document.getElementById(foId);
+    const orig = document.getElementById(origId);
+    if (!fo || !orig) continue;
+    fo.addEventListener('change', () => {
+      orig.checked = fo.checked;
+      orig.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    orig.addEventListener('change', () => { fo.checked = orig.checked; });
+  }
+
+  // Node type checkboxes
+  const foWiki   = document.getElementById('fo-show-wiki');
+  const origWiki = document.getElementById('show-wiki');
+  if (foWiki && origWiki) {
+    foWiki.addEventListener('change', () => {
+      origWiki.checked = foWiki.checked;
+      origWiki.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    origWiki.addEventListener('change', () => { foWiki.checked = origWiki.checked; });
+  }
+
+  // Sync graph stats from hidden spans to floating overlay spans
+  // Observe the hidden stat spans and mirror their textContent to fo-* counterparts
+  const statPairs = [
+    ['s-mem',  'fo-s-mem'],
+    ['s-tmp',  'fo-s-tmp'],
+    ['s-trn',  'fo-s-trn'],
+    ['s-wiki', 'fo-s-wiki'],
+    ['s-vis',  'fo-s-vis'],
+  ];
+  const statObserver = new MutationObserver(() => {
+    for (const [origId, foId] of statPairs) {
+      const orig = document.getElementById(origId);
+      const fo   = document.getElementById(foId);
+      if (orig && fo) fo.textContent = orig.textContent;
+    }
+  });
+  for (const [origId] of statPairs) {
+    const orig = document.getElementById(origId);
+    if (orig) statObserver.observe(orig, { childList: true, characterData: true, subtree: true });
+  }
 </script>
 </body>
 </html>
