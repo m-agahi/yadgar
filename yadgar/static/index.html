@@ -563,12 +563,14 @@ body.dh-open #dh-toggle { right: 480px; }
 }
 
 /* ── Control tab — v5.50.2 ─────────────────────────────────── */
+/* `display` must be scoped to `.active` — a bare `#tab-control{display:block}`
+   outranks `.tab-pane{display:none}` and forces the pane always-visible. */
 #tab-control {
   padding: 16px 20px;
   overflow-y: auto;
-  display: block;
   font-size: 12px;
 }
+#tab-control.active { display: block; }
 
 .ctrl-banner {
   padding: 8px 12px;
