@@ -17,17 +17,25 @@ body {
   overflow: hidden;
 }
 
-/* ── Top bar ───────────────────────────────────────────── */
+/* ── Top bar (v5.50.5: single merged row) ──────────────── */
 #topbar {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 12px;
+  padding: 0 8px 0 12px;
   background: #161b22;
   border-bottom: 1px solid #30363d;
   flex-shrink: 0;
+  height: 34px;
 }
-#topbar h1 { font-size: 13px; color: #58a6ff; letter-spacing: 2px; margin-right: 4px; }
+#topbar h1 { font-size: 13px; color: #58a6ff; letter-spacing: 2px; margin-right: 2px; }
+/* Graph-controls section inside topbar */
+#topbar-graph-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
 #search {
   background: #0d1117;
   border: 1px solid #30363d;
@@ -452,19 +460,18 @@ body.dh-open #dh-toggle { right: 480px; }
   padding: 6px 0;
 }
 
-/* ── v5.50.0 Tab bar ──────────────────────────────────────── */
+/* ── v5.50.5: #tab-bar now lives inside #topbar (no standalone bar) ── */
 #tab-bar {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: 0;
-  background: #161b22;
-  border-bottom: 1px solid #30363d;
-  flex-shrink: 0;
-  padding: 0 8px;
+  height: 100%;
+  margin-right: 8px;
 }
 #tab-bar a.tab-link {
-  display: inline-block;
-  padding: 6px 14px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 14px;
   font-size: 11px;
   font-family: inherit;
   color: #8b949e;
@@ -492,18 +499,55 @@ body.dh-open #dh-toggle { right: 480px; }
   min-height: 0;
 }
 
-/* Stats, Health, Info tabs: scrollable content */
-#tab-stats, #tab-health, #tab-info {
+/* Stats tab: fit to viewport — charts + detail in one view, no scroll */
+/* NOTE: display:flex must NOT be set on #tab-stats bare — ID beats .tab-pane class.
+   Use .active override scoped to this pane instead. */
+#tab-stats {
+  overflow: hidden;
+  padding: 12px 16px;
+  flex-direction: column;
+}
+#tab-stats.active { display: flex; }
+#tab-stats-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+#tab-stats-body .tab-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+#tab-stats-body .tab-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+#tab-stats-body canvas {
+  flex: 1;
+  min-height: 0;
+  height: unset !important;
+  width: 100% !important;
+}
+#tab-stats-detail {
+  flex-shrink: 0;
+  overflow-y: auto;
+  max-height: 120px;
+}
+
+/* Health, Info tabs: scrollable content */
+#tab-health, #tab-info {
   overflow-y: auto;
   padding: 16px;
 }
 
-/* Placeholder tab (empty shell — content in v5.50.1) */
+/* Bookmarks tab: left-split layout */
 #tab-bookmarks {
-  justify-content: center;
-  align-items: center;
-  color: #444;
-  font-size: 13px;
+  overflow: hidden;
 }
 
 /* ── Control tab — v5.50.2 ─────────────────────────────────── */
@@ -650,6 +694,22 @@ body.dh-open #dh-toggle { right: 480px; }
 }
 .ctrl-restart-confirm-input:focus { border-color: #f85149; outline: none; }
 
+/* ── v5.50.5 Health tab daemon detail (CORE/BACKEND columns) ──────────────── */
+#th-daemon-cols {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+#th-daemon-cols .dh-col { flex: 1; min-width: 0; }
+#th-daemon-wait {
+  color: var(--dh-warn, #e6a817);
+  font-size: 10px;
+  text-align: center;
+  padding: 10px 0;
+  animation: dh-blink 1.2s step-end infinite;
+}
+#th-scraped { font-size: 9px; color: #8b949e; margin-left: auto; }
+
 /* Health / Info / Stats tab content styles */
 .tab-section-title {
   color: #58a6ff;
@@ -745,30 +805,31 @@ body.dh-open #dh-toggle { right: 480px; }
 </head>
 <body>
 
+<!-- v5.50.5: single merged top bar — brand + tab-nav LEFT, graph controls RIGHT -->
 <div id="topbar">
   <h1>YADGAR</h1>
-  <span style="color:#8b949e;font-size:10px">Knowledge Graph</span>
-  <input id="search" type="search" placeholder="Semantic search…" style="width:220px">
-  <button class="btn" id="search-btn" onclick="runSearch()">⌕ Search</button>
-  <button class="btn" id="search-clear-btn" onclick="clearSearch()" style="display:none">✕ Clear</button>
-  <button class="btn" onclick="loadGraph()">↺ Reload</button>
-  <button class="btn" onclick="fitGraph()">⊞ Fit</button>
-  <button class="btn" onclick="resetLayout()">⟳ Reset</button>
-  <button class="btn" id="mode-btn" onclick="toggleMode()">2D</button>
-  <button class="btn" id="debug-btn" onclick="openDebug()">⚙ Debug</button>
-  <button class="btn" id="dh-btn" onclick="toggleDaemonPanel()">⬡ Daemons</button>
-  <span id="status-dot"></span>
-  <span id="status-text">Connecting…</span>
-</div>
-
-<!-- v5.50.0: Hash-router tab bar -->
-<div id="tab-bar">
-  <a href="#home" class="tab-link" data-tab="home">Home</a>
-  <a href="#stats" class="tab-link" data-tab="stats">Stats</a>
-  <a href="#health" class="tab-link" data-tab="health">Health</a>
-  <a href="#bookmarks" class="tab-link" data-tab="bookmarks">Bookmarks</a>
-  <a href="#info" class="tab-link" data-tab="info">Info</a>
-  <a href="#control" class="tab-link" data-tab="control">Control</a>
+  <!-- Tab nav (inline, v5.50.5 merged into topbar) -->
+  <div id="tab-bar">
+    <a href="#home" class="tab-link" data-tab="home">Home</a>
+    <a href="#stats" class="tab-link" data-tab="stats">Stats</a>
+    <a href="#health" class="tab-link" data-tab="health">Health</a>
+    <a href="#bookmarks" class="tab-link" data-tab="bookmarks">Bookmarks</a>
+    <a href="#info" class="tab-link" data-tab="info">Info</a>
+    <a href="#control" class="tab-link" data-tab="control">Control</a>
+  </div>
+  <!-- Graph controls (right side) -->
+  <div id="topbar-graph-controls">
+    <input id="search" type="search" placeholder="Semantic search…" style="width:180px">
+    <button class="btn" id="search-btn" onclick="runSearch()">⌕ Search</button>
+    <button class="btn" id="search-clear-btn" onclick="clearSearch()" style="display:none">✕ Clear</button>
+    <button class="btn" onclick="fitGraph()">⊞ Fit</button>
+    <button class="btn" onclick="resetLayout()">⟳ Reset</button>
+    <button class="btn" id="mode-btn" onclick="toggleMode()">2D</button>
+    <button class="btn" onclick="loadGraph()">↺ Reload</button>
+    <button class="btn" id="debug-btn" onclick="openDebug()">⚙ Debug</button>
+    <span id="status-dot"></span>
+    <span id="status-text">Connecting…</span>
+  </div>
 </div>
 
 <!-- v5.50.0: App container holds all tab panes -->
@@ -902,51 +963,6 @@ body.dh-open #dh-toggle { right: 480px; }
 
 </div><!-- /#content-area -->
 
-<!-- System metrics bar (always visible) -->
-<div id="sys-bar">
-  <div id="sys-tiles">
-    <div class="metric-tile" id="tile-cpu">
-      <span class="m-lbl">CPU</span>
-      <span class="m-val" id="m-cpu">—</span>
-      <span class="m-sub">daemon</span>
-    </div>
-    <div class="metric-tile" id="tile-rss">
-      <span class="m-lbl">RSS</span>
-      <span class="m-val" id="m-rss">—</span>
-      <span class="m-sub">daemon</span>
-    </div>
-    <div class="metric-tile">
-      <span class="m-lbl">Threads</span>
-      <span class="m-val" id="m-threads">—</span>
-      <span class="m-sub">daemon</span>
-    </div>
-    <div class="metric-tile" id="tile-db">
-      <span class="m-lbl">DB Size</span>
-      <span class="m-val" id="m-db">—</span>
-      <span class="m-sub">on disk</span>
-    </div>
-    <div class="metric-tile" id="tile-ram">
-      <span class="m-lbl">RAM Free</span>
-      <span class="m-val" id="m-ram">—</span>
-      <span class="m-sub" id="m-ram-sub">of —</span>
-    </div>
-    <div class="metric-tile">
-      <span class="m-lbl">Load avg</span>
-      <span class="m-val" id="m-load">—</span>
-      <span class="m-sub" id="m-load-sub">1m / 5m / 15m</span>
-    </div>
-    <div id="sys-sparks">
-      <div class="spark-wrap">
-        <canvas id="spark-cpu" width="140" height="32"></canvas>
-        <span class="spark-lbl">CPU %</span>
-      </div>
-      <div class="spark-wrap">
-        <canvas id="spark-db" width="140" height="32"></canvas>
-        <span class="spark-lbl">DB MB</span>
-      </div>
-    </div>
-  </div>
-</div><!-- /#sys-bar -->
 </div><!-- /#tab-home -->
 
 <!-- ── Tab: Stats ─────────────────────────────────────────── -->
@@ -969,12 +985,23 @@ body.dh-open #dh-toggle { right: 480px; }
   </div>
 </div><!-- /#tab-stats -->
 
-<!-- ── Tab: Health ────────────────────────────────────────── -->
+<!-- ── Tab: Health (v5.50.5: full CORE/BACKEND detail) ──── -->
 <div id="tab-health" class="tab-pane">
-  <div class="tab-section-title">Daemon Health</div>
+  <div class="tab-section-title" style="display:flex;align-items:center">
+    Daemon Health
+    <span id="th-scraped"></span>
+  </div>
+
+  <!-- System summary row -->
   <div class="tab-grid" id="tab-health-grid">
     <div class="tab-card">
-      <div class="tab-card-title">Core Daemon</div>
+      <div class="tab-card-title">System</div>
+      <div class="tab-kv"><span class="k">RAM Free</span><span class="v" id="th-ram">—</span></div>
+      <div class="tab-kv"><span class="k">Load avg</span><span class="v" id="th-load">—</span></div>
+      <div class="tab-kv"><span class="k">DB Size</span><span class="v" id="th-db">—</span></div>
+    </div>
+    <div class="tab-card">
+      <div class="tab-card-title">Core Process (summary)</div>
       <div class="tab-kv"><span class="k">CPU %</span><span class="v" id="th-cpu">—</span></div>
       <div class="tab-kv"><span class="k">RSS</span><span class="v" id="th-rss">—</span></div>
       <div class="tab-kv"><span class="k">Threads</span><span class="v" id="th-threads">—</span></div>
@@ -982,18 +1009,84 @@ body.dh-open #dh-toggle { right: 480px; }
       <div class="tab-kv"><span class="k">Uptime</span><span class="v" id="th-uptime">—</span></div>
     </div>
     <div class="tab-card">
-      <div class="tab-card-title">DB &amp; Queue</div>
-      <div class="tab-kv"><span class="k">DB Size</span><span class="v" id="th-db">—</span></div>
-      <div class="tab-kv"><span class="k">Queue Depth</span><span class="v" id="th-qdepth">—</span></div>
+      <div class="tab-card-title">Queue</div>
+      <div class="tab-kv"><span class="k">Depth</span><span class="v" id="th-qdepth">—</span></div>
       <div class="tab-kv"><span class="k">DLQ</span><span class="v" id="th-dlq">—</span></div>
       <div class="tab-kv"><span class="k">Lag p95</span><span class="v" id="th-lag">—</span></div>
     </div>
-    <div class="tab-card">
-      <div class="tab-card-title">System</div>
-      <div class="tab-kv"><span class="k">RAM Free</span><span class="v" id="th-ram">—</span></div>
-      <div class="tab-kv"><span class="k">Load avg</span><span class="v" id="th-load">—</span></div>
-    </div>
   </div>
+
+  <!-- Full CORE / BACKEND daemon detail (moved from dh-panel) -->
+  <div class="tab-section-title">CORE / BACKEND Detail</div>
+  <div id="th-daemon-wait" style="display:none">awaiting telemetry…</div>
+  <div id="th-daemon-cols" style="display:none">
+
+    <!-- Core daemon column -->
+    <div class="dh-col" id="th-core-col">
+      <div class="dh-col-head">Core</div>
+
+      <div class="dh-card">
+        <div class="dh-card-title">Process</div>
+        <div class="dh-row"><span class="dh-lbl">RSS</span>    <span class="dh-val" id="dh-c-rss">—</span></div>
+        <div class="dh-row"><span class="dh-lbl">CPU%</span>   <span class="dh-val" id="dh-c-cpu">—</span></div>
+        <div class="dh-row"><span class="dh-lbl">FDs</span>    <span class="dh-val" id="dh-c-fds">—</span></div>
+        <div class="dh-row"><span class="dh-lbl">Uptime</span> <span class="dh-val" id="dh-c-up">—</span></div>
+      </div>
+
+      <div class="dh-card">
+        <div class="dh-card-title">Queue</div>
+        <div class="dh-row"><span class="dh-lbl">Depth</span>     <span class="dh-val" id="dh-c-qdepth">—</span></div>
+        <div class="dh-row"><span class="dh-lbl">DLQ</span>       <span class="dh-val" id="dh-c-dlq">—</span></div>
+        <div class="dh-row"><span class="dh-lbl">Lag p95</span>   <span class="dh-val" id="dh-c-lag">—</span></div>
+      </div>
+
+      <div class="dh-card">
+        <div class="dh-card-title">Log</div>
+        <div class="dh-row"><span class="dh-lbl">Size</span>      <span class="dh-val" id="dh-c-lsz">—</span></div>
+        <div class="dh-row"><span class="dh-lbl">Rotations</span><span class="dh-val" id="dh-c-lrot">—</span></div>
+        <div class="dh-row"><span class="dh-lbl">Dropped</span>   <span class="dh-val" id="dh-c-ldrop">—</span></div>
+      </div>
+
+      <div class="dh-card" id="dh-cb-card">
+        <div class="dh-card-title">Circuit Breakers</div>
+        <div id="dh-cb-list"><div class="dh-waiting">loading…</div></div>
+      </div>
+    </div>
+
+    <!-- Backend daemon column -->
+    <div class="dh-col" id="th-back-col">
+      <div class="dh-col-head">Backend</div>
+
+      <div class="dh-card" id="dh-back-card">
+        <div class="dh-card-title">Process</div>
+        <div class="dh-row"><span class="dh-lbl">RSS</span>    <span class="dh-val" id="dh-b-rss">—</span></div>
+        <div class="dh-row"><span class="dh-lbl">CPU%</span>   <span class="dh-val" id="dh-b-cpu">—</span></div>
+        <div class="dh-row"><span class="dh-lbl">FDs</span>    <span class="dh-val" id="dh-b-fds">—</span></div>
+        <div class="dh-row"><span class="dh-lbl">Uptime</span> <span class="dh-val" id="dh-b-up">—</span></div>
+      </div>
+
+      <div class="dh-card">
+        <div class="dh-card-title">Rerank</div>
+        <div class="dh-row"><span class="dh-lbl">req ce</span>     <span class="dh-val" id="dh-b-rce">—</span></div>
+        <div class="dh-row"><span class="dh-lbl">req nli</span>    <span class="dh-val" id="dh-b-rnli">—</span></div>
+        <div class="dh-row"><span class="dh-lbl">err 5xx</span>    <span class="dh-val" id="dh-b-rerr">—</span></div>
+        <div class="dh-row"><span class="dh-lbl">inflight</span>  <span class="dh-val" id="dh-b-rsem">—</span></div>
+      </div>
+
+      <div class="dh-card">
+        <div class="dh-card-title">Log</div>
+        <div class="dh-row"><span class="dh-lbl">Size</span>      <span class="dh-val" id="dh-b-lsz">—</span></div>
+        <div class="dh-row"><span class="dh-lbl">Rotations</span><span class="dh-val" id="dh-b-lrot">—</span></div>
+        <div class="dh-row"><span class="dh-lbl">Dropped</span>   <span class="dh-val" id="dh-b-ldrop">—</span></div>
+      </div>
+
+      <div class="dh-card">
+        <div class="dh-card-title">Models</div>
+        <div id="dh-models-list"><div class="dh-waiting">loading…</div></div>
+      </div>
+    </div>
+  </div><!-- /#th-daemon-cols -->
+
   <div id="tab-health-status" style="color:#8b949e;font-size:10px;margin-top:8px">Waiting for data…</div>
 </div><!-- /#tab-health -->
 
@@ -1061,86 +1154,7 @@ body.dh-open #dh-toggle { right: 480px; }
   </div>
 </div>
 
-<!-- V1c: Daemon Health sidebar (v5.6.0) -->
-<div id="dh-toggle" onclick="toggleDaemonPanel()" title="Toggle daemon health panel">DAEMONS</div>
-<div id="dh-panel">
-  <div id="dh-header">
-    <h2>DAEMON HEALTH</h2>
-    <span id="dh-scraped"></span>
-    <span id="dh-close" onclick="toggleDaemonPanel()">✕</span>
-  </div>
-  <div id="dh-body">
-    <!-- Waiting placeholder — replaced by updateDaemonHealth() -->
-    <div class="dh-waiting" id="dh-wait">awaiting telemetry…</div>
-
-    <div id="dh-cols" style="display:none">
-      <!-- Core daemon column -->
-      <div class="dh-col" id="dh-core-col">
-        <div class="dh-col-head">Core</div>
-
-        <div class="dh-card">
-          <div class="dh-card-title">Process</div>
-          <div class="dh-row"><span class="dh-lbl">RSS</span>    <span class="dh-val" id="dh-c-rss">—</span></div>
-          <div class="dh-row"><span class="dh-lbl">CPU%</span>   <span class="dh-val" id="dh-c-cpu">—</span></div>
-          <div class="dh-row"><span class="dh-lbl">FDs</span>    <span class="dh-val" id="dh-c-fds">—</span></div>
-          <div class="dh-row"><span class="dh-lbl">Uptime</span> <span class="dh-val" id="dh-c-up">—</span></div>
-        </div>
-
-        <div class="dh-card">
-          <div class="dh-card-title">Queue</div>
-          <div class="dh-row"><span class="dh-lbl">Depth</span>     <span class="dh-val" id="dh-c-qdepth">—</span></div>
-          <div class="dh-row"><span class="dh-lbl">DLQ</span>       <span class="dh-val" id="dh-c-dlq">—</span></div>
-          <div class="dh-row"><span class="dh-lbl">Lag p95</span>   <span class="dh-val" id="dh-c-lag">—</span></div>
-        </div>
-
-        <div class="dh-card">
-          <div class="dh-card-title">Log</div>
-          <div class="dh-row"><span class="dh-lbl">Size</span>      <span class="dh-val" id="dh-c-lsz">—</span></div>
-          <div class="dh-row"><span class="dh-lbl">Rotations</span><span class="dh-val" id="dh-c-lrot">—</span></div>
-          <div class="dh-row"><span class="dh-lbl">Dropped</span>   <span class="dh-val" id="dh-c-ldrop">—</span></div>
-        </div>
-
-        <div class="dh-card" id="dh-cb-card">
-          <div class="dh-card-title">Circuit Breakers</div>
-          <div id="dh-cb-list"><div class="dh-waiting">loading…</div></div>
-        </div>
-      </div>
-
-      <!-- Backend daemon column -->
-      <div class="dh-col" id="dh-back-col">
-        <div class="dh-col-head">Backend</div>
-
-        <div class="dh-card" id="dh-back-card">
-          <div class="dh-card-title">Process</div>
-          <div class="dh-row"><span class="dh-lbl">RSS</span>    <span class="dh-val" id="dh-b-rss">—</span></div>
-          <div class="dh-row"><span class="dh-lbl">CPU%</span>   <span class="dh-val" id="dh-b-cpu">—</span></div>
-          <div class="dh-row"><span class="dh-lbl">FDs</span>    <span class="dh-val" id="dh-b-fds">—</span></div>
-          <div class="dh-row"><span class="dh-lbl">Uptime</span> <span class="dh-val" id="dh-b-up">—</span></div>
-        </div>
-
-        <div class="dh-card">
-          <div class="dh-card-title">Rerank</div>
-          <div class="dh-row"><span class="dh-lbl">req ce</span>     <span class="dh-val" id="dh-b-rce">—</span></div>
-          <div class="dh-row"><span class="dh-lbl">req nli</span>    <span class="dh-val" id="dh-b-rnli">—</span></div>
-          <div class="dh-row"><span class="dh-lbl">err 5xx</span>    <span class="dh-val" id="dh-b-rerr">—</span></div>
-          <div class="dh-row"><span class="dh-lbl">inflight</span>  <span class="dh-val" id="dh-b-rsem">—</span></div>
-        </div>
-
-        <div class="dh-card">
-          <div class="dh-card-title">Log</div>
-          <div class="dh-row"><span class="dh-lbl">Size</span>      <span class="dh-val" id="dh-b-lsz">—</span></div>
-          <div class="dh-row"><span class="dh-lbl">Rotations</span><span class="dh-val" id="dh-b-lrot">—</span></div>
-          <div class="dh-row"><span class="dh-lbl">Dropped</span>   <span class="dh-val" id="dh-b-ldrop">—</span></div>
-        </div>
-
-        <div class="dh-card">
-          <div class="dh-card-title">Models</div>
-          <div id="dh-models-list"><div class="dh-waiting">loading…</div></div>
-        </div>
-      </div>
-    </div><!-- /#dh-cols -->
-  </div><!-- /#dh-body -->
-</div><!-- /#dh-panel -->
+<!-- v5.50.5: dh-panel/dh-toggle removed; daemon health moved to #tab-health -->
 
 <script src="https://unpkg.com/force-graph@1.51.4/dist/force-graph.min.js"
         integrity="sha384-Hm6GpQcTNI5VqGgGS7lLxTGtEFcxu/kOVV0B7ozIZRu9blWVvigv5httJQZ2qZmY"
@@ -2196,13 +2210,21 @@ document.addEventListener('keydown', e => {
 // ── Stats tab charts ─────────────────────────────────────────────────────────
 let _tabChartHeat = null, _tabChartConsol = null;
 
+// v5.50.5: update charts in-place to preserve scroll position (no destroy/recreate)
 function _renderTabHeatChart(data) {
   const ctx = document.getElementById('tab-chart-heat');
   if (!ctx) return;
   const labels = (data.buckets || []).map(b => b.min.toFixed(1) + '–' + b.max.toFixed(1));
   const counts = (data.buckets || []).map(b => b.count);
   const colors = labels.map((_, i) => `hsl(${(1 - i/labels.length)*240},70%,55%)`);
-  if (_tabChartHeat) _tabChartHeat.destroy();
+  if (_tabChartHeat) {
+    // Update in-place — no destroy/recreate, preserves scroll position
+    _tabChartHeat.data.labels = labels;
+    _tabChartHeat.data.datasets[0].data = counts;
+    _tabChartHeat.data.datasets[0].backgroundColor = colors;
+    _tabChartHeat.update('none');
+    return;
+  }
   _tabChartHeat = new Chart(ctx, {
     type: 'bar',
     data: { labels, datasets: [{ label: 'Memories', data: counts, backgroundColor: colors, borderRadius: 3 }] },
@@ -2221,7 +2243,15 @@ function _renderTabConsolChart(rows) {
   const ctx = document.getElementById('tab-chart-consol');
   if (!ctx) return;
   const labels = rows.map(r => r.timestamp.slice(0, 16).replace('T', ' '));
-  if (_tabChartConsol) _tabChartConsol.destroy();
+  if (_tabChartConsol) {
+    // Update in-place — no destroy/recreate, preserves scroll position
+    _tabChartConsol.data.labels = labels;
+    _tabChartConsol.data.datasets[0].data = rows.map(r => r.added);
+    _tabChartConsol.data.datasets[1].data = rows.map(r => r.deleted);
+    _tabChartConsol.data.datasets[2].data = rows.map(r => r.archived);
+    _tabChartConsol.update('none');
+    return;
+  }
   _tabChartConsol = new Chart(ctx, {
     type: 'line',
     data: {
@@ -2243,8 +2273,7 @@ function _renderTabConsolChart(rows) {
   });
 }
 
-// ── V1c Daemon Health sidebar (v5.6.0) ──────────────────────────────────────
-let _dhOpen = false;
+// ── V1c Daemon Health (v5.50.5: moved into Health tab) ──────────────────────
 
 function _fmtBytes(b) {
   if (b == null) return '—';
@@ -2298,24 +2327,20 @@ function _mkEl(tag, cls, text) {
   return el;
 }
 
-function toggleDaemonPanel() {
-  _dhOpen = !_dhOpen;
-  document.getElementById('dh-panel').classList.toggle('open', _dhOpen);
-  document.getElementById('dh-btn').classList.toggle('active', _dhOpen);
-  if (_dhOpen) _dhFetchOnce();
-}
+// toggleDaemonPanel removed in v5.50.5 — daemon health is in Health tab
 
 function updateDaemonHealth(data) {
-  const wait = document.getElementById('dh-wait');
-  const cols  = document.getElementById('dh-cols');
+  // v5.50.5: daemon health now lives in #tab-health (th-daemon-* IDs)
+  const wait = document.getElementById('th-daemon-wait');
+  const cols  = document.getElementById('th-daemon-cols');
   if (!data) return;
 
   if (wait)  wait.style.display = 'none';
   if (cols)  cols.style.display = 'flex';
 
   const ts = data.scraped_at || null;
-  const scraped = document.getElementById('dh-scraped');
-  if (scraped && ts) scraped.textContent = ts.replace('T', ' ').replace('Z', ' UTC');
+  const scraped = document.getElementById('th-scraped');
+  if (scraped && ts) scraped.textContent = ' · ' + ts.replace('T', ' ').replace('Z', ' UTC');
 
   // ── Core ──────────────────────────────────────────────────────────────────
   const c = data.core || {};
@@ -2425,12 +2450,7 @@ function updateDaemonHealth(data) {
   _dhFlash('dh-scraped');
 }
 
-async function _dhFetchOnce() {
-  try {
-    const r = await fetch(DAEMON + '/api/daemon-health');
-    if (r.ok) updateDaemonHealth(await r.json());
-  } catch (_) {}
-}
+// _dhFetchOnce removed in v5.50.5 — health tab fetches daemon-health directly
 
 // ── v5.50.0 Hash Router ───────────────────────────────────────────────────────
 // Six tabs: home, stats, health, bookmarks, info, control.
@@ -2477,8 +2497,9 @@ function _tabStatsRefresh() {
     // Render charts
     if (hist)   _renderTabHeatChart(hist);
     if (consol) _renderTabConsolChart(consol);
-    // Render metric rows
+    // Render metric rows (v5.50.5: preserve scrollTop to prevent scroll-yank)
     if (el && gs) {
+      const savedScroll = el.scrollTop;
       el.innerHTML = '';
       // Pure field mapping via info.js module (YadgarInfo.mapStatsData)
       const rows = window.YadgarInfo
@@ -2500,6 +2521,7 @@ function _tabStatsRefresh() {
         row.appendChild(vSpan);
         el.appendChild(row);
       });
+      el.scrollTop = savedScroll;  // restore scroll — prevent yank
     } else if (el) {
       el.textContent = 'Stats unavailable.';
     }
@@ -2507,6 +2529,7 @@ function _tabStatsRefresh() {
 }
 
 // Health tab: populate from /api/system + /api/daemon-health
+// v5.50.5: also renders CORE/BACKEND daemon detail via updateDaemonHealth()
 function _tabHealthRefresh() {
   const status = document.getElementById('tab-health-status');
   Promise.all([
@@ -2536,6 +2559,13 @@ function _tabHealthRefresh() {
       set('th-load',    sys.load_avg_1m    != null
                           ? sys.load_avg_1m + ' / ' + sys.load_avg_5m + ' / ' + sys.load_avg_15m
                           : '—');
+    }
+    // v5.50.5: render full CORE/BACKEND daemon detail in Health tab
+    if (dh && Object.keys(dh).length > 0) {
+      updateDaemonHealth(dh);
+      // v5.50.5 CORE uptime fix: daemon-health core.process.uptime_s is null;
+      // override from /api/system uptime_s which is always populated.
+      if (sys.uptime_s != null) _dhSet('dh-c-up', _fmtUptime(sys.uptime_s));
     }
     if (status) status.textContent = 'Last updated: ' + new Date().toLocaleTimeString();
   }).catch(() => { if (status) status.textContent = 'Health data unavailable.'; });
