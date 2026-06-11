@@ -26,6 +26,7 @@ from __future__ import annotations
 import functools
 import inspect
 import logging
+import threading
 from typing import Any
 
 logger = logging.getLogger("yadgar.tracing")
@@ -314,6 +315,47 @@ def setup_tracing(service_name: str) -> None:
             "otlp_enabled": otlp_exporter is not None,
         },
     )
+
+
+def shutdown_tracing(timeout_sec: float = 3.0) -> None:
+    """Tear down the tracer provider with a HARD time bound.
+
+    A dead/unreachable OTLP collector must NEVER hang daemon shutdown: the
+    BatchSpanProcessor's final flush would otherwise retry exports against the
+    collector until the exporter timeout, which (historically) blew past the
+    systemd stop-timeout and got the container SIGKILLed (exit 137) on every
+    restart. We run ``provider.shutdown()`` in a daemon thread and abandon it
+    after ``timeout_sec`` — an abandoned daemon thread does not block process
+    exit, so the daemon always stops promptly regardless of collector state.
+
+    Idempotent and safe to call when tracing was never set up.
+    """
+    provider = _otel_trace.get_tracer_provider()
+    shutdown = getattr(provider, "shutdown", None)
+    if not callable(shutdown):
+        return
+
+    done = threading.Event()
+
+    def _run() -> None:
+        try:
+            shutdown()
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            done.set()
+
+    threading.Thread(target=_run, name="otel-shutdown", daemon=True).start()
+    if not done.wait(timeout_sec):
+        logger.warning(
+            "tracing_shutdown_timeout",
+            extra={
+                "component": "tracing",
+                "action": "shutdown_tracing",
+                "outcome": "abandoned",
+                "timeout_sec": timeout_sec,
+            },
+        )
 
 
 # ---------------------------------------------------------------------------
