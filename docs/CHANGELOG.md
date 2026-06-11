@@ -7,6 +7,12 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.50.8] — 2026-06-11
+
+### Changed
+- **Debug is now a nav tab** — moved the "⚙ Debug" toolbar button into the tab bar (after Control) as `#tab-debug`; the API-debug panel (graph / stats / system / search / nodes-table JSON inspector) renders there instead of a popup drawer. Removed the `openDebug`/`closeDebug` drawer. (Fixed a latent name collision: the drawer's internal `switchTab(...)` shadowed the main tab router — renamed to `switchDebugView`.)
+- **Removed node/edge counts from the toolbar** — the `N nodes · M edges` status (and the `· N nodes` on 2D/3D toggle) duplicated the GRAPH STATS floating overlay; the toolbar now shows only the connection indicator (`● live`).
+
 ## [5.50.7] — 2026-06-11
 
 ### Changed
