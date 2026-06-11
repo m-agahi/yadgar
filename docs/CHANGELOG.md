@@ -7,6 +7,16 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [backend-5.5.0] — 2026-06-11
+
+### Added
+- **Rerank model warm-up (background preload).** The heavy rerankers (ce / nli / pair) previously lazy-loaded only on the *first* `/rerank` request, so a daemon that only stores (no `recall`) never warmed them and the first rerank paid a cold-start penalty. The backend now preloads them in the background shortly after startup:
+  - `_run_model_warmup()` runs as a background task in the embed-service lifespan — created, **not** awaited before `yield`, so it never blocks readiness (same discipline as the v5.50.10 OTEL shutdown fix).
+  - Loads **ce → nli → pair** sequentially, each via a thread-pool executor (off the event loop); per-model errors are isolated (one failure doesn't abort the others); cancels cleanly on shutdown.
+  - Config: `YADGAR_MODEL_PRELOAD` (default **true**) + `YADGAR_MODEL_PRELOAD_DELAY_SEC` (default **10**). Set `YADGAR_MODEL_PRELOAD=false` to keep the old lazy-until-first-rerank behavior.
+  - Net: fast startup preserved (lazy init), cold-start penalty on first rerank gone. Idle eviction stays off (`YADGAR_MODEL_IDLE_EVICTION_SECONDS=0`), so once warm the models stay warm.
+- `yadgar-backend` image bumped **5.4.0 → 5.5.0**. Core unchanged (5.50.10).
+
 ## [5.50.10] — 2026-06-11
 
 ### Fixed
