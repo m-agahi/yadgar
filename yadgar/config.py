@@ -114,7 +114,7 @@ class Settings(BaseSettings):
     # v5.7.11 OTLP exporter knobs (formerly env-only, now yaml-overridable)
     OTLP_ENDPOINT: str = ""  # HTTP endpoint, e.g. http://tempo:4318/v1/traces. Empty = disabled.
     OTLP_HEADERS: str = ""  # Comma-separated k=v pairs for auth/tenant headers.
-    OTLP_TIMEOUT_SEC: int = 10  # Exporter timeout in seconds.
+    OTLP_TIMEOUT_SEC: int = 3  # Exporter timeout (s). Short so a dead collector fails fast.
     OTLP_INSECURE: bool = True  # True → plain HTTP (default). False → TLS.
 
     # v5.7.11 backend cache knob (formerly env-only, now yaml-overridable)

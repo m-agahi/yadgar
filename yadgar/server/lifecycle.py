@@ -410,6 +410,16 @@ def shutdown():
     except Exception:  # noqa: BLE001
         pass
 
+    # v5.50.10: tear down OTEL with a hard time bound — a dead/unreachable OTLP
+    # collector must never hang shutdown (it used to retry the final span flush
+    # past the systemd stop-timeout → SIGKILL/exit-137 on every restart).
+    try:
+        from yadgar.tracing import shutdown_tracing as _shutdown_tracing  # noqa: PLC0415
+
+        _shutdown_tracing(timeout_sec=3.0)
+    except Exception:  # noqa: BLE001
+        pass
+
     # v5.49.0 Phase 6: flush file queue before tearing down storage
     if _st._queue_drainer is not None:
         _st._queue_drainer.flush_barrier(timeout=10.0)
