@@ -545,6 +545,21 @@ body.dh-open #dh-toggle { right: 480px; }
   padding: 16px;
 }
 
+/* Info tab: brand header + author card */
+.ti-brand { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
+.ti-logo { height: 64px; width: auto; image-rendering: auto; }
+.ti-tagline { color: #8b949e; font-size: 12px; margin-top: 4px; max-width: 520px; }
+.ti-author { display: flex; gap: 16px; align-items: flex-start; max-width: 560px; }
+.ti-author-photo {
+  width: 84px; height: 84px; object-fit: cover; border-radius: 6px;
+  border: 1px solid #30363d; flex: 0 0 auto;
+}
+.ti-author-body { min-width: 0; }
+.ti-author-name { color: #c9d1d9; font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+.ti-author-bio { color: #c9d1d9; font-size: 12px; line-height: 1.5; margin: 0 0 6px; }
+.ti-author-meta { color: #8b949e; font-size: 11px; }
+.ti-author-meta a { color: #58a6ff; text-decoration: none; }
+
 /* Bookmarks tab: left-split layout */
 #tab-bookmarks {
   overflow: hidden;
@@ -1097,7 +1112,13 @@ body.dh-open #dh-toggle { right: 480px; }
 
 <!-- ── Tab: Info ──────────────────────────────────────────── -->
 <div id="tab-info" class="tab-pane">
-  <div class="tab-section-title">About Yadgar</div>
+  <div class="ti-brand">
+    <img src="yadgar.png" alt="Yadgar logo" class="ti-logo">
+    <div>
+      <div class="tab-section-title" style="margin-top:0">About Yadgar</div>
+      <div class="ti-tagline">Persistent memory for AI agents — heat decay · sleep consolidation · surprise-gated recall.</div>
+    </div>
+  </div>
   <div class="tab-grid">
     <div class="tab-card">
       <div class="tab-card-title">Version</div>
@@ -1113,7 +1134,16 @@ body.dh-open #dh-toggle { right: 480px; }
     </div>
     <div class="tab-card">
       <div class="tab-card-title">Links</div>
-      <div class="tab-kv"><span class="k">Repo</span><span class="v"><a href="https://github.com/max-sixty/yadgar" target="_blank" style="color:#58a6ff">GitHub</a></span></div>
+      <div class="tab-kv"><span class="k">Repo</span><span class="v"><a href="https://codeberg.org/maxagahi/yadgar" target="_blank" style="color:#58a6ff">Codeberg</a></span></div>
+    </div>
+  </div>
+  <div class="tab-section-title">Author</div>
+  <div class="tab-card ti-author">
+    <img src="img/author.jpg" alt="Max Agahi" class="ti-author-photo">
+    <div class="ti-author-body">
+      <div class="ti-author-name">Max Agahi</div>
+      <p class="ti-author-bio">Builds tools that remember. Creator of Yadgar — the persistent-memory engine behind this graph: heat-decay, sleep-consolidation, surprise-gated recall. Spends his days teaching machines what's worth keeping.</p>
+      <div class="ti-author-meta">Sweden · <a href="https://codeberg.org/maxagahi" target="_blank">codeberg.org/maxagahi</a></div>
     </div>
   </div>
   <div class="tab-section-title">Viz Config (active)</div>
