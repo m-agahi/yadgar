@@ -1,13 +1,19 @@
 /**
- * bookmarks-tab.js — v5.50.5 Bookmarks Tab orchestrator (layout redesign)
+ * bookmarks-tab.js — v5.50.6 Bookmarks Tab orchestrator (splitters + list shelf)
  *
- * Layout (v5.50.5):
- *   LEFT column (fixed ~260px, flex column):
- *     TOP section:  search bar + results list (bounded height, scrolls)
- *     BOTTOM section: bookmarks shelf (persistent)
+ * Layout (v5.50.6):
+ *   LEFT column (resizable via vertical splitter, default 280px):
+ *     TOP section:  search bar + results list (1/3 height, independently scrolls)
+ *     HORIZONTAL SPLITTER (drag to adjust 1/3 split)
+ *     BOTTOM section: bookmarks list (2/3 height, vertical list, independently scrolls)
+ *   VERTICAL SPLITTER (drag to resize left-col width)
  *   MAIN area (right, flex: 1):
  *     preview pane + versions rail (both always mounted; version-click
  *     updates preview only — rail stays visible, bug fix v5.50.5)
+ *
+ * Splitter sizes persisted to localStorage keys:
+ *   bm-left-width   (px)  — left column width
+ *   bm-search-pct   (%)   — search section height as % of left col
  *
  * Wires together:
  *   SearchBar + ModeToggle
@@ -45,6 +51,130 @@ import { PreviewPane } from './components/preview-pane.js';
 import { VersionsRail } from './components/versions-rail.js';
 import { DiffView } from './components/diff-view.js';
 import { BookmarkShelf } from './components/bookmark-spine.js';
+
+// ── Splitter persistence helpers ─────────────────────────────────────────────
+
+const _LS_LEFT_WIDTH  = 'bm-left-width';
+const _LS_SEARCH_PCT  = 'bm-search-pct';
+const _LEFT_MIN = 160;   // px
+const _LEFT_MAX = 520;   // px
+const _SEARCH_MIN = 15;  // % of left col
+const _SEARCH_MAX = 70;  // %
+
+function _loadSplitterSizes() {
+  const w = parseInt(localStorage.getItem(_LS_LEFT_WIDTH) || '280', 10);
+  const p = parseFloat(localStorage.getItem(_LS_SEARCH_PCT) || '33');
+  return {
+    leftWidth: Math.max(_LEFT_MIN, Math.min(_LEFT_MAX, isNaN(w) ? 280 : w)),
+    searchPct: Math.max(_SEARCH_MIN, Math.min(_SEARCH_MAX, isNaN(p) ? 33 : p)),
+  };
+}
+
+function _applySplitterSizes(leftCol, leftWidth, searchPct) {
+  leftCol.style.width = `${leftWidth}px`;
+  leftCol.style.setProperty('--bm-search-height', `${searchPct}%`);
+}
+
+/**
+ * Wire drag-resize on a vertical splitter (resizes the left column width).
+ */
+function _wireVSplitter(splitter, leftCol) {
+  let dragging = false;
+  let startX, startWidth;
+
+  const onMove = (e) => {
+    if (!dragging) return;
+    const dx = (e.touches ? e.touches[0].clientX : e.clientX) - startX;
+    const newW = Math.max(_LEFT_MIN, Math.min(_LEFT_MAX, startWidth + dx));
+    leftCol.style.width = `${newW}px`;
+  };
+
+  const onUp = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    splitter.classList.remove('dragging');
+    const w = parseInt(leftCol.style.width, 10);
+    if (!isNaN(w)) localStorage.setItem(_LS_LEFT_WIDTH, String(w));
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    document.removeEventListener('touchmove', onMove);
+    document.removeEventListener('touchend', onUp);
+  };
+
+  splitter.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    dragging = true;
+    startX = e.clientX;
+    startWidth = parseInt(leftCol.style.width || '280', 10);
+    splitter.classList.add('dragging');
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+
+  splitter.addEventListener('touchstart', (e) => {
+    dragging = true;
+    startX = e.touches[0].clientX;
+    startWidth = parseInt(leftCol.style.width || '280', 10);
+    splitter.classList.add('dragging');
+    document.addEventListener('touchmove', onMove, { passive: true });
+    document.addEventListener('touchend', onUp);
+  });
+}
+
+/**
+ * Wire drag-resize on a horizontal splitter (resizes search/shelf height split).
+ * searchSection + shelfSection are siblings inside leftCol.
+ */
+function _wireHSplitter(splitter, searchSection, leftCol) {
+  let dragging = false;
+  let startY, startColH, startPct;
+
+  const onMove = (e) => {
+    if (!dragging) return;
+    const dy = (e.touches ? e.touches[0].clientY : e.clientY) - startY;
+    const colH = leftCol.clientHeight || startColH;
+    const newPx = (startPct / 100) * startColH + dy;
+    const newPct = Math.max(_SEARCH_MIN, Math.min(_SEARCH_MAX, (newPx / colH) * 100));
+    leftCol.style.setProperty('--bm-search-height', `${newPct.toFixed(1)}%`);
+    searchSection.style.flex = `0 0 ${newPct.toFixed(1)}%`;
+  };
+
+  const onUp = () => {
+    if (!dragging) return;
+    dragging = false;
+    splitter.classList.remove('dragging');
+    const pctStr = leftCol.style.getPropertyValue('--bm-search-height').replace('%', '').trim();
+    const pct = parseFloat(pctStr);
+    if (!isNaN(pct)) localStorage.setItem(_LS_SEARCH_PCT, String(pct));
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    document.removeEventListener('touchmove', onMove);
+    document.removeEventListener('touchend', onUp);
+  };
+
+  splitter.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    dragging = true;
+    startY = e.clientY;
+    startColH = leftCol.clientHeight;
+    const pctStr = leftCol.style.getPropertyValue('--bm-search-height').replace('%', '').trim();
+    startPct = parseFloat(pctStr) || 33;
+    splitter.classList.add('dragging');
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+
+  splitter.addEventListener('touchstart', (e) => {
+    dragging = true;
+    startY = e.touches[0].clientY;
+    startColH = leftCol.clientHeight;
+    const pctStr = leftCol.style.getPropertyValue('--bm-search-height').replace('%', '').trim();
+    startPct = parseFloat(pctStr) || 33;
+    splitter.classList.add('dragging');
+    document.addEventListener('touchmove', onMove, { passive: true });
+    document.addEventListener('touchend', onUp);
+  });
+}
 
 // ── State ───────────────────────────────────────────────────────────────────
 
@@ -94,7 +224,7 @@ export function initBookmarksTab(tabContainer) {
     document.head.appendChild(link);
   }
 
-  // ── v5.50.5 layout: outer flex row ────────────────────────────────────────
+  // ── v5.50.6 layout: outer flex row with splitters ─────────────────────────
   const outerFlex = document.createElement('div');
   outerFlex.className = 'bm-outer';
   tabContainer.appendChild(outerFlex);
@@ -104,9 +234,14 @@ export function initBookmarksTab(tabContainer) {
   _leftCol.className = 'bm-left-col';
   outerFlex.appendChild(_leftCol);
 
-  // LEFT TOP: search bar + results
+  // Restore persisted splitter sizes BEFORE first paint
+  const { leftWidth, searchPct } = _loadSplitterSizes();
+  _applySplitterSizes(_leftCol, leftWidth, searchPct);
+
+  // LEFT TOP: search bar + results (top 1/3 by default)
   _searchSection = document.createElement('div');
   _searchSection.className = 'bm-search-section';
+  _searchSection.style.flex = `0 0 ${searchPct}%`;
   _leftCol.appendChild(_searchSection);
 
   // Search bar
@@ -124,7 +259,14 @@ export function initBookmarksTab(tabContainer) {
   _resultsPanel.style.display = 'none';
   _searchSection.appendChild(_resultsPanel);
 
-  // LEFT BOTTOM: bookmarks shelf
+  // HORIZONTAL SPLITTER: between search and shelf sections
+  const hSplitter = document.createElement('div');
+  hSplitter.className = 'bm-hsplitter';
+  hSplitter.setAttribute('role', 'separator');
+  hSplitter.setAttribute('aria-orientation', 'horizontal');
+  _leftCol.appendChild(hSplitter);
+
+  // LEFT BOTTOM: bookmarks list (bottom 2/3 by default)
   _shelfSection = document.createElement('div');
   _shelfSection.className = 'bm-shelf-section';
   _leftCol.appendChild(_shelfSection);
@@ -136,6 +278,13 @@ export function initBookmarksTab(tabContainer) {
     onReorder: _onReorder,
   });
   _shelfSection.appendChild(shelfEl);
+
+  // VERTICAL SPLITTER: between left-col and main area
+  const vSplitter = document.createElement('div');
+  vSplitter.className = 'bm-vsplitter';
+  vSplitter.setAttribute('role', 'separator');
+  vSplitter.setAttribute('aria-orientation', 'vertical');
+  outerFlex.appendChild(vSplitter);
 
   // ── MAIN area ─────────────────────────────────────────────────────────────
   _mainArea = document.createElement('div');
@@ -180,6 +329,10 @@ export function initBookmarksTab(tabContainer) {
   emptyMain.className = 'bm-main-empty';
   emptyMain.textContent = 'Select a bookmark or search result to preview';
   _mainArea.appendChild(emptyMain);
+
+  // ── Wire splitters ─────────────────────────────────────────────────────────
+  _wireVSplitter(vSplitter, _leftCol);
+  _wireHSplitter(hSplitter, _searchSection, _leftCol);
 
   // ── Keyboard handler ───────────────────────────────────────────────────────
   document.addEventListener('keydown', _onKeyDown);
