@@ -7,6 +7,23 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.50.2] — 2026-06-11
+
+### Added
+- **Control tab** — the `#control` shell (placeholder in v5.50.0) is now a live admin panel (`yadgar/static/control.js`): action triggers (consolidate / vacuum / re-embed), inline config editor (knob table with filter + group, type-aware edit, type/range validation, hot-reload-vs-restart classification per knob), an update button (reuses the existing `POST /api/control/update`), and restart buttons with typed-name confirmation.
+- **Control backend** (`yadgar/server/routes/control.py`): `GET/POST /api/control/config`, `POST /api/control/action/{consolidate|vacuum|reembed}`, `POST /api/control/restart/{yadgar|backend}`.
+- **`YADGAR_DEBUG_APIS_ENABLED` gate** (bool, default off, three-way registered) — gates `/api/control/{config,action,restart}`; enforced in the bearer-auth middleware (token alone insufficient → 403 when off). Distinct from the existing `YADGAR_UPDATE_DEBUG_APIS_ENABLED` which continues to gate the update route.
+
+### Security
+- **Restart is sentinel-file-only** — `POST /api/control/restart/<service>` (typed-name confirmation, 400 on mismatch) ONLY writes a sentinel request file; it never calls `os.execv`, `subprocess`, `systemctl`, or restarts in-process. A user-installed systemd `.path`+`.service` watcher does the actual restart (documented in `MIGRATION_NOTES.md`); until installed, the endpoint is inert (safe default). A test patches `os.execv`/`subprocess`/`os.system` and asserts none are called.
+- **`_WRITE_BLOCKED` config guard** — `POST /api/control/config` refuses to set security-sensitive knobs (`YADGAR_DEBUG_APIS_ENABLED` self-disable, `YADGAR_ALLOW_ROOT`, `YADGAR_REQUIRE_AUTH`, auth/enforcement/container flags), so the config editor can't be used to weaken its own gate or auth.
+
+### Tests
+- `yadgar/tests/test_control_api.py` (17) — gate 403/200, restart confirm-mismatch 400, restart writes sentinel + asserts no exec/systemctl, config round-trip, type-mismatch + out-of-range 400, security-knob block, action dispatch. `control.test.js` — config-row edit POST, restart typed-confirm enable, update-button grey-on-404. JS suite 213 → 240.
+
+### Changed
+- **Version bump**: 5.50.1 → 5.50.2.
+
 ## [5.50.1] — 2026-06-11
 
 ### Added
