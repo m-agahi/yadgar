@@ -7,6 +7,17 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.50.5] — 2026-06-11
+
+### Changed
+- **Merged the two top bars into one** — the old graph toolbar (brand + search + Fit/Reset/2D/Reload/Debug) sat above the tab nav bar. Now a single bar: brand + tab nav on the left, graph controls on the right.
+- **Daemon/system health moved into the Health tab** — the rich CORE/BACKEND detail (process, queue, log, rerank, models, circuit breakers) is now a "CORE / BACKEND Detail" section in the Health tab. Removed the `Daemons` toolbar button, the daemon popup panel + side tab, and the daemon footer that sat on the Home tab. CORE Uptime now wired from `/api/system` `uptime_s`.
+- **Stats tab fits the viewport** — the Heat Distribution + Consolidation charts are now bounded to the visible height (no overflow past the bottom), and the periodic refresh updates chart data in-place instead of rebuilding the DOM, so it no longer yanks the scroll position back to the top.
+
+### Fixed
+- **Bookmarks tab layout** — left column split vertically (top: search + results, bounded + scrollable; bottom: the bookmarks list, previously floating mid-page); main area holds the preview + version-history rail. **Clicking a version in the history rail no longer makes the rail disappear** (the rail is now a sibling of the preview, not nested inside it) — the structural invariant is covered by a new test.
+- Another `#tab-*{display}` id-specificity trap (`#tab-stats`) caught by the v5.50.3 regression guard and fixed (scoped to `.active`).
+
 ## [5.50.4] — 2026-06-11
 
 ### Fixed
