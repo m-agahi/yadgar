@@ -1,8 +1,14 @@
 /**
- * info.test.js — v5.50.0 info-tab mapping tests
+ * info.test.js — v5.50.4 info-tab mapping tests
  *
- * Tests the pure mapInfoData function extracted to info.js.
- * Verifies field mapping from /api/stats payload + vizConfig.
+ * Tests the pure mapping functions extracted to info.js.
+ * All mocks use REAL field names from the live API (verified against daemon).
+ *
+ * /api/info    → {version, python_version}
+ * /api/graph/stats → {memory_count, wiki_page_count, temporal_edge_count, transition_edge_count}
+ * /api/system  → {daemon_cpu_pct, rss_bytes, daemon_threads, open_fds, uptime_s,
+ *                  db_size_mb, system_ram_available_mb, load_avg_1m, load_avg_5m, load_avg_15m}
+ * /api/daemon-health → {core: {queue: {depth, dlq_size, drainer_lag_p95_ms}}}
  *
  * Run: cd viz-tests && npm test
  */
@@ -17,55 +23,56 @@ const MOCK_VIZ_CONFIG = {
   node: { wiki_shape: 'diamond' },
 };
 
-const MOCK_STATS = {
-  version: '5.50.0',
+// Real /api/info payload shape
+const MOCK_INFO = {
+  version: '5.50.4',
   python_version: '3.12.3',
 };
 
 describe('mapInfoData', () => {
-  it('extracts version from stats payload', () => {
-    const result = mapInfoData(MOCK_STATS, MOCK_VIZ_CONFIG);
-    expect(result['ti-version']).toBe('5.50.0');
+  it('extracts version from /api/info payload', () => {
+    const result = mapInfoData(MOCK_INFO, MOCK_VIZ_CONFIG);
+    expect(result['ti-version']).toBe('5.50.4');
   });
 
-  it('extracts python_version from stats payload', () => {
-    const result = mapInfoData(MOCK_STATS, MOCK_VIZ_CONFIG);
+  it('extracts python_version from /api/info payload', () => {
+    const result = mapInfoData(MOCK_INFO, MOCK_VIZ_CONFIG);
     expect(result['ti-python']).toBe('3.12.3');
   });
 
   it('extracts edge variant from viz config', () => {
-    const result = mapInfoData(MOCK_STATS, MOCK_VIZ_CONFIG);
+    const result = mapInfoData(MOCK_INFO, MOCK_VIZ_CONFIG);
     expect(result['ti-variant']).toBe('line');
   });
 
   it('extracts edge opacity from viz config', () => {
-    const result = mapInfoData(MOCK_STATS, MOCK_VIZ_CONFIG);
+    const result = mapInfoData(MOCK_INFO, MOCK_VIZ_CONFIG);
     expect(result['ti-opacity']).toBe(0.8);
   });
 
   it('extracts edge width_3d_multiplier from viz config', () => {
-    const result = mapInfoData(MOCK_STATS, MOCK_VIZ_CONFIG);
+    const result = mapInfoData(MOCK_INFO, MOCK_VIZ_CONFIG);
     expect(result['ti-width']).toBe(1.5);
   });
 
   it('extracts charge_strength from viz config physics', () => {
-    const result = mapInfoData(MOCK_STATS, MOCK_VIZ_CONFIG);
+    const result = mapInfoData(MOCK_INFO, MOCK_VIZ_CONFIG);
     expect(result['ti-charge']).toBe(-120);
   });
 
   it('extracts wiki_shape from viz config node', () => {
-    const result = mapInfoData(MOCK_STATS, MOCK_VIZ_CONFIG);
+    const result = mapInfoData(MOCK_INFO, MOCK_VIZ_CONFIG);
     expect(result['ti-wiki-shape']).toBe('diamond');
   });
 
-  it('returns null for missing stats fields', () => {
+  it('returns null for missing info fields', () => {
     const result = mapInfoData({}, MOCK_VIZ_CONFIG);
     expect(result['ti-version']).toBeNull();
     expect(result['ti-python']).toBeNull();
   });
 
   it('returns null for missing viz config fields', () => {
-    const result = mapInfoData(MOCK_STATS, { edge: {}, physics: {}, node: {} });
+    const result = mapInfoData(MOCK_INFO, { edge: {}, physics: {}, node: {} });
     expect(result['ti-variant']).toBeNull();
     expect(result['ti-opacity']).toBeNull();
     expect(result['ti-width']).toBeNull();
@@ -75,33 +82,30 @@ describe('mapInfoData', () => {
 });
 
 // ── mapStatsData ──────────────────────────────────────────────────────────────
+// Real /api/graph/stats payload shape: {memory_count, wiki_page_count,
+//   temporal_edge_count, transition_edge_count}
 
 describe('mapStatsData', () => {
   const MOCK = {
-    total_memories: 1234,
-    total_wiki_pages: 56,
-    total_embeddings: 1200,
-    hot_memories: 78,
-    orphan_edge_count: 0,
+    memory_count: 1234,
+    wiki_page_count: 56,
+    temporal_edge_count: 300,
+    transition_edge_count: 42,
   };
 
-  it('returns five rows in correct order', () => {
+  it('returns two rows in correct order', () => {
     const rows = mapStatsData(MOCK);
-    expect(rows).toHaveLength(5);
+    expect(rows).toHaveLength(2);
     expect(rows[0][0]).toBe('Memories');
-    expect(rows[4][0]).toBe('Orphan edges');
+    expect(rows[1][0]).toBe('Wiki pages');
   });
 
-  it('maps total_memories', () => {
+  it('maps memory_count', () => {
     expect(mapStatsData(MOCK)[0][1]).toBe(1234);
   });
 
-  it('maps total_wiki_pages', () => {
+  it('maps wiki_page_count', () => {
     expect(mapStatsData(MOCK)[1][1]).toBe(56);
-  });
-
-  it('maps orphan_edge_count = 0 (not falsy fallback)', () => {
-    expect(mapStatsData(MOCK)[4][1]).toBe(0);
   });
 
   it('uses — for missing fields', () => {
@@ -109,30 +113,36 @@ describe('mapStatsData', () => {
     rows.forEach(([, v]) => expect(v).toBe('—'));
   });
 
-  it('uses — for null orphan_edge_count but not 0', () => {
-    expect(mapStatsData({ orphan_edge_count: null })[4][1]).toBe('—');
-    expect(mapStatsData({ orphan_edge_count: 0 })[4][1]).toBe(0);
+  it('uses — for null memory_count', () => {
+    expect(mapStatsData({ memory_count: null })[0][1]).toBe('—');
+  });
+
+  it('maps memory_count = 0 (not falsy fallback)', () => {
+    expect(mapStatsData({ memory_count: 0 })[0][1]).toBe(0);
   });
 });
 
 // ── mapHealthData ─────────────────────────────────────────────────────────────
+// Real /api/system fields: daemon_cpu_pct, rss_bytes, daemon_threads, open_fds,
+// uptime_s, db_size_mb, system_ram_available_mb, load_avg_1m/5m/15m
+// Queue fields from /api/daemon-health core.queue
 
 describe('mapHealthData', () => {
   const MOCK_SYS = {
-    db_size_bytes: 1048576,
-    ram_free_bytes: 2097152,
-    load_avg: [0.5, 0.8, 1.0],
+    daemon_cpu_pct: 12,
+    rss_bytes: 524288,
+    daemon_threads: 4,
+    open_fds: 20,
+    uptime_s: 3661,
+    db_size_mb: 391.7,
+    system_ram_available_mb: 30752.3,
+    load_avg_1m: 0.5,
+    load_avg_5m: 0.8,
+    load_avg_15m: 1.0,
   };
 
   const MOCK_DH = {
     core: {
-      process: {
-        cpu_pct: 12,
-        rss_bytes: 524288,
-        thread_count: 4,
-        open_fds: 20,
-        uptime_s: 3661,
-      },
       queue: {
         depth: 3,
         dlq_size: 0,
@@ -141,7 +151,7 @@ describe('mapHealthData', () => {
     },
   };
 
-  it('maps cpu_pct with % suffix', () => {
+  it('maps daemon_cpu_pct with % suffix', () => {
     const r = mapHealthData(MOCK_SYS, MOCK_DH, _fmtBytes, _fmtUptime);
     expect(r['th-cpu']).toBe('12%');
   });
@@ -151,19 +161,34 @@ describe('mapHealthData', () => {
     expect(r['th-rss']).toBe('512 KB');
   });
 
+  it('maps daemon_threads', () => {
+    const r = mapHealthData(MOCK_SYS, MOCK_DH, _fmtBytes, _fmtUptime);
+    expect(r['th-threads']).toBe(4);
+  });
+
+  it('maps open_fds', () => {
+    const r = mapHealthData(MOCK_SYS, MOCK_DH, _fmtBytes, _fmtUptime);
+    expect(r['th-fds']).toBe(20);
+  });
+
   it('maps uptime_s using fmtUptime', () => {
     const r = mapHealthData(MOCK_SYS, MOCK_DH, _fmtBytes, _fmtUptime);
     expect(r['th-uptime']).toBe('1h 1m');
   });
 
-  it('maps load_avg as slash-joined string', () => {
+  it('maps load_avg_1m/5m/15m as slash-joined string', () => {
     const r = mapHealthData(MOCK_SYS, MOCK_DH, _fmtBytes, _fmtUptime);
     expect(r['th-load']).toBe('0.5 / 0.8 / 1');
   });
 
-  it('maps db_size_bytes using fmtBytes', () => {
+  it('maps db_size_mb with MB suffix', () => {
     const r = mapHealthData(MOCK_SYS, MOCK_DH, _fmtBytes, _fmtUptime);
-    expect(r['th-db']).toBe('1.0 MB');
+    expect(r['th-db']).toBe('391.7 MB');
+  });
+
+  it('maps system_ram_available_mb with MB suffix', () => {
+    const r = mapHealthData(MOCK_SYS, MOCK_DH, _fmtBytes, _fmtUptime);
+    expect(r['th-ram']).toBe('30752 MB');
   });
 
   it('maps lag with ms suffix', () => {
@@ -171,16 +196,24 @@ describe('mapHealthData', () => {
     expect(r['th-lag']).toBe('45ms');
   });
 
-  it('returns — for missing core data', () => {
+  it('returns — for missing sys data', () => {
     const r = mapHealthData({}, {}, _fmtBytes, _fmtUptime);
     expect(r['th-cpu']).toBe('—');
     expect(r['th-rss']).toBe('—');
+    expect(r['th-threads']).toBe('—');
     expect(r['th-uptime']).toBe('—');
     expect(r['th-load']).toBe('—');
+    expect(r['th-db']).toBe('—');
+    expect(r['th-ram']).toBe('—');
   });
 
   it('maps dlq_size = 0 (not falsy fallback)', () => {
     const r = mapHealthData(MOCK_SYS, MOCK_DH, _fmtBytes, _fmtUptime);
     expect(r['th-dlq']).toBe(0);
+  });
+
+  it('maps depth from core.queue', () => {
+    const r = mapHealthData(MOCK_SYS, MOCK_DH, _fmtBytes, _fmtUptime);
+    expect(r['th-qdepth']).toBe(3);
   });
 });
