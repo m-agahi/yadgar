@@ -282,6 +282,9 @@ _REGISTRY: list[ConfigEntry] = [
     # ── v5.49.0 Phase 9 orchestrator knobs ───────────────────────────────────
     ConfigEntry("YADGAR_UPDATE_INSTALL_ENABLED", "false", "bool"),
     ConfigEntry("YADGAR_UPDATE_LOCK_MAX_AGE_SECONDS", "3600", "int"),
+    # ── backend v5.5.0 model preload warm-up ─────────────────────────────────
+    ConfigEntry("YADGAR_MODEL_PRELOAD", "true", "bool"),
+    ConfigEntry("YADGAR_MODEL_PRELOAD_DELAY_SEC", "10", "int"),
 ]
 
 
