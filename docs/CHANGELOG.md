@@ -7,6 +7,18 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.50.6] — 2026-06-11
+
+### Changed
+- **Bookmarks left column reworked** — split fixed at **1/3 from top** (search) / **2/3** (bookmarks); the bookmark list is now a **vertical list** (one per row) instead of floating card tiles; both the search/results section and the bookmarks list **scroll independently**; the left column has a fixed boundary so nothing bleeds into the preview/viewer panel. Added **draggable splitters** — left-column width + the search/bookmarks split — with sizes persisted to `localStorage`.
+- **Wiki nodes render as octahedra** in the 3D graph (`graph-node-factory.js` + re-wired `nodeThreeObject`), so wiki nodes are visually distinct from memory spheres. Honors `node.wiki_shape` config. Root cause of the prior shard-rendering revert (v5.10.7.x) identified and fixed: the old custom mesh used `transparent: true`, which implicitly sets `depthWrite: false` and causes face-ordering artifacts; the new mesh uses `MeshBasicMaterial` with `depthWrite` on, rendering solid shapes.
+
+### Tests
+- `graph-node-factory.test.js` (13 tests) — wiki→`OctahedronGeometry`, non-wiki→default sphere, the `transparent:false` shard-fix invariant, color + config-override + null-THREE guard. JS suite 254 → 267.
+- Retired `TestS24StatsAutoRefresh` (tested the toolbar stats modal removed in v5.50.4).
+
+> Note: the octahedron shape cannot be verified in headless CI (no WebGL) — visually confirmed in a real browser.
+
 ## [5.50.5] — 2026-06-11
 
 ### Changed
