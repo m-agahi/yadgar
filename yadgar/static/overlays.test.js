@@ -1,15 +1,20 @@
 /**
- * overlays.test.js — v5.50.0 floating overlay localStorage tests
+ * overlays.test.js — overlay localStorage round-trip tests
  *
- * Tests overlay localStorage position + collapse round-trip and corrupt-JSON
- * fallback without running ForceGraph3D (headless-safe).
+ * Tests loadOverlayState, saveOverlayPosition, saveOverlayCollapsed
+ * imported from overlays.js (pure functions, no DOM required).
  *
  * Run: cd viz-tests && npm test
  */
 
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import {
+  loadOverlayState,
+  saveOverlayPosition,
+  saveOverlayCollapsed,
+} from './overlays.js';
 
-// ── Minimal localStorage implementation for isolated tests ─────────────────
+// ── Minimal localStorage stub ─────────────────────────────────────────────────
 
 function makeLocalStorage() {
   const store = {};
@@ -21,52 +26,7 @@ function makeLocalStorage() {
   };
 }
 
-/**
- * Minimal overlay persistence helpers extracted from overlays.js logic.
- * These functions mirror what overlays.js must export for testability.
- */
-function loadOverlayState(localStorage, name, defaults) {
-  const posKey = `viz.overlay.${name}.position`;
-  const colKey = `viz.overlay.${name}.collapsed`;
-  let position = defaults.position;
-  let collapsed = defaults.collapsed ?? false;
-  try {
-    const raw = localStorage.getItem(posKey);
-    if (raw !== null) {
-      const parsed = JSON.parse(raw);
-      if (
-        parsed &&
-        typeof parsed.x === 'number' &&
-        typeof parsed.y === 'number'
-      ) {
-        position = parsed;
-      }
-    }
-  } catch {
-    // corrupt JSON → fall back to defaults
-  }
-  try {
-    const rawCol = localStorage.getItem(colKey);
-    if (rawCol !== null) {
-      collapsed = rawCol === 'true';
-    }
-  } catch {
-    // ignore
-  }
-  return { position, collapsed };
-}
-
-function saveOverlayPosition(localStorage, name, x, y) {
-  const posKey = `viz.overlay.${name}.position`;
-  localStorage.setItem(posKey, JSON.stringify({ x, y }));
-}
-
-function saveOverlayCollapsed(localStorage, name, collapsed) {
-  const colKey = `viz.overlay.${name}.collapsed`;
-  localStorage.setItem(colKey, String(collapsed));
-}
-
-// ── Position persistence round-trip ───────────────────────────────────────
+// ── Position persistence round-trip ───────────────────────────────────────────
 
 describe('overlay position localStorage round-trip', () => {
   it('saves and restores position', () => {
@@ -95,7 +55,7 @@ describe('overlay position localStorage round-trip', () => {
   });
 });
 
-// ── Collapse persistence round-trip ───────────────────────────────────────
+// ── Collapse persistence round-trip ───────────────────────────────────────────
 
 describe('overlay collapse localStorage round-trip', () => {
   it('saves and restores collapsed=true', () => {
@@ -119,7 +79,7 @@ describe('overlay collapse localStorage round-trip', () => {
   });
 });
 
-// ── Corrupt JSON fallback ──────────────────────────────────────────────────
+// ── Corrupt JSON fallback ──────────────────────────────────────────────────────
 
 describe('corrupt localStorage JSON fallback', () => {
   it('falls back to defaults when position JSON is corrupt', () => {

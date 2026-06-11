@@ -1,147 +1,143 @@
 /**
- * tabs.test.js — v5.50.0 hash-router tab tests
+ * tabs.test.js — v5.50.0 hash-router behavioral tests
  *
- * Tests that the tab router in index.html correctly has containers
- * for each hash route. Uses string/regex analysis on the HTML file
- * (no browser/jsdom required — headless safe).
+ * Tests the pure router logic extracted to tabs.js.
+ * Uses jsdom (vitest environment: 'jsdom') for DOM assertions.
  *
  * Run: cd viz-tests && npm test
  */
 
-import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { describe, expect, it, beforeEach } from 'vitest';
+import { resolveTab, VALID_TABS } from './tabs.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const HTML_PATH = join(__dirname, 'index.html');
+// ── resolveTab — pure hash-to-tab-name ────────────────────────────────────────
 
-function readHtml() {
-  return readFileSync(HTML_PATH, 'utf-8');
-}
+describe('resolveTab', () => {
+  it('returns home for empty string', () => {
+    expect(resolveTab('')).toBe('home');
+  });
+
+  it('returns home for bare # (no name)', () => {
+    expect(resolveTab('#')).toBe('home');
+  });
+
+  it('returns home for #home', () => {
+    expect(resolveTab('#home')).toBe('home');
+  });
+
+  it('resolves each valid tab from hash string', () => {
+    expect(resolveTab('#stats')).toBe('stats');
+    expect(resolveTab('#health')).toBe('health');
+    expect(resolveTab('#bookmarks')).toBe('bookmarks');
+    expect(resolveTab('#info')).toBe('info');
+    expect(resolveTab('#control')).toBe('control');
+  });
+
+  it('falls back to home for unknown hash', () => {
+    expect(resolveTab('#unknown')).toBe('home');
+    expect(resolveTab('#foobar')).toBe('home');
+  });
+
+  it('strips sub-path after /', () => {
+    expect(resolveTab('#stats/detail')).toBe('stats');
+    expect(resolveTab('#home/section')).toBe('home');
+  });
+
+  it('strips leading # before lookup', () => {
+    // Both with and without # should resolve the same — # is stripped before VALID_TABS lookup
+    expect(resolveTab('#health')).toBe('health');
+    expect(resolveTab('health')).toBe('health');
+  });
+});
+
+// ── VALID_TABS — exported set ─────────────────────────────────────────────────
+
+describe('VALID_TABS', () => {
+  it('contains all six defined tabs', () => {
+    expect(VALID_TABS.has('home')).toBe(true);
+    expect(VALID_TABS.has('stats')).toBe(true);
+    expect(VALID_TABS.has('health')).toBe(true);
+    expect(VALID_TABS.has('bookmarks')).toBe(true);
+    expect(VALID_TABS.has('info')).toBe(true);
+    expect(VALID_TABS.has('control')).toBe(true);
+  });
+
+  it('has exactly 6 entries', () => {
+    expect(VALID_TABS.size).toBe(6);
+  });
+});
+
+// ── DOM behavioral tests (requires jsdom) ─────────────────────────────────────
+
+import { switchTab } from './tabs.js';
 
 /**
- * Check if a given element with id="tab-{name}" exists in the HTML.
+ * Build a minimal DOM matching the SPA tab structure.
+ * Returns document with #tab-bar + 6 .tab-pane divs.
  */
-function hasTabContainer(html, name) {
-  return (
-    html.includes(`id="tab-${name}"`) ||
-    html.includes(`id='tab-${name}'`)
-  );
+function makeTabDOM() {
+  const tabs = ['home', 'stats', 'health', 'bookmarks', 'info', 'control'];
+
+  // tab bar
+  const tabBar = document.createElement('nav');
+  tabBar.id = 'tab-bar';
+  tabs.forEach(t => {
+    const a = document.createElement('a');
+    a.className = 'tab-link';
+    a.dataset.tab = t;
+    a.href = '#' + t;
+    tabBar.appendChild(a);
+  });
+
+  // panes
+  const panes = tabs.map(t => {
+    const div = document.createElement('div');
+    div.id = 'tab-' + t;
+    div.className = 'tab-pane';
+    return div;
+  });
+
+  // mount
+  document.body.innerHTML = '';
+  document.body.appendChild(tabBar);
+  panes.forEach(p => document.body.appendChild(p));
+
+  return { tabs, panes };
 }
 
-/**
- * Check if the tab bar contains a link to #{name}.
- */
-function hasTabLink(html, name) {
-  return (
-    html.includes(`href="#${name}"`) ||
-    html.includes(`href='#${name}'`) ||
-    html.includes(`href="/#${name}"`) ||
-    html.includes(`href='/#${name}'`)
-  );
-}
-
-// ── Container presence tests ───────────────────────────────────────────────
-
-describe('tab containers exist in DOM', () => {
-  it('#home container present (id="tab-home")', () => {
-    expect(hasTabContainer(readHtml(), 'home')).toBe(true);
+describe('switchTab DOM behavior', () => {
+  beforeEach(() => {
+    makeTabDOM();
   });
 
-  it('#stats container present (id="tab-stats")', () => {
-    expect(hasTabContainer(readHtml(), 'stats')).toBe(true);
+  it('activates correct pane + link for each tab', () => {
+    const tabs = ['home', 'stats', 'health', 'bookmarks', 'info', 'control'];
+    for (const t of tabs) {
+      switchTab(t);
+      expect(document.getElementById('tab-' + t).classList.contains('active')).toBe(true);
+      const link = document.querySelector('#tab-bar a[data-tab="' + t + '"]');
+      expect(link.classList.contains('active')).toBe(true);
+    }
   });
 
-  it('#health container present (id="tab-health")', () => {
-    expect(hasTabContainer(readHtml(), 'health')).toBe(true);
+  it('deactivates all other panes when switching', () => {
+    switchTab('stats');
+    const panes = document.querySelectorAll('.tab-pane');
+    const active = [...panes].filter(p => p.classList.contains('active'));
+    expect(active.length).toBe(1);
+    expect(active[0].id).toBe('tab-stats');
   });
 
-  it('#bookmarks container present (empty placeholder)', () => {
-    expect(hasTabContainer(readHtml(), 'bookmarks')).toBe(true);
+  it('defaults to home for unknown tab name', () => {
+    switchTab('nonexistent');
+    expect(document.getElementById('tab-home').classList.contains('active')).toBe(true);
   });
 
-  it('#info container present (id="tab-info")', () => {
-    expect(hasTabContainer(readHtml(), 'info')).toBe(true);
-  });
-
-  it('#control container present (empty placeholder)', () => {
-    expect(hasTabContainer(readHtml(), 'control')).toBe(true);
-  });
-});
-
-// ── Tab bar navigation link tests ──────────────────────────────────────────
-
-describe('tab bar navigation links present', () => {
-  it('tab bar link to #home present', () => {
-    expect(hasTabLink(readHtml(), 'home')).toBe(true);
-  });
-
-  it('tab bar link to #stats present', () => {
-    expect(hasTabLink(readHtml(), 'stats')).toBe(true);
-  });
-
-  it('tab bar link to #health present', () => {
-    expect(hasTabLink(readHtml(), 'health')).toBe(true);
-  });
-
-  it('tab bar link to #bookmarks present', () => {
-    expect(hasTabLink(readHtml(), 'bookmarks')).toBe(true);
-  });
-
-  it('tab bar link to #info present', () => {
-    expect(hasTabLink(readHtml(), 'info')).toBe(true);
-  });
-
-  it('tab bar link to #control present', () => {
-    expect(hasTabLink(readHtml(), 'control')).toBe(true);
-  });
-});
-
-// ── Hash router JS present ─────────────────────────────────────────────────
-
-describe('hash router JavaScript present', () => {
-  it('index.html contains hash router logic (hashchange or popstate)', () => {
-    const html = readHtml();
-    const hasHashChange = html.includes('hashchange') || html.includes('onhashchange');
-    const hasPopState = html.includes('popstate');
-    expect(hasHashChange || hasPopState).toBe(true);
-  });
-
-  it('index.html has default route logic for #home', () => {
-    const html = readHtml();
-    // Must default to #home when no hash is present
-    expect(html.includes('#home') || html.includes('home')).toBe(true);
-  });
-});
-
-// ── Empty placeholder containers ──────────────────────────────────────────
-
-describe('#bookmarks and #control are empty placeholder shells', () => {
-  it('tab-bookmarks container is present as a div', () => {
-    const html = readHtml();
-    // Should appear as a div container
-    const hasDiv = (
-      html.includes('<div id="tab-bookmarks"') ||
-      html.includes("<div id='tab-bookmarks'")
-    );
-    const hasSection = (
-      html.includes('<section id="tab-bookmarks"') ||
-      html.includes("<section id='tab-bookmarks'")
-    );
-    expect(hasDiv || hasSection).toBe(true);
-  });
-
-  it('tab-control container is present as a div', () => {
-    const html = readHtml();
-    const hasDiv = (
-      html.includes('<div id="tab-control"') ||
-      html.includes("<div id='tab-control'")
-    );
-    const hasSection = (
-      html.includes('<section id="tab-control"') ||
-      html.includes("<section id='tab-control'")
-    );
-    expect(hasDiv || hasSection).toBe(true);
+  it('only one tab-link is active at a time', () => {
+    switchTab('health');
+    const links = document.querySelectorAll('#tab-bar .tab-link');
+    const active = [...links].filter(l => l.classList.contains('active'));
+    expect(active.length).toBe(1);
+    expect(active[0].dataset.tab).toBe('health');
   });
 });

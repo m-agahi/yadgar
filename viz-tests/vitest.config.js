@@ -1,8 +1,16 @@
 import { defineConfig } from 'vitest/config';
+import { resolve } from 'path';
+
+const repoRoot = resolve(new URL('..', import.meta.url).pathname);
 
 export default defineConfig({
+  server: {
+    fs: {
+      allow: [repoRoot],
+    },
+  },
   test: {
-    environment: 'node',
+    environment: 'jsdom',
     include: ['../yadgar/static/**/*.test.js'],
     exclude: [],
   },
