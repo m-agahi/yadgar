@@ -97,6 +97,7 @@ import yadgar.server.admin_config  # noqa: F401 — v5.6.7 PR-J: GET /admin/conf
 import yadgar.server.http_bookmarks  # noqa: F401 — v5.23.0: bookmark + wiki routes
 import yadgar.server.http_wiki_versioning  # noqa: F401 — v5.50.1: wiki query/history/diff/restore
 import yadgar.server.routes.control_update  # noqa: F401 — v5.48.0: POST /api/control/update
+import yadgar.server.routes.control  # noqa: F401 — v5.50.2: GET+POST /api/control/config, POST /api/control/action/*, POST /api/control/restart/*
 
 # Re-export HTTP route functions so 'import yadgar.server as srv; srv.hook_auto_capture'
 # resolves correctly (test_async_handlers_no_block.py, test_sse.py)
