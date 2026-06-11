@@ -2278,24 +2278,32 @@ async function _dhFetchOnce() {
 // ── v5.50.0 Hash Router ───────────────────────────────────────────────────────
 // Six tabs: home, stats, health, bookmarks, info, control.
 // Default: #home when hash is empty or unrecognised.
-const _VALID_TABS = new Set(['home', 'stats', 'health', 'bookmarks', 'info', 'control']);
+// DOM activation delegated to tabs.js (YadgarTabs); per-tab fetches kept here.
 
 function _getActiveTab() {
+  // YadgarTabs is set by the module script below; falls back gracefully if not yet loaded
+  if (window.YadgarTabs) return window.YadgarTabs.resolveTab(window.location.hash);
+  const _VALID = new Set(['home','stats','health','bookmarks','info','control']);
   const hash = (window.location.hash || '#home').replace(/^#/, '').split('/')[0];
-  return _VALID_TABS.has(hash) ? hash : 'home';
+  return _VALID.has(hash) ? hash : 'home';
 }
 
 function _switchTab(tabName) {
-  if (!_VALID_TABS.has(tabName)) tabName = 'home';
-  // Hide all panes
-  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('#tab-bar .tab-link').forEach(a => a.classList.remove('active'));
-  // Show active pane
-  const pane = document.getElementById('tab-' + tabName);
-  if (pane) pane.classList.add('active');
-  const link = document.querySelector('#tab-bar a[data-tab="' + tabName + '"]');
-  if (link) link.classList.add('active');
-  // Tab-specific init on first visit
+  // DOM activation via tabs.js module
+  if (window.YadgarTabs) {
+    window.YadgarTabs.switchTab(tabName);
+  } else {
+    // Fallback: inline activation (same logic as tabs.js) if module not yet loaded
+    const _VALID = new Set(['home','stats','health','bookmarks','info','control']);
+    if (!_VALID.has(tabName)) tabName = 'home';
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('#tab-bar .tab-link').forEach(a => a.classList.remove('active'));
+    const pane = document.getElementById('tab-' + tabName);
+    if (pane) pane.classList.add('active');
+    const link = document.querySelector('#tab-bar a[data-tab="' + tabName + '"]');
+    if (link) link.classList.add('active');
+  }
+  // Per-tab data fetches (not in tabs.js — tab module handles only DOM activation)
   if (tabName === 'stats') _tabStatsRefresh();
   if (tabName === 'health') _tabHealthRefresh();
   if (tabName === 'info') _tabInfoRefresh();
@@ -2309,15 +2317,25 @@ function _tabStatsRefresh() {
   fetch(DAEMON + '/api/stats').then(r => r.ok ? r.json() : null).then(d => {
     if (!d) { el.textContent = 'Failed to load stats.'; return; }
     el.innerHTML = '';
-    const rows = [
-      ['Memories', d.total_memories], ['Wiki pages', d.total_wiki_pages],
-      ['Embeddings', d.total_embeddings], ['Hot (heat>0.5)', d.hot_memories],
-      ['Orphan edges', d.orphan_edge_count != null ? d.orphan_edge_count : '—'],
-    ];
+    // Pure field mapping via info.js module (YadgarInfo.mapStatsData)
+    const rows = window.YadgarInfo
+      ? window.YadgarInfo.mapStatsData(d)
+      : [
+          ['Memories', d.total_memories ?? '—'], ['Wiki pages', d.total_wiki_pages ?? '—'],
+          ['Embeddings', d.total_embeddings ?? '—'], ['Hot (heat>0.5)', d.hot_memories ?? '—'],
+          ['Orphan edges', d.orphan_edge_count != null ? d.orphan_edge_count : '—'],
+        ];
     rows.forEach(([k, v]) => {
       const row = document.createElement('div');
       row.className = 'tab-kv';
-      row.innerHTML = '<span class="k">' + esc(k) + '</span><span class="v">' + esc(String(v ?? '—')) + '</span>';
+      const kSpan = document.createElement('span');
+      kSpan.className = 'k';
+      kSpan.textContent = k;
+      const vSpan = document.createElement('span');
+      vSpan.className = 'v';
+      vSpan.textContent = String(v ?? '—');
+      row.appendChild(kSpan);
+      row.appendChild(vSpan);
       el.appendChild(row);
     });
   }).catch(() => { if (el) el.textContent = 'Stats unavailable.'; });
@@ -2331,21 +2349,29 @@ function _tabHealthRefresh() {
     fetch(DAEMON + '/api/daemon-health').then(r => r.ok ? r.json() : {}),
   ]).then(([sys, dh]) => {
     const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v ?? '—'; };
-    const c = dh.core || {};
-    const cp = c.process || {};
-    const cq = c.queue || {};
-    set('th-cpu', cp.cpu_pct != null ? cp.cpu_pct + '%' : '—');
-    set('th-rss', cp.rss_bytes != null ? _fmtBytes(cp.rss_bytes) : '—');
-    set('th-threads', cp.thread_count ?? '—');
-    set('th-fds', cp.open_fds ?? '—');
-    set('th-uptime', cp.uptime_s != null ? _fmtUptime(cp.uptime_s) : '—');
-    set('th-qdepth', cq.depth ?? '—');
-    set('th-dlq', cq.dlq_size ?? '—');
-    set('th-lag', cq.drainer_lag_p95_ms != null ? cq.drainer_lag_p95_ms + 'ms' : '—');
-    set('th-db', sys.db_size_bytes != null ? _fmtBytes(sys.db_size_bytes) : '—');
-    set('th-ram', sys.ram_free_bytes != null ? _fmtBytes(sys.ram_free_bytes) : '—');
-    const load = sys.load_avg;
-    set('th-load', Array.isArray(load) ? load.join(' / ') : '—');
+    // Pure field mapping via info.js module (YadgarInfo.mapHealthData)
+    const fields = window.YadgarInfo
+      ? window.YadgarInfo.mapHealthData(sys, dh, _fmtBytes, _fmtUptime)
+      : null;
+    if (fields) {
+      Object.entries(fields).forEach(([id, v]) => set(id, v));
+    } else {
+      const c = dh.core || {};
+      const cp = c.process || {};
+      const cq = c.queue || {};
+      set('th-cpu', cp.cpu_pct != null ? cp.cpu_pct + '%' : '—');
+      set('th-rss', cp.rss_bytes != null ? _fmtBytes(cp.rss_bytes) : '—');
+      set('th-threads', cp.thread_count ?? '—');
+      set('th-fds', cp.open_fds ?? '—');
+      set('th-uptime', cp.uptime_s != null ? _fmtUptime(cp.uptime_s) : '—');
+      set('th-qdepth', cq.depth ?? '—');
+      set('th-dlq', cq.dlq_size ?? '—');
+      set('th-lag', cq.drainer_lag_p95_ms != null ? cq.drainer_lag_p95_ms + 'ms' : '—');
+      set('th-db', sys.db_size_bytes != null ? _fmtBytes(sys.db_size_bytes) : '—');
+      set('th-ram', sys.ram_free_bytes != null ? _fmtBytes(sys.ram_free_bytes) : '—');
+      const load = sys.load_avg;
+      set('th-load', Array.isArray(load) ? load.join(' / ') : '—');
+    }
     if (status) status.textContent = 'Last updated: ' + new Date().toLocaleTimeString();
   }).catch(() => { if (status) status.textContent = 'Health data unavailable.'; });
 }
@@ -2353,17 +2379,23 @@ function _tabHealthRefresh() {
 // Info tab: populate version + active viz config
 function _tabInfoRefresh() {
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v ?? '—'; };
-  // Try /api/stats for version info
   fetch(DAEMON + '/api/stats').then(r => r.ok ? r.json() : {}).then(d => {
-    set('ti-version', d.version ?? '—');
-    set('ti-python', d.python_version ?? '—');
+    // Pure field mapping via info.js module (YadgarInfo.mapInfoData)
+    const fields = window.YadgarInfo
+      ? window.YadgarInfo.mapInfoData(d, YADGAR_VIZ_CONFIG)
+      : null;
+    if (fields) {
+      Object.entries(fields).forEach(([id, v]) => set(id, v));
+    } else {
+      set('ti-version', d.version ?? '—');
+      set('ti-python', d.python_version ?? '—');
+      set('ti-variant', YADGAR_VIZ_CONFIG.edge.variant ?? '—');
+      set('ti-opacity', YADGAR_VIZ_CONFIG.edge.opacity ?? '—');
+      set('ti-width', YADGAR_VIZ_CONFIG.edge.width_3d_multiplier ?? '—');
+      set('ti-charge', YADGAR_VIZ_CONFIG.physics.charge_strength ?? '—');
+      set('ti-wiki-shape', YADGAR_VIZ_CONFIG.node.wiki_shape ?? '—');
+    }
   }).catch(() => {});
-  // Viz config from live YADGAR_VIZ_CONFIG
-  set('ti-variant', YADGAR_VIZ_CONFIG.edge.variant ?? '—');
-  set('ti-opacity', YADGAR_VIZ_CONFIG.edge.opacity ?? '—');
-  set('ti-width', YADGAR_VIZ_CONFIG.edge.width_3d_multiplier ?? '—');
-  set('ti-charge', YADGAR_VIZ_CONFIG.physics.charge_strength ?? '—');
-  set('ti-wiki-shape', YADGAR_VIZ_CONFIG.node.wiki_shape ?? '—');
 }
 
 // Listen for hash changes (back/forward navigation)
@@ -2380,6 +2412,22 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
   loadGraph();
   connectSSE();
 })();
+</script>
+
+<!-- ── v5.50.0 ES Modules ─────────────────────────────────────────────────────
+     Load extracted pure modules and expose them on window.* so the non-module
+     script above can delegate to them. Modules execute asynchronously (deferred
+     by default), but the boot IIFE awaits loadVizConfig() before calling
+     _switchTab — ensuring modules are loaded before first tab switch.
+     hashchange only fires on user navigation (after DOMContentLoaded).
+  -->
+<script type="module">
+  import * as Tabs from './tabs.js';
+  import * as Info from './info.js';
+  import * as Overlays from './overlays.js';
+  window.YadgarTabs    = Tabs;
+  window.YadgarInfo    = Info;
+  window.YadgarOverlays = Overlays;
 </script>
 </body>
 </html>
