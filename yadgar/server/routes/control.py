@@ -193,6 +193,28 @@ def _coerce_json_value(raw: object, kind: str) -> tuple[object, str | None]:
 
 _VALID_SERVICES: frozenset[str] = frozenset({"yadgar", "yadgar-backend"})
 
+# ---------------------------------------------------------------------------
+# Write-blocked knobs (security/enforcement — cannot be changed via POST /config)
+# ---------------------------------------------------------------------------
+# The config editor is scoped to tuning knobs (viz, physics, consolidation,
+# embedding, storage). Security and enforcement knobs must never be writable
+# via the API, even with the debug gate on. This is defence-in-depth: the gate
+# itself (YADGAR_DEBUG_APIS_ENABLED) must not be self-disabling, and auth/root/
+# enforcement knobs must not be accessible to any caller regardless of bearer
+# token.
+
+_WRITE_BLOCKED: frozenset[str] = frozenset(
+    {
+        "YADGAR_DEBUG_APIS_ENABLED",  # gate self-disable
+        "YADGAR_UPDATE_DEBUG_APIS_ENABLED",  # sibling gate
+        "YADGAR_ALLOW_ROOT",  # privilege escalation
+        "YADGAR_REQUIRE_AUTH",  # auth bypass
+        "YADGAR_BRANCH_ENFORCEMENT",  # enforcement bypass
+        "YADGAR_DIRECTORY_ENFORCEMENT",  # enforcement bypass
+        "YADGAR_IN_CONTAINER",  # runtime-detected; not user-settable
+    }
+)
+
 
 def _sentinel_dir() -> Path:
     """Return the XDG state dir for yadgar sentinel files."""
@@ -271,6 +293,9 @@ async def control_config_post_handler(request: Request) -> JSONResponse:
         return JSONResponse({"error": f"unknown knob: {name!r}"}, status_code=400)
 
     if entry._should_redact():
+        return JSONResponse({"error": f"knob {name!r} is write-protected"}, status_code=400)
+
+    if entry.name in _WRITE_BLOCKED:
         return JSONResponse({"error": f"knob {name!r} is write-protected"}, status_code=400)
 
     # Coerce + validate type

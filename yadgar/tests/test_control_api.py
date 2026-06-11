@@ -18,6 +18,7 @@ Tests (real behavioral — no string-grep-the-HTML):
 14. test_action_reembed_calls_reembed_all — mock reembed_all called
 15. test_action_unknown_returns_400 — unknown action → 400
 16. test_restart_unknown_service_returns_400 — unknown service param → 400
+17. test_config_post_write_blocked_knob_returns_400 — security/enforcement knobs → 400
 """
 
 from __future__ import annotations
@@ -450,3 +451,40 @@ def test_restart_unknown_service_returns_400(monkeypatch, tmp_path):
     )
     assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
     assert "error" in resp.json()
+
+
+# ===========================================================================
+# 17 — Write-blocked security/enforcement knobs → 400
+# ===========================================================================
+
+
+def test_config_post_write_blocked_knob_returns_400(monkeypatch, tmp_path):
+    """POST /api/control/config on security/enforcement knobs → 400 write-protected.
+
+    These knobs control auth, root access, and enforcement — the config editor
+    must never allow them to be changed via the API, even with the debug gate on.
+    """
+    client = _make_app(monkeypatch, debug_apis_on=True)
+
+    blocked_knobs = [
+        ("YADGAR_DEBUG_APIS_ENABLED", "false"),  # gate self-disable
+        ("YADGAR_ALLOW_ROOT", "true"),  # privilege escalation
+        ("YADGAR_REQUIRE_AUTH", "false"),  # auth bypass
+        ("YADGAR_BRANCH_ENFORCEMENT", "false"),  # enforcement bypass
+        ("YADGAR_DIRECTORY_ENFORCEMENT", "false"),  # enforcement bypass
+    ]
+
+    for name, value in blocked_knobs:
+        resp = client.post(
+            "/api/control/config",
+            json={"name": name, "value": value},
+            headers=_auth_headers(),
+        )
+        assert resp.status_code == 400, (
+            f"Expected 400 for write-blocked knob {name!r}, got {resp.status_code}: {resp.text}"
+        )
+        body = resp.json()
+        assert "error" in body, f"No 'error' key in response for {name!r}: {body}"
+        assert "write-protected" in body["error"].lower(), (
+            f"Expected 'write-protected' in error for {name!r}, got: {body['error']!r}"
+        )
