@@ -1268,7 +1268,29 @@ function _nodeColorFor(node) {
 // material; S2.2 shape distinction (wiki octahedra vs memory spheres) is
 // deferred until deeper ForceGraph3D + ThreeJS investigation.
 //
-// _makeNodeThreeObject removed.
+// v5.50.6: _makeNodeThreeObject re-introduced with correct material.
+// Three prior attempts (v5.10.7, .1, .2) produced fragmented shards because all
+// used `transparent: true`, which disables depthWrite → THREE renders faces in
+// submit order, not depth order → visible triangle-ordering artifacts on 3D polyhedra.
+// Fix: MeshBasicMaterial with NO transparent flag (defaults to false, depthWrite=true).
+// Wiki nodes → OctahedronGeometry; memory/other nodes → return null (ForceGraph default sphere).
+// Respects YADGAR_VIZ_CONFIG.node.wiki_shape: 'octahedron' | 'sphere'.
+// Exported for unit tests: window._makeNodeThreeObject = _makeNodeThreeObject.
+function _makeNodeThreeObject(node) {
+  const shape = YADGAR_VIZ_CONFIG.node.wiki_shape || 'octahedron';
+  if (node.type !== 'wiki' || shape !== 'octahedron') return null; // ForceGraph default sphere
+  const THREE = window.THREE;
+  if (!THREE) return null;
+  const nodeRelSize = YADGAR_VIZ_CONFIG.node.size_3d || 8;
+  const radius = Math.cbrt(1) * nodeRelSize;  // matches ForceGraph's own sphere sizing (nodeVal defaults to 1)
+  const geo = new THREE.OctahedronGeometry(radius, 0);
+  const color = _nodeColorFor(node) || '#8b949e';
+  // MeshBasicMaterial: unlit, transparent:false (default) → depthWrite:true → solid rendering
+  const mat = new THREE.MeshBasicMaterial({ color });
+  return new THREE.Mesh(geo, mat);
+}
+// Expose for unit tests
+if (typeof window !== 'undefined') window._makeNodeThreeObject = _makeNodeThreeObject;
 
 // ── Graph initialisation ────────────────────────────────────────────────────
 function _nodeLabel(n) {
@@ -1309,9 +1331,12 @@ function initGraph(mode) {
       .linkTarget('target')
       .nodeLabel(_nodeLabel)
       .nodeColor(_nodeColorFor)           // S2.1: heat-based colour applied to default sphere mesh
-      // v5.10.7.3: removed .nodeThreeObject(_makeNodeThreeObject).nodeThreeObjectExtend(false)
-      // — three attempts at custom mesh rendered as fragmented shards. Falling back to
-      // ForceGraph3D's default solid sphere rendering. Last-known-good visual.
+      // v5.50.6: re-introduce custom 3D node mesh with corrected material.
+      // Prior attempts (v5.10.7–.2) used transparent:true → depthWrite:false → triangle-sort shards.
+      // Fix: MeshBasicMaterial with transparent:false (default) so depthWrite:true.
+      // wiki nodes → OctahedronGeometry; null return → ForceGraph uses its default sphere.
+      .nodeThreeObject(_makeNodeThreeObject)
+      .nodeThreeObjectExtend(false)
       .linkColor(_linkColor)
       .linkWidth(l => _linkWidth(l) * YADGAR_VIZ_CONFIG.edge.width_3d_multiplier)  // v5.10.11: 3D-only; v5.11.0: config-driven
       .linkOpacity(YADGAR_VIZ_CONFIG.edge.opacity)  // v5.50.0 Variant C: 0.9
@@ -1905,9 +1930,9 @@ function _applySearchHighlight() {
   // S2.3: branch on mode — 3D uses nodeColor re-evaluation;
   // 2D uses nodeCanvasObject (which is 2D-only and throws in 3D mode).
   if (_graphMode === '3d') {
-    // v5.10.7.3: dropped nodeThreeObject re-call (custom mesh reverted). Only
-    // nodeColor needs re-application so ForceGraph3D refreshes default sphere material.
-    graph.nodeColor(_nodeColorFor);
+    // v5.50.6: re-wire nodeThreeObject + nodeColor so ForceGraph3D refreshes
+    // both the custom mesh (wiki octahedra) and the default sphere material (color).
+    graph.nodeColor(_nodeColorFor).nodeThreeObject(_makeNodeThreeObject);
     if (hasPins) {
       // Zoom toward matched nodes in 3D
       const matched = allNodes.filter(n => n.__pinned);
