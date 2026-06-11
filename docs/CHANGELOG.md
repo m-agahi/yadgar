@@ -7,6 +7,11 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.50.9] — 2026-06-11
+
+### Fixed
+- **Debug tab fell back to Home** — v5.50.8 added `debug` to `tabs.js` `VALID_TABS`, but the inline `_switchTab`/`_getActiveTab` router in `index.html` (the one actually wired to `hashchange` + initial load) had two hardcoded `_VALID` sets that didn't include `debug`, so `#debug` resolved to `home`. Added `debug` to both. (The tabs.js unit tests passed because they exercise the extracted module, not the inline router that drives the page.)
+
 ## [5.50.8] — 2026-06-11
 
 ### Changed
