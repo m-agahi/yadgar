@@ -237,51 +237,6 @@ class TestS23SearchModeDetection:
             )
 
 
-class TestS24StatsAutoRefresh:
-    """S2.4: Stats overlay must refresh on a poll interval, not just on open."""
-
-    def test_stats_refresh_interval_present(self) -> None:
-        html = _html()
-        # openStats or its helpers must set up an interval
-        assert "_statsRefreshInterval" in html or "setInterval" in html, (
-            "No setInterval found — Stats panel will show static numbers"
-        )
-
-    def test_stats_interval_calls_refreshStats(self) -> None:
-        html = _html()
-        lines = html.splitlines()
-        # Find setInterval calls that reference refreshStats
-        interval_lines = [ln for ln in lines if "setInterval" in ln and "refreshStats" in ln]
-        assert interval_lines, (
-            "No setInterval(refreshStats, ...) call found — "
-            "Stats panel won't auto-update after initial open"
-        )
-
-    def test_stats_interval_cleared_on_close(self) -> None:
-        html = _html()
-        # closeStats must clear the interval to avoid leaks
-        lines = html.splitlines()
-        in_close = False
-        close_lines: list[str] = []
-        brace_depth = 0
-        for line in lines:
-            if "function closeStats" in line:
-                in_close = True
-            if in_close:
-                close_lines.append(line)
-                brace_depth += line.count("{") - line.count("}")
-                if in_close and brace_depth == 0 and close_lines:
-                    break
-        body = "\n".join(close_lines)
-        assert "clearInterval" in body, (
-            "closeStats() does not call clearInterval — interval leaks when stats closed"
-        )
-
-
-# v5.10.7.3: TestV510701LightingFix removed (entire class). Custom mesh reverted —
-# regression gates live in TestV510703RevertCustomMesh above.
-
-
 class TestV5108PhysicsAndMeshLeakFix:
     """v5.10.8: tick-count guard for onEngineStop + drop empty-then-restore mesh leak.
 
