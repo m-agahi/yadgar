@@ -28,8 +28,10 @@
 }
 
 /* ── Layout ────────────────────────────────────────────────────────────────── */
+/* NOTE: do NOT set `display` here — the `#id` selector would outrank
+   `.tab-pane{display:none}` and force the pane always-visible. Visibility is
+   owned by `.tab-pane` / `.tab-pane.active`; this rule only carries layout. */
 #tab-bookmarks {
-  display: flex;
   flex-direction: column;
   height: 100%;
   overflow: hidden;
