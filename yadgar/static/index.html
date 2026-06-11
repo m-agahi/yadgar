@@ -2540,6 +2540,10 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
 })();
 </script>
 
+<!-- ── v5.50.1: marked.js for Bookmarks tab PreviewPane ──────────────────── -->
+<script src="./lib/marked.min.js" defer></script>
+<script src="./lib/dompurify.min.js" defer></script>
+
 <!-- ── v5.50.0 ES Modules ─────────────────────────────────────────────────────
      Load extracted pure modules and expose them on window.* so the non-module
      script above can delegate to them. Modules execute asynchronously (deferred
@@ -2551,9 +2555,16 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
   import * as Tabs from './tabs.js';
   import * as Info from './info.js';
   import * as Overlays from './overlays.js';
+  import { initBookmarksTab } from './bookmarks-tab.js';
   window.YadgarTabs    = Tabs;
   window.YadgarInfo    = Info;
   window.YadgarOverlays = Overlays;
+
+  // ── v5.50.1: Init Bookmarks tab ───────────────────────────────────────────
+  // Initialise immediately (module runs after DOM parsed); the tab is hidden
+  // until the user navigates to #bookmarks.
+  const _bmTab = document.getElementById('tab-bookmarks');
+  if (_bmTab) initBookmarksTab(_bmTab);
 
   // ── v5.50.0: Init floating overlays at DOMContentLoaded ──────────────────
   // DOMContentLoaded already fired by the time module scripts run, so call
