@@ -2631,6 +2631,38 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
     const orig = document.getElementById(origId);
     if (orig) statObserver.observe(orig, { childList: true, characterData: true, subtree: true });
   }
+
+  // Sync cluster items from hidden #cluster-list → #fo-cluster-list
+  // Click on overlay item delegates to corresponding original item (preserves _flyToCluster binding).
+  function _syncClusterOverlay() {
+    const origList = document.getElementById('cluster-list');
+    const foList   = document.getElementById('fo-cluster-list');
+    const foNone   = document.getElementById('fo-cluster-none');
+    if (!origList || !foList) return;
+    const origItems = Array.from(origList.querySelectorAll('.cluster-item'));
+    // Remove stale fo items (keep fo-cluster-none)
+    for (const el of Array.from(foList.querySelectorAll('.cluster-item'))) el.remove();
+    if (!origItems.length) {
+      if (foNone) foNone.style.display = '';
+      return;
+    }
+    if (foNone) foNone.style.display = 'none';
+    origItems.forEach((origItem, idx) => {
+      const foItem = document.createElement('div');
+      foItem.className = 'cluster-item';
+      foItem.style.pointerEvents = 'auto';
+      foItem.textContent = origItem.textContent;
+      foItem.title = origItem.title;
+      foItem.addEventListener('click', () => origItems[idx].click());
+      foList.appendChild(foItem);
+    });
+  }
+  const origClusterList = document.getElementById('cluster-list');
+  if (origClusterList) {
+    const clusterObserver = new MutationObserver(_syncClusterOverlay);
+    clusterObserver.observe(origClusterList, { childList: true, subtree: false });
+    _syncClusterOverlay(); // run once in case already populated
+  }
 </script>
 </body>
 </html>
