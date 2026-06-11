@@ -7,6 +7,13 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.50.7] — 2026-06-11
+
+### Changed
+- **Bookmarks show full names** — dropped the 12-char `truncateSlug` truncation now that the list is full-width; long names ellipsis via CSS (`min-width:0` added so the flex item actually shrinks).
+- **Info tab — branding + author** — added the Yadgar logo + tagline header, and an Author card (photo from the Codeberg profile, bio, location, profile link). Fixed the Repo link (`github.com/max-sixty/yadgar` → `codeberg.org/maxagahi/yadgar`).
+- **Restored the favicon** — the v5.50.0 `logo-y` replacement was unwanted; reverted `favicon.svg` to the pre-v5.50.0 design.
+
 ## [5.50.6] — 2026-06-11
 
 ### Changed
