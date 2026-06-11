@@ -1459,7 +1459,7 @@ function toggleMode() {
     // Re-apply existing data to new renderer
     graph.graphData({ nodes: allNodes, links: allLinks });
     applyFilters();
-    status(`Switched to ${_graphMode.toUpperCase()} mode · ${allNodes.length} nodes`, 'ok');
+    status(`Switched to ${_graphMode.toUpperCase()} mode`, 'ok');
   } else {
     loadGraph();
   }
