@@ -7,6 +7,11 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.50.11] — 2026-06-11
+
+### Changed
+- **Release sync — no core behavior change.** Republish so PyPI / container image / nix all match `master`. The previous core tag (5.50.10) predated the `backend-5.5.0` work, so its PyPI package + image carried an `embed_service.py` without the rerank warm-up; a fresh `pip install yadgar==5.50.10` therefore lagged `master`. 5.50.11 carries the warm-up code (and the new `YADGAR_MODEL_PRELOAD*` settings) into the core package/image so all distribution channels are consistent. Warm-up itself only runs in the backend (`yadgar-backend:5.5.0`).
+
 ## [backend-5.5.0] — 2026-06-11
 
 ### Added
