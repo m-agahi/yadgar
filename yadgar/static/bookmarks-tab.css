@@ -27,17 +27,86 @@
   --font-serif: 'IBM Plex Serif', Georgia, serif;
 }
 
-/* ── Layout ────────────────────────────────────────────────────────────────── */
+/* ── Layout (v5.50.5 redesign) ─────────────────────────────────────────────── */
 /* NOTE: do NOT set `display` here — the `#id` selector would outrank
    `.tab-pane{display:none}` and force the pane always-visible. Visibility is
    owned by `.tab-pane` / `.tab-pane.active`; this rule only carries layout. */
 #tab-bookmarks {
-  flex-direction: column;
+  flex-direction: row;   /* v5.50.5: outer row for left-col + main-area */
   height: 100%;
   overflow: hidden;
   background: var(--bg-base, #0d1117);
   color: var(--text-main, #c9d1d9);
   font-family: var(--font-sans);
+}
+
+/* v5.50.5: outer flex row wrapper */
+.bm-outer {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ── LEFT column: search (top) + bookmarks shelf (bottom) ─────────────────── */
+.bm-left-col {
+  width: 260px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border, #30363d);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-base, #0d1117);
+}
+
+/* TOP of left col: search bar + results list */
+.bm-search-section {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* BOTTOM of left col: bookmarks shelf */
+.bm-shelf-section {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border, #30363d);
+  max-height: 40%;
+  overflow-y: auto;
+  background: var(--bg-base, #0d1117);
+}
+
+/* ── MAIN area: preview + versions rail ─────────────────────────────────────── */
+.bm-main-area {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+}
+
+/* Preview takes the remaining space in main area */
+.bm-preview-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Empty state for main area */
+.bm-main-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-mute, #8b949e);
+  font-size: 13px;
+  font-family: var(--font-sans);
+  text-align: center;
+  padding: 24px;
 }
 
 /* Search bar — sticky top */
@@ -116,18 +185,11 @@
   background: var(--bg-hover, #21262d);
 }
 
-/* ── Body area ─────────────────────────────────────────────────────────────── */
-.bm-body {
-  flex: 1;
-  display: flex;
-  overflow: hidden;
-  min-height: 0;
-}
+/* .bm-body removed in v5.50.5 — replaced by .bm-outer + .bm-left-col + .bm-main-area */
 
-/* ── Shelf (bookmark spines on empty search) ───────────────────────────────── */
+/* ── Shelf (bookmark spines — persistent in left-col bottom) ──────────────── */
 .bm-shelf {
-  flex: 1;
-  padding: 16px;
+  padding: 12px;
   overflow-y: auto;
 }
 
@@ -202,11 +264,10 @@
   margin-top: 32px;
 }
 
-/* ── Results panel ─────────────────────────────────────────────────────────── */
+/* ── Results panel (v5.50.5: inside left-col, full width + bounded scroll) ── */
 .bm-results {
-  width: 260px;
-  flex-shrink: 0;
-  border-right: 1px solid var(--border, #30363d);
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -306,6 +367,7 @@
   flex-direction: column;
   background: var(--surface-2);
   overflow: hidden;
+  height: 100%;
 }
 
 .bm-preview-header {
