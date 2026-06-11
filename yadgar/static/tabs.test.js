@@ -31,6 +31,7 @@ describe('resolveTab', () => {
     expect(resolveTab('#bookmarks')).toBe('bookmarks');
     expect(resolveTab('#info')).toBe('info');
     expect(resolveTab('#control')).toBe('control');
+    expect(resolveTab('#debug')).toBe('debug');
   });
 
   it('falls back to home for unknown hash', () => {
@@ -53,17 +54,18 @@ describe('resolveTab', () => {
 // ── VALID_TABS — exported set ─────────────────────────────────────────────────
 
 describe('VALID_TABS', () => {
-  it('contains all six defined tabs', () => {
+  it('contains all seven defined tabs', () => {
     expect(VALID_TABS.has('home')).toBe(true);
     expect(VALID_TABS.has('stats')).toBe(true);
     expect(VALID_TABS.has('health')).toBe(true);
     expect(VALID_TABS.has('bookmarks')).toBe(true);
     expect(VALID_TABS.has('info')).toBe(true);
     expect(VALID_TABS.has('control')).toBe(true);
+    expect(VALID_TABS.has('debug')).toBe(true);
   });
 
-  it('has exactly 6 entries', () => {
-    expect(VALID_TABS.size).toBe(6);
+  it('has exactly 7 entries', () => {
+    expect(VALID_TABS.size).toBe(7);
   });
 });
 
@@ -73,10 +75,10 @@ import { switchTab } from './tabs.js';
 
 /**
  * Build a minimal DOM matching the SPA tab structure.
- * Returns document with #tab-bar + 6 .tab-pane divs.
+ * Returns document with #tab-bar + 7 .tab-pane divs.
  */
 function makeTabDOM() {
-  const tabs = ['home', 'stats', 'health', 'bookmarks', 'info', 'control'];
+  const tabs = ['home', 'stats', 'health', 'bookmarks', 'info', 'control', 'debug'];
 
   // tab bar
   const tabBar = document.createElement('nav');
@@ -111,7 +113,7 @@ describe('switchTab DOM behavior', () => {
   });
 
   it('activates correct pane + link for each tab', () => {
-    const tabs = ['home', 'stats', 'health', 'bookmarks', 'info', 'control'];
+    const tabs = ['home', 'stats', 'health', 'bookmarks', 'info', 'control', 'debug'];
     for (const t of tabs) {
       switchTab(t);
       expect(document.getElementById('tab-' + t).classList.contains('active')).toBe(true);
