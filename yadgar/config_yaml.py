@@ -659,6 +659,21 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Directory for cache snapshot files ce.snap + embed.snap (default /data/cache)",
         "section": "backend_hot_path_cache",
     },
+    # v5.5.0 — model preload warm-up
+    "model_preload": {
+        "desc": (
+            "Preload rerank models (ce/nli/pair) in background after startup (default true). "
+            "Set to false to disable warm-up and keep lazy-load behaviour."
+        ),
+        "section": "backend_model_preload",
+    },
+    "model_preload_delay_sec": {
+        "desc": (
+            "Seconds to wait after startup before loading rerank models in background (default 10). "
+            "Gives the app time to start serving before the warm-up begins."
+        ),
+        "section": "backend_model_preload",
+    },
     # viz_config — v5.11.0
     "viz_node_size_3d": {
         "desc": "3D node sphere radius (nodeRelSize, default 8)",
@@ -1019,6 +1034,7 @@ SECTION_TITLES: dict[str, str] = {
     "wiki_write_wait": "Wiki Write Wait / Read-Your-Writes (v5.41.2)",
     "update": "Update Mechanism (v5.48.0)",
     "memory_archive_retention": "Memory Archive Retention (v5.49.0)",
+    "backend_model_preload": "Backend Model Preload Warm-Up (v5.5.0)",
 }
 
 # Ordered list of sections for deterministic output

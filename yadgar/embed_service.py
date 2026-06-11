@@ -248,6 +248,59 @@ async def _run_cache_snapshot_task() -> None:
             logger.warning("cache_snapshot_task error: %s", exc)
 
 
+async def _run_model_warmup() -> None:
+    """Background task: preload rerank models (ce, nli, pair) after startup delay.
+
+    backend v5.5.0 — triggered once at startup if YADGAR_MODEL_PRELOAD=true.
+    Models load sequentially, each in a thread-pool executor so the event loop
+    is not blocked.  Per-model errors are caught so one failure doesn't abort
+    the others.  CancelledError propagates cleanly on lifespan exit.
+    """
+    from yadgar.config import get_settings  # noqa: PLC0415
+
+    settings = get_settings()
+    if not settings.MODEL_PRELOAD:
+        return
+
+    delay = settings.MODEL_PRELOAD_DELAY_SEC
+    await asyncio.sleep(delay)
+
+    loop = asyncio.get_running_loop()
+    reranker = _get_reranker()
+
+    for mode in ("ce", "nli", "pair"):
+        t0 = time.monotonic()
+        try:
+            if mode == "ce":
+                await loop.run_in_executor(None, reranker.score_cross_encoder, "warmup", ["warmup"])
+            elif mode == "nli":
+                await loop.run_in_executor(None, reranker.score_nli, "warmup", ["warmup"])
+            else:  # pair
+                await loop.run_in_executor(None, reranker.score_pair, "warmup", "warmup")
+            duration = time.monotonic() - t0
+            logger.info(
+                "model_warmup",
+                extra={
+                    "event": "model_warmup",
+                    "model": mode,
+                    "outcome": "ok",
+                    "duration_s": round(duration, 3),
+                },
+            )
+        except Exception as exc:
+            duration = time.monotonic() - t0
+            logger.warning(
+                "model_warmup",
+                extra={
+                    "event": "model_warmup",
+                    "model": mode,
+                    "outcome": "error",
+                    "duration_s": round(duration, 3),
+                    "error": str(exc),
+                },
+            )
+
+
 async def _require_admin_token(
     credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
 ) -> None:
@@ -425,6 +478,8 @@ async def lifespan(app: FastAPI):
     # Start periodic snapshot background task (ExceptionGroup-safe: task is
     # cancelled on lifespan exit).
     _snap_task = asyncio.create_task(_run_cache_snapshot_task())
+    # backend v5.5.0: preload rerank models in background (not awaited — must not block readiness).
+    _warmup_task = asyncio.create_task(_run_model_warmup())
 
     yield
 
@@ -432,6 +487,13 @@ async def lifespan(app: FastAPI):
     _snap_task.cancel()
     try:
         await _snap_task
+    except (asyncio.CancelledError, Exception):  # fmt: skip
+        pass
+
+    # Cancel warmup task on shutdown (no-op if already finished)
+    _warmup_task.cancel()
+    try:
+        await _warmup_task
     except (asyncio.CancelledError, Exception):  # fmt: skip
         pass
 
