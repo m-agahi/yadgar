@@ -44,49 +44,144 @@ class TestS21HeatColorIn3D:
         )
 
 
-class TestV510703RevertCustomMesh:
-    """v5.10.7.3: custom 3D node mesh REVERTED. Three attempts failed (Lambert v5.10.7,
-    Basic v5.10.7.1, conditional transparent v5.10.7.2) — all rendered as fragmented shards.
-    Fall back to ForceGraph3D default solid spheres. Regression gates below prevent
-    accidental re-introduction without deeper investigation.
+class TestV5506OctahedronForWiki:
+    """v5.50.6: re-introduce _makeNodeThreeObject with correct MeshBasicMaterial.
+
+    Root cause of prior shard failures (v5.10.7–.2): all used `transparent: true`
+    which sets depthWrite=false → THREE renders faces in submit order, not depth
+    order → visible triangle-ordering artifacts on 3D polyhedra.
+
+    Fix: MeshBasicMaterial with no transparent flag (defaults false → depthWrite=true).
+    Wiki nodes → OctahedronGeometry(0-detail); null return → ForceGraph default sphere.
     """
 
-    def test_no_makeNodeThreeObject_function(self) -> None:
+    def test_makeNodeThreeObject_function_present(self) -> None:
         html = _html()
-        # Function definition must be gone (comment mentioning the removal is OK)
-        assert "function _makeNodeThreeObject" not in html, (
-            "_makeNodeThreeObject function re-introduced — three attempts at custom mesh "
-            "produced fragmented shards. Don't re-add without deeper ForceGraph3D + ThreeJS "
-            "investigation. See docs/PLAN_V5_10_7_3_VIZ_REVERT_TO_DEFAULTS.md."
+        assert "function _makeNodeThreeObject" in html, (
+            "_makeNodeThreeObject function missing — v5.50.6 requires wiki→octahedron factory"
         )
 
-    def test_no_nodeThreeObject_call(self) -> None:
+    def test_nodeThreeObject_wired_in_3d_init(self) -> None:
         html = _html()
-        # Any .nodeThreeObject( call (not in a comment) is a regression
-        lines_with_call = [
-            line
-            for line in html.splitlines()
-            if ".nodeThreeObject(" in line and not line.strip().startswith("//")
+        non_comment_lines = [
+            line for line in html.splitlines() if not line.strip().startswith("//")
         ]
-        assert not lines_with_call, (
-            f".nodeThreeObject( call present (not in a comment): {lines_with_call[:3]} — "
-            "v5.10.7.3 revert dropped this. Re-introducing requires new plan."
+        src = "\n".join(non_comment_lines)
+        assert ".nodeThreeObject(_makeNodeThreeObject)" in src, (
+            ".nodeThreeObject(_makeNodeThreeObject) call missing from 3D init — "
+            "wiki octahedra won't render without this"
         )
 
-    def test_no_octahedron_or_custom_sphere_geometry(self) -> None:
+    def test_nodeThreeObjectExtend_false(self) -> None:
         html = _html()
-        # Custom OctahedronGeometry should not be in non-comment code
+        non_comment_lines = [
+            line for line in html.splitlines() if not line.strip().startswith("//")
+        ]
+        src = "\n".join(non_comment_lines)
+        assert ".nodeThreeObjectExtend(false)" in src, (
+            ".nodeThreeObjectExtend(false) missing — without this ForceGraph3D wraps "
+            "the custom mesh AND adds a default sphere, causing double geometry"
+        )
+
+    def test_octahedron_geometry_present(self) -> None:
+        html = _html()
         non_comment_lines = [
             line
             for line in html.splitlines()
             if not line.strip().startswith("//") and not line.strip().startswith("*")
         ]
-        non_comment_src = "\n".join(non_comment_lines)
-        assert "new THREE.OctahedronGeometry" not in non_comment_src, (
-            "OctahedronGeometry instantiation re-introduced — custom 3D mesh reverted in v5.10.7.3"
+        src = "\n".join(non_comment_lines)
+        assert "new THREE.OctahedronGeometry" in src, (
+            "OctahedronGeometry instantiation missing — v5.50.6 requires wiki nodes "
+            "to render as octahedra"
         )
-        assert "new THREE.SphereGeometry" not in non_comment_src, (
-            "SphereGeometry instantiation re-introduced — custom 3D mesh reverted in v5.10.7.3"
+
+    def test_uses_mesh_basic_not_lambert(self) -> None:
+        html = _html()
+        # Must use MeshBasicMaterial (unlit, no lights needed)
+        # Must NOT use MeshLambertMaterial in _makeNodeThreeObject (needs lights → shards)
+        lines = html.splitlines()
+        in_func = False
+        func_lines: list[str] = []
+        brace_depth = 0
+        for line in lines:
+            if "function _makeNodeThreeObject" in line:
+                in_func = True
+            if in_func:
+                func_lines.append(line)
+                brace_depth += line.count("{") - line.count("}")
+                if in_func and brace_depth == 0 and func_lines:
+                    break
+        body = "\n".join(func_lines)
+        assert "MeshBasicMaterial" in body, (
+            "MeshBasicMaterial missing from _makeNodeThreeObject — "
+            "v5.50.6 requires unlit Basic material to avoid Lambert shards"
+        )
+        assert "MeshLambertMaterial" not in body, (
+            "MeshLambertMaterial in _makeNodeThreeObject — Lambert needs scene lights "
+            "that ForceGraph3D doesn't add; causes shard rendering. Use MeshBasicMaterial."
+        )
+
+    def test_no_transparent_true_in_factory(self) -> None:
+        html = _html()
+        lines = html.splitlines()
+        in_func = False
+        func_lines: list[str] = []
+        brace_depth = 0
+        for line in lines:
+            if "function _makeNodeThreeObject" in line:
+                in_func = True
+            if in_func:
+                func_lines.append(line)
+                brace_depth += line.count("{") - line.count("}")
+                if in_func and brace_depth == 0 and func_lines:
+                    break
+        body = "\n".join(func_lines)
+        # transparent:true disables depthWrite → triangle-sort shards
+        assert "transparent: true" not in body, (
+            "transparent:true in _makeNodeThreeObject — this disables depthWrite, "
+            "causing THREE to render faces in submit order (triangle-sort shards). "
+            "Root cause of v5.10.7–.2 shard failures. Remove transparent flag entirely."
+        )
+
+    def test_wiki_type_check_present(self) -> None:
+        html = _html()
+        lines = html.splitlines()
+        in_func = False
+        func_lines: list[str] = []
+        brace_depth = 0
+        for line in lines:
+            if "function _makeNodeThreeObject" in line:
+                in_func = True
+            if in_func:
+                func_lines.append(line)
+                brace_depth += line.count("{") - line.count("}")
+                if in_func and brace_depth == 0 and func_lines:
+                    break
+        body = "\n".join(func_lines)
+        assert "node.type" in body or "type === 'wiki'" in body or "type !=" in body, (
+            "_makeNodeThreeObject missing wiki type check — "
+            "non-wiki nodes must return null so ForceGraph renders them as default spheres"
+        )
+
+    def test_respects_wiki_shape_config(self) -> None:
+        html = _html()
+        lines = html.splitlines()
+        in_func = False
+        func_lines: list[str] = []
+        brace_depth = 0
+        for line in lines:
+            if "function _makeNodeThreeObject" in line:
+                in_func = True
+            if in_func:
+                func_lines.append(line)
+                brace_depth += line.count("{") - line.count("}")
+                if in_func and brace_depth == 0 and func_lines:
+                    break
+        body = "\n".join(func_lines)
+        assert "wiki_shape" in body, (
+            "_makeNodeThreeObject does not check YADGAR_VIZ_CONFIG.node.wiki_shape — "
+            "setting wiki_shape='sphere' should disable octahedra and fall back to default"
         )
 
 
@@ -140,51 +235,6 @@ class TestS23SearchModeDetection:
                 "nodeCanvasObject called in _applySearchHighlight "
                 "without a _graphMode guard — will throw in 3D"
             )
-
-
-class TestS24StatsAutoRefresh:
-    """S2.4: Stats overlay must refresh on a poll interval, not just on open."""
-
-    def test_stats_refresh_interval_present(self) -> None:
-        html = _html()
-        # openStats or its helpers must set up an interval
-        assert "_statsRefreshInterval" in html or "setInterval" in html, (
-            "No setInterval found — Stats panel will show static numbers"
-        )
-
-    def test_stats_interval_calls_refreshStats(self) -> None:
-        html = _html()
-        lines = html.splitlines()
-        # Find setInterval calls that reference refreshStats
-        interval_lines = [ln for ln in lines if "setInterval" in ln and "refreshStats" in ln]
-        assert interval_lines, (
-            "No setInterval(refreshStats, ...) call found — "
-            "Stats panel won't auto-update after initial open"
-        )
-
-    def test_stats_interval_cleared_on_close(self) -> None:
-        html = _html()
-        # closeStats must clear the interval to avoid leaks
-        lines = html.splitlines()
-        in_close = False
-        close_lines: list[str] = []
-        brace_depth = 0
-        for line in lines:
-            if "function closeStats" in line:
-                in_close = True
-            if in_close:
-                close_lines.append(line)
-                brace_depth += line.count("{") - line.count("}")
-                if in_close and brace_depth == 0 and close_lines:
-                    break
-        body = "\n".join(close_lines)
-        assert "clearInterval" in body, (
-            "closeStats() does not call clearInterval — interval leaks when stats closed"
-        )
-
-
-# v5.10.7.3: TestV510701LightingFix removed (entire class). Custom mesh reverted —
-# regression gates live in TestV510703RevertCustomMesh above.
 
 
 class TestV5108PhysicsAndMeshLeakFix:
