@@ -28,6 +28,14 @@ _EXEMPT_PATHS: frozenset[str] = frozenset({"/health", "/metrics"})
 # Route prefixes that are protected when REQUIRE_AUTH=True
 _PROTECTED_PREFIXES: tuple[str, ...] = ("/admin/", "/api/", "/hooks/", "/mcp")
 
+# Paths gated by YADGAR_DEBUG_APIS_ENABLED in addition to bearer token.
+# NOTE: /api/control/update is excluded — it has its own gate (YADGAR_UPDATE_DEBUG_APIS_ENABLED).
+_DEBUG_API_PREFIXES: tuple[str, ...] = (
+    "/api/control/config",
+    "/api/control/action/",
+    "/api/control/restart/",
+)
+
 _startup_warned = False
 
 
@@ -66,6 +74,16 @@ class BearerAuthMiddleware:
         # Exempt paths always pass through
         if path in _EXEMPT_PATHS:
             await self.app(scope, receive, send)
+            return
+
+        # Debug-API gate: must fire before auth-required check (gate-off → 403 even with valid token,
+        # and even when auth is disabled). Applies only to the new control API paths, NOT /api/control/update.
+        if _is_debug_api_path(path) and not _is_debug_apis_enabled():
+            response = JSONResponse(
+                {"error": "debug APIs disabled"},
+                status_code=403,
+            )
+            await response(scope, receive, send)
             return
 
         # Check if this path is protected
@@ -144,3 +162,25 @@ def _observe_auth_duration(t0: float) -> None:
         yadgar_mcp_auth_check_duration_ms.observe(elapsed_ms)
     except Exception:
         pass
+
+
+def _is_debug_api_path(path: str) -> bool:
+    """Return True when path is gated by YADGAR_DEBUG_APIS_ENABLED.
+
+    Covers /api/control/config, /api/control/action/*, /api/control/restart/*.
+    Explicitly excludes /api/control/update (governed by YADGAR_UPDATE_DEBUG_APIS_ENABLED).
+    """
+    for prefix in _DEBUG_API_PREFIXES:
+        if path.startswith(prefix):
+            return True
+    return False
+
+
+def _is_debug_apis_enabled() -> bool:
+    """Return True when YADGAR_DEBUG_APIS_ENABLED is truthy (on/true/1/yes, case-insensitive)."""
+    return os.environ.get("YADGAR_DEBUG_APIS_ENABLED", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
