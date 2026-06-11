@@ -2496,7 +2496,7 @@ function updateDaemonHealth(data) {
 function _getActiveTab() {
   // YadgarTabs is set by the module script below; falls back gracefully if not yet loaded
   if (window.YadgarTabs) return window.YadgarTabs.resolveTab(window.location.hash);
-  const _VALID = new Set(['home','stats','health','bookmarks','info','control']);
+  const _VALID = new Set(['home','stats','health','bookmarks','info','control','debug']);
   const hash = (window.location.hash || '#home').replace(/^#/, '').split('/')[0];
   return _VALID.has(hash) ? hash : 'home';
 }
@@ -2507,7 +2507,7 @@ function _switchTab(tabName) {
     window.YadgarTabs.switchTab(tabName);
   } else {
     // Fallback: inline activation (same logic as tabs.js) if module not yet loaded
-    const _VALID = new Set(['home','stats','health','bookmarks','info','control']);
+    const _VALID = new Set(['home','stats','health','bookmarks','info','control','debug']);
     if (!_VALID.has(tabName)) tabName = 'home';
     document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('#tab-bar .tab-link').forEach(a => a.classList.remove('active'));
