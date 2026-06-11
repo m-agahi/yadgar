@@ -1332,7 +1332,21 @@ async def api_system(request: Request) -> JSONResponse:
     # §9 Q6: snapshot under lock before serialising to avoid torn reads.
     with _st._metrics_lock:
         snapshot = dict(_st._system_metrics_cache)
+    # Add daemon uptime (not sampled by background thread — compute live from start time)
+    snapshot["uptime_s"] = round(time.time() - _st._start_time, 1) if _st._start_time else None
     return JSONResponse(snapshot, headers=_CORS)
+
+
+@mcp_server.custom_route("/api/info", methods=["GET"])
+@trace_span("api.info")
+async def api_info(request: Request) -> JSONResponse:
+    """Return version and Python runtime info for the viz Info tab."""
+    import sys as _sys  # noqa: PLC0415
+
+    return JSONResponse(
+        {"version": __version__, "python_version": _sys.version.split()[0]},
+        headers=_CORS,
+    )
 
 
 @mcp_server.custom_route("/api/metrics/heat-histogram", methods=["GET"])

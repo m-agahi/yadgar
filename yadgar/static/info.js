@@ -5,23 +5,23 @@
  * No DOM dependencies. No side effects. Import and call from both the page and tests.
  *
  * Exports:
- *   mapInfoData   — /api/stats payload + vizConfig → info-tab field map
- *   mapStatsData  — /api/stats payload → stats-tab row pairs
+ *   mapInfoData   — /api/info payload + vizConfig → info-tab field map
+ *   mapStatsData  — /api/graph/stats payload → stats-tab row pairs
  *   mapHealthData — /api/system + /api/daemon-health → health-tab field map
  */
 
 /**
- * Map /api/stats + vizConfig to info-tab field values.
+ * Map /api/info + vizConfig to info-tab field values.
  * Returns null for missing fields (caller renders '—').
  *
- * @param {Object} stats     - response from /api/stats (may be {})
+ * @param {Object} info      - response from /api/info (may be {})
  * @param {Object} vizConfig - YADGAR_VIZ_CONFIG structure
  * @returns {Object} map of element-id → value | null
  */
-export function mapInfoData(stats, vizConfig) {
+export function mapInfoData(info, vizConfig) {
   return {
-    'ti-version':    stats.version                          ?? null,
-    'ti-python':     stats.python_version                   ?? null,
+    'ti-version':    info.version                           ?? null,
+    'ti-python':     info.python_version                    ?? null,
     'ti-variant':    vizConfig?.edge?.variant               ?? null,
     'ti-opacity':    vizConfig?.edge?.opacity               ?? null,
     'ti-width':      vizConfig?.edge?.width_3d_multiplier   ?? null,
@@ -31,19 +31,19 @@ export function mapInfoData(stats, vizConfig) {
 }
 
 /**
- * Map /api/stats payload to ordered label-value row pairs for the stats tab.
+ * Map /api/graph/stats payload to ordered label-value row pairs for the stats tab.
  * Missing numeric fields fall back to '—'.
  *
- * @param {Object} d - response from /api/stats
+ * Real fields from /api/graph/stats: memory_count, wiki_page_count,
+ * temporal_edge_count, transition_edge_count.
+ *
+ * @param {Object} d - response from /api/graph/stats
  * @returns {Array<[string, string|number]>} ordered pairs [label, value]
  */
 export function mapStatsData(d) {
   return [
-    ['Memories',       d.total_memories   ?? '—'],
-    ['Wiki pages',     d.total_wiki_pages ?? '—'],
-    ['Embeddings',     d.total_embeddings ?? '—'],
-    ['Hot (heat>0.5)', d.hot_memories     ?? '—'],
-    ['Orphan edges',   d.orphan_edge_count != null ? d.orphan_edge_count : '—'],
+    ['Memories',   d.memory_count    ?? '—'],
+    ['Wiki pages', d.wiki_page_count ?? '—'],
   ];
 }
 
@@ -52,6 +52,10 @@ export function mapStatsData(d) {
  * Values already formatted as display strings (callers set textContent directly).
  * Formatting helpers (_fmtBytes, _fmtUptime) are passed in to keep this pure.
  *
+ * Real /api/system fields: daemon_cpu_pct, rss_bytes, daemon_threads, open_fds,
+ * uptime_s, db_size_mb, system_ram_available_mb, load_avg_1m/5m/15m.
+ * Queue fields still from /api/daemon-health core.queue.
+ *
  * @param {Object} sys          - /api/system response
  * @param {Object} dh           - /api/daemon-health response
  * @param {Function} fmtBytes   - bytes formatter, e.g. _fmtBytes
@@ -59,21 +63,22 @@ export function mapStatsData(d) {
  * @returns {Object} map of element-id → display string
  */
 export function mapHealthData(sys, dh, fmtBytes, fmtUptime) {
-  const c  = (dh && dh.core)    || {};
-  const cp = c.process           || {};
-  const cq = c.queue             || {};
-  const load = sys && sys.load_avg;
+  const s  = sys || {};
+  const c  = (dh && dh.core) || {};
+  const cq = c.queue         || {};
   return {
-    'th-cpu':     cp.cpu_pct    != null ? cp.cpu_pct + '%'         : '—',
-    'th-rss':     cp.rss_bytes  != null ? fmtBytes(cp.rss_bytes)   : '—',
-    'th-threads': cp.thread_count  ?? '—',
-    'th-fds':     cp.open_fds      ?? '—',
-    'th-uptime':  cp.uptime_s   != null ? fmtUptime(cp.uptime_s)   : '—',
+    'th-cpu':     s.daemon_cpu_pct != null ? s.daemon_cpu_pct + '%'          : '—',
+    'th-rss':     s.rss_bytes      != null ? fmtBytes(s.rss_bytes)           : '—',
+    'th-threads': s.daemon_threads ?? '—',
+    'th-fds':     s.open_fds       ?? '—',
+    'th-uptime':  s.uptime_s       != null ? fmtUptime(s.uptime_s)           : '—',
     'th-qdepth':  cq.depth         ?? '—',
     'th-dlq':     cq.dlq_size      ?? '—',
     'th-lag':     cq.drainer_lag_p95_ms != null ? cq.drainer_lag_p95_ms + 'ms' : '—',
-    'th-db':      sys && sys.db_size_bytes  != null ? fmtBytes(sys.db_size_bytes)  : '—',
-    'th-ram':     sys && sys.ram_free_bytes != null ? fmtBytes(sys.ram_free_bytes) : '—',
-    'th-load':    Array.isArray(load) ? load.join(' / ') : '—',
+    'th-db':      s.db_size_mb     != null ? (s.db_size_mb.toFixed(1) + ' MB') : '—',
+    'th-ram':     s.system_ram_available_mb != null ? (s.system_ram_available_mb.toFixed(0) + ' MB') : '—',
+    'th-load':    s.load_avg_1m    != null
+                    ? s.load_avg_1m + ' / ' + s.load_avg_5m + ' / ' + s.load_avg_15m
+                    : '—',
   };
 }
