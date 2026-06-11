@@ -612,6 +612,14 @@ class Settings(BaseSettings):
     # Should be ≤ CIRCUIT_BREAKER_PROBE_TIMEOUT_SEC so probes always fail fast.
     RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC: float = 2.0
 
+    # backend v5.5.0 — model preload warm-up
+    MODEL_PRELOAD: bool = (
+        True  # YADGAR_MODEL_PRELOAD — preload rerank models in background after startup
+    )
+    MODEL_PRELOAD_DELAY_SEC: int = (
+        10  # YADGAR_MODEL_PRELOAD_DELAY_SEC — seconds to wait before loading
+    )
+
     # backend v5.4.0 — CE + embed LRU cache knobs
     # Kill switch for CE score cache (false/0 = disabled, pre-v5.4.0 behaviour).
     CE_CACHE_ENABLED: bool = True
