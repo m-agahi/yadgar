@@ -18,8 +18,10 @@ _CSS_SOURCES = [
 ]
 # Matches a CSS rule whose selector targets a tab-PANE id (not #tab-bar / links).
 # Captures the selector and the rule body.
+# `(?![\w-])` so the pane name must END here — a hyphenated child like
+# `#tab-stats-body` (a legit content container) is NOT treated as the pane.
 _RULE = re.compile(
-    r"(#tab-(?:home|stats|health|bookmarks|info|control)\b[^\{]*?)\{([^}]*)\}",
+    r"(#tab-(?:home|stats|health|bookmarks|info|control)(?![\w-])[^\{]*?)\{([^}]*)\}",
     re.DOTALL,
 )
 
