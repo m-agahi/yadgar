@@ -198,62 +198,6 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
 .spark-wrap { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .spark-lbl { font-size: 9px; color: #8b949e; }
 
-/* ── Stats overlay ─────────────────────────────────────── */
-#stats-overlay {
-  position: absolute;
-  inset: 0;
-  background: #0d1117;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-#stats-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 14px;
-  background: #161b22;
-  border-bottom: 1px solid #30363d;
-  flex-shrink: 0;
-}
-#stats-header h2 { color: #58a6ff; font-size: 13px; letter-spacing: 1px; }
-#stats-close { margin-left: auto; cursor: pointer; color: #8b949e; font-size: 18px; }
-#stats-close:hover { color: #f0f0f0; }
-#stats-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.stats-row {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-.stats-panel {
-  flex: 1;
-  min-width: 300px;
-  background: #161b22;
-  border: 1px solid #30363d;
-  border-radius: 6px;
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.stats-panel canvas { height: 220px !important; }
-.stats-panel-title {
-  color: #58a6ff;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  border-bottom: 1px solid #21262d;
-  padding-bottom: 5px;
-}
-
 /* ── Debug drawer ──────────────────────────────────────── */
 #debug-overlay {
   position: fixed;
@@ -811,7 +755,6 @@ body.dh-open #dh-toggle { right: 480px; }
   <button class="btn" onclick="fitGraph()">⊞ Fit</button>
   <button class="btn" onclick="resetLayout()">⟳ Reset</button>
   <button class="btn" id="mode-btn" onclick="toggleMode()">2D</button>
-  <button class="btn" id="stats-btn" onclick="openStats()">📊 Stats</button>
   <button class="btn" id="debug-btn" onclick="openDebug()">⚙ Debug</button>
   <button class="btn" id="dh-btn" onclick="toggleDaemonPanel()">⬡ Daemons</button>
   <span id="status-dot"></span>
@@ -956,27 +899,6 @@ body.dh-open #dh-toggle { right: 480px; }
   </div>
 </div>
 
-<!-- Stats overlay (absolute inside #content-area — clipped above sys-bar) -->
-<div id="stats-overlay" style="display:none">
-  <div id="stats-header">
-    <h2>MEMORY STATS</h2>
-    <button class="btn" onclick="refreshStats()">↺ Refresh</button>
-    <span id="stats-status" style="font-size:10px;color:#8b949e"></span>
-    <span id="stats-close" onclick="closeStats()">✕</span>
-  </div>
-  <div id="stats-body">
-    <div class="stats-row">
-      <div class="stats-panel">
-        <div class="stats-panel-title">Heat Distribution</div>
-        <canvas id="chart-heat" height="180"></canvas>
-      </div>
-      <div class="stats-panel">
-        <div class="stats-panel-title">Consolidation Activity (last 30 cycles)</div>
-        <canvas id="chart-consol" height="180"></canvas>
-      </div>
-    </div>
-  </div>
-</div>
 
 </div><!-- /#content-area -->
 
@@ -1200,7 +1122,7 @@ body.dh-open #dh-toggle { right: 480px; }
           <div class="dh-card-title">Rerank</div>
           <div class="dh-row"><span class="dh-lbl">req ce</span>     <span class="dh-val" id="dh-b-rce">—</span></div>
           <div class="dh-row"><span class="dh-lbl">req nli</span>    <span class="dh-val" id="dh-b-rnli">—</span></div>
-          <div class="dh-row"><span class="dh-lbl">err 503</span>    <span class="dh-val" id="dh-b-rerr">—</span></div>
+          <div class="dh-row"><span class="dh-lbl">err 5xx</span>    <span class="dh-val" id="dh-b-rerr">—</span></div>
           <div class="dh-row"><span class="dh-lbl">inflight</span>  <span class="dh-val" id="dh-b-rsem">—</span></div>
         </div>
 
@@ -2228,7 +2150,7 @@ document.getElementById('search').addEventListener('keydown', e => {
 
 // Close overlays on Escape
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { closeDebug(); closeStats(); }
+  if (e.key === 'Escape') { closeDebug(); }
 });
 
 // ── Right-panel drag-resize ───────────────────────────────────────────────────
@@ -2271,53 +2193,17 @@ document.addEventListener('keydown', e => {
 })();
 
 
-// ── Stats panel ──────────────────────────────────────────────────────────────
-let _chartHeat = null, _chartConsol = null;
-let _statsRefreshInterval = null;  // S2.4: interval handle for auto-refresh
+// ── Stats tab charts ─────────────────────────────────────────────────────────
+let _tabChartHeat = null, _tabChartConsol = null;
 
-function openStats() {
-  document.getElementById('main').style.display = 'none';
-  document.getElementById('stats-overlay').style.display = 'flex';
-  document.getElementById('stats-btn').classList.add('active');
-  refreshStats();
-  // S2.4: poll every 5 s so CPU/DB trends animate while panel is open
-  if (_statsRefreshInterval) clearInterval(_statsRefreshInterval);
-  _statsRefreshInterval = setInterval(refreshStats, 5000);
-}
-
-function closeStats() {
-  // S2.4: stop polling when panel closes to avoid resource leak
-  if (_statsRefreshInterval) { clearInterval(_statsRefreshInterval); _statsRefreshInterval = null; }
-  document.getElementById('stats-overlay').style.display = 'none';
-  document.getElementById('main').style.display = 'flex';
-  document.getElementById('stats-btn').classList.remove('active');
-}
-
-async function refreshStats() {
-  const statusEl = document.getElementById('stats-status');
-  statusEl.textContent = 'Loading…';
-  try {
-    const [histRes, consolRes] = await Promise.all([
-      fetch(`${DAEMON}/api/metrics/heat-histogram?bins=10`),
-      fetch(`${DAEMON}/api/metrics/consolidation-log?limit=30`),
-    ]);
-    const hist   = await histRes.json();
-    const consol = await consolRes.json();
-    renderHeatChart(hist);
-    renderConsolChart(consol);
-    statusEl.textContent = `${hist.total ?? '?'} memories · ${consol.length} consolidation cycles`;
-  } catch (e) {
-    statusEl.textContent = `⚠ ${e.message}`;
-  }
-}
-
-function renderHeatChart(data) {
-  const ctx = document.getElementById('chart-heat').getContext('2d');
+function _renderTabHeatChart(data) {
+  const ctx = document.getElementById('tab-chart-heat');
+  if (!ctx) return;
   const labels = (data.buckets || []).map(b => b.min.toFixed(1) + '–' + b.max.toFixed(1));
   const counts = (data.buckets || []).map(b => b.count);
   const colors = labels.map((_, i) => `hsl(${(1 - i/labels.length)*240},70%,55%)`);
-  if (_chartHeat) _chartHeat.destroy();
-  _chartHeat = new Chart(ctx, {
+  if (_tabChartHeat) _tabChartHeat.destroy();
+  _tabChartHeat = new Chart(ctx, {
     type: 'bar',
     data: { labels, datasets: [{ label: 'Memories', data: counts, backgroundColor: colors, borderRadius: 3 }] },
     options: {
@@ -2331,18 +2217,19 @@ function renderHeatChart(data) {
   });
 }
 
-function renderConsolChart(rows) {
-  const ctx = document.getElementById('chart-consol').getContext('2d');
+function _renderTabConsolChart(rows) {
+  const ctx = document.getElementById('tab-chart-consol');
+  if (!ctx) return;
   const labels = rows.map(r => r.timestamp.slice(0, 16).replace('T', ' '));
-  if (_chartConsol) _chartConsol.destroy();
-  _chartConsol = new Chart(ctx, {
+  if (_tabChartConsol) _tabChartConsol.destroy();
+  _tabChartConsol = new Chart(ctx, {
     type: 'line',
     data: {
       labels,
       datasets: [
-        { label: 'Added',   data: rows.map(r => r.added),   borderColor: '#3fb950', backgroundColor: '#3fb95022', tension: 0.3, pointRadius: 2 },
-        { label: 'Deleted', data: rows.map(r => r.deleted), borderColor: '#f85149', backgroundColor: '#f8514922', tension: 0.3, pointRadius: 2 },
-        { label: 'Archived',data: rows.map(r => r.archived),borderColor: '#d29922', backgroundColor: '#d2992222', tension: 0.3, pointRadius: 2 },
+        { label: 'Added',    data: rows.map(r => r.added),    borderColor: '#3fb950', backgroundColor: '#3fb95022', tension: 0.3, pointRadius: 2 },
+        { label: 'Deleted',  data: rows.map(r => r.deleted),  borderColor: '#f85149', backgroundColor: '#f8514922', tension: 0.3, pointRadius: 2 },
+        { label: 'Archived', data: rows.map(r => r.archived), borderColor: '#d29922', backgroundColor: '#d2992222', tension: 0.3, pointRadius: 2 },
       ],
     },
     options: {
@@ -2579,35 +2466,43 @@ function _switchTab(tabName) {
   if (tabName === 'info') _tabInfoRefresh();
 }
 
-// Stats tab: fetch /api/stats
-let _statsTabInited = false;
+// Stats tab: fetch /api/graph/stats + charts from /api/metrics/*
 function _tabStatsRefresh() {
   const el = document.getElementById('tab-stats-detail');
-  if (!el) return;
-  fetch(DAEMON + '/api/stats').then(r => r.ok ? r.json() : null).then(d => {
-    if (!d) { el.textContent = 'Failed to load stats.'; return; }
-    el.innerHTML = '';
-    // Pure field mapping via info.js module (YadgarInfo.mapStatsData)
-    const rows = window.YadgarInfo
-      ? window.YadgarInfo.mapStatsData(d)
-      : [
-          ['Memories', d.total_memories ?? '—'], ['Wiki pages', d.total_wiki_pages ?? '—'],
-          ['Embeddings', d.total_embeddings ?? '—'], ['Hot (heat>0.5)', d.hot_memories ?? '—'],
-          ['Orphan edges', d.orphan_edge_count != null ? d.orphan_edge_count : '—'],
-        ];
-    rows.forEach(([k, v]) => {
-      const row = document.createElement('div');
-      row.className = 'tab-kv';
-      const kSpan = document.createElement('span');
-      kSpan.className = 'k';
-      kSpan.textContent = k;
-      const vSpan = document.createElement('span');
-      vSpan.className = 'v';
-      vSpan.textContent = String(v ?? '—');
-      row.appendChild(kSpan);
-      row.appendChild(vSpan);
-      el.appendChild(row);
-    });
+  Promise.all([
+    fetch(DAEMON + '/api/graph/stats').then(r => r.ok ? r.json() : null),
+    fetch(DAEMON + '/api/metrics/heat-histogram?bins=10').then(r => r.ok ? r.json() : null),
+    fetch(DAEMON + '/api/metrics/consolidation-log?limit=30').then(r => r.ok ? r.json() : null),
+  ]).then(([gs, hist, consol]) => {
+    // Render charts
+    if (hist)   _renderTabHeatChart(hist);
+    if (consol) _renderTabConsolChart(consol);
+    // Render metric rows
+    if (el && gs) {
+      el.innerHTML = '';
+      // Pure field mapping via info.js module (YadgarInfo.mapStatsData)
+      const rows = window.YadgarInfo
+        ? window.YadgarInfo.mapStatsData(gs)
+        : [
+            ['Memories',   gs.memory_count    ?? '—'],
+            ['Wiki pages', gs.wiki_page_count ?? '—'],
+          ];
+      rows.forEach(([k, v]) => {
+        const row = document.createElement('div');
+        row.className = 'tab-kv';
+        const kSpan = document.createElement('span');
+        kSpan.className = 'k';
+        kSpan.textContent = k;
+        const vSpan = document.createElement('span');
+        vSpan.className = 'v';
+        vSpan.textContent = String(v ?? '—');
+        row.appendChild(kSpan);
+        row.appendChild(vSpan);
+        el.appendChild(row);
+      });
+    } else if (el) {
+      el.textContent = 'Stats unavailable.';
+    }
   }).catch(() => { if (el) el.textContent = 'Stats unavailable.'; });
 }
 
@@ -2626,21 +2521,21 @@ function _tabHealthRefresh() {
     if (fields) {
       Object.entries(fields).forEach(([id, v]) => set(id, v));
     } else {
-      const c = dh.core || {};
-      const cp = c.process || {};
-      const cq = c.queue || {};
-      set('th-cpu', cp.cpu_pct != null ? cp.cpu_pct + '%' : '—');
-      set('th-rss', cp.rss_bytes != null ? _fmtBytes(cp.rss_bytes) : '—');
-      set('th-threads', cp.thread_count ?? '—');
-      set('th-fds', cp.open_fds ?? '—');
-      set('th-uptime', cp.uptime_s != null ? _fmtUptime(cp.uptime_s) : '—');
-      set('th-qdepth', cq.depth ?? '—');
-      set('th-dlq', cq.dlq_size ?? '—');
-      set('th-lag', cq.drainer_lag_p95_ms != null ? cq.drainer_lag_p95_ms + 'ms' : '—');
-      set('th-db', sys.db_size_bytes != null ? _fmtBytes(sys.db_size_bytes) : '—');
-      set('th-ram', sys.ram_free_bytes != null ? _fmtBytes(sys.ram_free_bytes) : '—');
-      const load = sys.load_avg;
-      set('th-load', Array.isArray(load) ? load.join(' / ') : '—');
+      // Fallback (no info.js module) — use real /api/system field names
+      const cq = (dh.core || {}).queue || {};
+      set('th-cpu',     sys.daemon_cpu_pct != null ? sys.daemon_cpu_pct + '%' : '—');
+      set('th-rss',     sys.rss_bytes      != null ? _fmtBytes(sys.rss_bytes) : '—');
+      set('th-threads', sys.daemon_threads ?? '—');
+      set('th-fds',     sys.open_fds       ?? '—');
+      set('th-uptime',  sys.uptime_s       != null ? _fmtUptime(sys.uptime_s) : '—');
+      set('th-qdepth',  cq.depth           ?? '—');
+      set('th-dlq',     cq.dlq_size        ?? '—');
+      set('th-lag',     cq.drainer_lag_p95_ms != null ? cq.drainer_lag_p95_ms + 'ms' : '—');
+      set('th-db',      sys.db_size_mb     != null ? (sys.db_size_mb.toFixed(1) + ' MB') : '—');
+      set('th-ram',     sys.system_ram_available_mb != null ? (sys.system_ram_available_mb.toFixed(0) + ' MB') : '—');
+      set('th-load',    sys.load_avg_1m    != null
+                          ? sys.load_avg_1m + ' / ' + sys.load_avg_5m + ' / ' + sys.load_avg_15m
+                          : '—');
     }
     if (status) status.textContent = 'Last updated: ' + new Date().toLocaleTimeString();
   }).catch(() => { if (status) status.textContent = 'Health data unavailable.'; });
@@ -2649,7 +2544,7 @@ function _tabHealthRefresh() {
 // Info tab: populate version + active viz config
 function _tabInfoRefresh() {
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v ?? '—'; };
-  fetch(DAEMON + '/api/stats').then(r => r.ok ? r.json() : {}).then(d => {
+  fetch(DAEMON + '/api/info').then(r => r.ok ? r.json() : {}).then(d => {
     // Pure field mapping via info.js module (YadgarInfo.mapInfoData)
     const fields = window.YadgarInfo
       ? window.YadgarInfo.mapInfoData(d, YADGAR_VIZ_CONFIG)
