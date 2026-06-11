@@ -206,13 +206,8 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
 .spark-wrap { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .spark-lbl { font-size: 9px; color: #8b949e; }
 
-/* ── Debug drawer ──────────────────────────────────────── */
-#debug-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(13,17,23,0.92);
-  z-index: 100;
-  display: flex;
+/* ── Debug tab pane ──────────────────────────────────────── */
+#tab-debug.active {
   flex-direction: column;
 }
 #debug-header {
@@ -225,8 +220,6 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
   flex-shrink: 0;
 }
 #debug-header h2 { color: #58a6ff; font-size: 13px; letter-spacing: 1px; }
-#debug-close { margin-left: auto; cursor: pointer; color: #8b949e; font-size: 18px; }
-#debug-close:hover { color: #f0f0f0; }
 #debug-tabs { display: flex; gap: 2px; padding: 6px 14px 0; flex-shrink: 0; }
 .dtab {
   padding: 4px 14px;
@@ -831,6 +824,7 @@ body.dh-open #dh-toggle { right: 480px; }
     <a href="#bookmarks" class="tab-link" data-tab="bookmarks">Bookmarks</a>
     <a href="#info" class="tab-link" data-tab="info">Info</a>
     <a href="#control" class="tab-link" data-tab="control">Control</a>
+    <a href="#debug" class="tab-link" data-tab="debug">Debug</a>
   </div>
   <!-- Graph controls (right side) -->
   <div id="topbar-graph-controls">
@@ -841,7 +835,6 @@ body.dh-open #dh-toggle { right: 480px; }
     <button class="btn" onclick="resetLayout()">⟳ Reset</button>
     <button class="btn" id="mode-btn" onclick="toggleMode()">2D</button>
     <button class="btn" onclick="loadGraph()">↺ Reload</button>
-    <button class="btn" id="debug-btn" onclick="openDebug()">⚙ Debug</button>
     <span id="status-dot"></span>
     <span id="status-text">Connecting…</span>
   </div>
@@ -1161,28 +1154,27 @@ body.dh-open #dh-toggle { right: 480px; }
   <!-- Filled by control.js initControlTab() on DOMContentLoaded -->
 </div><!-- /#tab-control -->
 
-</div><!-- /#app-container -->
-
-<!-- Debug drawer (hidden by default) -->
-<div id="debug-overlay" style="display:none">
+<!-- ── Tab: Debug (v5.50.8) ──────────────────────────────── -->
+<div id="tab-debug" class="tab-pane">
   <div id="debug-header">
     <h2>API DEBUG</h2>
     <span style="color:#8b949e;font-size:10px" id="debug-url"></span>
     <button class="btn" onclick="refreshDebug()">↺ Refresh</button>
     <span id="debug-status"></span>
-    <span id="debug-close" onclick="closeDebug()">✕</span>
   </div>
   <div id="debug-tabs">
-    <button class="dtab active" onclick="switchTab('graph')">GET /api/graph</button>
-    <button class="dtab" onclick="switchTab('stats')">GET /api/graph/stats</button>
-    <button class="dtab" onclick="switchTab('system')">GET /api/system</button>
-    <button class="dtab" onclick="switchTab('search')">GET /api/viz/search</button>
-    <button class="dtab" onclick="switchTab('nodes')">Nodes table</button>
+    <button class="dtab active" onclick="switchDebugView('graph')">GET /api/graph</button>
+    <button class="dtab" onclick="switchDebugView('stats')">GET /api/graph/stats</button>
+    <button class="dtab" onclick="switchDebugView('system')">GET /api/system</button>
+    <button class="dtab" onclick="switchDebugView('search')">GET /api/viz/search</button>
+    <button class="dtab" onclick="switchDebugView('nodes')">Nodes table</button>
   </div>
   <div id="debug-body">
     <pre id="debug-json">Select a tab and click Refresh.</pre>
   </div>
-</div>
+</div><!-- /#tab-debug -->
+
+</div><!-- /#app-container -->
 
 <!-- v5.50.5: dh-panel/dh-toggle removed; daemon health moved to #tab-health -->
 
@@ -1568,7 +1560,7 @@ async function loadGraph() {
     detectAndRenderClusters();
     // B: zoom-to-fit ALL nodes (including disconnected) on load
     graph.zoomToFit(600, 50);
-    status(`${allNodes.length} nodes · ${allLinks.length} edges`, 'ok');
+    status('live', 'ok');
   } catch (e) { status(`⚠ ${e.message}`, 'err'); }
 
   try {
@@ -2110,18 +2102,7 @@ function resetLayout() {
 }
 
 // ── Debug panel ──────────────────────────────────────────────────────────────
-function openDebug() {
-  document.getElementById('debug-overlay').style.display = 'flex';
-  document.getElementById('debug-btn').classList.add('active');
-  refreshDebug();
-}
-
-function closeDebug() {
-  document.getElementById('debug-overlay').style.display = 'none';
-  document.getElementById('debug-btn').classList.remove('active');
-}
-
-function switchTab(tab) {
+function switchDebugView(tab) {
   debugTab = tab;
   document.querySelectorAll('.dtab').forEach((el, i) => {
     const tabs = ['graph','stats','system','search','nodes'];
@@ -2217,9 +2198,9 @@ document.getElementById('search').addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); runSearch(); }
 });
 
-// Close overlays on Escape
+// Close overlays on Escape (no-op placeholder — debug is now a tab pane)
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { closeDebug(); }
+  void e; // reserved for future overlay handlers
 });
 
 // ── Right-panel drag-resize ───────────────────────────────────────────────────
