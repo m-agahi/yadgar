@@ -7,6 +7,14 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.50.10] — 2026-06-11
+
+### Fixed
+- **OTEL could no longer hang/kill the daemon when the OTLP collector is down.** A dead or unreachable collector made the `BatchSpanProcessor`'s final span flush retry past the systemd stop-timeout, so the container was SIGKILLed (`exit 137`) on every restart — making deploys look like a crash-loop. Now:
+  - `tracing.shutdown_tracing(timeout_sec=3)` runs `provider.shutdown()` in a daemon thread and abandons it after a hard bound (an abandoned daemon thread can't block process exit), wired into `lifecycle.shutdown()` right after the STOPPING signal.
+  - `OTLP_TIMEOUT_SEC` default lowered `10 → 3` so exports fail fast.
+  - Net: tracing is fully non-fatal — collector up → spans export; collector down → spans drop silently; the daemon always shuts down promptly either way. No manual OTEL toggling needed.
+
 ## [5.50.9] — 2026-06-11
 
 ### Fixed
