@@ -353,14 +353,19 @@ class _DLQMixin:
                 yadgar_wiki_add_rejected_total.labels(reason="duplicate_detected").inc()
             except Exception:
                 pass
+            # v5.53.1: surface the best-match slug as a consolidation suggestion.
+            # Candidates are sorted desc by similarity; index 0 is the closest match.
+            best_slug = candidates[0]["slug"] if candidates else None
             return {
                 "stored": False,
                 "reason": "duplicate_detected",
+                "suggested_update_slug": best_slug,
                 "candidates": candidates,
                 "hint": (
-                    "Similarity gate fired in drainer (async path). "
-                    "Use force=True to bypass, or replace_slug=<existing-slug> "
-                    "to overwrite the existing page."
+                    "Near-duplicate detected. "
+                    "Update the existing page instead: "
+                    f"wiki_add(title=..., content=..., replace_slug={best_slug!r}). "
+                    "Use force=True to bypass this gate and create a new page anyway."
                 ),
             }
         except Exception as exc:
