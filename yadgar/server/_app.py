@@ -51,7 +51,20 @@ _PROFILE = os.environ.get("YADGAR_PROFILE", "full")
 
 mcp_server = FastMCP(
     name="yadgar",
-    instructions="Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage.",
+    instructions=(
+        "Yadgar holds two stores for this repo: (1) episodic + semantic memories"
+        " (heat-ranked, decay-gated) and (2) a curated wiki — conventions,"
+        " module purpose, past decisions, where subsystems live.\n\n"
+        "READ-FIRST CONTRACT: before searching a repo for structure, conventions,"
+        " decisions, or where code lives — consult the wiki index first."
+        " At session start you receive a wiki catalog via project_brief; read it."
+        " For named pages: wiki_list() → pick slug → wiki_read(slug)."
+        " For fuzzy topic search: wiki_query() (scores ~0.34 — use for discovery,"
+        " not as coordinates)."
+        " For exact current code lines: grep/read the source files directly."
+        " wiki_list and wiki_read are the primary read-first tools; wiki_query is"
+        " the fallback for unknown-slug topic search."
+    ),
     host=settings.HOST,
     port=settings.PORT,
 )

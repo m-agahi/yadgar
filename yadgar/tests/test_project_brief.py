@@ -527,9 +527,9 @@ def test_render_has_hot_memories_section(flush_queue):
 
 
 def test_render_has_wiki_keys_section():
-    """F5: _render contains ## Wiki Keys section."""
+    """F5: _render contains ## Wiki Index section (v5.53.0: renamed from Wiki Keys)."""
     result = server.project_brief("/tmp/render_wiki_keys_test")
-    assert "## Wiki Keys" in result["_render"]
+    assert "## Wiki Index" in result["_render"]
 
 
 def test_render_token_count_under_limit(flush_queue):

@@ -420,6 +420,40 @@ class _WikiMixin:
         rows = self._q(sql, params) if params else self._q(sql)
         return self._rows_to_dicts(rows)
 
+    @trace_span("storage.wiki.list_wiki_catalog")
+    def list_wiki_catalog(
+        self,
+        directory: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict]:
+        """Fetch metadata-only rows for catalog rendering (no content/embedding).
+
+        Returns slug, title, category, updated_at per page — excludes heavy
+        content and embedding columns so this is safe on the bootstrap hot path.
+
+        v5.53.0: scoped to directory + 'global' when directory supplied.
+        When absent, returns all pages (backward-compat).
+        """
+        conditions: list[str] = []
+        params: dict = {}
+
+        if directory is not None:
+            caller_dir = directory.rstrip("/")
+            conditions.append("(directory_context = $dir OR directory_context = 'global')")
+            params["dir"] = caller_dir
+
+        where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        limit_clause = "LIMIT $lim" if (limit is not None and limit > 0) else ""
+        if limit_clause:
+            params["lim"] = limit
+
+        sql = (
+            f"SELECT slug, title, category, updated_at FROM wiki_page "
+            f"{where_clause} ORDER BY updated_at DESC {limit_clause}"
+        ).strip()
+        rows = self._q(sql, params) if params else self._q(sql)
+        return self._rows_to_dicts(rows)
+
     # ------------------------------------------------------------------ Wiki Version CRUD
 
     def insert_wiki_page_version(

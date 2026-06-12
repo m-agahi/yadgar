@@ -7,6 +7,19 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.53.0] — 2026-06-12
+
+### Added
+- **Wiki catalog in `project_brief`** (Phase A — KB usability umbrella). Catalog/restore/full modes now include a `wiki_catalog` key: pages grouped by category with **titles** (not bare slugs), per-group counts, total page count, and a length cap (`_WIKI_CATALOG_MAX_PER_GROUP=5` per group + "…M more" affordance). The `## Wiki Index` render block in `_render_project_brief` uses this catalog, replacing the old bare-slug "Wiki Keys" section. Source: new `list_wiki_catalog()` storage method (metadata-only — no content/embedding columns) scoped to the resolved directory. `signals` mode is unchanged (no catalog, no render).
+- **Slug-prefix sub-grouping for large wiki categories** (`_render_wiki_catalog`). When a category's total page count exceeds `_WIKI_CATALOG_MAX_PER_GROUP`, the render replaces the (useless) truncated title list with a prefix-count breakdown: `by prefix: fn- (140) · mod- (45) · services- (30) · …4 more prefixes`. Prefix = first `-`-delimited slug segment (whole slug if no `-`). Sorted by count desc, capped at `_WIKI_CATALOG_MAX_PREFIXES=8` with "…M more prefixes" affordance. Small categories keep the existing title list unchanged. `_build_wiki_catalog` now accumulates `prefix_counts` (Counter over all rows, not capped) per group.
+- **MCP server read-first contract** (`server/_app.py`). Rewrote the FastMCP `instructions` string from one vague sentence to a concise contract: what yadgar holds (memories + curated wiki), and the read-first rule — consult the wiki index (session-start catalog / `wiki_list`) and `wiki_read` the relevant page before grepping; reserve `wiki_query` for fuzzy topic search; grep for exact current code lines.
+- **`docs/RECOMMENDED_CLAUDE_RULES.md`** (Phase D-general). Canonical read-first rule text for any yadgar user to copy into their `~/.claude/CLAUDE.md`. Rule: wiki = map (conventions/decisions/where code lives), grep = territory (exact lines); read the session-start catalog first; `wiki_list`→slug→`wiki_read` for named pages; `wiki_query` only for fuzzy topic search (~0.34, not coordinates).
+- **`WikiStore.list_wiki_catalog()`** — metadata-only query (`slug, title, category, updated_at`) scoped by `directory_context`, no content/embedding fetch. Safe on the bootstrap hot path.
+
+### Migration notes
+- **D-personal TODO (Max only):** see `MIGRATION_NOTES.md` → v5.53.0 section. Edit `~/git/nix/dotfiles/common/claude.md` with the rule from `docs/RECOMMENDED_CLAUDE_RULES.md`, then `home-manager switch`. Claude does not touch nix files.
+- `project_brief` payload gains `wiki_catalog` key in catalog/restore/full modes. Consumers expecting only `key_wiki_pages` continue to work (key is preserved); `wiki_catalog` is additive.
+
 ## [5.52.0] — 2026-06-12
 
 ### Added
