@@ -777,6 +777,30 @@ def _migration_018_directory_context_backfill_repair(storage) -> None:  # noqa: 
     )
 
 
+def _migration_019_wiki_page_type(storage) -> None:
+    """Add page_type (option<string>) and wiki_schema_version (option<int>) to wiki_page (v5.53.2).
+
+    Additive, nullable — no row rewrite. Existing pages have these fields absent (NONE),
+    which is the correct untyped state. New typed pages written via wiki_add(page_type=...)
+    will have these fields set.
+
+    page_type: one of the PAGE_TYPES registry keys (function, module, service,
+      architecture, decision, analysis). Nullable (option<string>) so legacy pages
+      remain readable without any update.
+    wiki_schema_version: integer schema stamp. 1 = v5.53.2 B-schema. 0 / absent = pre-5.53.2.
+      Nullable (option<int>) for the same backward-compat reason.
+
+    Idempotent: DEFINE FIELD IF NOT EXISTS is safe to re-run.
+    """
+    storage._q("DEFINE FIELD IF NOT EXISTS page_type ON TABLE wiki_page TYPE option<string>;")
+    storage._q(
+        "DEFINE FIELD IF NOT EXISTS wiki_schema_version ON TABLE wiki_page TYPE option<int>;"
+    )
+    _log.info(
+        "migration_019: added page_type + wiki_schema_version fields to wiki_page (additive/nullable)"
+    )
+
+
 _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {"version": "001_hnsw_indexes", "fn": _migration_001_hnsw_indexes},
     {"version": "002_relationship_indexes", "fn": _migration_002_relationship_indexes},
@@ -837,6 +861,10 @@ _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {
         "version": "018_directory_context_backfill_repair",
         "fn": _migration_018_directory_context_backfill_repair,
+    },
+    {
+        "version": "019_wiki_page_type",
+        "fn": _migration_019_wiki_page_type,
     },
 ]
 

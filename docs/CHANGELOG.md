@@ -7,6 +7,21 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.53.2] — 2026-06-12
+
+### Added (Phase B-schema — page types + templates + format lint, KB usability umbrella)
+
+- **`page_type` + `wiki_schema_version` fields on wiki pages.** Both optional (`option<string>` / `option<int>`). `wiki_add` gains an optional `page_type` parameter. When provided, the page is stamped with the current `wiki_schema_version` (1). Existing pages have these fields absent (NONE) — fully backward-compatible. `wiki_add` without `page_type` works exactly as before.
+- **`PAGE_TYPES` registry** (`yadgar/wiki_meta.py`). 6 types covering ~90% of the corpus: `function`, `module`, `service`, `architecture`, `decision`, `analysis`. Each type specifies required section headings (2–4 per type). `WIKI_SCHEMA_VERSION = 1` constant.
+- **`wiki_lint` format check.** For pages with a `page_type`, checks that all required sections (from `PAGE_TYPES`) are present as `##` headings (case-insensitive). Missing sections reported as `warn`-level `missing_section` issues. Pages without `page_type` → skipped (no format check). `format_violation_count` added to stats. `wiki_add` NEVER rejects writes on template mismatch — lint is advisory/reporting only.
+- **Catalog groups by `page_type`** (`_build_wiki_catalog`). Group key is now `page_type` when present, falling back to `category` when absent. `list_wiki_catalog` SELECT updated to include `page_type`. Coexists with existing prefix-breakdown sub-grouping.
+- **DB migration 019** (`_migration_019_wiki_page_type`): additive `DEFINE FIELD IF NOT EXISTS page_type TYPE option<string>` + `wiki_schema_version TYPE option<int>` on `wiki_page`. No row rewrite. Idempotent.
+- **`page_type` threaded through all `wiki_add` paths**: sync write, async enqueue, `wait=True` enqueue, `is_draining()` replay, and drainer `apply.py`.
+
+### Notes
+- Migration of existing 646 legacy pages to typed format is DEFERRED to v5.53.3 (B-migration). This release stops NEW drift immediately; existing pages remain untyped and are never format-checked by lint.
+- **D-personal TODO (Max, v5.53.2):** add page-type rule to nix claude.md → `home-manager switch`.
+
 ## [5.53.1] — 2026-06-12
 
 ### Added (Phase C — Live curation loop, KB usability umbrella)
