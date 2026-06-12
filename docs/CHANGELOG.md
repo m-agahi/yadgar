@@ -7,6 +7,24 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.54.2] — 2026-06-12
+
+### Added (Phase 3 — activate transition/co-recall edge, graph-leverage umbrella v5.54)
+
+- **Precomputed `cofire_prior` scalar on memory rows.** During each consolidation cycle, `_compute_cofire_priors` reads the `memory_transition` table ONCE via `get_all_transitions()`, sums transition counts per memory (from_memory_id + to_memory_id symmetric), normalizes to [0, 1] by cycle-max, and stores as `cofire_prior: option<float>` on the memory row. "Recalled together before" = learned co-recall association. Bounded by `SIMILARITY_MATRIX_MAX_CANDIDATES`. Non-fatal phase.
+- **`cofire_prior` boost in fusion (`retrieval/fusion.py`).** Immediately after the `graph_prior` boost (v5.54.1), all profiles (including `fast`) apply `WRRF_COFIRE_PRIOR_WEIGHT * cofire_prior` as an additive boost, then re-sort. O(1): reads stored field via `storage.get_memory_cofire_priors(candidate_ids)` — NO transition-table traversal, NO graph access on the request path. Activates the previously-dead `transition` edge.
+- **`WRRF_COFIRE_PRIOR_WEIGHT = 0.15`** (I25 three-way registered: `config.py` + `config_registry.py` + `config_yaml.py`). Smaller than graph_prior (0.2) — co-recall is a weaker structural signal than entity centrality. Set to 0.0 to disable entirely.
+- **DB migration 021** (`_migration_021_memory_cofire_prior`): additive `DEFINE FIELD IF NOT EXISTS cofire_prior ON TABLE memory TYPE option<float>`. No row rewrite. Idempotent.
+- **New storage methods:** `get_memory_cofire_priors(memory_ids) → {int: float}` (bulk-fetch priors for fusion); `update_memory_cofire_prior(memory_id, prior)` (write from consolidation). `cofire_prior` added to `_MEMORY_UPDATABLE_FIELDS`.
+- **`compute_cofire_priors` consolidation phase** wired into `_consolidation_cycle` (after `compute_graph_priors`). Non-fatal; phase-start/end logged; `_warn_slow_phase` applied.
+- **`docs/EDGE_CONTRACT.md` updated**: `transition` row — target role `retrieval` (activated v5.54.2, done). `wiki_crossref` + `memory_wiki` rows — target role downgraded to `display` (option A, 2026-06-12: recall already surfaces wiki via parallel semantic query at `recall.py:273`; edge-bridge is leverage-theater per I29, skipped).
+- **25 new tests** (`test_v5_54_2_cofire_prior.py`): consolidation computes correct co-recall priors (transition counts, normalized); fast-profile recall does NOT call `get_all_transitions`/`get_transitions_from`/`get_transition` inside `_fuse_scores`; `WRRF_COFIRE_PRIOR_WEIGHT=0` disables + storage not called; NULL prior safe; both graph_prior and cofire_prior boosts coexist (additive, both storage methods called); migration 021 registered; I25 three-way sync.
+
+### Notes
+- **ADDITIVE, non-breaking.** `WRRF_COFIRE_PRIOR_WEIGHT=0` disables entirely; `cofire_prior=NULL` = today's behavior (0.0 boost). Both boosts (graph_prior 5.54.1 + cofire_prior 5.54.2) apply concurrently — neither replaces the other.
+- Memory↔wiki edge-bridge (wiki_crossref/memory_wiki) intentionally skipped per option A: recall already queries wiki in parallel at `recall.py:273`. Bridge would be redundant leverage.
+- `5.54.1` = precomputed entity-graph prior. `5.54.2` = co-recall transition prior. Both serve the same latency constraint: precompute in consolidation, O(1) read in fast-profile fusion.
+
 ## [5.54.1] — 2026-06-12
 
 ### Added (Phase 2 — precomputed graph prior, graph-leverage umbrella v5.54)

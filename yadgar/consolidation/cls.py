@@ -295,6 +295,75 @@ class _CLSMixin:
         stats["graph_prior_updated"] = updated
         logger.info("graph_prior: computed and stored for %d memories", updated)
 
+    def _compute_cofire_priors(self, stats: dict) -> None:
+        """Precompute per-memory cofire_prior scalar and store on memory rows (v5.54.2).
+
+        Formula (v1 — simple, defensible):
+          For each memory in the bounded candidate set, sum the transition counts from
+          the memory_transition table where the memory appears as from_memory_id OR
+          to_memory_id. Normalize the scores across all memories to [0, 1].
+
+        Data source: storage.get_all_transitions() — one bulk read, no per-memory
+        traversal. The co-recall frequency is a learned association signal: "memories
+        that appeared together in past recalls are likely to be relevant together."
+
+        This runs in CONSOLIDATION (background), NOT on the request path — satisfies
+        the I8/I9 latency constraint. The fast-profile recall reads cofire_prior as an
+        O(1) field value at fusion time, with NO transition-table access.
+
+        Staleness window: one consolidation cadence (typically nightly). Acceptable —
+        cofire_prior is a secondary nudge, not a primary retrieval signal.
+
+        Bounded per cycle by SIMILARITY_MATRIX_MAX_CANDIDATES (same cap as
+        _link_similar_memories) to prevent PHASE_DURATION_WARN_MS overrun.
+        """
+        cap = getattr(self._settings, "SIMILARITY_MATRIX_MAX_CANDIDATES", 4000)
+
+        # Fetch bounded candidate set (most-recently-accessed first, same as link_similar)
+        rows = self._storage.get_memories_with_embeddings(limit=cap, order_by="last_accessed")
+        if not rows:
+            stats["cofire_prior_updated"] = 0
+            return
+
+        # Build candidate memory ID set for fast membership test
+        candidate_ids: set[int] = {mem["id"] for mem in rows}
+
+        # Load all transitions ONCE — avoid per-memory DB round trips
+        all_transitions = self._storage.get_all_transitions()
+
+        # Aggregate co-recall count per memory (from_memory_id + to_memory_id symmetric)
+        cofire_count: dict[int, float] = {mid: 0.0 for mid in candidate_ids}
+        for tr in all_transitions:
+            from_id = tr.get("from_memory_id")
+            to_id = tr.get("to_memory_id")
+            count = float(tr.get("count", 1))
+            if from_id in cofire_count:
+                cofire_count[from_id] += count
+            if to_id in cofire_count:
+                cofire_count[to_id] += count
+
+        # Normalize to [0, 1] by cycle-max; avoid divide-by-zero
+        max_count = max(cofire_count.values()) if cofire_count else 0.0
+
+        batch: list[tuple[str, dict | None]] = []
+        for mid, raw in cofire_count.items():
+            prior = (raw / max_count) if max_count > 1e-9 else 0.0
+            batch.append(
+                (
+                    "UPDATE type::record('memory', $id) SET cofire_prior = $cp",
+                    {"id": mid, "cp": round(prior, 6)},
+                )
+            )
+
+        if batch:
+            self._storage.batch_writes(batch)
+            updated = len(batch)
+        else:
+            updated = 0
+
+        stats["cofire_prior_updated"] = updated
+        logger.info("cofire_prior: computed and stored for %d memories", updated)
+
     def _link_similar_memories(self, stats: dict) -> None:
         """Create memory_similarity_link records between semantically similar memories.
 

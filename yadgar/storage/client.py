@@ -162,6 +162,8 @@ _MEMORY_UPDATABLE_FIELDS = frozenset(
         "access_count",
         # v5.54.1 — precomputed graph prior (consolidation phase, additive boost in fusion)
         "graph_prior",
+        # v5.54.2 — precomputed co-recall (transition-edge) prior (consolidation phase, additive boost in fusion)
+        "cofire_prior",
     }
 )
 
