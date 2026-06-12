@@ -1,5 +1,40 @@
 # Migration Notes
 
+## v5.53.0 — Bootstrap catalog + read-first contract (2026-06-12)
+
+### D-personal TODO for Max (nix-managed Claude config — NOT general)
+
+**Do NOT apply this yourself; Claude does not edit nix files. Apply manually.**
+
+The canonical read-first rule is now in `docs/RECOMMENDED_CLAUDE_RULES.md`.
+Max's `~/.claude/CLAUDE.md` is nix-managed; the source is:
+
+```
+~/git/nix/dotfiles/common/claude.md
+```
+
+The yadgar block is currently lines ~6-33 ("Read-first triggers" + "Tool selection").
+
+**Action required:**
+
+1. Edit `~/git/nix/dotfiles/common/claude.md` — rewrite the yadgar block with the
+   read-first rule from `docs/RECOMMENDED_CLAUDE_RULES.md`:
+   - Replace "Read-first triggers" with: wiki = map (concepts/conventions/decisions/
+     location), grep = territory (exact lines); read the session-start catalog first
+     then grep there; `wiki_list`→slug→`wiki_read` for named pages, `wiki_query` only
+     for fuzzy topic search (~0.34, not coordinates). Keep the existing
+     `restore(directory=...)` resume guidance.
+   - See `docs/RECOMMENDED_CLAUDE_RULES.md` for the verbatim rule text.
+2. Run: `home-manager switch`
+3. Verify: `~/.claude/CLAUDE.md` reflects the new rule. The global file is the only
+   allowed CLAUDE.md — no per-project copies.
+
+### No config knob changes in this release
+
+`wiki_catalog` is added to `project_brief` catalog/restore/full payloads as a new
+structured key. No env var tuning needed; per-group cap is the internal constant
+`_WIKI_CATALOG_MAX_PER_GROUP = 5` (not runtime-tunable by design).
+
 ## v5.50.2 — Control tab + backend control APIs (2026-06-11)
 
 ### New env var: `YADGAR_DEBUG_APIS_ENABLED`
