@@ -482,7 +482,9 @@ class WikiStore:
     ) -> list[dict]:
         """Return wiki pages with combined embedding similarity >= threshold.
 
-        Design note: wiki_page stores one combined embedding (title + content[:2000]).
+        Design note: wiki_page stores one combined embedding (title + content[:4000]).
+        v5.53.1: window raised from 2000 to 4000 chars for better near-duplicate recall.
+        Existing pages keep [:2000]-based embeddings until reembed_all is run.
         Separate title-only / content-only embeddings would require a schema change
         (violates §4 non-goals). Gate uses a single cosine similarity threshold on
         the combined embedding.
@@ -502,9 +504,11 @@ class WikiStore:
             List of dicts with keys: slug, title, similarity, branch.
             Sorted descending by similarity.
         """
-        # Embed the new page (same formula as _compute_embedding)
+        # Embed the new page (same formula as _compute_embedding — must stay in sync).
+        # v5.53.1: raised from [:2000] to [:4000] for better near-duplicate recall.
+        # Existing stored pages keep their [:2000]-based embeddings until reembed_all.
         try:
-            text = f"{title}\n{content[:2000]}"
+            text = f"{title}\n{content[:4000]}"
             query_embedding = self._embeddings.encode_query(text)
         except Exception:
             logger.debug("find_similar_wiki_pages: embedding failed for '%s'", title)
@@ -928,7 +932,9 @@ class WikiStore:
         from yadgar.config import get_settings  # noqa: PLC0415
 
         try:
-            text = f"{title}\n{content[:2000]}"
+            # v5.53.1: raised from [:2000] to [:4000] for better similarity matching.
+            # In sync with find_similar_wiki_pages query embedding formula.
+            text = f"{title}\n{content[:4000]}"
             result = self._embeddings.encode_document(text)
         except Exception as exc:
             _inc_embed_failure("exception")
