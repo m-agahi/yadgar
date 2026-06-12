@@ -7,6 +7,25 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.52.0] — 2026-06-12
+
+### Added
+- **Log streaming endpoints** — new self-registering route module `yadgar/server/routes/logs.py` (mirrors `routes/control.py` pattern). Three endpoints: `GET /api/logs/_capabilities` (SSE/poll probe), `GET /api/logs/poll?since=<seq>` (long-poll fallback), `GET /api/logs/stream` (SSE of daemon log lines, `text/event-stream`). Registered via side-effect import in `yadgar/server/__init__.py`.
+- **Log ring buffer** — `LogRingHandler` (stdlib `logging.Handler`) attaches to root logger on module import; pushes every `LogRecord` into an in-memory `deque` byte-capped at 1 MB. Evicts oldest entries when cap exceeded. Monotonic sequence numbers enable `since=<seq>` gap detection.
+- **Auth gate extended** — `/api/logs/` prefix added to `_DEBUG_API_PREFIXES` in `yadgar/auth_middleware.py`, gating all log endpoints on `YADGAR_DEBUG_APIS_ENABLED=on` in addition to bearer token (same defence-in-depth pattern as `/api/control/*`).
+- **Browser console capture** — new `yadgar/static/console_capture.js` ES module; proxies `window.console` (`log/info/warn/error/debug`) into an in-memory ring buffer byte-capped at 1 MB. Exposes `getEntries(filterLevel?)`, `subscribe(fn)`, `unsubscribe(fn)`, `clearBuffer()`, `pause()`, `resume()`. XSS-safe: all captured strings stored HTML-escaped. Installed at `DOMContentLoaded`.
+- **Debug-tab log panels** — two stacked panels appended to the existing `#tab-debug` (v5.50.8). Top: daemon log from `/api/logs/poll` (polled every 2s). Bottom: browser console from `console_capture.js` subscription. Each panel: level filter buttons (ALL/DEBUG/INFO/WARN/ERROR), Pause, Clear, Copy-all. XSS-safe rendering via `textContent` / pre-escaped strings.
+- **13 new backend tests** (`yadgar/tests/test_logs_api.py`): gate-off → 403 for all 3 endpoints; `/_capabilities` probe shape; `/poll` returns buffered lines; `/poll?since=N` seq filter; ring byte-cap eviction; seq monotonicity; self-registration on `mcp_server._custom_starlette_routes`; middleware prefix gate; stream handler returns `StreamingResponse` with `text/event-stream`.
+- **14 new frontend tests** (`yadgar/static/console_capture.test.js`): proxy captures all 5 levels; error entries have stack; level filter; pause/resume; clear; XSS escape regression (`<script>alert(1)</script>` stores as `&lt;script&gt;...`); byte-cap eviction; subscribe/unsubscribe.
+
+### Deferred (not in this release)
+- **12-endpoint `/api/debug/viz/*` camera/select/overlay API** — deferred per invariant I29 (leverage-completeness: no capability without a consumer). No current consumer of these endpoints exists. Will be reconsidered when a concrete agent use case emerges.
+- **`POST /api/debug/viz/screenshot` endpoint** — deferred due to design fork: the backend cannot capture client-side WebGL frames directly; browser-cooperation or a headless renderer is required. Main thread will surface the design choice to the user before implementation.
+
+### Migration notes
+- Enable log streaming: set `YADGAR_DEBUG_APIS_ENABLED=on` and ensure `YADGAR_MCP_AUTH_TOKEN` is configured. The daemon log panel then polls `/api/logs/poll` every 2s.
+- The log ring buffer holds up to 1 MB of log entries; restart wipes it. Use `journalctl -fu yadgar` for persistent daemon logs.
+
 ## [5.51.0] — 2026-06-12
 
 ### Added
