@@ -1303,33 +1303,27 @@ function _edgeColor() { return YADGAR_VIZ_CONFIG.edge.color; }
 function _wikiCatColor() { return YADGAR_VIZ_CONFIG.node.category_colors; }
 
 // ── Edge legend overlay renderer ────────────────────────────────────────────
-// v5.50.13: Re-render the edge-legend overlay from config.legend.edges so
-// overlay labels/colors match the single source (EDGE_TYPES in viz_meta.py).
-// Preserves existing checkbox IDs (fo-show-<key>) for filter wiring.
-// Key→checkboxId map: standard keys use kebab form (wiki_crossref→wiki-crossref).
+// v5.50.13: Update overlay labels/colors from config.legend.edges (single source).
+// Updates swatch color + label text in-place — NEVER replaces <input> elements.
+// The deferred-module bridge attaches 'change' listeners to the hardcoded <input>s
+// before this runs; replacing them would silently orphan those listeners.
+// Key→checkboxId: underscore→kebab (wiki_crossref → fo-show-wiki-crossref).
 function _renderEdgeLegendOverlay() {
-  const body = document.getElementById('fo-edge-legend-body');
-  if (!body) return;
   const edges = YADGAR_VIZ_CONFIG.legend && YADGAR_VIZ_CONFIG.legend.edges;
   if (!edges || !edges.length) return; // keep fallback static content
-  body.innerHTML = '';
   for (const edge of edges) {
     const cbKey = (edge.key || '').replace(/_/g, '-');
-    const cbId = 'fo-show-' + cbKey;
-    const label = document.createElement('label');
-    label.style.pointerEvents = 'auto';
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.id = cbId;
-    cb.checked = true;
-    label.appendChild(cb);
-    label.appendChild(document.createTextNode(' '));
-    const swatch = document.createElement('span');
-    swatch.style.color = edge.color || '#484f58';
-    swatch.textContent = '■';
-    label.appendChild(swatch);
-    label.appendChild(document.createTextNode(' ' + (edge.label || edge.key)));
-    body.appendChild(label);
+    const cb = document.getElementById('fo-show-' + cbKey);
+    if (!cb) continue; // edge type has no filter checkbox (e.g. causal) — skip
+    const lbl = cb.closest('label');
+    if (!lbl) continue;
+    // Update swatch color (the <span> immediately after the checkbox)
+    const swatch = lbl.querySelector('span');
+    if (swatch) swatch.style.color = edge.color || '#484f58';
+    // Update label text node (last child text node after the swatch)
+    const textNodes = [...lbl.childNodes].filter(n => n.nodeType === Node.TEXT_NODE);
+    const lastText = textNodes[textNodes.length - 1];
+    if (lastText) lastText.textContent = ' ' + (edge.label || edge.key);
   }
 }
 
