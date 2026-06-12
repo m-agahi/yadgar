@@ -1277,7 +1277,9 @@ function heatColor(h) {
 function _nodeColorFor(node) {
   const dimOpacity = YADGAR_VIZ_CONFIG.search.dim_opacity;
   if (node.__dimmed) return `rgba(80,80,80,${dimOpacity})`;
-  if (node.type === 'wiki') return _wikiCatColor()[node.category] || '#8b949e';
+  const mod = window._graphDetailModule;
+  const nt = mod ? mod.nodeType(node) : (node.type || '');
+  if (nt === 'wiki') return _wikiCatColor()[node.category] || '#8b949e';
   return heatColor(node.heat || 0);
 }
 
@@ -1300,7 +1302,9 @@ function _nodeColorFor(node) {
 // Exported for unit tests: window._makeNodeThreeObject = _makeNodeThreeObject.
 function _makeNodeThreeObject(node) {
   const shape = YADGAR_VIZ_CONFIG.node.wiki_shape || 'octahedron';
-  if (node.type !== 'wiki' || shape !== 'octahedron') return null; // ForceGraph default sphere
+  const mod = window._graphDetailModule;
+  const nt = mod ? mod.nodeType(node) : (node.type || '');
+  if (nt !== 'wiki' || shape !== 'octahedron') return null; // ForceGraph default sphere
   const THREE = window.THREE;
   if (!THREE) return null;
   const nodeRelSize = YADGAR_VIZ_CONFIG.node.size_3d || 8;
@@ -1740,172 +1744,33 @@ function applyFilters() {
   document.getElementById('s-vis').textContent = visCount;
 }
 
-// ── Detail panel ─────────────────────────────────────────────────────────────
-function showDetail(node) {
-  const panel = document.getElementById('right');
-  panel.classList.add('open');
-
-  if (node.type === 'wiki') {
-    document.getElementById('det-type').textContent = 'WIKI';
-    document.getElementById('det-title').textContent = node.label || node.slug || '';
-
-    const fill = document.getElementById('det-heat-fill');
-    const color = WIKI_CAT_COLOR[node.category] || '#8b949e';
-    fill.style.width = '100%';
-    fill.style.background = color;
-
-    const rows = [];
-
-    rows.push(`<div class="det-sec">
-      <div class="det-lbl">Category</div>
-      <div class="det-val">${esc(node.category || 'uncategorized')}</div>
-    </div>`);
-
-    if (node.slug)
-      rows.push(`<div class="det-sec">
-        <div class="det-lbl">Slug</div>
-        <div class="det-val" style="color:#8b949e">${esc(node.slug)}</div>
-      </div>`);
-
-    if (node.tags?.length)
-      rows.push(`<div class="det-sec">
-        <div class="det-lbl">Tags</div>
-        <div>${node.tags.map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</div>
-      </div>`);
-
-    if (node.updated_at)
-      rows.push(`<div class="det-sec">
-        <div class="det-lbl">Updated</div>
-        <div class="det-val" style="color:#8b949e">${String(node.updated_at).slice(0,19)}</div>
-      </div>`);
-
-    // Show connected edges summary
-    const conns = allLinks.filter(l => {
-      const s = l.source?.id??l.source, t = l.target?.id??l.target;
-      return s===node.id || t===node.id;
-    });
-    const byXref = conns.filter(l => l.type === 'wiki_crossref').length;
-    const byMemWiki = conns.filter(l => l.type === 'memory_wiki').length;
-    rows.push(`<div class="det-sec">
-      <div class="det-lbl">Connections</div>
-      <div class="det-val" style="color:#8b949e">${byXref} cross-refs · ${byMemWiki} source memories</div>
-    </div>`);
-
-    rows.push(`<div class="det-sec">
-      <div class="det-lbl">Node ID</div>
-      <div class="det-val" style="color:#8b949e">${esc(node.id)}</div>
-    </div>`);
-
-    // Placeholder for async content fetch
-    rows.push(`<div class="det-sec" id="wiki-content-sec">
-      <div class="det-lbl">Content</div>
-      <div class="det-val" id="wiki-content-body" style="color:#8b949e;font-style:italic">Loading…</div>
-    </div>`);
-
-    document.getElementById('det-body').innerHTML = rows.join('');
-
-    // Async fetch full wiki content via wiki_read endpoint
-    if (node.slug) {
-      _fetchWikiContent(node.slug);
-    } else {
-      const el = document.getElementById('wiki-content-body');
-      if (el) el.textContent = '(no slug)';
-    }
-    return;
-  }
-
-  // V3: universal fallback — handles 'memory', 'entity', and any future types
-  const typeLabel = (node.type || 'unknown').toUpperCase();
-  document.getElementById('det-type').textContent = typeLabel;
-  document.getElementById('det-title').textContent = (node.content || node.label || node.id || '').slice(0, 100);
-
-  const heat = node.heat || 0;
-  const fill = document.getElementById('det-heat-fill');
-  fill.style.width     = `${heat * 100}%`;
-  fill.style.background = heatColor(heat);
-
-  const rows = [];
-
-  rows.push(`<div class="det-sec">
-    <div class="det-lbl">Heat</div>
-    <div class="det-val">${heat.toFixed(4)}</div>
-  </div>`);
-
-  if (node.content)
-    rows.push(`<div class="det-sec">
-      <div class="det-lbl">Content</div>
-      <div class="det-val">${esc(node.content)}</div>
-    </div>`);
-
-  if (node.tags?.length)
-    rows.push(`<div class="det-sec">
-      <div class="det-lbl">Tags</div>
-      <div>${node.tags.map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</div>
-    </div>`);
-
-  if (node.directory)
-    rows.push(`<div class="det-sec">
-      <div class="det-lbl">Project</div>
-      <div class="det-val" style="color:#8b949e;word-break:break-all">${esc(node.directory)}</div>
-    </div>`);
-
-  if (node.created_at)
-    rows.push(`<div class="det-sec">
-      <div class="det-lbl">Created</div>
-      <div class="det-val" style="color:#8b949e">${String(node.created_at).slice(0,19)}</div>
-    </div>`);
-
-  // Show connected edges summary
-  const conns = allLinks.filter(l => {
-    const s = l.source?.id??l.source, t = l.target?.id??l.target;
-    return s===node.id || t===node.id;
+// ── Detail panel (v5.50.12) ───────────────────────────────────────────────────
+// Delegates to graph-detail.js module (imported via <script type="module"> below).
+// Lazy-initialised on first call so allLinks/heatColor/_wikiCatColor are live.
+let _detailPanel = null;
+function _getDetailPanel() {
+  if (_detailPanel) return _detailPanel;
+  const mod = window._graphDetailModule;
+  if (!mod) return null; // module not yet loaded (race — should not happen post-DOMContentLoaded)
+  _detailPanel = mod.createDetailPanel({
+    wikiCatColor:  _wikiCatColor,
+    heatColorFn:   heatColor,
+    allLinksFn:    () => allLinks,
+    fetchImpl:     (url) => fetch(DAEMON + url),
   });
-  const bySem = conns.filter(l => l.type === 'semantic').length;
-  const byTmp = conns.filter(l => l.type === 'temporal').length;
-  const byTrn = conns.filter(l => l.type === 'transition').length;
-  const byMemWiki = conns.filter(l => l.type === 'memory_wiki').length;
-  let connText = `${bySem} semantic · ${byTmp} temporal · ${byTrn} transition`;
-  if (byMemWiki) connText += ` · ${byMemWiki} wiki`;
-  rows.push(`<div class="det-sec">
-    <div class="det-lbl">Connections</div>
-    <div class="det-val" style="color:#8b949e">${connText}</div>
-  </div>`);
+  return _detailPanel;
+}
 
-  rows.push(`<div class="det-sec">
-    <div class="det-lbl">Node ID</div>
-    <div class="det-val" style="color:#8b949e">${esc(node.id)}</div>
-  </div>`);
-
-  document.getElementById('det-body').innerHTML = rows.join('');
+function showDetail(node) {
+  const panel = _getDetailPanel();
+  if (panel) { panel.showDetail(node); return; }
+  // Fallback (module not yet wired — should not happen in production)
+  const p = document.getElementById('right');
+  if (p) p.classList.add('open');
 }
 
 function closeDetail() { document.getElementById('right').classList.remove('open'); }
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-
-// ── Wiki content fetch (V2) ───────────────────────────────────────────────────
-async function _fetchWikiContent(slug) {
-  const el = document.getElementById('wiki-content-body');
-  if (!el) return;
-  try {
-    const r = await fetch(`${DAEMON}/api/wiki/read?slug=${encodeURIComponent(slug)}`);
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const d = await r.json();
-    // wiki_read returns {content, ...} or may wrap in result
-    const content = d.content || d.result?.content || '';
-    if (content) {
-      el.style.fontStyle = '';
-      el.style.color = '';
-      el.textContent = content.length > 800 ? content.slice(0, 800) + '…' : content;
-    } else {
-      el.textContent = '(no content)';
-    }
-  } catch (err) {
-    if (el) {
-      el.style.fontStyle = '';
-      el.textContent = `(fetch failed: ${err.message})`;
-    }
-  }
-}
 
 // ── Semantic search (V1) ──────────────────────────────────────────────────────
 let _searchPinnedIds = new Set();
@@ -2067,15 +1932,48 @@ function connectSSE() {
       if (msg.event === 'system_metrics') { updateSys(msg.data); return; }
       if (msg.event === 'daemon_health')  { updateDaemonHealth(msg.data); return; }
       if (msg.seq) lastSeq = msg.seq;
+      const mod = window._graphDetailModule;
       if (msg.event === 'memory_added' && msg.node) {
-        const n = msg.node;
-        n.label = (n.content||'').slice(0, 60);
-        n.__deg = 0; n.__match = false;
-        if (!allNodes.find(x => x.id === n.id)) {
-          allNodes.push(n);
+        // v5.50.12: delegate to ingestSseNode (sets type='memory' explicitly)
+        const added = mod
+          ? mod.ingestSseNode(msg, allNodes)
+          : (() => {
+              const n = msg.node;
+              n.type = 'memory';
+              n.label = (n.content||'').slice(0, 60);
+              n.__deg = 0; n.__match = false;
+              if (!allNodes.find(x => x.id === n.id)) { allNodes.push(n); return true; }
+              return false;
+            })();
+        if (added) {
           status(`+1 memory · ${allNodes.length} total`, 'ok');
           applyFilters();
         }
+      } else if ((msg.event === 'wiki_added' || msg.event === 'wiki_updated') && msg.node) {
+        // v5.50.12: upsert wiki node (sets type='wiki' explicitly)
+        const wasNew = mod
+          ? mod.ingestSseNode(msg, allNodes)
+          : (() => {
+              const n = msg.node; n.type = 'wiki';
+              n.__deg = n.__deg||0; n.__match = false;
+              const idx = allNodes.findIndex(x => x.id === n.id);
+              if (idx === -1) { allNodes.push(n); return true; }
+              Object.assign(allNodes[idx], n); return false;
+            })();
+        const verb = wasNew ? '+1 wiki' : 'wiki updated';
+        status(`${verb} · ${allNodes.length} total`, 'ok');
+        applyFilters();
+      } else if (msg.event === 'wiki_deleted' && msg.slug) {
+        // v5.50.12: remove wiki node by slug
+        if (mod) {
+          mod.removeSseNode(msg, allNodes);
+        } else {
+          for (let i = allNodes.length - 1; i >= 0; i--) {
+            if (allNodes[i].slug === msg.slug) allNodes.splice(i, 1);
+          }
+        }
+        status(`wiki removed · ${allNodes.length} total`, 'ok');
+        applyFilters();
       }
     } catch(_) {}
   };
@@ -2662,9 +2560,20 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
   import * as Overlays from './overlays.js';
   import { initBookmarksTab } from './bookmarks-tab.js';
   import { initControlTab } from './control.js';
+  import { nodeType as _nodeTypeModule, createDetailPanel, ingestSseNode, removeSseNode } from './graph-detail.js';
   window.YadgarTabs    = Tabs;
   window.YadgarInfo    = Info;
   window.YadgarOverlays = Overlays;
+
+  // v5.50.12: wire graph-detail module to the plain-script showDetail/SSE handlers.
+  // createDetailPanel is called lazily on first use so allLinks/wikiCatColor/heatColor
+  // are resolved from the live plain-script globals.
+  window._graphDetailModule = {
+    nodeType: _nodeTypeModule,
+    createDetailPanel,
+    ingestSseNode,
+    removeSseNode,
+  };
 
   // ── v5.50.1: Init Bookmarks tab ───────────────────────────────────────────
   // Initialise immediately (module runs after DOM parsed); the tab is hidden

@@ -7,6 +7,14 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.50.12] — 2026-06-12
+
+### Fixed
+- **Viz detail panel stale-state bug (the reported "WIKI header over MEMORY body" symptom).** `showDetail()` now fully resets every shared panel element (`det-type`, `det-title`, `det-body`, `det-heat-fill`) unconditionally before branching, so no prior selection's header/title can persist into a newer selection. A monotonic `selectionId` guard prevents a late `_fetchWikiContent` async fetch from writing into a panel that has already advanced to a newer node. Logic extracted into `graph-detail.js` for unit testability.
+- **SSE `memory_added` missing `type` field.** Backend `_phase_post_write.py` now includes `"type": "memory"` in the SSE node payload; frontend `ingestSseNode` sets `node.type='memory'` explicitly from the event name (never trusts payload) so SSE-added memories no longer render as "UNKNOWN".
+- **No SSE handler for wiki events.** `sse.onmessage` now handles `wiki_added`/`wiki_updated` (upsert node with `type='wiki'`, dedup by id) and `wiki_deleted` (remove by slug). Backend `wiki.py` now includes `"type": "wiki"` in both wiki SSE emit sites.
+- **Split-brain type check.** Introduced `nodeType(node)` helper (normalises to lowercase trimmed string) used consistently for branch selection, header label, `_nodeColorFor`, and `_makeNodeThreeObject` gate — header and body can no longer disagree due to casing or whitespace in `node.type`.
+
 ## [5.50.11] — 2026-06-11
 
 ### Changed
