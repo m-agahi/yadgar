@@ -42,13 +42,15 @@ Using the P2 precompute infra (cheap, off-query):
 - Skip `semantic`/`temporal` per the contract (redundant/weak).
 TDD: a co-recalled memory ranks higher; a memory with a linked wiki page surfaces it; bridge respects scope/branch.
 
-## v5.54.3 — Phase 4: Viz fidelity (show the actual graph, legibly)
+## v5.54.3 — Phase 4: Viz fidelity (ALL edges visible, toggleable, role-distinguished)
 
-- **Render the real entity graph** — all typed relations (`co_occurrence/imports/calls/resolved_by/caused_by`), not just `causal` (`graph_api.py:230-251`). The graph you look at should be the graph that drives retrieval.
-- **Distinguish edge roles visually** — retrieval-active edges (entity, transition, bridges) styled distinctly from display-only (`semantic`/`temporal`); use the v5.50.13 Help-tab legend + `EDGE_TYPES`/`viz_meta.py` as the single source.
-- **Level-of-detail (anti-hairball):** default to the selected-node neighborhood + edge-type toggles + a strength/weight threshold slider; "show all" is opt-in and warned. Accurate AND legible.
-- Optionally surface each edge's retrieval contribution (weight) so the viz teaches what actually matters.
-TDD: viz payload includes entity edges; role styling driven by the contract; LOD filters work; legend covers all rendered types.
+Stance (user-confirmed 2026-06-12): show **all** edge types — it showcases the system's actual capabilities — with per-type toggles to manage convolution. The toggle dissolves the hairball objection; the goal is the FULL picture, honestly labeled.
+
+- **Render EVERY edge type, each toggleable.** Including the currently-INVISIBLE entity graph (`co_occurrence/imports/calls/resolved_by/caused_by`, not just `causal` — `graph_api.py:230-251`) which is the biggest hidden capability (it powers retrieval). Per-type on/off toggles (extend the existing edge-legend overlay, `index.html:944`). Sensible default-on set (retrieval-active + structural); everything flippable on.
+- **Role-distinguished styling (honesty / I29 coherence).** "Show all" must NOT style a decorative edge identically to a load-bearing one — that would misrepresent capability. Visually distinguish **retrieval-active** (entity, `transition`, memory↔wiki bridges — these move recall) from **structural/display** (`semantic`=KNN, `temporal`=slot). Drive styling + the per-type legend from the P1 EDGE_CONTRACT + `viz_meta.py`/`EDGE_TYPES` (v5.50.13 single source). Optionally surface each edge's retrieval-contribution weight so the viz TEACHES what matters.
+- **Lazy-compute per toggle (performance).** Do NOT build every edge type upfront — `semantic` is ~O(n²) KNN; on thousands of nodes that's costly even when toggled off. Compute an edge type's data only when its toggle flips on (or for the selected-node neighborhood). Keep `/api/graph` cheap by default; fetch heavy edge types on demand.
+- Optional strength/weight threshold slider per type to thin dense edge sets.
+TDD: every edge type appears when its toggle is on + absent when off; entity edges render; role styling driven by the contract; heavy edge types are lazy (not computed until requested); legend covers all types with their role.
 
 ## v5.54.4 — Phase 5: GC the unused edges
 
