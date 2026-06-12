@@ -1440,12 +1440,15 @@ def _project_brief_signals(
     # v5.42.0: DLQ rejection signal — pending_rejections_count + review_rejections action.
     pending_rejections_count = _apply_rejection_signal(resolved, recommended_actions)
 
+    # v5.53.1: compute real stale wiki count (TTL-cached, cheap for hot path).
+    stale_wiki_count = _compute_stale_wiki_count(resolved)
+
     result: dict = {
         "_resolved_directory": resolved,
         "_mode": mode,
         "init_memory_present": init_memory_present,
         "active_work_present": active_work_present,
-        "stale_wiki_count": 0,
+        "stale_wiki_count": stale_wiki_count,
         "stale_checkpoint_hours": stale_checkpoint_hours,
         "active_work_age_hours": active_work_age_hours,
         "init_memory_age_hours": init_memory_age_hours,
@@ -1540,7 +1543,8 @@ def _project_brief_catalog_full(ctx: dict) -> dict:
         "top_anchors_global": top_anchors_global,
         "top_anchors_project": top_anchors_project,
         "recent_episode_count": len(ep_rows),
-        "stale_wiki_count": 0,
+        # v5.53.1: real stale count (TTL-cached).
+        "stale_wiki_count": _compute_stale_wiki_count(resolved),
         "hot_memories": _build_hot_memories(storage, resolved, limit=3, snippet=100),
         "key_wiki_pages": _build_wiki_pages(storage, limit=3),
         "checkpoint": _build_checkpoint_dict(checkpoint_rows),
@@ -1778,11 +1782,94 @@ def update_active_work(directory: str, content: str, branch_hint: str | None = N
     return result
 
 
+# ── Wiki stale-count helpers (v5.53.1) ─────────────────────────────────
+
+# Module-level TTL cache: (resolved_dir -> (count, computed_at_epoch))
+_stale_count_cache: dict[str, tuple[int, float]] = {}
+
+
+def _is_wiki_page_stale(md_path: Path, yaml_mod) -> bool:
+    """Return True if a single .md wiki page has hash drift vs its source files.
+
+    Extracted from _scan_stale_wiki_slugs to reduce cyclomatic complexity (I13).
+    Never raises — returns False on any read/parse error.
+    """
+    import hashlib as _hl  # noqa: PLC0415
+
+    try:
+        raw = md_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    fm = _parse_frontmatter(raw, yaml_mod)
+    if fm is None:
+        return False
+    stored_hash = fm.get("hash") or fm.get("sha256") or ""
+    source_files = fm.get("source_files") or fm.get("sources") or []
+    if isinstance(source_files, str):
+        source_files = [source_files]
+    if not source_files:
+        return False
+    current_hash = _compute_source_hash(source_files, _hl)
+    return bool((current_hash or stored_hash) and current_hash != stored_hash)
+
+
+def _scan_stale_wiki_slugs(directory: str) -> list[str]:
+    """Pure side-effect-free scan of .local-review/wiki/*.md for hash-drift.
+
+    Returns list of stale slugs.  Does NOT write a queue file, does NOT detect
+    branch — callers that need those concerns use _wiki_refresh_stale_impl.
+    Called from _compute_stale_wiki_count (signals path, TTL-cached) and
+    re-used by _wiki_refresh_stale_impl.
+    """
+    try:
+        import yaml as _yaml  # type: ignore[import]  # noqa: PLC0415
+    except ImportError:
+        _yaml = None
+
+    wiki_dir = Path(directory) / ".local-review" / "wiki"
+    if not wiki_dir.exists():
+        return []
+
+    return [
+        md_path.stem
+        for md_path in wiki_dir.glob("*.md")
+        if md_path.exists() and _is_wiki_page_stale(md_path, _yaml)
+    ]
+
+
+def _compute_stale_wiki_count(resolved: str) -> int:
+    """Return stale wiki page count for resolved directory, TTL-cached.
+
+    Cheap enough for the signals hot path (I8/I9): disk scan runs at most
+    once per STALE_COUNT_CACHE_TTL_S seconds per project directory.
+    Returns 0 on any error (graceful degradation).
+    """
+    try:
+        cfg = get_settings()
+        ttl = getattr(cfg, "STALE_COUNT_CACHE_TTL_S", 300)
+        now = time.monotonic()
+        if ttl > 0 and resolved in _stale_count_cache:
+            cached_count, cached_at = _stale_count_cache[resolved]
+            if (now - cached_at) < ttl:
+                return cached_count
+        count = len(_scan_stale_wiki_slugs(resolved))
+        _stale_count_cache[resolved] = (count, now)
+        return count
+    except Exception:
+        return 0
+
+
 # ── Wiki refresh helpers ────────────────────────────────────────────────
 
 
 def _parse_frontmatter(raw: str, yaml_mod) -> dict | None:
-    """Parse YAML frontmatter from a markdown file. Returns None if no frontmatter."""
+    """Parse YAML frontmatter from a markdown file. Returns None if no frontmatter.
+
+    v5.53.1: falls back to ruamel.yaml when the explicit yaml_mod argument is None,
+    allowing full YAML list/nested-value parsing even when PyYAML is not installed.
+    The terminal fallback is a minimal single-line key:value parser (hash + flat scalars
+    only — cannot parse multi-line lists).
+    """
     if not raw.startswith("---"):
         return None
     end = raw.find("\n---", 3)
@@ -1797,7 +1884,20 @@ def _parse_frontmatter(raw: str, yaml_mod) -> dict | None:
         except Exception as _e:
             logger.debug("wiki_refresh_stale: YAML parse error: %s", _e)
             return None
-    # Fallback: very minimal key: value parser
+    # v5.53.1: try ruamel.yaml as second YAML backend (available in yadgar deps).
+    try:
+        from ruamel.yaml import YAML as _RYAML  # noqa: PLC0415
+
+        _ry = _RYAML()
+        _ry.preserve_quotes = True
+        import io as _io  # noqa: PLC0415
+
+        data = _ry.load(_io.StringIO(fm_text))
+        if isinstance(data, dict):
+            return dict(data)
+    except Exception:
+        pass
+    # Terminal fallback: very minimal key: value parser (scalars only).
     result: dict = {}
     for line in fm_text.splitlines():
         if ":" in line:
@@ -1870,45 +1970,41 @@ def _wiki_refresh_stale_impl(
     if not wiki_dir.exists():
         return {
             "stale": [],
+            "stale_count": 0,
             "dispatched_agent_id": None,
             "branch": branch,
             "skipped_reason": None,
+            "suggested_calls": [],
         }
 
-    stale: list[str] = []
-    # Read the rest of the implementation from the original
-    # (included below verbatim)
-
-    # Collect candidate .md files
-    if slugs:
-        candidates = [wiki_dir / f"{slug}.md" for slug in slugs]
+    # v5.53.1: full-scan path reuses _scan_stale_wiki_slugs (side-effect-free helper,
+    # also used by the TTL-cached signals path).  Slug-filtered path keeps its own loop
+    # so callers can check specific pages without a full directory scan.
+    if not slugs:
+        stale = _scan_stale_wiki_slugs(directory)
     else:
-        candidates = list(wiki_dir.glob("*.md"))
-
-    for md_path in candidates:
-        if not md_path.exists():
-            continue
-        try:
-            raw = md_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        fm = _parse_frontmatter(raw, _yaml)
-        if fm is None:
-            continue
-        stored_hash = fm.get("hash") or fm.get("sha256") or ""
-        source_files = fm.get("source_files") or fm.get("sources") or []
-        if isinstance(source_files, str):
-            source_files = [source_files]
-        if not source_files:
-            continue
-        current_hash = _compute_source_hash(source_files, _hashlib)
-        # Mark stale when:
-        #   1. current_hash is truthy (all files exist) and differs from stored_hash
-        #   2. current_hash is empty (missing source file) and stored_hash is truthy
-        # Both conditions reduce to: (current_hash or stored_hash) and current_hash != stored_hash
-        if (current_hash or stored_hash) and current_hash != stored_hash:
-            slug = md_path.stem
-            stale.append(slug)
+        # Slug-filtered scan (explicit subset)
+        stale = []
+        for slug in slugs:
+            md_path = wiki_dir / f"{slug}.md"
+            if not md_path.exists():
+                continue
+            try:
+                raw = md_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            fm = _parse_frontmatter(raw, _yaml)
+            if fm is None:
+                continue
+            stored_hash = fm.get("hash") or fm.get("sha256") or ""
+            source_files = fm.get("source_files") or fm.get("sources") or []
+            if isinstance(source_files, str):
+                source_files = [source_files]
+            if not source_files:
+                continue
+            current_hash = _compute_source_hash(source_files, _hashlib)
+            if (current_hash or stored_hash) and current_hash != stored_hash:
+                stale.append(slug)
 
     if stale:
         import json as _json
@@ -1919,12 +2015,26 @@ def _wiki_refresh_stale_impl(
         ts = _time.strftime("%Y%m%dT%H%M%S")
         queue_file = queue_dir / f"{ts}.json"
         queue_file.write_text(_json.dumps({"stale": stale, "branch": branch, "requested_at": ts}))
+        # Invalidate the TTL cache so next signals call reflects the freshly detected list.
+        _stale_count_cache.pop(directory, None)
+
+    # v5.53.1: surface stale slugs prominently so the stop-hook can dispatch regen.
+    suggested_calls = (
+        [
+            f"Agent(subagent_type='general-purpose', prompt='/repo-wiki:repo-wiki update {s}')"
+            for s in stale
+        ]
+        if stale
+        else []
+    )
 
     return {
         "stale": stale,
+        "stale_count": len(stale),
         "dispatched_agent_id": None,
         "branch": branch,
         "skipped_reason": None,
+        "suggested_calls": suggested_calls,
     }
 
 
