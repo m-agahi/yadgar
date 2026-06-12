@@ -224,7 +224,7 @@ class WikiStore:
 
     # ── Public API ────────────────────────────────────────────────────────
 
-    def add(
+    def add(  # noqa: PLR0913 — v5.53.2 added page_type; all params needed for typed pages
         self,
         title: str,
         content: str,
@@ -234,12 +234,17 @@ class WikiStore:
         confidence: str = "medium",
         branch: str | None = None,
         directory_context: str | None = None,
+        page_type: str | None = None,
     ) -> dict:
         """Create or update a wiki page. Upserts by slug.
 
         v5.42.5: directory_context — absolute project path or 'global'.
         Defaults to 'global' when None (backward-compat for callers that pre-date
         the directory contract). DP-3: trailing slash stripped.
+        v5.53.2: page_type — optional page-type tag from PAGE_TYPES registry.
+        When provided, stored with wiki_schema_version=WIKI_SCHEMA_VERSION.
+        When None, page_type is not written (backward-compat: existing pages
+        without page_type continue to work exactly as before).
         """
         slug = self._slugify(title)
         if category not in self.CATEGORIES:
@@ -280,6 +285,13 @@ class WikiStore:
                 "updated_at": now,
                 "directory_context": effective_dir,
             }
+            # v5.53.2: only update page_type when caller provides one (don't clobber
+            # an existing type with None — preserves type set in a previous write).
+            if page_type is not None:
+                from yadgar.wiki_meta import WIKI_SCHEMA_VERSION  # noqa: PLC0415
+
+                updates["page_type"] = page_type
+                updates["wiki_schema_version"] = WIKI_SCHEMA_VERSION
             self._storage.update_wiki_page(existing["id"], updates)
             self._sync_crossrefs(slug, links)
             self._link_memories(slug, source_memory_ids)
@@ -301,6 +313,12 @@ class WikiStore:
             "updated_at": now,
             "directory_context": effective_dir,
         }
+        # v5.53.2: stamp page_type + wiki_schema_version on insert when provided.
+        if page_type is not None:
+            from yadgar.wiki_meta import WIKI_SCHEMA_VERSION  # noqa: PLC0415
+
+            page["page_type"] = page_type
+            page["wiki_schema_version"] = WIKI_SCHEMA_VERSION
         page_id = self._storage.insert_wiki_page(page, branch=branch)
         page["id"] = page_id
         # v5.43.0 (DP-2): include branch in returned dict so callers (e.g. wiki_approve)
@@ -612,8 +630,16 @@ class WikiStore:
 
         Returns dict with:
         - issues: list of {page, severity, type, message}
-        - stats: {total_pages, orphan_count, stale_count, broken_ref_count, low_confidence_count}
+        - stats: {total_pages, orphan_count, stale_count, broken_ref_count,
+                  low_confidence_count, format_violation_count}
+
+        v5.53.2: for pages with a page_type, checks that all required sections
+        (from PAGE_TYPES registry) are present as ## headings. Missing sections
+        are reported as warn-level "missing_section" violations. Pages without
+        page_type are skipped (no format check — backward-compat).
         """
+        from yadgar.wiki_meta import check_page_type_format  # noqa: PLC0415
+
         pages = self._storage.list_wiki_pages()
         slug_set = {p["slug"] for p in pages}
         issues: list[dict] = []
@@ -631,6 +657,7 @@ class WikiStore:
         stale_count = 0
         broken_ref_count = 0
         low_confidence_count = 0
+        format_violation_count = 0
 
         now = datetime.now(UTC)
         for page in pages:
@@ -691,6 +718,13 @@ class WikiStore:
                     }
                 )
 
+            # v5.53.2: format check — only for typed pages (untyped pages skipped)
+            page_type = page.get("page_type")
+            if page_type:
+                fmt = check_page_type_format(slug, page_type, page.get("content", ""))
+                format_violation_count += len(fmt)
+                issues.extend(fmt)
+
         return {
             "issues": issues,
             "stats": {
@@ -699,6 +733,7 @@ class WikiStore:
                 "stale_count": stale_count,
                 "broken_ref_count": broken_ref_count,
                 "low_confidence_count": low_confidence_count,
+                "format_violation_count": format_violation_count,
             },
         }
 

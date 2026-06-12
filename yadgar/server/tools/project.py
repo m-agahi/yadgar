@@ -494,12 +494,13 @@ def _build_wiki_catalog(storage, resolved: str) -> dict:
     total = len(rows)
     groups: dict[str, dict] = {}
     for row in rows:
-        cat = row.get("category") or "uncategorized"
+        # v5.53.2: group by page_type when present, fall back to category.
+        group_key = row.get("page_type") or row.get("category") or "uncategorized"
         title = (row.get("title") or "").strip() or row.get("slug", "")
         slug = row.get("slug", "")
-        if cat not in groups:
-            groups[cat] = {"pages": [], "more": 0, "prefix_counts": {}}
-        entry = groups[cat]
+        if group_key not in groups:
+            groups[group_key] = {"pages": [], "more": 0, "prefix_counts": {}}
+        entry = groups[group_key]
         if len(entry["pages"]) < _WIKI_CATALOG_MAX_PER_GROUP:
             entry["pages"].append({"slug": slug, "title": title})
         else:

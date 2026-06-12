@@ -76,11 +76,13 @@ def _wiki_add_sync_write(
     append: bool,
     replace_slug: str | None,
     directory_context: str | None = None,
+    page_type: str | None = None,
 ) -> dict:
     """Execute the sync wiki_add write path (QueueDrainer or fallback).
 
     Handles replace_slug overwrite, append merge, and normal upsert.
     v5.42.5: directory_context threaded through to WikiStore.add().
+    v5.53.2: page_type threaded through to WikiStore.add().
     """
     # replace_slug: overwrite a named existing page (gate already bypassed)
     if replace_slug is not None:
@@ -95,6 +97,7 @@ def _wiki_add_sync_write(
                 confidence,
                 branch=branch,
                 directory_context=directory_context,
+                page_type=page_type,
             )
             result.pop("embedding", None)
             _push_event(
@@ -126,6 +129,7 @@ def _wiki_add_sync_write(
             confidence,
             branch=branch,
             directory_context=directory_context,
+            page_type=page_type,
         )
     result.pop("embedding", None)
     event_type = "wiki_updated" if result.get("_merged") else "wiki_added"
@@ -160,6 +164,7 @@ def _wiki_add_wait_path(
     new_slug: str,
     force: bool = False,
     directory_context: str | None = None,
+    page_type: str | None = None,
 ) -> dict:
     """Handle wiki_add(wait=True): enqueue + wait_for_job to preserve FIFO ordering.
 
@@ -193,6 +198,7 @@ def _wiki_add_wait_path(
             append,
             replace_slug,
             directory_context=directory_context,
+            page_type=page_type,
         )
         result["stored"] = True
         result["queued"] = False
@@ -201,6 +207,7 @@ def _wiki_add_wait_path(
 
     # Enqueue like the async path so FIFO ordering is preserved.
     # v5.41.5: include force + replace_slug so drainer knows when to bypass gate.
+    # v5.53.2: include page_type so typed pages survive the queue path.
     try:
         job_id = _get_file_queue().enqueue(
             "wiki_add",
@@ -218,6 +225,7 @@ def _wiki_add_wait_path(
                 "force": force,
                 "replace_slug": replace_slug,
                 "directory_context": directory_context,
+                "page_type": page_type,
             },
         )
     except Exception as fq_exc:
@@ -233,6 +241,7 @@ def _wiki_add_wait_path(
             append,
             replace_slug,
             directory_context=directory_context,
+            page_type=page_type,
         )
         result["stored"] = True
         result["queued"] = False
@@ -353,6 +362,7 @@ def wiki_add(
     replace_slug: str | None = None,
     wait: bool = False,
     directory: str | None = None,
+    page_type: str | None = None,
 ) -> dict:
     """Create or update a wiki page. Content can include [[slug]] cross-references.
 
@@ -378,6 +388,10 @@ def wiki_add(
 
     Categories: architecture, decision, pattern, debugging, reference, convention, fact, analysis.
     Confidence: high, medium, low.
+    page_type: optional — one of: function, module, service, architecture, decision, analysis.
+      When provided, stored with wiki_schema_version=1. Omit to leave page untyped (backward-compat).
+      Typed pages are format-checked by wiki_lint (missing required sections reported as warnings).
+      wiki_add never rejects a write due to page_type/template mismatch — lint is advisory only.
 
     Branch resolution (evaluated in priority order):
     1. branch (non-empty string) — caller knows the branch explicitly; used as-is.
@@ -463,6 +477,7 @@ def wiki_add(
             append,
             replace_slug,
             directory_context=_effective_dir,
+            page_type=page_type,
         )
 
     # wait=True: enqueue first (preserves FIFO), then block until drainer commits.
@@ -482,11 +497,13 @@ def wiki_add(
             _new_slug,
             force=force,
             directory_context=_effective_dir,
+            page_type=page_type,
         )
 
     # Async path (wait=False default): enqueue and return immediately.
     # v5.41.5: similarity gate is deferred to drainer — caller gets
     # {similarity_check: "deferred"} and must use wait=True for sync rejection.
+    # v5.53.2: include page_type so typed pages survive the queue path.
     try:
         _get_file_queue().enqueue(
             "wiki_add",
@@ -505,6 +522,7 @@ def wiki_add(
                 "force": force,
                 "replace_slug": replace_slug,
                 "directory_context": _effective_dir,
+                "page_type": page_type,
             },
         )
         return {
@@ -529,6 +547,7 @@ def wiki_add(
         append,
         replace_slug,
         directory_context=_effective_dir,
+        page_type=page_type,
     )
 
 
