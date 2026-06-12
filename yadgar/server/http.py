@@ -1632,27 +1632,27 @@ async def api_viz_config(request: Request) -> JSONResponse:
     Frontend fetches this before graph init and applies to all viz constants.
     Fallback: if this endpoint is unreachable, frontend uses hardcoded defaults.
 
-    Response: nested dict with keys: node, edge, physics, layout, search.
+    Response: nested dict with keys: node, edge, physics, layout, search, legend.
+    v5.50.13: added legend block; category_colors built by iterating CATEGORIES.
     """
     from yadgar.config import get_settings  # noqa: PLC0415
+    from yadgar.viz_meta import (  # noqa: PLC0415
+        build_category_colors,
+        build_edge_colors,
+        build_legend,
+    )
 
     s = get_settings()
+    category_colors = build_category_colors(s)
+    edge_color = build_edge_colors(s)
+
     data = {
         "node": {
             "size_3d": s.VIZ_NODE_SIZE_3D,
             "size_2d": s.VIZ_NODE_SIZE_2D,
             # wiki_shape: config default only; mesh renderer deferred (see PLAN_V5_10_7_3)
             "wiki_shape": s.VIZ_WIKI_SHAPE,
-            "category_colors": {
-                "architecture": s.VIZ_CAT_COLOR_ARCHITECTURE,
-                "decision": s.VIZ_CAT_COLOR_DECISION,
-                "pattern": s.VIZ_CAT_COLOR_PATTERN,
-                "debugging": s.VIZ_CAT_COLOR_DEBUGGING,
-                "reference": s.VIZ_CAT_COLOR_REFERENCE,
-                "convention": s.VIZ_CAT_COLOR_CONVENTION,
-                "fact": s.VIZ_CAT_COLOR_FACT,
-                "analysis": s.VIZ_CAT_COLOR_ANALYSIS,
-            },
+            "category_colors": category_colors,
             "heat": {
                 "hue_start": s.VIZ_HEAT_HUE_START,
                 "hue_end": s.VIZ_HEAT_HUE_END,
@@ -1663,13 +1663,7 @@ async def api_viz_config(request: Request) -> JSONResponse:
             },
         },
         "edge": {
-            "color": {
-                "semantic": s.VIZ_EDGE_COLOR_SEMANTIC,
-                "temporal": s.VIZ_EDGE_COLOR_TEMPORAL,
-                "transition": s.VIZ_EDGE_COLOR_TRANSITION,
-                "wiki_crossref": s.VIZ_EDGE_COLOR_WIKI_CROSSREF,
-                "memory_wiki": s.VIZ_EDGE_COLOR_MEMORY_WIKI,
-            },
+            "color": edge_color,
             "width_3d_multiplier": s.VIZ_EDGE_WIDTH_3D_MULTIPLIER,
             "arrow_len": s.VIZ_EDGE_ARROW_LEN,
             "opacity": s.VIZ_EDGE_OPACITY,
@@ -1690,6 +1684,7 @@ async def api_viz_config(request: Request) -> JSONResponse:
             "pinned_color": s.VIZ_SEARCH_PINNED_COLOR,
             "dim_opacity": s.VIZ_SEARCH_DIM_OPACITY,
         },
+        "legend": build_legend(s),
     }
     return JSONResponse(data, headers=_CORS)
 
