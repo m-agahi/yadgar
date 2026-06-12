@@ -160,6 +160,8 @@ _MEMORY_UPDATABLE_FIELDS = frozenset(
         # v5.35.1 — were missing since initial implementation (same class as v5.17.0 confidence fix)
         "last_accessed",
         "access_count",
+        # v5.54.1 — precomputed graph prior (consolidation phase, additive boost in fusion)
+        "graph_prior",
     }
 )
 

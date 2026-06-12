@@ -291,6 +291,8 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_STATS_CACHE_TTL_S", "5", "int"),
     # v5.53.1: stale wiki count cache TTL
     ConfigEntry("YADGAR_STALE_COUNT_CACHE_TTL_S", "300", "int"),
+    # v5.54.1: precomputed graph prior weight (additive boost in all profiles)
+    ConfigEntry("YADGAR_WRRF_GRAPH_PRIOR_WEIGHT", "0.2", "float"),
 ]
 
 

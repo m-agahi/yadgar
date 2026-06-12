@@ -220,6 +220,22 @@ class _FusionMixin:
 
             fused = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
 
+        # v5.54.1: Apply precomputed graph_prior boost — additive, ALL profiles, O(1).
+        # The prior is a scalar stored on each memory row during consolidation; reading
+        # it here involves NO graph traversal, NO entity extraction, NO PPR computation.
+        # This satisfies the I8/I9 latency constraint for the fast profile.
+        # Confidence gating is intentionally bypassed (prior is additive, not a signal).
+        gp_weight = getattr(self._settings, "WRRF_GRAPH_PRIOR_WEIGHT", 0.0)
+        if gp_weight > 0 and fused_scores:
+            candidate_ids = list(fused_scores.keys())
+            priors = self._storage.get_memory_graph_priors(candidate_ids)
+            for mid, gp in priors.items():
+                if gp and mid in fused_scores:
+                    fused_scores[mid] = fused_scores[mid] + gp_weight * gp
+            # Re-sort after applying the boost so high-prior candidates aren't
+            # dropped by the rerank_pool truncation in _build_initial_results.
+            fused = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
+
         return fused, fused_scores
 
     def _build_initial_results(
