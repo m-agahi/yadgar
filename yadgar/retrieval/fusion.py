@@ -12,11 +12,19 @@ logger = logging.getLogger(__name__)
 # balanced: all 4 signals + cross-encoder — default
 # full:     all 4 signals + cross-encoder + NLI — maximum quality
 PROFILES: dict[str, dict] = {
+    # fast: BM25+HNSW only, no reranking, small candidate pool, no query analysis.
+    # Used by all hook handlers (prompt-recall, instructions-loaded, subagent-start).
+    # Candidate pool multiplier comes from FAST_PROFILE_CANDIDATE_MULTIPLIER (default 3)
+    # instead of the global CANDIDATE_POOL_MULTIPLIER (default 20).
+    # skip_query_analysis=True skips _pseudo_hyde_expand + _extract_query_entities +
+    # query routing intersection, reducing per-call overhead for short hook queries.
     "fast": {
         "signals": ["vector", "fts"],
         "cross_encoder": False,
         "nli": False,
         "multi_passage": False,
+        "skip_query_analysis": True,
+        "use_fast_candidate_multiplier": True,
     },
     "balanced": {
         "signals": ["vector", "fts", "ppr", "spreading"],

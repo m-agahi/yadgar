@@ -18,6 +18,7 @@ Collectors:
 - yadgar_signals_payload_oversized_total     Counter — signals mode payload exceeded SIGNALS_TOKEN_BUDGET_SOFT
 - yadgar_archive_purged_total               Counter — memory_archive rows deleted by nightly retention purge
 - yadgar_archive_retention_skipped_total{reason} Counter — rows skipped by retention purge (protected|anchor|recent)
+- yadgar_hook_recall_timeout_total{handler} Counter — hook recall() calls exceeding HOOK_RECALL_TIMEOUT_S latency budget
 """
 
 from __future__ import annotations
@@ -599,6 +600,19 @@ yadgar_loop_errors_total = Counter(
 yadgar_signals_payload_oversized_total = Counter(
     "yadgar_signals_payload_oversized_total",
     "Total project_brief(mode='signals') calls where payload exceeded SIGNALS_TOKEN_BUDGET_SOFT",
+    registry=_registry,
+)
+
+# ── v5.51.0 — hook recall latency budget timeout counter (I23) ───────────────
+# Emitted by yadgar/server/http.py _recall_with_timeout() when asyncio.wait_for
+# exceeds HOOK_RECALL_TIMEOUT_S.
+# handler labels: "prompt-recall" | "instructions-loaded" | "subagent-start"
+
+yadgar_hook_recall_timeout_total = Counter(
+    "yadgar_hook_recall_timeout_total",
+    "Total hook recall() calls that exceeded the HOOK_RECALL_TIMEOUT_S latency budget "
+    "and returned an empty result. Monitor this counter to tune the timeout default.",
+    ["handler"],
     registry=_registry,
 )
 
