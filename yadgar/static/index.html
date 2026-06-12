@@ -1403,34 +1403,104 @@ async function loadVizConfig() {
     // v5.50.13: legend block for Help tab renderer
     if (cfg.legend) YADGAR_VIZ_CONFIG.legend = cfg.legend;
   } catch (_) { /* silent fallback */ }
+  // v5.54.3: build role/color/lazy map from legend for styling
+  _buildEdgeTypeMapFromConfig();
 }
 
 // Convenience aliases — updated after loadVizConfig() runs
 function _edgeColor() { return YADGAR_VIZ_CONFIG.edge.color; }
 function _wikiCatColor() { return YADGAR_VIZ_CONFIG.node.category_colors; }
 
-// ── Edge legend overlay renderer ────────────────────────────────────────────
-// v5.50.13: Update overlay labels/colors from config.legend.edges (single source).
-// Updates swatch color + label text in-place — NEVER replaces <input> elements.
-// The deferred-module bridge attaches 'change' listeners to the hardcoded <input>s
-// before this runs; replacing them would silently orphan those listeners.
-// Key→checkboxId: underscore→kebab (wiki_crossref → fo-show-wiki-crossref).
+// ── Edge legend overlay renderer (v5.54.3) ──────────────────────────────────
+// Generates one labeled checkbox row per edge type from config.legend.edges
+// (the single source — viz_meta.py EDGE_TYPES). Each row has a stable
+// fo-show-<key> ID; listeners are wired AT CREATION (not orphaned on re-render).
+//
+// v5.50.13 approach: update-in-place (avoid orphaning listeners wired externally).
+// v5.54.3 approach: create-if-missing + update-in-place for each type.
+//   - New edge types (entity relations, causal) get rows created dynamically.
+//   - Existing rows (semantic/temporal/etc.) are updated in-place (label+color).
+//   - Listeners are always wired at creation — never orphaned.
+//
+// Role badge: shows "[retrieval]" or "[display]" next to label.
+// Lazy badge: shows "[lazy]" for types fetched on-demand.
 function _renderEdgeLegendOverlay() {
   const edges = YADGAR_VIZ_CONFIG.legend && YADGAR_VIZ_CONFIG.legend.edges;
   if (!edges || !edges.length) return; // keep fallback static content
+  const body = document.getElementById('fo-edge-legend-body');
+  if (!body) return;
+
   for (const edge of edges) {
     const cbKey = (edge.key || '').replace(/_/g, '-');
-    const cb = document.getElementById('fo-show-' + cbKey);
-    if (!cb) continue; // edge type has no filter checkbox (e.g. causal) — skip
-    const lbl = cb.closest('label');
-    if (!lbl) continue;
-    // Update swatch color (the <span> immediately after the checkbox)
-    const swatch = lbl.querySelector('span');
-    if (swatch) swatch.style.color = edge.color || '#484f58';
-    // Update label text node (last child text node after the swatch)
-    const textNodes = [...lbl.childNodes].filter(n => n.nodeType === Node.TEXT_NODE);
-    const lastText = textNodes[textNodes.length - 1];
-    if (lastText) lastText.textContent = ' ' + (edge.label || edge.key);
+    const cbId = 'fo-show-' + cbKey;
+    let cb = document.getElementById(cbId);
+
+    if (!cb) {
+      // ── Create new row for this edge type ──────────────────────────────────
+      const lbl = document.createElement('label');
+      lbl.style.pointerEvents = 'auto';
+      // Role badge CSS class
+      lbl.className = 'edge-legend-row' + (edge.role === 'retrieval' ? ' edge-role-retrieval' : ' edge-role-display');
+
+      cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.id = cbId;
+      cb.checked = edge.default_on !== false;
+      lbl.appendChild(cb);
+
+      const swatch = document.createElement('span');
+      swatch.style.color = edge.color || '#484f58';
+      swatch.textContent = '■';
+      lbl.appendChild(swatch);
+
+      const labelText = document.createTextNode(' ' + (edge.label || edge.key));
+      lbl.appendChild(labelText);
+
+      // Role badge
+      if (edge.role) {
+        const badge = document.createElement('span');
+        badge.className = 'edge-role-badge';
+        badge.textContent = ' [' + edge.role + (edge.lazy ? ', lazy' : '') + ']';
+        badge.style.fontSize = '9px';
+        badge.style.color = edge.role === 'retrieval' ? '#3fb950' : '#6e40c9';
+        badge.style.opacity = '0.8';
+        lbl.appendChild(badge);
+      }
+
+      body.appendChild(lbl);
+
+      // Wire change listener at creation (never orphaned — only created once)
+      cb.addEventListener('change', () => {
+        // Update applyFilters state and re-filter
+        _edgeToggleState[edge.key] = cb.checked;
+        // Lazy types: trigger on-demand fetch when flipped ON for first time
+        if (edge.lazy && cb.checked && !_lazyEdgesLoaded[edge.key]) {
+          _fetchLazyEdges(edge.key);
+        }
+        applyFilters();
+      });
+    } else {
+      // ── Update existing row in-place (don't replace <input> — preserves listeners) ─
+      const lbl = cb.closest('label');
+      if (lbl) {
+        const swatch = lbl.querySelector('span:not(.edge-role-badge)');
+        if (swatch) swatch.style.color = edge.color || '#484f58';
+        const textNodes = [...lbl.childNodes].filter(n => n.nodeType === Node.TEXT_NODE);
+        const lastText = textNodes[textNodes.length - 1];
+        if (lastText) lastText.textContent = ' ' + (edge.label || edge.key);
+        // Update role badge if present
+        const badge = lbl.querySelector('.edge-role-badge');
+        if (badge && edge.role) {
+          badge.textContent = ' [' + edge.role + (edge.lazy ? ', lazy' : '') + ']';
+          badge.style.color = edge.role === 'retrieval' ? '#3fb950' : '#6e40c9';
+        }
+      }
+    }
+
+    // Sync default_on state to _edgeToggleState (only if not already set by user)
+    if (!(edge.key in _edgeToggleState)) {
+      _edgeToggleState[edge.key] = edge.default_on !== false;
+    }
   }
 }
 
@@ -1449,6 +1519,10 @@ let _graphMode = localStorage.getItem('yadgar-graph-mode') || '3d';
 let _engineTickCount = 0;
 // v5.10.10: zoom-fit flag — reset per initGraph + loadGraph so fit fires once per load.
 let _zoomFitDone = false;
+// v5.54.3: per-type edge toggle state (populated from legend.edges default_on)
+let _edgeToggleState = {};
+// v5.54.3: tracks which lazy edge types have been fetched (prevents double-fetch)
+let _lazyEdgesLoaded = {};
 
 // ── Colour helpers ──────────────────────────────────────────────────────────
 function heatColor(h) {
@@ -1510,8 +1584,48 @@ function _nodeLabel(n) {
     : `[heat=${(n.heat||0).toFixed(3)}] ${(n.content || n.label || '').slice(0, 120)}`;
 }
 
-function _linkColor(l) { return _edgeColor()[l.type] || '#484f58'; }
-function _linkWidth(l) { return l.type === 'transition' ? Math.min(4, 1 + Math.log2(l.count || 1)) : l.type === 'semantic' ? 1 : l.type === 'wiki_crossref' ? 1 : 1.5; }
+// ── Edge styling helpers (v5.54.3: role-distinguished, driven from legend) ────
+// _edgeTypeMap is populated by _buildEdgeTypeMapFromConfig() after loadVizConfig().
+// Until then it falls back to empty (safe: returns fallback color/width).
+let _edgeTypeMap = {};
+function _buildEdgeTypeMapFromConfig() {
+  const edges = YADGAR_VIZ_CONFIG.legend && YADGAR_VIZ_CONFIG.legend.edges;
+  if (!edges) return;
+  _edgeTypeMap = {};
+  for (const e of edges) {
+    _edgeTypeMap[e.key] = {
+      role: e.role || 'display',
+      color: e.color || '#484f58',
+      default_on: e.default_on !== false,
+      lazy: e.lazy === true,
+    };
+  }
+}
+
+function _hexToRgbaInline(hex, alpha) {
+  try {
+    const h = hex.replace('#', '');
+    const r = parseInt(h.substring(0,2),16), g = parseInt(h.substring(2,4),16), b = parseInt(h.substring(4,6),16);
+    if (isNaN(r)||isNaN(g)||isNaN(b)) throw new Error('bad');
+    return `rgba(${r},${g},${b},${alpha})`;
+  } catch { return `rgba(130,130,130,${alpha})`; }
+}
+
+// Role-distinguished link color: retrieval=full-opacity, display=dimmed(0.45)
+function _linkColor(l) {
+  const meta = _edgeTypeMap[l.type];
+  const baseColor = (meta && meta.color) || _edgeColor()[l.type] || '#484f58';
+  if (meta && meta.role === 'retrieval') return baseColor;
+  return _hexToRgbaInline(baseColor, 0.45);
+}
+// Role-distinguished link width: retrieval=1.5, transition=count-scaled, semantic=0.8, display=1.0
+function _linkWidth(l) {
+  if (l.type === 'transition') return Math.min(4, 1 + Math.log2(l.count || 1));
+  const meta = _edgeTypeMap[l.type];
+  if (meta && meta.role === 'retrieval') return 1.5;
+  if (l.type === 'semantic') return 0.8;
+  return 1.0;
+}
 function _arrowLen(l) { return (l.type === 'transition' || l.type === 'memory_wiki' || l.type === 'wiki_crossref') ? YADGAR_VIZ_CONFIG.edge.arrow_len : 0; }
 
 function initGraph(mode) {
@@ -1884,15 +1998,12 @@ function _flyToCluster(nodes) {
   }
 }
 
-// ── Filters ─────────────────────────────────────────────────────────────────
+// ── Filters (v5.54.3: dynamic per-type toggle from _edgeToggleState) ─────────
+// _edgeToggleState is populated by _renderEdgeLegendOverlay from legend.edges.
+// Supports all 11 edge types (entity relations + legacy). No hardcoded type list.
 function applyFilters() {
   if (!graph) return;
-  const showSem  = document.getElementById('show-semantic').checked;
-  const showTmp  = document.getElementById('show-temporal').checked;
-  const showTrn  = document.getElementById('show-transition').checked;
   const showWiki = document.getElementById('show-wiki').checked;
-  const showXref = document.getElementById('show-wiki-crossref').checked;
-  const showMemWiki = document.getElementById('show-memory-wiki').checked;
   const minH    = parseFloat(document.getElementById('heat-slider').value);
   const q       = document.getElementById('search').value.toLowerCase().trim();
 
@@ -1912,21 +2023,67 @@ function applyFilters() {
     if (n.__visible) { vis.add(n.id); visCount++; }
   }
 
+  // Dynamic edge filter — driven by _edgeToggleState, not a hardcoded list.
+  // A type NOT in _edgeToggleState defaults to visible (render-from-source).
   const linkVisFn = l => {
     const s = l.source?.id ?? l.source, t = l.target?.id ?? l.target;
     if (!vis.has(s) || !vis.has(t)) return false;
-    if (l.type === 'semantic'   && !showSem) return false;
-    if (l.type === 'temporal'   && !showTmp) return false;
-    if (l.type === 'transition' && !showTrn) return false;
-    if (l.type === 'wiki_crossref' && !showXref) return false;
-    if (l.type === 'memory_wiki' && !showMemWiki) return false;
-    return true;
+    const t_type = l.type;
+    if (t_type && t_type in _edgeToggleState) {
+      return !!_edgeToggleState[t_type];
+    }
+    return true; // type unknown to toggle state: show by default
   };
   graph
     .nodeVisibility(n => n.__visible)
     .linkVisibility(linkVisFn);
 
   document.getElementById('s-vis').textContent = visCount;
+}
+
+// ── Lazy edge fetch (v5.54.3) ────────────────────────────────────────────────
+// Called when a lazy edge type's toggle flips ON for the first time.
+// Fetches from /api/graph/edges?type=<type>, orphan-filters, appends to allLinks,
+// then calls applyFilters (visibility, NOT reheat — we FREEZE the layout and
+// let the user use resetLayout() if they want a full re-layout).
+async function _fetchLazyEdges(edgeType) {
+  if (_lazyEdgesLoaded[edgeType]) return; // idempotent
+  _lazyEdgesLoaded[edgeType] = true; // mark before fetch to prevent double-fetch
+  try {
+    status(`Loading ${edgeType} edges…`, 'wait');
+    const r = await fetch(`${DAEMON}/api/graph/edges?type=${encodeURIComponent(edgeType)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    const newEdges = d.edges || [];
+    if (!newEdges.length) {
+      status(`No ${edgeType} edges found`, 'ok');
+      return;
+    }
+    // Orphan-filter before appending
+    const nodeIdSet = new Set(allNodes.map(n => n.id));
+    const beforeCount = allLinks.length;
+    const validEdges = newEdges.filter(e => {
+      const s = (e.source && e.source.id) || e.source;
+      const t = (e.target && e.target.id) || e.target;
+      return nodeIdSet.has(s) && nodeIdSet.has(t);
+    });
+    allLinks = allLinks.concat(validEdges);
+    const afterCount = allLinks.length;
+    // Only update graphData + recalc degrees when links actually changed.
+    // This triggers d3-force to re-recognize the new links.
+    // We FREEZE (don't reheat) for lazy heavy types — user can hit Reset to re-layout.
+    if (afterCount !== beforeCount) {
+      calcDegrees();
+      graph.graphData({ nodes: allNodes, links: allLinks });
+      // Gentle reheat: bump alpha briefly so the layout adapts (not a full reset)
+      if (graph.d3ReheatSimulation) graph.d3ReheatSimulation();
+    }
+    applyFilters();
+    status(`${edgeType}: ${validEdges.length} edge(s) loaded`, 'ok');
+  } catch (e) {
+    _lazyEdgesLoaded[edgeType] = false; // allow retry on error
+    status(`Failed to load ${edgeType} edges: ${e.message}`, 'err');
+  }
 }
 
 // ── Detail panel (v5.50.12) ───────────────────────────────────────────────────
@@ -2502,8 +2659,24 @@ function _initLogPanels() {
 document.addEventListener('DOMContentLoaded', _initLogPanels);
 
 // ── Event bindings ───────────────────────────────────────────────────────────
-['show-semantic','show-temporal','show-transition','show-wiki','show-wiki-crossref','show-memory-wiki']
-  .forEach(id => document.getElementById(id).addEventListener('change', applyFilters));
+// Wire hidden sidebar edge checkboxes: update _edgeToggleState then re-filter.
+// v5.54.3: _edgeToggleState is the canonical driver; hidden checkboxes mirror it.
+[
+  ['show-semantic',      'semantic'],
+  ['show-temporal',      'temporal'],
+  ['show-transition',    'transition'],
+  ['show-wiki-crossref', 'wiki_crossref'],
+  ['show-memory-wiki',   'memory_wiki'],
+].forEach(([id, type]) => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('change', () => {
+    _edgeToggleState[type] = el.checked;
+    applyFilters();
+  });
+});
+// wiki node toggle (not an edge type — directly calls applyFilters)
+const _showWikiEl = document.getElementById('show-wiki');
+if (_showWikiEl) _showWikiEl.addEventListener('change', applyFilters);
 
 document.getElementById('heat-slider').addEventListener('input', e => {
   document.getElementById('heat-val').textContent = parseFloat(e.target.value).toFixed(2);
@@ -3051,6 +3224,10 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
   }
 
   // Edge type checkboxes
+  // v5.54.3: _renderEdgeLegendOverlay now wires change listeners at creation for
+  // dynamically-created types (entity relations, causal, etc.). Legacy pairs below
+  // only need to sync hidden sidebar originals (for backward compat with any code
+  // that reads #show-semantic etc.). The real filter driver is _edgeToggleState.
   const edgePairs = [
     ['fo-show-semantic',    'show-semantic'],
     ['fo-show-temporal',    'show-temporal'],
@@ -3062,6 +3239,7 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
     const fo   = document.getElementById(foId);
     const orig = document.getElementById(origId);
     if (!fo || !orig) continue;
+    // Keep the hidden sidebar checkbox in sync with the overlay (for backward compat)
     fo.addEventListener('change', () => {
       orig.checked = fo.checked;
       orig.dispatchEvent(new Event('change', { bubbles: true }));

@@ -7,6 +7,29 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.54.3] — 2026-06-12
+
+### Added (Phase 4 — viz fidelity: all edges visible, toggleable, role-distinguished, lazy, physics-reheat)
+
+- **Entity typed-relation edges now visible in viz.** `graph_api.py:get_full_graph` now includes `co_occurrence`, `imports`, `calls`, `resolved_by`, `caused_by` edges from the entity knowledge graph — the biggest hidden capability (these power PPR + spreading + graph_prior in retrieval). Previously INVISIBLE (only `causal` subset rendered). Each edge carries `type` + `role="retrieval"` sourced from `EDGE_TYPES`.
+- **`role` field on all edges.** Every edge in `/api/graph` now carries a `role` field (`"retrieval"` or `"display"`) sourced from `EDGE_TYPES` (viz_meta.py, single source). Honesty: load-bearing ≠ decorative.
+- **Semantic edges moved to lazy path.** Removed `_compute_semantic_edges` from the default `/api/graph` path (O(n²) KNN — too expensive for large graphs). Default payload no longer contains semantic edges. New endpoint: `GET /api/graph/edges?type=semantic` — computes on-demand when the toggle flips ON.
+- **`EDGE_TYPES` extended with 5 entity types + `role` + `default_on` + `lazy` fields (viz_meta.py).** All 11 edge types now registered: semantic/temporal/transition/wiki_crossref/memory_wiki/causal (existing) + co_occurrence/imports/calls/resolved_by/caused_by (new). Every entry has `role`, `default_on`, `lazy`. `LAZY_EDGE_TYPES = frozenset({"semantic"})` declared.
+- **`build_legend` emits `role`, `default_on`, `lazy` per edge** (viz_meta.py). Frontend and Help tab read these fields — single source for styling + legend.
+- **Dynamic edge-legend overlay** (index.html `_renderEdgeLegendOverlay`). Now generates one checkbox row per edge type from `legend.edges` (data-driven, not hardcoded). Each row created with listener wired at creation — no orphaned listeners. New types get rows automatically. Role badge (`[retrieval]`/`[display]`) + lazy badge shown per row.
+- **Dynamic `applyFilters`** (index.html). Replaced hardcoded 5-type check with `_edgeToggleState` map (populated from `legend.edges.default_on`). Any edge type toggleable; unknown types default visible (render-from-source).
+- **Role-distinguished edge styling** (index.html + `viz_filters.js`). `_linkColor`: retrieval edges get full-opacity hex color; display edges get 45% opacity rgba. `_linkWidth`: retrieval edges = 1.5px; transition = count-scaled; semantic = 0.8px; other display = 1.0px. Driven from `_edgeTypeMap` (built from `legend.edges` after `loadVizConfig()`).
+- **Physics reheat on lazy edge load.** `_fetchLazyEdges` appends semantic edges to `allLinks`, calls `graph.d3ReheatSimulation()` only when link count changes. Visibility-only toggles (non-lazy types) do NOT reheat — `linkVisibility` handles those.
+- **`viz_filters.js` module** — pure filter/role helpers testable with vitest: `buildEdgeTypeMap`, `edgeCbKey`, `edgeVisible`, `edgeRole`, `linksChanged`, `edgeLinkColor`, `edgeLinkWidth`, `_hexToRgba`.
+- **Help tab legend** (help.js) shows `[role]` and `[lazy]` badges per edge type.
+- **New tests:** 31 backend tests (`test_v5_54_3_graph_viz_fidelity.py`): entity edges in payload with role, semantic absent from default, lazy endpoint, all-edges-have-role, EDGE_TYPES registry, LAZY_EDGE_TYPES, build_legend fields. 64 frontend vitest tests (`viz_filters.test.js`): per-type toggle on/off, role-styled colors/widths, linksChanged, render-from-source (absent type defaults visible), entity relation types individually togglable.
+
+### Notes
+
+- **No new Settings/I25 keys.** Entity relation edge colors use `fallback_color` in EDGE_TYPES — no `VIZ_EDGE_COLOR_*` settings created. Avoids 5× I25 config registration overhead for display-only decoration.
+- **Backward-compatible.** Legacy hidden `#show-*` sidebar checkboxes preserved and kept in sync. `applyFilters` unchanged in visible behavior — same filtering logic, now data-driven.
+- **`5.54.3` = Phase 4 of the graph-leverage umbrella.** P1 (EDGE_CONTRACT) → P2 (graph_prior) → P3 (cofire_prior) → **P4 (viz fidelity)** → P5 (GC dead edges, future).
+
 ## [5.54.2] — 2026-06-12
 
 ### Added (Phase 3 — activate transition/co-recall edge, graph-leverage umbrella v5.54)
