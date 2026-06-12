@@ -108,10 +108,14 @@ export function renderHelp(config, container) {
   }
 
   // ── Edge Types ─────────────────────────────────────────────────────────────
+  // v5.54.3: role badge shown per edge — "retrieval" (load-bearing) vs "display" (decorative).
   _section('Edge types');
   const edges = (legend.edges || []);
   for (const edge of edges) {
-    _row(edge.color, edge.label || edge.key, edge.description, 'help-row-edge');
+    const roleStr = edge.role ? ` [${edge.role}]` : '';
+    const lazyStr = edge.lazy ? ' [lazy]' : '';
+    const labelWithRole = (edge.label || edge.key) + roleStr + lazyStr;
+    _row(edge.color, labelWithRole, edge.description, 'help-row-edge');
   }
   if (!edges.length) {
     const p = document.createElement('p');
