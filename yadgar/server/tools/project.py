@@ -442,6 +442,26 @@ def _build_wiki_pages(storage, limit: int) -> list[dict]:
     ]
 
 
+def _slug_prefix(slug: str) -> str:
+    """Extract the first segment of a slug (split on '-', take element [0] + '-').
+
+    Examples:
+      "fn-foo-bar"  → "fn-"
+      "mod-core"    → "mod-"
+      "services"    → "services"   (no '-': whole slug, no trailing dash)
+    """
+    if not slug:
+        return "(other)"
+    idx = slug.find("-")
+    if idx == -1:
+        return slug
+    return slug[: idx + 1]
+
+
+# v5.53.0: max distinct prefixes shown in the prefix-breakdown line for big categories.
+_WIKI_CATALOG_MAX_PREFIXES = 8
+
+
 def _build_wiki_catalog(storage, resolved: str) -> dict:
     """Build a grouped wiki catalog for project_brief catalog/restore renders (v5.53.0).
 
@@ -452,14 +472,18 @@ def _build_wiki_catalog(storage, resolved: str) -> dict:
       {
           "total": N,
           "groups": {
-              "architecture": {"pages": [{"slug": ..., "title": ...}, ...], "more": M},
-              "decision": {"pages": [...], "more": 0},
+              "architecture": {"pages": [{"slug": ..., "title": ...}, ...], "more": M,
+                               "prefix_counts": {"arch-": 3, ...}},
+              "decision": {"pages": [...], "more": 0, "prefix_counts": {...}},
               ...
           },
       }
 
     Each page entry: {"slug": str, "title": str} — title falls back to slug when blank.
     `more` = number of additional pages in that category beyond the cap (0 if none).
+    `prefix_counts` = Counter of first-segment prefixes over ALL pages in the category
+      (not capped). Used by _render_wiki_catalog to show a prefix breakdown for large
+      categories instead of an uninformative truncated title list.
     Uses list_wiki_catalog (metadata-only) to avoid content/embedding fetch latency.
     """
     try:
@@ -474,12 +498,15 @@ def _build_wiki_catalog(storage, resolved: str) -> dict:
         title = (row.get("title") or "").strip() or row.get("slug", "")
         slug = row.get("slug", "")
         if cat not in groups:
-            groups[cat] = {"pages": [], "more": 0}
+            groups[cat] = {"pages": [], "more": 0, "prefix_counts": {}}
         entry = groups[cat]
         if len(entry["pages"]) < _WIKI_CATALOG_MAX_PER_GROUP:
             entry["pages"].append({"slug": slug, "title": title})
         else:
             entry["more"] += 1
+        # Accumulate prefix counts over ALL rows (not capped)
+        prefix = _slug_prefix(slug)
+        entry["prefix_counts"][prefix] = entry["prefix_counts"].get(prefix, 0) + 1
 
     return {"total": total, "groups": groups}
 
@@ -489,6 +516,15 @@ def _render_wiki_catalog(catalog: dict, resolved: str) -> list[str]:
 
     Returns a list of markdown lines (no trailing newline per line).
     When the catalog is empty, returns a nudge line.
+
+    For categories whose total page count exceeds _WIKI_CATALOG_MAX_PER_GROUP (i.e. the
+    title list would be a useless truncated sample), and where prefix_counts data is
+    available, renders a slug-prefix breakdown instead:
+
+      **reference** (237)
+        by prefix: fn- (140) · mod- (45) · services- (30) · … 4 more prefixes
+
+    Small categories (count ≤ cap, or no prefix_counts) keep the title list as-is.
     """
     total = catalog.get("total", 0)
     groups = catalog.get("groups", {})
@@ -504,11 +540,26 @@ def _render_wiki_catalog(catalog: dict, resolved: str) -> list[str]:
         pages = entry.get("pages", [])
         more = entry.get("more", 0)
         count = len(pages) + more
+        prefix_counts: dict = entry.get("prefix_counts", {})
+
         lines.append(f"**{cat}** ({count})")
-        for p in pages:
-            lines.append(f"  - {p['title']}")
-        if more > 0:
-            lines.append(f"  - …{more} more — call `wiki_list(category={cat!r})` to see all")
+
+        # Big-category branch: count exceeds cap AND we have prefix data
+        if count > _WIKI_CATALOG_MAX_PER_GROUP and prefix_counts:
+            sorted_prefixes = sorted(prefix_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+            shown = sorted_prefixes[:_WIKI_CATALOG_MAX_PREFIXES]
+            hidden = len(sorted_prefixes) - len(shown)
+            parts = [f"{pfx} ({cnt})" for pfx, cnt in shown]
+            prefix_line = "  by prefix: " + " · ".join(parts)
+            if hidden > 0:
+                prefix_line += f" · …{hidden} more prefixes"
+            lines.append(prefix_line)
+        else:
+            # Small category: render individual titles + affordance
+            for p in pages:
+                lines.append(f"  - {p['title']}")
+            if more > 0:
+                lines.append(f"  - …{more} more — call `wiki_list(category={cat!r})` to see all")
     return lines
 
 

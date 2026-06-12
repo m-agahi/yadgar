@@ -23,8 +23,10 @@ import pytest
 from yadgar import server
 from yadgar.server.tools.project import (
     _WIKI_CATALOG_MAX_PER_GROUP,
+    _WIKI_CATALOG_MAX_PREFIXES,
     _build_wiki_catalog,
     _render_wiki_catalog,
+    _slug_prefix,
 )
 
 # ── fixtures ─────────────────────────────────────────────────────────────────
@@ -292,7 +294,7 @@ def test_catalog_mode_render_no_bare_slug_only_line(flush_queue):
 
 
 def test_catalog_mode_render_length_capped(flush_queue):
-    """When a group exceeds the cap, the render contains the '…more' affordance."""
+    """When a group exceeds the cap, the render shows a prefix breakdown (not bare titles)."""
     directory = "/tmp/catalog_render_cap"
     over_limit = _WIKI_CATALOG_MAX_PER_GROUP + 2
     for i in range(over_limit):
@@ -309,8 +311,11 @@ def test_catalog_mode_render_length_capped(flush_queue):
 
     result = server.project_brief(directory)
     render = result["_render"]
-    assert "more" in render.lower()
-    assert "wiki_list" in render
+    # Big category → prefix breakdown line instead of bare titles + "…more"
+    assert "by prefix:" in render
+    # All pages share the same slug prefix "cap-"; count shown correctly
+    assert "cap-" in render
+    assert f"({over_limit})" in render
 
 
 # ── project_brief restore mode ────────────────────────────────────────────────
@@ -457,3 +462,188 @@ def test_recommended_claude_rules_mentions_catalog():
     rules_file = repo_root / "docs" / "RECOMMENDED_CLAUDE_RULES.md"
     content = rules_file.read_text()
     assert "catalog" in content.lower()
+
+
+# ── slug-prefix breakdown (v5.53.0 enhancement) ──────────────────────────────
+
+
+def test_slug_prefix_with_dash():
+    assert _slug_prefix("fn-foo-bar") == "fn-"
+
+
+def test_slug_prefix_no_dash():
+    assert _slug_prefix("services") == "services"
+
+
+def test_slug_prefix_empty():
+    assert _slug_prefix("") == "(other)"
+
+
+def test_slug_prefix_single_segment():
+    assert _slug_prefix("mod-core") == "mod-"
+
+
+def test_build_wiki_catalog_stores_prefix_counts(flush_queue):
+    """_build_wiki_catalog must store prefix_counts for every group (even small ones)."""
+    directory = "/tmp/catalog_prefix_small"
+    _add_wiki_page("Fn Overview", "reference", directory, flush_queue)
+
+    storage = server._get_storage()
+    catalog = _build_wiki_catalog(storage, directory)
+
+    ref = catalog["groups"].get("reference")
+    assert ref is not None
+    assert "prefix_counts" in ref
+
+
+def test_build_wiki_catalog_prefix_counts_correct(flush_queue):
+    """prefix_counts covers ALL rows, not just the capped title list."""
+    directory = "/tmp/catalog_prefix_counts"
+    over_limit = _WIKI_CATALOG_MAX_PER_GROUP + 5  # 10 pages total
+    for i in range(over_limit):
+        _add_wiki_page(f"fn-tool-{i}", "reference", directory, flush_queue)
+    for i in range(3):
+        _add_wiki_page(f"mod-core-{i}", "reference", directory, flush_queue)
+
+    storage = server._get_storage()
+    catalog = _build_wiki_catalog(storage, directory)
+
+    ref = catalog["groups"]["reference"]
+    prefix_counts = ref["prefix_counts"]
+
+    # "fn-" prefix: slugs generated from titles like "fn-tool-N" → slug "fn-tool-n"
+    fn_count = prefix_counts.get("fn-", 0)
+    mod_count = prefix_counts.get("mod-", 0)
+    assert fn_count == over_limit, f"Expected fn- count={over_limit}, got {fn_count}"
+    assert mod_count == 3, f"Expected mod- count=3, got {mod_count}"
+    # Total across all prefixes == total pages in group
+    assert sum(prefix_counts.values()) == over_limit + 3
+
+
+def test_render_big_category_shows_prefix_breakdown():
+    """Big category (count > cap) renders 'by prefix:' line instead of title list."""
+    count = _WIKI_CATALOG_MAX_PER_GROUP + 10  # 15
+    prefix_counts = {"fn-": 8, "mod-": 4, "services-": 3}
+    catalog = {
+        "total": count,
+        "groups": {
+            "reference": {
+                "pages": [
+                    {"slug": f"fn-p{i}", "title": f"Fn Page {i}"}
+                    for i in range(_WIKI_CATALOG_MAX_PER_GROUP)
+                ],
+                "more": count - _WIKI_CATALOG_MAX_PER_GROUP,
+                "prefix_counts": prefix_counts,
+            }
+        },
+    }
+    lines = _render_wiki_catalog(catalog, "/tmp/test")
+    combined = "\n".join(lines)
+
+    assert "by prefix:" in combined
+    assert "fn-" in combined
+    assert "mod-" in combined
+    assert "services-" in combined
+    # Counts are present
+    assert "(8)" in combined
+    assert "(4)" in combined
+    assert "(3)" in combined
+    # No individual title lines for big category
+    assert "Fn Page 0" not in combined
+
+
+def test_render_big_category_prefix_sorted_by_count_desc():
+    """Prefixes appear in descending count order."""
+    count = _WIKI_CATALOG_MAX_PER_GROUP + 5
+    prefix_counts = {"aws-": 2, "fn-": 10, "mod-": 5}
+    catalog = {
+        "total": count,
+        "groups": {
+            "reference": {
+                "pages": [
+                    {"slug": f"fn-p{i}", "title": f"T{i}"}
+                    for i in range(_WIKI_CATALOG_MAX_PER_GROUP)
+                ],
+                "more": count - _WIKI_CATALOG_MAX_PER_GROUP,
+                "prefix_counts": prefix_counts,
+            }
+        },
+    }
+    lines = _render_wiki_catalog(catalog, "/tmp/test")
+    prefix_line = next(ln for ln in lines if "by prefix:" in ln)
+
+    fn_pos = prefix_line.index("fn-")
+    mod_pos = prefix_line.index("mod-")
+    aws_pos = prefix_line.index("aws-")
+    assert fn_pos < mod_pos < aws_pos, "Prefixes not sorted by count desc"
+
+
+def test_render_big_category_more_prefixes_affordance():
+    """When prefix count > _WIKI_CATALOG_MAX_PREFIXES, a '…N more prefixes' appears."""
+    count = _WIKI_CATALOG_MAX_PER_GROUP + 50
+    # Create more distinct prefixes than the cap
+    prefix_counts = {f"p{i}-": i + 1 for i in range(_WIKI_CATALOG_MAX_PREFIXES + 4)}
+    catalog = {
+        "total": count,
+        "groups": {
+            "reference": {
+                "pages": [{"slug": "fn-p0", "title": "T0"}],
+                "more": count - 1,
+                "prefix_counts": prefix_counts,
+            }
+        },
+    }
+    lines = _render_wiki_catalog(catalog, "/tmp/test")
+    combined = "\n".join(lines)
+    assert "more prefixes" in combined
+
+
+def test_render_small_category_keeps_title_list():
+    """Small categories (count ≤ cap) must still render individual titles."""
+    catalog = {
+        "total": 3,
+        "groups": {
+            "architecture": {
+                "pages": [
+                    {"slug": "arch-overview", "title": "Architecture Overview"},
+                    {"slug": "arch-decisions", "title": "Arch Decisions"},
+                ],
+                "more": 0,
+                "prefix_counts": {"arch-": 2},
+            }
+        },
+    }
+    lines = _render_wiki_catalog(catalog, "/tmp/test")
+    combined = "\n".join(lines)
+
+    assert "Architecture Overview" in combined
+    assert "Arch Decisions" in combined
+    assert "by prefix:" not in combined
+
+
+def test_render_prefix_breakdown_length_bounded():
+    """Prefix line must not exceed _WIKI_CATALOG_MAX_PREFIXES entries."""
+    count = _WIKI_CATALOG_MAX_PER_GROUP + 100
+    # 20 distinct prefixes
+    prefix_counts = {f"pfx{i}-": 10 for i in range(20)}
+    catalog = {
+        "total": count,
+        "groups": {
+            "reference": {
+                "pages": [{"slug": "pfx0-p0", "title": "T0"}],
+                "more": count - 1,
+                "prefix_counts": prefix_counts,
+            }
+        },
+    }
+    lines = _render_wiki_catalog(catalog, "/tmp/test")
+    prefix_line = next(ln for ln in lines if "by prefix:" in ln)
+    # Count "·"-separated segments in the shown portion (before any "…more" clause)
+    shown_part = prefix_line.split("·…")[0] if "·…" in prefix_line else prefix_line
+    # Number of "(N)" occurrences in the shown part == number of prefix entries shown
+    import re
+
+    entry_count = len(re.findall(r"\(\d+\)", shown_part))
+    assert entry_count <= _WIKI_CATALOG_MAX_PREFIXES, (
+        f"Too many prefix entries shown: {entry_count} > {_WIKI_CATALOG_MAX_PREFIXES}"
+    )
