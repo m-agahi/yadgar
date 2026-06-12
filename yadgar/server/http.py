@@ -1419,6 +1419,42 @@ async def api_graph_stats(request: Request) -> JSONResponse:
     return JSONResponse(data, headers=_CORS)
 
 
+@mcp_server.custom_route("/api/graph/edges", methods=["GET"])
+@trace_span("api.graph_edges_lazy")
+async def api_graph_edges_lazy(request: Request) -> JSONResponse:
+    """On-demand edge computation for lazy edge types (v5.54.3).
+
+    Query params:
+      type: edge type to compute (e.g. 'semantic'). Must be in LAZY_EDGE_TYPES.
+      max_memories: limit for memory nodes (default 500).
+      top_k: top-K neighbours per node for KNN (default 8).
+
+    Returns {"edges": [...]} — no nodes. The frontend merges into existing graphData.
+    Semantic edges are O(n²) KNN — not in the default /api/graph payload.
+    """
+    if _st._storage is None:
+        return JSONResponse({"edges": []}, status_code=503)
+    edge_type = request.query_params.get("type", "")
+    if not edge_type:
+        return JSONResponse(
+            {"edges": [], "error": "Missing required query param: type"},
+            status_code=400,
+            headers=_CORS,
+        )
+    try:
+        max_mem = int(request.query_params.get("max_memories", 500))
+    except ValueError, TypeError:
+        max_mem = 500
+    try:
+        top_k = int(request.query_params.get("top_k", 8))
+    except ValueError, TypeError:
+        top_k = 8
+    data = await asyncio.to_thread(
+        GraphAPI(_st._storage).get_edges_by_type, edge_type, max_mem, top_k
+    )
+    return JSONResponse(data, headers=_CORS)
+
+
 @mcp_server.custom_route("/api/graph/neighborhood/{node_id}", methods=["GET"])
 @trace_span("api.graph_neighborhood")
 async def api_graph_neighborhood(request: Request) -> JSONResponse:
