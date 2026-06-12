@@ -7,6 +7,23 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.54.1] — 2026-06-12
+
+### Added (Phase 2 — precomputed graph prior, graph-leverage umbrella v5.54)
+
+- **Precomputed `graph_prior` scalar on memory rows.** During each consolidation cycle, `_compute_graph_priors` computes a normalized entity-graph centrality score per memory (sum of relationship weights for entities mentioned in the memory's content, normalized to [0, 1] by cycle-max) and stores it as `graph_prior: option<float>` on the memory row. Bounded by `SIMILARITY_MATRIX_MAX_CANDIDATES` (default 4000) to stay under `PHASE_DURATION_WARN_MS`. Staleness window = one consolidation cadence (acceptable — prior is a secondary nudge).
+- **`graph_prior` boost in fusion (`retrieval/fusion.py`).** After the main fusion step, all profiles (including `fast`) apply `WRRF_GRAPH_PRIOR_WEIGHT * graph_prior` as an additive boost to the fused score, then re-sort. O(1): reads a single stored field via `storage.get_memory_graph_priors(candidate_ids)` — no graph traversal, no entity extraction, no PPR at query time. Bypasses confidence gating intentionally (additive, not a signal).
+- **`WRRF_GRAPH_PRIOR_WEIGHT = 0.2`** (I25 three-way registered: `config.py` + `config_registry.py` + `config_yaml.py`). Small secondary nudge — must not dominate vector (1.0) or fts (0.5). Set to 0.0 to disable entirely.
+- **DB migration 020** (`_migration_020_memory_graph_prior`): additive `DEFINE FIELD IF NOT EXISTS graph_prior ON TABLE memory TYPE option<float>`. No row rewrite. Idempotent.
+- **New storage methods:** `get_memory_graph_priors(memory_ids) → {int: float}` (bulk-fetch priors for fusion); `update_memory_graph_prior(memory_id, prior)` (write from consolidation). `graph_prior` added to `_MEMORY_UPDATABLE_FIELDS`.
+- **`compute_graph_priors` consolidation phase** wired into `_consolidation_cycle` (after `detect_causality`, before `memify`). Non-fatal; phase-start/end logged; `_warn_slow_phase` applied.
+- **24 new tests** (`test_v5_54_1_graph_prior.py`): consolidation computes correct priors (mock entity graph, degree-ordered); fast-profile recall does not call PPR/spreading/entity-extraction; `WRRF_GRAPH_PRIOR_WEIGHT=0` disables boost; balanced/full profiles unchanged; NULL prior safe; migration 020 registered; I25 three-way sync.
+
+### Notes
+- Balanced/full PPR+spreading remain **unchanged** — `graph_prior` is additive, not a replacement.
+- `5.54.0` = EDGE_CONTRACT doc (Phase 1). This is Phase 2 of the `v5.54` graph-leverage series.
+- `5.54.0` is a doc-only release (no code); `5.54.1` is the first code release in the series.
+
 ## [5.53.2] — 2026-06-12
 
 ### Added (Phase B-schema — page types + templates + format lint, KB usability umbrella)

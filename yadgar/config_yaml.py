@@ -162,6 +162,14 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Weight of spreading activation signal",
         "section": "retrieval_fusion",
     },
+    "wrrf_graph_prior_weight": {
+        "desc": (
+            "Weight of precomputed entity-graph prior in fusion (v5.54.1). "
+            "Additive boost applied in ALL profiles including fast — O(1) field read, "
+            "no per-query traversal. Set 0.0 to disable. Default 0.2."
+        ),
+        "section": "retrieval_fusion",
+    },
     "fusion_method": {"desc": "Fusion method: convex or other", "section": "retrieval_fusion"},
     "fusion_norm": {
         "desc": "Score normalization before fusion: zscore, minmax, or raw",

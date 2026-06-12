@@ -197,6 +197,14 @@ class Settings(BaseSettings):
     # this smaller multiplier to bound latency without sacrificing fast-profile signals.
     FAST_PROFILE_CANDIDATE_MULTIPLIER: int = 3
 
+    # v5.54.1: Precomputed graph prior weight (I25 three-way registered).
+    # Additive boost applied to fused scores in ALL profiles (including fast).
+    # The prior is a precomputed scalar stored on each memory row during consolidation
+    # — O(1) read at fusion time, no per-query graph traversal (I8/I9 safe).
+    # Weight 0.2 is a secondary nudge; must not dominate vector(1.0)/fts(0.5).
+    # Set to 0.0 to disable entirely; memories with graph_prior=NULL are unaffected.
+    WRRF_GRAPH_PRIOR_WEIGHT: float = 0.2
+
     # v16: Query expansion (pseudo-HyDE) settings
     QUERY_EXPANSION_ENABLED: bool = True
 

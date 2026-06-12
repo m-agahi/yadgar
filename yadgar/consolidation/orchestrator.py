@@ -128,6 +128,22 @@ class _OrchestratorMixin:
                 record_exception("consolidation.phase_detect_causality", _exc)
                 logger.exception("Causal detection failed")
 
+            # v5.54.1: Precompute per-memory graph_prior scalars for fast-profile recall.
+            # Runs after detect_causality so the entity graph is maximally fresh.
+            # Non-fatal — prior is additive; a missing cycle just keeps old values.
+            try:
+                _t = time.monotonic()
+                logger.info("phase_start: compute_graph_priors")
+                self._compute_graph_priors(stats)
+                _dur_ms = int((time.monotonic() - _t) * 1000)
+                logger.info("phase_end: compute_graph_priors duration_ms=%d", _dur_ms)
+                _warn_slow_phase("compute_graph_priors", _dur_ms)
+            except Exception as _exc:
+                from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+                record_exception("consolidation.phase_compute_graph_priors", _exc)
+                logger.exception("Graph prior computation failed (non-fatal)")
+
             # Run memify self-improvement cycle
             try:
                 _t = time.monotonic()
