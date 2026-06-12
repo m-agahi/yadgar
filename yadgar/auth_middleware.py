@@ -34,6 +34,7 @@ _DEBUG_API_PREFIXES: tuple[str, ...] = (
     "/api/control/config",
     "/api/control/action/",
     "/api/control/restart/",
+    "/api/logs/",  # v5.52.0: log streaming endpoints
 )
 
 _startup_warned = False
@@ -167,7 +168,8 @@ def _observe_auth_duration(t0: float) -> None:
 def _is_debug_api_path(path: str) -> bool:
     """Return True when path is gated by YADGAR_DEBUG_APIS_ENABLED.
 
-    Covers /api/control/config, /api/control/action/*, /api/control/restart/*.
+    Covers /api/control/config, /api/control/action/*, /api/control/restart/*,
+    and /api/logs/* (v5.52.0 log streaming endpoints).
     Explicitly excludes /api/control/update (governed by YADGAR_UPDATE_DEBUG_APIS_ENABLED).
     """
     for prefix in _DEBUG_API_PREFIXES:

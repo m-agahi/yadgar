@@ -42,6 +42,22 @@ Audit performed 2026-06-12 against current source and CHANGELOG. Summary of find
 
 **Value rescope — build the high-value slice first.** The 12-endpoint programmatic viz-control API (camera/select/overlay) is speculative and low-priority: no current consumer, uncertain ROI. The **high-value slice is the screenshot endpoint + browser console capture**. Together they let an agent self-verify viz changes and catch JS errors, which closes the "headless Chromium has no WebGL" gap. Recommendation: build the screenshot + console-capture slice first; defer the camera/select/overlay API until something concretely needs it.
 
+**IMPLEMENTATION SCOPE (2026-06-12 — LEVERAGED SLICE).**
+
+Built in v5.52.0:
+- `yadgar/server/routes/logs.py` — 3 endpoints (`/_capabilities`, `/poll`, `/stream`), `LogRingHandler`, 1 MB byte-capped ring buffer.
+- `yadgar/static/console_capture.js` — `window.console` proxy with XSS-escape, byte cap, subscribe API.
+- Debug-tab log panels (two stacked in `#tab-debug`).
+- `/api/logs/` added to `_DEBUG_API_PREFIXES` in `auth_middleware.py`.
+- 13 backend tests (`test_logs_api.py`) + 14 frontend tests (`console_capture.test.js`).
+- Version bumped 5.51.0 → 5.52.0.
+
+**DEFERRED — not built in v5.52.0:**
+
+1. **12-endpoint `/api/debug/viz/*` camera/select/overlay API** — DEFERRED per invariant I29 (leverage-completeness: no capability without a consumer). No current agent or script consumes these endpoints. Will be reconsidered when a concrete consumer exists. Do not implement until I29 is satisfied.
+
+2. **`POST /api/debug/viz/screenshot` endpoint** — DEFERRED due to design fork. The backend cannot capture client-side WebGL frames directly (server-side headless Chrome is heavy; browser-side requires a WebSocket round-trip). Main thread must surface this design choice to the user before implementation begins. Do not implement without an explicit design decision.
+
 ---
 
 ## Goal — programmatic + visual debug surface for the viz

@@ -263,6 +263,81 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
 .jn { color: #3fb950; }  /* number */
 .jb { color: #d29922; }  /* bool/null */
 
+/* ── Debug log panels (v5.52.0) ──────────────────────────────────────────── */
+.log-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 120px;
+  background: #0d1117;
+  border: 1px solid #21262d;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.log-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: #161b22;
+  border-bottom: 1px solid #21262d;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.log-panel-title {
+  font-size: 11px;
+  color: #58a6ff;
+  font-weight: 600;
+  margin-right: 4px;
+}
+.log-filter-btn {
+  padding: 2px 7px;
+  font-size: 10px;
+  cursor: pointer;
+  background: #21262d;
+  border: 1px solid #30363d;
+  border-radius: 3px;
+  color: #8b949e;
+  font-family: inherit;
+}
+.log-filter-btn.active { background: #0d419d; border-color: #58a6ff; color: #e6edf3; }
+.log-action-btn {
+  padding: 2px 7px;
+  font-size: 10px;
+  cursor: pointer;
+  background: #21262d;
+  border: 1px solid #30363d;
+  border-radius: 3px;
+  color: #8b949e;
+  font-family: inherit;
+  margin-left: 2px;
+}
+.log-action-btn:hover { color: #e6edf3; border-color: #8b949e; }
+.log-action-btn.paused { color: #e6a817; border-color: #e6a817; }
+.log-entries {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 10px;
+  font-size: 10px;
+  line-height: 1.5;
+  font-family: monospace;
+  color: #c9d1d9;
+}
+.log-entry { display: flex; gap: 6px; margin-bottom: 2px; }
+.log-entry .le-ts { color: #484f58; flex-shrink: 0; }
+.log-entry .le-lvl { flex-shrink: 0; min-width: 38px; font-weight: 600; }
+.log-entry .le-lvl.DEBUG  { color: #8b949e; }
+.log-entry .le-lvl.INFO   { color: #3fb950; }
+.log-entry .le-lvl.WARN, .log-entry .le-lvl.WARNING { color: #e6a817; }
+.log-entry .le-lvl.ERROR  { color: #f85149; }
+.log-entry .le-lvl.log    { color: #8b949e; }
+.log-entry .le-lvl.info   { color: #3fb950; }
+.log-entry .le-lvl.warn   { color: #e6a817; }
+.log-entry .le-lvl.error  { color: #f85149; }
+.log-entry .le-lvl.debug  { color: #79c0ff; }
+.log-entry .le-msg { word-break: break-all; }
+.log-entry .le-stack { color: #484f58; font-size: 9px; margin-top: 2px; }
+
 /* ── V1c Daemon Health sidebar ─────────────────────────────────────────────── */
 :root {
   --dh-ok:       #3fb950;  /* CB CLOSED / healthy */
@@ -1196,7 +1271,7 @@ body.dh-open #dh-toggle { right: 480px; }
   <!-- Filled by control.js initControlTab() on DOMContentLoaded -->
 </div><!-- /#tab-control -->
 
-<!-- ── Tab: Debug (v5.50.8) ──────────────────────────────── -->
+<!-- ── Tab: Debug (v5.50.8 API inspector + v5.52.0 log panels) ────────── -->
 <div id="tab-debug" class="tab-pane">
   <div id="debug-header">
     <h2>API DEBUG</h2>
@@ -1213,6 +1288,38 @@ body.dh-open #dh-toggle { right: 480px; }
   </div>
   <div id="debug-body">
     <pre id="debug-json">Select a tab and click Refresh.</pre>
+
+    <!-- ── Daemon log panel (v5.52.0) ──────────────────────────── -->
+    <div class="log-panel" id="log-panel-daemon">
+      <div class="log-panel-header">
+        <span class="log-panel-title">DAEMON LOG</span>
+        <button class="log-filter-btn active" data-panel="daemon" data-level="">ALL</button>
+        <button class="log-filter-btn" data-panel="daemon" data-level="DEBUG">DEBUG</button>
+        <button class="log-filter-btn" data-panel="daemon" data-level="INFO">INFO</button>
+        <button class="log-filter-btn" data-panel="daemon" data-level="WARNING">WARN</button>
+        <button class="log-filter-btn" data-panel="daemon" data-level="ERROR">ERROR</button>
+        <button class="log-action-btn" id="daemon-pause-btn">⏸ Pause</button>
+        <button class="log-action-btn" id="daemon-clear-btn">✕ Clear</button>
+        <button class="log-action-btn" id="daemon-copy-btn">⎘ Copy all</button>
+      </div>
+      <div class="log-entries" id="daemon-log-entries"></div>
+    </div>
+
+    <!-- ── Browser console panel (v5.52.0) ─────────────────────── -->
+    <div class="log-panel" id="log-panel-console">
+      <div class="log-panel-header">
+        <span class="log-panel-title">BROWSER CONSOLE</span>
+        <button class="log-filter-btn active" data-panel="console" data-level="">ALL</button>
+        <button class="log-filter-btn" data-panel="console" data-level="debug">DEBUG</button>
+        <button class="log-filter-btn" data-panel="console" data-level="info">INFO</button>
+        <button class="log-filter-btn" data-panel="console" data-level="warn">WARN</button>
+        <button class="log-filter-btn" data-panel="console" data-level="error">ERROR</button>
+        <button class="log-action-btn" id="console-pause-btn">⏸ Pause</button>
+        <button class="log-action-btn" id="console-clear-btn">✕ Clear</button>
+        <button class="log-action-btn" id="console-copy-btn">⎘ Copy all</button>
+      </div>
+      <div class="log-entries" id="console-log-entries"></div>
+    </div>
   </div>
 </div><!-- /#tab-debug -->
 
@@ -2160,6 +2267,239 @@ function syntaxHL(json) {
     }
   );
 }
+
+// ── Log panels (v5.52.0) ─────────────────────────────────────────────────────
+
+// Daemon log panel state
+let _daemonLogFilter = '';
+let _daemonLogPaused = false;
+let _daemonLogSeq = 0;
+let _daemonLogBuffer = [];
+
+// Console panel state (populated via console_capture.js import)
+let _consoleLogFilter = '';
+let _consoleLogPaused = false;
+let _consoleLogBuffer = [];
+
+/** Escape HTML to prevent XSS in rendered log text. */
+function _logEsc(str) {
+  if (typeof str !== 'string') str = String(str);
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/** Format a timestamp (ms epoch or seconds float) to HH:MM:SS. */
+function _logFmtTs(ts) {
+  const ms = ts > 1e12 ? ts : ts * 1000;
+  const d = new Date(ms);
+  return d.toTimeString().slice(0, 8);
+}
+
+/** Render a daemon log entry row. */
+function _renderDaemonEntry(entry) {
+  if (_daemonLogFilter && entry.level !== _daemonLogFilter) return null;
+  const row = document.createElement('div');
+  row.className = 'log-entry';
+  row.innerHTML =
+    `<span class="le-ts">${_logFmtTs(entry.ts)}</span>` +
+    `<span class="le-lvl ${_logEsc(entry.level)}">${_logEsc(entry.level)}</span>` +
+    `<span class="le-msg">${_logEsc(entry.message || '')}</span>`;
+  return row;
+}
+
+/** Render a console capture entry row. */
+function _renderConsoleEntry(entry) {
+  if (_consoleLogFilter && entry.level !== _consoleLogFilter) return null;
+  const row = document.createElement('div');
+  row.className = 'log-entry';
+  let inner =
+    `<span class="le-ts">${_logFmtTs(entry.ts)}</span>` +
+    `<span class="le-lvl ${_logEsc(entry.level)}">${_logEsc(entry.level)}</span>` +
+    `<span class="le-msg">${entry.message || ''}</span>`;
+  if (entry.stack && entry.stack.length) {
+    inner += `<span class="le-stack">${entry.stack.map(_logEsc).join('\n')}</span>`;
+  }
+  row.innerHTML = inner;
+  return row;
+}
+
+/** Append a rendered row to a log entries container, auto-scroll. */
+function _appendLogRow(containerId, row) {
+  if (!row) return;
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  el.appendChild(row);
+  el.scrollTop = el.scrollHeight;
+}
+
+/** Re-render daemon log from buffer with current filter. */
+function _rerenderDaemonLog() {
+  const el = document.getElementById('daemon-log-entries');
+  if (!el) return;
+  el.innerHTML = '';
+  for (const entry of _daemonLogBuffer) {
+    const row = _renderDaemonEntry(entry);
+    if (row) el.appendChild(row);
+  }
+  el.scrollTop = el.scrollHeight;
+}
+
+/** Re-render console log from buffer with current filter. */
+function _rerenderConsoleLog() {
+  const el = document.getElementById('console-log-entries');
+  if (!el) return;
+  el.innerHTML = '';
+  for (const entry of _consoleLogBuffer) {
+    const row = _renderConsoleEntry(entry);
+    if (row) el.appendChild(row);
+  }
+  el.scrollTop = el.scrollHeight;
+}
+
+/** Poll daemon log endpoint and append new entries. */
+async function _pollDaemonLog() {
+  if (_daemonLogPaused) return;
+  try {
+    const r = await fetch(DAEMON + `/api/logs/poll?since=${_daemonLogSeq}`);
+    if (!r.ok) return;
+    const data = await r.json();
+    const lines = data.lines || [];
+    if (lines.length) {
+      _daemonLogSeq = data.next_seq || _daemonLogSeq;
+      for (const entry of lines) {
+        _daemonLogBuffer.push(entry);
+        _appendLogRow('daemon-log-entries', _renderDaemonEntry(entry));
+      }
+    }
+  } catch (_) { /* non-fatal */ }
+}
+
+/** Wiring: filter buttons, pause, clear, copy for both panels. */
+function _initLogPanels() {
+  // Filter button wiring (daemon + console)
+  document.querySelectorAll('.log-filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const panel = btn.dataset.panel;
+      const level = btn.dataset.level;
+      // Update active state for this panel's filter buttons
+      document.querySelectorAll(`.log-filter-btn[data-panel="${panel}"]`).forEach(b => {
+        b.classList.toggle('active', b.dataset.level === level);
+      });
+      if (panel === 'daemon') {
+        _daemonLogFilter = level;
+        _rerenderDaemonLog();
+      } else {
+        _consoleLogFilter = level;
+        _rerenderConsoleLog();
+      }
+    });
+  });
+
+  // Daemon pause
+  const daemonPause = document.getElementById('daemon-pause-btn');
+  if (daemonPause) {
+    daemonPause.addEventListener('click', () => {
+      _daemonLogPaused = !_daemonLogPaused;
+      daemonPause.textContent = _daemonLogPaused ? '▶ Resume' : '⏸ Pause';
+      daemonPause.classList.toggle('paused', _daemonLogPaused);
+    });
+  }
+
+  // Daemon clear
+  const daemonClear = document.getElementById('daemon-clear-btn');
+  if (daemonClear) {
+    daemonClear.addEventListener('click', () => {
+      _daemonLogBuffer = [];
+      const el = document.getElementById('daemon-log-entries');
+      if (el) el.innerHTML = '';
+    });
+  }
+
+  // Daemon copy-all
+  const daemonCopy = document.getElementById('daemon-copy-btn');
+  if (daemonCopy) {
+    daemonCopy.addEventListener('click', () => {
+      const text = _daemonLogBuffer.map(e =>
+        `${_logFmtTs(e.ts)} ${e.level} ${e.message || ''}`
+      ).join('\n');
+      navigator.clipboard?.writeText(text).catch(() => {});
+    });
+  }
+
+  // Console pause
+  const consolePause = document.getElementById('console-pause-btn');
+  if (consolePause) {
+    consolePause.addEventListener('click', async () => {
+      // Toggle via console_capture module (if loaded)
+      try {
+        const mod = await import('./console_capture.js');
+        if (mod.isPaused()) {
+          mod.resume();
+          consolePause.textContent = '⏸ Pause';
+          consolePause.classList.remove('paused');
+        } else {
+          mod.pause();
+          consolePause.textContent = '▶ Resume';
+          consolePause.classList.add('paused');
+        }
+      } catch (_) {}
+    });
+  }
+
+  // Console clear
+  const consoleClear = document.getElementById('console-clear-btn');
+  if (consoleClear) {
+    consoleClear.addEventListener('click', async () => {
+      try {
+        const mod = await import('./console_capture.js');
+        mod.clearBuffer();
+      } catch (_) {}
+      _consoleLogBuffer = [];
+      const el = document.getElementById('console-log-entries');
+      if (el) el.innerHTML = '';
+    });
+  }
+
+  // Console copy-all
+  const consoleCopyBtn = document.getElementById('console-copy-btn');
+  if (consoleCopyBtn) {
+    consoleCopyBtn.addEventListener('click', () => {
+      const text = _consoleLogBuffer.map(e =>
+        `${_logFmtTs(e.ts)} ${e.level} ${e.message || ''}`
+      ).join('\n');
+      navigator.clipboard?.writeText(text).catch(() => {});
+    });
+  }
+
+  // Start polling daemon log every 2s
+  setInterval(_pollDaemonLog, 2000);
+
+  // Wire console_capture subscription
+  import('./console_capture.js').then(mod => {
+    // Populate from existing buffer
+    const existing = mod.getEntries();
+    for (const e of existing) {
+      _consoleLogBuffer.push(e);
+      _appendLogRow('console-log-entries', _renderConsoleEntry(e));
+    }
+    // Subscribe to new entries
+    mod.subscribe(entry => {
+      if (_consoleLogPaused) return;
+      _consoleLogBuffer.push(entry);
+      _appendLogRow('console-log-entries', _renderConsoleEntry(entry));
+    });
+  }).catch(() => {
+    const el = document.getElementById('console-log-entries');
+    if (el) el.textContent = 'console_capture.js not available';
+  });
+}
+
+// Init log panels at DOMContentLoaded
+document.addEventListener('DOMContentLoaded', _initLogPanels);
 
 // ── Event bindings ───────────────────────────────────────────────────────────
 ['show-semantic','show-temporal','show-transition','show-wiki','show-wiki-crossref','show-memory-wiki']
