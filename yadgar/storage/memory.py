@@ -794,6 +794,46 @@ class _MemoryMixin:
             )
         return self._rows_to_dicts(rows)
 
+    # ------------------------------------------------------------------ Graph prior (v5.54.1)
+
+    def get_memory_graph_priors(self, memory_ids: list[int]) -> dict[int, float]:
+        """Bulk-fetch graph_prior scalars for a list of memory IDs (v5.54.1).
+
+        Returns {memory_id: graph_prior} for IDs that have a non-NULL prior.
+        Missing or NULL entries are omitted — caller treats absence as 0.0.
+        O(1) per candidate: reads a stored field, no traversal.
+        """
+        if not memory_ids:
+            return {}
+        # Fetch graph_prior for each candidate memory.
+        # Use individual point reads (one per ID) to stay compatible with both
+        # SurrealDB embedded (v2) and server (v3) modes.  The candidate set is
+        # bounded by the rerank_pool cap (≤50 by default) so N round trips are fine.
+        result: dict[int, float] = {}
+        for mid in memory_ids:
+            rows = self._q(
+                "SELECT id, graph_prior FROM type::record('memory', $id) "
+                "WHERE graph_prior IS NOT NONE",
+                {"id": mid},
+            )
+            for row in rows:
+                gp = row.get("graph_prior")
+                if gp is not None:
+                    result[mid] = float(gp)
+        return result
+
+    def update_memory_graph_prior(self, memory_id: int, prior: float) -> None:
+        """Store precomputed graph_prior scalar on a memory row (v5.54.1).
+
+        Called by consolidation._compute_graph_priors — NOT on the request path.
+        graph_prior is additive: 0.0 = no boost (same as today); NULL (absent) is
+        treated identically to 0.0 by the fusion layer.
+        """
+        self._q(
+            "UPDATE type::record('memory', $id) SET graph_prior = $gp",
+            {"id": memory_id, "gp": prior},
+        )
+
     # ------------------------------------------------------------------ Memory excitability
 
     def update_memory_excitability(self, memory_id: int, excitability: float):
