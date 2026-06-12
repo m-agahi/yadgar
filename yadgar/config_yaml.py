@@ -291,6 +291,10 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Total candidate pool = max_results * this before reranking",
         "section": "embedding_enhancement",
     },
+    "fast_profile_candidate_multiplier": {
+        "desc": "Candidate pool multiplier used only for profile='fast' (default 3; overrides global candidate_pool_multiplier on fast path)",
+        "section": "embedding_enhancement",
+    },
     "embedding_cache_size": {
         "desc": "LRU cache size for embedding results",
         "section": "embedding_enhancement",
@@ -908,6 +912,25 @@ FIELD_META: dict[str, dict[str, str]] = {
         ),
         "section": "wiki_similarity_gate",
     },
+    # v5.51.0 — hook recall latency budget
+    "hook_recall_timeout_s": {
+        "desc": (
+            "Maximum seconds asyncio.wait_for waits for retriever.recall in hook handlers "
+            "(prompt-recall, instructions-loaded, subagent-start). On timeout: WARN log + "
+            "yadgar_hook_recall_timeout_total incremented + empty result returned. "
+            "Default 2.0. Raise to 5.0 if counter rate too high in prod."
+        ),
+        "section": "hooks",
+    },
+    # v5.51.0 — /api/stats TTL cache
+    "stats_cache_ttl_s": {
+        "desc": (
+            "/api/stats response TTL in seconds. Within the TTL, the same compute result is "
+            "returned without calling get_memory_stats. 0 = disabled (recompute every request). "
+            "Default 5. Does not affect /api/system (already sampled by background thread)."
+        ),
+        "section": "stats_cache",
+    },
     # v5.49.0 — memory_archive retention
     "memory_archive_retention_days": {
         "desc": (
@@ -1035,6 +1058,8 @@ SECTION_TITLES: dict[str, str] = {
     "update": "Update Mechanism (v5.48.0)",
     "memory_archive_retention": "Memory Archive Retention (v5.49.0)",
     "backend_model_preload": "Backend Model Preload Warm-Up (v5.5.0)",
+    "hooks": "Hook Recall Latency Budget (v5.51.0)",
+    "stats_cache": "Stats Cache (v5.51.0)",
 }
 
 # Ordered list of sections for deterministic output

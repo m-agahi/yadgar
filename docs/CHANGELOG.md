@@ -7,6 +7,20 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.51.0] — 2026-06-12
+
+### Added
+- **§4.3 Hook recall latency budget (primary win).** All three hook handlers (`/hooks/prompt-recall`, `/hooks/instructions-loaded`, `/hooks/subagent-start`) now wrap `retriever.recall` in `asyncio.wait_for` via shared `_recall_with_timeout()` helper. On timeout: structured WARN log (`event="hook.recall_timeout"`) + empty result returned + `yadgar_hook_recall_timeout_total{handler}` counter incremented. Timeout configurable via `HOOK_RECALL_TIMEOUT_S` (default **2.0s**). Same defensive class as v5.50.10 OTEL shutdown bound.
+- **§4.2 Fast profile tuning.** `PROFILES["fast"]` in `fusion.py` gains `skip_query_analysis=True` and `use_fast_candidate_multiplier=True`. When active: (a) `analyze_query` / query routing intersection is skipped, saving entity-extraction + embedding overhead for short hook queries; (b) candidate pool uses `FAST_PROFILE_CANDIDATE_MULTIPLIER` (default **3**) instead of the global `CANDIDATE_POOL_MULTIPLIER` (default 20) — drops DB fetch from 100 to 15 candidates at `max_results=5`. The skip also avoids the empty-signals trap: when `QUERY_ROUTING_ENABLED=True`, skipping the routing intersection ensures `enabled_signals` stays `{vector, fts}` rather than an empty set.
+- **§4.6 `/api/stats` TTL cache.** `/api/stats` now serves a cached `get_memory_stats()` result within `STATS_CACHE_TTL_S` (default **5s**, 0=disabled). Cache keyed by `project` param; response includes `cache_age_seconds`. `/api/system` is unaffected (already background-sampled).
+- **Prometheus counter `yadgar_hook_recall_timeout_total{handler}`** in `yadgar/metrics.py` (I23 compliant — writer in `_recall_with_timeout`).
+- **Three new I25-registered config knobs:** `HOOK_RECALL_TIMEOUT_S` (float, 2.0), `FAST_PROFILE_CANDIDATE_MULTIPLIER` (int, 3), `STATS_CACHE_TTL_S` (int, 5). All three registered in `config.py` + `config_yaml.py` (FIELD_META + SECTION_TITLES) + `config_registry.py`.
+
+### Migration notes
+- `HOOK_RECALL_TIMEOUT_S=2.0` (default): a hook recall exceeding 2s will return `{"text":""}` silently degrading recall quality under load. Monitor `yadgar_hook_recall_timeout_total` counter rate; raise to 5.0 if rate is too high.
+- `FAST_PROFILE_CANDIDATE_MULTIPLIER=3`: recall@K on fast profile may differ vs. global default=20. If recall quality degrades, raise to 5 and re-evaluate.
+- `STATS_CACHE_TTL_S=0` disables the stats cache; set to 0 to restore pre-v5.51.0 behaviour.
+
 ## [5.50.13] — 2026-06-12
 
 ### Added
