@@ -102,6 +102,7 @@ def _wiki_add_sync_write(
                     "event": "wiki_updated",
                     "node": {
                         "id": f"wiki:{result.get('id', '')}",
+                        "type": "wiki",
                         "slug": result.get("slug", ""),
                         "title": result.get("title", ""),
                     },
@@ -133,6 +134,7 @@ def _wiki_add_sync_write(
             "event": event_type,
             "node": {
                 "id": f"wiki:{result.get('id', '')}",
+                "type": "wiki",
                 "slug": result.get("slug", ""),
                 "title": result.get("title", ""),
             },
