@@ -88,6 +88,13 @@ repos:
         pass_filenames: false
         files: ^yadgar/(security/allowlist\.py|secrets\.py)$
 
+      - id: check-dead-capability
+        name: Check I29 edge dead-capability lint (produced ≡ contracted, no drop-still-produced)
+        language: system
+        entry: python scripts/check_dead_capability.py
+        pass_filenames: false
+        files: ^(yadgar/graph_api\.py|yadgar/viz_meta\.py|docs/EDGE_CONTRACT\.md)$
+
   - repo: local
     hooks:
       - id: check-image-size-backend

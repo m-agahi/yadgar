@@ -366,7 +366,7 @@ Two corollaries:
 1. **Coherence — stored ≡ used ≡ shown.** A user-facing representation (ESPECIALLY the viz) MUST faithfully reflect the data that drives behavior, not a decorative proxy. What you show = what you actually use.
 2. **Full-potential — wire it into the everyday path.** A capability gated behind an opt-in or slow profile that real usage never hits is effectively unused. Either wire it into the default/everyday path — respecting the latency budget (I8/I9: precompute off the request path rather than dropping the feature) — or document the explicit deferral + the trigger that will wire it.
 
-**Enforcement:** any plan ADDING a stored/computed artifact MUST declare its consumer(s) — a "field/edge contract" (template: `PLAN_V5_54` → `EDGE_CONTRACT.md`). Reviews reject orphan capability. A periodic audit/lint flags stored artifacts with zero readers (candidate: extend `check_invariants` / a `check_dead_capability.py`).
+**Enforcement:** any plan ADDING a stored/computed artifact MUST declare its consumer(s) — a "field/edge contract" (template: `PLAN_V5_54` → `EDGE_CONTRACT.md`). Reviews reject orphan capability. `scripts/check_dead_capability.py` (added v5.54.4) enforces the EDGE_CONTRACT domain: every produced/registered edge type must have a row in `docs/EDGE_CONTRACT.md` with a declared role; `drop`-role types must be GC'd from code; stale contract rows (type no longer produced) fail the lint. Run as pre-commit hook (`check-dead-capability`) and CI step (after I25). See test coverage in `yadgar/tests/test_check_dead_capability.py`.
 
 **Why (triggered 2026-06-12 by two findings in one session):**
 
@@ -377,7 +377,7 @@ Both reduce to "implemented something, never used its full potential." I29 makes
 
 **History:** introduced 2026-06-12. Proposed by user after the edge-leverage + KB-usability investigations this session.
 
-**Last updated:** 2026-06-12.
+**Last updated:** 2026-06-12 (v5.54.4: `scripts/check_dead_capability.py` enforcement lint added; replaces "future lint" placeholder).
 
 ### Deferred (codify only when violations surface)
 
@@ -744,6 +744,7 @@ Post-v5.3.9 `BindsTo → Wants` decouple, core + backend run as independent daem
 - 2026-05-29: I26 added (v5.10.2) — secret-gate single chokepoint at storage layer + `scripts/check_secret_gate.py` AST lint. Refactor of per-tool gating (memorize/wiki_add gated, anchor not) into Layer 1 storage chokepoint + Layer 2 API-boundary fast-feedback. GitHub/OpenAI/Anthropic token regex thresholds lowered `{36,}` → `{20,}`. Pre-commit hook and CI step added.
 - 2026-05-29: I27 added (this commit) — plan-first for discoveries. Every reproducible bug / >10 LOC fix / user-visible issue MUST land in `docs/PLAN_V5_*.md` + roadmap pointer same session. Proposed by Opus advisor after audit found viz UX bugs S2.1-S2.4 (memory ids 494192, 495861) sat unplanned for 9 days (2026-05-20 discovery → 2026-05-29 user-flagged). Enforcement via `scripts/check_open_discoveries.py` (lint to be written) + stop-hook warning. Tag convention: `memorize(tags=["discovery", ...])`.
 - 2026-06-12: I29 added — leverage-completeness / no-dead-capability (stored ≡ used ≡ shown). Proposed by user after two same-session investigations exposed built-but-unleveraged capability: (1) KB corpus 646 wiki pages but bootstrap surfaced 3 slugs + read-first unusable (RCA `yadgar-knowledge-base-usability-rca-why-claude-doesn-t-read-firs`, remediation `PLAN_V5_53`); (2) graph edges stored/computed but retrieval ignored most + ran graph only off the fast/everyday path, viz showed decorative edges while hiding the retrieval entity graph (`PLAN_V5_54`). Rule: every stored/computed artifact needs a named consumer or removal; user-facing representation must match behavior-driving data; capability must reach the everyday path. Enforcement: per-plan "field/edge contract" declaring consumers; future `check_dead_capability.py` lint to flag zero-reader artifacts.
+- 2026-06-12 (v5.54.4): I29 enforcement lint shipped — `scripts/check_dead_capability.py`. Scoped to EDGE_CONTRACT domain (graph_api.py + viz_meta.py EDGE_TYPES registry vs docs/EDGE_CONTRACT.md). Three failure modes: ORPHAN (produced but uncontracted), DROP-STILL-PRODUCED (marked drop but still in code), STALE (contracted but no longer produced). Lint passes on current codebase (all 11 edge types contracted; no drop types; no stale rows). Pre-commit hook `check-dead-capability` + CI step after I25. Tests: `yadgar/tests/test_check_dead_capability.py` (8 tests). Post-train no-GC finding confirmed: every edge has a consumer, drop set = empty.
 
 ---
 
