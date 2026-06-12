@@ -702,6 +702,45 @@ body.dh-open #dh-toggle { right: 480px; }
 }
 .ctrl-restart-confirm-input:focus { border-color: #f85149; outline: none; }
 
+/* ── v5.50.13 Help tab ──────────────────────────────────────────────────────── */
+#tab-help {
+  padding: 16px 20px;
+  overflow-y: auto;
+  font-size: 12px;
+}
+#tab-help.active { display: block; }
+#tab-help-body { max-width: 620px; }
+.help-intro { color: #8b949e; margin: 0 0 16px; line-height: 1.5; }
+.help-section-title {
+  color: #58a6ff;
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin: 16px 0 8px;
+}
+.help-section-title:first-of-type { margin-top: 0; }
+.help-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 4px 0;
+  line-height: 1.4;
+}
+.help-swatch {
+  flex: 0 0 14px;
+  height: 14px;
+  border-radius: 2px;
+  margin-top: 1px;
+  display: inline-block;
+}
+.help-swatch-gradient { flex: 0 0 60px; width: 60px; border-radius: 3px; }
+.help-label { color: #c9d1d9; min-width: 110px; font-weight: 500; }
+.help-desc { color: #8b949e; }
+.help-note { color: #6e7681; font-style: italic; margin: 2px 0 6px; }
+.help-heat-desc { color: #8b949e; margin: 4px 0 0; }
+.help-empty { color: #484f58; font-style: italic; }
+.help-error { color: #f85149; }
+
 /* ── v5.50.5 Health tab daemon detail (CORE/BACKEND columns) ──────────────── */
 #th-daemon-cols {
   display: flex;
@@ -825,6 +864,7 @@ body.dh-open #dh-toggle { right: 480px; }
     <a href="#info" class="tab-link" data-tab="info">Info</a>
     <a href="#control" class="tab-link" data-tab="control">Control</a>
     <a href="#debug" class="tab-link" data-tab="debug">Debug</a>
+    <a href="#help" class="tab-link" data-tab="help">Help</a>
   </div>
   <!-- Graph controls (right side) -->
   <div id="topbar-graph-controls">
@@ -940,13 +980,15 @@ body.dh-open #dh-toggle { right: 480px; }
   </div>
 </div>
 
-<!-- Edge Legend overlay -->
+<!-- Edge Legend overlay — v5.50.13: labels/colors populated from YADGAR_VIZ_CONFIG.legend.edges -->
+<!-- Checkboxes use stable fo-show-<key> IDs for filter wiring; labels rendered by _renderEdgeLegendOverlay -->
 <div class="floating-overlay" data-overlay-name="edge-legend" style="left:16px;top:160px">
   <div class="overlay-grip">
     ⋮ Edge Types
     <button class="overlay-collapse" title="Collapse">−</button>
   </div>
-  <div class="overlay-body">
+  <div class="overlay-body" id="fo-edge-legend-body">
+    <!-- Populated by _renderEdgeLegendOverlay() after loadVizConfig(). Fallback below. -->
     <label style="pointer-events:auto"><input type="checkbox" id="fo-show-semantic" checked> <span style="color:#1f6feb">■</span> Semantic</label>
     <label style="pointer-events:auto"><input type="checkbox" id="fo-show-temporal" checked> <span style="color:#6e40c9">■</span> Temporal</label>
     <label style="pointer-events:auto"><input type="checkbox" id="fo-show-transition" checked> <span style="color:#3fb950">■</span> Transitions</label>
@@ -1174,6 +1216,13 @@ body.dh-open #dh-toggle { right: 480px; }
   </div>
 </div><!-- /#tab-debug -->
 
+<!-- ── Tab: Help ───────────────────────────────────────────── -->
+<div id="tab-help" class="tab-pane">
+  <div id="tab-help-body">
+    <div style="color:#8b949e;font-size:11px">Loading help…</div>
+  </div>
+</div><!-- /#tab-help -->
+
 </div><!-- /#app-container -->
 
 <!-- v5.50.5: dh-panel/dh-toggle removed; daemon health moved to #tab-health -->
@@ -1215,6 +1264,8 @@ let YADGAR_VIZ_CONFIG = {
   physics: { charge_strength: -18, link_distance_2d: 30, link_distance_3d: 36 },
   layout: { auto_zoom_fit_tick_threshold: 80, zoom_fit_padding: 50, zoom_fit_transition_ms: 800 },
   search: { match_color: '#ffffff', pinned_color: '#ffd700', dim_opacity: 0.18 },
+  // v5.50.13: legend block — populated by loadVizConfig() from /api/viz/config
+  legend: {},
 };
 
 async function loadVizConfig() {
@@ -1242,12 +1293,39 @@ async function loadVizConfig() {
     if (cfg.physics) Object.assign(YADGAR_VIZ_CONFIG.physics, cfg.physics);
     if (cfg.layout) Object.assign(YADGAR_VIZ_CONFIG.layout, cfg.layout);
     if (cfg.search) Object.assign(YADGAR_VIZ_CONFIG.search, cfg.search);
+    // v5.50.13: legend block for Help tab renderer
+    if (cfg.legend) YADGAR_VIZ_CONFIG.legend = cfg.legend;
   } catch (_) { /* silent fallback */ }
 }
 
 // Convenience aliases — updated after loadVizConfig() runs
 function _edgeColor() { return YADGAR_VIZ_CONFIG.edge.color; }
 function _wikiCatColor() { return YADGAR_VIZ_CONFIG.node.category_colors; }
+
+// ── Edge legend overlay renderer ────────────────────────────────────────────
+// v5.50.13: Update overlay labels/colors from config.legend.edges (single source).
+// Updates swatch color + label text in-place — NEVER replaces <input> elements.
+// The deferred-module bridge attaches 'change' listeners to the hardcoded <input>s
+// before this runs; replacing them would silently orphan those listeners.
+// Key→checkboxId: underscore→kebab (wiki_crossref → fo-show-wiki-crossref).
+function _renderEdgeLegendOverlay() {
+  const edges = YADGAR_VIZ_CONFIG.legend && YADGAR_VIZ_CONFIG.legend.edges;
+  if (!edges || !edges.length) return; // keep fallback static content
+  for (const edge of edges) {
+    const cbKey = (edge.key || '').replace(/_/g, '-');
+    const cb = document.getElementById('fo-show-' + cbKey);
+    if (!cb) continue; // edge type has no filter checkbox (e.g. causal) — skip
+    const lbl = cb.closest('label');
+    if (!lbl) continue;
+    // Update swatch color (the <span> immediately after the checkbox)
+    const swatch = lbl.querySelector('span');
+    if (swatch) swatch.style.color = edge.color || '#484f58';
+    // Update label text node (last child text node after the swatch)
+    const textNodes = [...lbl.childNodes].filter(n => n.nodeType === Node.TEXT_NODE);
+    const lastText = textNodes[textNodes.length - 1];
+    if (lastText) lastText.textContent = ' ' + (edge.label || edge.key);
+  }
+}
 
 // ── State ───────────────────────────────────────────────────────────────────
 let allNodes = [], allLinks = [];
@@ -2394,7 +2472,7 @@ function updateDaemonHealth(data) {
 function _getActiveTab() {
   // YadgarTabs is set by the module script below; falls back gracefully if not yet loaded
   if (window.YadgarTabs) return window.YadgarTabs.resolveTab(window.location.hash);
-  const _VALID = new Set(['home','stats','health','bookmarks','info','control','debug']);
+  const _VALID = new Set(['home','stats','health','bookmarks','info','control','debug','help']);
   const hash = (window.location.hash || '#home').replace(/^#/, '').split('/')[0];
   return _VALID.has(hash) ? hash : 'home';
 }
@@ -2405,7 +2483,7 @@ function _switchTab(tabName) {
     window.YadgarTabs.switchTab(tabName);
   } else {
     // Fallback: inline activation (same logic as tabs.js) if module not yet loaded
-    const _VALID = new Set(['home','stats','health','bookmarks','info','control','debug']);
+    const _VALID = new Set(['home','stats','health','bookmarks','info','control','debug','help']);
     if (!_VALID.has(tabName)) tabName = 'home';
     document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('#tab-bar .tab-link').forEach(a => a.classList.remove('active'));
@@ -2418,6 +2496,7 @@ function _switchTab(tabName) {
   if (tabName === 'stats') _tabStatsRefresh();
   if (tabName === 'health') _tabHealthRefresh();
   if (tabName === 'info') _tabInfoRefresh();
+  if (tabName === 'help') _tabHelpRefresh();
 }
 
 // Stats tab: fetch /api/graph/stats + charts from /api/metrics/*
@@ -2527,6 +2606,21 @@ function _tabInfoRefresh() {
   }).catch(() => {});
 }
 
+// ── Help tab ─────────────────────────────────────────────────────────────────
+// _tabHelpRefresh delegates to the help.js module renderer (window.YadgarHelp).
+// Called on every navigation to #help — idempotent.
+function _tabHelpRefresh() {
+  const body = document.getElementById('tab-help-body');
+  if (!body) return;
+  if (!window.YadgarHelp) {
+    body.innerHTML = '<p style="color:#8b949e">Help module loading…</p>';
+    return;
+  }
+  // Re-use the already-fetched config (YADGAR_VIZ_CONFIG) so no extra fetch is needed.
+  // legend block was populated by loadVizConfig() from /api/viz/config.
+  window.YadgarHelp.renderHelp(YADGAR_VIZ_CONFIG, body);
+}
+
 // Listen for hash changes (back/forward navigation)
 window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
 
@@ -2535,6 +2629,7 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
 // (nodeRelSize, d3Force distances, charge strength) apply config overrides.
 (async () => {
   await loadVizConfig();
+  _renderEdgeLegendOverlay(); // v5.50.13: update overlay labels/colors from legend
   // Activate the correct tab before initGraph (so #tab-home is visible)
   _switchTab(_getActiveTab());
   initGraph(_graphMode);
@@ -2561,9 +2656,11 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
   import { initBookmarksTab } from './bookmarks-tab.js';
   import { initControlTab } from './control.js';
   import { nodeType as _nodeTypeModule, createDetailPanel, ingestSseNode, removeSseNode } from './graph-detail.js';
+  import * as Help from './help.js';
   window.YadgarTabs    = Tabs;
   window.YadgarInfo    = Info;
   window.YadgarOverlays = Overlays;
+  window.YadgarHelp    = Help;
 
   // v5.50.12: wire graph-detail module to the plain-script showDetail/SSE handlers.
   // createDetailPanel is called lazily on first use so allLinks/wikiCatColor/heatColor

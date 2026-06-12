@@ -7,6 +7,20 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.50.13] — 2026-06-12
+
+### Added
+- **Viz Help tab** — new `#help` nav tab documenting node types/shapes, wiki category colors, edge types, and heat. Rendered as a pure client-side pass over `config.legend` from `/api/viz/config`; nothing hardcoded in the frontend.
+- **`/api/viz/config` `legend` block** — backend now returns `legend.categories`, `legend.edges`, `legend.node_types`, and `legend.heat`. Categories built by iterating `WikiStore.CATEGORIES`; edges from new `EDGE_TYPES` constant in `yadgar/viz_meta.py`. Single source for all label/color/description text.
+- **`yadgar/viz_meta.py`** — canonical `EDGE_TYPES` dict (6 types: semantic, temporal, transition, wiki_crossref, memory_wiki, causal) and `NODE_TYPES`/`HEAT_META` for legend. Eliminates the prior three-copy duplication of edge colors across `graph_api.py`, `index.html`, and `http.py`.
+- **`yadgar/static/help.js`** — extracted pure renderer module; `renderHelp(config, container)` iterates `legend.*` to produce swatch+label+description rows — no hardcoded strings.
+- **Edge-legend overlay consolidated** — the `edge-legend` floating overlay now renders from `config.legend.edges` after `loadVizConfig()`, so overlay labels/colors stay in sync with the single EDGE_TYPES source.
+
+### Changed
+- `tabs.js` / `VALID_TABS` expanded to 8 entries (added `'help'`); both inline `_VALID` sets in `index.html` updated to match.
+- `category_colors` in `/api/viz/config` now built by iterating `CATEGORIES` (`getattr` with fallback) rather than an independent 8-key literal — adding a new category flows automatically.
+- `edge.color` in `/api/viz/config` now built by iterating `EDGE_TYPES` keys pulling from Settings, killing the previous separate set.
+
 ## [5.50.12] — 2026-06-12
 
 ### Fixed
