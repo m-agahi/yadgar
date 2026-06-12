@@ -834,6 +834,42 @@ class _MemoryMixin:
             {"id": memory_id, "gp": prior},
         )
 
+    # ------------------------------------------------------------------ Co-recall prior (v5.54.2)
+
+    def get_memory_cofire_priors(self, memory_ids: list[int]) -> dict[int, float]:
+        """Bulk-fetch cofire_prior scalars for a list of memory IDs (v5.54.2).
+
+        Returns {memory_id: cofire_prior} for IDs that have a non-NULL prior.
+        Missing or NULL entries are omitted — caller treats absence as 0.0.
+        O(1) per candidate: reads a stored field, no graph traversal.
+        """
+        if not memory_ids:
+            return {}
+        result: dict[int, float] = {}
+        for mid in memory_ids:
+            rows = self._q(
+                "SELECT id, cofire_prior FROM type::record('memory', $id) "
+                "WHERE cofire_prior IS NOT NONE",
+                {"id": mid},
+            )
+            for row in rows:
+                cp = row.get("cofire_prior")
+                if cp is not None:
+                    result[mid] = float(cp)
+        return result
+
+    def update_memory_cofire_prior(self, memory_id: int, prior: float) -> None:
+        """Store precomputed cofire_prior scalar on a memory row (v5.54.2).
+
+        Called by consolidation._compute_cofire_priors — NOT on the request path.
+        cofire_prior is additive: 0.0 = no boost (same as today); NULL (absent) is
+        treated identically to 0.0 by the fusion layer.
+        """
+        self._q(
+            "UPDATE type::record('memory', $id) SET cofire_prior = $cp",
+            {"id": memory_id, "cp": prior},
+        )
+
     # ------------------------------------------------------------------ Memory excitability
 
     def update_memory_excitability(self, memory_id: int, excitability: float):

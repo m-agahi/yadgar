@@ -170,6 +170,15 @@ FIELD_META: dict[str, dict[str, str]] = {
         ),
         "section": "retrieval_fusion",
     },
+    "wrrf_cofire_prior_weight": {
+        "desc": (
+            "Weight of precomputed co-recall (transition-edge) prior in fusion (v5.54.2). "
+            "Additive boost applied in ALL profiles including fast — O(1) field read, "
+            "no transition-table traversal on request path. 'Recalled together before' = "
+            "learned association. Set 0.0 to disable. Default 0.15."
+        ),
+        "section": "retrieval_fusion",
+    },
     "fusion_method": {"desc": "Fusion method: convex or other", "section": "retrieval_fusion"},
     "fusion_norm": {
         "desc": "Score normalization before fusion: zscore, minmax, or raw",

@@ -205,6 +205,15 @@ class Settings(BaseSettings):
     # Set to 0.0 to disable entirely; memories with graph_prior=NULL are unaffected.
     WRRF_GRAPH_PRIOR_WEIGHT: float = 0.2
 
+    # v5.54.2: Precomputed co-recall (transition-edge) prior weight (I25 three-way registered).
+    # Additive boost applied to fused scores in ALL profiles (including fast).
+    # The prior is computed from memory_transition table co-recall frequency during
+    # consolidation — O(1) read at fusion time, NO transition-table traversal on request path.
+    # "Recalled together before" = learned association. Weight 0.15 is smaller than
+    # graph_prior (0.2) — co-recall is a weaker structural signal than entity centrality.
+    # Set to 0.0 to disable entirely; memories with cofire_prior=NULL are unaffected.
+    WRRF_COFIRE_PRIOR_WEIGHT: float = 0.15
+
     # v16: Query expansion (pseudo-HyDE) settings
     QUERY_EXPANSION_ENABLED: bool = True
 
