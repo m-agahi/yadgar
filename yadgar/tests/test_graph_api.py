@@ -19,13 +19,18 @@ def _mem(content):
     return {"content": content, "directory_context": "/proj", "tags": ["t"], "heat": 1.0}
 
 
-def _make_mock_storage(nodes_rows, causal_edges_rows):
-    """Minimal mock StorageEngine for GraphAPI unit tests."""
+def _make_mock_storage(nodes_rows, causal_edges_rows, entity_rels=None, entity_rows=None):
+    """Minimal mock StorageEngine for GraphAPI unit tests.
+
+    v5.54.3: added get_relationships_by_types + get_all_entities mocks.
+    """
     s = MagicMock()
     s._q.return_value = nodes_rows
     s.get_all_transitions.return_value = []
     s.get_all_wiki_crossrefs.return_value = []
     s.get_all_causal_edges.return_value = causal_edges_rows
+    s.get_relationships_by_types.return_value = entity_rels or []
+    s.get_all_entities.return_value = entity_rows or []
     return s
 
 

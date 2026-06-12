@@ -1,4 +1,10 @@
-"""Graph API — assembles graph JSON for knowledge graph visualization."""
+"""Graph API — assembles graph JSON for knowledge graph visualization.
+
+v5.54.3: entity typed-relation edges (co_occurrence/imports/calls/resolved_by/caused_by)
+now included in the default /api/graph payload with role="retrieval" sourced from
+EDGE_TYPES (viz_meta.py). Semantic edges moved to lazy path (/api/graph/edges?type=semantic)
+— not in the default payload. All edges carry a `role` field.
+"""
 
 import gc
 import logging
@@ -14,6 +20,7 @@ from yadgar.metrics import (
     yadgar_python_gc_duration_ms,
 )
 from yadgar.tracing import trace_span
+from yadgar.viz_meta import EDGE_TYPES, LAZY_EDGE_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -61,15 +68,66 @@ class GraphAPI:
         include_invalidated: bool = False,
         as_of: str | None = None,
     ) -> dict:
-        """Return full graph: memory nodes with semantic, temporal, and transition edges.
+        """Return full graph: memory + wiki + entity nodes with typed edges.
 
         include_invalidated: when False (default), excludes invalidated KG edges.
         as_of (v5.29.0): ISO-8601 timestamp for point-in-time graph snapshot.
+
+        v5.54.3: entity typed-relation edges added; semantic moved to lazy path;
+        all edges carry `role` field sourced from EDGE_TYPES.
         """
         nodes: list[dict] = []
         edges: list[dict] = []
 
-        # ── Memory nodes ──────────────────────────────────────────────────────
+        # ── Memory nodes + slot map ───────────────────────────────────────────
+        mem_ids, slot_map = self._assemble_memory_nodes(nodes, max_memories)
+
+        # ── Temporal edges ────────────────────────────────────────────────────
+        edges.extend(self._build_temporal_edges(slot_map))
+
+        # ── Transition edges ──────────────────────────────────────────────────
+        edges.extend(self._build_transition_edges(mem_ids))
+
+        # ── Wiki nodes ────────────────────────────────────────────────────────
+        wiki_pages, wiki_slug_to_id = self._assemble_wiki_nodes(nodes)
+
+        # NOTE: Semantic edges NOT computed here (v5.54.3 lazy — O(n²) KNN).
+        # Fetch on-demand via /api/graph/edges?type=semantic when toggle flips ON.
+
+        # ── Wiki cross-reference edges ────────────────────────────────────────
+        edges.extend(self._build_wiki_crossref_edges(wiki_slug_to_id))
+
+        # ── Memory → Wiki edges ───────────────────────────────────────────────
+        edges.extend(self._build_memory_wiki_edges(wiki_pages, mem_ids))
+
+        # ── Entity nodes (required so entity edges pass orphan filter) ────────
+        self._assemble_entity_nodes(nodes)
+
+        # ── Causal edges (PC-algorithm) ───────────────────────────────────────
+        edges.extend(self._build_causal_edges(include_invalidated, as_of))
+
+        # ── Entity typed-relation edges (v5.54.3 — retrieval-active, was invisible) ─
+        edges.extend(self._build_entity_rel_edges())
+
+        # ── Orphan-edge filter (v5.10.9) ──────────────────────────────────────
+        node_ids = {n["id"] for n in nodes}
+        filtered_edges = [
+            e for e in edges if e.get("source") in node_ids and e.get("target") in node_ids
+        ]
+        orphan_count = len(edges) - len(filtered_edges)
+        if orphan_count > 0:
+            logger.info(
+                "graph_api: dropped %d orphan edge(s) (endpoints absent from node set)",
+                orphan_count,
+            )
+            yadgar_graph_api_orphan_edges_dropped_total.inc(orphan_count)
+
+        return {"nodes": nodes, "edges": filtered_edges}
+
+    def _assemble_memory_nodes(
+        self, nodes: list[dict], max_memories: int
+    ) -> tuple[set[int], dict[int, list[tuple[int, str]]]]:
+        """Fetch memory rows, append node dicts, return (mem_ids, slot_map)."""
         try:
             memories = self._s._q(
                 "SELECT id, content, heat, tags, directory_context, created_at, "
@@ -78,11 +136,8 @@ class GraphAPI:
             )
         except Exception:
             memories = []
-
-        embeddings_for_sem: list[tuple[str, bytes]] = []  # (node_id, bytes)
-        mem_ids: set[int] = set()  # track which memories are in the graph
-        slot_map: dict[int, list[tuple[int, str]]] = {}  # slot_index → [(raw_id, created_at)]
-
+        mem_ids: set[int] = set()
+        slot_map: dict[int, list[tuple[int, str]]] = {}
         for m in memories:
             raw_id = self._extract_id(m.get("id"))
             if raw_id is None:
@@ -101,37 +156,38 @@ class GraphAPI:
                     "created_at": str(m.get("created_at") or ""),
                 }
             )
-            if len(embeddings_for_sem) < 200:
-                emb = m.get("embedding")
-                if emb:
-                    embeddings_for_sem.append((node_id, emb))
-
-            # Collect slot assignments for temporal edges
             slot = m.get("slot_index")
             if slot is not None:
                 slot_map.setdefault(int(slot), []).append((raw_id, str(m.get("created_at") or "")))
+        return mem_ids, slot_map
 
-        # ── Temporal edges (memories sharing an engram slot) ──────────────────
+    def _build_temporal_edges(self, slot_map: dict[int, list[tuple[int, str]]]) -> list[dict]:
+        """Build temporal edges from slot_map (memories sharing an engram slot)."""
+        role = EDGE_TYPES.get("temporal", {}).get("role", "display")
+        result = []
         for _slot, members in slot_map.items():
-            # Cap to 10 most recent per slot to avoid O(n^2) in large slots
             if len(members) > 10:
                 members = sorted(members, key=lambda x: x[1], reverse=True)[:10]
             for i, (id_a, _) in enumerate(members):
                 for id_b, _ in members[i + 1 :]:
-                    edges.append(
+                    result.append(
                         {
                             "source": f"mem:{id_a}",
                             "target": f"mem:{id_b}",
                             "type": "temporal",
+                            "role": role,
                         }
                     )
+        return result
 
-        # ── Transition edges (memory co-recall patterns) ──────────────────────
+    def _build_transition_edges(self, mem_ids: set[int]) -> list[dict]:
+        """Build transition (co-recall) edges from memory_transition table."""
+        role = EDGE_TYPES.get("transition", {}).get("role", "retrieval")
         try:
             transitions = self._s.get_all_transitions()
         except Exception:
             transitions = []
-
+        result = []
         for t in transitions:
             from_id = self._extract_id(t.get("from_memory_id"))
             to_id = self._extract_id(t.get("to_memory_id"))
@@ -140,16 +196,19 @@ class GraphAPI:
                 continue
             if from_id not in mem_ids or to_id not in mem_ids:
                 continue
-            edges.append(
+            result.append(
                 {
                     "source": f"mem:{from_id}",
                     "target": f"mem:{to_id}",
                     "type": "transition",
                     "count": count,
+                    "role": role,
                 }
             )
+        return result
 
-        # ── Wiki nodes ────────────────────────────────────────────────────────
+    def _assemble_wiki_nodes(self, nodes: list[dict]) -> tuple[list[dict], dict[str, str]]:
+        """Fetch wiki pages, append node dicts, return (wiki_pages, wiki_slug_to_id)."""
         try:
             wiki_pages = self._s._q(
                 "SELECT id, title, slug, category, tags, links, source_memory_ids, "
@@ -157,7 +216,6 @@ class GraphAPI:
             )
         except Exception:
             wiki_pages = []
-
         wiki_slug_to_id: dict[str, str] = {}
         for wp in wiki_pages or []:
             raw_id = self._extract_id(wp.get("id"))
@@ -177,62 +235,60 @@ class GraphAPI:
                     "updated_at": str(wp.get("updated_at") or ""),
                 }
             )
-            emb = wp.get("embedding")
-            if emb and len(embeddings_for_sem) < 400:
-                embeddings_for_sem.append((node_id, emb))
+        return wiki_pages or [], wiki_slug_to_id
 
-        # ── Semantic edges (memories + wikis, cosine ≥ 0.75, top-K per node) ─
-        if len(embeddings_for_sem) >= 2:
-            edges.extend(self._compute_semantic_edges(embeddings_for_sem, top_k=top_k))
-
-        # ── Wiki cross-reference edges ────────────────────────────────────
+    def _build_wiki_crossref_edges(self, wiki_slug_to_id: dict[str, str]) -> list[dict]:
+        """Build wiki cross-reference edges from wiki_crossref table."""
+        role = EDGE_TYPES.get("wiki_crossref", {}).get("role", "display")
         try:
             crossrefs = self._s.get_all_wiki_crossrefs()
         except Exception:
             crossrefs = []
-
+        result = []
         for cr in crossrefs:
             src = wiki_slug_to_id.get(cr.get("from_slug"))
             tgt = wiki_slug_to_id.get(cr.get("to_slug"))
             if src and tgt:
-                edges.append(
-                    {
-                        "source": src,
-                        "target": tgt,
-                        "type": "wiki_crossref",
-                    }
-                )
+                result.append({"source": src, "target": tgt, "type": "wiki_crossref", "role": role})
+        return result
 
-        # ── Memory → Wiki edges (via source_memory_ids) ──────────────────
-        for wp in wiki_pages or []:
+    def _build_memory_wiki_edges(self, wiki_pages: list[dict], mem_ids: set[int]) -> list[dict]:
+        """Build memory→wiki edges from wiki_page.source_memory_ids."""
+        role = EDGE_TYPES.get("memory_wiki", {}).get("role", "display")
+        result = []
+        for wp in wiki_pages:
             raw_id = self._extract_id(wp.get("id"))
             if raw_id is None:
                 continue
-            source_ids = wp.get("source_memory_ids") or []
             wiki_nid = f"wiki:{raw_id}"
-            for mid in source_ids:
+            for mid in wp.get("source_memory_ids") or []:
                 if isinstance(mid, int) and mid in mem_ids:
-                    edges.append(
+                    result.append(
                         {
                             "source": f"mem:{mid}",
                             "target": wiki_nid,
                             "type": "memory_wiki",
+                            "role": role,
                         }
                     )
+        return result
 
-        # ── Entity nodes (C1/v5.31.1: required so causal edges pass orphan filter) ─
-        self._assemble_entity_nodes(nodes)
+    def _build_causal_edges(
+        self, include_invalidated: bool = False, as_of: str | None = None
+    ) -> list[dict]:
+        """Build PC-algorithm causal edges from causal_edge table.
 
-        # ── Causal edges (C3: include source_memory_id for citation tracing) ──
-        # C1: filter out invalidated edges by default.
-        # v5.29.0: as_of parameter enables point-in-time graph snapshots.
+        C1: filter out invalidated edges by default.
+        v5.29.0: as_of parameter enables point-in-time graph snapshots.
+        """
+        role = EDGE_TYPES.get("causal", {}).get("role", "display")
         try:
             causal_edges_raw = self._s.get_all_causal_edges(
                 include_invalidated=include_invalidated, as_of=as_of
             )
         except Exception:
             causal_edges_raw = []
-
+        result = []
         for ce in causal_edges_raw:
             src_eid = self._extract_id(ce.get("source_entity_id"))
             tgt_eid = self._extract_id(ce.get("target_entity_id"))
@@ -244,30 +300,122 @@ class GraphAPI:
                 "type": "causal",
                 "confidence": float(ce.get("confidence") or 0.0),
                 "algorithm": ce.get("algorithm") or "",
+                "role": role,
             }
             smid = ce.get("source_memory_id")
             if smid is not None:
                 edge["source_memory_id"] = int(smid)
-            edges.append(edge)
+            result.append(edge)
+        return result
 
-        # ── Orphan-edge filter (v5.10.9) ─────────────────────────────────────────
-        # force-graph.min.js throws 'node not found: <id>' synchronously when any
-        # link references an ID not in the node set. One orphan edge crashes the
-        # entire physics simulation (tick count stays 0, all nodes clump at origin).
-        # v5.31.1: entity nodes now included above; causal edges no longer orphans.
-        node_ids = {n["id"] for n in nodes}
-        filtered_edges = [
-            e for e in edges if e.get("source") in node_ids and e.get("target") in node_ids
-        ]
-        orphan_count = len(edges) - len(filtered_edges)
-        if orphan_count > 0:
-            logger.info(
-                "graph_api: dropped %d orphan edge(s) (endpoints absent from node set)",
-                orphan_count,
+    def _build_entity_rel_edges(self) -> list[dict]:
+        """Build entity typed-relation edges (v5.54.3 — the big hidden capability).
+
+        co_occurrence/imports/calls/resolved_by/caused_by power PPR + spreading
+        + graph_prior in retrieval. Previously INVISIBLE in the viz.
+        Uses get_relationships_by_types — avoids the PC-algorithm causal edges
+        (separate path via _build_causal_edges / get_all_causal_edges).
+        """
+        _ENTITY_REL_TYPES = ["co_occurrence", "imports", "calls", "resolved_by", "caused_by"]
+        try:
+            entity_rels = self._s.get_relationships_by_types(_ENTITY_REL_TYPES)
+        except Exception:
+            entity_rels = []
+        result = []
+        for rel in entity_rels:
+            src_eid = self._extract_id(rel.get("source_entity_id"))
+            tgt_eid = self._extract_id(rel.get("target_entity_id"))
+            rel_type = rel.get("relationship_type") or ""
+            if src_eid is None or tgt_eid is None or rel_type not in EDGE_TYPES:
+                continue
+            result.append(
+                {
+                    "source": f"entity:{src_eid}",
+                    "target": f"entity:{tgt_eid}",
+                    "type": rel_type,
+                    "weight": float(rel.get("weight") or 1.0),
+                    "role": EDGE_TYPES[rel_type].get("role", "retrieval"),
+                }
             )
-            yadgar_graph_api_orphan_edges_dropped_total.inc(orphan_count)
+        return result
 
-        return {"nodes": nodes, "edges": filtered_edges}
+    @trace_span("graph_api.get_edges_by_type")
+    def get_edges_by_type(
+        self,
+        edge_type: str,
+        max_memories: int = 500,
+        top_k: int = 8,
+    ) -> dict:
+        """On-demand edge computation for lazy edge types (e.g. semantic).
+
+        v5.54.3: semantic edges are O(n²) KNN — not computed in get_full_graph.
+        This endpoint computes them on-demand when the frontend toggle flips ON.
+
+        Returns {"edges": [...]} (no nodes — caller merges into existing graph).
+        """
+        if edge_type not in LAZY_EDGE_TYPES:
+            return {"edges": [], "error": f"Edge type '{edge_type}' is not lazy-computed."}
+
+        if edge_type == "semantic":
+            return self._get_semantic_edges(max_memories=max_memories, top_k=top_k)
+
+        return {"edges": []}
+
+    def _get_semantic_edges(self, max_memories: int = 500, top_k: int = 8) -> dict:
+        """Compute semantic edges on-demand (lazy path for /api/graph/edges?type=semantic).
+
+        Collects embeddings from memory + wiki nodes, computes cosine-similarity KNN.
+        """
+        embeddings_for_sem: list[tuple[str, bytes]] = []
+        node_ids_for_orphan: set[str] = set()
+
+        # Collect memory embeddings
+        try:
+            memories = self._s._q(
+                "SELECT id, embedding FROM memory ORDER BY heat DESC LIMIT $lim",
+                {"lim": max_memories},
+            )
+        except Exception:
+            memories = []
+
+        for m in memories or []:
+            raw_id = self._extract_id(m.get("id"))
+            if raw_id is None:
+                continue
+            nid = f"mem:{raw_id}"
+            node_ids_for_orphan.add(nid)
+            emb = m.get("embedding")
+            if emb and len(embeddings_for_sem) < 200:
+                embeddings_for_sem.append((nid, emb))
+
+        # Collect wiki embeddings
+        try:
+            wiki_pages = self._s._q(
+                "SELECT id, embedding FROM wiki_page ORDER BY updated_at DESC LIMIT 200"
+            )
+        except Exception:
+            wiki_pages = []
+
+        for wp in wiki_pages or []:
+            raw_id = self._extract_id(wp.get("id"))
+            if raw_id is None:
+                continue
+            nid = f"wiki:{raw_id}"
+            node_ids_for_orphan.add(nid)
+            emb = wp.get("embedding")
+            if emb and len(embeddings_for_sem) < 400:
+                embeddings_for_sem.append((nid, emb))
+
+        if len(embeddings_for_sem) < 2:
+            return {"edges": []}
+
+        _sem_role = EDGE_TYPES.get("semantic", {}).get("role", "display")
+        raw_edges = self._compute_semantic_edges(embeddings_for_sem, top_k=top_k)
+        # Stamp role on each edge
+        for e in raw_edges:
+            e["role"] = _sem_role
+
+        return {"edges": raw_edges}
 
     @trace_span("graph_api.get_graph_stats")
     def get_graph_stats(self) -> dict:

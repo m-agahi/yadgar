@@ -5,6 +5,9 @@ Referenced by graph_api.py (edge type keys), http.py (legend block), and
 the frontend help.js renderer.
 
 v5.50.13: extracted from scattered literals in graph_api.py / index.html.
+v5.54.3: added `role` field (retrieval|display) per EDGE_CONTRACT; added 5
+    entity typed-relation types (co_occurrence, imports, calls, resolved_by,
+    caused_by) — the retrieval-active entity graph now visible in viz.
 """
 
 from __future__ import annotations
@@ -20,44 +23,126 @@ if TYPE_CHECKING:
 # Keys MUST match the "type" strings emitted in graph_api.py.
 # Colors come from Settings at response time (see http.py api_viz_config).
 # 'causal' uses fallback #484f58 — no VIZ_EDGE_COLOR_CAUSAL setting.
-EDGE_TYPES: dict[str, dict[str, str]] = {
+#
+# role (v5.54.3, per docs/EDGE_CONTRACT.md):
+#   "retrieval" — feeds recall ranking (PPR / spreading / precomputed prior).
+#                 These are the load-bearing edges; styled solid/brighter.
+#   "display"   — viz only; decorative / structural teaching. Styled dashed/dimmer.
+#
+# Entity typed-relations (co_occurrence/imports/calls/resolved_by/caused_by):
+#   role=retrieval — these power PPR + spreading in balanced/full profiles, and
+#   the precomputed graph_prior in fast profile (v5.54.1). The biggest hidden
+#   capability — previously invisible in the viz.
+#
+# default_on (v5.54.3): whether the toggle is checked by default.
+#   retrieval-role edges default ON; heavy display-only (semantic) OFF.
+EDGE_TYPES: dict[str, dict] = {
+    # ── Display-only (semantic similarity — redundant with vector retrieval) ──
     "semantic": {
         "label": "Semantic",
-        "description": "Cosine-similarity link between nodes with similar content (≥0.75 threshold).",
+        "description": "Cosine-similarity link between nodes with similar content (≥0.75 threshold). Display only — redundant with the vector signal recall already uses.",
         "settings_color_key": "VIZ_EDGE_COLOR_SEMANTIC",
         "fallback_color": "#1f6feb",
+        "role": "display",
+        "default_on": False,  # lazy; heavy O(n²) — off by default
     },
+    # ── Display-only (temporal slot co-membership — weak signal) ─────────────
     "temporal": {
         "label": "Temporal",
-        "description": "Co-occurrence in time: two memories stored within the same temporal slot.",
+        "description": "Co-occurrence in time: two memories stored within the same temporal slot. Display only — weak signal, not wired to retrieval.",
         "settings_color_key": "VIZ_EDGE_COLOR_TEMPORAL",
         "fallback_color": "#6e40c9",
+        "role": "display",
+        "default_on": True,
     },
+    # ── Retrieval-active (co-recall precomputed prior, v5.54.2) ──────────────
     "transition": {
         "label": "Transition",
-        "description": "Co-recall pattern: memories retrieved together ≥2 times (strength ∝ edge width).",
+        "description": "Co-recall pattern: memories retrieved together ≥2 times (strength ∝ edge width). Retrieval-active: powers the cofire_prior boost in all profiles (v5.54.2).",
         "settings_color_key": "VIZ_EDGE_COLOR_TRANSITION",
         "fallback_color": "#3fb950",
+        "role": "retrieval",
+        "default_on": True,
     },
+    # ── Display-only (wiki structure) ─────────────────────────────────────────
     "wiki_crossref": {
         "label": "Wiki Link",
-        "description": "Explicit cross-reference between two wiki pages (from page [[link]] syntax).",
+        "description": "Explicit cross-reference between two wiki pages (from page [[link]] syntax). Display only.",
         "settings_color_key": "VIZ_EDGE_COLOR_WIKI_CROSSREF",
         "fallback_color": "#d2a8ff",
+        "role": "display",
+        "default_on": True,
     },
+    # ── Display-only (memory→wiki provenance) ────────────────────────────────
     "memory_wiki": {
         "label": "Mem→Wiki",
-        "description": "A memory was used as a source when the linked wiki page was created.",
+        "description": "A memory was used as a source when the linked wiki page was created. Display only.",
         "settings_color_key": "VIZ_EDGE_COLOR_MEMORY_WIKI",
         "fallback_color": "#ffa657",
+        "role": "display",
+        "default_on": True,
     },
+    # ── Display-only (PC-algorithm causal discovery) ──────────────────────────
     "causal": {
         "label": "Causal",
-        "description": "Causal relationship between two entity nodes, inferred by causal-discovery algorithm.",
+        "description": "Causal relationship between two entity nodes, inferred by causal-discovery algorithm. Display only — causal ≠ retrieval relevance.",
         "settings_color_key": None,  # No VIZ_EDGE_COLOR_CAUSAL — renders at fallback
         "fallback_color": "#484f58",
+        "role": "display",
+        "default_on": True,
+    },
+    # ── Retrieval-active entity typed-relations (the big hidden capability) ───
+    # These power PPR (w=0.5) + spreading (w=0.3) in balanced/full profiles,
+    # and the precomputed graph_prior in fast profile (v5.54.1).
+    # Previously INVISIBLE in the viz — now rendered (v5.54.3).
+    "co_occurrence": {
+        "label": "Co-Occurrence",
+        "description": "Entity co-occurrence: two entities extracted from the same memory. Core retrieval signal — feeds PPR + spreading activation + graph_prior.",
+        "settings_color_key": None,
+        "fallback_color": "#e8b86d",
+        "role": "retrieval",
+        "default_on": True,
+    },
+    "imports": {
+        "label": "Imports",
+        "description": "Import dependency: one entity imports another (code context). Retrieval-active via entity graph.",
+        "settings_color_key": None,
+        "fallback_color": "#79c0ff",
+        "role": "retrieval",
+        "default_on": True,
+    },
+    "calls": {
+        "label": "Calls",
+        "description": "Function call relationship: one entity calls another. Retrieval-active via entity graph.",
+        "settings_color_key": None,
+        "fallback_color": "#56d364",
+        "role": "retrieval",
+        "default_on": True,
+    },
+    "resolved_by": {
+        "label": "Resolved By",
+        "description": "Error resolved by an entity (error→fix pattern). Retrieval-active via entity graph.",
+        "settings_color_key": None,
+        "fallback_color": "#f85149",
+        "role": "retrieval",
+        "default_on": True,
+    },
+    "caused_by": {
+        "label": "Caused By",
+        "description": "Causal entity link (entity A caused by entity B). Retrieval-active via entity graph.",
+        "settings_color_key": None,
+        "fallback_color": "#ff7b72",
+        "role": "retrieval",
+        "default_on": True,
     },
 }
+
+# ---------------------------------------------------------------------------
+# Lazy edge types (v5.54.3)
+# ---------------------------------------------------------------------------
+# Types that are NOT included in the default /api/graph payload.
+# Fetched on-demand via /api/graph/edges?type=<type> when toggle flips ON.
+LAZY_EDGE_TYPES: frozenset[str] = frozenset({"semantic"})
 
 # ---------------------------------------------------------------------------
 # Node type descriptions (informational — shapes/colors still driven by code)
@@ -149,6 +234,9 @@ def build_legend(settings: Settings) -> dict:
             "color": edge_colors[key],
             "label": meta["label"],
             "description": meta["description"],
+            "role": meta.get("role", "display"),
+            "default_on": meta.get("default_on", True),
+            "lazy": key in LAZY_EDGE_TYPES,
         }
         for key, meta in EDGE_TYPES.items()
     ]
