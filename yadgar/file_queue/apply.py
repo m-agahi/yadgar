@@ -89,6 +89,8 @@ class _ApplyMixin:
                 append=p.get("append", False),
                 branch=p.get("branch"),
                 directory=p.get("directory_context") or p.get("directory"),
+                # v5.53.2: thread page_type through drainer replay path
+                page_type=p.get("page_type"),
             )
         else:
             logger.debug("Unknown queue op %r — skipping", op)

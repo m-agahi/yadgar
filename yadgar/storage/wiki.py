@@ -151,6 +151,13 @@ class _WikiMixin:
         directory_context = page.get("directory_context") or "global"
         page_set += ", directory_context = $directory_context"
         params["directory_context"] = directory_context
+        # v5.53.2: page_type + wiki_schema_version — optional (option<string> /
+        # option<int>). Only included in SET clause when non-None so SurrealDB
+        # stores NONE (absent) rather than explicit null for untyped pages.
+        if page.get("page_type") is not None:
+            page_set += ", page_type = $page_type, wiki_schema_version = $wiki_schema_version"
+            params["page_type"] = page["page_type"]
+            params["wiki_schema_version"] = page.get("wiki_schema_version", 1)
 
         # Single compound transaction: wiki_page + wiki_page_version version=1.
         # I1: no LLM/embed inside txn — pure DB writes only.
@@ -447,8 +454,9 @@ class _WikiMixin:
         if limit_clause:
             params["lim"] = limit
 
+        # v5.53.2: include page_type so catalog can group by type when present.
         sql = (
-            f"SELECT slug, title, category, updated_at FROM wiki_page "
+            f"SELECT slug, title, category, page_type, updated_at FROM wiki_page "
             f"{where_clause} ORDER BY updated_at DESC {limit_clause}"
         ).strip()
         rows = self._q(sql, params) if params else self._q(sql)
