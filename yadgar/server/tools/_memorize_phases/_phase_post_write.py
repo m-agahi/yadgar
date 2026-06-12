@@ -198,6 +198,7 @@ def _build_response(ctx: MemorizeContext, storage, settings) -> dict:
             "event": "memory_added",
             "node": {
                 "id": f"mem:{ctx.memory_id}",
+                "type": "memory",
                 "heat": memory.get("heat", ctx.initial_heat),
                 "content": ctx.content[:200],
                 "tags": ctx.tags,
