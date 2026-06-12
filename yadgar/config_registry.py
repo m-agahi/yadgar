@@ -285,6 +285,10 @@ _REGISTRY: list[ConfigEntry] = [
     # ── backend v5.5.0 model preload warm-up ─────────────────────────────────
     ConfigEntry("YADGAR_MODEL_PRELOAD", "true", "bool"),
     ConfigEntry("YADGAR_MODEL_PRELOAD_DELAY_SEC", "10", "int"),
+    # ── v5.51.0 hook recall latency budget + fast profile tuning + stats cache ─
+    ConfigEntry("YADGAR_HOOK_RECALL_TIMEOUT_S", "2.0", "float"),
+    ConfigEntry("YADGAR_FAST_PROFILE_CANDIDATE_MULTIPLIER", "3", "int"),
+    ConfigEntry("YADGAR_STATS_CACHE_TTL_S", "5", "int"),
 ]
 
 
