@@ -2,7 +2,7 @@
 
 **Status:** SKELETON drafted 2026-06-04. Origin: live UX failure 2026-06-04 — user attempted roadmap update; legacy preamble (pre-v5.41.1) was unreachable without 46k-char `wiki_update` full-content replace (corruption-class risk). Memory anchor id 523183 (heat=1, importance=1, protected) captured initial scope.
 
-**Supersedes:** `docs/PLAN_V5_63_WIKI_CORPUS_MAINTENANCE_TOOLS.md` (skeleton on branch `docs/v5.63-skeleton` @ 0881700). v5.63's two metadata tools fold into `wiki_set_metadata`. Migration 020 carries over. Delete v5.63 branch once v5.64 lands.
+**Supersedes:** `docs/PLAN_V5_63_WIKI_CORPUS_MAINTENANCE_TOOLS.md` (skeleton on branch `docs/v5.63-skeleton` @ 0881700). v5.63's two metadata tools fold into `wiki_set_metadata`. Migration (next-free-at-build) carries over. Delete v5.63 branch once v5.64 lands.
 
 **Not blocking.** Adjacent to v5.61 (repo-wiki native) + v5.62 (yadgar CLI) + v5.65 (fresh memory access UX).
 
@@ -104,9 +104,9 @@ wiki_set_metadata(slug, field, value, directory, branch_hint)
 
 **Replaces:** `wiki_reclassify_directory` and `wiki_set_branch` from v5.63 plan. Single tool, parameterized.
 
-### Optional — Migration 020 (carryover from v5.63)
+### Optional — Migration (next-free-at-build) (carryover from v5.63)
 
-Bulk-NULL legacy `branch="master"` rows where `directory_context != "global"`. Gated by env knob `YADGAR_MIGRATION_020_AUTO_NULL_BRANCH=true` (default `false`).
+Bulk-NULL legacy `branch="master"` rows where `directory_context != "global"`. Gated by env knob `YADGAR_MIGRATION_AUTO_NULL_BRANCH=true` (default `false`).
 
 Origin: ~200 pages stamped `branch="master"` by pre-v5.42.2 drainer default. Architecture says project-tagged pages are branch-invariant by default; `NULL` (canonical) is the correct slot.
 
@@ -131,7 +131,7 @@ Pages with `branch="master"` AND `directory_context="global"` left alone (intent
 - All edits log `provenance_agent`
 - Caller-context validated (P1-P11)
 - Audit-found misclassified page corrected: `wiki_set_metadata('aws-vpc-terraform-...', 'directory_context', '/home/max/aws-work')` succeeds, page findable in aws-work bucket
-- Migration 020 (optional) bulk-cleans `branch="master"` legacy when knob is on
+- Migration (next-free-at-build) (optional) bulk-cleans `branch="master"` legacy when knob is on
 - Roadmap maintenance flow (origin failure) works: `wiki_replace_text(roadmap_slug, "legacy preamble v5.41.1...", "...new preamble...")` succeeds without 46k-char round-trip
 
 ## Effort estimate
