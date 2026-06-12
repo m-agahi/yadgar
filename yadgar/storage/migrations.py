@@ -777,6 +777,25 @@ def _migration_018_directory_context_backfill_repair(storage) -> None:  # noqa: 
     )
 
 
+def _migration_020_memory_graph_prior(storage) -> None:
+    """Add graph_prior (option<float>) to memory table (v5.54.1).
+
+    Precomputed entity-graph centrality scalar stored during consolidation.
+    Additive, nullable — no row rewrite needed. Existing memories have graph_prior=NONE,
+    which the fusion layer treats identically to 0.0 (no boost).
+
+    The field is computed by ConsolidationScheduler._compute_graph_priors() on each
+    consolidation cadence (typically nightly). Staleness window = one consolidation
+    cycle — acceptable; the prior is a secondary nudge, not a primary signal.
+
+    Idempotent: DEFINE FIELD IF NOT EXISTS is safe to re-run.
+    Note: option<float> — SurrealDB will coerce JSON number to float at write time.
+    Live server verification recommended on first deploy (no backfill needed).
+    """
+    storage._q("DEFINE FIELD IF NOT EXISTS graph_prior ON TABLE memory TYPE option<float>;")
+    _log.info("migration_020: added graph_prior field to memory table (additive/nullable, v5.54.1)")
+
+
 def _migration_019_wiki_page_type(storage) -> None:
     """Add page_type (option<string>) and wiki_schema_version (option<int>) to wiki_page (v5.53.2).
 
@@ -865,6 +884,10 @@ _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {
         "version": "019_wiki_page_type",
         "fn": _migration_019_wiki_page_type,
+    },
+    {
+        "version": "020_memory_graph_prior",
+        "fn": _migration_020_memory_graph_prior,
     },
 ]
 

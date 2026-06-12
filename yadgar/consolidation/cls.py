@@ -214,6 +214,87 @@ class _CLSMixin:
                 unique.append(pair)
         return unique
 
+    def _compute_graph_priors(self, stats: dict) -> None:
+        """Precompute per-memory graph_prior scalar and store on memory rows (v5.54.1).
+
+        Formula (v1 — simple, defensible):
+          For each memory, find which entities appear in its content via a substring
+          match against all known entity names. Sum the total relationship weight
+          (degree) for those entities in the entity graph. Normalize the scores
+          across all memories processed this cycle to [0, 1].
+
+        This runs in CONSOLIDATION (background), NOT on the request path — satisfies
+        the I8/I9 latency constraint. The fast-profile recall reads graph_prior as an
+        O(1) field value at fusion time.
+
+        Staleness window: one consolidation cadence (typically nightly). Acceptable —
+        graph_prior is a secondary nudge, not a primary retrieval signal.
+
+        Bounded per cycle by SIMILARITY_MATRIX_MAX_CANDIDATES (same cap as
+        _link_similar_memories) to prevent PHASE_DURATION_WARN_MS overrun.
+        """
+        cap = getattr(self._settings, "SIMILARITY_MATRIX_MAX_CANDIDATES", 4000)
+
+        # Fetch bounded candidate set (most-recently-accessed first, same as link_similar)
+        rows = self._storage.get_memories_with_embeddings(limit=cap, order_by="last_accessed")
+        if not rows:
+            stats["graph_prior_updated"] = 0
+            return
+
+        # Load all entities once — avoid per-memory HTTP round trips
+        all_entities = self._storage.get_all_entities(min_heat=0.0, include_archived=True)
+        if not all_entities:
+            stats["graph_prior_updated"] = 0
+            return
+
+        # Build entity-name → total degree (sum of relationship weights) map
+        # by querying adjacency for each entity once.
+        entity_degree: dict[int, float] = {}
+        for ent in all_entities:
+            eid = ent["id"]
+            neighbors = self._graph._get_adjacent(eid, None)
+            entity_degree[eid] = sum(n["weight"] for n in neighbors)
+
+        # Build entity name list once for substring matching
+        entity_name_list: list[tuple[int, str]] = [
+            (ent["id"], ent["name"]) for ent in all_entities if ent.get("name")
+        ]
+
+        # Compute raw prior score per memory
+        raw_scores: dict[int, float] = {}
+        for mem in rows:
+            mid = mem["id"]
+            content = mem.get("content", "") or ""
+            score = 0.0
+            for eid, ename in entity_name_list:
+                if (
+                    len(ename) >= getattr(self._settings, "GRAPH_ENTITY_MIN_LENGTH", 3)
+                    and ename in content
+                ):
+                    score += entity_degree.get(eid, 0.0)
+            raw_scores[mid] = score
+
+        # Normalize to [0, 1] by cycle-max; avoid divide-by-zero
+        max_score = max(raw_scores.values()) if raw_scores else 0.0
+
+        updated = 0
+        batch: list[tuple[str, dict | None]] = []
+        for mid, raw in raw_scores.items():
+            prior = (raw / max_score) if max_score > 1e-9 else 0.0
+            batch.append(
+                (
+                    "UPDATE type::record('memory', $id) SET graph_prior = $gp",
+                    {"id": mid, "gp": round(prior, 6)},
+                )
+            )
+
+        if batch:
+            self._storage.batch_writes(batch)
+            updated = len(batch)
+
+        stats["graph_prior_updated"] = updated
+        logger.info("graph_prior: computed and stored for %d memories", updated)
+
     def _link_similar_memories(self, stats: dict) -> None:
         """Create memory_similarity_link records between semantically similar memories.
 
