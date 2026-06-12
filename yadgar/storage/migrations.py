@@ -796,6 +796,31 @@ def _migration_020_memory_graph_prior(storage) -> None:
     _log.info("migration_020: added graph_prior field to memory table (additive/nullable, v5.54.1)")
 
 
+def _migration_021_memory_cofire_prior(storage) -> None:
+    """Add cofire_prior (option<float>) to memory table (v5.54.2).
+
+    Precomputed co-recall (transition-edge) prior stored during consolidation.
+    Additive, nullable — no row rewrite needed. Existing memories have cofire_prior=NONE,
+    which the fusion layer treats identically to 0.0 (no boost).
+
+    The field is computed by ConsolidationScheduler._compute_cofire_priors() on each
+    consolidation cadence (typically nightly). Formula: sum of memory_transition.count
+    where the memory appears as from_memory_id or to_memory_id, normalized to [0,1]
+    across all candidates in the bounded cycle.
+
+    Staleness window: one consolidation cycle — acceptable; the prior is a secondary
+    nudge, not a primary retrieval signal. "Recalled together before" = learned
+    association from the memory_transition table.
+
+    Idempotent: DEFINE FIELD IF NOT EXISTS is safe to re-run.
+    Note: option<float> — SurrealDB will coerce JSON number to float at write time.
+    """
+    storage._q("DEFINE FIELD IF NOT EXISTS cofire_prior ON TABLE memory TYPE option<float>;")
+    _log.info(
+        "migration_021: added cofire_prior field to memory table (additive/nullable, v5.54.2)"
+    )
+
+
 def _migration_019_wiki_page_type(storage) -> None:
     """Add page_type (option<string>) and wiki_schema_version (option<int>) to wiki_page (v5.53.2).
 
@@ -888,6 +913,10 @@ _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {
         "version": "020_memory_graph_prior",
         "fn": _migration_020_memory_graph_prior,
+    },
+    {
+        "version": "021_memory_cofire_prior",
+        "fn": _migration_021_memory_cofire_prior,
     },
 ]
 
