@@ -236,6 +236,25 @@ class _FusionMixin:
             # dropped by the rerank_pool truncation in _build_initial_results.
             fused = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
 
+        # v5.54.2: Apply precomputed cofire_prior boost — additive, ALL profiles, O(1).
+        # co-recall (transition-edge) prior: memories historically recalled together get a boost.
+        # The prior is stored on each memory row during consolidation from the
+        # memory_transition table. Reading it here involves NO transition-table traversal,
+        # NO graph traversal — pure O(1) field read. Activates the dead "transition" edge.
+        # Confidence gating intentionally bypassed (additive, not a signal weight).
+        try:
+            cf_weight = float(getattr(self._settings, "WRRF_COFIRE_PRIOR_WEIGHT", 0.0))
+        except TypeError, ValueError:
+            cf_weight = 0.0
+        if cf_weight > 0 and fused_scores:
+            candidate_ids = list(fused_scores.keys())
+            cofire_priors = self._storage.get_memory_cofire_priors(candidate_ids)
+            for mid, cp in cofire_priors.items():
+                if cp and mid in fused_scores:
+                    fused_scores[mid] = fused_scores[mid] + cf_weight * cp
+            # Re-sort after boost to preserve correct ranking for rerank_pool truncation.
+            fused = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
+
         return fused, fused_scores
 
     def _build_initial_results(

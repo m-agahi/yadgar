@@ -144,6 +144,22 @@ class _OrchestratorMixin:
                 record_exception("consolidation.phase_compute_graph_priors", _exc)
                 logger.exception("Graph prior computation failed (non-fatal)")
 
+            # v5.54.2: Precompute per-memory cofire_prior scalars from co-recall transitions.
+            # Runs after compute_graph_priors. Reads memory_transition once (bulk), stores
+            # a normalized co-recall frequency on each memory row. Non-fatal — additive.
+            try:
+                _t = time.monotonic()
+                logger.info("phase_start: compute_cofire_priors")
+                self._compute_cofire_priors(stats)
+                _dur_ms = int((time.monotonic() - _t) * 1000)
+                logger.info("phase_end: compute_cofire_priors duration_ms=%d", _dur_ms)
+                _warn_slow_phase("compute_cofire_priors", _dur_ms)
+            except Exception as _exc:
+                from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+                record_exception("consolidation.phase_compute_cofire_priors", _exc)
+                logger.exception("Co-fire prior computation failed (non-fatal)")
+
             # Run memify self-improvement cycle
             try:
                 _t = time.monotonic()
