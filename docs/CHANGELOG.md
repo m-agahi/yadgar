@@ -7,6 +7,22 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.54.4] — 2026-06-12
+
+### Added (Phase 5 — I29 enforcement lint, graph-leverage umbrella v5.54)
+
+- **`scripts/check_dead_capability.py`** — I29 edge dead-capability lint. Scoped to the EDGE_CONTRACT domain. Collects all produced/registered edge types (AST scan of `graph_api.py` for literal edge-shaped dicts with `source`+`target` keys, union with `EDGE_TYPES` registry keys from `viz_meta.py`). Asserts every type has a row in `docs/EDGE_CONTRACT.md` with a declared role (`retrieval`/`display`/`drop`). Three failure modes: **ORPHAN** (produced but uncontracted), **DROP-STILL-PRODUCED** (marked `drop` but still emitted — dead capability not GC'd), **STALE** (contract row for a type no longer produced). Exits non-zero and names offending types on violation; exits 0 when clean.
+- **Pre-commit hook `check-dead-capability`** (`.pre-commit-config.yaml`). Fires on changes to `yadgar/graph_api.py`, `yadgar/viz_meta.py`, or `docs/EDGE_CONTRACT.md`. Same `language: system` / `entry: python scripts/check_dead_capability.py` pattern as I23/I24/I26 hooks.
+- **CI step** (`.forgejo/workflows/ci.yaml`). Added after the I25 step in the `test` job: `python scripts/check_dead_capability.py`.
+- **`docs/ARCHITECTURE_INVARIANTS.md` I29 section updated.** Replaces "future lint" placeholder with description of `check_dead_capability.py`, its three failure modes, pre-commit + CI wiring, and test coverage. Decision log entry added.
+- **Tests: `yadgar/tests/test_check_dead_capability.py`** — 8 pytest tests. Real-codebase passthrough (exit 0); orphan-edge fixture (exit 1, names type); registry-only orphan; drop-still-produced fixture; stale-contract-row fixture; clean fixture (exit 0); `--list-all` exits 0 even with violations; multi-type combined contract row (entity typed-relations pattern).
+
+### Notes
+
+- **GC no-op (confirmed).** Post-train audit: every edge type has a consumer. The `drop` set is empty — `semantic` and `temporal` are `display`, not `drop`. No compute paths removed this release; the lint is the enforcement mechanism going forward.
+- **Post-train verification.** Lint passes on current codebase: 11 edge types (semantic/temporal/transition/wiki_crossref/memory_wiki/causal/co_occurrence/imports/calls/resolved_by/caused_by), all contracted, none `drop`.
+- **`5.54.4` = Phase 5 (GC/enforcement) of the graph-leverage umbrella.** P1 (EDGE_CONTRACT) → P2 (graph_prior) → P3 (cofire_prior) → P4 (viz fidelity) → **P5 (enforcement lint)**. Umbrella complete.
+
 ## [5.54.3] — 2026-06-12
 
 ### Added (Phase 4 — viz fidelity: all edges visible, toggleable, role-distinguished, lazy, physics-reheat)

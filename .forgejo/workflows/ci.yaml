@@ -96,6 +96,9 @@ jobs:
       - name: Check I25 — config three-way-sync (Settings + yaml + registry)
         run: python -m pytest yadgar/tests/test_config_three_way_sync.py -q --tb=short
 
+      - name: Check I29 — edge dead-capability lint (produced ≡ contracted, no drop-still-produced)
+        run: python scripts/check_dead_capability.py
+
   viz-tests:
     runs-on: ubuntu-latest
     # Use yadgar-ci-viz which extends yadgar-ci with Playwright + Chromium pre-baked.
