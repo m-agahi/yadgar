@@ -316,6 +316,12 @@ class Settings(BaseSettings):
     # 0 = disabled (recompute every request). Default 5s.
     STATS_CACHE_TTL_S: int = 5
 
+    # v5.53.1: stale wiki count cache TTL (I25 three-way registered).
+    # Seconds before stale_wiki_count is recomputed from disk scan.
+    # 0 = disabled (scan every signals call). Default 300s (5 minutes) — cheap
+    # enough to keep signals hot path fast (I8/I9) while staying fresh.
+    STALE_COUNT_CACHE_TTL_S: int = 300
+
     # File queue — async write queue base directory
     DATA_DIR: str = str(_paths.DATA_DIR)
     # Optional prefix for wiki .md archive filenames (e.g. "myproject" → "myproject-overview.md")

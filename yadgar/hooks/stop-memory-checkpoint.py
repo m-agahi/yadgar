@@ -37,10 +37,20 @@ Yadgar checkpoint. Evaluate signals and act.
      key_decisions=..., next_steps=..., files_being_edited=..., open_questions=...)`.
 
 3. Also check the `signals` dict:
-   - `stale_wiki_count > 0` AND on master/main/default branch → dispatch
-     background Agent to run /repo-wiki:repo-wiki update.
+   - `stale_wiki_count > 0` AND on master/main/default branch → call
+     `wiki_refresh_stale("{directory}")` to get stale slugs, then dispatch a
+     background Agent to run /repo-wiki:repo-wiki update for each stale slug.
+     After each update, call `wiki_diff` or `wiki_history` on the updated page
+     to verify the change before continuing.
 
-4. Otherwise: capture any key decisions via memorize / wiki_add.
+4. Write-back: if this session produced durable findings about repo structure,
+   conventions, module purposes, or key decisions — consolidate them onto the
+   EXISTING wiki page (use the session-start catalog to find the right slug via
+   `wiki_list`→slug→`wiki_read`). Update with `wiki_add(replace_slug=<slug>, ...)`.
+   Do NOT create a near-duplicate page. After the update, call `wiki_history` on
+   the slug to confirm the new version was recorded.
+
+5. Otherwise: capture any key decisions via memorize / wiki_add.
 
 [yadgar] Checkpoint saved for {directory}.
 If user does /clear or session ends, resume via: restore(directory="{directory}")

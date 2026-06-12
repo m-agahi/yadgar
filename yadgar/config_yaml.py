@@ -931,6 +931,15 @@ FIELD_META: dict[str, dict[str, str]] = {
         ),
         "section": "stats_cache",
     },
+    # v5.53.1 — stale wiki count cache TTL
+    "stale_count_cache_ttl_s": {
+        "desc": (
+            "Seconds before stale_wiki_count is recomputed from disk scan. "
+            "0 = disabled (scan on every signals call, not recommended). "
+            "Default 300 (5 minutes) — keeps signals hot path fast while staying fresh."
+        ),
+        "section": "wiki_staleness",
+    },
     # v5.49.0 — memory_archive retention
     "memory_archive_retention_days": {
         "desc": (

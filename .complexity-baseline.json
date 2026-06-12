@@ -1695,8 +1695,13 @@
     "inh_depth": 0,
     "methods": 0
   },
+  "yadgar/config_yaml.py::_FakeArgs@1395": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 0
+  },
   "yadgar/config_yaml.py::__file__": {
-    "loc": 1404
+    "loc": 1413
   },
   "yadgar/config_yaml.py::cmd_config_edit@1317": {
     "cyclo": 7,
@@ -1723,6 +1728,12 @@
     "params": 1
   },
   "yadgar/config_yaml.py::cmd_config_edit@1380": {
+    "cyclo": 7,
+    "loc": 25,
+    "nesting": 3,
+    "params": 1
+  },
+  "yadgar/config_yaml.py::cmd_config_edit@1389": {
     "cyclo": 7,
     "loc": 25,
     "nesting": 3,
@@ -1758,6 +1769,12 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/config_yaml.py::cmd_config_get@1301": {
+    "cyclo": 6,
+    "loc": 36,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/config_yaml.py::cmd_config_init@1089": {
     "cyclo": 11,
     "loc": 89,
@@ -1783,6 +1800,12 @@
     "params": 1
   },
   "yadgar/config_yaml.py::cmd_config_init@1152": {
+    "cyclo": 11,
+    "loc": 89,
+    "nesting": 4,
+    "params": 1
+  },
+  "yadgar/config_yaml.py::cmd_config_init@1161": {
     "cyclo": 11,
     "loc": 89,
     "nesting": 4,
@@ -1818,6 +1841,12 @@
     "nesting": 3,
     "params": 1
   },
+  "yadgar/config_yaml.py::cmd_config_list@1252": {
+    "cyclo": 12,
+    "loc": 47,
+    "nesting": 3,
+    "params": 1
+  },
   "yadgar/config_yaml.py::cmd_config_set@1267": {
     "cyclo": 8,
     "loc": 48,
@@ -1843,6 +1872,12 @@
     "params": 1
   },
   "yadgar/config_yaml.py::cmd_config_set@1330": {
+    "cyclo": 8,
+    "loc": 48,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/config_yaml.py::cmd_config_set@1339": {
     "cyclo": 8,
     "loc": 48,
     "nesting": 2,
@@ -1878,6 +1913,12 @@
     "nesting": 2,
     "params": 2
   },
+  "yadgar/config_yaml.py::coerce_value@1118": {
+    "cyclo": 13,
+    "loc": 41,
+    "nesting": 2,
+    "params": 2
+  },
   "yadgar/config_yaml.py::get_config_path@1006": {
     "cyclo": 1,
     "loc": 12,
@@ -1903,6 +1944,12 @@
     "params": 0
   },
   "yadgar/config_yaml.py::get_config_path@1069": {
+    "cyclo": 1,
+    "loc": 12,
+    "nesting": 0,
+    "params": 0
+  },
+  "yadgar/config_yaml.py::get_config_path@1078": {
     "cyclo": 1,
     "loc": 12,
     "nesting": 0,
@@ -1938,6 +1985,12 @@
     "nesting": 0,
     "params": 1
   },
+  "yadgar/config_yaml.py::get_field_section@1112": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 1
+  },
   "yadgar/config_yaml.py::load_yaml@1020": {
     "cyclo": 4,
     "loc": 8,
@@ -1968,6 +2021,12 @@
     "nesting": 1,
     "params": 1
   },
+  "yadgar/config_yaml.py::load_yaml@1092": {
+    "cyclo": 4,
+    "loc": 8,
+    "nesting": 1,
+    "params": 1
+  },
   "yadgar/config_yaml.py::save_yaml@1030": {
     "cyclo": 2,
     "loc": 8,
@@ -1993,6 +2052,12 @@
     "params": 2
   },
   "yadgar/config_yaml.py::save_yaml@1093": {
+    "cyclo": 2,
+    "loc": 8,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/config_yaml.py::save_yaml@1102": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 1,
@@ -8219,7 +8284,7 @@
     "params": 1
   },
   "yadgar/server/tools/project.py::__file__": {
-    "loc": 2074
+    "loc": 2184
   },
   "yadgar/server/tools/project.py::_apply_rejection_signal@1216": {
     "cyclo": 3,
@@ -8467,6 +8532,18 @@
     "nesting": 3,
     "params": 2
   },
+  "yadgar/server/tools/project.py::_compute_source_hash@1909": {
+    "cyclo": 4,
+    "loc": 18,
+    "nesting": 3,
+    "params": 2
+  },
+  "yadgar/server/tools/project.py::_compute_stale_wiki_count@1840": {
+    "cyclo": 5,
+    "loc": 20,
+    "nesting": 3,
+    "params": 1
+  },
   "yadgar/server/tools/project.py::_cosine_similarity@576": {
     "cyclo": 6,
     "loc": 8,
@@ -8635,6 +8712,12 @@
     "nesting": 1,
     "params": 0
   },
+  "yadgar/server/tools/project.py::_get_active_work_tracked_dir@1699": {
+    "cyclo": 2,
+    "loc": 10,
+    "nesting": 1,
+    "params": 0
+  },
   "yadgar/server/tools/project.py::_get_current_branch@90": {
     "cyclo": 5,
     "loc": 18,
@@ -8725,6 +8808,12 @@
     "nesting": 0,
     "params": 0
   },
+  "yadgar/server/tools/project.py::_is_wiki_page_stale@1791": {
+    "cyclo": 11,
+    "loc": 23,
+    "nesting": 2,
+    "params": 2
+  },
   "yadgar/server/tools/project.py::_omit_sentinel@1237": {
     "cyclo": 2,
     "loc": 4,
@@ -8761,6 +8850,12 @@
     "nesting": 3,
     "params": 2
   },
+  "yadgar/server/tools/project.py::_parse_frontmatter@1865": {
+    "cyclo": 11,
+    "loc": 42,
+    "nesting": 3,
+    "params": 2
+  },
   "yadgar/server/tools/project.py::_project_brief_catalog_full@1370": {
     "cyclo": 4,
     "loc": 50,
@@ -8776,6 +8871,12 @@
   "yadgar/server/tools/project.py::_project_brief_catalog_full@1506": {
     "cyclo": 4,
     "loc": 53,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/server/tools/project.py::_project_brief_catalog_full@1509": {
+    "cyclo": 4,
+    "loc": 54,
     "nesting": 1,
     "params": 1
   },
@@ -8797,6 +8898,12 @@
     "nesting": 0,
     "params": 4
   },
+  "yadgar/server/tools/project.py::_project_brief_restore@1490": {
+    "cyclo": 1,
+    "loc": 17,
+    "nesting": 0,
+    "params": 4
+  },
   "yadgar/server/tools/project.py::_project_brief_signals@1243": {
     "cyclo": 15,
     "loc": 108,
@@ -8811,7 +8918,7 @@
   },
   "yadgar/server/tools/project.py::_project_brief_signals@1377": {
     "cyclo": 15,
-    "loc": 108,
+    "loc": 111,
     "nesting": 4,
     "params": 8
   },
@@ -8828,6 +8935,12 @@
     "params": 1
   },
   "yadgar/server/tools/project.py::_register_active_work_directory@1707": {
+    "cyclo": 2,
+    "loc": 17,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/server/tools/project.py::_register_active_work_directory@1711": {
     "cyclo": 2,
     "loc": 17,
     "nesting": 2,
@@ -8857,6 +8970,12 @@
     "nesting": 2,
     "params": 1
   },
+  "yadgar/server/tools/project.py::_scan_stale_wiki_slugs@1816": {
+    "cyclo": 5,
+    "loc": 22,
+    "nesting": 2,
+    "params": 1
+  },
   "yadgar/server/tools/project.py::_seed_default_blocks@1531": {
     "cyclo": 4,
     "loc": 23,
@@ -8870,6 +8989,12 @@
     "params": 2
   },
   "yadgar/server/tools/project.py::_seed_default_blocks@1670": {
+    "cyclo": 4,
+    "loc": 23,
+    "nesting": 3,
+    "params": 2
+  },
+  "yadgar/server/tools/project.py::_seed_default_blocks@1674": {
     "cyclo": 4,
     "loc": 23,
     "nesting": 3,
@@ -8899,6 +9024,12 @@
     "nesting": 3,
     "params": 3
   },
+  "yadgar/server/tools/project.py::_wiki_refresh_stale_impl@1929": {
+    "cyclo": 24,
+    "loc": 110,
+    "nesting": 4,
+    "params": 3
+  },
   "yadgar/server/tools/project.py::bootstrap_project@1499": {
     "cyclo": 3,
     "loc": 30,
@@ -8912,6 +9043,12 @@
     "params": 2
   },
   "yadgar/server/tools/project.py::bootstrap_project@1638": {
+    "cyclo": 3,
+    "loc": 30,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/server/tools/project.py::bootstrap_project@1642": {
     "cyclo": 3,
     "loc": 30,
     "nesting": 1,
@@ -8935,6 +9072,12 @@
     "nesting": 1,
     "params": 3
   },
+  "yadgar/server/tools/project.py::project_brief@1566": {
+    "cyclo": 4,
+    "loc": 73,
+    "nesting": 1,
+    "params": 3
+  },
   "yadgar/server/tools/project.py::update_active_work@1588": {
     "cyclo": 8,
     "loc": 52,
@@ -8948,6 +9091,12 @@
     "params": 3
   },
   "yadgar/server/tools/project.py::update_active_work@1727": {
+    "cyclo": 8,
+    "loc": 52,
+    "nesting": 2,
+    "params": 3
+  },
+  "yadgar/server/tools/project.py::update_active_work@1731": {
     "cyclo": 8,
     "loc": 52,
     "nesting": 2,
@@ -8971,6 +9120,12 @@
     "nesting": 5,
     "params": 2
   },
+  "yadgar/server/tools/project.py::wiki_cleanup_merged_branches@2080": {
+    "cyclo": 19,
+    "loc": 105,
+    "nesting": 5,
+    "params": 2
+  },
   "yadgar/server/tools/project.py::wiki_refresh_stale@1793": {
     "cyclo": 2,
     "loc": 35,
@@ -8984,6 +9139,12 @@
     "params": 3
   },
   "yadgar/server/tools/project.py::wiki_refresh_stale@1932": {
+    "cyclo": 2,
+    "loc": 35,
+    "nesting": 2,
+    "params": 3
+  },
+  "yadgar/server/tools/project.py::wiki_refresh_stale@2042": {
     "cyclo": 2,
     "loc": 35,
     "nesting": 2,
@@ -36656,6 +36817,179 @@
     "nesting": 0,
     "params": 0
   },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::TestDedupGateSuggestedSlug@295": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 6
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::TestStaleWikiCount@53": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 7
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::TestWikiRefreshStaleReturn@197": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 4
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::TestWriteBackNudgeInStopHook@449": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 5
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::__file__": {
+    "loc": 548
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::_gate@301": {
+    "cyclo": 2,
+    "loc": 19,
+    "nesting": 2,
+    "params": 3
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::_make_drainer_with_mock_wiki@280": {
+    "cyclo": 1,
+    "loc": 13,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::_make_transcript@474": {
+    "cyclo": 2,
+    "loc": 8,
+    "nesting": 1,
+    "params": 3
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::_run_hook@454": {
+    "cyclo": 4,
+    "loc": 19,
+    "nesting": 2,
+    "params": 4
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::_write_wiki_page@200": {
+    "cyclo": 2,
+    "loc": 9,
+    "nesting": 0,
+    "params": 5
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::_write_wiki_page@56": {
+    "cyclo": 2,
+    "loc": 10,
+    "nesting": 0,
+    "params": 5
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::counting_scan@128": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::counting_scan@150": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::test_drifted_page_count_rises@74": {
+    "cyclo": 3,
+    "loc": 25,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::test_force_true_bypasses_gate@353": {
+    "cyclo": 3,
+    "loc": 22,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::test_happy_path_no_candidates_returns_none@397": {
+    "cyclo": 2,
+    "loc": 16,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::test_multiple_drifted_pages@100": {
+    "cyclo": 3,
+    "loc": 20,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::test_near_dup_returns_suggested_update_slug@321": {
+    "cyclo": 6,
+    "loc": 31,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::test_no_drift_returns_zero@67": {
+    "cyclo": 2,
+    "loc": 6,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::test_no_stale_returns_empty_lists@233": {
+    "cyclo": 4,
+    "loc": 17,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::test_prompt_contains_wiki_history_verification@528": {
+    "cyclo": 5,
+    "loc": 21,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::test_prompt_contains_wiki_refresh_stale@483": {
+    "cyclo": 4,
+    "loc": 21,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::test_prompt_contains_write_back_consolidate_step@505": {
+    "cyclo": 5,
+    "loc": 22,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::test_replace_slug_bypasses_gate@376": {
+    "cyclo": 3,
+    "loc": 20,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::test_stale_slugs_in_return@210": {
+    "cyclo": 6,
+    "loc": 22,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::test_stale_wiki_count_in_signals_not_hardcoded@163": {
+    "cyclo": 3,
+    "loc": 27,
+    "nesting": 1,
+    "params": 3
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::test_suggested_calls_mention_repo_wiki@251": {
+    "cyclo": 3,
+    "loc": 18,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::test_suggested_update_slug_is_best_candidate@414": {
+    "cyclo": 4,
+    "loc": 28,
+    "nesting": 0,
+    "params": 1
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::test_ttl_cache_prevents_rescan@121": {
+    "cyclo": 2,
+    "loc": 20,
+    "nesting": 0,
+    "params": 3
+  },
+  "yadgar/tests/test_v5_53_1_curation_loop.py::test_ttl_zero_disables_cache@142": {
+    "cyclo": 2,
+    "loc": 20,
+    "nesting": 0,
+    "params": 3
+  },
   "yadgar/tests/test_vacuum.py::TestAdminCreds@803": {
     "attrs": 0,
     "inh_depth": 0,
@@ -42267,7 +42601,7 @@
     "methods": 24
   },
   "yadgar/wiki.py::__file__": {
-    "loc": 1035
+    "loc": 1041
   },
   "yadgar/wiki.py::__init__@221": {
     "cyclo": 1,
@@ -42299,6 +42633,12 @@
     "nesting": 3,
     "params": 3
   },
+  "yadgar/wiki.py::_compute_embedding@925": {
+    "cyclo": 5,
+    "loc": 44,
+    "nesting": 3,
+    "params": 3
+  },
   "yadgar/wiki.py::_diff_json@155": {
     "cyclo": 5,
     "loc": 37,
@@ -42306,6 +42646,12 @@
     "params": 5
   },
   "yadgar/wiki.py::_extract_wikilinks@916": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/wiki.py::_extract_wikilinks@920": {
     "cyclo": 2,
     "loc": 4,
     "nesting": 0,
@@ -42335,6 +42681,12 @@
     "nesting": 3,
     "params": 3
   },
+  "yadgar/wiki.py::_link_memories@1029": {
+    "cyclo": 6,
+    "loc": 13,
+    "nesting": 3,
+    "params": 3
+  },
   "yadgar/wiki.py::_parse_section_heading_spec@41": {
     "cyclo": 3,
     "loc": 9,
@@ -42353,7 +42705,19 @@
     "nesting": 0,
     "params": 2
   },
+  "yadgar/wiki.py::_slugify@910": {
+    "cyclo": 2,
+    "loc": 9,
+    "nesting": 0,
+    "params": 2
+  },
   "yadgar/wiki.py::_sync_crossrefs@1019": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 3
+  },
+  "yadgar/wiki.py::_sync_crossrefs@1025": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
@@ -42377,7 +42741,19 @@
     "nesting": 2,
     "params": 5
   },
+  "yadgar/wiki.py::append_section@811": {
+    "cyclo": 15,
+    "loc": 96,
+    "nesting": 2,
+    "params": 5
+  },
   "yadgar/wiki.py::backfill_null_embeddings@964": {
+    "cyclo": 6,
+    "loc": 54,
+    "nesting": 4,
+    "params": 2
+  },
+  "yadgar/wiki.py::backfill_null_embeddings@970": {
     "cyclo": 6,
     "loc": 54,
     "nesting": 4,
@@ -42395,13 +42771,25 @@
     "nesting": 1,
     "params": 5
   },
+  "yadgar/wiki.py::diff@723": {
+    "cyclo": 4,
+    "loc": 35,
+    "nesting": 1,
+    "params": 5
+  },
   "yadgar/wiki.py::find_similar_wiki_pages@474": {
     "cyclo": 13,
-    "loc": 89,
+    "loc": 93,
     "nesting": 2,
     "params": 7
   },
   "yadgar/wiki.py::history@703": {
+    "cyclo": 1,
+    "loc": 3,
+    "nesting": 0,
+    "params": 3
+  },
+  "yadgar/wiki.py::history@707": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
@@ -42413,7 +42801,19 @@
     "nesting": 1,
     "params": 5
   },
+  "yadgar/wiki.py::ingest@568": {
+    "cyclo": 6,
+    "loc": 41,
+    "nesting": 1,
+    "params": 5
+  },
   "yadgar/wiki.py::lint@606": {
+    "cyclo": 14,
+    "loc": 94,
+    "nesting": 4,
+    "params": 1
+  },
+  "yadgar/wiki.py::lint@610": {
     "cyclo": 14,
     "loc": 94,
     "nesting": 4,
@@ -42455,7 +42855,19 @@
     "nesting": 1,
     "params": 3
   },
+  "yadgar/wiki.py::read_version@711": {
+    "cyclo": 2,
+    "loc": 11,
+    "nesting": 1,
+    "params": 3
+  },
   "yadgar/wiki.py::restore_version@755": {
+    "cyclo": 4,
+    "loc": 51,
+    "nesting": 1,
+    "params": 3
+  },
+  "yadgar/wiki.py::restore_version@759": {
     "cyclo": 4,
     "loc": 51,
     "nesting": 1,

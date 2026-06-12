@@ -7,6 +7,25 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.53.1] — 2026-06-12
+
+### Added (Phase C — Live curation loop, KB usability umbrella)
+
+- **Revived `stale_wiki_count` signal.** Un-hardcoded the two `stale_wiki_count: 0` constants in `project_brief` signals and catalog/full modes. New `_compute_stale_wiki_count(resolved)` scans `.local-review/wiki/*.md` frontmatter hash vs SHA256(source_files) — same logic as `wiki_refresh_stale` — TTL-cached (`STALE_COUNT_CACHE_TTL_S`, default 300s). Stop-hook `stale_wiki_count > 0` path now live.
+- **`wiki_refresh_stale` returns stale slugs actionably.** Return dict gains `stale_count` and `suggested_calls` keys. Full-scan reuses `_scan_stale_wiki_slugs` (side-effect-free, shared with signals path); cache invalidated on each call.
+- **Dedup gate returns consolidation suggestion (`suggested_update_slug`).** `_sim_gate_for_drainer` hard-mode reject now includes `suggested_update_slug: <best-match slug>`. `force=True`, `replace_slug=`, `append=True` still bypass; soft mode and happy path unchanged.
+- **Content window 2000→4000 chars** in `_compute_embedding` and `find_similar_wiki_pages` (kept in sync). Existing pages retain old embeddings until `reembed_all`.
+- **Write-back forcing function in stop hook.** Checkpoint prompt extended: step 3 = stale regen via `wiki_refresh_stale` + diff verification; step 4 = write-back nudge (consolidate onto EXISTING page, `wiki_add(replace_slug=...)` + `wiki_history` confirm). Same 25-msg cadence.
+- **`STALE_COUNT_CACHE_TTL_S`** config knob (I25 three-way). Default 300s. 0 = disable cache.
+
+### Changed
+- `wiki_refresh_stale` return dict gains `stale_count` (int) and `suggested_calls` (list[str]). Existing keys unchanged.
+- `_sim_gate_for_drainer` reject gains `suggested_update_slug` + improved `hint`. Existing keys unchanged.
+
+### Migration notes
+- **D-personal TODO (Max, v5.53.1):** add write-back rule to nix claude.md → `home-manager switch`.
+- `reembed_all` recommended (not required) to backfill [:4000] embeddings on existing pages.
+
 ## [5.53.0] — 2026-06-12
 
 ### Added
