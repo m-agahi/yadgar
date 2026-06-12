@@ -191,6 +191,12 @@ class Settings(BaseSettings):
     EMBEDDING_CACHE_SIZE: int = 128
     QUERY_PREFIX: str = ""
 
+    # v5.51.0: Fast profile candidate pool override (I25 three-way registered).
+    # Candidate pool = max_results * multiplier. Global default=20 is too large for
+    # fast/hook profile (fetches 100 candidates at max_results=5). Fast profile uses
+    # this smaller multiplier to bound latency without sacrificing fast-profile signals.
+    FAST_PROFILE_CANDIDATE_MULTIPLIER: int = 3
+
     # v16: Query expansion (pseudo-HyDE) settings
     QUERY_EXPANSION_ENABLED: bool = True
 
@@ -297,6 +303,18 @@ class Settings(BaseSettings):
     # Set to False as a migration escape hatch if legacy callers lack branch/directory.
     DIRECTORY_ENFORCEMENT: bool = True
     BRANCH_ENFORCEMENT: bool = True
+
+    # v5.51.0: Hook recall latency budget (I25 three-way registered).
+    # Maximum seconds asyncio.wait_for may wait for retriever.recall in hook handlers.
+    # On timeout: WARN log + yadgar_hook_recall_timeout_total incremented + empty returned.
+    # Same defensive class as v5.50.10 OTEL shutdown bound. Default 2.0s is conservative
+    # (p99=10s; 2s cuts ~1% slowest calls). Raise to 5s if counter rate too high.
+    HOOK_RECALL_TIMEOUT_S: float = 2.0
+
+    # v5.51.0: /api/stats TTL cache (I25 three-way registered).
+    # Seconds before a cached /api/stats result is invalidated and recomputed.
+    # 0 = disabled (recompute every request). Default 5s.
+    STATS_CACHE_TTL_S: int = 5
 
     # File queue — async write queue base directory
     DATA_DIR: str = str(_paths.DATA_DIR)

@@ -36,6 +36,58 @@ logger = logging.getLogger(__name__)
 _CORS = {"Cache-Control": "no-cache"}
 
 # ---------------------------------------------------------------------------
+# v5.51.0: Hook recall latency budget helper
+# ---------------------------------------------------------------------------
+
+
+async def _recall_with_timeout(
+    retriever,
+    handler_name: str,
+    *args,
+    **kwargs,
+):
+    """Wrap asyncio.to_thread(retriever.recall, ...) with asyncio.wait_for timeout.
+
+    On TimeoutError: logs WARN, increments yadgar_hook_recall_timeout_total{handler},
+    returns None (caller should treat as empty recall).
+    On other exceptions: re-raises so the caller's existing except Exception block fires.
+
+    handler_name: one of "prompt-recall" | "instructions-loaded" | "subagent-start"
+    """
+    from yadgar.config import get_settings  # noqa: PLC0415
+
+    timeout_s = get_settings().HOOK_RECALL_TIMEOUT_S
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(retriever.recall, *args, **kwargs),
+            timeout=timeout_s,
+        )
+    except TimeoutError:
+        logger.warning(
+            "hook latency budget exceeded",
+            extra={
+                "event": "hook.recall_timeout",
+                "handler": handler_name,
+                "timeout_s": timeout_s,
+            },
+        )
+        try:
+            from yadgar.metrics import yadgar_hook_recall_timeout_total  # noqa: PLC0415
+
+            yadgar_hook_recall_timeout_total.labels(handler=handler_name).inc()
+        except Exception:  # noqa: BLE001
+            pass
+        return None  # caller checks for None and returns {"text": ""}
+
+
+# ---------------------------------------------------------------------------
+# v5.51.0: /api/stats TTL cache
+# ---------------------------------------------------------------------------
+
+_stats_cache: dict = {}  # keys: "data", "cached_at", "project"
+
+
+# ---------------------------------------------------------------------------
 # v5.10.6: session-end sentinel helpers
 # ---------------------------------------------------------------------------
 
@@ -579,13 +631,22 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
         try:
             # v5.6.6 A: use lightweight "fast" profile (BM25+HNSW only, no CE/NLI/MP).
             # Hooks fire 50+ times/hour; full rerank pipeline causes 8-46s CPU bursts.
-            results = await asyncio.to_thread(
-                retriever.recall, query, max_results=5, min_heat=0.0, profile="fast"
+            # v5.51.0: wrapped in _recall_with_timeout (asyncio.wait_for) to bound latency.
+            # On timeout, _recall_with_timeout returns None (logs WARN + increments counter).
+            results = await _recall_with_timeout(
+                retriever,
+                "prompt-recall",
+                query,
+                max_results=5,
+                min_heat=0.0,
+                profile="fast",
             )
         except Exception as e:
             logger.debug("prompt-recall hook error: %s", e)
             _hook_observe("prompt_recall", _t0, e)
             _observed = True
+            return JSONResponse({"text": ""})
+        if results is None:
             return JSONResponse({"text": ""})
 
         if not results:
@@ -1116,13 +1177,22 @@ async def hook_instructions_loaded(request: Request) -> JSONResponse:
             # Fires on every session_start + compact event — highest-frequency burst path.
             # Siblings prompt_recall (~line 524) and subagent_start (~line 1048) already
             # use profile="fast" with same rationale. Same fix now applied here.
-            results = await asyncio.to_thread(
-                retriever.recall, query, max_results=3, min_heat=0.0, profile="fast"
+            # v5.51.0: wrapped in _recall_with_timeout (asyncio.wait_for) to bound latency.
+            # On timeout, _recall_with_timeout returns None (logs WARN + increments counter).
+            results = await _recall_with_timeout(
+                retriever,
+                "instructions-loaded",
+                query,
+                max_results=3,
+                min_heat=0.0,
+                profile="fast",
             )
         except Exception as _e:
             logger.debug("instructions-loaded hook recall error: %s", _e)
             _hook_observe("instructions_loaded", _t0, _e)
             _observed = True
+            return JSONResponse({"text": ""})
+        if results is None:
             return JSONResponse({"text": ""})
 
         if not results:
@@ -1212,15 +1282,22 @@ async def hook_subagent_start(request: Request) -> JSONResponse:
             # Hooks fire on every agent dispatch; full rerank pipeline causes 2.5-10s
             # CPU bursts. Sibling prompt_recall (~line 524) already used profile="fast"
             # with same rationale — same fix now applied here.
-            results = await asyncio.to_thread(
-                retriever.recall, query, max_results=5, min_heat=0.0, profile="fast"
+            # v5.51.0: wrapped in _recall_with_timeout (asyncio.wait_for) to bound latency.
+            # On timeout, _recall_with_timeout returns None (logs WARN + increments counter).
+            results = await _recall_with_timeout(
+                retriever,
+                "subagent-start",
+                query,
+                max_results=5,
+                min_heat=0.0,
+                profile="fast",
             )
         except Exception as _e:
             logger.debug("subagent-start hook recall error: %s", _e)
             _hook_observe("subagent_start", _t0, _e)
             _observed = True
             return JSONResponse({"text": ""})
-
+        # None (timeout) or empty list → no context to inject
         if not results:
             return JSONResponse({"text": ""})
 
@@ -1290,14 +1367,46 @@ async def api_graph(request: Request) -> JSONResponse:
 @mcp_server.custom_route("/api/stats", methods=["GET"])
 @trace_span("api.stats")
 async def api_stats(request: Request) -> JSONResponse:
-    """Return memory statistics as JSON (used by `yadgar stats` CLI when daemon is running)."""
+    """Return memory statistics as JSON (used by `yadgar stats` CLI when daemon is running).
+
+    v5.51.0: TTL-cached to avoid live get_memory_stats on every request.
+    Cache TTL = STATS_CACHE_TTL_S (default 5s). 0 = disabled (recompute every request).
+    Cache is keyed by project param. Response includes cache_age_seconds.
+    """
     if _st._storage is None:
         return JSONResponse({}, status_code=503)
     project = request.query_params.get("project")
+
+    from yadgar.config import get_settings  # noqa: PLC0415
+
+    ttl_s = get_settings().STATS_CACHE_TTL_S
+    now = time.monotonic()
+
+    # Check cache
+    if ttl_s > 0:
+        cached_project = _stats_cache.get("project")
+        cached_at = _stats_cache.get("cached_at")
+        if cached_at is not None and cached_project == project and (now - cached_at) < ttl_s:
+            # Cache hit — copy to avoid mutating cached entry
+            response_data = dict(_stats_cache["data"])
+            response_data["cache_age_seconds"] = round(now - cached_at, 3)
+            if project:
+                response_data["project_filter"] = project
+            return JSONResponse(response_data, headers=_CORS)
+
+    # Cache miss — recompute
     data = await asyncio.to_thread(_st._storage.get_memory_stats)
+
+    if ttl_s > 0:
+        _stats_cache["data"] = data
+        _stats_cache["cached_at"] = now
+        _stats_cache["project"] = project
+
+    response_data = dict(data)
+    response_data["cache_age_seconds"] = 0
     if project:
-        data["project_filter"] = project
-    return JSONResponse(data, headers=_CORS)
+        response_data["project_filter"] = project
+    return JSONResponse(response_data, headers=_CORS)
 
 
 @mcp_server.custom_route("/api/graph/stats", methods=["GET"])

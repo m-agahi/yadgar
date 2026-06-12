@@ -360,6 +360,60 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
 
     # -- d2. Unified Recall (legacy monolithic implementation — kept for compat) --
 
+    def _resolve_query_and_candidate_k(
+        self,
+        query: str,
+        profile: dict,
+        profile_signals: set,
+        max_results: int,
+    ) -> tuple[dict, object, bool, list, int]:
+        """Resolve query analysis, enabled signals, open-domain state, and candidate_k.
+
+        Returns:
+            (query_analysis, enabled_signals, open_domain_mode, open_domain_subqueries, candidate_k)
+
+        v5.51.0: extracted from recall() to keep fn_loc under the I13 HARD cap (150).
+        When profile has skip_query_analysis=True (fast profile), analysis and routing
+        intersection are bypassed entirely to avoid per-call overhead and the empty-signals
+        trap when QUERY_ROUTING_ENABLED=True.
+        """
+        skip_query_analysis = profile.get("skip_query_analysis", False)
+
+        if skip_query_analysis:
+            query_analysis: dict = {}
+            enabled_signals = profile_signals
+            open_domain_mode = False
+            open_domain_subqueries: list = []
+        else:
+            query_analysis = analyze_query(query, self._settings)
+            if self._settings.QUERY_ROUTING_ENABLED:
+                enabled_signals = set(query_analysis.get("enabled_signals", [])) & profile_signals
+            else:
+                enabled_signals = None if len(profile_signals) >= 4 else profile_signals
+            open_domain_mode = query_analysis.get("is_open_domain_like", False)
+            open_domain_subqueries = (
+                _build_open_domain_subqueries(query, query_analysis) if open_domain_mode else []
+            )
+
+        if profile.get("use_fast_candidate_multiplier", False):
+            candidate_k = max_results * getattr(
+                self._settings, "FAST_PROFILE_CANDIDATE_MULTIPLIER", 3
+            )
+        else:
+            candidate_k = max_results * self._settings.CANDIDATE_POOL_MULTIPLIER
+            if open_domain_mode:
+                candidate_k = int(
+                    candidate_k * getattr(self._settings, "OPEN_DOMAIN_CANDIDATE_MULTIPLIER", 1.5)
+                )
+
+        return (
+            query_analysis,
+            enabled_signals,
+            open_domain_mode,
+            open_domain_subqueries,
+            candidate_k,
+        )
+
     @trace_span("retrieval.recall")
     def recall(
         self,
@@ -432,26 +486,10 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
             }
         )
 
-        query_analysis = analyze_query(query, self._settings)
-
-        # Query-dependent signal routing (intersected with profile signals)
-        if self._settings.QUERY_ROUTING_ENABLED:
-            enabled_signals = set(query_analysis.get("enabled_signals", [])) & profile_signals
-        else:
-            # Without routing, use all profile signals
-            # None means all signals — preserve that behavior for balanced/full (all 4)
-            enabled_signals = None if len(profile_signals) >= 4 else profile_signals
-
-        open_domain_mode = query_analysis.get("is_open_domain_like", False)
-        open_domain_subqueries = (
-            _build_open_domain_subqueries(query, query_analysis) if open_domain_mode else []
+        # v5.51.0: query analysis + candidate_k resolution extracted to helper (I13 HARD cap).
+        query_analysis, enabled_signals, open_domain_mode, open_domain_subqueries, candidate_k = (
+            self._resolve_query_and_candidate_k(query, profile, profile_signals, max_results)
         )
-
-        candidate_k = max_results * self._settings.CANDIDATE_POOL_MULTIPLIER
-        if open_domain_mode:
-            candidate_k = int(
-                candidate_k * getattr(self._settings, "OPEN_DOMAIN_CANDIDATE_MULTIPLIER", 1.5)
-            )
 
         # 1 + 1b + 1c. FTS, entity-FTS, and COMET expansion scores
         self._collect_fts_scores(
