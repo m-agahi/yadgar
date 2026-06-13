@@ -806,17 +806,6 @@
     "added_by": "complexity-governance-agent"
   },
   {
-    "path": "yadgar/sleep_compute/dream.py",
-    "function": "dream_replay",
-    "lineno": 14,
-    "metrics": {
-      "cyclomatic": 20
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
-  },
-  {
     "path": "yadgar/staleness.py",
     "function": "scan_directory",
     "lineno": 129,
