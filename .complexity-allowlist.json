@@ -275,18 +275,6 @@
     "added_by": "complexity-governance-agent"
   },
   {
-    "path": "yadgar/metacognition/coverage.py",
-    "function": "assess_coverage",
-    "lineno": 16,
-    "metrics": {
-      "cyclomatic": 31,
-      "nesting": 6
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
-  },
-  {
     "path": "yadgar/metacognition/gap_detection.py",
     "function": "detect_gaps",
     "lineno": 9,
