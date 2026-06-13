@@ -2549,16 +2549,28 @@
   "yadgar/consolidation/heat_decay.py::_HeatDecayMixin@9": {
     "attrs": 0,
     "inh_depth": 0,
-    "methods": 1
+    "methods": 3
   },
   "yadgar/consolidation/heat_decay.py::__file__": {
-    "loc": 77
+    "loc": 88
   },
   "yadgar/consolidation/heat_decay.py::_apply_decay@12": {
-    "cyclo": 19,
-    "loc": 66,
+    "cyclo": 3,
+    "loc": 8,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/consolidation/heat_decay.py::_decay_entities@65": {
+    "cyclo": 6,
+    "loc": 24,
     "nesting": 3,
     "params": 2
+  },
+  "yadgar/consolidation/heat_decay.py::_decay_memories@21": {
+    "cyclo": 12,
+    "loc": 43,
+    "nesting": 3,
+    "params": 3
   },
   "yadgar/consolidation/orchestrator.py::_OrchestratorMixin@48": {
     "attrs": 0,

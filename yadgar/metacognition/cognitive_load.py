@@ -10,6 +10,64 @@ def _extract_entities(query: str) -> list[str]:
     return _extract_query_entities(query)
 
 
+def _precompute_memory_features(
+    memories: list[dict],
+) -> tuple[list[set[str]], list[datetime | None]]:
+    """Extract entity sets and parsed timestamps for each memory.
+
+    Returns a parallel pair of lists: entity_sets and timestamps.
+    Invalid timestamp strings are replaced with None.
+    """
+    entity_sets: list[set[str]] = []
+    timestamps: list[datetime | None] = []
+
+    for mem in memories:
+        entities = set(_extract_entities(mem.get("content", "")))
+        tags = mem.get("tags", [])
+        if isinstance(tags, list):
+            entities.update(tags)
+        entity_sets.append(entities)
+
+        created = mem.get("created_at")
+        if isinstance(created, str):
+            try:
+                created = datetime.fromisoformat(created)
+            except ValueError, TypeError:
+                created = None
+        timestamps.append(created)
+
+    return entity_sets, timestamps
+
+
+def _memories_should_cluster(
+    i: int,
+    j: int,
+    entity_sets: list[set[str]],
+    timestamps: list[datetime | None],
+) -> bool:
+    """Return True if memories i and j should belong to the same chunk.
+
+    Clustering criteria (either is sufficient):
+    - Entity overlap: Jaccard similarity > 0.3
+    - Temporal proximity: timestamps < 2 hours apart
+    """
+    ei, ej = entity_sets[i], entity_sets[j]
+    if ei and ej:
+        union = ei | ej
+        jaccard = len(ei & ej) / len(union) if union else 0.0
+        if jaccard > 0.3:
+            return True
+
+    ti, tj = timestamps[i], timestamps[j]
+    if ti is not None and tj is not None:
+        t_i = ti if ti.tzinfo is not None else ti.replace(tzinfo=UTC)
+        t_j = tj if tj.tzinfo is not None else tj.replace(tzinfo=UTC)
+        if abs((t_i - t_j).total_seconds()) < 7200:  # 2 hours
+            return True
+
+    return False
+
+
 class _CognitiveLoadMixin:
     """Cognitive load management via Cowan's 4±1 chunk limit (Cognitive Workspace)."""
 
@@ -93,29 +151,7 @@ class _CognitiveLoadMixin:
 
         n = len(memories)
         assigned = [False] * n
-
-        # Pre-compute entity sets and timestamps for each memory
-        entity_sets: list[set[str]] = []
-        timestamps: list[datetime | None] = []
-
-        for mem in memories:
-            # Extract entities from content
-            entities = set(_extract_entities(mem.get("content", "")))
-            # Also add tags
-            tags = mem.get("tags", [])
-            if isinstance(tags, list):
-                entities.update(tags)
-            entity_sets.append(entities)
-
-            # Parse timestamp
-            created = mem.get("created_at")
-            if isinstance(created, str):
-                try:
-                    created = datetime.fromisoformat(created)
-                except (ValueError, TypeError) as _e:
-                    created = None
-            timestamps.append(created)
-
+        entity_sets, timestamps = _precompute_memory_features(memories)
         chunks: list[list[dict]] = []
 
         for i in range(n):
@@ -127,30 +163,9 @@ class _CognitiveLoadMixin:
             for j in range(i + 1, n):
                 if assigned[j]:
                     continue
-
-                # Check entity overlap (Jaccard > 0.3)
-                if entity_sets[i] and entity_sets[j]:
-                    intersection = entity_sets[i] & entity_sets[j]
-                    union = entity_sets[i] | entity_sets[j]
-                    jaccard = len(intersection) / len(union) if union else 0.0
-                    if jaccard > 0.3:
-                        chunk.append(memories[j])
-                        assigned[j] = True
-                        continue
-
-                # Check temporal proximity (< 2 hours apart)
-                if timestamps[i] is not None and timestamps[j] is not None:
-                    t_i = timestamps[i]
-                    t_j = timestamps[j]
-                    if t_i.tzinfo is None:
-                        t_i = t_i.replace(tzinfo=UTC)
-                    if t_j.tzinfo is None:
-                        t_j = t_j.replace(tzinfo=UTC)
-                    diff = abs((t_i - t_j).total_seconds())
-                    if diff < 7200:  # 2 hours
-                        chunk.append(memories[j])
-                        assigned[j] = True
-                        continue
+                if _memories_should_cluster(i, j, entity_sets, timestamps):
+                    chunk.append(memories[j])
+                    assigned[j] = True
 
             chunks.append(chunk)
 

@@ -1,5 +1,6 @@
 """Clustering and embedding-similarity search for the CLS store."""
 
+import json as _json
 import logging
 
 import numpy as np
@@ -29,63 +30,91 @@ class _ClusteringMixin:
            - Check generalizability (>= 2 directories OR same directory)
         4. Return qualifying clusters
         """
-        max_candidates = self._settings.CLS_PATTERN_MAX_CANDIDATES
-        # 1. Get episodic memories — cap to avoid O(N²) at scale
-        if directory:
-            memories = self._storage.get_memories_by_store_type(
-                "episodic", directory=directory, limit=max_candidates
-            )
-        else:
-            memories = self._storage.get_memories_by_store_type("episodic", limit=max_candidates)
+        memories = self._fetch_episodic_candidates(directory)
         if len(memories) < min_occurrences:
             return []
 
-        # 2. Vectorised greedy clustering via numpy matmul
-        threshold = self._settings.CLUSTER_SIMILARITY_THRESHOLD
-
-        # Build unit-normalised embedding matrix for memories with valid embeddings
-        valid_mems: list[dict] = []
-        unit_vecs: list[np.ndarray] = []
-        for mem in memories:
-            # Don't promote action-stream noise or already-abstracted semantics
-            # to semantic — they are garbage at the episodic level.
-            mem_tags = mem.get("tags") or []
-            if isinstance(mem_tags, str):
-                import json as _json
-
-                mem_tags = _json.loads(mem_tags)
-            if "_action_stream" in mem_tags or "auto-abstracted" in mem_tags:
-                continue
-
-            emb = mem.get("embedding")
-            if not emb:
-                continue
-            try:
-                arr = np.frombuffer(emb, dtype=np.float32)
-                norm = np.linalg.norm(arr)
-                if len(arr) == 0 or norm == 0:
-                    continue
-                unit_vecs.append(arr / norm)
-                valid_mems.append(mem)
-            except Exception:
-                continue
-
+        valid_mems, mat = self._build_unit_matrix(memories)
         if len(valid_mems) < min_occurrences:
             return []
 
-        # Pairwise cosine similarity via matrix multiplication (O(N·D))
-        mat = np.stack(unit_vecs)  # N x D
-        sim_matrix = mat @ mat.T  # N x N
+        sim_matrix = mat @ mat.T
+        threshold = self._settings.CLUSTER_SIMILARITY_THRESHOLD
+        clusters = self._greedy_cluster(valid_mems, sim_matrix, threshold)
 
+        return [
+            result
+            for cluster in clusters
+            if (result := self._qualify_cluster(cluster, min_occurrences)) is not None
+        ]
+
+    # ── Pattern Detection Helpers ─────────────────────────────────────────
+
+    def _fetch_episodic_candidates(self, directory: str | None) -> list[dict]:
+        """Fetch episodic memories capped at CLS_PATTERN_MAX_CANDIDATES."""
+        cap = self._settings.CLS_PATTERN_MAX_CANDIDATES
+        if directory:
+            return self._storage.get_memories_by_store_type(
+                "episodic", directory=directory, limit=cap
+            )
+        return self._storage.get_memories_by_store_type("episodic", limit=cap)
+
+    @staticmethod
+    def _mem_tags(mem: dict) -> list:
+        """Return tags as a list (handles JSON-string encoding)."""
+        tags = mem.get("tags") or []
+        if isinstance(tags, str):
+            tags = _json.loads(tags)
+        return tags
+
+    def _build_unit_matrix(self, memories: list[dict]) -> tuple[list[dict], np.ndarray]:
+        """Filter noise tags and normalise embeddings into a unit matrix.
+
+        Returns (valid_mems, N×D unit matrix).  Memories with invalid or
+        missing embeddings, or tagged _action_stream / auto-abstracted, are
+        excluded.
+        """
+        valid_mems: list[dict] = []
+        unit_vecs: list[np.ndarray] = []
+        for mem in memories:
+            tags = self._mem_tags(mem)
+            if "_action_stream" in tags or "auto-abstracted" in tags:
+                continue
+            vec = self._try_unit_vec(mem)
+            if vec is None:
+                continue
+            unit_vecs.append(vec)
+            valid_mems.append(mem)
+        mat = np.stack(unit_vecs) if unit_vecs else np.empty((0, 0), dtype=np.float32)
+        return valid_mems, mat
+
+    @staticmethod
+    def _try_unit_vec(mem: dict) -> np.ndarray | None:
+        """Convert embedding bytes to a unit vector; return None on failure."""
+        emb = mem.get("embedding")
+        if not emb:
+            return None
+        try:
+            arr = np.frombuffer(emb, dtype=np.float32)
+            norm = np.linalg.norm(arr)
+            if len(arr) == 0 or norm == 0:
+                return None
+            return arr / norm
+        except Exception:
+            return None
+
+    @staticmethod
+    def _greedy_cluster(
+        valid_mems: list[dict], sim_matrix: np.ndarray, threshold: float
+    ) -> list[list[dict]]:
+        """Greedy O(N²) cluster assignment using precomputed similarity matrix."""
         clusters: list[list[dict]] = []
         assigned: set[int] = set()
-
         for i, mem_a in enumerate(valid_mems):
             if mem_a["id"] in assigned:
                 continue
             cluster = [mem_a]
             assigned.add(mem_a["id"])
-
             for j in range(i + 1, len(valid_mems)):
                 mem_b = valid_mems[j]
                 if mem_b["id"] in assigned:
@@ -93,46 +122,42 @@ class _ClusteringMixin:
                 if sim_matrix[i, j] >= threshold:
                     cluster.append(mem_b)
                     assigned.add(mem_b["id"])
-
             clusters.append(cluster)
+        return clusters
 
-        # 3. Filter by occurrence count and session/directory diversity
-        qualifying = []
-        for cluster in clusters:
-            if len(cluster) < min_occurrences:
-                continue
+    def _session_proxy(self, mem: dict) -> str | None:
+        """Return a session identifier for a memory, or None if unresolvable."""
+        ep_id = mem.get("source_episode_id")
+        if ep_id is not None:
+            return self._storage.get_episode_session_id(ep_id)
+        created = mem.get("created_at", "")
+        if isinstance(created, str) and len(created) >= 10:
+            return created[:10]
+        return None
 
-            # Session diversity: check source_episode_id → session_id
-            session_ids = set()
-            directories = set()
-            for mem in cluster:
-                directories.add(mem.get("directory_context", ""))
-                ep_id = mem.get("source_episode_id")
-                if ep_id is not None:
-                    session_id = self._storage.get_episode_session_id(ep_id)
-                    if session_id is not None:
-                        session_ids.add(session_id)
-                else:
-                    # No episode linkage — treat created_at date as session proxy
-                    created = mem.get("created_at", "")
-                    if isinstance(created, str) and len(created) >= 10:
-                        session_ids.add(created[:10])  # date part as proxy
+    def _qualify_cluster(self, cluster: list[dict], min_occurrences: int) -> dict | None:
+        """Return a result dict if cluster meets size + session-diversity thresholds.
 
-            # Go-CLS: require >= 2 different sessions for generalizability
-            if len(session_ids) < 2:
-                continue
-
-            qualifying.append(
-                {
-                    "memories": cluster,
-                    "pattern_summary": self._summarize_cluster(cluster),
-                    "occurrence_count": len(cluster),
-                    "session_count": len(session_ids),
-                    "directories": list(directories),
-                }
-            )
-
-        return qualifying
+        Returns None when the cluster does not qualify.
+        """
+        if len(cluster) < min_occurrences:
+            return None
+        session_ids: set[str] = set()
+        directories: set[str] = set()
+        for mem in cluster:
+            directories.add(mem.get("directory_context", ""))
+            proxy = self._session_proxy(mem)
+            if proxy is not None:
+                session_ids.add(proxy)
+        if len(session_ids) < 2:
+            return None
+        return {
+            "memories": cluster,
+            "pattern_summary": self._summarize_cluster(cluster),
+            "occurrence_count": len(cluster),
+            "session_count": len(session_ids),
+            "directories": list(directories),
+        }
 
     # ── Internal Helpers ──────────────────────────────────────────────────
 

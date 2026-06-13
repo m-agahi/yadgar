@@ -49,17 +49,6 @@
     "added_by": "complexity-governance-agent"
   },
   {
-    "path": "yadgar/cls_store/clustering.py",
-    "function": "find_recurring_patterns",
-    "lineno": 18,
-    "metrics": {
-      "cyclomatic": 26
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
-  },
-  {
     "path": "yadgar/consolidation/cleanup.py",
     "function": "_process_action_log",
     "lineno": 68,
@@ -105,17 +94,6 @@
     "added_by": "complexity-governance-agent"
   },
   {
-    "path": "yadgar/consolidation/heat_decay.py",
-    "function": "_apply_decay",
-    "lineno": 12,
-    "metrics": {
-      "cyclomatic": 19
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
-  },
-  {
     "path": "yadgar/consolidation/orchestrator.py",
     "function": "_consolidation_cycle",
     "lineno": 69,
@@ -153,17 +131,6 @@
     "path": "yadgar/embeddings.py",
     "function": "_ensure_model",
     "lineno": 106,
-    "metrics": {
-      "nesting": 6
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
-  },
-  {
-    "path": "yadgar/enrichment/conceptnet.py",
-    "function": "_try_http",
-    "lineno": 174,
     "metrics": {
       "nesting": 6
     },
@@ -247,29 +214,6 @@
     "lineno": 361,
     "metrics": {
       "nesting": 6
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
-  },
-  {
-    "path": "yadgar/metacognition/cognitive_load.py",
-    "function": "chunk_memories",
-    "lineno": 85,
-    "metrics": {
-      "cyclomatic": 19
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
-  },
-  {
-    "path": "yadgar/metacognition/gap_detection.py",
-    "function": "detect_gaps",
-    "lineno": 9,
-    "metrics": {
-      "cyclomatic": 35,
-      "fn_loc": 160
     },
     "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
     "added": "2026-06-13",
@@ -766,17 +710,6 @@
     "lineno": 555,
     "metrics": {
       "cyclomatic": 20
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
-  },
-  {
-    "path": "yadgar/sleep_compute/community.py",
-    "function": "generate_cluster_summaries",
-    "lineno": 125,
-    "metrics": {
-      "cyclomatic": 18
     },
     "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
     "added": "2026-06-13",
