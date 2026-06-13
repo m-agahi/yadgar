@@ -60,17 +60,6 @@
     "added_by": "complexity-governance-agent"
   },
   {
-    "path": "yadgar/cls_store/patterns.py",
-    "function": "abstract_to_schema",
-    "lineno": 252,
-    "metrics": {
-      "cyclomatic": 17
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
-  },
-  {
     "path": "yadgar/consolidation/cleanup.py",
     "function": "_process_action_log",
     "lineno": 68,
