@@ -162,18 +162,12 @@ def _build_sync_env(monkeypatch, *, memory_id=_FIXED_MEMORY_ID, get_memory_retur
     monkeypatch.setattr(_st, "_replay", None)
     monkeypatch.setattr(_st, "_rules_engine", None)
 
-    # Patch lifecycle getters in each phase module that uses them
-    _embed_mod = importlib.import_module("yadgar.server.tools._memorize_phases._phase_embed")
-    _store_mod = importlib.import_module("yadgar.server.tools._memorize_phases._phase_store")
-    _post_write_mod = importlib.import_module(
-        "yadgar.server.tools._memorize_phases._phase_post_write"
-    )
-    monkeypatch.setattr(_embed_mod, "_get_embeddings", lambda: mock_embeddings)
-    monkeypatch.setattr(_store_mod, "_get_storage", lambda: mock_storage)
-    monkeypatch.setattr(_store_mod, "_get_embeddings", lambda: mock_embeddings)
-    monkeypatch.setattr(_store_mod, "_get_buffer", lambda: mock_buffer)
-    monkeypatch.setattr(_post_write_mod, "_get_storage", lambda: mock_storage)
-    monkeypatch.setattr(_post_write_mod, "_get_buffer", lambda: mock_buffer)
+    # Patch lifecycle getters at the lifecycle module (phases use _lifecycle.getter())
+    import yadgar.server.lifecycle as _lc
+
+    monkeypatch.setattr(_lc, "_get_embeddings", lambda: mock_embeddings)
+    monkeypatch.setattr(_lc, "_get_storage", lambda: mock_storage)
+    monkeypatch.setattr(_lc, "_get_buffer", lambda: mock_buffer)
 
     mock_settings = _make_mock_settings()
     monkeypatch.setattr(_mem_mod, "settings", mock_settings)

@@ -77,9 +77,8 @@ def test_hook_file_exists():
 def test_state_file_written_atomically(tmp_path):
     """After a checkpoint, state file should exist with last_save count."""
     transcript = _make_transcript(tmp_path, 25)
-    state_dir = tmp_path / ".yadgar"
-    state_dir.mkdir()
-    state_file = state_dir / "stop-hook-state.json"
+    # isolate_yadgar_paths sets XDG_STATE_HOME=tmp_path/state, so hook writes there
+    state_file = tmp_path / "state" / "yadgar" / "stop-hook-state.json"
 
     with patch.dict(os.environ, {"HOME": str(tmp_path)}):
         _run_hook(
@@ -102,8 +101,8 @@ def test_state_file_keyed_by_session_id(tmp_path):
     """State file tracks per-session counts."""
     transcript_a = _make_transcript(tmp_path, 25)
     transcript_b = _make_transcript(tmp_path, 50)
-    state_dir = tmp_path / ".yadgar"
-    state_dir.mkdir()
+    # isolate_yadgar_paths sets XDG_STATE_HOME=tmp_path/state, so hook writes there
+    state_file = tmp_path / "state" / "yadgar" / "stop-hook-state.json"
 
     with patch.dict(os.environ, {"HOME": str(tmp_path)}):
         _run_hook(
@@ -123,7 +122,6 @@ def test_state_file_keyed_by_session_id(tmp_path):
             },
         )
 
-    state_file = state_dir / "stop-hook-state.json"
     data = json.loads(state_file.read_text())
     # Both sessions must have independent state
     assert len(data) >= 2 or "session-A" in data or "session-B" in data
@@ -221,10 +219,9 @@ def test_prompt_fires_at_75(tmp_path):
 
 def test_no_prompt_between_25_and_50(tmp_path):
     """After firing at 25, no block at 30 messages."""
-    state_dir = tmp_path / ".yadgar"
-    state_dir.mkdir()
-
-    state_file = state_dir / "stop-hook-state.json"
+    # isolate_yadgar_paths sets XDG_STATE_HOME=tmp_path/state, so hook reads/writes there
+    state_file = tmp_path / "state" / "yadgar" / "stop-hook-state.json"
+    state_file.parent.mkdir(parents=True, exist_ok=True)
     state_file.write_text(json.dumps({"sess-mid": {"last_save": 25}}))
 
     transcript = _make_transcript(tmp_path, 30)

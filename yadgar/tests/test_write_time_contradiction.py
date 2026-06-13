@@ -303,49 +303,49 @@ def test_llm_resolver_short_circuit_bypasses_lightweight(monkeypatch):
 
     curator_mock = MagicMock()
 
+    mock_storage = MagicMock()
+    mock_storage.insert_memory.return_value = "memory:test000"
+    mock_storage.get_memory.return_value = {
+        "id": "memory:test000",
+        "content": "x",
+        "tags": [],
+        "context": "/test/wtc",
+        "branch": None,
+        "heat": 0.5,
+    }
+
+    mock_emb = MagicMock()
+    mock_emb.encode.return_value = b"\x00" * (384 * 4)
+    mock_emb.get_model_name.return_value = "test-model"
+
+    import yadgar.server._state as _state_mod
+
     with (
-        patch("yadgar.server.tools.memorize.is_draining", return_value=True),
-        patch("yadgar.server.tools.memorize.gate_or_reject", return_value=None),
+        patch("yadgar.file_queue.is_draining", return_value=True),
+        patch(
+            "yadgar.server.tools._memorize_phases._phase_validate.gate_or_reject", return_value=None
+        ),
         patch("yadgar.server.tools.memorize.settings", settings_stub),
-        patch("yadgar.server.tools.memorize._st") as mock_st,
-        patch("yadgar.server.tools.memorize._get_storage") as mock_get_storage,
-        patch("yadgar.server.tools.memorize._get_embeddings") as mock_get_emb,
-        patch("yadgar.server.tools.memorize._get_buffer"),
-        patch("yadgar.server.tools.memorize._get_file_queue"),
+        patch.object(_state_mod, "_retriever", MagicMock()),
+        patch.object(_state_mod, "_replay", None),
+        patch.object(_state_mod, "_buffer", MagicMock()),
+        patch.object(_state_mod, "_write_gate", None),
+        patch.object(_state_mod, "_rules_engine", None),
+        patch.object(_state_mod, "_thermo", None),
+        patch.object(_state_mod, "_curator", curator_mock),
+        patch.object(_state_mod, "_pool", None),
+        patch.object(_state_mod, "_consolidation", None),
+        patch.object(_state_mod, "_prospective", None),
+        patch.object(_state_mod, "_engram", None),
+        patch("yadgar.server.lifecycle._get_storage", return_value=mock_storage),
+        patch("yadgar.server.lifecycle._get_embeddings", return_value=mock_emb),
+        patch("yadgar.server.lifecycle._get_buffer", return_value=MagicMock()),
+        patch("yadgar.server.lifecycle._get_file_queue", return_value=MagicMock()),
         patch(
             "yadgar.conflict_resolver.resolve_conflict",
             return_value={"op": "NOOP", "target_id": None, "reason": "duplicate"},
         ),
     ):
-        mock_st._retriever = MagicMock()
-        mock_st._replay = None
-        mock_st._buffer = None
-        mock_st._write_gate = None
-        mock_st._rules_engine = None
-        mock_st._thermo = None
-        mock_st._curator = curator_mock
-        mock_st._pool = None
-        mock_st._consolidation = None
-        mock_st._prospective = None
-        mock_st._engram = None
-
-        mock_storage = MagicMock()
-        mock_storage.insert_memory.return_value = "memory:test000"
-        mock_storage.get_memory.return_value = {
-            "id": "memory:test000",
-            "content": "x",
-            "tags": [],
-            "context": "/test/wtc",
-            "branch": None,
-            "heat": 0.5,
-        }
-        mock_get_storage.return_value = mock_storage
-
-        mock_emb = MagicMock()
-        mock_emb.encode.return_value = b"\x00" * (384 * 4)
-        mock_emb.get_model_name.return_value = "test-model"
-        mock_get_emb.return_value = mock_emb
-
         from yadgar.server.tools.memorize import memorize
 
         result = memorize("anything", context="/test/wtc", tags=[])

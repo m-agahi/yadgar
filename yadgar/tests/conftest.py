@@ -40,6 +40,18 @@ os.environ.setdefault("YADGAR_DB_PASS", "root")
 os.environ.setdefault("YADGAR_DB_USER", "root")
 
 # ---------------------------------------------------------------------------
+# Rerank-model warmup OFF in tests (v5.54.5)
+#
+# YADGAR_MODEL_PRELOAD=true eagerly loads the CE/NLI/pair cross-encoders
+# (~2.5 GB) on EVERY xdist worker at startup — the dominant cause of the
+# `-n auto` OOM on a many-core box (23 workers x ~3GB). Tests that genuinely
+# need a model still lazy-load it on first use (only on the workers that run
+# them); tests exercising warmup itself re-enable via monkeypatch. setdefault
+# respects an explicit override.
+# ---------------------------------------------------------------------------
+os.environ.setdefault("YADGAR_MODEL_PRELOAD", "false")
+
+# ---------------------------------------------------------------------------
 # Production-DB isolation guard
 #
 # Prevent tests from accidentally writing to a live production SurrealDB.
@@ -85,6 +97,55 @@ def _is_production_url(db_url: str) -> bool:
     return host in _FORBIDDEN_HOSTS and port == _FORBIDDEN_PORT
 
 
+# ---------------------------------------------------------------------------
+# RAM-aware xdist worker cap (v5.54.5)
+#
+# Each worker holds a Python process plus (lazily) ML models and a SurrealDB
+# subprocess — up to ~3-4 GB under load. An unguarded `-n auto` on a many-core
+# box spawns one worker per core and saturates RAM (a 23-worker run OOM'd a
+# 64 GB machine). Clamp the worker count to floor(MemAvailable / 4 GB), both
+# for `-n auto` (via pytest_xdist_auto_num_workers) and for an explicit large
+# `-n N` (via the clamp in pytest_configure).
+# ---------------------------------------------------------------------------
+_PER_WORKER_GB = 4
+
+
+def _available_ram_gb() -> float:
+    try:
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) / (1024 * 1024)
+    except OSError:
+        pass
+    return float("inf")  # unknown → do not clamp
+
+
+def _ram_safe_workers() -> int:
+    return max(1, int(_available_ram_gb() // _PER_WORKER_GB))
+
+
+def pytest_xdist_auto_num_workers(config):
+    """Cap `-n auto` to a RAM-safe worker count (consulted by pytest-xdist)."""
+    return _ram_safe_workers()
+
+
+def _clamp_workers_to_ram(config):
+    n = getattr(config.option, "numprocesses", None)
+    if not isinstance(n, int) or n <= 1:
+        return  # serial, or `auto` handled by pytest_xdist_auto_num_workers
+    safe = _ram_safe_workers()
+    if n > safe:
+        config.option.numprocesses = safe
+        import warnings
+
+        warnings.warn(
+            f"xdist workers clamped {n}->{safe} to fit ~{_available_ram_gb():.0f}GB "
+            f"available RAM (~{_PER_WORKER_GB}GB/worker). Free RAM or lower -n to raise it.",
+            stacklevel=2,
+        )
+
+
 def pytest_configure(config):
     db_url = os.environ.get("YADGAR_DB_URL", "")
     yadgar_test = os.environ.get("YADGAR_TEST", "").lower()
@@ -97,6 +158,14 @@ def pytest_configure(config):
             "YADGAR_DB_URL to let the test suite start its own isolated SurrealDB.",
             returncode=78,
         )
+
+    # Master-only guardrails (v5.54.5) — skip xdist worker subprocesses, which
+    # would otherwise reap each other's live databases.
+    if not hasattr(config, "workerinput"):
+        from yadgar.tests._surreal_helpers import reap_stale_surreal
+
+        reap_stale_surreal()
+        _clamp_workers_to_ram(config)
 
 
 def pytest_sessionfinish(session, exitstatus):
@@ -272,6 +341,25 @@ def _isolate_surrealdb(surreal_server):
         yield
     finally:
         _sm.StorageEngine._init_schema = original_init_schema
+
+
+@pytest.fixture(autouse=True)
+def _restore_logging_state():
+    """Snapshot and restore the global logging disable level after each test.
+
+    logging.disable(logging.CRITICAL) in cli/_shared.py::init_replay_lightweight()
+    is a global flag (logging.root.manager.disable) that persists for the worker
+    process lifetime unless explicitly reset.  Tests in test_cli_shared_module.py
+    that call init_replay_lightweight() without patching logging.disable set this
+    flag, silencing all subsequent logging on the same xdist worker — causing
+    test_json_formatter_includes_timestamp, test_uvicorn_access_emits_json, and
+    consolidation phase-marker tests to see empty log output.
+    """
+    import logging
+
+    saved = logging.root.manager.disable
+    yield
+    logging.disable(saved)
 
 
 @pytest.fixture(autouse=True)

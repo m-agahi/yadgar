@@ -92,10 +92,10 @@ class TestVizPageLoads:
         assert el is not None, "#canvas-wrap container not found in DOM"
 
     def test_stats_btn_present(self, page_with_console):
-        """#stats-btn button must exist in DOM (stats overlay trigger)."""
+        """#search-btn button must exist in DOM (search trigger; stats-btn removed in 5.50.x tab rework)."""
         page, _ = page_with_console
-        el = page.query_selector("#stats-btn")
-        assert el is not None, "#stats-btn not found in DOM"
+        el = page.query_selector("#search-btn")
+        assert el is not None, "#search-btn not found in DOM"
 
 
 class TestVizNoJsErrors:

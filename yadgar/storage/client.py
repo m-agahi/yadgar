@@ -179,6 +179,68 @@ _RELATIONSHIP_UPDATABLE_FIELDS = frozenset(
 )
 
 
+def _normalize_rows(raw) -> list:
+    """Normalise a raw SurrealDB response to a flat list of dicts.
+
+    Handles None, dict, flat list, and list-of-lists (embedded SDK wraps
+    results in an outer list on some code paths).
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, dict):
+        return [raw]
+    if isinstance(raw, list):
+        if not raw:
+            return []
+        first = raw[0]
+        if isinstance(first, list):
+            return first
+        return raw
+    return []
+
+
+def _prefix_param_tokens(sql: str, params: dict, i: int) -> str:
+    """Rewrite ``$k`` parameter tokens in *sql* to ``$p{i}_{k}``.
+
+    Uses a character-level state machine to skip over single- and double-quoted
+    string literals so that ``$k`` inside a quoted string is never rewritten.
+    Only standalone parameter tokens (preceded by ``$``, followed by a
+    non-identifier character or end-of-string) are replaced.
+    """
+    new_sql_parts: list[str] = []
+    in_quote = False
+    quote_char = ""
+    current: list[str] = []
+    pos = 0
+    while pos < len(sql):
+        ch = sql[pos]
+        if not in_quote and ch in ("'", '"'):
+            # Flush pending non-quoted segment and rewrite params in it.
+            segment = "".join(current)
+            for k in params:
+                segment = re.sub(rf"\${re.escape(k)}(?=[^A-Za-z0-9_]|$)", f"$p{i}_{k}", segment)
+            new_sql_parts.append(segment)
+            current = [ch]
+            in_quote = True
+            quote_char = ch
+        elif in_quote and ch == quote_char and (pos == 0 or sql[pos - 1] != "\\"):
+            current.append(ch)
+            new_sql_parts.append("".join(current))
+            current = []
+            in_quote = False
+            quote_char = ""
+        else:
+            current.append(ch)
+        pos += 1
+    # Flush remainder — rewrite only if we ended outside a quoted string.
+    segment = "".join(current)
+    if not in_quote:
+        for k in params:
+            segment = re.sub(rf"\${re.escape(k)}(?=[^A-Za-z0-9_]|$)", f"$p{i}_{k}", segment)
+    new_sql_parts.append(segment)
+    return "".join(new_sql_parts)
+
+
 def _sql_op(surql: str) -> str:
     """Extract the first SQL keyword from a SurrealQL statement for the op label.
 
@@ -392,87 +454,73 @@ class _ClientMixin:
             return self._q(surql, params)
 
         # Normalise to flat list of dicts (same as _q).
-        if raw is None:
-            return []
-        if isinstance(raw, dict):
-            return [raw]
-        if isinstance(raw, list):
-            if not raw:
-                return []
-            first = raw[0]
-            if isinstance(first, list):
-                return first
-            return raw
-        return []
+        return _normalize_rows(raw)
+
+    def _q_server(self, surql: str, params: dict | None) -> object:
+        """Execute *surql* via HTTP POST and return the raw result object.
+
+        Server mode only.  Raises RuntimeError on any SurrealDB-level error.
+
+        ensure_ascii=False so emoji and other non-ASCII pass as UTF-8; SurrealDB v3
+        rejects \\uD800–\\uDFFF surrogate pairs that json.dumps emits with ensure_ascii=True.
+
+        TODO(review-20260516, H-4): roll-your-own JSON escaping via LET $k = json.dumps
+        bypasses SurrealDB's native {"sql": ..., "vars": ...} bind facility. Migrate all
+        _q callers to POST {"sql": stmt, "vars": params} to eliminate this pattern.
+        """
+        import json as _json
+
+        if params:
+            lets = [f"LET ${k} = {_json.dumps(v, ensure_ascii=False)};" for k, v in params.items()]
+            body = "\n".join(lets) + "\n" + surql
+        else:
+            body = surql
+        resp = self._http.post(
+            "/sql", content=body.encode(), headers={"Content-Type": "text/plain"}
+        )
+        resp.raise_for_status()
+        results = resp.json()
+        # Raise on any SurrealDB-level error (HTTP is always 200).
+        for entry in results:
+            if entry.get("status") == "ERR":
+                raise RuntimeError(
+                    f"SurrealDB error: {entry.get('detail') or entry.get('result') or entry}"
+                )
+        # Last entry is the actual query result (LET entries precede it).
+        return results[-1].get("result") if results else None
+
+    def _q_embedded(self, surql: str, params: dict | None) -> object:
+        """Execute *surql* via the embedded SurrealKV SDK and return the raw result.
+
+        Embedded mode only.  Read-only statements (SELECT / INFO / SHOW) are
+        retried once on failure to handle transient SDK errors; write statements
+        are never retried to prevent double-writes (§5 Q3).
+        """
+        _surql_upper = surql.lstrip().upper()
+        _is_readonly = any(
+            _surql_upper.startswith(kw) for kw in ("SELECT", "INFO FOR", "INFO", "SHOW")
+        )
+        # Non-readonly: attempt once; guard clause avoids retry overhead.
+        if not _is_readonly:
+            return self._embedded_db.query(surql, params or {})
+        try:
+            return self._embedded_db.query(surql, params or {})
+        except Exception as exc:
+            _log.debug("Embedded DB error (%s), retrying…", exc)
+            return self._embedded_db.query(surql, params or {})
 
     def _q(self, surql: str, params: dict | None = None) -> list:
         """Run a parameterised query via HTTP (server mode) or embedded SDK.
 
         Returns rows as a flat list of dicts.
         """
-        import json as _json
-
         _t0 = time.perf_counter()
         if self._db_url:
-            # Server mode: POST to /sql with LET preamble for params.
-            # ensure_ascii=False so emoji and other non-ASCII pass as UTF-8; SurrealDB v3
-            # rejects \uD800–\uDFFF surrogate pairs that json.dumps emits with ensure_ascii=True.
-            # TODO(review-20260516, H-4): roll-your-own JSON escaping via LET $k = json.dumps
-            # bypasses SurrealDB's native {"sql": ..., "vars": ...} bind facility. Migrate all
-            # _q callers to POST {"sql": stmt, "vars": params} to eliminate this pattern.
-            if params:
-                lets = [
-                    f"LET ${k} = {_json.dumps(v, ensure_ascii=False)};" for k, v in params.items()
-                ]
-                body = "\n".join(lets) + "\n" + surql
-            else:
-                body = surql
-            resp = self._http.post(
-                "/sql", content=body.encode(), headers={"Content-Type": "text/plain"}
-            )
-            resp.raise_for_status()
-            results = resp.json()
-            # Raise on any SurrealDB-level error (HTTP is always 200).
-            for entry in results:
-                if entry.get("status") == "ERR":
-                    raise RuntimeError(
-                        f"SurrealDB error: {entry.get('detail') or entry.get('result') or entry}"
-                    )
-            # Last entry is the actual query result (LET entries precede it).
-            raw = results[-1].get("result") if results else None
+            raw = self._q_server(surql, params)
         else:
-            # Embedded mode: delegate to the surrealkv SDK.
-            # §5 Q3: Only retry read-only statements to prevent double-writes.
-            _surql_upper = surql.lstrip().upper()
-            _is_readonly = any(
-                _surql_upper.startswith(kw) for kw in ("SELECT", "INFO FOR", "INFO", "SHOW")
-            )
-            _max_attempts = 2 if _is_readonly else 1
-            for attempt in range(_max_attempts):
-                try:
-                    raw = self._embedded_db.query(surql, params or {})
-                    break
-                except Exception as exc:
-                    if attempt == 0 and _is_readonly:
-                        _log.debug("Embedded DB error (%s), retrying…", exc)
-                        continue
-                    raise
-
+            raw = self._q_embedded(surql, params)
         _observe_query_metrics(surql, time.perf_counter() - _t0)
-
-        # Normalise to flat list of dicts.
-        if raw is None:
-            return []
-        if isinstance(raw, dict):
-            return [raw]
-        if isinstance(raw, list):
-            if not raw:
-                return []
-            first = raw[0]
-            if isinstance(first, list):
-                return first
-            return raw
-        return []
+        return _normalize_rows(raw)
 
     @staticmethod
     def _build_chunk_body(chunk: list[tuple[str, dict | None]], json_mod: object) -> bytes:
@@ -485,55 +533,14 @@ class _ClientMixin:
         word-boundary replacement so '$id' inside a SQL string literal is never
         accidentally rewritten.  Each $k is replaced only when it appears as a
         standalone token (word boundary on both sides, not inside quotes).
+        The rewrite is delegated to the module-level ``_prefix_param_tokens``.
         """
         parts = ["BEGIN TRANSACTION"]
         for i, (sql, params) in enumerate(chunk):
             if params:
                 for k, v in params.items():
                     parts.append(f"LET $p{i}_{k} = {json_mod.dumps(v, ensure_ascii=False)}")
-                # Tokeniser-safe rewrite: only replace $k that are SQL param tokens
-                # (preceded by $, followed by non-identifier char or end-of-string),
-                # not inside single-quoted or double-quoted string literals.
-                # Strategy: split on quote boundaries, only rewrite outside quotes.
-                new_sql_parts: list[str] = []
-                # Simple state machine: track whether we're inside a single-quoted string.
-                # Double-quoted identifiers are not used in SurrealQL params.
-                in_quote = False
-                quote_char = ""
-                current: list[str] = []
-                sql_iter = sql
-                pos = 0
-                while pos < len(sql_iter):
-                    ch = sql_iter[pos]
-                    if not in_quote and ch in ("'", '"'):
-                        # Flush pending non-quoted segment and rewrite params in it
-                        segment = "".join(current)
-                        for k in params:
-                            segment = re.sub(
-                                rf"\${re.escape(k)}(?=[^A-Za-z0-9_]|$)", f"$p{i}_{k}", segment
-                            )
-                        new_sql_parts.append(segment)
-                        current = [ch]
-                        in_quote = True
-                        quote_char = ch
-                    elif in_quote and ch == quote_char and (pos == 0 or sql_iter[pos - 1] != "\\"):
-                        current.append(ch)
-                        new_sql_parts.append("".join(current))
-                        current = []
-                        in_quote = False
-                        quote_char = ""
-                    else:
-                        current.append(ch)
-                    pos += 1
-                # Flush remainder
-                segment = "".join(current)
-                if not in_quote:
-                    for k in params:
-                        segment = re.sub(
-                            rf"\${re.escape(k)}(?=[^A-Za-z0-9_]|$)", f"$p{i}_{k}", segment
-                        )
-                new_sql_parts.append(segment)
-                sql = "".join(new_sql_parts)
+                sql = _prefix_param_tokens(sql, params, i)
             parts.append(sql.rstrip(";"))
         parts.append("COMMIT TRANSACTION")
         return (";\n".join(parts) + ";").encode()

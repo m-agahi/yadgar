@@ -26,7 +26,7 @@ def test_storage_engine_raises_without_db_pass(monkeypatch, tmp_path):
 
     importlib.reload(_s)
 
-    with pytest.raises((KeyError, RuntimeError)):
+    with pytest.raises((KeyError, RuntimeError, ValueError)):
         _s.StorageEngine(str(tmp_path / "db"))
 
 

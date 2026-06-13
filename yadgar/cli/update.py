@@ -205,9 +205,10 @@ def _install_msg_code(result: object) -> tuple[str, int]:  # noqa: PLR0911
 
 def _cmd_install(args: argparse.Namespace) -> None:
     """Run the routine-upgrade orchestrator."""
-    from yadgar.update.orchestrator import run_install  # noqa: PLC0415
+    from yadgar.update.orchestrator import InstallConfig, run_install  # noqa: PLC0415
 
-    result = run_install(target_version=getattr(args, "target_version", None) or None)
+    config = InstallConfig(target_version=getattr(args, "target_version", None) or None)
+    result = run_install(config)
     _install_exit(result)
 
 

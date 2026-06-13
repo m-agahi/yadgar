@@ -180,11 +180,11 @@ def test_phase_resolve_branch_prefers_cwd_when_both_available(monkeypatch):
 def test_phase_embed_returns_vector(monkeypatch):
     """phase_embed sets ctx.embedding from embeddings engine."""
     import yadgar.server._state as _st
-    import yadgar.server.tools._memorize_phases._phase_embed as _pe
+    import yadgar.server.lifecycle as _lc
 
     mock_embeddings = MagicMock()
     mock_embeddings.encode.return_value = [0.1, 0.2, 0.3]
-    monkeypatch.setattr(_pe, "_get_embeddings", lambda: mock_embeddings)
+    monkeypatch.setattr(_lc, "_get_embeddings", lambda: mock_embeddings)
     monkeypatch.setattr(_st, "_write_gate", None)
     monkeypatch.setattr(_st, "_retriever", None)
     monkeypatch.setattr(_st, "_thermo", None)
@@ -204,11 +204,11 @@ def test_phase_embed_returns_vector(monkeypatch):
 def test_phase_embed_retries_on_timeout(monkeypatch):
     """phase_embed returns rejection dict when write gate rejects (surprisal too low)."""
     import yadgar.server._state as _st
-    import yadgar.server.tools._memorize_phases._phase_embed as _pe
+    import yadgar.server.lifecycle as _lc
 
     mock_embeddings = MagicMock()
     mock_embeddings.encode.return_value = [0.1]
-    monkeypatch.setattr(_pe, "_get_embeddings", lambda: mock_embeddings)
+    monkeypatch.setattr(_lc, "_get_embeddings", lambda: mock_embeddings)
     monkeypatch.setattr(_st, "_retriever", None)
     monkeypatch.setattr(_st, "_thermo", None)
 
@@ -252,7 +252,6 @@ def test_phase_contradiction_flags_known_pairs(monkeypatch):
 def test_phase_store_returns_id(monkeypatch):
     """phase_store sets ctx.memory_id to the ID returned by storage."""
     import yadgar.server._state as _st
-    import yadgar.server.tools._memorize_phases._phase_store as _ps
 
     mock_storage = MagicMock()
     mock_storage.insert_memory.return_value = 77
@@ -263,9 +262,11 @@ def test_phase_store_returns_id(monkeypatch):
 
     mock_buffer = MagicMock()
 
-    monkeypatch.setattr(_ps, "_get_storage", lambda: mock_storage)
-    monkeypatch.setattr(_ps, "_get_embeddings", lambda: mock_embeddings)
-    monkeypatch.setattr(_ps, "_get_buffer", lambda: mock_buffer)
+    import yadgar.server.lifecycle as _lc
+
+    monkeypatch.setattr(_lc, "_get_storage", lambda: mock_storage)
+    monkeypatch.setattr(_lc, "_get_embeddings", lambda: mock_embeddings)
+    monkeypatch.setattr(_lc, "_get_buffer", lambda: mock_buffer)
     monkeypatch.setattr(_st, "_curator", None)
     monkeypatch.setattr(_st, "_consolidation", None)
     monkeypatch.setattr(_st, "_pool", None)
@@ -289,7 +290,6 @@ def test_phase_store_returns_id(monkeypatch):
 def test_phase_post_write_writes_link_when_contradictions_present(monkeypatch):
     """phase_post_write applies explicit protection when is_protected=True."""
     import yadgar.server._state as _st
-    import yadgar.server.tools._memorize_phases._phase_post_write as _pp
 
     mock_storage = MagicMock()
     mock_storage.get_memory.return_value = {
@@ -303,8 +303,10 @@ def test_phase_post_write_writes_link_when_contradictions_present(monkeypatch):
 
     mock_buffer = MagicMock()
 
-    monkeypatch.setattr(_pp, "_get_storage", lambda: mock_storage)
-    monkeypatch.setattr(_pp, "_get_buffer", lambda: mock_buffer)
+    import yadgar.server.lifecycle as _lc
+
+    monkeypatch.setattr(_lc, "_get_storage", lambda: mock_storage)
+    monkeypatch.setattr(_lc, "_get_buffer", lambda: mock_buffer)
     monkeypatch.setattr(_st, "_thermo", None)
     monkeypatch.setattr(_st, "_prospective", None)
     monkeypatch.setattr(_st, "_engram", None)

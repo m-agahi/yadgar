@@ -1443,11 +1443,11 @@ async def api_graph_edges_lazy(request: Request) -> JSONResponse:
         )
     try:
         max_mem = int(request.query_params.get("max_memories", 500))
-    except ValueError, TypeError:
+    except (ValueError, TypeError):  # fmt: skip
         max_mem = 500
     try:
         top_k = int(request.query_params.get("top_k", 8))
-    except ValueError, TypeError:
+    except (ValueError, TypeError):  # fmt: skip
         top_k = 8
     data = await asyncio.to_thread(
         GraphAPI(_st._storage).get_edges_by_type, edge_type, max_mem, top_k

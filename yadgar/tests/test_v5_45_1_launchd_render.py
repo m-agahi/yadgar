@@ -20,12 +20,16 @@ GENERATE_LAUNCHD_SH = REPO_ROOT / "scripts" / "install" / "generate_launchd.sh"
 BASH = shutil.which("bash") or "/run/current-system/sw/bin/bash"
 
 # Template variable defaults for test rendering
+# Templates use @VAR@ placeholder format (substituted by generate_launchd.sh via sed).
+# Log paths use XDG convention: @YADGAR_HOME@/.local/share/yadgar/logs/
+# (changed from ~/Library/Logs in v5.47 XDG migration — all launchd plists consistent).
 _DEFAULT_ENV = {
     "YADGAR_INSTALL_PREFIX": "/home/testuser/.yadgar",
     "YADGAR_RUNTIME": "podman",
     "YADGAR_SECRETS_ENV_FILE": "/home/testuser/.yadgar/secrets.env",
     "YADGAR_CORE_IMAGE": "openfantasy/yadgar:5.45.1",
     "YADGAR_BACKEND_IMAGE": "openfantasy/yadgar-backend:5.45.1",
+    "YADGAR_HOME": "/home/testuser",
 }
 
 
@@ -48,12 +52,11 @@ def _run_generate_launchd(
 
 
 def _render_template(template_path: Path, env: dict | None = None) -> str:
-    """Render a .in template via sed substitutions using the provided env."""
+    """Render a .in template via @VAR@ substitutions matching generate_launchd.sh sed pattern."""
     substitutions = {**_DEFAULT_ENV, **(env or {})}
     content = template_path.read_text()
     for key, value in substitutions.items():
-        content = content.replace("${" + key + "}", value)
-    # Also replace any remaining ${VAR} that weren't substituted (leave as-is for inspection)
+        content = content.replace("@" + key + "@", value)
     return content
 
 
@@ -135,20 +138,28 @@ class TestV5_45_1LaunchdTemplates:
         rendered = _render_template(BACKEND_PLIST_TEMPLATE)
         assert "ProgramArguments" in rendered, "Backend plist must have ProgramArguments"
 
-    def test_v5_45_1_core_plist_stdout_path_in_library_logs(self):
-        """Core plist StandardOutPath must be under ~/Library/Logs/yadgar/."""
+    def test_v5_45_1_core_plist_stdout_path_in_xdg_logs(self):
+        """Core plist StandardOutPath must be under ~/.local/share/yadgar/logs/.
+
+        v5.47 XDG migration: all launchd plists use @YADGAR_HOME@/.local/share/yadgar/logs/
+        consistently. ~/Library/Logs convention was superseded.
+        """
         rendered = _render_template(CORE_PLIST_TEMPLATE)
         assert "StandardOutPath" in rendered, "Core plist must set StandardOutPath"
-        assert "Library/Logs/yadgar" in rendered, (
-            "StandardOutPath must be under ~/Library/Logs/yadgar/"
+        assert ".local/share/yadgar/logs" in rendered, (
+            "StandardOutPath must be under ~/.local/share/yadgar/logs/ (XDG convention, v5.47+)"
         )
 
-    def test_v5_45_1_core_plist_stderr_path_in_library_logs(self):
-        """Core plist StandardErrorPath must be under ~/Library/Logs/yadgar/."""
+    def test_v5_45_1_core_plist_stderr_path_in_xdg_logs(self):
+        """Core plist StandardErrorPath must be under ~/.local/share/yadgar/logs/.
+
+        v5.47 XDG migration: all launchd plists use @YADGAR_HOME@/.local/share/yadgar/logs/
+        consistently. ~/Library/Logs convention was superseded.
+        """
         rendered = _render_template(CORE_PLIST_TEMPLATE)
         assert "StandardErrorPath" in rendered, "Core plist must set StandardErrorPath"
-        assert "Library/Logs/yadgar" in rendered, (
-            "StandardErrorPath must be under ~/Library/Logs/yadgar/"
+        assert ".local/share/yadgar/logs" in rendered, (
+            "StandardErrorPath must be under ~/.local/share/yadgar/logs/ (XDG convention, v5.47+)"
         )
 
     def test_v5_45_1_core_plist_has_working_directory(self):

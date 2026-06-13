@@ -253,6 +253,16 @@ clean:
 check:
 	python3 -m pytest yadgar/tests/test_v5_45_*.py yadgar/tests/test_v5_46_*.py --noconftest --override-ini="addopts=" -q
 
+## test-clean: Kill orphaned test SurrealDB procs left by crashed runs (never touches prod)
+test-clean:
+	@pkill -9 -f 'surreal start.*/tmp/pytest' 2>/dev/null || true
+	@echo "Reaped stale test surreal procs (production daemon on /data untouched)."
+
+## test: Run the full suite with the RAM-safe worker cap + pre/post orphan reaping
+test: test-clean
+	@trap 'pkill -9 -f "surreal start.*/tmp/pytest" 2>/dev/null || true' EXIT; \
+	uv run --extra test pytest yadgar/tests/ -q $(PYTEST_ARGS)
+
 ## upgrade-test: Print the manual upgrade-test runbook (see docs/UPGRADE_TEST.md)
 upgrade-test:
 	@echo "Manual recipe — see docs/UPGRADE_TEST.md for the runbook."

@@ -72,6 +72,9 @@ KNOWN_MEMORY_FIELDS: frozenset[str] = frozenset(
         # ── Graph / cluster ────────────────────────────────────────────────
         "cluster_id",
         "wiki_refs",
+        # ── Graph/cofire priors (v5.54.1/.2) ──────────────────────────────
+        "graph_prior",
+        "cofire_prior",
         # ── Confidence / quality ───────────────────────────────────────────
         "confidence",
         # ── Anchor hygiene (v5.8.0) ────────────────────────────────────────

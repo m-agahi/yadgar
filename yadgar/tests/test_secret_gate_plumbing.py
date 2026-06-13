@@ -52,10 +52,10 @@ class TestMemorizeForwardsTagsToGate:
 
         # Patch gate_or_reject in the memorize module
         # Import the module directly via sys.modules to avoid __init__ re-export collision
-        import importlib
+        # Patch gate_or_reject at the phase_validate module where it is actually called.
+        import yadgar.server.tools._memorize_phases._phase_validate as _pv
 
-        _mem_mod = importlib.import_module("yadgar.server.tools.memorize")
-        monkeypatch.setattr(_mem_mod, "gate_or_reject", fake_gate)
+        monkeypatch.setattr(_pv, "gate_or_reject", fake_gate)
 
         # Patch storage + embeddings singletons to avoid DB
         storage_mock = MagicMock()
@@ -76,10 +76,11 @@ class TestMemorizeForwardsTagsToGate:
 
         monkeypatch.setattr(_fq, "is_draining", lambda: True)
 
-        # Stub buffer state
+        # Stub buffer state — use MagicMock so _get_buffer() guard passes
         import yadgar.server._state as _st
 
-        monkeypatch.setattr(_st, "_buffer", None)
+        buffer_mock = MagicMock()
+        monkeypatch.setattr(_st, "_buffer", buffer_mock)
         monkeypatch.setattr(_st, "_rules_engine", None)
 
         from yadgar.server.tools.memorize import memorize
@@ -305,7 +306,8 @@ class TestMemorizeAllowlistedTagSucceeds:
 
         import yadgar.server._state as _st
 
-        monkeypatch.setattr(_st, "_buffer", None)
+        buffer_mock = MagicMock()
+        monkeypatch.setattr(_st, "_buffer", buffer_mock)
         monkeypatch.setattr(_st, "_rules_engine", None)
 
         from yadgar.server.tools.memorize import memorize

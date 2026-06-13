@@ -644,6 +644,7 @@ class TestExportFullCorpusSmoke:
     """Spin up real SurrealDB with seed data; run full export; execute every view."""
 
     def test_full_corpus_smoke(self, seeded_storage, tmp_duckdb, tmp_db):
+        pytest.importorskip("duckdb", reason="duckdb not installed")
         import duckdb
 
         from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig

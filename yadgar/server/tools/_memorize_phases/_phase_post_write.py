@@ -13,8 +13,8 @@ import logging
 from datetime import UTC, datetime
 
 import yadgar.server._state as _st
+import yadgar.server.lifecycle as _lifecycle
 from yadgar.server._helpers import _DECISION_STRONG_RE, _push_event
-from yadgar.server.lifecycle import _get_buffer, _get_storage
 
 from .context import MemorizeContext
 
@@ -29,8 +29,8 @@ def phase_post_write(ctx: MemorizeContext, settings) -> dict:
 
     Returns the memory dict (success response).
     """
-    storage = _get_storage()
-    buffer = _get_buffer()
+    storage = _lifecycle._get_storage()
+    buffer = _lifecycle._get_buffer()
 
     _run_synaptic_boost(ctx)
     _run_prospective(ctx, storage)

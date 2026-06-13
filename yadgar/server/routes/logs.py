@@ -172,7 +172,7 @@ async def logs_poll_handler(request: Request) -> JSONResponse:
 
     try:
         since = int(request.query_params.get("since", "0"))
-    except ValueError, TypeError:
+    except (ValueError, TypeError):  # fmt: skip
         since = 0
 
     entries, next_seq = get_ring_snapshot(since_seq=since)

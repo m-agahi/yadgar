@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -240,24 +241,46 @@ class TestConfigureLogging:
         # Reset root and yadgar loggers before each test (v5.4.3: handler lives on root)
         import logging as _logging
 
-        from yadgar.log_config import JSONLogFormatter
+        from yadgar.log_config import JSONLogFormatter, RotatingJSONLFileHandler
 
         root = _logging.getLogger()
-        root.handlers = [h for h in root.handlers if not isinstance(h.formatter, JSONLogFormatter)]
+        # Remove both JSON stream handlers and file handlers to ensure clean state.
+        # The autouse isolate_yadgar_paths fixture sets YADGAR_LOG_DIR which would
+        # cause configure_logging to install a file handler; unset it for these tests.
+        root.handlers = [
+            h
+            for h in root.handlers
+            if not isinstance(h.formatter, JSONLogFormatter)
+            and not isinstance(h, RotatingJSONLFileHandler)
+        ]
         logger = _logging.getLogger("yadgar")
         logger.handlers.clear()
         logger.propagate = True
+        # Unset log-dir env vars so configure_logging is stdout-only during these tests
+        self._orig_log_dir = os.environ.pop("YADGAR_LOG_DIR", None)
+        self._orig_log_file = os.environ.pop("YADGAR_LOG_FILE_PATH", None)
 
     def teardown_method(self):
         import logging as _logging
 
-        from yadgar.log_config import JSONLogFormatter
+        from yadgar.log_config import JSONLogFormatter, RotatingJSONLFileHandler
 
         root = _logging.getLogger()
-        root.handlers = [h for h in root.handlers if not isinstance(h.formatter, JSONLogFormatter)]
+        root.handlers = [
+            h
+            for h in root.handlers
+            if not isinstance(h.formatter, JSONLogFormatter)
+            and not isinstance(h, RotatingJSONLFileHandler)
+        ]
         logger = _logging.getLogger("yadgar")
         logger.handlers.clear()
         logger.propagate = True
+        # Restore log-dir env vars (monkeypatch autouse fixture owns teardown,
+        # but we cleared them in setup_method so restore here to be safe)
+        if self._orig_log_dir is not None:
+            os.environ["YADGAR_LOG_DIR"] = self._orig_log_dir
+        if self._orig_log_file is not None:
+            os.environ["YADGAR_LOG_FILE_PATH"] = self._orig_log_file
 
     def test_json_mode_installs_json_formatter(self):
         """v5.4.3: JSONLogFormatter lives on root logger, not yadgar logger."""
@@ -315,32 +338,47 @@ class TestFrameworkLoggerCoverage:
         """Reset root and yadgar loggers; remove handlers added by previous tests."""
         import logging
 
+        from yadgar.log_config import JSONLogFormatter, RotatingJSONLFileHandler
+
         root = logging.getLogger()
-        # Remove any JSONLogFormatter handlers from root installed by prior test
+        # Remove both JSON stream and file handlers to ensure clean state.
+        # The autouse isolate_yadgar_paths fixture sets YADGAR_LOG_DIR which would
+        # cause configure_logging to install a file handler; unset it for these tests.
         root.handlers = [
             h
             for h in root.handlers
-            if not isinstance(
-                h.formatter,
-                __import__("yadgar.log_config", fromlist=["JSONLogFormatter"]).JSONLogFormatter,
-            )
+            if not isinstance(h.formatter, JSONLogFormatter)
+            and not isinstance(h, RotatingJSONLFileHandler)
         ]
         # Reset yadgar logger
         yadgar_log = logging.getLogger("yadgar")
         yadgar_log.handlers.clear()
         yadgar_log.propagate = True
+        # Unset log-dir env vars so configure_logging is stdout-only during these tests
+        self._orig_log_dir = os.environ.pop("YADGAR_LOG_DIR", None)
+        self._orig_log_file = os.environ.pop("YADGAR_LOG_FILE_PATH", None)
 
     def teardown_method(self):
         """Remove root handlers added by configure_logging to avoid polluting other tests."""
         import logging
 
-        from yadgar.log_config import JSONLogFormatter
+        from yadgar.log_config import JSONLogFormatter, RotatingJSONLFileHandler
 
         root = logging.getLogger()
-        root.handlers = [h for h in root.handlers if not isinstance(h.formatter, JSONLogFormatter)]
+        root.handlers = [
+            h
+            for h in root.handlers
+            if not isinstance(h.formatter, JSONLogFormatter)
+            and not isinstance(h, RotatingJSONLFileHandler)
+        ]
         yadgar_log = logging.getLogger("yadgar")
         yadgar_log.handlers.clear()
         yadgar_log.propagate = True
+        # Restore log-dir env vars
+        if self._orig_log_dir is not None:
+            os.environ["YADGAR_LOG_DIR"] = self._orig_log_dir
+        if self._orig_log_file is not None:
+            os.environ["YADGAR_LOG_FILE_PATH"] = self._orig_log_file
 
     def test_root_handler_installed_in_json_mode(self):
         """configure_logging(json) must attach JSONLogFormatter handler to root logger."""

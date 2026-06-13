@@ -166,7 +166,7 @@ def _acquire_lock(
             data = json.loads(lock_path.read_text())
             pid = int(data.get("pid", 0))
             start_ts = float(data.get("start_ts", 0))
-        except json.JSONDecodeError, ValueError, KeyError:
+        except (json.JSONDecodeError, ValueError, KeyError):  # fmt: skip
             logger.warning("upgrade.lock is corrupt; treating as stale and overwriting")
             pid = 0
             start_ts = 0
@@ -279,6 +279,25 @@ def _disabled_result(target_version: str | None) -> OrchestratorResult:
     )
 
 
+@dataclass
+class InstallConfig:
+    """Configuration bundle for run_install — groups all non-hook parameters.
+
+    All fields default to None; None means "use the production default" so tests
+    need only supply the fields they want to override.
+    """
+
+    target_version: str | None = None
+    enabled_override: bool | None = None
+    lock_file_path: Path | None = None
+    snapshots_base_dir: Path | None = None
+    upgrade_env_path: Path | None = None
+    snapshot_retention: int | None = None
+    prev_image_tag_override: str | None = None
+    prev_unit_file_override: str | None = None
+    prev_cli_version_override: str | None = None
+
+
 def _build_hooks(
     image_pull: Callable | None,
     graceful_stop: Callable | None,
@@ -302,24 +321,9 @@ def _build_hooks(
     )
 
 
-def run_install(  # noqa: PLR0913 — inject-everything DI pattern; all params are test overrides
-    *,
-    target_version: str | None = None,
-    enabled_override: bool | None = None,
-    lock_file_path: Path | None = None,
-    snapshots_base_dir: Path | None = None,
-    upgrade_env_path: Path | None = None,
-    snapshot_retention: int | None = None,
-    prev_image_tag_override: str | None = None,
-    prev_unit_file_override: str | None = None,
-    prev_cli_version_override: str | None = None,
-    image_pull: Callable | None = None,
-    graceful_stop: Callable | None = None,
-    service_restart: Callable | None = None,
-    health_check: Callable | None = None,
-    cli_upgrade: Callable | None = None,
-    cli_rollback: Callable | None = None,
-    re_exec: Callable | None = None,
+def run_install(
+    config: InstallConfig | None = None,
+    hooks: _Hooks | None = None,
 ) -> OrchestratorResult:
     """Routine upgrade state machine.
 
@@ -333,35 +337,48 @@ def run_install(  # noqa: PLR0913 — inject-everything DI pattern; all params a
 
     NOTE: RE_EXECING is the last in-process state — os.execvp never returns.
     DONE is set by Phase 10 --finalize subcommand, not by this function.
+
+    Args:
+        config: InstallConfig grouping all path/version/retention overrides.
+                Defaults to InstallConfig() (all production defaults).
+        hooks:  _Hooks bundle for test-injectable callables.
+                Defaults to _build_hooks() (all production implementations).
     """
+    if config is None:
+        config = InstallConfig()
+    if hooks is None:
+        hooks = _build_hooks(None, None, None, None, None, None, None)
+
     from yadgar.config import get_settings  # noqa: PLC0415
 
     settings = get_settings()
 
     install_enabled = (
-        enabled_override if enabled_override is not None else settings.UPDATE_INSTALL_ENABLED
+        config.enabled_override
+        if config.enabled_override is not None
+        else settings.UPDATE_INSTALL_ENABLED
     )
     if not install_enabled:
-        return _disabled_result(target_version)
-
-    hooks = _build_hooks(
-        image_pull, graceful_stop, service_restart, health_check, cli_upgrade, cli_rollback, re_exec
-    )
+        return _disabled_result(config.target_version)
 
     ctx = _RunCtx(
-        lock_path=lock_file_path if lock_file_path is not None else _DEFAULT_LOCK_PATH,
-        env_path=upgrade_env_path if upgrade_env_path is not None else _DEFAULT_UPGRADE_ENV_PATH,
-        snaps_dir=snapshots_base_dir
-        if snapshots_base_dir is not None
+        lock_path=config.lock_file_path
+        if config.lock_file_path is not None
+        else _DEFAULT_LOCK_PATH,
+        env_path=config.upgrade_env_path
+        if config.upgrade_env_path is not None
+        else _DEFAULT_UPGRADE_ENV_PATH,
+        snaps_dir=config.snapshots_base_dir
+        if config.snapshots_base_dir is not None
         else (paths.STATE_DIR / "upgrade-snapshots"),
-        retention=snapshot_retention
-        if snapshot_retention is not None
+        retention=config.snapshot_retention
+        if config.snapshot_retention is not None
         else settings.UPDATE_SNAPSHOT_RETENTION,
         hooks=hooks,
-        prev_image_tag_override=prev_image_tag_override,
-        prev_unit_file_override=prev_unit_file_override,
-        prev_cli_version_override=prev_cli_version_override,
-        to_version=target_version if target_version is not None else "unknown",
+        prev_image_tag_override=config.prev_image_tag_override,
+        prev_unit_file_override=config.prev_unit_file_override,
+        prev_cli_version_override=config.prev_cli_version_override,
+        to_version=config.target_version if config.target_version is not None else "unknown",
     )
 
     ctx.log(OrchestratorState.ACQUIRING_LOCK)
@@ -380,7 +397,7 @@ def run_install(  # noqa: PLR0913 — inject-everything DI pattern; all params a
         )
 
     try:
-        return _run_forward(ctx, target_version)
+        return _run_forward(ctx, config.target_version)
     finally:
         _release_lock(ctx.lock_path)
 

@@ -82,13 +82,14 @@ def _get_audit_sentinels(storage, directory: str) -> list:
 class TestAnchorPassEnabled:
     """consolidate_now() writes _audit_anchors sentinel when knob is true."""
 
-    def test_sentinel_written_after_consolidate(self, storage, monkeypatch):
+    def test_sentinel_written_after_consolidate(self, storage, monkeypatch, request):
         """After consolidate_now(), _audit_anchors memory exists for directory with anchors."""
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_CONSOLIDATION_ENABLED", "true")
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_THRESHOLD", "0")
         from yadgar.config import get_settings
 
         get_settings.cache_clear()
+        request.addfinalizer(get_settings.cache_clear)
 
         # Insert enough anchors to pass threshold (threshold=0 means always run)
         _insert_anchor(storage, "anchor content one")
@@ -102,15 +103,14 @@ class TestAnchorPassEnabled:
             "when ANCHOR_AUDIT_CONSOLIDATION_ENABLED=true"
         )
 
-        get_settings.cache_clear()
-
-    def test_sentinel_is_latest_wins(self, storage, monkeypatch):
+    def test_sentinel_is_latest_wins(self, storage, monkeypatch, request):
         """Second consolidate_now() overwrites (not appends) sentinel — latest-wins."""
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_CONSOLIDATION_ENABLED", "true")
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_THRESHOLD", "0")
         from yadgar.config import get_settings
 
         get_settings.cache_clear()
+        request.addfinalizer(get_settings.cache_clear)
 
         _insert_anchor(storage, "anchor one for latest wins")
 
@@ -120,9 +120,7 @@ class TestAnchorPassEnabled:
         sentinels = _get_audit_sentinels(storage, _DIR)
         assert len(sentinels) == 1, "_audit_anchors must be latest-wins single row (not append)"
 
-        get_settings.cache_clear()
-
-    def test_sentinel_content_has_actions(self, storage, monkeypatch):
+    def test_sentinel_content_has_actions(self, storage, monkeypatch, request):
         """Sentinel content is serializable (list of recommendations or empty dict)."""
         import json
 
@@ -131,6 +129,7 @@ class TestAnchorPassEnabled:
         from yadgar.config import get_settings
 
         get_settings.cache_clear()
+        request.addfinalizer(get_settings.cache_clear)
 
         _insert_anchor(storage, "anchor for content check")
 
@@ -144,8 +143,6 @@ class TestAnchorPassEnabled:
         assert isinstance(parsed, dict), "Sentinel content must be JSON dict"
         assert "actions" in parsed, "Sentinel content must have 'actions' key"
 
-        get_settings.cache_clear()
-
 
 # ---------------------------------------------------------------------------
 # 2. ANCHOR_AUDIT_CONSOLIDATION_ENABLED=false — no sentinel writes
@@ -155,11 +152,12 @@ class TestAnchorPassEnabled:
 class TestAnchorPassDisabled:
     """consolidate_now() skips anchor pass when knob is false."""
 
-    def test_no_sentinel_when_disabled(self, storage, monkeypatch):
+    def test_no_sentinel_when_disabled(self, storage, monkeypatch, request):
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_CONSOLIDATION_ENABLED", "false")
         from yadgar.config import get_settings
 
         get_settings.cache_clear()
+        request.addfinalizer(get_settings.cache_clear)
 
         _insert_anchor(storage, "anchor when disabled")
 
@@ -170,8 +168,6 @@ class TestAnchorPassDisabled:
             "_audit_anchors must NOT be written when ANCHOR_AUDIT_CONSOLIDATION_ENABLED=false"
         )
 
-        get_settings.cache_clear()
-
 
 # ---------------------------------------------------------------------------
 # 3. Threshold gate — skip dirs below threshold
@@ -181,13 +177,14 @@ class TestAnchorPassDisabled:
 class TestThresholdGate:
     """Anchor pass skips directories with anchor_count < ANCHOR_AUDIT_THRESHOLD."""
 
-    def test_skips_below_threshold(self, storage, monkeypatch):
+    def test_skips_below_threshold(self, storage, monkeypatch, request):
         """With 1 anchor and threshold=5, sentinel is not written."""
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_CONSOLIDATION_ENABLED", "true")
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_THRESHOLD", "5")
         from yadgar.config import get_settings
 
         get_settings.cache_clear()
+        request.addfinalizer(get_settings.cache_clear)
 
         _insert_anchor(storage, "only one anchor")  # below threshold of 5
 
@@ -196,15 +193,14 @@ class TestThresholdGate:
         sentinels = _get_audit_sentinels(storage, _DIR)
         assert not sentinels, "Anchor pass must skip directories below ANCHOR_AUDIT_THRESHOLD"
 
-        get_settings.cache_clear()
-
-    def test_runs_at_or_above_threshold(self, storage, monkeypatch):
+    def test_runs_at_or_above_threshold(self, storage, monkeypatch, request):
         """With threshold=2 and 2 anchors, sentinel is written."""
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_CONSOLIDATION_ENABLED", "true")
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_THRESHOLD", "2")
         from yadgar.config import get_settings
 
         get_settings.cache_clear()
+        request.addfinalizer(get_settings.cache_clear)
 
         _insert_anchor(storage, "anchor A at threshold")
         _insert_anchor(storage, "anchor B at threshold")
@@ -213,5 +209,3 @@ class TestThresholdGate:
 
         sentinels = _get_audit_sentinels(storage, _DIR)
         assert sentinels, "Anchor pass must run when anchor_count >= ANCHOR_AUDIT_THRESHOLD"
-
-        get_settings.cache_clear()

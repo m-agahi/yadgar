@@ -20,8 +20,10 @@ jobs:
 
       - uses: https://data.forgejo.org/actions/checkout@v6
 
-      - name: Install pre-commit
-        run: pip install pre-commit
+      - name: Install pre-commit and uv
+        # uv: required by pre-commit check-config-three-way-sync hook
+        # (entry: uv run python -m pytest yadgar/tests/test_config_three_way_sync.py).
+        run: pip install pre-commit uv
 
       - name: Run pre-commit
         run: pre-commit run --all-files

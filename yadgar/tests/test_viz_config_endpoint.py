@@ -59,6 +59,8 @@ def test_viz_config_endpoint_returns_yaml_values(tmp_path, monkeypatch):
     monkeypatch.setenv("YADGAR_CONFIG_FILE", str(config_file))
     monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", "tok")
     monkeypatch.setenv("YADGAR_REQUIRE_AUTH", "1")
+    # Defensive: clear leaked VIZ env vars so yaml values take precedence.
+    monkeypatch.delenv("YADGAR_VIZ_NODE_SIZE_3D", raising=False)
 
     from starlette.testclient import TestClient
 
@@ -96,6 +98,9 @@ def _get_default_config(tmp_path, monkeypatch) -> dict:
     monkeypatch.setenv("YADGAR_CONFIG_FILE", str(config_file))
     monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", "tok2")
     monkeypatch.setenv("YADGAR_REQUIRE_AUTH", "1")
+    # Defensive: clear any VIZ env vars that a co-worker test may have leaked into
+    # os.environ directly (e.g. test_config_post_round_trip via control.py:337).
+    monkeypatch.delenv("YADGAR_VIZ_NODE_SIZE_3D", raising=False)
 
     from starlette.testclient import TestClient
 
