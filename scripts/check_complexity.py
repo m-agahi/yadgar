@@ -16,13 +16,19 @@ Ruff covers:
 
 Enforcement:
   - Soft cap violations → warn to stderr, exit 0
-  - Hard cap violations → error to stderr, exit 1
-  - # noqa: C901 - cohesive: <reason> on def line suppresses SOFT only; hard = never suppressible
+  - Hard cap violations → error to stderr, exit 1, UNLESS the
+    (path, function, metric) triple has an allowlist entry with a
+    non-empty rationale in .complexity-allowlist.json → INFO/pass
+  - # noqa: C901 - cohesive: <reason> on def line suppresses SOFT only;
+    hard = never suppressible via noqa (use the allowlist instead)
 
-Baseline ratchet (option 1):
-  - .complexity-baseline.json records current metrics for all functions
-  - Hook only blocks NEW violations OR worsened existing ones
-  - New code held to full caps; existing functions allowed at their current numbers
+Baseline ratchet:
+  - .complexity-baseline.json records current metrics for SOFT violations
+  - Hook only blocks NEW soft violations OR worsened existing ones
+  - HARD violations bypass the ratchet; they require the allowlist
+
+Caps are read from .complexity-config.json (repo root); defaults match
+the previously hardcoded constants if the file is missing.
 
 Usage:
   python scripts/check_complexity.py [files...]
@@ -53,28 +59,67 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 from complexity_audit import (  # noqa: E402
     CLASS_ATTRS_SOFT,
-    CLASS_DEPTH_HARD,
     CLASS_METHODS_SOFT,
-    FILE_LOC_HARD,
-    FILE_LOC_SOFT,
-    FN_CYCLO_HARD,
-    FN_CYCLO_SOFT,
-    FN_LOC_HARD,
-    FN_LOC_SOFT,
-    FN_NESTING_HARD,
-    FN_PARAMS_HARD,
-    FN_PARAMS_SOFT,
     FileResult,
     FunctionResult,
     analyze_file,
 )
+from complexity_config import (  # noqa: E402
+    build_allowlist_index,
+    is_allowlisted,
+    load_allowlist,
+    load_caps,
+)
 
 # ---------------------------------------------------------------------------
-# Cap constants (re-exported from complexity_audit — shown here for clarity)
+# Cap constants — loaded from .complexity-config.json at module init.
+# Kept as module-level for import compatibility; callers should prefer
+# using _CAPS directly.  Default: identical to previously hardcoded values.
 # ---------------------------------------------------------------------------
 
-# FN_CYCLO_HARD = 15  # Covered by ruff C901
-# FN_CYCLO_SOFT = 10  # Covered by ruff C901
+_CAPS = load_caps()
+
+# Legacy aliases so external importers and tests don't break
+FN_CYCLO_HARD = _CAPS.cyclomatic_hard
+FN_CYCLO_SOFT = _CAPS.cyclomatic_soft or 10
+FN_LOC_HARD = _CAPS.fn_loc_hard
+FN_LOC_SOFT = _CAPS.fn_loc_soft or 80
+FN_NESTING_HARD = _CAPS.nesting_hard
+FN_PARAMS_HARD = _CAPS.params_hard
+FN_PARAMS_SOFT = _CAPS.params_soft or 5
+FILE_LOC_HARD = _CAPS.file_loc_hard
+FILE_LOC_SOFT = _CAPS.file_loc_soft or 500
+CLASS_DEPTH_HARD = _CAPS.class_depth_hard
+
+# ---------------------------------------------------------------------------
+# Allowlist — loaded once at module init.  Tests may override by injecting
+# a pre-built index into check functions via the allowlist_index parameter.
+# ---------------------------------------------------------------------------
+
+_ALLOWLIST_PATH = _REPO_ROOT / ".complexity-allowlist.json"
+_ALLOWLIST_ENTRIES = load_allowlist(_ALLOWLIST_PATH)
+_ALLOWLIST_INDEX = build_allowlist_index(_ALLOWLIST_ENTRIES)
+
+# ---------------------------------------------------------------------------
+# Metric name mapping: Violation.cap  →  allowlist metrics key
+#
+# Violation.cap uses the hook's internal vocabulary; the allowlist uses the
+# canonical external vocabulary defined in .complexity-config.json.
+# Keeping Violation.cap labels unchanged preserves existing test assertions
+# (which filter by substring e.g. "cyclo" in v.cap, "inheritance" in v.cap).
+# ---------------------------------------------------------------------------
+
+_CAP_TO_ALLOWLIST_METRIC: dict[str, str] = {
+    "cyclomatic": "cyclomatic",  # fn cyclomatic complexity
+    "fn_loc": "fn_loc",  # function LOC
+    "nesting": "nesting",  # function nesting depth
+    "params": "params",  # function parameter count
+    "file_loc": "file_loc",  # file LOC
+    "inheritance_depth": "class_depth",  # class inheritance depth (cap name → allowlist key)
+    # soft-only (never HARD → never looked up in allowlist, but listed for completeness)
+    "class_methods": "class_methods",
+    "class_attrs": "class_attrs",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +163,7 @@ def _has_noqa_cohesive(source_lines: list[str], lineno: int) -> bool:
 class ViolationSeverity(str, Enum):  # noqa: UP042 — StrEnum unavailable in Python <3.11
     HARD = "HARD"
     SOFT = "SOFT"
-    ALLOWED = "ALLOWED"  # pre-existing at or below baseline
+    ALLOWED = "ALLOWED"  # pre-existing at or below baseline, or HARD allowlisted
 
 
 @dataclass
@@ -132,12 +177,15 @@ class Violation:
     limit: int
     pre_existing: bool = False
     suppressed: bool = False  # true if a cohesive noqa annotation silences this soft violation
+    allowlisted: bool = False  # true if a HARD violation is in the allowlist
 
     def message(self) -> str:
         tag = f"{self.filepath}:{self.lineno}"
         severity = self.severity.value
         if self.suppressed:
             severity = "suppressed"
+        if self.allowlisted:
+            severity = "allowlisted"
         pre = " [pre-existing]" if self.pre_existing else ""
         return (
             f"{tag}: {self.entity}: {self.cap}={self.actual} exceeds {self.limit} ({severity}){pre}"
@@ -228,20 +276,33 @@ def _is_test_file(filepath: str) -> bool:
     return name.startswith("test_") or name.endswith("_test.py")
 
 
-def _check_function(
+def _check_function(  # noqa: C901 - cohesive: dispatch function; each branch = one metric check (cyclo/loc/nesting/params)
     r: FunctionResult,
     source_lines: list[str],
     baseline: dict,
+    allowlist_index: dict | None = None,
+    caps: object | None = None,
 ) -> list[Violation]:
     """Return violations for a single function result.
 
     Baseline keys use the same short names stored by update_baseline:
     "loc", "cyclo", "params", "nesting".
+
+    HARD violations are checked against the allowlist: if (path, function, metric)
+    is allowlisted with a non-empty rationale, the violation becomes ALLOWED.
     """
+    if allowlist_index is None:
+        allowlist_index = _ALLOWLIST_INDEX
+    if caps is None:
+        caps = _CAPS
+
     violations = []
     has_noqa = _has_noqa_cohesive(source_lines, r.lineno)
     key = _baseline_key(r.filepath, r.name, r.lineno)
     bl = baseline.get(key)
+
+    # Relative path for allowlist lookup
+    rel = _rel_path(r.filepath)
 
     def _classify(
         bl_key: str,
@@ -251,7 +312,7 @@ def _check_function(
         soft_limit: int | None = None,
     ) -> Violation | None:
         """bl_key: key into baseline dict (e.g. "loc", "cyclo").
-        cap_label: human-readable cap name for Violation.cap."""
+        cap_label: internal cap name for Violation.cap (also used to look up allowlist key)."""
         lower_bound = soft_limit if soft_limit is not None else hard_limit
         if actual <= lower_bound:
             return None
@@ -259,7 +320,32 @@ def _check_function(
         severity = ViolationSeverity.HARD if is_hard else ViolationSeverity.SOFT
         limit = hard_limit if is_hard else (soft_limit or hard_limit)
 
-        # Baseline ratchet
+        # HARD → check allowlist first (bypasses baseline ratchet for HARD)
+        if is_hard:
+            allowlist_metric = _CAP_TO_ALLOWLIST_METRIC.get(cap_label, cap_label)
+            if is_allowlisted(rel, r.name, allowlist_metric, allowlist_index):
+                return Violation(
+                    filepath=r.filepath,
+                    lineno=r.lineno,
+                    entity=r.name,
+                    cap=cap_label,
+                    severity=ViolationSeverity.ALLOWED,
+                    actual=actual,
+                    limit=limit,
+                    allowlisted=True,
+                )
+            # Not allowlisted → hard error (no baseline ratchet for HARD)
+            return Violation(
+                filepath=r.filepath,
+                lineno=r.lineno,
+                entity=r.name,
+                cap=cap_label,
+                severity=ViolationSeverity.HARD,
+                actual=actual,
+                limit=limit,
+            )
+
+        # SOFT → baseline ratchet
         if bl is not None and bl_key in bl:
             baseline_val = bl[bl_key]
             if actual <= baseline_val:
@@ -276,7 +362,7 @@ def _check_function(
             # Worsened beyond baseline — fall through to full enforcement
 
         # noqa suppresses SOFT only
-        if has_noqa and not is_hard:
+        if has_noqa:
             return Violation(
                 filepath=r.filepath,
                 lineno=r.lineno,
@@ -299,45 +385,59 @@ def _check_function(
         )
 
     # --- Cyclomatic (always enforced, including test files) ---
-    # NOTE: ruff C901 covers this at hard cap; we check here too for consistency
-    # and because ruff may not run on the same file set.
-    if r.cyclo > FN_CYCLO_SOFT:
-        v = _classify("cyclo", "cyclo", r.cyclo, FN_CYCLO_HARD, FN_CYCLO_SOFT)
+    cyclo_soft = caps.cyclomatic_soft or 10
+    cyclo_hard = caps.cyclomatic_hard
+    if r.cyclo > cyclo_soft:
+        v = _classify("cyclo", "cyclomatic", r.cyclo, cyclo_hard, cyclo_soft)
         if v:
             violations.append(v)
 
     # --- LOC (skipped for test files) ---
     if not r.is_test:
-        v = _classify("loc", "fn_loc", r.loc, FN_LOC_HARD, FN_LOC_SOFT)
+        fn_loc_soft = caps.fn_loc_soft or 80
+        fn_loc_hard = caps.fn_loc_hard
+        v = _classify("loc", "fn_loc", r.loc, fn_loc_hard, fn_loc_soft)
         if v:
             violations.append(v)
 
     # --- Nesting (always enforced) ---
-    if r.nesting > FN_NESTING_HARD:
-        v = _classify("nesting", "nesting", r.nesting, FN_NESTING_HARD, None)
+    nesting_hard = caps.nesting_hard
+    if r.nesting > nesting_hard:
+        v = _classify("nesting", "nesting", r.nesting, nesting_hard, None)
         if v:
             violations.append(v)
 
     # --- Params (skipped for test files) ---
-    if not r.is_test and r.params > FN_PARAMS_SOFT:
-        v = _classify("params", "params", r.params, FN_PARAMS_HARD, FN_PARAMS_SOFT)
-        if v:
-            violations.append(v)
+    if not r.is_test:
+        params_soft = caps.params_soft or 5
+        params_hard = caps.params_hard
+        if r.params > params_soft:
+            v = _classify("params", "params", r.params, params_hard, params_soft)
+            if v:
+                violations.append(v)
 
     return violations
 
 
-def _check_class(
+def _check_class(  # noqa: C901 - cohesive: dispatch function; each branch = one class metric check (methods/attrs/depth)
     c,
     baseline: dict,
+    allowlist_index: dict | None = None,
+    caps: object | None = None,
 ) -> list[Violation]:
     """Return violations for a single class result.
 
     Baseline keys: "methods", "attrs", "inh_depth" (matching update_baseline).
     """
+    if allowlist_index is None:
+        allowlist_index = _ALLOWLIST_INDEX
+    if caps is None:
+        caps = _CAPS
+
     violations = []
     key = _baseline_key(c.filepath, c.name, c.lineno)
     bl = baseline.get(key)
+    rel = _rel_path(c.filepath)
 
     def _classify_cls(
         bl_key: str,
@@ -355,7 +455,30 @@ def _check_class(
         severity = ViolationSeverity.HARD if is_hard else ViolationSeverity.SOFT
         limit = hard_limit if is_hard else soft_limit
 
-        # Baseline ratchet
+        if is_hard:
+            allowlist_metric = _CAP_TO_ALLOWLIST_METRIC.get(cap_label, cap_label)
+            if is_allowlisted(rel, c.name, allowlist_metric, allowlist_index):
+                return Violation(
+                    filepath=c.filepath,
+                    lineno=c.lineno,
+                    entity=c.name,
+                    cap=cap_label,
+                    severity=ViolationSeverity.ALLOWED,
+                    actual=actual,
+                    limit=limit,
+                    allowlisted=True,
+                )
+            return Violation(
+                filepath=c.filepath,
+                lineno=c.lineno,
+                entity=c.name,
+                cap=cap_label,
+                severity=ViolationSeverity.HARD,
+                actual=actual,
+                limit=limit,
+            )
+
+        # Baseline ratchet (soft only)
         if bl is not None and bl_key in bl:
             baseline_val = bl[bl_key]
             if actual <= baseline_val:
@@ -367,7 +490,6 @@ def _check_class(
                     severity=ViolationSeverity.ALLOWED,
                     actual=actual,
                     limit=limit,
-                    pre_existing=True,
                 )
 
         return Violation(
@@ -393,9 +515,10 @@ def _check_class(
             violations.append(v)
 
     # Inheritance depth (hard)
-    if c.inh_depth > CLASS_DEPTH_HARD:
+    class_depth_hard = caps.class_depth_hard
+    if c.inh_depth > class_depth_hard:
         v = _classify_cls(
-            "inh_depth", "inheritance_depth", c.inh_depth, hard_limit=CLASS_DEPTH_HARD
+            "inh_depth", "inheritance_depth", c.inh_depth, hard_limit=class_depth_hard
         )
         if v:
             violations.append(v)
@@ -406,20 +529,56 @@ def _check_class(
 def _check_file_loc(
     file_result: FileResult,
     baseline: dict,
+    allowlist_index: dict | None = None,
+    caps: object | None = None,
 ) -> list[Violation]:
     """Return file-level LOC violations."""
+    if allowlist_index is None:
+        allowlist_index = _ALLOWLIST_INDEX
+    if caps is None:
+        caps = _CAPS
+
     violations = []
-    if file_result.is_test:
-        # Test files: file LOC still enforced (only fn params+LOC are exempt)
-        pass
+    file_loc_soft = caps.file_loc_soft or 500
+    file_loc_hard = caps.file_loc_hard
 
     loc = file_result.loc
-    if loc <= FILE_LOC_SOFT:
+    if loc <= file_loc_soft:
         return violations
 
-    severity = ViolationSeverity.HARD if loc > FILE_LOC_HARD else ViolationSeverity.SOFT
-    limit = FILE_LOC_HARD if severity == ViolationSeverity.HARD else FILE_LOC_SOFT
+    severity = ViolationSeverity.HARD if loc > file_loc_hard else ViolationSeverity.SOFT
+    limit = file_loc_hard if severity == ViolationSeverity.HARD else file_loc_soft
 
+    if severity == ViolationSeverity.HARD:
+        # HARD file LOC → check allowlist
+        rel = _rel_path(file_result.filepath)
+        if is_allowlisted(rel, "<file>", "file_loc", allowlist_index):
+            return [
+                Violation(
+                    filepath=file_result.filepath,
+                    lineno=1,
+                    entity="<file>",
+                    cap="file_loc",
+                    severity=ViolationSeverity.ALLOWED,
+                    actual=loc,
+                    limit=limit,
+                    allowlisted=True,
+                )
+            ]
+        # Not allowlisted → hard error
+        return [
+            Violation(
+                filepath=file_result.filepath,
+                lineno=1,
+                entity="<file>",
+                cap="file_loc",
+                severity=ViolationSeverity.HARD,
+                actual=loc,
+                limit=limit,
+            )
+        ]
+
+    # SOFT → baseline ratchet
     key = _baseline_key(file_result.filepath, "__file__")
     bl = baseline.get(key)
     if bl is not None and "loc" in bl:
@@ -460,6 +619,8 @@ def analyze_staged_file(
     filepath: str,
     is_test: bool,
     baseline: dict | None = None,
+    allowlist_index: dict | None = None,
+    caps: object | None = None,
 ) -> CheckResult:
     """Analyze a single file and return a CheckResult.
 
@@ -468,6 +629,10 @@ def analyze_staged_file(
     """
     if baseline is None:
         baseline = {}
+    if allowlist_index is None:
+        allowlist_index = _ALLOWLIST_INDEX
+    if caps is None:
+        caps = _CAPS
     filepath = str(Path(filepath).resolve())
 
     all_classes: dict = {}
@@ -489,15 +654,15 @@ def analyze_staged_file(
     all_violations: list[Violation] = []
 
     # File-level LOC
-    all_violations.extend(_check_file_loc(file_result, baseline))
+    all_violations.extend(_check_file_loc(file_result, baseline, allowlist_index, caps))
 
     # Per-function checks
     for fn_r in fn_results:
-        all_violations.extend(_check_function(fn_r, source_lines, baseline))
+        all_violations.extend(_check_function(fn_r, source_lines, baseline, allowlist_index, caps))
 
     # Per-class checks
     for cls_r in cls_results:
-        all_violations.extend(_check_class(cls_r, baseline))
+        all_violations.extend(_check_class(cls_r, baseline, allowlist_index, caps))
 
     result.violations = all_violations
 
@@ -517,6 +682,8 @@ def analyze_staged_file(
 def check_files(
     filepaths: list[str],
     baseline_path: str,
+    allowlist_index: dict | None = None,
+    caps: object | None = None,
 ) -> CheckResult:
     """Check all given files and return aggregated CheckResult.
 
@@ -524,6 +691,10 @@ def check_files(
     absolute) match regardless of whether pre-commit passes relative paths.
     """
     baseline = load_baseline(baseline_path)
+    if allowlist_index is None:
+        allowlist_index = _ALLOWLIST_INDEX
+    if caps is None:
+        caps = _CAPS
     combined = CheckResult()
 
     for filepath in filepaths:
@@ -532,7 +703,7 @@ def check_files(
         # Normalise to absolute path so baseline key lookup always hits
         filepath = str(Path(filepath).resolve())
         is_test = _is_test_file(filepath)
-        result = analyze_staged_file(filepath, is_test, baseline)
+        result = analyze_staged_file(filepath, is_test, baseline, allowlist_index, caps)
         combined.violations.extend(result.violations)
         combined.warnings.extend(result.warnings)
         combined.errors.extend(result.errors)
