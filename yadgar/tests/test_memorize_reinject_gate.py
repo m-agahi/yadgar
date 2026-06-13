@@ -55,9 +55,7 @@ def _run_memorize_with_settings(settings_stub: MagicMock, retriever_mock: MagicM
 
     import yadgar.file_queue as _fq
     import yadgar.server._state as _state_mod
-    import yadgar.server.tools._memorize_phases._phase_embed as _pe
-    import yadgar.server.tools._memorize_phases._phase_post_write as _pp
-    import yadgar.server.tools._memorize_phases._phase_store as _ps
+    import yadgar.server.lifecycle as _lc
 
     _mem_mod = importlib.import_module("yadgar.server.tools.memorize")
     _validate_mod = importlib.import_module("yadgar.server.tools._memorize_phases._phase_validate")
@@ -76,13 +74,10 @@ def _run_memorize_with_settings(settings_stub: MagicMock, retriever_mock: MagicM
         patch.object(_fq, "is_draining", return_value=True),
         patch.object(_validate_mod, "gate_or_reject", return_value=None),
         patch.object(_mem_mod, "settings", settings_stub),
-        # patch lifecycle getters in each phase module
-        patch.object(_pe, "_get_embeddings", return_value=mock_emb),
-        patch.object(_ps, "_get_storage", return_value=mock_storage),
-        patch.object(_ps, "_get_embeddings", return_value=mock_emb),
-        patch.object(_ps, "_get_buffer", return_value=mock_buffer),
-        patch.object(_pp, "_get_storage", return_value=mock_storage),
-        patch.object(_pp, "_get_buffer", return_value=mock_buffer),
+        # patch lifecycle getters at the lifecycle module (phases use _lifecycle.getter())
+        patch.object(_lc, "_get_embeddings", return_value=mock_emb),
+        patch.object(_lc, "_get_storage", return_value=mock_storage),
+        patch.object(_lc, "_get_buffer", return_value=mock_buffer),
         # patch _state attributes via the actual state module
         patch.object(_state_mod, "_rules_engine", None),
         patch.object(_state_mod, "_write_gate", None),

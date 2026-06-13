@@ -112,6 +112,101 @@ class _FusionMixin:
     and ``self._reranker`` — all available on the Retriever instance via MRO.
     """
 
+    def _apply_confidence_gating(self, signal_weights: dict, scores: dict) -> None:
+        """Zero-out signal weights that fall below their confidence threshold (in-place)."""
+        _conf_name_map = {"spread": "spreading"}
+        thresholds = {
+            "vector": getattr(self._settings, "CONFIDENCE_THRESHOLD_VECTOR", 0.1),
+            "fts": getattr(self._settings, "CONFIDENCE_THRESHOLD_FTS", 0.1),
+            "ppr": getattr(self._settings, "CONFIDENCE_THRESHOLD_PPR", 0.1),
+            "spread": getattr(self._settings, "CONFIDENCE_THRESHOLD_SPREADING", 0.1),
+            "temporal": getattr(self._settings, "CONFIDENCE_THRESHOLD_TEMPORAL", 0.1),
+        }
+        for sig in list(signal_weights.keys()):
+            ranked = sorted(
+                [(mid, s[sig]) for mid, s in scores.items() if s[sig] > 0],
+                key=lambda x: x[1],
+                reverse=True,
+            )
+            conf_name = _conf_name_map.get(sig, sig)
+            confidence = self._reranker.compute_signal_confidence(conf_name, ranked)
+            if confidence < thresholds.get(sig, 0.1):
+                signal_weights[sig] = 0.0
+
+    @staticmethod
+    def _normalize_signal(
+        sig: str,
+        sig_vals: list,
+        vals: list,
+        fusion_norm: str,
+        normalized: dict,
+    ) -> None:
+        """Normalize one signal's scores into `normalized` dict (in-place)."""
+        if fusion_norm == "minmax":
+            min_v, max_v = min(vals), max(vals)
+            rng = max_v - min_v
+            for mid, v in sig_vals:
+                normalized[mid][sig] = (v - min_v) / rng if rng > 1e-9 else 0.5
+        elif fusion_norm == "raw":
+            for mid, v in sig_vals:
+                normalized[mid][sig] = v
+        else:  # zscore (default)
+            mean_v = sum(vals) / len(vals)
+            std_v = (sum((v - mean_v) ** 2 for v in vals) / len(vals)) ** 0.5
+            if std_v > 1e-9:
+                z_scores = [(mid, (v - mean_v) / std_v) for mid, v in sig_vals]
+                z_vals = [z for _, z in z_scores]
+                z_min, z_max = min(z_vals), max(z_vals)
+                z_rng = z_max - z_min
+                for mid, z in z_scores:
+                    normalized[mid][sig] = (z - z_min) / z_rng if z_rng > 1e-9 else 0.5
+            else:
+                for mid, _v in sig_vals:
+                    normalized[mid][sig] = 0.5
+
+    def _wrrf_fuse(self, scores: dict, signal_weights: dict) -> tuple[dict, list]:
+        """WRRF-style normalized weighted sum fusion.
+
+        Returns (fused_scores_dict, sorted_list).
+        """
+        signal_names = list(
+            {sig for mid, sigs in scores.items() for sig, v in sigs.items() if v > 0}
+        )
+        normalized: dict[int, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+        fusion_norm = getattr(self._settings, "FUSION_NORM", "zscore")
+
+        for sig in signal_names:
+            sig_vals = [(mid, s[sig]) for mid, s in scores.items() if s[sig] > 0]
+            if not sig_vals:
+                continue
+            self._normalize_signal(sig, sig_vals, [v for _, v in sig_vals], fusion_norm, normalized)
+
+        combmnz = getattr(self._settings, "COMBMNZ_ENABLED", False)
+
+        fused_scores: dict = {}
+        for mid, norm_sigs in normalized.items():
+            total = 0.0
+            signal_count = 0
+            for signal, norm_score in norm_sigs.items():
+                w = signal_weights.get(signal, 0.0)
+                if w > 0:
+                    total += w * norm_score
+                    signal_count += 1
+            if total > 0:
+                if combmnz and signal_count > 1:
+                    total *= signal_count
+                fused_scores[mid] = total
+
+        return fused_scores, sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
+
+    @staticmethod
+    def _apply_prior_boost(fused_scores: dict, weight: float, priors: dict) -> list:
+        """Apply a precomputed prior boost (additive, O(1)) and return re-sorted list."""
+        for mid, prior_val in priors.items():
+            if prior_val and mid in fused_scores:
+                fused_scores[mid] = fused_scores[mid] + weight * prior_val
+        return sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
+
     def _fuse_scores(
         self,
         scores: dict,
@@ -133,27 +228,8 @@ class _FusionMixin:
         if open_domain_mode:
             signal_weights["fts"] *= getattr(self._settings, "OPEN_DOMAIN_FTS_BOOST", 1.6)
 
-        # Apply confidence gating
         if getattr(self._settings, "CONFIDENCE_GATING_ENABLED", False):
-            _conf_name_map = {"spread": "spreading"}
-            thresholds = {
-                "vector": getattr(self._settings, "CONFIDENCE_THRESHOLD_VECTOR", 0.1),
-                "fts": getattr(self._settings, "CONFIDENCE_THRESHOLD_FTS", 0.1),
-                "ppr": getattr(self._settings, "CONFIDENCE_THRESHOLD_PPR", 0.1),
-                "spread": getattr(self._settings, "CONFIDENCE_THRESHOLD_SPREADING", 0.1),
-                "temporal": getattr(self._settings, "CONFIDENCE_THRESHOLD_TEMPORAL", 0.1),
-            }
-            for sig in list(signal_weights.keys()):
-                ranked = sorted(
-                    [(mid, s[sig]) for mid, s in scores.items() if s[sig] > 0],
-                    key=lambda x: x[1],
-                    reverse=True,
-                )
-                conf_name = _conf_name_map.get(sig, sig)
-                confidence = self._reranker.compute_signal_confidence(conf_name, ranked)
-                threshold = thresholds.get(sig, 0.1)
-                if confidence < threshold:
-                    signal_weights[sig] = 0.0
+            self._apply_confidence_gating(signal_weights, scores)
 
         fusion_method = getattr(self._settings, "FUSION_METHOD", "wrrf")
 
@@ -166,96 +242,60 @@ class _FusionMixin:
             fused = _convex_fuse(signal_scores_for_convex, signal_weights)
             fused_scores = dict(fused)
         else:
-            # WRRF-style normalized weighted sum
-            signal_names = list(
-                {sig for mid, sigs in scores.items() for sig, v in sigs.items() if v > 0}
-            )
-            normalized: dict[int, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-            fusion_norm = getattr(self._settings, "FUSION_NORM", "zscore")
-
-            for sig in signal_names:
-                sig_vals = [(mid, s[sig]) for mid, s in scores.items() if s[sig] > 0]
-                if not sig_vals:
-                    continue
-                vals = [v for _, v in sig_vals]
-
-                if fusion_norm == "minmax":
-                    min_v = min(vals)
-                    max_v = max(vals)
-                    rng = max_v - min_v
-                    for mid, v in sig_vals:
-                        normalized[mid][sig] = (v - min_v) / rng if rng > 1e-9 else 0.5
-                elif fusion_norm == "raw":
-                    for mid, v in sig_vals:
-                        normalized[mid][sig] = v
-                else:  # zscore (default)
-                    mean_v = sum(vals) / len(vals)
-                    std_v = (sum((v - mean_v) ** 2 for v in vals) / len(vals)) ** 0.5
-                    if std_v > 1e-9:
-                        z_scores = [(mid, (v - mean_v) / std_v) for mid, v in sig_vals]
-                        z_vals = [z for _, z in z_scores]
-                        z_min, z_max = min(z_vals), max(z_vals)
-                        z_rng = z_max - z_min
-                        for mid, z in z_scores:
-                            normalized[mid][sig] = (z - z_min) / z_rng if z_rng > 1e-9 else 0.5
-                    else:
-                        for mid, _v in sig_vals:
-                            normalized[mid][sig] = 0.5
-
-            combmnz = getattr(self._settings, "COMBMNZ_ENABLED", False)
-
-            fused_scores = {}
-            for mid, norm_sigs in normalized.items():
-                total = 0.0
-                signal_count = 0
-                for signal, norm_score in norm_sigs.items():
-                    w = signal_weights.get(signal, 0.0)
-                    if w > 0:
-                        total += w * norm_score
-                        signal_count += 1
-                if total > 0:
-                    if combmnz and signal_count > 1:
-                        total *= signal_count
-                    fused_scores[mid] = total
-
-            fused = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
+            fused_scores, fused = self._wrrf_fuse(scores, signal_weights)
 
         # v5.54.1: Apply precomputed graph_prior boost — additive, ALL profiles, O(1).
-        # The prior is a scalar stored on each memory row during consolidation; reading
-        # it here involves NO graph traversal, NO entity extraction, NO PPR computation.
-        # This satisfies the I8/I9 latency constraint for the fast profile.
-        # Confidence gating is intentionally bypassed (prior is additive, not a signal).
-        gp_weight = getattr(self._settings, "WRRF_GRAPH_PRIOR_WEIGHT", 0.0)
+        # Prior is stored on each memory row during consolidation — NO graph traversal.
+        # Confidence gating intentionally bypassed (prior is additive, not a signal).
+        try:
+            gp_weight = float(getattr(self._settings, "WRRF_GRAPH_PRIOR_WEIGHT", 0.0))
+        except TypeError:
+            gp_weight = 0.0
         if gp_weight > 0 and fused_scores:
-            candidate_ids = list(fused_scores.keys())
-            priors = self._storage.get_memory_graph_priors(candidate_ids)
-            for mid, gp in priors.items():
-                if gp and mid in fused_scores:
-                    fused_scores[mid] = fused_scores[mid] + gp_weight * gp
-            # Re-sort after applying the boost so high-prior candidates aren't
-            # dropped by the rerank_pool truncation in _build_initial_results.
-            fused = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
+            priors = self._storage.get_memory_graph_priors(list(fused_scores.keys()))
+            fused = self._apply_prior_boost(fused_scores, gp_weight, priors)
 
         # v5.54.2: Apply precomputed cofire_prior boost — additive, ALL profiles, O(1).
-        # co-recall (transition-edge) prior: memories historically recalled together get a boost.
-        # The prior is stored on each memory row during consolidation from the
-        # memory_transition table. Reading it here involves NO transition-table traversal,
-        # NO graph traversal — pure O(1) field read. Activates the dead "transition" edge.
+        # Co-recall (transition-edge) prior — NO transition/graph traversal.
         # Confidence gating intentionally bypassed (additive, not a signal weight).
         try:
             cf_weight = float(getattr(self._settings, "WRRF_COFIRE_PRIOR_WEIGHT", 0.0))
-        except TypeError, ValueError:
+        except (TypeError, ValueError):  # fmt: skip
             cf_weight = 0.0
         if cf_weight > 0 and fused_scores:
-            candidate_ids = list(fused_scores.keys())
-            cofire_priors = self._storage.get_memory_cofire_priors(candidate_ids)
-            for mid, cp in cofire_priors.items():
-                if cp and mid in fused_scores:
-                    fused_scores[mid] = fused_scores[mid] + cf_weight * cp
-            # Re-sort after boost to preserve correct ranking for rerank_pool truncation.
-            fused = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
+            cofire_priors = self._storage.get_memory_cofire_priors(list(fused_scores.keys()))
+            fused = self._apply_prior_boost(fused_scores, cf_weight, cofire_priors)
 
         return fused, fused_scores
+
+    def _inject_ce_diversity(
+        self,
+        result_memories: list[dict],
+        seen_ids: set[int],
+        scores: dict,
+        fused_scores: dict,
+        open_domain_mode: bool,
+        min_heat: float,
+    ) -> None:
+        """Inject cross-encoder diversity candidates into result_memories (in-place)."""
+        diversity_k = getattr(self._settings, "CE_DIVERSITY_INJECT_K", 10)
+        if open_domain_mode:
+            diversity_k = max(diversity_k, 15)
+        for sig in ["fts", "vector"]:
+            top_sig = sorted(
+                [(mid, s[sig]) for mid, s in scores.items() if s[sig] > 0],
+                key=lambda x: x[1],
+                reverse=True,
+            )[:diversity_k]
+            for mid, _ in top_sig:
+                if mid in seen_ids:
+                    continue
+                mem = self._storage.get_memory(mid)
+                if mem and mem.get("id") is not None and mem["heat"] >= min_heat:
+                    mem["_retrieval_score"] = round(fused_scores.get(mid, 0.0), 4)
+                    mem.pop("embedding", None)
+                    result_memories.append(mem)
+                    seen_ids.add(mid)
 
     def _build_initial_results(
         self,
@@ -292,23 +332,9 @@ class _FusionMixin:
             self._settings, "CROSS_ENCODER_ENABLED", False
         )
         if use_cross_encoder:
-            diversity_k = getattr(self._settings, "CE_DIVERSITY_INJECT_K", 10)
-            if open_domain_mode:
-                diversity_k = max(diversity_k, 15)
-            for sig in ["fts", "vector"]:
-                top_sig = sorted(
-                    [(mid, s[sig]) for mid, s in scores.items() if s[sig] > 0],
-                    key=lambda x: x[1],
-                    reverse=True,
-                )[:diversity_k]
-                for mid, _ in top_sig:
-                    if mid not in seen_ids:
-                        mem = self._storage.get_memory(mid)
-                        if mem and mem.get("id") is not None and mem["heat"] >= min_heat:
-                            mem["_retrieval_score"] = round(fused_scores.get(mid, 0.0), 4)
-                            mem.pop("embedding", None)
-                            result_memories.append(mem)
-                            seen_ids.add(mid)
+            self._inject_ce_diversity(
+                result_memories, seen_ids, scores, fused_scores, open_domain_mode, min_heat
+            )
 
         return result_memories, seen_ids, use_cross_encoder
 

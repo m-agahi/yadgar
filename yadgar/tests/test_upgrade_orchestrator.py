@@ -61,26 +61,53 @@ def _noop_re_exec(version: str, snapshot_path: Path) -> None:  # noqa: ARG001
 
 def _run(tmp_path: Path, **overrides):
     """Convenience wrapper: run_install with test-safe paths and all injections."""
-    from yadgar.update.orchestrator import run_install
+    from yadgar.update.orchestrator import InstallConfig, _build_hooks, run_install
 
-    defaults = {
-        "target_version": "5.49.0",
-        "enabled_override": True,  # bypass install_enabled check
-        "lock_file_path": tmp_path / "upgrade.lock",
-        "snapshots_base_dir": tmp_path / "snaps",
+    # Separate config fields from hook fields
+    _hook_fields = {
+        "image_pull",
+        "graceful_stop",
+        "service_restart",
+        "health_check",
+        "cli_upgrade",
+        "cli_rollback",
+        "re_exec",
+    }
+    hook_defaults: dict = {
         "image_pull": _noop_image_pull,
         "graceful_stop": _noop_graceful_stop,
         "service_restart": _noop_service_restart,
         "health_check": _passing_health_check,
         "cli_upgrade": _noop_cli_upgrade,
         "re_exec": _noop_re_exec,
-        # Provide stable prev-state for snapshot assertions
+    }
+    config_defaults: dict = {
+        "target_version": "5.49.0",
+        "enabled_override": True,  # bypass install_enabled check
+        "lock_file_path": tmp_path / "upgrade.lock",
+        "snapshots_base_dir": tmp_path / "snaps",
         "prev_image_tag_override": "docker.io/openfantasy/yadgar:5.48.0",
         "prev_unit_file_override": "[Unit]\nDescription=yadgar\n",
         "prev_cli_version_override": "5.48.0",
     }
-    defaults.update(overrides)
-    return run_install(**defaults)
+    hook_kw = {
+        k: overrides.pop(k, hook_defaults.get(k))
+        for k in _hook_fields
+        if k in hook_defaults or k in overrides
+    }
+    config_kw = {**config_defaults, **{k: v for k, v in overrides.items() if k not in _hook_fields}}
+
+    config = InstallConfig(**config_kw)
+    hooks = _build_hooks(
+        hook_kw.get("image_pull"),
+        hook_kw.get("graceful_stop"),
+        hook_kw.get("service_restart"),
+        hook_kw.get("health_check"),
+        hook_kw.get("cli_upgrade"),
+        hook_kw.get("cli_rollback"),
+        hook_kw.get("re_exec"),
+    )
+    return run_install(config, hooks)
 
 
 # ---------------------------------------------------------------------------
@@ -303,26 +330,35 @@ def test_orchestrator_snapshot_retention(tmp_path: Path) -> None:
 
 def test_orchestrator_install_disabled_refuses(tmp_path: Path) -> None:
     """run_install() with enabled_override=False refuses without any state mutations."""
-    from yadgar.update.orchestrator import OrchestratorState, run_install
+    from yadgar.update.orchestrator import (
+        InstallConfig,
+        OrchestratorState,
+        _build_hooks,
+        run_install,
+    )
 
     service_restart = MagicMock()
     image_pull = MagicMock()
 
-    result = run_install(
+    config = InstallConfig(
         target_version="5.49.0",
         enabled_override=False,
         lock_file_path=tmp_path / "upgrade.lock",
         snapshots_base_dir=tmp_path / "snaps",
-        image_pull=image_pull,
-        service_restart=service_restart,
-        graceful_stop=_noop_graceful_stop,
-        health_check=_passing_health_check,
-        cli_upgrade=_noop_cli_upgrade,
-        re_exec=_noop_re_exec,
         prev_image_tag_override="docker.io/openfantasy/yadgar:5.48.0",
         prev_unit_file_override="[Unit]\nDescription=yadgar\n",
         prev_cli_version_override="5.48.0",
     )
+    hooks = _build_hooks(
+        image_pull,
+        _noop_graceful_stop,
+        service_restart,
+        _passing_health_check,
+        _noop_cli_upgrade,
+        None,
+        _noop_re_exec,
+    )
+    result = run_install(config, hooks)
 
     # Refused immediately
     assert result.final_state == OrchestratorState.IDLE
@@ -359,21 +395,27 @@ def test_orchestrator_concurrent_run_blocked(tmp_path: Path) -> None:
     lock_path.write_text(json.dumps(lock_data))
     original_content = lock_path.read_text()
 
-    result = run_install(
+    from yadgar.update.orchestrator import InstallConfig, _build_hooks
+
+    config = InstallConfig(
         target_version="5.49.0",
         enabled_override=True,
         lock_file_path=lock_path,
         snapshots_base_dir=tmp_path / "snaps",
-        image_pull=_noop_image_pull,
-        graceful_stop=_noop_graceful_stop,
-        service_restart=_noop_service_restart,
-        health_check=_passing_health_check,
-        cli_upgrade=_noop_cli_upgrade,
-        re_exec=_noop_re_exec,
         prev_image_tag_override="docker.io/openfantasy/yadgar:5.48.0",
         prev_unit_file_override="",
         prev_cli_version_override="5.48.0",
     )
+    hooks = _build_hooks(
+        _noop_image_pull,
+        _noop_graceful_stop,
+        _noop_service_restart,
+        _passing_health_check,
+        _noop_cli_upgrade,
+        None,
+        _noop_re_exec,
+    )
+    result = run_install(config, hooks)
 
     assert result.final_state == OrchestratorState.IDLE
     assert result.error is not None

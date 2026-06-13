@@ -26,7 +26,8 @@ def test_prune_keeps_keep_n_newest(tmp_path):
 
     _run_cleanup_script(tmp_path, "surreal_db.pre-vacuum-*", keep_n=3)
 
-    remaining = sorted(tmp_path.iterdir(), key=os.path.getmtime)
+    # Use glob to count only matching snapshots (tmp_path may have fixture-injected dirs).
+    remaining = sorted(tmp_path.glob("surreal_db.pre-vacuum-*"), key=os.path.getmtime)
     assert len(remaining) == 3, f"Expected 3 remaining, got {len(remaining)}"
 
     # The 3 newest (i=7,8,9) should survive
@@ -46,7 +47,8 @@ def test_prune_noop_when_fewer_than_keep_n(tmp_path):
 
     _run_cleanup_script(tmp_path, "snap-*.bak", keep_n=5)
 
-    remaining = list(tmp_path.iterdir())
+    # Use glob to count only matching files (tmp_path may have fixture-injected dirs).
+    remaining = list(tmp_path.glob("snap-*.bak"))
     assert len(remaining) == 3
 
 
@@ -62,5 +64,6 @@ def test_prune_deletes_files_not_dirs_only(tmp_path):
 
     _run_cleanup_script(tmp_path, "backup-*.surql", keep_n=2)
 
-    remaining = list(tmp_path.iterdir())
+    # Use glob to count only matching files (tmp_path may have fixture-injected dirs).
+    remaining = list(tmp_path.glob("backup-*.surql"))
     assert len(remaining) == 2

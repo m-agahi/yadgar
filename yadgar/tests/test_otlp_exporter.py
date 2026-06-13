@@ -288,7 +288,7 @@ class TestInvalidEndpoint:
 
 class TestOtlpTimeout:
     def test_default_timeout_is_10(self, monkeypatch):
-        """YADGAR_OTLP_TIMEOUT_SEC defaults to 10."""
+        """YADGAR_OTLP_TIMEOUT_SEC defaults to 3 (v5.50.10: short so dead collector fails fast)."""
         monkeypatch.setenv("YADGAR_OTLP_ENDPOINT", "http://127.0.0.1:4318/v1/traces")
         monkeypatch.delenv("YADGAR_OTLP_TIMEOUT_SEC", raising=False)
 
@@ -315,7 +315,7 @@ class TestOtlpTimeout:
         assert otlp_proc is not None
         exporter = otlp_proc.span_exporter
         # OTLPSpanExporter stores timeout_sec as _timeout
-        assert exporter._timeout == 10
+        assert exporter._timeout == 3
 
     def test_custom_timeout(self, monkeypatch):
         """YADGAR_OTLP_TIMEOUT_SEC=30 configures exporter with 30s timeout."""

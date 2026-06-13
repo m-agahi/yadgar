@@ -73,12 +73,13 @@ class TestLightMode:
         mock_slp.run_sleep_cycle.assert_not_called()
         assert "sleep_cycle" not in result
 
-    def test_consolidate_now_light_mode_skips_anchor_audit(self, mock_state, monkeypatch):
+    def test_consolidate_now_light_mode_skips_anchor_audit(self, mock_state, monkeypatch, request):
         """mode='light' must NOT call _run_anchor_audit_pass even when ENABLED=True."""
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_CONSOLIDATION_ENABLED", "true")
         from yadgar.config import get_settings
 
         get_settings.cache_clear()
+        request.addfinalizer(get_settings.cache_clear)  # reliably clears even if test fails
 
         audit_mock = MagicMock(return_value={"actions": []})
         with patch("yadgar.server.tools.audit._run_anchor_audit_pass", audit_mock):
@@ -88,7 +89,6 @@ class TestLightMode:
 
         audit_mock.assert_not_called()
         assert "anchor_audit_pass" not in result
-        get_settings.cache_clear()
 
     def test_consolidate_now_default_mode_is_light(self, mock_state):
         """Calling consolidate_now() without args behaves as mode='light'."""
@@ -138,12 +138,15 @@ class TestFullMode:
         mock_slp.run_sleep_cycle.assert_called_once()
         assert "sleep_cycle" in result
 
-    def test_consolidate_now_full_mode_runs_anchor_audit_if_enabled(self, mock_state, monkeypatch):
+    def test_consolidate_now_full_mode_runs_anchor_audit_if_enabled(
+        self, mock_state, monkeypatch, request
+    ):
         """mode='full' + ENABLED=True calls _run_anchor_audit_pass."""
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_CONSOLIDATION_ENABLED", "true")
         from yadgar.config import get_settings
 
         get_settings.cache_clear()
+        request.addfinalizer(get_settings.cache_clear)  # reliably clears even if test fails
 
         audit_mock = MagicMock(return_value={"actions": []})
         with patch("yadgar.server.tools.audit._run_anchor_audit_pass", audit_mock):
@@ -155,16 +158,16 @@ class TestFullMode:
 
         audit_mock.assert_called_once()
         assert "anchor_audit_pass" in result
-        get_settings.cache_clear()
 
     def test_consolidate_now_full_mode_skips_anchor_audit_if_disabled(
-        self, mock_state, monkeypatch
+        self, mock_state, monkeypatch, request
     ):
         """mode='full' + ENABLED=False skips _run_anchor_audit_pass."""
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_CONSOLIDATION_ENABLED", "false")
         from yadgar.config import get_settings
 
         get_settings.cache_clear()
+        request.addfinalizer(get_settings.cache_clear)  # reliably clears even if test fails
 
         audit_mock = MagicMock(return_value={"actions": []})
         with patch("yadgar.server.tools.audit._run_anchor_audit_pass", audit_mock):
@@ -174,7 +177,6 @@ class TestFullMode:
 
         audit_mock.assert_not_called()
         assert "anchor_audit_pass" not in result
-        get_settings.cache_clear()
 
     def test_consolidate_now_full_updates_last_sleep_cycle_timestamp(self, mock_state):
         """mode='full' sets _last_sleep_cycle to approximately now."""

@@ -14,6 +14,7 @@ from yadgar._surreal_runner import (  # noqa: F401
     allocate_port,
     allocate_port_with_retry,
     kill_all_spawned_surreal,
+    reap_stale_surreal,
     spawn_surreal,
     teardown_surreal_proc,
 )

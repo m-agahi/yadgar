@@ -44,7 +44,7 @@ def _parse_limit(raw: str | None, default: int = 20) -> int:
     """Parse limit query param, clamped to [1, 100]."""
     try:
         return max(1, min(int(raw or default), 100))
-    except ValueError, TypeError:
+    except (ValueError, TypeError):  # fmt: skip
         return default
 
 
@@ -144,7 +144,7 @@ async def api_wiki_history(request: Request) -> JSONResponse:
     try:
         limit = int(request.query_params.get("limit", 20))
         limit = max(1, min(limit, 100))
-    except ValueError, TypeError:
+    except (ValueError, TypeError):  # fmt: skip
         limit = 20
 
     wiki = _st._wiki
@@ -188,7 +188,7 @@ async def api_wiki_read_version(request: Request) -> JSONResponse:
     version_raw = (request.query_params.get("version") or "").strip()
     try:
         version = int(version_raw)
-    except ValueError, TypeError:
+    except (ValueError, TypeError):  # fmt: skip
         return JSONResponse({"error": "version must be an integer"}, status_code=400, headers=_CORS)
 
     wiki = _st._wiki
@@ -233,7 +233,7 @@ async def api_wiki_diff(request: Request) -> JSONResponse:
     try:
         v1 = int(request.query_params.get("v1", ""))
         v2 = int(request.query_params.get("v2", ""))
-    except ValueError, TypeError:
+    except (ValueError, TypeError):  # fmt: skip
         return JSONResponse({"error": "v1 and v2 must be integers"}, status_code=400, headers=_CORS)
 
     fmt = (request.query_params.get("fmt") or "unified").strip().lower()
@@ -296,7 +296,7 @@ async def api_wiki_restore(request: Request) -> JSONResponse:
     version_raw = body.get("version")
     try:
         version = int(version_raw)
-    except ValueError, TypeError:
+    except (ValueError, TypeError):  # fmt: skip
         return JSONResponse(
             {"restored": False, "reason": "version_must_be_int"}, status_code=400, headers=_CORS
         )

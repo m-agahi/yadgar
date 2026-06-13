@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 
 import yadgar.server._state as _st
+import yadgar.server.lifecycle as _lifecycle
 from yadgar.server._helpers import _file_hash
-from yadgar.server.lifecycle import _get_buffer, _get_embeddings, _get_storage
 
 from .context import MemorizeContext
 
@@ -20,9 +20,9 @@ def phase_store(ctx: MemorizeContext) -> None:
     - memory_id set
     - curation_action set
     """
-    storage = _get_storage()
-    embeddings = _get_embeddings()
-    buffer = _get_buffer()
+    storage = _lifecycle._get_storage()
+    embeddings = _lifecycle._get_embeddings()
+    buffer = _lifecycle._get_buffer()
     fhash = _file_hash(ctx.context)
 
     curator = _st._curator

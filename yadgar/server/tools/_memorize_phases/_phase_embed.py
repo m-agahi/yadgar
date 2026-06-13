@@ -6,7 +6,7 @@ import logging
 from datetime import UTC, datetime
 
 import yadgar.server._state as _st
-from yadgar.server.lifecycle import _get_embeddings
+import yadgar.server.lifecycle as _lifecycle
 
 from .context import MemorizeContext
 
@@ -24,7 +24,7 @@ def phase_embed(ctx: MemorizeContext, settings) -> dict | None:
 
     Returns rejection dict if write gate rejects, else None.
     """
-    embeddings = _get_embeddings()
+    embeddings = _lifecycle._get_embeddings()
 
     # Predictive coding write gate — FIRST check before any storage
     if _st._write_gate is not None:

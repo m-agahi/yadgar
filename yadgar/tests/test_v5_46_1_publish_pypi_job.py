@@ -49,13 +49,20 @@ def test_publish_pypi_depends_on_build_wheel():
 
 @pytest.mark.skipif(not HAS_YAML, reason="PyYAML not installed")
 def test_publish_pypi_has_tag_guard():
-    """publish-pypi must have an if: condition gating on refs/tags/v prefix."""
+    """publish-pypi must have an if: condition gating on refs/tags/v or workflow_dispatch.
+
+    During dev mode (PD-45) the gate is workflow_dispatch (manual UI only).
+    Production gate will be startsWith(github.ref, 'refs/tags/v').
+    Both are valid; test accepts either.
+    """
     parsed = yaml.safe_load(RELEASE_YAML.read_text())
     job = parsed["jobs"]["publish-pypi"]
     if_condition = str(job.get("if", ""))
-    assert "refs/tags/v" in if_condition or "startsWith" in if_condition, (
-        f"publish-pypi must be gated on tag push; if: {if_condition!r}"
-    )
+    assert (
+        "refs/tags/v" in if_condition
+        or "startsWith" in if_condition
+        or "workflow_dispatch" in if_condition
+    ), f"publish-pypi must be gated on tag push or workflow_dispatch; if: {if_condition!r}"
 
 
 @pytest.mark.skipif(not HAS_YAML, reason="PyYAML not installed")

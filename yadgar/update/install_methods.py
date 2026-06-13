@@ -33,7 +33,7 @@ def detect_install_method() -> str:
             stderr=subprocess.DEVNULL,
             text=True,
         ).strip()
-    except subprocess.CalledProcessError, FileNotFoundError:
+    except (subprocess.CalledProcessError, FileNotFoundError):  # fmt: skip
         return "not_installed"
 
     if not raw:

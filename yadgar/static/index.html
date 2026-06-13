@@ -2432,6 +2432,9 @@ let _daemonLogFilter = '';
 let _daemonLogPaused = false;
 let _daemonLogSeq = 0;
 let _daemonLogBuffer = [];
+// E1 fix (v5.54.5): disable log polling when YADGAR_DEBUG_APIS_ENABLED is off.
+// A 403 on the first poll disables all further polls to avoid console noise.
+let _daemonLogGated = false;
 
 // Console panel state (populated via console_capture.js import)
 let _consoleLogFilter = '';
@@ -2519,9 +2522,23 @@ function _rerenderConsoleLog() {
 
 /** Poll daemon log endpoint and append new entries. */
 async function _pollDaemonLog() {
-  if (_daemonLogPaused) return;
+  if (_daemonLogPaused || _daemonLogGated) return;
+  // v5.54.5: only poll when the Debug tab (which holds this panel) is visible.
+  // The panel lives in #tab-debug, hidden (display:none) unless the Debug tab is
+  // active, so on page load offsetParent is null. /api/logs is gated and returns
+  // 403 when debug APIs are off; a browser logs that 403 to the console regardless
+  // of JS handling, tripping test_no_uncaught_js_errors. Not fetching until the
+  // panel is actually shown avoids the load-time console error entirely (and is
+  // correct — no point polling a log the user isn't looking at).
+  const _logEl = document.getElementById('daemon-log-entries');
+  if (!_logEl || _logEl.offsetParent === null) return;
   try {
     const r = await fetch(DAEMON + `/api/logs/poll?since=${_daemonLogSeq}`);
+    if (r.status === 403) {
+      // YADGAR_DEBUG_APIS_ENABLED is off — disable further polls silently.
+      _daemonLogGated = true;
+      return;
+    }
     if (!r.ok) return;
     const data = await r.json();
     const lines = data.lines || [];
@@ -3010,6 +3027,10 @@ function _switchTab(tabName) {
   if (tabName === 'health') _tabHealthRefresh();
   if (tabName === 'info') _tabInfoRefresh();
   if (tabName === 'help') _tabHelpRefresh();
+  // v5.54.5: lazy-init Control tab on first open — its probe hits a gated
+  // endpoint (403) that the browser logs to the console, so it must not run on
+  // page load. window._lazyInitControlTab is defined in the module script.
+  if (tabName === 'control') window._lazyInitControlTab?.();
 }
 
 // Stats tab: fetch /api/graph/stats + charts from /api/metrics/*
@@ -3191,11 +3212,19 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
   const _bmTab = document.getElementById('tab-bookmarks');
   if (_bmTab) initBookmarksTab(_bmTab);
 
-  // ── v5.50.2: Init Control tab ─────────────────────────────────────────────
-  // Tab is hidden until the user navigates to #control. initControlTab probes
-  // GET /api/control/config and shows a banner if the debug gate is off.
+  // ── v5.50.2 / v5.54.5: Lazy-init Control tab ──────────────────────────────
+  // initControlTab probes GET /api/control/config, which is GATED and returns
+  // 403 when the control debug gate is off. A browser logs that 403 to the
+  // console regardless of JS handling, tripping test_no_uncaught_js_errors. The
+  // tab is hidden until the user navigates to #control, so defer the probe until
+  // it is actually opened (via _switchTab). Once-guarded.
   const _ctrlTab = document.getElementById('tab-control');
-  if (_ctrlTab) initControlTab(_ctrlTab);
+  let _ctrlInited = false;
+  window._lazyInitControlTab = () => {
+    if (_ctrlInited || !_ctrlTab) return;
+    _ctrlInited = true;
+    initControlTab(_ctrlTab);
+  };
 
   // ── v5.50.0: Init floating overlays at DOMContentLoaded ──────────────────
   // DOMContentLoaded already fired by the time module scripts run, so call

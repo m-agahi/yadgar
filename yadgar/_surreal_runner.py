@@ -147,6 +147,73 @@ def kill_all_spawned_surreal() -> None:
 # Register once at module import — fires on clean exit, ^C, pytest-timeout unwind.
 atexit.register(kill_all_spawned_surreal)
 
+
+def _session_tmp_base() -> str:
+    """Root tmp dir for THIS test session's SurrealDB data.
+
+    Mirrors conftest's namespace logic: YADGAR_TEST_NAMESPACE redirects to
+    /tmp/pytest-<ns>; otherwise pytest's default /tmp/pytest-of-<user>.
+    Used to scope the stale-orphan reaper to this session only, so concurrent
+    sessions under different namespaces never kill each other's databases.
+    """
+    ns = os.environ.get("YADGAR_TEST_NAMESPACE", "")
+    if ns:
+        return f"/tmp/pytest-{ns}"
+    tmp = os.environ.get("TMPDIR", "").rstrip("/")
+    if tmp:
+        return tmp
+    import getpass
+
+    return f"/tmp/pytest-of-{getpass.getuser()}"
+
+
+def reap_stale_surreal() -> int:
+    """SIGKILL orphaned test SurrealDB procs left by prior crashed runs.
+
+    Registry cleanup (kill_all_spawned_surreal) misses these: atexit and
+    pytest_sessionfinish never fire on SIGKILL, and a fresh run's PID registry
+    can't see a previous run's PIDs, so orphans stack across runs (39 stray
+    surreals once observed — a secondary cause of the -n auto OOM).
+
+    Scans /proc (Linux) for `surreal start` whose data path is under THIS
+    session's tmp base. Never touches the production daemon (binds
+    /data/surreal_db) nor a concurrent session under a different namespace.
+    Best-effort; silent on permission errors. Returns the number killed.
+    """
+    base = _session_tmp_base()
+    if not base:
+        return 0
+    self_pid = os.getpid()
+    killed = 0
+    try:
+        entries = list(os.scandir("/proc"))
+    except OSError:
+        return 0
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        if pid == self_pid:
+            continue
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as fh:
+                cmd = fh.read().replace(b"\x00", b" ").decode("utf-8", "replace")
+        except OSError:
+            continue
+        if "surreal start" not in cmd or base not in cmd:
+            continue
+        if "/data/surreal_db" in cmd:  # production daemon — never touch
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+            killed += 1
+        except OSError:
+            pass
+    if killed:
+        logger.warning("reap_stale_surreal: killed %d orphaned test surreal proc(s)", killed)
+    return killed
+
+
 # ---------------------------------------------------------------------------
 # Deterministic port allocation (xdist-aware)
 # ---------------------------------------------------------------------------

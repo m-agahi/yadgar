@@ -24,6 +24,7 @@ Tests (real behavioral — no string-grep-the-HTML):
 from __future__ import annotations
 
 import json
+import os
 from unittest.mock import patch
 
 from starlette.applications import Starlette
@@ -297,6 +298,11 @@ def test_config_get_returns_knob_table_shape(monkeypatch, tmp_path):
 def test_config_post_round_trip(monkeypatch, tmp_path):
     """POST /api/control/config sets a knob → GET reflects new value."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    # Register the env var with monkeypatch BEFORE the route handler mutates it
+    # via os.environ[...] = str(coerced) (control.py:337).  Monkeypatch records
+    # the original value (or absence) here so teardown reliably restores it,
+    # preventing the mutated value from leaking into other workers/tests.
+    monkeypatch.setenv("YADGAR_VIZ_NODE_SIZE_3D", os.environ.get("YADGAR_VIZ_NODE_SIZE_3D", "8"))
     client = _make_app(monkeypatch, debug_apis_on=True)
 
     # Pick a float knob: YADGAR_VIZ_NODE_SIZE_3D (default 8.0)

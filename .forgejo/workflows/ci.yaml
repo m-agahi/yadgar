@@ -78,7 +78,11 @@ jobs:
         # yadgar-ci:5.46.9 — no cache/install steps needed.
         # No --no-cache-dir: pip cache at /root/.cache/pip avoids re-downloading
         # torch + sentence-transformers (~1 GB) on every run.
-        run: pip install -e ".[test,ml]"
+        # uv: required by test_v5_46_10_wheel_bundle (uv build --wheel subprocess)
+        # and pre-commit check-config-three-way-sync hook.
+        run: |
+          pip install -e ".[test,ml]"
+          pip install uv
 
       - name: Run tests
         # -n auto parallelises across CPU cores via pytest-xdist (already
@@ -130,7 +134,10 @@ jobs:
           restore-keys: npm-viz-
 
       - name: Install Python dependencies
-        run: pip install -e ".[test,ml]"
+        # uv: required by test_v5_46_10_wheel_bundle (uv build --wheel subprocess).
+        run: |
+          pip install -e ".[test,ml]"
+          pip install uv
 
       - name: Layer 1 — API contract integrity (Python)
         run: |
@@ -146,7 +153,20 @@ jobs:
 
       - name: Install Node.js deps (Layer 3)
         working-directory: viz-tests
-        run: npm ci
+        # Resilient install: npm registry socket timeouts are a recurring CI flake.
+        # Bump fetch retries/timeouts and retry the whole `npm ci` up to 3x.
+        run: |
+          npm config set fetch-retries 5
+          npm config set fetch-retry-mintimeout 20000
+          npm config set fetch-retry-maxtimeout 120000
+          npm config set fetch-timeout 300000
+          ok=0
+          for attempt in 1 2 3; do
+            if npm ci; then ok=1; break; fi
+            echo "npm ci attempt ${attempt} failed; retrying in 10s..." >&2
+            sleep 10
+          done
+          [ "$ok" = 1 ] || { echo "npm ci failed after 3 attempts" >&2; exit 1; }
 
       - name: Layer 3 — JS unit tests (Vitest)
         working-directory: viz-tests
@@ -155,7 +175,9 @@ jobs:
   publish:
     needs: test
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Publish only on tag pushes (post-merge to master) — never on pull_request,
+    # so it does not appear as a PR check.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     environment: pypi
     permissions:
       id-token: write
