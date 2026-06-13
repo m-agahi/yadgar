@@ -24,19 +24,6 @@
     "added_by": "complexity-governance-agent"
   },
   {
-    "path": "yadgar/cli/daemon.py",
-    "function": "cmd_daemon",
-    "lineno": 8,
-    "metrics": {
-      "cyclomatic": 42,
-      "fn_loc": 184,
-      "nesting": 13
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
-  },
-  {
     "path": "yadgar/cli/stats.py",
     "function": "cmd_stats",
     "lineno": 15,
