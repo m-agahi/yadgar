@@ -7,6 +7,13 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.57.2] — 2026-06-14
+
+### Fixed (CI release + image tracking)
+
+- **ci-release: registry-existence check**: `changes` job detect step now ORs a Docker Hub tag-presence check into the per-image build decision — build if (file/version changed) OR (target tag absent from registry). Closes the gap that left `yadgar-backend:5.6.0` unbuilt: `backend_version` was bumped in v5.56 (dev-gated CI built nothing), then v5.57.x saw it "unchanged" and skipped, creating a phantom 404 tag.
+- **Bump core 5.57.1→5.57.2 + backend_version 5.6.0→5.7.0**: forces a fresh matched build of both images on this merge; both version fields changed AND both tags will be absent from the registry → change-detection triggers both builds.
+
 ## [5.57.1] — 2026-06-14
 
 ### Fixed (CI release bugs)
