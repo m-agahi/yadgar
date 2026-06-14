@@ -2,7 +2,8 @@
 # Generate CycloneDX 1.5 SBOM for yadgar.
 #
 # Uses cyclonedx-bom (installed via `pip install yadgar[sbom]` or `pip install cyclonedx-bom`).
-# Note: cyclonedx-py on PyPI is an alias for cyclonedx-bom; use cyclonedx-bom directly.
+# The cyclonedx-bom==7.3.0 package installs its CLI entry point as `cyclonedx-py`
+# (not `cyclonedx-bom`). Use `cyclonedx-py environment` to generate from the active env.
 #
 # Usage:
 #   ./scripts/generate_sbom.sh [--output <path>]
@@ -13,7 +14,7 @@
 #
 # Exit codes:
 #   0  success
-#   1  cyclonedx-bom not found or generation failed
+#   1  cyclonedx-py not found or generation failed
 
 set -euo pipefail
 
@@ -43,7 +44,7 @@ Environment variables:
   SBOM_VERSION      Override version string
 
 Prerequisites:
-  pip install 'yadgar[sbom]'   (installs cyclonedx-bom==7.3.0)
+  pip install 'yadgar[sbom]'   (installs cyclonedx-bom==7.3.0, CLI entry point: cyclonedx-py)
 EOF
             exit 0
             ;;
@@ -53,8 +54,8 @@ done
 
 # ── check prerequisites ───────────────────────────────────────────────────────
 
-if ! command -v cyclonedx-bom &>/dev/null; then
-    die "cyclonedx-bom not found. Install with: pip install 'yadgar[sbom]' (or cyclonedx-bom==7.3.0)"
+if ! command -v cyclonedx-py &>/dev/null; then
+    die "cyclonedx-py not found. Install with: pip install 'yadgar[sbom]' (or cyclonedx-bom==7.3.0 — CLI entry point is cyclonedx-py)"
 fi
 
 # ── version detection ─────────────────────────────────────────────────────────
@@ -90,10 +91,10 @@ mkdir -p "$(dirname "$OUTPUT")"
 echo "==> Generating CycloneDX 1.5 SBOM for yadgar ${VERSION}..."
 echo "    Output: ${OUTPUT}"
 
-cyclonedx-bom environment \
-    --output-format json \
-    --schema-version 1.5 \
-    --output-file "${OUTPUT}"
+cyclonedx-py environment \
+    --of JSON \
+    --sv 1.5 \
+    -o "${OUTPUT}"
 
 echo "==> SBOM generated: ${OUTPUT}"
 
