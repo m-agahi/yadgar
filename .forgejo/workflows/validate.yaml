@@ -1,9 +1,13 @@
----
 name: Validate
 
 on:
   pull_request:
     branches: [master]
+
+# Cancel superseded runs on the same PR branch (rapid push storms).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   validate:

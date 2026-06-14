@@ -7,6 +7,19 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.57.0] — 2026-06-14
+
+### Changed (production CI split)
+
+- **CI restructure**: split monolithic `ci.yaml` / `release.yaml` / `release-check.yaml` into three focused workflows: `validate.yaml` (pre-commit, PR gate), `ci-pr.yaml` (test + viz-tests + verify-version-bump, PR gate), `ci-release.yaml` (change-detect → build-images → build-wheel + build-sbom → publish-pypi → tag-and-release, fires on master push).
+- **Removed `workflow_dispatch` dev-gates** (production CI): all `if: github.event_name == 'workflow_dispatch'` job gates removed; CI now fires automatically on PR / master push without manual UI clicks.
+- **Version-based release detection**: `ci-release.yaml` compares pyproject `version` against the latest `v*` git tag to decide whether to release; no longer tag-triggered. `workflow_dispatch` forces `release=true` as manual override.
+- **Tags tracking-only** (not triggers): git tags are now created by the `tag-and-release` job after PyPI publish succeeds — not used as CI triggers.
+- **Fixed I13 `check-complexity` scope**: `scripts/check_complexity.py` now excludes `yadgar/tests/` and `scripts/` from enforcement, matching the production-only scope of I30 (`check_complexity_allowlist.py`). Pre-commit `validate` hook now passes on all files.
+- `docs/COMPLEXITY_POLICY.md` updated to document the production-only scope exemption.
+
+Includes the v5.56.0 work (complexity governance, test isolation, orchestration safety) which ships within this release.
+
 ## [5.56.0] — 2026-06-14
 
 ### Changed (complexity governance + debt paydown — v5.55 campaign)
