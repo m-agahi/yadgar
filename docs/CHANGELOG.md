@@ -7,6 +7,12 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.57.4] — 2026-06-14
+
+### Fixed (release hygiene)
+- `sync_version.py` now also maintains `flake.nix` `coreVersion`/`backendVersion` module defaults and `docker-compose.yml` image-tag defaults. These were drifting and required manual bumps before (e.g. v5.57.3 docker-compose had to be bumped manually).
+- Robust tag-and-release Forgejo-release step: capture curl output to a variable before parsing; guard `json.loads` with try/except so empty/non-JSON bodies yield `""` instead of crashing; if the create POST fails (e.g. 409 "release already exists for tag"), re-fetch via GET and use the existing release id. v5.57.3's release-object create crashed with a `JSONDecodeError` on empty stdin under `set -e`, though the tag, images, and PyPI publish all succeeded.
+
 ## [5.57.3] — 2026-06-14
 
 ### Fixed (backend image build)
