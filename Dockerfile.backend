@@ -7,13 +7,14 @@ COPY . /app
 # so apt resolves to a single deterministic version per build.
 RUN apt-get update && apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/*
-# Install torch + sentence-transformers + uvicorn (for embed service)
+# Install torch + sentence-transformers + uvicorn (for embed service).
+# CPU-only torch on BOTH arches: this is a CPU embedding service, so the CUDA
+# wheel set is useless. Plain `pip install torch` on arm64 pulls the full
+# CUDA-bundled aarch64 wheels (>2GB) → the long silent install tripped Docker
+# Build Cloud's gRPC keepalive and failed the arm64 build (v5.57.2). The cpu
+# index has cp314 wheels for both aarch64 and x86_64.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    if [ "$TARGETARCH" = "arm64" ]; then \
-        pip install torch; \
-    else \
-        pip install torch --index-url https://download.pytorch.org/whl/cpu; \
-    fi && \
+    pip install torch --index-url https://download.pytorch.org/whl/cpu && \
     pip install "/app[ml]" uvicorn
 # SurrealDB v3
 COPY --from=surrealdb/surrealdb:v3.0.5 /surreal /usr/local/bin/surreal
