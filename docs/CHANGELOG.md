@@ -7,6 +7,13 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.57.1] — 2026-06-14
+
+### Fixed (CI release bugs)
+
+- **SBOM CLI name**: `scripts/generate_sbom.sh` was invoking `cyclonedx-bom` (not found); the `cyclonedx-bom==7.3.0` package installs its entry point as `cyclonedx-py`. Fixed command-existence check, invocation (`cyclonedx-py environment`), and all flags (`--of JSON`, `--sv 1.5`, `-o <file>`).
+- **Decouple tag-and-release from build-sbom**: `tag-and-release` no longer lists `build-sbom` in `needs`; `build-sbom` gains `continue-on-error: true`; the asset-download step in `tag-and-release` gains `continue-on-error: true`; the asset-upload loop no-ops if `dist/` is absent or empty. A SBOM failure now never blocks the git tag or Forgejo release (v5.57.0 had to be tagged manually due to this coupling).
+
 ## [5.57.0] — 2026-06-14
 
 ### Changed (production CI split)

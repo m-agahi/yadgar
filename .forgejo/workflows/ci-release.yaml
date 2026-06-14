@@ -233,6 +233,7 @@ jobs:
   build-sbom:
     needs: [changes, build-wheel]
     if: needs.changes.outputs.release == 'true'
+    continue-on-error: true
     runs-on: ubuntu-latest
     container:
       image: docker.io/openfantasy/yadgar-ci:5.46.9
@@ -314,7 +315,7 @@ jobs:
 
   # ── Create git tag + Forgejo release ─────────────────────────────────────
   tag-and-release:
-    needs: [changes, publish-pypi, build-images, build-sbom]
+    needs: [changes, publish-pypi, build-images]
     if: needs.changes.outputs.release == 'true'
     runs-on: ubuntu-latest
     container:
@@ -352,6 +353,7 @@ jobs:
             || echo "Tag ${TAG} already exists on remote (skipping)"
 
       - name: Download release assets
+        continue-on-error: true
         uses: https://data.forgejo.org/actions/download-artifact@v3.1.0
         with:
           name: release-assets-${{ steps.get-version.outputs.version }}
@@ -385,14 +387,18 @@ jobs:
             echo "Release ${RELEASE_ID} already exists for ${TAG}"
           fi
 
-          # Upload all dist/ files as release assets
-          for f in dist/*; do
-            filename=$(basename "$f")
-            echo "Uploading ${filename}..."
-            curl -sf -X POST \
-              -H "Authorization: token ${FORGEJO_TOKEN}" \
-              -F "attachment=@${f}" \
-              "${API}/repos/${REPO}/releases/${RELEASE_ID}/assets?name=${filename}" || \
-              echo "WARN: Failed to upload ${filename} (may already exist)"
-          done
-          echo "==> Release assets attached."
+          # Upload all dist/ files as release assets (no-op if dist/ absent or empty — SBOM may have failed)
+          if [ -d dist ] && compgen -G "dist/*" >/dev/null 2>&1; then
+            for f in dist/*; do
+              filename=$(basename "$f")
+              echo "Uploading ${filename}..."
+              curl -sf -X POST \
+                -H "Authorization: token ${FORGEJO_TOKEN}" \
+                -F "attachment=@${f}" \
+                "${API}/repos/${REPO}/releases/${RELEASE_ID}/assets?name=${filename}" || \
+                echo "WARN: Failed to upload ${filename} (may already exist)"
+            done
+            echo "==> Release assets attached."
+          else
+            echo "==> No dist/ assets to attach (build-sbom may have failed — skipping upload)."
+          fi
