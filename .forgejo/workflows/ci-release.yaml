@@ -99,9 +99,27 @@ jobs:
             [ "$old_be" != "$new_be" ] && backend_changed=true
           fi
 
+          # Registry-existence check: build if (file/version changed) OR (target tag absent
+          # from registry). Closes the v5.56/5.57 phantom-image gap where backend_version
+          # bumped in a dev-gated run (nothing built), then v5.57.x saw it "unchanged" and
+          # skipped — leaving yadgar-backend:5.6.0 as a phantom 404 on Docker Hub.
+          # Fail-safe: if curl errors/empty (network hiccup), default to building (treat as
+          # missing) — better to rebuild than silently skip.
+          # BACKEND_VER read unconditionally here (new_be may not exist if server.json didn't
+          # change in this commit, but the tag could still be absent from the registry).
+          BACKEND_VER=$(python3 -c "import json; print(json.load(open('server.json'))['backend_version'])")
+
+          core_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
+            "https://hub.docker.com/v2/repositories/openfantasy/yadgar/tags/${PYPROJECT_VER}" || true)
+          [ "$core_code" = "200" ] || core_changed=true
+
+          backend_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
+            "https://hub.docker.com/v2/repositories/openfantasy/yadgar-backend/tags/${BACKEND_VER}" || true)
+          [ "$backend_code" = "200" ] || backend_changed=true
+
           echo "core=$core_changed"       >> "$GITHUB_OUTPUT"
           echo "backend=$backend_changed" >> "$GITHUB_OUTPUT"
-          echo "core_changed=$core_changed backend_changed=$backend_changed"
+          echo "core_changed=$core_changed backend_changed=$backend_changed (core_tag=${core_code:-err} backend_tag=${backend_code:-err})"
 
   # ── Build Docker images ───────────────────────────────────────────────────
   build-images:
