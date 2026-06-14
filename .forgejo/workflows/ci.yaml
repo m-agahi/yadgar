@@ -53,13 +53,13 @@ jobs:
     # Image built locally and pushed to dockerhub per PD-42 carve-out.
     container:
       image: docker.io/openfantasy/yadgar-ci:5.46.9
-    # PRs (gates the merge) and version tags (gates the PyPI publish) only.
-    # NOT on pushes to master (already tested on the PR) and NOT on
-    # workflow_dispatch (manual dispatch is "rebuild from latest master" — the
-    # code was tested when its PR merged, so dispatch runs `build` alone).
+    # PRs (gates the merge), version tags (gates PyPI publish + image build),
+    # and workflow_dispatch (so manual image rebuilds stay test-gated via
+    # build's `needs: test`). NOT on plain pushes to master (already tested on PR).
     if: >-
       github.event_name == 'pull_request' ||
-      startsWith(github.ref, 'refs/tags/v')
+      startsWith(github.ref, 'refs/tags/v') ||
+      github.event_name == 'workflow_dispatch'
     steps:
       # make, git, curl, ca-certificates, nodejs are pre-installed in yadgar-ci image.
       # No apt-get install step needed for these system deps.
@@ -262,15 +262,18 @@ jobs:
           echo "core_changed=$core_changed backend_changed=$backend_changed"
 
   build:
-    needs: [changes]
+    needs: [changes, test]
     runs-on: ubuntu-latest
     # The self-hosted runner host has no `docker` binary — run inside docker:cli
     # (alpine), then apk-install the bits the JS actions / scripts need.
     container:
       image: docker:cli
-    # GATED: only fire on manual workflow_dispatch (PD-45). Remove this gate
-    # when going production and re-enable push-triggered builds.
-    if: github.event_name == 'workflow_dispatch'
+    # Fires on manual workflow_dispatch AND on version-tag pushes (v5.56+: CI
+    # builds + pushes release images on tag). Gated by `needs: test` so images
+    # never publish from a red tag. (Supersedes the PD-45 dispatch-only gate.)
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
     steps:
       - name: Install minimal tools
         # docker:cli already has the docker CLI. bash for heredocs, python3 for

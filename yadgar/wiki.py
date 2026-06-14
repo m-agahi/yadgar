@@ -5,6 +5,7 @@ import html
 import logging
 import re
 import time as _time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from yadgar.tracing import trace_span
@@ -201,6 +202,24 @@ def _collect_headings(lines: list[str], pattern: re.Pattern[str], result: list[s
                 result.append(heading)
 
 
+@dataclass
+class WikiAddOptions:
+    """Optional metadata bundle for WikiStore.add().
+
+    Bundles the five least-frequently-passed kwargs so the public add()
+    signature stays at 6 params (self + title + content + category + tags + opts)
+    — below the params_hard=8 cap (I13).
+
+    v5.55 complexity-debt campaign: extracted from add() params=10 → params=6.
+    """
+
+    source_memory_ids: list[int] | None = None
+    confidence: str = "medium"
+    branch: str | None = None
+    directory_context: str | None = None
+    page_type: str | None = None
+
+
 class WikiStore:
     """Manages wiki pages in SurrealDB with hybrid FTS + vector search."""
 
@@ -224,17 +243,13 @@ class WikiStore:
 
     # ── Public API ────────────────────────────────────────────────────────
 
-    def add(  # noqa: PLR0913 — v5.53.2 added page_type; all params needed for typed pages
+    def add(
         self,
         title: str,
         content: str,
         category: str = "reference",
         tags: list[str] | None = None,
-        source_memory_ids: list[int] | None = None,
-        confidence: str = "medium",
-        branch: str | None = None,
-        directory_context: str | None = None,
-        page_type: str | None = None,
+        opts: WikiAddOptions | None = None,
     ) -> dict:
         """Create or update a wiki page. Upserts by slug.
 
@@ -245,7 +260,18 @@ class WikiStore:
         When provided, stored with wiki_schema_version=WIKI_SCHEMA_VERSION.
         When None, page_type is not written (backward-compat: existing pages
         without page_type continue to work exactly as before).
+
+        v5.55: rare optional params bundled into WikiAddOptions (complexity-debt I13):
+        source_memory_ids, confidence, branch, directory_context, page_type.
+        params 10 → 6; HARD allowlist entry removed.
         """
+        o = opts or WikiAddOptions()
+        source_memory_ids = o.source_memory_ids
+        confidence = o.confidence
+        branch = o.branch
+        directory_context = o.directory_context
+        page_type = o.page_type
+
         slug = self._slugify(title)
         if category not in self.CATEGORIES:
             category = "reference"
@@ -622,7 +648,7 @@ class WikiStore:
             title=title,
             content=content,
             tags=tags,
-            source_memory_ids=source_memory_ids,
+            opts=WikiAddOptions(source_memory_ids=source_memory_ids),
         )
 
     def lint(self) -> dict:

@@ -9,7 +9,7 @@ from yadgar import server
 from yadgar.astrocyte_pool import AstrocytePool
 from yadgar.config import Settings
 from yadgar.consolidation import ConsolidationScheduler
-from yadgar.curation import MemoryCurator
+from yadgar.curation import CurateParams, MemoryCurator
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.knowledge_graph import KnowledgeGraph
 from yadgar.narrative import NarrativeEngine
@@ -572,11 +572,13 @@ class TestRememberWithCurationMerge:
             "/proj",
             ["python", "fastapi"],
             emb2,
-            initial_heat=1.0,
-            surprise=0.1,
-            importance=0.5,
-            valence=0.0,
-            embedding_model=embeddings.get_model_name(),
+            params=CurateParams(
+                initial_heat=1.0,
+                surprise=0.1,
+                importance=0.5,
+                valence=0.0,
+                embedding_model=embeddings.get_model_name(),
+            ),
         )
 
         # Should merge because content is nearly identical

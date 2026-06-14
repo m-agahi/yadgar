@@ -5,7 +5,7 @@ Mirrored in wiki: `yadgar-architectural-invariants`.
 Anchored memory: project-scoped, `/home/max/git/yadgar`.
 Version-execution-order lives in the `yadgar-roadmap-future-improvements` wiki.
 
-Last updated: 2026-06-12 (I29 leverage-completeness / no-dead-capability — added this session from the KB-usability + graph-edge-leverage findings; planned via PLAN_V5_53 + PLAN_V5_54). Prior: 2026-05-31 (I26 secret-gate chokepoint v5.10.2; I27 plan-first for discoveries v5.10.x; I28 pre-commit allowlist audit v5.13.0).
+Last updated: 2026-06-13 (I30 complexity-cap integrity — configurable caps + gated allowlist, no silent HARD baselining; v5.55.0). Prior: 2026-06-12 (I29 leverage-completeness / no-dead-capability — added this session from the KB-usability + graph-edge-leverage findings; planned via PLAN_V5_53 + PLAN_V5_54). Prior: 2026-05-31 (I26 secret-gate chokepoint v5.10.2; I27 plan-first for discoveries v5.10.x; I28 pre-commit allowlist audit v5.13.0).
 
 ---
 
@@ -378,6 +378,46 @@ Both reduce to "implemented something, never used its full potential." I29 makes
 **History:** introduced 2026-06-12. Proposed by user after the edge-leverage + KB-usability investigations this session.
 
 **Last updated:** 2026-06-12 (v5.54.4: `scripts/check_dead_capability.py` enforcement lint added; replaces "future lint" placeholder).
+
+### I30 — Complexity-cap integrity (HARD gated, rationale required, no silent baselining)
+
+Every HARD complexity violation in production code MUST either:
+1. Be **refactored under cap** — the allowlist entry is removed; I30 stale check fails if forgotten.
+2. Be **allowlisted with a non-empty permanent rationale** (≥ 40 chars) in `.complexity-allowlist.json`.
+
+Silent HARD baselining (suppressing HARD violations via `.complexity-baseline.json`) is **forbidden**.
+The baseline ratchet applies to SOFT violations only. HARD violations require a conscious decision.
+
+**Four enforcement properties:**
+
+- **(a) GATE** — no HARD violation exists outside the allowlist. Any new HARD violation without an
+  allowlist entry blocks the commit.
+- **(b) RATIONALE REQUIRED** — every allowlist entry has a rationale ≥ 40 characters. A placeholder
+  rationale ("TODO", "fix later") fails the check.
+- **(c) NO STALE ENTRIES** — every allowlist entry still maps to a real current HARD violation.
+  Refactoring a function under cap makes its entry stale; I30 fails until the entry is removed.
+- **(d) DRIFT DETECTION** — recorded `metrics` in each entry must match current values within 20%.
+  Growth beyond the recorded value triggers re-review.
+
+**Caps:** configurable in `.complexity-config.json` (soft + hard per metric). Changing a cap = a
+reviewed PR diff. Defaults: cyclomatic 10/15, nesting —/4, params 5/8, fn_loc 80/150, file_loc
+500/1000, class_depth —/3.
+
+**Allowlist format:** see `docs/COMPLEXITY_POLICY.md` for the entry schema, rationale guide, and
+decision flowchart (refactor vs. justify).
+
+**Enforcement:** pre-commit hook `check-complexity-allowlist` runs `scripts/check_complexity_allowlist.py`
+on any changed Python file or allowlist/config file. Tests: `yadgar/tests/test_check_complexity_allowlist.py`.
+
+**Day-one state (v5.55.0):** 84 production HARD violations across 78 functions + 6 files, all seeded
+into the allowlist with provisional rationale `"pre-existing; scheduled for v5.55 wave N refactor"`.
+The gate is live and green; it tightens as v5.55.x waves remove entries.
+
+**History:** introduced 2026-06-13 (v5.55.0). Triggered by two findings: (1) `.complexity-baseline.json`
+was silently suppressing HARD violations too, making the hard cap advisory; (2) `storage/client.py` grew
+past hard caps undetected in v5.54.5 because it hadn't been edited since baselining.
+
+**Last updated:** 2026-06-13 (v5.55.0, initial enforcement).
 
 ### Deferred (codify only when violations surface)
 

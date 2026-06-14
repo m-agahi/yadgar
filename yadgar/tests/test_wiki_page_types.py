@@ -13,6 +13,7 @@ Covers:
 import pytest
 
 from yadgar import server
+from yadgar.wiki import WikiAddOptions
 from yadgar.wiki_meta import PAGE_TYPES, WIKI_SCHEMA_VERSION
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -84,7 +85,7 @@ class TestWikiAddPageType:
             "My Function",
             "## Purpose\nDoes stuff.\n## Signature\nfoo(x)\n## Behaviour\nReturns x.",
             category="reference",
-            page_type="function",
+            opts=WikiAddOptions(page_type="function"),
         )
         assert result.get("page_type") == "function"
         assert result.get("wiki_schema_version") == WIKI_SCHEMA_VERSION
@@ -95,7 +96,7 @@ class TestWikiAddPageType:
             "My Function Persisted",
             "## Purpose\nDoes stuff.\n## Signature\nfoo(x)\n## Behaviour\nReturns x.",
             category="reference",
-            page_type="function",
+            opts=WikiAddOptions(page_type="function"),
         )
         slug = "my-function-persisted"
         page = _storage().get_wiki_page_by_slug(slug)
@@ -136,7 +137,7 @@ class TestWikiAddPageType:
             "My Module",
             "## Purpose\nCore module.\n## Exports\nfoo, bar\n## Design\nSimple.",
             category="reference",
-            page_type="module",
+            opts=WikiAddOptions(page_type="module"),
         )
         assert result.get("page_type") == "module"
 
@@ -146,7 +147,7 @@ class TestWikiAddPageType:
             "Typed Page",
             "## Purpose\nOriginal.\n## Signature\nfoo()\n## Behaviour\nOK.",
             category="reference",
-            page_type="function",
+            opts=WikiAddOptions(page_type="function"),
         )
         # Update without page_type — should not clobber existing type
         _wiki().add(
@@ -167,13 +168,13 @@ class TestWikiAddPageType:
             "Type Change Page",
             "## Purpose\nOriginal.\n## Signature\nfoo()\n## Behaviour\nOK.",
             category="reference",
-            page_type="function",
+            opts=WikiAddOptions(page_type="function"),
         )
         _wiki().add(
             "Type Change Page",
             "## Purpose\nUpdated.\n## Exports\nfoo\n## Design\nNew.",
             category="reference",
-            page_type="module",
+            opts=WikiAddOptions(page_type="module"),
         )
         page = _storage().get_wiki_page_by_slug("type-change-page")
         assert page is not None
@@ -192,7 +193,7 @@ class TestWikiLintPageType:
             "Missing Sig Function",
             "## Purpose\nDoes stuff.\n## Behaviour\nReturns x.",  # no Signature section
             category="reference",
-            page_type="function",
+            opts=WikiAddOptions(page_type="function"),
         )
         report = _wiki().lint()
         violations = [i for i in report["issues"] if i["type"] == "missing_section"]
@@ -209,7 +210,7 @@ class TestWikiLintPageType:
             "Complete Function",
             "## Purpose\nDoes stuff.\n## Signature\nfoo(x: int)\n## Behaviour\nReturns x.",
             category="reference",
-            page_type="function",
+            opts=WikiAddOptions(page_type="function"),
         )
         report = _wiki().lint()
         violations = [i for i in report["issues"] if i["type"] == "missing_section"]
@@ -238,7 +239,7 @@ class TestWikiLintPageType:
             "## Decision\nWe decided X.\n## Consequences\nSome consequences.",
             # missing Context section
             category="decision",
-            page_type="decision",
+            opts=WikiAddOptions(page_type="decision"),
         )
         report = _wiki().lint()
         violations = [
@@ -255,7 +256,7 @@ class TestWikiLintPageType:
             "Bad Function",
             "## Purpose\nDoes stuff.",  # missing Signature + Behaviour
             category="reference",
-            page_type="function",
+            opts=WikiAddOptions(page_type="function"),
         )
         report = _wiki().lint()
         assert "format_violation_count" in report["stats"]
@@ -267,7 +268,7 @@ class TestWikiLintPageType:
             "Good Function",
             "## Purpose\nDoes stuff.\n## Signature\nfoo()\n## Behaviour\nOK.",
             category="reference",
-            page_type="function",
+            opts=WikiAddOptions(page_type="function"),
         )
         report = _wiki().lint()
         violations = [
@@ -285,7 +286,7 @@ class TestWikiLintPageType:
             "Lowercase Sections",
             "## purpose\nDoes stuff.\n## signature\nfoo()\n## behaviour\nOK.",
             category="reference",
-            page_type="function",
+            opts=WikiAddOptions(page_type="function"),
         )
         report = _wiki().lint()
         violations = [
@@ -310,7 +311,7 @@ class TestCatalogPageTypeGrouping:
             "Fn Example",
             "## Purpose\nP.\n## Signature\nS.\n## Behaviour\nB.",
             category="reference",
-            page_type="function",
+            opts=WikiAddOptions(page_type="function"),
         )
         storage = _storage()
         catalog = _build_wiki_catalog(storage, "global")
@@ -346,13 +347,13 @@ class TestCatalogPageTypeGrouping:
             "Fn Thing",
             "## Purpose\nP.\n## Signature\nS.\n## Behaviour\nB.",
             category="reference",
-            page_type="function",
+            opts=WikiAddOptions(page_type="function"),
         )
         _wiki().add(
             "Decision Thing",
             "## Context\nC.\n## Decision\nD.\n## Consequences\nCons.",
             category="decision",
-            page_type="decision",
+            opts=WikiAddOptions(page_type="decision"),
         )
         _wiki().add(
             "Plain Page",

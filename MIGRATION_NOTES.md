@@ -6946,3 +6946,55 @@ All four `VACUUM_AUTO_*` knobs remain unchanged and functional:
 
 Existing deployments keep working without any env-var changes.  The only observable difference is
 that vacuum will also fire at 19:00 UTC once `yadgar-vacuum.timer` is deployed (PR-1a/1b).
+
+---
+
+# Orchestration safety net (2026-06-14)
+
+Prevents the failure mode where an unattended test/gate run hangs and pegs the
+machine for hours (one ran 9.7h overnight, all cores ~95%). Three layers.
+Run these yourself — infra/system changes are never auto-applied.
+
+## 1. Make the scripts executable
+```bash
+cd ~/git/yadgar && chmod +x scripts/reap-stale-tests.sh scripts/test-capped.sh
+```
+
+## 2. Install + enable the watchdog timer (systemd --user)
+Kills any test process older than 90min, every 10min. Skips the production
+daemon (surreal on /data/surreal_db).
+```bash
+mkdir -p ~/.config/systemd/user
+cp ~/git/yadgar/deploy/systemd/reap-stale-tests.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now reap-stale-tests.timer
+systemctl --user list-timers reap-stale-tests.timer        # verify
+~/git/yadgar/scripts/reap-stale-tests.sh                   # sanity: prints "killed 0"
+```
+(If the repo is not at `~/git/yadgar`, edit `ExecStart=` in the .service first.)
+
+## 3. Use the capped wrapper for long runs
+`make test` now routes through it. Ad-hoc:
+```bash
+scripts/test-capped.sh uv run --extra test pytest yadgar/tests/ -q -n 4
+```
+Hard-killed after 90min; capped to ~3 cores / 20G (headroom for production).
+
+`pyproject.toml` already sets `timeout_method = "signal"` (committed) so the 300s
+per-test timeout can actually kill a deadlocked test (the thread method could not).
+
+---
+
+## v5.56.0 release
+
+### What publishes and how
+
+**PyPI `yadgar 5.56.0`** — published AUTOMATICALLY by CI on tag push `v5.56.0`. The publish job is `needs: test`; it runs without any manual dispatch once the tag is pushed.
+
+**Container images `openfantasy/yadgar:5.56.0` + `openfantasy/yadgar-backend:5.6.0`** (amd64 + arm64) — the `build` job is `workflow_dispatch` ONLY. It is NOT triggered by the tag push. After the tag is pushed and CI passes, manually dispatch the build workflow from the Forgejo UI (or `gh workflow run`) to produce the container images.
+
+**nix** — NOT handled by CI or Claude. Run `nix-update` / flake bump yourself after the PyPI package is published and the container images are available. Update both the core version (`5.56.0`) and the backend image tag (`5.6.0`) in the nix module.
+
+### Orchestration-safety watchdog systemd units
+
+The watchdog scripts and systemd units shipped in `chore/orchestration-safety` (see section above). If not yet installed, follow the steps in the "Orchestration safety net" section above — do NOT install them automatically; run the commands yourself.

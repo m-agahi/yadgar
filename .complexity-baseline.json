@@ -2549,16 +2549,28 @@
   "yadgar/consolidation/heat_decay.py::_HeatDecayMixin@9": {
     "attrs": 0,
     "inh_depth": 0,
-    "methods": 1
+    "methods": 3
   },
   "yadgar/consolidation/heat_decay.py::__file__": {
-    "loc": 77
+    "loc": 88
   },
   "yadgar/consolidation/heat_decay.py::_apply_decay@12": {
-    "cyclo": 19,
-    "loc": 66,
+    "cyclo": 3,
+    "loc": 8,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/consolidation/heat_decay.py::_decay_entities@65": {
+    "cyclo": 6,
+    "loc": 24,
     "nesting": 3,
     "params": 2
+  },
+  "yadgar/consolidation/heat_decay.py::_decay_memories@21": {
+    "cyclo": 12,
+    "loc": 43,
+    "nesting": 3,
+    "params": 3
   },
   "yadgar/consolidation/orchestrator.py::_OrchestratorMixin@48": {
     "attrs": 0,
@@ -5603,10 +5615,10 @@
   "yadgar/restoration.py::CheckpointRestore@46": {
     "attrs": 7,
     "inh_depth": 0,
-    "methods": 17
+    "methods": 22
   },
   "yadgar/restoration.py::__file__": {
-    "loc": 471
+    "loc": 509
   },
   "yadgar/restoration.py::__init__@55": {
     "cyclo": 2,
@@ -5614,13 +5626,49 @@
     "nesting": 0,
     "params": 7
   },
+  "yadgar/restoration.py::_build_sr_query@277": {
+    "cyclo": 4,
+    "loc": 7,
+    "nesting": 2,
+    "params": 3
+  },
+  "yadgar/restoration.py::_detect_gaps_safe@320": {
+    "cyclo": 4,
+    "loc": 12,
+    "nesting": 2,
+    "params": 2
+  },
   "yadgar/restoration.py::_fetch_blocks_safe@402": {
     "cyclo": 3,
     "loc": 7,
     "nesting": 2,
     "params": 2
   },
+  "yadgar/restoration.py::_fetch_blocks_safe@440": {
+    "cyclo": 3,
+    "loc": 7,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/restoration.py::_fetch_hot_memories@260": {
+    "cyclo": 4,
+    "loc": 16,
+    "nesting": 1,
+    "params": 4
+  },
+  "yadgar/restoration.py::_fetch_recent_memories_safe@246": {
+    "cyclo": 3,
+    "loc": 13,
+    "nesting": 2,
+    "params": 2
+  },
   "yadgar/restoration.py::_format_checkpoint_section@373": {
+    "cyclo": 7,
+    "loc": 23,
+    "nesting": 2,
+    "params": 2
+  },
+  "yadgar/restoration.py::_format_checkpoint_section@411": {
     "cyclo": 7,
     "loc": 23,
     "nesting": 2,
@@ -5632,13 +5680,37 @@
     "nesting": 2,
     "params": 8
   },
+  "yadgar/restoration.py::_format_restoration@456": {
+    "cyclo": 13,
+    "loc": 54,
+    "nesting": 2,
+    "params": 8
+  },
   "yadgar/restoration.py::_parse_list_field@367": {
     "cyclo": 3,
     "loc": 5,
     "nesting": 1,
     "params": 1
   },
+  "yadgar/restoration.py::_parse_list_field@405": {
+    "cyclo": 3,
+    "loc": 5,
+    "nesting": 1,
+    "params": 1
+  },
+  "yadgar/restoration.py::_predict_memories@285": {
+    "cyclo": 8,
+    "loc": 34,
+    "nesting": 2,
+    "params": 5
+  },
   "yadgar/restoration.py::_prepend_blocks@397": {
+    "cyclo": 2,
+    "loc": 4,
+    "nesting": 0,
+    "params": 4
+  },
+  "yadgar/restoration.py::_prepend_blocks@435": {
     "cyclo": 2,
     "loc": 4,
     "nesting": 0,
@@ -5650,7 +5722,19 @@
     "nesting": 0,
     "params": 3
   },
+  "yadgar/restoration.py::_render_blocks_section@448": {
+    "cyclo": 1,
+    "loc": 7,
+    "nesting": 0,
+    "params": 3
+  },
   "yadgar/restoration.py::_truncate@362": {
+    "cyclo": 2,
+    "loc": 3,
+    "nesting": 0,
+    "params": 2
+  },
+  "yadgar/restoration.py::_truncate@400": {
     "cyclo": 2,
     "loc": 3,
     "nesting": 0,
@@ -5698,6 +5782,12 @@
     "nesting": 6,
     "params": 2
   },
+  "yadgar/restoration.py::restore@333": {
+    "cyclo": 6,
+    "loc": 65,
+    "nesting": 1,
+    "params": 2
+  },
   "yadgar/restoration.py::should_auto_checkpoint@76": {
     "cyclo": 3,
     "loc": 6,
@@ -5738,10 +5828,39 @@
     "inh_depth": 0,
     "methods": 3
   },
+  "yadgar/retrieval/_reranking_cross_encoder.py::_CrossEncoderMixin@90": {
+    "attrs": 0,
+    "inh_depth": 0,
+    "methods": 3
+  },
   "yadgar/retrieval/_reranking_cross_encoder.py::__file__": {
-    "loc": 156
+    "loc": 190
+  },
+  "yadgar/retrieval/_reranking_cross_encoder.py::_aggregate_max_scores@43": {
+    "cyclo": 4,
+    "loc": 18,
+    "nesting": 2,
+    "params": 3
+  },
+  "yadgar/retrieval/_reranking_cross_encoder.py::_apply_ce_weights@63": {
+    "cyclo": 5,
+    "loc": 25,
+    "nesting": 3,
+    "params": 3
+  },
+  "yadgar/retrieval/_reranking_cross_encoder.py::_build_expanded_pairs@18": {
+    "cyclo": 4,
+    "loc": 23,
+    "nesting": 3,
+    "params": 2
   },
   "yadgar/retrieval/_reranking_cross_encoder.py::cluster_memories@125": {
+    "cyclo": 9,
+    "loc": 32,
+    "nesting": 3,
+    "params": 2
+  },
+  "yadgar/retrieval/_reranking_cross_encoder.py::cluster_memories@159": {
     "cyclo": 9,
     "loc": 32,
     "nesting": 3,
@@ -5753,7 +5872,19 @@
     "nesting": 3,
     "params": 4
   },
+  "yadgar/retrieval/_reranking_cross_encoder.py::cross_encoder_rerank@94": {
+    "cyclo": 12,
+    "loc": 54,
+    "nesting": 2,
+    "params": 4
+  },
   "yadgar/retrieval/_reranking_cross_encoder.py::score_single_pair@116": {
+    "cyclo": 3,
+    "loc": 8,
+    "nesting": 2,
+    "params": 3
+  },
+  "yadgar/retrieval/_reranking_cross_encoder.py::score_single_pair@150": {
     "cyclo": 3,
     "loc": 8,
     "nesting": 2,
@@ -6176,7 +6307,7 @@
     "params": 2
   },
   "yadgar/retrieval/query_analysis.py::__file__": {
-    "loc": 498
+    "loc": 560
   },
   "yadgar/retrieval/query_analysis.py::_add@250": {
     "cyclo": 4,
@@ -6190,6 +6321,12 @@
     "nesting": 1,
     "params": 1
   },
+  "yadgar/retrieval/query_analysis.py::_add_unique_hint@387": {
+    "cyclo": 3,
+    "loc": 6,
+    "nesting": 1,
+    "params": 3
+  },
   "yadgar/retrieval/query_analysis.py::_build_boosted_fts_query@228": {
     "cyclo": 5,
     "loc": 15,
@@ -6202,6 +6339,12 @@
     "nesting": 2,
     "params": 2
   },
+  "yadgar/retrieval/query_analysis.py::_classify_query_type@456": {
+    "cyclo": 8,
+    "loc": 26,
+    "nesting": 1,
+    "params": 6
+  },
   "yadgar/retrieval/query_analysis.py::_collect_left@187": {
     "cyclo": 5,
     "loc": 13,
@@ -6211,6 +6354,12 @@
   "yadgar/retrieval/query_analysis.py::_collect_right@201": {
     "cyclo": 5,
     "loc": 13,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/retrieval/query_analysis.py::_collect_semantic_expansions@447": {
+    "cyclo": 3,
+    "loc": 7,
     "nesting": 2,
     "params": 1
   },
@@ -6226,6 +6375,12 @@
     "nesting": 4,
     "params": 1
   },
+  "yadgar/retrieval/query_analysis.py::_derive_implied_fact_passages@395": {
+    "cyclo": 12,
+    "loc": 35,
+    "nesting": 4,
+    "params": 1
+  },
   "yadgar/retrieval/query_analysis.py::_extract_comparison_options@167": {
     "cyclo": 15,
     "loc": 59,
@@ -6238,10 +6393,34 @@
     "nesting": 3,
     "params": 2
   },
+  "yadgar/retrieval/query_analysis.py::_extract_named_entities@437": {
+    "cyclo": 4,
+    "loc": 8,
+    "nesting": 2,
+    "params": 1
+  },
+  "yadgar/retrieval/query_analysis.py::_infer_said_line_hints@344": {
+    "cyclo": 9,
+    "loc": 12,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/retrieval/query_analysis.py::_infer_subject_keyword_hints@358": {
+    "cyclo": 11,
+    "loc": 16,
+    "nesting": 2,
+    "params": 2
+  },
   "yadgar/retrieval/query_analysis.py::_other_speaker@300": {
     "cyclo": 5,
     "loc": 7,
     "nesting": 2,
+    "params": 1
+  },
+  "yadgar/retrieval/query_analysis.py::_parse_setting_keywords@432": {
+    "cyclo": 2,
+    "loc": 3,
+    "nesting": 0,
     "params": 1
   },
   "yadgar/retrieval/query_analysis.py::_pseudo_hyde_expand@78": {
@@ -6256,10 +6435,22 @@
     "nesting": 1,
     "params": 1
   },
+  "yadgar/retrieval/query_analysis.py::_resolve_other_speaker@376": {
+    "cyclo": 5,
+    "loc": 9,
+    "nesting": 1,
+    "params": 2
+  },
   "yadgar/retrieval/query_analysis.py::analyze_query@396": {
     "cyclo": 29,
     "loc": 103,
     "nesting": 7,
+    "params": 2
+  },
+  "yadgar/retrieval/query_analysis.py::analyze_query@485": {
+    "cyclo": 14,
+    "loc": 76,
+    "nesting": 0,
     "params": 2
   },
   "yadgar/retrieval/reranking.py::Reranker@32": {

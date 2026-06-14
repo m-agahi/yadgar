@@ -11,7 +11,15 @@ class _HeatDecayMixin:
 
     def _apply_decay(self, stats: dict) -> None:
         now = datetime.now(UTC)
-        decay = self._settings.DECAY_FACTOR
+        mem_batch = self._decay_memories(stats, now)
+        if mem_batch:
+            self._storage.batch_writes(mem_batch)
+        ent_batch = self._decay_entities(now)
+        if ent_batch:
+            self._storage.batch_writes(ent_batch)
+
+    def _decay_memories(self, stats: dict, now: datetime) -> list[tuple[str, dict | None]]:
+        """Compute per-memory heat decay; return batch of DB writes."""
         cold = self._settings.COLD_THRESHOLD
         action_stream_cold = self._settings.ACTION_STREAM_COLD_THRESHOLD
         # C2: recall-frequency-modulated decay (MemoryBank parity)
@@ -50,9 +58,12 @@ class _HeatDecayMixin:
                 )
                 if abs(new_heat - mem["heat"]) > 1e-9:
                     stats["memories_updated"] += 1
+        return mem_batch
 
-        if mem_batch:
-            self._storage.batch_writes(mem_batch)
+    def _decay_entities(self, now: datetime) -> list[tuple[str, dict | None]]:
+        """Compute per-entity heat decay; return batch of DB writes."""
+        decay = self._settings.DECAY_FACTOR
+        cold = self._settings.COLD_THRESHOLD
 
         ent_batch: list[tuple[str, dict | None]] = []
         for ent in self._storage.get_all_entities_for_decay():
@@ -72,6 +83,4 @@ class _HeatDecayMixin:
                         {"id": ent["id"], "heat": new_heat},
                     )
                 )
-
-        if ent_batch:
-            self._storage.batch_writes(ent_batch)
+        return ent_batch

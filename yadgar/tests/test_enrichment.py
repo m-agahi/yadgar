@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock, patch
+
 import numpy as np
 
 from yadgar.config import Settings
@@ -59,6 +61,70 @@ class TestConceptNetExpander:
         assert len(result) > 0, "Expected hardcoded expansions"
         for term in result:
             assert term in expected, f"{term} not in hardcoded camping expansions"
+
+    def test_try_http_parses_edges(self):
+        """Characterization: _try_http filters edges by weight and builds labels correctly."""
+        expander = ConceptNetExpander()
+        expander._http_available = True  # enable HTTP path
+        expander._lite_available = False
+
+        fake_response = MagicMock()
+        fake_response.raise_for_status.return_value = None
+        fake_response.json.return_value = {
+            "edges": [
+                {"weight": 2.0, "end": {"label": "outdoor activity"}},
+                {"weight": 0.1, "end": {"label": "low weight term"}},  # below min_weight
+                {"weight": 3.0, "end": {"label": "nature"}},
+                {"weight": 1.5, "end": {"label": ""}},  # empty label — skip
+            ]
+        }
+
+        with patch("httpx.get", return_value=fake_response) as mock_get:
+            results = expander._try_http("camping", ["RelatedTo"], min_weight=1.0)
+
+        assert "outdoor_activity" in results
+        assert "nature" in results
+        assert "low_weight_term" not in results
+        assert "" not in results
+        assert mock_get.call_count == 1
+
+    def test_try_http_request_error_continues(self):
+        """Characterization: per-relation request errors are swallowed; other relations proceed."""
+        import httpx
+
+        expander = ConceptNetExpander()
+        expander._http_available = True
+        expander._lite_available = False
+
+        good_response = MagicMock()
+        good_response.raise_for_status.return_value = None
+        good_response.json.return_value = {"edges": [{"weight": 2.0, "end": {"label": "trail"}}]}
+
+        call_count = 0
+
+        def side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise httpx.RequestError("timeout", request=MagicMock())
+            return good_response
+
+        with patch("httpx.get", side_effect=side_effect):
+            results = expander._try_http("camping", ["RelatedTo", "IsA"], min_weight=1.0)
+
+        assert "trail" in results
+
+    def test_try_http_import_error_disables(self):
+        """Characterization: ImportError (httpx missing) sets _http_available=False."""
+        expander = ConceptNetExpander()
+        expander._http_available = True
+        expander._lite_available = False
+
+        with patch("builtins.__import__", side_effect=ImportError("no httpx")):
+            results = expander._try_http("camping", ["RelatedTo"], min_weight=1.0)
+
+        assert results == []
+        assert expander._http_available is False
 
 
 class TestFPAFilter:

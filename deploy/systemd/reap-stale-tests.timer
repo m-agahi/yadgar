@@ -1,0 +1,12 @@
+[Unit]
+Description=Reap stale yadgar test processes every 10 minutes
+Documentation=https://codeberg.org/maxagahi/yadgar
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=10min
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

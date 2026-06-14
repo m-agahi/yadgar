@@ -18,8 +18,8 @@ from yadgar.retrieval.query_analysis import (
     _build_open_domain_subqueries,
     analyze_query,
 )
-from yadgar.retrieval.reranking import Reranker, _RerankingMixin
-from yadgar.retrieval.scoring import _ScoringMixin
+from yadgar.retrieval.reranking import RerankContext, Reranker, _RerankingMixin
+from yadgar.retrieval.scoring import FTSParams, _ScoringMixin
 from yadgar.storage import BranchFilter, StorageEngine
 from yadgar.tracing import trace_span
 
@@ -493,14 +493,16 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
 
         # 1 + 1b + 1c. FTS, entity-FTS, and COMET expansion scores
         self._collect_fts_scores(
-            query,
             scores,
-            enabled_signals,
-            open_domain_subqueries,
-            open_domain_mode,
-            candidate_k,
-            min_heat,
-            branch_filter=branch_filter,
+            FTSParams(
+                query=query,
+                enabled_signals=enabled_signals,
+                open_domain_subqueries=open_domain_subqueries,
+                open_domain_mode=open_domain_mode,
+                candidate_k=candidate_k,
+                min_heat=min_heat,
+                branch_filter=branch_filter,
+            ),
         )
 
         # 2. Vector similarity via SurrealDB KNN
@@ -534,15 +536,14 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
         )
 
         # Post-fusion reranking pipeline
-        return self._apply_rerank_pipeline(
-            result_memories,
-            seen_ids,
-            query,
-            query_analysis,
-            query_embedding,
-            profile,
-            profile_name,
-            open_domain_mode,
-            use_cross_encoder,
-            max_results,
+        ctx = RerankContext(
+            query=query,
+            query_analysis=query_analysis,
+            query_embedding=query_embedding,
+            profile=profile,
+            profile_name=profile_name,
+            open_domain_mode=open_domain_mode,
+            use_cross_encoder=use_cross_encoder,
+            max_results=max_results,
         )
+        return self._apply_rerank_pipeline(result_memories, seen_ids, ctx)

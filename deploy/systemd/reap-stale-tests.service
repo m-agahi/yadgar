@@ -1,0 +1,9 @@
+[Unit]
+Description=Reap stale/runaway yadgar test processes (>90min)
+Documentation=https://codeberg.org/maxagahi/yadgar
+
+[Service]
+Type=oneshot
+# Adjust the path if the repo lives elsewhere.
+ExecStart=%h/git/yadgar/scripts/reap-stale-tests.sh
+Nice=10

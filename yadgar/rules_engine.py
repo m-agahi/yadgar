@@ -163,6 +163,67 @@ def _get_field_value(memory: dict, field: str) -> Any:
     return None
 
 
+def _coerce_none_field(field_value: Any, operator: str) -> Any:
+    """Coerce None field values to sensible defaults for comparison operators."""
+    if field_value is not None:
+        return field_value
+    if operator in (">", "<", ">=", "<="):
+        return 0.0
+    if operator in ("==", "!=", "contains", "not_contains", "matches"):
+        return ""
+    return field_value
+
+
+def _compare_numeric(field_value: Any, value: str, operator: str) -> bool:
+    """Compare field_value to value using a numeric comparison operator.
+
+    Returns False if either side cannot be cast to float.
+    """
+    try:
+        num_field = float(field_value) if not isinstance(field_value, (int, float)) else field_value
+        num_value = float(value)
+    except (ValueError, TypeError):  # fmt: skip
+        return False
+    if operator == ">":
+        return num_field > num_value
+    if operator == "<":
+        return num_field < num_value
+    if operator == ">=":
+        return num_field >= num_value
+    # operator == "<="
+    return num_field <= num_value
+
+
+def _compare_equality(field_value: Any, value: str, field: str, operator: str) -> bool:
+    """Compare field_value to value using == or != (numeric-aware, case-insensitive)."""
+    if field in NUMERIC_FIELDS:
+        try:
+            numeric_match = float(field_value) == float(value)
+            return numeric_match if operator == "==" else not numeric_match
+        except (ValueError, TypeError):  # fmt: skip
+            pass
+    str_match = str(field_value).lower() == str(value).lower()
+    return str_match if operator == "==" else not str_match
+
+
+def _compare_contains(field_value: Any, value: str, operator: str) -> bool:
+    """Evaluate contains / not_contains operator (case-insensitive, list-aware)."""
+    if isinstance(field_value, list):
+        found = any(value.lower() in str(item).lower() for item in field_value)
+    else:
+        found = value.lower() in str(field_value).lower()
+    return found if operator == "contains" else not found
+
+
+def _apply_score_delta(memory: dict, action_type: str, action_value: float) -> None:
+    """Apply a boost or penalty delta to memory's _retrieval_score in-place."""
+    score = memory.get("_retrieval_score", 0.0)
+    if action_type == "boost":
+        memory["_retrieval_score"] = score + action_value
+    elif action_type == "penalty":
+        memory["_retrieval_score"] = score - action_value
+
+
 class RulesEngine:
     """Neuro-symbolic rules engine combining hard logical constraints
     and soft preferences with neural retrieval results."""
@@ -298,26 +359,28 @@ class RulesEngine:
         result = list(memories)
 
         for rule in rules:
-            rule_type = rule["rule_type"]
-            condition = rule["condition"]
-            action = rule["action"]
-
-            if rule_type == "hard":
-                # Filter: keep only memories that satisfy the condition
-                result = [m for m in result if self.evaluate_condition(condition, m)]
-            elif rule_type == "soft":
-                action_type, action_value = _parse_action(action)
-                for m in result:
-                    if self.evaluate_condition(condition, m):
-                        score = m.get("_retrieval_score", 0.0)
-                        if action_type == "boost":
-                            m["_retrieval_score"] = score + action_value
-                        elif action_type == "penalty":
-                            m["_retrieval_score"] = score - action_value
+            result = self._apply_single_rule(result, rule)
 
         # Re-sort by score after soft rule adjustments
         result.sort(key=lambda m: m.get("_retrieval_score", 0.0), reverse=True)
         return result
+
+    def _apply_single_rule(self, memories: list[dict], rule: dict) -> list[dict]:
+        """Apply one rule to the memory list; return updated list."""
+        rule_type = rule["rule_type"]
+        condition = rule["condition"]
+        action = rule["action"]
+
+        if rule_type == "hard":
+            return [m for m in memories if self.evaluate_condition(condition, m)]
+
+        if rule_type == "soft":
+            action_type, action_value = _parse_action(action)
+            for m in memories:
+                if self.evaluate_condition(condition, m):
+                    _apply_score_delta(m, action_type, action_value)
+
+        return memories
 
     def evaluate_condition(self, condition: str, memory: dict) -> bool:
         """Evaluate a condition against a memory.
@@ -336,67 +399,17 @@ class RulesEngine:
             logger.warning("Failed to parse condition (fail-closed): %s", condition)
             return False
 
-        field_value = _get_field_value(memory, field)
+        field_value = _coerce_none_field(_get_field_value(memory, field), operator)
 
-        # Handle None field values
-        if field_value is None:
-            # For numeric comparisons, treat None as 0
-            if operator in (">", "<", ">=", "<="):
-                field_value = 0.0
-            # For string comparisons, treat None as empty string
-            elif operator in ("==", "!=", "contains", "not_contains", "matches"):
-                field_value = ""
-
-        # Numeric comparisons
         if operator in (">", "<", ">=", "<="):
-            try:
-                num_field = (
-                    float(field_value) if not isinstance(field_value, (int, float)) else field_value
-                )
-                num_value = float(value)
-            except (ValueError, TypeError) as _e:
-                return False
+            return _compare_numeric(field_value, value, operator)
 
-            if operator == ">":
-                return num_field > num_value
-            elif operator == "<":
-                return num_field < num_value
-            elif operator == ">=":
-                return num_field >= num_value
-            elif operator == "<=":
-                return num_field <= num_value
+        if operator in ("==", "!="):
+            return _compare_equality(field_value, value, field, operator)
 
-        # Equality
-        if operator == "==":
-            # Try numeric equality first
-            if field in NUMERIC_FIELDS:
-                try:
-                    return float(field_value) == float(value)
-                except (ValueError, TypeError) as _e:
-                    pass
-            return str(field_value).lower() == str(value).lower()
+        if operator in ("contains", "not_contains"):
+            return _compare_contains(field_value, value, operator)
 
-        if operator == "!=":
-            if field in NUMERIC_FIELDS:
-                try:
-                    return float(field_value) != float(value)
-                except (ValueError, TypeError) as _e:
-                    pass
-            return str(field_value).lower() != str(value).lower()
-
-        # Contains
-        if operator == "contains":
-            if isinstance(field_value, list):
-                # Check if value is in the list (case-insensitive)
-                return any(value.lower() in str(item).lower() for item in field_value)
-            return value.lower() in str(field_value).lower()
-
-        if operator == "not_contains":
-            if isinstance(field_value, list):
-                return not any(value.lower() in str(item).lower() for item in field_value)
-            return value.lower() not in str(field_value).lower()
-
-        # Glob matching
         if operator == "matches":
             return fnmatch.fnmatch(str(field_value), value)
 

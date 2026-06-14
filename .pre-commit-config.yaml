@@ -95,6 +95,13 @@ repos:
         pass_filenames: false
         files: ^(yadgar/graph_api\.py|yadgar/viz_meta\.py|docs/EDGE_CONTRACT\.md)$
 
+      - id: check-complexity-allowlist
+        name: Check I30 complexity-cap integrity (HARD gated, rationale required, no stale entries)
+        language: system
+        entry: python scripts/check_complexity_allowlist.py
+        pass_filenames: false
+        files: ^(yadgar/.*\.py|scripts/.*\.py|\.complexity-allowlist\.json|\.complexity-config\.json)$
+
   - repo: local
     hooks:
       - id: check-image-size-backend

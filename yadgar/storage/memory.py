@@ -88,17 +88,15 @@ class _MemoryMixin:
 
     # ------------------------------------------------------------------ Memories
 
-    @trace_span("storage.memory.insert_memory")
-    def insert_memory(  # noqa: C901 — pre-existing complexity + v5.10.2 security gate (P13)
-        self, memory: dict, embeddings_engine=None, settings=None, branch: str | None = None
-    ) -> int:
-        from yadgar.storage import _get_enrichment_pipeline
+    def _build_memory_insert_clause(
+        self, memory: dict, mid: int, now: str, branch: str | None, emb_floats
+    ) -> tuple[str, dict]:
+        """Build the CREATE SQL and params dict for a new memory row.
 
-        now = self._now_iso()
-        mid = self._next_id("memory")
-        embedding = memory.get("embedding")
-        emb_floats = self._bytes_to_floats(embedding) if embedding else None
-
+        Pure computation — no I/O, no side-effects.  Optional fields
+        (branch, tier, valid_until, migration_grace) are appended only
+        when present so SurrealDB does not store explicit NULLs for them.
+        """
         sql = (
             "CREATE type::record('memory', $id) SET "
             "content = $content, embedding = $embedding, tags = $tags, "
@@ -155,10 +153,20 @@ class _MemoryMixin:
         if memory.get("migration_grace") is not None:
             sql += ", migration_grace = $migration_grace"
             params["migration_grace"] = bool(memory["migration_grace"])
+        return sql, params
 
-        # v5.10.2: Layer 1 storage-level secret gate — last line of defence.
-        # Fires only if API-boundary (Layer 2) gate was bypassed.
-        # YADGAR_SECRET_GATE_DISABLED=1 is a kill switch for emergencies only.
+    def _validate_memory_secrets(self, memory: dict) -> None:
+        """Layer 1 storage-level secret gate — last line of defence (P13/v5.10.2).
+
+        Fires only if the API-boundary (Layer 2) gate was bypassed.
+        YADGAR_SECRET_GATE_DISABLED=1 is a kill switch for emergencies only.
+
+        SECURITY-CRITICAL: preserve exact gate semantics (audit P13) — same
+        fields checked (content, tags, reason), same env bypass path, same
+        exception type and message.  Do not weaken.
+
+        Raises SecretLeakBlocked when a secret is detected.
+        """
         if not os.environ.get("YADGAR_SECRET_GATE_DISABLED"):
             _content_str = memory.get("content", "") or ""
             _tags_str = " ".join(str(t) for t in (memory.get("tags") or []))
@@ -191,63 +199,82 @@ class _MemoryMixin:
                 "This is a kill switch for emergencies only. Remove it when resolved."
             )
 
-        self._q(sql, params)
+    def _enrich_memory_if_enabled(  # noqa: C901 — pipeline flag+length+embedding guards + 6-field mapping; extract further degrades locality without reducing count
+        self, mid: int, memory: dict, settings, embeddings_engine, embedding
+    ) -> None:
+        """Run optional INDEX_ENRICHMENT_ENABLED pipeline, update memory row in-place.
 
-        # Enrichment pipeline
-        enrichment_data = {}
-        if (
+        Guard clauses at the top mean default deployments exit immediately
+        (flag=False or missing) with zero overhead — identical to before.
+        """
+        from yadgar.storage import _get_enrichment_pipeline
+
+        if not (
             settings
             and getattr(settings, "INDEX_ENRICHMENT_ENABLED", False)
             and len(memory["content"]) >= getattr(settings, "ENRICHMENT_MIN_CONTENT_LENGTH", 20)
             and embeddings_engine is not None
             and embedding is not None
         ):
-            try:
-                pipeline = _get_enrichment_pipeline(settings, embeddings_engine)
-                result = pipeline.enrich(memory["content"], embedding, settings)
-                enrichment_data = {
-                    "enrichment_concepts": result.concepts if result.concepts else None,
-                    "enrichment_comet": result.comet_inferences
-                    if result.comet_inferences
-                    else None,
-                    "enrichment_queries": result.queries if result.queries else None,
-                    "enrichment_logic": result.logic_expansions
-                    if result.logic_expansions
-                    else None,
-                    "enriched_content": result.enriched_content or None,
-                    "enrichment_model_versions": result.model_versions
-                    if result.model_versions
-                    else None,
-                }
-                if any(v is not None for v in enrichment_data.values()):
-                    set_parts = []
-                    params = {"id": mid}
-                    for col, val in enrichment_data.items():
-                        if val is not None:
-                            set_parts.append(f"{col} = ${col}")
-                            params[col] = val
-                    if set_parts:
-                        self._q(
-                            f"UPDATE type::record('memory', $id) SET {', '.join(set_parts)}",
-                            params,
-                        )
-                        if (
-                            enrichment_data.get("enriched_content")
-                            and embeddings_engine is not None
-                        ):
-                            new_embedding = embeddings_engine.encode_document_enriched(
-                                memory["content"], enrichment_data["enriched_content"]
-                            )
-                            if new_embedding is not None:
-                                new_floats = self._bytes_to_floats(new_embedding)
-                                self._q(
-                                    "UPDATE type::record('memory', $id) SET embedding = $emb",
-                                    {"id": mid, "emb": new_floats},
-                                )
-            except Exception as e:
-                import logging
+            return
 
-                logging.getLogger(__name__).warning("Enrichment failed: %s", e)
+        try:
+            pipeline = _get_enrichment_pipeline(settings, embeddings_engine)
+            result = pipeline.enrich(memory["content"], embedding, settings)
+            enrichment_data = {
+                "enrichment_concepts": result.concepts if result.concepts else None,
+                "enrichment_comet": result.comet_inferences if result.comet_inferences else None,
+                "enrichment_queries": result.queries if result.queries else None,
+                "enrichment_logic": result.logic_expansions if result.logic_expansions else None,
+                "enriched_content": result.enriched_content or None,
+                "enrichment_model_versions": result.model_versions
+                if result.model_versions
+                else None,
+            }
+            if not any(v is not None for v in enrichment_data.values()):
+                return
+            set_parts = []
+            update_params: dict = {"id": mid}
+            for col, val in enrichment_data.items():
+                if val is not None:
+                    set_parts.append(f"{col} = ${col}")
+                    update_params[col] = val
+            if not set_parts:
+                return
+            self._q(
+                f"UPDATE type::record('memory', $id) SET {', '.join(set_parts)}",
+                update_params,
+            )
+            if not enrichment_data.get("enriched_content"):
+                return
+            new_embedding = embeddings_engine.encode_document_enriched(
+                memory["content"], enrichment_data["enriched_content"]
+            )
+            if new_embedding is None:
+                return
+            new_floats = self._bytes_to_floats(new_embedding)
+            self._q(
+                "UPDATE type::record('memory', $id) SET embedding = $emb",
+                {"id": mid, "emb": new_floats},
+            )
+        except Exception as e:
+            import logging
+
+            logging.getLogger(__name__).warning("Enrichment failed: %s", e)
+
+    @trace_span("storage.memory.insert_memory")
+    def insert_memory(
+        self, memory: dict, embeddings_engine=None, settings=None, branch: str | None = None
+    ) -> int:
+        now = self._now_iso()
+        mid = self._next_id("memory")
+        embedding = memory.get("embedding")
+        emb_floats = self._bytes_to_floats(embedding) if embedding else None
+
+        self._validate_memory_secrets(memory)
+        sql, params = self._build_memory_insert_clause(memory, mid, now, branch, emb_floats)
+        self._q(sql, params)
+        self._enrich_memory_if_enabled(mid, memory, settings, embeddings_engine, embedding)
 
         # insert_vector is a no-op for the separate table, but keep for API compat
         if embedding is not None:

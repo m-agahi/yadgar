@@ -249,6 +249,84 @@ def _on_walk_error(error: OSError) -> None:
     logger.warning("Skipped (permission denied): %s", error.filename or error)
 
 
+def _rel_path(rel_dir: str, fname: str) -> str:
+    """Return repo-relative path for a file, handling the root directory case."""
+    return os.path.join(rel_dir, fname) if rel_dir else fname
+
+
+def _maybe_config(fname: str, filepath: Path, rel_dir: str) -> dict | None:
+    """Return a config record for fname if it matches a known config pattern."""
+    config_lang = _match_config(fname)
+    if config_lang is None:
+        return None
+    content = _read_file_safe(filepath)
+    if not content:
+        return None
+    return {"path": _rel_path(rel_dir, fname), "language": config_lang, "content": content}
+
+
+def _maybe_doc(fname: str, filepath: Path, rel_dir: str) -> dict | None:
+    """Return a doc record for fname if it is a recognised documentation file."""
+    if fname not in _DOC_FILES:
+        return None
+    content = _read_file_safe(filepath)
+    if not content:
+        return None
+    return {"path": _rel_path(rel_dir, fname), "content": content}
+
+
+def _maybe_ci_cd(fname: str, filepath: Path, rel_dir: str) -> dict | None:
+    """Return a CI/CD record if the file lives in a CI dir or matches a CI name."""
+    in_ci_dir = rel_dir in (".github/workflows", ".github", ".gitlab")
+    if not in_ci_dir and fname not in _CI_FILES:
+        return None
+    content = _read_file_safe(filepath)
+    if not content:
+        return None
+    return {"path": _rel_path(rel_dir, fname), "content": content}
+
+
+def _maybe_entry_point(fname: str, filepath: Path, rel_dir: str) -> dict | None:
+    """Return an entry-point record if the file matches any entry pattern."""
+    if rel_dir not in ("", "src"):
+        return None
+    rel_path = _rel_path(rel_dir, fname)
+    for pattern in _ENTRY_PATTERNS:
+        if fnmatch.fnmatch(rel_path, pattern):
+            content = _read_file_safe(filepath)
+            if content:
+                return {"path": rel_path, "content": content}
+            return None
+    return None
+
+
+def _collect_file_records(
+    fname: str,
+    filepath: Path,
+    rel_dir: str,
+    configs: list,
+    docs: list,
+    ci_cd: list,
+    entry_points: list,
+) -> None:
+    """Classify one file and append records to the appropriate output lists."""
+    record = _maybe_config(fname, filepath, rel_dir)
+    if record:
+        configs.append(record)
+
+    record = _maybe_doc(fname, filepath, rel_dir)
+    if record:
+        docs.append(record)
+
+    record = _maybe_ci_cd(fname, filepath, rel_dir)
+    if record:
+        ci_cd.append(record)
+
+    record = _maybe_entry_point(fname, filepath, rel_dir)
+    if record:
+        entry_points.append(record)
+
+
 def scan_project(directory: str) -> dict:
     """Scan a project directory and return structured data for seeding.
 
@@ -267,12 +345,11 @@ def scan_project(directory: str) -> dict:
 
     project_name = root.name
 
-    # Collect structure
-    structure = {}  # rel_path -> list of files
-    configs = []
-    docs = []
-    entry_points = []
-    ci_cd = []
+    structure: dict[str, list] = {}
+    configs: list = []
+    docs: list = []
+    entry_points: list = []
+    ci_cd: list = []
     ext_counts: dict[str, int] = {}
     total_files = 0
     total_dirs = 0
@@ -280,82 +357,27 @@ def scan_project(directory: str) -> dict:
     for dirpath, dirnames, filenames in os.walk(
         str(root), followlinks=False, onerror=_on_walk_error
     ):
-        # Filter out skip directories in-place
         dirnames[:] = [d for d in dirnames if not _should_skip_dir(d)]
         dirnames.sort()
 
         rel_dir = os.path.relpath(dirpath, root)
         if rel_dir == ".":
             rel_dir = ""
-
         total_dirs += 1
 
         dir_files = []
         for fname in sorted(filenames):
             filepath = Path(dirpath) / fname
             total_files += 1
-
-            # Count extensions
             ext = filepath.suffix.lower()
             if ext:
                 ext_counts[ext] = ext_counts.get(ext, 0) + 1
-
             dir_files.append(fname)
-
-            # Check if it's a config file (exact match + glob patterns)
-            config_lang = _match_config(fname)
-            if config_lang is not None:
-                content = _read_file_safe(filepath)
-                if content:
-                    configs.append(
-                        {
-                            "path": os.path.join(rel_dir, fname) if rel_dir else fname,
-                            "language": config_lang,
-                            "content": content,
-                        }
-                    )
-
-            # Check if it's a doc file
-            if fname in _DOC_FILES:
-                content = _read_file_safe(filepath)
-                if content:
-                    docs.append(
-                        {
-                            "path": os.path.join(rel_dir, fname) if rel_dir else fname,
-                            "content": content,
-                        }
-                    )
-
-            # Check CI/CD
-            if rel_dir in (".github/workflows", ".github", ".gitlab") or fname in _CI_FILES:
-                content = _read_file_safe(filepath)
-                if content:
-                    ci_cd.append(
-                        {
-                            "path": os.path.join(rel_dir, fname) if rel_dir else fname,
-                            "content": content,
-                        }
-                    )
-
-            # Check entry points (only in root or src/)
-            if rel_dir in ("", "src"):
-                for pattern in _ENTRY_PATTERNS:
-                    rel_path = os.path.join(rel_dir, fname) if rel_dir else fname
-                    if fnmatch.fnmatch(rel_path, pattern):
-                        content = _read_file_safe(filepath)
-                        if content:
-                            entry_points.append(
-                                {
-                                    "path": rel_path,
-                                    "content": content,
-                                }
-                            )
-                        break
+            _collect_file_records(fname, filepath, rel_dir, configs, docs, ci_cd, entry_points)
 
         if dir_files:
             structure[rel_dir or "."] = dir_files
 
-    # Sort extensions by count
     top_extensions = sorted(ext_counts.items(), key=lambda x: -x[1])[:10]
 
     return {

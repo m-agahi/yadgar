@@ -97,6 +97,24 @@ class TestRemoteMLClientScorePair:
         )
         assert score == 0.85
 
+    def test_remote_score_pair_empty_scores_returns_none(self):
+        """Backend returns empty scores list for pair mode → returns None, not IndexError."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"scores": [], "mode": "pair"}
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.post.return_value = mock_response
+            mock_client_cls.return_value = mock_client
+
+            from yadgar.ml_client import RemoteMLClient
+
+            client = RemoteMLClient("http://localhost:8001")
+            score = client.score_pair("who is alice", "Alice works here")
+
+        assert score is None
+
 
 class TestRemoteMLClientUnload:
     def test_remote_unload_is_noop(self):

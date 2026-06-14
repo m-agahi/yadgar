@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from yadgar.retrieval.scoring import FTSParams
 from yadgar.retrieval.stages.base import RetrievalStage
 from yadgar.retrieval.state import RetrievalState
 
@@ -61,13 +62,15 @@ class FTSStage(RetrievalStage):
         open_domain_subqueries = state.query_analysis.get("_open_domain_subqueries", [])
 
         self._retriever._collect_fts_scores(
-            state.query,
             state.scores,
-            enabled_signals,
-            open_domain_subqueries,
-            state.open_domain_mode,
-            candidate_k,
-            state.min_heat,
-            branch_filter=branch_filter,
+            FTSParams(
+                query=state.query,
+                enabled_signals=enabled_signals,
+                open_domain_subqueries=open_domain_subqueries,
+                open_domain_mode=state.open_domain_mode,
+                candidate_k=candidate_k,
+                min_heat=state.min_heat,
+                branch_filter=branch_filter,
+            ),
         )
         return state

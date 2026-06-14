@@ -19,6 +19,57 @@ _ENTITY_PATTERN_RE = re.compile(
     r"|\bfrom\s+\w+)",  # from imports
 )
 
+_STOP_WORDS = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "is",
+        "are",
+        "was",
+        "were",
+        "and",
+        "or",
+        "to",
+        "in",
+        "of",
+        "for",
+        "with",
+        "on",
+        "at",
+        "by",
+        "from",
+        "this",
+        "that",
+        "it",
+        "not",
+        "be",
+        "as",
+        "has",
+        "have",
+    }
+)
+
+
+def _top_keywords(text: str, n: int = 5) -> list[str]:
+    """Return the top *n* keywords from *text*, excluding common stop words."""
+    words = text.lower().split()
+    meaningful = [w for w in words if w not in _STOP_WORDS and len(w) > 2]
+    return [w for w, _ in Counter(meaningful).most_common(n)]
+
+
+def _compute_centroid(rows: list[dict]) -> bytes | None:
+    """Compute a normalized centroid embedding from *rows*, or None if no embeddings."""
+    embeddings_list = [m["embedding"] for m in rows if m.get("embedding") is not None]
+    if not embeddings_list:
+        return None
+    arrays = [np.frombuffer(e, dtype=np.float32) for e in embeddings_list]
+    centroid_arr = np.mean(arrays, axis=0).astype(np.float32)
+    norm = np.linalg.norm(centroid_arr)
+    if norm > 0:
+        centroid_arr = centroid_arr / norm
+    return centroid_arr.tobytes()
+
 
 class _CommunityMixin:
     """Community detection and cluster summarization operations."""
@@ -125,13 +176,13 @@ class _CommunityMixin:
     def generate_cluster_summaries(self) -> None:
         """Generate summaries and centroid embeddings for clusters with > 3 members."""
         clusters = self._storage.get_clusters_by_level(1)
+        all_memories = self._storage.get_all_memories_with_embeddings()
 
         for cluster in clusters:
             if cluster["member_count"] <= 3:
                 continue
 
             cluster_id = cluster["id"]
-            all_memories = self._storage.get_all_memories_with_embeddings()
             rows = [
                 m
                 for m in all_memories
@@ -141,65 +192,8 @@ class _CommunityMixin:
             if len(rows) <= 3:
                 continue
 
-            # Extract entities and keywords from all member contents
-            all_content = " ".join(m["content"] for m in rows)
-            entities = _ENTITY_PATTERN_RE.findall(all_content)
-            entity_counts = Counter(entities)
-            top_entities = [e for e, _ in entity_counts.most_common(10)]
-
-            # Top keywords by frequency (excluding stop words)
-            words = all_content.lower().split()
-            stop_words = frozenset(
-                {
-                    "the",
-                    "a",
-                    "an",
-                    "is",
-                    "are",
-                    "was",
-                    "were",
-                    "and",
-                    "or",
-                    "to",
-                    "in",
-                    "of",
-                    "for",
-                    "with",
-                    "on",
-                    "at",
-                    "by",
-                    "from",
-                    "this",
-                    "that",
-                    "it",
-                    "not",
-                    "be",
-                    "as",
-                    "has",
-                    "have",
-                }
-            )
-            meaningful = [w for w in words if w not in stop_words and len(w) > 2]
-            word_counts = Counter(meaningful)
-            top_keywords = [w for w, _ in word_counts.most_common(5)]
-
-            summary_parts = []
-            if top_entities:
-                summary_parts.append("Entities: " + ", ".join(top_entities[:5]))
-            if top_keywords:
-                summary_parts.append("Keywords: " + ", ".join(top_keywords))
-            summary = "; ".join(summary_parts) if summary_parts else cluster["summary"]
-
-            # Compute centroid embedding (average of member embeddings, normalized)
-            embeddings_list = [m["embedding"] for m in rows if m.get("embedding") is not None]
-            centroid = None
-            if embeddings_list:
-                arrays = [np.frombuffer(e, dtype=np.float32) for e in embeddings_list]
-                centroid_arr = np.mean(arrays, axis=0).astype(np.float32)
-                norm = np.linalg.norm(centroid_arr)
-                if norm > 0:
-                    centroid_arr = centroid_arr / norm
-                centroid = centroid_arr.tobytes()
+            summary = self._build_cluster_summary(rows, cluster["summary"])
+            centroid = _compute_centroid(rows)
 
             self._storage.update_cluster(
                 cluster_id,
@@ -211,6 +205,22 @@ class _CommunityMixin:
 
         # Create level 2 (root) clusters by grouping level 1 by directory_context
         self._create_root_clusters()
+
+    def _build_cluster_summary(self, rows: list[dict], fallback: str) -> str:
+        """Extract entities and keywords from member memories, return summary string."""
+        all_content = " ".join(m["content"] for m in rows)
+
+        entities = _ENTITY_PATTERN_RE.findall(all_content)
+        top_entities = [e for e, _ in Counter(entities).most_common(10)]
+
+        top_keywords = _top_keywords(all_content, n=5)
+
+        summary_parts = []
+        if top_entities:
+            summary_parts.append("Entities: " + ", ".join(top_entities[:5]))
+        if top_keywords:
+            summary_parts.append("Keywords: " + ", ".join(top_keywords))
+        return "; ".join(summary_parts) if summary_parts else fallback
 
     def _create_root_clusters(self) -> None:
         """Group level 1 clusters by dominant directory_context into level 2 clusters."""

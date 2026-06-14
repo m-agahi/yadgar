@@ -201,6 +201,25 @@ class TestFallbackPath:
         result = fn({"transcript_path": str(tp)})
         assert content in result
 
+    def test_fallback_get_report_text_list_content_blocks(self, tmp_path):
+        """list-of-blocks content: text blocks joined, non-text blocks skipped."""
+        ns = self._load_inline_ns()
+        fn = ns.get("_get_report_text")
+        if fn is None:
+            pytest.skip("Fallback path not active")
+        tp = tmp_path / "t.jsonl"
+        content = [
+            {"type": "text", "text": "First block"},
+            {"type": "tool_use", "id": "xyz", "name": "Bash"},
+            {"type": "text", "text": "Second block"},
+        ]
+        tp.write_text(json.dumps({"message": {"role": "assistant", "content": content}}))
+        result = fn({"transcript_path": str(tp)})
+        assert "First block" in result
+        assert "Second block" in result
+        # tool_use block has no "text" key — must not error or bleed through
+        assert "xyz" not in result
+
     def test_fallback_post_findings_silent_on_network_error(self):
         ns = self._load_inline_ns()
         fn = ns.get("_post_findings")

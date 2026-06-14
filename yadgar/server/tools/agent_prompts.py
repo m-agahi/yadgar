@@ -22,6 +22,7 @@ import re
 
 from yadgar.secrets import gate_or_reject
 from yadgar.server._app import _tool
+from yadgar.wiki import WikiAddOptions
 
 logger = logging.getLogger(__name__)
 
@@ -127,10 +128,12 @@ def agent_prompt_save(
             content=content,
             category="reference",
             tags=tags,
-            source_memory_ids=[],
-            confidence="high",
-            branch=branch_hint,
-            directory_context=_effective_dir,
+            opts=WikiAddOptions(
+                source_memory_ids=[],
+                confidence="high",
+                branch=branch_hint,
+                directory_context=_effective_dir,
+            ),
         )
         page_id = result.get("id")
     else:

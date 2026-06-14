@@ -272,19 +272,23 @@ class TestHeavyRerankKillSwitch:
             retriever = _FakeRetriever()
             memories = [{"id": i, "content": f"mem {i}", "_retrieval_score": 0.5} for i in range(5)]
             from yadgar.retrieval.fusion import PROFILES
+            from yadgar.retrieval.reranking import RerankContext
 
             profile = PROFILES["balanced"]
+            ctx = RerankContext(
+                query="test query",
+                query_analysis={},
+                query_embedding=None,
+                profile=profile,
+                profile_name="balanced",
+                open_domain_mode=False,
+                use_cross_encoder=True,  # should be bypassed
+                max_results=5,
+            )
             result = retriever._apply_rerank_pipeline(
                 memories,
                 set(range(5)),
-                "test query",
-                {},
-                None,
-                profile,
-                "balanced",
-                False,
-                True,  # use_cross_encoder=True; should be bypassed
-                5,
+                ctx,
             )
 
             assert not ce_called, "CE should not be called when HEAVY_RERANK_ENABLED=False"
@@ -295,3 +299,188 @@ class TestHeavyRerankKillSwitch:
             assert len(result) <= 5
         finally:
             cfg.get_settings.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# F. _apply_rerank_pipeline characterization — full pipeline (non-bypass path)
+# ---------------------------------------------------------------------------
+
+
+class TestApplyRerankPipelineCharacterization:
+    """Characterization tests for _apply_rerank_pipeline after RerankContext refactor.
+
+    Verifies that stage ordering and output are preserved when HEAVY_RERANK_ENABLED=True
+    and all optional sub-stages are enabled/disabled individually.
+    """
+
+    def _make_retriever(self, settings):
+        """Build a _RerankingMixin instance wired to a fake reranker."""
+        from yadgar.retrieval.reranking import _RerankingMixin
+
+        call_log = []
+
+        class _FakeReranker:
+            def heuristic_rerank(self, mems, query, top_k=None):
+                call_log.append(("heuristic", top_k))
+                return mems
+
+            def cross_encoder_rerank(self, mems, query):
+                call_log.append(("ce",))
+                # Tag each mem so we can verify CE ran
+                for m in mems:
+                    m["_cross_encoder_score"] = 0.8
+                return mems
+
+            def nli_rerank(self, query, mems):
+                call_log.append(("nli",))
+                for m in mems:
+                    m["_nli_entailment_score"] = 0.6
+                return mems
+
+            def multi_passage_rerank(self, query, mems, top_k):
+                call_log.append(("mp", top_k))
+                return mems
+
+            def mmr_rerank(self, mems, emb, top_k=5, lambda_param=0.7):
+                call_log.append(("mmr",))
+                return mems
+
+            def detect_adversarial(self, mems):
+                call_log.append(("adv",))
+                return {"confidence": 0.9, "is_uncertain": False, "score_gap": 0.1}
+
+        class _FakeRetriever(_RerankingMixin):
+            def __init__(self):
+                self._settings = settings
+                self._reranker = _FakeReranker()
+                self._rules_engine = None
+                self._engram = None
+                self._metacognition = None
+
+            def _comparison_dual_search(self, *a, **kw):
+                return []
+
+            def _search_profiles_and_beliefs(self, *a, **kw):
+                return []
+
+        return _FakeRetriever(), call_log
+
+    def test_all_optional_stages_disabled(self, monkeypatch):
+        """When all optional stages are off, pipeline runs without errors and trims to max_results."""
+        from yadgar.config import Settings
+        from yadgar.retrieval.fusion import PROFILES
+        from yadgar.retrieval.reranking import RerankContext
+
+        s = Settings(
+            RERANKER_ENABLED=False,
+            NLI_RERANKING_ENABLED=False,
+            MULTI_PASSAGE_RERANKING_ENABLED=False,
+            ADVERSARIAL_DETECTION_ENABLED=False,
+            ADVERSARIAL_DIVERSITY_ENFORCEMENT=False,
+            HEAVY_RERANK_ENABLED=True,
+        )
+        retriever, call_log = self._make_retriever(s)
+        memories = [{"id": i, "content": f"m{i}", "_retrieval_score": float(i)} for i in range(10)]
+        ctx = RerankContext(
+            query="test",
+            query_analysis={},
+            query_embedding=None,
+            profile=PROFILES["balanced"],
+            profile_name="balanced",
+            open_domain_mode=False,
+            use_cross_encoder=False,
+            max_results=5,
+        )
+        result = retriever._apply_rerank_pipeline(memories[:], set(range(10)), ctx)
+        assert len(result) == 5
+        # No reranker stage should have been called
+        assert call_log == []
+
+    def test_cross_encoder_called_when_enabled(self, monkeypatch):
+        """CE runs when use_cross_encoder=True."""
+        from yadgar.config import Settings
+        from yadgar.retrieval.fusion import PROFILES
+        from yadgar.retrieval.reranking import RerankContext
+
+        s = Settings(
+            RERANKER_ENABLED=False,
+            NLI_RERANKING_ENABLED=False,
+            MULTI_PASSAGE_RERANKING_ENABLED=False,
+            ADVERSARIAL_DETECTION_ENABLED=False,
+            ADVERSARIAL_DIVERSITY_ENFORCEMENT=False,
+            HEAVY_RERANK_ENABLED=True,
+        )
+        retriever, call_log = self._make_retriever(s)
+        memories = [{"id": i, "content": f"m{i}", "_retrieval_score": float(i)} for i in range(3)]
+        ctx = RerankContext(
+            query="test",
+            query_analysis={},
+            query_embedding=None,
+            profile=PROFILES["balanced"],
+            profile_name="balanced",
+            open_domain_mode=False,
+            use_cross_encoder=True,
+            max_results=3,
+        )
+        result = retriever._apply_rerank_pipeline(memories[:], set(range(3)), ctx)
+        assert ("ce",) in call_log
+        assert len(result) <= 3
+
+    def test_heuristic_skipped_for_fast_profile(self, monkeypatch):
+        """Heuristic reranker is skipped for 'fast' profile even when RERANKER_ENABLED=True."""
+        from yadgar.config import Settings
+        from yadgar.retrieval.fusion import PROFILES
+        from yadgar.retrieval.reranking import RerankContext
+
+        s = Settings(
+            RERANKER_ENABLED=True,
+            NLI_RERANKING_ENABLED=False,
+            MULTI_PASSAGE_RERANKING_ENABLED=False,
+            ADVERSARIAL_DETECTION_ENABLED=False,
+            ADVERSARIAL_DIVERSITY_ENFORCEMENT=False,
+            HEAVY_RERANK_ENABLED=True,
+        )
+        retriever, call_log = self._make_retriever(s)
+        memories = [{"id": i, "content": f"m{i}", "_retrieval_score": float(i)} for i in range(3)]
+        ctx = RerankContext(
+            query="test",
+            query_analysis={},
+            query_embedding=None,
+            profile=PROFILES.get("fast", PROFILES["balanced"]),
+            profile_name="fast",
+            open_domain_mode=False,
+            use_cross_encoder=False,
+            max_results=3,
+        )
+        retriever._apply_rerank_pipeline(memories[:], set(range(3)), ctx)
+        heuristic_calls = [c for c in call_log if c[0] == "heuristic"]
+        assert heuristic_calls == [], "heuristic should be skipped for fast profile"
+
+    def test_output_trimmed_to_max_results(self, monkeypatch):
+        """Result list is always trimmed to max_results."""
+        from yadgar.config import Settings
+        from yadgar.retrieval.fusion import PROFILES
+        from yadgar.retrieval.reranking import RerankContext
+
+        s = Settings(
+            RERANKER_ENABLED=False,
+            NLI_RERANKING_ENABLED=False,
+            MULTI_PASSAGE_RERANKING_ENABLED=False,
+            ADVERSARIAL_DETECTION_ENABLED=False,
+            ADVERSARIAL_DIVERSITY_ENFORCEMENT=False,
+            HEAVY_RERANK_ENABLED=True,
+        )
+        retriever, _ = self._make_retriever(s)
+        memories = [{"id": i, "content": f"m{i}", "_retrieval_score": float(i)} for i in range(20)]
+        ctx = RerankContext(
+            query="test",
+            query_analysis={},
+            query_embedding=None,
+            profile=PROFILES["balanced"],
+            profile_name="balanced",
+            open_domain_mode=False,
+            use_cross_encoder=False,
+            max_results=7,
+        )
+        result = retriever._apply_rerank_pipeline(memories[:], set(range(20)), ctx)
+        assert len(result) == 7

@@ -205,19 +205,36 @@ def test_startup_fails_with_require_auth_and_empty_token(monkeypatch):
     import importlib
 
     import yadgar.config as _cfg
+    import yadgar.server._app as _app
 
-    importlib.reload(_cfg)
-
+    # Snapshot mcp_server before reload so the populated instance is restored after.
+    # importlib.reload(yadgar.server) rebinds server.mcp_server from _app.mcp_server;
+    # if _app.mcp_server was previously replaced by test_graceful_shutdown, the reload
+    # propagates an empty FastMCP to all later tests (Root-A xdist pollution — v5.56 fix).
+    _saved_app_mcp = _app.mcp_server
     import yadgar.server as _srv
 
-    importlib.reload(_srv)
+    _saved_srv_mcp = _srv.__dict__.get("mcp_server")
 
-    with pytest.raises(RuntimeError, match="REQUIRE_AUTH=1 requires YADGAR_MCP_AUTH_TOKEN"):
-        # Call main() with a dummy transport that we'll never actually start.
-        # We monkeypatch init_engines + mcp_server.run to prevent side effects.
-        monkeypatch.setattr(_srv, "init_engines", lambda **kw: None)
-        monkeypatch.setattr(_srv.mcp_server, "run", lambda **kw: None)
-        _srv.main(transport="stdio")
+    # Use cache_clear() instead of reload() to pick up fresh env values without
+    # replacing the module object in sys.modules — reload() creates a NEW get_settings
+    # lru_cache function, orphaning submodules that already imported the old reference
+    # (Root-B xdist pollution — v5.56 fix).
+    _cfg.get_settings.cache_clear()
+
+    try:
+        importlib.reload(_srv)
+
+        with pytest.raises(RuntimeError, match="REQUIRE_AUTH=1 requires YADGAR_MCP_AUTH_TOKEN"):
+            # Call main() with a dummy transport that we'll never actually start.
+            # We monkeypatch init_engines + mcp_server.run to prevent side effects.
+            monkeypatch.setattr(_srv, "init_engines", lambda **kw: None)
+            monkeypatch.setattr(_srv.mcp_server, "run", lambda **kw: None)
+            _srv.main(transport="stdio")
+    finally:
+        _app.mcp_server = _saved_app_mcp
+        if _saved_srv_mcp is not None:
+            _srv.__dict__["mcp_server"] = _saved_srv_mcp
 
 
 def test_startup_ok_with_require_auth_and_token(monkeypatch):
@@ -229,27 +246,40 @@ def test_startup_ok_with_require_auth_and_token(monkeypatch):
     import importlib
 
     import yadgar.config as _cfg
+    import yadgar.server._app as _app
 
-    importlib.reload(_cfg)
+    # Snapshot before reload — restore in finally (Root-A xdist pollution — v5.56 fix).
+    _saved_app_mcp = _app.mcp_server
+    import yadgar.server as _srv
+
+    _saved_srv_mcp = _srv.__dict__.get("mcp_server")
+
+    # Use cache_clear() instead of reload() to pick up fresh env values without
+    # replacing the module object in sys.modules — reload() creates a NEW get_settings
+    # lru_cache function, orphaning submodules that already imported the old reference
+    # (Root-B xdist pollution — v5.56 fix).
+    _cfg.get_settings.cache_clear()
     # Clear the lru_cache on ALL references to get_settings so lifecycle.py
     # picks up the fresh env after the server split (v5.1 fix).
-    _cfg.get_settings.cache_clear()
     from yadgar.server import lifecycle as _lifecycle
 
     _lifecycle.get_settings.cache_clear()
 
-    import yadgar.server as _srv
+    try:
+        importlib.reload(_srv)
 
-    importlib.reload(_srv)
+        monkeypatch.setattr(_srv, "init_engines", lambda **kw: None)
+        monkeypatch.setattr(_srv, "sync_instructions", lambda: None)
+        monkeypatch.setattr(_srv, "install_hooks", lambda *a: None)
+        monkeypatch.setattr(_srv, "shutdown", lambda: None)
+        monkeypatch.setattr(_srv.mcp_server, "run", lambda **kw: None)
 
-    monkeypatch.setattr(_srv, "init_engines", lambda **kw: None)
-    monkeypatch.setattr(_srv, "sync_instructions", lambda: None)
-    monkeypatch.setattr(_srv, "install_hooks", lambda *a: None)
-    monkeypatch.setattr(_srv, "shutdown", lambda: None)
-    monkeypatch.setattr(_srv.mcp_server, "run", lambda **kw: None)
-
-    # Should not raise
-    _srv.main(transport="stdio")
+        # Should not raise
+        _srv.main(transport="stdio")
+    finally:
+        _app.mcp_server = _saved_app_mcp
+        if _saved_srv_mcp is not None:
+            _srv.__dict__["mcp_server"] = _saved_srv_mcp
 
 
 def test_sse_transport_requires_auth(monkeypatch):

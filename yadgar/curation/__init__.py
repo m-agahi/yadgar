@@ -3,6 +3,7 @@
 import logging
 import os
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from yadgar.config import Settings
@@ -27,6 +28,7 @@ from yadgar.tracing import trace_span
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "CurateParams",
     "MemoryCurator",
     # re-export constants for backward compatibility
     "_NEGATION_RE",
@@ -34,6 +36,22 @@ __all__ = [
     "_LINK_LOW",
     "_LINK_HIGH",
 ]
+
+
+@dataclass
+class CurateParams:
+    """Optional metadata bundle for :meth:`MemoryCurator.curate_on_remember`.
+
+    All fields mirror the former keyword arguments and carry the same defaults.
+    """
+
+    initial_heat: float = 1.0
+    surprise: float = 0.0
+    importance: float = 0.5
+    valence: float = 0.0
+    file_hash: str | None = None
+    embedding_model: str | None = None
+    contextual_prefix: str | None = None
 
 
 class MemoryCurator:
@@ -66,18 +84,22 @@ class MemoryCurator:
         tags: list[str],
         embedding: bytes,
         *,
-        initial_heat: float = 1.0,
-        surprise: float = 0.0,
-        importance: float = 0.5,
-        valence: float = 0.0,
-        file_hash: str | None = None,
-        embedding_model: str | None = None,
-        contextual_prefix: str | None = None,
+        params: CurateParams | None = None,
     ) -> dict:
         """Decide whether to merge, link, or create a new memory.
 
         Returns dict with "action" key: "merged", "linked", or "created".
+
+        Args:
+            content: Memory content text.
+            context: Directory context path.
+            tags: Tag list.
+            embedding: Raw embedding bytes.
+            params: Optional metadata bundle.  Defaults to :class:`CurateParams`
+                with all-default values when omitted.
         """
+        if params is None:
+            params = CurateParams()
         # PR-E: bracket curate duration + outcome; fires even on exception via finally
         _t0 = time.perf_counter()
         _result: dict[str, Any] = {}
@@ -96,20 +118,20 @@ class MemoryCurator:
                     existing = self._storage.get_memory(mem_id)
                     if existing and self._has_textual_overlap(content, existing["content"]):
                         _result = self._merge_memory(
-                            mem_id, content, tags, embedding, contextual_prefix
+                            mem_id, content, tags, embedding, params.contextual_prefix
                         )
                         return _result
 
             spec = NewMemorySpec(
                 tags=tags,
                 embedding=embedding,
-                heat=initial_heat,
-                file_hash=file_hash,
-                embedding_model=embedding_model,
-                contextual_prefix=contextual_prefix,
-                surprise=surprise,
-                importance=importance,
-                valence=valence,
+                heat=params.initial_heat,
+                file_hash=params.file_hash,
+                embedding_model=params.embedding_model,
+                contextual_prefix=params.contextual_prefix,
+                surprise=params.surprise,
+                importance=params.importance,
+                valence=params.valence,
             )
 
             # Moderate similarity → link

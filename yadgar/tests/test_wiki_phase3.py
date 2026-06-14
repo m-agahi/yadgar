@@ -16,6 +16,7 @@ from yadgar import server
 from yadgar.server import _is_episodic_query
 from yadgar.storage import StorageEngine
 from yadgar.tests.conftest import memorize_sync
+from yadgar.wiki import WikiAddOptions
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -90,7 +91,7 @@ class TestWikiBlendingThreshold:
             "Storage Engine Design",
             "The storage engine uses SurrealDB for persistence and WRRF for retrieval.",
             "architecture",
-            confidence="high",
+            opts=WikiAddOptions(confidence="high"),
         )
         server.memorize(
             content="Storage engine handles all persistence operations.",
@@ -146,7 +147,7 @@ class TestBidirectionalLinking:
             "Storage Design",
             "The storage engine uses SurrealDB.",
             "architecture",
-            source_memory_ids=[mid],
+            opts=WikiAddOptions(source_memory_ids=[mid]),
         )
 
         mem = _storage().get_memory(mid)
@@ -158,8 +159,8 @@ class TestBidirectionalLinking:
         m1 = memorize_sync(content="First design note.", context="/tmp", tags=[])["id"]
         m2 = memorize_sync(content="Second design note.", context="/tmp", tags=[])["id"]
 
-        _wiki().add("Design Notes", "Initial design.", source_memory_ids=[m1])
-        _wiki().add("Design Notes", "Updated design.", source_memory_ids=[m2])
+        _wiki().add("Design Notes", "Initial design.", opts=WikiAddOptions(source_memory_ids=[m1]))
+        _wiki().add("Design Notes", "Updated design.", opts=WikiAddOptions(source_memory_ids=[m2]))
 
         mem2 = _storage().get_memory(m2)
         assert "design-notes" in (mem2.get("wiki_refs") or [])
@@ -182,20 +183,20 @@ class TestBidirectionalLinking:
     def test_no_duplicate_refs(self):
         """Adding the same page twice should not duplicate wiki_refs."""
         mid = memorize_sync(content="Original note.", context="/tmp", tags=[])["id"]
-        _wiki().add("My Page", "Content.", source_memory_ids=[mid])
-        _wiki().add("My Page", "Updated content.", source_memory_ids=[mid])
+        _wiki().add("My Page", "Content.", opts=WikiAddOptions(source_memory_ids=[mid]))
+        _wiki().add("My Page", "Updated content.", opts=WikiAddOptions(source_memory_ids=[mid]))
         mem = _storage().get_memory(mid)
         refs = mem.get("wiki_refs") or []
         assert refs.count("my-page") == 1
 
     def test_nonexistent_memory_id_skipped(self):
         """Linking to a nonexistent memory ID must not raise."""
-        _wiki().add("Safe Page", "Content.", source_memory_ids=[99999])
+        _wiki().add("Safe Page", "Content.", opts=WikiAddOptions(source_memory_ids=[99999]))
         # No exception = pass
 
     def test_empty_source_memory_ids_no_error(self):
         """wiki_add with empty source_memory_ids must not raise."""
-        _wiki().add("Standalone Page", "Content.", source_memory_ids=[])
+        _wiki().add("Standalone Page", "Content.", opts=WikiAddOptions(source_memory_ids=[]))
         # No exception = pass
 
 

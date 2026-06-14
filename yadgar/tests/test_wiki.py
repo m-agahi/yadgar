@@ -16,6 +16,7 @@ Tests verify:
 import pytest
 
 from yadgar import server
+from yadgar.wiki import WikiAddOptions
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -161,14 +162,16 @@ class TestUpsert:
         assert "tag-b" in page["tags"]
 
     def test_upsert_keeps_higher_confidence(self):
-        _wiki().add("Conf Test", "Content.", "reference", confidence="high")
-        _wiki().add("Conf Test", "New content.", "reference", confidence="low")
+        _wiki().add("Conf Test", "Content.", "reference", opts=WikiAddOptions(confidence="high"))
+        _wiki().add("Conf Test", "New content.", "reference", opts=WikiAddOptions(confidence="low"))
         page = _wiki().read("conf-test")
         assert page["confidence"] == "high"
 
     def test_upsert_merges_source_memory_ids(self):
-        _wiki().add("Source Test", "C1.", "reference", source_memory_ids=[1, 2])
-        _wiki().add("Source Test", "C2.", "reference", source_memory_ids=[3])
+        _wiki().add(
+            "Source Test", "C1.", "reference", opts=WikiAddOptions(source_memory_ids=[1, 2])
+        )
+        _wiki().add("Source Test", "C2.", "reference", opts=WikiAddOptions(source_memory_ids=[3]))
         page = _wiki().read("source-test")
         assert 1 in page["source_memory_ids"]
         assert 3 in page["source_memory_ids"]
@@ -324,7 +327,9 @@ class TestLint:
         assert report["stats"]["broken_ref_count"] >= 1
 
     def test_lint_detects_low_confidence(self):
-        _wiki().add("Low Conf Page", "Uncertain info.", "reference", confidence="low")
+        _wiki().add(
+            "Low Conf Page", "Uncertain info.", "reference", opts=WikiAddOptions(confidence="low")
+        )
         report = _wiki().lint()
         low = [i for i in report["issues"] if i["type"] == "low_confidence"]
         assert any(i["page"] == "low-conf-page" for i in low)
@@ -351,7 +356,9 @@ class TestValidation:
         assert result["category"] == "reference"
 
     def test_invalid_confidence_defaults_to_medium(self):
-        result = _wiki().add("Bad Conf", "Content.", "reference", confidence="invalid")
+        result = _wiki().add(
+            "Bad Conf", "Content.", "reference", opts=WikiAddOptions(confidence="invalid")
+        )
         assert result["confidence"] == "medium"
 
 
@@ -367,7 +374,7 @@ class TestRecallIntegration:
             "Yadgar is a biologically-inspired memory engine with WRRF retrieval.",
             "architecture",
             ["core"],
-            confidence="high",
+            opts=WikiAddOptions(confidence="high"),
         )
         # Also store a memory so recall has something to blend with
         server.memorize(

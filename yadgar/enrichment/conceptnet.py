@@ -171,6 +171,17 @@ class ConceptNetExpander:
             self._lite_available = False
             return []
 
+    @staticmethod
+    def _parse_edges(data: dict, min_weight: float) -> list[str]:
+        """Extract concept labels from a ConceptNet API response, filtered by weight."""
+        results = []
+        for edge in data.get("edges", []):
+            if edge.get("weight", 0) >= min_weight:
+                end = edge.get("end", {}).get("label", "")
+                if end:
+                    results.append(end.replace(" ", "_"))
+        return results
+
     def _try_http(self, term: str, relations: list[str], min_weight: float) -> list[str]:
         """Try ConceptNet HTTP API. Disabled by default — too slow for batch use."""
         # HTTP API is 5s/request — unusable for batch enrichment
@@ -192,12 +203,7 @@ class ConceptNetExpander:
                 try:
                     resp = httpx.get(url, headers={"Accept": "application/json"}, timeout=5.0)
                     resp.raise_for_status()
-                    data = resp.json()
-                    for edge in data.get("edges", []):
-                        if edge.get("weight", 0) >= min_weight:
-                            end = edge.get("end", {}).get("label", "")
-                            if end:
-                                results.append(end.replace(" ", "_"))
+                    results.extend(self._parse_edges(resp.json(), min_weight))
                 except (httpx.RequestError, httpx.HTTPStatusError, TimeoutError, OSError) as _e:
                     continue
             self._http_available = True if results else None

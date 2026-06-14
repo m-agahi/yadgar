@@ -7,6 +7,8 @@ Tests verify:
 4. After decay, access_count_since_decay is reset to 0.
 5. Protected memory: heat stays at 1.0 (decay skipped).
 6. YADGAR_RECALL_BOOST=0.0 env → no boost, pure decay.
+7. Entity decay — golden value: heat = init * DECAY_FACTOR^hours.
+8. Entity cold-archival — goes_cold sets heat=0.0 and archived=True.
 """
 
 from __future__ import annotations
@@ -187,3 +189,41 @@ def test_zero_recall_boost_env(storage):
     # boost = 10 * 0.0 = 0; pure decay only
     expected = 0.5 * (settings.DECAY_FACTOR**1)
     assert mem["heat"] == pytest.approx(expected, rel=1e-3)
+
+
+def test_entity_decay_golden_value(storage):
+    """T7 (characterization): Entity heat = init * DECAY_FACTOR^hours (1h elapsed)."""
+    from datetime import UTC, datetime, timedelta
+
+    settings = _make_settings(DECAY_FACTOR=0.9995, COLD_THRESHOLD=0.0)
+    # Insert entity with last_accessed 1 hour ago
+    last = (datetime.now(UTC) - timedelta(hours=1.0)).isoformat()
+    storage.insert_entity(
+        {"name": "test_entity_decay", "type": "function", "heat": 0.8, "last_accessed": last}
+    )
+
+    _run_decay(storage, settings)
+
+    ent = storage.get_entity_by_name("test_entity_decay")
+    expected = 0.8 * (0.9995**1)
+    assert ent["heat"] == pytest.approx(expected, rel=1e-3)
+    assert not ent.get("archived", False)
+
+
+def test_entity_cold_archival(storage):
+    """T8 (characterization): Entity goes_cold → heat=0.0, archived=True."""
+    from datetime import UTC, datetime, timedelta
+
+    # COLD_THRESHOLD=0.5: any heat < 0.5 after decay triggers archival
+    # heat=0.4, hours=1: new_heat = 0.4 * 0.9995^1 ≈ 0.3998 < 0.5 → archived
+    settings = _make_settings(DECAY_FACTOR=0.9995, COLD_THRESHOLD=0.5)
+    last = (datetime.now(UTC) - timedelta(hours=1.0)).isoformat()
+    storage.insert_entity(
+        {"name": "cold_entity", "type": "function", "heat": 0.4, "last_accessed": last}
+    )
+
+    _run_decay(storage, settings)
+
+    ent = storage.get_entity_by_name("cold_entity")
+    assert ent["heat"] == pytest.approx(0.0)
+    assert ent.get("archived") is True

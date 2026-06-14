@@ -258,6 +258,67 @@ def surreal_server(tmp_path_factory):
         os.environ.pop("YADGAR_DB_URL", None)
 
 
+def _replace_module_binding(mod, canonical_gs) -> None:
+    """Swap a module's get_settings binding to canonical and clear any stale cache.
+
+    Separated out to keep _resync_get_settings_bindings nesting ≤ 4 (I13 HARD cap).
+    """
+    gs = mod.__dict__.get("get_settings")
+    if gs is None or not callable(getattr(gs, "cache_clear", None)):
+        return
+    if gs is not canonical_gs:
+        try:
+            gs.cache_clear()
+        except Exception:
+            pass
+        try:
+            mod.__dict__["get_settings"] = canonical_gs
+        except Exception:
+            pass
+
+
+def _resync_get_settings_bindings():
+    """Re-point every module's get_settings binding to the current yadgar.config.get_settings.
+
+    importlib.reload(yadgar.config) replaces yadgar.config.get_settings with a NEW
+    lru_cache function.  Modules that imported get_settings via
+    ``from yadgar.config import get_settings`` still hold a reference to the OLD
+    function.  When a fixture (e.g. _engines/init_engines) populates the OLD
+    function's cache, and a test only calls ``get_settings.cache_clear()`` on the
+    NEW function, the OLD cache survives.  Subsequent calls from admin_other,
+    audit, lifecycle, etc. all see the stale Settings object (wrong THRESHOLD or
+    CONSOLIDATION flag).
+
+    This helper walks sys.modules, finds every yadgar module that has a stale (old)
+    get_settings attribute, and replaces it with the current canonical function.
+    It also calls cache_clear() on every distinct get_settings function found.
+
+    Root-D xdist pollution fix (v5.56): test_config_yaml_container_path reloads
+    yadgar.config; subsequent anchor-audit tests then see stale Settings with
+    ANCHOR_AUDIT_THRESHOLD=15 (init_engines default) overriding the test's
+    THRESHOLD=0/2 env var, so consolidate_now skips and writes no sentinel.
+    """
+    import sys
+
+    try:
+        import yadgar.config as _cfg
+
+        canonical_gs = _cfg.get_settings
+    except Exception:
+        return
+
+    canonical_gs.cache_clear()
+
+    for mod_name, mod in list(sys.modules.items()):
+        # Only scan yadgar modules; scanning all sys.modules modules triggers
+        # third-party module-level imports (e.g. HuggingFace transformers has a
+        # 'get_settings' compat shim that imports torchvision on attribute access).
+        if not mod_name.startswith("yadgar") or mod is None:
+            continue
+        # Use mod.__dict__ to avoid triggering __getattr__ shims.
+        _replace_module_binding(mod, canonical_gs)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_yaml_config(monkeypatch):
     """Point YADGAR_CONFIG_FILE at a nonexistent path so every test starts from
@@ -266,21 +327,17 @@ def _isolate_yaml_config(monkeypatch):
     Tests that need a specific yaml file (TestYamlOverride etc.) override
     YADGAR_CONFIG_FILE with their own monkeypatch.setenv — LIFO ordering means
     their value wins inside their test and is restored afterward.
+
+    Also re-syncs all get_settings bindings across sys.modules at both setup and
+    teardown.  importlib.reload(yadgar.config) (used by test_config_yaml_container_path)
+    creates a new get_settings lru_cache function; modules that captured the old
+    reference otherwise keep stale Settings objects across tests on the same xdist
+    worker (Root-D pollution — v5.56 fix).
     """
     monkeypatch.setenv("YADGAR_CONFIG_FILE", "/nonexistent/yadgar-test-isolated.yaml")
-    try:
-        from yadgar.config import get_settings
-
-        get_settings.cache_clear()
-    except Exception:
-        pass
+    _resync_get_settings_bindings()
     yield
-    try:
-        from yadgar.config import get_settings
-
-        get_settings.cache_clear()
-    except Exception:
-        pass
+    _resync_get_settings_bindings()
 
 
 @pytest.fixture(autouse=True)
@@ -333,7 +390,10 @@ def _isolate_surrealdb(surreal_server):
     def _patched_init_schema(self):
         if self._db_url and hasattr(self, "_http"):
             path_hash = hashlib.md5(str(self._db_path).encode()).hexdigest()[:12]
-            self._http.headers["surreal-db"] = f"t{path_hash}"
+            ns = f"t{path_hash}"
+            self._http.headers["surreal-db"] = ns
+            # Register so _wipe_surrealdb_data can clean up even after shutdown.
+            _USED_SURREAL_NAMESPACES.add(ns)
         original_init_schema(self)
 
     _sm.StorageEngine._init_schema = _patched_init_schema
@@ -345,21 +405,79 @@ def _isolate_surrealdb(surreal_server):
 
 @pytest.fixture(autouse=True)
 def _restore_logging_state():
-    """Snapshot and restore the global logging disable level after each test.
+    """Snapshot and restore global logging state after each test.
 
-    logging.disable(logging.CRITICAL) in cli/_shared.py::init_replay_lightweight()
-    is a global flag (logging.root.manager.disable) that persists for the worker
-    process lifetime unless explicitly reset.  Tests in test_cli_shared_module.py
-    that call init_replay_lightweight() without patching logging.disable set this
-    flag, silencing all subsequent logging on the same xdist worker — causing
-    test_json_formatter_includes_timestamp, test_uvicorn_access_emits_json, and
-    consolidation phase-marker tests to see empty log output.
+    Restores:
+    - logging.root.manager.disable — set by logging.disable(CRITICAL) in
+      cli/_shared.py::init_replay_lightweight(); persists for the worker process
+      lifetime, silencing all subsequent logging (Root-B/C xdist pollution).
+    - logging.root.level — set by test_tracing.py and others; a raised root level
+      blocks records from reaching handlers even when disable is not set.
+      (Root-C: test_uvicorn_access_emits_json sees empty output when root level
+      is left at WARNING or CRITICAL by a prior test — v5.56 fix.)
+
+    Note: uvicorn.* logger propagate flags are restored by source fixes in
+    test_graceful_shutdown.py::test_uvicorn_abandons_hanging_request_within_budget
+    rather than here — snapshotting them in the fixture is circular when a prior
+    test already left them in the bad state.
     """
     import logging
 
-    saved = logging.root.manager.disable
+    saved_disable = logging.root.manager.disable
+    saved_root_level = logging.root.level
+    saved_root_handlers = list(logging.root.handlers)
     yield
-    logging.disable(saved)
+    logging.disable(saved_disable)
+    logging.root.setLevel(saved_root_level)
+    # Remove any handlers added during the test; close them to release file locks.
+    # test_graceful_shutdown.py reloads yadgar.server._app which calls configure_logging()
+    # and installs a RotatingJSONLFileHandler on root.  Without cleanup, _install_file_handler's
+    # idempotency check bails early for subsequent tests, leaving the stale handler.
+    # test_opt_out_empty_path_no_file_handler expects 0 file handlers but sees 1
+    # (Root-E xdist pollution — v5.56 fix).
+    for h in list(logging.root.handlers):
+        if h not in saved_root_handlers:
+            logging.root.removeHandler(h)
+            try:
+                h.close()
+            except Exception:
+                pass
+
+
+@pytest.fixture(autouse=True)
+def _restore_mcp_server():
+    """Snapshot and restore the mcp_server singleton after each test.
+
+    Tests in test_graceful_shutdown.py reload yadgar.server._app, replacing the
+    FastMCP instance at _app.mcp_server with a fresh (empty) one.  Tests in
+    test_security_headers.py then reload yadgar.server, propagating the empty
+    instance into server.mcp_server.  Later tests on the same xdist worker see
+    an empty route/tool registry — causing 404s, missing tools, and missing /health.
+
+    This backstop restores both binding points after every test so reload-based
+    polluters cannot corrupt the singleton for subsequent tests.  (Root-A xdist
+    pollution — v5.56 fix.  Source fixes in test_graceful_shutdown.py and
+    test_security_headers.py are the primary fix; this is belt-and-suspenders.)
+    """
+    try:
+        import yadgar.server as _srv
+        import yadgar.server._app as _app
+
+        saved_app_mcp = _app.mcp_server
+        saved_srv_mcp = _srv.__dict__.get("mcp_server")
+    except Exception:
+        yield
+        return
+    yield
+    try:
+        import yadgar.server as _srv
+        import yadgar.server._app as _app
+
+        _app.mcp_server = saved_app_mcp
+        if saved_srv_mcp is not None:
+            _srv.__dict__["mcp_server"] = saved_srv_mcp
+    except Exception:
+        pass
 
 
 @pytest.fixture(autouse=True)
@@ -395,7 +513,75 @@ _WIPE_TABLES = (
     "entity",
     "relationship",
     "memory_rule",
+    "checkpoint",
+    "action_log",
+    "episode",
+    "memory_archive",
+    "memory_similarity_link",
+    "memory_block",
+    "prospective_memory",
+    "narrative_entry",
+    "consolidation_log",
 )
+
+# Worker-local set of all SurrealDB database namespaces used so far on this
+# xdist worker.  Populated by `_isolate_surrealdb`'s patch — every time a
+# StorageEngine runs _init_schema it registers its per-path namespace here.
+# `_wipe_surrealdb_data` uses this set to wipe ALL known namespaces (not just
+# the live _st._storage one) so tests that call server.shutdown() before the
+# wipe fixture runs are still cleaned up.  "main" is always wiped in addition
+# to catch CLI-subprocess writes that bypass the isolation patch.
+_USED_SURREAL_NAMESPACES: set[str] = set()
+
+
+def _wipe_namespace_via_http(db_url: str, db_name: str) -> None:
+    """DELETE all rows in _WIPE_TABLES in the given SurrealDB namespace.
+
+    Creates a short-lived httpx.Client so it works even after the test's
+    StorageEngine has been closed.  Errors per-table are silently ignored —
+    the table may not exist yet in the namespace (empty namespace is fine).
+    """
+    import base64
+
+    user = os.environ.get("YADGAR_DB_USER", "root")
+    pw = os.environ.get("YADGAR_DB_PASS", "root")
+    auth = base64.b64encode(f"{user}:{pw}".encode()).decode()
+    _wipe_tables_with_client(db_url, db_name, auth)
+
+
+def _wipe_tables_with_client(db_url: str, db_name: str, auth: str) -> None:
+    """Issue DELETE for each wipe table using a short-lived httpx client."""
+    import httpx
+
+    try:
+        client = httpx.Client(
+            base_url=db_url,
+            headers={
+                "Authorization": f"Basic {auth}",
+                "surreal-ns": "yadgar",
+                "surreal-db": db_name,
+                "Accept": "application/json",
+            },
+            timeout=5.0,
+        )
+    except Exception:
+        return
+    try:
+        for table in _WIPE_TABLES:
+            _delete_table_safe(client, table)
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+def _delete_table_safe(client, table: str) -> None:
+    """POST DELETE for one table; ignore all errors (table may not exist)."""
+    try:
+        client.post("/sql", content=f"DELETE {table};")
+    except Exception:
+        pass
 
 
 @pytest.fixture(autouse=True)
@@ -404,21 +590,81 @@ def _wipe_surrealdb_data():
 
     Keeps the per-file namespace warm (schema stays) but prevents data written
     by one test from leaking into the next test on the same xdist worker.
+
+    Robust fallback (v5.56 iteration 2): when `_st._storage` is None because
+    the test called `server.shutdown()` before this fixture's teardown runs,
+    fall back to per-namespace HTTP wipes using `_USED_SURREAL_NAMESPACES`.
+    Also always wipes the "main" namespace to clean up CLI-subprocess tests
+    (subprocesses inherit YADGAR_DB_URL but not the _isolate_surrealdb patch,
+    so their writes land in "main" and are never reached by the live storage).
+
+    Snapshot guard (v5.56 iteration 3): snapshot ``_USED_SURREAL_NAMESPACES``
+    at test-setup time (after all longer-scoped fixtures have run their setup).
+    The HTTP fallback only wipes namespaces that are *new* since the snapshot —
+    i.e. namespaces registered during the test body itself.  Namespaces
+    belonging to module- or session-scoped fixtures are already in the snapshot
+    and are therefore excluded, so their data survives across function-scoped
+    tests (fixing the regression where the module-scoped characterization corpus
+    was wiped after the first test in the module, causing tests 1-9 to see an
+    empty DB).
     """
+    # Snapshot before the test body runs — module/session fixtures have already
+    # registered their namespaces via _patched_init_schema at this point.
+    pre_test_namespaces: frozenset[str] = frozenset(_USED_SURREAL_NAMESPACES)
     yield
-    if not os.environ.get("YADGAR_DB_URL"):
+    db_url = os.environ.get("YADGAR_DB_URL")
+    if not db_url:
         return
+    _do_wipe_after_test(db_url, pre_test_namespaces)
+
+
+def _do_wipe_after_test(db_url: str, pre_test_namespaces: frozenset[str]) -> None:
+    """Wipe all data tables after a test, tolerating server.shutdown() having run."""
     try:
         from yadgar import server as _s
 
         storage = _s._storage
-        if storage is None:
-            return
-        for table in _WIPE_TABLES:
-            try:
-                storage._q(f"DELETE {table};")
-            except Exception:
-                pass
+    except Exception:
+        storage = None
+
+    if storage is not None:
+        _wipe_via_live_storage(storage, db_url)
+    else:
+        _wipe_via_http_fallback(db_url, pre_test_namespaces)
+
+
+def _wipe_via_live_storage(storage, db_url: str) -> None:
+    """Fast path: wipe via the live StorageEngine (namespace already set on client)."""
+    for table in _WIPE_TABLES:
+        try:
+            storage._q(f"DELETE {table};")
+        except Exception:
+            pass
+    # Always wipe "main" — CLI subprocesses write there bypassing isolation patch.
+    try:
+        _wipe_namespace_via_http(db_url, "main")
+    except Exception:
+        pass
+
+
+def _wipe_via_http_fallback(db_url: str, pre_test_namespaces: frozenset[str]) -> None:
+    """Slow path: storage shut down. Wipe only test-local namespaces + 'main' via HTTP.
+
+    Only namespaces that are *new* since the pre-test snapshot are wiped —
+    namespaces from module- or session-scoped fixtures are excluded so their
+    data survives across function-scoped tests on the same xdist worker.
+    """
+    for ns in list(_USED_SURREAL_NAMESPACES):
+        if ns in pre_test_namespaces:
+            # Namespace existed before this test — belongs to a longer-scoped
+            # fixture; do not wipe it.
+            continue
+        try:
+            _wipe_namespace_via_http(db_url, ns)
+        except Exception:
+            pass
+    try:
+        _wipe_namespace_via_http(db_url, "main")
     except Exception:
         pass
 

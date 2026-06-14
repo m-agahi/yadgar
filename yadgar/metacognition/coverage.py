@@ -10,19 +10,78 @@ def _extract_entities(query: str) -> list[str]:
     return _extract_query_entities(query)
 
 
+def _density_score(memory_count: int) -> float:
+    """Map memory count to a density score bucket."""
+    if memory_count == 0:
+        return 0.0
+    if memory_count <= 2:
+        return 0.3
+    if memory_count <= 5:
+        return 0.6
+    return 0.9
+
+
+def _parse_created_at(value) -> datetime | None:
+    """Parse a created_at value to a timezone-aware datetime, or None."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except (ValueError, TypeError):  # fmt: skip
+            return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value
+
+
+def _recency_score(memories: list[dict]) -> float:
+    """Return recency score based on most recent memory timestamp."""
+    if not memories:
+        return 0.0
+    now = datetime.now(UTC)
+    most_recent = None
+    for m in memories:
+        created = _parse_created_at(m.get("created_at"))
+        if created is None:
+            continue
+        if most_recent is None or created > most_recent:
+            most_recent = created
+    if most_recent is None:
+        return 0.0
+    age_days = (now - most_recent).total_seconds() / 86400
+    if age_days < 1:
+        return 1.0
+    if age_days < 7:
+        return 0.7
+    if age_days < 30:
+        return 0.4
+    return 0.2
+
+
+def _confidence_score(memories: list[dict]) -> float:
+    """Return average confidence score of matching memories."""
+    if not memories:
+        return 0.0
+    confidences = [m.get("confidence", 1.0) for m in memories]
+    return sum(confidences) / len(confidences)
+
+
+def _suggestion(overall: float) -> tuple[str, str]:
+    """Map overall score to suggestion label and detail string."""
+    if overall >= 0.7:
+        return "sufficient", "Proceed with confidence — strong knowledge coverage."
+    if overall >= 0.4:
+        return "partial", "Answer available but may be incomplete — consider investigating gaps."
+    return "insufficient", "Limited knowledge — investigate further before answering."
+
+
 class _CoverageMixin:
     """Metacognitive coverage assessment (MetaRAG signal 1)."""
 
-    def assess_coverage(self, query: str, directory: str = "") -> dict:
-        """Assess how well Yadgar can answer a query.
-
-        Returns a dict with coverage score, confidence, suggestion,
-        identified gaps, and detailed signal breakdowns.
-        """
-        # a) Memory density via FTS + vector search
-        memory_count = 0
-        matching_memories = []
-
+    def _gather_memories(self, query: str) -> list[dict]:
+        """Collect matching memories via FTS + vector search with deduplication."""
+        matching_memories: list[dict] = []
         try:
             fts_results = self._storage.search_memories_fts(query, min_heat=0.0, limit=50)
             if fts_results:
@@ -40,99 +99,52 @@ class _CoverageMixin:
                     if mem:
                         matching_memories.append(mem)
                         seen_ids.add(mid)
+        return matching_memories
 
+    def _entity_coverage(self, query: str) -> tuple[float, list[str]]:
+        """Return (entity_coverage_ratio, unknown_entity_names)."""
+        query_entities = _extract_entities(query)
+        total = len(query_entities)
+        if total == 0:
+            return 0.0, []
+        unknown: list[str] = []
+        known = 0
+        for name in query_entities:
+            if self._storage.get_entity_by_name(name):
+                known += 1
+            else:
+                unknown.append(name)
+        return known / total, unknown
+
+    def assess_coverage(self, query: str, directory: str = "") -> dict:
+        """Assess how well Yadgar can answer a query.
+
+        Returns a dict with coverage score, confidence, suggestion,
+        identified gaps, and detailed signal breakdowns.
+        """
+        matching_memories = self._gather_memories(query)
         memory_count = len(matching_memories)
 
-        # Density scoring: 0=0.0, 1-2=0.3, 3-5=0.6, 6+=0.9
-        if memory_count == 0:
-            density = 0.0
-        elif memory_count <= 2:
-            density = 0.3
-        elif memory_count <= 5:
-            density = 0.6
-        else:
-            density = 0.9
+        density = _density_score(memory_count)
+        entity_coverage, unknown_entities = self._entity_coverage(query)
+        recency = _recency_score(matching_memories)
+        confidence = _confidence_score(matching_memories)
 
-        # b) Entity coverage: what fraction of query entities exist in the graph
-        query_entities = _extract_entities(query)
-        total_query_entities = len(query_entities)
-        known_entities = 0
-        unknown_entities = []
+        overall = 0.3 * density + 0.3 * entity_coverage + 0.2 * recency + 0.2 * confidence
 
-        for entity_name in query_entities:
-            entity = self._storage.get_entity_by_name(entity_name)
-            if entity:
-                known_entities += 1
-            else:
-                unknown_entities.append(entity_name)
+        suggestion, detail = _suggestion(overall)
 
-        if total_query_entities > 0:
-            entity_coverage = known_entities / total_query_entities
-        else:
-            entity_coverage = 0.0
-
-        # c) Recency: age of most recent relevant memory
-        recency_score = 0.0
-        if matching_memories:
-            now = datetime.now(UTC)
-            most_recent = None
-            for m in matching_memories:
-                created = m.get("created_at")
-                if created:
-                    if isinstance(created, str):
-                        try:
-                            created = datetime.fromisoformat(created)
-                        except (ValueError, TypeError) as _e:
-                            continue
-                    if created.tzinfo is None:
-                        created = created.replace(tzinfo=UTC)
-                    if most_recent is None or created > most_recent:
-                        most_recent = created
-            if most_recent is not None:
-                age_days = (now - most_recent).total_seconds() / 86400
-                if age_days < 1:
-                    recency_score = 1.0
-                elif age_days < 7:
-                    recency_score = 0.7
-                elif age_days < 30:
-                    recency_score = 0.4
-                else:
-                    recency_score = 0.2
-
-        # d) Confidence: average confidence score of matching memories
-        confidence_score = 0.0
-        if matching_memories:
-            confidences = [m.get("confidence", 1.0) for m in matching_memories]
-            confidence_score = sum(confidences) / len(confidences)
-
-        # Overall coverage (weighted blend)
-        overall = (
-            0.3 * density + 0.3 * entity_coverage + 0.2 * recency_score + 0.2 * confidence_score
-        )
-
-        # Suggestion
-        if overall >= 0.7:
-            suggestion = "sufficient"
-            detail = "Proceed with confidence — strong knowledge coverage."
-        elif overall >= 0.4:
-            suggestion = "partial"
-            detail = "Answer available but may be incomplete — consider investigating gaps."
-        else:
-            suggestion = "insufficient"
-            detail = "Limited knowledge — investigate further before answering."
-
-        # Identify gaps
         gaps = list(unknown_entities)
         if memory_count == 0:
             gaps.append(f"No memories found matching query: {query[:80]}")
 
         return {
             "coverage": round(overall, 4),
-            "confidence": round(confidence_score, 4),
+            "confidence": round(confidence, 4),
             "suggestion": suggestion,
             "gaps": gaps,
             "memory_count": memory_count,
             "entity_coverage": round(entity_coverage, 4),
-            "recency_score": round(recency_score, 4),
+            "recency_score": round(recency, 4),
             "detail": detail,
         }

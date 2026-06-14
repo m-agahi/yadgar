@@ -2,6 +2,7 @@
 
 import logging
 import time as _time
+from dataclasses import dataclass
 
 from yadgar.retrieval.entities import _QUERY_STOP_WORDS
 from yadgar.retrieval.query_analysis import _build_boosted_fts_query, _pseudo_hyde_expand
@@ -22,6 +23,33 @@ def _observe_stage(stage: str, elapsed_ms: float) -> None:
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class FTSParams:
+    """Cohesive parameter object for FTS signal collection."""
+
+    query: str
+    enabled_signals: object  # set | None
+    open_domain_subqueries: list
+    open_domain_mode: bool
+    candidate_k: int
+    min_heat: float
+    branch_filter: BranchFilter | None = None
+
+
+def _normalize_fts_hits(
+    hits: list,
+    scores: dict,
+    strength: float,
+) -> None:
+    """Normalize BM25 hit scores and update scores[mid]['fts'] in-place."""
+    vals = [s for _, s in hits]
+    lo, hi = min(vals), max(vals)
+    rng = hi - lo
+    for mid, raw in hits:
+        normalized = (raw - lo) / rng if rng > 1e-9 else 0.5
+        scores[mid]["fts"] = max(scores[mid].get("fts", 0.0), normalized * strength)
+
+
 class _ScoringMixin:
     """Score-collector helpers for Retriever.
 
@@ -32,111 +60,105 @@ class _ScoringMixin:
 
     # -- Signal collection helpers --
 
-    def _collect_fts_scores(
-        self,
-        query: str,
-        scores: dict,
-        enabled_signals,
-        open_domain_subqueries: list,
-        open_domain_mode: bool,
-        candidate_k: int,
-        min_heat: float,
-        branch_filter: BranchFilter | None = None,
-    ) -> None:
+    def _run_fts_bm25(self, params: FTSParams, scores: dict) -> None:
+        """Section 1: FTS5 keyword search with BM25 scores (main query + subqueries)."""
+        fts_searches = [(params.query, 1.0)]
+        for subquery in params.open_domain_subqueries:
+            fts_searches.append((subquery, 0.8))
+        try:
+            for fts_query, strength in fts_searches:
+                hits = self._storage.search_memories_fts_scored(
+                    _build_boosted_fts_query(fts_query),
+                    min_heat=params.min_heat,
+                    limit=params.candidate_k,
+                    branch_filter=params.branch_filter,
+                )
+                if hits:
+                    _normalize_fts_hits(hits, scores, strength)
+        except Exception:
+            pass
+
+    def _run_entity_fts(self, params: FTSParams, scores: dict) -> None:
+        """Section 1b: Entity-focused FTS for person names mentioned in the query."""
+        entity_names = [
+            w.strip(".,;:!?()[]{}\"'")
+            for w in params.query.split()
+            if w[0:1].isupper()
+            and len(w.strip(".,;:!?()[]{}\"'")) >= 2
+            and w.strip(".,;:!?()[]{}\"'").lower() not in _QUERY_STOP_WORDS
+        ]
+        if not entity_names:
+            return
+        try:
+            hits = self._storage.search_memories_fts_scored(
+                " ".join(entity_names),
+                min_heat=params.min_heat,
+                limit=params.candidate_k,
+                branch_filter=params.branch_filter,
+            )
+            if hits:
+                strength = 0.7 if params.open_domain_mode else 0.5
+                _normalize_fts_hits(hits, scores, strength)
+        except Exception:
+            pass
+
+    def _run_comet_fts(self, params: FTSParams, scores: dict) -> None:
+        """Section 1c: COMET query expansion FTS (open-domain mode only)."""
+        if not params.open_domain_mode:
+            return
+        comet_terms = self._comet_expand_query(params.query)
+        if not comet_terms:
+            return
+        try:
+            hits = self._storage.search_memories_fts_scored(
+                " ".join(comet_terms[:6]),
+                min_heat=params.min_heat,
+                limit=params.candidate_k,
+                branch_filter=params.branch_filter,
+            )
+            if hits:
+                _normalize_fts_hits(hits, scores, 0.6)
+        except Exception:
+            pass
+
+    def _collect_fts_scores(self, scores: dict, params: FTSParams) -> None:
         """Collect FTS BM25 scores (including entity-FTS and COMET expansion) into scores."""
-        if enabled_signals is not None and "fts" not in enabled_signals:
+        if params.enabled_signals is not None and "fts" not in params.enabled_signals:
             return
         _bm25_t0 = _time.perf_counter()
-
-        # 1. FTS5 keyword search with actual BM25 scores
-        try:
-            fts_searches = [(query, 1.0)]
-            if open_domain_subqueries:
-                for subquery in open_domain_subqueries:
-                    fts_searches.append((subquery, 0.8))
-
-            for fts_query, strength in fts_searches:
-                fts_scored = self._storage.search_memories_fts_scored(
-                    _build_boosted_fts_query(fts_query),
-                    min_heat=min_heat,
-                    limit=candidate_k,
-                    branch_filter=branch_filter,
-                )
-                if not fts_scored:
-                    continue
-                bm25_vals = [s for _, s in fts_scored]
-                bm25_min, bm25_max = min(bm25_vals), max(bm25_vals)
-                bm25_range = bm25_max - bm25_min
-                for mid, bm25_score in fts_scored:
-                    normalized = (bm25_score - bm25_min) / bm25_range if bm25_range > 1e-9 else 0.5
-                    scores[mid]["fts"] = max(
-                        scores[mid].get("fts", 0.0),
-                        normalized * strength,
-                    )
-        except Exception:
-            pass
-
-        # 1b. Entity-focused FTS: search for just person names to ensure
-        #     all memories about mentioned people reach the CE pool.
-        try:
-            entity_names = [
-                w.strip(".,;:!?()[]{}\"'")
-                for w in query.split()
-                if w[0:1].isupper()
-                and len(w.strip(".,;:!?()[]{}\"'")) >= 2
-                and w.strip(".,;:!?()[]{}\"'").lower() not in _QUERY_STOP_WORDS
-            ]
-            if entity_names:
-                entity_query = " ".join(entity_names)
-                entity_hits = self._storage.search_memories_fts_scored(
-                    entity_query,
-                    min_heat=min_heat,
-                    limit=candidate_k,
-                    branch_filter=branch_filter,
-                )
-                if entity_hits:
-                    ent_vals = [s for _, s in entity_hits]
-                    ent_min, ent_max = min(ent_vals), max(ent_vals)
-                    ent_range = ent_max - ent_min
-                    for mid, ent_score in entity_hits:
-                        normalized = (ent_score - ent_min) / ent_range if ent_range > 1e-9 else 0.5
-                        scores[mid]["fts"] = max(
-                            scores[mid].get("fts", 0.0),
-                            normalized * (0.7 if open_domain_mode else 0.5),
-                        )
-        except Exception:
-            pass
-
-        # 1c. COMET query expansion
-        if open_domain_mode:
-            comet_terms = self._comet_expand_query(query)
-            if comet_terms:
-                try:
-                    comet_query = " ".join(comet_terms[:6])
-                    comet_hits = self._storage.search_memories_fts_scored(
-                        comet_query,
-                        min_heat=min_heat,
-                        limit=candidate_k,
-                        branch_filter=branch_filter,
-                    )
-                    if comet_hits:
-                        comet_vals = [s for _, s in comet_hits]
-                        comet_min, comet_max = min(comet_vals), max(comet_vals)
-                        comet_range = comet_max - comet_min
-                        for mid, comet_score in comet_hits:
-                            normalized = (
-                                (comet_score - comet_min) / comet_range
-                                if comet_range > 1e-9
-                                else 0.5
-                            )
-                            scores[mid]["fts"] = max(
-                                scores[mid].get("fts", 0.0),
-                                normalized * 0.6,
-                            )
-                except Exception:
-                    pass
-
+        self._run_fts_bm25(params, scores)
+        self._run_entity_fts(params, scores)
+        self._run_comet_fts(params, scores)
         _observe_stage("bm25", (_time.perf_counter() - _bm25_t0) * 1000)
+
+    def _build_vector_search_list(
+        self,
+        query: str,
+        open_domain_subqueries: list,
+    ) -> list[tuple[str, float]]:
+        """Build the ordered list of (vector_query, strength) pairs to search."""
+        searches = [(query, 1.0)]
+        if self._settings.QUERY_EXPANSION_ENABLED:
+            expanded = _pseudo_hyde_expand(query)
+            if expanded and expanded != query:
+                searches.append((expanded, 0.95))
+        for subquery in open_domain_subqueries[:2]:
+            searches.append((subquery, 0.85))
+        return searches
+
+    def _encode_vector_query(
+        self,
+        vector_query: str,
+        embed_query_observed: bool,
+    ) -> tuple[object | None, float, bool]:
+        """Encode one query string. Returns (encoded, enc_elapsed_ms, observed_flag)."""
+        _enc_t0 = _time.perf_counter()
+        encoded = self._embeddings.encode_query(vector_query)
+        _enc_elapsed = (_time.perf_counter() - _enc_t0) * 1000
+        if not embed_query_observed:
+            _observe_stage("embed_query", _enc_elapsed)
+            embed_query_observed = True
+        return encoded, _enc_elapsed, embed_query_observed
 
     def _collect_vector_scores(
         self,
@@ -154,16 +176,7 @@ class _ScoringMixin:
         if enabled_signals is not None and "vector" not in enabled_signals:
             return vector_memory_ids, query_embedding
 
-        vector_searches = [(query, 1.0)]
-
-        if self._settings.QUERY_EXPANSION_ENABLED:
-            expanded_query = _pseudo_hyde_expand(query)
-            if expanded_query and expanded_query != query:
-                vector_searches.append((expanded_query, 0.95))
-
-        if open_domain_subqueries:
-            for subquery in open_domain_subqueries[:2]:
-                vector_searches.append((subquery, 0.85))
+        vector_searches = self._build_vector_search_list(query, open_domain_subqueries)
 
         seen_vector_queries: set[str] = set()
         _embed_query_observed = False
@@ -174,14 +187,9 @@ class _ScoringMixin:
                 continue
             seen_vector_queries.add(lowered)
 
-            _enc_t0 = _time.perf_counter()
-            encoded = self._embeddings.encode_query(vector_query)
-            _enc_elapsed = (_time.perf_counter() - _enc_t0) * 1000
-            if not _embed_query_observed:
-                # Observe once for the canonical query; subsequent queries use the
-                # same model so timing is dominated by the first call.
-                _observe_stage("embed_query", _enc_elapsed)
-                _embed_query_observed = True
+            encoded, _enc_elapsed, _embed_query_observed = self._encode_vector_query(
+                vector_query, _embed_query_observed
+            )
             if encoded is None:
                 continue
             if vector_query == query:
@@ -247,6 +255,18 @@ class _ScoringMixin:
                     scores[mid]["spread"] = normalized
         _observe_stage("spreading_activation", (_time.perf_counter() - _spread_t0) * 1000)
 
+    def _apply_temporal_content_scores(self, temporal_memories: list, scores: dict) -> None:
+        """Write content-date temporal scores for each returned memory."""
+        for i, mem in enumerate(temporal_memories):
+            if mem.get("id") is not None:
+                scores[mem["id"]]["temporal"] = 1.0 / (1 + i)
+
+    def _apply_temporal_month_scores(self, month_matches: list, scores: dict) -> None:
+        """Write month-proximity temporal scores for memory IDs not already scored."""
+        for mid in month_matches:
+            if scores[mid]["temporal"] == 0.0:
+                scores[mid]["temporal"] = 0.5
+
     def _collect_temporal_scores(
         self,
         query: str,
@@ -273,9 +293,7 @@ class _ScoringMixin:
                 branch_filter=branch_filter,
             )
             if temporal_memories:
-                for i, mem in enumerate(temporal_memories):
-                    if mem.get("id") is not None:
-                        scores[mem["id"]]["temporal"] = 1.0 / (1 + i)
+                self._apply_temporal_content_scores(temporal_memories, scores)
                 w_temporal = 0.8
 
             # B) Timestamp-based temporal matching (created_at proximity)
@@ -287,9 +305,7 @@ class _ScoringMixin:
                     branch_filter=branch_filter,
                 )
                 if month_matches:
-                    for mid in month_matches:
-                        if scores[mid]["temporal"] == 0.0:
-                            scores[mid]["temporal"] = 0.5
+                    self._apply_temporal_month_scores(month_matches, scores)
                     if w_temporal == 0.0:
                         w_temporal = 0.6
         except Exception:

@@ -103,6 +103,56 @@ class EmbeddingEngine:
                         return True
         return False
 
+    def _load_sentence_transformer(self, local_only: bool, old_offline: str | None) -> object:
+        """Load SentenceTransformer with retry/fallback logic.
+
+        Attempt order:
+          1. local_files_only=local_only (primary)
+          2. local_files_only=True (retry after network failure)
+          3. unrestricted online fetch (only when user did not set HF_HUB_OFFLINE)
+        """
+        from sentence_transformers import SentenceTransformer  # noqa: PLC0415
+
+        try:
+            return SentenceTransformer(
+                self.model_name,
+                trust_remote_code=True,
+                local_files_only=local_only,
+            )
+        except Exception:
+            pass
+
+        # Retry with forced local — handles corrupt cache / transient net error.
+        try:
+            return SentenceTransformer(
+                self.model_name, trust_remote_code=True, local_files_only=True
+            )
+        except Exception:
+            # Cache absent or corrupt. Fall through to online only if user
+            # did not explicitly set HF_HUB_OFFLINE.
+            if old_offline is not None:
+                raise  # User wants offline — respect that
+            return SentenceTransformer(self.model_name, trust_remote_code=True)
+
+    @staticmethod
+    def _cap_torch_threads() -> None:
+        """Cap PyTorch intra/inter-op threads to half of available CPUs.
+
+        The OS-level CPUQuota acts as the outer ceiling; this is the inner
+        soft cap so inference never saturates the machine.
+        """
+        try:
+            import torch  # noqa: PLC0415
+
+            _n = max(1, (os.cpu_count() or 2) // 2)
+            torch.set_num_threads(_n)
+            try:
+                torch.set_num_interop_threads(_n)
+            except RuntimeError:
+                pass  # inter-op pool already initialized — intra-op cap is enough
+        except Exception:
+            pass
+
     def _ensure_model(self) -> None:
         """Load the SentenceTransformer model if not already loaded."""
         if self._model is not None or self._unavailable:
@@ -112,8 +162,6 @@ class EmbeddingEngine:
             self._model = EmbeddingEngine._model_cache[self.model_name]
             return
         try:
-            from sentence_transformers import SentenceTransformer
-
             # If model is cached, use local_files_only to avoid network requests
             # that can fail on corporate networks and corrupt the MCP stdio pipe
             local_only = self._is_model_cached()
@@ -122,25 +170,8 @@ class EmbeddingEngine:
             old_offline = os.environ.get("HF_HUB_OFFLINE")
             if local_only:
                 os.environ["HF_HUB_OFFLINE"] = "1"
-
             try:
-                self._model = SentenceTransformer(
-                    self.model_name,
-                    trust_remote_code=True,
-                    local_files_only=local_only,
-                )
-            except Exception:
-                # Network failure or corrupt cache — retry with local_files_only
-                try:
-                    self._model = SentenceTransformer(
-                        self.model_name, trust_remote_code=True, local_files_only=True
-                    )
-                except Exception:
-                    # Cache is corrupt or model not available locally at all.
-                    # Only try online if user didn't explicitly set HF_HUB_OFFLINE.
-                    if old_offline is not None:
-                        raise  # User wants offline — respect that
-                    self._model = SentenceTransformer(self.model_name, trust_remote_code=True)
+                self._model = self._load_sentence_transformer(local_only, old_offline)
             finally:
                 # Restore original HF_HUB_OFFLINE state
                 if old_offline is None:
@@ -152,20 +183,7 @@ class EmbeddingEngine:
             # instances in this process skip the expensive load.
             EmbeddingEngine._model_cache[self.model_name] = self._model
 
-            # Cap PyTorch threads to half the available cores so inference
-            # never saturates the machine. The OS-level CPUQuota acts as an
-            # outer ceiling; this is the inner soft cap.
-            try:
-                import torch
-
-                _n = max(1, (os.cpu_count() or 2) // 2)
-                torch.set_num_threads(_n)
-                try:
-                    torch.set_num_interop_threads(_n)
-                except RuntimeError:
-                    pass  # inter-op pool already initialized — intra-op cap is enough
-            except Exception:
-                pass
+            self._cap_torch_threads()
 
         except ImportError:
             logger.warning(

@@ -1,0 +1,11 @@
+{
+  "caps": {
+    "cyclomatic":  {"soft": 10,  "hard": 15},
+    "nesting":     {"soft": null, "hard": 4},
+    "params":      {"soft": 5,    "hard": 8},
+    "fn_loc":      {"soft": 80,   "hard": 150},
+    "file_loc":    {"soft": 500,  "hard": 1000},
+    "class_depth": {"soft": null, "hard": 3}
+  },
+  "per_path_overrides": {}
+}
