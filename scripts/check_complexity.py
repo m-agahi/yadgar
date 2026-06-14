@@ -276,6 +276,37 @@ def _is_test_file(filepath: str) -> bool:
     return name.startswith("test_") or name.endswith("_test.py")
 
 
+def _is_excluded_path(filepath: str) -> bool:
+    """Return True for paths exempt from I13 enforcement.
+
+    Excluded scopes — mirror the I30 production-only gate in
+    check_complexity_allowlist.py:
+      - yadgar/tests/   — test suite; complexity is expected and tolerated
+      - scripts/        — one-off tooling scripts; not production code
+
+    Both scopes are checked against the resolved absolute path so the
+    predicate holds regardless of whether pre-commit passes a relative
+    or absolute path.
+    """
+    resolved = Path(filepath).resolve()
+    parts = resolved.parts
+    # yadgar/tests/ — any depth inside the tests sub-package
+    for i, part in enumerate(parts):
+        if part == "yadgar" and i + 1 < len(parts) and parts[i + 1] == "tests":
+            return True
+    # scripts/ — the top-level scripts directory (one level below repo root)
+    # Identified by: parent == repo root AND grandparent is also the repo root
+    # resolved-path approach: repo root is _REPO_ROOT; check if the file is
+    # directly under _REPO_ROOT / "scripts".
+    try:
+        rel = resolved.relative_to(_REPO_ROOT)
+        if rel.parts and rel.parts[0] == "scripts":
+            return True
+    except ValueError:
+        pass
+    return False
+
+
 def _check_function(  # noqa: C901 - cohesive: dispatch function; each branch = one metric check (cyclo/loc/nesting/params)
     r: FunctionResult,
     source_lines: list[str],
@@ -702,6 +733,10 @@ def check_files(
             continue
         # Normalise to absolute path so baseline key lookup always hits
         filepath = str(Path(filepath).resolve())
+        # Skip test suite and one-off scripts — I13 enforces production code only.
+        # Mirrors the yadgar/-only scope of check_complexity_allowlist.py (I30).
+        if _is_excluded_path(filepath):
+            continue
         is_test = _is_test_file(filepath)
         result = analyze_staged_file(filepath, is_test, baseline, allowlist_index, caps)
         combined.violations.extend(result.violations)
@@ -813,11 +848,13 @@ def main() -> None:
 
     if args.all_files:
         repo_root = Path(__file__).parent.parent
+        # Scan production code only: yadgar/ (excluding yadgar/tests/).
+        # scripts/ is excluded — one-off tooling, not production.
+        # Matches the I30 production-only scope in check_complexity_allowlist.py.
         filenames = [
             str(p)
-            for d in ("yadgar", "scripts")
-            for p in (repo_root / d).rglob("*.py")
-            if "__pycache__" not in str(p) and ".venv" not in str(p)
+            for p in (repo_root / "yadgar").rglob("*.py")
+            if "__pycache__" not in str(p) and ".venv" not in str(p) and "/tests/" not in str(p)
         ]
     else:
         filenames = args.filenames

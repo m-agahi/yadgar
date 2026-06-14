@@ -1,0 +1,156 @@
+name: CI (PR)
+
+on:
+  pull_request:
+    branches: [master]
+
+# Cancel superseded test runs on a fresh push to the same PR branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# YADGAR_CI_BRANCH tells the yadgar daemon which branch context to use in the
+# CI runner (B2 fix — CI runner paths are anonymised so git branch detection
+# fails without this hint). See docs/DECISIONS.md PD-42.
+# YADGAR_TEST_SKIP_RUNTIME_CHECK: skip container-runtime detection in Makefile
+# pre-setup target when podman/docker is absent in CI runner (P8 fix v5.46.7).
+env:
+  YADGAR_CI_BRANCH: master
+  YADGAR_TEST_SKIP_RUNTIME_CHECK: "1"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # Run in the yadgar-ci image which pins Python 3.14 + includes make, git,
+    # curl, and pre-installed test deps. Replaces python:3.14-slim (B6 fix).
+    # Image built locally and pushed to dockerhub per PD-42 carve-out.
+    container:
+      image: docker.io/openfantasy/yadgar-ci:5.46.9
+    steps:
+      # make, git, curl, ca-certificates, nodejs are pre-installed in yadgar-ci image.
+      # No apt-get install step needed for these system deps.
+
+      - uses: https://data.forgejo.org/actions/checkout@v6
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: /root/.cache/pip
+          key: pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-
+
+      - name: Install dependencies
+        # SurrealDB v3.0.5 and HuggingFace all-MiniLM-L6-v2 are baked into
+        # yadgar-ci:5.46.9 — no cache/install steps needed.
+        # No --no-cache-dir: pip cache at /root/.cache/pip avoids re-downloading
+        # torch + sentence-transformers (~1 GB) on every run.
+        # uv: required by test_v5_46_10_wheel_bundle (uv build --wheel subprocess)
+        # and pre-commit check-config-three-way-sync hook.
+        run: |
+          pip install -e ".[test,ml]"
+          pip install uv
+
+      - name: Run tests
+        # -n auto parallelises across CPU cores via pytest-xdist (already
+        # in the [test] extra). --reruns: the suite shares a session-scoped
+        # SurrealDB across xdist workers; a few server-globals tests flake on
+        # worker ordering. Retry twice before counting a failure.
+        run: python -m pytest yadgar/tests/ -q --tb=short -n auto --reruns 2 --reruns-delay 2
+
+      - name: Check I23 — declared metrics must have writers
+        run: python scripts/check_metric_writers.py
+
+      - name: Check I24 — public HTTP handlers must have @trace_span
+        run: python scripts/check_trace_spans.py
+
+      - name: Check I25 — config three-way-sync (Settings + yaml + registry)
+        run: python -m pytest yadgar/tests/test_config_three_way_sync.py -q --tb=short
+
+      - name: Check I29 — edge dead-capability lint (produced ≡ contracted, no drop-still-produced)
+        run: python scripts/check_dead_capability.py
+
+  viz-tests:
+    runs-on: ubuntu-latest
+    # Use yadgar-ci-viz which extends yadgar-ci with Playwright + Chromium pre-baked.
+    # Saves ~75s vs inline apt-get install on every run (v5.46.9 CI speedup).
+    container:
+      image: docker.io/openfantasy/yadgar-ci-viz:5.46.9
+    steps:
+      # Playwright + Chromium + SurrealDB + HF model pre-baked in yadgar-ci-viz.
+      # No apt-get install or binary download steps needed.
+
+      - uses: https://data.forgejo.org/actions/checkout@v6
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: /root/.cache/pip
+          key: pip-viz-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-viz-
+
+      - name: Cache npm (viz-tests)
+        uses: actions/cache@v4
+        with:
+          path: viz-tests/node_modules
+          key: npm-viz-${{ hashFiles('viz-tests/package-lock.json') }}
+          restore-keys: npm-viz-
+
+      - name: Install Python dependencies
+        # uv: required by test_v5_46_10_wheel_bundle (uv build --wheel subprocess).
+        run: |
+          pip install -e ".[test,ml]"
+          pip install uv
+
+      - name: Layer 1 — API contract integrity (Python)
+        run: |
+          python -m pytest yadgar/tests/test_graph_api_contract.py \
+            -v --tb=short -q --reruns 1
+
+      - name: Layer 2 — Playwright headless smoke
+        # System chromium path pre-set via PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+        # env in yadgar-ci-viz image. No extra env needed here.
+        run: |
+          python -m pytest yadgar/tests/integration/viz/ \
+            -m integration -v --tb=short -q --reruns 1
+
+      - name: Install Node.js deps (Layer 3)
+        working-directory: viz-tests
+        # Resilient install: npm registry socket timeouts are a recurring CI flake.
+        # Bump fetch retries/timeouts and retry the whole `npm ci` up to 3x.
+        run: |
+          npm config set fetch-retries 5
+          npm config set fetch-retry-mintimeout 20000
+          npm config set fetch-retry-maxtimeout 120000
+          npm config set fetch-timeout 300000
+          ok=0
+          for attempt in 1 2 3; do
+            if npm ci; then ok=1; break; fi
+            echo "npm ci attempt ${attempt} failed; retrying in 10s..." >&2
+            sleep 10
+          done
+          [ "$ok" = 1 ] || { echo "npm ci failed after 3 attempts" >&2; exit 1; }
+
+      - name: Layer 3 — JS unit tests (Vitest)
+        working-directory: viz-tests
+        run: npx vitest run
+
+  verify-version-bump:
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.14-slim
+    steps:
+      - name: Install runtime deps (nodejs for actions, git, ca-certs)
+        run: apt-get update -qq && apt-get install -y --no-install-recommends nodejs git ca-certificates
+      - uses: https://data.forgejo.org/actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Verify version bump vs latest tag
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          PYPROJECT_VER=$(grep -E '^version = ' pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          if [ "v${PYPROJECT_VER}" = "${LATEST_TAG}" ]; then
+            if git diff --name-only origin/master...HEAD | grep -qE '^yadgar/'; then
+              echo "::error::pyproject.toml version (${PYPROJECT_VER}) matches latest tag (${LATEST_TAG}). Bump or add 'no-release' label."
+              exit 1
+            fi
+          fi

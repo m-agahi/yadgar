@@ -5,6 +5,21 @@ check-complexity-allowlist).
 
 ---
 
+## Scope — production code only
+
+I13 (`check-complexity`) enforces caps on **production code only**:
+
+- `yadgar/` — production package, excluding `yadgar/tests/`
+- Everything else is **exempt**: `yadgar/tests/` (test suite) and `scripts/` (one-off tooling)
+
+This matches the scope of I30 (`check-complexity-allowlist`), which also scans
+`yadgar/` only and skips test files. The two invariants agree by design.
+
+Test and script files are expected to contain longer, more complex functions and
+are governed by review rather than automated caps.
+
+---
+
 ## Caps
 
 Caps live in `.complexity-config.json` at the repo root. Changing a cap requires a reviewed PR diff —

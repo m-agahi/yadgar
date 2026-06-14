@@ -1,0 +1,398 @@
+name: CI (Release)
+
+# Triggers on every push to master (post-merge). Detects whether a new version
+# was bumped; if so, runs the full release pipeline: build images, build wheel,
+# publish to PyPI, create git tag + Forgejo release.
+#
+# workflow_dispatch: manual fallback — forces release=true so an operator can
+# re-run a failed release without re-pushing to master.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+# Don't cancel in-progress releases when a new push arrives — let the current
+# release finish. Only one release runs at a time per ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  YADGAR_CI_BRANCH: master
+  YADGAR_TEST_SKIP_RUNTIME_CHECK: "1"
+
+jobs:
+  # ── Detect whether a release is needed ───────────────────────────────────
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      release:  ${{ steps.detect.outputs.release }}
+      core:     ${{ steps.detect.outputs.core }}
+      backend:  ${{ steps.detect.outputs.backend }}
+      version:  ${{ steps.detect.outputs.version }}
+    steps:
+      - name: Checkout (full history for tag detection)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect version bump + per-image changes
+        id: detect
+        # Release fires when pyproject version differs from the latest v* tag.
+        # On workflow_dispatch, force release=true (manual override).
+        # Per-image rebuild detection uses file globs + server.json version fields
+        # (same logic as the old ci.yaml changes job).
+        run: |
+          set -euo pipefail
+
+          PYPROJECT_VER=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "version=${PYPROJECT_VER}" >> "$GITHUB_OUTPUT"
+
+          # Latest v* git tag (empty string if none exist yet → first release)
+          LATEST_TAG=$(git tag --list 'v*' | sort -V | tail -1 || true)
+          LATEST_VER="${LATEST_TAG#v}"  # strip leading v
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual dispatch — forcing release=true"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          elif [ -z "$LATEST_VER" ]; then
+            echo "No v* tags found — first release, release=true"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          elif [ "${PYPROJECT_VER}" = "${LATEST_VER}" ]; then
+            echo "Version ${PYPROJECT_VER} already tagged — release=false"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "New version ${PYPROJECT_VER} vs latest tag ${LATEST_TAG} — release=true"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Per-image change detection: diff HEAD~1..HEAD file globs.
+          # (On first commit / shallow history, default both=true.)
+          if ! git rev-parse HEAD~1 >/dev/null 2>&1; then
+            echo "core=true"    >> "$GITHUB_OUTPUT"
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed=$(git diff --name-only HEAD~1 HEAD)
+
+          core_changed=false
+          backend_changed=false
+
+          # Per-image file globs. Workflow files are deliberately NOT in either
+          # pattern — workflow edits change orchestration, not image content.
+          # To force a rebuild, bump the version field in pyproject.toml or server.json.
+          if echo "$changed" | grep -qE '^(Dockerfile$|entrypoint\.sh$|yadgar/|pyproject\.toml$)'; then
+            core_changed=true
+          fi
+          if echo "$changed" | grep -qE '^(Dockerfile\.backend$|entrypoint-backend\.sh$)'; then
+            backend_changed=true
+          fi
+
+          # server.json — only the relevant version field counts
+          if echo "$changed" | grep -q '^server\.json$'; then
+            old_core=$(git show HEAD~1:server.json | python3 -c "import json,sys; print(json.load(sys.stdin)['version'])")
+            new_core=$(python3 -c "import json; print(json.load(open('server.json'))['version'])")
+            [ "$old_core" != "$new_core" ] && core_changed=true
+            old_be=$(git show HEAD~1:server.json | python3 -c "import json,sys; print(json.load(sys.stdin)['backend_version'])")
+            new_be=$(python3 -c "import json; print(json.load(open('server.json'))['backend_version'])")
+            [ "$old_be" != "$new_be" ] && backend_changed=true
+          fi
+
+          echo "core=$core_changed"       >> "$GITHUB_OUTPUT"
+          echo "backend=$backend_changed" >> "$GITHUB_OUTPUT"
+          echo "core_changed=$core_changed backend_changed=$backend_changed"
+
+  # ── Build Docker images ───────────────────────────────────────────────────
+  build-images:
+    needs: changes
+    if: needs.changes.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    # The self-hosted runner host has no `docker` binary — run inside docker:cli
+    # (alpine), then apk-install the bits the JS actions / scripts need.
+    container:
+      image: docker:cli
+    steps:
+      - name: Install minimal tools
+        # docker:cli already has the docker CLI. bash for heredocs, python3 for
+        # version extraction, nodejs+git for JS actions, curl for runtime.
+        run: apk add --no-cache bash python3 nodejs git curl
+
+      - uses: https://data.forgejo.org/actions/checkout@v6
+
+      # Log in BEFORE setting up buildx: the `cloud` driver fetches a Docker Hub
+      # token to reach the remote builder (openfantasy/builder), so credentials
+      # must already be present.
+      - name: Log in to Docker Hub
+        uses: https://github.com/docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx (Build Cloud)
+        uses: https://github.com/docker/setup-buildx-action@v3
+        with:
+          driver: cloud
+          endpoint: openfantasy/builder
+
+      - name: Get version from pyproject.toml
+        id: get-version
+        run: |
+          echo "version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" >> "$GITHUB_OUTPUT"
+
+      - name: Get backend version from server.json
+        id: get-backend-version
+        run: |
+          echo "version=$(python3 -c "import json; print(json.load(open('server.json'))['backend_version'])")" >> "$GITHUB_OUTPUT"
+
+      # Generate tags for core image: latest + exact version on master, semver on tags
+      - name: Docker metadata (core)
+        id: meta-core
+        uses: https://github.com/docker/metadata-action@v5
+        with:
+          images: openfantasy/yadgar
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.get-version.outputs.version }},enable={{is_default_branch}}
+
+      # Generate tags for backend image — version read from server.json:backend_version
+      # so core and backend can be bumped independently.
+      - name: Docker metadata (backend)
+        id: meta-backend
+        uses: https://github.com/docker/metadata-action@v5
+        with:
+          images: openfantasy/yadgar-backend
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.get-backend-version.outputs.version }},enable={{is_default_branch}}
+
+      - name: Build and push core image
+        if: needs.changes.outputs.core == 'true'
+        uses: https://github.com/docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: prod
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta-core.outputs.tags }}
+          labels: ${{ steps.meta-core.outputs.labels }}
+          # Registry-based BuildKit cache on dockerhub. Reused across runs on
+          # the same builder; survives runner restarts unlike actions/cache.
+          cache-from: type=registry,ref=openfantasy/yadgar:buildcache
+          cache-to: type=registry,ref=openfantasy/yadgar:buildcache,mode=min
+
+      - name: Build and push backend image
+        if: needs.changes.outputs.backend == 'true'
+        uses: https://github.com/docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.backend
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta-backend.outputs.tags }}
+          labels: ${{ steps.meta-backend.outputs.labels }}
+          cache-from: type=registry,ref=openfantasy/yadgar-backend:buildcache
+          cache-to: type=registry,ref=openfantasy/yadgar-backend:buildcache,mode=min
+
+  # ── Build wheel + sdist ───────────────────────────────────────────────────
+  build-wheel:
+    needs: changes
+    if: needs.changes.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    container:
+      image: docker.io/openfantasy/yadgar-ci:5.46.9
+    steps:
+      # make, git, curl, ca-certificates, nodejs are pre-installed in yadgar-ci image.
+
+      - uses: https://data.forgejo.org/actions/checkout@v6
+
+      - name: Install build tools
+        run: pip install build
+
+      - name: Get version from pyproject.toml
+        id: get-version
+        run: |
+          echo "version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" >> "$GITHUB_OUTPUT"
+
+      - name: Build sdist + wheel
+        run: python -m build
+
+      - name: Upload dist artifacts
+        uses: https://data.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: dist-${{ steps.get-version.outputs.version }}
+          path: dist/
+          retention-days: 7
+
+  # ── Generate SBOM ─────────────────────────────────────────────────────────
+  build-sbom:
+    needs: [changes, build-wheel]
+    if: needs.changes.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    container:
+      image: docker.io/openfantasy/yadgar-ci:5.46.9
+    steps:
+      # make, git, nodejs are pre-installed in yadgar-ci image.
+
+      - uses: https://data.forgejo.org/actions/checkout@v6
+
+      - name: Get version
+        id: get-version
+        run: |
+          echo "version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" >> "$GITHUB_OUTPUT"
+
+      - name: Download dist artifacts
+        uses: https://data.forgejo.org/actions/download-artifact@v3.1.0
+        with:
+          name: dist-${{ steps.get-version.outputs.version }}
+          path: dist/
+
+      - name: Install yadgar with sbom extra
+        # Install from the local wheel built by build-wheel job (already in dist/).
+        # This avoids a PyPI roundtrip and guarantees we test the exact artifact
+        # being released. Wheel filename: yadgar-<version>-py3-none-any.whl.
+        run: |
+          pip install --upgrade pip
+          pip install "dist/yadgar-${{ steps.get-version.outputs.version }}-py3-none-any.whl[sbom]"
+
+      - name: Generate CycloneDX SBOM
+        env:
+          SBOM_VERSION: ${{ steps.get-version.outputs.version }}
+          SBOM_OUTPUT: dist/yadgar-${{ steps.get-version.outputs.version }}-sbom.cdx.json
+        run: bash scripts/generate_sbom.sh
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > CHECKSUMS.txt
+          echo "==> Checksums:"
+          cat CHECKSUMS.txt
+
+      - name: Upload dist + sbom + checksums
+        uses: https://data.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: release-assets-${{ steps.get-version.outputs.version }}
+          path: dist/
+          retention-days: 30
+
+  # ── Publish to PyPI ───────────────────────────────────────────────────────
+  # Uses twine upload (consistent with release.yaml). PYPI_API_TOKEN must be
+  # configured in Forgejo Settings → Actions → Secrets (project-scoped token).
+  publish-pypi:
+    needs: [changes, build-wheel]
+    if: needs.changes.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    container:
+      image: docker.io/openfantasy/yadgar-ci:5.46.9
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+
+      - name: Get version from pyproject.toml
+        id: get-version
+        run: |
+          echo "version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" >> "$GITHUB_OUTPUT"
+
+      - name: Download dist artifacts
+        uses: https://data.forgejo.org/actions/download-artifact@v3.1.0
+        with:
+          name: dist-${{ steps.get-version.outputs.version }}
+          path: dist/
+
+      - name: Install twine
+        run: pip install twine
+
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: twine upload --skip-existing dist/*
+
+  # ── Create git tag + Forgejo release ─────────────────────────────────────
+  tag-and-release:
+    needs: [changes, publish-pypi, build-images, build-sbom]
+    if: needs.changes.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    container:
+      image: docker.io/openfantasy/yadgar-ci:5.46.9
+    steps:
+      - name: Install jq
+        # curl, nodejs pre-installed in yadgar-ci; jq is not.
+        run: apt-get update -qq && apt-get install -y --no-install-recommends jq
+
+      - uses: https://data.forgejo.org/actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Get version
+        id: get-version
+        run: |
+          echo "version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push git tag
+        env:
+          VERSION: ${{ steps.get-version.outputs.version }}
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          REPO: maxagahi/yadgar
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+
+          # Configure git identity for the tag
+          git config user.email "ci@yadgar"
+          git config user.name "yadgar-ci"
+
+          # Push tag via authenticated HTTPS
+          git tag "${TAG}" HEAD || echo "Tag ${TAG} already exists locally"
+          git push "https://x-token:${FORGEJO_TOKEN}@codeberg.org/${REPO}.git" "${TAG}" \
+            || echo "Tag ${TAG} already exists on remote (skipping)"
+
+      - name: Download release assets
+        uses: https://data.forgejo.org/actions/download-artifact@v3.1.0
+        with:
+          name: release-assets-${{ steps.get-version.outputs.version }}
+          path: dist/
+
+      - name: Create or update Forgejo release and attach assets
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          VERSION: ${{ steps.get-version.outputs.version }}
+          REPO: maxagahi/yadgar
+          API: https://codeberg.org/api/v1
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+
+          # Check if release already exists
+          RELEASE_ID=$(curl -sf -H "Authorization: token ${FORGEJO_TOKEN}" \
+            "${API}/repos/${REPO}/releases/tags/${TAG}" 2>/dev/null | \
+            python3 -c "import json,sys; d=json.load(sys.stdin); print(d['id'])" 2>/dev/null || echo "")
+
+          if [ -z "$RELEASE_ID" ]; then
+            # Create new release
+            RELEASE_ID=$(curl -sf -X POST \
+              -H "Authorization: token ${FORGEJO_TOKEN}" \
+              -H "Content-Type: application/json" \
+              "${API}/repos/${REPO}/releases" \
+              -d "{\"tag_name\":\"${TAG}\",\"name\":\"yadgar ${VERSION}\",\"body\":\"Release ${VERSION}. See CHANGELOG.md for details.\",\"draft\":false,\"prerelease\":$(python3 -c "print('true' if 'alpha' in '${VERSION}' or 'beta' in '${VERSION}' else 'false')")}" | \
+              python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+            echo "Created release ${RELEASE_ID} for ${TAG}"
+          else
+            echo "Release ${RELEASE_ID} already exists for ${TAG}"
+          fi
+
+          # Upload all dist/ files as release assets
+          for f in dist/*; do
+            filename=$(basename "$f")
+            echo "Uploading ${filename}..."
+            curl -sf -X POST \
+              -H "Authorization: token ${FORGEJO_TOKEN}" \
+              -F "attachment=@${f}" \
+              "${API}/repos/${REPO}/releases/${RELEASE_ID}/assets?name=${filename}" || \
+              echo "WARN: Failed to upload ${filename} (may already exist)"
+          done
+          echo "==> Release assets attached."

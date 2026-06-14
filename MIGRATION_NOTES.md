@@ -6998,3 +6998,37 @@ per-test timeout can actually kill a deadlocked test (the thread method could no
 ### Orchestration-safety watchdog systemd units
 
 The watchdog scripts and systemd units shipped in `chore/orchestration-safety` (see section above). If not yet installed, follow the steps in the "Orchestration safety net" section above — do NOT install them automatically; run the commands yourself.
+
+---
+
+## v5.57.0
+
+### Forgejo branch protection — MUST configure manually
+
+The new production CI split (`validate.yaml` / `ci-pr.yaml` / `ci-release.yaml`) requires branch
+protection on `master` to enforce the PR-gated checks. Without protection, direct pushes to master
+bypass test gating.
+
+**Steps (Forgejo → Settings → Branches → Add Rule for `master`):**
+
+1. Enable "Protect this branch"
+2. Enable "Require status checks to pass before merging"
+3. Add required checks:
+   - `validate / validate`
+   - `CI (PR) / test`
+   - `CI (PR) / viz-tests`
+   - `CI (PR) / verify-version-bump`
+4. Enable "Restrict pushes that create matching branches" (PRs only; no direct pushes)
+5. Save
+
+**Why this is safe:** `ci-release.yaml` does NOT re-run tests on master push — it assumes the PR
+checks already passed. Branch protection is what makes that assumption valid. Without it, a direct
+push bypassing CI could trigger a publish to PyPI without test gating.
+
+### nix / flake bump — manual
+
+After the v5.57.0 PyPI package publishes and container images are available, bump the nix module:
+- Core version: `5.56.0` → `5.57.0`
+- Backend image tag: `5.6.0` (unchanged — no backend build input changes in v5.57.0)
+
+Run `nix-update` or edit `flake.nix` manually. Claude does not do this.
