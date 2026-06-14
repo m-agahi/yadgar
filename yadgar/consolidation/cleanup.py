@@ -62,6 +62,56 @@ def _quarantine_action_group(action_ids: list, reason: str, directory: str) -> N
         logger.debug("quarantine write failed (non-fatal)", exc_info=True)
 
 
+def _bucket_for_timestamp(timestamp: str) -> str:
+    """Return a 30-minute bucket string for *timestamp*, or 'unknown' on parse error."""
+    try:
+        dt = datetime.fromisoformat(timestamp)
+        return dt.strftime("%Y-%m-%d-%H") + f"-{dt.minute // 30}"
+    except (ValueError, TypeError):  # fmt: skip
+        return "unknown"
+
+
+def _group_rows_by_window(rows: list) -> dict[str, list]:
+    """Group action-log rows by (directory, 30-min window) key.
+
+    Each value is a list of compact dicts: {id, tool, summary, directory}.
+    """
+    groups: dict[str, list] = {}
+    for row in rows:
+        directory = row.get("directory") or "unknown"
+        bucket = _bucket_for_timestamp(row.get("timestamp", ""))
+        key = f"{directory}|{bucket}"
+        groups.setdefault(key, []).append(
+            {
+                "id": row.get("id"),
+                "tool": row.get("tool_name", ""),
+                "summary": row.get("tool_input_summary", ""),
+                "directory": directory,
+            }
+        )
+    return groups
+
+
+def _build_group_content(actions: list) -> str | None:
+    """Build a summary string for *actions* if the group has >= 3 entries.
+
+    Returns None when the group is too small to warrant a memory.
+    """
+    if len(actions) < 3:
+        return None
+    tool_counts: dict[str, int] = {}
+    details: list[str] = []
+    for a in actions:
+        tool_counts[a["tool"]] = tool_counts.get(a["tool"], 0) + 1
+        if a["summary"] and len(details) < 5:
+            details.append(f"{a['tool']}: {a['summary'][:80]}")
+    tools_str = ", ".join(f"{t}({c})" for t, c in sorted(tool_counts.items(), key=lambda x: -x[1]))
+    content = f"Session activity [{tools_str}]: {len(actions)} tool calls"
+    if details:
+        content += "\n" + "\n".join(f"- {d}" for d in details)
+    return content
+
+
 class _CleanupMixin:
     """Action log processing and retention-based table pruning."""
 
@@ -85,49 +135,12 @@ class _CleanupMixin:
         if not rows:
             return stats
 
-        # Group by directory + 30-min windows
-        groups: dict[str, list] = {}
-        for row in rows:
-            directory = row.get("directory") or "unknown"
-            timestamp = row.get("timestamp", "")
-            # Create a window key: directory + 30-min bucket
-            try:
-                dt = datetime.fromisoformat(timestamp)
-                bucket = dt.strftime("%Y-%m-%d-%H") + f"-{dt.minute // 30}"
-            except (ValueError, TypeError) as _e:
-                bucket = "unknown"
-            key = f"{directory}|{bucket}"
-            if key not in groups:
-                groups[key] = []
-            groups[key].append(
-                {
-                    "id": row.get("id"),
-                    "tool": row.get("tool_name", ""),
-                    "summary": row.get("tool_input_summary", ""),
-                    "directory": directory,
-                }
-            )
+        groups = _group_rows_by_window(rows)
 
-        # Create a summary memory for each group with 3+ actions
         for _key, actions in groups.items():
             directory = actions[0]["directory"]
-
-            # Build action summary
-            tool_counts: dict[str, int] = {}
-            details = []
-            for a in actions:
-                tool_counts[a["tool"]] = tool_counts.get(a["tool"], 0) + 1
-                if a["summary"] and len(details) < 5:
-                    details.append(f"{a['tool']}: {a['summary'][:80]}")
-
-            if len(actions) >= 3:
-                tools_str = ", ".join(
-                    f"{t}({c})" for t, c in sorted(tool_counts.items(), key=lambda x: -x[1])
-                )
-                content = f"Session activity [{tools_str}]: {len(actions)} tool calls"
-                if details:
-                    content += "\n" + "\n".join(f"- {d}" for d in details)
-
+            content = _build_group_content(actions)
+            if content is not None:
                 group_ids = [a["id"] for a in actions]
                 stored = self._try_store_action_summary(content, directory, group_ids)
                 if stored is None:
@@ -135,19 +148,21 @@ class _CleanupMixin:
                 else:
                     stats["memories_created"] += stored
 
-            # Mark all as processed
             ids = [a["id"] for a in actions]
             self._storage.mark_actions_processed(ids)
             stats["processed"] += len(actions)
 
-        # Prune old processed rows so action_log doesn't grow without bound.
+        self._prune_action_log_safe()
+
+        return stats
+
+    def _prune_action_log_safe(self) -> None:
+        """Prune old processed rows so action_log doesn't grow without bound. Non-fatal."""
         try:
             retention = self._settings.ACTION_LOG_RETENTION_DAYS
             self._storage.prune_processed_action_log(older_than_days=retention)
         except Exception:
             logger.debug("action_log prune failed (non-fatal)", exc_info=True)
-
-        return stats
 
     def _try_store_action_summary(
         self, content: str, directory: str, group_ids: list

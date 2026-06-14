@@ -243,6 +243,93 @@ class CheckpointRestore:
             "auto_checkpoint_created": auto_created,
         }
 
+    def _fetch_recent_memories_safe(self, max_memories: int) -> list[dict]:
+        """Fetch recently stored memories, suppressing errors (step 3 of restore).
+
+        Returns [] on any storage failure so restore() stays unblocked.
+        """
+        try:
+            memories = self._storage.get_recent_memories(limit=max_memories)
+            for m in memories:
+                m.pop("embedding", None)
+            return memories
+        except Exception:
+            logger.debug("Failed to fetch recently stored memories for restore")
+            return []
+
+    def _fetch_hot_memories(
+        self,
+        directory: str,
+        exclude_ids: set[int],
+        max_memories: int,
+    ) -> list[dict]:
+        """Fetch hot project memories, deduplicated against exclude_ids (step 4 of restore)."""
+        if directory:
+            hot = self._storage.get_memories_for_directory(
+                directory, min_heat=self._settings.HOT_THRESHOLD
+            )
+        else:
+            hot = self._storage.get_memories_by_heat(self._settings.HOT_THRESHOLD)
+        for m in hot:
+            m.pop("embedding", None)
+        return [m for m in hot if m["id"] not in exclude_ids][:max_memories]
+
+    def _build_sr_query(self, checkpoint: dict | None, directory: str) -> str:
+        """Derive SR navigation query from checkpoint task or directory (step 5 of restore)."""
+        if checkpoint:
+            task = checkpoint.get("current_task", "")
+            if task:
+                return task
+        return f"project work in {directory}" if directory else ""
+
+    def _predict_memories(
+        self,
+        checkpoint: dict | None,
+        directory: str,
+        seen_ids: set[int],
+        max_memories: int,
+    ) -> list[dict]:
+        """Run SR cognitive-map navigation to predict needed memories (step 5 of restore).
+
+        Returns [] when cognitive map is absent or has insufficient data.
+        """
+        if self._cognitive_map is None or not self._cognitive_map.has_sufficient_data():
+            return []
+        query = self._build_sr_query(checkpoint, directory)
+        if not query:
+            return []
+        query_emb = self._embeddings.encode(query)
+        if query_emb is None:
+            return []
+        sr_results = self._cognitive_map.navigate_to(
+            query_emb, self._embeddings, top_k=max_memories // 2
+        )
+        predicted: list[dict] = []
+        local_seen = set(seen_ids)
+        for mid, proximity in sr_results:
+            if mid in local_seen:
+                continue
+            mem = self._storage.get_memory(mid)
+            if mem:
+                mem.pop("embedding", None)
+                mem["_sr_proximity"] = round(proximity, 4)
+                predicted.append(mem)
+                local_seen.add(mid)
+        return predicted
+
+    def _detect_gaps_safe(self, directory: str) -> list[dict]:
+        """Detect knowledge gaps, suppressing errors (step 6 of restore).
+
+        Returns at most 3 gaps. Returns [] when metacognition is absent or on error.
+        """
+        if self._metacognition is None or not directory:
+            return []
+        try:
+            return self._metacognition.detect_gaps(directory)[:3]
+        except Exception:
+            logger.debug("Gap detection failed during restore")
+            return []
+
     def restore(self, directory: str = "") -> dict:
         """Intelligent context reconstruction after compaction.
 
@@ -257,77 +344,30 @@ class CheckpointRestore:
         """
         max_memories = self._settings.REPLAY_MAX_RESTORE_MEMORIES
 
-        # 1. Get latest checkpoint for this directory
+        # 1. Latest checkpoint
         checkpoint = self._storage.get_active_checkpoint(directory)
 
-        # 2. Get anchored memories (always included, scope-split: global first then project)
+        # 2. Anchored memories (scope-split: global first then project)
         anchored = self._storage.get_anchored_memories_scoped(
             directory=directory, limit=max_memories
         )
         for m in anchored:
             m.pop("embedding", None)
 
-        # 3. Recently stored memories (working memory — what was actively being worked on)
-        # These capture incremental progress that may not be "hot" yet but represents
-        # the user's active train of thought before compaction
-        recent_memories = []
-        try:
-            recent_memories = self._storage.get_recent_memories(limit=max_memories)
-            for m in recent_memories:
-                m.pop("embedding", None)
+        # 3. Recently stored memories (working memory)
+        recent_memories = self._fetch_recent_memories_safe(max_memories)
 
-        except Exception:
-            logger.debug("Failed to fetch recently stored memories for restore")
-
-        # 4. Hot project memories
-        hot_memories = []
-        if directory:
-            hot_memories = self._storage.get_memories_for_directory(
-                directory, min_heat=self._settings.HOT_THRESHOLD
-            )
-        else:
-            hot_memories = self._storage.get_memories_by_heat(self._settings.HOT_THRESHOLD)
-        for m in hot_memories:
-            m.pop("embedding", None)
-
-        # Exclude anchored and recent IDs from hot to avoid duplicates
+        # 4. Hot project memories (deduplicated)
         anchor_ids = {m["id"] for m in anchored}
         recent_ids = {m["id"] for m in recent_memories}
-        hot_memories = [m for m in hot_memories if m["id"] not in anchor_ids | recent_ids]
-        hot_memories = hot_memories[:max_memories]
+        hot_memories = self._fetch_hot_memories(directory, anchor_ids | recent_ids, max_memories)
 
         # 5. Predictive retrieval via SR cognitive map
-        predicted = []
-        if self._cognitive_map is not None and self._cognitive_map.has_sufficient_data():
-            # Use checkpoint task as query for SR navigation
-            query = ""
-            if checkpoint:
-                query = checkpoint.get("current_task", "")
-            if not query and directory:
-                query = f"project work in {directory}"
-            if query:
-                query_emb = self._embeddings.encode(query)
-                if query_emb is not None:
-                    sr_results = self._cognitive_map.navigate_to(
-                        query_emb, self._embeddings, top_k=max_memories // 2
-                    )
-                    seen_ids = anchor_ids | recent_ids | {m["id"] for m in hot_memories}
-                    for mid, proximity in sr_results:
-                        if mid not in seen_ids:
-                            mem = self._storage.get_memory(mid)
-                            if mem:
-                                mem.pop("embedding", None)
-                                mem["_sr_proximity"] = round(proximity, 4)
-                                predicted.append(mem)
-                                seen_ids.add(mid)
+        seen_ids = anchor_ids | recent_ids | {m["id"] for m in hot_memories}
+        predicted = self._predict_memories(checkpoint, directory, seen_ids, max_memories)
 
         # 6. Gap detection
-        gaps = []
-        if self._metacognition is not None and directory:
-            try:
-                gaps = self._metacognition.detect_gaps(directory)[:3]
-            except Exception:
-                logger.debug("Gap detection failed during restore")
+        gaps = self._detect_gaps_safe(directory)
 
         # Build formatted markdown for hook injection
         markdown = self._format_restoration(
@@ -341,8 +381,6 @@ class CheckpointRestore:
         )
 
         # 7. Memory blocks (v5.33.0) — always-injected named text containers.
-        # Fetched + rendered via helpers; no new branches in restore() to respect
-        # baseline ratchet (cyclo=24 — every additional branch triggers HARD violation).
         blocks = self._fetch_blocks_safe(directory)
         markdown = self._prepend_blocks(blocks, directory, markdown)
 

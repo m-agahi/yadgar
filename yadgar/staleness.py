@@ -126,6 +126,25 @@ class StalenessDetector:
 
         return {"valid": True, "reason": "file unchanged"}
 
+    def _flag_scan_memories(
+        self, filepath: str, old_hash: str, flagged_memory_ids: set[int]
+    ) -> None:
+        """Flag memories for a changed file during a directory scan.
+
+        Deduplication is global across the full scan walk via ``flagged_memory_ids``,
+        which the caller owns and passes by reference.  This differs from
+        ``_flag_memories_for_file``, whose dedup scope is per-call only.
+        """
+        memories = self._storage.get_memories_by_file_hash(old_hash)
+        parent_dir = str(Path(filepath).parent)
+        dir_memories = self._storage.get_memories_for_directory(parent_dir, min_heat=0.0)
+
+        for m in memories + dir_memories:
+            if m["id"] not in flagged_memory_ids:
+                flagged_memory_ids.add(m["id"])
+                self._storage.update_memory_heat(m["id"], m["heat"] / 2.0)
+                self._storage.update_memory_staleness(m["id"], True)
+
     def scan_directory(self, directory: str) -> dict:
         files_scanned = 0
         files_changed = 0
@@ -149,18 +168,7 @@ class StalenessDetector:
 
                 if old_hash is not None and old_hash != new_hash:
                     files_changed += 1
-
-                    memories = self._storage.get_memories_by_file_hash(old_hash)
-                    parent_dir = str(Path(filepath).parent)
-                    dir_memories = self._storage.get_memories_for_directory(
-                        parent_dir, min_heat=0.0
-                    )
-
-                    for m in memories + dir_memories:
-                        if m["id"] not in flagged_memory_ids:
-                            flagged_memory_ids.add(m["id"])
-                            self._storage.update_memory_heat(m["id"], m["heat"] / 2.0)
-                            self._storage.update_memory_staleness(m["id"], True)
+                    self._flag_scan_memories(filepath, old_hash, flagged_memory_ids)
 
                 self._storage.upsert_file_hash(filepath, new_hash)
 

@@ -283,6 +283,115 @@ def _compact_fact_object(text: str, max_words: int = 10) -> str:
     return " ".join(tokens[:max_words])
 
 
+# Each entry: (keywords_tuple, fact_template, use_elif_semantic)
+# When use_elif_semantic=True the group is exclusive with the previous elif group.
+# See _infer_subject_keyword_hints for evaluation logic.
+_SUBJECT_KEYWORD_GROUPS: list[tuple[tuple[str, ...], str, bool]] = [
+    # outdoor activities — primary (elif branch below is the fallback)
+    (
+        ("camping", "campfire", "meteor shower", "hiking", "forest", "mountains"),
+        "{subject} enjoys outdoor activities, nature, camping, hiking, and national parks",
+        False,
+    ),
+    # outdoor activities — fallback (only when primary not matched)
+    (
+        ("nature", "outdoors"),
+        "{subject} enjoys outdoor activities and nature",
+        True,  # elif: skip when previous group matched
+    ),
+    (
+        ("classical", "bach", "mozart", "orchestra", "symphony"),
+        "{subject} enjoys classical music and composers like Vivaldi",
+        False,
+    ),
+    (
+        ("counseling", "mental health"),
+        "{subject} is interested in counseling and mental health careers",
+        False,
+    ),
+    (
+        ("volunteer", "shelter", "make a difference", "help others", "community service"),
+        "{subject} values helping others and community service",
+        False,
+    ),
+    (
+        ("church", "faith", "cross necklace", "spiritual", "prayer"),
+        "{subject} has religious or spiritual beliefs",
+        False,
+    ),
+    (
+        ("serve my country", "join the military", "running for office", "policymaking", "veteran"),
+        "{subject} is patriotic and interested in public service",
+        False,
+    ),
+    (
+        ("adoption", "have a family", "having a family", "kids who need it"),
+        "{subject} wants a family and cares about children",
+        False,
+    ),
+    (
+        ("lgbtq", "transgender", "rights", "acceptance", "supportive community"),
+        "{subject} supports LGBTQ rights and acceptance",
+        False,
+    ),
+]
+
+# Books group uses a compound condition (keyword OR classic+book), handled separately.
+_BOOKS_KEYWORDS = ("dr. seuss", "children's books", "kids' books", "kids books")
+_BOOKS_FACT = "{subject} collects children's books and classic books"
+
+
+def _infer_said_line_hints(other: str, quote: str) -> list[str]:
+    """Return fact hints inferred from a dialogue quote attributed to *other*."""
+    results: list[str] = []
+    if "you're so thoughtful" in quote or "you are so thoughtful" in quote:
+        results.append(f"{other} is thoughtful")
+    if "your drive" in quote or "drive to help" in quote:
+        results.append(f"{other} is driven")
+    if "being real" in quote or "authentic" in quote:
+        results.append(f"{other} is authentic")
+    if "helping others" in quote or "caring heart" in quote:
+        results.append(f"{other} is caring")
+    return results
+
+
+def _infer_subject_keyword_hints(subject: str, lower: str) -> list[str]:
+    """Return fact hints inferred from keyword groups in a subject-line."""
+    results: list[str] = []
+    prev_matched = False
+    for keywords, template, is_elif in _SUBJECT_KEYWORD_GROUPS:
+        if is_elif and prev_matched:
+            prev_matched = False
+            continue
+        matched = any(kw in lower for kw in keywords)
+        if matched:
+            results.append(template.format(subject=subject))
+        prev_matched = matched and not is_elif
+    # Books: compound condition
+    if any(kw in lower for kw in _BOOKS_KEYWORDS) or ("classic" in lower and "book" in lower):
+        results.append(_BOOKS_FACT.format(subject=subject))
+    return results
+
+
+def _resolve_other_speaker(current: str | None, paired: list[str]) -> str | None:
+    """Return the counterpart speaker in a two-speaker exchange, or None."""
+    if not current or len(paired) != 2:
+        return None
+    if current == paired[0]:
+        return paired[1]
+    if current == paired[1]:
+        return paired[0]
+    return None
+
+
+def _add_unique_hint(text: str, hints: list[str], seen: set[str]) -> None:
+    """Append *text* to hints if not already present (dedup via *seen*)."""
+    normalized = text.strip().rstrip(".")
+    if normalized and normalized.lower() not in seen:
+        seen.add(normalized.lower())
+        hints.append(normalized + ".")
+
+
 def _derive_implied_fact_passages(content: str) -> list[str]:
     """Generate short inferred fact passages for open-domain reranking."""
     hints: list[str] = []
@@ -291,35 +400,13 @@ def _derive_implied_fact_passages(content: str) -> list[str]:
     speakers = [m.group("speaker") for line in lines if (m := _SAID_LINE_RE.match(line))]
     paired_speakers = speakers[:2]
 
-    def _add(text: str) -> None:
-        normalized = text.strip().rstrip(".")
-        if normalized and normalized.lower() not in seen:
-            seen.add(normalized.lower())
-            hints.append(normalized + ".")
-
-    def _other_speaker(current: str | None) -> str | None:
-        if current and len(paired_speakers) == 2:
-            if current == paired_speakers[0]:
-                return paired_speakers[1]
-            if current == paired_speakers[1]:
-                return paired_speakers[0]
-        return None
-
     for line in lines:
         said_match = _SAID_LINE_RE.match(line)
         if said_match:
-            speaker = said_match.group("speaker")
-            other = _other_speaker(speaker)
-            quote = said_match.group("quote").lower()
+            other = _resolve_other_speaker(said_match.group("speaker"), paired_speakers)
             if other:
-                if "you're so thoughtful" in quote or "you are so thoughtful" in quote:
-                    _add(f"{other} is thoughtful")
-                if "your drive" in quote or "drive to help" in quote:
-                    _add(f"{other} is driven")
-                if "being real" in quote or "authentic" in quote:
-                    _add(f"{other} is authentic")
-                if "helping others" in quote or "caring heart" in quote:
-                    _add(f"{other} is caring")
+                for hint in _infer_said_line_hints(other, said_match.group("quote").lower()):
+                    _add_unique_hint(hint, hints, seen)
             continue
 
         subject_match = _LINE_SUBJECT_RE.match(line)
@@ -333,63 +420,65 @@ def _derive_implied_fact_passages(content: str) -> list[str]:
             if match:
                 obj = _compact_fact_object(match.group("object"))
                 if obj:
-                    _add(template.format(subject=match.group("subject"), object=obj))
+                    fact = template.format(subject=match.group("subject"), object=obj)
+                    _add_unique_hint(fact, hints, seen)
 
-        if any(
-            word in lower
-            for word in ("camping", "campfire", "meteor shower", "hiking", "forest", "mountains")
-        ):
-            _add(
-                f"{subject} enjoys outdoor activities, nature, camping, hiking, and national parks"
-            )
-        elif any(word in lower for word in ("nature", "outdoors")):
-            _add(f"{subject} enjoys outdoor activities and nature")
-        if any(word in lower for word in ("classical", "bach", "mozart", "orchestra", "symphony")):
-            _add(f"{subject} enjoys classical music and composers like Vivaldi")
-        if any(
-            word in lower for word in ("dr. seuss", "children's books", "kids' books", "kids books")
-        ) or ("classic" in lower and "book" in lower):
-            _add(f"{subject} collects children's books and classic books")
-        if any(word in lower for word in ("counseling", "mental health")):
-            _add(f"{subject} is interested in counseling and mental health careers")
-        if any(
-            word in lower
-            for word in (
-                "volunteer",
-                "shelter",
-                "make a difference",
-                "help others",
-                "community service",
-            )
-        ):
-            _add(f"{subject} values helping others and community service")
-        if any(
-            word in lower for word in ("church", "faith", "cross necklace", "spiritual", "prayer")
-        ):
-            _add(f"{subject} has religious or spiritual beliefs")
-        if any(
-            word in lower
-            for word in (
-                "serve my country",
-                "join the military",
-                "running for office",
-                "policymaking",
-                "veteran",
-            )
-        ):
-            _add(f"{subject} is patriotic and interested in public service")
-        if any(
-            word in lower
-            for word in ("adoption", "have a family", "having a family", "kids who need it")
-        ):
-            _add(f"{subject} wants a family and cares about children")
-        if any(
-            word in lower
-            for word in ("lgbtq", "transgender", "rights", "acceptance", "supportive community")
-        ):
-            _add(f"{subject} supports LGBTQ rights and acceptance")
+        for hint in _infer_subject_keyword_hints(subject, lower):
+            _add_unique_hint(hint, hints, seen)
 
     return hints[:4]
+
+
+def _parse_setting_keywords(setting_str: str) -> list[str]:
+    """Split a comma-separated settings keyword string, stripping blanks."""
+    return [k.strip() for k in setting_str.split(",") if k.strip()]
+
+
+def _extract_named_entities(query: str) -> list[str]:
+    """Return words after the first that start with an uppercase letter."""
+    entities: list[str] = []
+    for w in query.split()[1:]:
+        cleaned = w.strip(".,;:!?()[]{}\"'")
+        if cleaned and cleaned[0].isupper():
+            entities.append(cleaned)
+    return entities
+
+
+def _collect_semantic_expansions(query_lower: str) -> list[str]:
+    """Return topic expansions whose trigger phrase appears in the query."""
+    expansions: list[str] = []
+    for phrase, phrase_expansions in _OPEN_DOMAIN_TOPIC_EXPANSIONS.items():
+        if phrase in query_lower:
+            expansions.extend(phrase_expansions)
+    return expansions
+
+
+def _classify_query_type(
+    words: list[str],
+    temporal_markers: list[str],
+    is_open_domain_like: bool,
+    has_question: bool,
+    code_identifiers: list[str],
+    has_relational_intent: bool,
+) -> tuple[str, list[str]]:
+    """Return (query_type, enabled_signals) from pre-computed feature flags."""
+    all_signals = ["vector", "fts", "ppr", "spreading"]
+    # Ordered table: first matching rule wins.
+    if temporal_markers:
+        return "temporal", ["vector", "fts"]
+    if is_open_domain_like:
+        return "open_domain", ["vector", "fts"]
+    if has_question:
+        return "factoid", ["vector", "fts", "ppr"]
+    if code_identifiers:
+        return "code", ["vector", "fts"]
+    if has_relational_intent:
+        return "relational", ["vector", "fts", "ppr", "spreading"]
+    if len(words) <= 2:
+        return "keyword", ["vector", "fts"]
+    if len(words) < 5:
+        return "simple", ["vector", "fts"]
+    return "complex", list(all_signals)
 
 
 @trace_span("retrieval.analyze_query")
@@ -408,25 +497,19 @@ def analyze_query(query: str, settings) -> dict:
     words = query_lower.split()
 
     # 1. Check for temporal keywords
-    temporal_keywords = [k.strip() for k in settings.TEMPORAL_KEYWORDS.split(",") if k.strip()]
+    temporal_keywords = _parse_setting_keywords(settings.TEMPORAL_KEYWORDS)
     temporal_markers = [kw for kw in temporal_keywords if kw in query_lower]
 
     # 2. Check for code keywords
-    code_keywords = [k.strip() for k in settings.CODE_KEYWORDS.split(",") if k.strip()]
+    code_keywords = _parse_setting_keywords(settings.CODE_KEYWORDS)
     code_identifiers = [kw for kw in code_keywords if kw.lower() in query_lower]
 
     # 3. Check for relational keywords
-    relational_keywords = [k.strip() for k in settings.RELATIONAL_KEYWORDS.split(",") if k.strip()]
+    relational_keywords = _parse_setting_keywords(settings.RELATIONAL_KEYWORDS)
     has_relational_intent = any(kw.lower() in query_lower for kw in relational_keywords)
 
     # 5. Named entities: words starting with uppercase (excluding first word)
-    raw_words = query.split()
-    named_entities = []
-    for w in raw_words[1:]:
-        cleaned = w.strip(".,;:!?()[]{}\"'")
-        if cleaned and cleaned[0].isupper():
-            named_entities.append(cleaned)
-
+    named_entities = _extract_named_entities(query)
     named_entity_lowers = {name.lower() for name in named_entities}
     content_terms = [
         term
@@ -434,10 +517,7 @@ def analyze_query(query: str, settings) -> dict:
         if term.lower() not in named_entity_lowers
     ][:8]
     comparison_options = _extract_comparison_options(query)
-    semantic_expansions: list[str] = []
-    for phrase, expansions in _OPEN_DOMAIN_TOPIC_EXPANSIONS.items():
-        if phrase in query_lower:
-            semantic_expansions.extend(expansions)
+    semantic_expansions = _collect_semantic_expansions(query_lower)
 
     # Only trigger open_domain mode for genuine inference-style questions,
     # NOT for simple factual queries starting with "is/are/does/did/can".
@@ -456,33 +536,15 @@ def analyze_query(query: str, settings) -> dict:
     )
 
     # 4. Classify
-    all_signals = ["vector", "fts", "ppr", "spreading"]
     has_question = any(w in _QUESTION_WORDS for w in words)
-
-    if temporal_markers:
-        query_type = "temporal"
-        enabled_signals = ["vector", "fts"]
-    elif is_open_domain_like:
-        query_type = "open_domain"
-        enabled_signals = ["vector", "fts"]
-    elif has_question:
-        query_type = "factoid"
-        enabled_signals = ["vector", "fts", "ppr"]
-    elif code_identifiers:
-        query_type = "code"
-        enabled_signals = ["vector", "fts"]
-    elif has_relational_intent:
-        query_type = "relational"
-        enabled_signals = ["vector", "fts", "ppr", "spreading"]
-    elif len(words) <= 2:
-        query_type = "keyword"
-        enabled_signals = ["vector", "fts"]
-    elif len(words) < 5:
-        query_type = "simple"
-        enabled_signals = ["vector", "fts"]
-    else:
-        query_type = "complex"
-        enabled_signals = list(all_signals)
+    query_type, enabled_signals = _classify_query_type(
+        words,
+        temporal_markers,
+        is_open_domain_like,
+        has_question,
+        code_identifiers,
+        has_relational_intent,
+    )
 
     return {
         "query_type": query_type,

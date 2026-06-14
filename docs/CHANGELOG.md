@@ -7,6 +7,31 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.56.0] — 2026-06-14
+
+### Changed (complexity governance + debt paydown — v5.55 campaign)
+
+- **Configurable I13 caps + gated allowlist**: `COMPLEXITY_POLICY` doc establishes hard caps per metric (I13: cyclo ≤15, nesting ≤4); allowlist of permanent keepers documented (`recall`, `pc_algorithm`, MCP-tool params, `_enrich_memory_if_enabled`) with rationale; new `scripts/check_complexity_allowlist.py` validates allowlist entries still satisfy gate criteria.
+- **I30 integrity invariant**: `check_invariants` now enforces I30 (no orphaned memory references); gate runs in CI on every push.
+- **~40 GREEN refactors**: hot-path extracts (`_memify_prune`, `insert_memory`), YELLOW param-objects, `wiki.py::add` decomposition; all reduce cyclomatic complexity without behavior change.
+- **BACKEND_VERSION 5.5.0 → 5.6.0**: Dockerfile.backend `COPY . /app` picks up v5.55 storage/memory.py refactors; version bumped accordingly in `yadgar/__init__.py` and `server.json`.
+
+### Fixed (test-suite xdist isolation)
+
+- **Module-reload pollution**: `_restore_mcp_server` autouse fixture prevents stale MCP server state leaking across xdist workers; eliminates cross-test failures in `test_consolidate_anchor_pass` and `test_cli_restore`.
+- **SurrealDB data-leak wipe**: HTTP-fallback wipe scoped to namespace-local test data only; was previously nuking module-scoped corpora, causing `test_consolidate_anchor_pass` + `test_cli_restore` to fail.
+
+### Fixed (orchestration safety)
+
+- **`timeout_method = "signal"`**: pytest timeout now uses SIGALRM (can kill deadlocked tests); the thread method could not interrupt blocking C extensions.
+- **`scripts/test-capped.sh`**: cgroup-limited wrapper (≤3 cores / 20 GB) + hard KILL-timeout after 90 min; `make test` routes through it.
+- **Reap-stale-tests watchdog**: `scripts/reap-stale-tests.sh` + `deploy/systemd/reap-stale-tests.{service,timer}` SIGKILLs orphaned test SurrealDB procs older than 90 min (every 10 min); skips production daemon.
+
+### Fixed (bugs)
+
+- **`retrieval/core.py` FTSParams caller** (yellow-batch regression): corrected argument order/keyword after yellow-batch refactor broke the FTS query path.
+- **conftest HTTP-fallback over-wipe**: scoped wipe to test-local namespaces; was previously destroying module-scoped corpora shared across the test session.
+
 ## [5.54.5] — 2026-06-13
 
 ### Fixed (CI green — all 90 CI failures across 12 root causes)

@@ -32,27 +32,16 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-@_tool()
-def checkpoint(  # noqa: PLR0913 — v5.42.3 added branch_hint param; pre-existing 8-param fn
-    directory: str,
-    current_task: str = "",
-    files_being_edited: list[str] = None,
-    key_decisions: list[str] = None,
-    open_questions: list[str] = None,
-    next_steps: list[str] = None,
-    active_errors: list[str] = None,
-    custom_context: str = "",
-    branch_hint: str | None = None,
-) -> dict:
-    """Snapshot your current working state for post-compaction recovery.
-
-    Call this periodically during long sessions. After context compaction,
-    the restore tool uses this checkpoint to reconstruct what you were doing.
-    Checkpoints auto-supersede — only the latest one matters.
-
-    branch_hint: host-supplied branch name (v5.42.3). Used when daemon-side
-      _detect_branch() cannot reach the host .git directory.
-    """
+def _validate_checkpoint_surrogates(  # noqa: PLR0913
+    current_task: str,
+    custom_context: str,
+    key_decisions: list[str] | None,
+    open_questions: list[str] | None,
+    next_steps: list[str] | None,
+    active_errors: list[str] | None,
+    files_being_edited: list[str] | None,
+) -> dict | None:
+    """Return an error dict if any free-text field contains unpaired surrogates, else None."""
     for _field in (current_task, custom_context):
         if _has_unpaired_surrogate(_field):
             return {"stored": False, "reason": "invalid_unicode_surrogates"}
@@ -66,7 +55,21 @@ def checkpoint(  # noqa: PLR0913 — v5.42.3 added branch_hint param; pre-existi
         for _item in _lst:
             if isinstance(_item, str) and _has_unpaired_surrogate(_item):
                 return {"stored": False, "reason": "invalid_unicode_surrogates"}
+    return None
 
+
+def _gate_checkpoint_text(
+    current_task: str,
+    custom_context: str,
+    key_decisions: list[str] | None,
+    next_steps: list[str] | None,
+    open_questions: list[str] | None,
+    active_errors: list[str] | None,
+) -> dict | None:
+    """Run the secret gate over all checkpoint free-text fields.
+
+    Returns a gate-rejection dict if a secret is detected, else None.
+    """
     # v5.10.2: secret gate — scan all free-text fields before enqueue
     _list_text = " ".join(
         item
@@ -79,10 +82,18 @@ def checkpoint(  # noqa: PLR0913 — v5.42.3 added branch_hint param; pre-existi
         for item in lst
         if isinstance(item, str)
     )
-    _gate = gate_or_reject(current_task, custom_context, _list_text)
-    if _gate is not None:
-        return _gate
+    return gate_or_reject(current_task, custom_context, _list_text)
 
+
+def _resolve_checkpoint_branch(
+    directory: str, branch_hint: str | None
+) -> tuple[str | None, dict | None]:
+    """Resolve branch for checkpoint at the MCP boundary.
+
+    Resolution order: _detect_branch(directory) → branch_hint → YADGAR_CI_BRANCH env.
+    Returns (branch, None) on success, (None, error_dict) when branch is absent
+    and not draining (hard-reject path).
+    """
     # Capture branch at API boundary for payload tagging and future filter use.
     # v5.46.7: resolution order: _detect_branch(directory) → branch_hint
     #           → YADGAR_CI_BRANCH env → hard-reject.
@@ -104,7 +115,7 @@ def checkpoint(  # noqa: PLR0913 — v5.42.3 added branch_hint param; pre-existi
 
     # v5.42.3: hard-reject at MCP boundary when branch context is absent.
     if not _branch and not is_draining():
-        return {
+        return None, {
             "error": "missing_branch",
             "stored": False,
             "message": (
@@ -114,6 +125,90 @@ def checkpoint(  # noqa: PLR0913 — v5.42.3 added branch_hint param; pre-existi
             "field": "branch_hint",
             "op_type": "checkpoint",
         }
+
+    return _branch, None
+
+
+def _enrich_checkpoint_context(custom_context: str) -> str:
+    """Enrich custom_context with the action buffer summary if available."""
+    buffer = _st._buffer
+    if buffer is not None:
+        action_summary = buffer.get_action_summary()
+        if action_summary:
+            return f"{custom_context}\n\n{action_summary}" if custom_context else action_summary
+    return custom_context
+
+
+def _build_checkpoint_ctx(  # noqa: PLR0913
+    current_task: str,
+    files_being_edited: list[str] | None,
+    key_decisions: list[str] | None,
+    open_questions: list[str] | None,
+    next_steps: list[str] | None,
+    active_errors: list[str] | None,
+    enriched_context: str,
+) -> CheckpointContext:
+    """Construct a CheckpointContext from checkpoint parameters."""
+    return CheckpointContext(
+        current_task=current_task,
+        files_being_edited=files_being_edited or [],
+        key_decisions=key_decisions or [],
+        open_questions=open_questions or [],
+        next_steps=next_steps or [],
+        active_errors=active_errors or [],
+        custom_context=enriched_context,
+    )
+
+
+@_tool()
+def checkpoint(  # noqa: PLR0913 — v5.42.3 added branch_hint param; pre-existing 8-param fn
+    directory: str,
+    current_task: str = "",
+    files_being_edited: list[str] = None,
+    key_decisions: list[str] = None,
+    open_questions: list[str] = None,
+    next_steps: list[str] = None,
+    active_errors: list[str] = None,
+    custom_context: str = "",
+    branch_hint: str | None = None,
+) -> dict:
+    """Snapshot your current working state for post-compaction recovery.
+
+    Call this periodically during long sessions. After context compaction,
+    the restore tool uses this checkpoint to reconstruct what you were doing.
+    Checkpoints auto-supersede — only the latest one matters.
+
+    branch_hint: host-supplied branch name (v5.42.3). Used when daemon-side
+      _detect_branch() cannot reach the host .git directory.
+    """
+    # secret-gate: skip — gate_or_reject() is called inside _gate_checkpoint_text()
+    _surrogate_err = _validate_checkpoint_surrogates(
+        current_task,
+        custom_context,
+        key_decisions,
+        open_questions,
+        next_steps,
+        active_errors,
+        files_being_edited,
+    )
+    if _surrogate_err is not None:
+        return _surrogate_err
+
+    # v5.10.2: secret gate — scan all free-text fields before enqueue
+    _gate = _gate_checkpoint_text(
+        current_task,
+        custom_context,
+        key_decisions,
+        next_steps,
+        open_questions,
+        active_errors,
+    )
+    if _gate is not None:
+        return _gate
+
+    _branch, _branch_err = _resolve_checkpoint_branch(directory, branch_hint)
+    if _branch_err is not None:
+        return _branch_err
 
     # Async path: enqueue and return immediately (skip during drain replay)
     if not is_draining():
@@ -139,24 +234,15 @@ def checkpoint(  # noqa: PLR0913 — v5.42.3 added branch_hint param; pre-existi
     # Sync path — only runs during drain replay (is_draining=True) or queue fallback
     replay = _get_replay()
 
-    # Enrich checkpoint with action stream summary if available
-    enriched_context = custom_context
-    buffer = _st._buffer
-    if buffer is not None:
-        action_summary = buffer.get_action_summary()
-        if action_summary:
-            enriched_context = (
-                f"{custom_context}\n\n{action_summary}" if custom_context else action_summary
-            )
-
-    ctx = CheckpointContext(
-        current_task=current_task,
-        files_being_edited=files_being_edited or [],
-        key_decisions=key_decisions or [],
-        open_questions=open_questions or [],
-        next_steps=next_steps or [],
-        active_errors=active_errors or [],
-        custom_context=enriched_context,
+    enriched_context = _enrich_checkpoint_context(custom_context)
+    ctx = _build_checkpoint_ctx(
+        current_task,
+        files_being_edited,
+        key_decisions,
+        open_questions,
+        next_steps,
+        active_errors,
+        enriched_context,
     )
     return replay.create_checkpoint(directory, ctx)
 
@@ -182,8 +268,118 @@ def restore(directory: str = "") -> dict:
 _VALID_ANCHOR_TIERS = frozenset({"semantic_immortal", "conditional", "ephemeral"})
 
 
+def _validate_anchor_inputs(
+    content: str,
+    context: str,
+    reason: str,
+    tier: str | None,
+    valid_until: str | None,
+    ttl_days: int | None,
+) -> tuple[str, str | None, dict | None]:
+    """Validate anchor inputs and compute expiry.
+
+    Returns (resolved_tier, computed_valid_until, error_dict_or_None).
+    On error, the third element is the error dict to return to the caller.
+    """
+    for _field in (content, context, reason):
+        if _has_unpaired_surrogate(_field):
+            return "", None, {"stored": False, "reason": "invalid_unicode_surrogates"}
+
+    # v5.15.0: secret gate — pass _anchor tag so allowlist can fire for anchor() calls.
+    # anchor() always writes with ["_anchor"] tag; forward that to gate so allowlist
+    # entries keyed on "_anchor" become effective.
+    _gate = gate_or_reject(content, reason, tags=["_anchor"])
+    if _gate is not None:
+        return "", None, _gate
+
+    # v5.8.0: tier validation
+    _tier = tier if tier is not None else "conditional"
+    if _tier not in _VALID_ANCHOR_TIERS:
+        return (
+            "",
+            None,
+            {
+                "stored": False,
+                "reason": f"invalid tier: {tier!r}. Must be one of {sorted(_VALID_ANCHOR_TIERS)}",
+            },
+        )
+
+    # v5.8.0: semantic_immortal requires non-empty reason
+    if _tier == "semantic_immortal" and settings.ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON:
+        if not reason or not reason.strip():
+            return (
+                "",
+                None,
+                {
+                    "stored": False,
+                    "reason": "anchor tier=semantic_immortal requires a non-empty reason explaining why this anchor is truly immortal",
+                },
+            )
+
+    # v5.8.0: conflicting valid_until + ttl_days
+    if valid_until is not None and ttl_days is not None:
+        return (
+            "",
+            None,
+            {
+                "stored": False,
+                "reason": "conflict: both valid_until and ttl_days provided — choose one",
+            },
+        )
+
+    # v5.8.0: compute valid_until at API boundary
+    from yadgar.server.tools.memorize import _compute_valid_until
+
+    _computed_valid_until: str | None = None
+    try:
+        _computed_valid_until = _compute_valid_until(_tier, valid_until, ttl_days, settings)
+    except ValueError as _vu_exc:
+        return "", None, {"stored": False, "reason": str(_vu_exc)}
+
+    return _tier, _computed_valid_until, None
+
+
+def _resolve_anchor_branch(context: str, branch_hint: str | None) -> tuple[str | None, dict | None]:
+    """Resolve branch for anchor at the MCP boundary.
+
+    Resolution order: _detect_branch(context) → branch_hint → YADGAR_CI_BRANCH env.
+    Returns (branch, None) on success, (None, error_dict) when branch is absent
+    and not draining (hard-reject path).
+    """
+    _branch = None
+    try:
+        import yadgar.server as _srv
+
+        _branch = _srv._detect_branch(context)
+    except Exception:
+        pass  # non-fatal — fall through to branch_hint
+
+    # v5.42.3: branch_hint fallback
+    if not _branch and branch_hint:
+        _branch = branch_hint
+
+    # v5.46.7: YADGAR_CI_BRANCH env fallback — CI runner sets this when git is unavailable.
+    if not _branch:
+        _branch = os.environ.get("YADGAR_CI_BRANCH") or None
+
+    # v5.42.3: hard-reject at MCP boundary when branch context is absent.
+    if not _branch and not is_draining():
+        return None, {
+            "error": "missing_branch",
+            "stored": False,
+            "message": (
+                "Branch context required. Supply branch_hint=<current-branch-name> or ensure "
+                "the working directory is a git repo accessible to the yadgar daemon."
+            ),
+            "field": "branch_hint",
+            "op_type": "anchor",
+        }
+
+    return _branch, None
+
+
 @_tool()
-def anchor(  # noqa: C901 — v5.42.3 added branch enforcement; pre-existing cyclo-15 fn
+def anchor(
     content: str,
     context: str,
     reason: str = "",
@@ -211,80 +407,19 @@ def anchor(  # noqa: C901 — v5.42.3 added branch enforcement; pre-existing cyc
       _detect_branch() cannot reach the host .git directory. Agents should pass
       branch_hint=<current-branch> from SessionStart hook context.
     """
-    for _field in (content, context, reason):
-        if _has_unpaired_surrogate(_field):
-            return {"stored": False, "reason": "invalid_unicode_surrogates"}
-
-    # v5.15.0: secret gate — pass _anchor tag so allowlist can fire for anchor() calls.
-    # anchor() always writes with ["_anchor"] tag; forward that to gate so allowlist
-    # entries keyed on "_anchor" become effective.
-    _gate = gate_or_reject(content, reason, tags=["_anchor"])
-    if _gate is not None:
-        return _gate
-
-    # v5.8.0: tier validation
-    _tier = tier if tier is not None else "conditional"
-    if _tier not in _VALID_ANCHOR_TIERS:
-        return {
-            "stored": False,
-            "reason": f"invalid tier: {tier!r}. Must be one of {sorted(_VALID_ANCHOR_TIERS)}",
-        }
-
-    # v5.8.0: semantic_immortal requires non-empty reason
-    if _tier == "semantic_immortal" and settings.ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON:
-        if not reason or not reason.strip():
-            return {
-                "stored": False,
-                "reason": "anchor tier=semantic_immortal requires a non-empty reason explaining why this anchor is truly immortal",
-            }
-
-    # v5.8.0: conflicting valid_until + ttl_days
-    if valid_until is not None and ttl_days is not None:
-        return {
-            "stored": False,
-            "reason": "conflict: both valid_until and ttl_days provided — choose one",
-        }
-
-    # v5.8.0: compute valid_until at API boundary
-    from yadgar.server.tools.memorize import _compute_valid_until
-
-    _computed_valid_until: str | None = None
-    try:
-        _computed_valid_until = _compute_valid_until(_tier, valid_until, ttl_days, settings)
-    except ValueError as _vu_exc:
-        return {"stored": False, "reason": str(_vu_exc)}
+    # secret-gate: skip — gate_or_reject() is called inside _validate_anchor_inputs()
+    _tier, _computed_valid_until, _err = _validate_anchor_inputs(
+        content, context, reason, tier, valid_until, ttl_days
+    )
+    if _err is not None:
+        return _err
 
     # Capture branch at API boundary — enqueue-time value used by drainer.
     # v5.46.7: resolution order: _detect_branch(context) → branch_hint
     #           → YADGAR_CI_BRANCH env → hard-reject.
-    _branch = None
-    try:
-        import yadgar.server as _srv
-
-        _branch = _srv._detect_branch(context)
-    except Exception:
-        pass  # non-fatal — fall through to branch_hint
-
-    # v5.42.3: branch_hint fallback
-    if not _branch and branch_hint:
-        _branch = branch_hint
-
-    # v5.46.7: YADGAR_CI_BRANCH env fallback — CI runner sets this when git is unavailable.
-    if not _branch:
-        _branch = os.environ.get("YADGAR_CI_BRANCH") or None
-
-    # v5.42.3: hard-reject at MCP boundary when branch context is absent.
-    if not _branch and not is_draining():
-        return {
-            "error": "missing_branch",
-            "stored": False,
-            "message": (
-                "Branch context required. Supply branch_hint=<current-branch-name> or ensure "
-                "the working directory is a git repo accessible to the yadgar daemon."
-            ),
-            "field": "branch_hint",
-            "op_type": "anchor",
-        }
+    _branch, _branch_err = _resolve_anchor_branch(context, branch_hint)
+    if _branch_err is not None:
+        return _branch_err
 
     # Async path: enqueue and return immediately (skip during drain replay)
     if not is_draining():

@@ -82,18 +82,15 @@ class _ConfidenceMixin:
             if not ranked_list:
                 return 0.0
             top_score = ranked_list[0][1]
-            if len(ranked_list) > 1:
-                gap = ranked_list[0][1] - ranked_list[1][1]
-            else:
-                gap = top_score
+            gap = ranked_list[0][1] - ranked_list[1][1] if len(ranked_list) > 1 else top_score
             return min(1.0, top_score * (1 + gap))
 
-        elif signal_name == "fts":
+        if signal_name == "fts":
             if not ranked_list:
                 return 0.0
             return min(1.0, len(ranked_list) / 5.0)
 
-        elif signal_name in ("ppr", "spreading"):
+        if signal_name in ("ppr", "spreading"):
             if not ranked_list:
                 return 0.0
             scores = [s for _, s in ranked_list]
@@ -103,7 +100,7 @@ class _ConfidenceMixin:
             mean_score = sum(scores) / len(scores)
             return (max_score - mean_score) / max_score if max_score > 0 else 0.0
 
-        elif signal_name == "temporal":
+        if signal_name == "temporal":
             if not ranked_list:
                 return 0.0
             return min(1.0, len(ranked_list) / 3.0)

@@ -65,6 +65,148 @@ class _OrchestratorMixin:
             record_exception("consolidation.sleep_cycle", _exc)
             logger.exception("Sleep cycle failed")
 
+    def _run_episodic_phases(self, stats: dict) -> None:
+        """Phase group 1: decay, episode processing, pruning, duplicate merge."""
+        _t = time.monotonic()
+        logger.info("phase_start: apply_decay")
+        self._apply_decay(stats)
+        _dur_ms = int((time.monotonic() - _t) * 1000)
+        logger.info("phase_end: apply_decay duration_ms=%d", _dur_ms)
+        _warn_slow_phase("apply_decay", _dur_ms)
+
+        _t = time.monotonic()
+        logger.info("phase_start: process_episodes")
+        self._process_new_episodes(stats)
+        _dur_ms = int((time.monotonic() - _t) * 1000)
+        logger.info("phase_end: process_episodes duration_ms=%d", _dur_ms)
+        _warn_slow_phase("process_episodes", _dur_ms)
+
+        # Prune old episodes to keep the table bounded and _check_temporal_order fast
+        self._prune_old_episodes_safe()
+
+        _t = time.monotonic()
+        logger.info("phase_start: merge_duplicates")
+        self._merge_duplicates(stats)
+        _dur_ms = int((time.monotonic() - _t) * 1000)
+        logger.info("phase_end: merge_duplicates duration_ms=%d", _dur_ms)
+        _warn_slow_phase("merge_duplicates", _dur_ms)
+
+    def _run_graph_phases(self, stats: dict) -> None:
+        """Phase group 2: similarity linking, causality, graph priors, cofire priors."""
+        # Semantic similarity linking — create relationships between similar memories
+        try:
+            _t = time.monotonic()
+            logger.info("phase_start: link_similar")
+            self._link_similar_memories(stats)
+            _dur_ms = int((time.monotonic() - _t) * 1000)
+            logger.info("phase_end: link_similar duration_ms=%d", _dur_ms)
+            _warn_slow_phase("link_similar", _dur_ms)
+        except Exception as _exc:
+            from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+            record_exception("consolidation.phase_link_similar", _exc)
+            logger.exception("Similarity linking failed")
+
+        try:
+            _t = time.monotonic()
+            logger.info("phase_start: detect_causality")
+            self._graph.detect_causality()
+            _dur_ms = int((time.monotonic() - _t) * 1000)
+            logger.info("phase_end: detect_causality duration_ms=%d", _dur_ms)
+            _warn_slow_phase("detect_causality", _dur_ms)
+        except Exception as _exc:
+            from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+            record_exception("consolidation.phase_detect_causality", _exc)
+            logger.exception("Causal detection failed")
+
+        # v5.54.1: Precompute per-memory graph_prior scalars for fast-profile recall.
+        # Runs after detect_causality so the entity graph is maximally fresh.
+        # Non-fatal — prior is additive; a missing cycle just keeps old values.
+        try:
+            _t = time.monotonic()
+            logger.info("phase_start: compute_graph_priors")
+            self._compute_graph_priors(stats)
+            _dur_ms = int((time.monotonic() - _t) * 1000)
+            logger.info("phase_end: compute_graph_priors duration_ms=%d", _dur_ms)
+            _warn_slow_phase("compute_graph_priors", _dur_ms)
+        except Exception as _exc:
+            from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+            record_exception("consolidation.phase_compute_graph_priors", _exc)
+            logger.exception("Graph prior computation failed (non-fatal)")
+
+        # v5.54.2: Precompute per-memory cofire_prior scalars from co-recall transitions.
+        # Runs after compute_graph_priors. Reads memory_transition once (bulk), stores
+        # a normalized co-recall frequency on each memory row. Non-fatal — additive.
+        try:
+            _t = time.monotonic()
+            logger.info("phase_start: compute_cofire_priors")
+            self._compute_cofire_priors(stats)
+            _dur_ms = int((time.monotonic() - _t) * 1000)
+            logger.info("phase_end: compute_cofire_priors duration_ms=%d", _dur_ms)
+            _warn_slow_phase("compute_cofire_priors", _dur_ms)
+        except Exception as _exc:
+            from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+            record_exception("consolidation.phase_compute_cofire_priors", _exc)
+            logger.exception("Co-fire prior computation failed (non-fatal)")
+
+    def _run_curation_phases(self, stats: dict) -> None:
+        """Phase group 3: memify, CLS consolidation, action log processing."""
+        # Run memify self-improvement cycle
+        try:
+            _t = time.monotonic()
+            logger.info("phase_start: memify")
+            memify_stats = self._curator.memify_cycle()
+            stats["memify_pruned"] = memify_stats.get("pruned", 0)
+            stats["memify_strengthened"] = memify_stats.get("strengthened", 0)
+            stats["memify_reweighted"] = memify_stats.get("reweighted", 0)
+            stats["memify_derived"] = memify_stats.get("derived", 0)
+            _dur_ms = int((time.monotonic() - _t) * 1000)
+            logger.info("phase_end: memify duration_ms=%d", _dur_ms)
+            _warn_slow_phase("memify", _dur_ms)
+        except Exception as _exc:
+            from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+            record_exception("consolidation.phase_memify", _exc)
+            logger.exception("Memify cycle failed")
+
+        # Run CLS dual-store consolidation (Go-CLS: episodic → semantic)
+        try:
+            _t = time.monotonic()
+            logger.info("phase_start: cls_consolidation")
+            cls_stats = self._cls.consolidation_cycle()
+            stats["cls_patterns_found"] = cls_stats.get("patterns_found", 0)
+            stats["cls_promoted"] = cls_stats.get("promoted", 0)
+            stats["cls_skipped_inconsistent"] = cls_stats.get("skipped_inconsistent", 0)
+            _dur_ms = int((time.monotonic() - _t) * 1000)
+            logger.info("phase_end: cls_consolidation duration_ms=%d", _dur_ms)
+            _warn_slow_phase("cls_consolidation", _dur_ms)
+        except Exception as _exc:
+            from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+            record_exception("consolidation.phase_cls_consolidation", _exc)
+            logger.exception("CLS consolidation cycle failed")
+
+        # Compression disabled: memory content must stay intact for LLM usage.
+
+        # Process action_log entries into real memories
+        try:
+            _t = time.monotonic()
+            logger.info("phase_start: action_log")
+            action_stats = self._process_action_log()
+            stats["actions_processed"] = action_stats.get("processed", 0)
+            stats["action_memories_created"] = action_stats.get("memories_created", 0)
+            _dur_ms = int((time.monotonic() - _t) * 1000)
+            logger.info("phase_end: action_log duration_ms=%d", _dur_ms)
+            _warn_slow_phase("action_log", _dur_ms)
+        except Exception as _exc:
+            from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+            record_exception("consolidation.phase_action_log", _exc)
+            logger.exception("Action log processing failed")
+
     @trace_span("consolidation.cycle")
     def _consolidation_cycle(self) -> dict:
         _cycle_wall_t0 = time.monotonic()
@@ -77,141 +219,9 @@ class _OrchestratorMixin:
         }
 
         try:
-            _t = time.monotonic()
-            logger.info("phase_start: apply_decay")
-            self._apply_decay(stats)
-            _dur_ms = int((time.monotonic() - _t) * 1000)
-            logger.info("phase_end: apply_decay duration_ms=%d", _dur_ms)
-            _warn_slow_phase("apply_decay", _dur_ms)
-
-            _t = time.monotonic()
-            logger.info("phase_start: process_episodes")
-            self._process_new_episodes(stats)
-            _dur_ms = int((time.monotonic() - _t) * 1000)
-            logger.info("phase_end: process_episodes duration_ms=%d", _dur_ms)
-            _warn_slow_phase("process_episodes", _dur_ms)
-
-            # Prune old episodes to keep the table bounded and _check_temporal_order fast
-            self._prune_old_episodes_safe()
-
-            _t = time.monotonic()
-            logger.info("phase_start: merge_duplicates")
-            self._merge_duplicates(stats)
-            _dur_ms = int((time.monotonic() - _t) * 1000)
-            logger.info("phase_end: merge_duplicates duration_ms=%d", _dur_ms)
-            _warn_slow_phase("merge_duplicates", _dur_ms)
-
-            # Semantic similarity linking — create relationships between similar memories
-            try:
-                _t = time.monotonic()
-                logger.info("phase_start: link_similar")
-                self._link_similar_memories(stats)
-                _dur_ms = int((time.monotonic() - _t) * 1000)
-                logger.info("phase_end: link_similar duration_ms=%d", _dur_ms)
-                _warn_slow_phase("link_similar", _dur_ms)
-            except Exception as _exc:
-                from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
-
-                record_exception("consolidation.phase_link_similar", _exc)
-                logger.exception("Similarity linking failed")
-
-            try:
-                _t = time.monotonic()
-                logger.info("phase_start: detect_causality")
-                self._graph.detect_causality()
-                _dur_ms = int((time.monotonic() - _t) * 1000)
-                logger.info("phase_end: detect_causality duration_ms=%d", _dur_ms)
-                _warn_slow_phase("detect_causality", _dur_ms)
-            except Exception as _exc:
-                from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
-
-                record_exception("consolidation.phase_detect_causality", _exc)
-                logger.exception("Causal detection failed")
-
-            # v5.54.1: Precompute per-memory graph_prior scalars for fast-profile recall.
-            # Runs after detect_causality so the entity graph is maximally fresh.
-            # Non-fatal — prior is additive; a missing cycle just keeps old values.
-            try:
-                _t = time.monotonic()
-                logger.info("phase_start: compute_graph_priors")
-                self._compute_graph_priors(stats)
-                _dur_ms = int((time.monotonic() - _t) * 1000)
-                logger.info("phase_end: compute_graph_priors duration_ms=%d", _dur_ms)
-                _warn_slow_phase("compute_graph_priors", _dur_ms)
-            except Exception as _exc:
-                from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
-
-                record_exception("consolidation.phase_compute_graph_priors", _exc)
-                logger.exception("Graph prior computation failed (non-fatal)")
-
-            # v5.54.2: Precompute per-memory cofire_prior scalars from co-recall transitions.
-            # Runs after compute_graph_priors. Reads memory_transition once (bulk), stores
-            # a normalized co-recall frequency on each memory row. Non-fatal — additive.
-            try:
-                _t = time.monotonic()
-                logger.info("phase_start: compute_cofire_priors")
-                self._compute_cofire_priors(stats)
-                _dur_ms = int((time.monotonic() - _t) * 1000)
-                logger.info("phase_end: compute_cofire_priors duration_ms=%d", _dur_ms)
-                _warn_slow_phase("compute_cofire_priors", _dur_ms)
-            except Exception as _exc:
-                from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
-
-                record_exception("consolidation.phase_compute_cofire_priors", _exc)
-                logger.exception("Co-fire prior computation failed (non-fatal)")
-
-            # Run memify self-improvement cycle
-            try:
-                _t = time.monotonic()
-                logger.info("phase_start: memify")
-                memify_stats = self._curator.memify_cycle()
-                stats["memify_pruned"] = memify_stats.get("pruned", 0)
-                stats["memify_strengthened"] = memify_stats.get("strengthened", 0)
-                stats["memify_reweighted"] = memify_stats.get("reweighted", 0)
-                stats["memify_derived"] = memify_stats.get("derived", 0)
-                _dur_ms = int((time.monotonic() - _t) * 1000)
-                logger.info("phase_end: memify duration_ms=%d", _dur_ms)
-                _warn_slow_phase("memify", _dur_ms)
-            except Exception as _exc:
-                from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
-
-                record_exception("consolidation.phase_memify", _exc)
-                logger.exception("Memify cycle failed")
-
-            # Run CLS dual-store consolidation (Go-CLS: episodic → semantic)
-            try:
-                _t = time.monotonic()
-                logger.info("phase_start: cls_consolidation")
-                cls_stats = self._cls.consolidation_cycle()
-                stats["cls_patterns_found"] = cls_stats.get("patterns_found", 0)
-                stats["cls_promoted"] = cls_stats.get("promoted", 0)
-                stats["cls_skipped_inconsistent"] = cls_stats.get("skipped_inconsistent", 0)
-                _dur_ms = int((time.monotonic() - _t) * 1000)
-                logger.info("phase_end: cls_consolidation duration_ms=%d", _dur_ms)
-                _warn_slow_phase("cls_consolidation", _dur_ms)
-            except Exception as _exc:
-                from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
-
-                record_exception("consolidation.phase_cls_consolidation", _exc)
-                logger.exception("CLS consolidation cycle failed")
-
-            # Compression disabled: memory content must stay intact for LLM usage.
-
-            # Process action_log entries into real memories
-            try:
-                _t = time.monotonic()
-                logger.info("phase_start: action_log")
-                action_stats = self._process_action_log()
-                stats["actions_processed"] = action_stats.get("processed", 0)
-                stats["action_memories_created"] = action_stats.get("memories_created", 0)
-                _dur_ms = int((time.monotonic() - _t) * 1000)
-                logger.info("phase_end: action_log duration_ms=%d", _dur_ms)
-                _warn_slow_phase("action_log", _dur_ms)
-            except Exception as _exc:
-                from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
-
-                record_exception("consolidation.phase_action_log", _exc)
-                logger.exception("Action log processing failed")
+            self._run_episodic_phases(stats)
+            self._run_graph_phases(stats)
+            self._run_curation_phases(stats)
 
             # Run formal causal discovery (PC algorithm) periodically.
             # v5.1 C1: placed after all memory-producing phases so counters are fully populated.

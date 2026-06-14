@@ -65,6 +65,34 @@ except ImportError:
                 bullets.append(v)
         return bullets
 
+    def _content_to_text(content):
+        """Return text from a message content value, or '' if empty/non-text."""
+        if isinstance(content, str):
+            return content if content.strip() else ""
+        if isinstance(content, list):
+            parts = [
+                b.get("text", "")
+                for b in content
+                if isinstance(b, dict) and b.get("type") == "text"
+            ]
+            joined = "\n".join(p for p in parts if p.strip())
+            return joined if joined.strip() else ""
+        return ""
+
+    def _parse_assistant_line(raw):
+        """Parse one JSONL line; return assistant text or '' on any miss."""
+        raw = raw.strip()
+        if not raw:
+            return ""
+        try:
+            entry = json.loads(raw)
+        except json.JSONDecodeError:
+            return ""
+        msg = entry.get("message", entry)
+        if not isinstance(msg, dict) or msg.get("role") != "assistant":
+            return ""
+        return _content_to_text(msg.get("content", ""))
+
     def _get_report_text(data):
         transcript_path = data.get("transcript_path", "")
         if not transcript_path:
@@ -77,28 +105,9 @@ except ImportError:
                 return ""
             last = ""
             for raw in p.read_text(encoding="utf-8", errors="ignore").splitlines():
-                raw = raw.strip()
-                if not raw:
-                    continue
-                try:
-                    entry = json.loads(raw)
-                except json.JSONDecodeError:
-                    continue
-                msg = entry.get("message", entry)
-                if not isinstance(msg, dict) or msg.get("role") != "assistant":
-                    continue
-                content = msg.get("content", "")
-                if isinstance(content, str) and content.strip():
-                    last = content
-                elif isinstance(content, list):
-                    parts = [
-                        b.get("text", "")
-                        for b in content
-                        if isinstance(b, dict) and b.get("type") == "text"
-                    ]
-                    joined = "\n".join(p for p in parts if p.strip())
-                    if joined.strip():
-                        last = joined
+                text = _parse_assistant_line(raw)
+                if text:
+                    last = text
             return last
         except Exception:
             return ""

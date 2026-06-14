@@ -6,6 +6,7 @@ pattern). _RerankingMixin is the thin pipeline orchestrator for Retriever's MRO.
 
 import logging
 import time as _time
+from dataclasses import dataclass
 
 # Per-strategy mixin classes (sibling private modules)
 from yadgar.retrieval._reranking_confidence import _ConfidenceMixin
@@ -27,6 +28,25 @@ def _observe_recall_stage(stage: str, elapsed_ms: float) -> None:
         yadgar_recall_stage_ms.labels(stage=stage).observe(elapsed_ms)
     except Exception:
         pass
+
+
+@dataclass
+class RerankContext:
+    """Query-context bundle for the rerank pipeline.
+
+    Groups the 8 query-scoped parameters that flow unchanged through every
+    pipeline stage, so each stage helper receives a single context object
+    rather than a wide parameter list.
+    """
+
+    query: str
+    query_analysis: dict
+    query_embedding: object  # raw embedding bytes or None
+    profile: dict
+    profile_name: str
+    open_domain_mode: bool
+    use_cross_encoder: bool
+    max_results: int
 
 
 class Reranker(
@@ -65,19 +85,184 @@ class _RerankingMixin:
     instance via MRO.
     """
 
+    # ------------------------------------------------------------------
+    # Pipeline stage helpers
+    # ------------------------------------------------------------------
+
+    def _rerank_heuristic(self, result_memories: list[dict], ctx: RerankContext) -> list[dict]:
+        """Apply heuristic reranker (skipped for 'fast' profile)."""
+        if not (self._settings.RERANKER_ENABLED and ctx.profile_name != "fast"):
+            return result_memories
+        heuristic_k = ctx.max_results
+        if ctx.use_cross_encoder:
+            heuristic_k = None  # Uses RERANKER_TOP_K (50)
+        return self._reranker.heuristic_rerank(result_memories, ctx.query, top_k=heuristic_k)
+
+    def _rerank_comparison_merge(
+        self,
+        result_memories: list[dict],
+        seen_ids: set[int],
+        ctx: RerankContext,
+    ) -> list[dict]:
+        """Merge extra candidates for comparison queries ("A or B?")."""
+        comparison_options = ctx.query_analysis.get("comparison_options", [])
+        if not (
+            getattr(self._settings, "COMPARISON_DUAL_SEARCH_ENABLED", False) and comparison_options
+        ):
+            return result_memories
+        subject = (
+            ctx.query_analysis.get("named_entities", [None])[0]
+            if ctx.query_analysis.get("named_entities")
+            else None
+        )
+        comp_results = self._comparison_dual_search(
+            ctx.query,
+            comparison_options,
+            subject,
+            ctx.max_results,
+        )
+        for r in comp_results:
+            rid = r.get("id", -1)
+            if rid not in seen_ids:
+                r.setdefault("_retrieval_score", 0.0)
+                r.pop("embedding", None)
+                result_memories.append(r)
+                seen_ids.add(rid)
+        return result_memories
+
+    def _rerank_cross_encoder(self, result_memories: list[dict], ctx: RerankContext) -> list[dict]:
+        """Apply cross-encoder reranker."""
+        if not ctx.use_cross_encoder:
+            return result_memories
+        _ce_t0 = _time.perf_counter()
+        result_memories = self._reranker.cross_encoder_rerank(result_memories, ctx.query)
+        _observe_recall_stage("cross_encoder", (_time.perf_counter() - _ce_t0) * 1000)
+        return result_memories
+
+    def _rerank_nli(self, result_memories: list[dict], ctx: RerankContext) -> list[dict]:
+        """Apply NLI entailment scoring.
+
+        v5.6.6: profile["nli"] is the "this tier allows it" gate; setting is
+        "globally enabled". AND semantics so fast/hook profile never triggers NLI.
+        """
+        use_nli = ctx.profile["nli"] and getattr(self._settings, "NLI_RERANKING_ENABLED", False)
+        if not (use_nli and (not self._settings.NLI_ONLY_FOR_OPEN_DOMAIN or ctx.open_domain_mode)):
+            return result_memories
+        _nli_t0 = _time.perf_counter()
+        result_memories = self._reranker.nli_rerank(ctx.query, result_memories)
+        nli_weight = self._settings.NLI_WEIGHT
+        for mem in result_memories:
+            ce = mem.get("_cross_encoder_score", 0)
+            nli = mem.get("_nli_entailment_score", 0)
+            mem["_retrieval_score"] = (1 - nli_weight) * ce + nli_weight * nli
+        result_memories.sort(key=lambda m: m.get("_retrieval_score", 0), reverse=True)
+        _observe_recall_stage("nli", (_time.perf_counter() - _nli_t0) * 1000)
+        return result_memories
+
+    def _rerank_multi_passage(self, result_memories: list[dict], ctx: RerankContext) -> list[dict]:
+        """Apply multi-passage evidence aggregation.
+
+        Profile gate: "multi_passage" key added v5.6.6 — default True for backward compat.
+        """
+        _mp_allowed = ctx.profile.get("multi_passage", True)
+        if not (_mp_allowed and getattr(self._settings, "MULTI_PASSAGE_RERANKING_ENABLED", False)):
+            return result_memories
+        return self._reranker.multi_passage_rerank(ctx.query, result_memories, ctx.max_results)
+
+    def _rerank_profile_belief_merge(
+        self, result_memories: list[dict], ctx: RerankContext
+    ) -> list[dict]:
+        """Merge structured knowledge from profile and belief search after CE reranking."""
+        directory = ""
+        for mem in result_memories:
+            if mem.get("directory_context"):
+                directory = mem["directory_context"]
+                break
+        profile_belief_results = self._search_profiles_and_beliefs(
+            ctx.query,
+            directory,
+            ctx.max_results,
+        )
+        if profile_belief_results:
+            result_memories.extend(profile_belief_results)
+            result_memories.sort(
+                key=lambda m: m.get("_retrieval_score", 0),
+                reverse=True,
+            )
+            result_memories = result_memories[: ctx.max_results * 2]
+        return result_memories
+
+    def _rerank_mmr(self, result_memories: list[dict], ctx: RerankContext) -> list[dict]:
+        """Apply MMR diversity reranking."""
+        if not getattr(self._settings, "ADVERSARIAL_DIVERSITY_ENFORCEMENT", False):
+            return result_memories
+        return self._reranker.mmr_rerank(
+            result_memories,
+            ctx.query_embedding,
+            top_k=ctx.max_results,
+            lambda_param=0.7,
+        )
+
+    def _rerank_adversarial_detect(self, result_memories: list[dict]) -> list[dict]:
+        """Annotate results with retrieval confidence via adversarial detection."""
+        if not (self._settings.ADVERSARIAL_DETECTION_ENABLED and result_memories):
+            return result_memories
+        adv_info = self._reranker.detect_adversarial(result_memories)
+        for mem in result_memories:
+            mem["_retrieval_confidence"] = adv_info["confidence"]
+        if adv_info["is_uncertain"]:
+            logger.debug(
+                "Low retrieval confidence (%.3f), score_gap=%.3f",
+                adv_info["confidence"],
+                adv_info["score_gap"],
+            )
+        return result_memories
+
+    def _rerank_rules(self, result_memories: list[dict], ctx: RerankContext) -> list[dict]:
+        """Apply neuro-symbolic rules."""
+        if self._rules_engine is None or not result_memories:
+            return result_memories
+        directory = ""
+        for mem in result_memories:
+            if mem.get("directory_context"):
+                directory = mem["directory_context"]
+                break
+        result_memories = self._rules_engine.apply_rules(result_memories, directory)
+        return result_memories[: ctx.max_results]
+
+    def _rerank_engram_links(self, result_memories: list[dict]) -> list[dict]:
+        """Enrich with temporal links from engram allocation."""
+        if self._engram is None:
+            return result_memories
+        for mem in result_memories:
+            try:
+                linked = self._engram.get_temporally_linked(mem["id"])
+                if linked:
+                    mem["temporal_links"] = linked
+            except Exception:
+                pass
+        return result_memories
+
+    def _rerank_metacognition(self, result_memories: list[dict]) -> list[dict]:
+        """Apply cognitive load management via metacognition."""
+        if self._metacognition is None or not result_memories:
+            return result_memories
+        try:
+            result_memories = self._metacognition.manage_context(result_memories)
+        except Exception:
+            logger.debug("Metacognition manage_context failed, returning unoptimized")
+        return result_memories
+
+    # ------------------------------------------------------------------
+    # Pipeline orchestrator
+    # ------------------------------------------------------------------
+
     @trace_span("retrieval.rerank")
     def _apply_rerank_pipeline(
         self,
         result_memories: list[dict],
         seen_ids: set[int],
-        query: str,
-        query_analysis: dict,
-        query_embedding,
-        profile: dict,
-        profile_name: str,
-        open_domain_mode: bool,
-        use_cross_encoder: bool,
-        max_results: int,
+        ctx: RerankContext,
     ) -> list[dict]:
         """Apply full post-fusion reranking pipeline and return final result list."""
         _rerank_t0 = _time.perf_counter()
@@ -86,137 +271,23 @@ class _RerankingMixin:
         # Useful for CPU-only hosts where every rerank call causes 8-46s saturation.
         if not getattr(self._settings, "HEAVY_RERANK_ENABLED", True):
             _observe_recall_stage("rerank_final", (_time.perf_counter() - _rerank_t0) * 1000)
-            return result_memories[:max_results]
+            return result_memories[: ctx.max_results]
 
-        # Heuristic reranker (skipped for 'fast' profile)
-        if self._settings.RERANKER_ENABLED and profile_name != "fast":
-            heuristic_k = max_results
-            if use_cross_encoder:
-                heuristic_k = None  # Uses RERANKER_TOP_K (50)
-            result_memories = self._reranker.heuristic_rerank(
-                result_memories, query, top_k=heuristic_k
-            )
-
-        # Comparison dual search: merge extra candidates for "A or B?" queries
-        comparison_options = query_analysis.get("comparison_options", [])
-        if getattr(self._settings, "COMPARISON_DUAL_SEARCH_ENABLED", False) and comparison_options:
-            subject = (
-                query_analysis.get("named_entities", [None])[0]
-                if query_analysis.get("named_entities")
-                else None
-            )
-            comp_results = self._comparison_dual_search(
-                query,
-                comparison_options,
-                subject,
-                max_results,
-            )
-            for r in comp_results:
-                rid = r.get("id", -1)
-                if rid not in seen_ids:
-                    r.setdefault("_retrieval_score", 0.0)
-                    r.pop("embedding", None)
-                    result_memories.append(r)
-                    seen_ids.add(rid)
-
-        # Cross-encoder reranker
-        if use_cross_encoder:
-            _ce_t0 = _time.perf_counter()
-            result_memories = self._reranker.cross_encoder_rerank(result_memories, query)
-            _observe_recall_stage("cross_encoder", (_time.perf_counter() - _ce_t0) * 1000)
-
-        # NLI entailment scoring
-        # v5.6.6: profile["nli"] is the "this tier allows it" gate; setting is "globally enabled".
-        # Use AND semantics so fast/hook profile never triggers NLI even when setting is on.
-        use_nli = profile["nli"] and getattr(self._settings, "NLI_RERANKING_ENABLED", False)
-        if use_nli and (not self._settings.NLI_ONLY_FOR_OPEN_DOMAIN or open_domain_mode):
-            _nli_t0 = _time.perf_counter()
-            result_memories = self._reranker.nli_rerank(query, result_memories)
-            nli_weight = self._settings.NLI_WEIGHT
-            for mem in result_memories:
-                ce = mem.get("_cross_encoder_score", 0)
-                nli = mem.get("_nli_entailment_score", 0)
-                mem["_retrieval_score"] = (1 - nli_weight) * ce + nli_weight * nli
-            result_memories.sort(key=lambda m: m.get("_retrieval_score", 0), reverse=True)
-            _observe_recall_stage("nli", (_time.perf_counter() - _nli_t0) * 1000)
-
-        # Multi-passage evidence aggregation
-        # Profile gate: "multi_passage" key added v5.6.6 — default True for backward compat.
-        _mp_allowed = profile.get("multi_passage", True)
-        if _mp_allowed and getattr(self._settings, "MULTI_PASSAGE_RERANKING_ENABLED", False):
-            result_memories = self._reranker.multi_passage_rerank(
-                query, result_memories, max_results
-            )
-
-        # Profile and belief search: merge structured knowledge after CE reranking
-        directory = ""
-        for mem in result_memories:
-            if mem.get("directory_context"):
-                directory = mem["directory_context"]
-                break
-        profile_belief_results = self._search_profiles_and_beliefs(
-            query,
-            directory,
-            max_results,
-        )
-        if profile_belief_results:
-            result_memories.extend(profile_belief_results)
-            result_memories.sort(
-                key=lambda m: m.get("_retrieval_score", 0),
-                reverse=True,
-            )
-            result_memories = result_memories[: max_results * 2]
-
-        # MMR diversity reranking
-        if getattr(self._settings, "ADVERSARIAL_DIVERSITY_ENFORCEMENT", False):
-            result_memories = self._reranker.mmr_rerank(
-                result_memories,
-                query_embedding,
-                top_k=max_results,
-                lambda_param=0.7,
-            )
+        result_memories = self._rerank_heuristic(result_memories, ctx)
+        result_memories = self._rerank_comparison_merge(result_memories, seen_ids, ctx)
+        result_memories = self._rerank_cross_encoder(result_memories, ctx)
+        result_memories = self._rerank_nli(result_memories, ctx)
+        result_memories = self._rerank_multi_passage(result_memories, ctx)
+        result_memories = self._rerank_profile_belief_merge(result_memories, ctx)
+        result_memories = self._rerank_mmr(result_memories, ctx)
 
         # Trim to max_results after reranking
-        result_memories = result_memories[:max_results]
+        result_memories = result_memories[: ctx.max_results]
 
-        # Adversarial detection
-        if self._settings.ADVERSARIAL_DETECTION_ENABLED and result_memories:
-            adv_info = self._reranker.detect_adversarial(result_memories)
-            for mem in result_memories:
-                mem["_retrieval_confidence"] = adv_info["confidence"]
-            if adv_info["is_uncertain"]:
-                logger.debug(
-                    "Low retrieval confidence (%.3f), score_gap=%.3f",
-                    adv_info["confidence"],
-                    adv_info["score_gap"],
-                )
-
-        # Apply neuro-symbolic rules
-        if self._rules_engine is not None and result_memories:
-            directory = ""
-            for mem in result_memories:
-                if mem.get("directory_context"):
-                    directory = mem["directory_context"]
-                    break
-            result_memories = self._rules_engine.apply_rules(result_memories, directory)
-            result_memories = result_memories[:max_results]
-
-        # Enrich with temporal links from engram allocation
-        if self._engram is not None:
-            for mem in result_memories:
-                try:
-                    linked = self._engram.get_temporally_linked(mem["id"])
-                    if linked:
-                        mem["temporal_links"] = linked
-                except Exception:
-                    pass
-
-        # Apply cognitive load management via metacognition
-        if self._metacognition is not None and result_memories:
-            try:
-                result_memories = self._metacognition.manage_context(result_memories)
-            except Exception:
-                logger.debug("Metacognition manage_context failed, returning unoptimized")
+        result_memories = self._rerank_adversarial_detect(result_memories)
+        result_memories = self._rerank_rules(result_memories, ctx)
+        result_memories = self._rerank_engram_links(result_memories)
+        result_memories = self._rerank_metacognition(result_memories)
 
         # P11: observe rerank_final covering the full post-fusion pipeline duration.
         _observe_recall_stage("rerank_final", (_time.perf_counter() - _rerank_t0) * 1000)

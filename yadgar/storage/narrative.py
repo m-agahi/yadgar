@@ -8,8 +8,28 @@ _NarrativeMixin provides:
 """
 
 import logging
+from dataclasses import dataclass
 
 _log = logging.getLogger(__name__)
+
+
+@dataclass
+class BeliefRecord:
+    """Data describing a derived belief to be inserted into the store.
+
+    Fields map 1-to-1 to the derived_belief table columns.
+    ``evidence_memory_ids`` intentionally defaults to None (not an empty list)
+    so that ``insert_belief`` can apply the ``or []`` coercion and keep the
+    insertion behaviour identical to the pre-refactor signature.
+    """
+
+    belief_type: str
+    subject: str
+    content: str
+    evidence_memory_ids: list[int] | None = None
+    confidence: float = 0.5
+    embedding_info: tuple[bytes, str] | None = None
+    directory_context: str | None = None
 
 
 class _NarrativeMixin:
@@ -150,27 +170,30 @@ class _NarrativeMixin:
 
     # ------------------------------------------------------------------ Derived Beliefs
 
-    def insert_belief(  # noqa: PLR0913
+    def insert_belief(
         self,
-        belief_type: str,
-        subject: str,
-        content: str,
-        evidence_memory_ids: list[int] | None = None,
-        confidence: float = 0.5,
-        embedding_info: tuple[bytes, str] | None = None,
-        directory_context: str | None = None,
+        record: BeliefRecord,
         supersede: bool = True,
     ) -> int:
         """Insert a derived belief, optionally superseding prior beliefs.
 
-        embedding_info: optional (embedding_bytes, model_name) pair.
+        ``record`` carries all the data fields for the belief row; ``supersede``
+        is a control flag that governs whether any currently-valid row for the
+        same (subject, belief_type, directory_context) is closed first.
+
         v5.29.0 (Adopt-3): when supersede=True (default), any currently-valid
         rows for the same (subject, belief_type, directory_context) are closed
         (valid_until set to now()) before the new row is inserted. Set
         supersede=False to allow competing co-existing beliefs (both remain valid).
         """
         now = self._now_iso()
-        evidence = evidence_memory_ids or []
+        belief_type = record.belief_type
+        subject = record.subject
+        content = record.content
+        directory_context = record.directory_context
+        confidence = record.confidence
+        evidence = record.evidence_memory_ids or []
+        embedding_info = record.embedding_info
         embedding: bytes | None = embedding_info[0] if embedding_info else None
         embedding_model: str | None = embedding_info[1] if embedding_info else None
         emb_floats = self._bytes_to_floats(embedding) if embedding else None

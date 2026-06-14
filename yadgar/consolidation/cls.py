@@ -55,105 +55,132 @@ _CODE_EXTENSIONS = frozenset(
 class _CLSMixin:
     """Episode processing, duplicate merging, and semantic similarity linking."""
 
+    # ── _process_new_episodes helpers ─────────────────────────────────────────
+
+    @staticmethod
+    def _build_entity_map(
+        typed_entities: list,
+        legacy_entities: list[tuple[str, str]],
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        """Merge typed + legacy entity extractions into (entity_map, rel_contexts)."""
+        entity_map: dict[str, str] = {}  # name -> type
+        rel_contexts: dict[str, str] = {}  # name -> relationship context
+        for name, etype, ctx in typed_entities:
+            entity_map[name] = etype
+            if ctx:
+                rel_contexts[name] = ctx
+        for name, etype in legacy_entities:
+            if name not in entity_map:
+                entity_map[name] = etype
+        return entity_map, rel_contexts
+
+    def _upsert_entities(self, entity_map: dict[str, str]) -> tuple[list[int], list[str]]:
+        """Get-or-create entities; return (entity_ids, entity_names)."""
+        entity_ids: list[int] = []
+        entity_names: list[str] = []
+        for name, etype in entity_map.items():
+            existing = self._storage.get_entity_by_name(name)
+            if existing:
+                self._storage.reinforce_entity(existing["id"])
+                entity_ids.append(existing["id"])
+            else:
+                eid = self._storage.insert_entity({"name": name, "type": etype})
+                entity_ids.append(eid)
+            entity_names.append(name)
+        return entity_ids, entity_names
+
+    def _build_cooccurrence_batch(self, entity_ids: list[int]) -> list[tuple[str, dict | None]]:
+        """Build batched SQL writes for co-occurrence relationships (bulk, O(1) round trips)."""
+        existing_rels = self._storage.get_relationships_among_entities(entity_ids)
+        rel_index: dict[tuple[int, int], dict] = {
+            (
+                min(r["source_entity_id"], r["target_entity_id"]),
+                max(r["source_entity_id"], r["target_entity_id"]),
+            ): r
+            for r in existing_rels
+        }
+        to_reinforce: list[int] = []
+        to_insert: list[tuple[int, int]] = []
+        for id_a, id_b in combinations(entity_ids, 2):
+            key = (min(id_a, id_b), max(id_a, id_b))
+            rel = rel_index.get(key)
+            if rel:
+                to_reinforce.append(rel["id"])
+            else:
+                to_insert.append((id_a, id_b))
+
+        now = self._storage._now_iso()
+        batch: list[tuple[str, dict | None]] = []
+        for rid in to_reinforce:
+            batch.append(
+                (
+                    "UPDATE type::record('relationship', $id) SET "
+                    "weight = weight + $inc, last_reinforced = $now",
+                    {"id": rid, "inc": 1.0, "now": now},
+                )
+            )
+        if to_insert:
+            new_ids = self._storage._reserve_ids("relationship", len(to_insert))
+            for (id_a, id_b), rid in zip(to_insert, new_ids, strict=True):
+                batch.append(
+                    (
+                        "CREATE type::record('relationship', $id) SET "
+                        "source_entity_id = $src, target_entity_id = $tgt, "
+                        "relationship_type = 'co_occurrence', weight = 1.0, "
+                        "created_at = $now, last_reinforced = $now",
+                        {"id": rid, "src": id_a, "tgt": id_b, "now": now},
+                    )
+                )
+        return batch
+
+    @staticmethod
+    def _find_entity_by_type(
+        entity_map: dict[str, str], target_type: str, exclude_name: str
+    ) -> str | None:
+        """Return first entity name of target_type excluding exclude_name, or None."""
+        for other_name, other_type in entity_map.items():
+            if other_type == target_type and other_name != exclude_name:
+                return other_name
+        return None
+
+    def _apply_one_typed_relationship(
+        self, name: str, ctx: str, entity_map: dict[str, str]
+    ) -> None:
+        """Emit one typed graph edge for a single (name, ctx) pair."""
+        if ctx == "imports":
+            dep = self._find_entity_by_type(entity_map, "dependency", name)
+            if dep:
+                self._graph.add_relationship(name, dep, "imports")
+        elif ctx == "resolved_by":
+            sol = self._find_entity_by_type(entity_map, "solution", name)
+            if sol:
+                self._graph.add_relationship(sol, name, "resolved_by")
+        # ctx == "calls": implicit from co_occurrence — no edge needed
+        # ctx == "decided_to_use": handled by extract_entities_typed
+
+    def _apply_typed_relationships(
+        self, rel_contexts: dict[str, str], entity_map: dict[str, str]
+    ) -> None:
+        """Emit typed graph edges for entities with relationship context."""
+        for name, ctx in rel_contexts.items():
+            self._apply_one_typed_relationship(name, ctx, entity_map)
+
     def _process_new_episodes(self, stats: dict) -> None:
         episodes = self._storage.get_episodes_since(self._last_consolidated_episode_id)
         for ep in episodes:
-            # Use typed extraction for richer relationships
             typed_entities = self._graph.extract_entities_typed(
                 ep["raw_content"], ep.get("directory", "")
             )
-            # Fall back to legacy extraction for broad coverage
             legacy_entities = self._extract_entities(ep["raw_content"])
 
-            # Merge: typed triples -> (name, type) pairs + relationship context
-            entity_map: dict[str, str] = {}  # name -> type
-            rel_contexts: dict[str, str] = {}  # name -> relationship context
-            for name, etype, ctx in typed_entities:
-                entity_map[name] = etype
-                if ctx:
-                    rel_contexts[name] = ctx
-            for name, etype in legacy_entities:
-                if name not in entity_map:
-                    entity_map[name] = etype
+            entity_map, rel_contexts = self._build_entity_map(typed_entities, legacy_entities)
+            entity_ids, _entity_names = self._upsert_entities(entity_map)
 
-            entity_ids = []
-            entity_names = []
-            for name, etype in entity_map.items():
-                existing = self._storage.get_entity_by_name(name)
-                if existing:
-                    self._storage.reinforce_entity(existing["id"])
-                    entity_ids.append(existing["id"])
-                else:
-                    eid = self._storage.insert_entity({"name": name, "type": etype})
-                    entity_ids.append(eid)
-                entity_names.append(name)
-
-            # Build co-occurrence relationships — ONE bulk fetch + batched writes
-            # instead of O(N²) per-pair HTTP calls.
-            existing_rels = self._storage.get_relationships_among_entities(entity_ids)
-            rel_index: dict[tuple[int, int], dict] = {
-                (
-                    min(r["source_entity_id"], r["target_entity_id"]),
-                    max(r["source_entity_id"], r["target_entity_id"]),
-                ): r
-                for r in existing_rels
-            }
-            to_reinforce: list[int] = []
-            to_insert: list[tuple[int, int]] = []
-            for id_a, id_b in combinations(entity_ids, 2):
-                key = (min(id_a, id_b), max(id_a, id_b))
-                rel = rel_index.get(key)
-                if rel:
-                    to_reinforce.append(rel["id"])
-                else:
-                    to_insert.append((id_a, id_b))
-
-            now = self._storage._now_iso()
-            batch: list[tuple[str, dict | None]] = []
-
-            if to_reinforce:
-                for rid in to_reinforce:
-                    batch.append(
-                        (
-                            "UPDATE type::record('relationship', $id) SET "
-                            "weight = weight + $inc, last_reinforced = $now",
-                            {"id": rid, "inc": 1.0, "now": now},
-                        )
-                    )
-
-            if to_insert:
-                new_ids = self._storage._reserve_ids("relationship", len(to_insert))
-                for (id_a, id_b), rid in zip(to_insert, new_ids, strict=True):
-                    batch.append(
-                        (
-                            "CREATE type::record('relationship', $id) SET "
-                            "source_entity_id = $src, target_entity_id = $tgt, "
-                            "relationship_type = 'co_occurrence', weight = 1.0, "
-                            "created_at = $now, last_reinforced = $now",
-                            {"id": rid, "src": id_a, "tgt": id_b, "now": now},
-                        )
-                    )
-
+            batch = self._build_cooccurrence_batch(entity_ids)
             if batch:
                 self._storage.batch_writes(batch)
 
-            # Build typed relationships from extraction context
-            for name, ctx in rel_contexts.items():
-                if ctx == "imports":
-                    # Find the module this was imported from (nearest dependency)
-                    for other_name, other_type in entity_map.items():
-                        if other_type == "dependency" and other_name != name:
-                            self._graph.add_relationship(name, other_name, "imports")
-                            break
-                elif ctx == "calls":
-                    pass  # calls are implicit from co_occurrence for now
-                elif ctx == "resolved_by":
-                    for other_name, other_type in entity_map.items():
-                        if other_type == "solution" and other_name != name:
-                            self._graph.add_relationship(other_name, name, "resolved_by")
-                            break
-                elif ctx == "decided_to_use":
-                    pass  # decision pairs handled by extract_entities_typed
+            self._apply_typed_relationships(rel_contexts, entity_map)
 
             # Synaptic boost: if any associated memory has high importance,
             # boost nearby memories in the time window
@@ -364,66 +391,59 @@ class _CLSMixin:
         stats["cofire_prior_updated"] = updated
         logger.info("cofire_prior: computed and stored for %d memories", updated)
 
-    def _link_similar_memories(self, stats: dict) -> None:
-        """Create memory_similarity_link records between semantically similar memories.
+    # ── _link_similar_memories helpers ────────────────────────────────────────
 
-        Uses numpy matrix multiplication for fast pairwise cosine similarity,
-        then upserts into memory_similarity_link (no entity-table rows created).
-        Capped per cycle to keep consolidation fast.
+    @staticmethod
+    def _build_valid_embedding_matrix(
+        memories: list[dict],
+    ) -> tuple[list[int], object] | None:
+        """Build normalized embedding matrix from memories with valid embeddings.
+
+        Returns (ids, matrix) where matrix is an NxD numpy float32 array,
+        or None if fewer than 2 valid embeddings exist.
         """
         import numpy as np
 
-        max_candidates = self._settings.SIMILARITY_MATRIX_MAX_CANDIDATES
-        memories = self._storage.get_memories_with_embeddings(
-            limit=max_candidates, order_by="last_accessed"
-        )
-        if len(memories) < 2:
-            return
-
-        threshold = self._settings.SIMILARITY_LINK_THRESHOLD
-        max_new_links = 100  # cap per consolidation cycle
-        max_degree = self._settings.MAX_SIMILARITY_LINKS_PER_MEMORY
-
-        # Build embedding matrix (only memories with valid embeddings)
         valid = []
         for m in memories:
             emb = m.get("embedding")
-            if emb and len(emb) > 0:
-                try:
-                    arr = np.frombuffer(emb, dtype=np.float32)
-                    if len(arr) > 0 and np.linalg.norm(arr) > 0:
-                        valid.append((m["id"], arr / np.linalg.norm(arr)))
-                except Exception:
-                    continue
+            if not emb or len(emb) == 0:
+                continue
+            try:
+                arr = np.frombuffer(emb, dtype=np.float32)
+                norm = np.linalg.norm(arr)
+                if len(arr) > 0 and norm > 0:
+                    valid.append((m["id"], arr / norm))
+            except Exception:
+                continue
 
         if len(valid) < 2:
-            return
+            return None
 
         ids = [v[0] for v in valid]
         matrix = np.stack([v[1] for v in valid])  # N x D
+        return ids, matrix
 
-        # Pairwise cosine similarity via matrix multiplication (fast)
-        sim_matrix = matrix @ matrix.T  # N x N
+    @staticmethod
+    def _collect_link_candidates(
+        ids: list[int],
+        sim_matrix: object,
+        existing_links: dict,
+        degree: dict[int, int],
+        threshold: float,
+        max_new_links: int,
+        max_degree: int,
+    ) -> tuple[list[tuple[int, int, float]], list[tuple[int, float]]]:
+        """Iterate sorted similar pairs and accumulate pending inserts and reinforces."""
+        import numpy as np
 
-        # Pre-load all existing links to avoid per-pair read roundtrips.
-        # Key is canonical (source_memory_id, target_memory_id) — already stored as min/max.
-        existing_links: dict[tuple[int, int], dict] = {}
-        degree: dict[int, int] = {}  # memory_id -> current link count
-        for link in self._storage.get_all_memory_similarity_links():
-            src_id, tgt_id = link["source_memory_id"], link["target_memory_id"]
-            existing_links[(src_id, tgt_id)] = link
-            degree[src_id] = degree.get(src_id, 0) + 1
-            degree[tgt_id] = degree.get(tgt_id, 0) + 1
-
-        # Find pairs above threshold (upper triangle only)
-        # Get indices sorted by descending similarity for best-first linking
-        links_created = 0
         rows, cols = np.where(np.triu(sim_matrix, k=1) >= threshold)
         sims = sim_matrix[rows, cols]
         order = np.argsort(-sims)
 
-        pending_inserts: list[tuple[int, int, float]] = []  # (mid_a, mid_b, weight)
-        pending_reinforces: list[tuple[int, float]] = []  # (link_id, delta)
+        pending_inserts: list[tuple[int, int, float]] = []
+        pending_reinforces: list[tuple[int, float]] = []
+        links_created = 0
 
         for idx in order:
             if links_created >= max_new_links:
@@ -432,18 +452,15 @@ class _CLSMixin:
             sim = float(sims[idx])
             mid_a, mid_b = ids[i], ids[j]
 
-            # Canonical key matches storage convention (source < target)
             key = (mid_a, mid_b) if mid_a < mid_b else (mid_b, mid_a)
             existing = existing_links.get(key)
             if existing:
-                # Reinforce if new similarity is higher
                 if sim > existing.get("weight", 0):
                     pending_reinforces.append((existing["id"], sim - existing["weight"]))
                 continue
 
-            # Degree cap — keep the similarity graph sparse. Pairs are processed
-            # in descending-similarity order, so a capped-out memory has already
-            # kept its strongest links.
+            # Degree cap — pairs processed in descending-similarity order, so a
+            # capped-out memory has already kept its strongest links.
             if degree.get(mid_a, 0) >= max_degree or degree.get(mid_b, 0) >= max_degree:
                 continue
 
@@ -452,7 +469,14 @@ class _CLSMixin:
             degree[mid_b] = degree.get(mid_b, 0) + 1
             links_created += 1
 
-        # Batch all writes into a single transaction
+        return pending_inserts, pending_reinforces
+
+    def _build_similarity_batch(
+        self,
+        pending_inserts: list[tuple[int, int, float]],
+        pending_reinforces: list[tuple[int, float]],
+    ) -> list[tuple[str, dict | None]]:
+        """Convert pending inserts/reinforces to a SQL batch for similarity links."""
         now = self._storage._now_iso()
         batch: list[tuple[str, dict | None]] = []
 
@@ -474,7 +498,7 @@ class _CLSMixin:
                         "weight": weight,
                         "created_at": now,
                         "updated_at": now,
-                        "csm": src,  # lower-id memory as canonical citation source
+                        "csm": src,
                     },
                 )
             )
@@ -488,9 +512,130 @@ class _CLSMixin:
                 )
             )
 
+        return batch
+
+    def _link_similar_memories(self, stats: dict) -> None:
+        """Create memory_similarity_link records between semantically similar memories.
+
+        Uses numpy matrix multiplication for fast pairwise cosine similarity,
+        then upserts into memory_similarity_link (no entity-table rows created).
+        Capped per cycle to keep consolidation fast.
+        """
+        max_candidates = self._settings.SIMILARITY_MATRIX_MAX_CANDIDATES
+        memories = self._storage.get_memories_with_embeddings(
+            limit=max_candidates, order_by="last_accessed"
+        )
+        if len(memories) < 2:
+            return
+
+        result = self._build_valid_embedding_matrix(memories)
+        if result is None:
+            return
+        ids, matrix = result
+
+        sim_matrix = matrix @ matrix.T  # N x N — pairwise cosine via matmul
+
+        # Pre-load all existing links to avoid per-pair read roundtrips.
+        existing_links: dict[tuple[int, int], dict] = {}
+        degree: dict[int, int] = {}
+        for link in self._storage.get_all_memory_similarity_links():
+            src_id, tgt_id = link["source_memory_id"], link["target_memory_id"]
+            existing_links[(src_id, tgt_id)] = link
+            degree[src_id] = degree.get(src_id, 0) + 1
+            degree[tgt_id] = degree.get(tgt_id, 0) + 1
+
+        threshold = self._settings.SIMILARITY_LINK_THRESHOLD
+        max_new_links = 100
+        max_degree = self._settings.MAX_SIMILARITY_LINKS_PER_MEMORY
+
+        pending_inserts, pending_reinforces = self._collect_link_candidates(
+            ids, sim_matrix, existing_links, degree, threshold, max_new_links, max_degree
+        )
+
+        batch = self._build_similarity_batch(pending_inserts, pending_reinforces)
         self._storage.batch_writes(batch)
 
-        stats["similarity_links_created"] = links_created
+        stats["similarity_links_created"] = len(pending_inserts)
+
+    # ── _merge_duplicates helpers ──────────────────────────────────────────────
+
+    @staticmethod
+    def _exact_content_dedup(memories: list[dict]) -> set[int]:
+        """Pass 1: collect IDs to delete via exact-content match.
+
+        Keeps the hotter copy; on equal heat keeps the first-seen (stable sort).
+        Handles missing embeddings since it only looks at content strings.
+        """
+        to_delete: set[int] = set()
+        content_index: dict[str, int] = {}  # content → winning memory id
+        content_heat: dict[str, float] = {}  # content → heat of winner
+        for mem in memories:
+            content = mem.get("content") or ""
+            if not content:
+                continue
+            if content in content_index:
+                existing_heat = content_heat[content]
+                if mem["heat"] > existing_heat:
+                    to_delete.add(content_index[content])
+                    content_index[content] = mem["id"]
+                    content_heat[content] = mem["heat"]
+                else:
+                    to_delete.add(mem["id"])
+            else:
+                content_index[content] = mem["id"]
+                content_heat[content] = mem["heat"]
+        return to_delete
+
+    @staticmethod
+    def _parse_unit_embedding(emb: bytes) -> object | None:
+        """Parse raw embedding bytes to a unit-normalized float32 ndarray, or None on failure."""
+        import numpy as np
+
+        if not emb or len(emb) == 0:
+            return None
+        try:
+            arr = np.frombuffer(emb, dtype=np.float32)
+            norm = np.linalg.norm(arr)
+            if len(arr) == 0 or norm == 0:
+                return None
+            return arr / norm
+        except Exception:
+            return None
+
+    @staticmethod
+    def _embedding_dedup(memories: list[dict], to_delete: set[int]) -> set[int]:
+        """Pass 2: collect IDs to delete via embedding cosine similarity > 0.95.
+
+        Skips memories already marked for deletion. Keeps the hotter copy;
+        on tie keeps the lower-index memory (stable sort).
+        """
+        import numpy as np
+
+        valid: list[tuple[int, np.ndarray, float]] = []
+        for mem in memories:
+            if mem["id"] in to_delete:
+                continue
+            unit = _CLSMixin._parse_unit_embedding(mem.get("embedding"))
+            if unit is not None:
+                valid.append((mem["id"], unit, mem["heat"]))
+
+        if len(valid) < 2:
+            return to_delete
+
+        ids = [v[0] for v in valid]
+        heats = [v[2] for v in valid]
+        matrix = np.stack([v[1] for v in valid])
+        sim_matrix = matrix @ matrix.T  # N x N pairwise cosine (O(N·D))
+
+        rows, cols = np.where(np.triu(sim_matrix, k=1) > 0.95)
+        for i, j in zip(rows.tolist(), cols.tolist(), strict=False):
+            mid_a, mid_b = ids[i], ids[j]
+            if mid_a in to_delete or mid_b in to_delete:
+                continue
+            victim = mid_b if heats[i] >= heats[j] else mid_a
+            to_delete.add(victim)
+
+        return to_delete
 
     def _merge_duplicates(self, stats: dict) -> None:
         """Delete near-duplicate memories (cosine similarity > 0.95), keeping the hotter one.
@@ -504,8 +649,6 @@ class _CLSMixin:
            is missing/corrupt (preserves existing short-circuit semantics).
         2. Embedding-similarity pass — numpy matmul over valid-embedding subset.
         """
-        import numpy as np
-
         max_candidates = self._settings.SIMILARITY_MATRIX_MAX_CANDIDATES
         memories = self._storage.get_memories_with_embeddings(
             limit=max_candidates, order_by="last_accessed"
@@ -513,66 +656,8 @@ class _CLSMixin:
         if len(memories) < 2:
             return
 
-        to_delete: set[int] = set()
-
-        # Pass 1: exact-content match (cheap, handles missing embeddings)
-        content_index: dict[str, int] = {}  # content → first-seen memory id
-        content_heat: dict[str, float] = {}  # content → heat of winner
-        for mem in memories:
-            content = mem.get("content") or ""
-            if not content:
-                continue
-            if content in content_index:
-                existing_id = content_index[content]
-                existing_heat = content_heat[content]
-                if mem["heat"] > existing_heat:
-                    # New one is hotter — evict the old winner
-                    to_delete.add(existing_id)
-                    content_index[content] = mem["id"]
-                    content_heat[content] = mem["heat"]
-                else:
-                    to_delete.add(mem["id"])
-            else:
-                content_index[content] = mem["id"]
-                content_heat[content] = mem["heat"]
-
-        # Pass 2: embedding-similarity pass via numpy matmul
-        # Only consider memories not already marked for deletion and with valid embeddings.
-        valid: list[tuple[int, np.ndarray, float]] = []  # (id, unit_vec, heat)
-        for mem in memories:
-            if mem["id"] in to_delete:
-                continue
-            emb = mem.get("embedding")
-            if not emb or len(emb) == 0:
-                continue
-            try:
-                arr = np.frombuffer(emb, dtype=np.float32)
-                norm = np.linalg.norm(arr)
-                if len(arr) == 0 or norm == 0:
-                    continue
-                valid.append((mem["id"], arr / norm, mem["heat"]))
-            except Exception:
-                continue
-
-        if len(valid) >= 2:
-            ids = [v[0] for v in valid]
-            heats = [v[2] for v in valid]
-            matrix = np.stack([v[1] for v in valid])  # N x D
-
-            # Pairwise cosine similarity via matrix multiplication (fast, O(N·D))
-            sim_matrix = matrix @ matrix.T  # N x N
-
-            # Find pairs strictly above 0.95 in upper triangle (same semantics as legacy > 0.95)
-            rows, cols = np.where(np.triu(sim_matrix, k=1) > 0.95)
-
-            for i, j in zip(rows.tolist(), cols.tolist(), strict=False):
-                mid_a, mid_b = ids[i], ids[j]
-                if mid_a in to_delete or mid_b in to_delete:
-                    continue
-                # Keep higher-heat memory; on tie, keep the one with lower index (stable)
-                heat_a, heat_b = heats[i], heats[j]
-                victim = mid_b if heat_a >= heat_b else mid_a
-                to_delete.add(victim)
+        to_delete = self._exact_content_dedup(memories)
+        to_delete = self._embedding_dedup(memories, to_delete)
 
         for mid in to_delete:
             self._storage.delete_memory(mid)

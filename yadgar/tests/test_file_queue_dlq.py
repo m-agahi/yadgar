@@ -5,7 +5,7 @@ import os
 import time
 from unittest.mock import MagicMock, patch
 
-from yadgar.file_queue import FileQueue, QueueDrainer, _Attempt, _classify_error
+from yadgar.file_queue import DrainerConfig, FileQueue, QueueDrainer, _Attempt, _classify_error
 
 # ── _classify_error ───────────────────────────────────────────────────────────
 
@@ -85,9 +85,24 @@ class TestFileQueueDLQ:
 # ── QueueDrainer retry / DLQ ─────────────────────────────────────────────────
 
 
+_DRAINER_CONFIG_FIELDS = {
+    "max_permanent_attempts",
+    "max_transient_attempts",
+    "backoff_base_s",
+    "backoff_max_s",
+    "dlq_retention_days",
+}
+
+
 def _make_drainer(tmp_path, **kwargs) -> tuple[FileQueue, QueueDrainer]:
     fq = FileQueue(tmp_path)
-    drainer = QueueDrainer(fq, MagicMock(), drain_interval=0.01, **kwargs)
+    config_kwargs = {k: v for k, v in kwargs.items() if k in _DRAINER_CONFIG_FIELDS}
+    drainer = QueueDrainer(
+        fq,
+        MagicMock(),
+        drain_interval=0.01,
+        config=DrainerConfig(**config_kwargs) if config_kwargs else None,
+    )
     return fq, drainer
 
 

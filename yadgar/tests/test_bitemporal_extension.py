@@ -16,6 +16,7 @@ from __future__ import annotations
 import pytest
 
 from yadgar.storage import StorageEngine
+from yadgar.storage.narrative import BeliefRecord
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -85,10 +86,12 @@ class TestMigration011AddColumns:
     def test_migration_011_adds_columns_to_derived_belief(self, storage):
         """Inserting a derived_belief row must expose valid_from/valid_until fields."""
         storage.insert_belief(
-            belief_type="preference",
-            subject="Alice_t1",
-            content="Prefers dark mode",
-            confidence=0.8,
+            BeliefRecord(
+                belief_type="preference",
+                subject="Alice_t1",
+                content="Prefers dark mode",
+                confidence=0.8,
+            )
         )
         rows = storage._q(
             "SELECT valid_from, valid_until FROM derived_belief WHERE subject = 'Alice_t1'"
@@ -119,10 +122,12 @@ class TestInsertDefaults:
 
     def test_insert_derived_belief_defaults_valid_from_now(self, storage):
         storage.insert_belief(
-            belief_type="interest",
-            subject="Bob",
-            content="Interested in distributed systems",
-            confidence=0.7,
+            BeliefRecord(
+                belief_type="interest",
+                subject="Bob",
+                content="Interested in distributed systems",
+                confidence=0.7,
+            )
         )
         rows = storage._q("SELECT valid_from, valid_until FROM derived_belief")
         assert rows, "Expected at least one derived_belief row"
@@ -234,11 +239,13 @@ class TestDerivedBeliefSupersession:
     def test_derived_belief_new_supersedes_prior(self, storage):
         """Insert belief, insert competing belief for same subject → prior is closed."""
         storage.insert_belief(
-            belief_type="preference",
-            subject="Frank",
-            content="Prefers light mode",
-            confidence=0.7,
-            directory_context="/work",
+            BeliefRecord(
+                belief_type="preference",
+                subject="Frank",
+                content="Prefers light mode",
+                confidence=0.7,
+                directory_context="/work",
+            )
         )
 
         rows_before = storage._q("SELECT valid_until FROM derived_belief WHERE subject = 'Frank'")
@@ -246,11 +253,13 @@ class TestDerivedBeliefSupersession:
 
         # Insert superseding belief
         storage.insert_belief(
-            belief_type="preference",
-            subject="Frank",
-            content="Prefers dark mode",
-            confidence=0.9,
-            directory_context="/work",
+            BeliefRecord(
+                belief_type="preference",
+                subject="Frank",
+                content="Prefers dark mode",
+                confidence=0.9,
+                directory_context="/work",
+            )
         )
 
         rows_after = storage._q(
@@ -268,18 +277,22 @@ class TestDerivedBeliefSupersession:
     def test_derived_belief_supersede_false_keeps_old(self, storage):
         """supersede=False opts out of supersession — both rows remain current."""
         storage.insert_belief(
-            belief_type="hypothesis",
-            subject="Grace",
-            content="Hypothesis A",
-            confidence=0.6,
-            directory_context="/research",
+            BeliefRecord(
+                belief_type="hypothesis",
+                subject="Grace",
+                content="Hypothesis A",
+                confidence=0.6,
+                directory_context="/research",
+            )
         )
         storage.insert_belief(
-            belief_type="hypothesis",
-            subject="Grace",
-            content="Hypothesis B",
-            confidence=0.6,
-            directory_context="/research",
+            BeliefRecord(
+                belief_type="hypothesis",
+                subject="Grace",
+                content="Hypothesis B",
+                confidence=0.6,
+                directory_context="/research",
+            ),
             supersede=False,
         )
         rows = storage._q("SELECT valid_until FROM derived_belief WHERE subject = 'Grace'")
@@ -489,13 +502,15 @@ class TestBackwardCompat:
         profiles = storage.get_profiles_for_entity("Alice", directory_context="/work")
         assert any(r.get("attribute_key") == "language" for r in profiles)
 
-    def test_existing_insert_belief_callers_pass_unchanged(self, storage):
-        """Call insert_belief exactly as v5.12.x callers do — no exceptions."""
+    def test_insert_belief_via_record_works(self, storage):
+        """Call insert_belief with BeliefRecord — returns int id, search/query still work."""
         bid = storage.insert_belief(
-            belief_type="preference",
-            subject="Alice",
-            content="Alice prefers concise code",
-            confidence=0.7,
+            BeliefRecord(
+                belief_type="preference",
+                subject="Alice",
+                content="Alice prefers concise code",
+                confidence=0.7,
+            )
         )
         assert isinstance(bid, int) and bid > 0
 
@@ -540,9 +555,11 @@ class TestBackwardCompat:
         from yadgar.storage.bitemporal import invalidate_edge
 
         bid = storage.insert_belief(
-            belief_type="fact",
-            subject="Lucy",
-            content="Lucy works at ACME",
+            BeliefRecord(
+                belief_type="fact",
+                subject="Lucy",
+                content="Lucy works at ACME",
+            )
         )
         invalidate_edge(storage, "derived_belief", bid, reason="changed employer")
 
@@ -586,9 +603,11 @@ class TestBackwardCompat:
         from yadgar.storage.bitemporal import invalidate_edge
 
         bid = storage.insert_belief(
-            belief_type="stale",
-            subject="Max",
-            content="Stale belief content",
+            BeliefRecord(
+                belief_type="stale",
+                subject="Max",
+                content="Stale belief content",
+            )
         )
         invalidate_edge(storage, "derived_belief", bid)
 

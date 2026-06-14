@@ -258,10 +258,11 @@ test-clean:
 	@pkill -9 -f 'surreal start.*/tmp/pytest' 2>/dev/null || true
 	@echo "Reaped stale test surreal procs (production daemon on /data untouched)."
 
-## test: Run the full suite with the RAM-safe worker cap + pre/post orphan reaping
+## test: Run the full suite CPU/mem-capped + timeout-bounded + orphan-reaped
+## (a hung run can't peg the box or crash the prod daemon; see scripts/test-capped.sh)
 test: test-clean
 	@trap 'pkill -9 -f "surreal start.*/tmp/pytest" 2>/dev/null || true' EXIT; \
-	uv run --extra test pytest yadgar/tests/ -q $(PYTEST_ARGS)
+	scripts/test-capped.sh uv run --extra test pytest yadgar/tests/ -q $(PYTEST_ARGS)
 
 ## upgrade-test: Print the manual upgrade-test runbook (see docs/UPGRADE_TEST.md)
 upgrade-test:

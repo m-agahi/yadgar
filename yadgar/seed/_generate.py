@@ -30,19 +30,17 @@ _HEAT_BY_TYPE = {
 _PROJECT_INIT_CAP = 2000  # Must match config.PROJECT_INIT_CAP_CHARS
 
 
-def generate_memories(scan_data: dict) -> list[dict]:
-    """Generate memory entries from scan data.
+# ---------------------------------------------------------------------------
+# Section helpers — each builds one logical group of memories
+# ---------------------------------------------------------------------------
 
-    Returns a list of dicts with keys: content, context, tags, heat_type
-    Each represents one memory to store.
-    """
-    memories = []
-    directory = scan_data["root"]
+
+def _generate_overview_memory(scan_data: dict, directory: str) -> dict:
+    """Build the project overview memory (section 1)."""
     project_name = scan_data["project_name"]
     stats = scan_data["stats"]
     structure = scan_data["structure"]
 
-    # 1. Project overview memory
     stack = _detect_stack(scan_data["configs"], stats)
     structure_summary = _summarize_structure(structure)
     overview = (
@@ -52,16 +50,17 @@ def generate_memories(scan_data: dict) -> list[dict]:
         f"Top extensions: {', '.join(f'{ext}({n})' for ext, n in stats['top_extensions'][:8])}\n\n"
         f"Structure:\n{structure_summary}"
     )
-    memories.append(
-        {
-            "content": _truncate(overview),
-            "context": directory,
-            "tags": ["_seed", "overview", "structure"],
-            "heat_type": "overview",
-        }
-    )
+    return {
+        "content": _truncate(overview),
+        "context": directory,
+        "tags": ["_seed", "overview", "structure"],
+        "heat_type": "overview",
+    }
 
-    # 2. Config file memories
+
+def _generate_config_memories(scan_data: dict, directory: str) -> list[dict]:
+    """Build config file memories (section 2)."""
+    memories = []
     for config in scan_data["configs"]:
         summary = _summarize_config(config)
         content = f"Config: {config['path']}\nLanguage: {config['language']}\n\n{summary}"
@@ -73,10 +72,13 @@ def generate_memories(scan_data: dict) -> list[dict]:
                 "heat_type": "config",
             }
         )
+    return memories
 
-    # 3. Documentation memories
+
+def _generate_doc_memories(scan_data: dict, directory: str) -> list[dict]:
+    """Build documentation memories (section 3)."""
+    memories = []
     for doc in scan_data["docs"]:
-        # Include path-based context in tags for distinguishability
         doc_dir = os.path.dirname(doc["path"])
         extra_tags = [doc_dir] if doc_dir else []
         content = f"Documentation: {doc['path']}\n\n{doc['content']}"
@@ -88,23 +90,31 @@ def generate_memories(scan_data: dict) -> list[dict]:
                 "heat_type": "documentation",
             }
         )
+    return memories
 
-    # 4. CI/CD memories
-    if scan_data["ci_cd"]:
-        ci_parts = []
-        for ci in scan_data["ci_cd"]:
-            ci_parts.append(f"--- {ci['path']} ---\n{_truncate(ci['content'], 600)}")
-        ci_content = f"CI/CD configuration for {project_name}:\n\n" + "\n\n".join(ci_parts)
-        memories.append(
-            {
-                "content": _truncate(ci_content),
-                "context": directory,
-                "tags": ["_seed", "ci_cd", "devops"],
-                "heat_type": "ci_cd",
-            }
-        )
 
-    # 5. Entry point memories
+def _generate_ci_memory(scan_data: dict, directory: str) -> list[dict]:
+    """Build CI/CD memory (section 4). Returns empty list if no ci_cd data."""
+    if not scan_data["ci_cd"]:
+        return []
+    project_name = scan_data["project_name"]
+    ci_parts = []
+    for ci in scan_data["ci_cd"]:
+        ci_parts.append(f"--- {ci['path']} ---\n{_truncate(ci['content'], 600)}")
+    ci_content = f"CI/CD configuration for {project_name}:\n\n" + "\n\n".join(ci_parts)
+    return [
+        {
+            "content": _truncate(ci_content),
+            "context": directory,
+            "tags": ["_seed", "ci_cd", "devops"],
+            "heat_type": "ci_cd",
+        }
+    ]
+
+
+def _generate_entry_point_memories(scan_data: dict, directory: str) -> list[dict]:
+    """Build entry point memories (section 5)."""
+    memories = []
     for ep in scan_data["entry_points"]:
         content = f"Entry point: {ep['path']}\n\n{_truncate(ep['content'], 1500)}"
         memories.append(
@@ -115,65 +125,94 @@ def generate_memories(scan_data: dict) -> list[dict]:
                 "heat_type": "entry_point",
             }
         )
+    return memories
 
-    # 6. Per-component memories — use sub-project boundaries for monorepos
-    boundaries = _find_subproject_boundaries(structure, scan_data["configs"])
+
+# ---------------------------------------------------------------------------
+# Component memory helpers (section 6) — split for complexity
+# ---------------------------------------------------------------------------
+
+
+def _compute_boundaries(structure: dict, configs: list) -> list[str]:
+    """Compute component boundaries; fallback to top-level dirs."""
+    boundaries = _find_subproject_boundaries(structure, configs)
     if not boundaries:
-        # Fallback: top-level directories
         boundaries = sorted(d for d in structure if d != "." and "/" not in d and os.sep not in d)
+    return boundaries
 
+
+def _collect_component_files(d: str, structure: dict) -> list[str]:
+    """Gather all relative file paths under component directory d."""
+    sub_files = []
+    for key, files in structure.items():
+        if key == d or key.startswith(d + "/") or key.startswith(d + os.sep):
+            for f in files:
+                sub_files.append(os.path.join(key, f))
+    return sub_files
+
+
+def _build_component_content(
+    d: str,
+    sub_files: list[str],
+    structure: dict,
+    docs: list[dict],
+) -> str:
+    """Build the text content for a component memory entry."""
+    # Extension frequency map
+    exts: dict[str, int] = {}
+    for f in sub_files:
+        ext = os.path.splitext(f)[1].lower()
+        if ext:
+            exts[ext] = exts.get(ext, 0) + 1
+
+    ext_summary = ", ".join(
+        f"{ext}({n})" for ext, n in sorted(exts.items(), key=lambda x: -x[1])[:5]
+    )
+
+    # Subdirectory names relative to d
+    subdirs = sorted(
+        set(
+            key
+            for key in structure
+            if (key.startswith(d + "/") or key.startswith(d + os.sep)) and key != d
+        )
+    )
+    subdir_names = [os.path.relpath(sd, d) for sd in subdirs[:15]]
+
+    # Check for own README
+    component_readme = None
+    for doc in docs:
+        doc_dir = os.path.dirname(doc["path"])
+        if doc_dir == d:
+            component_readme = os.path.basename(doc["path"])
+            break
+
+    content = f"Component: {d}/\n"
+    content += f"Files: {len(sub_files)} ({ext_summary})\n"
+    if subdir_names:
+        content += f"Subdirectories: {', '.join(subdir_names)}\n"
+    if component_readme:
+        content += f"Has own documentation: {component_readme}\n"
+    if len(sub_files) <= 20:
+        content += f"All files: {', '.join(os.path.basename(f) for f in sub_files)}\n"
+    else:
+        content += (
+            f"Sample files: {', '.join(os.path.basename(f) for f in sub_files[:15])},"
+            f" ... (+{len(sub_files) - 15} more)\n"
+        )
+    return content
+
+
+def _generate_component_memories(scan_data: dict, directory: str) -> list[dict]:
+    """Build per-component memories (section 6)."""
+    structure = scan_data["structure"]
+    boundaries = _compute_boundaries(structure, scan_data["configs"])
+    memories = []
     for d in boundaries:
-        # Gather all files under this component
-        sub_files = []
-        for key, files in structure.items():
-            if key == d or key.startswith(d + "/") or key.startswith(d + os.sep):
-                for f in files:
-                    rel = os.path.join(key, f)
-                    sub_files.append(rel)
-
+        sub_files = _collect_component_files(d, structure)
         if not sub_files:
             continue
-
-        # Build component summary
-        exts = {}
-        for f in sub_files:
-            ext = os.path.splitext(f)[1].lower()
-            if ext:
-                exts[ext] = exts.get(ext, 0) + 1
-
-        ext_summary = ", ".join(
-            f"{ext}({n})" for ext, n in sorted(exts.items(), key=lambda x: -x[1])[:5]
-        )
-
-        # Get subdirectory structure
-        subdirs = sorted(
-            set(
-                key
-                for key in structure
-                if (key.startswith(d + "/") or key.startswith(d + os.sep)) and key != d
-            )
-        )
-        subdir_names = [os.path.relpath(sd, d) for sd in subdirs[:15]]
-
-        # Check if this component has its own README
-        component_readme = None
-        for doc in scan_data["docs"]:
-            doc_dir = os.path.dirname(doc["path"])
-            if doc_dir == d:
-                component_readme = os.path.basename(doc["path"])
-                break
-
-        content = f"Component: {d}/\n"
-        content += f"Files: {len(sub_files)} ({ext_summary})\n"
-        if subdir_names:
-            content += f"Subdirectories: {', '.join(subdir_names)}\n"
-        if component_readme:
-            content += f"Has own documentation: {component_readme}\n"
-        if len(sub_files) <= 20:
-            content += f"All files: {', '.join(os.path.basename(f) for f in sub_files)}\n"
-        else:
-            content += f"Sample files: {', '.join(os.path.basename(f) for f in sub_files[:15])}, ... (+{len(sub_files) - 15} more)\n"
-
+        content = _build_component_content(d, sub_files, structure, scan_data["docs"])
         memories.append(
             {
                 "content": _truncate(content),
@@ -182,7 +221,28 @@ def generate_memories(scan_data: dict) -> list[dict]:
                 "heat_type": "component",
             }
         )
+    return memories
 
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def generate_memories(scan_data: dict) -> list[dict]:
+    """Generate memory entries from scan data.
+
+    Returns a list of dicts with keys: content, context, tags, heat_type
+    Each represents one memory to store.
+    """
+    directory = scan_data["root"]
+    memories: list[dict] = []
+    memories.append(_generate_overview_memory(scan_data, directory))
+    memories.extend(_generate_config_memories(scan_data, directory))
+    memories.extend(_generate_doc_memories(scan_data, directory))
+    memories.extend(_generate_ci_memory(scan_data, directory))
+    memories.extend(_generate_entry_point_memories(scan_data, directory))
+    memories.extend(_generate_component_memories(scan_data, directory))
     return memories
 
 

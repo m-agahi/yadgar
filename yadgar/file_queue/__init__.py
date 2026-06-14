@@ -96,9 +96,26 @@ class _Attempt:
     classification: str = "transient"  # set on first failure; "permanent" or "transient"
 
 
+@dataclass
+class DrainerConfig:
+    """Bundled retry and DLQ policy for QueueDrainer.
+
+    Extracted from QueueDrainer.__init__ to keep the constructor under the
+    param cap (v5.55 complexity campaign, YELLOW tier).  All fields carry the
+    same defaults that were previously inline on the constructor.
+    """
+
+    max_permanent_attempts: int = 3
+    max_transient_attempts: int = 20
+    backoff_base_s: float = 30.0
+    backoff_max_s: float = 3600.0
+    dlq_retention_days: int = 90
+
+
 __all__ = [
     "FileQueue",
     "QueueDrainer",
+    "DrainerConfig",
     "is_draining",
     "_drain_local",
     "_Attempt",
@@ -114,23 +131,20 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         queue: FileQueue,
         storage_factory,
         drain_interval: float = _DRAIN_INTERVAL,
-        max_permanent_attempts: int = 3,
-        max_transient_attempts: int = 20,
-        backoff_base_s: float = 30.0,
-        backoff_max_s: float = 3600.0,
-        dlq_retention_days: int = 90,
+        config: DrainerConfig | None = None,
     ) -> None:
         super().__init__(daemon=True, name="yadgar-queue-drainer")
+        _cfg = config if config is not None else DrainerConfig()
         self._queue = queue
         self._storage_factory = storage_factory  # callable -> StorageEngine
         self._stop_event = threading.Event()
         self._drain_count = 0
         self._drain_interval = drain_interval
-        self._max_permanent = max_permanent_attempts
-        self._max_transient = max_transient_attempts
-        self._backoff_base = backoff_base_s
-        self._backoff_max = backoff_max_s
-        self._dlq_retention_days = dlq_retention_days
+        self._max_permanent = _cfg.max_permanent_attempts
+        self._max_transient = _cfg.max_transient_attempts
+        self._backoff_base = _cfg.backoff_base_s
+        self._backoff_max = _cfg.backoff_max_s
+        self._dlq_retention_days = _cfg.dlq_retention_days
         # In-memory per-file retry state; keyed by filename.
         # Resets on container restart — acceptable because thresholds are tight enough that
         # even from-scratch counting cannot sustain meaningful DB CPU for long.
@@ -183,132 +197,16 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         self._attempts.pop(filename, None)
 
     @trace_span("drainer.drain_cycle")
-    def _drain_once(self) -> int:  # noqa: C901 — pre-existing complexity, tracked for P13 refactor
+    def _drain_once(self) -> int:
         _cycle_t0 = time.monotonic()
         files = self._queue.pending()
-        processed = 0
         now = time.time()
         logger.info("Queue drain pass: %d pending files", len(files))
 
         # P11: update queue/dlq depth gauges (v5.42.0: also rejection count)
         self._update_dlq_gauges(len(files))
 
-        if files:
-            for path in files:
-                fname = path.name
-                attempt = self._attempts.get(fname, _Attempt())
-
-                # Respect backoff window
-                if attempt.count > 0 and now < attempt.next_retry_at:
-                    continue
-
-                op_type = "unknown"
-                try:
-                    data = json.loads(path.read_text())
-                    op_type = data.get("op", "unknown")
-                except Exception as exc:
-                    # Parse error: can never succeed → treat as permanent
-                    self._record_failure(attempt, str(exc)[:500], "permanent", now)
-                    self._attempts[fname] = attempt
-                    logger.warning("Failed to parse %s (attempt %d): %s", fname, attempt.count, exc)
-                    if attempt.count >= self._max_permanent:
-                        self._move_to_dlq(path, attempt, op_type)
-                        self._attempts.pop(fname, None)
-                    continue
-
-                # §26 Option Z — wiki_add validation before apply
-                if op_type == "wiki_add":
-                    reject_reason = self._validate_wiki_add(data)
-                    if reject_reason:
-                        attempt.count = self._max_permanent  # treat as permanent failure
-                        attempt.last_error = reject_reason
-                        attempt.classification = "permanent"
-                        attempt.first_failed_at = now
-                        if reject_reason.startswith("missing_branch"):
-                            _fm = self._build_missing_branch_metadata(data, op_type)
-                            _fr = "missing_branch"
-                        elif reject_reason.startswith("missing_directory"):
-                            # v5.42.5: directory_context missing → DLQ with missing_directory
-                            _fm = self._build_missing_directory_metadata(data, op_type)
-                            _fr = "missing_directory"
-                        else:
-                            _fm = None
-                            _fr = "policy_rejected"
-                        self._move_to_dlq(
-                            path, attempt, op_type, failure_reason=_fr, failure_metadata=_fm
-                        )
-                        self._attempts.pop(fname, None)
-                        logger.warning("wiki_add rejected (DLQ): %s — %s", fname, reject_reason)
-                        continue
-
-                # v5.42.3: memory-op branch validation (defense-in-depth, symmetric with wiki)
-                if op_type in self._MEMORY_OP_TYPES:
-                    reject_reason = self._validate_branch_context(data)
-                    if reject_reason:
-                        attempt.count = self._max_permanent
-                        attempt.last_error = reject_reason
-                        attempt.classification = "permanent"
-                        attempt.first_failed_at = now
-                        _fm = self._build_missing_branch_metadata(data, op_type)
-                        self._move_to_dlq(
-                            path,
-                            attempt,
-                            op_type,
-                            failure_reason="missing_branch",
-                            failure_metadata=_fm,
-                        )
-                        self._attempts.pop(fname, None)
-                        logger.warning(
-                            "%s rejected (DLQ, missing_branch): %s — %s",
-                            op_type,
-                            fname,
-                            reject_reason,
-                        )
-                        continue
-
-                try:
-                    # P11: observe drainer lag (enqueue_ts -> drain start)
-                    try:
-                        from yadgar.metrics import yadgar_drainer_lag_ms  # noqa: PLC0415
-
-                        enqueue_ts = data.get("ts", now)
-                        yadgar_drainer_lag_ms.observe((now - enqueue_ts) * 1000)
-                    except Exception:
-                        pass
-
-                    self._apply_with_stage_metrics(data, path)
-                    self._attempts.pop(fname, None)
-                    processed += 1
-                except Exception as exc:
-                    err_str = str(exc)
-                    classification = _classify_error(err_str)
-                    max_attempts = (
-                        self._max_permanent
-                        if classification == "permanent"
-                        else self._max_transient
-                    )
-                    self._record_failure(attempt, err_str[:500], classification, now)
-                    self._attempts[fname] = attempt
-                    logger.warning(
-                        "Failed to drain %s (attempt %d, %s): %s",
-                        fname,
-                        attempt.count,
-                        classification,
-                        err_str[:200],
-                    )
-                    # v5.10.2: log metric for secret-blocked DLQ entries
-                    if "SecretLeakBlocked" in err_str:
-                        try:
-                            from yadgar.metrics import yadgar_writegate_outcome  # noqa: PLC0415
-
-                            yadgar_writegate_outcome.labels(
-                                outcome="rejected_secret_at_storage"
-                            ).inc()
-                        except Exception:
-                            pass
-                    if attempt.count >= max_attempts:
-                        self._move_to_dlq(path, attempt, op_type)
-                        self._attempts.pop(fname, None)
+        processed = sum(self._process_pending_file(path, now) for path in files)
 
         _cycle_ms = round((time.monotonic() - _cycle_t0) * 1000, 1)
         logger.info(
@@ -347,6 +245,156 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
 
         return processed
 
+    def _process_pending_file(self, path, now: float) -> int:
+        """Process one pending queue file. Returns 1 on success, 0 otherwise.
+
+        Handles backoff, parse errors, validation rejections, and apply.
+        """
+        fname = path.name
+        attempt = self._attempts.get(fname, _Attempt())
+
+        # Respect backoff window
+        if attempt.count > 0 and now < attempt.next_retry_at:
+            return 0
+
+        op_type = "unknown"
+        try:
+            data = json.loads(path.read_text())
+            op_type = data.get("op", "unknown")
+        except Exception as exc:
+            # Parse error: can never succeed → treat as permanent
+            self._record_failure(attempt, str(exc)[:500], "permanent", now)
+            self._attempts[fname] = attempt
+            logger.warning("Failed to parse %s (attempt %d): %s", fname, attempt.count, exc)
+            if attempt.count >= self._max_permanent:
+                self._move_to_dlq(path, attempt, op_type)
+                self._attempts.pop(fname, None)
+            return 0
+
+        # §26 Option Z — wiki_add validation before apply
+        if op_type == "wiki_add":
+            reject_reason = self._validate_wiki_add(data)
+            if reject_reason:
+                self._reject_permanent_to_dlq(
+                    path, fname, attempt, op_type, reject_reason, data, now
+                )
+                return 0
+
+        # v5.42.3: memory-op branch validation (defense-in-depth, symmetric with wiki)
+        if op_type in self._MEMORY_OP_TYPES:
+            reject_reason = self._validate_branch_context(data)
+            if reject_reason:
+                self._reject_permanent_to_dlq(
+                    path, fname, attempt, op_type, reject_reason, data, now
+                )
+                return 0
+
+        return self._apply_pending(fname, path, data, op_type, now)
+
+    def _reject_permanent_to_dlq(
+        self,
+        path,
+        fname: str,
+        attempt: _Attempt,
+        op_type: str,
+        reject_reason: str,
+        data: dict,
+        now: float,
+    ) -> None:
+        """Move a file to DLQ as a permanent policy rejection.
+
+        Shared by wiki_add and memory-op rejection paths (§26 Option Z + v5.42.3).
+        """
+        attempt.count = self._max_permanent
+        attempt.last_error = reject_reason
+        attempt.classification = "permanent"
+        attempt.first_failed_at = now
+        failure_reason, failure_metadata = self._build_rejection_reason_and_meta(
+            reject_reason, data, op_type
+        )
+        self._move_to_dlq(
+            path,
+            attempt,
+            op_type,
+            failure_reason=failure_reason,
+            failure_metadata=failure_metadata,
+        )
+        self._attempts.pop(fname, None)
+        if op_type == "wiki_add":
+            logger.warning("wiki_add rejected (DLQ): %s — %s", fname, reject_reason)
+        else:
+            logger.warning(
+                "%s rejected (DLQ, missing_branch): %s — %s", op_type, fname, reject_reason
+            )
+
+    def _build_rejection_reason_and_meta(
+        self, reject_reason: str, data: dict, op_type: str
+    ) -> tuple[str, dict | None]:
+        """Return (failure_reason, failure_metadata) for a permanent policy rejection."""
+        if reject_reason.startswith("missing_branch"):
+            return "missing_branch", self._build_missing_branch_metadata(data, op_type)
+        if reject_reason.startswith("missing_directory"):
+            # v5.42.5: directory_context missing → DLQ with missing_directory
+            return "missing_directory", self._build_missing_directory_metadata(data, op_type)
+        # memory-op branch failures always come as missing_branch (never hit the above two)
+        if op_type in self._MEMORY_OP_TYPES:
+            return "missing_branch", self._build_missing_branch_metadata(data, op_type)
+        return "policy_rejected", None
+
+    def _observe_drainer_lag(self, data: dict, now: float) -> None:
+        """Observe P11 drainer lag metric (enqueue_ts -> drain start). Swallows all errors."""
+        try:
+            from yadgar.metrics import yadgar_drainer_lag_ms  # noqa: PLC0415
+
+            yadgar_drainer_lag_ms.observe((now - data.get("ts", now)) * 1000)
+        except Exception:
+            pass
+
+    def _observe_secret_blocked_metric(self, err_str: str) -> None:
+        """v5.10.2: record writegate metric for SecretLeakBlocked DLQ entries."""
+        if "SecretLeakBlocked" not in err_str:
+            return
+        try:
+            from yadgar.metrics import yadgar_writegate_outcome  # noqa: PLC0415
+
+            yadgar_writegate_outcome.labels(outcome="rejected_secret_at_storage").inc()
+        except Exception:
+            pass
+
+    def _apply_pending(self, fname: str, path, data: dict, op_type: str, now: float) -> int:
+        """Attempt to apply one queue item. Returns 1 on success, 0 on error.
+
+        Records failure state and routes to DLQ when retry cap is exceeded.
+        """
+        attempt = self._attempts.get(fname, _Attempt())
+        # P11: observe drainer lag (enqueue_ts -> drain start) — outside apply try/except
+        # so lag metric errors never mask DB errors.
+        self._observe_drainer_lag(data, now)
+        try:
+            self._apply_with_stage_metrics(data, path)
+            self._attempts.pop(fname, None)
+            return 1
+        except Exception as exc:
+            err_str = str(exc)
+            classification = _classify_error(err_str)
+            max_attempts = (
+                self._max_permanent if classification == "permanent" else self._max_transient
+            )
+            self._record_failure(attempt, err_str[:500], classification, now)
+            self._attempts[fname] = attempt
+            logger.warning(
+                "Failed to drain %s (attempt %d, %s): %s",
+                fname,
+                attempt.count,
+                classification,
+                err_str[:200],
+            )
+            self._observe_secret_blocked_metric(err_str)
+            if attempt.count >= max_attempts:
+                self._move_to_dlq(path, attempt, op_type)
+                self._attempts.pop(fname, None)
+            return 0
+
     def _record_failure(
         self, attempt: _Attempt, err_str: str, classification: str, now: float
     ) -> None:
@@ -377,6 +425,34 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
 
     # ── v5.42.0 helpers ───────────────────────────────────────────────────────
 
+    def _scan_dlq_counts(self) -> tuple[int, int]:
+        """Scan DLQ directory and return (dlq_count, rejection_count).
+
+        Counts non-error .json files as queue entries; reads their .error.json
+        sidecars to detect policy rejections (failure_reason not in permanent_error/None).
+        Raises on iterdir() failure so the outer try/except in _update_dlq_gauges
+        can suppress the whole gauge-set (matching original behavior).
+        """
+        dlq_count = 0
+        rejection_count = 0
+        for _f in self._queue.dlq_dir.iterdir():
+            if _f.suffix != ".json" or _f.name.endswith(".error.json"):
+                continue
+            dlq_count += 1
+            _sidecar = self._queue.dlq_dir / (_f.name + ".error.json")
+            if not _sidecar.exists():
+                continue
+            try:
+                _meta = json.loads(_sidecar.read_text())
+                if _meta.get("failure_reason", "permanent_error") not in (
+                    "permanent_error",
+                    None,
+                ):
+                    rejection_count += 1
+            except Exception:
+                pass
+        return dlq_count, rejection_count
+
     def _update_dlq_gauges(self, queue_depth: int) -> None:
         """Update P11 queue/dlq depth gauges and v5.42.0 rejection count gauge (I23).
 
@@ -390,22 +466,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
             )
 
             yadgar_queue_depth.labels(queue="queue").set(queue_depth)
-            dlq_count = 0
-            rejection_count = 0
-            for _f in self._queue.dlq_dir.iterdir():
-                if _f.suffix == ".json" and not _f.name.endswith(".error.json"):
-                    dlq_count += 1
-                    _sidecar = self._queue.dlq_dir / (_f.name + ".error.json")
-                    if _sidecar.exists():
-                        try:
-                            _meta = json.loads(_sidecar.read_text())
-                            if _meta.get("failure_reason", "permanent_error") not in (
-                                "permanent_error",
-                                None,
-                            ):
-                                rejection_count += 1
-                        except Exception:
-                            pass
+            dlq_count, rejection_count = self._scan_dlq_counts()
             yadgar_dlq_size.set(dlq_count)
             yadgar_queue_depth.labels(queue="dlq").set(dlq_count)
             yadgar_dlq_rejection_count.set(rejection_count)

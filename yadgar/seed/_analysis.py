@@ -224,16 +224,16 @@ def _summarize_config(config: dict) -> str:
 
     if fname == "package.json":
         return _summarize_package_json(content)
-    elif fname == "pyproject.toml":
+    if fname == "pyproject.toml":
         return _summarize_pyproject(content)
-    elif fname == "Cargo.toml":
+    if fname == "Cargo.toml":
         return _summarize_cargo_toml(content)
-    elif fname == "go.mod":
+    if fname == "go.mod":
         return _summarize_go_mod(content)
-    elif fname == "requirements.txt":
+    if fname == "requirements.txt":
         lines = [ln.strip() for ln in content.splitlines() if ln.strip() and not ln.startswith("#")]
         return f"Python dependencies ({len(lines)}): {', '.join(lines[:20])}"
-    elif fname in (
+    if fname in (
         "Dockerfile",
         "docker-compose.yml",
         "docker-compose.yaml",
@@ -241,8 +241,7 @@ def _summarize_config(config: dict) -> str:
         "compose.yaml",
     ):
         return _truncate(content, 1000)
-    else:
-        return _truncate(content, 800)
+    return _truncate(content, 800)
 
 
 def _find_subproject_boundaries(structure: dict, configs: list[dict]) -> list[str]:

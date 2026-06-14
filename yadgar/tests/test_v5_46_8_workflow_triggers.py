@@ -21,6 +21,10 @@ CI_YAML = REPO_ROOT / ".forgejo" / "workflows" / "ci.yaml"
 RELEASE_YAML = REPO_ROOT / ".forgejo" / "workflows" / "release.yaml"
 
 EXPECTED_JOB_GATE = "github.event_name == 'workflow_dispatch'"
+EXPECTED_BUILD_GATE = (
+    "github.event_name == 'workflow_dispatch' || "
+    "(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))"
+)
 HEADER_SENTINEL = "WORKFLOW STATE: GATED FOR INTERNAL DEV"
 
 # Number of lines from top to search for header (before 'name:')
@@ -80,16 +84,20 @@ class TestCiYamlTriggers:
         assert "workflow_dispatch" in on_block, "ci.yaml missing workflow_dispatch trigger"
 
     def test_build_job_gated_to_workflow_dispatch_only(self):
-        """build job if: must equal exactly 'github.event_name == workflow_dispatch'."""
+        """build job if: must equal workflow_dispatch OR version-tag push (v5.56+ gate)."""
         data = _load_yaml(CI_YAML)
         build_if = data["jobs"]["build"].get("if")
         assert build_if is not None, "ci.yaml build job has no 'if:' gate"
-        assert build_if.strip() == EXPECTED_JOB_GATE, (
+        assert build_if.strip() == EXPECTED_BUILD_GATE, (
             f"ci.yaml build job if-gate mismatch.\n"
-            f"  Expected: {EXPECTED_JOB_GATE!r}\n"
+            f"  Expected: {EXPECTED_BUILD_GATE!r}\n"
             f"  Got:      {build_if.strip()!r}\n"
-            "Gate must be workflow_dispatch-only (drop the push OR clause)."
+            "Gate must be workflow_dispatch OR version-tag push (v5.56+)."
         )
+        # build must also depend on both changes and test jobs
+        needs = data["jobs"]["build"].get("needs", [])
+        assert "changes" in needs, f"ci.yaml build job must need 'changes', got: {needs}"
+        assert "test" in needs, f"ci.yaml build job must need 'test', got: {needs}"
 
     def test_ci_yaml_header_comment_present(self):
         """Header sentinel must appear in first 20 lines of ci.yaml."""

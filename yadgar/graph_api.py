@@ -533,22 +533,7 @@ class GraphAPI:
         try:
             import numpy as np
 
-            ids = []
-            vecs = []
-            for node_id, emb_data in embeddings_list:
-                try:
-                    if isinstance(emb_data, (bytes, bytearray)):
-                        arr = np.frombuffer(emb_data, dtype=np.float32).copy()
-                    elif isinstance(emb_data, list):
-                        arr = np.array(emb_data, dtype=np.float32)
-                    else:
-                        continue
-                    if arr.size > 0:
-                        ids.append(node_id)
-                        vecs.append(arr)
-                except Exception:
-                    pass
-
+            ids, vecs = _parse_embedding_vectors(embeddings_list, np)
             if len(ids) < 2:
                 return []
 
@@ -557,32 +542,8 @@ class GraphAPI:
             norms = np.where(norms == 0, 1e-10, norms)
             matrix = matrix / norms
             sim = matrix @ matrix.T
-            n = len(ids)
-            seen: set[tuple[int, int]] = set()
-            result = []
-            for i in range(n):
-                # Collect top-K neighbours above threshold, sorted by similarity desc
-                neighbours = sorted(
-                    (
-                        (float(sim[i, j]), j)
-                        for j in range(n)
-                        if j != i and float(sim[i, j]) >= threshold
-                    ),
-                    reverse=True,
-                )
-                for s, j in neighbours[:top_k]:
-                    key = (min(i, j), max(i, j))
-                    if key not in seen:
-                        seen.add(key)
-                        result.append(
-                            {
-                                "source": ids[key[0]],
-                                "target": ids[key[1]],
-                                "type": "semantic",
-                                "similarity": round(s, 3),
-                            }
-                        )
-            return result
+
+            return _deduplicated_edges(sim, ids, threshold, top_k)
         except Exception as exc:
             logger.debug("Semantic edge computation failed: %s", exc)
             return []
@@ -616,6 +577,61 @@ class GraphAPI:
             return None
 
 
+# ── Semantic edge helpers (module-level so they're testable independently) ─────
+
+
+def _parse_embedding_vectors(
+    embeddings_list: list[tuple[str, bytes]], np
+) -> tuple[list[str], list]:
+    """Parse raw embedding data into (ids, vecs) lists, skipping malformed entries."""
+    ids: list[str] = []
+    vecs: list = []
+    for node_id, emb_data in embeddings_list:
+        try:
+            if isinstance(emb_data, (bytes, bytearray)):
+                arr = np.frombuffer(emb_data, dtype=np.float32).copy()
+            elif isinstance(emb_data, list):
+                arr = np.array(emb_data, dtype=np.float32)
+            else:
+                continue
+            if arr.size > 0:
+                ids.append(node_id)
+                vecs.append(arr)
+        except Exception:
+            pass
+    return ids, vecs
+
+
+def _deduplicated_edges(
+    sim,
+    ids: list[str],
+    threshold: float,
+    top_k: int,
+) -> list[dict]:
+    """Scan similarity matrix; return deduplicated top-K edges above threshold."""
+    n = len(ids)
+    seen: set[tuple[int, int]] = set()
+    result: list[dict] = []
+    for i in range(n):
+        neighbours = sorted(
+            ((float(sim[i, j]), j) for j in range(n) if j != i and float(sim[i, j]) >= threshold),
+            reverse=True,
+        )
+        for s, j in neighbours[:top_k]:
+            key = (min(i, j), max(i, j))
+            if key not in seen:
+                seen.add(key)
+                result.append(
+                    {
+                        "source": ids[key[0]],
+                        "target": ids[key[1]],
+                        "type": "semantic",
+                        "similarity": round(s, 3),
+                    }
+                )
+    return result
+
+
 # ── System metrics (no extra deps — reads /proc) ──────────────────────────────
 
 _metrics_cache: dict = {}
@@ -632,6 +648,82 @@ def _observe_dbsize_ms(elapsed_ms: float) -> None:
         yadgar_viz_dbsize_sample_duration_ms.observe(elapsed_ms)
     except Exception:
         pass
+
+
+def _sample_cpu_pct(pid: int, clk_tck: int) -> float:
+    """Read /proc/<pid>/stat and return CPU% via two-sample delta against module globals."""
+    global _prev_cpu_ticks, _prev_cpu_time
+    with open(f"/proc/{pid}/stat") as fh:
+        parts = fh.read().split()
+    cpu_ticks = int(parts[13]) + int(parts[14])
+    now = time.monotonic()
+    if _prev_cpu_time > 0:
+        elapsed = now - _prev_cpu_time
+        delta = cpu_ticks - _prev_cpu_ticks
+        cpu_pct = round(delta / clk_tck / max(elapsed, 0.001) * 100, 1)
+    else:
+        cpu_pct = 0.0
+    _prev_cpu_ticks = cpu_ticks
+    _prev_cpu_time = now
+    return cpu_pct
+
+
+def _sample_rss_threads(pid: int) -> tuple[int, int]:
+    """Read /proc/<pid>/status; return (rss_kb, threads)."""
+    rss_kb = 0
+    threads = 0
+    with open(f"/proc/{pid}/status") as fh:
+        for line in fh:
+            if line.startswith("VmRSS:"):
+                rss_kb = int(line.split()[1])
+            elif line.startswith("Threads:"):
+                threads = int(line.split()[1])
+    return rss_kb, threads
+
+
+def _sample_open_fds() -> int:
+    """Count open file descriptors via /proc/self/fd."""
+    return len(os.listdir("/proc/self/fd"))
+
+
+def _sample_meminfo() -> tuple[int, int]:
+    """Read /proc/meminfo; return (total_ram_kb, avail_ram_kb)."""
+    total_ram_kb = avail_ram_kb = 0
+    with open("/proc/meminfo") as fh:
+        for line in fh:
+            if line.startswith("MemTotal:"):
+                total_ram_kb = int(line.split()[1])
+            elif line.startswith("MemAvailable:"):
+                avail_ram_kb = int(line.split()[1])
+    return total_ram_kb, avail_ram_kb
+
+
+def _sample_loadavg() -> tuple[float, float, float]:
+    """Read /proc/loadavg; return (load_1m, load_5m, load_15m)."""
+    with open("/proc/loadavg") as fh:
+        la = fh.read().split()
+    return float(la[0]), float(la[1]), float(la[2])
+
+
+def _sample_db_size(storage: object, db_path: str) -> float:
+    """Return db_size_mb — via storage proxy in server mode, or path walk otherwise."""
+    if storage is not None:
+        _db_url = getattr(storage, "_db_url", None)
+        if _db_url is not None:
+            try:
+                size_data = storage.get_db_size()  # type: ignore[union-attr]
+                size_bytes = size_data.get("db_size_bytes", 0)
+                return round(size_bytes / 1024 / 1024, 1)
+            except Exception:
+                pass
+    try:
+        db_dir = Path(db_path).expanduser()
+        if db_dir.is_dir():
+            size_bytes = sum(f.stat().st_size for f in db_dir.rglob("*") if f.is_file())
+            return round(size_bytes / 1024 / 1024, 1)
+    except Exception:
+        pass
+    return 0.0
 
 
 def sample_system_metrics(pid: int, db_path: str, storage: object = None) -> dict:
@@ -654,111 +746,60 @@ def sample_system_metrics(pid: int, db_path: str, storage: object = None) -> dic
     except Exception:  # noqa: BLE001
         pass
 
-    global _metrics_cache, _metrics_sampled_at, _prev_cpu_ticks, _prev_cpu_time
+    global _metrics_cache, _metrics_sampled_at
 
     result: dict = dict(_metrics_cache)  # start with last known values
 
     try:
         clk_tck = os.sysconf("SC_CLK_TCK")
-    except (AttributeError, ValueError) as _e:
+    except (AttributeError, ValueError):  # fmt: skip
         clk_tck = 100
 
-    # CPU% (two-sample delta)
+    # CPU% (two-sample delta via /proc/<pid>/stat; Fields 13=utime, 14=stime)
     try:
-        with open(f"/proc/{pid}/stat") as fh:
-            parts = fh.read().split()
-        # Fields 13=utime, 14=stime (0-indexed)
-        cpu_ticks = int(parts[13]) + int(parts[14])
-        now = time.monotonic()
-        if _prev_cpu_time > 0:
-            elapsed = now - _prev_cpu_time
-            delta = cpu_ticks - _prev_cpu_ticks
-            cpu_pct = round(delta / clk_tck / max(elapsed, 0.001) * 100, 1)
-        else:
-            cpu_pct = 0.0
-        _prev_cpu_ticks = cpu_ticks
-        _prev_cpu_time = now
-        result["daemon_cpu_pct"] = cpu_pct
+        result["daemon_cpu_pct"] = _sample_cpu_pct(pid, clk_tck)
     except Exception:
         result.setdefault("daemon_cpu_pct", 0.0)
 
     # RSS + thread count from /proc/{pid}/status
-    rss_kb = 0
-    threads = 0
     try:
-        with open(f"/proc/{pid}/status") as fh:
-            for line in fh:
-                if line.startswith("VmRSS:"):
-                    rss_kb = int(line.split()[1])
-                elif line.startswith("Threads:"):
-                    threads = int(line.split()[1])
+        rss_kb, threads = _sample_rss_threads(pid)
     except Exception:
-        pass
+        rss_kb, threads = 0, 0
     result["daemon_rss_mb"] = round(rss_kb / 1024, 1)
     result["rss_bytes"] = rss_kb * 1024
     result["daemon_threads"] = threads
 
     # Open file descriptors (self — /proc/self/fd is always accessible)
     try:
-        result["open_fds"] = len(os.listdir("/proc/self/fd"))
+        result["open_fds"] = _sample_open_fds()
     except Exception:
         result.setdefault("open_fds", 0)
 
     # System RAM
-    total_ram_kb = avail_ram_kb = 0
     try:
-        with open("/proc/meminfo") as fh:
-            for line in fh:
-                if line.startswith("MemTotal:"):
-                    total_ram_kb = int(line.split()[1])
-                elif line.startswith("MemAvailable:"):
-                    avail_ram_kb = int(line.split()[1])
+        total_ram_kb, avail_ram_kb = _sample_meminfo()
     except Exception:
-        pass
+        total_ram_kb = avail_ram_kb = 0
     result["system_ram_total_mb"] = round(total_ram_kb / 1024, 1)
     result["system_ram_available_mb"] = round(avail_ram_kb / 1024, 1)
 
     # Load average
     try:
-        with open("/proc/loadavg") as fh:
-            la = fh.read().split()
-        result["load_avg_1m"] = float(la[0])
-        result["load_avg_5m"] = float(la[1])
-        result["load_avg_15m"] = float(la[2])
+        la1, la5, la15 = _sample_loadavg()
+        result["load_avg_1m"] = la1
+        result["load_avg_5m"] = la5
+        result["load_avg_15m"] = la15
     except Exception:
         result.setdefault("load_avg_1m", 0.0)
         result.setdefault("load_avg_5m", 0.0)
         result.setdefault("load_avg_15m", 0.0)
 
-    # DB directory size — use storage.get_db_size() in server mode so we hit the
-    # embed-service proxy rather than walking a path that doesn't exist locally.
-    _db_size_set = False
+    # DB directory size — uses storage proxy in server mode, path walk otherwise.
     _dbsize_t0 = time.time()
-    if storage is not None:
-        _db_url = getattr(storage, "_db_url", None)
-        if _db_url is not None:
-            try:
-                size_data = storage.get_db_size()
-                size_bytes = size_data.get("db_size_bytes", 0)
-                result["db_size_mb"] = round(size_bytes / 1024 / 1024, 1)
-                _db_size_set = True
-            except Exception:
-                pass
-
-    if not _db_size_set:
-        try:
-            db_dir = Path(db_path).expanduser()
-            if db_dir.is_dir():
-                size_bytes = sum(f.stat().st_size for f in db_dir.rglob("*") if f.is_file())
-                result["db_size_mb"] = round(size_bytes / 1024 / 1024, 1)
-            else:
-                result["db_size_mb"] = 0.0
-        except Exception:
-            result.setdefault("db_size_mb", 0.0)
-
+    result["db_size_mb"] = _sample_db_size(storage, db_path)
     # P11: observe dbsize sampling duration (non-fatal; bare call avoids cyclo branch).
-    _dbsize_elapsed_ms = (time.time() - _dbsize_t0) * 1000.0
-    _observe_dbsize_ms(_dbsize_elapsed_ms)
+    _observe_dbsize_ms((time.time() - _dbsize_t0) * 1000.0)
 
     result["sampled_at"] = time.time()
     _metrics_cache = result

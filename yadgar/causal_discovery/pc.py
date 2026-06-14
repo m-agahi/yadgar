@@ -15,6 +15,86 @@ from yadgar.storage import StorageEngine
 logger = logging.getLogger(__name__)
 
 
+def _fetch_filtered_episodes(
+    storage: StorageEngine,
+    cutoff_iso: str,
+    directory: str | None,
+) -> list[dict]:
+    """Return episodes since cutoff, sorted by timestamp, optionally filtered by directory."""
+    all_episodes = storage.get_episodes_since(0)
+    episodes = [e for e in all_episodes if e.get("timestamp", "") >= cutoff_iso]
+    episodes.sort(key=lambda e: e.get("timestamp", ""))
+    if directory:
+        episodes = [e for e in episodes if e["directory"] == directory]
+    return episodes
+
+
+def _build_time_buckets(cutoff: datetime, now: datetime) -> list[str]:
+    """Return ISO-formatted 1-hour bucket starts from cutoff to now."""
+    timestamps: list[str] = []
+    bucket_start = cutoff.replace(minute=0, second=0, microsecond=0)
+    while bucket_start < now:
+        timestamps.append(bucket_start.isoformat())
+        bucket_start += timedelta(hours=1)
+    return timestamps
+
+
+def _scan_entity_mentions(
+    episodes: list[dict],
+    all_entities: list[dict],
+) -> tuple[list[str], list[tuple[str, list[str]]]]:
+    """Scan each episode for entity name mentions.
+
+    Returns (entity_names, episode_entities) where episode_entities is a list
+    of (timestamp, [entity_names_found]) pairs.
+    """
+    entity_names: list[str] = []
+    entity_name_set: set[str] = set()
+    episode_entities: list[tuple[str, list[str]]] = []
+
+    for ep in episodes:
+        content = ep["raw_content"]
+        ep_entities: list[str] = []
+        for ent in all_entities:
+            name = ent["name"]
+            if re.search(r"\b" + re.escape(name) + r"\b", content):
+                ep_entities.append(name)
+                if name not in entity_name_set:
+                    entity_name_set.add(name)
+                    entity_names.append(name)
+        episode_entities.append((ep["timestamp"], ep_entities))
+
+    return entity_names, episode_entities
+
+
+def _fill_event_matrix(
+    episode_entities: list[tuple[str, list[str]]],
+    entity_names: list[str],
+    timestamps: list[str],
+    bucket_origin: datetime,
+) -> np.ndarray:
+    """Fill and return a binary (n_windows x n_vars) event matrix."""
+    n_windows = len(timestamps)
+    n_vars = len(entity_names)
+    name_to_col = {name: i for i, name in enumerate(entity_names)}
+    data = np.zeros((n_windows, n_vars), dtype=np.float64)
+
+    for ep_ts, ep_ents in episode_entities:
+        try:
+            ep_time = datetime.fromisoformat(ep_ts)
+            if ep_time.tzinfo is None:
+                ep_time = ep_time.replace(tzinfo=UTC)
+        except (ValueError, TypeError):  # fmt: skip
+            continue
+        bucket_idx = int((ep_time - bucket_origin).total_seconds() / 3600)
+        if 0 <= bucket_idx < n_windows:
+            for name in ep_ents:
+                if name in name_to_col:
+                    data[bucket_idx, name_to_col[name]] = 1.0
+
+    return data
+
+
 def build_event_matrix(
     storage: StorageEngine,
     settings: Settings,
@@ -32,72 +112,24 @@ def build_event_matrix(
     cutoff = now - timedelta(hours=hours)
     cutoff_iso = cutoff.isoformat()
 
-    # Collect entities active since cutoff
     all_entities = storage.get_all_entities(min_heat=0.0, include_archived=True)
-
-    # Collect episodes within the time range
-    all_episodes = storage.get_episodes_since(0)
-    episodes = [e for e in all_episodes if e.get("timestamp", "") >= cutoff_iso]
-    episodes.sort(key=lambda e: e.get("timestamp", ""))
-
-    if directory:
-        episodes = [e for e in episodes if e["directory"] == directory]
+    episodes = _fetch_filtered_episodes(storage, cutoff_iso, directory)
 
     if not episodes:
         return np.zeros((0, 0)), [], []
 
-    # Build time buckets (1-hour windows)
-    timestamps: list[str] = []
-    bucket_start = cutoff.replace(minute=0, second=0, microsecond=0)
-    while bucket_start < now:
-        timestamps.append(bucket_start.isoformat())
-        bucket_start += timedelta(hours=1)
+    timestamps = _build_time_buckets(cutoff, now)
 
     if not timestamps:
         return np.zeros((0, 0)), [], []
 
-    # Map entity names to column indices
-    entity_names: list[str] = []
-    entity_name_set: set[str] = set()
-
-    # Collect entity mentions per episode
-    episode_entities: list[tuple[str, list[str]]] = []
-    for ep in episodes:
-        content = ep["raw_content"]
-        ep_entities: list[str] = []
-        for ent in all_entities:
-            name = ent["name"]
-            if re.search(r"\b" + re.escape(name) + r"\b", content):
-                ep_entities.append(name)
-                if name not in entity_name_set:
-                    entity_name_set.add(name)
-                    entity_names.append(name)
-        episode_entities.append((ep["timestamp"], ep_entities))
+    entity_names, episode_entities = _scan_entity_mentions(episodes, all_entities)
 
     if not entity_names:
         return np.zeros((0, 0)), [], []
 
-    # Build the matrix
-    n_windows = len(timestamps)
-    n_vars = len(entity_names)
-    name_to_col = {name: i for i, name in enumerate(entity_names)}
-    data = np.zeros((n_windows, n_vars), dtype=np.float64)
-
-    for ep_ts, ep_ents in episode_entities:
-        # Find which time bucket this episode falls into
-        try:
-            ep_time = datetime.fromisoformat(ep_ts)
-            if ep_time.tzinfo is None:
-                ep_time = ep_time.replace(tzinfo=UTC)
-        except (ValueError, TypeError) as _e:
-            continue
-        bucket_idx = int(
-            (ep_time - cutoff.replace(minute=0, second=0, microsecond=0)).total_seconds() / 3600
-        )
-        if 0 <= bucket_idx < n_windows:
-            for name in ep_ents:
-                if name in name_to_col:
-                    data[bucket_idx, name_to_col[name]] = 1.0
+    bucket_origin = cutoff.replace(minute=0, second=0, microsecond=0)
+    data = _fill_event_matrix(episode_entities, entity_names, timestamps, bucket_origin)
 
     return data, entity_names, timestamps
 

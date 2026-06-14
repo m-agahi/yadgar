@@ -27,34 +27,8 @@ class _DreamMixin:
         max_pairs = len(memories) * (len(memories) - 1) // 2
         num_pairs = min(self._settings.DREAM_REPLAY_PAIRS, max_pairs)
 
-        # Generate random unique index pairs
-        pairs: set[tuple[int, int]] = set()
-        attempts = 0
-        max_attempts = num_pairs * 10
-        while len(pairs) < num_pairs and attempts < max_attempts:
-            i, j = random.sample(range(len(memories)), 2)
-            pairs.add((min(i, j), max(i, j)))
-            attempts += 1
-
-        # Pre-build a connected-pair index: ONE bulk fetch instead of one
-        # get_relationship_between HTTP call per pair (_memories_connected).
-        candidate_mem_ids = {memories[i]["id"] for idx_pair in pairs for i in idx_pair}
-        # Resolve memory-entity names → entity ids (only for already-existing entities).
-        mem_entity_id: dict[int, int] = {}
-        for mid in candidate_mem_ids:
-            ent = self._storage.get_entity_by_name(f"memory:{mid}")
-            if ent is not None:
-                mem_entity_id[mid] = ent["id"]
-
-        # Bulk-fetch all relationships among the entity ids we found.
-        connected_pairs: set[tuple[int, int]] = set()
-        if len(mem_entity_id) >= 2:
-            entity_ids = list(mem_entity_id.values())
-            for rel in self._storage.get_relationships_among_entities(entity_ids):
-                sid = rel.get("source_entity_id")
-                tid = rel.get("target_entity_id")
-                if sid is not None and tid is not None:
-                    connected_pairs.add((min(sid, tid), max(sid, tid)))
+        pairs = _generate_random_pairs(memories, num_pairs)
+        mem_entity_id, connected_pairs = self._build_connected_pair_index(memories, pairs)
 
         for idx_a, idx_b in pairs:
             mem_a = memories[idx_a]
@@ -85,6 +59,37 @@ class _DreamMixin:
                 stats["connections_found"] += 1
 
         return stats
+
+    def _build_connected_pair_index(
+        self,
+        memories: list[dict],
+        pairs: set[tuple[int, int]],
+    ) -> tuple[dict[int, int], set[tuple[int, int]]]:
+        """Build entity-id lookup and connected-pair set for the candidate pairs.
+
+        Pre-builds a connected-pair index via ONE bulk fetch instead of one
+        get_relationship_between HTTP call per pair (_memories_connected).
+        """
+        candidate_mem_ids = {memories[i]["id"] for idx_pair in pairs for i in idx_pair}
+
+        # Resolve memory-entity names → entity ids (only for already-existing entities).
+        mem_entity_id: dict[int, int] = {}
+        for mid in candidate_mem_ids:
+            ent = self._storage.get_entity_by_name(f"memory:{mid}")
+            if ent is not None:
+                mem_entity_id[mid] = ent["id"]
+
+        # Bulk-fetch all relationships among the entity ids we found.
+        connected_pairs: set[tuple[int, int]] = set()
+        if len(mem_entity_id) >= 2:
+            entity_ids = list(mem_entity_id.values())
+            for rel in self._storage.get_relationships_among_entities(entity_ids):
+                sid = rel.get("source_entity_id")
+                tid = rel.get("target_entity_id")
+                if sid is not None and tid is not None:
+                    connected_pairs.add((min(sid, tid), max(sid, tid)))
+
+        return mem_entity_id, connected_pairs
 
     def _create_dream_connection(self, mem_a_id: int, mem_b_id: int) -> None:
         """Create a weak co_occurrence link between two memories."""
@@ -132,3 +137,21 @@ class _DreamMixin:
             surprise_score=0.8,
             importance=0.4,
         )
+
+
+def _generate_random_pairs(
+    memories: list[dict],
+    num_pairs: int,
+) -> set[tuple[int, int]]:
+    """Generate a set of random unique index pairs from memories.
+
+    Attempts up to num_pairs * 10 times to reach num_pairs distinct pairs.
+    """
+    pairs: set[tuple[int, int]] = set()
+    attempts = 0
+    max_attempts = num_pairs * 10
+    while len(pairs) < num_pairs and attempts < max_attempts:
+        i, j = random.sample(range(len(memories)), 2)
+        pairs.add((min(i, j), max(i, j)))
+        attempts += 1
+    return pairs

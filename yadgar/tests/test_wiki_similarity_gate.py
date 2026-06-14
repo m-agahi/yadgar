@@ -24,6 +24,7 @@ from __future__ import annotations
 import pytest
 
 from yadgar import server
+from yadgar.wiki import WikiAddOptions
 
 
 @pytest.fixture(autouse=True)
@@ -279,7 +280,7 @@ YADGAR_DB_PATH: SurrealDB storage directory
         _wiki().add(
             "Yadgar Architecture",
             _ARCH_CONTENT,
-            branch="feat/x",
+            opts=WikiAddOptions(branch="feat/x"),
         )
         # Check for duplicates on branch feat/y -- should not find feat/x page
         candidates = _wiki().find_similar_wiki_pages(

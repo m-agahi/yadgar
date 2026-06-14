@@ -3,6 +3,86 @@
 from __future__ import annotations
 
 
+def _cosine_sim(a, b) -> float:
+    """Return cosine similarity between two numpy arrays, or 0.0 if either is None."""
+    import numpy as np
+
+    if a is None or b is None:
+        return 0.0
+    dot = np.dot(a, b)
+    norm = np.linalg.norm(a) * np.linalg.norm(b)
+    return float(dot / norm) if norm > 0 else 0.0
+
+
+def _collect_candidate_embeddings(
+    storage,
+    memories: list[dict],
+    q_arr,
+) -> tuple[list[dict], list]:
+    """Fetch embeddings for each memory; drop dim-mismatched, keep missing as None.
+
+    Returns (valid_memories, mem_embeddings) where each valid_memories[i]
+    corresponds to mem_embeddings[i].  Dim-mismatched memories are silently
+    dropped; memories with no embedding record are kept with emb=None.
+    """
+    import numpy as np
+
+    mem_embeddings: list = []
+    valid_memories: list[dict] = []
+    for mem in memories:
+        full_mem = storage.get_memory(mem["id"])
+        if full_mem and full_mem.get("embedding"):
+            emb = np.frombuffer(full_mem["embedding"], dtype=np.float32)
+            if len(emb) == len(q_arr):
+                mem_embeddings.append(emb)
+                valid_memories.append(mem)
+            # else: dim mismatch — drop entirely (no append to either list)
+        else:
+            valid_memories.append(mem)
+            mem_embeddings.append(None)
+    return valid_memories, mem_embeddings
+
+
+def _max_sim_to_selected(emb, selected_embs: list) -> float:
+    """Return maximum cosine similarity between emb and any selected embedding.
+
+    Returns 0.0 when selected_embs is empty or emb is None (floor matches
+    original behaviour — cosine similarity can be negative, but we cap at 0).
+    """
+    max_sim = 0.0
+    if selected_embs and emb is not None:
+        for sel_emb in selected_embs:
+            sim = _cosine_sim(emb, sel_emb)
+            if sim > max_sim:
+                max_sim = sim
+    return max_sim
+
+
+def _best_mmr_candidate(
+    candidates: list[int],
+    mem_embeddings: list,
+    valid_memories: list[dict],
+    selected_embs: list,
+    lambda_param: float,
+) -> int | None:
+    """Pick the candidate index with the highest MMR score.
+
+    MMR score = lambda * relevance - (1 - lambda) * max_similarity_to_selected.
+    Ties broken by first (lowest) index — strict `>` comparison preserved.
+    """
+    best_idx = None
+    best_score = -float("inf")
+    for idx in candidates:
+        emb = mem_embeddings[idx]
+        relevance = valid_memories[idx].get("_retrieval_score", 0.0)
+        max_sim = _max_sim_to_selected(emb, selected_embs)
+        mmr_score = lambda_param * relevance - (1 - lambda_param) * max_sim
+        if mmr_score > best_score:
+            best_score = mmr_score
+            best_idx = idx
+    return best_idx
+
+
 class _MMRMixin:
     """Provides mmr_rerank for diversity-aware candidate selection."""
 
@@ -25,57 +105,21 @@ class _MMRMixin:
 
         q_arr = np.frombuffer(query_embedding, dtype=np.float32)
 
-        # Get embeddings for all candidate memories
-        mem_embeddings = []
-        valid_memories = []
-        for mem in memories:
-            full_mem = self._storage.get_memory(mem["id"])
-            if full_mem and full_mem.get("embedding"):
-                emb = np.frombuffer(full_mem["embedding"], dtype=np.float32)
-                # Handle dimension mismatch
-                if len(emb) == len(q_arr):
-                    mem_embeddings.append(emb)
-                    valid_memories.append(mem)
-            else:
-                valid_memories.append(mem)
-                mem_embeddings.append(None)
+        valid_memories, mem_embeddings = _collect_candidate_embeddings(
+            self._storage, memories, q_arr
+        )
 
         if not valid_memories:
             return memories[:top_k]
 
-        def cosine_sim(a, b):
-            if a is None or b is None:
-                return 0.0
-            dot = np.dot(a, b)
-            norm = np.linalg.norm(a) * np.linalg.norm(b)
-            return float(dot / norm) if norm > 0 else 0.0
-
-        selected = []
-        selected_embs = []
+        selected: list[dict] = []
+        selected_embs: list = []
         candidates = list(range(len(valid_memories)))
 
         for _ in range(min(top_k, len(valid_memories))):
-            best_idx = None
-            best_score = -float("inf")
-
-            for idx in candidates:
-                emb = mem_embeddings[idx]
-                relevance = valid_memories[idx].get("_retrieval_score", 0.0)
-
-                # Max similarity to already-selected documents
-                max_sim = 0.0
-                if selected_embs and emb is not None:
-                    for sel_emb in selected_embs:
-                        sim = cosine_sim(emb, sel_emb)
-                        if sim > max_sim:
-                            max_sim = sim
-
-                mmr_score = lambda_param * relevance - (1 - lambda_param) * max_sim
-
-                if mmr_score > best_score:
-                    best_score = mmr_score
-                    best_idx = idx
-
+            best_idx = _best_mmr_candidate(
+                candidates, mem_embeddings, valid_memories, selected_embs, lambda_param
+            )
             if best_idx is not None:
                 selected.append(valid_memories[best_idx])
                 selected_embs.append(mem_embeddings[best_idx])

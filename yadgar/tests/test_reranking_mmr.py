@@ -270,3 +270,16 @@ class TestMMRSelection:
         result = r.mmr_rerank(mems, q_emb, top_k=5)
         ids = [m["id"] for m in result]
         assert len(ids) == len(set(ids))  # no duplicates
+
+    def test_golden_mmr_order_lambda_07(self):
+        """Golden-order regression: lambda=0.7 produces a specific deterministic ranking.
+
+        Seed-based vectors ensure reproducibility. Order captured from the original
+        implementation and MUST remain identical after any refactor.
+        """
+        store = {f"m{i}": {"embedding": _rand_vec(i)} for i in range(5)}
+        r = _StubReranker(store)
+        q_emb = _rand_vec(99)
+        mems = [{"id": f"m{i}", "_retrieval_score": 0.8 - i * 0.1} for i in range(5)]
+        result = r.mmr_rerank(mems, q_emb, top_k=4, lambda_param=0.7)
+        assert [m["id"] for m in result] == ["m0", "m1", "m3", "m2"]

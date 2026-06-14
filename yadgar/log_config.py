@@ -340,6 +340,32 @@ def _outcome_from_status(status: str) -> str:
     return "error"
 
 
+def _resolve_route_label(scope: dict) -> str:
+    """Route-template label for Prometheus; FastAPI: scope["route"].path, Starlette: router scan."""
+    route_obj = scope.get("route")
+    if route_obj is not None and hasattr(route_obj, "path"):
+        return route_obj.path  # type: ignore[no-any-return]
+    router = scope.get("router")
+    endpoint = scope.get("endpoint")
+    if router is None or endpoint is None:
+        return "<unmatched>"
+    for _r in getattr(router, "routes", []):
+        _match, _child = _r.matches(scope)
+        if _match.value > 0 and _child.get("endpoint") is endpoint:
+            return getattr(_r, "path", "<unmatched>")
+    return "<unmatched>"
+
+
+def _increment_request_metric(scope: dict) -> None:
+    """Increment yadgar_requests_total{route}. No-ops if metrics unavailable."""
+    try:
+        from yadgar.metrics import yadgar_requests_total  # noqa: PLC0415
+
+        yadgar_requests_total.labels(route=_resolve_route_label(scope)).inc()
+    except Exception:
+        pass
+
+
 class RequestLoggingMiddleware:
     """ASGI middleware that emits one structured log line per HTTP request.
 
@@ -409,30 +435,7 @@ class RequestLoggingMiddleware:
                     "tool_name": tool_name,
                 },
             )
-            # PR-B: wire yadgar_requests_total{route}. Use matched route template
-            # to avoid cardinality blowup from raw URLs.
-            # FastAPI/FastMCP sets scope["route"] with a .path attribute.
-            # Plain Starlette does not — fall back to router+endpoint scan.
-            try:
-                from yadgar.metrics import yadgar_requests_total  # noqa: PLC0415
-
-                route_label = "<unmatched>"
-                route_obj = scope.get("route")
-                if route_obj is not None and hasattr(route_obj, "path"):
-                    route_label = route_obj.path
-                else:
-                    # Starlette path: find matching route via router + endpoint
-                    router = scope.get("router")
-                    endpoint = scope.get("endpoint")
-                    if router is not None and endpoint is not None:
-                        for _r in getattr(router, "routes", []):
-                            _match, _child = _r.matches(scope)
-                            if _match.value > 0 and _child.get("endpoint") is endpoint:
-                                route_label = getattr(_r, "path", "<unmatched>")
-                                break
-                yadgar_requests_total.labels(route=route_label).inc()
-            except Exception:
-                pass
+            _increment_request_metric(scope)
 
 
 def _configure_yadgar_logger(numeric_level: int, *, propagate: bool) -> None:

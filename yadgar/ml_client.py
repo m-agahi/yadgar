@@ -344,63 +344,51 @@ class LocalMLClient:
         self._cross_encoder = None  # Lazy-loaded sentence-transformers CrossEncoder (fallback)
         self._last_used: float = 0.0  # monotonic timestamp of last call
 
-    def score_cross_encoder(self, query: str, texts: list[str]) -> list[float]:
-        """Return raw cross-encoder scores for (query, text) pairs.
+    def _try_gte_reranker(self, query: str, texts: list[str]) -> list[float] | None:
+        """Attempt GTE-Reranker scoring.  Returns scores on success, None to fall through.
 
-        Tries GTE-Reranker first, falls back to FlashRank, then sentence-transformers
-        CrossEncoder — mirroring the priority chain in reranking.py.
-
-        Returns list of float scores, one per text. Returns zeros on total failure.
+        Sets self._gte_load_failed on permanent failure (T-0006).
+        Returns [0.0]*len(texts) (terminal) when fallback is disabled.
         """
-        self._last_used = time.monotonic()
-        if not texts:
-            return []
-
         settings = self._settings
-
-        # --- GTE-Reranker (best zero-shot OOD) ---
-        # T-0006: gate subsequent attempts after permanent failure
-        gte_failed = False
-        if (
+        if not (
             settings is not None
             and getattr(settings, "GTE_RERANKER_ENABLED", False)
             and not self._gte_load_failed
         ):
-            try:
-                if self._gte_reranker is None:
-                    from sentence_transformers import CrossEncoder as STCrossEncoder
+            return None
 
-                    self._gte_reranker = STCrossEncoder(
-                        settings.GTE_RERANKER_MODEL,
-                        max_length=settings.GTE_RERANKER_MAX_LENGTH,
-                    )
-                    logger.info(
-                        "LocalMLClient: loaded GTE-Reranker: %s", settings.GTE_RERANKER_MODEL
-                    )
-
-                if self._gte_reranker is not False:
-                    pairs = [(query, t[:512]) for t in texts]
-                    scores = self._gte_reranker.predict(pairs)
-                    return [float(s) for s in scores]
-            except Exception as e:
-                from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
-
-                record_exception("ml_client.reranker_fallback", e)
-                logger.warning("LocalMLClient: GTE-Reranker failed, falling back: %s", e)
-                self._gte_reranker = False
-                self._gte_load_failed = True  # T-0006: mark permanent failure
-                gte_failed = True
-
-        if (
-            gte_failed
-            and settings is not None
-            and not getattr(settings, "GTE_RERANKER_FALLBACK_TO_FLASHRANK", True)
-        ):
-            return [0.0] * len(texts)
-
-        # --- FlashRank (ONNX, fast on CPU) ---
         try:
-            from flashrank import Ranker, RerankRequest
+            if self._gte_reranker is None:
+                from sentence_transformers import CrossEncoder as STCrossEncoder  # noqa: PLC0415
+
+                self._gte_reranker = STCrossEncoder(
+                    settings.GTE_RERANKER_MODEL,
+                    max_length=settings.GTE_RERANKER_MAX_LENGTH,
+                )
+                logger.info("LocalMLClient: loaded GTE-Reranker: %s", settings.GTE_RERANKER_MODEL)
+
+            if self._gte_reranker is not False:
+                pairs = [(query, t[:512]) for t in texts]
+                scores = self._gte_reranker.predict(pairs)
+                return [float(s) for s in scores]
+        except Exception as e:
+            from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+            record_exception("ml_client.reranker_fallback", e)
+            logger.warning("LocalMLClient: GTE-Reranker failed, falling back: %s", e)
+            self._gte_reranker = False
+            self._gte_load_failed = True  # T-0006: mark permanent failure
+            # Terminal: return zeros when fallback to FlashRank is explicitly disabled
+            if not getattr(settings, "GTE_RERANKER_FALLBACK_TO_FLASHRANK", True):
+                return [0.0] * len(texts)
+
+        return None
+
+    def _try_flashrank(self, query: str, texts: list[str]) -> list[float] | None:
+        """Attempt FlashRank (ONNX) scoring.  Returns scores on success, None to fall through."""
+        try:
+            from flashrank import Ranker, RerankRequest  # noqa: PLC0415
 
             if self._flashrank_ranker is None:
                 self._flashrank_ranker = Ranker(
@@ -411,25 +399,26 @@ class LocalMLClient:
             passages = [{"id": i, "text": t} for i, t in enumerate(texts)]
             rerank_req = RerankRequest(query=query, passages=passages)
             results = self._flashrank_ranker.rerank(rerank_req)
-
             # Rebuild score list in original order
             score_map: dict[int, float] = {r["id"]: r["score"] for r in results}
             return [score_map.get(i, 0.0) for i in range(len(texts))]
-
         except ImportError:
             pass
         except Exception:
             logger.debug(
                 "LocalMLClient: FlashRank failed, trying sentence-transformers CrossEncoder"
             )
+        return None
 
+    def _try_st_cross_encoder(self, query: str, texts: list[str]) -> list[float]:
+        """sentence-transformers CrossEncoder fallback.  Always returns a list (zeros on error)."""
+        settings = self._settings
         # Respect explicit disable before loading the heavy CrossEncoder fallback.
         if settings is not None and not getattr(settings, "CROSS_ENCODER_ENABLED", True):
             return [0.0] * len(texts)
 
-        # --- sentence-transformers CrossEncoder (final fallback) ---
         try:
-            from sentence_transformers import CrossEncoder
+            from sentence_transformers import CrossEncoder  # noqa: PLC0415
         except ImportError:
             logger.warning("LocalMLClient: no reranker available (install yadgar[ml])")
             return [0.0] * len(texts)
@@ -461,6 +450,28 @@ class LocalMLClient:
 
             record_exception("ml_client.score_pair", e)
             return [0.0] * len(texts)
+
+    def score_cross_encoder(self, query: str, texts: list[str]) -> list[float]:
+        """Return raw cross-encoder scores for (query, text) pairs.
+
+        Tries GTE-Reranker first, falls back to FlashRank, then sentence-transformers
+        CrossEncoder — mirroring the priority chain in reranking.py.
+
+        Returns list of float scores, one per text. Returns zeros on total failure.
+        """
+        self._last_used = time.monotonic()
+        if not texts:
+            return []
+
+        result = self._try_gte_reranker(query, texts)
+        if result is not None:
+            return result
+
+        result = self._try_flashrank(query, texts)
+        if result is not None:
+            return result
+
+        return self._try_st_cross_encoder(query, texts)
 
     def score_nli(self, query: str, texts: list[str]) -> list[float]:
         """Return NLI entailment probability for each (text, hypothesis) pair.
@@ -640,155 +651,76 @@ class RemoteMLClient:
         """Clock accessor — overridden by tests via self._fake_now."""
         return getattr(self, "_fake_now", time.monotonic())
 
+    def _rerank_rpc(self, mode: str, query: str, texts: list[str]) -> list | None:
+        """Shared HTTP + circuit-breaker logic for all /rerank modes.
+
+        Returns the raw ``scores`` list on success, or None on circuit-open /
+        HTTP error.  Callers apply result indexing (e.g. ``[0]`` for pair).
+        """
+        _is_probe = False
+        if self._breaker_enabled:
+            breaker = self._breakers[mode]  # type: ignore[index]
+            now = self._now()
+            if breaker.is_open(_now=now) and not breaker.is_half_open(_now=now):
+                logger.warning(
+                    "/rerank/%s circuit OPEN — skipping (cooldown %.0fs remaining)",
+                    mode,
+                    breaker.cooldown_remaining(_now=now),
+                )
+                return None
+            _is_probe = breaker.is_half_open(_now=self._now())
+        try:
+            _timeout = self._probe_timeout if _is_probe else self._rerank_timeout
+            r = self._client.post(
+                "/rerank", json={"query": query, "texts": texts, "mode": mode}, timeout=_timeout
+            )
+            r.raise_for_status()
+            result = r.json()["scores"]
+            if self._breaker_enabled:
+                self._breakers[mode].record_success()  # type: ignore[index]
+            return result
+        except Exception as e:
+            import httpx as _httpx  # noqa: PLC0415
+
+            if isinstance(e, (_httpx.TimeoutException, _httpx.ConnectError, _httpx.HTTPStatusError)):  # fmt: skip
+                if self._breaker_enabled:
+                    b = self._breakers[mode]  # type: ignore[index]
+                    b.record_failure(_now=self._now())
+                    logger.warning(
+                        "/rerank/%s failure (%d consecutive): %s",
+                        mode,
+                        b.consecutive_failures,
+                        e,
+                    )
+                else:
+                    logger.warning(
+                        "backend timeout: RemoteMLClient /rerank %s timed out: %s", mode, e
+                    )
+            else:
+                logger.warning("RemoteMLClient: /rerank %s failed: %s", mode, e)
+            return None
+
     def score_cross_encoder(self, query: str, texts: list[str]) -> list[float] | None:
         with _rpc_span(
             "rpc.rerank.ce",
             {"rerank.mode": "ce", "rerank.n_passages": len(texts), "http.url": self._base_url},
         ):
-            _is_probe = False
-            if self._breaker_enabled:
-                breaker = self._breakers["ce"]  # type: ignore[index]
-                now = self._now()
-                if breaker.is_open(_now=now) and not breaker.is_half_open(_now=now):
-                    logger.warning(
-                        "/rerank/ce circuit OPEN — skipping (cooldown %.0fs remaining)",
-                        breaker.cooldown_remaining(_now=now),
-                    )
-                    return None
-                _is_probe = breaker.is_half_open(_now=self._now())
-            try:
-                _kwargs = {"json": {"query": query, "texts": texts, "mode": "ce"}}
-                if _is_probe:
-                    _kwargs["timeout"] = self._probe_timeout
-                else:
-                    _kwargs["timeout"] = self._rerank_timeout
-                r = self._client.post("/rerank", **_kwargs)
-                r.raise_for_status()
-                result = r.json()["scores"]
-                if self._breaker_enabled:
-                    self._breakers["ce"].record_success()  # type: ignore[index]
-                return result
-            except Exception as e:
-                import httpx as _httpx
-
-                if isinstance(
-                    e, (_httpx.TimeoutException, _httpx.ConnectError, _httpx.HTTPStatusError)
-                ):
-                    if self._breaker_enabled:
-                        b = self._breakers["ce"]  # type: ignore[index]
-                        b.record_failure(_now=self._now())
-                        logger.warning(
-                            "/rerank/ce failure (%d consecutive): %s",
-                            b.consecutive_failures,
-                            e,
-                        )
-                    else:
-                        logger.warning(
-                            "backend timeout: RemoteMLClient /rerank ce timed out: %s", e
-                        )
-                else:
-                    logger.warning("RemoteMLClient: /rerank ce failed: %s", e)
-                return None
+            return self._rerank_rpc("ce", query, texts)
 
     def score_nli(self, query: str, texts: list[str]) -> list[float] | None:
         with _rpc_span(
             "rpc.rerank.nli",
             {"rerank.mode": "nli", "rerank.n_passages": len(texts), "http.url": self._base_url},
         ):
-            _is_probe = False
-            if self._breaker_enabled:
-                breaker = self._breakers["nli"]  # type: ignore[index]
-                now = self._now()
-                if breaker.is_open(_now=now) and not breaker.is_half_open(_now=now):
-                    logger.warning(
-                        "/rerank/nli circuit OPEN — skipping (cooldown %.0fs remaining)",
-                        breaker.cooldown_remaining(_now=now),
-                    )
-                    return None
-                _is_probe = breaker.is_half_open(_now=self._now())
-            try:
-                _kwargs = {"json": {"query": query, "texts": texts, "mode": "nli"}}
-                if _is_probe:
-                    _kwargs["timeout"] = self._probe_timeout
-                else:
-                    _kwargs["timeout"] = self._rerank_timeout
-                r = self._client.post("/rerank", **_kwargs)
-                r.raise_for_status()
-                result = r.json()["scores"]
-                if self._breaker_enabled:
-                    self._breakers["nli"].record_success()  # type: ignore[index]
-                return result
-            except Exception as e:
-                import httpx as _httpx
-
-                if isinstance(
-                    e, (_httpx.TimeoutException, _httpx.ConnectError, _httpx.HTTPStatusError)
-                ):
-                    if self._breaker_enabled:
-                        b = self._breakers["nli"]  # type: ignore[index]
-                        b.record_failure(_now=self._now())
-                        logger.warning(
-                            "/rerank/nli failure (%d consecutive): %s",
-                            b.consecutive_failures,
-                            e,
-                        )
-                    else:
-                        logger.warning(
-                            "backend timeout: RemoteMLClient /rerank nli timed out: %s", e
-                        )
-                else:
-                    logger.warning("RemoteMLClient: /rerank nli failed: %s", e)
-                return None
+            return self._rerank_rpc("nli", query, texts)
 
     def score_pair(self, query: str, text: str) -> float | None:
         with _rpc_span(
             "rpc.rerank.pair",
             {"rerank.mode": "pair", "rerank.n_passages": 1, "http.url": self._base_url},
         ):
-            _is_probe = False
-            if self._breaker_enabled:
-                breaker = self._breakers["pair"]  # type: ignore[index]
-                now = self._now()
-                if breaker.is_open(_now=now) and not breaker.is_half_open(_now=now):
-                    logger.warning(
-                        "/rerank/pair circuit OPEN — skipping (cooldown %.0fs remaining)",
-                        breaker.cooldown_remaining(_now=now),
-                    )
-                    return None
-                _is_probe = breaker.is_half_open(_now=self._now())
-            try:
-                _kwargs = {"json": {"query": query, "texts": [text], "mode": "pair"}}
-                if _is_probe:
-                    _kwargs["timeout"] = self._probe_timeout
-                else:
-                    _kwargs["timeout"] = self._rerank_timeout
-                r = self._client.post("/rerank", **_kwargs)
-                r.raise_for_status()
-                result = r.json()["scores"][0]
-                if self._breaker_enabled:
-                    self._breakers["pair"].record_success()  # type: ignore[index]
-                return result
-            except Exception as e:
-                import httpx as _httpx
-
-                if isinstance(
-                    e, (_httpx.TimeoutException, _httpx.ConnectError, _httpx.HTTPStatusError)
-                ):
-                    if self._breaker_enabled:
-                        b = self._breakers["pair"]  # type: ignore[index]
-                        b.record_failure(_now=self._now())
-                        logger.warning(
-                            "/rerank/pair failure (%d consecutive): %s",
-                            b.consecutive_failures,
-                            e,
-                        )
-                    else:
-                        logger.warning(
-                            "backend timeout: RemoteMLClient /rerank pair timed out: %s", e
-                        )
-                else:
-                    logger.warning("RemoteMLClient: /rerank pair failed: %s", e)
-                return None
+            result = self._rerank_rpc("pair", query, [text])
+            return result[0] if result else None
 
     def unload_if_idle(self, idle_seconds: float | None = None) -> None:
         pass  # backend manages its own lifecycle

@@ -1,28 +1,112 @@
-"""stats subcommand — detailed memory statistics.
-
-# Module size justified: single-responsibility CLI command. All LoC implement
-# cmd_stats — one function with two output paths (daemon HTTP fallback → direct
-# DB access) and two format modes (table, JSON). The size is driven by the number
-# of parallel aggregate queries needed for a comprehensive stats view, not by
-# multiple responsibilities. Splitting (e.g. per-section helpers) would scatter
-# query logic that shares local variables and a single DB connection.
-"""
+"""stats subcommand — detailed memory statistics."""
 
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
+
+# ── Shared utilities ───────────────────────────────────────────────────────────
 
 
-def cmd_stats(args):
-    """Show detailed memory statistics.
+def _one(results, key, default=0):
+    """Extract a single aggregate value from a GROUP ALL result."""
+    try:
+        return results[0][0][key] if results and results[0] else default
+    except IndexError, KeyError, TypeError:
+        return default
 
-    Tries the running daemon's HTTP endpoint first (works when server is in Docker).
-    Falls back to direct DB access when no daemon is reachable.
-    """
+
+def _count(results):
+    return _one(results, "count", 0)
+
+
+def _q(db, project, sql, sql_proj):
+    """Run sql_proj when project is set (binding {p: project}), else sql."""
+    if project:
+        return db.query(sql_proj, {"p": project})
+    return db.query(sql)
+
+
+# ── Stats data container ───────────────────────────────────────────────────────
+
+
+@dataclass
+class StatsData:
+    # Core counts
+    total: int = 0
+    active: int = 0
+    stale: int = 0
+    archived: int = 0
+    protected: int = 0
+    # Types
+    episodic: int = 0
+    semantic: int = 0
+    # Compression
+    comp_0: int = 0
+    comp_1: int = 0
+    comp_2: int = 0
+    # Heat
+    heat_min: float = 0.0
+    heat_avg: float = 0.0
+    heat_max: float = 0.0
+    heat_buckets: list = field(default_factory=list)
+    # Access
+    total_accesses: int = 0
+    avg_accesses: float = 0.0
+    max_accesses: int = 0
+    total_useful: int = 0
+    never_accessed: int = 0
+    # Temporal
+    oldest: Any = None
+    newest: Any = None
+    last_accessed: Any = None
+    age_days: Any = None
+    # Projects breakdown
+    project_rows: list = field(default_factory=list)
+    # Consolidation
+    total_consolidations: int = 0
+    last_consol: Any = None
+    avg_duration: float = 0.0
+    # Knowledge graph
+    entity_count: int = 0
+    rel_count: int = 0
+    causal_edges: int = 0
+    # Action log
+    action_total: int = 0
+    action_unprocessed: int = 0
+    # Subsystems
+    cluster_count: int = 0
+    narrative_count: int = 0
+    triggers_active: int = 0
+    triggers_fired: int = 0
+    # Tags
+    top_tags: list = field(default_factory=list)
+
+
+# ── HTTP path ─────────────────────────────────────────────────────────────────
+
+
+def _print_http_summary(data, project):
+    """Print brief summary from daemon HTTP response."""
+    header = f"=== Yadgar Stats{f' — {project}' if project else ''} ==="
+    print(header)
+    print()
+    print(f"  Total:    {data.get('total_memories', '?')}")
+    print(f"  Active:   {data.get('active_count', '?')}")
+    print(f"  Archived: {data.get('archived_count', '?')}")
+    print(f"  Stale:    {data.get('stale_count', '?')}")
+    print(f"  Avg heat: {data.get('avg_heat', 0):.4f}")
+    print(f"  Last consolidation: {data.get('last_consolidation', 'n/a')}")
+    print()
+    print("(Daemon running in Docker — for full stats run with direct DB access)")
+
+
+def _try_http_path(args):
+    """Try the daemon HTTP endpoint. Return True if handled, False to fall through."""
     import json
     import os as _os
     import urllib.parse
     import urllib.request
-    from datetime import UTC, datetime
 
     port = int(_os.environ.get("YADGAR_PORT", "8765"))
     http_url = f"http://127.0.0.1:{port}/api/stats"
@@ -38,21 +122,452 @@ def cmd_stats(args):
         if args.format == "json":
             print(json.dumps(data, indent=2))
         else:
-            # Brief summary — daemon has limited stats; full detail needs direct DB
-            header = f"=== Yadgar Stats{f' — {args.project}' if args.project else ''} ==="
-            print(header)
-            print()
-            print(f"  Total:    {data.get('total_memories', '?')}")
-            print(f"  Active:   {data.get('active_count', '?')}")
-            print(f"  Archived: {data.get('archived_count', '?')}")
-            print(f"  Stale:    {data.get('stale_count', '?')}")
-            print(f"  Avg heat: {data.get('avg_heat', 0):.4f}")
-            print(f"  Last consolidation: {data.get('last_consolidation', 'n/a')}")
-            print()
-            print("(Daemon running in Docker — for full stats run with direct DB access)")
-        return
+            _print_http_summary(data, args.project)
+        return True
     except Exception:
-        pass  # daemon not running or unreachable — fall back to direct DB access
+        return False  # daemon not running or unreachable — fall back to direct DB
+
+
+# ── DB query helpers ───────────────────────────────────────────────────────────
+
+
+def _query_core_counts(db, project, sd):
+    """Populate sd with total, active, stale, archived, protected."""
+    total_res = _q(
+        db,
+        project,
+        "SELECT count() FROM memory GROUP ALL",
+        "SELECT count() FROM memory WHERE directory_context = $p GROUP ALL",
+    )
+    sd.total = _count(total_res)
+
+    sd.active = _count(
+        _q(
+            db,
+            project,
+            "SELECT count() FROM memory WHERE is_stale = false AND heat >= 0.05 GROUP ALL",
+            "SELECT count() FROM memory WHERE directory_context = $p "
+            "AND is_stale = false AND heat >= 0.05 GROUP ALL",
+        )
+    )
+    sd.stale = _count(
+        _q(
+            db,
+            project,
+            "SELECT count() FROM memory WHERE is_stale = true GROUP ALL",
+            "SELECT count() FROM memory WHERE directory_context = $p AND is_stale = true GROUP ALL",
+        )
+    )
+    sd.archived = _count(
+        _q(
+            db,
+            project,
+            "SELECT count() FROM memory WHERE heat < 0.05 GROUP ALL",
+            "SELECT count() FROM memory WHERE directory_context = $p AND heat < 0.05 GROUP ALL",
+        )
+    )
+    sd.protected = _count(
+        _q(
+            db,
+            project,
+            "SELECT count() FROM memory WHERE is_protected = true GROUP ALL",
+            "SELECT count() FROM memory WHERE directory_context = $p "
+            "AND is_protected = true GROUP ALL",
+        )
+    )
+
+
+def _query_type_breakdown(db, project, sd):
+    """Populate sd with episodic, semantic."""
+    sd.episodic = _count(
+        _q(
+            db,
+            project,
+            "SELECT count() FROM memory WHERE store_type = 'episodic' GROUP ALL",
+            "SELECT count() FROM memory WHERE directory_context = $p "
+            "AND store_type = 'episodic' GROUP ALL",
+        )
+    )
+    sd.semantic = _count(
+        _q(
+            db,
+            project,
+            "SELECT count() FROM memory WHERE store_type = 'semantic' GROUP ALL",
+            "SELECT count() FROM memory WHERE directory_context = $p "
+            "AND store_type = 'semantic' GROUP ALL",
+        )
+    )
+
+
+def _query_compression_levels(db, project, sd):
+    """Populate sd with comp_0, comp_1, comp_2."""
+    for attr, lvl in [("comp_0", 0), ("comp_1", 1), ("comp_2", 2)]:
+        res = _q(
+            db,
+            project,
+            f"SELECT count() FROM memory WHERE compression_level = {lvl} GROUP ALL",
+            f"SELECT count() FROM memory WHERE directory_context = $p "
+            f"AND compression_level = {lvl} GROUP ALL",
+        )
+        setattr(sd, attr, _count(res))
+
+
+def _query_heat_stats(db, project, sd):
+    """Populate sd with heat_min, heat_avg, heat_max, heat_buckets."""
+    heat_res = _q(
+        db,
+        project,
+        "SELECT math::min(heat) AS min_h, math::mean(heat) AS avg_h, "
+        "math::max(heat) AS max_h FROM memory GROUP ALL",
+        "SELECT math::min(heat) AS min_h, math::mean(heat) AS avg_h, "
+        "math::max(heat) AS max_h FROM memory "
+        "WHERE directory_context = $p GROUP ALL",
+    )
+    sd.heat_min = _one(heat_res, "min_h", 0) or 0
+    sd.heat_avg = _one(heat_res, "avg_h", 0) or 0
+    sd.heat_max = _one(heat_res, "max_h", 0) or 0
+
+    buckets = []
+    for lo, hi, label in [
+        (0, 0.01, "cold (<0.01)"),
+        (0.01, 0.1, "cool (0.01-0.1)"),
+        (0.1, 0.5, "warm (0.1-0.5)"),
+        (0.5, 0.9, "hot (0.5-0.9)"),
+        (0.9, 999, "burning (0.9+)"),
+    ]:
+        if project:
+            br = db.query(
+                "SELECT count() FROM memory WHERE directory_context = $p "
+                "AND heat >= $lo AND heat < $hi GROUP ALL",
+                {"p": project, "lo": lo, "hi": hi},
+            )
+        else:
+            br = db.query(
+                "SELECT count() FROM memory WHERE heat >= $lo AND heat < $hi GROUP ALL",
+                {"lo": lo, "hi": hi},
+            )
+        buckets.append((label, _count(br)))
+    sd.heat_buckets = buckets
+
+
+def _query_access_stats(db, project, sd):
+    """Populate sd with access stats."""
+    access_res = _q(
+        db,
+        project,
+        "SELECT math::sum(access_count) AS total_ac, "
+        "math::mean(access_count) AS avg_ac, "
+        "math::max(access_count) AS max_ac FROM memory GROUP ALL",
+        "SELECT math::sum(access_count) AS total_ac, "
+        "math::mean(access_count) AS avg_ac, "
+        "math::max(access_count) AS max_ac FROM memory "
+        "WHERE directory_context = $p GROUP ALL",
+    )
+    useful_res = _q(
+        db,
+        project,
+        "SELECT math::sum(useful_count) AS total_uc FROM memory GROUP ALL",
+        "SELECT math::sum(useful_count) AS total_uc FROM memory "
+        "WHERE directory_context = $p GROUP ALL",
+    )
+    never_res = _q(
+        db,
+        project,
+        "SELECT count() FROM memory WHERE access_count = 0 GROUP ALL",
+        "SELECT count() FROM memory WHERE directory_context = $p AND access_count = 0 GROUP ALL",
+    )
+    sd.total_accesses = _one(access_res, "total_ac", 0) or 0
+    sd.avg_accesses = _one(access_res, "avg_ac", 0) or 0
+    sd.max_accesses = _one(access_res, "max_ac", 0) or 0
+    sd.total_useful = _one(useful_res, "total_uc", 0) or 0
+    sd.never_accessed = _count(never_res)
+
+
+def _query_temporal_stats(db, project, sd):
+    """Populate sd with temporal stats."""
+    from datetime import UTC, datetime
+
+    temporal_res = _q(
+        db,
+        project,
+        "SELECT math::min(created_at) AS oldest, math::max(created_at) AS newest, "
+        "math::max(last_accessed) AS last_acc FROM memory GROUP ALL",
+        "SELECT math::min(created_at) AS oldest, math::max(created_at) AS newest, "
+        "math::max(last_accessed) AS last_acc FROM memory "
+        "WHERE directory_context = $p GROUP ALL",
+    )
+    sd.oldest = _one(temporal_res, "oldest", None)
+    sd.newest = _one(temporal_res, "newest", None)
+    sd.last_accessed = _one(temporal_res, "last_acc", None)
+
+    now = datetime.now(UTC)
+    if sd.oldest:
+        try:
+            oldest_str = str(sd.oldest)
+            oldest_dt = datetime.fromisoformat(oldest_str.replace("Z", "+00:00"))
+            sd.age_days = (now - oldest_dt).days
+        except Exception:
+            pass
+
+
+def _query_project_breakdown(db, sd):
+    """Populate sd.project_rows (only when no project filter)."""
+    proj_res = db.query(
+        "SELECT directory_context, count() AS cnt, math::mean(heat) AS avg_h, "
+        "math::max(created_at) AS last_created FROM memory "
+        "WHERE directory_context != '' "
+        "GROUP BY directory_context ORDER BY cnt DESC LIMIT 15"
+    )
+    sd.project_rows = proj_res[0] if proj_res else []
+
+
+def _query_consolidation(db, sd):
+    """Populate sd with consolidation stats."""
+    sd.total_consolidations = _count(db.query("SELECT count() FROM consolidation_log GROUP ALL"))
+    last_consol_res = db.query(
+        "SELECT timestamp, duration_ms, memories_added, memories_archived "
+        "FROM consolidation_log ORDER BY id DESC LIMIT 1"
+    )
+    sd.last_consol = last_consol_res[0][0] if last_consol_res and last_consol_res[0] else None
+    avg_dur_res = db.query(
+        "SELECT math::mean(duration_ms) AS avg_d FROM consolidation_log GROUP ALL"
+    )
+    sd.avg_duration = _one(avg_dur_res, "avg_d", 0) or 0
+
+
+def _query_knowledge_graph(db, sd):
+    """Populate sd with knowledge graph stats."""
+    try:
+        sd.entity_count = _count(db.query("SELECT count() FROM entity GROUP ALL"))
+        sd.rel_count = _count(db.query("SELECT count() FROM relationship GROUP ALL"))
+    except Exception:
+        sd.entity_count = sd.rel_count = 0
+    try:
+        sd.causal_edges = _count(db.query("SELECT count() FROM causal_dag_edge GROUP ALL"))
+    except Exception:
+        sd.causal_edges = 0
+
+
+def _query_action_log(db, sd):
+    """Populate sd with action log stats."""
+    try:
+        sd.action_total = _count(db.query("SELECT count() FROM action_log GROUP ALL"))
+        sd.action_unprocessed = _count(
+            db.query("SELECT count() FROM action_log WHERE processed = false GROUP ALL")
+        )
+    except Exception:
+        sd.action_total = sd.action_unprocessed = 0
+
+
+def _query_subsystems(db, sd):
+    """Populate sd with subsystem stats (clusters, narratives, triggers)."""
+    try:
+        sd.cluster_count = _count(db.query("SELECT count() FROM memory_cluster GROUP ALL"))
+    except Exception:
+        sd.cluster_count = 0
+    try:
+        sd.narrative_count = _count(db.query("SELECT count() FROM narrative_entry GROUP ALL"))
+    except Exception:
+        sd.narrative_count = 0
+    try:
+        sd.triggers_active = _count(
+            db.query("SELECT count() FROM prospective_memory WHERE is_active = true GROUP ALL")
+        )
+        trig_fired_res = db.query(
+            "SELECT math::sum(triggered_count) AS total_fired FROM prospective_memory GROUP ALL"
+        )
+        sd.triggers_fired = _one(trig_fired_res, "total_fired", 0) or 0
+    except Exception:
+        sd.triggers_active = sd.triggers_fired = 0
+
+
+def _query_top_tags(db, project, sd):
+    """Populate sd.top_tags."""
+    if project:
+        tags_res = db.query(
+            "SELECT tags FROM memory WHERE directory_context = $p",
+            {"p": project},
+        )
+    else:
+        tags_res = db.query("SELECT tags FROM memory")
+    tag_counts: dict[str, int] = {}
+    for row in tags_res[0] if tags_res else []:
+        try:
+            for tag in row.get("tags") or []:
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+        except Exception:
+            pass
+    sd.top_tags = sorted(tag_counts.items(), key=lambda x: -x[1])[:10]
+
+
+# ── Output renderers ───────────────────────────────────────────────────────────
+
+
+def _build_json_output(sd):
+    """Build the JSON output dict from StatsData."""
+    data = {
+        "total": sd.total,
+        "active": sd.active,
+        "stale": sd.stale,
+        "archived": sd.archived,
+        "protected": sd.protected,
+        "episodic": sd.episodic,
+        "semantic": sd.semantic,
+        "compression": {"raw": sd.comp_0, "gist": sd.comp_1, "tag": sd.comp_2},
+        "heat": {
+            "min": sd.heat_min,
+            "avg": sd.heat_avg,
+            "max": sd.heat_max,
+            "buckets": {b[0]: b[1] for b in sd.heat_buckets},
+        },
+        "access": {
+            "total": sd.total_accesses,
+            "avg": sd.avg_accesses,
+            "max": sd.max_accesses,
+            "useful": sd.total_useful,
+            "never_accessed": sd.never_accessed,
+        },
+        "temporal": {
+            "oldest": sd.oldest,
+            "newest": sd.newest,
+            "last_accessed": sd.last_accessed,
+            "age_days": sd.age_days,
+        },
+        "consolidation": {
+            "total": sd.total_consolidations,
+            "avg_duration_ms": sd.avg_duration,
+        },
+        "knowledge_graph": {
+            "entities": sd.entity_count,
+            "relationships": sd.rel_count,
+            "causal_edges": sd.causal_edges,
+        },
+        "action_log": {"total": sd.action_total, "unprocessed": sd.action_unprocessed},
+        "clusters": sd.cluster_count,
+        "narratives": sd.narrative_count,
+        "triggers": {"active": sd.triggers_active, "fired": sd.triggers_fired},
+        "top_tags": dict(sd.top_tags),
+    }
+    if sd.project_rows:
+        data["projects"] = [
+            {
+                "directory": r["directory_context"],
+                "count": r["cnt"],
+                "avg_heat": round(r["avg_h"] or 0, 4),
+                "last_created": r["last_created"],
+            }
+            for r in sd.project_rows
+        ]
+    return data
+
+
+def _print_memories_section(sd):
+    print("MEMORIES")
+    print(f"  Total:     {sd.total}")
+    print(f"  Active:    {sd.active}")
+    print(f"  Stale:     {sd.stale}")
+    print(f"  Archived:  {sd.archived}")
+    print(f"  Protected: {sd.protected}")
+    print()
+
+
+def _print_types_section(sd):
+    print("TYPES")
+    print(f"  Episodic:  {sd.episodic}")
+    print(f"  Semantic:  {sd.semantic}")
+    print(f"  Raw:       {sd.comp_0}  |  Gist: {sd.comp_1}  |  Tag: {sd.comp_2}")
+    print()
+
+
+def _print_heat_section(sd):
+    print("HEAT")
+    print(f"  Min: {sd.heat_min:.4f}  |  Avg: {sd.heat_avg:.4f}  |  Max: {sd.heat_max:.4f}")
+    for label, count in sd.heat_buckets:
+        bar = "#" * min(count, 40)
+        print(f"  {label:20s} {count:5d}  {bar}")
+    print()
+
+
+def _print_access_section(sd):
+    print("ACCESS")
+    print(f"  Total recalls:   {sd.total_accesses}")
+    print(f"  Avg per memory:  {sd.avg_accesses:.1f}")
+    print(f"  Max on a single: {sd.max_accesses}")
+    print(f"  Rated useful:    {sd.total_useful}")
+    print(f"  Never accessed:  {sd.never_accessed}")
+    print()
+
+
+def _print_temporal_section(sd):
+    print("TEMPORAL")
+    if sd.age_days is not None:
+        print(f"  Memory span:     {sd.age_days} days")
+    print(f"  Oldest:          {sd.oldest or 'n/a'}")
+    print(f"  Newest:          {sd.newest or 'n/a'}")
+    print(f"  Last accessed:   {sd.last_accessed or 'n/a'}")
+    print()
+
+
+def _print_consolidation_section(sd):
+    print("CONSOLIDATION")
+    print(f"  Total cycles:    {sd.total_consolidations}")
+    print(f"  Avg duration:    {sd.avg_duration:.0f}ms")
+    if sd.last_consol:
+        print(f"  Last run:        {sd.last_consol['timestamp']}")
+        print(
+            f"    Added: {sd.last_consol['memories_added']}  "
+            f"Archived: {sd.last_consol['memories_archived']}  "
+            f"Duration: {sd.last_consol['duration_ms']}ms"
+        )
+    print()
+
+
+def _print_table_output(sd, project):
+    """Render human-readable table output."""
+    header = f"=== Yadgar Stats{f' — {project}' if project else ''} ==="
+    print(header)
+    print()
+
+    _print_memories_section(sd)
+    _print_types_section(sd)
+    _print_heat_section(sd)
+    _print_access_section(sd)
+    _print_temporal_section(sd)
+
+    if sd.project_rows:
+        print("PROJECTS (top 15)")
+        for r in sd.project_rows:
+            print(f"  {r['cnt']:5d} memories  heat={r['avg_h'] or 0:.4f}  {r['directory_context']}")
+        print()
+
+    _print_consolidation_section(sd)
+
+    print("KNOWLEDGE GRAPH")
+    print(f"  Entities:        {sd.entity_count}")
+    print(f"  Relationships:   {sd.rel_count}")
+    print(f"  Causal edges:    {sd.causal_edges}")
+    print()
+
+    print("SUBSYSTEMS")
+    print(f"  Clusters:        {sd.cluster_count}")
+    print(f"  Narratives:      {sd.narrative_count}")
+    print(f"  Active triggers: {sd.triggers_active}  (fired {sd.triggers_fired} times)")
+    print(f"  Action log:      {sd.action_total} total, {sd.action_unprocessed} unprocessed")
+    print()
+
+    if sd.top_tags:
+        print("TOP TAGS")
+        for tag, count in sd.top_tags:
+            print(f"  {count:5d}  {tag}")
+        print()
+
+
+# ── DB direct-access path ──────────────────────────────────────────────────────
+
+
+def _run_db_path(args):
+    """Run the direct DB access path. Exits on error."""
+    import json as _json
 
     try:
         from surrealdb import Surreal
@@ -70,454 +585,55 @@ def cmd_stats(args):
     db_path = str(Path(args.db_path or settings.DB_PATH).expanduser())
     project = str(Path(args.project).resolve()) if args.project else None
 
-    def _one(results, key, default=0):
-        """Extract a single aggregate value from a GROUP ALL result."""
-        try:
-            return results[0][0][key] if results and results[0] else default
-        except (IndexError, KeyError, TypeError) as _e:
-            return default
-
-    def _count(results):
-        return _one(results, "count", 0)
+    sd = StatsData()
 
     try:
         db = Surreal(f"surrealkv://{db_path}")
         db.use("yadgar", "main")
 
-        # ── Core counts ──
-        if project:
-            total_res = db.query(
-                "SELECT count() FROM memory WHERE directory_context = $p GROUP ALL",
-                {"p": project},
-            )
-        else:
-            total_res = db.query("SELECT count() FROM memory GROUP ALL")
-        total = _count(total_res)
+        _query_core_counts(db, project, sd)
 
-        if total == 0:
+        if sd.total == 0:
             label = f"project {project}" if project else "database"
             print(f"No memories in {label}.", file=sys.stderr)
             sys.exit(0)
 
-        if project:
-            active_res = db.query(
-                "SELECT count() FROM memory WHERE directory_context = $p "
-                "AND is_stale = false AND heat >= 0.05 GROUP ALL",
-                {"p": project},
-            )
-            stale_res = db.query(
-                "SELECT count() FROM memory WHERE directory_context = $p "
-                "AND is_stale = true GROUP ALL",
-                {"p": project},
-            )
-            archived_res = db.query(
-                "SELECT count() FROM memory WHERE directory_context = $p AND heat < 0.05 GROUP ALL",
-                {"p": project},
-            )
-            protected_res = db.query(
-                "SELECT count() FROM memory WHERE directory_context = $p "
-                "AND is_protected = true GROUP ALL",
-                {"p": project},
-            )
-        else:
-            active_res = db.query(
-                "SELECT count() FROM memory WHERE is_stale = false AND heat >= 0.05 GROUP ALL"
-            )
-            stale_res = db.query("SELECT count() FROM memory WHERE is_stale = true GROUP ALL")
-            archived_res = db.query("SELECT count() FROM memory WHERE heat < 0.05 GROUP ALL")
-            protected_res = db.query(
-                "SELECT count() FROM memory WHERE is_protected = true GROUP ALL"
-            )
-
-        active = _count(active_res)
-        stale = _count(stale_res)
-        archived = _count(archived_res)
-        protected = _count(protected_res)
-
-        # ── Type breakdown ──
-        if project:
-            episodic_res = db.query(
-                "SELECT count() FROM memory WHERE directory_context = $p "
-                "AND store_type = 'episodic' GROUP ALL",
-                {"p": project},
-            )
-            semantic_res = db.query(
-                "SELECT count() FROM memory WHERE directory_context = $p "
-                "AND store_type = 'semantic' GROUP ALL",
-                {"p": project},
-            )
-        else:
-            episodic_res = db.query(
-                "SELECT count() FROM memory WHERE store_type = 'episodic' GROUP ALL"
-            )
-            semantic_res = db.query(
-                "SELECT count() FROM memory WHERE store_type = 'semantic' GROUP ALL"
-            )
-        episodic = _count(episodic_res)
-        semantic = _count(semantic_res)
-
-        # ── Compression levels ──
-        if project:
-            comp_0_res = db.query(
-                "SELECT count() FROM memory WHERE directory_context = $p "
-                "AND compression_level = 0 GROUP ALL",
-                {"p": project},
-            )
-            comp_1_res = db.query(
-                "SELECT count() FROM memory WHERE directory_context = $p "
-                "AND compression_level = 1 GROUP ALL",
-                {"p": project},
-            )
-            comp_2_res = db.query(
-                "SELECT count() FROM memory WHERE directory_context = $p "
-                "AND compression_level = 2 GROUP ALL",
-                {"p": project},
-            )
-        else:
-            comp_0_res = db.query(
-                "SELECT count() FROM memory WHERE compression_level = 0 GROUP ALL"
-            )
-            comp_1_res = db.query(
-                "SELECT count() FROM memory WHERE compression_level = 1 GROUP ALL"
-            )
-            comp_2_res = db.query(
-                "SELECT count() FROM memory WHERE compression_level = 2 GROUP ALL"
-            )
-        comp_0 = _count(comp_0_res)
-        comp_1 = _count(comp_1_res)
-        comp_2 = _count(comp_2_res)
-
-        # ── Heat stats ──
-        if project:
-            heat_res = db.query(
-                "SELECT math::min(heat) AS min_h, math::mean(heat) AS avg_h, "
-                "math::max(heat) AS max_h FROM memory "
-                "WHERE directory_context = $p GROUP ALL",
-                {"p": project},
-            )
-        else:
-            heat_res = db.query(
-                "SELECT math::min(heat) AS min_h, math::mean(heat) AS avg_h, "
-                "math::max(heat) AS max_h FROM memory GROUP ALL"
-            )
-        heat_min = _one(heat_res, "min_h", 0) or 0
-        heat_avg = _one(heat_res, "avg_h", 0) or 0
-        heat_max = _one(heat_res, "max_h", 0) or 0
-
-        heat_buckets = []
-        for lo, hi, label in [
-            (0, 0.01, "cold (<0.01)"),
-            (0.01, 0.1, "cool (0.01-0.1)"),
-            (0.1, 0.5, "warm (0.1-0.5)"),
-            (0.5, 0.9, "hot (0.5-0.9)"),
-            (0.9, 999, "burning (0.9+)"),
-        ]:
-            if project:
-                br = db.query(
-                    "SELECT count() FROM memory WHERE directory_context = $p "
-                    "AND heat >= $lo AND heat < $hi GROUP ALL",
-                    {"p": project, "lo": lo, "hi": hi},
-                )
-            else:
-                br = db.query(
-                    "SELECT count() FROM memory WHERE heat >= $lo AND heat < $hi GROUP ALL",
-                    {"lo": lo, "hi": hi},
-                )
-            heat_buckets.append((label, _count(br)))
-
-        # ── Access stats ──
-        if project:
-            access_res = db.query(
-                "SELECT math::sum(access_count) AS total_ac, "
-                "math::mean(access_count) AS avg_ac, "
-                "math::max(access_count) AS max_ac FROM memory "
-                "WHERE directory_context = $p GROUP ALL",
-                {"p": project},
-            )
-            useful_res = db.query(
-                "SELECT math::sum(useful_count) AS total_uc FROM memory "
-                "WHERE directory_context = $p GROUP ALL",
-                {"p": project},
-            )
-            never_res = db.query(
-                "SELECT count() FROM memory WHERE directory_context = $p "
-                "AND access_count = 0 GROUP ALL",
-                {"p": project},
-            )
-        else:
-            access_res = db.query(
-                "SELECT math::sum(access_count) AS total_ac, "
-                "math::mean(access_count) AS avg_ac, "
-                "math::max(access_count) AS max_ac FROM memory GROUP ALL"
-            )
-            useful_res = db.query(
-                "SELECT math::sum(useful_count) AS total_uc FROM memory GROUP ALL"
-            )
-            never_res = db.query("SELECT count() FROM memory WHERE access_count = 0 GROUP ALL")
-        total_accesses = _one(access_res, "total_ac", 0) or 0
-        avg_accesses = _one(access_res, "avg_ac", 0) or 0
-        max_accesses = _one(access_res, "max_ac", 0) or 0
-        total_useful = _one(useful_res, "total_uc", 0) or 0
-        never_accessed = _count(never_res)
-
-        # ── Temporal stats ──
-        if project:
-            temporal_res = db.query(
-                "SELECT math::min(created_at) AS oldest, math::max(created_at) AS newest, "
-                "math::max(last_accessed) AS last_acc FROM memory "
-                "WHERE directory_context = $p GROUP ALL",
-                {"p": project},
-            )
-        else:
-            temporal_res = db.query(
-                "SELECT math::min(created_at) AS oldest, math::max(created_at) AS newest, "
-                "math::max(last_accessed) AS last_acc FROM memory GROUP ALL"
-            )
-        oldest = _one(temporal_res, "oldest", None)
-        newest = _one(temporal_res, "newest", None)
-        last_accessed = _one(temporal_res, "last_acc", None)
-
-        now = datetime.now(UTC)
-        age_days = None
-        if oldest:
-            try:
-                oldest_str = str(oldest)
-                oldest_dt = datetime.fromisoformat(oldest_str.replace("Z", "+00:00"))
-                age_days = (now - oldest_dt).days
-            except Exception:
-                pass
-
-        # ── Per-project breakdown (only when no --project filter) ──
-        project_rows = []
+        _query_type_breakdown(db, project, sd)
+        _query_compression_levels(db, project, sd)
+        _query_heat_stats(db, project, sd)
+        _query_access_stats(db, project, sd)
+        _query_temporal_stats(db, project, sd)
         if not project:
-            proj_res = db.query(
-                "SELECT directory_context, count() AS cnt, math::mean(heat) AS avg_h, "
-                "math::max(created_at) AS last_created FROM memory "
-                "WHERE directory_context != '' "
-                "GROUP BY directory_context ORDER BY cnt DESC LIMIT 15"
-            )
-            project_rows = proj_res[0] if proj_res else []
-
-        # ── Consolidation history ──
-        consol_count_res = db.query("SELECT count() FROM consolidation_log GROUP ALL")
-        total_consolidations = _count(consol_count_res)
-
-        last_consol_res = db.query(
-            "SELECT timestamp, duration_ms, memories_added, memories_archived "
-            "FROM consolidation_log ORDER BY id DESC LIMIT 1"
-        )
-        last_consol = last_consol_res[0][0] if last_consol_res and last_consol_res[0] else None
-
-        avg_dur_res = db.query(
-            "SELECT math::mean(duration_ms) AS avg_d FROM consolidation_log GROUP ALL"
-        )
-        avg_duration = _one(avg_dur_res, "avg_d", 0) or 0
-
-        # ── Knowledge graph ──
-        try:
-            entity_res = db.query("SELECT count() FROM entity GROUP ALL")
-            entity_count = _count(entity_res)
-            rel_res = db.query("SELECT count() FROM relationship GROUP ALL")
-            rel_count = _count(rel_res)
-        except Exception:
-            entity_count = rel_count = 0
-
-        try:
-            causal_res = db.query("SELECT count() FROM causal_dag_edge GROUP ALL")
-            causal_edges = _count(causal_res)
-        except Exception:
-            causal_edges = 0
-
-        # ── Action log ──
-        try:
-            act_total_res = db.query("SELECT count() FROM action_log GROUP ALL")
-            action_total = _count(act_total_res)
-            act_unproc_res = db.query(
-                "SELECT count() FROM action_log WHERE processed = false GROUP ALL"
-            )
-            action_unprocessed = _count(act_unproc_res)
-        except Exception:
-            action_total = action_unprocessed = 0
-
-        # ── Clusters ──
-        try:
-            cluster_res = db.query("SELECT count() FROM memory_cluster GROUP ALL")
-            cluster_count = _count(cluster_res)
-        except Exception:
-            cluster_count = 0
-
-        # ── Narrative entries ──
-        try:
-            narrative_res = db.query("SELECT count() FROM narrative_entry GROUP ALL")
-            narrative_count = _count(narrative_res)
-        except Exception:
-            narrative_count = 0
-
-        # ── Prospective memories ──
-        try:
-            trig_active_res = db.query(
-                "SELECT count() FROM prospective_memory WHERE is_active = true GROUP ALL"
-            )
-            triggers_active = _count(trig_active_res)
-            trig_fired_res = db.query(
-                "SELECT math::sum(triggered_count) AS total_fired FROM prospective_memory GROUP ALL"
-            )
-            triggers_fired = _one(trig_fired_res, "total_fired", 0) or 0
-        except Exception:
-            triggers_active = triggers_fired = 0
-
-        # ── Top tags ──
-        tag_counts: dict[str, int] = {}
-        if project:
-            tags_res = db.query(
-                "SELECT tags FROM memory WHERE directory_context = $p",
-                {"p": project},
-            )
-        else:
-            tags_res = db.query("SELECT tags FROM memory")
-        for row in tags_res[0] if tags_res else []:
-            try:
-                for tag in row.get("tags") or []:
-                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
-            except Exception:
-                pass
-        top_tags = sorted(tag_counts.items(), key=lambda x: -x[1])[:10]
+            _query_project_breakdown(db, sd)
+        _query_consolidation(db, sd)
+        _query_knowledge_graph(db, sd)
+        _query_action_log(db, sd)
+        _query_subsystems(db, sd)
+        _query_top_tags(db, project, sd)
 
     except Exception as e:
         print(f"Failed to query database: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # ── Output ──
     if args.format == "json":
-        data = {
-            "total": total,
-            "active": active,
-            "stale": stale,
-            "archived": archived,
-            "protected": protected,
-            "episodic": episodic,
-            "semantic": semantic,
-            "compression": {"raw": comp_0, "gist": comp_1, "tag": comp_2},
-            "heat": {
-                "min": heat_min,
-                "avg": heat_avg,
-                "max": heat_max,
-                "buckets": {b[0]: b[1] for b in heat_buckets},
-            },
-            "access": {
-                "total": total_accesses,
-                "avg": avg_accesses,
-                "max": max_accesses,
-                "useful": total_useful,
-                "never_accessed": never_accessed,
-            },
-            "temporal": {
-                "oldest": oldest,
-                "newest": newest,
-                "last_accessed": last_accessed,
-                "age_days": age_days,
-            },
-            "consolidation": {"total": total_consolidations, "avg_duration_ms": avg_duration},
-            "knowledge_graph": {
-                "entities": entity_count,
-                "relationships": rel_count,
-                "causal_edges": causal_edges,
-            },
-            "action_log": {"total": action_total, "unprocessed": action_unprocessed},
-            "clusters": cluster_count,
-            "narratives": narrative_count,
-            "triggers": {"active": triggers_active, "fired": triggers_fired},
-            "top_tags": dict(top_tags),
-        }
-        if project_rows:
-            data["projects"] = [
-                {
-                    "directory": r["directory_context"],
-                    "count": r["cnt"],
-                    "avg_heat": round(r["avg_h"] or 0, 4),
-                    "last_created": r["last_created"],
-                }
-                for r in project_rows
-            ]
-        print(json.dumps(data, indent=2))
+        print(_json.dumps(_build_json_output(sd), indent=2))
         return
 
-    # Human-readable table output
-    header = f"=== Yadgar Stats{f' — {project}' if project else ''} ==="
-    print(header)
-    print()
+    _print_table_output(sd, project)
 
-    print("MEMORIES")
-    print(f"  Total:     {total}")
-    print(f"  Active:    {active}")
-    print(f"  Stale:     {stale}")
-    print(f"  Archived:  {archived}")
-    print(f"  Protected: {protected}")
-    print()
 
-    print("TYPES")
-    print(f"  Episodic:  {episodic}")
-    print(f"  Semantic:  {semantic}")
-    print(f"  Raw:       {comp_0}  |  Gist: {comp_1}  |  Tag: {comp_2}")
-    print()
+# ── Public entry point ─────────────────────────────────────────────────────────
 
-    print("HEAT")
-    print(f"  Min: {heat_min:.4f}  |  Avg: {heat_avg:.4f}  |  Max: {heat_max:.4f}")
-    for label, count in heat_buckets:
-        bar = "#" * min(count, 40)
-        print(f"  {label:20s} {count:5d}  {bar}")
-    print()
 
-    print("ACCESS")
-    print(f"  Total recalls:   {total_accesses}")
-    print(f"  Avg per memory:  {avg_accesses:.1f}")
-    print(f"  Max on a single: {max_accesses}")
-    print(f"  Rated useful:    {total_useful}")
-    print(f"  Never accessed:  {never_accessed}")
-    print()
+def cmd_stats(args):
+    """Show detailed memory statistics.
 
-    print("TEMPORAL")
-    if age_days is not None:
-        print(f"  Memory span:     {age_days} days")
-    print(f"  Oldest:          {oldest or 'n/a'}")
-    print(f"  Newest:          {newest or 'n/a'}")
-    print(f"  Last accessed:   {last_accessed or 'n/a'}")
-    print()
-
-    if project_rows:
-        print("PROJECTS (top 15)")
-        for r in project_rows:
-            print(f"  {r['cnt']:5d} memories  heat={r['avg_h'] or 0:.4f}  {r['directory_context']}")
-        print()
-
-    print("CONSOLIDATION")
-    print(f"  Total cycles:    {total_consolidations}")
-    print(f"  Avg duration:    {avg_duration:.0f}ms")
-    if last_consol:
-        print(f"  Last run:        {last_consol['timestamp']}")
-        print(
-            f"    Added: {last_consol['memories_added']}  Archived: {last_consol['memories_archived']}  Duration: {last_consol['duration_ms']}ms"
-        )
-    print()
-
-    print("KNOWLEDGE GRAPH")
-    print(f"  Entities:        {entity_count}")
-    print(f"  Relationships:   {rel_count}")
-    print(f"  Causal edges:    {causal_edges}")
-    print()
-
-    print("SUBSYSTEMS")
-    print(f"  Clusters:        {cluster_count}")
-    print(f"  Narratives:      {narrative_count}")
-    print(f"  Active triggers: {triggers_active}  (fired {triggers_fired} times)")
-    print(f"  Action log:      {action_total} total, {action_unprocessed} unprocessed")
-    print()
-
-    if top_tags:
-        print("TOP TAGS")
-        for tag, count in top_tags:
-            print(f"  {count:5d}  {tag}")
-        print()
+    Tries the running daemon's HTTP endpoint first (works when server is in Docker).
+    Falls back to direct DB access when no daemon is reachable.
+    """
+    if _try_http_path(args):
+        return
+    _run_db_path(args)
 
 
 def register(subparsers):

@@ -113,6 +113,56 @@ _SUBJECT_STOP_WORDS = frozenset(
 # Canonical degenerate body — exact known-bad pattern from _memify_derive clusters
 _DEGENERATE_BODY_RE = re.compile(r"^frequently\s+modified\s+together$", re.IGNORECASE)
 
+# Stop-words used by abstract_to_schema when filtering common words.
+# Intentionally smaller than _SUBJECT_STOP_WORDS — do NOT merge them.
+_SCHEMA_STOP_WORDS = frozenset(
+    {
+        "the",
+        "and",
+        "for",
+        "with",
+        "that",
+        "this",
+        "from",
+        "was",
+        "were",
+        "are",
+        "has",
+        "had",
+        "have",
+        "been",
+        "will",
+        "would",
+        "could",
+        "should",
+        "can",
+        "may",
+        "might",
+        "its",
+        "but",
+        "not",
+        "all",
+        "any",
+        "each",
+        "also",
+        "into",
+        "than",
+        "then",
+        "when",
+        "which",
+        "who",
+        "how",
+        "what",
+        "where",
+        "there",
+        "here",
+        "does",
+    }
+)
+
+# Punctuation characters stripped from tokens during word-frequency analysis.
+_PUNCT_STRIP = ".,;:!?()[]{}\"'`"
+
 # Unicode-aware token: any run of 2+ Unicode letters (covers ASCII, Cyrillic,
 # Arabic, CJK, Greek, etc.).  [^\W\d_] means: not (non-word | digit | underscore)
 # i.e. any Unicode letter character.
@@ -176,6 +226,52 @@ _SPECIFIC_INDICATORS = re.compile(
     r"|0x[0-9a-fA-F]+"  # memory addresses
     r")"
 )
+
+
+def _collect_word_freq(
+    cluster_memories: list[dict],
+) -> tuple[dict[str, int], list[str]]:
+    """Return (word_freq, all_contents) from *cluster_memories*.
+
+    word_freq maps each cleaned token (len > 2, punctuation stripped) to the
+    number of distinct memories it appears in.  all_contents preserves order.
+    """
+    word_freq: dict[str, int] = defaultdict(int)
+    all_contents: list[str] = []
+    for mem in cluster_memories:
+        content = mem.get("content", "")
+        all_contents.append(content)
+        for w in set(content.lower().split()):
+            clean = w.strip(_PUNCT_STRIP)
+            if len(clean) > 2:
+                word_freq[clean] += 1
+    return word_freq, all_contents
+
+
+def _build_ordered_common(first_content: str, meaningful: set[str]) -> list[str]:
+    """Return *meaningful* words ordered by first appearance in *first_content*.
+
+    Words absent from *first_content* are appended in arbitrary order.
+    """
+    ordered: list[str] = []
+    for word in first_content.lower().split():
+        clean = word.strip(_PUNCT_STRIP)
+        if clean in meaningful and clean not in ordered:
+            ordered.append(clean)
+    for word in meaningful:
+        if word not in ordered:
+            ordered.append(word)
+    return ordered
+
+
+def _collect_common_tags(cluster_memories: list[dict], threshold: float) -> list[str]:
+    """Return tags that appear in at least *threshold* memories."""
+    all_tags: dict[str, int] = defaultdict(int)
+    for mem in cluster_memories:
+        for tag in mem.get("tags", []):
+            if isinstance(tag, str):
+                all_tags[tag] += 1
+    return [t for t, c in all_tags.items() if c >= threshold]
 
 
 class _PatternsMixin:
@@ -258,101 +354,23 @@ class _PatternsMixin:
         if not cluster_memories:
             return ""
 
-        # Collect word frequency across all memories
-        word_freq: dict[str, int] = defaultdict(int)
-        all_contents: list[str] = []
-
-        for mem in cluster_memories:
-            content = mem.get("content", "")
-            all_contents.append(content)
-            words = set(content.lower().split())
-            for w in words:
-                # Strip punctuation
-                clean = w.strip(".,;:!?()[]{}\"'`")
-                if len(clean) > 2:
-                    word_freq[clean] += 1
-
+        word_freq, all_contents = _collect_word_freq(cluster_memories)
         n_memories = len(cluster_memories)
 
-        # Find words that appear in majority of memories (>= 50%)
+        # Words that appear in the majority of memories (>= 50%)
         common_threshold = max(n_memories / 2, 2)
         common_words = {w for w, count in word_freq.items() if count >= common_threshold}
-
-        # Remove stop words
-        stop_words = {
-            "the",
-            "and",
-            "for",
-            "with",
-            "that",
-            "this",
-            "from",
-            "was",
-            "were",
-            "are",
-            "has",
-            "had",
-            "have",
-            "been",
-            "will",
-            "would",
-            "could",
-            "should",
-            "can",
-            "may",
-            "might",
-            "its",
-            "but",
-            "not",
-            "all",
-            "any",
-            "each",
-            "also",
-            "into",
-            "than",
-            "then",
-            "when",
-            "which",
-            "who",
-            "how",
-            "what",
-            "where",
-            "there",
-            "here",
-            "does",
-        }
-        meaningful = common_words - stop_words
+        meaningful = common_words - _SCHEMA_STOP_WORDS
 
         if not meaningful:
             # Fallback: use the shortest memory as representative
             shortest = min(all_contents, key=len)
             return f"Recurring pattern: {shortest}"
 
-        # Build schema from common meaningful words, preserving original order
-        # from the first memory's structure
-        first_content = all_contents[0].lower()
-        ordered_common = []
-        for word in first_content.split():
-            clean = word.strip(".,;:!?()[]{}\"'`")
-            if clean in meaningful and clean not in ordered_common:
-                ordered_common.append(clean)
-
-        # Add any remaining common words not in first memory
-        for word in meaningful:
-            if word not in ordered_common:
-                ordered_common.append(word)
-
-        # Construct generalized statement
+        ordered_common = _build_ordered_common(all_contents[0], meaningful)
         key_phrase = " ".join(ordered_common[:15])  # Cap at 15 words
 
-        # Collect common tags across memories
-        all_tags: dict[str, int] = defaultdict(int)
-        for mem in cluster_memories:
-            for tag in mem.get("tags", []):
-                if isinstance(tag, str):
-                    all_tags[tag] += 1
-        common_tags = [t for t, c in all_tags.items() if c >= common_threshold]
-
+        common_tags = _collect_common_tags(cluster_memories, common_threshold)
         schema = f"Recurring pattern across {n_memories} observations: {key_phrase}"
         if common_tags:
             schema += f" [tags: {', '.join(common_tags[:5])}]"

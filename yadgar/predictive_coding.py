@@ -245,6 +245,54 @@ class WriteGate:
 
         return new_count / total_entities
 
+    def _collect_temporal_entities(self, content: str, directory: str) -> set[str]:
+        """Collect entity names to check for temporal novelty.
+
+        Method 1: Extract entities from content using code patterns.
+        Method 2: Check which cached entities appear in the content text.
+        """
+        entity_names: set[str] = set()
+        kg = self._retriever._graph
+        extracted = kg.extract_entities_typed(content, directory)
+        for name, _type, _rel_ctx in extracted:
+            entity_names.add(name)
+        for entity in self._get_cached_entities():
+            if entity["name"] in content and len(entity["name"]) > 1:
+                entity_names.add(entity["name"])
+        return entity_names
+
+    def _parse_created_at(self, mem: dict) -> datetime | None:
+        """Parse a memory's created_at field into a timezone-aware datetime.
+
+        Returns None if the field is missing or unparseable.
+        """
+        try:
+            mem_dt = datetime.fromisoformat(mem["created_at"])
+            if mem_dt.tzinfo is None:
+                mem_dt = mem_dt.replace(tzinfo=UTC)
+            return mem_dt
+        except (ValueError, TypeError, KeyError):  # fmt: skip
+            return None
+
+    def _most_recent_mention_dt(
+        self, entity_names: set[str], dir_memories: list[dict]
+    ) -> datetime | None:
+        """Return the most recent datetime any of entity_names appears in dir_memories.
+
+        Returns None if no matching memory is found.
+        """
+        most_recent: datetime | None = None
+        for mem in dir_memories:
+            mem_content = mem.get("content", "")
+            if not any(name in mem_content for name in entity_names):
+                continue
+            mem_dt = self._parse_created_at(mem)
+            if mem_dt is None:
+                continue
+            if most_recent is None or mem_dt > most_recent:
+                most_recent = mem_dt
+        return most_recent
+
     def _compute_temporal_novelty(self, content: str, directory: str) -> float:
         """Signal 3: How recently was a related topic discussed?
 
@@ -252,54 +300,24 @@ class WriteGate:
         1-24h ago: 0.3 (moderate gap)
         >24h or none found: 0.7 (old topic resurfacing = surprising)
         """
-        # Collect entity names to check: from extraction AND from existing entities in content
-        entity_names_to_check = set()
-
-        # Method 1: Extract entities from content using code patterns
-        kg = self._retriever._graph
-        extracted = kg.extract_entities_typed(content, directory)
-        for name, _type, _rel_ctx in extracted:
-            entity_names_to_check.add(name)
-
-        # Method 2: Check which existing entities appear in the content text.
-        # Use TTL-cached entity list to avoid O(N) DB round-trip on every call.
-        for entity in self._get_cached_entities():
-            if entity["name"] in content and len(entity["name"]) > 1:
-                entity_names_to_check.add(entity["name"])
-
+        entity_names_to_check = self._collect_temporal_entities(content, directory)
         if not entity_names_to_check:
             return 0.7  # No entities to check = surprising
 
-        # Find most recent memory about any overlapping entity.
-        # Pre-filter by directory_context so the iteration is O(D) not O(N·M).
-        now = datetime.now(UTC)
-        most_recent_dt = None
-
         dir_memories = self._storage.get_memories_for_directory(directory, min_heat=0.0)
-
-        for name in entity_names_to_check:
-            for mem in dir_memories:
-                if name in mem.get("content", ""):
-                    try:
-                        mem_dt = datetime.fromisoformat(mem["created_at"])
-                        if mem_dt.tzinfo is None:
-                            mem_dt = mem_dt.replace(tzinfo=UTC)
-                        if most_recent_dt is None or mem_dt > most_recent_dt:
-                            most_recent_dt = mem_dt
-                    except (ValueError, TypeError) as _e:
-                        pass
+        most_recent_dt = self._most_recent_mention_dt(entity_names_to_check, dir_memories)
 
         if most_recent_dt is None:
             return 0.7  # No recent memory found
 
+        now = datetime.now(UTC)
         hours_elapsed = (now - most_recent_dt).total_seconds() / 3600.0
 
         if hours_elapsed < 1.0:
             return 0.1  # Very recent = expected follow-up
-        elif hours_elapsed < 24.0:
+        if hours_elapsed < 24.0:
             return 0.3  # Moderate gap
-        else:
-            return 0.7  # Old topic resurfacing = surprising
+        return 0.7  # Old topic resurfacing = surprising
 
     def _compute_structural_novelty(self, content: str, directory: str) -> float:
         """Signal 4: Does this content introduce new relationship types or causal patterns?
@@ -459,6 +477,51 @@ class WriteGate:
 
     # ── Directory Generative Model ───────────────────────────────────────
 
+    def _extract_common_tags(self, memories: list[dict]) -> list[str]:
+        """Return the 10 most frequent tags across memories.
+
+        Handles tags stored as JSON strings or as lists.
+        """
+        import json
+
+        tag_counter: Counter = Counter()
+        for m in memories:
+            tags = m.get("tags", [])
+            if isinstance(tags, str):
+                try:
+                    tags = json.loads(tags)
+                except (ValueError, TypeError):  # fmt: skip
+                    tags = []
+            for tag in tags:
+                tag_counter[tag] += 1
+        return [tag for tag, _ in tag_counter.most_common(10)]
+
+    def _entity_names_in(self, memories: list[dict], all_entities: list[dict]) -> set[str]:
+        """Return names of cached entities that appear in any of the given memories."""
+        found: set[str] = set()
+        for m in memories:
+            content = m.get("content", "")
+            for e in all_entities:
+                if e["name"] in content:
+                    found.add(e["name"])
+        return found
+
+    def _compute_centroid(self, memories: list[dict]) -> bytes | None:
+        """Compute the mean embedding of memories as bytes, or None if unavailable."""
+        dim = self._embeddings.get_dimensions()
+        embeddings_list = []
+        for m in memories:
+            emb = m.get("embedding")
+            if emb is None:
+                continue
+            arr = np.frombuffer(emb, dtype=np.float32)
+            if len(arr) == dim:
+                embeddings_list.append(arr)
+        if not embeddings_list:
+            return None
+        centroid = np.mean(embeddings_list, axis=0).astype(np.float32)
+        return centroid.tobytes()
+
     def get_directory_model(self, directory: str) -> dict:
         """Build summary of what Yadgar 'knows' about a directory.
 
@@ -482,59 +545,18 @@ class WriteGate:
                 "centroid_embedding": None,
             }
 
-        # Memory count
         memory_count = len(memories)
-
-        # Average heat
         avg_heat = sum(m["heat"] for m in memories) / memory_count
+        common_tags = self._extract_common_tags(memories)
 
-        # Common tags
-        tag_counter = Counter()
-        for m in memories:
-            tags = m.get("tags", [])
-            if isinstance(tags, str):
-                import json
-
-                try:
-                    tags = json.loads(tags)
-                except (ValueError, TypeError) as _e:
-                    tags = []
-            for tag in tags:
-                tag_counter[tag] += 1
-        common_tags = [tag for tag, _ in tag_counter.most_common(10)]
-
-        # Entity count and recent topics — use TTL-cached entity list (fetched once).
+        # Entity count and recent topics — fetch cached list once, reuse for both calls.
         all_entities = self._get_cached_entities()
-        entity_names = set()
-        for m in memories:
-            content = m.get("content", "")
-            for e in all_entities:
-                if e["name"] in content:
-                    entity_names.add(e["name"])
+        entity_names = self._entity_names_in(memories, all_entities)
 
-        # Recent topics: entities from most recent memories
         recent_memories = sorted(memories, key=lambda m: m.get("created_at", ""), reverse=True)[:10]
-        recent_entity_names = set()
-        for m in recent_memories:
-            content = m.get("content", "")
-            for e in all_entities:
-                if e["name"] in content:
-                    recent_entity_names.add(e["name"])
+        recent_entity_names = self._entity_names_in(recent_memories, all_entities)
 
-        # Centroid embedding: mean of all memory embeddings
-        centroid_embedding = None
-        embeddings_list = []
-        dim = self._embeddings.get_dimensions()
-        for m in memories:
-            emb = m.get("embedding")
-            if emb is not None:
-                arr = np.frombuffer(emb, dtype=np.float32)
-                if len(arr) == dim:
-                    embeddings_list.append(arr)
-
-        if embeddings_list:
-            centroid = np.mean(embeddings_list, axis=0).astype(np.float32)
-            centroid_embedding = centroid.tobytes()
+        centroid_embedding = self._compute_centroid(memories)
 
         return {
             "memory_count": memory_count,

@@ -142,7 +142,7 @@ def _get_file_queue():
     if _st._file_queue is None:
         with _st._queue_lock:
             if _st._file_queue is None:
-                from yadgar.file_queue import FileQueue, QueueDrainer
+                from yadgar.file_queue import DrainerConfig, FileQueue, QueueDrainer
 
                 _settings = get_settings()
                 base = Path(os.environ.get("YADGAR_DATA_DIR", _settings.DATA_DIR))
@@ -153,11 +153,13 @@ def _get_file_queue():
                     fq,
                     _get_storage,
                     drain_interval=float(_settings.QUEUE_DRAIN_INTERVAL),
-                    max_permanent_attempts=_settings.QUEUE_MAX_PERMANENT_ATTEMPTS,
-                    max_transient_attempts=_settings.QUEUE_MAX_TRANSIENT_ATTEMPTS,
-                    backoff_base_s=float(_settings.QUEUE_BACKOFF_BASE_S),
-                    backoff_max_s=float(_settings.QUEUE_BACKOFF_MAX_S),
-                    dlq_retention_days=_settings.QUEUE_DLQ_RETENTION_DAYS,
+                    config=DrainerConfig(
+                        max_permanent_attempts=_settings.QUEUE_MAX_PERMANENT_ATTEMPTS,
+                        max_transient_attempts=_settings.QUEUE_MAX_TRANSIENT_ATTEMPTS,
+                        backoff_base_s=float(_settings.QUEUE_BACKOFF_BASE_S),
+                        backoff_max_s=float(_settings.QUEUE_BACKOFF_MAX_S),
+                        dlq_retention_days=_settings.QUEUE_DLQ_RETENTION_DAYS,
+                    ),
                 )
                 drainer.start()  # may raise — do NOT assign globals before this
                 _st._queue_drainer = drainer
@@ -253,36 +255,49 @@ def _emit_sd_ready() -> None:
         pass
 
 
-def init_engines(
-    db_path: str | None = None,
-    embedding_model: str | None = None,
-    start_daemons: bool = False,
-    watch_directory: str | None = None,
-):
-    """Initialize all engines. Returns (storage, embeddings, buffer, consolidation, staleness)."""
-    # Q16: reset shutdown flag so a re-initialized server can shut down cleanly
-    _st._shutdown_done = False
+def _init_embedding_client(embedding_model: str | None, _settings):
+    """Init embedding engine + ML client based on YADGAR_EMBED_URL env var.
 
-    _settings = get_settings()
-    _st._storage = StorageEngine(db_path or _settings.DB_PATH)
+    Returns (embeddings, ml_client). Extracted from init_engines to reduce
+    cyclomatic complexity (each branch imports different client classes).
+    """
     if os.environ.get("YADGAR_EMBED_URL"):
-        from yadgar.ml_client import RemoteMLClient
-        from yadgar.remote_embeddings import RemoteEmbeddingEngine
+        from yadgar.ml_client import RemoteMLClient  # noqa: PLC0415
+        from yadgar.remote_embeddings import RemoteEmbeddingEngine  # noqa: PLC0415
 
-        _st._embeddings = RemoteEmbeddingEngine(embedding_model or _settings.EMBEDDING_MODEL)
-        _ml_client = RemoteMLClient(os.environ["YADGAR_EMBED_URL"])
+        embeddings = RemoteEmbeddingEngine(embedding_model or _settings.EMBEDDING_MODEL)
+        ml_client = RemoteMLClient(os.environ["YADGAR_EMBED_URL"])
     else:
-        from yadgar.ml_client import LocalMLClient
+        from yadgar.ml_client import LocalMLClient  # noqa: PLC0415
 
-        _st._embeddings = EmbeddingEngine(embedding_model or _settings.EMBEDDING_MODEL)
-        _ml_client = LocalMLClient(_settings)
+        embeddings = EmbeddingEngine(embedding_model or _settings.EMBEDDING_MODEL)
+        ml_client = LocalMLClient(_settings)
+    return embeddings, ml_client
+
+
+def _init_secondary_engines(_settings) -> None:
+    """Assign all secondary engine singletons in their required init order.
+
+    Must be called after _st._storage and _st._embeddings are set.
+    Extracted from init_engines to reduce LOC and cognitive load; no
+    branching — pure linear construction.
+    """
     _st._buffer = ActionLogger(_st._storage, _settings)
     _st._buffer.start_session()
     _st._thermo = MemoryThermodynamics(_st._storage, _st._embeddings, _settings)
     _st._kg = KnowledgeGraph(_st._storage, _settings)
     _st._cognitive_map = CognitiveMap(_st._storage, _settings)
+
+
+def _init_retriever_and_post_engines(_settings, ml_client) -> None:
+    """Init retriever, write-gate, engram, rules, causal, metacognition, replay, wiki.
+
+    Called after _init_secondary_engines(). Wires cross-engine dependencies
+    (set_engram, set_rules_engine, set_metacognition) and exposes
+    consolidation sub-engines as server globals.
+    """
     _st._retriever = Retriever(
-        _st._storage, _st._embeddings, _st._kg, _settings, ml_client=_ml_client
+        _st._storage, _st._embeddings, _st._kg, _settings, ml_client=ml_client
     )
     _st._curator = MemoryCurator(_st._storage, _st._embeddings, _st._thermo, _settings)
     _st._consolidation = ConsolidationScheduler(_st._storage, _st._embeddings, _settings)
@@ -313,69 +328,121 @@ def init_engines(
     _st._pool = _st._consolidation.pool
     _st._cls = _st._consolidation.cls
 
+
+def _metrics_loop(pid: int, db_path: str, storage: object) -> None:
+    """Background thread: sample system metrics every 5 s (PR-I).
+
+    Extracted from init_engines closure to module level so it is a named
+    function (improves traceability in thread dumps). Captures pid/db_path/
+    storage via explicit args (same semantics as the previous default-arg closure).
+    """
+    from yadgar.graph_api import sample_system_metrics  # noqa: PLC0415
+
+    sample_system_metrics(pid, db_path, storage)  # prime CPU delta baseline
+    while True:
+        time.sleep(5)
+        try:
+            with _lifecycle_span("lifecycle.metrics_sample"):
+                result = sample_system_metrics(pid, db_path, storage)
+                # §9 Q6: update under lock to prevent torn reads.
+                with _st._metrics_lock:
+                    _st._system_metrics_cache.update(result)
+        except Exception:
+            pass
+
+
+def _reranker_idle_loop() -> None:
+    """Background thread: unload idle rerankers every 60 s (PR-I).
+
+    Extracted from init_engines closure; frees ~500 MB after 10 min of
+    no recall activity. Emits heartbeat + error counter via PR-I helpers.
+    """
+    while True:
+        _lc_heartbeat("model_unload")  # PR-I: heartbeat at top of every iteration
+        time.sleep(60)
+        try:
+            with _lifecycle_span("lifecycle.reranker_idle_check"):
+                if _st._retriever is not None:
+                    _st._retriever.unload_rerankers_if_idle(idle_seconds=600.0)
+        except Exception as _exc:
+            _lc_record_exc("model_unload", _exc)  # PR-I: loop error counter
+
+
+def _viz_loop(host: str, port: int) -> None:
+    """Background thread: run the viz server (auto-started with daemon).
+
+    Extracted from init_engines closure. Binds the same interface as the
+    MCP server (settings.HOST). Containers override via YADGAR_HOST=0.0.0.0
+    so the host-side docker port mapping (-p 127.0.0.1:42069:42069) works.
+    OSError is caught separately to emit a specific port-conflict warning.
+    """
+    try:
+        from yadgar.viz_server import run_viz_server  # noqa: PLC0415
+
+        logger.info("Viz server starting on http://%s:%d", host, port)
+        run_viz_server(host=host, port=port)
+    except OSError as exc:
+        logger.warning("Viz server could not bind port %d: %s", port, exc)
+    except Exception as exc:
+        logger.warning("Viz server error: %s", exc)
+
+
+def _start_daemon_threads(watch_directory: str | None, _settings) -> None:
+    """Start background daemon threads (metrics, reranker-idle, viz).
+
+    Called only when start_daemons=True. Extracted from init_engines to
+    reduce its cyclomatic complexity; preserves exact thread startup order.
+    """
+    # v5.7.0 PR-0: consolidation daemon removed; cron takes over in PR-1.
+    # _st._consolidation.start() intentionally removed.
+    if watch_directory:
+        _st._staleness.start(watch_directory)
+
+    # Background system-metrics sampler for /api/system and SSE events
+    _pid = os.getpid()
+    _db_path = _settings.DB_PATH
+    _storage_ref = _st._storage  # capture at call time
+    threading.Thread(target=_metrics_loop, args=(_pid, _db_path, _storage_ref), daemon=True).start()
+
+    # Idle reranker unloader — frees ~500 MB after 10 min of no recall activity
+    threading.Thread(target=_reranker_idle_loop, daemon=True).start()
+
+    # Auto-start viz server alongside the daemon.
+    _viz_port = getattr(_settings, "VIZ_PORT", 42069)
+    _viz_host = getattr(_settings, "HOST", "127.0.0.1")
+    threading.Thread(target=_viz_loop, args=(_viz_host, _viz_port), daemon=True).start()
+
+
+def _init_file_queue() -> None:
+    """Start the file queue drainer; non-fatal on failure.
+
+    Extracted from init_engines to reduce its cyclomatic complexity.
+    """
+    try:
+        _get_file_queue()
+    except Exception as exc:
+        logger.warning("File queue init failed (non-fatal): %s", exc)
+
+
+def init_engines(
+    db_path: str | None = None,
+    embedding_model: str | None = None,
+    start_daemons: bool = False,
+    watch_directory: str | None = None,
+):
+    """Initialize all engines. Returns (storage, embeddings, buffer, consolidation, staleness)."""
+    # Q16: reset shutdown flag so a re-initialized server can shut down cleanly
+    _st._shutdown_done = False
+
+    _settings = get_settings()
+    _st._storage = StorageEngine(db_path or _settings.DB_PATH)
+    _st._embeddings, _ml_client = _init_embedding_client(embedding_model, _settings)
+
+    _init_secondary_engines(_settings)
+    _init_retriever_and_post_engines(_settings, _ml_client)
+
     if start_daemons:
-        # v5.7.0 PR-0: consolidation daemon removed; cron takes over in PR-1.
-        # _st._consolidation.start() intentionally removed.
-        if watch_directory:
-            _st._staleness.start(watch_directory)
-        # Background system-metrics sampler for /api/system and SSE events
-        _pid = os.getpid()
-        _db_path = _settings.DB_PATH
-
-        _storage_ref = _st._storage  # capture for closure
-
-        def _metrics_thread(
-            pid: int = _pid, db_path: str = _db_path, storage: object = _storage_ref
-        ) -> None:
-            from yadgar.graph_api import sample_system_metrics
-
-            sample_system_metrics(pid, db_path, storage)  # prime CPU delta baseline
-            while True:
-                time.sleep(5)
-                try:
-                    with _lifecycle_span("lifecycle.metrics_sample"):
-                        result = sample_system_metrics(pid, db_path, storage)
-                        # §9 Q6: update under lock to prevent torn reads.
-                        with _st._metrics_lock:
-                            _st._system_metrics_cache.update(result)
-                except Exception:
-                    pass
-
-        threading.Thread(target=_metrics_thread, daemon=True).start()
-
-        # Idle reranker unloader — frees ~500MB after 10 min of no recall activity
-        def _reranker_idle_thread() -> None:
-            while True:
-                _lc_heartbeat("model_unload")  # PR-I: heartbeat at top of every iteration
-                time.sleep(60)
-                try:
-                    with _lifecycle_span("lifecycle.reranker_idle_check"):
-                        if _st._retriever is not None:
-                            _st._retriever.unload_rerankers_if_idle(idle_seconds=600.0)
-                except Exception as _exc:
-                    _lc_record_exc("model_unload", _exc)  # PR-I: loop error counter
-
-        threading.Thread(target=_reranker_idle_thread, daemon=True).start()
-
-        # Auto-start viz server alongside the daemon.
-        # Bind same interface as MCP server (settings.HOST). Default loopback
-        # for security; containers override via YADGAR_HOST=0.0.0.0 so the
-        # host-side docker port mapping (-p 127.0.0.1:42069:42069) works.
-        _viz_port = getattr(_settings, "VIZ_PORT", 42069)
-        _viz_host = getattr(_settings, "HOST", "127.0.0.1")
-
-        def _viz_thread(host: str = _viz_host, port: int = _viz_port) -> None:
-            try:
-                from yadgar.viz_server import run_viz_server
-
-                logger.info("Viz server starting on http://%s:%d", host, port)
-                run_viz_server(host=host, port=port)
-            except OSError as exc:
-                logger.warning("Viz server could not bind port %d: %s", port, exc)
-            except Exception as exc:
-                logger.warning("Viz server error: %s", exc)
-
-        threading.Thread(target=_viz_thread, daemon=True).start()
+        _start_daemon_threads(watch_directory, _settings)
 
     # Eagerly warm up the embedding model so the first recall isn't slow.
     _st._embeddings._ensure_model()
@@ -384,11 +451,7 @@ def init_engines(
     # Runs after both StorageEngine + EmbeddingEngine are ready. Idempotent.
     _run_wiki_embedding_backfill(_st._wiki)
 
-    # Start file queue drainer — processes any pending writes from previous sessions
-    try:
-        _get_file_queue()
-    except Exception as exc:
-        logger.warning("File queue init failed (non-fatal): %s", exc)
+    _init_file_queue()
 
     # v5.49.4: emit READY=1 — all engines initialised, server accepting requests.
     _emit_sd_ready()

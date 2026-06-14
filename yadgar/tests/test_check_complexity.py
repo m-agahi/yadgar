@@ -360,46 +360,47 @@ class TestBaselineRatchet:
         p.write_text(json.dumps(entries), encoding="utf-8")
         return p
 
-    def test_preexisting_at_same_level_passes(self, tmp_py, tmp_path):
-        # Function with loc=155 (hard). Baseline records loc=155. Should pass.
-        src = _fn_with_loc(154)  # def + 154 body = 155
+    def test_preexisting_soft_at_same_level_passes(self, tmp_py, tmp_path):
+        # SOFT violation (loc=100, between soft=80 and hard=150). Baseline records loc=100.
+        # Baseline ratchet still applies to SOFT → violation is ALLOWED.
+        src = _fn_with_loc(99)  # def + 99 = 100 LOC (soft range: 80 < 100 <= 150)
         f = tmp_py(src, "target.py")
-        # Key includes lineno: function starts at line 1
         fn_key = f"{f}::my_func@1"
-        baseline_entry = {"loc": 155, "cyclo": 1, "params": 0, "nesting": 0}
+        baseline_entry = {"loc": 100, "cyclo": 1, "params": 0, "nesting": 0}
         baseline_path = self._make_baseline(tmp_path, {fn_key: baseline_entry})
 
         result = analyze_staged_file(
             str(f), is_test=False, baseline=load_baseline(str(baseline_path))
         )
-        # Violation should be downgraded to ALLOWED (pre-existing)
-        blocked = [
-            v
-            for v in result.violations
-            if v.severity == ViolationSeverity.HARD and not v.pre_existing
+        # Soft violation should be downgraded to ALLOWED (pre-existing via ratchet)
+        non_allowed_soft = [
+            v for v in result.violations if "loc" in v.cap and v.severity == ViolationSeverity.SOFT
         ]
-        assert not blocked, f"Pre-existing violation should not block: {result.violations}"
+        assert not non_allowed_soft, (
+            f"Pre-existing soft violation should be ratcheted: {result.violations}"
+        )
 
-    def test_worsened_beyond_baseline_blocks(self, tmp_py, tmp_path):
-        # Function with loc=200 (hard). Baseline records loc=155. Worsened → block.
-        src = _fn_with_loc(199)  # def + 199 = 200
+    def test_worsened_soft_beyond_baseline_warns(self, tmp_py, tmp_path):
+        # Soft violation worsened beyond baseline (100→120, both soft) → warn.
+        src = _fn_with_loc(119)  # def + 119 = 120 LOC (soft range)
         f = tmp_py(src, "target.py")
         fn_key = f"{f}::my_func@1"
-        baseline_entry = {"loc": 155, "cyclo": 1, "params": 0, "nesting": 0}
+        baseline_entry = {"loc": 100, "cyclo": 1, "params": 0, "nesting": 0}
         baseline_path = self._make_baseline(tmp_path, {fn_key: baseline_entry})
 
         result = analyze_staged_file(
             str(f), is_test=False, baseline=load_baseline(str(baseline_path))
         )
-        blocked = [
+        # Worsened soft → SOFT warning (not HARD, not ALLOWED)
+        soft_warns = [
             v
             for v in result.violations
-            if v.severity == ViolationSeverity.HARD and not v.pre_existing
+            if "loc" in v.cap and v.severity == ViolationSeverity.SOFT and not v.pre_existing
         ]
-        assert blocked, f"Worsened violation should block: {result.violations}"
+        assert soft_warns, f"Worsened soft violation should warn: {result.violations}"
 
     def test_new_file_not_in_baseline_full_caps(self, tmp_py, tmp_path):
-        # New file not in baseline → full caps apply
+        # New file not in baseline → full caps apply; HARD violation not allowlisted → error.
         src = _fn_with_loc(154)  # 155 > 150 hard
         f = tmp_py(src, "target.py")
         baseline_path = self._make_baseline(tmp_path, {})  # empty baseline
@@ -414,24 +415,42 @@ class TestBaselineRatchet:
         ]
         assert hard, f"New file should have full caps applied: {result.violations}"
 
-    def test_improvement_below_baseline_passes(self, tmp_py, tmp_path):
-        # Function improves from loc=200 to loc=155 — still hard but better than baseline.
-        # Should pass (pre-existing at current level).
-        src = _fn_with_loc(154)  # 155
+    def test_soft_improvement_below_baseline_passes(self, tmp_py, tmp_path):
+        # Function improves soft violation (120→100, both soft but below recorded baseline).
+        # Baseline ratchet passes it (improved, not worsened).
+        src = _fn_with_loc(99)  # 100 LOC (soft)
         f = tmp_py(src, "target.py")
         fn_key = f"{f}::my_func@1"
-        baseline_entry = {"loc": 200, "cyclo": 1, "params": 0, "nesting": 0}
+        baseline_entry = {"loc": 120, "cyclo": 1, "params": 0, "nesting": 0}
         baseline_path = self._make_baseline(tmp_path, {fn_key: baseline_entry})
 
         result = analyze_staged_file(
             str(f), is_test=False, baseline=load_baseline(str(baseline_path))
         )
-        blocked = [
+        non_allowed = [
             v
             for v in result.violations
-            if v.severity == ViolationSeverity.HARD and not v.pre_existing
+            if "loc" in v.cap and v.severity == ViolationSeverity.SOFT and not v.pre_existing
         ]
-        assert not blocked, f"Improvement from baseline should not block: {result.violations}"
+        assert not non_allowed, (
+            f"Improvement from baseline should be ratcheted (ALLOWED): {result.violations}"
+        )
+
+    def test_hard_violation_not_in_allowlist_blocks(self, tmp_py, tmp_path):
+        # HARD violation on a tmp file → not in allowlist → must block (exit 1).
+        src = _fn_with_loc(154)  # 155 > 150 hard
+        f = tmp_py(src, "target.py")
+        baseline_path = self._make_baseline(tmp_path, {})
+
+        result = analyze_staged_file(
+            str(f),
+            is_test=False,
+            baseline=load_baseline(str(baseline_path)),
+            allowlist_index={},  # empty allowlist
+        )
+        hard = [v for v in result.violations if v.severity == ViolationSeverity.HARD]
+        assert hard, f"HARD violation not in allowlist must block: {result.violations}"
+        assert result.exit_code == 1
 
 
 # ---------------------------------------------------------------------------

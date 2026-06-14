@@ -6,6 +6,7 @@ import logging
 
 import yadgar.server._state as _st
 import yadgar.server.lifecycle as _lifecycle
+from yadgar.curation import CurateParams
 from yadgar.server._helpers import _file_hash
 
 from .context import MemorizeContext
@@ -62,13 +63,15 @@ def _store_via_curator(ctx: MemorizeContext, storage, embeddings, fhash: str | N
         ctx.context,
         ctx.tags,
         ctx.embedding,
-        initial_heat=ctx.initial_heat,
-        surprise=ctx.surprise,
-        importance=ctx.importance,
-        valence=ctx.valence,
-        file_hash=fhash,
-        embedding_model=embeddings.get_model_name(),
-        contextual_prefix=ctx.contextual_prefix,
+        params=CurateParams(
+            initial_heat=ctx.initial_heat,
+            surprise=ctx.surprise,
+            importance=ctx.importance,
+            valence=ctx.valence,
+            file_hash=fhash,
+            embedding_model=embeddings.get_model_name(),
+            contextual_prefix=ctx.contextual_prefix,
+        ),
     )
     memory_id = result["memory_id"]
     ctx.curation_action = result["action"]

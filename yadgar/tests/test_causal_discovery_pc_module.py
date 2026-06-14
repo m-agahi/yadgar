@@ -5,15 +5,25 @@ Coverage targets:
   independent variables, v-structure orientation
 - pc_algorithm output shape + type contracts
 - Edge confidence computation
+- build_event_matrix helpers (pure functions, no StorageEngine needed)
 
-Note: build_event_matrix requires a live StorageEngine and is excluded here.
+Note: build_event_matrix itself requires a live StorageEngine and is excluded.
+The extracted helpers (_build_time_buckets, _scan_entity_mentions,
+_fill_event_matrix) are pure functions tested here.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import numpy as np
 
-from yadgar.causal_discovery.pc import pc_algorithm
+from yadgar.causal_discovery.pc import (
+    _build_time_buckets,
+    _fill_event_matrix,
+    _scan_entity_mentions,
+    pc_algorithm,
+)
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -262,3 +272,145 @@ def test_pc_algorithm_no_bidirectional_directed_edges():
     directed_pairs = {(s, t) for s, t, _ in result["directed_edges"]}
     for s, t in directed_pairs:
         assert (t, s) not in directed_pairs, f"Bidirectional edge: {s}<->{t}"
+
+
+# ── build_event_matrix pure helpers ──────────────────────────────────────────
+
+
+class TestBuildTimeBuckets:
+    """_build_time_buckets is a pure function — no StorageEngine needed."""
+
+    def _make_times(self, hours: int) -> tuple[datetime, datetime]:
+        cutoff = datetime(2024, 1, 1, 3, 30, 0, tzinfo=UTC)
+        now = cutoff + timedelta(hours=hours)
+        return cutoff, now
+
+    def test_returns_list_of_strings(self):
+        cutoff, now = self._make_times(3)
+        result = _build_time_buckets(cutoff, now)
+        assert isinstance(result, list)
+        assert all(isinstance(t, str) for t in result)
+
+    def test_bucket_count_matches_hours(self):
+        # cutoff at 03:30 → bucket_origin at 03:00; now at 06:30 → 4 buckets: 03,04,05,06
+        cutoff, now = self._make_times(3)
+        result = _build_time_buckets(cutoff, now)
+        assert len(result) == 4
+
+    def test_empty_when_now_equals_cutoff(self):
+        t = datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
+        result = _build_time_buckets(t, t)
+        assert result == []
+
+    def test_buckets_are_sorted(self):
+        cutoff, now = self._make_times(5)
+        result = _build_time_buckets(cutoff, now)
+        assert result == sorted(result)
+
+    def test_single_hour_window(self):
+        cutoff = datetime(2024, 1, 1, 10, 0, 0, tzinfo=UTC)
+        now = datetime(2024, 1, 1, 10, 59, 0, tzinfo=UTC)
+        result = _build_time_buckets(cutoff, now)
+        assert len(result) == 1
+        assert "10:00:00" in result[0]
+
+
+class TestScanEntityMentions:
+    """_scan_entity_mentions is a pure function — no StorageEngine needed."""
+
+    def _make_episode(self, ts: str, content: str) -> dict:
+        return {"timestamp": ts, "raw_content": content, "directory": "/test"}
+
+    def _make_entity(self, name: str) -> dict:
+        return {"name": name, "type": "file"}
+
+    def test_returns_entity_names_and_episode_entities(self):
+        episodes = [self._make_episode("2024-01-01T10:00:00+00:00", "worked on foo and bar")]
+        entities = [self._make_entity("foo"), self._make_entity("bar")]
+        names, ep_ents = _scan_entity_mentions(episodes, entities)
+        assert "foo" in names
+        assert "bar" in names
+        assert len(ep_ents) == 1
+        assert "foo" in ep_ents[0][1]
+        assert "bar" in ep_ents[0][1]
+
+    def test_empty_episodes_returns_empty(self):
+        entities = [self._make_entity("foo")]
+        names, ep_ents = _scan_entity_mentions([], entities)
+        assert names == []
+        assert ep_ents == []
+
+    def test_no_entity_match_returns_empty_names(self):
+        episodes = [self._make_episode("2024-01-01T10:00:00+00:00", "nothing here")]
+        entities = [self._make_entity("foo")]
+        names, ep_ents = _scan_entity_mentions(episodes, entities)
+        assert names == []
+        assert ep_ents[0][1] == []
+
+    def test_entity_dedup_across_episodes(self):
+        """Entity name appears in multiple episodes but listed once in entity_names."""
+        eps = [
+            self._make_episode("2024-01-01T10:00:00+00:00", "foo in first"),
+            self._make_episode("2024-01-01T11:00:00+00:00", "foo in second"),
+        ]
+        entities = [self._make_entity("foo")]
+        names, ep_ents = _scan_entity_mentions(eps, entities)
+        assert names.count("foo") == 1
+        assert ep_ents[0][1] == ["foo"]
+        assert ep_ents[1][1] == ["foo"]
+
+    def test_word_boundary_matching(self):
+        """'foobar' should not match entity 'foo'."""
+        episodes = [self._make_episode("2024-01-01T10:00:00+00:00", "foobar is here")]
+        entities = [self._make_entity("foo")]
+        names, _ = _scan_entity_mentions(episodes, entities)
+        assert "foo" not in names
+
+
+class TestFillEventMatrix:
+    """_fill_event_matrix is a pure function — no StorageEngine needed."""
+
+    def test_returns_numpy_array(self):
+        origin = datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC)
+        timestamps = ["2024-01-01T00:00:00+00:00"]
+        entity_names = ["a", "b"]
+        ep_ents: list = []
+        mat = _fill_event_matrix(ep_ents, entity_names, timestamps, origin)
+        assert isinstance(mat, np.ndarray)
+        assert mat.shape == (1, 2)
+
+    def test_episode_sets_correct_cell(self):
+        origin = datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC)
+        timestamps = ["2024-01-01T00:00:00+00:00", "2024-01-01T01:00:00+00:00"]
+        entity_names = ["a", "b"]
+        ep_ents = [("2024-01-01T01:30:00+00:00", ["b"])]
+        mat = _fill_event_matrix(ep_ents, entity_names, timestamps, origin)
+        assert mat[1, 1] == 1.0
+        assert mat[0, 1] == 0.0
+        assert mat[1, 0] == 0.0
+
+    def test_invalid_timestamp_skipped(self):
+        origin = datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC)
+        timestamps = ["2024-01-01T00:00:00+00:00"]
+        entity_names = ["a"]
+        ep_ents = [("not-a-date", ["a"])]
+        mat = _fill_event_matrix(ep_ents, entity_names, timestamps, origin)
+        assert mat[0, 0] == 0.0
+
+    def test_out_of_range_bucket_skipped(self):
+        origin = datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC)
+        timestamps = ["2024-01-01T00:00:00+00:00"]
+        entity_names = ["a"]
+        # Episode 48 hours after origin → bucket_idx=48, but n_windows=1
+        ep_ents = [("2024-01-03T00:00:00+00:00", ["a"])]
+        mat = _fill_event_matrix(ep_ents, entity_names, timestamps, origin)
+        assert mat[0, 0] == 0.0
+
+    def test_naive_timestamp_treated_as_utc(self):
+        origin = datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC)
+        timestamps = ["2024-01-01T00:00:00+00:00"]
+        entity_names = ["a"]
+        # Naive timestamp — should be treated as UTC
+        ep_ents = [("2024-01-01T00:30:00", ["a"])]
+        mat = _fill_event_matrix(ep_ents, entity_names, timestamps, origin)
+        assert mat[0, 0] == 1.0

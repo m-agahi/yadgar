@@ -1,0 +1,364 @@
+[
+  {
+    "path": "yadgar/causal_discovery/pc.py",
+    "function": "pc_algorithm",
+    "lineno": 105,
+    "metrics": {
+      "cyclomatic": 53,
+      "fn_loc": 175,
+      "nesting": 6
+    },
+    "rationale": "PERMANENT. Textbook PC constraint-based causal-discovery algorithm; the branching structure (skeleton phase, v-structure orientation, Meek propagation) is the algorithm itself. Extraction scatters the invariants across helpers and harms readability without reducing essential complexity.",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/server/http.py",
+    "function": "health_check",
+    "lineno": 248,
+    "metrics": {
+      "nesting": 5
+    },
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/server/http.py",
+    "function": "hook_auto_capture",
+    "lineno": 393,
+    "metrics": {
+      "cyclomatic": 16
+    },
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/server/http.py",
+    "function": "hook_session_context",
+    "lineno": 488,
+    "metrics": {
+      "cyclomatic": 18,
+      "nesting": 5
+    },
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/server/http.py",
+    "function": "hook_prompt_recall",
+    "lineno": 603,
+    "metrics": {
+      "cyclomatic": 17
+    },
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/server/http.py",
+    "function": "hook_subagent_stop",
+    "lineno": 689,
+    "metrics": {
+      "cyclomatic": 17
+    },
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/server/http.py",
+    "function": "_handle_team_inbox",
+    "lineno": 954,
+    "metrics": {
+      "cyclomatic": 16
+    },
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/server/http.py",
+    "function": "_make_event_stream",
+    "lineno": 1564,
+    "metrics": {
+      "cyclomatic": 16,
+      "nesting": 5
+    },
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/server/http.py",
+    "function": "api_viz_search",
+    "lineno": 1697,
+    "metrics": {
+      "cyclomatic": 18,
+      "nesting": 7
+    },
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/server/tools/memorize.py",
+    "function": "memorize",
+    "lineno": 68,
+    "metrics": {
+      "params": 10
+    },
+    "rationale": "PERMANENT. The 10 parameters are the public MCP tool schema the LLM calls directly; bundling into a dataclass would break the tool API and require a coordinated schema change across all callers.",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/server/tools/misc.py",
+    "function": "checkpoint",
+    "lineno": 36,
+    "metrics": {
+      "params": 9
+    },
+    "rationale": "PERMANENT. The 9 parameters are the public MCP tool schema the LLM calls directly; bundling into a dataclass would break the tool API and require a coordinated schema change across all callers.",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/server/tools/project.py",
+    "function": "_render_project_brief",
+    "lineno": 213,
+    "metrics": {
+      "cyclomatic": 35
+    },
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/server/tools/project.py",
+    "function": "_wiki_refresh_stale_impl",
+    "lineno": 1930,
+    "metrics": {
+      "cyclomatic": 24
+    },
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/server/tools/project.py",
+    "function": "wiki_cleanup_merged_branches",
+    "lineno": 2081,
+    "metrics": {
+      "cyclomatic": 19,
+      "nesting": 5
+    },
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/server/tools/recall.py",
+    "function": "recall",
+    "lineno": 20,
+    "metrics": {
+      "cyclomatic": 55,
+      "fn_loc": 293,
+      "nesting": 6
+    },
+    "rationale": "PERMANENT. 7-phase retrieval dispatcher (validation, branch detection, retriever dispatch, FTS+vector fallback, filtering, 4 boost passes, wiki blend). Behavior-rich phases 6a-6d (branch convex-combo boost, postmortem boost, heat update, SR transition) have only mirror/mock test coverage + source-string-match tests — NO real-call behavioral guard. A structural extract risks silent behavior change and would spuriously break the inspect.getsource string-match tests. Allowlisted permanently; revisit only after real-call boost/blend tests exist.",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/server/tools/wiki.py",
+    "function": "_wiki_add_sync_write",
+    "lineno": 68,
+    "metrics": {
+      "params": 11
+    },
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/server/tools/wiki.py",
+    "function": "_wiki_add_wait_path",
+    "lineno": 154,
+    "metrics": {
+      "params": 13
+    },
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/server/tools/wiki.py",
+    "function": "wiki_add",
+    "lineno": 351,
+    "metrics": {
+      "cyclomatic": 25,
+      "fn_loc": 201,
+      "params": 14
+    },
+    "rationale": "PERMANENT. Public MCP tool: 14 params are the LLM-facing schema and cannot be bundled without breaking the API. Sync/wait execution paths (_wiki_add_sync_write, _wiki_add_wait_path) are already extracted helpers; residual cyclo and fn_loc are essential orchestration glue across those two paths plus validation, approval gating, and error normalization.",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/server/tools/wiki.py",
+    "function": "wiki_query",
+    "lineno": 555,
+    "metrics": {
+      "cyclomatic": 20
+    },
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/storage/migrations.py",
+    "function": "_migration_016_directory_context",
+    "lineno": 528,
+    "metrics": {
+      "nesting": 5
+    },
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/storage/migrations.py",
+    "function": "_migration_018_directory_context_backfill_repair",
+    "lineno": 653,
+    "metrics": {
+      "nesting": 5
+    },
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/config_yaml.py",
+    "function": "<file>",
+    "lineno": 1,
+    "metrics": {
+      "file_loc": 1430
+    },
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/server/http.py",
+    "function": "<file>",
+    "lineno": 1,
+    "metrics": {
+      "file_loc": 1842
+    },
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/server/tools/project.py",
+    "function": "<file>",
+    "lineno": 1,
+    "metrics": {
+      "file_loc": 2185
+    },
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/server/tools/wiki.py",
+    "function": "<file>",
+    "lineno": 1,
+    "metrics": {
+      "file_loc": 1167
+    },
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/storage/migrations.py",
+    "function": "<file>",
+    "lineno": 1,
+    "metrics": {
+      "file_loc": 1153
+    },
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/wiki.py",
+    "function": "<file>",
+    "lineno": 1,
+    "metrics": {
+      "file_loc": 1076
+    },
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "scripts/check_complexity.py",
+    "function": "_check_function",
+    "lineno": 279,
+    "metrics": {
+      "cyclomatic": 26
+    },
+    "rationale": "PERMANENT. Central dispatch for function-level complexity checks; each branch handles one metric (cyclo/loc/nesting/params). Splitting would scatter the check logic with no single place to see all enforcement rules. Self-referential: the checker itself cannot be split without undermining the policy it enforces.",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "scripts/check_complexity.py",
+    "function": "_check_class",
+    "lineno": 422,
+    "metrics": {
+      "cyclomatic": 21
+    },
+    "rationale": "PERMANENT. Central dispatch for class-level complexity checks (methods, attrs, inheritance depth). Mirrors _check_function structure; splitting would break the parallel check pattern without improving clarity. Self-referential: the checker itself cannot be split without undermining the policy it enforces.",
+    "added": "2026-06-13",
+    "added_by": "complexity-governance-agent"
+  },
+  {
+    "path": "yadgar/tests/test_integration.py",
+    "function": "<file>",
+    "lineno": 1,
+    "metrics": {
+      "file_loc": 1104
+    },
+    "rationale": "pre-existing large integration test file; not caused by this refactor",
+    "added": "2026-06-14",
+    "added_by": "refactor/v5.55-curate-params"
+  },
+  {
+    "path": "yadgar/tests/test_integration.py",
+    "function": "test_clean_startup_and_shutdown",
+    "lineno": 999,
+    "metrics": {
+      "cyclomatic": 28
+    },
+    "rationale": "pre-existing complex integration test; not caused by this refactor",
+    "added": "2026-06-14",
+    "added_by": "refactor/v5.55-curate-params"
+  },
+  {
+    "path": "yadgar/storage/memory.py",
+    "function": "_enrich_memory_if_enabled",
+    "lineno": 202,
+    "metrics": {
+      "cyclomatic": 20
+    },
+    "rationale": "PERMANENT. v5.55 extract from insert_memory: 5-term enable guard + 6-field result mapping + set_parts loop/conditional re-encode; further splitting degrades locality without reducing branch count — cohesive enrichment pipeline, single responsibility.",
+    "added": "2026-06-14",
+    "added_by": "insert-memory-refactor"
+  }
+]

@@ -12,6 +12,7 @@ from yadgar.secrets import gate_or_reject
 from yadgar.server._app import _tool
 from yadgar.server._helpers import _has_unpaired_surrogate, _push_event
 from yadgar.server.lifecycle import _get_file_queue, _get_storage
+from yadgar.wiki import WikiAddOptions
 
 logger = logging.getLogger(__name__)
 
@@ -93,11 +94,13 @@ def _wiki_add_sync_write(
                 content,
                 category,
                 tags or [],
-                source_memory_ids,
-                confidence,
-                branch=branch,
-                directory_context=directory_context,
-                page_type=page_type,
+                opts=WikiAddOptions(
+                    source_memory_ids=source_memory_ids,
+                    confidence=confidence,
+                    branch=branch,
+                    directory_context=directory_context,
+                    page_type=page_type,
+                ),
             )
             result.pop("embedding", None)
             _push_event(
@@ -125,11 +128,13 @@ def _wiki_add_sync_write(
             content,
             category,
             tags or [],
-            source_memory_ids,
-            confidence,
-            branch=branch,
-            directory_context=directory_context,
-            page_type=page_type,
+            opts=WikiAddOptions(
+                source_memory_ids=source_memory_ids,
+                confidence=confidence,
+                branch=branch,
+                directory_context=directory_context,
+                page_type=page_type,
+            ),
         )
     result.pop("embedding", None)
     event_type = "wiki_updated" if result.get("_merged") else "wiki_added"
@@ -838,9 +843,11 @@ def wiki_approve(slug: str) -> dict:
         content=draft["content"],
         category=draft.get("category", "reference"),
         tags=draft.get("tags", []),
-        source_memory_ids=draft.get("source_memory_ids", []),
-        confidence=draft.get("confidence", "medium"),
-        branch=draft_branch,
+        opts=WikiAddOptions(
+            source_memory_ids=draft.get("source_memory_ids", []),
+            confidence=draft.get("confidence", "medium"),
+            branch=draft_branch,
+        ),
     )
     result.pop("embedding", None)
     storage.delete_wiki_draft(slug)
