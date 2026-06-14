@@ -7,6 +7,13 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.57.3] — 2026-06-14
+
+### Fixed (backend image build)
+- `Dockerfile.backend`: install CPU-only torch on **both** arches (drop the arm64 branch that did plain `pip install torch`). Plain arm64 torch pulled the full CUDA wheel set (>2 GB); the long silent install tripped Docker Build Cloud's gRPC keepalive and failed the arm64 backend build in v5.57.2 — so `yadgar-backend` never got past 5.5.0. The CPU index has cp314 wheels for aarch64 and x86_64; this is a CPU embedding service, so CUDA was useless anyway.
+- Bump `backend_version` 5.7.0 → 5.7.1 (backend image input changed) and core 5.57.2 → 5.57.3 to force a fresh matched build of both images.
+
+
 ## [5.57.2] — 2026-06-14
 
 ### Fixed (CI release + image tracking)
