@@ -387,26 +387,44 @@ jobs:
           set -euo pipefail
           TAG="v${VERSION}"
 
-          # Check if release already exists
-          RELEASE_ID=$(curl -sf -H "Authorization: token ${FORGEJO_TOKEN}" \
-            "${API}/repos/${REPO}/releases/tags/${TAG}" 2>/dev/null | \
-            python3 -c "import json,sys; d=json.load(sys.stdin); print(d['id'])" 2>/dev/null || echo "")
+          # parse_id: extract .id from JSON body; empty string on empty/non-JSON input.
+          PARSE_ID='import json,sys; b=sys.stdin.read().strip(); d=b and json.loads(b) or {}; print(d.get("id",""))'
 
-          if [ -z "$RELEASE_ID" ]; then
-            # Create new release
-            RELEASE_ID=$(curl -sf -X POST \
+          # 1. Try GET — release may already exist (idempotent re-run).
+          GET_BODY=$(curl -s -H "Authorization: token ${FORGEJO_TOKEN}" \
+            "${API}/repos/${REPO}/releases/tags/${TAG}" 2>/dev/null || true)
+          RELEASE_ID=$(echo "${GET_BODY}" | python3 -c "${PARSE_ID}" 2>/dev/null || echo "")
+
+          if [ -z "${RELEASE_ID}" ]; then
+            # 2. Release not found — create it.
+            PRERELEASE=$(python3 -c "import sys; v='${VERSION}'; print('true' if 'alpha' in v or 'beta' in v else 'false')")
+            POST_BODY=$(curl -s -X POST \
               -H "Authorization: token ${FORGEJO_TOKEN}" \
               -H "Content-Type: application/json" \
               "${API}/repos/${REPO}/releases" \
-              -d "{\"tag_name\":\"${TAG}\",\"name\":\"yadgar ${VERSION}\",\"body\":\"Release ${VERSION}. See CHANGELOG.md for details.\",\"draft\":false,\"prerelease\":$(python3 -c "print('true' if 'alpha' in '${VERSION}' or 'beta' in '${VERSION}' else 'false')")}" | \
-              python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
-            echo "Created release ${RELEASE_ID} for ${TAG}"
+              -d "{\"tag_name\":\"${TAG}\",\"name\":\"yadgar ${VERSION}\",\"body\":\"Release ${VERSION}. See CHANGELOG.md for details.\",\"draft\":false,\"prerelease\":${PRERELEASE}}" \
+              2>/dev/null || true)
+            RELEASE_ID=$(echo "${POST_BODY}" | python3 -c "${PARSE_ID}" 2>/dev/null || echo "")
+
+            if [ -z "${RELEASE_ID}" ]; then
+              # 3. POST returned no id (e.g. 409 release already exists) — re-fetch via GET.
+              echo "POST returned no id (body: ${POST_BODY:0:200}) — re-fetching via GET"
+              GET_BODY2=$(curl -s -H "Authorization: token ${FORGEJO_TOKEN}" \
+                "${API}/repos/${REPO}/releases/tags/${TAG}" 2>/dev/null || true)
+              RELEASE_ID=$(echo "${GET_BODY2}" | python3 -c "${PARSE_ID}" 2>/dev/null || echo "")
+            fi
+
+            if [ -n "${RELEASE_ID}" ]; then
+              echo "Created release ${RELEASE_ID} for ${TAG}"
+            else
+              echo "WARN: could not obtain release id for ${TAG} — skipping asset upload"
+            fi
           else
             echo "Release ${RELEASE_ID} already exists for ${TAG}"
           fi
 
           # Upload all dist/ files as release assets (no-op if dist/ absent or empty — SBOM may have failed)
-          if [ -d dist ] && compgen -G "dist/*" >/dev/null 2>&1; then
+          if [ -n "${RELEASE_ID}" ] && [ -d dist ] && compgen -G "dist/*" >/dev/null 2>&1; then
             for f in dist/*; do
               filename=$(basename "$f")
               echo "Uploading ${filename}..."
@@ -418,5 +436,5 @@ jobs:
             done
             echo "==> Release assets attached."
           else
-            echo "==> No dist/ assets to attach (build-sbom may have failed — skipping upload)."
+            echo "==> No dist/ assets to attach (build-sbom may have failed or release id unavailable — skipping upload)."
           fi
