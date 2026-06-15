@@ -227,21 +227,26 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
         merged = merged[:max_results]
 
         # Boost heat, update last_accessed, and record metamemory access
+        # Guard: synthetic/injected dicts (e.g. profile/belief entries) may omit 'id'
+        # or 'heat'. Skip heat-boost for those — they have no persisted storage row.
         now = storage._now_iso()
         thermo = _st._thermo
         for m in merged:
-            new_heat = min(m["heat"] + 0.1, 1.0)
-            storage.update_memory_heat(m["id"], new_heat)
-            storage.update_memory_last_accessed(m["id"], now)
+            mid = m.get("id")
+            if mid is None:
+                continue
+            new_heat = min(m.get("heat", 0.0) + 0.1, 1.0)
+            storage.update_memory_heat(mid, new_heat)
+            storage.update_memory_last_accessed(mid, now)
             m["heat"] = new_heat
             m["last_accessed"] = now
             if thermo is not None:
-                thermo.record_access(m["id"], was_useful=True)
+                thermo.record_access(mid, was_useful=True)
 
         # Record SR transitions: link previous recall → current recall
         if _st._cognitive_map is not None and merged:
             session_key = "default"
-            top_id = merged[0]["id"]
+            top_id = merged[0].get("id")
             prev_id = _st._last_recalled_ids.get(session_key)
             if prev_id is not None and prev_id != top_id:
                 try:

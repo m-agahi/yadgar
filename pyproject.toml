@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.58.0"
+version = "5.59.0"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "Apache-2.0"
@@ -173,6 +173,8 @@ test = [
     # per-test @pytest.mark.asyncio noise (pytest-asyncio 1.4.0 = latest stable 2026-06-05)
     "pytest-asyncio>=1.4.0",
     "anyio>=4.0",
+    # v5.59 — parallel chunk splitting for CI matrix (ci-pr.yaml --splits/--group)
+    "pytest-split>=0.9.0",
 ]
 dev = [
     "yadgar[test]",
@@ -192,6 +194,8 @@ sbom = [
 testpaths = ["yadgar/tests"]
 # --timeout=120 removed; per-session default now comes from `timeout = 300` below.
 addopts = "-n 4 --dist loadgroup --maxprocesses=4 -m 'not integration'"
+# Suppress INFO-level noise in test output; WARNING/ERROR still visible on failure.
+log_level = "WARNING"
 # pytest-timeout defaults — override per-test with @pytest.mark.timeout(N).
 # timeout_method=signal (SIGALRM) can interrupt deadlocked / hung C-extension
 # tests that the thread method cannot — a thread-method hang once ran 9.7h

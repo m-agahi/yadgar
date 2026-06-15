@@ -14,14 +14,6 @@ from yadgar.cognitive_map import CognitiveMap
 from yadgar.metacognition import MetaCognition
 from yadgar.tests.conftest import memorize_sync
 
-# v5.49.4 bisect: same memorize_sync KeyError('id') root cause as
-# test_memory_behavior.py — queue drain / FTS fallback gap in embedded SurrealKV.
-# Pre-existing, not a v5.49 regression.  Refactor tracked as v5.50+.
-pytestmark = pytest.mark.xfail(
-    reason="v5.49.4 bisect: memorize_sync KeyError('id') — queue drain / FTS fallback gap in embedded SurrealKV; refactor in v5.50+",
-    strict=False,
-)
-
 # ── Fixtures ───────────────────────────────────────────────────────────
 
 

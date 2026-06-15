@@ -131,10 +131,6 @@ def test_record_exception_no_span_does_not_raise():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="v5.49.4 bisect: opentelemetry not installed in .venv-test; test requires opentelemetry-sdk. Missing dep in test venv, not a code bug. Refactor: add pytest.importorskip in v5.50+.",
-    strict=False,
-)
 def test_record_exception_enriches_active_span(in_memory_tracer):
     """record_exception with an active span sets ERROR status and records the exception."""
     from opentelemetry.trace import StatusCode

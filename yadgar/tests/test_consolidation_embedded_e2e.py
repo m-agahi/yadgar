@@ -321,3 +321,59 @@ class TestEmbeddedConsolidationE2E:
             assert storage._db_url is None, "must be embedded mode"
         finally:
             storage.close()
+
+
+class TestDecayIdempotency:
+    """Decay must NOT compound across repeated cycles for unaccessed memories.
+
+    THE BUG (pre-fix): the decay UPDATE wrote only `heat` (+ access counter), never
+    advancing a decay watermark.  Each cycle recomputed `now - last_accessed` (which
+    only moves on *access*) and multiplied that full elapsed decay onto the already-
+    decayed heat.  For an unaccessed memory, the exponent grew every cycle while heat
+    kept shrinking -> quadratic over-decay (a 20-day-untouched memory lands at ~0.08
+    instead of ~0.79).  Nightly runs effectively killed cold memories in ~2-3 weeks
+    vs the configured ~2-month half-life.
+
+    THE FIX: persist `last_decay_at` and decay over `now - max(last_accessed,
+    last_decay_at)`, advancing the watermark each write.  Decay becomes idempotent:
+    running it twice back-to-back applies the true (near-zero) elapsed time on the
+    second pass, not the whole age again.
+
+    None of the single-run E2E tests above catch this -- only a repeated-run test does.
+    """
+
+    def test_second_decay_pass_is_near_noop_without_access(self, embedded_storage, scheduler):
+        """Two back-to-back decay passes (no access between) must not double-decay.
+
+        Pre-fix: pass 2 re-applies the full ~10-day decay -> heat2 << heat1 (RED).
+        Post-fix: pass 2 sees ~0 elapsed since last_decay_at -> heat2 ~= heat1 (GREEN).
+        """
+        ten_days_ago = (datetime.now(UTC) - timedelta(days=10)).isoformat()
+        mid = _insert_memory_embedded(
+            embedded_storage,
+            content="unaccessed memory -- decay idempotency guard",
+            heat=0.9,
+            last_accessed=ten_days_ago,
+        )
+
+        stats = {"memories_updated": 0, "memories_archived": 0}
+        scheduler._apply_decay(stats)
+        heat_after_first = _read_heat(embedded_storage, mid)
+
+        # Sanity: the first pass DID decay (10 days elapsed).
+        assert heat_after_first < 0.9, (
+            f"first decay pass should reduce heat from 0.9, got {heat_after_first}"
+        )
+
+        # Second pass immediately after, with NO intervening access.
+        scheduler._apply_decay(stats)
+        heat_after_second = _read_heat(embedded_storage, mid)
+
+        # The only elapsed time between the two passes is microseconds, so the
+        # second pass must barely move heat.  The bug makes it drop by another
+        # ~10 days' worth of decay.
+        assert heat_after_second == pytest.approx(heat_after_first, abs=0.005), (
+            f"decay compounded across cycles: heat went {heat_after_first} -> "
+            f"{heat_after_second} on a second pass with no access. Decay is not "
+            "idempotent -- last_decay_at watermark missing or not honored."
+        )

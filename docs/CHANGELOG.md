@@ -7,6 +7,17 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.59.0]
+
+### Fixed (correctness)
+- **Heat decay was compounding across consolidation cycles.** The decay UPDATE persisted only `heat`, never a decay watermark, so every cycle recomputed `now - last_accessed` (which only advances on *access*) and multiplied that full elapsed span onto the already-decayed heat → quadratic over-decay for unaccessed memories. With `f=0.9995` a memory untouched 20 days landed at ~0.08 instead of ~0.79; cold memories died in ~2-3 weeks vs the configured ~2-month half-life. Dormant during the 6-week consolidation outage; would have restarted the moment nightly resumed. Added a `last_decay_at` watermark — decay now spans `now - max(last_accessed, last_decay_at)` and is idempotent. Same fix for entity decay. Tables are SCHEMALESS so no migration is needed; pre-existing rows fall back to `last_accessed`. (regression: `TestDecayIdempotency` — RED before, GREEN after)
+- recall heat-boost loop raised `KeyError: 'id'`/`'heat'` on synthetic profile/belief dicts injected by the rerank merge — guarded with `.get()` and skip rows lacking a storage id.
+
+### Changed (test infrastructure)
+- SurrealDB test fixture respawns a dead server in place (same port, via a function-scoped `_surreal_liveness` gate), bounding the xdist ConnectError cascade (one dead worker previously ERRORed the whole session) to the current module. Capped at 8 respawns per session, then fails loudly instead of masking. (regression: `test_surreal_resilience.py`)
+- `ci-pr` `test` job split into a 5-group `pytest-split` matrix (`fail-fast: false`) with a `test-gate` aggregator and a separate one-shot `invariant-checks` job; pytest `log_level = WARNING` to cut INFO-log noise.
+
+
 ## [5.58.0]
 
 ### Fixed (test-suite paydown — run-829)

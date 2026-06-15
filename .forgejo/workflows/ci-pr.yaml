@@ -26,6 +26,12 @@ jobs:
     # Image built locally and pushed to dockerhub per PD-42 carve-out.
     container:
       image: docker.io/openfantasy/yadgar-ci:5.46.9
+    # fail-fast: false — each chunk runs independently; one failure does NOT
+    # abort the others.  Aggregation happens in the `test-gate` job below.
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1, 2, 3, 4, 5]
     steps:
       # make, git, curl, ca-certificates, nodejs are pre-installed in yadgar-ci image.
       # No apt-get install step needed for these system deps.
@@ -46,16 +52,43 @@ jobs:
         # torch + sentence-transformers (~1 GB) on every run.
         # uv: required by test_v5_46_10_wheel_bundle (uv build --wheel subprocess)
         # and pre-commit check-config-three-way-sync hook.
+        # pytest-split: parallel chunk partitioning via --splits/--group flags.
         run: |
           pip install -e ".[test,ml]"
           pip install uv
 
-      - name: Run tests
-        # -n auto parallelises across CPU cores via pytest-xdist (already
-        # in the [test] extra). --reruns: the suite shares a session-scoped
-        # SurrealDB across xdist workers; a few server-globals tests flake on
-        # worker ordering. Retry twice before counting a failure.
-        run: python -m pytest yadgar/tests/ -q --tb=short -n auto --reruns 2 --reruns-delay 2
+      - name: Run tests (chunk ${{ matrix.group }}/5)
+        # --splits/--group: pytest-split partitions the collected set into 5
+        # equal chunks and runs only chunk $group.  Every file in the suite is
+        # covered across all 5 legs; no manual list maintenance required.
+        # -n auto / --dist loadgroup / --reruns: unchanged from monolith run.
+        # -m 'not integration': keep integration tests excluded (run in viz-tests job).
+        run: >
+          python -m pytest yadgar/tests/
+          -q --tb=short
+          -n auto --dist loadgroup
+          --reruns 2 --reruns-delay 2
+          -m 'not integration'
+          --splits 5 --group ${{ matrix.group }}
+
+  invariant-checks:
+    runs-on: ubuntu-latest
+    container:
+      image: docker.io/openfantasy/yadgar-ci:5.46.9
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: /root/.cache/pip
+          key: pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[test,ml]"
+          pip install uv
 
       - name: Check I23 — declared metrics must have writers
         run: python scripts/check_metric_writers.py
@@ -68,6 +101,22 @@ jobs:
 
       - name: Check I29 — edge dead-capability lint (produced ≡ contracted, no drop-still-produced)
         run: python scripts/check_dead_capability.py
+
+  # Gateway: aggregates all 5 test chunks.
+  # if: always() is required — without it this job is SKIPPED (not failed)
+  # when any test chunk fails, which would leave the PR green incorrectly.
+  test-gate:
+    runs-on: ubuntu-latest
+    needs: [test]
+    if: ${{ always() }}
+    steps:
+      - name: Assert all test chunks passed
+        run: |
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "One or more test chunks failed (result: ${{ needs.test.result }})"
+            exit 1
+          fi
+          echo "All test chunks passed."
 
   viz-tests:
     runs-on: ubuntu-latest

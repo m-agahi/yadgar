@@ -113,10 +113,6 @@ def _build_stacked_app():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="v5.49.4 bisect: opentelemetry not installed in .venv-test; in_memory_tracer fixture raises ModuleNotFoundError. Missing dep in test venv, not a code bug. Refactor: add pytest.importorskip in v5.50+.",
-    strict=False,
-)
 class TestMCPTraceSpanMiddleware:
     """MCPTraceSpanMiddleware opens a span before RequestLoggingMiddleware so
     that get_current_trace_id() returns a value when the log line is emitted.

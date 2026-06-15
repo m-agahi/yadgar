@@ -992,10 +992,6 @@ class TestAllMCPTools:
 
 
 class TestServerStartupShutdown:
-    @pytest.mark.xfail(
-        reason="v5.49.4 bisect: memorize_sync KeyError('id') — queue drain / FTS fallback gap in embedded SurrealKV; refactor in v5.50+",
-        strict=False,
-    )
     def test_clean_startup_and_shutdown(self, tmp_path):
         """Verify clean startup and shutdown of all engines."""
         db_path = str(tmp_path / "lifecycle.db")
