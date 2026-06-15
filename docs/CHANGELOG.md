@@ -7,6 +7,16 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.62.0]
+
+### Fixed (recall scoping — chunk 1 of recall-scoping-restamp)
+- **`directory=` was a no-op in recall.** Recall/wiki_query now scope out other-project results via a single shared predicate `is_directory_eligible` (`storage/directory.py`, twin of `branch.py`). `wiki_query` previously also missed `'system'` from its eligibility set — normalized. Measured: recall from within yadgar was 37.5% noise (cross-project leak + derived co-occurrence); this removes the cross-project-dir leak. (`system`/`global` stay eligible pending the write-time reclassify chunk — order-safe.)
+- **Quality floor** — drop recall results below a cross-encoder relevance threshold (`RECALL_QUALITY_FLOOR`, default 0.0 = off; operators raise to ~0.15-0.20 post-backfill). Kills keyword-only co-occurrence junk that survived with `_rerank_score=0`. Wiring proven by `TestQualityFloorBehavioral` at threshold 0.2 (junk band ≤0.157 vs genuine ≥0.289).
+- **Dedup** — collapse repeated identical co-occurrence rows in recall output.
+
+Chunk 1 = retrieval surfaces (recall/wiki_query) only; the DB-level `DirectoryFilter` + `project_brief`/hooks scoping (E2, gated) + write-time stamp fixes + corpus re-stamp are later chunks. See `docs/plans/recall-scoping-restamp.md`. Core-only; backend unchanged.
+
+
 ## [5.61.0]
 
 ### Added (wiki edit primitives — corpus-maintenance foundation)

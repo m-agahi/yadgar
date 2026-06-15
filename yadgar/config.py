@@ -321,6 +321,20 @@ class Settings(BaseSettings):
     DIRECTORY_ENFORCEMENT: bool = True
     BRANCH_ENFORCEMENT: bool = True
 
+    # v5.62.0: Recall quality floor — drop results whose cross-encoder score is
+    # below this threshold.  Targets keyword-only co-occurrence noise that survives
+    # retrieval with _cross_encoder_score≈0 / _rerank_score=0.
+    #
+    # Calibration (2026-06-15, 80-sample audit, production corpus):
+    #   Co-occurrence junk CE: 0.0 – 0.157
+    #   Genuine results CE:    0.289 – 0.843
+    # Default 0.0 = DISABLED.  Short synthetic content (test env) overlaps the
+    # lower junk band (CE 0.03–0.08), so a non-zero default would break tests.
+    # Production tuning: raise to 0.15–0.20 once write-time backfill (plan §C)
+    # removes mis-stamped system/global rows that currently bulk up the corpus.
+    # Set to 0.0 to disable entirely; missing CE scores are always preserved.
+    RECALL_QUALITY_FLOOR: float = 0.0
+
     # v5.51.0: Hook recall latency budget (I25 three-way registered).
     # Maximum seconds asyncio.wait_for may wait for retriever.recall in hook handlers.
     # On timeout: WARN log + yadgar_hook_recall_timeout_total incremented + empty returned.
