@@ -1050,6 +1050,16 @@ FIELD_META: dict[str, dict[str, str]] = {
         ),
         "section": "update",
     },
+    # v5.62.0 — recall quality floor
+    "recall_quality_floor": {
+        "desc": (
+            "Minimum cross-encoder score for a recall result to be returned (default 0.0 = disabled). "
+            "Rows without a _cross_encoder_score always pass through regardless of this setting. "
+            "Calibration (2026-06-15): co-occurrence junk CE 0.0–0.157, genuine results CE 0.289–0.843. "
+            "Production tuning: raise to 0.15–0.20 after write-time backfill (plan §C) completes."
+        ),
+        "section": "recall_quality",
+    },
 }
 
 
@@ -1086,6 +1096,7 @@ SECTION_TITLES: dict[str, str] = {
     "backend_model_preload": "Backend Model Preload Warm-Up (v5.5.0)",
     "hooks": "Hook Recall Latency Budget (v5.51.0)",
     "stats_cache": "Stats Cache (v5.51.0)",
+    "recall_quality": "Recall Quality Floor (v5.62.0)",
 }
 
 # Ordered list of sections for deterministic output

@@ -12,6 +12,7 @@ from yadgar.secrets import gate_or_reject
 from yadgar.server._app import _tool
 from yadgar.server._helpers import _has_unpaired_surrogate, _push_event
 from yadgar.server.lifecycle import _get_file_queue, _get_storage
+from yadgar.storage.directory import is_directory_eligible
 from yadgar.wiki import WikiAddOptions
 
 logger = logging.getLogger(__name__)
@@ -617,7 +618,9 @@ def wiki_query(
 
         results = [r for r in results if r.get("branch") in _allowed_branches]
 
-        # v5.43.0: directory scoping — scope to caller directory + 'global'.
+        # v5.43.0 / v5.62.0: directory scoping — scope to caller directory.
+        # v5.62.0: replaces hand-rolled predicate with is_directory_eligible() from
+        # storage/directory.py — single source of truth for the eligible-set rule.
         # Applied as Python-side post-filter (mirrors recall directory filter from v5.42.5).
         if directory is not None:
             caller_dir = directory.strip().rstrip("/") or None
@@ -625,7 +628,7 @@ def wiki_query(
                 results = [
                     r
                     for r in results
-                    if r.get("directory_context") in (caller_dir, "global", "", None)
+                    if is_directory_eligible(r.get("directory_context"), caller_dir)
                 ]
             else:
                 logger.warning(

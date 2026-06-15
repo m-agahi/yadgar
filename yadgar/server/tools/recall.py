@@ -10,10 +10,73 @@ from yadgar.config import get_settings
 from yadgar.server._app import _tool
 from yadgar.server._helpers import _bounded_set, _is_episodic_query
 from yadgar.server.lifecycle import _get_embeddings, _get_storage
+from yadgar.storage.directory import is_directory_eligible
 
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
+
+
+# ---------------------------------------------------------------------------
+# v5.62.0 recall quality helpers — quality floor + dedup
+# ---------------------------------------------------------------------------
+
+
+def _apply_quality_floor(memories: list[dict], threshold: float) -> list[dict]:
+    """Drop results whose cross-encoder score is below *threshold*.
+
+    Only acts when ``_cross_encoder_score`` is present on a row.  Rows without
+    the key (fallback path, rows beyond CE_TOP_K, wiki-blend entries) always
+    pass through — missing score must never drop a result.
+
+    When threshold is 0.0, returns the list unchanged (fast path).
+
+    Args:
+        memories: Candidate result list (may be mutated in place by other steps;
+            this function does NOT mutate — returns a new list).
+        threshold: Minimum cross-encoder score.  0.0 disables the floor.
+
+    Returns:
+        Filtered list.  May be shorter than the input.
+    """
+    if threshold <= 0.0:
+        return memories
+    kept = []
+    for m in memories:
+        ce = m.get("_cross_encoder_score")
+        if ce is None:
+            # Missing CE score — always keep (fallback path / beyond top-k).
+            kept.append(m)
+        elif ce >= threshold:
+            kept.append(m)
+    return kept
+
+
+def _dedup_by_content(memories: list[dict]) -> list[dict]:
+    """Collapse repeated memories with identical content.
+
+    Co-occurrence rows ("X and Y frequently modified together") are generated
+    for every modification event, so the same content can accumulate dozens of
+    rows with different ``created_at`` values.  Keep the first occurrence
+    (highest score, since the list is already sorted descending before dedup).
+
+    Dedup key: exact content string.  Two memories with the same content but
+    different IDs are treated as duplicates; the first (highest-scored) survives.
+
+    Args:
+        memories: Input list, assumed sorted by score descending.
+
+    Returns:
+        Deduplicated list preserving insertion order of first occurrences.
+    """
+    seen_content: set[str] = set()
+    result = []
+    for m in memories:
+        content = m.get("content", "")
+        if content not in seen_content:
+            seen_content.add(content)
+            result.append(m)
+    return result
 
 
 @_tool()
@@ -177,7 +240,9 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
             # Fallback path: apply Python-side filter (retriever path uses SurrealQL filter)
             merged = [m for m in merged if m.get("branch") in _allowed_branches]
 
-        # v5.42.5: directory filter — scope results to caller directory + 'global'.
+        # v5.42.5 / v5.62.0: directory filter — scope results to caller directory.
+        # v5.62.0: replaces hand-rolled predicate with is_directory_eligible() from
+        # storage/directory.py — single source of truth for the eligible-set rule.
         # Applied as a Python-side post-filter (retriever pipeline threading is v5.44+).
         # When directory is None: legacy mode — no filter, all directories returned.
         if directory is not None:
@@ -186,12 +251,23 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
                 merged = [
                     m
                     for m in merged
-                    if m.get("directory_context") in (caller_dir, "global", "", "system", None)
+                    if is_directory_eligible(m.get("directory_context"), caller_dir)
                 ]
             else:
                 logger.warning(
                     "recall: directory supplied but empty after strip — skipping directory filter"
                 )
+
+        # v5.62.0: quality floor — drop results the cross-encoder scored below threshold.
+        # Targets co-occurrence / keyword-only noise that survives with CE≈0.
+        # Rows without _cross_encoder_score (fallback path, wiki-blend) always pass through.
+        _quality_floor = getattr(settings, "RECALL_QUALITY_FLOOR", 0.0)
+        merged = _apply_quality_floor(merged, _quality_floor)
+
+        # v5.62.0: dedup — collapse repeated identical co-occurrence rows.
+        # Same content can appear multiple times with different created_at values;
+        # keep the first (highest-scored) occurrence.
+        merged = _dedup_by_content(merged)
 
         # §25 C4: convex-combination boost for current-branch results.
         # boosted = score + (1 - score) * BRANCH_BOOST_WEIGHT — keeps scores in [0,1].
