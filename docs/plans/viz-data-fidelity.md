@@ -30,6 +30,8 @@ User feedback on the deployed v5.54.3 viz ("nicer now, but…"). v5.54.3 shipped
 
 11. **Node detail panel shows "0 connections" for entity nodes though the graph draws their edges (BUG, 2026-06-15).** `graph-detail.js` (~line 259) counts only memory edge types when computing a node's connection count, so entity nodes report 0 even when co_occurrence/relationship edges are visibly drawn. This caused real confusion debugging "why does node X show heat 1.0 and 0 connections" — the node was an entity, and the panel undercounted. Fix: count all incident edge types (memory + entity/relationship) for the panel's connection tally.
 
+12. **Bookmarked wiki viewer needs a Refresh (2026-06-15).** User request. In the Bookmarks tab, when viewing a bookmarked wiki page, add a Refresh control that re-fetches the page content AND its version history (`wiki_read` + `wiki_history` for the slug) so edits made elsewhere (e.g. via the v5.61 `wiki_*` edit primitives) appear without reloading the whole viz. The bookmarked wiki view is currently a static snapshot from load time — after a `wiki_replace_text`/`wiki_append_section` edit it's stale until a full reload. Where: the Bookmarks-tab wiki reader in `index.html` + the `/api/viz` wiki/bookmark endpoints. Same class as F2 (stale-heat): a rendered view diverges from the DB after a write — here a per-page refresh button is the fix.
+
 ## REFACTOR — viz data fidelity (single source of truth) — PRIORITY (2026-06-15)
 
 User directive: **"the viz must show actual reality, not something made up."** The viz currently derives/freezes several values that drift from canonical DB state. This is the headline refactor; items 1-11 above are polish on top of it. Mapped root causes (verified):
