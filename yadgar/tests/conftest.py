@@ -307,6 +307,14 @@ def _resync_get_settings_bindings():
     except Exception:
         return
 
+    # v5.58 fix: if canonical_gs is a plain monkeypatched function (no cache_clear),
+    # bail out entirely.  Propagating a plain fn into submodule __dict__ would leak
+    # the monkeypatch to the next test on the worker.  pytest's monkeypatch teardown
+    # restores yadgar.config.get_settings to the real lru_cache after this fixture
+    # yields; the next test's autouse setup resync then runs with a real canonical.
+    if not callable(getattr(canonical_gs, "cache_clear", None)):
+        return
+
     canonical_gs.cache_clear()
 
     for mod_name, mod in list(sys.modules.items()):

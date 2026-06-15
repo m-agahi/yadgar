@@ -19,9 +19,29 @@ Floor: The `if __name__ == "__main__": cli()` guard (lines 160-161) is
 
 from __future__ import annotations
 
+import os
 import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _restore_yadgar_env():
+    """cli() mutates os.environ directly (YADGAR_PORT/HOST/DB_PATH/TRANSPORT) — it
+    does NOT go through monkeypatch, so those writes leak across xdist worker tests
+    (e.g. --port 9876 leaked into yadgar.hooks.subagent_stop's _PORT). Snapshot +
+    restore the cli()-touched env vars around every test in this module."""
+    _keys = ("YADGAR_PORT", "YADGAR_HOST", "YADGAR_DB_PATH", "YADGAR_TRANSPORT")
+    _saved = {k: os.environ.get(k) for k in _keys}
+    yield
+    for k, v in _saved.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
 
 # ---------------------------------------------------------------------------
 # STARTUP_BANNER content

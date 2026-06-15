@@ -52,14 +52,22 @@ def _make_fixtures(tmp_path: Path, version: str) -> dict[str, Path]:
     )
 
     # flake.nix with old version (matches real file structure: version = "5.46.0";)
+    # Includes coreVersion mkOption block required by sync_version.py step 2.
     (tmp_path / "flake.nix").write_text(
         textwrap.dedent("""\
             {
               description = "test";
-              outputs = { self }: {
+              outputs = { self, nixpkgs, lib }: {
                 packages.x86_64-linux.default = {
                   pname = "yadgar";
                   version = "5.46.0";
+                };
+                options.programs.yadgar = {
+                  coreVersion = lib.mkOption {
+                    type = lib.types.str;
+                    default = "5.46.0";
+                    description = "Container image tag for the yadgar core service.";
+                  };
                 };
               };
             }
@@ -145,7 +153,7 @@ def test_sync_version_exits_0_when_no_changes(tmp_path):
     fixtures["server_json"].write_text(json.dumps(data, indent=2) + "\n")
 
     flake = fixtures["flake_nix"].read_text()
-    flake = flake.replace('version = "5.46.0"', f'version = "{version}"')
+    flake = flake.replace("5.46.0", version)
     fixtures["flake_nix"].write_text(flake)
 
     r = subprocess.run(

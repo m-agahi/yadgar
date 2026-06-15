@@ -63,12 +63,12 @@ class TestBackendVersionConstant:
         )
 
     def test_backend_version_value(self) -> None:
-        """yadgar.BACKEND_VERSION must be '5.6.0' (current backend track; bumped v5.56)."""
+        """yadgar.BACKEND_VERSION must be '5.7.1' (current backend track; bumped v5.57.2→.4)."""
         import yadgar
 
-        assert yadgar.BACKEND_VERSION == "5.6.0", (
-            f"yadgar.BACKEND_VERSION = {yadgar.BACKEND_VERSION!r}, expected '5.6.0'.\n"
-            "Fix: set BACKEND_VERSION = '5.6.0' in yadgar/__init__.py."
+        assert yadgar.BACKEND_VERSION == "5.7.1", (
+            f"yadgar.BACKEND_VERSION = {yadgar.BACKEND_VERSION!r}, expected '5.7.1'.\n"
+            "Fix: set BACKEND_VERSION = '5.7.1' in yadgar/__init__.py."
         )
 
 
