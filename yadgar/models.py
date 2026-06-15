@@ -22,6 +22,9 @@ class Entity(BaseModel):
     last_accessed: datetime = Field(default_factory=lambda: datetime.now(UTC))
     heat: float = 1.0
     archived: bool = False
+    # Watermark for the last heat-decay pass; decay spans now - max(last_accessed,
+    # last_decay_at) so repeated cycles don't compound over-decay. None = never decayed.
+    last_decay_at: datetime | None = None
     # v2 fields
     causal_weight: float = 0.0
     domain: str | None = None
@@ -52,6 +55,9 @@ class Memory(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_accessed: datetime = Field(default_factory=lambda: datetime.now(UTC))
     heat: float = 1.0
+    # Watermark for the last heat-decay pass; decay spans now - max(last_accessed,
+    # last_decay_at) so repeated cycles don't compound over-decay. None = never decayed.
+    last_decay_at: datetime | None = None
     is_stale: bool = False
     file_hash: str | None = None
     # v2 fields

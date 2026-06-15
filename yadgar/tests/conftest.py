@@ -224,6 +224,47 @@ def _wait_for_health(port: int, timeout: float = 30.0) -> None:
     raise RuntimeError(f"SurrealDB did not start on port {port}")
 
 
+# Cap on session respawns before we stop masking and fail loudly.  A handful of
+# OOM-kills under memory pressure is recoverable; a server that dies repeatedly
+# signals genuine infra instability that should surface, not be papered over.
+_MAX_SURREAL_RESPAWNS = 8
+
+
+def _ensure_surreal_alive(handle: dict) -> bool:
+    """Respawn the session SurrealDB subprocess if it died, on the SAME port.
+
+    Pure respawn+health primitive (no session-registry side effects — the caller
+    owns those).  Reusing the port keeps ``YADGAR_DB_URL`` valid so existing
+    httpx clients reconnect transparently once the server is back.  A SIGKILL'd
+    surrealkv store is likely locked/corrupt, so we spawn against a fresh data
+    dir rather than reusing the old one.
+
+    Returns True if a respawn occurred, False if the process was already alive.
+    Raises RuntimeError once ``_MAX_SURREAL_RESPAWNS`` is exceeded so chronic
+    death surfaces instead of becoming a silent ConnectError cascade.
+    """
+    import tempfile
+
+    from yadgar.tests._surreal_helpers import spawn_surreal
+
+    if handle["proc"].poll() is None:
+        return False  # alive
+
+    handle["respawns"] += 1
+    if handle["respawns"] > _MAX_SURREAL_RESPAWNS:
+        raise RuntimeError(
+            f"SurrealDB test server died and was respawned "
+            f"{handle['respawns'] - 1}× (cap {_MAX_SURREAL_RESPAWNS}) — infra "
+            "unstable; aborting to avoid masking real failures as a cascade."
+        )
+
+    new_dir = tempfile.mkdtemp(prefix="surreal_respawn_")
+    handle["proc"] = spawn_surreal(port=handle["port"], data_dir=new_dir)
+    handle["data_dir"] = new_dir
+    _wait_for_health(handle["port"])
+    return True
+
+
 @pytest.fixture(scope="session", autouse=True)
 def surreal_server(tmp_path_factory):
     """Start a real SurrealDB HTTP server for the test session.
@@ -249,13 +290,39 @@ def surreal_server(tmp_path_factory):
     pid_file.write_text(str(proc.pid))
 
     os.environ["YADGAR_DB_URL"] = f"http://127.0.0.1:{port}"
+    # Mutable handle so the function-scoped _surreal_liveness gate can respawn a
+    # dead server in place (same port) and update the proc reference here.
+    handle = {"proc": proc, "port": port, "data_dir": str(db), "respawns": 0}
     try:
         _wait_for_health(port)
-        yield
+        yield handle
     finally:
-        teardown_surreal_proc(proc, wait_timeout=5)
+        teardown_surreal_proc(handle["proc"], wait_timeout=5)
         pid_file.unlink(missing_ok=True)
         os.environ.pop("YADGAR_DB_URL", None)
+
+
+@pytest.fixture(autouse=True)
+def _surreal_liveness(surreal_server):
+    """Respawn a dead SurrealDB server before each test (server-mode only).
+
+    Converts the failure mode where one xdist worker's surreal dies mid-run and
+    every subsequent test ERRORs with ConnectError (the session-wide cascade)
+    into transparent recovery.  Partial by design: tests later in a module whose
+    surreal died mid-module still fail, because their module-scoped ``_engines``
+    fixture populated the ``server._storage`` singleton against the now-wiped DB
+    and won't re-run ``_init_schema``.  It bounds the blast radius to the current
+    module instead of the whole session.
+    """
+    handle = surreal_server
+    if handle is None or not os.environ.get("YADGAR_DB_URL"):
+        yield
+        return
+    if _ensure_surreal_alive(handle):
+        # Respawn yields a fresh, empty DB — drop the stale namespace registry so
+        # the wipe fixture and _init_schema rebuild namespaces on next engine init.
+        _USED_SURREAL_NAMESPACES.clear()
+    yield
 
 
 def _replace_module_binding(mod, canonical_gs) -> None:

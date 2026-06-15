@@ -29,7 +29,15 @@ class _HeatDecayMixin:
         for mem in self._storage.get_all_memories_for_decay():
             if mem.get("is_protected"):
                 continue
+            # Decay over time since the LAST decay pass (watermark), not since
+            # last access.  Without last_decay_at, every cycle re-applied the full
+            # now-last_accessed span onto already-decayed heat → quadratic
+            # over-decay for unaccessed memories.  Fall back to last_accessed for
+            # rows written before last_decay_at existed.
             last = datetime.fromisoformat(mem["last_accessed"])
+            last_decay_raw = mem.get("last_decay_at")
+            if last_decay_raw:
+                last = max(last, datetime.fromisoformat(last_decay_raw))
             hours = (now - last).total_seconds() / 3600.0
             # Base decay — uses importance/valence/confidence modifiers
             new_heat = self._thermo.compute_decay(mem, hours)
@@ -52,8 +60,8 @@ class _HeatDecayMixin:
                 mem_batch.append(
                     (
                         "UPDATE type::record('memory', $id) SET "
-                        "heat = $heat, access_count_since_decay = 0",
-                        {"id": mem["id"], "heat": new_heat},
+                        "heat = $heat, last_decay_at = $now, access_count_since_decay = 0",
+                        {"id": mem["id"], "heat": new_heat, "now": now.isoformat()},
                     )
                 )
                 if abs(new_heat - mem["heat"]) > 1e-9:
@@ -67,20 +75,25 @@ class _HeatDecayMixin:
 
         ent_batch: list[tuple[str, dict | None]] = []
         for ent in self._storage.get_all_entities_for_decay():
+            # Same watermark fix as memories: decay since the last decay pass, not
+            # since last access, so repeated cycles don't compound over-decay.
             last = datetime.fromisoformat(ent["last_accessed"])
+            last_decay_raw = ent.get("last_decay_at")
+            if last_decay_raw:
+                last = max(last, datetime.fromisoformat(last_decay_raw))
             hours = (now - last).total_seconds() / 3600.0
             new_heat = ent["heat"] * (decay**hours)
             goes_cold = new_heat < cold
             if goes_cold:
                 new_heat = 0.0
             if abs(new_heat - ent["heat"]) > 1e-9 or goes_cold:
-                set_clause = "heat = $heat"
+                set_clause = "heat = $heat, last_decay_at = $now"
                 if goes_cold:
                     set_clause += ", archived = true"
                 ent_batch.append(
                     (
                         f"UPDATE type::record('entity', $id) SET {set_clause}",
-                        {"id": ent["id"], "heat": new_heat},
+                        {"id": ent["id"], "heat": new_heat, "now": now.isoformat()},
                     )
                 )
         return ent_batch
