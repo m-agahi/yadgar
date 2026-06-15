@@ -889,7 +889,7 @@ async def hook_file_changed(request: Request) -> JSONResponse:
 
     Dispatch:
       - team_inbox/**/*.jsonl → read new JSONL lines, write action_log per message
-      - docs/PLAN_*.md        → read file content, memorize with _plan tag
+      - docs/plans/<slug>.md  → read file content, memorize with _plan tag (excl. archive/)
       - other paths           → 200 OK no-op (forward-compat)
     """
     import re as _re
@@ -931,7 +931,7 @@ async def hook_file_changed(request: Request) -> JSONResponse:
         _TEAM_INBOX_RE = _re.compile(
             r"[/\\]\.claude[/\\]team_inbox[/\\]([^/\\]+)[/\\]([^/\\]+)[/\\]([^/\\]+)\.jsonl$"
         )
-        _PLAN_FILE_RE = _re.compile(r"[/\\]docs[/\\](PLAN_[^/\\]*\.md)$")
+        _PLAN_FILE_RE = _re.compile(r"[/\\]docs[/\\]plans[/\\]([^/\\]+\.md)$")
 
         inbox_match = _TEAM_INBOX_RE.search(file_path)
         plan_match = _PLAN_FILE_RE.search(file_path)
@@ -1047,7 +1047,7 @@ async def _handle_team_inbox(file_path: str, match, storage) -> JSONResponse:
 
 @trace_span("hook.plan_file")
 async def _handle_plan_file(file_path: str, match, storage) -> JSONResponse:
-    """Read PLAN_*.md content and memorize with _plan tag (hash-dedup)."""
+    """Read plan-file content (docs/plans/<slug>.md) and memorize with _plan tag (hash-dedup)."""
     import asyncio as _asyncio
     import hashlib as _hashlib
     from pathlib import Path as _Path

@@ -8,7 +8,7 @@ must pass after implementation of:
   - log settings in config.py
   - metrics in metrics.py / embed_service_metrics.py
 
-Plan reference: docs/PLAN_v5_5_1_log_management.md §10
+Plan reference: docs/plans/archive/PLAN_v5_5_1_log_management.md §10
 """
 
 from __future__ import annotations

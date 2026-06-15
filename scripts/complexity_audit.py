@@ -576,7 +576,7 @@ def generate_markdown(results: dict, root: str) -> str:
         )
         lines.append("")
         lines.append(
-            "Per v5.4 exit criteria (docs/PLAN_V5_4_to_v7.md): if >20% of functions violate soft caps,"
+            "Per v5.4 exit criteria (docs/plans/archive/PLAN_V5_4_to_v7.md): if >20% of functions violate soft caps,"
         )
         lines.append(
             "the I13 cap numbers need review per I10 BEFORE shipping pre-commit enforcement"

@@ -21,8 +21,8 @@ _AUTH_TOKEN = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
 _TEAM_INBOX_RE = re.compile(
     r"[/\\]\.claude[/\\]team_inbox[/\\][^/\\]+[/\\][^/\\]+[/\\][^/\\]+\.jsonl$"
 )
-# PLAN file pattern: **/docs/PLAN_*.md (covers PLAN_V*.md via wildcard)
-_PLAN_FILE_RE = re.compile(r"[/\\]docs[/\\]PLAN_[^/\\]*\.md$")
+# PLAN file pattern: **/docs/plans/<slug>.md (open plans; excludes docs/plans/archive/)
+_PLAN_FILE_RE = re.compile(r"[/\\]docs[/\\]plans[/\\][^/\\]+\.md$")
 
 
 def is_team_inbox_path(path: str) -> bool:
@@ -31,7 +31,7 @@ def is_team_inbox_path(path: str) -> bool:
 
 
 def is_plan_file_path(path: str) -> bool:
-    """Return True if path is a PLAN_*.md file under a docs/ directory."""
+    """Return True if path is an open plan: docs/plans/<slug>.md (not archive/)."""
     return bool(_PLAN_FILE_RE.search(path))
 
 

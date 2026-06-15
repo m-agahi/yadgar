@@ -751,7 +751,7 @@ class Settings(BaseSettings):
     UPDATE_SNAPSHOT_RETENTION: int = 3
     # v5.49.0 Phase 9 — Orchestrator knobs (I25 three-way registered)
     # Gate for run_install(). Default OFF (opt-in safety: avoid accidental self-upgrades).
-    # Set to true in ~/.yadgar/config.yaml after reading docs/PLAN_V5_49_0.md § Rollout.
+    # Set to true in ~/.yadgar/config.yaml after reading docs/plans/archive/PLAN_V5_49_0.md § Rollout.
     UPDATE_INSTALL_ENABLED: bool = False
     # Maximum age in seconds for an upgrade lock before it's treated as stale.
     # Default 3600 = 1 hour.  Allows recovery if the upgrader process was killed mid-run.
