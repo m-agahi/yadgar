@@ -363,7 +363,7 @@ class _CLSMixin:
         for tr in all_transitions:
             from_id = tr.get("from_memory_id")
             to_id = tr.get("to_memory_id")
-            count = float(tr.get("count", 1))
+            count = float(tr.get("count") or 1)
             if from_id in cofire_count:
                 cofire_count[from_id] += count
             if to_id in cofire_count:

@@ -261,9 +261,13 @@ def test_startup_ok_with_require_auth_and_token(monkeypatch):
     _cfg.get_settings.cache_clear()
     # Clear the lru_cache on ALL references to get_settings so lifecycle.py
     # picks up the fresh env after the server split (v5.1 fix).
+    # Guard: lifecycle.get_settings may be a plain monkeypatched fn (no cache_clear)
+    # if a prior test patched it — calling cache_clear() directly raises AttributeError
+    # (v5.58 fix, run-846).
     from yadgar.server import lifecycle as _lifecycle
 
-    _lifecycle.get_settings.cache_clear()
+    if callable(getattr(_lifecycle.get_settings, "cache_clear", None)):
+        _lifecycle.get_settings.cache_clear()
 
     try:
         importlib.reload(_srv)

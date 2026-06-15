@@ -7,6 +7,13 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.58.0]
+
+### Fixed (test-suite paydown — run-829)
+- Updated 6 CI guardrail modules (test_v5_46_0/1/3/8*) for the v5.57 workflow rename (ci.yaml→ci-pr.yaml, release.yaml→ci-release.yaml, validate.yml→validate.yaml; tag-trigger removed, release gated on changes.release output) — 35 stale-filename assertions.
+- conftest `_resync_get_settings_bindings`: guard `cache_clear()` with a callable check — fixes 13 teardown AttributeErrors for tests that monkeypatch get_settings.
+
+
 ## [5.57.4] — 2026-06-14
 
 ### Fixed (release hygiene)

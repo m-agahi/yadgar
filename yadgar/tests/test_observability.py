@@ -113,7 +113,18 @@ def test_decorator_noop_without_prometheus_client():
         finally:
             builtins.__import__ = real_import
     finally:
-        # Restore saved modules
+        # Remove any modules planted under the fake import hook that were NOT
+        # present before this test ran. Without this, if
+        # 'yadgar.observability.timing' was absent from sys.modules at test
+        # start (common in xdist workers before any timing test runs), the
+        # broken copy (_PROMETHEUS_AVAILABLE=False) stays in sys.modules after
+        # sys.modules.update(saved) and poisons every subsequent test on the
+        # same worker that imports _make_stage_timer (flaky empty-scrape).
+        for key in list(sys.modules):
+            if (
+                "prometheus_client" in key or key == "yadgar.observability.timing"
+            ) and key not in saved:
+                del sys.modules[key]
         sys.modules.update(saved)
 
 

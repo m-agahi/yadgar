@@ -86,7 +86,7 @@ class CognitiveMap:
         for t in transitions:
             i = self._memory_index[t["from_memory_id"]]
             j = self._memory_index[t["to_memory_id"]]
-            T[i, j] = t["count"]
+            T[i, j] = t.get("count") or 0
 
         # Row-normalize
         row_sums = T.sum(axis=1, keepdims=True)
@@ -308,7 +308,7 @@ class CognitiveMap:
     def has_sufficient_data(self) -> bool:
         """Check if enough transitions exist for meaningful SR computation."""
         transitions = self._storage.get_all_transitions()
-        total_count = sum(t["count"] for t in transitions) if transitions else 0
+        total_count = sum(t.get("count") or 0 for t in transitions) if transitions else 0
         return total_count >= _MIN_TRANSITIONS
 
     @property

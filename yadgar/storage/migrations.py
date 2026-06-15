@@ -1031,12 +1031,17 @@ class _MigrationsMixin:
                     ON memory FIELDS embedding
                     MTREE DIMENSION {self._embedding_dim} DIST COSINE TYPE F32;
             """)
-        # memory: SEARCH index on content (FTS)
-        self._q("""
-            DEFINE INDEX IF NOT EXISTS memory_content_idx
-                ON memory FIELDS content
-                FULLTEXT ANALYZER mem_analyzer BM25;
-        """)
+        # memory: SEARCH index on content (FTS) — server/daemon only.
+        # Embedded SurrealDB (Python v2) has no FULLTEXT/BM25 support; issuing it
+        # throws a parse error in _init_schema, which silently killed the embedded
+        # nightly consolidation cycle (no heat decay/prune). Guard like the
+        # HNSW/MTREE vector-index split above.
+        if self._db_url:
+            self._q("""
+                DEFINE INDEX IF NOT EXISTS memory_content_idx
+                    ON memory FIELDS content
+                    FULLTEXT ANALYZER mem_analyzer BM25;
+            """)
         # memory: vector index on implicit embedding
         if self._db_url:
             self._q(f"""
@@ -1070,30 +1075,33 @@ class _MigrationsMixin:
                 FIELDS entity_name, attribute_type, attribute_key, directory_context;
         """)
 
-        # FTS on user_profile — one index per field (SurrealDB v3 FULLTEXT is single-field only)
-        for _field, _idx in [
-            ("entity_name", "profile_entity_name_idx"),
-            ("attribute_type", "profile_attribute_type_idx"),
-            ("attribute_key", "profile_attribute_key_idx"),
-            ("attribute_value", "profile_attribute_value_idx"),
-        ]:
-            self._q(f"""
-                DEFINE INDEX IF NOT EXISTS {_idx}
-                    ON user_profile FIELDS {_field}
-                    FULLTEXT ANALYZER profile_analyzer BM25;
-            """)
+        # FTS on user_profile — server/daemon only (embedded has no FULLTEXT).
+        # One index per field (SurrealDB v3 FULLTEXT is single-field only).
+        if self._db_url:
+            for _field, _idx in [
+                ("entity_name", "profile_entity_name_idx"),
+                ("attribute_type", "profile_attribute_type_idx"),
+                ("attribute_key", "profile_attribute_key_idx"),
+                ("attribute_value", "profile_attribute_value_idx"),
+            ]:
+                self._q(f"""
+                    DEFINE INDEX IF NOT EXISTS {_idx}
+                        ON user_profile FIELDS {_field}
+                        FULLTEXT ANALYZER profile_analyzer BM25;
+                """)
 
-        # FTS on derived_belief — one index per field
-        for _field, _idx in [
-            ("subject", "belief_subject_idx"),
-            ("belief_type", "belief_type_idx"),
-            ("content", "belief_content_idx"),
-        ]:
-            self._q(f"""
-                DEFINE INDEX IF NOT EXISTS {_idx}
-                    ON derived_belief FIELDS {_field}
-                    FULLTEXT ANALYZER belief_analyzer BM25;
-            """)
+        # FTS on derived_belief — server/daemon only (embedded has no FULLTEXT).
+        if self._db_url:
+            for _field, _idx in [
+                ("subject", "belief_subject_idx"),
+                ("belief_type", "belief_type_idx"),
+                ("content", "belief_content_idx"),
+            ]:
+                self._q(f"""
+                    DEFINE INDEX IF NOT EXISTS {_idx}
+                        ON derived_belief FIELDS {_field}
+                        FULLTEXT ANALYZER belief_analyzer BM25;
+                """)
 
         # engram_slot: index on slot_index
         self._q("""
@@ -1109,12 +1117,14 @@ class _MigrationsMixin:
 
     def _init_wiki_indexes(self) -> None:
         """Define wiki-related indexes (extracted for fn_loc compliance)."""
-        # wiki_page: FTS on content (BM25 keyword search)
-        self._q("""
-            DEFINE INDEX IF NOT EXISTS wiki_content_idx
-                ON wiki_page FIELDS content
-                FULLTEXT ANALYZER mem_analyzer BM25;
-        """)
+        # wiki_page: FTS on content (BM25 keyword search) — server/daemon only.
+        # Embedded SurrealDB (Python v2) has no FULLTEXT support (crashes _init_schema).
+        if self._db_url:
+            self._q("""
+                DEFINE INDEX IF NOT EXISTS wiki_content_idx
+                    ON wiki_page FIELDS content
+                    FULLTEXT ANALYZER mem_analyzer BM25;
+            """)
         # wiki_page: vector index on embedding (semantic search)
         if self._db_url:
             self._q(f"""

@@ -1,15 +1,29 @@
 """
 TDD scaffolding — v5.46.8 workflow trigger gate assertions.
 
-Verifies:
-1. ci.yaml  `on.push.tags` NOT present (only master branch + PR + workflow_dispatch fire)
-2. ci.yaml  `build` job if-gate == `workflow_dispatch` only
-3. release.yaml ALL 4 jobs (build-wheel, build-sbom, attach-to-release, publish-pypi)
-   have `if: github.event_name == 'workflow_dispatch'` (exact value)
-4. Header comment block present in both workflows (text-grep — yaml parser strips comments)
+Updated in v5.58 paydown-A for v5.57 CI refactor (ci.yaml→ci-pr.yaml,
+release.yaml→ci-release.yaml, validate.yml→validate.yaml):
+
+New design:
+1. ci-pr.yaml   on: pull_request only (no push, no workflow_dispatch)
+2. ci-pr.yaml   NO 'build' job (build/publish moved to ci-release.yaml)
+3. ci-release.yaml  on: push:[master] + workflow_dispatch (NO on.push.tags)
+4. ci-release.yaml  jobs gated by needs.changes.outputs.release == 'true'
+   (version-bump detection replaces old workflow_dispatch gate)
+5. validate.yaml  on: pull_request (renamed from validate.yml)
+
+Dropped assertions (noted inline with reason):
+- ci.yaml on.push.branches test → ci-pr.yaml has NO on.push (PR-only now)
+- ci.yaml on.workflow_dispatch test → ci-pr.yaml has NO workflow_dispatch
+- ci.yaml build job gate test → build job removed from ci-pr.yaml entirely
+- ci.yaml header sentinel → neither file has GATED header (dev gate removed)
+- release.yaml on.push.tags test → ci-release.yaml has NO tag trigger
+- release.yaml jobs gated to workflow_dispatch → replaced by changes.release output
+- release.yaml header sentinel → header sentinel removed in v5.57 redesign
+- attach-to-release job → renamed to tag-and-release
 
 Per PD-45 (2026-06-06): internal dev workflow vs production CI separation.
-Anchors 490140 (2026-05-18) + 491179 (2026-05-19) codified.
+Superseded by v5.57 design: always-on per-PR CI + version-bump-gated release.
 """
 
 from pathlib import Path
@@ -17,18 +31,19 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CI_YAML = REPO_ROOT / ".forgejo" / "workflows" / "ci.yaml"
-RELEASE_YAML = REPO_ROOT / ".forgejo" / "workflows" / "release.yaml"
+CI_YAML = REPO_ROOT / ".forgejo" / "workflows" / "ci-pr.yaml"
+RELEASE_YAML = REPO_ROOT / ".forgejo" / "workflows" / "ci-release.yaml"
+VALIDATE_YAML = REPO_ROOT / ".forgejo" / "workflows" / "validate.yaml"
 
-EXPECTED_JOB_GATE = "github.event_name == 'workflow_dispatch'"
-EXPECTED_BUILD_GATE = (
-    "github.event_name == 'workflow_dispatch' || "
-    "(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))"
-)
-HEADER_SENTINEL = "WORKFLOW STATE: GATED FOR INTERNAL DEV"
-
-# Number of lines from top to search for header (before 'name:')
-HEADER_SEARCH_LINES = 20
+# Jobs in ci-release.yaml that must be gated by the changes.release output
+RELEASE_GATED_JOBS = [
+    "build-wheel",
+    "build-sbom",
+    "publish-pypi",
+    "tag-and-release",
+    "build-images",
+]
+EXPECTED_RELEASE_GATE = "needs.changes.outputs.release == 'true'"
 
 
 def _load_yaml(path: Path) -> dict:
@@ -38,131 +53,167 @@ def _load_yaml(path: Path) -> dict:
 
 def _on_block(data: dict) -> dict:
     """Return the triggers block (keyed as True in pyyaml, 'on' in BaseLoader)."""
-    # pyyaml parses 'on:' as Python True
     return data.get(True, data.get("on", {}))
 
 
-def _header_present(path: Path) -> bool:
-    lines = path.read_text().splitlines()
-    return any(HEADER_SENTINEL in line for line in lines[:HEADER_SEARCH_LINES])
+# ── ci-pr.yaml assertions ─────────────────────────────────────────────────────
 
 
-# ── ci.yaml assertions ────────────────────────────────────────────────────────
-
-
-class TestCiYamlTriggers:
-    def test_ci_yaml_exists(self):
+class TestCiPrYamlTriggers:
+    def test_ci_pr_yaml_exists(self):
         assert CI_YAML.exists(), f"Missing: {CI_YAML}"
 
-    def test_on_push_has_no_tags(self):
-        """tags: key must be absent from on.push — no tag-push triggers in ci.yaml."""
-        data = _load_yaml(CI_YAML)
-        on_block = _on_block(data)
-        push_block = on_block.get("push", {})
-        assert "tags" not in push_block, (
-            f"ci.yaml on.push still has 'tags' key: {push_block}. "
-            "Remove it — tag pushes must not fire any CI jobs."
-        )
-
-    def test_on_push_retains_branches_master(self):
-        """on.push.branches: [master] must still be present."""
-        data = _load_yaml(CI_YAML)
-        on_block = _on_block(data)
-        push_branches = on_block.get("push", {}).get("branches", [])
-        assert "master" in push_branches, f"ci.yaml on.push.branches lost 'master': {push_branches}"
-
     def test_on_pull_request_present(self):
-        """pull_request trigger must still exist."""
+        """pull_request trigger must be present in ci-pr.yaml."""
         data = _load_yaml(CI_YAML)
         on_block = _on_block(data)
-        assert "pull_request" in on_block, "ci.yaml missing pull_request trigger"
+        assert "pull_request" in on_block, "ci-pr.yaml missing pull_request trigger"
 
-    def test_on_workflow_dispatch_present(self):
-        """workflow_dispatch trigger must be present."""
+    def test_on_push_tags_absent(self):
+        """ci-pr.yaml must NOT have on.push.tags — tag pushes do not fire PR checks.
+
+        Dropped from old ci.yaml: on.push.branches assertion.
+        Reason: ci-pr.yaml is pull_request-only; it has no on.push block at all.
+        """
         data = _load_yaml(CI_YAML)
         on_block = _on_block(data)
-        assert "workflow_dispatch" in on_block, "ci.yaml missing workflow_dispatch trigger"
+        push_block = on_block.get("push", {}) or {}
+        assert "tags" not in push_block, (
+            f"ci-pr.yaml on.push still has 'tags' key: {push_block}. "
+            "Remove it — tag pushes must not fire PR checks."
+        )
 
-    def test_build_job_gated_to_workflow_dispatch_only(self):
-        """build job if: must equal workflow_dispatch OR version-tag push (v5.56+ gate)."""
+    def test_no_build_job_in_ci_pr(self):
+        """ci-pr.yaml must NOT have a 'build' job (build moved to ci-release.yaml).
+
+        Dropped: build job if-gate assertion.
+        Reason: build job was removed from ci-pr.yaml in v5.57 refactor.
+        """
         data = _load_yaml(CI_YAML)
-        build_if = data["jobs"]["build"].get("if")
-        assert build_if is not None, "ci.yaml build job has no 'if:' gate"
-        assert build_if.strip() == EXPECTED_BUILD_GATE, (
-            f"ci.yaml build job if-gate mismatch.\n"
-            f"  Expected: {EXPECTED_BUILD_GATE!r}\n"
-            f"  Got:      {build_if.strip()!r}\n"
-            "Gate must be workflow_dispatch OR version-tag push (v5.56+)."
-        )
-        # build must also depend on both changes and test jobs
-        needs = data["jobs"]["build"].get("needs", [])
-        assert "changes" in needs, f"ci.yaml build job must need 'changes', got: {needs}"
-        assert "test" in needs, f"ci.yaml build job must need 'test', got: {needs}"
-
-    def test_ci_yaml_header_comment_present(self):
-        """Header sentinel must appear in first 20 lines of ci.yaml."""
-        assert _header_present(CI_YAML), (
-            f"ci.yaml missing header sentinel {HEADER_SENTINEL!r} in first "
-            f"{HEADER_SEARCH_LINES} lines. Add the gate-state comment block."
+        jobs = data.get("jobs", {})
+        assert "build" not in jobs, (
+            f"ci-pr.yaml still has 'build' job — it must be removed (lives in ci-release.yaml now). "
+            f"Present jobs: {list(jobs)}"
         )
 
-    def test_ci_yaml_parses_valid(self):
-        """ci.yaml must be valid YAML after changes."""
+    def test_test_job_present_in_ci_pr(self):
+        """ci-pr.yaml must have the 'test' job (pytest suite)."""
+        data = _load_yaml(CI_YAML)
+        jobs = data.get("jobs", {})
+        assert "test" in jobs, f"ci-pr.yaml must have 'test' job; present: {list(jobs)}"
+
+    def test_ci_pr_yaml_parses_valid(self):
+        """ci-pr.yaml must be valid YAML."""
         data = _load_yaml(CI_YAML)
         assert isinstance(data, dict)
         assert "jobs" in data
 
 
-# ── release.yaml assertions ───────────────────────────────────────────────────
+# ── ci-release.yaml assertions ────────────────────────────────────────────────
 
 
-class TestReleaseYamlTriggers:
-    GATED_JOBS = ["build-wheel", "build-sbom", "attach-to-release", "publish-pypi"]
-
-    def test_release_yaml_exists(self):
+class TestCiReleaseYamlTriggers:
+    def test_ci_release_yaml_exists(self):
         assert RELEASE_YAML.exists(), f"Missing: {RELEASE_YAML}"
 
-    def test_release_on_push_tags_still_present(self):
-        """release.yaml keeps on.push.tags — production handoff trigger stays."""
+    def test_on_push_master_present(self):
+        """ci-release.yaml must trigger on push to master.
+
+        Dropped: on.push.tags assertion.
+        Reason: v5.57 removed the tag-push trigger entirely; release is now
+        driven by version-bump detection in the 'changes' job.
+        """
+        data = _load_yaml(RELEASE_YAML)
+        on_block = _on_block(data)
+        push_branches = on_block.get("push", {}).get("branches", [])
+        assert "master" in push_branches, (
+            f"ci-release.yaml on.push.branches must include 'master'; got: {push_branches}"
+        )
+
+    def test_on_push_no_tags(self):
+        """ci-release.yaml must NOT have on.push.tags (tag trigger removed in v5.57)."""
         data = _load_yaml(RELEASE_YAML)
         on_block = _on_block(data)
         push_tags = on_block.get("push", {}).get("tags", [])
-        assert push_tags, (
-            "release.yaml on.push.tags removed — keep it. "
-            "Jobs are gated individually; trigger subscription stays."
+        assert not push_tags, (
+            f"ci-release.yaml on.push.tags must be absent (tag trigger removed in v5.57); "
+            f"got: {push_tags}"
         )
 
-    def test_release_on_workflow_dispatch_present(self):
-        """workflow_dispatch trigger must be present in release.yaml."""
+    def test_on_workflow_dispatch_present(self):
+        """workflow_dispatch trigger must be present in ci-release.yaml (manual fallback)."""
         data = _load_yaml(RELEASE_YAML)
         on_block = _on_block(data)
-        assert "workflow_dispatch" in on_block, "release.yaml missing workflow_dispatch trigger"
+        assert "workflow_dispatch" in on_block, "ci-release.yaml missing workflow_dispatch trigger"
 
-    def test_all_release_jobs_gated_to_workflow_dispatch(self):
-        """All 4 release jobs must have if: github.event_name == 'workflow_dispatch'."""
+    def test_changes_job_present(self):
+        """ci-release.yaml must have a 'changes' job (version-bump detection)."""
+        data = _load_yaml(RELEASE_YAML)
+        jobs = data.get("jobs", {})
+        assert "changes" in jobs, (
+            f"ci-release.yaml must have 'changes' job (version-bump detection); "
+            f"present: {list(jobs)}"
+        )
+
+    def test_release_gated_jobs_present(self):
+        """All key release jobs must exist in ci-release.yaml."""
+        data = _load_yaml(RELEASE_YAML)
+        jobs = data.get("jobs", {})
+        missing = [j for j in RELEASE_GATED_JOBS if j not in jobs]
+        assert not missing, (
+            f"ci-release.yaml missing expected jobs: {missing}; present: {list(jobs)}"
+        )
+
+    def test_release_gated_jobs_use_changes_output(self):
+        """Release jobs must be gated by needs.changes.outputs.release == 'true'.
+
+        Dropped: jobs gated to workflow_dispatch exactly.
+        Reason: v5.57 replaced per-job workflow_dispatch gates with the 'changes'
+        job output so all release jobs share the same version-bump-detection gate.
+
+        Dropped: attach-to-release job check.
+        Reason: renamed to tag-and-release in v5.57.
+        """
         data = _load_yaml(RELEASE_YAML)
         jobs = data["jobs"]
         failures = []
-        for job_name in self.GATED_JOBS:
-            assert job_name in jobs, f"release.yaml missing expected job: {job_name}"
-            job_if = jobs[job_name].get("if")
-            if job_if is None:
-                failures.append(f"  {job_name}: no 'if:' gate present")
-            elif job_if.strip() != EXPECTED_JOB_GATE:
+        for job_name in RELEASE_GATED_JOBS:
+            if job_name not in jobs:
+                failures.append(f"  {job_name}: job not found")
+                continue
+            job_if = str(jobs[job_name].get("if", ""))
+            if "release" not in job_if:
                 failures.append(
-                    f"  {job_name}: if={job_if.strip()!r} (expected {EXPECTED_JOB_GATE!r})"
+                    f"  {job_name}: if={job_if.strip()!r} — must reference 'release' output"
                 )
-        assert not failures, "release.yaml job gate mismatches:\n" + "\n".join(failures)
-
-    def test_release_yaml_header_comment_present(self):
-        """Header sentinel must appear in first 20 lines of release.yaml."""
-        assert _header_present(RELEASE_YAML), (
-            f"release.yaml missing header sentinel {HEADER_SENTINEL!r} in first "
-            f"{HEADER_SEARCH_LINES} lines. Add the gate-state comment block."
+        assert not failures, (
+            "ci-release.yaml job gate mismatches (must reference changes.outputs.release):\n"
+            + "\n".join(failures)
         )
 
-    def test_release_yaml_parses_valid(self):
-        """release.yaml must be valid YAML after changes."""
+    def test_ci_release_yaml_parses_valid(self):
+        """ci-release.yaml must be valid YAML."""
         data = _load_yaml(RELEASE_YAML)
+        assert isinstance(data, dict)
+        assert "jobs" in data
+
+
+# ── validate.yaml assertions ──────────────────────────────────────────────────
+
+
+class TestValidateYamlTriggers:
+    def test_validate_yaml_exists(self):
+        """validate.yaml must exist (renamed from validate.yml in v5.57)."""
+        assert VALIDATE_YAML.exists(), f"Missing: {VALIDATE_YAML}"
+
+    def test_validate_on_pull_request_present(self):
+        """validate.yaml must trigger on pull_request."""
+        data = _load_yaml(VALIDATE_YAML)
+        on_block = _on_block(data)
+        assert "pull_request" in on_block, "validate.yaml missing pull_request trigger"
+
+    def test_validate_yaml_parses_valid(self):
+        """validate.yaml must be valid YAML."""
+        data = _load_yaml(VALIDATE_YAML)
         assert isinstance(data, dict)
         assert "jobs" in data
