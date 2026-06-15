@@ -183,6 +183,20 @@ from yadgar.server.tools import (  # noqa: F401
     agent_prompt_save,
     wiki_coverage,
     agent_dispatch_prelude,
+    wiki_history,
+    wiki_read_version,
+    wiki_diff,
+    wiki_restore,
+    wiki_append_section,
+    wiki_set_metadata,
+    wiki_replace_text,
+    wiki_delete_text,
+    wiki_insert_after,
+    wiki_insert_before,
+    wiki_replace_at,
+    wiki_delete_at,
+    wiki_insert_at,
+    wiki_replace_markdown_block,
 )
 
 # ── 7. Project helpers (tests import _detect_branch etc. indirectly) ──

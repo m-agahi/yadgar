@@ -36,6 +36,266 @@ def _inc_embed_failure(reason: str) -> None:
         pass
 
 
+# ── Positional helpers (Layer 2) ─────────────────────────────────────────────
+
+_ANCHOR_HINT_MIN_LEN = 20
+
+
+def _line_col_to_offset(content: str, line: int, col: int) -> int | None:
+    """Convert 1-indexed (line, col) to a char offset into content.
+
+    Uses str.split('\\n') — NOT splitlines() — so \\r\\n content is handled
+    consistently and the reverse of '\\n'.join(lines) holds.
+
+    Returns None if line or col is out of range.
+    """
+    lines = content.split("\n")
+    if line < 1 or line > len(lines):
+        return None
+    row = lines[line - 1]
+    if col < 1 or col > len(row) + 1:
+        return None
+    offset = sum(len(lines[i]) + 1 for i in range(line - 1)) + (col - 1)
+    return offset
+
+
+def _check_anchor_hint_len(anchor_hint: str) -> dict | None:
+    """Return an error dict if anchor_hint is shorter than the minimum, else None."""
+    if len(anchor_hint) < _ANCHOR_HINT_MIN_LEN:
+        return {
+            "ok": False,
+            "reason": "anchor_hint too short",
+            "detail": (
+                f"anchor_hint must be ≥{_ANCHOR_HINT_MIN_LEN} chars; got {len(anchor_hint)}"
+            ),
+        }
+    return None
+
+
+# ── Markdown block parser (Layer 3) ──────────────────────────────────────────
+
+_VALID_BLOCK_TYPES = frozenset(
+    {"paragraph", "heading", "code_fence", "blockquote", "list", "table"}
+)
+
+
+_LIST_RE = re.compile(r"^[-*+] |^\d+\. ")
+_HEADING_RE_BLOCK = re.compile(r"^#{1,6} ")
+_BLOCK_START_RE = re.compile(r"^```|^~~~|^#{1,6} |^> |^\||^[-*+] |^\d+\. ")
+
+
+def _is_block_start(line: str) -> bool:
+    """Return True if line starts a non-paragraph markdown block."""
+    return bool(_BLOCK_START_RE.match(line))
+
+
+def _consume_code_fence(lines: list[str], i: int) -> tuple[int, dict]:
+    """Consume a fenced code block starting at i. Returns (new_i, block)."""
+    fence_marker = lines[i][:3]
+    start = i
+    i += 1
+    n = len(lines)
+    while i < n and not lines[i].startswith(fence_marker):
+        i += 1
+    end = i + 1  # include closing fence line
+    return end, {"type": "code_fence", "start_line": start, "end_line": end}
+
+
+def _consume_blockquote(lines: list[str], i: int) -> tuple[int, dict]:
+    """Consume contiguous blockquote lines starting at i. Returns (new_i, block)."""
+    start = i
+    i += 1
+    n = len(lines)
+    while i < n and (lines[i].startswith("> ") or lines[i] == ">"):
+        i += 1
+    return i, {"type": "blockquote", "start_line": start, "end_line": i}
+
+
+def _consume_table(lines: list[str], i: int) -> tuple[int, dict]:
+    """Consume contiguous table lines starting at i. Returns (new_i, block)."""
+    start = i
+    i += 1
+    n = len(lines)
+    while i < n and (lines[i].startswith("|") or "|" in lines[i]):
+        i += 1
+    return i, {"type": "table", "start_line": start, "end_line": i}
+
+
+def _consume_list(lines: list[str], i: int) -> tuple[int, dict]:
+    """Consume contiguous list lines starting at i. Returns (new_i, block)."""
+    start = i
+    i += 1
+    n = len(lines)
+    while i < n and (_LIST_RE.match(lines[i]) or (lines[i].startswith("  ") and lines[i].strip())):
+        i += 1
+    return i, {"type": "list", "start_line": start, "end_line": i}
+
+
+def _consume_paragraph(lines: list[str], i: int) -> tuple[int, dict]:
+    """Consume a paragraph (runs until blank line or block start). Returns (new_i, block)."""
+    start = i
+    i += 1
+    n = len(lines)
+    while i < n and lines[i].strip() and not _is_block_start(lines[i]):
+        i += 1
+    return i, {"type": "paragraph", "start_line": start, "end_line": i}
+
+
+def _consume_next_block(lines: list[str], i: int) -> tuple[int, dict]:
+    """Consume the next non-blank block starting at lines[i]. Returns (new_i, block).
+
+    Extracted so _parse_markdown_blocks avoids a deeply nested if/elif chain
+    (each elif is an AST If node in orelse, incrementing the nesting counter).
+    """
+    line = lines[i]
+    if line.startswith("```") or line.startswith("~~~"):
+        return _consume_code_fence(lines, i)
+    if _HEADING_RE_BLOCK.match(line):
+        return i + 1, {"type": "heading", "start_line": i, "end_line": i + 1}
+    if line.startswith("> ") or line == ">":
+        return _consume_blockquote(lines, i)
+    if line.startswith("|") or (len(line) > 2 and "|" in line[1:-1]):
+        return _consume_table(lines, i)
+    if _LIST_RE.match(line):
+        return _consume_list(lines, i)
+    return _consume_paragraph(lines, i)
+
+
+def _parse_markdown_blocks(content: str) -> list[dict]:
+    """Parse markdown content into a list of block spans.
+
+    Each block is a dict:
+      {type, start_line, end_line}  — both 0-based, end_line is exclusive.
+
+    Recognised block types: paragraph, heading, code_fence, blockquote,
+    list, table.  Blank lines between blocks are NOT emitted as blocks.
+
+    Delegates per-block-type parsing to _consume_next_block to keep
+    nesting depth within I13 caps (while + if = 2 levels, not 2 + elif chain).
+    """
+    lines = content.split("\n")
+    blocks: list[dict] = []
+    i = 0
+    n = len(lines)
+
+    while i < n:
+        if not lines[i].strip():
+            i += 1
+            continue
+        i, block = _consume_next_block(lines, i)
+        blocks.append(block)
+
+    return blocks
+
+
+def _replace_block_span(content: str, start_line: int, end_line: int, new_content: str) -> str:
+    """Replace lines[start_line:end_line] with new_content, preserving surrounding blank lines."""
+    lines = content.split("\n")
+    new_lines = new_content.split("\n")
+    replaced = lines[:start_line] + new_lines + lines[end_line:]
+    return "\n".join(replaced)
+
+
+# ── Bold/blockquote section-heading helpers (Layer 3 extension) ───────────────
+
+
+def _find_bold_sections(content: str) -> list[dict]:
+    """Find **Bold** first-line section headers (not inside fenced code blocks).
+
+    Returns list of {text, line_idx} dicts.
+    """
+    lines = content.split("\n")
+    sections: list[dict] = []
+    in_fence = False
+    fence_marker = ""
+    _bold_re = re.compile(r"^\*\*(.+?)\*\*\s*$")
+
+    for i, line in enumerate(lines):
+        stripped = line.rstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            marker = stripped[:3]
+            if not in_fence:
+                in_fence = True
+                fence_marker = marker
+            elif marker == fence_marker:
+                in_fence = False
+            continue
+        if in_fence:
+            continue
+        m = _bold_re.match(stripped)
+        if m:
+            sections.append({"text": m.group(1).strip(), "line_idx": i, "level": 2})
+    return sections
+
+
+def _find_blockquote_sections(content: str) -> list[dict]:
+    """Find > first-line blockquote section headers.
+
+    A blockquote section is a line starting with '> ' that we treat as a heading.
+    Returns list of {text, line_idx} dicts.
+    """
+    lines = content.split("\n")
+    sections: list[dict] = []
+    _bq_re = re.compile(r"^>\s+(.+)$")
+
+    for i, line in enumerate(lines):
+        m = _bq_re.match(line.rstrip())
+        if m:
+            # Only treat as a section header if not consecutive with previous blockquote
+            if sections and sections[-1]["line_idx"] == i - 1:
+                continue  # part of previous blockquote, not a new section header
+            sections.append({"text": m.group(1).strip(), "line_idx": i, "level": 2})
+    return sections
+
+
+def _find_section_end_generic(lines: list[str], heading_line_idx: int) -> int:
+    """Find end of a generic (bold/blockquote) section.
+
+    Section ends at the next blank-line-preceded heading-like marker or EOF.
+    Returns exclusive end index into lines.
+    """
+    _heading_re = re.compile(r"^#{2,3} |^\*\*.*\*\*\s*$|^>\s+")
+    for i in range(heading_line_idx + 1, len(lines)):
+        if _heading_re.match(lines[i].rstrip()):
+            return i
+    return len(lines)
+
+
+def _patch_generic_section(
+    content: str,
+    target: dict,
+    new_content: str,
+    position: str,
+) -> str:
+    """Apply a section patch for bold/blockquote section headers.
+
+    Mirrors _patch_section but uses _find_section_end_generic.
+    Returns updated content string.
+    """
+    lines = content.split("\n")
+    heading_line_idx = target["line_idx"]
+    end_line_idx = _find_section_end_generic(lines, heading_line_idx)
+
+    if position == "start_of_section":
+        new_line = new_content if new_content.endswith("\n") else new_content + "\n"
+        lines.insert(heading_line_idx + 1, new_line)
+
+    elif position == "replace_section":
+        body_lines = new_content.split("\n")
+        lines[heading_line_idx + 1 : end_line_idx] = body_lines
+
+    else:  # end_of_section (default)
+        body_end = end_line_idx
+        for i in range(end_line_idx - 1, heading_line_idx, -1):
+            if lines[i].strip():
+                body_end = i + 1
+                break
+        new_line = new_content if new_content.endswith("\n") else new_content + "\n"
+        lines.insert(body_end, new_line)
+
+    return "\n".join(lines)
+
+
 # ── Section-parsing helpers (wiki_append_section) ─────────────────────────────
 
 
@@ -869,12 +1129,61 @@ class WikiStore:
             "note": f"version {new_version} created from snapshot of version {version}",
         }
 
+    _VALID_HEADING_TYPES = frozenset({"h2", "h3", "bold", "blockquote"})
+
+    def _find_headings_by_type(self, page_content: str, heading_type: str) -> list[dict]:
+        """Dispatch heading search by heading_type."""
+        if heading_type in ("h2", "h3"):
+            return _find_section_headings(page_content)
+        if heading_type == "bold":
+            return _find_bold_sections(page_content)
+        return _find_blockquote_sections(page_content)
+
+    def _patch_existing_section(
+        self,
+        page_content: str,
+        headings: list[dict],
+        heading_text: str,
+        content: str,
+        position: str,
+        occurrence: int | None,
+        heading_type: str,
+    ) -> str | dict:
+        """Locate and patch an existing section. Returns new content str or error dict."""
+        matches = [h for h in headings if h["text"].lower() == heading_text.lower()]
+        if not matches:
+            return {
+                "error": "section_not_found",
+                "section_heading": heading_text,
+                "available_sections": [h["text"] for h in headings],
+            }
+        if len(matches) > 1 and position != "replace_section" and occurrence is None:
+            return {
+                "error": "ambiguous_section",
+                "section_heading": heading_text,
+                "occurrences": len(matches),
+                "hint": "Use 'Pipeline#2' syntax to target nth occurrence",
+            }
+        occ_idx = (occurrence - 1) if occurrence is not None else 0
+        if occ_idx >= len(matches):
+            return {
+                "error": "occurrence_out_of_range",
+                "section_heading": heading_text,
+                "requested": occurrence,
+                "max": len(matches),
+            }
+        target = matches[occ_idx]
+        if heading_type in ("h2", "h3"):
+            return _patch_section(page_content, target, content, position)
+        return _patch_generic_section(page_content, target, content, position)
+
     def append_section(
         self,
         page_id: int,
         section_heading: str,
         content: str,
         position: str = "end_of_section",
+        heading_type: str = "h2",
     ) -> dict:
         """Section-atomic write: patch a specific section without replacing entire content.
 
@@ -888,64 +1197,46 @@ class WikiStore:
           new_section_top  — create section at top of page (error if heading exists)
           new_section_bottom — create section at bottom of page (error if heading exists)
 
-        Heading detection:
-          Matches ## or ### at column 0. Case-insensitive. Ignores ## inside fenced
-          code blocks (``` ... ```). Supports Pipeline#2 syntax for nth occurrence
-          (1-based; bare name matches first).
+        Heading detection (controlled by heading_type, default 'h2' for backward compat):
+          h2 (default) — Matches ## or ### at column 0. Case-insensitive. Ignores
+            ## inside fenced code blocks. Supports Pipeline#2 syntax.
+          h3 — same as h2 (both h2/h3 matched by existing _find_section_headings).
+          bold — Matches **Text** first-line patterns outside fenced code blocks.
+          blockquote — Matches "> Text" first-line patterns.
 
         Returns dict with action='appended' on success, or error dict.
         """
+        if heading_type not in self._VALID_HEADING_TYPES:
+            return {
+                "error": "invalid_heading_type",
+                "heading_type": heading_type,
+                "allowed": sorted(self._VALID_HEADING_TYPES),
+            }
+
         page = self._storage.get_wiki_page(page_id)
         if page is None:
             return {"error": "page_not_found", "page_id": page_id}
 
         page_content = page.get("content", "")
         heading_text, occurrence = _parse_section_heading_spec(section_heading)
-
-        headings = _find_section_headings(page_content)
+        headings = self._find_headings_by_type(page_content, heading_type)
 
         if position in ("new_section_top", "new_section_bottom"):
-            # Error if heading already exists
             existing = [h for h in headings if h["text"].lower() == heading_text.lower()]
             if existing:
                 return {"error": "section_exists", "section_heading": heading_text}
-            # Create new section
             if position == "new_section_bottom":
                 new_content = page_content.rstrip("\n") + f"\n\n## {heading_text}\n\n{content}"
-            else:  # new_section_top
+            else:
                 new_content = f"## {heading_text}\n\n{content}\n\n" + page_content
             new_content = new_content if new_content.endswith("\n") else new_content + "\n"
         else:
-            # Requires existing heading
-            matches = [h for h in headings if h["text"].lower() == heading_text.lower()]
-
-            if not matches:
-                available = [h["text"] for h in headings]
-                return {
-                    "error": "section_not_found",
-                    "section_heading": heading_text,
-                    "available_sections": available,
-                }
-
-            if len(matches) > 1 and position != "replace_section" and occurrence is None:
-                return {
-                    "error": "ambiguous_section",
-                    "section_heading": heading_text,
-                    "occurrences": len(matches),
-                    "hint": "Use 'Pipeline#2' syntax to target nth occurrence",
-                }
-
-            occ_idx = (occurrence - 1) if occurrence is not None else 0
-            if occ_idx >= len(matches):
-                return {
-                    "error": "occurrence_out_of_range",
-                    "section_heading": heading_text,
-                    "requested": occurrence,
-                    "max": len(matches),
-                }
-
-            target = matches[occ_idx]
-            new_content = _patch_section(page_content, target, content, position)
+            result = self._patch_existing_section(
+                page_content, headings, heading_text, content, position, occurrence, heading_type
+            )
+            if isinstance(result, dict):
+                return result  # error dict
+            new_content = result
 
         size_before = len(page_content.encode())
         size_after = len(new_content.encode())
@@ -953,7 +1244,6 @@ class WikiStore:
         self._storage.update_wiki_page(page_id, {"content": new_content})
         new_version = self._storage.get_max_version_for_page(page_id)
 
-        # Sync crossrefs from updated content
         links = self._extract_wikilinks(new_content)
         self._sync_crossrefs(page.get("slug", ""), links)
 
@@ -965,6 +1255,451 @@ class WikiStore:
             "size_before": size_before,
             "size_after": size_after,
         }
+
+    # ── Edit primitives (v5.61.0) ─────────────────────────────────────────
+
+    _METADATA_FIELDS: frozenset[str] = frozenset({"directory_context", "branch"})
+
+    def set_metadata(
+        self,
+        page_id: int,
+        field: str,
+        value: str | None,
+    ) -> dict:
+        """Set directory_context or branch on a wiki page.
+
+        Idempotent: no-op when current value already matches.
+        Creates a wiki_page_version row on real change.
+        branch=None uses UNSET so §25 IS NONE queries resolve correctly.
+
+        Returns {ok, page_id, changed, version_id} or {ok: False, error}.
+        """
+        if field not in self._METADATA_FIELDS:
+            return {
+                "ok": False,
+                "error": f"invalid field '{field}' — allowed: {sorted(self._METADATA_FIELDS)}",
+            }
+
+        # Validate value per field.
+        if field == "directory_context":
+            if not value or (value != "global" and not value.startswith("/")):
+                return {
+                    "ok": False,
+                    "error": (
+                        "directory_context must be 'global' or an absolute path "
+                        f"(starts with '/'); got {value!r}"
+                    ),
+                }
+        elif field == "branch":
+            # None = canonical. Empty string invalid.
+            if value is not None and value == "":
+                return {
+                    "ok": False,
+                    "error": "branch must be null (canonical) or a non-empty string",
+                }
+
+        page = self._storage.get_wiki_page(page_id)
+        if page is None:
+            return {"ok": False, "error": f"page_id={page_id} not found"}
+
+        current = page.get(field)
+        if current == value:
+            logger.info(
+                "set_metadata no-op: page_id=%s field=%s value=%r (unchanged)",
+                page_id,
+                field,
+                value,
+            )
+            return {
+                "ok": True,
+                "page_id": page_id,
+                "changed": False,
+                "version_id": self._storage.get_max_version_for_page(page_id),
+            }
+
+        logger.info(
+            "set_metadata: page_id=%s field=%s old=%r new=%r",
+            page_id,
+            field,
+            current,
+            value,
+        )
+        self._storage.set_wiki_page_metadata(page_id, field, value)
+        new_version = self._storage.get_max_version_for_page(page_id)
+        return {
+            "ok": True,
+            "page_id": page_id,
+            "changed": True,
+            "version_id": new_version,
+        }
+
+    def _apply_text_edit(
+        self,
+        page_id: int,
+        new_content: str,
+        old_content: str,
+        replaced_count: int,
+    ) -> dict:
+        """Write new_content to page, create version row, return result dict."""
+        self._storage.update_wiki_page(page_id, {"content": new_content})
+        new_version = self._storage.get_max_version_for_page(page_id)
+        return {
+            "ok": True,
+            "page_id": page_id,
+            "version_id": new_version,
+            "replaced_count": replaced_count,
+            "length_delta": len(new_content.encode()) - len(old_content.encode()),
+        }
+
+    def replace_text(
+        self,
+        page_id: int,
+        old_text: str,
+        new_text: str,
+        occurrences: int | str = 1,
+    ) -> dict:
+        """Replace old_text with new_text in page content.
+
+        occurrences: int N → require exactly N matches; 'all' → replace all (≥1).
+        No-op (ok:True, replaced_count=0) when old_text == new_text.
+        Reject (ok:False) when found-count != occurrences.
+        Does NOT call similarity gate — caller (MCP tool) does.
+
+        Returns {ok, page_id, version_id, replaced_count, length_delta}.
+        """
+        page = self._storage.get_wiki_page(page_id)
+        if page is None:
+            return {"ok": False, "error": f"page_id={page_id} not found"}
+
+        content = page.get("content", "")
+
+        # No-op: same text
+        if old_text == new_text:
+            return {
+                "ok": True,
+                "page_id": page_id,
+                "version_id": self._storage.get_max_version_for_page(page_id),
+                "replaced_count": 0,
+                "length_delta": 0,
+            }
+
+        found = content.count(old_text)
+        if occurrences == "all":
+            if found == 0:
+                return {"ok": False, "error": f"text not found: {old_text!r}"}
+            new_content = content.replace(old_text, new_text)
+            return self._apply_text_edit(page_id, new_content, content, found)
+        else:
+            n = int(occurrences)
+            if found != n:
+                return {
+                    "ok": False,
+                    "error": f"occurrences mismatch: expected {n}, found {found}",
+                    "expected_occurrences": n,
+                    "found_occurrences": found,
+                }
+            new_content = content.replace(old_text, new_text, n)
+            return self._apply_text_edit(page_id, new_content, content, n)
+
+    def delete_text(
+        self,
+        page_id: int,
+        text: str,
+        occurrences: int | str = 1,
+    ) -> dict:
+        """Delete text from page content.
+
+        Absent text is a no-op (ok:True, replaced_count=0) — unlike replace_text.
+        occurrences mismatch (when text IS present but count != N) → reject.
+        occurrences='all' deletes all matches.
+
+        Returns {ok, page_id, version_id, replaced_count, length_delta}.
+        """
+        page = self._storage.get_wiki_page(page_id)
+        if page is None:
+            return {"ok": False, "error": f"page_id={page_id} not found"}
+
+        content = page.get("content", "")
+        found = content.count(text)
+
+        # No-op: absent text
+        if found == 0:
+            return {
+                "ok": True,
+                "page_id": page_id,
+                "version_id": self._storage.get_max_version_for_page(page_id),
+                "replaced_count": 0,
+                "length_delta": 0,
+            }
+
+        if occurrences == "all":
+            new_content = content.replace(text, "")
+            return self._apply_text_edit(page_id, new_content, content, found)
+        else:
+            n = int(occurrences)
+            if found != n:
+                return {
+                    "ok": False,
+                    "error": f"occurrences mismatch: expected {n}, found {found}",
+                    "expected_occurrences": n,
+                    "found_occurrences": found,
+                }
+            new_content = content.replace(text, "", n)
+            return self._apply_text_edit(page_id, new_content, content, n)
+
+    def insert_after(
+        self,
+        page_id: int,
+        anchor_text: str,
+        new_text: str,
+    ) -> dict:
+        """Insert new_text immediately after anchor_text.
+
+        anchor_text must be unique (count == 1) else reject.
+        Anchor absent → reject.
+        Does NOT call similarity gate — caller (MCP tool) does.
+
+        Returns {ok, page_id, version_id, replaced_count, length_delta}.
+        """
+        page = self._storage.get_wiki_page(page_id)
+        if page is None:
+            return {"ok": False, "error": f"page_id={page_id} not found"}
+
+        content = page.get("content", "")
+        found = content.count(anchor_text)
+        if found == 0:
+            return {"ok": False, "error": f"anchor_text not found: {anchor_text!r}"}
+        if found > 1:
+            return {
+                "ok": False,
+                "error": f"anchor_text not unique: found {found} occurrences",
+                "found_occurrences": found,
+            }
+
+        new_content = content.replace(anchor_text, anchor_text + new_text, 1)
+        return self._apply_text_edit(page_id, new_content, content, 1)
+
+    def insert_before(
+        self,
+        page_id: int,
+        anchor_text: str,
+        new_text: str,
+    ) -> dict:
+        """Insert new_text immediately before anchor_text.
+
+        anchor_text must be unique (count == 1) else reject.
+        Anchor absent → reject.
+        Does NOT call similarity gate — caller (MCP tool) does.
+
+        Returns {ok, page_id, version_id, replaced_count, length_delta}.
+        """
+        page = self._storage.get_wiki_page(page_id)
+        if page is None:
+            return {"ok": False, "error": f"page_id={page_id} not found"}
+
+        content = page.get("content", "")
+        found = content.count(anchor_text)
+        if found == 0:
+            return {"ok": False, "error": f"anchor_text not found: {anchor_text!r}"}
+        if found > 1:
+            return {
+                "ok": False,
+                "error": f"anchor_text not unique: found {found} occurrences",
+                "found_occurrences": found,
+            }
+
+        new_content = content.replace(anchor_text, new_text + anchor_text, 1)
+        return self._apply_text_edit(page_id, new_content, content, 1)
+
+    # ── Layer 2: positional primitives (v5.61.0) ──────────────────────────
+
+    def replace_at(
+        self,
+        page_id: int,
+        line: int,
+        col: int,
+        length: int,
+        new_text: str,
+        anchor_hint: str,
+    ) -> dict:
+        """Replace `length` chars at (line, col) after verifying anchor_hint.
+
+        anchor_hint MUST be ≥20 chars. Actual text at offset must start with
+        anchor_hint (guards against caller off-by-one).
+
+        Returns {ok, page_id, version_id, applied, length_delta} or {ok:False, ...}.
+        """
+        hint_err = _check_anchor_hint_len(anchor_hint)
+        if hint_err:
+            return hint_err
+
+        page = self._storage.get_wiki_page(page_id)
+        if page is None:
+            return {"ok": False, "error": f"page_id={page_id} not found"}
+
+        content = page.get("content", "")
+        offset = _line_col_to_offset(content, line, col)
+        if offset is None:
+            return {
+                "ok": False,
+                "error": f"coordinates out of range: line={line}, col={col}",
+            }
+
+        # Verify anchor_hint
+        if not content[offset:].startswith(anchor_hint):
+            preview = content[offset : offset + len(anchor_hint) + 10]
+            return {
+                "ok": False,
+                "reason": "anchor_hint mismatch",
+                "actual_text_preview": preview,
+            }
+
+        new_content = content[:offset] + new_text + content[offset + length :]
+        result = self._apply_text_edit(page_id, new_content, content, 1)
+        result["applied"] = True
+        result.pop("replaced_count", None)
+        return result
+
+    def delete_at(
+        self,
+        page_id: int,
+        line: int,
+        col: int,
+        length: int,
+        anchor_hint: str,
+    ) -> dict:
+        """Delete `length` chars at (line, col) after verifying anchor_hint.
+
+        anchor_hint MUST be ≥20 chars. Actual text at offset must start with
+        anchor_hint.
+
+        Returns {ok, page_id, version_id, applied, length_delta} or {ok:False, ...}.
+        """
+        hint_err = _check_anchor_hint_len(anchor_hint)
+        if hint_err:
+            return hint_err
+
+        page = self._storage.get_wiki_page(page_id)
+        if page is None:
+            return {"ok": False, "error": f"page_id={page_id} not found"}
+
+        content = page.get("content", "")
+        offset = _line_col_to_offset(content, line, col)
+        if offset is None:
+            return {
+                "ok": False,
+                "error": f"coordinates out of range: line={line}, col={col}",
+            }
+
+        if not content[offset:].startswith(anchor_hint):
+            preview = content[offset : offset + len(anchor_hint) + 10]
+            return {
+                "ok": False,
+                "reason": "anchor_hint mismatch",
+                "actual_text_preview": preview,
+            }
+
+        new_content = content[:offset] + content[offset + length :]
+        result = self._apply_text_edit(page_id, new_content, content, 1)
+        result["applied"] = True
+        result.pop("replaced_count", None)
+        return result
+
+    def insert_at(
+        self,
+        page_id: int,
+        line: int,
+        col: int,
+        new_text: str,
+        anchor_hint: str,
+    ) -> dict:
+        """Insert new_text at (line, col) after verifying the text before the
+        insertion point ends with anchor_hint.
+
+        anchor_hint MUST be ≥20 chars. The `length` in chars of text immediately
+        BEFORE the insertion point must end with anchor_hint.
+
+        Returns {ok, page_id, version_id, applied, length_delta} or {ok:False, ...}.
+        """
+        hint_err = _check_anchor_hint_len(anchor_hint)
+        if hint_err:
+            return hint_err
+
+        page = self._storage.get_wiki_page(page_id)
+        if page is None:
+            return {"ok": False, "error": f"page_id={page_id} not found"}
+
+        content = page.get("content", "")
+        offset = _line_col_to_offset(content, line, col)
+        if offset is None:
+            return {
+                "ok": False,
+                "error": f"coordinates out of range: line={line}, col={col}",
+            }
+
+        # anchor_hint = expected text immediately before insertion point
+        before = content[:offset]
+        if not before.endswith(anchor_hint):
+            preview = before[-len(anchor_hint) - 10 :]
+            return {
+                "ok": False,
+                "reason": "anchor_hint mismatch",
+                "actual_text_preview": preview,
+            }
+
+        new_content = content[:offset] + new_text + content[offset:]
+        result = self._apply_text_edit(page_id, new_content, content, 1)
+        result["applied"] = True
+        result.pop("replaced_count", None)
+        return result
+
+    # ── Layer 3: structural primitives (v5.61.0) ──────────────────────────
+
+    def replace_markdown_block(
+        self,
+        page_id: int,
+        block_type: str,
+        block_index: int,
+        new_content: str,
+    ) -> dict:
+        """Replace the Nth block of block_type with new_content.
+
+        block_type ∈ {paragraph, heading, code_fence, blockquote, list, table}.
+        block_index is 0-based within block_type.
+        new_content replaces the entire block span (including markers).
+
+        Returns {ok, page_id, version_id, replaced_count, length_delta} or {ok:False, ...}.
+        """
+        if block_type not in _VALID_BLOCK_TYPES:
+            return {
+                "ok": False,
+                "error": (
+                    f"invalid block_type '{block_type}' — allowed: {sorted(_VALID_BLOCK_TYPES)}"
+                ),
+            }
+
+        page = self._storage.get_wiki_page(page_id)
+        if page is None:
+            return {"ok": False, "error": f"page_id={page_id} not found"}
+
+        content = page.get("content", "")
+        blocks = _parse_markdown_blocks(content)
+        typed_blocks = [b for b in blocks if b["type"] == block_type]
+
+        if block_index >= len(typed_blocks) or block_index < 0:
+            return {
+                "ok": False,
+                "error": (
+                    f"block_index {block_index} out of range: "
+                    f"found {len(typed_blocks)} {block_type} block(s)"
+                ),
+            }
+
+        target = typed_blocks[block_index]
+        updated = _replace_block_span(
+            content, target["start_line"], target["end_line"], new_content
+        )
+        return self._apply_text_edit(page_id, updated, content, 1)
 
     # ── Internal ──────────────────────────────────────────────────────────
 

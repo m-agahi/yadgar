@@ -7,6 +7,19 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.61.0]
+
+### Added (wiki edit primitives — corpus-maintenance foundation)
+12 new MCP tools for surgical wiki edits + metadata maintenance — the foundation for corpus reclassify/cleanup (no more 40k-char full-content `wiki_update` to fix a preamble). All edits create a `wiki_page_version` row (v5.41 versioning), log `provenance_agent`, and bypass the v5.39 similarity gate (a revision isn't a novel page).
+
+- **Layer 4 — metadata:** `wiki_set_metadata(slug, field, value)` — set `directory_context`/`branch` (previously excluded from `wiki_update`'s allowlist → misclassified pages were unfixable). `branch=None` uses the `SET branch = NONE` literal so §25 `IS NONE` resolution matches. **This is the re-stamp tool the recall-scoping train needs.**
+- **Layer 1 — anchor-text:** `wiki_replace_text`, `wiki_delete_text`, `wiki_insert_after`, `wiki_insert_before` — caller supplies text, server finds + applies (no coords). Unique-anchor enforcement; `occurrences` count-mismatch rejects; idempotent no-ops.
+- **Layer 2 — positional (escape hatch):** `wiki_replace_at`, `wiki_delete_at`, `wiki_insert_at` — `(line, col, length)` with mandatory `anchor_hint` ≥20 chars verified against actual text (catches caller off-by-one).
+- **Layer 3 — structural:** `wiki_replace_markdown_block(block_type, block_index)` (paragraph/heading/code_fence/blockquote/list/table); `wiki_append_section` extended with `heading_type=h2|h3|bold|blockquote`.
+
+75 tests (TDD red→green); 72/72 existing wiki tests pass. No version-bump to backend (5.7.2) — core-only.
+
+
 ## [5.60.1]
 
 ### Changed (docs / tooling)

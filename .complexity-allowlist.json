@@ -168,7 +168,7 @@
       "fn_loc": 293,
       "nesting": 6
     },
-    "rationale": "PERMANENT. 7-phase retrieval dispatcher (validation, branch detection, retriever dispatch, FTS+vector fallback, filtering, 4 boost passes, wiki blend). Behavior-rich phases 6a-6d (branch convex-combo boost, postmortem boost, heat update, SR transition) have only mirror/mock test coverage + source-string-match tests — NO real-call behavioral guard. A structural extract risks silent behavior change and would spuriously break the inspect.getsource string-match tests. Allowlisted permanently; revisit only after real-call boost/blend tests exist.",
+    "rationale": "PERMANENT. 7-phase retrieval dispatcher (validation, branch detection, retriever dispatch, FTS+vector fallback, filtering, 4 boost passes, wiki blend). Behavior-rich phases 6a-6d (branch convex-combo boost, postmortem boost, heat update, SR transition) have only mirror/mock test coverage + source-string-match tests \u2014 NO real-call behavioral guard. A structural extract risks silent behavior change and would spuriously break the inspect.getsource string-match tests. Allowlisted permanently; revisit only after real-call boost/blend tests exist.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -278,9 +278,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 1167
+      "file_loc": 1579
     },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "rationale": "pre-existing; v5.61.0 +412 LOC for L2+L3 MCP tool registrations (wiki_replace_at/delete_at/insert_at/replace_markdown_block + heading_type param for wiki_append_section); scheduled for v5.55 wave N refactor",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -300,9 +300,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 1076
+      "file_loc": 1841
     },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "rationale": "pre-existing large file; v5.61.0 +281 LOC for edit primitives (L4+L1) + ~484 LOC for L2+L3 (positional/structural primitives + helpers); scheduled for refactor post-v5.64",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -357,7 +357,7 @@
     "metrics": {
       "cyclomatic": 20
     },
-    "rationale": "PERMANENT. v5.55 extract from insert_memory: 5-term enable guard + 6-field result mapping + set_parts loop/conditional re-encode; further splitting degrades locality without reducing branch count — cohesive enrichment pipeline, single responsibility.",
+    "rationale": "PERMANENT. v5.55 extract from insert_memory: 5-term enable guard + 6-field result mapping + set_parts loop/conditional re-encode; further splitting degrades locality without reducing branch count \u2014 cohesive enrichment pipeline, single responsibility.",
     "added": "2026-06-14",
     "added_by": "insert-memory-refactor"
   }
