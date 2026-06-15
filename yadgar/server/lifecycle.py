@@ -262,13 +262,13 @@ def _init_embedding_client(embedding_model: str | None, _settings):
     cyclomatic complexity (each branch imports different client classes).
     """
     if os.environ.get("YADGAR_EMBED_URL"):
-        from yadgar.ml_client import RemoteMLClient  # noqa: PLC0415
+        from yadgar.backend.ml_client import RemoteMLClient  # noqa: PLC0415
         from yadgar.remote_embeddings import RemoteEmbeddingEngine  # noqa: PLC0415
 
         embeddings = RemoteEmbeddingEngine(embedding_model or _settings.EMBEDDING_MODEL)
         ml_client = RemoteMLClient(os.environ["YADGAR_EMBED_URL"])
     else:
-        from yadgar.ml_client import LocalMLClient  # noqa: PLC0415
+        from yadgar.backend.ml_client import LocalMLClient  # noqa: PLC0415
 
         embeddings = EmbeddingEngine(embedding_model or _settings.EMBEDDING_MODEL)
         ml_client = LocalMLClient(_settings)

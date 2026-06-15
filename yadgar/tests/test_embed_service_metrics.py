@@ -45,7 +45,7 @@ def _make_client(monkeypatch, max_concurrency: int = 1, acquire_timeout: float =
     cfg.get_settings.cache_clear()
 
     # Reload so module-level semaphores + metric registry pick up new env
-    import yadgar.embed_service as es
+    import yadgar.backend.embed_service as es
 
     importlib.reload(es)
 
@@ -154,7 +154,7 @@ class TestMetricFamiliesPresent:
 class TestRequestsCounterIncrements:
     def test_requests_counter_increments_on_success(self, monkeypatch):
         """yadgar_embed_rerank_requests_total{mode='ce'} increments on rerank call."""
-        import yadgar.embed_service as es
+        import yadgar.backend.embed_service as es
 
         client = _make_client(monkeypatch)
 
@@ -191,7 +191,7 @@ class TestSemaphoreBusy503Counter:
         """yadgar_embed_rerank_503_total{mode='ce'} increments on semaphore-busy 503."""
         import asyncio
 
-        import yadgar.embed_service as es
+        import yadgar.backend.embed_service as es
 
         # Short timeout so semaphore-busy fast-fails
         client = _make_client(monkeypatch, max_concurrency=1, acquire_timeout=0.1)
@@ -239,7 +239,7 @@ class TestSemaphoreBusy503Counter:
 class TestDurationHistogramObservation:
     def test_duration_histogram_records_on_success(self, monkeypatch):
         """yadgar_embed_rerank_duration_seconds{mode='ce'} records observation on success."""
-        import yadgar.embed_service as es
+        import yadgar.backend.embed_service as es
 
         client = _make_client(monkeypatch)
 

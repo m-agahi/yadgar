@@ -22,7 +22,7 @@ T3 (behavioural) — embed_service.py:434 ``except asyncio.CancelledError,
     live async test overkill; static check is sufficient).
 
 Runner note: all checks are pure static (read source, no import of
-    yadgar.server or yadgar.embed_service) — avoids the mcp-module
+    yadgar.server or yadgar.backend.embed_service) — avoids the mcp-module
     ImportError that affects several integration tests.
 """
 
@@ -65,7 +65,7 @@ SITES = [
         "config_registry.py prometheus metrics setter",
     ),
     (
-        "yadgar/embed_service.py",
+        "yadgar/backend/embed_service.py",
         "asyncio.CancelledError, Exception",
         "embed_service.py shutdown handler (critical — Exception was escaping)",
     ),
@@ -80,7 +80,7 @@ SITES = [
         "log_config.py fallback log-dir creation",
     ),
     (
-        "yadgar/ml_client.py",
+        "yadgar/backend/ml_client.py",
         "ValueError, TypeError",
         "ml_client.py idle-eviction env parse",
     ),
@@ -205,7 +205,7 @@ def test_embed_service_exception_is_caught_in_shutdown_handler() -> None:
     Verified statically: the parenthesised form must appear in embed_service.py
     and must include both ``asyncio.CancelledError`` and ``Exception``.
     """
-    path = YADGAR_ROOT / "embed_service.py"
+    path = YADGAR_ROOT / "backend" / "embed_service.py"
     content = path.read_text(encoding="utf-8")
 
     # Find all parenthesised except clauses

@@ -33,7 +33,7 @@ def _make_app(monkeypatch, max_concurrency: int = 1, acquire_timeout: float = 2.
     cfg.get_settings.cache_clear()
 
     # Reload embed_service so module-level semaphores pick up new env vars
-    import yadgar.embed_service as es
+    import yadgar.backend.embed_service as es
 
     importlib.reload(es)
 
@@ -52,8 +52,8 @@ class TestSemaphoreNormalCall:
         """POST /rerank returns 200 when semaphore has capacity and reranker works."""
         import importlib
 
+        import yadgar.backend.embed_service as es
         import yadgar.config as cfg
-        import yadgar.embed_service as es
 
         monkeypatch.setenv("YADGAR_RERANK_MAX_CONCURRENCY", "1")
         monkeypatch.setenv("YADGAR_RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC", "2.0")
@@ -96,7 +96,7 @@ class TestSemaphoreHeldReturns503:
         monkeypatch.setenv("YADGAR_ALLOW_ROOT", "1")
         cfg.get_settings.cache_clear()
 
-        import yadgar.embed_service as es
+        import yadgar.backend.embed_service as es
 
         importlib.reload(es)
 
@@ -147,7 +147,7 @@ class TestSemaphorePerModeIsolation:
         monkeypatch.setenv("YADGAR_ALLOW_ROOT", "1")
         cfg.get_settings.cache_clear()
 
-        import yadgar.embed_service as es
+        import yadgar.backend.embed_service as es
 
         importlib.reload(es)
 
@@ -193,7 +193,7 @@ class TestSemaphoreConcurrencyN:
         monkeypatch.setenv("YADGAR_ALLOW_ROOT", "1")
         cfg.get_settings.cache_clear()
 
-        import yadgar.embed_service as es
+        import yadgar.backend.embed_service as es
 
         importlib.reload(es)
 

@@ -24,70 +24,70 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, field_validator
 
 import yadgar.paths as _paths
-from yadgar.embed_service_metrics import (
+from yadgar.backend.embed_service_metrics import (
     cache_snapshot_age_seconds as _cache_snapshot_age_seconds,
 )
-from yadgar.embed_service_metrics import (
+from yadgar.backend.embed_service_metrics import (
     ce_cache_evictions_total as _ce_cache_evictions_total,
 )
-from yadgar.embed_service_metrics import (
+from yadgar.backend.embed_service_metrics import (
     ce_cache_hits_total as _ce_cache_hits_total,
 )
-from yadgar.embed_service_metrics import (
+from yadgar.backend.embed_service_metrics import (
     ce_cache_misses_total as _ce_cache_misses_total,
 )
-from yadgar.embed_service_metrics import (
+from yadgar.backend.embed_service_metrics import (
     ce_cache_size_bytes as _ce_cache_size_bytes,
 )
-from yadgar.embed_service_metrics import (
+from yadgar.backend.embed_service_metrics import (
     ce_cache_size_entries as _ce_cache_size_entries,
 )
-from yadgar.embed_service_metrics import (
+from yadgar.backend.embed_service_metrics import (
     embed_cache_evictions_total as _embed_cache_evictions_total,
 )
-from yadgar.embed_service_metrics import (
+from yadgar.backend.embed_service_metrics import (
     embed_cache_hits_total as _embed_cache_hits_total,
 )
-from yadgar.embed_service_metrics import (
+from yadgar.backend.embed_service_metrics import (
     embed_cache_misses_total as _embed_cache_misses_total,
 )
-from yadgar.embed_service_metrics import (
+from yadgar.backend.embed_service_metrics import (
     embed_cache_size_bytes as _embed_cache_size_bytes,
 )
-from yadgar.embed_service_metrics import (
+from yadgar.backend.embed_service_metrics import (
     embed_cache_size_entries as _embed_cache_size_entries,
 )
-from yadgar.embed_service_metrics import (
+from yadgar.backend.embed_service_metrics import (
     embed_dbsize_cache_hits_total as _dbsize_cache_hits,
 )
-from yadgar.embed_service_metrics import (
+from yadgar.backend.embed_service_metrics import (
     embed_dbsize_cache_misses_total as _dbsize_cache_misses,
 )
-from yadgar.embed_service_metrics import (
+from yadgar.backend.embed_service_metrics import (
     embed_restart_reason_total as _restart_reason_total,
 )
-from yadgar.embed_service_metrics import (
+from yadgar.backend.embed_service_metrics import (
     metrics_handler as _metrics_handler,
 )
-from yadgar.embed_service_metrics import (
+from yadgar.backend.embed_service_metrics import (
     model_loaded as _model_loaded,
 )
-from yadgar.embed_service_metrics import (
+from yadgar.backend.embed_service_metrics import (
     rerank_503_total as _rerank_503_total,
 )
-from yadgar.embed_service_metrics import (
+from yadgar.backend.embed_service_metrics import (
     rerank_duration_seconds as _rerank_duration_seconds,
 )
-from yadgar.embed_service_metrics import (
+from yadgar.backend.embed_service_metrics import (
     rerank_requests_total as _rerank_requests_total,
 )
-from yadgar.embed_service_metrics import (
+from yadgar.backend.embed_service_metrics import (
     rerank_semaphore_held as _rerank_semaphore_held,
 )
 
 if TYPE_CHECKING:
+    from yadgar.backend.ml_client import LocalMLClient
     from yadgar.embeddings import EmbeddingEngine
-    from yadgar.ml_client import LocalMLClient
 
 logger = logging.getLogger(__name__)
 
@@ -189,14 +189,14 @@ def _get_embed_checkpoint_hash() -> str:
 
 
 def _make_ce_cache():
-    from yadgar.cache import LRUCache  # noqa: PLC0415
+    from yadgar.backend.cache import LRUCache  # noqa: PLC0415
 
     max_e = _ce_cache_max_entries() if _ce_cache_enabled() else 0
     return LRUCache(max_entries=max_e, checkpoint_hash=_get_ce_checkpoint_hash())
 
 
 def _make_embed_cache():
-    from yadgar.cache import LRUCache  # noqa: PLC0415
+    from yadgar.backend.cache import LRUCache  # noqa: PLC0415
 
     max_e = _embed_cache_max_entries() if _embed_cache_enabled() else 0
     return LRUCache(max_entries=max_e, checkpoint_hash=_get_embed_checkpoint_hash())
@@ -344,8 +344,8 @@ def _get_reranker() -> LocalMLClient:
     if _reranker is None:
         with _reranker_lock:
             if _reranker is None:
+                from yadgar.backend.ml_client import LocalMLClient
                 from yadgar.config import get_settings
-                from yadgar.ml_client import LocalMLClient
 
                 _reranker = LocalMLClient(get_settings())
                 # Mark all reranker model variants as loaded (lazy-load on first use)
@@ -714,7 +714,7 @@ async def rerank(req: RerankRequest, _: None = Depends(_require_admin_token)) ->
             from opentelemetry import trace as _ot  # noqa: PLC0415
 
             _model_name = os.environ.get("YADGAR_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
-            _tracer = _ot.get_tracer("yadgar.embed_service")
+            _tracer = _ot.get_tracer("yadgar.backend.embed_service")
             _ctx = _tracer.start_as_current_span(f"backend.rerank.{req.mode}")
             return _ctx, _model_name
         except Exception:

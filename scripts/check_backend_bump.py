@@ -2,8 +2,8 @@
 """Pre-commit hook: enforce backend_version bump when backend build inputs change.
 
 If any backend build input (entrypoint-backend.sh, Dockerfile.backend, or files
-under backend/ if that directory exists) is staged in this commit, server.json
-must also be staged with a backend_version change relative to HEAD.
+under any backend/ dir at any depth — e.g. yadgar/backend/) is staged in this
+commit, server.json must also be staged with a backend_version change vs HEAD.
 
 Exit 0 → OK.  Exit 1 → error (describes offending files).
 """
@@ -41,8 +41,10 @@ def _is_backend_build_input(path: str) -> bool:
     p = Path(path)
     if p.name in BACKEND_BUILD_INPUTS:
         return True
+    # Match a "backend" dir at ANY depth: top-level backend/ and the v5.60
+    # yadgar/backend/ subpackage (cache, ml_client, embed_service, metrics).
     for d in BACKEND_BUILD_DIRS:
-        if p.parts and p.parts[0] == d:
+        if d in p.parts:
             return True
     return False
 

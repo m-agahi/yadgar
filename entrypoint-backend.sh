@@ -113,7 +113,7 @@ else
 fi
 
 # Start embedding service
-python3 -m uvicorn yadgar.embed_service:app \
+python3 -m uvicorn yadgar.backend.embed_service:app \
   --host 0.0.0.0 \
   --port 8001 \
   --no-access-log \

@@ -325,7 +325,7 @@ def test_embed_endpoint_requires_auth(monkeypatch):
 
     from fastapi.testclient import TestClient
 
-    from yadgar.embed_service import app as embed_app
+    from yadgar.backend.embed_service import app as embed_app
 
     client = TestClient(embed_app, raise_server_exceptions=False)
     resp = client.post("/embed", json={"texts": ["hello"]})
@@ -347,7 +347,7 @@ def test_rerank_endpoint_requires_auth(monkeypatch):
 
     from fastapi.testclient import TestClient
 
-    from yadgar.embed_service import app as embed_app
+    from yadgar.backend.embed_service import app as embed_app
 
     client = TestClient(embed_app, raise_server_exceptions=False)
     resp = client.post("/rerank", json={"query": "hello", "texts": ["world"]})

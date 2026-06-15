@@ -90,14 +90,16 @@ def snapshot_embed_caches() -> None:
     lifecycle.shutdown() imports and calls this function.
 
     Uses module-level attribute access (via sys.modules) so tests can patch
-    yadgar.embed_service._ce_cache / ._embed_cache / ._cache_snapshot_dir.
+    yadgar.backend.embed_service._ce_cache / ._embed_cache / ._cache_snapshot_dir.
     """
     import sys as _sys  # noqa: PLC0415
 
     try:
         import importlib as _il  # noqa: PLC0415
 
-        _es = _sys.modules.get("yadgar.embed_service") or _il.import_module("yadgar.embed_service")
+        _es = _sys.modules.get("yadgar.backend.embed_service") or _il.import_module(
+            "yadgar.backend.embed_service"
+        )
         snap_dir = _es._cache_snapshot_dir()
         _es._ce_cache.save_snapshot(snap_dir, "ce")
         _es._embed_cache.save_snapshot(snap_dir, "embed")

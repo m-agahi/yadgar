@@ -564,7 +564,7 @@ class TestBackendMetricDI:
 
     def test_size_metric_updates_for_backend_process(self, tmp_path):
         """File-size gauge on backend registry updates; core registry stays zero."""
-        import yadgar.embed_service_metrics as esm
+        import yadgar.backend.embed_service_metrics as esm
         import yadgar.metrics as m
         from yadgar.log_config import RotatingJSONLFileHandler
 
@@ -598,7 +598,7 @@ class TestBackendMetricDI:
 
     def test_rotation_metric_updates_for_backend_process(self, tmp_path):
         """Rotation counter on backend registry increments; core registry stays zero."""
-        import yadgar.embed_service_metrics as esm
+        import yadgar.backend.embed_service_metrics as esm
         import yadgar.metrics as m
         from yadgar.log_config import RotatingJSONLFileHandler
 
@@ -631,7 +631,7 @@ class TestBackendMetricDI:
 
     def test_dropped_metric_updates_for_backend_process(self):
         """Drop counter on backend registry increments; core registry stays zero."""
-        import yadgar.embed_service_metrics as esm
+        import yadgar.backend.embed_service_metrics as esm
         import yadgar.metrics as m
         from yadgar.log_config import RateLimitFilter
 

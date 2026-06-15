@@ -7,6 +7,17 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.60.0]
+
+### Changed (structure)
+- **Backend code regrouped under `yadgar/backend/`.** The 4 backend-only modules — `cache`, `ml_client`, `embed_service`, `embed_service_metrics` — moved from `yadgar/` into a `yadgar/backend/` subpackage, making the core/backend boundary explicit (core ~93% of the tree never imports these; backend ~4.5%). All ~60 import sites + `entrypoint-backend.sh` (`uvicorn yadgar.backend.embed_service:app`), `drain.py` dynamic import, and `scripts/check_metric_writers.py` paths updated. `yadgar.paths` and other shared modules stay in core (absolute imports unchanged). No behavior change — pure relocation.
+- **CI per-path version detection.** `ci-release.yaml` `changes` job now distinguishes core vs backend image inputs by path: backend = `yadgar/backend/**` + `Dockerfile.backend` + `entrypoint-backend.sh` + `pyproject` ml deps; core = everything else under `yadgar/`. Each image builds/versions independently — fixes the v5.58 class of bug where a backend bump was silently missed. `check_backend_bump.py` pre-commit hook generalized to detect a `backend/` dir at any depth (matches the new `yadgar/backend/`).
+
+### Versions
+- core `5.59.0` → **5.60.0** (regroup changes core import surface).
+- backend `5.7.1` → **5.7.2** (entrypoint + module install paths changed → backend image rebuilds).
+
+
 ## [5.59.0]
 
 ### Fixed (correctness)

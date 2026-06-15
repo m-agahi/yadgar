@@ -52,7 +52,7 @@ class TestRunModelWarmup:
 
         mock_reranker = _make_mock_reranker()
 
-        import yadgar.embed_service as svc
+        import yadgar.backend.embed_service as svc
 
         with patch.object(svc, "_get_reranker", return_value=mock_reranker):
             asyncio.run(svc._run_model_warmup())
@@ -88,7 +88,7 @@ class TestRunModelWarmup:
         mock_reranker.score_nli.side_effect = _nli
         mock_reranker.score_pair.side_effect = _pair
 
-        import yadgar.embed_service as svc
+        import yadgar.backend.embed_service as svc
 
         with patch.object(svc, "_get_reranker", return_value=mock_reranker):
             asyncio.run(svc._run_model_warmup())
@@ -121,7 +121,7 @@ class TestRunModelWarmup:
         mock_reranker.score_nli.side_effect = _nli_ok
         mock_reranker.score_pair.side_effect = _pair_ok
 
-        import yadgar.embed_service as svc
+        import yadgar.backend.embed_service as svc
 
         with patch.object(svc, "_get_reranker", return_value=mock_reranker):
             # Must not raise
@@ -156,7 +156,7 @@ class TestRunModelWarmup:
         mock_reranker.score_nli.side_effect = _nli_fail
         mock_reranker.score_pair.side_effect = _pair_ok
 
-        import yadgar.embed_service as svc
+        import yadgar.backend.embed_service as svc
 
         with patch.object(svc, "_get_reranker", return_value=mock_reranker):
             asyncio.run(svc._run_model_warmup())
@@ -172,7 +172,7 @@ class TestRunModelWarmup:
             YADGAR_MODEL_PRELOAD_DELAY_SEC="9999",  # Long delay — will be cancelled
         )
 
-        import yadgar.embed_service as svc
+        import yadgar.backend.embed_service as svc
 
         async def _run():
             task = asyncio.create_task(svc._run_model_warmup())
@@ -195,7 +195,7 @@ class TestRunModelWarmup:
         mock_reranker = _make_mock_reranker()
         executor_calls: list = []
 
-        import yadgar.embed_service as svc
+        import yadgar.backend.embed_service as svc
 
         async def _run():
             loop = asyncio.get_running_loop()
@@ -235,7 +235,7 @@ class TestLifespanWarmupWiring:
         monkeypatch.setenv("YADGAR_ALLOW_ROOT", "1")
         cfg.get_settings.cache_clear()
 
-        import yadgar.embed_service as svc
+        import yadgar.backend.embed_service as svc
 
         importlib.reload(svc)
 

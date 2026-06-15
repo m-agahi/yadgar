@@ -92,7 +92,7 @@ class TestRemoteMLClientTimeout:
 
         server = _SlowServer(delay_s=30.0)
         try:
-            import yadgar.ml_client as ml
+            import yadgar.backend.ml_client as ml
 
             client = ml.RemoteMLClient(base_url=server.url)
             start = time.monotonic()
@@ -116,7 +116,7 @@ class TestRemoteMLClientTimeout:
 
         server = _SlowServer(delay_s=30.0)
         try:
-            import yadgar.ml_client as ml
+            import yadgar.backend.ml_client as ml
 
             client = ml.RemoteMLClient(base_url=server.url)
             start = time.monotonic()
@@ -138,7 +138,7 @@ class TestRemoteMLClientTimeout:
 
         server = _SlowServer(delay_s=30.0)
         try:
-            import yadgar.ml_client as ml
+            import yadgar.backend.ml_client as ml
 
             client = ml.RemoteMLClient(base_url=server.url)
             start = time.monotonic()

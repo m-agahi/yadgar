@@ -140,21 +140,21 @@ def test_graceful_stop_snapshots_embed_cache(tmp_path, monkeypatch):
     ce_mock = MagicMock()
     embed_mock = MagicMock()
 
-    fake_es = ModuleType("yadgar.embed_service")
+    fake_es = ModuleType("yadgar.backend.embed_service")
     fake_es._ce_cache = ce_mock  # type: ignore[attr-defined]
     fake_es._embed_cache = embed_mock  # type: ignore[attr-defined]
     fake_es._cache_snapshot_dir = lambda: str(tmp_path)  # type: ignore[attr-defined]
 
     # Inject fake module so drain.snapshot_embed_caches finds it via sys.modules
-    original = sys.modules.get("yadgar.embed_service")
-    sys.modules["yadgar.embed_service"] = fake_es
+    original = sys.modules.get("yadgar.backend.embed_service")
+    sys.modules["yadgar.backend.embed_service"] = fake_es
     try:
         snapshot_embed_caches()
     finally:
         if original is None:
-            sys.modules.pop("yadgar.embed_service", None)
+            sys.modules.pop("yadgar.backend.embed_service", None)
         else:
-            sys.modules["yadgar.embed_service"] = original
+            sys.modules["yadgar.backend.embed_service"] = original
 
     ce_mock.save_snapshot.assert_called_once()
     embed_mock.save_snapshot.assert_called_once()

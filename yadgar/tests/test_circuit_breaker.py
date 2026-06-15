@@ -31,7 +31,7 @@ class TestBreakerOpensAfterThreshold:
             mock_http.post.side_effect = httpx.ReadTimeout("timed out", request=MagicMock())
             mock_cls.return_value = mock_http
 
-            from yadgar.ml_client import RemoteMLClient
+            from yadgar.backend.ml_client import RemoteMLClient
 
             client = RemoteMLClient("http://localhost:8001")
 
@@ -62,7 +62,7 @@ class TestBreakerReturnsNoneWhenOpen:
             mock_http = MagicMock()
             mock_cls.return_value = mock_http
 
-            from yadgar.ml_client import RemoteMLClient
+            from yadgar.backend.ml_client import RemoteMLClient
 
             client = RemoteMLClient("http://localhost:8001")
             # Manually open breaker
@@ -92,7 +92,7 @@ class TestBreakerHalfOpenAfterCooldown:
 
         with patch("httpx.Client") as mock_cls:
             mock_cls.return_value = MagicMock()
-            from yadgar.ml_client import RemoteMLClient
+            from yadgar.backend.ml_client import RemoteMLClient
 
             client = RemoteMLClient("http://localhost:8001")
             breaker = client._breakers["ce"]
@@ -131,7 +131,7 @@ class TestBreakerClosesOnProbeSuccess:
             mock_http.post.return_value = mock_resp
             mock_cls.return_value = mock_http
 
-            from yadgar.ml_client import RemoteMLClient
+            from yadgar.backend.ml_client import RemoteMLClient
 
             client = RemoteMLClient("http://localhost:8001")
             breaker = client._breakers["ce"]
@@ -170,7 +170,7 @@ class TestBreakerReopensOnProbeFailure:
             mock_http.post.side_effect = httpx.ReadTimeout("timeout again", request=MagicMock())
             mock_cls.return_value = mock_http
 
-            from yadgar.ml_client import RemoteMLClient
+            from yadgar.backend.ml_client import RemoteMLClient
 
             client = RemoteMLClient("http://localhost:8001")
             breaker = client._breakers["ce"]
@@ -206,7 +206,7 @@ class TestBreakerEnvDisabledPassesThrough:
             mock_http.post.return_value = mock_resp
             mock_cls.return_value = mock_http
 
-            from yadgar.ml_client import RemoteMLClient
+            from yadgar.backend.ml_client import RemoteMLClient
 
             client = RemoteMLClient("http://localhost:8001")
 
@@ -241,7 +241,7 @@ class TestPerEndpointIsolation:
             mock_http.post.return_value = mock_resp
             mock_cls.return_value = mock_http
 
-            from yadgar.ml_client import RemoteMLClient
+            from yadgar.backend.ml_client import RemoteMLClient
 
             client = RemoteMLClient("http://localhost:8001")
 
@@ -279,7 +279,7 @@ class TestProbeUsesShortTimeout:
             mock_http.post.return_value = mock_resp
             mock_cls.return_value = mock_http
 
-            from yadgar.ml_client import RemoteMLClient
+            from yadgar.backend.ml_client import RemoteMLClient
 
             client = RemoteMLClient("http://localhost:8001")
             breaker = client._breakers["ce"]
@@ -325,7 +325,7 @@ class TestProbeUsesShortTimeout:
             mock_http.post.return_value = mock_resp
             mock_cls.return_value = mock_http
 
-            from yadgar.ml_client import RemoteMLClient
+            from yadgar.backend.ml_client import RemoteMLClient
 
             client = RemoteMLClient("http://localhost:8001")
             # Breaker is CLOSED — normal call
@@ -363,7 +363,7 @@ class TestExponentialBackoffOnProbeFailure:
 
         with patch("httpx.Client") as mock_cls:
             mock_cls.return_value = MagicMock()
-            from yadgar.ml_client import RemoteMLClient
+            from yadgar.backend.ml_client import RemoteMLClient
 
             return RemoteMLClient("http://localhost:8001")
 
@@ -466,7 +466,7 @@ def _make_mock_metrics():
 class TestGaugeInitializedToClosedOnConstruct:
     def test_gauge_initialized_to_closed_on_construct(self):
         """Constructing _CircuitBreaker sets gauge to 0 (CLOSED)."""
-        from yadgar.ml_client import _CircuitBreaker
+        from yadgar.backend.ml_client import _CircuitBreaker
 
         mock_metrics = _make_mock_metrics()
         breaker = _CircuitBreaker(
@@ -486,7 +486,7 @@ class TestGaugeInitializedToClosedOnConstruct:
 class TestGaugeSetToOpenOnThresholdFailures:
     def test_gauge_set_to_open_on_threshold_failures(self):
         """After 3 consecutive failures gauge == 2 (OPEN)."""
-        from yadgar.ml_client import _CircuitBreaker
+        from yadgar.backend.ml_client import _CircuitBreaker
 
         mock_metrics = _make_mock_metrics()
         breaker = _CircuitBreaker(
@@ -510,7 +510,7 @@ class TestGaugeSetToOpenOnThresholdFailures:
 class TestGaugeSetToHalfOpenAfterCooldown:
     def test_gauge_set_to_half_open_after_cooldown(self):
         """After cooldown expires and is_open() called, gauge == 1 (HALF_OPEN)."""
-        from yadgar.ml_client import _CircuitBreaker
+        from yadgar.backend.ml_client import _CircuitBreaker
 
         mock_metrics = _make_mock_metrics()
         breaker = _CircuitBreaker(
@@ -537,7 +537,7 @@ class TestGaugeSetToHalfOpenAfterCooldown:
 class TestGaugeSetToClosedOnRecordSuccess:
     def test_gauge_set_to_closed_on_record_success(self):
         """From OPEN state, record_success() sets gauge to 0 (CLOSED)."""
-        from yadgar.ml_client import _CircuitBreaker
+        from yadgar.backend.ml_client import _CircuitBreaker
 
         mock_metrics = _make_mock_metrics()
         breaker = _CircuitBreaker(
@@ -562,7 +562,7 @@ class TestGaugeSetToClosedOnRecordSuccess:
 class TestGaugePerEndpointIndependent:
     def test_gauge_per_endpoint_independent(self):
         """Two breakers with different endpoints update gauge independently."""
-        from yadgar.ml_client import _CircuitBreaker
+        from yadgar.backend.ml_client import _CircuitBreaker
 
         mock_metrics = _make_mock_metrics()
 

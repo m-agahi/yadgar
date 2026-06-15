@@ -23,7 +23,7 @@ class TestRemoteMLClientScoreCE:
             mock_client.post.return_value = mock_response
             mock_client_cls.return_value = mock_client
 
-            from yadgar.ml_client import RemoteMLClient
+            from yadgar.backend.ml_client import RemoteMLClient
 
             client = RemoteMLClient("http://localhost:8001")
             scores = client.score_cross_encoder(
@@ -54,7 +54,7 @@ class TestRemoteMLClientScoreNLI:
             mock_client.post.return_value = mock_response
             mock_client_cls.return_value = mock_client
 
-            from yadgar.ml_client import RemoteMLClient
+            from yadgar.backend.ml_client import RemoteMLClient
 
             client = RemoteMLClient("http://localhost:8001")
             scores = client.score_nli(
@@ -85,7 +85,7 @@ class TestRemoteMLClientScorePair:
             mock_client.post.return_value = mock_response
             mock_client_cls.return_value = mock_client
 
-            from yadgar.ml_client import RemoteMLClient
+            from yadgar.backend.ml_client import RemoteMLClient
 
             client = RemoteMLClient("http://localhost:8001")
             score = client.score_pair("who is alice", "Alice works here")
@@ -108,7 +108,7 @@ class TestRemoteMLClientScorePair:
             mock_client.post.return_value = mock_response
             mock_client_cls.return_value = mock_client
 
-            from yadgar.ml_client import RemoteMLClient
+            from yadgar.backend.ml_client import RemoteMLClient
 
             client = RemoteMLClient("http://localhost:8001")
             score = client.score_pair("who is alice", "Alice works here")
@@ -123,7 +123,7 @@ class TestRemoteMLClientUnload:
             mock_client = MagicMock()
             mock_client_cls.return_value = mock_client
 
-            from yadgar.ml_client import RemoteMLClient
+            from yadgar.backend.ml_client import RemoteMLClient
 
             client = RemoteMLClient("http://localhost:8001")
             client.unload_if_idle(idle_seconds=0.0)
@@ -148,7 +148,7 @@ class TestRemoteMLClientHTTPError:
             mock_client.post.return_value = mock_response
             mock_client_cls.return_value = mock_client
 
-            from yadgar.ml_client import RemoteMLClient
+            from yadgar.backend.ml_client import RemoteMLClient
 
             client = RemoteMLClient("http://localhost:8001")
             scores = client.score_cross_encoder("query", ["text1", "text2"])
@@ -166,9 +166,9 @@ class TestRerankEndpointCE:
 
         from starlette.testclient import TestClient
 
-        from yadgar.embed_service import app
+        from yadgar.backend.embed_service import app
 
-        with patch("yadgar.embed_service._get_reranker") as mock_get_reranker:
+        with patch("yadgar.backend.embed_service._get_reranker") as mock_get_reranker:
             mock_ml = MagicMock()
             mock_ml.score_cross_encoder.return_value = [0.8, 0.2]
             mock_get_reranker.return_value = mock_ml
@@ -197,9 +197,9 @@ class TestRerankEndpointNLI:
         """POST /rerank with mode=nli routes to score_nli."""
         from starlette.testclient import TestClient
 
-        from yadgar.embed_service import app
+        from yadgar.backend.embed_service import app
 
-        with patch("yadgar.embed_service._get_reranker") as mock_get_reranker:
+        with patch("yadgar.backend.embed_service._get_reranker") as mock_get_reranker:
             mock_ml = MagicMock()
             mock_ml.score_nli.return_value = [0.9, 0.1]
             mock_get_reranker.return_value = mock_ml
@@ -226,9 +226,9 @@ class TestRerankEndpointPair:
         """POST /rerank with mode=pair routes to score_pair."""
         from starlette.testclient import TestClient
 
-        from yadgar.embed_service import app
+        from yadgar.backend.embed_service import app
 
-        with patch("yadgar.embed_service._get_reranker") as mock_get_reranker:
+        with patch("yadgar.backend.embed_service._get_reranker") as mock_get_reranker:
             mock_ml = MagicMock()
             mock_ml.score_pair.return_value = 0.77
             mock_get_reranker.return_value = mock_ml
@@ -251,7 +251,7 @@ class TestRerankEndpointInvalidMode:
         """POST /rerank with unknown mode returns 422 validation error."""
         from starlette.testclient import TestClient
 
-        from yadgar.embed_service import app
+        from yadgar.backend.embed_service import app
 
         client = TestClient(app)
         resp = client.post(
@@ -272,13 +272,13 @@ class TestLocalMLClientNoModuleLevelImport:
 
         # Remove cached module to force re-import
         for key in list(sys.modules.keys()):
-            if key == "yadgar.ml_client":
+            if key == "yadgar.backend.ml_client":
                 del sys.modules[key]
 
         # Snapshot modules before import
         before = set(sys.modules.keys())
 
-        import yadgar.ml_client  # noqa: F401
+        import yadgar.backend.ml_client  # noqa: F401
 
         after = set(sys.modules.keys())
         new_modules = after - before

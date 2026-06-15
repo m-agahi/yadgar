@@ -120,7 +120,7 @@ class TestRerankTimeout:
         cfg.get_settings.cache_clear()
 
         try:
-            import yadgar.ml_client as ml
+            import yadgar.backend.ml_client as ml
 
             client = ml.RemoteMLClient(base_url="http://127.0.0.1:19999")
 
@@ -149,7 +149,7 @@ class TestRerankTimeout:
         try:
             import httpx
 
-            import yadgar.ml_client as ml
+            import yadgar.backend.ml_client as ml
 
             client = ml.RemoteMLClient(base_url="http://127.0.0.1:19999")
 

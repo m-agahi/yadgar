@@ -67,7 +67,7 @@ class Reranker(
         self._settings = settings
         self._storage = storage
         if ml_client is None:
-            from yadgar.ml_client import LocalMLClient
+            from yadgar.backend.ml_client import LocalMLClient
 
             ml_client = LocalMLClient(settings)
         self._ml = ml_client

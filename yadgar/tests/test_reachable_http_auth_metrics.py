@@ -45,8 +45,8 @@ def _get_hist_count(metric) -> float:
 
 def test_backend_reachable_set_on_success():
     """yadgar_backend_reachable{endpoint="/rerank/ce"} = 1.0 after probe success."""
+    from yadgar.backend.ml_client import _CircuitBreaker
     from yadgar.metrics import yadgar_backend_reachable
-    from yadgar.ml_client import _CircuitBreaker
 
     cb = _CircuitBreaker(
         endpoint="/rerank/ce",
@@ -62,8 +62,8 @@ def test_backend_reachable_set_on_success():
 
 def test_backend_reachable_clears_on_breaker_open():
     """yadgar_backend_reachable{endpoint="/rerank/ce"} = 0.0 when breaker opens."""
+    from yadgar.backend.ml_client import _CircuitBreaker
     from yadgar.metrics import yadgar_backend_reachable
-    from yadgar.ml_client import _CircuitBreaker
 
     cb = _CircuitBreaker(
         endpoint="/rerank/ce",

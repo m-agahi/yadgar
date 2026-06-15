@@ -159,8 +159,8 @@ def test_record_exception_enriches_active_span(in_memory_tracer):
 
 def test_ml_client_nli_failure_increments_counter():
     """NLI model failure: counter ml_client.score_nli increments, zeros returned."""
+    from yadgar.backend.ml_client import LocalMLClient
     from yadgar.metrics import yadgar_exception_total
-    from yadgar.ml_client import LocalMLClient
 
     before = _counter_value(
         yadgar_exception_total, location="ml_client.score_nli", error_type="RuntimeError"
@@ -171,7 +171,7 @@ def test_ml_client_nli_failure_increments_counter():
     client = LocalMLClient(settings)
 
     with patch.object(client, "_nli_model", None):
-        with patch("yadgar.ml_client.LocalMLClient.score_nli"):
+        with patch("yadgar.backend.ml_client.LocalMLClient.score_nli"):
             # Bypass the mock — we want real code, so use real method with patched internals
             pass
 
