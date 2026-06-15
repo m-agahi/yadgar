@@ -36,7 +36,6 @@ embedded init succeeds, decay runs, assertions hold.
 
 from __future__ import annotations
 
-import re
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -53,10 +52,6 @@ from yadgar.storage import StorageEngine
 _DIR = "/tmp/test_embedded_consolidate_e2e"
 _THREE_DAYS_AGO = (datetime.now(UTC) - timedelta(days=3)).isoformat()
 _NOW = datetime.now(UTC).isoformat()
-
-# type::record() pattern used by heat_decay.py in batch_writes statements.
-# Embedded Python surrealdb v2 rejects integer $id params here; we inline them.
-_RECORD_ID_RE = re.compile(r"type::record\('(\w+)',\s*\$id\)")
 
 
 # ---------------------------------------------------------------------------
@@ -106,31 +101,6 @@ def _read_heat(storage: StorageEngine, mid: int) -> float:
     return float(rows[0]["heat"])
 
 
-def _patch_batch_writes_for_embedded(storage: StorageEngine) -> None:
-    """Replace batch_writes on this instance with an embedded-safe fallback.
-
-    batch_writes() is server-only (HTTP transaction). In the actual nightly cycle
-    it is never called because the live DB has no hot memories written via the
-    embedded path -- the daemon wrote them via HTTP. In tests we seed memories
-    explicitly, so we need this patch to exercise the full decay write-back path.
-
-    The fallback:
-    - Rewrites `type::record('table', $id)` -> `table:{id}` inline, because the
-      embedded Python surrealdb v2 SDK rejects integer $id params in type::record().
-    - Executes each statement via _q() (works in embedded mode).
-    """
-
-    def _embedded_batch_writes(statements: list[tuple[str, dict | None]]) -> None:
-        for sql, params in statements:
-            if params and "id" in params:
-                mid = int(params["id"])
-                sql = _RECORD_ID_RE.sub(lambda m, _mid=mid: f"{m.group(1)}:{_mid}", sql)
-                params = {k: v for k, v in params.items() if k != "id"}
-            storage._q(sql, params or None)
-
-    storage.batch_writes = _embedded_batch_writes  # type: ignore[method-assign]
-
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -148,7 +118,7 @@ def embedded_storage(tmp_path, monkeypatch):
     get_settings.cache_clear()
     db_path = str(tmp_path / "test_embedded_e2e.db")
     storage = StorageEngine(db_path)
-    _patch_batch_writes_for_embedded(storage)
+    # NO batch_writes patch — exercise the REAL embedded write path (v5.63).
     yield storage
     storage.close()
 
@@ -376,4 +346,54 @@ class TestDecayIdempotency:
             f"decay compounded across cycles: heat went {heat_after_first} -> "
             f"{heat_after_second} on a second pass with no access. Decay is not "
             "idempotent -- last_decay_at watermark missing or not honored."
+        )
+
+
+class TestNightlyCycleEmbedded:
+    """The REAL nightly path: force_consolidate() end-to-end in EMBEDDED mode.
+
+    Pre-v5.63 the nightly cycle (host nightly_cycle.py opens StorageEngine
+    embedded) FAILED every run with exit 30:
+    - `batch_writes` raised RuntimeError (server-only) on any non-empty decay
+      batch -> killed consolidation;
+    - `insert_consolidation_log` (fires every cycle) and `insert_astrocyte_process`
+      (scheduler init) emit `type::record('t', $id)` with an INTEGER id, which the
+      embedded SurrealDB Python SDK rejects ("second argument must be a table name
+      or a string"). The astrocyte failure left the engram empty (the
+      `engram_slot has 0 rows` check_invariants violation).
+
+    v5.63 fixes both at the embedded transport layer (client.py:
+    `_inline_int_record_ids` + embedded `batch_writes` loop). These tests exercise
+    the REAL path with NO patching — they were RED before the fix.
+    """
+
+    def test_force_consolidate_completes_embedded(self, embedded_storage, scheduler):
+        _insert_memory_embedded(
+            embedded_storage, "nightly cycle mem A", heat=0.9, last_accessed=_THREE_DAYS_AGO
+        )
+        _insert_memory_embedded(
+            embedded_storage, "nightly cycle mem B", heat=0.85, last_accessed=_THREE_DAYS_AGO
+        )
+        # Must NOT raise — this was the nightly exit-30 failure.
+        scheduler.force_consolidate()
+        # insert_consolidation_log fires every cycle via type::record (Mode B).
+        rows = embedded_storage._q("SELECT id FROM consolidation_log")
+        assert rows, (
+            "consolidation_log row not written — insert_consolidation_log "
+            "(type::record) failed in embedded mode"
+        )
+
+    def test_astrocyte_init_writes_embedded(self, embedded_storage):
+        # ConsolidationScheduler construction -> AstrocytePool.init_processes ->
+        # insert_astrocyte_process (type::record). Pre-fix this failed embedded,
+        # leaving the engram empty (the engram_slot=0 invariant violation source).
+        from yadgar.config import get_settings as _gs
+        from yadgar.consolidation import ConsolidationScheduler as _CS
+        from yadgar.embeddings import EmbeddingEngine as _EE
+
+        _CS(embedded_storage, _EE(), _gs())
+        rows = embedded_storage._q("SELECT id FROM astrocyte_process")
+        assert rows, (
+            "astrocyte_process rows not written — astrocyte init (type::record) "
+            "failed in embedded mode"
         )
