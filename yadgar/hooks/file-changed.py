@@ -19,7 +19,7 @@ Filters (two use cases):
   1. team_inbox — path matches ~/.claude/team_inbox/**/*.jsonl
      → POST /hooks/file-changed with path + action → daemon reads new JSONL lines
        and writes them to action_log as team_message entries.
-  2. PLAN_*.md — path matches **/docs/PLAN_*.md or **/docs/PLAN_V*.md
+  2. plan files — path matches **/docs/plans/<slug>.md (excludes docs/plans/archive/)
      → POST /hooks/file-changed with path + action → daemon reads file content
        and memorizes with _plan tag.
 
@@ -51,8 +51,8 @@ except ImportError:
     _TEAM_INBOX_RE = re.compile(
         r"[/\\]\.claude[/\\]team_inbox[/\\][^/\\]+[/\\][^/\\]+[/\\][^/\\]+\.jsonl$"
     )
-    # PLAN file pattern: **/docs/PLAN_*.md (covers PLAN_V*.md via wildcard)
-    _PLAN_FILE_RE = re.compile(r"[/\\]docs[/\\]PLAN_[^/\\]*\.md$")
+    # PLAN file pattern: **/docs/plans/<slug>.md (open plans; excludes docs/plans/archive/)
+    _PLAN_FILE_RE = re.compile(r"[/\\]docs[/\\]plans[/\\][^/\\]+\.md$")
 
     def _is_team_inbox(path: str) -> bool:
         return bool(_TEAM_INBOX_RE.search(path))

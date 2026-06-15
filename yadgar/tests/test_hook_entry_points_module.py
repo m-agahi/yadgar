@@ -115,7 +115,7 @@ class TestFileChangedFallback:
         mod = self._load()
         payload = json.dumps(
             {
-                "file_path": "/proj/docs/PLAN_V5_49.md",
+                "file_path": "/proj/docs/plans/some-plan.md",
                 "file_action": "modified",
             }
         )
@@ -142,7 +142,7 @@ class TestFileChangedFallback:
         mod = self._load()
         payload = json.dumps(
             {
-                "file_path": "/proj/docs/PLAN_V5.md",
+                "file_path": "/proj/docs/plans/some-plan.md",
                 "file_action": "deleted",
             }
         )
@@ -194,7 +194,7 @@ class TestFileChangedFallback:
         mod = self._load()
         payload = json.dumps(
             {
-                "file_path": "/proj/docs/PLAN_V5.md",
+                "file_path": "/proj/docs/plans/some-plan.md",
                 "file_action": "created",
             }
         )

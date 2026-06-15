@@ -274,7 +274,7 @@ def _disabled_result(target_version: str | None) -> OrchestratorResult:
         error=(
             "yadgar update --install is disabled. "
             f"Set update.install_enabled=true in {paths.CONFIG_YAML_PATH} "
-            "after reading docs/PLAN_V5_49_0.md § Rollout."
+            "after reading docs/plans/archive/PLAN_V5_49_0.md § Rollout."
         ),
     )
 

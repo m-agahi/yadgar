@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-_PLAN_RE = re.compile(r"[/\\]docs[/\\](PLAN_[^/\\]*\.md)$")
+_PLAN_RE = re.compile(r"[/\\]docs[/\\]plans[/\\]([^/\\]+\.md)$")
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -24,11 +24,11 @@ _PLAN_RE = re.compile(r"[/\\]docs[/\\](PLAN_[^/\\]*\.md)$")
 
 def _make_plan_file(
     tmp_path: Path,
-    name: str = "PLAN_V5_3.md",
+    name: str = "viz-data-fidelity.md",
     content: str = "# Plan\n\nSome content.",
 ) -> Path:
-    docs = tmp_path / "docs"
-    docs.mkdir(exist_ok=True)
+    docs = tmp_path / "docs" / "plans"
+    docs.mkdir(parents=True, exist_ok=True)
     p = docs / name
     p.write_text(content, encoding="utf-8")
     return p
@@ -56,7 +56,7 @@ class TestPlanFileMemorize:
         """PLAN_V5_3.md change → memorize called, response ok."""
         import yadgar.server._state as _st
 
-        plan_path = _make_plan_file(tmp_path, name="PLAN_V5_3.md")
+        plan_path = _make_plan_file(tmp_path, name="viz-data-fidelity.md")
         _st._plan_file_hashes.clear()
 
         mock_storage = MagicMock()
@@ -73,14 +73,14 @@ class TestPlanFileMemorize:
 
         assert result["status"] == "ok"
         assert result["memorized"] is True
-        assert result["file"] == "PLAN_V5_3.md"
+        assert result["file"] == "viz-data-fidelity.md"
         assert len(memorize_calls) == 1
 
     def test_plan_file_memorize_includes_plan_tag(self, tmp_path):
         """Memorize call includes _plan tag."""
         import yadgar.server._state as _st
 
-        plan_path = _make_plan_file(tmp_path, name="PLAN_V5_3.md")
+        plan_path = _make_plan_file(tmp_path, name="viz-data-fidelity.md")
         _st._plan_file_hashes.clear()
 
         mock_storage = MagicMock()
@@ -121,10 +121,28 @@ class TestPlanPathFilter:
     def test_non_docs_plan_file_not_detected(self, tmp_path):
         from yadgar.hooks.file_changed import is_plan_file_path
 
-        wrong_dir = tmp_path / "other" / "PLAN_V5.md"
+        wrong_dir = tmp_path / "other" / "plan.md"
         wrong_dir.parent.mkdir(parents=True, exist_ok=True)
         wrong_dir.write_text("content")
         assert is_plan_file_path(str(wrong_dir)) is False
+
+    def test_archived_plan_not_detected(self, tmp_path):
+        # docs/plans/archive/ holds shipped/dead plans — frozen, must NOT re-memorize.
+        from yadgar.hooks.file_changed import is_plan_file_path
+
+        archived = tmp_path / "docs" / "plans" / "archive" / "PLAN_V5_3.md"
+        archived.parent.mkdir(parents=True, exist_ok=True)
+        archived.write_text("old plan")
+        assert is_plan_file_path(str(archived)) is False
+
+    def test_legacy_top_level_plan_not_detected(self, tmp_path):
+        # Pre-migration docs/PLAN_*.md location is no longer the convention.
+        from yadgar.hooks.file_changed import is_plan_file_path
+
+        legacy = tmp_path / "docs" / "PLAN_V5_3.md"
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.write_text("legacy")
+        assert is_plan_file_path(str(legacy)) is False
 
     def test_main_posts_for_plan_file(self, tmp_path, monkeypatch):
         """main() calls _post_file_changed for a docs/PLAN_*.md path."""

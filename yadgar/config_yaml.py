@@ -1038,7 +1038,7 @@ FIELD_META: dict[str, dict[str, str]] = {
     "update_install_enabled": {
         "desc": (
             "Enable the yadgar update --install routine-upgrade orchestrator (default false). "
-            "Set to true after reading docs/PLAN_V5_49_0.md § Rollout. "
+            "Set to true after reading docs/plans/archive/PLAN_V5_49_0.md § Rollout. "
             "When false, run_install() refuses immediately with a clear message."
         ),
         "section": "update",

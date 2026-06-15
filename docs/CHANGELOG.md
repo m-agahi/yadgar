@@ -7,6 +7,13 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.60.1]
+
+### Changed (docs / tooling)
+- **Plan-docs hygiene.** Decoupled plan identity from version numbers (the `PLAN_V5_NN_TOPIC.md` scheme caused constant renumbering drift). Archived 85 shipped/dead plan docs → `docs/plans/archive/` (classified vs git tags + CHANGELOG, not the unreliable in-file statuses); slug-renamed the 10 genuinely-open plans → `docs/plans/<slug>.md` (version assigned at ship, not in filename); added `docs/plans/ROADMAP.md` as the single source of truth + convention, and a `docs/plans/db-audit-fix.md` skeleton.
+- **Plan auto-detection glob updated** to match the new layout: `docs/PLAN_*.md` → `docs/plans/<slug>.md` (excludes `archive/`) in `file_changed.py`, `file-changed.py`, `server/http.py` + tests. Open plans still auto-memorize on edit; archived ones don't. Code references to shipped plans repointed to `docs/plans/archive/`.
+
+
 ## [5.60.0]
 
 ### Changed (structure)

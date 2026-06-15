@@ -218,7 +218,7 @@ def _build_report(timings: dict[str, list[float]], e2e_p50: float) -> str:
         "",
         "## References",
         "",
-        "- Plan: `docs/PLAN_V5_41_5_HANDLER_I9_FIX.md`",
+        "- Plan: `docs/plans/archive/PLAN_V5_41_5_HANDLER_I9_FIX.md`",
         "- Perf test (xfail): `yadgar/tests/test_wiki_mcp_handler_perf.py`",
         "- I9 invariant: `docs/ARCHITECTURE_INVARIANTS.md`",
         "- Baseline (task header): ~28.89ms p50 / xfail comment: ~48ms p50",

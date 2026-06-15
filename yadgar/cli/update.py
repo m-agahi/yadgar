@@ -197,7 +197,7 @@ def _install_msg_code(result: object) -> tuple[str, int]:  # noqa: PLR0911
         return (
             "yadgar update --install is disabled.\n"
             f"To opt in: set update.install_enabled: true in {paths.CONFIG_YAML_PATH}\n"
-            "See docs/PLAN_V5_49_0.md § Rollout for prerequisites and risks.",
+            "See docs/plans/archive/PLAN_V5_49_0.md § Rollout for prerequisites and risks.",
             3,
         )
     return (f"Update failed: {result.error}" if result.error else "", 1)
