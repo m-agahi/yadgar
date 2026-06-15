@@ -28,6 +28,40 @@ _log = logging.getLogger(__name__)
 
 _CAMEL_CASE_RE = re.compile(r"([a-z])([A-Z])")
 
+# Embedded SurrealDB (Python SDK v2) rejects an INTEGER second arg to
+# type::record('table', $id) — "the second argument must be a table name or a
+# string". Server mode (HTTP) accepts it. To keep ONE statement form across both
+# modes, the embedded transport inlines type::record('t', $p) -> t:{int} when the
+# param is an integer (the canonical record-id type), dropping the inlined param.
+_TYPE_RECORD_RE = re.compile(r"type::record\(\s*'(\w+)'\s*,\s*\$(\w+)\s*\)")
+
+
+def _inline_int_record_ids(surql: str, params: dict | None) -> tuple[str, dict | None]:
+    """Rewrite type::record('t', $p) -> t:{int} for integer params (embedded only).
+
+    Returns (surql, params) with integer-id params inlined + removed. A param is
+    only dropped if it no longer appears as $p anywhere in the rewritten SQL
+    (guards against a param reused outside the type::record call).
+    """
+    if not params or "type::record" not in surql:
+        return surql, params
+    inlined: set[str] = set()
+
+    def _sub(m: re.Match) -> str:
+        table, pname = m.group(1), m.group(2)
+        val = params.get(pname)
+        if isinstance(val, int) and not isinstance(val, bool):
+            inlined.add(pname)
+            return f"{table}:{val}"
+        return m.group(0)
+
+    new_surql = _TYPE_RECORD_RE.sub(_sub, surql)
+    if not inlined:
+        return surql, params
+    new_params = {k: v for k, v in params.items() if k not in inlined or f"${k}" in new_surql}
+    return new_surql, new_params
+
+
 _FTS_STOP_WORDS = frozenset(
     {
         # Standard English stop words
@@ -496,6 +530,8 @@ class _ClientMixin:
         retried once on failure to handle transient SDK errors; write statements
         are never retried to prevent double-writes (§5 Q3).
         """
+        # Embedded SDK rejects integer type::record($id) — inline to t:{int}.
+        surql, params = _inline_int_record_ids(surql, params)
         _surql_upper = surql.lstrip().upper()
         _is_readonly = any(
             _surql_upper.startswith(kw) for kw in ("SELECT", "INFO FOR", "INFO", "SHOW")
@@ -603,14 +639,20 @@ class _ClientMixin:
         batches small enough to fit in a single chunk.
 
         Empty list is a no-op (no transaction sent).
-        Only supported in server mode (YADGAR_DB_URL set).
+
+        Server mode chunks into BEGIN…COMMIT HTTP transactions. Embedded mode
+        (no YADGAR_DB_URL — e.g. the nightly consolidation cycle) has no HTTP
+        transaction; statements run per-statement via _q (which applies the
+        embedded type::record inline rewrite). Per-statement embedded execution
+        is not cross-statement atomic — acceptable, since server mode is also only
+        per-chunk atomic, and the nightly cycle is single-writer.
         """
         if not statements:
             return
         if self._db_url is None:
-            raise RuntimeError(
-                "batch_writes is only supported in server mode (YADGAR_DB_URL not set)"
-            )
+            for sql, params in statements:
+                self._q(sql, params)
+            return
 
         from yadgar.config import get_settings
 

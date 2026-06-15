@@ -7,6 +7,17 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.63.0]
+
+### Fixed (nightly consolidation — was failing EVERY night)
+- **The nightly cycle (`yadgar-nightly-cycle.service`) failed every run (exit 30).** It opens `StorageEngine` in EMBEDDED mode (no `YADGAR_DB_URL`), and two production paths broke there:
+  - `batch_writes` *raised* `RuntimeError` ("server mode only") on any non-empty decay batch → killed `_apply_decay`.
+  - direct `_q` calls — `insert_consolidation_log` (every cycle), `insert_astrocyte_process` (scheduler init), `insert_entity`, `reinforce_entity`, `delete_memory` — emit `type::record('table', $id)` with an INTEGER id, which the embedded SurrealDB Python SDK rejects ("second argument must be a table name or a string"). The astrocyte-init failure left the engram empty (the `engram_slot has 0 rows` `check_invariants` violation).
+- **Fix at the embedded transport layer** (`storage/client.py`): `_inline_int_record_ids` rewrites `type::record('t', $id)` → `t:{int}` for integer params in `_q_embedded` (covers all direct sites); `batch_writes` runs per-statement via `_q` in embedded mode instead of raising. Server mode (HTTP) is untouched. So decay + every consolidation phase + astrocyte/engram init now run nightly.
+- **Test integrity:** removed `_patch_batch_writes_for_embedded` from the E2E test — it had *monkeypatched the failing production primitive to make the test green*, hiding this bug (false-green). The E2E test now exercises the **real** embedded `batch_writes`; added `TestNightlyCycleEmbedded` running `force_consolidate()` end-to-end embedded (was RED before this fix). Net: the nightly path is finally covered by a test that drives production code.
+
+Known follow-ups (separate): nightly backup snapshot path drift (`/home/max/.yadgar/surreal_db` no longer exists → backups silently failing); verify `engram_slot` reaches its 5000 target; a lint forbidding tests that reassign production methods. Core-only; backend unchanged.
+
 ## [5.62.0]
 
 ### Fixed (recall scoping — chunk 1 of recall-scoping-restamp)
