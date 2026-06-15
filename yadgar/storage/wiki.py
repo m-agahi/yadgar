@@ -258,6 +258,80 @@ class _WikiMixin:
         )
         return True
 
+    @trace_span("storage.wiki.set_wiki_page_metadata")
+    def set_wiki_page_metadata(
+        self,
+        page_id: int,
+        field: str,
+        value: str | None,
+    ) -> bool:
+        """Set directory_context or branch on a wiki page. Returns True if page found.
+
+        branch=None uses 'SET branch = NONE' (literal SurrealDB NONE) so the
+        field becomes absent and §25 IS NONE resolution queries match.
+        Passing Python None as a param would store explicit SQL null, which
+        IS NONE does NOT match — this is the branch-null trap noted in the
+        v5.61 plan.
+
+        Creates a wiki_page_version row in the same compound transaction.
+        """
+        old_page = self.get_wiki_page(int(page_id))
+        if old_page is None:
+            return False
+        now = self._now_iso()
+        vid = self._next_id("wiki_page_version")
+        new_ver = self.get_max_version_for_page(int(page_id)) + 1
+
+        merged = dict(old_page)
+        if field == "branch" and value is None:
+            merged["branch"] = None
+        else:
+            merged[field] = value
+
+        new_content = merged.get("content", "")
+        change_summary = _compute_change_summary(old_page.get("content", ""), new_content)
+
+        params: dict = {
+            "pid": int(page_id),
+            "vid": vid,
+            "new_ver": new_ver,
+            "ver_title": merged.get("title", ""),
+            "ver_content": new_content,
+            "ver_category": merged.get("category"),
+            "ver_tags": merged.get("tags", []),
+            "ver_confidence": merged.get("confidence"),
+            "ver_source_memory_ids": merged.get("source_memory_ids", []),
+            "ver_branch": merged.get("branch"),
+            "ver_change_summary": change_summary,
+            "ver_now": now,
+        }
+
+        if field == "branch" and value is None:
+            # SET branch = NONE uses literal SurrealDB NONE (absent field),
+            # which IS NONE queries match. Passing Python None as a param
+            # would store explicit null, which IS NONE does NOT match.
+            page_set_clause = "branch = NONE, updated_at = $upd_now"
+            params["upd_now"] = now
+        else:
+            page_set_clause = f"{field} = $upd_val, updated_at = $upd_now"
+            params["upd_val"] = value
+            params["upd_now"] = now
+
+        self._q(
+            "BEGIN TRANSACTION;\n"
+            f"UPDATE type::record('wiki_page', $pid) SET {page_set_clause};\n"
+            "CREATE type::record('wiki_page_version', $vid) SET "
+            "page_id = $pid, version = $new_ver, title = $ver_title, "
+            "content = $ver_content, category = $ver_category, tags = $ver_tags, "
+            "confidence = $ver_confidence, "
+            "source_memory_ids = $ver_source_memory_ids, branch = $ver_branch, "
+            "change_summary = $ver_change_summary, created_at = $ver_now, "
+            "provenance_agent = 'default';\n"
+            "COMMIT TRANSACTION",
+            params,
+        )
+        return True
+
     @trace_span("storage.wiki.get_wiki_page")
     def get_wiki_page(self, page_id: int) -> dict | None:
         """Get a wiki page by ID."""

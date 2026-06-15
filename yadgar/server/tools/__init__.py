@@ -78,6 +78,15 @@ from yadgar.server.tools.wiki import (
     wiki_diff,
     wiki_restore,
     wiki_append_section,
+    wiki_set_metadata,
+    wiki_replace_text,
+    wiki_delete_text,
+    wiki_insert_after,
+    wiki_insert_before,
+    wiki_replace_at,  # noqa: F401
+    wiki_delete_at,  # noqa: F401
+    wiki_insert_at,  # noqa: F401
+    wiki_replace_markdown_block,  # noqa: F401
 )
 from yadgar.server.tools.misc import (
     checkpoint,
@@ -155,6 +164,11 @@ __all__ = [
     "wiki_diff",
     "wiki_restore",
     "wiki_append_section",
+    "wiki_set_metadata",
+    "wiki_replace_text",
+    "wiki_delete_text",
+    "wiki_insert_after",
+    "wiki_insert_before",
     "checkpoint",
     "restore",
     "anchor",

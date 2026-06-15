@@ -1129,6 +1129,7 @@ def wiki_append_section(
     wait: bool = False,
     directory: str | None = None,
     branch_hint: str | None = None,
+    heading_type: str = "h2",
 ) -> dict:
     """Section-atomic wiki write: patch a specific section without replacing entire content.
 
@@ -1136,8 +1137,12 @@ def wiki_append_section(
     with only their section patch (destroying everything else). Use this instead of
     wiki_update(fields={"content": <short patch>}) for targeted edits.
 
-    Heading detection: matches ## or ### at column 0. Case-insensitive. Ignores
-    ## inside fenced code blocks. Use "Pipeline#2" syntax for 2nd occurrence.
+    Heading detection (controlled by heading_type, default 'h2'):
+      h2 (default) — matches ## or ### at column 0. Case-insensitive. Ignores
+        ## inside fenced code blocks. Use "Pipeline#2" syntax for 2nd occurrence.
+      h3 — same as h2 (## and ### both matched by default).
+      bold — matches **Bold Header** first-line patterns outside code fences.
+      blockquote — matches "> text" first-line patterns.
 
     Positions:
       end_of_section    (default) — append content before next heading
@@ -1151,6 +1156,7 @@ def wiki_append_section(
       {"error": "section_exists"} — heading already present + new_section_* position
       {"error": "ambiguous_section"} — multiple headings + non-replace position
         (use "Heading#2" syntax to address 2nd occurrence)
+      {"error": "invalid_heading_type"} — heading_type not in {h2, h3, bold, blockquote}
 
     wait: Accepted for API symmetry with wiki_add. This tool writes
         synchronously (no queue) — wait=True is a no-op.
@@ -1169,6 +1175,405 @@ def wiki_append_section(
     if page_id is None:
         return {"error": f"Wiki page '{slug}' not found"}
 
-    result = _st._wiki.append_section(page_id, section_heading, content, position)
+    result = _st._wiki.append_section(page_id, section_heading, content, position, heading_type)
+    result["slug"] = slug
+    return result
+
+
+# ── v5.61.0: Layer 4 — Metadata primitives ───────────────────────────────────
+
+
+@_tool(power=True)
+def wiki_set_metadata(
+    slug: str,
+    field: str,
+    value: str | None,
+    directory: str | None = None,
+    branch_hint: str | None = None,
+) -> dict:
+    """Set directory_context or branch on a wiki page (Layer 4 metadata primitive).
+
+    field must be 'directory_context' or 'branch'. Other fields are rejected.
+
+    Validation per field:
+      directory_context: 'global' or an absolute path (starts with '/').
+      branch: null (sets canonical slot, resolves via IS NONE) or non-empty string.
+
+    Idempotent: no-op when current value already matches (no version row created).
+    On real change: creates a wiki_page_version row (v5.41 versioning).
+    Logs old + new value for audit trail.
+
+    Bypasses v5.39 similarity gate (metadata revision, not a new page).
+
+    Args:
+        slug: Wiki page slug.
+        field: Metadata field to set. Must be 'directory_context' or 'branch'.
+        value: New value. For branch, null clears it (sets canonical slot).
+        directory: Caller directory for §25 resolution (v5.42.5).
+        branch_hint: Caller branch for §25 resolution (v5.42.5).
+
+    Returns: {ok, page_id, changed, version_id} or {ok: False, error}.
+    """
+    assert _st._wiki is not None, "WikiStore not initialized"
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
+    if page_id is None:
+        return {"ok": False, "error": f"Wiki page '{slug}' not found"}
+    result = _st._wiki.set_metadata(page_id, field, value)
+    result["slug"] = slug
+    return result
+
+
+# ── v5.61.0: Layer 1 — Anchor-text primitives ────────────────────────────────
+
+
+@_tool(power=True)
+def wiki_replace_text(
+    slug: str,
+    old_text: str,
+    new_text: str,
+    occurrences: int | str = 1,
+    directory: str | None = None,
+    branch_hint: str | None = None,
+) -> dict:
+    """Replace old_text with new_text in a wiki page (surgical anchor-text edit).
+
+    Caller never computes line/col. Server finds the text and applies the replacement.
+
+    occurrences controls matching:
+      1 (default) — require exactly one match (unique text). Reject if 0 or >1.
+      N (int)     — require exactly N matches. Reject if count != N.
+      'all'       — replace every occurrence (≥1 required, else reject).
+
+    No-op (ok:True, replaced_count=0) when old_text == new_text.
+    Reject (ok:False) when found-count != occurrences.
+    Bypasses v5.39 similarity gate (revision, not new page).
+
+    Args:
+        slug: Wiki page slug.
+        old_text: Text to find (exact match, case-sensitive).
+        new_text: Replacement text.
+        occurrences: Expected match count, or 'all'.
+        directory: Caller directory for §25 resolution.
+        branch_hint: Caller branch for §25 resolution.
+
+    Returns: {ok, page_id, version_id, replaced_count, length_delta}
+    """
+    assert _st._wiki is not None, "WikiStore not initialized"
+
+    # I26: secret gate on new written content
+    _gate = gate_or_reject(new_text, tags=[])
+    if _gate is not None:
+        return _gate
+
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
+    if page_id is None:
+        return {"ok": False, "error": f"Wiki page '{slug}' not found"}
+
+    result = _st._wiki.replace_text(page_id, old_text, new_text, occurrences)
+    result["slug"] = slug
+    return result
+
+
+@_tool(power=True)
+def wiki_delete_text(
+    slug: str,
+    text: str,
+    occurrences: int | str = 1,
+    directory: str | None = None,
+    branch_hint: str | None = None,
+) -> dict:
+    """Delete text from a wiki page (surgical anchor-text edit).
+
+    Absent text is a no-op (ok:True, replaced_count=0) — not an error.
+    Reject (ok:False) when text IS present but found-count != occurrences.
+    occurrences='all' deletes every match (≥1 required for present text).
+
+    No secret gate: nothing new is written.
+    Bypasses v5.39 similarity gate (revision, not new page).
+
+    Args:
+        slug: Wiki page slug.
+        text: Text to remove (exact match, case-sensitive).
+        occurrences: Expected match count when text present, or 'all'.
+        directory: Caller directory for §25 resolution.
+        branch_hint: Caller branch for §25 resolution.
+
+    Returns: {ok, page_id, version_id, replaced_count, length_delta}
+    """
+    assert _st._wiki is not None, "WikiStore not initialized"
+
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
+    if page_id is None:
+        return {"ok": False, "error": f"Wiki page '{slug}' not found"}
+
+    result = _st._wiki.delete_text(page_id, text, occurrences)
+    result["slug"] = slug
+    return result
+
+
+@_tool(power=True)
+def wiki_insert_after(
+    slug: str,
+    anchor_text: str,
+    new_text: str,
+    directory: str | None = None,
+    branch_hint: str | None = None,
+) -> dict:
+    """Insert new_text immediately after anchor_text in a wiki page.
+
+    anchor_text must be unique (exactly one occurrence). Reject if absent or non-unique.
+    Bypasses v5.39 similarity gate (revision, not new page).
+
+    Args:
+        slug: Wiki page slug.
+        anchor_text: Unique text to locate (exact, case-sensitive).
+        new_text: Content to insert immediately after anchor_text.
+        directory: Caller directory for §25 resolution.
+        branch_hint: Caller branch for §25 resolution.
+
+    Returns: {ok, page_id, version_id, replaced_count, length_delta}
+    """
+    assert _st._wiki is not None, "WikiStore not initialized"
+
+    # I26: secret gate on new written content
+    _gate = gate_or_reject(new_text, tags=[])
+    if _gate is not None:
+        return _gate
+
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
+    if page_id is None:
+        return {"ok": False, "error": f"Wiki page '{slug}' not found"}
+
+    result = _st._wiki.insert_after(page_id, anchor_text, new_text)
+    result["slug"] = slug
+    return result
+
+
+@_tool(power=True)
+def wiki_insert_before(
+    slug: str,
+    anchor_text: str,
+    new_text: str,
+    directory: str | None = None,
+    branch_hint: str | None = None,
+) -> dict:
+    """Insert new_text immediately before anchor_text in a wiki page.
+
+    anchor_text must be unique (exactly one occurrence). Reject if absent or non-unique.
+    Bypasses v5.39 similarity gate (revision, not new page).
+
+    Args:
+        slug: Wiki page slug.
+        anchor_text: Unique text to locate (exact, case-sensitive).
+        new_text: Content to insert immediately before anchor_text.
+        directory: Caller directory for §25 resolution.
+        branch_hint: Caller branch for §25 resolution.
+
+    Returns: {ok, page_id, version_id, replaced_count, length_delta}
+    """
+    assert _st._wiki is not None, "WikiStore not initialized"
+
+    # I26: secret gate on new written content
+    _gate = gate_or_reject(new_text, tags=[])
+    if _gate is not None:
+        return _gate
+
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
+    if page_id is None:
+        return {"ok": False, "error": f"Wiki page '{slug}' not found"}
+
+    result = _st._wiki.insert_before(page_id, anchor_text, new_text)
+    result["slug"] = slug
+    return result
+
+
+# ── v5.61.0: Layer 2 — Positional primitives ─────────────────────────────────
+
+
+@_tool(power=True)
+def wiki_replace_at(
+    slug: str,
+    line: int,
+    col: int,
+    length: int,
+    new_text: str,
+    anchor_hint: str,
+    directory: str | None = None,
+    branch_hint: str | None = None,
+) -> dict:
+    """Replace `length` chars at (line, col) in a wiki page (positional escape hatch).
+
+    anchor_hint MUST be ≥20 chars. The actual text at (line, col) must start with
+    anchor_hint — guards against caller off-by-one arithmetic bugs.
+
+    line/col are 1-indexed. length is in chars (not bytes).
+
+    Bypasses v5.39 similarity gate (revision, not new page).
+
+    Args:
+        slug: Wiki page slug.
+        line: 1-indexed line number.
+        col: 1-indexed column number.
+        length: Number of chars to replace.
+        new_text: Replacement text.
+        anchor_hint: Expected text at (line, col). Must be ≥20 chars.
+        directory: Caller directory for §25 resolution.
+        branch_hint: Caller branch for §25 resolution.
+
+    Returns: {ok, page_id, version_id, applied, length_delta}
+      Mismatch: {ok: false, reason: "anchor_hint mismatch", actual_text_preview: "..."}
+    """
+    assert _st._wiki is not None, "WikiStore not initialized"
+
+    # I26: secret gate on new written content
+    _gate = gate_or_reject(new_text, tags=[])
+    if _gate is not None:
+        return _gate
+
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
+    if page_id is None:
+        return {"ok": False, "error": f"Wiki page '{slug}' not found"}
+
+    result = _st._wiki.replace_at(page_id, line, col, length, new_text, anchor_hint)
+    result["slug"] = slug
+    return result
+
+
+@_tool(power=True)
+def wiki_delete_at(
+    slug: str,
+    line: int,
+    col: int,
+    length: int,
+    anchor_hint: str,
+    directory: str | None = None,
+    branch_hint: str | None = None,
+) -> dict:
+    """Delete `length` chars at (line, col) in a wiki page (positional escape hatch).
+
+    anchor_hint MUST be ≥20 chars. The actual text at (line, col) must start with
+    anchor_hint — guards against caller off-by-one arithmetic bugs.
+
+    line/col are 1-indexed. length is in chars (not bytes).
+
+    No secret gate: nothing new is written.
+    Bypasses v5.39 similarity gate (revision, not new page).
+
+    Args:
+        slug: Wiki page slug.
+        line: 1-indexed line number.
+        col: 1-indexed column number.
+        length: Number of chars to delete.
+        anchor_hint: Expected text at (line, col). Must be ≥20 chars.
+        directory: Caller directory for §25 resolution.
+        branch_hint: Caller branch for §25 resolution.
+
+    Returns: {ok, page_id, version_id, applied, length_delta}
+      Mismatch: {ok: false, reason: "anchor_hint mismatch", actual_text_preview: "..."}
+    """
+    assert _st._wiki is not None, "WikiStore not initialized"
+
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
+    if page_id is None:
+        return {"ok": False, "error": f"Wiki page '{slug}' not found"}
+
+    result = _st._wiki.delete_at(page_id, line, col, length, anchor_hint)
+    result["slug"] = slug
+    return result
+
+
+@_tool(power=True)
+def wiki_insert_at(
+    slug: str,
+    line: int,
+    col: int,
+    new_text: str,
+    anchor_hint: str,
+    directory: str | None = None,
+    branch_hint: str | None = None,
+) -> dict:
+    """Insert new_text at (line, col) in a wiki page (positional escape hatch).
+
+    anchor_hint MUST be ≥20 chars. The text immediately BEFORE the insertion
+    point must end with anchor_hint — guards against off-by-one bugs.
+
+    line/col are 1-indexed.
+
+    Bypasses v5.39 similarity gate (revision, not new page).
+
+    Args:
+        slug: Wiki page slug.
+        line: 1-indexed line number.
+        col: 1-indexed column (1 = start of line, len+1 = after end of line).
+        new_text: Text to insert at position.
+        anchor_hint: Expected text immediately before insertion point. Must be ≥20 chars.
+        directory: Caller directory for §25 resolution.
+        branch_hint: Caller branch for §25 resolution.
+
+    Returns: {ok, page_id, version_id, applied, length_delta}
+      Mismatch: {ok: false, reason: "anchor_hint mismatch", actual_text_preview: "..."}
+    """
+    assert _st._wiki is not None, "WikiStore not initialized"
+
+    # I26: secret gate on new written content
+    _gate = gate_or_reject(new_text, tags=[])
+    if _gate is not None:
+        return _gate
+
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
+    if page_id is None:
+        return {"ok": False, "error": f"Wiki page '{slug}' not found"}
+
+    result = _st._wiki.insert_at(page_id, line, col, new_text, anchor_hint)
+    result["slug"] = slug
+    return result
+
+
+# ── v5.61.0: Layer 3 — Structural primitives ─────────────────────────────────
+
+
+@_tool(power=True)
+def wiki_replace_markdown_block(
+    slug: str,
+    block_type: str,
+    block_index: int,
+    new_content: str,
+    directory: str | None = None,
+    branch_hint: str | None = None,
+) -> dict:
+    """Replace the Nth block of block_type in a wiki page (structural edit).
+
+    Parses the markdown structure, locates the Nth block of the given type,
+    and replaces the entire block span (including fence markers, >, #, etc.)
+    with new_content.
+
+    block_type must be one of: paragraph, heading, code_fence, blockquote, list, table.
+    block_index is 0-based within the given block_type.
+
+    Useful for: replace the 3rd code fence, swap a heading, rewrite a blockquote.
+    Bypasses v5.39 similarity gate (revision, not new page).
+
+    Args:
+        slug: Wiki page slug.
+        block_type: Type of markdown block to target.
+        block_index: 0-based index within that block_type.
+        new_content: Replacement content for the block (whole span including markers).
+        directory: Caller directory for §25 resolution.
+        branch_hint: Caller branch for §25 resolution.
+
+    Returns: {ok, page_id, version_id, replaced_count, length_delta}
+    """
+    assert _st._wiki is not None, "WikiStore not initialized"
+
+    # I26: secret gate on new written content
+    _gate = gate_or_reject(new_content, tags=[])
+    if _gate is not None:
+        return _gate
+
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
+    if page_id is None:
+        return {"ok": False, "error": f"Wiki page '{slug}' not found"}
+
+    result = _st._wiki.replace_markdown_block(page_id, block_type, block_index, new_content)
     result["slug"] = slug
     return result

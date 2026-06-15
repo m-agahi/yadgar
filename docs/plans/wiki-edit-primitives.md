@@ -1,6 +1,15 @@
-# PLAN — v5.64: Wiki edit primitives + metadata maintenance (SKELETON)
+# PLAN — Wiki edit primitives + metadata maintenance
 
-**Status:** SKELETON drafted 2026-06-04. Origin: live UX failure 2026-06-04 — user attempted roadmap update; legacy preamble (pre-v5.41.1) was unreachable without 46k-char `wiki_update` full-content replace (corruption-class risk). Memory anchor id 523183 (heat=1, importance=1, protected) captured initial scope.
+**Status:** GRINDING (2026-06-15) — shipping as **v5.61.0** (new MCP tools = minor bump). The cleanup foundation: corpus reclassify/dedup/normalize is impossible without these. Audited + design settled. Origin: live UX failure 2026-06-04 — roadmap update needed a 46k-char `wiki_update` full-content replace (corruption-class risk).
+
+**Build order (MVP-first):**
+1. **Layer 4 `wiki_set_metadata`** — smallest, highest cleanup value (fix `directory_context`/`branch` on misclassified pages). Validates the pattern.
+2. **Layer 1 anchor-text** (`wiki_replace_text`/`delete_text`/`insert_after`/`insert_before`) — primary surgical-edit API.
+3. **Layer 3 structural** (`wiki_replace_markdown_block` + `wiki_append_section` heading_type extension).
+4. **Layer 2 positional** (`wiki_replace_at`/`delete_at`/`insert_at`, anchor_hint ≥20) — escape hatch.
+5. **Migration** (optional, env-gated).
+
+TDD each tool. Related: `[[wiki-kb-usefulness-snr]]` (the SNR/usefulness investigation, discussed AFTER this lands). Linkage (source_count) DROPPED — see that doc, D1.
 
 **Supersedes:** `docs/PLAN_V5_63_WIKI_CORPUS_MAINTENANCE_TOOLS.md` (skeleton on branch `docs/v5.63-skeleton` @ 0881700). v5.63's two metadata tools fold into `wiki_set_metadata`. Migration (next-free-at-build) carries over. Delete v5.63 branch once v5.64 lands.
 
