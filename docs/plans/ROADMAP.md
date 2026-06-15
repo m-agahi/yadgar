@@ -22,10 +22,13 @@ Single source of truth for **open** plans. Shipped/dead plans live in
 | [viz-data-fidelity](viz-data-fidelity.md) | viz | scoping (F1-F5) | **Next.** Viz must reflect DB reality — F2 stale-heat (SSE write-time freeze) is the worst; F1 connection miscount, F3 typed-id, F4 dropped edges, F5 fidelity test. |
 | [db-audit-fix](db-audit-fix.md) | data-integrity | **skeleton — discuss first** | Audit + fix live-store issues (legacy `last_decay_at`, 6-week-dead aftermath, entity heat, wiki↔memory link, archive tier, orphans). User has thoughts to bring before scoping. |
 
-### Wiki / KB
-| Plan | Theme | Status | Notes |
-|------|-------|--------|-------|
-| [wiki-edit-primitives](wiki-edit-primitives.md) | wiki-kb | skeleton | Wiki edit primitives + metadata maintenance (from v5.64 skeleton). |
+### Wiki / KB + retrieval — the "truly useful" train (sequenced 2026-06-15)
+Investigation: `[[wiki-kb-usefulness-snr]]` (recall is 37.5% noise from within yadgar; `directory=` is a no-op; mis-stamp sinks `system`/`global`). Decision D1: wiki↔memory linkage DROPPED (unused field). Order:
+| # | Plan | Theme | Status | Notes |
+|---|------|-------|--------|-------|
+| 1 | [wiki-edit-primitives](wiki-edit-primitives.md) | wiki-kb | **GRINDING (v5.61)** | Edit/maintenance tools (set_metadata, anchor-text, structural, positional). Cleanup foundation; `wiki_set_metadata` is the re-stamp tool. |
+| 2 | [recall-scoping-restamp](recall-scoping-restamp.md) | retrieval | planned (next) | Immediate noise cut: fix write-time dir defaults, tighten recall filter (`directory=` no-op + quality floor + dedup), re-stamp ~612 mis-stamped wikis + memory rows. Lower-risk, existing design. |
+| 3 | [unified-scoped-recall](unified-scoped-recall.md) | retrieval (arch) | planned (after) | **Centerpiece.** One `recall(type=all\|memory\|wiki\|…)` — fan-out to source providers, single DB-level DirectoryFilter, one cross-encoder rerank. `wiki_query`→deprecated alias. Absorbs #2's scoping core. |
 | [fresh-memory-restore](fresh-memory-restore.md) | wiki-kb / retrieval | skeleton | Fresh-memory-access UX — recently-written memory not visible without reload (from v5.65). Overlaps viz-data-fidelity F2 (staleness). |
 
 ### Infra / ops
