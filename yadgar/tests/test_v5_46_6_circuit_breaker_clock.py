@@ -18,7 +18,7 @@ from yadgar.config import Settings
 
 @pytest.fixture
 def ml_client(monkeypatch):
-    from yadgar.ml_client import RemoteMLClient
+    from yadgar.backend.ml_client import RemoteMLClient
 
     # RemoteMLClient reads settings from get_settings() — inject via env vars.
     monkeypatch.setenv("CIRCUIT_BREAKER_ENABLED", "true")

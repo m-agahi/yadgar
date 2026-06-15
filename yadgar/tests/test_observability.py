@@ -160,7 +160,7 @@ def test_circuit_breaker_state_metric_emitted():
     """Trip breaker open -> yadgar_circuit_breaker_state{endpoint='ce'} == 2."""
     from prometheus_client import CollectorRegistry, Gauge, generate_latest
 
-    from yadgar.ml_client import _STATE_OPEN, _CircuitBreaker
+    from yadgar.backend.ml_client import _STATE_OPEN, _CircuitBreaker
 
     reg = CollectorRegistry()
     cb_state_gauge = Gauge(

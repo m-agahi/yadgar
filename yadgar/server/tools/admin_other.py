@@ -235,7 +235,7 @@ def _ms_circuit_breaker_states() -> dict[str, int]:
     """Return ML client circuit-breaker states (memory_stats helper)."""
     cb_states: dict[str, int] = {}
     try:
-        from yadgar.ml_client import RemoteMLClient  # noqa: PLC0415
+        from yadgar.backend.ml_client import RemoteMLClient  # noqa: PLC0415
 
         _ml = getattr(_st, "_ml_client", None)
         if isinstance(_ml, RemoteMLClient):

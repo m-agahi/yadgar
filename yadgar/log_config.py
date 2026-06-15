@@ -576,7 +576,7 @@ class RotatingJSONLFileHandler(logging.handlers.RotatingFileHandler):
         backupCount: Number of backup files to keep (default 5).
         logger_name: Label used for Prometheus metrics (default "core").
         metrics_module: Module supplying yadgar_log_* metrics. Defaults to
-            ``yadgar.metrics`` (core registry). Pass ``yadgar.embed_service_metrics``
+            ``yadgar.metrics`` (core registry). Pass ``yadgar.backend.embed_service_metrics``
             for the backend process so updates land in the isolated registry.
     """
 
@@ -767,7 +767,7 @@ def _resolve_metrics_module(process: str):
     """
     try:
         if process == "backend":
-            from yadgar import embed_service_metrics as _esm  # noqa: PLC0415
+            from yadgar.backend import embed_service_metrics as _esm  # noqa: PLC0415
 
             return _esm
         from yadgar import metrics as _m  # noqa: PLC0415

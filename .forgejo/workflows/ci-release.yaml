@@ -82,10 +82,28 @@ jobs:
           # Per-image file globs. Workflow files are deliberately NOT in either
           # pattern — workflow edits change orchestration, not image content.
           # To force a rebuild, bump the version field in pyproject.toml or server.json.
-          if echo "$changed" | grep -qE '^(Dockerfile$|entrypoint\.sh$|yadgar/|pyproject\.toml$)'; then
+          #
+          # After v5.60 the 4 backend-only modules live under yadgar/backend/.
+          # Core = everything under yadgar/ EXCEPT yadgar/backend/, plus Dockerfile
+          # and entrypoint.sh. Backend = yadgar/backend/**, Dockerfile.backend,
+          # entrypoint-backend.sh. pyproject.toml touches both (ml-extra deps live
+          # there too) so we treat any pyproject.toml change as a trigger for both.
+          #
+          # Mirror of the pre-commit check-backend-bump hook path list
+          # (scripts/check_backend_bump.py: BACKEND_BUILD_INPUTS + BACKEND_BUILD_DIRS),
+          # extended with yadgar/backend/ for the v5.60 module move.
+          if echo "$changed" | grep -qE '^(Dockerfile$|entrypoint\.sh$|pyproject\.toml$)'; then
             core_changed=true
           fi
-          if echo "$changed" | grep -qE '^(Dockerfile\.backend$|entrypoint-backend\.sh$)'; then
+          # yadgar/ files that are NOT under yadgar/backend/ → core
+          if echo "$changed" | grep -E '^yadgar/' | grep -qvE '^yadgar/backend/'; then
+            core_changed=true
+          fi
+          if echo "$changed" | grep -qE '^(Dockerfile\.backend$|entrypoint-backend\.sh$|yadgar/backend/)'; then
+            backend_changed=true
+          fi
+          # pyproject.toml also touches backend (ml-extra deps live there)
+          if echo "$changed" | grep -q '^pyproject\.toml$'; then
             backend_changed=true
           fi
 

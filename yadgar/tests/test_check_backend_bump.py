@@ -46,6 +46,10 @@ class TestIsBackendBuildInput:
     def test_backend_dir_file(self) -> None:
         assert _is_backend_build_input("backend/run.sh") is True
 
+    def test_yadgar_backend_subpackage_file(self) -> None:
+        # v5.60: the 4 backend modules moved under yadgar/backend/.
+        assert _is_backend_build_input("yadgar/backend/embed_service.py") is True
+
     def test_pyproject_toml_not_backend(self) -> None:
         assert _is_backend_build_input("pyproject.toml") is False
 

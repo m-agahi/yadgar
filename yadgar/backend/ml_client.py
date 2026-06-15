@@ -24,7 +24,7 @@ def _rpc_span(name: str, attributes: dict | None = None):
     try:
         from opentelemetry import trace as _t  # noqa: PLC0415
 
-        tracer = _t.get_tracer("yadgar.ml_client")
+        tracer = _t.get_tracer("yadgar.backend.ml_client")
         ctx = tracer.start_as_current_span(name)
         return ctx
     except Exception:
@@ -56,7 +56,7 @@ def _record_model_load(model: str, duration_seconds: float) -> None:
     """
     # Histogram
     try:
-        import yadgar.embed_service_metrics as _esm  # noqa: PLC0415
+        import yadgar.backend.embed_service_metrics as _esm  # noqa: PLC0415
 
         _esm.model_load_duration_seconds.labels(model=model).observe(duration_seconds)
     except Exception:
@@ -66,7 +66,7 @@ def _record_model_load(model: str, duration_seconds: float) -> None:
     try:
         from opentelemetry import trace as _otel  # noqa: PLC0415
 
-        tracer = _otel.get_tracer("yadgar.ml_client")
+        tracer = _otel.get_tracer("yadgar.backend.ml_client")
         with tracer.start_as_current_span("model.load") as span:
             span.set_attribute("model", model)
             span.set_attribute("cold_load", True)
@@ -82,7 +82,7 @@ def _emit_unload_telemetry(unloaded_ce: bool, unloaded_nli: bool, effective: flo
     """
     # Prometheus gauges + counters
     try:
-        import yadgar.embed_service_metrics as _esm  # noqa: PLC0415
+        import yadgar.backend.embed_service_metrics as _esm  # noqa: PLC0415
 
         if unloaded_ce:
             _esm.model_loaded.labels(model="ce").set(0)
@@ -97,7 +97,7 @@ def _emit_unload_telemetry(unloaded_ce: bool, unloaded_nli: bool, effective: flo
     try:
         from opentelemetry import trace as _otel  # noqa: PLC0415
 
-        tracer = _otel.get_tracer("yadgar.ml_client")
+        tracer = _otel.get_tracer("yadgar.backend.ml_client")
         model_label = ",".join((["ce"] if unloaded_ce else []) + (["nli"] if unloaded_nli else []))
         with tracer.start_as_current_span("model.unload") as span:
             span.set_attribute("model", model_label)
