@@ -39,6 +39,7 @@ try:
     _merge_and_rank = _mod._merge_and_rank
     _format_context = _mod._format_context
     _db_locked = _mod._db_locked
+    _fts_search = _mod._fts_search
     _MODULE_LOADED = True
 except Exception as _e:
     _MODULE_LOADED = False
@@ -299,3 +300,81 @@ class TestMain:
             except SystemExit:
                 pass
         # No exception = pass
+
+
+# ---------------------------------------------------------------------------
+# _fts_search — supplement query scoping (Fix A, v5.65)
+# ---------------------------------------------------------------------------
+
+
+class TestFtsSearchSupplementScoping:
+    """Assert that the supplement query in _fts_search uses sentinel IN-list, not != $dir.
+
+    The mocked db.query returns controlled row sets.  We do NOT test that other-project
+    rows are filtered (the mock controls what rows come back, so that would be circular).
+    Instead we assert on the EMITTED SQL of each db.query call: the supplement query
+    must contain `IN ('', 'global')` and must NOT contain `!= $dir`.
+
+    This is the honest non-circular RED: on the buggy code the supplement query string
+    contains `directory_context != $dir`, so `assert '!= $dir' not in sql` fails.
+    """
+
+    def setup_method(self):
+        _require()
+
+    def _make_mock_db(self, primary_rows=None, supplement_rows=None):
+        """Return a mock db whose query() returns primary_rows on the first call,
+        supplement_rows on the second (supplement) call."""
+        mock_db = MagicMock()
+        primary_rows = primary_rows or []
+        supplement_rows = supplement_rows or []
+        # query() return value: list-of-list (first element is the result set).
+        mock_db.query.side_effect = [
+            [primary_rows],  # first call: project-scoped query
+            [supplement_rows],  # second call: supplement query
+        ]
+        return mock_db
+
+    def test_supplement_query_uses_sentinel_in_list_not_neq_dir(self):
+        """The supplement query must filter to IN ('', 'global'), not != $dir.
+
+        Pre-fix: supplement contains `directory_context != $dir` → test FAILS.
+        Post-fix: supplement contains `directory_context IN ('', 'global')` → test PASSES.
+        """
+        mock_db = self._make_mock_db(primary_rows=[], supplement_rows=[])
+        directory = "/home/max/git/yadgar"
+
+        _fts_search(mock_db, "test query about scoping", directory)
+
+        assert mock_db.query.call_count == 2, "Supplement query must be called when primary empty"
+        # Inspect the supplement query (second call)
+        _primary_call, supplement_call = mock_db.query.call_args_list
+        supplement_sql = supplement_call.args[0]
+
+        # Must NOT use the leaking != $dir pattern
+        assert "!= $dir" not in supplement_sql, (
+            f"Supplement query must not use '!= $dir' (leaks other-project rows). "
+            f"Got: {supplement_sql!r}"
+        )
+        # Must use the sentinel IN-list pattern
+        assert "IN ('', 'global')" in supplement_sql or "directory_context IN" in supplement_sql, (
+            f"Supplement query must filter to sentinel IN-list. Got: {supplement_sql!r}"
+        )
+
+    def test_supplement_not_called_when_primary_has_enough(self):
+        """When primary returns MAX_RESULTS rows, supplement is skipped."""
+        mock_db = MagicMock()
+        # Primary returns 5 rows (MAX_RESULTS = 5)
+        primary_rows = [
+            {
+                "id": f"memory:{i}",
+                "content": f"content {i}",
+                "heat": 1.0,
+                "directory_context": "/home/max/git/yadgar",
+                "search::score(1)": 0.9,
+            }
+            for i in range(5)
+        ]
+        mock_db.query.side_effect = [[primary_rows]]
+        _fts_search(mock_db, "query with enough results", "/home/max/git/yadgar")
+        assert mock_db.query.call_count == 1, "Supplement must not fire when primary has enough"

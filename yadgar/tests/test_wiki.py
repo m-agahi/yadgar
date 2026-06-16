@@ -384,7 +384,7 @@ class TestRecallIntegration:
             branch_hint="feat/test-branch",
         )
         flush_queue()
-        results = server.recall(query="yadgar architecture", max_results=5)
+        results = server.recall(query="yadgar architecture", max_results=5, directory="/tmp/test")
         wiki_results = [r for r in results if r.get("_source") == "wiki"]
         assert len(wiki_results) >= 1
         assert wiki_results[0].get("title") == "Yadgar Architecture"
@@ -397,7 +397,7 @@ class TestRecallIntegration:
             branch_hint="feat/test-branch",
         )
         flush_queue()
-        results = server.recall(query="plain memory", max_results=5)
+        results = server.recall(query="plain memory", max_results=5, directory="/tmp/test")
         assert len(results) >= 1
 
 

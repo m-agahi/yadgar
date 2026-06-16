@@ -150,7 +150,7 @@ class TestWikiQueryNoGitContext:
         # Patch _get_default_branch to RAISE — this is what triggers the except block
         monkeypatch.setattr("yadgar.server._get_default_branch", _raise_file_not_found)
 
-        results = server.wiki_query("v5424 query test master slot")
+        results = server.wiki_query("v5424 query test master slot", directory="/tmp/test")
         result_slugs = [r.get("slug") for r in results]
 
         # RED assertion: pre-fix, scope = {"master", None}, master page IS found.
@@ -180,7 +180,7 @@ class TestWikiQueryNoGitContext:
         monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
         monkeypatch.setattr("yadgar.server._get_default_branch", _raise_file_not_found)
 
-        results = server.wiki_query("v5424 null slot preservation test")
+        results = server.wiki_query("v5424 null slot preservation test", directory="/tmp/test")
         result_slugs = [r.get("slug") for r in results]
 
         assert slug_null in result_slugs, (
@@ -414,7 +414,7 @@ class TestRecallNoGitContext:
 
         monkeypatch.setattr(retriever, "recall", _spy_recall)
 
-        server.recall("unique content for v5424 recall fallback test")
+        server.recall("unique content for v5424 recall fallback test", directory="/tmp/test")
 
         assert captured_default_branch, "retriever.recall was never called"
         db_used = captured_default_branch[0]

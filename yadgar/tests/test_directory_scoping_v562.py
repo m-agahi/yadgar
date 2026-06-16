@@ -63,8 +63,8 @@ class TestIsDirectoryEligible:
         assert self.elig(None, "/home/max/git/yadgar")
 
     def test_sentinel_system(self):
-        # 'system' stays eligible until write-time reclassify (plan §A later chunk).
-        assert self.elig("system", "/home/max/git/yadgar")
+        # v5.65: 'system' dropped from eligible set (mis-stamp sink; v5.64 stopped new writes).
+        assert not self.elig("system", "/home/max/git/yadgar")
 
     # Legacy mode (caller_dir=None)
     def test_legacy_mode_all_pass(self):
@@ -126,9 +126,12 @@ class TestBuildDirectoryClause:
         assert params["df_caller"] == "/home/max/git/yadgar"
 
     def test_clause_contains_sentinels(self):
+        # v5.65: 'system' removed from _build_directory_clause (mis-stamp sink).
+        # dominant_directory._SENTINELS still contains 'system' (exclusion set for
+        # the directory vote — opposite semantics; intentionally unchanged).
         sql, _ = self.build(self.DF("/home/max/git/yadgar"))
         assert "global" in sql
-        assert "system" in sql
+        assert "system" not in sql
         assert "df_caller" in sql
 
     def test_clause_is_string(self):
@@ -268,10 +271,20 @@ def _engines(tmp_path):
 
 
 def _insert_mem(storage, content: str, directory: str, tags: list | None = None) -> int:
-    """Insert a memory with given directory_context and return its id."""
+    """Insert a memory with given directory_context and return its id.
+
+    Computes a real embedding (same path as production memorize → phase_embed →
+    embeddings.encode) so vector search surfaces the row.  Without an embedding,
+    recall falls back to FTS-only and the directory filter then drops the row
+    before it is ever retrieved — making scoping assertions vacuously fail.
+    """
+    from yadgar.server.lifecycle import _get_embeddings
+
+    embedding = _get_embeddings().encode(content)
     return storage.insert_memory(
         {
             "content": content,
+            "embedding": embedding,
             "directory_context": directory,
             "tags": tags or [],
             "heat": 1.0,
@@ -370,12 +383,15 @@ class TestDirectoryScopingIntegration:
         )
 
     def test_directory_arg_changes_results(self, monkeypatch):
-        """assertion (2): directory= measurably changes results vs no directory.
+        """assertion (2): directory= scopes results — different dirs return different subsets.
 
         Strategy: insert an aws-work row and a yadgar row with the same unique token.
-        Without directory=: aws row IS present (passes legacy all-pass mode).
-        With directory=yadgar_dir: aws row is ABSENT.
+        With directory=YADGAR_DIR: aws row is ABSENT, yadgar row is PRESENT.
+        With directory=AWS_DIR: yadgar row is ABSENT, aws row is PRESENT.
         Proves directory= is NOT a no-op — it changes the result set.
+
+        v5.65 Fix D: directory=None no longer works (raises ValueError).
+        Proof technique changed: compare YADGAR_DIR vs AWS_DIR scoping.
         """
         monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
         monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
@@ -383,24 +399,22 @@ class TestDirectoryScopingIntegration:
 
         storage = server._get_storage()
         # Insert aws-work row and a yadgar row, both with unique shared token xzq777.
-        mid_aws = _insert_mem(storage, "aws-work RDS endpoint config xzq777", AWS_DIR)
-        mid_yadgar = _insert_mem(storage, "yadgar config endpoint xzq777", YADGAR_DIR)  # noqa: F841
+        mid_aws = _insert_mem(storage, "aws-work RDS endpoint config xzq777b", AWS_DIR)
+        mid_yadgar = _insert_mem(storage, "yadgar config endpoint xzq777b", YADGAR_DIR)
 
-        query = "aws-work RDS yadgar config endpoint xzq777"
+        query = "aws-work RDS yadgar config endpoint xzq777b"
 
-        # Without directory=: legacy all-pass mode — aws row must surface.
-        results_unscoped = server.recall(query, directory=None, max_results=20)
-        ids_unscoped = {r.get("id") for r in results_unscoped}
-        assert mid_aws in ids_unscoped, (
-            "AWS-dir row must be present when directory=None (legacy all-pass mode)"
-        )
+        # Scoped to YADGAR_DIR: aws row must be absent, yadgar row must be present.
+        results_yadgar = server.recall(query, directory=YADGAR_DIR, max_results=20)
+        ids_yadgar = {r.get("id") for r in results_yadgar}
+        assert mid_aws not in ids_yadgar, "AWS-dir row must be excluded when directory=YADGAR_DIR"
+        assert mid_yadgar in ids_yadgar, "Yadgar row must be present when directory=YADGAR_DIR"
 
-        # Scoped to YADGAR_DIR: aws row must be absent — directory= changed the set.
-        results_scoped = server.recall(query, directory=YADGAR_DIR, max_results=20)
-        ids_scoped = {r.get("id") for r in results_scoped}
-        assert mid_aws not in ids_scoped, (
-            "AWS-dir row must be excluded when directory=yadgar_dir is passed"
-        )
+        # Scoped to AWS_DIR: yadgar row must be absent, aws row must be present.
+        results_aws = server.recall(query, directory=AWS_DIR, max_results=20)
+        ids_aws = {r.get("id") for r in results_aws}
+        assert mid_yadgar not in ids_aws, "Yadgar row must be excluded when directory=AWS_DIR"
+        assert mid_aws in ids_aws, "AWS row must be present when directory=AWS_DIR"
 
     def test_dedup_collapses_duplicate_cofire_rows(self, monkeypatch):
         """assertion (4): duplicate co-occurrence rows collapsed to one result.
@@ -588,11 +602,113 @@ class TestWikiQueryDirectoryScoping:
         assert slug_yadgar in slugs or True, "yadgar page should be eligible"
         assert slug_aws not in slugs, "aws-work page must be excluded when directory=yadgar"
 
-    def test_wiki_query_system_sentinel_eligible(self, monkeypatch):
-        """wiki pages with directory_context='system' pass through is_directory_eligible."""
-        # Confirms that is_directory_eligible('system', any_caller) → True
+    def test_wiki_query_system_sentinel_not_eligible(self, monkeypatch):
+        """v5.65: 'system' removed from eligible set — system-stamped pages no longer surface.
+
+        Legacy mode (caller_dir=None) still passes everything — that assertion stays True.
+        """
         from yadgar.storage.directory import is_directory_eligible
 
-        assert is_directory_eligible("system", YADGAR_DIR)
-        assert is_directory_eligible("system", AWS_DIR)
+        # With a real caller dir, system must NOT be eligible
+        assert not is_directory_eligible("system", YADGAR_DIR)
+        assert not is_directory_eligible("system", AWS_DIR)
+        # Legacy/no-dir mode still passes everything
         assert is_directory_eligible("system", None)
+
+
+class TestProjectBriefWikiScoping:
+    """project_brief key_wiki_pages must be scoped to caller directory + global (Fix B, v5.65).
+
+    Pre-fix: _build_wiki_pages calls storage.list_wiki_pages(limit=N) with no directory arg
+    → returns wiki pages from ALL directories, leaking cross-project pages into project_brief.
+    Post-fix: passes directory=resolved, scoping to dir + 'global' (matching list_wiki_pages sig).
+    """
+
+    def _insert_wiki(self, wiki_storage, slug: str, title: str, directory: str) -> None:
+        wiki_storage.insert_wiki_page(
+            {
+                "slug": slug,
+                "title": title,
+                "content": f"content for {slug} in {directory}",
+                "category": "reference",
+                "tags": ["test"],
+                "links": [],
+                "source_memory_ids": [],
+                "confidence": "medium",
+                "directory_context": directory,
+            }
+        )
+
+    def test_key_wiki_pages_excludes_other_project_in_catalog(self, monkeypatch):
+        """catalog mode: key_wiki_pages must not include aws-work wiki pages.
+
+        RED pre-fix: aws-work page appears in key_wiki_pages because list_wiki_pages
+        is called without directory= arg.
+        """
+        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
+        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.server.tools.project._detect_branch", lambda _d: None)
+        from yadgar import server
+
+        wiki_storage = server._wiki._storage
+        # Unique slug tokens to avoid collisions across test runs
+        slug_yadgar = "test-brief-scope-yadgar-pq1"
+        slug_aws = "test-brief-scope-aws-pq2"
+        slug_global = "test-brief-scope-global-pq3"
+
+        self._insert_wiki(wiki_storage, slug_yadgar, "Yadgar Brief Scope PQ1", YADGAR_DIR)
+        self._insert_wiki(wiki_storage, slug_aws, "Aws Brief Scope PQ2", AWS_DIR)
+        self._insert_wiki(wiki_storage, slug_global, "Global Brief Scope PQ3", "global")
+
+        result = server.project_brief(YADGAR_DIR, mode="catalog")
+        page_slugs = {p["slug"] for p in result.get("key_wiki_pages", [])}
+
+        assert slug_aws not in page_slugs, (
+            f"aws-work wiki page must NOT appear in key_wiki_pages for yadgar project_brief; "
+            f"got slugs: {page_slugs}"
+        )
+        # Eligible pages must still be present — list_wiki_pages orders by updated_at DESC
+        # and limit=3; with 2 eligible rows seeded (yadgar + global), both must appear.
+        assert slug_yadgar in page_slugs, (
+            f"yadgar-dir wiki page must appear in key_wiki_pages; got slugs: {page_slugs}"
+        )
+        assert slug_global in page_slugs, (
+            f"global wiki page must appear in key_wiki_pages; got slugs: {page_slugs}"
+        )
+        # Non-wiki keys must be present (threading directory= must not perturb structure)
+        for required_key in ("top_anchors", "hot_memories", "checkpoint"):
+            assert required_key in result, f"key '{required_key}' missing from project_brief result"
+
+    def test_key_wiki_pages_excludes_other_project_in_full(self, monkeypatch):
+        """full mode: key_wiki_pages must not include aws-work wiki pages."""
+        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
+        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.server.tools.project._detect_branch", lambda _d: None)
+        from yadgar import server
+
+        wiki_storage = server._wiki._storage
+        slug_yadgar = "test-brief-scope-yadgar-full-rr1"
+        slug_aws = "test-brief-scope-aws-full-rr2"
+        slug_global = "test-brief-scope-global-full-rr3"
+
+        self._insert_wiki(wiki_storage, slug_yadgar, "Yadgar Brief Full RR1", YADGAR_DIR)
+        self._insert_wiki(wiki_storage, slug_aws, "Aws Brief Full RR2", AWS_DIR)
+        self._insert_wiki(wiki_storage, slug_global, "Global Brief Full RR3", "global")
+
+        result = server.project_brief(YADGAR_DIR, mode="full")
+        page_slugs = {p["slug"] for p in result.get("key_wiki_pages", [])}
+
+        assert slug_aws not in page_slugs, (
+            f"aws-work wiki page must NOT appear in key_wiki_pages for full mode project_brief; "
+            f"got slugs: {page_slugs}"
+        )
+        # Eligible pages must still be present (limit=5 in full mode, 2 eligible rows)
+        assert slug_yadgar in page_slugs, (
+            f"yadgar-dir wiki page must appear in key_wiki_pages (full); got slugs: {page_slugs}"
+        )
+        assert slug_global in page_slugs, (
+            f"global wiki page must appear in key_wiki_pages (full); got slugs: {page_slugs}"
+        )
+        # Non-wiki keys must be present
+        for required_key in ("top_anchors", "hot_memories", "checkpoint"):
+            assert required_key in result, f"key '{required_key}' missing from project_brief result"

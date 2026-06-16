@@ -144,11 +144,14 @@ def test_q2_wiki_query_uses_branch_hint_when_detect_returns_none(tmp_path):
         patch("yadgar.server._get_default_branch", return_value=None),
     ):
         # With branch_hint — should find the page and boost it
-        results_with = wiki_query("schema discipline Q2", branch_hint="feat/schema")
+        results_with = wiki_query(
+            "schema discipline Q2", branch_hint="feat/schema", directory="/tmp/test"
+        )
         slugs_with = [r["slug"] for r in results_with]
 
         # Without branch_hint — daemon can't detect branch; canonical filter only
-        results_without = wiki_query("schema discipline Q2")
+        # v5.65 Fix D: directory required; passing /tmp/test (page is global, always eligible)
+        results_without = wiki_query("schema discipline Q2", directory="/tmp/test")
         slugs_without = [r["slug"] for r in results_without]
 
     # The page has branch="feat/schema" — only findable when branch_hint is provided
@@ -191,15 +194,20 @@ def test_q3_wiki_query_scopes_to_directory(tmp_path):
     assert "schema-q3-proj-a" not in slugs_b
 
 
-def test_q4_wiki_query_falls_back_to_daemon_cwd_when_no_hint():
-    """wiki_query without branch_hint uses _detect_branch(os.getcwd()) path (Q4).
+def test_q4_wiki_query_requires_directory_v565():
+    """wiki_query without directory raises ValueError (v5.65 Fix D).
 
-    Smoke test: call succeeds and returns a list (may be empty).
+    Pre-v5.65: fell back to os.getcwd() (daemon container path — mis-scoping).
+    Post-v5.65: hard-require directory; callers must supply the real host path.
+
+    Updated from test_q4_wiki_query_falls_back_to_daemon_cwd_when_no_hint.
     """
+    import pytest
+
     from yadgar.server.tools.wiki import wiki_query
 
-    result = wiki_query("schema discipline query fallback smoke")
-    assert isinstance(result, list)
+    with pytest.raises(ValueError, match="directory is required"):
+        wiki_query("schema discipline query fallback smoke")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

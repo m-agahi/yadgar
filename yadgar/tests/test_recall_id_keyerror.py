@@ -61,7 +61,7 @@ def _call_recall_with_results(result_dicts: list[dict]) -> list[dict]:
         patch("yadgar.server.tools.project._detect_branch", return_value=None),
         patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
     ):
-        return recall_fn(query="test query", max_results=5, min_heat=0.0)
+        return recall_fn(query="test query", max_results=5, min_heat=0.0, directory="/tmp/test")
 
 
 # ---------------------------------------------------------------------------

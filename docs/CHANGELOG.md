@@ -7,6 +7,41 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.65.0]
+
+### Fixed (Fix D — hard-require directory on recall + wiki_query; scope prompt-recall daemon path)
+- **`recall()` and `wiki_query()` now hard-require `directory`.** Previously omitting `directory` silently enabled legacy all-pass mode (no filter), allowing cross-project memories/wikis to leak. The daemon runs in a container — `os.getcwd()` would return the container path and mis-scope results; callers MUST supply the real host directory. Omitting or passing `None`/`""` now raises `ValueError: ... directory is required`. The legacy no-filter code path is removed; scoping always applies. Container-safe: does NOT fall back to `os.getcwd()`. (`yadgar/server/tools/recall.py`, `yadgar/server/tools/wiki.py`)
+- **`hook_prompt_recall` (http.py) now filters retriever results by caller directory.** Previously, `hook_prompt_recall` called `retriever.recall(...)` with no directory filter and served ALL results to the model context regardless of caller project. The `?directory=` query param was extracted but used only for throttle-key/display — never for scoping. Fix: added `_filter_prompt_recall_results(results, directory)` helper that applies `is_directory_eligible()` after retrieval. When `directory` param is absent, filter is skipped with a warning (never `os.getcwd()` — container-safe). The `os.getcwd()` default on line 614 is removed.
+- **TDD:** new `yadgar/tests/test_v5_65_directory_required.py` (14 tests). RED confirmed for all 3 cases before fix: no-directory recall/wiki_query returns list (not raises), and aws-work memory leaks into prompt-recall response. Updated existing callers across 12 test files and test_recall_wiki_dir_scoping.py + test_directory_scoping_v562.py to pass `directory=`.
+
+### Fixed (recall wiki-path directory scoping)
+- **Wiki results were bypassing `is_directory_eligible()` in recall.** The wiki-blend branch (lines ~353-368 in `server/tools/recall.py`) fetched `_st._wiki.query()` results and filtered only by `_retrieval_score > 0.3` and `branch in _allowed_branches` — no directory filter. Wiki pages stamped `directory_context="/home/max/aws-work"` leaked into recall responses scoped to `/home/max/git/yadgar` (reproduced live: aws-work wikis appeared as top results for a yadgar-scoped recall).
+- **Fix:** apply `is_directory_eligible()` to the qualifying wiki list inside the wiki-blend branch, using the same `caller_dir` computed for the memory filter. `caller_dir` is hoisted to function scope (was local to the memory-filter `if` block) so both filters share a single computation without changing the memory-filter behaviour. When `directory=None` (legacy mode), `caller_dir` is `None` and neither memories nor wikis are filtered — preserving backward compatibility.
+- `WikiStore.query()` returns `directory_context` via `SELECT *` → `get_wiki_page()` → passthrough `_row_to_dict()` — no projection change needed.
+- **TDD:** new `yadgar/tests/test_recall_wiki_dir_scoping.py` — 4 tests. RED confirmed (aws-work wiki id=100 present in results before fix). GREEN after fix.
+
+### Fixed (prompt-recall hook supplement leak — E1)
+- **`_fts_search` supplement query used `directory_context != $dir`** (hooks/prompt-recall.py) → fetched memories from every *other* project when the primary project-scoped query returned fewer than MAX_RESULTS rows. Cross-project memories were injected into every user prompt context.
+- **Fix:** supplement WHERE changed from `directory_context != $dir` to `directory_context IN ('', 'global')` — only cross-cutting sentinel memories supplement the project results. The unused `dir` param removed from the supplement query params dict.
+- **TDD:** `TestFtsSearchSupplementScoping` in `test_prompt_recall_module.py` — asserts on emitted SQL string (non-circular RED: buggy code contains `!= $dir`; fixed code contains `IN ('', 'global')`).
+
+### Fixed (project_brief key_wiki_pages leak — E2)
+- **`_build_wiki_pages` called `storage.list_wiki_pages(limit=N)` with no directory arg** (server/tools/project.py ~432) → returned wiki pages from all directories, leaking cross-project pages into `project_brief` `key_wiki_pages` in catalog, full, and restore modes.
+- **Fix:** added `directory: str | None = None` param to `_build_wiki_pages`; all three callers (restore ~1504, catalog ~1555, full ~1564) now pass `directory=resolved`. `list_wiki_pages` already accepts `directory=` and scopes to `dir + 'global'` (wiki.py ~490-492, added v5.42.5).
+- **TDD:** `TestProjectBriefWikiScoping` in `test_directory_scoping_v562.py` — golden-style seed (yadgar + aws-work + global wiki pages), asserts aws-work pages absent from `key_wiki_pages` in both catalog and full modes.
+
+### Fixed (drop 'system' from directory-eligible sets — E1/E2)
+- **`'system'` was the mis-stamp sink.** v5.64.0 stopped all three write sites from creating new `'system'`-stamped rows. Existing `'system'` rows are noise (mis-stamps). Dropping `'system'` from eligible sets prevents them from surfacing.
+- **Sites changed:**
+  - `yadgar/storage/directory.py` — `_ALWAYS_ELIGIBLE` frozenset: removed `'system'` (keep `None`, `''`, `'global'`). Affects `is_directory_eligible()` → recall (memory + wiki), `wiki_query`.
+  - `yadgar/storage/directory.py` — `_build_directory_clause` SQL fragment: removed `OR directory_context = 'system'` (deferred/dead code — kept consistent with `_ALWAYS_ELIGIBLE`).
+  - `yadgar/server/tools/project.py` ~596-601 (`_build_anchor_rows_catalog` global query): `IN ('', 'global', 'system')` → `IN ('', 'global')`.
+  - `yadgar/server/tools/project.py` ~651-656 (`_build_anchor_rows_restore` global query): same.
+  - `yadgar/storage/memory.py` ~778-782 (`get_anchored_memories_scoped` global query): same.
+  - NOTE: `dominant_directory`'s `_SENTINELS` frozenset intentionally retains `'system'` — opposite semantics (exclusion from directory vote, not eligibility). Left unchanged.
+- **Safety check:** grepped all production code for `directory_context.*=.*'system'` assignments — zero hits outside tests and comments. No current writer of `'system'` exists post-v5.64; change is safe.
+- **TDD:** flipped existing tests to the new contract — `test_sentinel_system` (test_directory_scoping_v562.py), `test_wiki_query_system_sentinel_not_eligible` (was `_eligible`), `test_system_directory_context_not_surfaced` (test_anchor_surfacing.py, was `_treated_as_global`). Legacy-mode (`caller_dir=None`) assertions unchanged — still return True (legacy passes everything).
+
 ## [5.64.0]
 
 ### Fixed (recall scoping chunk 2 — write-time directory stamping)

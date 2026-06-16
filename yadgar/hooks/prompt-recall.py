@@ -85,19 +85,20 @@ def _fts_search(db, query: str, directory: str) -> list:
         )
         rows = res[0] if res and res[0] else []
 
-        # Supplement with global results if not enough
+        # Supplement with cross-cutting (global/empty) results if not enough.
+        # v5.65: use IN ('', 'global') instead of != $dir to avoid leaking
+        # other-project memories into the injected prompt context.
         if len(rows) < MAX_RESULTS and directory:
             global_res = db.query(
                 "SELECT id, content, heat, directory_context, "
                 "search::score(1) AS score "
                 "FROM memory "
                 "WHERE content @1@ $query AND heat >= $min_heat AND is_stale = false "
-                "AND directory_context != $dir "
+                "AND directory_context IN ('', 'global') "
                 "ORDER BY score DESC LIMIT $lim",
                 {
                     "query": fts_query,
                     "min_heat": MIN_HEAT,
-                    "dir": directory,
                     "lim": MAX_RESULTS * 2,
                 },
             )

@@ -933,7 +933,7 @@ class TestBackwardCompatibility:
         assert result["content"] == "backward compat test memory"
         assert "embedding" not in result
 
-        results = server.recall("backward compat test")
+        results = server.recall("backward compat test", directory="/tmp/compat")
         assert len(results) >= 1
         assert any("backward compat" in r["content"] for r in results)
 

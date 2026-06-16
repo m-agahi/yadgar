@@ -91,7 +91,7 @@ def test_memorize_drain_actually_persists(flush_queue):
 
     flush_queue()
 
-    hits = server.recall(content[:50])
+    hits = server.recall(content[:50], directory="/tmp/persist")
     assert any(h["content"] == content for h in hits), "Memory was not found after drain replay"
 
 
@@ -101,7 +101,7 @@ def test_memorize_drain_preserves_context_and_tags(flush_queue):
     server.memorize(content, "/projects/myapp", ["infra", "v4test"])
     flush_queue()
 
-    hits = server.recall(content[:50])
+    hits = server.recall(content[:50], directory="/projects/myapp")
     match = next((h for h in hits if h["content"] == content), None)
     assert match is not None
     assert match["directory_context"] == "/projects/myapp"
