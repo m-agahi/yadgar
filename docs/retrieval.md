@@ -175,6 +175,46 @@ When `INDEX_ENRICHMENT_ENABLED=true`, memories are expanded at storage time:
 
 Enriched text is appended to the embedding input, improving retrieval of memories via related terms not literally present in the content.
 
+## Directory Scoping (v5.62–v5.65)
+
+`recall()` and `wiki_query()` filter results by `directory_context` before returning them to the caller. This is a separate, earlier gate than the branch filter — it prevents cross-project memory leakage entirely.
+
+### Eligible-set rule
+
+```
+eligible = {caller_dir, 'global', '', None}
+results = [r for r in results if r["directory_context"] in eligible]
+```
+
+`caller_dir` is the absolute project path the caller passed as the `directory` parameter. Results whose `directory_context` is none of the four members above are silently dropped before any scoring or reranking step. The check is implemented in `storage/directory.py::is_directory_eligible(dc, caller_dir)`, which is the single source of truth for this predicate — no other code should replicate the logic.
+
+`'system'` is **not** in the eligible set. It was the primary mis-stamp sink (rows that landed in no real project) and was removed from eligibility in v5.65. Note: `dominant_directory()` still retains `'system'` in its `_SENTINELS` exclusion set, but that is the opposite role — it excludes `'system'` from the directory vote when deriving a stamp. These are unrelated.
+
+### Hard-require `directory`
+
+`recall()` and `wiki_query()` raise `ValueError` if `directory` is absent. There is no `os.getcwd()` fallback: the daemon runs in a container and its CWD is the container filesystem path, not the caller's project path. Callers must supply `directory` explicitly.
+
+### Wiki-blend scoping (v5.65)
+
+Before v5.65, wiki pages surfaced inside `recall()` bypassed `is_directory_eligible()` — cross-project wiki entries leaked into results. Fixed in v5.65: the same predicate now applies to the wiki-blend branch of `recall()` and to the supplement WHERE clause in `hooks/prompt-recall.py` (changed from `directory_context != $dir` to `directory_context IN ('', 'global')` to prevent cross-project supplement injection).
+
+`project_brief()` similarly passes `directory=resolved` to `list_wiki_pages()` (v5.65).
+
+### Quality floor and dedup (v5.62)
+
+Two additional filters applied after direction scoping:
+
+- **Quality floor** — results with a cross-encoder score near zero (controlled by `RECALL_QUALITY_FLOOR` env knob) are dropped. Catches low-signal co-occurrence rows that score ≈ 0 yet survive fusion.
+- **Dedup** — repeated identical co-occurrence rows (same content, multiple co-occurrence edges) are collapsed to one result before return.
+
+### `dominant_directory()` helper
+
+Used at write time (v5.64) by `curation/strengthen.py`, `cls_store/promotion.py`, and `sleep_compute/dream.py`. When deriving a `directory_context` stamp for an auto-generated or promoted memory, these modules call `dominant_directory(candidates)` instead of hardcoding `'system'`. The helper excludes sentinel values (`None`, `''`, `'global'`, `'system'`) from the vote and returns the single real project path when unambiguous, or `'global'` for cross-project outputs (dreams).
+
+### SQL builder
+
+`_build_directory_clause(df)` in `storage/directory.py` converts a `DirectoryFilter` dataclass into the SurrealQL `WHERE` fragment. It is the single place where directory predicate SQL is produced.
+
 ## Branch-Aware Filter and Boost (v5.0)
 
 `recall()` and `wiki_query()` filter results by git branch after fetch:

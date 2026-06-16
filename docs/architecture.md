@@ -35,7 +35,7 @@ Claude Code (MCP client)
          │
          ├──► enrichment/        (subpackage: ConceptNet / COMET / doc2query)
          │
-         ├──► storage/           (subpackage: ops.py, client.py, schema.py — SurrealDB)
+         ├──► storage/           (subpackage: ops.py, client.py, schema.py, directory.py — SurrealDB + directory scoping)
          │
          ├──► file_queue/        (subpackage: queue + dlq.py drainer + similarity gate)
          │
@@ -116,12 +116,14 @@ consolidation/orchestrator.py (ConsolidationScheduler)
 
 Dream replay runs separately in `_maybe_sleep_cycle()` — triggered at most once every 6 hours, after the daily consolidation cycle completes. It examines random memory pairs for latent relationships and drives narrative summarisation.
 
+**Embedded-mode compatibility (v5.63):** `storage/client.py` runs `batch_writes` per-statement in embedded SurrealDB Python SDK mode (not a single batch call). The `_inline_int_record_ids` helper rewrites `type::record('t', $int)` syntax — rejected by the embedded SDK — to `t:{int}` syntax before execution. Without this, every nightly consolidation run failed silently in embedded mode.
+
 ## Module Responsibilities
 
 | Module | Responsibility |
 |---|---|
 | `server/` | MCP tool handlers, session management, action-stream capture (subpackage: `tools/`, `middleware/`, `transport/`) |
-| `storage/` | All SurrealDB reads/writes; schema ownership (subpackage: `ops.py`, `client.py`, `schema.py`, `migrations.py`, `wiki.py`, `memory.py`) |
+| `storage/` | All SurrealDB reads/writes; schema ownership (subpackage: `ops.py`, `client.py`, `schema.py`, `migrations.py`, `wiki.py`, `memory.py`, `directory.py` — eligible-set predicate + SQL builder, v5.62) |
 | `consolidation/` | Background daemon loop (subpackage: `orchestrator.py`, `heat_decay.py`, `cls.py`, `causal.py`, `cleanup.py`) |
 | `retrieval/` | Multi-signal search, fusion, reranking (subpackage: `core.py`, `pipeline.py` v5.31.0 plugin arch, `stages/`, `wrrf.py`, `routing.py`, `temporal.py`, `adversarial.py`) |
 | `enrichment/` | Index-time text enrichment (subpackage: `conceptnet.py`, `comet.py`, `doc2query.py`) |
@@ -166,11 +168,9 @@ Dream replay runs separately in `_maybe_sleep_cycle()` — triggered at most onc
 | `prospective.py` | Forward-looking memory (plans, intentions) |
 | `staleness.py` | File-hash-based staleness detection for code memories |
 | `remote_embeddings.py` | HTTP embedding service for Docker deployments |
-| `embed_service.py` | Embedding microservice server |
-| `ml_client.py` | HTTP client for remote ML inference |
+| `backend/` | Backend-only modules moved here from top-level `yadgar/` in v5.60 (subpackage: `cache.py`, `ml_client.py`, `embed_service.py`, `embed_service_metrics.py`) |
 | `backup.py` | Database backup/restore utilities |
 | `blocks_render.py` | Memory block rendering for context injection (v5.33.0) |
-| `cache.py` | Shared LRU/TTL cache utilities |
 | `conflict_resolver.py` | Memory conflict detection + resolution gate |
 | `exception_telemetry.py` | Exception capture + structured error reporting |
 | `install_hooks_lib.py` | Hook installation logic (library, invoked by CLI) |

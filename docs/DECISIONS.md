@@ -10,6 +10,50 @@
 
 ---
 
+## 2026-06-16 Directory scoping subsystem (v5.60–v5.66)
+
+### PD-46 — Drop 'system' from directory eligible set (DONE — v5.65)
+
+**Decision:** Remove `'system'` from the eligible set checked by `is_directory_eligible`. The eligible set is now `{caller_dir, 'global', '', None}` only.
+
+**Rationale:** `'system'` was the primary mis-stamp sink — rows that failed directory derivation landed there with no real project affiliation, then surfaced in every caller's results. Removing it from eligibility cuts cross-project leakage at the retrieval layer immediately, before the corpus re-stamp migration completes. Rows still stamped `'system'` will not be returned by retrieval; they become invisible (not deleted) until the re-stamp sweep reclaims them.
+
+**Note:** `dominant_directory._SENTINELS` still contains `'system'`, but for the opposite purpose: excluding sentinel values from the directory vote when deriving a stamp. These roles are unrelated.
+
+**Affected code:** `storage/directory.py::_ALWAYS_ELIGIBLE`; `hooks/prompt-recall.py` supplement WHERE (`directory_context != $dir` → `directory_context IN ('', 'global')`).
+
+---
+
+### PD-47 — Hard-require `directory` on recall() / wiki_query() (DONE — v5.62)
+
+**Decision:** `recall()` and `wiki_query()` raise `ValueError` if `directory` is absent. No `os.getcwd()` fallback.
+
+**Rationale:** The daemon runs containerized. `os.getcwd()` inside the container returns the container's filesystem path, not the caller's project directory. Using it as a directory filter silently mis-scopes every read — worse than failing loudly. Callers already have the project path (Claude Code passes `cwd` to hook scripts; MCP clients supply it explicitly). Raising `ValueError` forces callers to fix the omission rather than accepting silently wrong results.
+
+**Affected code:** `retrieval/core.py`, `server/tools/recall.py`, `server/tools/wiki.py` entry points.
+
+---
+
+### PD-48 — Write-time directory stamp derivation via dominant_directory() (DONE — v5.64)
+
+**Decision:** Auto-generated memories (strengthened curations, CLS promotions, dream summaries) derive their `directory_context` stamp from `dominant_directory(source_candidates)` instead of hardcoding `'system'` or `'global'`.
+
+**Rationale:** Hardcoded `'system'` was the write-side partner of PD-46's read-side problem. Newly minted derived memories were guaranteed to be invisible (after PD-46 drops `'system'`) and unrecoverable without a re-stamp. `dominant_directory()` inspects the source memories' `directory_context` values, excludes sentinel values (`None`, `''`, `'global'`, `'system'`) from the vote, and returns the single unambiguous real project path. When sources span multiple projects or are all sentinels, it returns `'global'` — appropriate for cross-project derived knowledge (dreams).
+
+**Affected modules:** `curation/strengthen.py`, `cls_store/promotion.py`, `sleep_compute/dream.py`.
+
+---
+
+### PD-49 — Purge by access recency for derived/auto-abstracted memories (IN PROGRESS — v5.66)
+
+**Decision:** Auto-abstracted and derived memories (tagged `_auto`, `_derived`) are pruned when they are old AND have not been accessed recently, even if their `access_count` is non-zero.
+
+**Rationale:** Prior rule spared any memory with `access_count != 0`, regardless of when it was last accessed. This accumulated stale derived memories that were accessed once (e.g., during the consolidation run that created them) but never retrieved by a real caller. The new rule adds a recency gate: `last_accessed < now() - PURGE_RECENCY_CUTOFF_DAYS`. Memories actively serving recall remain protected; memories that have gone cold despite a non-zero access count are reclaimed.
+
+**Affected code:** `curation/prune_passes.py`. Controlled by `PURGE_RECENCY_CUTOFF_DAYS` env knob.
+
+---
+
 ## 2026-06-06 Internal dev workflow vs production CI separation
 
 ## PD-45 — Internal dev workflow vs production CI separation (2026-06-06)
