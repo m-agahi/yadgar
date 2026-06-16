@@ -3,6 +3,13 @@ name: CI (PR)
 on:
   pull_request:
     branches: [master]
+    # Docs-only changes skip CI (docs go direct to master, no PR). Workflow-only
+    # changes skip too — the test suite doesn't validate workflow YAML; validate.yaml
+    # (yaml/actionlint) still runs on .forgejo edits as the safety net. Skips a run
+    # only when EVERY changed path matches — mixed code+docs/ci PRs still run.
+    paths-ignore:
+      - 'docs/**'
+      - '.forgejo/**'
 
 # Cancel superseded test runs on a fresh push to the same PR branch.
 concurrency:
