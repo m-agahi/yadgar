@@ -632,12 +632,15 @@ def test_consolidation_cycle_emits_all_phase_complete_markers(tmp_path, caplog):
 
 
 def test_memify_prune_auto_generated(tmp_path):
-    """_memify_prune deletes cold, unaccessed, old auto-generated memories.
+    """_memify_prune deletes cold, stale, old auto-generated memories.
 
     Scenario:
-    - 1 old cold unaccessed auto-generated memory → should be pruned
-    - 1 user memory (no auto-generated tag)       → must survive
-    - 1 protected auto-generated memory            → must survive
+    - 1 old cold stale (last_accessed old) auto-generated memory → should be pruned
+    - 1 user memory (no auto-generated tag)                      → must survive
+    - 1 protected auto-generated memory                          → must survive
+
+    v5.66: prune gate is now recency-based (last_accessed < cutoff), not
+    access_count==0.  Memories must have last_accessed backdated to be eligible.
     """
     from datetime import UTC, datetime, timedelta
 
@@ -660,7 +663,8 @@ def test_memify_prune_auto_generated(tmp_path):
 
     old_date = (datetime.now(UTC) - timedelta(days=45)).isoformat()
 
-    # 1. Cold, unaccessed, old auto-generated memory — SHOULD be pruned
+    # 1. Cold, stale, old auto-generated memory — SHOULD be pruned.
+    #    last_accessed also backdated: no recent recall -> eligible for purge.
     autogen_id = storage.insert_memory(
         {
             "content": "auto-generated derived fact about a.py and b.py",
@@ -669,9 +673,10 @@ def test_memify_prune_auto_generated(tmp_path):
             "heat": 0.005,  # below COLD_THRESHOLD
         }
     )
-    # Back-date it so it exceeds the age floor
+    # Back-date created_at AND last_accessed so it exceeds the age floor.
+    # v5.66: without last_accessed backdated, last_accessed=insert_time (now) → spared.
     storage._q(
-        "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 0",
+        "UPDATE type::record('memory', $id) SET created_at = $ts, last_accessed = $ts, access_count = 0",
         {"id": autogen_id, "ts": old_date},
     )
 
@@ -685,7 +690,7 @@ def test_memify_prune_auto_generated(tmp_path):
         }
     )
     storage._q(
-        "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 0",
+        "UPDATE type::record('memory', $id) SET created_at = $ts, last_accessed = $ts, access_count = 0",
         {"id": user_id, "ts": old_date},
     )
 
@@ -700,7 +705,7 @@ def test_memify_prune_auto_generated(tmp_path):
     )
     storage._q(
         "UPDATE type::record('memory', $id) SET "
-        "created_at = $ts, access_count = 0, is_protected = true",
+        "created_at = $ts, last_accessed = $ts, access_count = 0, is_protected = true",
         {"id": protected_id, "ts": old_date},
     )
 
@@ -708,7 +713,7 @@ def test_memify_prune_auto_generated(tmp_path):
     curator._memify_prune(stats)
 
     assert storage.get_memory(autogen_id) is None, (
-        "cold old unaccessed auto-generated memory should have been pruned"
+        "cold old stale auto-generated memory should have been pruned"
     )
     assert storage.get_memory(user_id) is not None, "user memory must not be pruned"
     assert storage.get_memory(protected_id) is not None, "protected memory must not be pruned"
@@ -796,16 +801,22 @@ def test_memify_derive_no_413_on_5000_statements(monkeypatch):
 
 
 def test_memify_prune_auto_abstracted(tmp_path):
-    """_memify_prune deletes cold, unaccessed, old auto-abstracted memories (Fix 1).
+    """_memify_prune deletes stale, old auto-abstracted memories (v5.66 recency gate).
 
     Scenario:
-    - 1 old cold unaccessed auto-abstracted memory → should be pruned
-    - 1 user memory (no auto-abstracted tag)        → must survive
-    - 1 protected auto-abstracted memory             → must survive
-    - 1 recently-created auto-abstracted memory      → must survive (too young)
-    - 1 accessed auto-abstracted memory              → must survive (was accessed)
-    - 1 memory at age = MAX - 1 days                 → must survive (boundary: under age cap)
-    - 1 memory at age = MAX + 1 days                 → must be pruned (boundary: over age cap)
+    - 1 old stale (last_accessed old) auto-abstracted memory  → should be pruned
+    - 1 user memory (no auto-abstracted tag)                  → must survive
+    - 1 protected auto-abstracted memory                      → must survive
+    - 1 recently-created auto-abstracted memory               → must survive (too young)
+    - 1 accessed recently (last_accessed recent) memory       → must survive (recently used)
+    - 1 memory at age = MAX - 1 days                          → must survive (boundary: under age cap)
+    - 1 memory at age = MAX + 1 days                          → must be pruned (boundary: over age cap)
+    - 1 high-heat old+stale memory                            → must be pruned (no heat gate)
+
+    v5.66: prune gate changed from access_count==0 to recency of last_accessed.
+    All memories that should be pruned have both created_at AND last_accessed
+    backdated; memories that should survive (recently-accessed) have last_accessed
+    left at insert time (= now, within the recency window).
     """
     from datetime import UTC, datetime, timedelta
 
@@ -832,7 +843,8 @@ def test_memify_prune_auto_abstracted(tmp_path):
     boundary_under_date = (datetime.now(UTC) - timedelta(days=max_age - 1)).isoformat()
     boundary_over_date = (datetime.now(UTC) - timedelta(days=max_age + 1)).isoformat()
 
-    # 1. Old, cold, unaccessed auto-abstracted memory — SHOULD be pruned
+    # 1. Old, stale (last_accessed old too) auto-abstracted memory — SHOULD be pruned.
+    #    Both created_at and last_accessed backdated: no recent recall -> eligible.
     prunable_id = storage.insert_memory(
         {
             "content": "Recurring pattern across 5 observations: bash git diff cat",
@@ -842,7 +854,7 @@ def test_memify_prune_auto_abstracted(tmp_path):
         }
     )
     storage._q(
-        "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 0",
+        "UPDATE type::record('memory', $id) SET created_at = $ts, last_accessed = $ts, access_count = 0",
         {"id": prunable_id, "ts": old_date},
     )
 
@@ -856,7 +868,7 @@ def test_memify_prune_auto_abstracted(tmp_path):
         }
     )
     storage._q(
-        "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 0",
+        "UPDATE type::record('memory', $id) SET created_at = $ts, last_accessed = $ts, access_count = 0",
         {"id": user_id, "ts": old_date},
     )
 
@@ -871,11 +883,11 @@ def test_memify_prune_auto_abstracted(tmp_path):
     )
     storage._q(
         "UPDATE type::record('memory', $id) SET "
-        "created_at = $ts, access_count = 0, is_protected = true",
+        "created_at = $ts, last_accessed = $ts, access_count = 0, is_protected = true",
         {"id": protected_id, "ts": old_date},
     )
 
-    # 4. Recent auto-abstracted memory — MUST survive (too young)
+    # 4. Recent auto-abstracted memory — MUST survive (too young: created_at within window)
     recent_id = storage.insert_memory(
         {
             "content": "Recurring pattern across 4 observations: test fixture setup",
@@ -885,11 +897,13 @@ def test_memify_prune_auto_abstracted(tmp_path):
         }
     )
     storage._q(
-        "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 0",
+        "UPDATE type::record('memory', $id) SET created_at = $ts, last_accessed = $ts, access_count = 0",
         {"id": recent_id, "ts": recent_date},
     )
 
-    # 5. Accessed auto-abstracted memory — MUST survive
+    # 5. Old but RECENTLY ACCESSED memory — MUST survive (v5.66: recency gate).
+    #    created_at is old, but last_accessed is left at insert time (now = within window).
+    #    This models the correct case: memory is old but is still being used.
     accessed_id = storage.insert_memory(
         {
             "content": "Recurring pattern across 6 observations: authentication flow",
@@ -899,11 +913,13 @@ def test_memify_prune_auto_abstracted(tmp_path):
         }
     )
     storage._q(
+        # Only backdate created_at; leave last_accessed=now (insert time) -> recently accessed
         "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 2",
         {"id": accessed_id, "ts": old_date},
     )
 
-    # 6. Boundary: age = MAX - 1 days — MUST survive (just under the cap)
+    # 6. Boundary: age = MAX - 1 days — MUST survive (just under the age cap).
+    #    last_accessed also at boundary_under_date (same as created_at).
     boundary_under_id = storage.insert_memory(
         {
             "content": "Recurring pattern boundary: just under max age",
@@ -913,11 +929,11 @@ def test_memify_prune_auto_abstracted(tmp_path):
         }
     )
     storage._q(
-        "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 0",
+        "UPDATE type::record('memory', $id) SET created_at = $ts, last_accessed = $ts, access_count = 0",
         {"id": boundary_under_id, "ts": boundary_under_date},
     )
 
-    # 7. Boundary: age = MAX + 1 days — SHOULD be pruned (just over the cap)
+    # 7. Boundary: age = MAX + 1 days — SHOULD be pruned (just over the age cap).
     boundary_over_id = storage.insert_memory(
         {
             "content": "Recurring pattern boundary: just over max age",
@@ -927,13 +943,12 @@ def test_memify_prune_auto_abstracted(tmp_path):
         }
     )
     storage._q(
-        "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 0",
+        "UPDATE type::record('memory', $id) SET created_at = $ts, last_accessed = $ts, access_count = 0",
         {"id": boundary_over_id, "ts": boundary_over_date},
     )
 
-    # 8. High-heat auto-abstracted memory (heat=0.8) — MUST be pruned
-    # Pass 3 has no heat gate: a fresh auto-abstracted memory that exceeds the age
-    # cap must be pruned regardless of how warm it is.
+    # 8. High-heat auto-abstracted memory (heat=0.8), old+stale — MUST be pruned.
+    #    Pass 3 has no heat gate; old+stale regardless of heat -> purged.
     high_heat_date = (datetime.now(UTC) - timedelta(days=max_age + 5)).isoformat()
     high_heat_id = storage.insert_memory(
         {
@@ -944,7 +959,7 @@ def test_memify_prune_auto_abstracted(tmp_path):
         }
     )
     storage._q(
-        "UPDATE type::record('memory', $id) SET created_at = $ts, access_count = 0",
+        "UPDATE type::record('memory', $id) SET created_at = $ts, last_accessed = $ts, access_count = 0",
         {"id": high_heat_id, "ts": high_heat_date},
     )
 
@@ -952,13 +967,13 @@ def test_memify_prune_auto_abstracted(tmp_path):
     curator._memify_prune(stats)
 
     assert storage.get_memory(prunable_id) is None, (
-        "old cold unaccessed auto-abstracted memory should have been pruned"
+        "old stale auto-abstracted memory should have been pruned"
     )
     assert storage.get_memory(user_id) is not None, "user memory must not be pruned"
     assert storage.get_memory(protected_id) is not None, "protected memory must not be pruned"
     assert storage.get_memory(recent_id) is not None, "recent auto-abstracted must not be pruned"
     assert storage.get_memory(accessed_id) is not None, (
-        "accessed auto-abstracted must not be pruned"
+        "recently-accessed auto-abstracted must not be pruned (last_accessed within window)"
     )
     assert storage.get_memory(boundary_under_id) is not None, (
         "auto-abstracted at age MAX-1 must survive (boundary: under age cap)"
@@ -1286,9 +1301,12 @@ class TestMemifyPruneDegenerateAutoAbstracted:
             "degenerate memory with [tags:...] suffix must be pruned"
         )
 
-    def test_pass6_access_count_guard(self, storage, settings, embeddings, thermo):
-        """Pass 6 must skip memories that have been accessed (access_count > 0).
-        Even if body is degenerate, a user-accessed memory is treated as legitimate.
+    def test_pass6_accessed_degenerate_is_purged(self, storage, settings, embeddings, thermo):
+        """v5.66: Pass 6 no longer spares degenerate memories based on access_count.
+
+        Degenerate content was never valid signal; an accidental recall should not
+        grant immortality.  access_count > 0 no longer protects degenerate rows.
+        is_protected is still honoured (tested separately).
         """
         curator = MemoryCurator(storage, embeddings, thermo, settings)
 
@@ -1297,7 +1315,7 @@ class TestMemifyPruneDegenerateAutoAbstracted:
             "Recurring pattern across 27 observations: frequently modified together",
             ["semantic", "auto-abstracted"],
         )
-        # Set access_count > 0
+        # Set access_count > 0 — under old guard this spared the memory; not anymore.
         storage._q(
             "UPDATE type::record('memory', $id) SET access_count = 3",
             {"id": accessed_degen_id},
@@ -1306,8 +1324,8 @@ class TestMemifyPruneDegenerateAutoAbstracted:
         stats = {"pruned": 0}
         curator._memify_prune(stats)
 
-        assert storage.get_memory(accessed_degen_id) is not None, (
-            "accessed degenerate memory must not be pruned by Pass 6"
+        assert storage.get_memory(accessed_degen_id) is None, (
+            "accessed degenerate memory must be purged by Pass 6 — access_count no longer protects degenerate content"
         )
 
     def test_pass6_keeps_cyrillic_with_recurring_prefix(
