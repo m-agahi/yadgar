@@ -162,7 +162,9 @@ def _call_recall_mcp_tool(query: str = "test query", max_results: int = 1, min_h
         patch("yadgar.server.tools.project._detect_branch", return_value=None),
         patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
     ):
-        return recall_fn(query=query, max_results=max_results, min_heat=min_heat)
+        return recall_fn(
+            query=query, max_results=max_results, min_heat=min_heat, directory="/tmp/test"
+        )
 
 
 def _call_wiki_query_mcp_tool(
@@ -182,7 +184,13 @@ def _call_wiki_query_mcp_tool(
         patch("yadgar.server.tools.project._detect_branch", return_value=None),
         patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
     ):
-        return wiki_query_fn(query=query, tags=tags, category=category, max_results=max_results)
+        return wiki_query_fn(
+            query=query,
+            tags=tags,
+            category=category,
+            max_results=max_results,
+            directory="/tmp/test",
+        )
 
 
 def _make_settings_mock():
@@ -312,7 +320,7 @@ class TestRecallDurationMetricBugA:
         ):
             from yadgar.server.tools.recall import recall as recall_fn
 
-            recall_fn(query="test", max_results=1)
+            recall_fn(query="test", max_results=1, directory="/tmp/test")
 
         after = _count_nolabel(yadgar_recall_duration_ms)
         assert after - before == 1, (

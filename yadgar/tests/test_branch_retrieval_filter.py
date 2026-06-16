@@ -73,7 +73,7 @@ class TestRecallBranchFilter:
             storage, "unique-current-branch-content xyz987", "feat/my-feature"
         )
 
-        results = server.recall("unique-current-branch-content xyz987")
+        results = server.recall("unique-current-branch-content xyz987", directory="/tmp/test-dir")
         ids_branches = [(r.get("id"), r.get("branch")) for r in results]
         current_branch_results = [r for r in results if r.get("branch") == "feat/my-feature"]
         assert current_branch_results, (
@@ -87,7 +87,7 @@ class TestRecallBranchFilter:
         storage = server._get_storage()
         _insert_memory_with_branch(storage, "unique-default-branch-content abc123", "master")
 
-        results = server.recall("unique-default-branch-content abc123")
+        results = server.recall("unique-default-branch-content abc123", directory="/tmp/test-dir")
         master_results = [r for r in results if r.get("branch") == "master"]
         assert master_results, "Expected default-branch memory in results"
 
@@ -98,7 +98,7 @@ class TestRecallBranchFilter:
         storage = server._get_storage()
         _insert_memory_with_branch(storage, "unique-no-branch-content leg456", None)
 
-        results = server.recall("unique-no-branch-content leg456")
+        results = server.recall("unique-no-branch-content leg456", directory="/tmp/test-dir")
         none_branch_results = [r for r in results if r.get("branch") is None]
         assert none_branch_results, "Expected NONE-branch (legacy) memory in results"
 
@@ -111,7 +111,7 @@ class TestRecallBranchFilter:
             storage, "unique-other-branch-content zzz999", "feat/completely-different"
         )
 
-        results = server.recall("unique-other-branch-content zzz999")
+        results = server.recall("unique-other-branch-content zzz999", directory="/tmp/test-dir")
         result_ids = [r.get("id") for r in results]
         assert mid not in result_ids, (
             f"Memory on different branch should be excluded, but id {mid} appeared in results"
@@ -131,7 +131,9 @@ class TestRecallBranchFilter:
             storage, "boost-test identical query content default-branch", "master"
         )
 
-        results = server.recall("boost-test identical query content", max_results=10)
+        results = server.recall(
+            "boost-test identical query content", max_results=10, directory="/tmp/test-dir"
+        )
         current_results = [r for r in results if r.get("branch") == "feat/boosted"]
         default_results = [r for r in results if r.get("branch") == "master"]
 
@@ -160,7 +162,10 @@ class TestRecallBranchFilter:
             storage, "non-git-recall feat content sss", "feat/something"
         )
 
-        result_ids = {r.get("id") for r in server.recall("non-git-recall", max_results=10)}
+        result_ids = {
+            r.get("id")
+            for r in server.recall("non-git-recall", max_results=10, directory="/tmp/test-dir")
+        }
         assert mid_master in result_ids, (
             "Master-branch memory should be included in non-git context"
         )
@@ -188,7 +193,7 @@ class TestWikiQueryBranchFilter:
             "unique wiki current content bbb999",
             "feat/wiki-filter",
         )
-        results = server.wiki_query("unique wiki current content bbb999")
+        results = server.wiki_query("unique wiki current content bbb999", directory="/tmp/test-dir")
         current_results = [r for r in results if r.get("branch") == "feat/wiki-filter"]
         assert current_results, "Expected current-branch wiki page in results"
 
@@ -206,7 +211,7 @@ class TestWikiQueryBranchFilter:
         page = wiki._storage.get_wiki_page_by_slug(slug)
         page_id = page["id"] if page else None
 
-        results = server.wiki_query("unique wiki other content ccc111")
+        results = server.wiki_query("unique wiki other content ccc111", directory="/tmp/test-dir")
         result_ids = [r.get("id") for r in results]
         assert page_id not in result_ids, (
             f"Wiki page on different branch should be excluded, but {page_id} appeared"
@@ -229,7 +234,9 @@ class TestWikiQueryBranchFilter:
             "wiki boost identical query ddd999 default",
             "master",
         )
-        results = server.wiki_query("wiki boost identical query ddd999", max_results=10)
+        results = server.wiki_query(
+            "wiki boost identical query ddd999", max_results=10, directory="/tmp/test-dir"
+        )
         current_results = [r for r in results if r.get("branch") == "feat/wiki-boost"]
         default_results = [r for r in results if r.get("branch") == "master"]
         assert current_results, "Current-branch wiki missing from results"
@@ -257,7 +264,9 @@ class TestWikiQueryBranchFilter:
             wiki, "Wiki Non Git Feat Eee", "wiki non-git content eee111 feat", "feat/other"
         )
 
-        results = server.wiki_query("wiki non-git content eee111", max_results=10)
+        results = server.wiki_query(
+            "wiki non-git content eee111", max_results=10, directory="/tmp/test-dir"
+        )
 
         def _get_slug_id(s):
             p = wiki._storage.get_wiki_page_by_slug(s)

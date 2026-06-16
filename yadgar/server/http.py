@@ -598,6 +598,30 @@ async def hook_session_context(request: Request) -> JSONResponse:
         return JSONResponse({"text": ""})
 
 
+def _filter_prompt_recall_results(results: list[dict], directory: str | None) -> list[dict]:
+    """Post-filter retriever results by caller directory for prompt-recall.
+
+    v5.65 Fix D: hook_prompt_recall previously forwarded all retriever results to
+    the response without directory scoping.  The retriever runs in a container and
+    cannot filter by host directory on its own — we must apply is_directory_eligible()
+    here after retrieval.
+
+    When directory is None or empty (param absent / not passed by hook script),
+    scoping is skipped with a warning rather than using os.getcwd() (container path
+    would mis-scope results).
+    """
+    from yadgar.storage.directory import is_directory_eligible  # noqa: PLC0415
+
+    if not directory or not directory.strip():
+        logger.warning(
+            "prompt-recall: directory param absent — skipping directory filter "
+            "(container cannot detect host cwd; pass ?directory= in hook script)"
+        )
+        return results
+    caller_dir = directory.strip().rstrip("/")
+    return [r for r in results if is_directory_eligible(r.get("directory_context"), caller_dir)]
+
+
 @mcp_server.custom_route("/hooks/prompt-recall", methods=["GET"])
 @trace_span("hook.prompt_recall")
 async def hook_prompt_recall(request: Request) -> JSONResponse:
@@ -611,17 +635,21 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
     _observed = False
     try:
         query = request.query_params.get("query", "")
-        directory = request.query_params.get("directory", os.getcwd())
+        # v5.65 Fix D: do NOT fall back to os.getcwd() — daemon runs in a container;
+        # container cwd would mis-scope retriever results.  directory may be None if
+        # hook script does not pass ?directory=; handled by _filter_prompt_recall_results.
+        directory = request.query_params.get("directory") or None
 
         if not query or len(query) < 2:
             return JSONResponse({"text": ""})
 
         # Throttle: skip if session-context ran < 3 min ago (already loaded context)
         now = time.monotonic()
-        if now - _st._last_session_context.get(directory, 0) < 180:
+        throttle_key = directory or ""
+        if now - _st._last_session_context.get(throttle_key, 0) < 180:
             return JSONResponse({"text": "", "skipped": "session_context_recent"})
         # Throttle: max 1 recall per 2 minutes per directory
-        if now - _st._last_prompt_recall.get(directory, 0) < 120:
+        if now - _st._last_prompt_recall.get(throttle_key, 0) < 120:
             return JSONResponse({"text": "", "skipped": "rate_limited"})
 
         retriever = _st._retriever
@@ -649,6 +677,10 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
         if results is None:
             return JSONResponse({"text": ""})
 
+        # v5.65 Fix D: apply directory filter to retriever results.
+        # retriever.recall returns unscoped results; filter here by caller directory.
+        results = _filter_prompt_recall_results(results, directory)
+
         if not results:
             return JSONResponse({"text": ""})
 
@@ -674,7 +706,7 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
         if dlq_text:
             lines = [dlq_text, ""] + lines
 
-        _bounded_set(_st._last_prompt_recall, directory, time.monotonic())
+        _bounded_set(_st._last_prompt_recall, throttle_key, time.monotonic())
         return JSONResponse({"text": "\n".join(lines)})
     except Exception as _exc:
         _caught_exc = _exc

@@ -173,14 +173,19 @@ class TestGetAnchoredMemoriesScoped:
             "empty-string directory_context anchor should be in global bucket"
         )
 
-    def test_system_directory_context_treated_as_global(self, storage):
-        """Anchors with directory_context='system' are treated as global."""
+    def test_system_directory_context_not_surfaced(self, storage):
+        """v5.65: Anchors with directory_context='system' are no longer surfaced.
+
+        'system' was the mis-stamp sink; v5.64 stopped creating new system rows.
+        Dropping 'system' from the anchor SQL global-bucket query prevents stale
+        mis-stamped rows from surfacing.
+        """
         _seed_anchor(storage, "system anchor", "system")
 
         result = storage.get_anchored_memories_scoped(directory="/some/project", limit=20)
         contents = [r["content"] for r in result]
-        assert "system anchor" in contents, (
-            "system directory_context anchor should be in global bucket"
+        assert "system anchor" not in contents, (
+            "system directory_context anchor must NOT surface after v5.65 (mis-stamp sink dropped)"
         )
 
     def test_project_anchors_surface_for_correct_project(self, storage):

@@ -498,7 +498,11 @@ class TestRecallDirectoryScope:
     """recall(directory=...) excludes memories from other directories."""
 
     def test_agent_in_proj_A_does_not_see_proj_B_writes(self):
-        """recall with directory=/proj/A includes /proj/A and global, excludes /proj/B."""
+        """recall with directory=/proj/A includes /proj/A and global, excludes /proj/B.
+
+        v5.65 Fix D: directory is now required (no os.getcwd() fallback in recall).
+        directory=/proj/A is passed explicitly; no os-patching needed.
+        """
         import yadgar.server._state as _st
 
         storage = _st._storage
@@ -508,9 +512,7 @@ class TestRecallDirectoryScope:
 
         from yadgar.server.tools.recall import recall
 
-        with patch("yadgar.server.tools.recall.os") as mock_os:
-            mock_os.getcwd.return_value = "/daemon/root"
-            results = recall(query="proj secret", max_results=10, directory="/proj/A")
+        results = recall(query="proj secret", max_results=10, directory="/proj/A")
 
         contents = [r.get("content", "") for r in results]
         any("proj-A-secret" in c for c in contents)

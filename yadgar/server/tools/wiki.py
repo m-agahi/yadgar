@@ -571,12 +571,22 @@ def wiki_query(
     Returns matching pages with relevance scores. Use tags and category to filter.
 
     directory: Absolute project path for scoping results to caller directory + 'global'.
-        When absent, all directories are returned (legacy mode; WARNING logged).
+        Required (v5.65 Fix D): callers must supply the real host directory.
+        Container-safe: daemon does NOT fall back to os.getcwd().
     branch_hint: Caller branch for §25 branch filter (v5.43.0).
         Uses branch_hint when daemon-side _detect_branch returns None (container scenario).
         Resolution order: _detect_branch(directory) → branch_hint → None (canonical slot).
     """
     import time as _time  # noqa: PLC0415
+
+    # v5.65 Fix D: hard-require directory — MUST be first check (before any store access).
+    # Container-safe: do NOT fall back to os.getcwd().
+    _dir_stripped = (directory or "").strip().rstrip("/")
+    if not _dir_stripped:
+        raise ValueError(
+            "wiki_query: directory is required (caller must supply project dir; "
+            "container cannot detect it via os.getcwd())"
+        )
 
     _wiki_query_t0 = _time.monotonic()
     results: list[dict] = []
@@ -593,7 +603,9 @@ def wiki_query(
         try:
             import sys as _sys  # noqa: PLC0415
 
-            _cwd = directory if directory else os.getcwd()
+            _cwd = (
+                _dir_stripped  # v5.65 Fix D: directory is required; _dir_stripped always non-empty
+            )
             _srv = _sys.modules.get("yadgar.server")
             _detect_branch = getattr(_srv, "_detect_branch", None) if _srv else None
             _get_default_branch = getattr(_srv, "_get_default_branch", None) if _srv else None
@@ -622,23 +634,11 @@ def wiki_query(
         # v5.62.0: replaces hand-rolled predicate with is_directory_eligible() from
         # storage/directory.py — single source of truth for the eligible-set rule.
         # Applied as Python-side post-filter (mirrors recall directory filter from v5.42.5).
-        if directory is not None:
-            caller_dir = directory.strip().rstrip("/") or None
-            if caller_dir:
-                results = [
-                    r
-                    for r in results
-                    if is_directory_eligible(r.get("directory_context"), caller_dir)
-                ]
-            else:
-                logger.warning(
-                    "wiki_query: directory supplied but empty after strip — skipping directory filter"
-                )
-        else:
-            logger.warning(
-                "wiki_query: no directory supplied — returning results from all directories "
-                "(backward-compat mode). Pass directory= for project-scoped results (v5.43.0)."
-            )
+        # v5.65 Fix D: directory is now required (validated at function top), so
+        # _dir_stripped is always a non-empty absolute path here.
+        results = [
+            r for r in results if is_directory_eligible(r.get("directory_context"), _dir_stripped)
+        ]
 
         if _effective_branch is not None:
             for r in results:

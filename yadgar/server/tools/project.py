@@ -429,9 +429,14 @@ def _build_checkpoint_dict(checkpoint_rows: list) -> dict | None:
     }
 
 
-def _build_wiki_pages(storage, limit: int) -> list[dict]:
-    """Fetch and shape wiki pages list."""
-    pages = storage.list_wiki_pages(limit=limit)
+def _build_wiki_pages(storage, limit: int, directory: str | None = None) -> list[dict]:
+    """Fetch and shape wiki pages list, scoped to directory + 'global' when supplied.
+
+    v5.65: added directory param to prevent cross-project wiki page leakage in
+    project_brief key_wiki_pages (callers now pass resolved directory).
+    list_wiki_pages already accepts directory= and scopes to dir + 'global'.
+    """
+    pages = storage.list_wiki_pages(limit=limit, directory=directory)
     return [
         {
             "slug": p.get("slug", ""),
@@ -596,7 +601,7 @@ def _build_anchor_rows_catalog(storage, resolved: str) -> tuple:
     global_rows = storage._q(
         "SELECT id, content, tags, heat, access_count FROM memory "
         "WHERE '_anchor' INSIDE tags "
-        "AND (directory_context = '' OR directory_context = 'global' OR directory_context = 'system') "
+        "AND (directory_context = '' OR directory_context = 'global') "
         "AND (valid_until IS NONE OR valid_until > $now) "
         "ORDER BY heat DESC LIMIT 20",
         {"now": _now},
@@ -651,7 +656,7 @@ def _build_anchor_rows_restore(storage, resolved: str) -> list[dict]:
     global_rows = storage._q(
         "SELECT id, content, tags, heat, access_count FROM memory "
         "WHERE '_anchor' INSIDE tags "
-        "AND (directory_context = '' OR directory_context = 'global' OR directory_context = 'system') "
+        "AND (directory_context = '' OR directory_context = 'global') "
         "AND (valid_until IS NONE OR valid_until > $now) "
         "ORDER BY heat DESC LIMIT 20",
         {"now": _now},
@@ -1501,7 +1506,7 @@ def _project_brief_restore(
         "top_anchors": _build_anchor_rows_restore(storage, resolved),
         "hot_memories": _build_hot_memories(storage, resolved, limit=5, snippet=150),
         "checkpoint": _build_checkpoint_dict(checkpoint_rows),
-        "key_wiki_pages": _build_wiki_pages(storage, limit=3),
+        "key_wiki_pages": _build_wiki_pages(storage, limit=3, directory=resolved),
         # v5.53.0: grouped wiki catalog (metadata-only, length-capped).
         "wiki_catalog": _build_wiki_catalog(storage, resolved),
     }
@@ -1547,7 +1552,7 @@ def _project_brief_catalog_full(ctx: dict) -> dict:
         # v5.53.1: real stale count (TTL-cached).
         "stale_wiki_count": _compute_stale_wiki_count(resolved),
         "hot_memories": _build_hot_memories(storage, resolved, limit=3, snippet=100),
-        "key_wiki_pages": _build_wiki_pages(storage, limit=3),
+        "key_wiki_pages": _build_wiki_pages(storage, limit=3, directory=resolved),
         "checkpoint": _build_checkpoint_dict(checkpoint_rows),
         # v5.53.0: grouped wiki catalog (metadata-only, length-capped).
         "wiki_catalog": _build_wiki_catalog(storage, resolved),
@@ -1556,7 +1561,7 @@ def _project_brief_catalog_full(ctx: dict) -> dict:
         result["init_memory"] = init_rows[0].get("content") if init_rows else None
         result["active_work"] = active_rows[0].get("content") if active_rows else None
         result["hot_memories"] = _build_hot_memories(storage, resolved, limit=10, snippet=200)
-        result["key_wiki_pages"] = _build_wiki_pages(storage, limit=5)
+        result["key_wiki_pages"] = _build_wiki_pages(storage, limit=5, directory=resolved)
         result["wiki_catalog"] = _build_wiki_catalog(storage, resolved)
     # §28 — add _render for catalog+full (back-compat); signals+restore omit it
     result["_render"] = _render_project_brief(result)

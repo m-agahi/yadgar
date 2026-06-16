@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 
 import yadgar.server._state as _st
 from yadgar.config import get_settings
@@ -107,9 +106,21 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
     Resolution order: _detect_branch(directory or os.getcwd()) → branch_hint → None.
 
     Raises ValueError immediately (before any retrieval work) if profile is
-    set to an unrecognised value.
+    set to an unrecognised value, or if directory is absent/empty (v5.65 Fix D:
+    daemon runs in a container — os.getcwd() returns the container path and
+    would mis-scope results; callers MUST supply the real host directory).
     """
     import time as _time  # noqa: PLC0415
+
+    # v5.65 Fix D: hard-require directory — MUST be first check in body (before
+    # _get_storage() so the error fires even when StorageEngine is not initialised).
+    # Container-safe: do NOT fall back to os.getcwd().
+    _dir_stripped = (directory or "").strip().rstrip("/")
+    if not _dir_stripped:
+        raise ValueError(
+            "recall: directory is required (caller must supply project dir; "
+            "container cannot detect it via os.getcwd())"
+        )
 
     # I3: validate profile BEFORE any expensive setup or DB access.
     if profile is not None:
@@ -140,7 +151,9 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
         try:
             import sys as _sys  # noqa: PLC0415
 
-            _cwd = directory if directory else os.getcwd()
+            _cwd = (
+                _dir_stripped  # v5.65 Fix D: directory is required; _dir_stripped always non-empty
+            )
             _srv = _sys.modules.get("yadgar.server")
             if _srv is not None:
                 _detect_branch_fn = getattr(_srv, "_detect_branch", None)
@@ -244,19 +257,12 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
         # v5.62.0: replaces hand-rolled predicate with is_directory_eligible() from
         # storage/directory.py — single source of truth for the eligible-set rule.
         # Applied as a Python-side post-filter (retriever pipeline threading is v5.44+).
-        # When directory is None: legacy mode — no filter, all directories returned.
-        if directory is not None:
-            caller_dir = directory.strip().rstrip("/") or None
-            if caller_dir:
-                merged = [
-                    m
-                    for m in merged
-                    if is_directory_eligible(m.get("directory_context"), caller_dir)
-                ]
-            else:
-                logger.warning(
-                    "recall: directory supplied but empty after strip — skipping directory filter"
-                )
+        # v5.65 Fix D: directory is now required (validated at function top), so
+        # caller_dir is always a non-empty absolute path here.
+        caller_dir = _dir_stripped  # guaranteed non-empty by earlier validation
+        merged = [
+            m for m in merged if is_directory_eligible(m.get("directory_context"), caller_dir)
+        ]
 
         # v5.62.0: quality floor — drop results the cross-encoder scored below threshold.
         # Targets co-occurrence / keyword-only noise that survives with CE≈0.
@@ -357,6 +363,14 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
                 qualifying = [wr for wr in wiki_results if wr.get("_retrieval_score", 0.0) > 0.3]
                 # §25 branch filter: exclude wiki pages outside allowed branches
                 qualifying = [wr for wr in qualifying if wr.get("branch") in _allowed_branches]
+                # v5.65.0: directory filter — same rule as memories (is_directory_eligible).
+                # caller_dir is None when directory=None (legacy mode) → no filter applied.
+                if caller_dir:
+                    qualifying = [
+                        wr
+                        for wr in qualifying
+                        if is_directory_eligible(wr.get("directory_context"), caller_dir)
+                    ]
                 for wr in qualifying:
                     wr["_source"] = "wiki"
                     wr.pop("embedding", None)

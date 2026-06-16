@@ -76,8 +76,8 @@ class TestContentIntegrity:
         result = memorize_sync(content, "/home/user/project", ["infra"])
         mid = result["id"]
 
-        # Recall with a related query
-        hits = server.recall("helm chart deployment replicas")
+        # Recall with a related query — v5.65: directory required
+        hits = server.recall("helm chart deployment replicas", directory="/home/user/project")
         match = next((h for h in hits if h["id"] == mid), None)
         assert match is not None, "Memory not found in recall results"
         assert match["content"] == content, (
@@ -90,7 +90,7 @@ class TestContentIntegrity:
         result = memorize_sync(content, "/home/user", ["codeberg", "secrets"])
         mid = result["id"]
 
-        hits = server.recall("codeberg personal access token")
+        hits = server.recall("codeberg personal access token", directory="/home/user")
         match = next((h for h in hits if h["id"] == mid), None)
         assert match is not None
         assert "zqq55bz2qi53gw375jlm2sh4jq" in match["content"], (
@@ -111,7 +111,7 @@ class TestContentIntegrity:
             "another unrelated: cooking pasta al dente",
         ]
         for query in queries:
-            server.recall(query)
+            server.recall(query, directory="/home/user/ops")
             mem = _get_memory(mid)
             assert mem is not None
             assert mem["content"] == content, (
@@ -556,7 +556,7 @@ class TestRegressionScenarios:
             "password manager vault item",
         ]
         for query in unrelated_queries:
-            server.recall(query)
+            server.recall(query, directory="/home/user")
 
         mem = _get_memory(mid)
         assert mem is not None
@@ -577,9 +577,9 @@ class TestRegressionScenarios:
         result = memorize_sync(content, "/home/user/projectA", ["github", "ci", "token"])
         mid = result["id"]
 
-        # Recall from a completely different project
-        server.recall("github token authentication")
-        server.recall("CI deployment secrets")
+        # Recall from a completely different project — v5.65: directory required
+        server.recall("github token authentication", directory="/home/user/projectB")
+        server.recall("CI deployment secrets", directory="/home/user/projectB")
 
         mem = _get_memory(mid)
         assert mem is not None

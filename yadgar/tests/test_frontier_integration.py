@@ -191,13 +191,13 @@ class TestRecallFullPipeline:
             "/test/recall",
             ["python", "asyncio"],
         )
-        results = server.recall("asyncio event loop", max_results=5)
+        results = server.recall("asyncio event loop", max_results=5, directory="/test/recall")
         assert len(results) >= 1
         assert any("asyncio" in r["content"] for r in results)
 
     def test_recall_no_embedding_leak(self):
         _store_novel_memory("embedding leak test data", "/test/recall", ["test"])
-        results = server.recall("embedding leak test")
+        results = server.recall("embedding leak test", directory="/test/recall")
         for r in results:
             assert "embedding" not in r
 
@@ -226,7 +226,7 @@ class TestRecallFullPipeline:
         assert rule_result["status"] == "created"
 
         # Recall should apply the filter
-        results = server.recall("validate user input")
+        results = server.recall("validate user input", directory="/test/rules")
         # Results from /test/rules should satisfy the rule
         for r in results:
             if r.get("directory_context") == "/test/rules":
@@ -245,7 +245,7 @@ class TestReconsolidationOnRecall:
         mid = result["id"]
 
         # Recall with a very different context — triggers reconsolidation
-        server.recall("completely unrelated quantum physics topic")
+        server.recall("completely unrelated quantum physics topic", directory="/test/recon")
         # Reconsolidation should have run (updating plasticity at minimum)
         storage = server._get_storage()
         mem = storage.get_memory(mid)
@@ -274,8 +274,8 @@ class TestCognitiveMapUpdates:
         )
 
         # Recall both to trigger transition recording
-        server.recall("first memory cognitive map")
-        server.recall("second memory cognitive map")
+        server.recall("first memory cognitive map", directory="/test/cogmap")
+        server.recall("second memory cognitive map", directory="/test/cogmap")
 
         # The _last_recalled_ids dict should be populated
         assert len(server._last_recalled_ids) >= 0  # may or may not have recorded yet
@@ -296,7 +296,7 @@ class TestMetacognitionLimitsContext:
                 ["design", "test"],
             )
 
-        results = server.recall("system design patterns", max_results=10)
+        results = server.recall("system design patterns", max_results=10, directory="/test/meta")
         # Metacognition should limit results to COGNITIVE_LOAD_LIMIT (4)
         # But only if there are more results than the limit
         limit = server._metacognition._chunk_limit
@@ -433,7 +433,7 @@ class TestBackwardCompatibility:
         )
 
         # Verify recall still works
-        results = server.recall("old format memory")
+        results = server.recall("old format memory", directory="/old/project")
         assert len(results) >= 0  # Should not crash
 
         # Verify validate still works

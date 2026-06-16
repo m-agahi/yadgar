@@ -52,7 +52,11 @@ def _make_mock_retriever() -> Any:
 
 
 def _call_recall(query: str = "test query", profile=None, stage_overrides=None, **kwargs):
-    """Call the MCP recall tool directly with mocked server state."""
+    """Call the MCP recall tool directly with mocked server state.
+
+    v5.65 Fix D: directory is now required. Default to "/tmp/test" for pipeline
+    tests that don't exercise directory scoping.
+    """
     import yadgar.server._state as _st
     from yadgar.server.tools.recall import recall as recall_fn
 
@@ -72,7 +76,7 @@ def _call_recall(query: str = "test query", profile=None, stage_overrides=None, 
         patch("yadgar.server.tools.project._detect_branch", return_value=None),
         patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
     ):
-        call_kwargs: dict = {"query": query}
+        call_kwargs: dict = {"query": query, "directory": "/tmp/test"}
         if profile is not None:
             call_kwargs["profile"] = profile
         if stage_overrides is not None:
@@ -195,7 +199,7 @@ class TestRecallInvalidProfile:
             patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
         ):
             with pytest.raises((ValueError, Exception)) as exc_info:
-                recall_fn(query="test", profile="turbo-ultra-hyper")
+                recall_fn(query="test", profile="turbo-ultra-hyper", directory="/tmp/test")
             assert (
                 "turbo-ultra-hyper" in str(exc_info.value).lower()
                 or "unknown" in str(exc_info.value).lower()
@@ -224,7 +228,7 @@ class TestRecallInvalidProfile:
             patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
         ):
             try:
-                recall_fn(query="test", profile="bogus_profile")
+                recall_fn(query="test", profile="bogus_profile", directory="/tmp/test")
             except Exception:
                 pass
             mock_retriever.recall.assert_not_called()

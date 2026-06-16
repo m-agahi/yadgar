@@ -67,7 +67,7 @@ def test_recall_finds_by_fts(flush_queue):
     server.memorize("Python asyncio event loop", "/tmp", ["async"])
     flush_queue()
 
-    results = server.recall("SQLite search")
+    results = server.recall("SQLite search", directory="/tmp")
     assert len(results) >= 1
     assert any("SQLite" in r["content"] for r in results)
 
@@ -79,7 +79,7 @@ def test_recall_boosts_heat():
     # Set heat to 0.5 so we can observe the boost
     server._get_storage().update_memory_heat(mid, 0.5)
 
-    results = server.recall("heat boost test")
+    results = server.recall("heat boost test", directory="/tmp")
     assert len(results) >= 1
     # Heat should be 0.5 + 0.1 = 0.6
     boosted = [r for r in results if r["id"] == mid]
@@ -91,7 +91,7 @@ def test_recall_respects_min_heat():
     r = memorize_sync("low heat memory", "/tmp", ["test"])
     server._get_storage().update_memory_heat(r["id"], 0.05)
 
-    results = server.recall("low heat memory", min_heat=0.5)
+    results = server.recall("low heat memory", min_heat=0.5, directory="/tmp")
     matching = [r for r in results if r["content"] == "low heat memory"]
     assert len(matching) == 0
 
@@ -101,14 +101,14 @@ def test_recall_max_results(flush_queue):
         server.memorize(f"memory number {i} test recall", "/tmp", ["bulk"])
     flush_queue()
 
-    results = server.recall("memory number test recall", max_results=3)
+    results = server.recall("memory number test recall", max_results=3, directory="/tmp")
     assert len(results) <= 3
 
 
 def test_recall_no_embedding_in_results(flush_queue):
     server.memorize("no embedding leak", "/tmp", ["test"])
     flush_queue()
-    results = server.recall("no embedding leak")
+    results = server.recall("no embedding leak", directory="/tmp")
     for r in results:
         assert "embedding" not in r
 

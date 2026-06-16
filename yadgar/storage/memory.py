@@ -765,8 +765,9 @@ class _MemoryMixin:
         """Return anchors in scope priority order: global first, then project.
 
         Two queries, hard cap `limit` each (safety cap 50 per design).
-        Global = directory_context IN ('', 'global', 'system').
+        Global = directory_context IN ('', 'global').
         Project = directory_context = directory (exact repo root match).
+        v5.65: 'system' removed from global bucket (mis-stamp sink; v5.64 stopped new writes).
         Deduplicates by memory id. Returns global anchors first, then project.
         No rank-filter applied — anchors surface unconditionally (design §2).
 
@@ -778,8 +779,7 @@ class _MemoryMixin:
         global_rows = self._q(
             "SELECT * FROM memory "
             "WHERE '_anchor' INSIDE tags AND is_protected = true "
-            "AND (directory_context = '' OR directory_context = 'global' "
-            "     OR directory_context = 'system') "
+            "AND (directory_context = '' OR directory_context = 'global') "
             "AND (valid_until IS NONE OR valid_until > $now) "
             "ORDER BY heat DESC LIMIT $lim",
             {"now": _now, "lim": _cap},

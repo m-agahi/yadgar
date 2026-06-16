@@ -25,15 +25,14 @@ class DirectoryFilter:
     Eligible set for Python post-filters (always_eligible_sentinels):
         {caller_dir, 'global', '', None}
 
-    NOTE — 'system' is included in the eligible set for now.  As of v5.64.0
+    NOTE — 'system' was the mis-stamp sink prior to v5.64.0.  As of v5.64.0
     the three write sites (curation/strengthen.py, cls_store/promotion.py,
     sleep_compute/dream.py) NO LONGER stamp 'system' — they stamp the
-    originating project dir or 'global' via dominant_directory().  However the
-    EXISTING 'system'-stamped rows still live in the store; dropping 'system'
-    from the eligible set is safe ONLY after a migration reclassifies those
-    rows (plan §C — a later chunk).  Until then, removing it would cut
-    legitimate rows.  The quality floor (v5.62.0) handles the signal/noise
-    problem for the residual 'system' rows in the interim.
+    originating project dir or 'global' via dominant_directory().  As of
+    v5.65.0 'system' is REMOVED from the eligible set: existing system-stamped
+    rows are treated as mis-stamps (noise) and will no longer surface in
+    directory-scoped recall / wiki_query / project_brief.  This is safe
+    post-v5.64 because no production code path creates new 'system' rows.
     """
 
     __slots__ = ("caller_dir",)
@@ -46,9 +45,9 @@ class DirectoryFilter:
 
 
 # Always-eligible sentinels — rows with these directory_context values are
-# included regardless of caller_dir.  'system' stays until the reclassify
-# chunk; see class docstring.
-_ALWAYS_ELIGIBLE: frozenset[str | None] = frozenset({"global", "", "system", None})
+# included regardless of caller_dir.  'system' removed in v5.65 (mis-stamp sink;
+# v5.64 stopped new system writes; existing rows are noise, not signal).
+_ALWAYS_ELIGIBLE: frozenset[str | None] = frozenset({"global", "", None})
 
 
 def is_directory_eligible(directory_context: str | None, caller_dir: str | None) -> bool:
@@ -114,8 +113,8 @@ def _build_directory_clause(
 
     When directory_filter is None: returns ('', {}) — no filtering.
     When caller_dir is set: generates a clause that allows sentinel rows
-    (directory_context IS NONE, = '', = 'global', = 'system') plus the
-    caller directory.
+    (directory_context IS NONE, = '', = 'global') plus the caller directory.
+    NOTE: 'system' removed from sentinels in v5.65 (mis-stamp sink).
 
     Args:
         directory_filter: DirectoryFilter instance, or None for no filtering.
@@ -134,7 +133,6 @@ def _build_directory_clause(
         "(directory_context IS NONE"
         " OR directory_context = ''"
         " OR directory_context = 'global'"
-        " OR directory_context = 'system'"
         " OR directory_context = $df_caller)"
     )
     return clause, params
