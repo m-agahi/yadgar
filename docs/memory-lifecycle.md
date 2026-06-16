@@ -75,6 +75,14 @@ Action-stream memories are permanently deleted when all three conditions hold:
 
 Normal memories are never automatically deleted. Use `forget(memory_id)` for manual deletion.
 
+### Purge by access recency for derived/auto-abstracted memories (v5.66)
+
+Derived and auto-abstracted memories (tagged `_auto`, `_derived`) accumulate over time — strengthened curations, CLS promotions, dream summaries. Prior to v5.66, any such memory with `access_count != 0` was spared from pruning regardless of age, because a non-zero count indicated it had once been returned by recall.
+
+v5.66 adds a recency gate: derived/auto-abstracted memories are purged when they are old AND `last_accessed < now() - PURGE_RECENCY_CUTOFF_DAYS` (configurable, default 90 days). A memory accessed once during the consolidation run that generated it (internal bookkeeping) but never retrieved by a real caller hits this cutoff and is reclaimed.
+
+Memories actively returned to callers update `last_accessed` on each retrieval and are not affected. Implementation lives in `curation/prune_passes.py`.
+
 ## Write Gate
 
 `memorize()` computes a novelty score before inserting. If the content is too similar to already-stored memories, the write is rejected:

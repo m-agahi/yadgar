@@ -5,7 +5,7 @@ Mirrored in wiki: `yadgar-architectural-invariants`.
 Anchored memory: project-scoped, `/home/max/git/yadgar`.
 Version-execution-order lives in the `yadgar-roadmap-future-improvements` wiki.
 
-Last updated: 2026-06-13 (I30 complexity-cap integrity — configurable caps + gated allowlist, no silent HARD baselining; v5.55.0). Prior: 2026-06-12 (I29 leverage-completeness / no-dead-capability — added this session from the KB-usability + graph-edge-leverage findings; planned via PLAN_V5_53 + PLAN_V5_54). Prior: 2026-05-31 (I26 secret-gate chokepoint v5.10.2; I27 plan-first for discoveries v5.10.x; I28 pre-commit allowlist audit v5.13.0).
+Last updated: 2026-06-16 (I31 directory-scoping single-predicate — eligible-set rule, hard-require directory, no 'system' in eligible set; v5.62–v5.65). Prior: 2026-06-13 (I30 complexity-cap integrity — configurable caps + gated allowlist, no silent HARD baselining; v5.55.0). Prior: 2026-06-12 (I29 leverage-completeness / no-dead-capability — added this session from the KB-usability + graph-edge-leverage findings; planned via PLAN_V5_53 + PLAN_V5_54). Prior: 2026-05-31 (I26 secret-gate chokepoint v5.10.2; I27 plan-first for discoveries v5.10.x; I28 pre-commit allowlist audit v5.13.0).
 
 ---
 
@@ -419,6 +419,32 @@ past hard caps undetected in v5.54.5 because it hadn't been edited since baselin
 
 **Last updated:** 2026-06-13 (v5.55.0, initial enforcement).
 
+### I31 — Directory scoping: single predicate, hard-require, no 'system' (v5.62–v5.65)
+
+All directory filtering for retrieval MUST go through `storage/directory.py::is_directory_eligible(dc, caller_dir)`. No caller, stage, or storage helper may replicate or widen the eligible-set logic inline.
+
+**Eligible set:**
+
+```
+eligible = {caller_dir, 'global', '', None}
+```
+
+`'system'` is **not** eligible. It was the primary mis-stamp sink and was removed from the eligible set in v5.65. Code that checks `directory_context IN ('', 'global', 'system')` is wrong and must be updated to use `is_directory_eligible`.
+
+**Note on `dominant_directory._SENTINELS`:** `'system'` is retained there, but as an *exclusion from the vote* (i.e., "don't let sentinel values win a directory election"), not as an eligible label. The two roles are opposite and unrelated.
+
+**Hard-require `directory` on reads:** `recall()` and `wiki_query()` raise `ValueError` if `directory` is absent. No `os.getcwd()` fallback. The daemon runs inside a container; its CWD is not the caller's project path.
+
+**SQL builder:** `_build_directory_clause(df)` in `storage/directory.py` is the single point of directory predicate SQL generation. No other code should construct a directory `WHERE` fragment.
+
+**Scope:** applies to all retrieval surfaces — `recall()` (including wiki-blend branch), `wiki_query()`, `project_brief()` wiki enumeration, and the `hooks/prompt-recall.py` supplement query.
+
+**Enforcement:** runtime `ValueError` on missing `directory` (hard-require); single-predicate convention enforced by code review. No automated lint yet.
+
+**History:** introduced v5.62 (`is_directory_eligible`, quality floor, dedup); extended v5.65 (wiki-blend scoping, drop `'system'`, prompt-recall supplement fix, `project_brief` scoping).
+
+**Last updated:** 2026-06-16 (v5.65, initial codification).
+
 ### Deferred (codify only when violations surface)
 
 - **I16 migration reversibility** — better as documented rollback procedure (restore-from-backup OR forward-fix script) verified by integration test.
@@ -785,6 +811,7 @@ Post-v5.3.9 `BindsTo → Wants` decouple, core + backend run as independent daem
 - 2026-05-29: I27 added (this commit) — plan-first for discoveries. Every reproducible bug / >10 LOC fix / user-visible issue MUST land in `docs/PLAN_V5_*.md` + roadmap pointer same session. Proposed by Opus advisor after audit found viz UX bugs S2.1-S2.4 (memory ids 494192, 495861) sat unplanned for 9 days (2026-05-20 discovery → 2026-05-29 user-flagged). Enforcement via `scripts/check_open_discoveries.py` (lint to be written) + stop-hook warning. Tag convention: `memorize(tags=["discovery", ...])`.
 - 2026-06-12: I29 added — leverage-completeness / no-dead-capability (stored ≡ used ≡ shown). Proposed by user after two same-session investigations exposed built-but-unleveraged capability: (1) KB corpus 646 wiki pages but bootstrap surfaced 3 slugs + read-first unusable (RCA `yadgar-knowledge-base-usability-rca-why-claude-doesn-t-read-firs`, remediation `PLAN_V5_53`); (2) graph edges stored/computed but retrieval ignored most + ran graph only off the fast/everyday path, viz showed decorative edges while hiding the retrieval entity graph (`PLAN_V5_54`). Rule: every stored/computed artifact needs a named consumer or removal; user-facing representation must match behavior-driving data; capability must reach the everyday path. Enforcement: per-plan "field/edge contract" declaring consumers; future `check_dead_capability.py` lint to flag zero-reader artifacts.
 - 2026-06-12 (v5.54.4): I29 enforcement lint shipped — `scripts/check_dead_capability.py`. Scoped to EDGE_CONTRACT domain (graph_api.py + viz_meta.py EDGE_TYPES registry vs docs/EDGE_CONTRACT.md). Three failure modes: ORPHAN (produced but uncontracted), DROP-STILL-PRODUCED (marked drop but still in code), STALE (contracted but no longer produced). Lint passes on current codebase (all 11 edge types contracted; no drop types; no stale rows). Pre-commit hook `check-dead-capability` + CI step after I25. Tests: `yadgar/tests/test_check_dead_capability.py` (8 tests). Post-train no-GC finding confirmed: every edge has a consumer, drop set = empty.
+- 2026-06-16 (v5.62–v5.65): I31 added — directory-scoping single-predicate. `is_directory_eligible` in `storage/directory.py` is now the single source of truth for the eligible-set rule `{caller_dir, 'global', '', None}`. `'system'` removed from eligible set (v5.65); hard-require `directory` on `recall()`/`wiki_query()` (`ValueError` on absent); wiki-blend branch of `recall()` and `project_brief()` now filter with the same predicate; prompt-recall supplement WHERE corrected from `directory_context != $dir` to `directory_context IN ('', 'global')`. Write-time stamping (v5.64): `curation/strengthen.py`, `cls_store/promotion.py`, `sleep_compute/dream.py` now derive directory via `dominant_directory()` instead of hardcoding `'system'`. Quality floor (`RECALL_QUALITY_FLOOR`) + dedup of repeated co-occurrence rows (v5.62).
 
 ---
 
