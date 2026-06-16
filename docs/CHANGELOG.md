@@ -7,6 +7,41 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.67.0]
+
+### Fixed (nightly-cycle service failures — exit status 30)
+
+- **Bug 1 — backup-path drift:** `nightly_cycle.main()` derived `db_path` from
+  `Settings.DB_PATH`, which reads the stale legacy value from `config.yaml`
+  (`db_path: ~/.yadgar/surreal_db`). The real DB lives at
+  `~/.local/share/yadgar/surreal_db` (XDG default, or `YADGAR_DATA_DIR`).
+  Fix: derive `db_path` from `yadgar.paths.DB_PATH` directly when no explicit
+  `args.db_path` is provided. `paths.DB_PATH` respects `YADGAR_DATA_DIR` /
+  `XDG_DATA_HOME` and is the single source of truth for the data directory.
+  (`yadgar/scripts/nightly_cycle.py`)
+
+- **Bug 2 — GC-shutdown AttributeError:** `_gc_callback` in `graph_api.py`
+  accessed `time.perf_counter()` and `_gc_start_times` module globals during
+  interpreter shutdown, when CPython has already torn those down to `None`.
+  This surfaced as "Exception ignored while calling GC callback …
+  AttributeError: 'NoneType' object has no attribute 'perf_counter'" in
+  journald and was the proximate cause of the non-zero exit code.
+  Fix: added a shutdown guard at the top of `_gc_callback` — return immediately
+  if `time is None or _gc_start_times is None`.
+  (`yadgar/graph_api.py`)
+
+- **Bug 3 — reembed_all skips None-content rows:** `reembed_all` passed the raw
+  `content` field (which can be `None` for bulk-imported memories) directly to
+  `encode_batch`, causing the entire batch to fail on the backend and return
+  all-`None` embeddings — leaving `reembedded: 0` even when valid rows exist.
+  Fix: filter out `None`/empty-content rows before batching; only rows with
+  non-empty content are submitted to `encode_batch`.
+  (`yadgar/server/tools/admin_other.py`)
+
+- **TDD:** `yadgar/tests/test_v5_67_nightly_fixes.py` — 10 tests (3 for Bug 1,
+  4 for Bug 2, 3 for Bug 3). RED confirmed for all 6 new assertions before fix;
+  GREEN after.
+
 ## [5.66.0]
 
 ### Fixed (zombie derived memories — "ever-accessed = immortal" prune bug)

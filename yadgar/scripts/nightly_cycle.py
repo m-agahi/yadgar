@@ -38,6 +38,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+import yadgar.paths as _paths
 from yadgar.backup import create_snapshot, default_retention, prune_snapshots
 from yadgar.config import Settings
 from yadgar.consolidation import ConsolidationScheduler
@@ -283,7 +284,9 @@ def main(args=None) -> int:  # type: ignore[no-untyped-def]
     """Run one nightly cycle. Returns exit code.
 
     args attributes consumed (all have defaults):
-      - db_path (str | None)   — override default from Settings.DB_PATH
+      - db_path (str | None)   — override default from yadgar.paths.DB_PATH
+                                 (respects YADGAR_DATA_DIR / XDG; do NOT use
+                                  Settings.DB_PATH which reads stale config.yaml)
       - backend_url (str)      — SurrealDB backend URL (default: YADGAR_DB_URL env, else http://127.0.0.1:8080)
       - service_mode (str)     — "systemd" | "docker" | "manual" | None (auto-detect)
       - retention (int)        — snapshot retention count (default YADGAR_BACKUP_RETENTION)
@@ -291,7 +294,11 @@ def main(args=None) -> int:  # type: ignore[no-untyped-def]
     configure_logging(log_format="json", level="INFO")
 
     settings = Settings()
-    db_path_str: str = getattr(args, "db_path", None) or settings.DB_PATH
+    # Derive db_path from yadgar.paths.DB_PATH (respects YADGAR_DATA_DIR / XDG
+    # default ~/.local/share/yadgar).  Do NOT fall back to settings.DB_PATH —
+    # config.yaml may carry a stale legacy value (e.g. ~/.yadgar/surreal_db)
+    # that points at a non-existent directory, causing snapshot to fail.
+    db_path_str: str = getattr(args, "db_path", None) or str(_paths.DB_PATH)
     db_path = Path(db_path_str).expanduser()
     snapshot_dir = db_path.parent
 

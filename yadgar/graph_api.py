@@ -30,7 +30,18 @@ _gc_start_times: dict[int, float] = {}
 
 
 def _gc_callback(phase: str, info: dict) -> None:
-    """Record GC collection duration into yadgar_python_gc_duration_ms histogram."""
+    """Record GC collection duration into yadgar_python_gc_duration_ms histogram.
+
+    Shutdown guard: at interpreter teardown module globals (time,
+    _gc_start_times, yadgar_python_gc_duration_ms) are set to None before GC
+    finishes draining callbacks.  Accessing attributes on None raises
+    AttributeError — surfaced as "Exception ignored while calling GC callback"
+    in journald and can cause a non-zero exit code.  Return immediately when
+    any critical global is None.
+    """
+    # Must be first — any attribute access below this line may raise if None.
+    if time is None or _gc_start_times is None:
+        return
     if phase == "start":
         _gc_start_times[info["generation"]] = time.perf_counter()
     elif phase == "stop":
