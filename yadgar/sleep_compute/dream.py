@@ -126,7 +126,7 @@ class _DreamMixin:
                 "content": content,
                 "embedding": embedding,
                 "tags": ["dream", "auto-generated"],
-                "directory_context": "system",
+                "directory_context": "global",
                 "heat": 0.5,
                 "is_stale": False,
                 "embedding_model": self._embeddings.get_model_name(),

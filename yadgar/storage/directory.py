@@ -25,13 +25,15 @@ class DirectoryFilter:
     Eligible set for Python post-filters (always_eligible_sentinels):
         {caller_dir, 'global', '', None}
 
-    NOTE — 'system' is included in the eligible set for now.  Co-occurrence
-    memories, cls-promotions, and dream rows are currently stamped 'system' by
-    curation/strengthen.py:179, cls_store/promotion.py:53, and dream.py:129.
-    Dropping 'system' from the eligible set is safe ONLY after those write-time
-    stamps are reclassified (plan §A — a later chunk).  Until then, removing it
-    would cut legitimate rows.  The quality floor (v5.62.0) handles the
-    signal/noise problem for 'system' rows in this release.
+    NOTE — 'system' is included in the eligible set for now.  As of v5.64.0
+    the three write sites (curation/strengthen.py, cls_store/promotion.py,
+    sleep_compute/dream.py) NO LONGER stamp 'system' — they stamp the
+    originating project dir or 'global' via dominant_directory().  However the
+    EXISTING 'system'-stamped rows still live in the store; dropping 'system'
+    from the eligible set is safe ONLY after a migration reclassifies those
+    rows (plan §C — a later chunk).  Until then, removing it would cut
+    legitimate rows.  The quality floor (v5.62.0) handles the signal/noise
+    problem for the residual 'system' rows in the interim.
     """
 
     __slots__ = ("caller_dir",)
@@ -73,6 +75,30 @@ def is_directory_eligible(directory_context: str | None, caller_dir: str | None)
         return True
 
     return directory_context == caller_dir
+
+
+def dominant_directory(candidates: list[str | None]) -> str:
+    """Return the dominant project directory from a list of directory_context values.
+
+    Rules:
+    - Exclude sentinels (None, '', 'global', 'system') from the vote.
+    - If exactly one distinct real directory remains → return it.
+    - If multiple distinct real directories → return 'global' (genuinely cross-cutting).
+    - If no real directory found → return 'global' (safe fallback).
+
+    v5.64.0: used by write-time stamping in curation/strengthen.py,
+    cls_store/promotion.py, and sleep_compute/dream.py to eliminate the
+    'system' mis-stamp sink.
+    """
+    _SENTINELS: frozenset[str | None] = frozenset({None, "", "global", "system"})
+    real_dirs: set[str] = set()
+    for dc in candidates:
+        if dc not in _SENTINELS and isinstance(dc, str):
+            real_dirs.add(dc)
+    if len(real_dirs) == 1:
+        return next(iter(real_dirs))
+    # 0 or ≥2 distinct real dirs → global (cross-cutting or unknown)
+    return "global"
 
 
 def _build_directory_clause(
