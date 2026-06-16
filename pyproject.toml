@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.67.0"
+version = "5.68.0"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "Apache-2.0"
@@ -193,7 +193,7 @@ sbom = [
 [tool.pytest.ini_options]
 testpaths = ["yadgar/tests"]
 # --timeout=120 removed; per-session default now comes from `timeout = 300` below.
-addopts = "-n 4 --dist loadgroup --maxprocesses=4 -m 'not integration'"
+addopts = "-n 4 --dist loadgroup --maxprocesses=4 -m 'not integration and not e2e'"
 # Suppress INFO-level noise in test output; WARNING/ERROR still visible on failure.
 log_level = "WARNING"
 # pytest-timeout defaults — override per-test with @pytest.mark.timeout(N).
@@ -208,6 +208,7 @@ timeout_func_only = false
 markers = [
     "xdist_group: group tests that share server module-level globals into one worker",
     "integration: requires docker/podman + spins up live containers (slow, opt-in)",
+    "e2e: behavior-contract end-to-end tests against a real local SurrealDB (run via make e2e; excluded from CI)",
 ]
 # v5.46.3 — B7 fix: auto mode avoids per-test @pytest.mark.asyncio decoration noise
 asyncio_mode = "auto"

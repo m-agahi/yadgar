@@ -413,7 +413,9 @@ class _FusionMixin:
                             "_retrieval_score": self._settings.PROFILE_SEARCH_WEIGHT,
                         }
                     )
-            except Exception:
+            except (KeyError, TypeError, ValueError):  # fmt: skip
+                # Tolerate malformed profile rows; do NOT catch AttributeError —
+                # that signals a missing config key (v5.68 fix #38).
                 pass
 
         # Search beliefs

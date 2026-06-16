@@ -135,3 +135,12 @@ repos:
         entry: ruff format
         types: [python]
         exclude: "^benchmarks/"
+
+  - repo: local
+    hooks:
+      - id: e2e-behavior-contract
+        name: Behavior-contract e2e safety net (make e2e)
+        language: system
+        entry: make e2e
+        pass_filenames: false
+        stages: [pre-push]

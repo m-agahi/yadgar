@@ -7,6 +7,45 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.68.0]
+
+### Added (behavior-contract e2e safety net — Phase 1)
+
+- **`yadgar/tests/e2e/`** — new directory for behavior-contract end-to-end tests
+  against a real local SurrealDB. Fixtures in `conftest.py` guarantee per-test
+  isolation: `YADGAR_DATA_DIR` is set to a `tmp_path` and asserted to be outside
+  `~/.local/share/yadgar` before any DB operation. A `service_stub` fixture blocks
+  real `systemctl`/`podman stop/start` calls, ready for future host-job tests.
+- **Phase-1 DB-layer tests** (`test_phase1_db_layer.py`): BC-A1–A3, BC-B1–B5,
+  BC-C1–C3, BC-G1, BC-H1, BC-I1/I2 (deferred ⏳). Each test asserts a SHALL
+  from `docs/BEHAVIOR_CONTRACT.md`. BC-B5 proves the #38 fix (see below).
+- **`make e2e`** target: runs `OTEL_SDK_DISABLED=true ... pytest -m e2e -p no:randomly -n0`.
+  Requires `~/.local/bin/surreal` (or `surreal` on PATH).
+- **Pre-push hook** in `.pre-commit-config.yaml` (`stages: [pre-push]`): runs
+  `make e2e` before every push. Install once with:
+  `pre-commit install --hook-type pre-push`
+- **`e2e` marker** registered in `pyproject.toml` `[tool.pytest.ini_options]` markers.
+- **Default `addopts`** updated to `-m 'not integration and not e2e'` so `make test`
+  never accidentally collects e2e tests without a local `surreal` binary.
+- **CI exclusion** in `.forgejo/workflows/ci-pr.yaml`: all pytest legs now use
+  `-m 'not integration and not e2e'` (CI containers lack the local surreal binary).
+
+### Fixed
+
+- **Bug #38 — `PROFILE_SEARCH_WEIGHT` undefined in `Settings`** (`config.py`,
+  `retrieval/fusion.py`): accessing `self._settings.PROFILE_SEARCH_WEIGHT` in
+  `fusion._search_profiles_and_beliefs()` raised `AttributeError`, silently
+  swallowed by `except Exception: pass` at line ~416. Result: profile-sourced
+  results were never included in `recall()` output even when structured profiles
+  existed. Fix:
+  - Added `PROFILE_SEARCH_WEIGHT: float = 1.0` to `Settings` (mirrors sibling
+    weight `BELIEF_HIGH_CONFIDENCE_BOOST`).
+  - Narrowed the bare `except Exception: pass` to `except (KeyError, TypeError, ValueError):`
+    so `AttributeError` from missing config keys surfaces instead of being swallowed.
+  - Added `YADGAR_PROFILE_SEARCH_WEIGHT` to `config_env_only_allowlist.txt`
+    (Tier-2 grandfathered, same as sibling weights).
+  - BC-B5 e2e test demonstrates RED (pre-fix) → GREEN (post-fix).
+
 ## [5.67.0]
 
 ### Fixed (nightly-cycle service failures — exit status 30)
