@@ -264,6 +264,16 @@ test: test-clean
 	@trap 'pkill -9 -f "surreal start.*/tmp/pytest" 2>/dev/null || true' EXIT; \
 	scripts/test-capped.sh uv run --extra test pytest yadgar/tests/ -q $(PYTEST_ARGS)
 
+## e2e: Run the behavior-contract e2e safety-net suite against the local `surreal` binary.
+## Requires: ~/.local/bin/surreal (or surreal on PATH). See yadgar/tests/e2e/conftest.py.
+## Excluded from CI (-m 'not e2e') — CI's embedded SurrealDB can't run these reliably.
+## Install the pre-push hook once with: pre-commit install --hook-type pre-push
+e2e: test-clean
+	@trap 'pkill -9 -f "surreal start.*/tmp/pytest" 2>/dev/null || true' EXIT; \
+	OTEL_SDK_DISABLED=true PATH="$$HOME/.local/bin:$$PATH" \
+	uv run --extra test --extra ml python -m pytest yadgar/tests/e2e/ \
+	  -m e2e -p no:randomly -n0 --tb=short -q $(PYTEST_ARGS)
+
 ## upgrade-test: Print the manual upgrade-test runbook (see docs/UPGRADE_TEST.md)
 upgrade-test:
 	@echo "Manual recipe — see docs/UPGRADE_TEST.md for the runbook."

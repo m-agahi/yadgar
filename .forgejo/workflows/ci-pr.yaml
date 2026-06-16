@@ -69,13 +69,14 @@ jobs:
         # equal chunks and runs only chunk $group.  Every file in the suite is
         # covered across all 5 legs; no manual list maintenance required.
         # -n auto / --dist loadgroup / --reruns: unchanged from monolith run.
-        # -m 'not integration': keep integration tests excluded (run in viz-tests job).
+        # -m 'not integration and not e2e': integration runs in viz-tests job;
+        #   e2e requires a local surreal binary not available in CI containers.
         run: >
           python -m pytest yadgar/tests/
           -q --tb=short
           -n auto --dist loadgroup
           --reruns 2 --reruns-delay 2
-          -m 'not integration'
+          -m 'not integration and not e2e'
           --splits 5 --group ${{ matrix.group }}
 
   invariant-checks:

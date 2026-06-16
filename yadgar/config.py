@@ -248,6 +248,10 @@ class Settings(BaseSettings):
     PROFILE_CONFIDENCE_DIRECT: float = 0.7
     PROFILE_CONFIDENCE_INFERRED: float = 0.4
     PROFILE_SUMMARY_ENABLED: bool = True
+    # v5.68 fix #38: was missing → AttributeError swallowed silently by except Exception: pass
+    # in retrieval/fusion.py → profiles never surfaced in recall results.
+    # Mirror BELIEF_HIGH_CONFIDENCE_BOOST (sibling weight, same retrieval layer).
+    PROFILE_SEARCH_WEIGHT: float = 1.0
 
     # v19 Derived Beliefs (Hindsight)
     DERIVED_BELIEFS_ENABLED: bool = True
