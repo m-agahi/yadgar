@@ -46,7 +46,19 @@ def _prune_auto_generated_old(
     storage: StorageEngine,
     settings: Settings,
 ) -> None:
-    """Pass 2: delete cold, unaccessed, old auto-generated memories."""
+    """Pass 2: delete cold, stale, old auto-generated memories.
+
+    v5.66: replaced "ever-accessed = immortal" with recency check.
+    Purge when created_at < cutoff AND last_accessed < cutoff (old AND
+    not recently accessed).  A memory accessed within the max-age window
+    is still in active use and is spared; one accessed 32+ days ago with
+    a 30-day max-age is genuinely stale and eligible.
+
+    Rationale: recall() bumps access_count AND last_accessed on every hit.
+    access_count>0 alone meant a single accidental recall granted immortality
+    forever, causing zombie accumulation (e.g. memory:1110: 38d old, heat=0,
+    access_count=2, last_accessed 32d ago — never purged under old guard).
+    """
     max_age_days = settings.AUTO_GENERATED_MEMORY_MAX_AGE_DAYS
     cold_threshold = settings.COLD_THRESHOLD
     age_cutoff = (datetime.now(UTC) - timedelta(days=max_age_days)).isoformat()
@@ -59,11 +71,12 @@ def _prune_auto_generated_old(
             continue
         if (mem.get("heat") or 0.0) >= cold_threshold:
             continue
-        if (mem.get("access_count") or 0) != 0:
-            continue
         created_at = mem.get("created_at") or ""
         if created_at > age_cutoff:
             continue  # too recent — spare it
+        last_accessed = mem.get("last_accessed") or created_at
+        if last_accessed > age_cutoff:
+            continue  # accessed recently — still in use, spare it
         storage.delete_memory(mem["id"])
         stats["pruned"] += 1
 
@@ -74,12 +87,20 @@ def _prune_auto_abstracted_old(
     storage: StorageEngine,
     settings: Settings,
 ) -> None:
-    """Pass 3: delete unaccessed, old CLS-promoted auto-abstracted semantics.
+    """Pass 3: delete stale, old CLS-promoted auto-abstracted semantics.
 
     Action-stream noise and file co-occurrence patterns start at heat=0.8
     and decay ~0.9995/hour — reaching COLD_THRESHOLD takes 300+ days, so
     the 30-day age cap would never fire with a heat gate.  Rely on age +
-    access_count only; no heat check.
+    recency of last access; no heat check.
+
+    v5.66: replaced "ever-accessed = immortal" with recency check.
+    Purge when created_at < cutoff AND last_accessed < cutoff (old AND not
+    recently accessed).  recall() bumps both access_count AND last_accessed
+    on each hit, so last_accessed is a reliable recency signal.
+
+    The memory:1110 zombie: 38d old, heat=0, access_count=2, last_accessed
+    32d ago — old guard spared it forever; new guard correctly purges it.
     """
     auto_abstracted_max_age = settings.AUTO_ABSTRACTED_MEMORY_MAX_AGE_DAYS
     if auto_abstracted_max_age <= 0:
@@ -92,11 +113,12 @@ def _prune_auto_abstracted_old(
             continue
         if mem.get("is_protected"):
             continue
-        if (mem.get("access_count") or 0) != 0:
-            continue
         created_at = mem.get("created_at") or ""
         if created_at > aa_age_cutoff:
             continue  # too recent — spare it
+        last_accessed = mem.get("last_accessed") or created_at
+        if last_accessed > aa_age_cutoff:
+            continue  # accessed recently — still in use, spare it
         storage.delete_memory(mem["id"])
         stats["pruned"] += 1
 
@@ -142,9 +164,13 @@ def _prune_action_stream_aged(
 
     Action log summaries (tool-call batches) are tagged _action_stream and
     created at heat=0.4.  Pass 1 prunes at heat<0.01 — that takes ~300 days.
-    One access (access_count=1) blocks Pass 1 forever, so these pile up
-    indefinitely.  Prune unconditionally after ACTION_STREAM_MAX_AGE_DAYS
-    unless accessed (access_count > 0 means something found them useful).
+    One access (access_count=1) blocked Pass 5 forever under the old guard,
+    so stale summaries piled up indefinitely.
+
+    v5.66: replaced "ever-accessed = immortal" with recency check.
+    Purge when created_at < cutoff AND last_accessed < cutoff.  An action-
+    stream summary accessed within the 90-day window is still potentially
+    useful; one last accessed 120d ago is genuinely stale.
     """
     action_stream_max_age = settings.ACTION_STREAM_MAX_AGE_DAYS
     if action_stream_max_age <= 0:
@@ -157,11 +183,12 @@ def _prune_action_stream_aged(
             continue
         if mem.get("is_protected"):
             continue
-        if (mem.get("access_count") or 0) > 0:
-            continue  # was accessed — something found it useful
         created_at = mem.get("created_at") or ""
         if created_at > as_age_cutoff:
             continue  # too recent — spare it
+        last_accessed = mem.get("last_accessed") or created_at
+        if last_accessed > as_age_cutoff:
+            continue  # accessed recently — still in use, spare it
         storage.delete_memory(mem["id"])
         stats["pruned"] += 1
 
@@ -177,8 +204,12 @@ def _prune_degenerate_auto_abstracted(
     CLS consolidation_cycle can emit "Recurring pattern across N observations:
     frequently modified together" when clusters are built from _memify_derive
     placeholders.  These memories have no subject and are pure noise.
-    Delete unconditionally (regardless of age / heat) — they were never
-    meaningful.  Protected memories and accessed memories are respected.
+    Delete unconditionally (regardless of age / heat / access_count) — they
+    were never meaningful, so access_count>0 offers no protection here.
+
+    v5.66: removed access_count guard.  Degenerate content is structurally
+    invalid (no subject, no signal); an accidental recall should not grant
+    immortality.  is_protected is still always honoured.
     """
     for mem in candidates:
         tags = _parse_tags(mem)
@@ -186,8 +217,6 @@ def _prune_degenerate_auto_abstracted(
             continue
         if mem.get("is_protected"):
             continue
-        if (mem.get("access_count") or 0) > 0:
-            continue  # user accessed it; treat as legitimate
         content = mem.get("content") or ""
         if _is_degenerate_auto_abstracted(content):
             logger.info(

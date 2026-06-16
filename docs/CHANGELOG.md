@@ -7,6 +7,20 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.66.0]
+
+### Fixed (zombie derived memories — "ever-accessed = immortal" prune bug)
+
+- **Root cause:** prune passes 2, 3, 5, and 6 in `yadgar/curation/prune_passes.py` used `access_count != 0` (or `> 0`) as an immortality guard — any derived memory ever surfaced in recall was spared from pruning FOREVER regardless of age or heat. `recall()` bumps both `access_count` AND `last_accessed` on every hit, so once a derived memory surfaced once it became a self-perpetuating zombie. Canonical example: `memory:1110` — auto-abstracted, 38 days old, heat=0, `access_count=2`, `last_accessed` 32 days ago — never purged despite `AUTO_ABSTRACTED_MEMORY_MAX_AGE_DAYS=30`.
+- **Fix A (primary):** replaced "ever-accessed = immortal" with a **recency gate** in all affected passes. Purge condition: `created_at < cutoff AND last_accessed < cutoff` (old AND not recently accessed). A memory accessed within the max-age window is still in active use and is spared; one whose `last_accessed` is itself beyond the cutoff is genuinely stale. The existing cutoff (`now - max_age_days`) is reused for both gates — same window, consistent semantics. `recall()` refreshes `last_accessed` on every hit (confirmed in `yadgar/server/tools/recall.py`), so `last_accessed` is a reliable recency signal.
+  - **Pass 2** `_prune_auto_generated_old` (~L44): `if access_count != 0: continue` → `if last_accessed > age_cutoff: continue`
+  - **Pass 3** `_prune_auto_abstracted_old` (~L71): same replacement — PRIMARY fix for `memory:1110`
+  - **Pass 5** `_prune_action_stream_aged` (~L135): `if access_count > 0: continue` → `if last_accessed > as_age_cutoff: continue`
+  - **Pass 6** `_prune_degenerate_auto_abstracted` (~L169): access_count guard **dropped entirely** — degenerate content (no subject after Recurring prefix) is structurally invalid and never meaningful; an accidental recall must not grant immortality. `is_protected` is still always honoured.
+  - Pass 1 (`_prune_action_stream_cold`) and Pass 4 (`_prune_dream_insights`) unchanged — already correct (no access_count immortality).
+- **Fix B (not implemented):** with Fix A, zombies are purged on the next nightly run. Heat-0 derived rows only surface in the pre-purge window. Implementing a targeted `min_heat` guard in recall for derived/auto-generated rows risks harming legitimate low-heat recall and is not warranted — Fix A removes the structural cause.
+- **TDD:** `yadgar/tests/test_v5_66_zombie_prune.py` — 14 new tests. RED confirmed pre-fix (4 failures: old+stale+accessed rows not purged in passes 2, 3, 5, 6). GREEN post-fix. Updated `test_prune_passes_module.py` (4 tests rewritten from old immortality contract to new recency contract) and `test_curation.py` (3 integration tests updated: backdate `last_accessed` alongside `created_at`, rewrite Pass 6 access_count guard test).
+
 ## [5.65.0]
 
 ### Fixed (Fix D — hard-require directory on recall + wiki_query; scope prompt-recall daemon path)
