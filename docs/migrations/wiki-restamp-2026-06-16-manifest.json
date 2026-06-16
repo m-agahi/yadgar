@@ -1,0 +1,3049 @@
+{
+ "restamp": [
+  {
+   "slug": "max-agahi-professional-background-capability-profile",
+   "old": "global",
+   "new": "/home/max/git/karyab"
+  },
+  {
+   "slug": "devops-343-cb-mcp-backup-auth-server-config-implementation-plan",
+   "old": "global",
+   "new": "/home/max/quinyx/infrastructure/aws/accounts/operations/cloudbeaver"
+  },
+  {
+   "slug": "quinyx-aws-org-migration-roadmap",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "quinyx-security-account-inventory-2026-06-03",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "digger-cli-vlatest-download-failure-moving-tag-flakes-pin-fixed-",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "cloudbeaver-saml-google-workspace-group-team-mapping-mechanics-g",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "quinyx-operations-ou-inventory-2026-06-03",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "quinyx-iam-users-inventory-2026-06-03",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "quinyx-old-mpa-inventory-2026-06-03",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "ri-sp-management-terraform-automation",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "ri-sp-management-phase6-multi-account-discount-sharing",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "ri-sp-management-phase5-cost-optimization-hub-trusted-advisor",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "ri-sp-management-phase3-utilization-coverage-monitoring",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "ri-sp-management-phase2-expiration-notifications",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "ri-sp-management-phase1-inventory",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "ri-sp-management-operational-runbook-quarterly-review",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "ri-sp-management-documentation-reference-index",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "org-restructure-master-index",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "ri-sp-management-index",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "jit-access-terraform-automation",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "jit-access-team-temporary-elevated-access-management",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "jit-access-reference-links",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "jit-access-pricing",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "jit-access-prerequisites",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "jit-access-notification-chat-integration",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "jit-access-migration-from-session-manager",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "jit-access-index",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "aws-org-migration-terraform-automation",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "aws-org-migration-risk-register",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "aws-org-migration-prerequisites",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "aws-org-migration-phase6-post-migration-validation",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "aws-org-migration-phase5-migrate-main-account",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "aws-org-migration-phase4-migrate-members",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "aws-org-migration-phase2-control-tower-landing-zone",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "aws-org-migration-phase3-prepare-accounts",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "aws-org-migration-phase1-new-mgmt-account",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "aws-org-migration-phase2b-delegated-admin",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "aws-org-migration-documentation-reference-index",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "aws-org-migration-index",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "aws-org-migration-terraform-automation",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "cloudbeaver-mcp-team-crud-tools-qrnd-58480",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "cloudbeaver-cli-plan-qrnd-58478",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "cloudbeaver-aws-edition-graphql-connection-schema-dbaccess-quiny",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "reusable-workflow-upload-openapi-specs-apim",
+   "old": "global",
+   "new": "/home/max/quinyx/reusable-workflows-apim"
+  },
+  {
+   "slug": "redocly-developer-quinyx-com",
+   "old": "global",
+   "new": "/home/max/quinyx/qwfm"
+  },
+  {
+   "slug": "github-actions-runner-terraform-provider-install-out-of-disk-spa",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "buildkit-gha-cache-masks-alpine-apk-cve-fixes-trivy-gate-failure",
+   "old": "global",
+   "new": "/home/max/quinyx/tf-toolkit"
+  },
+  {
+   "slug": "quinyx-slack-notifier-pattern-slack-bot-token-org-secret-chat-po",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "digger-opentaco-workflow-dispatch-trigger-missing-422-workflow-f",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "meridian-aws-collector-emit-pattern-om-correct",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "om-1-3-4-entity-hierarchy-explore-facet-rules",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "meridian-state-tldr-post-13-pr-autonomous-session",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "aurora-mysql-cluster-migration-playbook-rds-instance-v2-aws-rds-",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "meridian-architectural-invariants",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "tfp-workspace-existence-pre-flight-devops-admin-self-assume-tri-",
+   "old": "global",
+   "new": "/home/max/quinyx/tf-toolkit"
+  },
+  {
+   "slug": "ccpm-repo-wiki-v1-1-3-plan-yadgar-export-version-detect-dlq-veri",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "ui-vitest-setup-ts",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "ui-vite-config-ts",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "ui-src-api-client-ts",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "tests-unit-openlineage-test-translator",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-unit-om-ingestion-test-snowflake-workflow",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-unit-om-ingestion-test-redshift-workflow",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-unit-om-ingestion-test-athena-glue-workflow",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-unit-metrics-reader-test-metrics-reader",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-unit-mcp-test-mcp-tools",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-unit-mcp-test-mcp-app",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-unit-log-reader-test-log-reader",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-unit-jaeger-test-jaeger-reader",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-unit-collectors-test-stepfunctions",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-unit-collectors-test-standalone-redis",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-unit-collectors-test-firehose",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-unit-collectors-test-eventbridge",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-unit-collectors-test-emr",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-unit-collectors-test-elb",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-unit-collectors-test-elasticache",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-unit-collectors-test-ecs",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-unit-collectors-test-dynamodb",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-unit-collectors-test-apigw",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-unit-analyzers-test-typescript-analyzer",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-unit-analyzers-test-python-analyzer",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-unit-analyzers-test-java-analyzer",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-unit-analyzers-test-go-analyzer",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-integration-test-lambda-integration",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-fixtures-code-typescript-sample-redis-service-ts",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-fixtures-code-typescript-sample-nestjs-service-ts",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-fixtures-code-typescript-sample-lambda-ts",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-fixtures-code-typescript-sample-express-service-ts",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-fixtures-code-python-sample-redis-service",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-fixtures-code-python-sample-lambda-handler",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-fixtures-code-python-sample-fastapi-service",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-fixtures-code-python-sample-django-views",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-fixtures-code-java-sampleservice-java",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-fixtures-code-java-auditdao-java",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-fixtures-code-go-sample-redis-go",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-fixtures-code-go-sample-lambda-go",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-fixtures-code-go-sample-http-go",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-fixtures-code-go-sample-dao-go",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-e2e-test-saml-auth",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "tests-conftest",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "shared-ssm",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "shared-om-client",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "shared-models",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "shared-fqn",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-scheduler-flows-standalone-redis-scan",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-scheduler-flows-sftp-scan",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-scheduler-flows-nightly-om-ingestion",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-scheduler-flows-nightly-code-analysis",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-scheduler-flows-nightly-aws-scan",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-openlineage-receiver-translator",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-scheduler-flows-metrics-scan",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-scheduler-flows-log-scan",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-scheduler-flows-jaeger-scan",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-scheduler-flows-hazelcast-scan",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-scheduler-flows-haproxy-scan",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-openlineage-receiver-main",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-om-ingestion-run-workflow",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-metrics-reader-queries",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-metrics-reader-main",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-mcp-server-tools-service-data-map",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-mcp-server-tools-search",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-mcp-server-tools-schema",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-mcp-server-tools-pii",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-mcp-server-tools-ownership",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-mcp-server-tools-lineage",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-mcp-server-tools-impact",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-mcp-server-tools-data-flow",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-mcp-server-tools-column-lineage",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-mcp-server-main",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-log-reader-patterns",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-log-reader-main",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-jaeger-reader-main",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-code-analyzer-resolver",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-code-analyzer-analyzers-typescript-analyzer",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-code-analyzer-analyzers-sql-parser",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-code-analyzer-analyzers-python-analyzer",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-code-analyzer-analyzers-java-analyzer",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-code-analyzer-analyzers-go-analyzer",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-code-analyzer-analyzers-base",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "services-aws-collector-state-store",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "services-aws-collector-main",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "services-aws-collector-collectors-stepfunctions-collector",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "services-aws-collector-collectors-standalone-redis-collector",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "services-aws-collector-collectors-sqs-collector",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "services-aws-collector-collectors-sns-collector",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "services-aws-collector-collectors-sftp-collector",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "services-aws-collector-collectors-ses-collector",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "services-aws-collector-collectors-s3-collector",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "services-aws-collector-collectors-rds-collector",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "services-aws-collector-collectors-msk-collector",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "services-aws-collector-collectors-lambda-collector",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "services-aws-collector-collectors-hazelcast-collector",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "services-aws-collector-collectors-haproxy-collector",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "services-aws-collector-collectors-firehose-collector",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "services-aws-collector-collectors-eventbridge-collector",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "services-aws-collector-collectors-emr-collector",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "services-aws-collector-collectors-elb-collector",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "services-aws-collector-collectors-elasticache-collector",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "services-aws-collector-collectors-ecs-collector",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "services-aws-collector-collectors-dynamodb-collector",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "services-aws-collector-collectors-base",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "services-aws-collector-collectors-apigw-collector",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "openmetadata-bootstrap-bootstrap",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "state-store-methods",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "scan-account-region",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "put-lineage",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "lambda-collector-process-function",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "lambda-collector-arn-to-node",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "create-or-update-entity",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "bootstrap-main",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "diagrams",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "data-models",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "architecture",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "overview",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "agent-prompt-cleanup-v1",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "flux-repo-pr-template-ai-usage-labels-required",
+   "old": "global",
+   "new": "/home/max/git/nix"
+  },
+  {
+   "slug": "flux-adoption-scripts-pattern-adopting-pre-existing-resources-in",
+   "old": "global",
+   "new": "/home/max/git/nix"
+  },
+  {
+   "slug": "flux-repo-conventions-naming-labels-kustomization-layout",
+   "old": "global",
+   "new": "/home/max/git/nix"
+  },
+  {
+   "slug": "flux-sources-catalogue-apps-apps-preinstall-infra",
+   "old": "global",
+   "new": "/home/max/git/nix"
+  },
+  {
+   "slug": "aws-vpc-terraform-workspace-infrastructure-quinyx-aws-vpc",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "zed-editor-customize-commit-message-prompt-via-rules-library",
+   "old": "global",
+   "new": "/home/max/git/nix"
+  },
+  {
+   "slug": "tf-toolkit-make-setup-os-detected-pipx-install-offer",
+   "old": "global",
+   "new": "/home/max/quinyx/tf-toolkit"
+  },
+  {
+   "slug": "home-lab-arm64-amd64-risc-v-rack-design",
+   "old": "global",
+   "new": "/home/max/claude"
+  },
+  {
+   "slug": "tfp-provider-extensibility-contract",
+   "old": "global",
+   "new": "/home/max/quinyx/tf-toolkit"
+  },
+  {
+   "slug": "meridian-component-status-2026-05-17-audit",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "phase-27-mcp-server",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "20-repository-yaml-ruleset-merge-architecture",
+   "old": "global",
+   "new": "/home/max/quinyx/infrastructure/github/20-repository"
+  },
+  {
+   "slug": "tfp-github-provider-detection-fix",
+   "old": "global",
+   "new": "/home/max/quinyx/tf-toolkit"
+  },
+  {
+   "slug": "github-teams-iac-onelogin-scim-and-email-validation",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "github-team-team-workforce-automation",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "github-team-team-spark",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "github-team-team-schedule-compliance",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "github-team-team-planning",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "github-team-team-optimisation",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "github-team-team-operational-insights",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "github-team-team-mobile",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "github-team-team-gorillaz",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "github-team-team-follow-up",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "github-team-team-ext-data-analytics",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "github-team-team-devops",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "github-team-team-design",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "github-team-team-dashboard",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "github-team-team-creed",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "github-team-team-core",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "github-team-team-copilot",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "github-team-team-concepts",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "github-team-team-atlas",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "github-team-team-apim",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "github-team-team-ai-compliance",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "github-team-team-advance-analytics",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "ccpm-ci-single-release-yaml-with-multi-plugin-matrix-build",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "buildkit-secret-mount-pattern-for-sensitive-build-time-data",
+   "old": "global",
+   "new": "/home/max/quinyx/tf-toolkit"
+  },
+  {
+   "slug": "code-review-plugin-v4-architecture",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "emr-cluster-analytics-us-east-1",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "emr-cluster-analytics-eu-central-1",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "yadgar-ci-on-the-self-hosted-forgejo-runner",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "engram-slot-allocation-warm-clustering-vs-cold-start-spreading",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "meridian-local-dev-setup-new-laptop-runbook",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "ir-modules",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "ir-functions",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "ir-dependencies-graph",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "ir-callgraph",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "wiki-overview",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "ir-apis",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "mod-shared-om-client",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-services-scheduler-flows-nightly-om-ingestion",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-shared-models",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-shared-fqn",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-shared-ssm",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-services-aws-collector-collectors-sqs-collector",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-services-aws-collector-collectors-s3-collector",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-services-aws-collector-collectors-sns-collector",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-services-aws-collector-main",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-services-aws-collector-collectors-lambda-collector",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-services-aws-collector-collectors-eventbridge-collector",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-services-aws-collector-state-store",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-services-scheduler-flows-nightly-aws-scan",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-services-scheduler-flows-nightly-code-analysis",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-services-aws-collector-collectors-lambda-collector-py-arn-to-",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-openmetadata-bootstrap-bootstrap",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-services-scheduler-flows-nightly-aws-scan-py-scan-account-reg",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-openmetadata-bootstrap-bootstrap-py-main",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-services-aws-collector-collectors-lambda-collector-py-process",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-shared-om-client-py-put-lineage",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-services-aws-collector-state-store-py-upsert",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-shared-om-client-py-create-or-update-entity",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-services-aws-collector-collectors-base",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "wiki-data-models",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "wiki-architecture",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "wiki-diagrams",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "surrealdb-v3-surrogate-pair-gotcha",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "yadgar-architecture-overview",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "index-overview",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "fn-server-py-get-file-queue",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-file-queue-py-drain-once",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-file-queue-py-run",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-file-queue",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "vpc-inventory-eu-central-1-vpc-inventory-eu-central-1",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "sg-batch-vpc-0fd4761d4133a2ae3-sg-batch-vpc-0fd4761d4133a2ae3-ba",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "sg-batch-vpc-088299f339c43c847-sg-batch-vpc-088299f339c43c847-vp",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "sg-batch-vpc-03257650d5f5f0e52-sg-batch-vpc-03257650d5f5f0e52-pr",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "sg-batch-vpc-01488397aa04cc7ec-sg-batch-vpc-01488397aa04cc7ec-se",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "sg-batch-vpc-d59558bc-5of5-sg-batch-vpc-d59558bc-part-5-of-5-47-",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "sg-batch-vpc-d59558bc-4of5-sg-batch-vpc-d59558bc-part-4-of-5-48-",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "sg-batch-vpc-d59558bc-3of5-sg-batch-vpc-d59558bc-part-3-of-5-48-",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "sg-batch-vpc-d59558bc-2of5-sg-batch-vpc-d59558bc-part-2-of-5-48-",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "sg-batch-vpc-d59558bc-1of5-sg-batch-vpc-d59558bc-part-1-of-5-48-",
+   "old": "global",
+   "new": "/home/max/aws-work"
+  },
+  {
+   "slug": "nixos-quinyx-hardware-specs",
+   "old": "global",
+   "new": "/home/max/git/nix"
+  },
+  {
+   "slug": "nixos-quinyx-host",
+   "old": "global",
+   "new": "/home/max/git/nix"
+  },
+  {
+   "slug": "nixos-media-host",
+   "old": "global",
+   "new": "/home/max/git/nix"
+  },
+  {
+   "slug": "nixos-work-host",
+   "old": "global",
+   "new": "/home/max/git/nix"
+  },
+  {
+   "slug": "om-searchindexingapplication-triggering-reindex-via-api",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "mod-pre-commit-config",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-github-templates",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-github-workflows",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-codeowners",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-seed",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-storage",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-staleness",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-sleep-compute",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-server",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-viz-server",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-wiki",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-sensory-buffer",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-thermodynamics",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-retrieval-core",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-restoration",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-retrieval-entities",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-retrieval-init",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-retrieval-fusion",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-secrets",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-remote-embeddings",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-retrieval-reranking",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-retrieval-query-analysis",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-rules-engine",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-retrieval-temporal",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-hooks-session-start-context",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-metacognition",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-knowledge-graph",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-hooks-prompt-recall",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-hooks-post-tool-capture",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-narrative",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-prospective",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-hooks-stop-memory-checkpoint",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-predictive-coding",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-models",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-engram",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-graph-api",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-config-yaml",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-enrichment",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-consolidation",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-daemon",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-config",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-embeddings",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-curation",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-embed-service",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-causal-discovery",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-cls-store",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-wiki-py-query",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-main",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-cognitive-map",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-wiki-py-lint",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-wiki-py-add",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-thermodynamics-py-synaptic-boost",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-astrocyte-pool",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-init",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-py-insert-memory",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-thermodynamics-py-compute-decay",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-thermodynamics-py-compute-surprise",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-py-insert-entity",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-py-insert-wiki-page",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-py-search-wiki-fts",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-py-insert-relationship",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-py-search-vectors",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-py-insert-checkpoint",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-thermodynamics-py-compute-importance",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-py-search-memories-fts",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-sleep-compute-py-run-sleep-cycle",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-py-get-memories-for-directory",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-validate-memory",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-wiki-add",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-py-get-active-checkpoint",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-wiki-query",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-sleep-compute-py-dream-replay",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-py-get-memory",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-staleness-py-validate-memory",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-py-close",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-py-get-memory-stats",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-main",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-memory-stats",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-reembed-all",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-init-engines",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-remember",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-restore",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-get-project-context",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-install-hooks",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-recall",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-seed-project",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-memorize",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-sensory-buffer-py-capture",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-anchor",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-add-rule",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-rules-engine-py-apply-rules",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-forget",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-seed-py-seed-project",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-checkpoint",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-sensory-buffer-py-flush",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-secrets-py-check-secrets",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-rules-engine-py-check-write-policy",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-consolidate-now",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-retrieval-reranking-py-nli-rerank",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-retrieval-query-analysis-py-analyze-query",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-retrieval-reranking-py-cross-encoder-rerank",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-retrieval-fusion-py-convex-fuse",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-retrieval-reranking-py-heuristic-rerank",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-retrieval-reranking-py-multi-passage-rerank",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-rules-engine-py-add-rule",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-retrieval-temporal-py-parse-temporal-expression",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-retrieval-core-py-ppr-retrieve",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-restoration-py-pre-compact-drain",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-retrieval-core-py-recall",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-prospective-py-check-triggers",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-restoration-py-anchor-memory",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-restoration-py-create-checkpoint",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-restoration-py-restore",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-retrieval-core-py-spreading-activation",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-predictive-coding-py-compute-surprisal",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-knowledge-graph-py-extract-entities-typed",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-predictive-coding-py-should-store",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-metacognition-py-manage-context",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-narrative-py-generate-narrative",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-metacognition-py-assess-coverage",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-wiki-read",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-knowledge-graph-py-add-relationship",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-wiki-list",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-sync-instructions",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-wiki-delete",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-wiki-discard",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-knowledge-graph-py-detect-causality",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-wiki-approve",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-wiki-lint",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-wiki-drafts",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-resource-processes",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-shutdown",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-resource-hot",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-resource-stale",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-resource-stats",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-graph-view",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-api-stats",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-api-system",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-get-rules",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-health-check",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-hook-auto-capture",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-hook-post-compact",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-hook-prompt-recall",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-hook-pre-compact",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-api-graph",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-signal-handler",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-api-consolidation-log",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-is-episodic-query",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-tool",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-api-graph-neighborhood",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-load-default-rules",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-api-graph-events",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-api-heat-histogram",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-push-event",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-api-graph-stats",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-get-write-gate",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-get-retriever",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-get-thermo",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-get-consolidation",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-get-replay",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-get-embeddings",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-get-staleness",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-get-storage",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-get-buffer",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-get-engram",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-file-queue-py-drain-now",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-file-queue-py-is-draining",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-file-queue-py-write-wiki",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-py-file-hash",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-file-queue-py-delete-wiki",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-file-queue-py-stop",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-file-queue-py-pending",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-file-queue-py-cleanup-archive",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-file-queue-py-archive",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-file-queue-py-apply",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-file-queue-py-memories-archive-dir",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-file-queue-py-json-default",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-file-queue-py-init",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-file-queue-py-today-str",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-file-queue-py-apply-inner",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-config-py-get-field-value",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-config-py-load",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-config-py-get-settings",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-config-py-settings-customise-sources",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-file-queue-py-enqueue",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-enrichment-py-enrich",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-config-py-call",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-config-py-db-path-resolved",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-config-py-init",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-consolidation-py-start",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-daemon-py-start",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-curation-py-detect-contradictions",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-embeddings-py-encode-query",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-embeddings-py-search",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-engram-py-allocate",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-embeddings-py-encode",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-embeddings-py-similarity",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-curation-py-memify-cycle",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-curation-py-curate-on-remember",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-embeddings-py-encode-document-enriched",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-embed-service-py-embed",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-astrocyte-pool-py-assign-memory",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-cognitive-map-py-navigate-to",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-consolidation-py-force-consolidate",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-cognitive-map-py-record-transition",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-cls-store-py-consolidation-cycle",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-main-py-cli",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-causal-discovery-py-discover-dag",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-cls-store-py-classify-memory",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-cognitive-map-py-compute-sr-matrix",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-astrocyte-pool-py-consensus-retrieve",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "api-post-embed",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "index-architecture",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "api-get-health",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "index-diagrams",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "index-data-models",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "ir-dependency-graph",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "fn-staleness-validate-memory",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-prospective-check-triggers",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-narrative-generate-narrative",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-causal-discovery-discover-dag",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-astrocyte-pool-consensus-retrieve",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-astrocyte-pool-assign-memory",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-enrichment-enrich",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-embed-service-embed",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-daemon-start",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-main-cli",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-sensory-buffer-flush",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-sensory-buffer-capture",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-cls-store-classify-memory",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-cls-store-consolidation-cycle",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-metacognition-assess-coverage",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-metacognition-manage-context",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-engram-allocate",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-sleep-compute-dream-replay",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-sleep-compute-run-sleep-cycle",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-seed-seed-project",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-secrets-check-secrets",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-rules-engine-check-write-policy",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-rules-engine-apply-rules",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-rules-engine-add-rule",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-wiki-lint",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-wiki-query",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-wiki-add",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-file-queue-drain-now",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-file-queue-enqueue",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-restoration-anchor-memory",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-restoration-pre-compact-drain",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-restoration-restore",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-restoration-create-checkpoint",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-cognitive-map-navigate-to",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-cognitive-map-compute-sr-matrix",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-cognitive-map-record-transition",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-knowledge-graph-detect-causality",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-knowledge-graph-extract-entities-typed",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-knowledge-graph-add-relationship",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-thermodynamics-synaptic-boost",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-thermodynamics-compute-decay",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-thermodynamics-compute-importance",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-thermodynamics-compute-surprise",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-embeddings-encode-document-enriched",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-embeddings-encode-query",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-embeddings-search",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-embeddings-similarity",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-embeddings-encode",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-curation-detect-contradictions",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-curation-memify-cycle",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-curation-curate-on-remember",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-consolidation-start",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-consolidation-force-consolidate",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-predictive-coding-compute-surprisal",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-predictive-coding-should-store",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-retrieval-temporal-parse-temporal-expression",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-retrieval-reranking-multi-passage-rerank",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-retrieval-reranking-nli-rerank",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-retrieval-reranking-heuristic-rerank",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-retrieval-reranking-cross-encoder-rerank",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-retrieval-query-analysis-analyze-query",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-retrieval-fusion-convex-fuse",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-retrieval-core-spreading-activation",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-retrieval-core-ppr-retrieve",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-retrieval-core-recall",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-close",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-search-wiki-fts",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-insert-wiki-page",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-get-active-checkpoint",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-insert-checkpoint",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-get-memory-stats",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-insert-relationship",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-insert-entity",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-get-memories-for-directory",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-search-vectors",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-search-memories-fts",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-get-memory",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-storage-insert-memory",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-remember",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-validate-memory",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-reembed-all",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-main",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-init-engines",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-add-rule",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-wiki-query",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-wiki-add",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-seed-project",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-install-hooks",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-anchor",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-restore",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-checkpoint",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-memory-stats",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-consolidate-now",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-get-project-context",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-forget",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-recall",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "fn-server-memorize",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-hooks-prompt-recall-auto-memory-surfacing",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-graph-api-3d-visualization-rest-api",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-enrichment-index-time-content-enrichment",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-embeddings-embeddingengine",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-embed-service-fastapi-embedding-backend",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-daemon-docker-lifecycle",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-curation-memorycurator",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-config-yaml-cli-config-management",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-config-settings",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "mod-main-cli-entry-point",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "data-models-source",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "architecture-source",
+   "old": "global",
+   "new": "/home/max/quinyx/meridian"
+  },
+  {
+   "slug": "yadgar-overview-source",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "yadgar-ir-intermediate-representation-static-analysis-data",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "yadgar-knowledge-graph-rules-engine",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "yadgar-checkpoint-restore-hippocampal-replay",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "yadgar-data-models",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "yadgar-consolidation-cycle",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "yadgar-recall-pipeline-multi-signal",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "yadgar-write-pipeline-surprise-gated",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  },
+  {
+   "slug": "yadgar-surrealdb-v3-migration-notes",
+   "old": "global",
+   "new": "/home/max/git/yadgar"
+  }
+ ],
+ "delete": [
+  "v4-4-wiki-latency-probe-page-4",
+  "v4-4-wiki-latency-probe-page-3",
+  "v4-4-wiki-latency-probe-page-2",
+  "v4-4-wiki-latency-probe-page-1",
+  "v4-4-wiki-latency-probe-page-0",
+  "v43-probe-emoji-test",
+  "test-page"
+ ],
+ "stay_global": [
+  "slack-link-format",
+  "claude-code-claude-setup-token-long-lived-oauth-token-from-subsc",
+  "how-to-update-a-confluence-page-with-large-content"
+ ],
+ "unmatched": []
+}
