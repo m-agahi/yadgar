@@ -12,6 +12,9 @@ the fix task) · ⏳ test not yet written.
 Run: `make e2e` (local, real `surreal`); pre-push hook; **excluded from CI**
 (`-m 'not e2e'`) — CI's embedded SurrealDB can't run these reliably.
 
+> ✅ is reserved for e2e-GREEN only. "I believe it holds" = ⏳ (this whole
+> exercise exists to kill belief-without-a-test).
+
 ---
 
 ## A. Write / memorize
@@ -67,7 +70,7 @@ Run: `make e2e` (local, real `surreal`); pre-push hook; **excluded from CI**
 - **BC-F1** A backup snapshot SHALL be a COMPLETE, restorable copy (restoring it
   yields the same row counts as the source). NOTE: a live `cp` mid-write is NOT
   complete (the 2026-06-16 nightly-pre snapshot restored to 1484/3622) — backups
-  SHALL be taken from a quiesced/atomic source.
+  SHALL be taken from a quiesced/atomic source. ❌ **#45** (pre-backup is a live cp → partial).
 - **BC-F2** Restore SHALL bring the daemon back to the snapshot's full state
   (both core + backend reopen the restored DB).
 
@@ -77,12 +80,12 @@ Run: `make e2e` (local, real `surreal`); pre-push hook; **excluded from CI**
 
 ## H. reembed_all
 - **BC-H1** `reembed_all` SHALL re-embed every memory missing an embedding;
-  `reembedded` == count of missing-embedding rows (skips None-content). ✅ (v5.67).
+  `reembedded` == count of missing-embedding rows (skips None-content). ⏳ (unit-green; e2e pending).
 
 ## I. Hooks directory stamping
 - **BC-I1** The tool-usage capture hook SHALL stamp the caller's cwd as
-  `directory_context` (not a sentinel). ✅
-- **BC-I2** The subagent-stop / session-end hook SHALL stamp the caller's cwd. ✅
+  `directory_context` (not a sentinel). ⏳ (audit-confirmed; e2e pending)
+- **BC-I2** The subagent-stop / session-end hook SHALL stamp the caller's cwd. ⏳ (audit-confirmed; e2e pending)
 - **BC-I3** The prompt-recall hook's injected context SHALL be directory-scoped
   (no other-project leak). ✅ (v5.65 supplement fix; daemon path post-filter).
 
