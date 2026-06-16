@@ -143,9 +143,14 @@ def reembed_all() -> dict:
     total = 0
     for i in range(0, len(rows), batch_size):
         batch = rows[i : i + batch_size]
-        texts = [r["content"] for r in batch]
-        ids = [r["id"] for r in batch]
-        encoded = embeddings.encode_batch(texts)
+        # Filter out rows with None/empty content — passing None to encode_batch
+        # causes the entire batch to fail on the backend (HTTP 500), returning
+        # all-None embeddings and leaving reembedded=0 even when other rows are valid.
+        valid = [(r["id"], r["content"]) for r in batch if r.get("content")]
+        if not valid:
+            continue
+        ids, texts = zip(*valid, strict=False)
+        encoded = embeddings.encode_batch(list(texts))
         for mid, emb in zip(ids, encoded, strict=False):
             if emb is not None:
                 storage.update_memory_embedding(mid, emb, embeddings.model_name)
