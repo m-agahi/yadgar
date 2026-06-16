@@ -7,6 +7,17 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.64.0]
+
+### Fixed (recall scoping chunk 2 — write-time directory stamping)
+- **Auto-generated memories no longer mis-stamp `directory_context = "system"`.** `"system"` is an always-eligible bucket in `is_directory_eligible`, so every memory stamped with it leaked into *every* project's recall results. Three write sites hardcoded `"system"`:
+  - `curation/strengthen.py` `_memify_derive` (co-occurrence derived memories) — now derives the originating directory from the source memories that mention either entity name, via `dominant_directory()`. Derived/auto-generated memories are excluded from the vote (no self-reinforcement). Single real dir → that dir; cross-project or unknown → `"global"`.
+  - `cls_store/promotion.py` `_promote_pattern` (CLS cluster promotion) — now uses `dominant_directory()` over the cluster members' `directory_context` values instead of `pattern["directories"][0]` (set-ordered, lossy, could be `"system"`).
+  - `sleep_compute/dream.py` `_create_dream_insight` (dream connections) — now stamps `"global"` (dreams are synthetic cross-cutting random-pair associations, never a single project).
+- New shared helper `storage/directory.py` `dominant_directory(candidates)`: excludes sentinels (`None`/`""`/`"global"`/`"system"`) from the vote; returns the single real dir when unambiguous, else `"global"`.
+
+> Note: the ~612 existing wikis + memories already stamped `"system"`/`"global"` are corrected by a separate user-run migration (re-stamp script), not this release. This release stops the bleed at write time.
+
 ## [5.63.0]
 
 ### Fixed (nightly consolidation — was failing EVERY night)

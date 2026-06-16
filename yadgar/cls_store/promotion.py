@@ -3,6 +3,7 @@
 import logging
 
 from yadgar.cls_store.patterns import _is_degenerate_auto_abstracted
+from yadgar.storage.directory import dominant_directory
 from yadgar.tracing import trace_span
 
 logger = logging.getLogger(__name__)
@@ -48,9 +49,12 @@ class _PromotionMixin:
                     if sim > self._settings.CURATION_SIMILARITY_THRESHOLD:
                         return False
 
-        # d. Create semantic memory
-        directories = pattern["directories"]
-        primary_dir = directories[0] if directories else "system"
+        # d. Create semantic memory — derive originating directory from cluster members.
+        # Use dominant_directory() over cluster_mems to get the real project dir
+        # (not directories[0] which is set-ordered and loses counts; not "system").
+        # Cross-cluster or unknown → "global" (safe, cross-cutting).
+        cluster_dirs = [m.get("directory_context") for m in cluster_mems]
+        primary_dir = dominant_directory(cluster_dirs)
 
         semantic_id = self._storage.insert_memory(
             {

@@ -4,6 +4,7 @@ import logging
 
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.storage import StorageEngine
+from yadgar.storage.directory import dominant_directory
 
 logger = logging.getLogger(__name__)
 
@@ -87,25 +88,39 @@ def _memify_reweight(
         storage.batch_writes(batch)
 
 
-def _memify_derive(
+# Tags marking a memory as machine-derived — excluded from directory votes so
+# derived memories never reinforce their own (possibly wrong) directory_context.
+_DERIVED_TAGS = frozenset({"derived", "auto-generated"})
+
+
+def _derive_pair_directory(src_name: str, tgt_name: str, source_mems: list[dict]) -> str:
+    """Originating directory for a co-occurrence pair.
+
+    Vote with the directory_context of every source memory whose content mentions
+    either entity name. dominant_directory() returns the single real dir when
+    unambiguous, else "global" (cross-project / unknown).
+    """
+    dir_votes = [
+        m.get("directory_context")
+        for m in source_mems
+        if src_name in (m.get("content") or "") or tgt_name in (m.get("content") or "")
+    ]
+    return dominant_directory(dir_votes)
+
+
+def _collect_derive_inserts(
     storage: StorageEngine,
     embeddings: EmbeddingEngine,
     stats: dict,
-) -> None:
-    """Generate synthetic derived-fact memories for high-weight entity pairs."""
-    entities = storage.get_all_entities(min_heat=0.0, include_archived=True)
-    entity_map = {e["id"]: e for e in entities}
+    entity_map: dict,
+    existing_contents: set[str],
+    source_mems: list[dict],
+) -> list[dict]:
+    """Phase 1: walk co_occurrence relationships, build insert payloads.
 
-    # Pre-build existing content set for dedup
-    existing_contents = {m["content"] for m in storage.get_all_memories_with_embeddings()}
-
-    now = storage._now_iso()
-    model_name = embeddings.get_model_name()
-
-    # ONE query for co_occurrence relationships instead of O(N²) per-pair HTTP calls.
+    ONE query for co_occurrence relationships instead of O(N²) per-pair HTTP calls.
+    """
     relationships = storage.get_relationships_by_types(["co_occurrence"])
-
-    # Phase 1: walk relationships, compute embeddings, collect inserts
     to_insert: list[dict] = []
     for rel in relationships:
         sid = rel.get("source_entity_id")
@@ -113,10 +128,8 @@ def _memify_derive(
         if sid is None or tid is None:
             continue
 
-        weight = rel.get("weight") or 0.0
-
         # Check if co-occurrence count is high enough (weight as proxy)
-        if weight < 10.0:
+        if (rel.get("weight") or 0.0) < 10.0:
             continue
 
         src_entity = entity_map.get(sid)
@@ -132,20 +145,42 @@ def _memify_derive(
         if derived_content in existing_contents:
             continue
 
-        embedding = embeddings.encode(derived_content)
-        memory_id = storage._next_id("memory")
         to_insert.append(
             {
-                "memory_id": memory_id,
+                "memory_id": storage._next_id("memory"),
                 "content": derived_content,
-                "embedding": embedding,
+                "embedding": embeddings.encode(derived_content),
                 "src_name": src_name,
                 "tgt_name": tgt_name,
+                "directory_context": _derive_pair_directory(src_name, tgt_name, source_mems),
             }
         )
         existing_contents.add(derived_content)
         stats["derived"] += 1
 
+    return to_insert
+
+
+def _memify_derive(
+    storage: StorageEngine,
+    embeddings: EmbeddingEngine,
+    stats: dict,
+) -> None:
+    """Generate synthetic derived-fact memories for high-weight entity pairs."""
+    entities = storage.get_all_entities(min_heat=0.0, include_archived=True)
+    entity_map = {e["id"]: e for e in entities}
+
+    # Pre-build existing content set for dedup + full dicts for directory derivation.
+    all_mems = storage.get_all_memories_with_embeddings()
+    existing_contents = {m["content"] for m in all_mems}
+    source_mems = [m for m in all_mems if not _DERIVED_TAGS.intersection(set(m.get("tags") or []))]
+
+    now = storage._now_iso()
+    model_name = embeddings.get_model_name()
+
+    to_insert = _collect_derive_inserts(
+        storage, embeddings, stats, entity_map, existing_contents, source_mems
+    )
     if not to_insert:
         return
 
@@ -176,7 +211,7 @@ def _memify_derive(
                     "embedding": emb_floats,
                     "tags": ["derived", "auto-generated"],
                     "source_episode_id": None,
-                    "directory_context": "system",
+                    "directory_context": item["directory_context"],
                     "created_at": now,
                     "last_accessed": now,
                     "heat": 0.5,
