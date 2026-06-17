@@ -149,6 +149,18 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         # Resets on container restart — acceptable because thresholds are tight enough that
         # even from-scratch counting cannot sustain meaningful DB CPU for long.
         self._attempts: dict[str, _Attempt] = {}
+        # Serializes _drain_once: the background run() loop and a synchronous
+        # drain_now() must never execute a pass concurrently. Without this, two
+        # passes read the same pending() file list and race — one applies and
+        # removes a file while the other finds it gone ("file theft"), so
+        # drain_now() can return before the queued write is durable and a caller
+        # that reads storage immediately sees NOT-FOUND. This is the CI flake #53
+        # root cause (test_memory_behavior / test_project_brief_modes under
+        # -n auto). flush_barrier already documents the same intent of avoiding
+        # concurrent _drain_once; the lock enforces it for drain_now(). Non-
+        # reentrant: nothing calls _drain_once recursively (flush_barrier only
+        # polls pending(); _process_pending_file does not recurse) → no deadlock.
+        self._drain_lock = threading.Lock()
 
     def run(self) -> None:
         while not self._stop_event.is_set():
@@ -198,6 +210,15 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
 
     @trace_span("drainer.drain_cycle")
     def _drain_once(self) -> int:
+        # Serialize the whole pass: the background loop and drain_now() share one
+        # drainer instance; concurrent passes steal each other's pending files
+        # (CI flake #53). The lock guarantees a pass applies its files to storage
+        # before any other pass starts, so drain_now() returns only after its
+        # writes are durable.
+        with self._drain_lock:
+            return self._drain_once_locked()
+
+    def _drain_once_locked(self) -> int:
         _cycle_t0 = time.monotonic()
         files = self._queue.pending()
         now = time.time()
