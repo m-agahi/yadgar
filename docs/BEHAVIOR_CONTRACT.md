@@ -13,10 +13,21 @@ contract e2e yet) · ❌ = KNOWN-BROKEN (ships `xfail(strict)`, links fix task).
 > exists to kill belief-without-a-test.
 
 Run: `make e2e` (local, real `surreal`) + pre-push hook; **excluded from CI**
-(`-m 'not e2e'`). Surface: **290 SHALLs / 28 subsystems.** Today: ~107 real-path,
-~124 unit-only, ~59 none, 41 known-broken. Goal: every SHALL → ✅ or ❌.
+(`-m 'not e2e'`).
 
-Lint rule: a ✅ without an e2e test reference is a rejected claim.
+**Surface (recounted v5.71, self-enforced by `scripts/check_contract_coverage.py`):**
+**233 SHALLs / 38 subsystems.** Today: **6 ✅ · 212 ⏳ · 15 ❌.** Of the 212 ⏳:
+**70 `[r]` (real-path coverage exists) · 110 `[u]` (unit-only) · 32 none.**
+Goal: every SHALL → ✅ or ❌.
+
+**Lint rules** (`scripts/check_contract_coverage.py`, run as a non-e2e pytest):
+1. A ✅ entry MUST cite a resolvable `path::node` test reference; a ✅ without one
+   is a rejected claim.
+2. A `[r]`/`[u]` tag on any entry, when it carries a `path::node` reference, MUST
+   resolve to a real test (validate-if-present — the tag itself is not mandatory,
+   but a dangling reference is a lint failure). This extends rule 1 beyond ✅.
+3. The header counts (✅/⏳/❌ and `[r]`/`[u]`/none) MUST equal the actual tally
+   over all `BC-*` rows. Header drift is a lint failure.
 
 ---
 
@@ -39,10 +50,11 @@ Lint rule: a ✅ without an e2e test reference is a rejected claim.
 - BC-C2 heat decay lowers heat; below cold_threshold → archived. ⏳[r] P1
 - BC-C3 old+not-recently-accessed derived purged; recent spared; protected spared (v5.66). ⏳[u] P1
 - BC-C4 nightly sleep phases run (dream/community/cluster/reembed_stale/compress/auto_narrate). ❌ #37 P1
-- BC-C5 AstrocytePool domain consolidation executes (or removed). ❌ #40 P2
+- BC-C5a AstrocytePool domain consolidation executes (assign→consolidate per domain produces a summary). ❌ #40 P2
+- BC-C5b if astrocyte pool is disabled, config reports it disabled + emits exactly one startup warning. ⏳ #40 P2
 
 ### D. Nightly cycle (host job; tests use TEMP data dir + stubbed service control)
-- BC-D1 nightly completes exit 0 against seeded temp DB. ❌ #43 P1 (skew-blocked: surrealdb SDK 2.0.0 cannot embedded-open a surreal-3.0.5 surrealkv DB; e2e ships skipped, see SDK/server-alignment follow-up)
+- BC-D1 nightly completes exit 0 against seeded temp DB. ❌ #51 P1 (skew-blocked: surrealdb SDK 2.0.0 cannot embedded-open a surreal-3.0.5 surrealkv DB; e2e ships skipped, see SDK/server-alignment follow-up)
 - BC-D2 pre-backup snapshot at real YADGAR_DATA_DIR/XDG, not stale config (v5.67). ⏳ P1
 - BC-D3 interpreter shutdown clean (no SEGV / unhandled GC). ❌ #43 P1 (resolved via CPython 3.14.4 — the `_asyncio` finalize SEGV was a 3.14.3 bug fixed in 3.14.4; `.venv` now 3.14.4; no dedicated e2e asserts clean exit, so status stays ❌ until a test proves it)
 
@@ -100,12 +112,57 @@ Lint rule: a ✅ without an e2e test reference is a rejected claim.
 - BC-DC1 eligible set = {caller_dir, global, '', None}; single is_directory_eligible predicate (I31). ⏳[r] P1
 - BC-DC2 hard-require directory on reads; no os.getcwd() container fallback. ⏳[r] P1
 
+### IC. In-context blocks (block_* tools — `yadgar/server/tools/blocks.py`)
+- BC-IC1 block_create(dir,label,value) then block_get returns the value, stamped dir. ⏳[u] P2
+- BC-IC2 block_list(dir) returns only blocks for dir (no cross-project leak). ⏳[u] P2
+- BC-IC3 block_append/block_replace mutate the stored value as specified. ⏳[u] P2
+- BC-IC4 block_update patches label/value; block_delete removes it (subsequent get → not-found). ⏳[u] P2
+
+### AS. Action stream (tool-call capture → episodic action records)
+- BC-AS1 a captured tool-usage action becomes a retrievable action-stream record stamped caller cwd. ⏳[u] P2
+- BC-AS2 action records feed recall (an action surfaces in directory-scoped recall, not in another dir). ⏳ P2
+
+### AN. Anchors as first-class (anchor / audit_anchors — `yadgar/server/tools/misc.py`, `audit.py`)
+- BC-AN1 anchor(dir,title,...) creates a pinned `_anchor`-tagged memory that project_brief surfaces in top_anchors for dir. ⏳[u] P2
+- BC-AN2 anchors are exempt from heat decay / archival (an aged anchor stays in top_anchors). ⏳ P2
+- BC-AN3 audit_anchors(dir) reports anchor count + flags malformed/duplicate anchors. ⏳[u] P2
+
+### HK. Hook install / sync (install_hooks / sync_instructions — `yadgar/server/tools/misc.py`)
+- BC-HK1 install_hooks(dir) writes the Claude Code hook config to dir and is idempotent (re-run = no duplicate entries). ⏳[u] P2
+- BC-HK2 sync_instructions(dir) writes the agent-instruction block to dir; a stale block is replaced, not duplicated. ⏳[u] P2
+
+### RU. Rules engine (add_rule / get_rules — `yadgar/server/tools/admin_other.py`)
+- BC-RU1 add_rule(dir,rule) stores a rule that get_rules(dir) returns, stamped dir. ⏳[u] P2
+- BC-RU2 get_rules is directory-scoped (a rule added for dir A absent from get_rules(dir B)). ⏳ P2
+- BC-RU3 stored rules are applied at retrieval time (BC-RR4 rules-rerank consumes them). ⏳ P2
+
+### AP. Agent-prompt library (agent_prompt_save / agent_prompt_get / agent_dispatch_prelude — `yadgar/server/tools/agent_prompts.py`, `dispatch_helper.py`)
+- BC-AP1 agent_prompt_save(name,body) then agent_prompt_get(name) returns the saved body. ⏳[u] P2
+- BC-AP2 agent_prompt_get on an unknown name returns not-found (not a stale/other prompt). ⏳ P2
+- BC-AP3 agent_dispatch_prelude(dir) returns the standard dispatch prelude with dir-scoped context injected. ⏳[u] P2
+
 ---
 
 ## PHASE 2 — broader subsystems
 
+### RR. Retrieval scoring / reranking (`yadgar/retrieval/`)
+- BC-RR1 cross-encoder rerank reorders candidates by query-document relevance (top-1 changes vs raw vector order on a designed query). ⏳[u] P1 (`_reranking_cross_encoder.cross_encoder_rerank`)
+- BC-RR2 NLI entailment demotes a contradicting passage below an entailing one for the same query. ⏳[u] P1 (`_reranking_nli.nli_rerank`)
+- BC-RR3 adversarial-candidate filter drops/penalises a planted adversarial (prompt-injection / contradictory) candidate. ⏳[u] P2 (`stages/adversarial.AdversarialStage`, `_reranking_confidence.detect_adversarial`)
+- BC-RR4 stored rules rerank: a matching rule boosts/penalises a candidate's rank. ⏳[u] P2 (`reranking._rerank_rules`)
+- BC-RR5 confidence gate / quality floor drops low-confidence (CE≈0) results below the floor. ⏳[u] P1 (`_reranking_confidence.compute_signal_confidence`, `quality._compute_signal_confidence`)
+- BC-RR6 multi-passage aggregation: a multi-chunk memory is scored by aggregated passage scores, not a single chunk. ⏳[u] P2 (`_reranking_multi_passage.multi_passage_rerank`)
+- BC-RR7 MMR diversification reduces near-duplicate results in the top-k. ⏳[u] P2 (`_reranking_mmr`)
+- BC-RR8 query routing: analyze_query classifies query type and selects the matching retrieval path (factoid vs comparison vs open-domain). ⏳[u] P2 (`query_analysis.analyze_query`, `_classify_query_type`)
+- BC-RR9 query expansion: pseudo-HyDE / semantic-expansion adds boosted FTS subqueries that retrieve an item the raw query misses. ⏳[u] P2 (`query_analysis._pseudo_hyde_expand`, `_collect_semantic_expansions`, `_build_boosted_fts_query`)
+- BC-RR10 fusion default = convex combination of signal scores. ⏳[u] P1 (`fusion._convex_fuse`)
+- BC-RR11 WRRF fusion (weighted reciprocal-rank fusion) available + selected by config, produces a rank-based fused order. ⏳[u] P2 (`fusion._wrrf_fuse`)
+- BC-RR12 temporal retrieval: a temporal expression ("yesterday", "last week") parses to a window that scores time-matching memories higher. ⏳[r] P2 (`temporal.parse_temporal_expression`, `scoring._collect_temporal_scores`)
+- BC-RR13 comparison-merge rerank merges the option candidates for a comparison query into a single ranked answer set. ⏳[u] P2 (`reranking._rerank_comparison_merge`)
+
 ### Sleep compute (gated behind #37 wiring)
-- BC-SC1 dream replay surfaces latent memory pairs. ❌/⏳ #37 P2
+- BC-SC1a dream replay surfaces latent memory pairs (a co-activated pair becomes a derived link). ❌ #37 P2
+- BC-SC1b if dream replay is disabled, config reports it disabled + emits exactly one startup warning. ⏳ #37 P2
 - BC-SC2 community detection clusters the memory graph. ⏳[u] P2
 - BC-SC3 cluster summarization writes semantic summaries. ⏳[u] P2
 - BC-SC4 reembed_stale fixes stale embeddings after a model change. ❌ #37 P2
@@ -115,7 +172,8 @@ Lint rule: a ✅ without an e2e test reference is a rejected claim.
 ### Astrocyte pool
 - BC-AC1 assign_memory routes a memory to a domain. ⏳[u] P2
 - BC-AC2 domain consolidation runs per domain. ❌ #40 P2
-- BC-AC3 consensus_retrieve merges across domains (or removed). ❌ #41 P2
+- BC-AC3a consensus_retrieve merges results across domains into one ranked set. ❌ #41 P2
+- BC-AC3b if consensus_retrieve is disabled/removed, config reports it absent + emits exactly one startup warning. ⏳ #41 P2
 
 ### Knowledge graph / entities
 - BC-KG1 entities extracted from episodes. ⏳[r] P2
@@ -135,15 +193,18 @@ Lint rule: a ✅ without an e2e test reference is a rejected claim.
 - BC-CA3 causal DAG inferred from dependency patterns. ⏳[u] P3
 
 ### Enrichment
-- BC-EN1 ConceptNet expansion adds related terms (or config reflects off + warns). ❌ #39 P2
-- BC-EN2 COMET commonsense expansion (or off+warn). ❌ #39 P2
-- BC-EN3 doc2query synthetic queries (or off+warn). ❌ #39 P2
+- BC-EN1a ConceptNet expansion adds related terms to a query/memory. ❌ #39 P2
+- BC-EN1b if ConceptNet expansion is disabled, config reports it disabled + emits exactly one startup warning. ⏳ #39 P2
+- BC-EN2a COMET commonsense expansion adds inferred commonsense triples. ❌ #39 P2
+- BC-EN2b if COMET expansion is disabled, config reports it disabled + emits exactly one startup warning. ⏳ #39 P2
+- BC-EN3a doc2query generates synthetic queries for a stored memory. ❌ #39 P2
+- BC-EN3b if doc2query is disabled, config reports it disabled + emits exactly one startup warning. ⏳ #39 P2
 
 ### Metacognition
 - BC-MC1 coverage scored by entity/topic distribution. ⏳[r] P2
 - BC-MC2 gap detection flags missing topics. ⏳[u] P3
 - BC-MC3 belief search returns high-confidence inferred statements. ⏳[u] P2 (ties B5)
-- BC-MC4 quality floor drops low-confidence/CE≈0 results. ⏳[u] P1 (recall)
+- BC-MC4 quality floor drops low-confidence/CE≈0 results. ⏳[u] P1 (recall; ties RR5)
 
 ### Predictive coding / surprise
 - BC-PCd1 novel memory triggers surprise heat boost. ⏳[r] P2
@@ -170,11 +231,119 @@ Lint rule: a ✅ without an e2e test reference is a rejected claim.
 - BC-ADM5 archive_purge(older_than) purges archived. ⏳[u] P2
 - BC-ADM6 memory_update patches allowed fields. ⏳[r] P2
 
-### Tracing / metrics / invariants (I1–I31)
-- BC-INV-* the I1–I31 invariants hold (most enforced by CI pre-commit checkers I13/I23/I24/I25/I28/I29/I30; add e2e for the runtime ones: I1 latency, I8 backpressure metrics, I2/I4 drainer/ML-async). ⏳ mixed P2
+### INV. Architecture invariants (I1–I31; from `docs/ARCHITECTURE_INVARIANTS.md`)
+> One falsifiable SHALL per defined invariant. CI-enforced ones (a pre-commit
+> checker script already proves them) are marked `[ci]` + the script. Runtime ones
+> need an e2e. I16/I17/I18 are DEFERRED in the invariants doc (codify on violation)
+> — no SHALL minted; listed for completeness only.
+- BC-I1 request path stays THIN: no ML/heavy compute on the request thread; offloaded to drainer/to_thread. ⏳ P2 (runtime)
+- BC-I2 the drainer is the SINGLE catch-up lane (no second background processor competes). ⏳[u] P2 (runtime)
+- BC-I3 opt-in features short-circuit BEFORE expensive setup when disabled. ⏳[u] P2 (runtime)
+- BC-I4 ML compute runs via asyncio.to_thread or drainer-thread ONLY (never inline on the event loop). ⏳ P2 (runtime)
+- BC-I5 module decomposition never moves work across boundaries (refactor preserves where work runs). ⏳ P3 (review-time; no runtime probe)
+- BC-I6 no double-pay: a given compute (embedding/rerank) is not performed twice per request. ⏳[u] P2 (runtime)
+- BC-I7 the queue is the durability boundary (an accepted write survives a crash before processing). ⏳[r] P1 (runtime)
+- BC-I8 backpressure is observable: queue depth / backpressure exposed as a metric. ⏳ P2 (runtime; metric assert)
+- BC-I9 new write-path code budget ≤5ms p50. ⏳ P2 (runtime; latency assert)
+- BC-I10 overrides are explicit (a config override is logged/visible, never silent). ⏳ P3
+- BC-I11 heavy stable artifacts live in backend image, not core (size-ratchet CI-enforced). ⏳[ci] P2 (`scripts/check_image_size.py`)
+- BC-I12 measure before optimize (perf claims backed by a recorded measurement). ⏳ P3 (process)
+- BC-I13 bounded file + function complexity. ⏳[ci] P2 (`scripts/check_complexity.py`)
+- BC-I14 structured logging contract (SCOPED) holds for in-scope log sites. ⏳ P3
+- BC-I15 boundary-property fuzz tests (SCOPED) exist for in-scope boundaries. ⏳[u] P3
+- BC-I19 file handler installed before tracing init. ⏳[ci] P2 (`scripts/check_trace_spans.py`)
+- BC-I20 FastAPI/Starlette apps instrumented with FastAPIInstrumentor. ⏳ P3 (runtime)
+- BC-I21 background threads create an OTel root span per work unit. ⏳ P3 (runtime)
+- BC-I22 trust boundary: single-user single-host (no multi-tenant auth assumed). ⏳ P3 (design)
+- BC-I23 every declared metric has ≥1 writer. ⏳[ci] P2 (`scripts/check_metric_writers.py`)
+- BC-I24 every public HTTP-handler has @trace_span. ⏳[ci] P2 (`scripts/check_trace_spans.py`)
+- BC-I25 every config knob defaults to a yaml-backed value. ⏳[u] P2
+- BC-I26 secret-gate is a single chokepoint at the storage layer. ⏳[ci+r] P1 (`scripts/check_secret_gate.py`; ties S1)
+- BC-I27 plan-first: every reproducible bug / >10 LOC fix lands in a plan doc same-session. ⏳ P3 (process)
+- BC-I28 every pre-commit allowlist bypass is audited. ⏳[ci+r] P2 (`scripts/check_allowlist_audit.py`; ties S3)
+- BC-I29 no dead capability: stored ≡ used ≡ shown (edge types). ⏳[ci] P2 (`scripts/check_dead_capability.py`)
+- BC-I30 complexity-cap integrity: caps configurable, allowlist gated, no silent baselining. ⏳[ci] P2 (`scripts/check_complexity.py`)
+- BC-I31 directory scoping: single is_directory_eligible predicate, hard-require, no 'system'. ⏳[r] P1 (ties DC1)
 
-### MCP tool surface (52 tools)
-- BC-MCP every registered MCP tool has ≥1 e2e exercising its real path + a contract. 18 real today, 22 unit-only, 12 none → drive all to ⏳→✅. P2
+### MCP tool surface (72 registered tools — `yadgar/server/tools/*`)
+> Replaces the old single BC-MCP umbrella. Each registered `@_tool` gets a row;
+> status ⏳ until a contract e2e exercises its real path. Many overlap an existing
+> BC-* above (cross-ref in the Note column) — those inherit that contract's e2e.
+
+| BC id | Tool | Status | Note |
+|-------|------|--------|------|
+| BC-T1 | memorize | ⏳[r] | =A1 |
+| BC-T2 | remember | ⏳[u] | alias of memorize |
+| BC-T3 | recall | ⏳[r] | =B1..B4 |
+| BC-T4 | project_brief | ⏳[r] | =PC1 |
+| BC-T5 | seed_project | ⏳[u] | =PC2 |
+| BC-T6 | bootstrap_project | ⏳[u] | initial project scaffold |
+| BC-T7 | update_active_work | ⏳[r] | =PC3 |
+| BC-T8 | checkpoint | ⏳[u] | =CK1 |
+| BC-T9 | restore | ⏳[u] | =CK1 |
+| BC-T10 | anchor | ⏳[u] | =AN1 |
+| BC-T11 | audit_anchors | ⏳[u] | =AN3 |
+| BC-T12 | install_hooks | ⏳[u] | =HK1 |
+| BC-T13 | sync_instructions | ⏳[u] | =HK2 |
+| BC-T14 | add_rule | ⏳[u] | =RU1 |
+| BC-T15 | get_rules | ⏳[u] | =RU1/RU2 |
+| BC-T16 | agent_prompt_save | ⏳[u] | =AP1 |
+| BC-T17 | agent_prompt_get | ⏳[u] | =AP1/AP2 |
+| BC-T18 | agent_dispatch_prelude | ⏳[u] | =AP3 |
+| BC-T19 | block_create | ⏳[u] | =IC1 |
+| BC-T20 | block_get | ⏳[u] | =IC1 |
+| BC-T21 | block_list | ⏳[u] | =IC2 |
+| BC-T22 | block_append | ⏳[u] | =IC3 |
+| BC-T23 | block_replace | ⏳[u] | =IC3 |
+| BC-T24 | block_update | ⏳[u] | =IC4 |
+| BC-T25 | block_delete | ⏳[u] | =IC4 |
+| BC-T26 | bookmark_add | ⏳[r] | =G7 |
+| BC-T27 | bookmark_list | ⏳[r] | =G7 |
+| BC-T28 | bookmark_remove | ⏳[r] | =G7 |
+| BC-T29 | bookmark_reorder | ⏳[r] | =G7 |
+| BC-T30 | wiki_add | ⏳[r] | =G1 |
+| BC-T31 | wiki_get | ⏳[r] | =G1 |
+| BC-T32 | wiki_read | ⏳[r] | =G3 |
+| BC-T33 | wiki_query | ⏳[r] | =G2 |
+| BC-T34 | wiki_list | ⏳[u] | catalog listing |
+| BC-T35 | wiki_update | ⏳[r] | =G4 |
+| BC-T36 | wiki_approve | ⏳[r] | =G5 |
+| BC-T37 | wiki_drafts | ⏳[u] | =G5 |
+| BC-T38 | wiki_discard | ⏳[u] | =G5 |
+| BC-T39 | wiki_check_duplicate | ⏳[r] | =G6 |
+| BC-T40 | wiki_history | ⏳[u] | =G4 |
+| BC-T41 | wiki_read_version | ⏳[u] | =G4 |
+| BC-T42 | wiki_diff | ⏳[u] | version diff |
+| BC-T43 | wiki_restore | ⏳[u] | restore old version |
+| BC-T44 | wiki_set_metadata | ⏳[u] | =G9/G10 |
+| BC-T45 | wiki_lint | ⏳[u] | lint a page |
+| BC-T46 | wiki_append_section | ⏳[u] | =G9 |
+| BC-T47 | wiki_insert_at | ⏳[u] | =G9 |
+| BC-T48 | wiki_insert_after | ⏳[u] | =G9 |
+| BC-T49 | wiki_insert_before | ⏳[u] | =G9 |
+| BC-T50 | wiki_replace_at | ⏳[u] | =G9 |
+| BC-T51 | wiki_replace_text | ⏳[u] | =G9 |
+| BC-T52 | wiki_replace_markdown_block | ⏳[u] | =G9 |
+| BC-T53 | wiki_delete | ⏳[u] | delete a page |
+| BC-T54 | wiki_delete_at | ⏳[u] | =G9 |
+| BC-T55 | wiki_delete_text | ⏳[u] | =G9 |
+| BC-T56 | wiki_coverage | ⏳[u] | coverage report |
+| BC-T57 | wiki_cleanup_merged_branches | ⏳[u] | =G8 |
+| BC-T58 | wiki_refresh_stale | ⏳[u] | stale-page refresh |
+| BC-T59 | consolidate_now | ⏳[r] | =C1 |
+| BC-T60 | reembed_all | ⏳[u] | =ADM1 |
+| BC-T61 | vacuum_now | ⏳[r] | =E1..E3 |
+| BC-T62 | vacuum_checkpoints | ⏳[u] | checkpoint vacuum |
+| BC-T63 | archive_purge | ⏳[u] | =ADM5 |
+| BC-T64 | forget | ⏳[r] | =ADM2 |
+| BC-T65 | memory_get | ⏳[r] | fetch by id |
+| BC-T66 | memory_update | ⏳[r] | =ADM6 |
+| BC-T67 | memory_stats | ⏳[u] | counts/heat stats |
+| BC-T68 | validate_memory | ⏳[u] | =ADM3 |
+| BC-T69 | check_invariants | ⏳[r] | =C1 |
+| BC-T70 | dlq_inspect | ⏳[u] | DLQ list |
+| BC-T71 | dlq_requeue | ⏳[r] | =ADM4 |
+| BC-T72 | dlq_dismiss | ⏳[u] | DLQ dismiss |
 
 ### Viz / graph API
 - BC-VZ1 graph REST returns entity neighborhood + scores. ⏳[u] P2
@@ -199,11 +368,19 @@ Lint rule: a ✅ without an e2e test reference is a rejected claim.
 - **v5.68 (P1 build now):** harness + isolation fixture (temp data dir, stub service
   control) + P1 DB-layer tests green + #38, #37 fixed real red→green; the
   data-safety P1 contracts (D1/D3/E1-3/F1) ship `xfail(strict)` linking #43/#44/#45.
-- **P2:** sleep/astrocyte/KG/CLS/causal/enrichment/hooks/admin/MCP-surface e2e +
+- **v5.69:** vacuum/backup data-safety contracts BC-E1/E2/E3/F1/F2/F3 flipped ✅
+  (real e2e in `test_vacuum_backup_safety.py`). BC-D1 stays ❌ (#51 SDK/server skew).
+- **v5.71:** contract hardened — header recounted + self-enforced, retrieval (RR),
+  in-context/action-stream/anchors/hook/rules/agent-prompt subsystems added,
+  BC-MCP exploded to a per-tool table (72), BC-INV exploded per-invariant,
+  disjunctive-escape SHALLs split. Coverage-lint extended to validate `[r]`/`[u]`
+  references + header counts.
+- **P2:** sleep/astrocyte/KG/CLS/causal/enrichment/hooks/admin/RR/MCP-surface e2e +
   the #39/#40/#41 fixes flip their xfails.
 - **P3:** cognitive-map decide-or-remove, full coverage closure, dead-code lint.
 - **Suite acceptance:** re-run vs PRE-fix commits of this session's bugs (embedded
   consolidation, recall wiki leak, reembed_all, vacuum data-loss, partial backup)
   → each relevant contract goes RED. Proves the net catches rot.
 - **Coverage lint (CI-able):** every BC-* references an e2e test OR is ⏳/❌ with a
-  reason; ✅ without a test ref fails the lint.
+  reason; ✅ without a test ref fails the lint; a dangling `[r]`/`[u]` reference
+  fails the lint; header counts must equal the actual tally.
