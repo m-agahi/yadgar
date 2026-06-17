@@ -255,24 +255,42 @@ check:
 
 ## test-clean: Kill orphaned test SurrealDB procs left by crashed runs (never touches prod)
 test-clean:
-	@pkill -9 -f 'surreal start.*/tmp/pytest' 2>/dev/null || true
+	@bash scripts/reap-test-surreal.sh
 	@echo "Reaped stale test surreal procs (production daemon on /data untouched)."
 
-## test: Run the full suite CPU/mem-capped + timeout-bounded + orphan-reaped
+# Shared mutual-exclusion lock for ALL local surreal-spawning test runs
+# (test / test-ci / e2e). Two concurrent runs would each fire the orphan-reaper
+# and kill the OTHER run's /tmp/pytest surreals → spurious errors. flock
+# serializes them: a second run (pre-push hook OR a manual/agent trigger) waits
+# up to 15min for the in-flight run, then fails fast rather than colliding.
+# The reaper runs INSIDE the lock, so it can only ever touch true orphans.
+# (CI is unaffected — it invokes pytest directly with --splits, not these targets.)
+TEST_LOCK := $(HOME)/.cache/yadgar/test.lock
+LOCKED = mkdir -p $(dir $(TEST_LOCK)) && flock -w 900 $(TEST_LOCK) bash -c
+
+## test: Run the full suite CPU/mem-capped + timeout-bounded + orphan-reaped + lock-serialized
 ## (a hung run can't peg the box or crash the prod daemon; see scripts/test-capped.sh)
-test: test-clean
-	@trap 'pkill -9 -f "surreal start.*/tmp/pytest" 2>/dev/null || true' EXIT; \
-	scripts/test-capped.sh uv run --extra test pytest yadgar/tests/ -q $(PYTEST_ARGS)
+test:
+	@$(LOCKED) 'bash scripts/reap-test-surreal.sh; trap "bash scripts/reap-test-surreal.sh" EXIT; \
+	  scripts/test-capped.sh uv run --extra test pytest yadgar/tests/ -q $(PYTEST_ARGS)'
+
+## test-ci: CI-visible selection (-m "not integration and not e2e"), locked + parallel.
+## Use this for a local pre-merge preflight — mirrors what CI runs, serialized so it
+## never collides with a concurrent e2e/pre-push run.
+test-ci:
+	@$(LOCKED) 'bash scripts/reap-test-surreal.sh; trap "bash scripts/reap-test-surreal.sh" EXIT; \
+	  uv run --extra test --extra ml python -m pytest yadgar/tests/ \
+	    -m "not integration and not e2e" -p no:randomly -n auto -q $(PYTEST_ARGS)'
 
 ## e2e: Run the behavior-contract e2e safety-net suite against the local `surreal` binary.
 ## Requires: ~/.local/bin/surreal (or surreal on PATH). See yadgar/tests/e2e/conftest.py.
 ## Excluded from CI (-m 'not e2e') — CI's embedded SurrealDB can't run these reliably.
 ## Install the pre-push hook once with: pre-commit install --hook-type pre-push
-e2e: test-clean
-	@trap 'pkill -9 -f "surreal start.*/tmp/pytest" 2>/dev/null || true' EXIT; \
-	OTEL_SDK_DISABLED=true PATH="$$HOME/.local/bin:$$PATH" \
-	uv run --extra test --extra ml python -m pytest yadgar/tests/e2e/ \
-	  -m e2e -p no:randomly -n0 --tb=short -q $(PYTEST_ARGS)
+e2e:
+	@$(LOCKED) 'bash scripts/reap-test-surreal.sh; trap "bash scripts/reap-test-surreal.sh" EXIT; \
+	  OTEL_SDK_DISABLED=true PATH="$$HOME/.local/bin:$$PATH" \
+	  uv run --extra test --extra ml python -m pytest yadgar/tests/e2e/ \
+	    -m e2e -p no:randomly -n0 --tb=short -q $(PYTEST_ARGS)'
 
 ## upgrade-test: Print the manual upgrade-test runbook (see docs/UPGRADE_TEST.md)
 upgrade-test:

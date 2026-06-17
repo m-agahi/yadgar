@@ -71,28 +71,54 @@ def _cmd_to_str(cmd) -> str:
 def service_stub():
     """Provide a stub for service-control calls (systemctl/podman stop/start).
 
-    Future host-job tests (BC-D1/D2/D3) MUST drive the nightly cycle's service
-    control through this seam.  Phase-1 tests (DB-layer only) never touch service
-    control, so this fixture is benign here.
+    Two service-control seams exist in yadgar and BOTH are stubbed here so no
+    test can trigger a real systemctl/podman start/stop:
 
-    Implementation: patches only the specific functions that nightly_cycle.py calls
-    for service control (`yadgar.scripts.nightly_cycle._stop_service`, etc.).
-    Does NOT patch `subprocess.run` globally — that would break surreal subprocess.
-    Exposes the mock as `service_stub["stop_service"]` / `["start_service"]` for
-    future assertion in host-job tests.
+      1. nightly_cycle's host-job seam — the real, module-level wrappers
+         ``yadgar.scripts.nightly_cycle._stop_service`` / ``._start_service``
+         (added in v5.69 P0; previously this fixture patched names that did not
+         exist and the ``hasattr`` guard silently no-opped — the latent defect).
+      2. vacuum's service path — ``yadgar.ops.ServiceController`` instance
+         methods (``stop`` / ``stop_backend`` / ``start_backend`` /
+         ``start_yadgar``).  Vacuum drives the backend lifecycle through a
+         ServiceController, NOT through nightly_cycle.  In tests the SurrealDB
+         backend is a subprocess started by the harness, never a systemd unit —
+         so these MUST be neutralised to no-ops by default.
+
+    Both seams are patched to benign no-ops here (autouse).  Tests that need to
+    *drive* the dedicated backend (e.g. BC-E2) supersede the ServiceController
+    patch with their own function-scoped controlling fixture (last patch wins).
+
+    Does NOT patch ``subprocess.run`` globally — that would break the real
+    surreal subprocess the e2e harness relies on.
+
+    Exposes the recorders as ``service_stub["stop_service"]`` /
+    ``["start_service"]`` / ``["svc_stop"]`` / ``["svc_stop_backend"]`` /
+    ``["svc_start_backend"]`` / ``["svc_start_yadgar"]`` for assertion.
     """
     stop_mock = MagicMock(return_value=0)
     start_mock = MagicMock(return_value=0)
+    svc_stop = MagicMock(return_value=None)
+    svc_stop_backend = MagicMock(return_value=None)
+    svc_start_backend = MagicMock(return_value=None)
+    svc_start_yadgar = MagicMock(return_value=None)
 
-    # Only patch if the module is importable; if not (rare), fixture is a no-op.
     patchers = []
     try:
         import yadgar.scripts.nightly_cycle as _nc
 
-        if hasattr(_nc, "_stop_service"):
-            patchers.append(patch.object(_nc, "_stop_service", stop_mock))
-        if hasattr(_nc, "_start_service"):
-            patchers.append(patch.object(_nc, "_start_service", start_mock))
+        patchers.append(patch.object(_nc, "_stop_service", stop_mock))
+        patchers.append(patch.object(_nc, "_start_service", start_mock))
+    except ImportError:
+        pass
+
+    try:
+        from yadgar.ops import ServiceController as _SC
+
+        patchers.append(patch.object(_SC, "stop", svc_stop))
+        patchers.append(patch.object(_SC, "stop_backend", svc_stop_backend))
+        patchers.append(patch.object(_SC, "start_backend", svc_start_backend))
+        patchers.append(patch.object(_SC, "start_yadgar", svc_start_yadgar))
     except ImportError:
         pass
 
@@ -102,6 +128,10 @@ def service_stub():
         yield {
             "stop_service": stop_mock,
             "start_service": start_mock,
+            "svc_stop": svc_stop,
+            "svc_stop_backend": svc_stop_backend,
+            "svc_start_backend": svc_start_backend,
+            "svc_start_yadgar": svc_start_yadgar,
         }
     finally:
         for p in patchers:

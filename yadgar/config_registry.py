@@ -145,6 +145,9 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_BACKUP_RETENTION", "3", "int"),
     # ── Vacuum trigger file ──────────────────────────────────────────────────
     ConfigEntry("YADGAR_VACUUM_TRIGGER_PATH", "/data/triggers/vacuum_requested", "string"),
+    # ── Sensitive-job lock + signal drain (v5.69 P3) ─────────────────────────
+    ConfigEntry("YADGAR_SENSITIVE_LOCK_TTL_SEC", "7200", "int"),
+    ConfigEntry("YADGAR_SENSITIVE_DRAIN_TIMEOUT_SEC", "300.0", "float"),
     # ── Vacuum / DB credentials ──────────────────────────────────────────────
     ConfigEntry("YADGAR_RW_USER", "yadgar-rw", "string"),
     ConfigEntry("YADGAR_RW_PASS", "", "string", redact=True),

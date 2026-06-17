@@ -42,18 +42,19 @@ Lint rule: a ✅ without an e2e test reference is a rejected claim.
 - BC-C5 AstrocytePool domain consolidation executes (or removed). ❌ #40 P2
 
 ### D. Nightly cycle (host job; tests use TEMP data dir + stubbed service control)
-- BC-D1 nightly completes exit 0 against seeded temp DB. ❌ #43 P1
+- BC-D1 nightly completes exit 0 against seeded temp DB. ❌ #43 P1 (skew-blocked: surrealdb SDK 2.0.0 cannot embedded-open a surreal-3.0.5 surrealkv DB; e2e ships skipped, see SDK/server-alignment follow-up)
 - BC-D2 pre-backup snapshot at real YADGAR_DATA_DIR/XDG, not stale config (v5.67). ⏳ P1
-- BC-D3 interpreter shutdown clean (no SEGV / unhandled GC). ❌ #43 P1
+- BC-D3 interpreter shutdown clean (no SEGV / unhandled GC). ❌ #43 P1 (resolved via CPython 3.14.4 — the `_asyncio` finalize SEGV was a 3.14.3 bug fixed in 3.14.4; `.venv` now 3.14.4; no dedicated e2e asserts clean exit, so status stays ❌ until a test proves it)
 
 ### E. Vacuum (DATA-SAFETY — caused 2026-06-16 data loss)
-- BC-E1 post-vacuum row counts == pre-vacuum, per table. ❌ #44 P1
-- BC-E2 atomic: any mid-vacuum failure leaves live DB intact+populated (never empty). ❌ #44 P1
-- BC-E3 sensitive job in progress blocks external restart/shutdown. ❌ #44 P1
+- BC-E1 post-vacuum row counts == pre-vacuum, per table. ✅ `tests/e2e/test_vacuum_backup_safety.py::TestBCE1_RowCountsPreserved::test_memory_count_unchanged` P1
+- BC-E2 atomic: any mid-vacuum failure leaves live DB intact+populated (never empty). ✅ `tests/e2e/test_vacuum_backup_safety.py::TestBCE2_VacuumAtomicity` (test_a_import_failure_leaves_canonical_untouched, test_b_verification_failure_blocks_swap, test_c_happy_path_swapped_dir_opens_complete, test_d_crash_mid_swap_recovery, test_e_recovery_runs_before_preflight_in_cmd_vacuum_impl) P1
+- BC-E3 sensitive job in progress blocks external restart/shutdown. ✅ `tests/e2e/test_vacuum_backup_safety.py::TestBCE3_SensitiveJobLock::test_external_shutdown_refused_while_locked` P1
 
 ### F. Backup / restore
-- BC-F1 a backup is a COMPLETE restorable copy (restore == source row counts). ❌ #45 P1
-- BC-F2 restore brings daemon to full state (core+backend reopen restored DB). ⏳[u] P1
+- BC-F1 a backup is a COMPLETE restorable copy (restore == source row counts). ✅ `tests/e2e/test_vacuum_backup_safety.py::TestBCF1_BackupRoundTrip::test_snapshot_restore_same_count` P1
+- BC-F2 restore brings daemon to full state (core+backend reopen restored DB). ✅ `tests/e2e/test_vacuum_backup_safety.py::TestBCF2_RestoreToFullState::test_export_restore_brings_full_state` P1
+- BC-F3 a backup taken under concurrent writes restores to a consistent committed-prefix state. ✅ `tests/e2e/test_vacuum_backup_safety.py::TestBCF3_QuiescedBackup::test_concurrent_write_backup_is_consistent` P1
 
 ### G. Wiki
 - BC-G1 wiki_add(slug, content, directory=D) stamps D. ⏳[r] P1

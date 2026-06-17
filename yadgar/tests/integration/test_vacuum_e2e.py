@@ -236,8 +236,8 @@ def test_vacuum_e2e_happy_path(live_backend_container):
     - cmd_vacuum_impl exits 0 (or 2 = succeeded with check_invariants warning)
     - stdout printed "DB size before:" and "DB size after:" lines
     - after_bytes < before_bytes  (vlog actually compacted)
-    - surreal_db/ directory still exists and has content
-    - a *.bloated-* directory was created (success path proof)
+    - surreal_db/ directory still exists and has content (compacted DB swapped in)
+    - a *.pre-vacuum-* snapshot was created (phase 2 ran)
     - no *.tmp leftovers in data_dir
     """
     info = live_backend_container
@@ -328,10 +328,9 @@ def test_vacuum_e2e_happy_path(live_backend_container):
     assert db_path.exists(), "surreal_db/ was deleted — vacuum destroyed the DB"
     assert any(db_path.iterdir()), "surreal_db/ is empty — data was lost"
 
-    # A .bloated-* directory should exist (created in phase 3, removed after success)
-    # When check_invariants returns ok=True, bloated dir is removed.  Accept either:
-    #   - directory removed (full success) OR still present (finalize warned)
-    list(data_dir.glob("surreal_db.bloated-*"))
+    # P2: the compacted DB is swapped in at the canonical path; the previous
+    # canonical (.old-*) is retired after check_invariants passes.  The quiesced
+    # .pre-vacuum snapshot must always be present (phase 2 ran).
     pre_vacuum_dirs = list(data_dir.glob("surreal_db.pre-vacuum-*"))
     assert pre_vacuum_dirs, "No surreal_db.pre-vacuum-* snapshot found — phase 2 did not run"
 
@@ -412,14 +411,15 @@ def test_vacuum_e2e_happy_path(live_backend_container):
 
 @pytest.mark.integration
 def test_vacuum_e2e_import_failure_restores_original(live_backend_container):
-    """When /import returns 403, V2 restore path keeps the original surreal_db.
+    """When the side-build /import returns 403, the canonical surreal_db is kept.
 
-    Strategy: let phase 1 (export) succeed with root creds, then intercept the
-    httpx.post("/import") call and return a 403.  This proves:
-    - Phase 3 detects the failure.
-    - _restore_db() renames .bloated-* back to surreal_db.
+    P2 (atomic vacuum): the compacted DB is built on a SIDE path; if its /import
+    fails (403 injected here) the side-build aborts BEFORE any swap, so the
+    canonical is never renamed.  This proves:
+    - The side-build detects the failure and aborts.
+    - The canonical surreal_db is left UNTOUCHED (never renamed → no `.old-*`).
     - The original DB survives intact (sentinel memories still present).
-    - No orphaned .bloated-*.tmp dirs.
+    - No swap-staging (`.old-*` / `.new-*`) dirs are left behind.
     """
     info = live_backend_container
     backend_url: str = info["backend_url"]
@@ -477,15 +477,19 @@ def test_vacuum_e2e_import_failure_restores_original(live_backend_container):
     # Must fail
     assert exit_code != 0, "cmd_vacuum_impl should return non-zero when /import returns 403"
 
-    # Original surreal_db must still exist (V2 restore renamed .bloated back)
-    assert db_path.exists(), "surreal_db/ was deleted after /import 403 — V2 restore path failed"
+    # Canonical surreal_db must still exist + be populated (NEVER renamed on abort)
+    assert db_path.exists(), "surreal_db/ was deleted after /import 403 — abort path failed"
     assert any(db_path.iterdir()), (
-        "surreal_db/ is empty after /import 403 — restore created a fresh empty DB"
+        "surreal_db/ is empty after /import 403 — canonical was emptied on abort"
     )
 
-    # No orphaned .bloated-*.tmp directories
-    tmp_bloated = list(data_dir.glob("surreal_db.bloated-*.tmp"))
-    assert not tmp_bloated, f"Orphaned .bloated-*.tmp dirs: {tmp_bloated}"
+    # ABORT-UNTOUCHED proof (P2): no swap-staging dirs created/left behind.
+    assert not list(data_dir.glob("surreal_db.old-*")), (
+        "canonical was renamed on the 403 abort path (.old-* present)"
+    )
+    assert not list(data_dir.glob("surreal_db.new-*")), (
+        "a .new-* side dir leaked on the 403 abort path"
+    )
 
     # Sentinel memories must still be queryable — container was restored + restarted.
     # Wait briefly for the container to settle after restore restart.

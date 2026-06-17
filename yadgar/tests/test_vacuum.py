@@ -6,6 +6,7 @@ old no-op implementation, then pass once the new implementation is in place.
 
 from __future__ import annotations
 
+import contextlib
 import types
 from unittest.mock import MagicMock, patch
 
@@ -28,6 +29,51 @@ def _vacuum_args(
         db_path=db_path,
         yes=yes,
     )
+
+
+# ---------------------------------------------------------------------------
+# P2 side-build seams (v5.69): the new vacuum flow builds the compacted DB on a
+# side path via a throwaway surreal subprocess.  These mock-based unit tests have
+# no live backend, so the two surreal-touching seams are patched while the rest
+# of the orchestration (export, strip, _atomic_swap [pure os.rename], finalize,
+# check_invariants, log-row) runs for REAL.  The live side-build is covered by
+# the e2e suite (BC-E1 / BC-E2c) against a real embedded surreal.
+# ---------------------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def _patch_side_build_success():
+    """Patch the P2 side-build to SUCCEED hermetically (no surreal subprocess).
+
+    _capture_table_counts → a fixed dict; _build_and_verify_side_db → creates the
+    side path (so the real _atomic_swap can rename it in) and returns True.
+    """
+
+    def _make_side(backend_url, filtered_path, side_path, source_counts):
+        side_path.mkdir(parents=True, exist_ok=True)
+        (side_path / "compacted.marker").write_bytes(b"compacted")
+        return True
+
+    with (
+        patch("yadgar.vacuum._capture_table_counts", return_value={"memory": 1}),
+        patch("yadgar.vacuum._build_and_verify_side_db", side_effect=_make_side),
+    ):
+        yield
+
+
+@contextlib.contextmanager
+def _patch_side_build_abort():
+    """Patch the P2 side-build to ABORT (import/verify failure) hermetically.
+
+    _capture_table_counts → a fixed dict (so the flow proceeds past count
+    capture); _build_and_verify_side_db → False (the abort path: canonical must
+    be left untouched, no `.old-*` ever created).
+    """
+    with (
+        patch("yadgar.vacuum._capture_table_counts", return_value={"memory": 1}),
+        patch("yadgar.vacuum._build_and_verify_side_db", return_value=False),
+    ):
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -473,15 +519,16 @@ class TestCharacterization:
             db_path=str(yadgar_home / "surreal_db"),
         )
 
-        with patch("yadgar.vacuum._log_consolidation_row", fake_log_row):
-            with patch("yadgar.vacuum.ServiceController") as MockSVC:
-                with patch("yadgar.vacuum._wait_for_health", return_value=True):
-                    with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
-                        with patch("yadgar.vacuum._redefine_users_post_import"):
-                            mock_svc = MagicMock()
-                            MockSVC.return_value = mock_svc
+        with _patch_side_build_success():
+            with patch("yadgar.vacuum._log_consolidation_row", fake_log_row):
+                with patch("yadgar.vacuum.ServiceController") as MockSVC:
+                    with patch("yadgar.vacuum._wait_for_health", return_value=True):
+                        with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
+                            with patch("yadgar.vacuum._redefine_users_post_import"):
+                                mock_svc = MagicMock()
+                                MockSVC.return_value = mock_svc
 
-                            result = cmd_vacuum_impl(args)
+                                result = cmd_vacuum_impl(args)
 
         # Must succeed
         assert result == 0, "cmd_vacuum_impl should return 0 on success"
@@ -531,16 +578,19 @@ class TestCharacterization:
             db_path=str(yadgar_home / "surreal_db"),
         )
 
-        with patch("yadgar.vacuum._log_consolidation_row"):
-            with patch("yadgar.vacuum.ServiceController"):
-                with patch("yadgar.vacuum._wait_for_health", return_value=True):
-                    with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
-                        with patch("yadgar.vacuum._redefine_users_post_import"):
-                            # Should not raise — exit_code 0 means no sys.exit call
-                            try:
-                                main_mod.cmd_vacuum(args)
-                            except SystemExit as e:
-                                pytest.fail(f"cmd_vacuum raised SystemExit({e.code}) unexpectedly")
+        with _patch_side_build_success():
+            with patch("yadgar.vacuum._log_consolidation_row"):
+                with patch("yadgar.vacuum.ServiceController"):
+                    with patch("yadgar.vacuum._wait_for_health", return_value=True):
+                        with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
+                            with patch("yadgar.vacuum._redefine_users_post_import"):
+                                # Should not raise — exit_code 0 means no sys.exit call
+                                try:
+                                    main_mod.cmd_vacuum(args)
+                                except SystemExit as e:
+                                    pytest.fail(
+                                        f"cmd_vacuum raised SystemExit({e.code}) unexpectedly"
+                                    )
 
 
 # ---------------------------------------------------------------------------
@@ -597,12 +647,13 @@ class TestRelatePreservation:
             db_path=str(yadgar_home / "surreal_db"),
         )
 
-        with patch("yadgar.vacuum._log_consolidation_row"):
-            with patch("yadgar.vacuum.ServiceController"):
-                with patch("yadgar.vacuum._wait_for_health", return_value=True):
-                    with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
-                        with patch("yadgar.vacuum._redefine_users_post_import"):
-                            cmd_vacuum_impl(args)
+        with _patch_side_build_success():
+            with patch("yadgar.vacuum._log_consolidation_row"):
+                with patch("yadgar.vacuum.ServiceController"):
+                    with patch("yadgar.vacuum._wait_for_health", return_value=True):
+                        with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
+                            with patch("yadgar.vacuum._redefine_users_post_import"):
+                                cmd_vacuum_impl(args)
 
         filtered = list(yadgar_home.glob("vacuum_export_*.filtered.surql"))
         assert filtered
@@ -660,37 +711,44 @@ class TestFailureInjection:
         started_services = []
         stopped_services = []
 
-        with patch("yadgar.vacuum._log_consolidation_row"):
-            with patch("yadgar.vacuum.ServiceController") as MockSVC:
-                with patch("yadgar.vacuum._wait_for_health", return_value=True):
-                    mock_svc = MagicMock()
-                    mock_svc.start_backend.side_effect = lambda: started_services.append(
-                        "start_backend"
-                    )
-                    mock_svc.start_yadgar.side_effect = lambda: started_services.append(
-                        "start_yadgar"
-                    )
-                    mock_svc.stop_backend.side_effect = lambda: stopped_services.append(
-                        "stop_backend"
-                    )
-                    MockSVC.return_value = mock_svc
+        # P2: drive the abort path for real — side-build/verify FAILS, so the
+        # canonical must be left untouched (NEVER renamed → no `.old-*`).
+        with _patch_side_build_abort():
+            with patch("yadgar.vacuum._log_consolidation_row"):
+                with patch("yadgar.vacuum.ServiceController") as MockSVC:
+                    with patch("yadgar.vacuum._wait_for_health", return_value=True):
+                        mock_svc = MagicMock()
+                        mock_svc.start_backend.side_effect = lambda: started_services.append(
+                            "start_backend"
+                        )
+                        mock_svc.start_yadgar.side_effect = lambda: started_services.append(
+                            "start_yadgar"
+                        )
+                        mock_svc.stop_backend.side_effect = lambda: stopped_services.append(
+                            "stop_backend"
+                        )
+                        MockSVC.return_value = mock_svc
 
-                    exit_code = cmd_vacuum_impl(args)
+                        exit_code = cmd_vacuum_impl(args)
 
         # Non-zero exit on import failure
         assert exit_code != 0, "Expected non-zero exit on /import HTTP 500"
 
-        # surreal_db must exist with original contents (sentinel preserved)
+        # surreal_db must exist with original contents (sentinel preserved) —
+        # the canonical was NEVER renamed on the abort path.
         db_path = yadgar_home / "surreal_db"
-        assert db_path.exists(), "surreal_db must be restored on /import failure"
+        assert db_path.exists(), "surreal_db must be untouched on /import failure"
         assert (db_path / "sentinel.txt").read_bytes() == b"original", (
-            "surreal_db must contain original data after restore"
+            "surreal_db must still contain original data after abort"
         )
 
-        # No .bloated-* or .bloated-*.tmp leftovers
-        bloated_dirs = list(yadgar_home.glob("surreal_db.bloated-*"))
-        assert not bloated_dirs, (
-            f"No .bloated-* dirs should remain after restore, found: {bloated_dirs}"
+        # ABORT-UNTOUCHED proof (P2): no swap-staging siblings created/left behind.
+        assert not list(yadgar_home.glob("surreal_db.old-*")), (
+            "canonical was renamed on an abort path (.old-* present) — swap must "
+            "begin only AFTER side-build+verify"
+        )
+        assert not list(yadgar_home.glob("surreal_db.new-*")), (
+            "a .new-* side dir leaked on the abort path"
         )
 
         # yadgar (MCP layer) must NOT be started after import failure
@@ -731,21 +789,148 @@ class TestFailureInjection:
             db_path=str(yadgar_home / "surreal_db"),
         )
 
-        with patch("yadgar.vacuum._log_consolidation_row"):
-            with patch("yadgar.vacuum.ServiceController") as MockSVC:
-                with patch("yadgar.vacuum._wait_for_health", return_value=True):
-                    MockSVC.return_value = MagicMock()
-                    exit_code = cmd_vacuum_impl(args)
+        with _patch_side_build_abort():
+            with patch("yadgar.vacuum._log_consolidation_row"):
+                with patch("yadgar.vacuum.ServiceController") as MockSVC:
+                    with patch("yadgar.vacuum._wait_for_health", return_value=True):
+                        MockSVC.return_value = MagicMock()
+                        exit_code = cmd_vacuum_impl(args)
 
         assert exit_code != 0
         db_path = yadgar_home / "surreal_db"
-        assert db_path.exists(), "surreal_db must be restored on 403"
+        assert db_path.exists(), "surreal_db must be untouched on 403 abort"
         assert (db_path / "sentinel.txt").read_bytes() == b"original"
+        assert not list(yadgar_home.glob("surreal_db.old-*")), (
+            "canonical was renamed on the 403 abort path (.old-* present)"
+        )
+
+    def test_real_side_import_500_aborts_inside_build_canonical_untouched(
+        self, tmp_path, monkeypatch, yadgar_home, cleanup_script, capsys
+    ):
+        """H1 (CI-runnable): drive the REAL abort branch INSIDE _build_and_verify_side_db.
+
+        The 500/403 tests above stub `_build_and_verify_side_db → False`, so they
+        only exercise cmd_vacuum_impl's handling of a False return — NOT the real
+        internal abort.  A regression that made the abort path rename/empty the
+        canonical would pass those green.  This test instead runs the REAL side
+        build (no surreal binary: spawn/teardown/health/namespace are the only
+        host/binary seams stubbed) and injects an HTTP 500 at the side `/import`
+        POST — the actual orchestrator↔backend fault boundary.  It asserts:
+          (1) _build_and_verify_side_db returns False (spy-wrapped, not stubbed),
+          (2) the real `/import returned HTTP 500` abort message was emitted,
+          (3) NO `.old-*` sibling was ever created (canonical never renamed),
+          (4) NO `.new-*` / `.building-*` staging dir leaked,
+          (5) the canonical still holds its original data (sentinel preserved),
+          (6) yadgar (MCP layer) was never started.
+        Runs under the default CI selection (`-m 'not integration and not e2e'`):
+        unmarked, no real `surreal` process.
+        """
+        import httpx
+
+        import yadgar.vacuum as _vac
+        from yadgar.vacuum import cmd_vacuum_impl
+
+        sentinel = yadgar_home / "surreal_db" / "sentinel.txt"
+        sentinel.write_bytes(b"original")
+
+        fake_surql = "-- TABLE DATA: memory ----\nUPSERT memory:1 CONTENT {};\n"
+        mock_export = MagicMock(status_code=200, text=fake_surql)
+        mock_health = MagicMock(status_code=200)
+
+        def mock_get(url, **kwargs):
+            if "/export" in url:
+                return mock_export
+            return mock_health
+
+        def mock_post(url, **kwargs):
+            # The side build's /import POST is the injected fault boundary.
+            if str(url).endswith("/import"):
+                req = httpx.Request("POST", url)
+                return httpx.Response(500, text="simulated side /import failure", request=req)
+            return MagicMock(status_code=200, text="")
+
+        monkeypatch.setattr(httpx, "get", mock_get)
+        monkeypatch.setattr(httpx, "post", mock_post)
+
+        # Host/binary seams ONLY (no real surreal): a fake throwaway proc, a
+        # no-op spawn/teardown, forced-healthy wait, and a no-op namespace
+        # bootstrap (its real client would POST to a dead port and raise BEFORE
+        # the /import branch, masking the abort under test).
+        fake_proc = MagicMock()
+        monkeypatch.setattr("yadgar._surreal_runner.spawn_surreal", lambda *a, **kw: fake_proc)
+        monkeypatch.setattr("yadgar._surreal_runner.teardown_surreal_proc", lambda *a, **kw: None)
+        monkeypatch.setattr("yadgar.vacuum._bootstrap_namespace", lambda *a, **kw: None)
+
+        # Spy-wrap the REAL function (NOT a stub) so its body runs end-to-end and
+        # we can assert it actually returned False from the real abort branch.
+        _real_build = _vac._build_and_verify_side_db
+        recorded: dict[str, object] = {}
+
+        def _spy_build(*a, **kw):
+            rv = _real_build(*a, **kw)
+            recorded["rv"] = rv
+            return rv
+
+        started_services: list[str] = []
+
+        args = _vacuum_args(
+            backend_url="http://127.0.0.1:8080",
+            service_mode="manual",
+            db_path=str(yadgar_home / "surreal_db"),
+        )
+
+        with patch("yadgar.vacuum._build_and_verify_side_db", side_effect=_spy_build):
+            with patch("yadgar.vacuum._capture_table_counts", return_value={"memory": 1}):
+                with patch("yadgar.vacuum._log_consolidation_row"):
+                    with patch("yadgar.vacuum.ServiceController") as MockSVC:
+                        with patch("yadgar.vacuum._wait_for_health", return_value=True):
+                            mock_svc = MagicMock()
+                            mock_svc.start_yadgar.side_effect = lambda: started_services.append(
+                                "start_yadgar"
+                            )
+                            MockSVC.return_value = mock_svc
+                            exit_code = cmd_vacuum_impl(args)
+
+        # (1) the REAL side build returned False from its internal abort branch.
+        assert recorded.get("rv") is False, (
+            "the real _build_and_verify_side_db must return False on a side /import "
+            f"HTTP 500, got {recorded.get('rv')!r}"
+        )
+        assert exit_code != 0, "Expected non-zero exit when the side /import fails"
+
+        # (2) prove the abort reason was the /import 500 — not some earlier path.
+        err = capsys.readouterr().err
+        assert "side /import returned HTTP 500" in err, (
+            "the abort must originate at the real /import branch; stderr was:\n" + err
+        )
+
+        # (3) canonical was NEVER renamed → no `.old-*` ever created.
+        assert not list(yadgar_home.glob("surreal_db.old-*")), (
+            "canonical was renamed on the real abort path (.old-* present) — the "
+            "swap must begin only AFTER side-build+verify"
+        )
+        # (4) no staging dir leaked.
+        assert not list(yadgar_home.glob("surreal_db.new-*")), "a `.new-*` side dir leaked"
+        assert not list(yadgar_home.glob("surreal_db.building-*")), (
+            "a `.building-*` UNVERIFIED side dir leaked on the abort path"
+        )
+
+        # (5) canonical still holds its original data.
+        db_path = yadgar_home / "surreal_db"
+        assert db_path.exists(), "surreal_db must be untouched on side /import failure"
+        assert (db_path / "sentinel.txt").read_bytes() == b"original", (
+            "surreal_db must still contain original data after the real abort"
+        )
+
+        # (6) yadgar (MCP layer) must NOT be started after the abort.
+        assert "start_yadgar" not in started_services, (
+            "yadgar service must NOT be started after a side-build abort"
+        )
 
     def test_import_success_leaves_no_surreal_db_at_bloated_path(
         self, tmp_path, monkeypatch, yadgar_home, cleanup_script
     ):
-        """SUCCESS path: .bloated-<ts> exists, surreal_db populated, no .tmp leftovers."""
+        """SUCCESS path (P2): compacted DB swapped in at canonical, no staging left."""
         import httpx
 
         from yadgar.vacuum import cmd_vacuum_impl
@@ -780,19 +965,22 @@ class TestFailureInjection:
             db_path=str(yadgar_home / "surreal_db"),
         )
 
-        with patch("yadgar.vacuum._log_consolidation_row"):
-            with patch("yadgar.vacuum.ServiceController") as MockSVC:
-                with patch("yadgar.vacuum._wait_for_health", return_value=True):
-                    with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
-                        with patch("yadgar.vacuum._redefine_users_post_import"):
-                            MockSVC.return_value = MagicMock()
-                            exit_code = cmd_vacuum_impl(args)
+        with _patch_side_build_success():
+            with patch("yadgar.vacuum._log_consolidation_row"):
+                with patch("yadgar.vacuum.ServiceController") as MockSVC:
+                    with patch("yadgar.vacuum._wait_for_health", return_value=True):
+                        with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
+                            with patch("yadgar.vacuum._redefine_users_post_import"):
+                                MockSVC.return_value = MagicMock()
+                                exit_code = cmd_vacuum_impl(args)
 
         assert exit_code == 0, f"Expected 0 on success, got {exit_code}"
 
-        # No .tmp leftovers
-        tmp_dirs = list(yadgar_home.glob("surreal_db.bloated-*.tmp"))
-        assert not tmp_dirs, f"No .tmp dirs should remain after success: {tmp_dirs}"
+        # New-contract (P2): no side-build staging dirs survive a clean vacuum.
+        new_dirs = list(yadgar_home.glob("surreal_db.new-*"))
+        assert not new_dirs, f"No .new-* side dirs should remain after success: {new_dirs}"
+        # The compacted DB is swapped in at the canonical path.
+        assert (yadgar_home / "surreal_db").exists(), "canonical must hold the swapped-in DB"
 
 
 # ---------------------------------------------------------------------------
@@ -1238,12 +1426,13 @@ class TestCheckInvariantsBearer:
 
             monkeypatch.setattr(httpx, "get", fake_get)
 
-            with patch("yadgar.vacuum._log_consolidation_row"):
-                with patch("yadgar.vacuum.ServiceController"):
-                    with patch("yadgar.vacuum._wait_for_health", return_value=True):
-                        with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
-                            with patch("yadgar.vacuum._redefine_users_post_import"):
-                                cmd_vacuum_impl(args)
+            with _patch_side_build_success():
+                with patch("yadgar.vacuum._log_consolidation_row"):
+                    with patch("yadgar.vacuum.ServiceController"):
+                        with patch("yadgar.vacuum._wait_for_health", return_value=True):
+                            with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
+                                with patch("yadgar.vacuum._redefine_users_post_import"):
+                                    cmd_vacuum_impl(args)
 
         # Find the check_invariants call
         ci_calls = [c for c in captured_calls if "/api/check_invariants" in c["url"]]
@@ -1314,12 +1503,13 @@ class TestCheckInvariantsBearer:
 
             from yadgar.vacuum import cmd_vacuum_impl
 
-            with patch("yadgar.vacuum._log_consolidation_row"):
-                with patch("yadgar.vacuum.ServiceController"):
-                    with patch("yadgar.vacuum._wait_for_health", return_value=True):
-                        with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
-                            with patch("yadgar.vacuum._redefine_users_post_import"):
-                                cmd_vacuum_impl(args)
+            with _patch_side_build_success():
+                with patch("yadgar.vacuum._log_consolidation_row"):
+                    with patch("yadgar.vacuum.ServiceController"):
+                        with patch("yadgar.vacuum._wait_for_health", return_value=True):
+                            with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
+                                with patch("yadgar.vacuum._redefine_users_post_import"):
+                                    cmd_vacuum_impl(args)
 
         ci_calls = [c for c in captured_calls if "/api/check_invariants" in c["url"]]
         assert ci_calls, "check_invariants was never called"
