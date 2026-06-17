@@ -232,7 +232,14 @@ class MemoryCurator:
         spec: NewMemorySpec | None = None,
     ) -> int:
         """Insert a brand-new memory and set its scores."""
-        return insert_new_memory(self._storage, content, context, spec)
+        return insert_new_memory(
+            self._storage,
+            content,
+            context,
+            spec,
+            embeddings_engine=self._embeddings,
+            settings=self._settings,
+        )
 
     def _create_link(self, new_id: int, existing_id: int) -> None:
         """Create a derived_from relationship between two memories via entities."""
