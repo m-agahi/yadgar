@@ -6,7 +6,8 @@ Lifecycle (steps 1-7):
   1. Stop yadgar core (releases embedded StorageEngine DB lock).
   2. Pre-backup snapshot (label="nightly-pre") — only valid because core is down.
   3. Consolidation — open StorageEngine in embedded mode, run
-     ConsolidationScheduler.force_consolidate(), close storage cleanly.
+     ConsolidationScheduler.run_nightly_consolidation() (a consolidation cycle
+     plus the gated sleep cycle — #37), close storage cleanly.
      YADGAR_DB_URL must be unset so StorageEngine opens in embedded mode.
   4. Vacuum — cmd_vacuum_impl manages its own service lifecycle (starts backend,
      runs export/swap/import, restarts core, runs check_invariants).
@@ -240,7 +241,11 @@ def _step_consolidation(db_path: Path, settings: Settings) -> int:
         storage = StorageEngine(str(db_path))
         embeddings = EmbeddingEngine()
         scheduler = ConsolidationScheduler(storage, embeddings, settings)
-        stats = scheduler.force_consolidate()
+        # PR-1 wiring (#37): nightly path runs consolidation + the gated sleep
+        # cycle (dream/community/cluster/reembed/compress/narrate). The sleep
+        # cycle had been dead since v5.7.0 PR-0 dropped the daemon loop — no
+        # call site invoked _maybe_sleep_cycle until this entrypoint.
+        stats = scheduler.run_nightly_consolidation()
         _log_step("consolidation", "ok", (time.monotonic() - t0) * 1000, stats=str(stats))
         return 0
     except Exception as exc:

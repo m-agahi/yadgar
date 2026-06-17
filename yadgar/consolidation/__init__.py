@@ -156,6 +156,23 @@ class ConsolidationScheduler(
         """
         return self._consolidation_cycle()
 
+    def run_nightly_consolidation(self) -> dict:
+        """Nightly entrypoint: a full consolidation cycle followed by a gated sleep cycle.
+
+        This is the cron-only path (yadgar/scripts/nightly_cycle.py). It runs the
+        regular consolidation cycle, then invokes ``_maybe_sleep_cycle()`` so the
+        dream/community/cluster/reembed/compress/narrate phases run at most once
+        every 6 hours (v5.7.0 PR-1 wiring — the sleep cycle had been dead since
+        the daemon loop was removed; #37).
+
+        The interactive MCP path (consolidate_now) deliberately does NOT call
+        this — ``light`` stays fast and ``full`` triggers its own sleep cycle —
+        so the gated sleep runs only on the nightly cron, avoiding a double-fire.
+        """
+        stats = self._consolidation_cycle()
+        self._maybe_sleep_cycle()
+        return stats
+
     # -- Properties --
 
     @property

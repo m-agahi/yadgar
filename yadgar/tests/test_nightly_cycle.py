@@ -5,7 +5,7 @@ TDD: written before implementation, confirmed red before green (v5.7.0 PR-1a).
 Lifecycle under test (steps 1-7):
   1. Stop core (systemctl --user stop yadgar)
   2. Pre-backup snapshot (backup.create_snapshot label="nightly-pre")
-  3. Consolidation (StorageEngine + ConsolidationScheduler.force_consolidate)
+  3. Consolidation (StorageEngine + ConsolidationScheduler.run_nightly_consolidation)
   4. Vacuum (cmd_vacuum_impl)
   5. Stop core again + post-backup snapshot (label="nightly-post") — quiesced
   6. Prune snapshots (backup.prune_snapshots)
@@ -64,9 +64,9 @@ def _run_with_mocks(
 
     mock_storage = MagicMock()
     mock_sched = MagicMock()
-    mock_sched.force_consolidate.return_value = {"merged": 0}
+    mock_sched.run_nightly_consolidation.return_value = {"merged": 0}
     if sched_side_effect is not None:
-        mock_sched.force_consolidate.side_effect = sched_side_effect
+        mock_sched.run_nightly_consolidation.side_effect = sched_side_effect
 
     db_dir = tmp_path / "surreal_db"
     db_dir.mkdir(exist_ok=True)
@@ -170,10 +170,10 @@ class TestHappyPath:
             return 0
 
         def _force_cons():
-            call_order.append("force_consolidate")
+            call_order.append("run_nightly_consolidation")
             return {"merged": 0}
 
-        mock_sched.force_consolidate.side_effect = _force_cons
+        mock_sched.run_nightly_consolidation.side_effect = _force_cons
 
         db_dir = tmp_path / "surreal_db"
         db_dir.mkdir()
@@ -206,10 +206,10 @@ class TestHappyPath:
         # Step 3: consolidation
         assert "storage_engine_init" in call_order
         assert "consolidation_scheduler_init" in call_order
-        assert "force_consolidate" in call_order
+        assert "run_nightly_consolidation" in call_order
         # Step 4: vacuum
         assert "cmd_vacuum_impl" in call_order
-        cons_idx = call_order.index("force_consolidate")
+        cons_idx = call_order.index("run_nightly_consolidation")
         vac_idx = call_order.index("cmd_vacuum_impl")
         assert vac_idx > cons_idx, "Vacuum must come after consolidation"
         # Steps 5-6: second snapshot after vacuum
@@ -393,7 +393,7 @@ class TestPreBackupFailure:
         assert code == 20
         mock_vac.assert_not_called()
         mock_prune.assert_not_called()
-        mock_sched.force_consolidate.assert_not_called()
+        mock_sched.run_nightly_consolidation.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -406,7 +406,7 @@ class TestConsolidationFailure:
         mod = _import_module()
 
         mock_sched = MagicMock()
-        mock_sched.force_consolidate.side_effect = RuntimeError("OOM")
+        mock_sched.run_nightly_consolidation.side_effect = RuntimeError("OOM")
         mock_vac = MagicMock(return_value=0)
         snap_calls = []
 
@@ -438,12 +438,12 @@ class TestConsolidationFailure:
         assert len(snap_calls) == 2, f"Expected 2 snapshots (pre + post), got: {snap_calls}"
 
     def test_consolidation_storage_engine_closed_on_failure(self, tmp_path: Path) -> None:
-        """StorageEngine must be closed even when force_consolidate raises."""
+        """StorageEngine must be closed even when run_nightly_consolidation raises."""
         mod = _import_module()
 
         mock_storage = MagicMock()
         mock_sched = MagicMock()
-        mock_sched.force_consolidate.side_effect = RuntimeError("crash")
+        mock_sched.run_nightly_consolidation.side_effect = RuntimeError("crash")
 
         db_dir = tmp_path / "surreal_db"
         db_dir.mkdir()
@@ -581,7 +581,7 @@ class TestMultipleFailures:
         mod = _import_module()
 
         mock_sched = MagicMock()
-        mock_sched.force_consolidate.side_effect = RuntimeError("OOM")
+        mock_sched.run_nightly_consolidation.side_effect = RuntimeError("OOM")
 
         db_dir = tmp_path / "surreal_db"
         db_dir.mkdir()
