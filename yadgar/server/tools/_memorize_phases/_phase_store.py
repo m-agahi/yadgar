@@ -112,6 +112,8 @@ def _store_direct(ctx: MemorizeContext, storage, embeddings, fhash: str | None) 
 
 def _direct_insert(ctx: MemorizeContext, storage, embeddings, fhash: str | None) -> int:
     """Insert memory directly into storage and return memory_id."""
+    from yadgar.config import get_settings
+
     return storage.insert_memory(
         {
             "content": ctx.content,
@@ -126,5 +128,7 @@ def _direct_insert(ctx: MemorizeContext, storage, embeddings, fhash: str | None)
             "tier": ctx.tier,
             "valid_until": ctx.computed_valid_until,
         },
+        embeddings_engine=embeddings,
+        settings=get_settings(),
         branch=ctx.resolved_branch,
     )

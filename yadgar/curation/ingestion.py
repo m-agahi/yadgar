@@ -130,11 +130,16 @@ def insert_new_memory(
     content: str,
     context: str,
     spec: NewMemorySpec | None = None,
+    embeddings_engine=None,
+    settings=None,
 ) -> int:
     """Insert a brand-new memory and set its scores.
 
     spec bundles tags, embedding, heat, file_hash, embedding_model,
     contextual_prefix, surprise, importance, and valence.
+
+    embeddings_engine and settings are forwarded to storage.insert_memory so
+    that the INDEX_ENRICHMENT_ENABLED pipeline runs when configured.
     """
     s = spec or NewMemorySpec()
     memory_id = storage.insert_memory(
@@ -147,7 +152,9 @@ def insert_new_memory(
             "is_stale": False,
             "file_hash": s.file_hash,
             "embedding_model": s.embedding_model,
-        }
+        },
+        embeddings_engine=embeddings_engine,
+        settings=settings,
     )
 
     if s.contextual_prefix:

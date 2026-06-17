@@ -650,15 +650,6 @@ class TestBCAC2_AstrocyteDomainConsolidation:
 class TestBCEN3a_Doc2QueryEnrichment:
     """BC-EN3a: doc2query generates synthetic queries for a stored memory."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="❌ BC-EN3a #39 — the enrichment pipeline (EnrichmentPipeline.enrich) "
-        "is never invoked by the write path, so a memorized memory carries no "
-        "synthetic-query enrichment artifact. The SHALL ('doc2query generates "
-        "synthetic queries for a stored memory') is unmet. Flips to xpass when #39 "
-        "wires enrichment into memorize. Asserts the WIRING (enrichment marker on "
-        "the stored row), not the model — so it is robust to model presence/absence.",
-    )
     def test_stored_memory_has_synthetic_queries(self, e2e_engines):
         """A memory written via memorize() SHALL carry enrichment-derived synthetic
         queries (observable as the '[enrichment]' marker the pipeline appends)."""
