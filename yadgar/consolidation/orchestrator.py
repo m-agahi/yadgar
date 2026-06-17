@@ -2,8 +2,9 @@
 
 v5.7.0 PR-0: _daemon_loop (idle-triggered + daily 18:30 auto-consolidation)
 removed. Consolidation now runs only when explicitly invoked via force_consolidate()
-(MCP consolidate_now), or by the nightly cron (PR-1). The _maybe_sleep_cycle
-helper is preserved for PR-1 to wire into the cron.
+(MCP consolidate_now), or by the nightly cron. The _maybe_sleep_cycle helper is
+wired into the nightly cron via ConsolidationScheduler.run_nightly_consolidation()
+(#37 — PR-1 wiring; the sleep cycle had been dead from v5.7.0 until this).
 
 v5.15.0 D1: per-phase duration alerting.  When any phase exceeds
 PHASE_DURATION_WARN_MS (config default 60 000 ms = 1 min), a CRITICAL log is

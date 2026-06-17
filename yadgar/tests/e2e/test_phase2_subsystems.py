@@ -507,6 +507,82 @@ class TestBCHT1_HeatDecayCurve:
         )
 
 
+class TestBCC4_NightlySleepCycleRuns:
+    """BC-C4 / BC-SC1a (#37): the nightly consolidation path runs the sleep cycle.
+
+    The sleep/dream cycle was DEAD since v5.7.0 PR-0 dropped the daemon loop —
+    ``_maybe_sleep_cycle`` was defined but never called. The nightly cron called
+    ``force_consolidate()`` (consolidation only), so dream replay never ran.
+
+    This drives the nightly entrypoint (``run_nightly_consolidation``) against a
+    seeded real DB and asserts the dream replay produced an observable artifact:
+    a synthetic 'dream' insight memory linking two highly-similar memories. Dream
+    replay generates an insight only for pairs with cosine similarity > 0.7, so
+    we seed two closely-related (but non-identical, below the 0.95 merge
+    threshold) memories.
+
+    Anti-bending: asserts the real observable (a 'dream'-tagged insight memory),
+    not that the method was called.
+    """
+
+    def _make_scheduler(self, e2e_engines):
+        from yadgar.config import Settings
+        from yadgar.consolidation import ConsolidationScheduler
+
+        settings = Settings(DB_PATH=e2e_engines["db_path"])
+        return ConsolidationScheduler(e2e_engines["storage"], e2e_engines["embeddings"], settings)
+
+    def test_nightly_runs_sleep_cycle_produces_dream_insight(self, e2e_engines):
+        """run_nightly_consolidation SHALL run the gated sleep cycle, whose dream
+        replay produces a synthetic 'dream' insight memory for a similar pair."""
+        yadgar_dir = e2e_engines["yadgar_dir"]
+        storage = e2e_engines["storage"]
+
+        # Two closely-related prose memories: high embedding similarity (> 0.7 so
+        # dream replay generates an insight) but not identical (< 0.95 merge
+        # threshold). Pure prose with no shared file/function entities so earlier
+        # consolidation phases do not pre-connect them and starve dream replay.
+        # Measured pairwise cosine ~0.85 (all-MiniLM-L6-v2): above the 0.7 dream
+        # insight threshold, below the 0.95 CURATION_SIMILARITY_THRESHOLD merge
+        # threshold — so the pair survives merge_duplicates yet triggers a dream
+        # insight.
+        _insert_mem(
+            e2e_engines,
+            "The overnight maintenance job slowly drains the pending request "
+            "queue and rebalances load toward the warmer replica nodes. "
+            "xc4dream10001",
+            yadgar_dir,
+            heat=0.9,
+        )
+        _insert_mem(
+            e2e_engines,
+            "During the nightly maintenance window the request queue is "
+            "gradually drained while traffic is rebalanced across the warm "
+            "replicas. xc4dream10002",
+            yadgar_dir,
+            heat=0.9,
+        )
+
+        scheduler = self._make_scheduler(e2e_engines)
+        # Fresh scheduler: _last_sleep_cycle is None, so the 6-hour gate opens
+        # and the sleep cycle fires on this first nightly run.
+        scheduler.run_nightly_consolidation()
+
+        rows = storage.get_memories_by_heat(min_heat=0.0, limit=500)
+        dream_memories = [
+            r
+            for r in rows
+            if "dream" in (r.get("tags") or [])
+            and str(r.get("content", "")).startswith("Dream connection:")
+        ]
+        assert dream_memories, (
+            "BC-C4/BC-SC1a (#37): the nightly sleep cycle MUST run dream replay and "
+            "produce a synthetic 'dream' insight memory for the similar pair. Found "
+            "none — the sleep cycle did not run (or dream replay produced nothing). "
+            f"Total memories seen: {len(rows)}."
+        )
+
+
 # ===========================================================================
 # xfail(strict) — KNOWN-BROKEN subsystems written as failing specs.
 # ===========================================================================
