@@ -61,6 +61,23 @@ def _fake_post_ok(url: str, **kwargs) -> MagicMock:
     return m
 
 
+def _make_side_db(backend_url, filtered_path, side_path, source_counts):
+    """Hermetic stand-in for the P2 side-build (no surreal subprocess).
+
+    Creates the side path so the REAL _atomic_swap renames it in; returns True.
+    The live side-build is covered by the e2e suite.
+    """
+    side_path.mkdir(parents=True, exist_ok=True)
+    (side_path / "compacted.marker").write_bytes(b"compacted")
+    return True
+
+
+def _patch_p2_side_build(stack: ExitStack) -> None:
+    """Patch the two surreal-touching P2 side-build seams into an ExitStack."""
+    stack.enter_context(patch("yadgar.vacuum._capture_table_counts", return_value={"memory": 1}))
+    stack.enter_context(patch("yadgar.vacuum._build_and_verify_side_db", side_effect=_make_side_db))
+
+
 # ---------------------------------------------------------------------------
 # TestVacuumReadinessWait
 # ---------------------------------------------------------------------------
@@ -116,6 +133,7 @@ class TestVacuumReadinessWait:
                 stack.enter_context(patch("yadgar.vacuum._wait_for_health", return_value=True))
                 stack.enter_context(patch("yadgar.vacuum._wait_for_yadgar_health", wait_mock))
                 stack.enter_context(patch("yadgar.vacuum._redefine_users_post_import"))
+                _patch_p2_side_build(stack)
                 result = cmd_vacuum_impl(_vacuum_args(db))
 
         return result, wait_mock
@@ -235,6 +253,7 @@ class TestVacuumReadinessWait:
                     patch("yadgar.vacuum._wait_for_yadgar_health", side_effect=health_side_effect)
                 )
                 stack.enter_context(patch("yadgar.vacuum._redefine_users_post_import"))
+                _patch_p2_side_build(stack)
                 cmd_vacuum_impl(_vacuum_args(db))
 
         # call_log should contain: [..., "health_wait(timeout=30.0)", "check_invariants"]

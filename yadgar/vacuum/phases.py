@@ -124,20 +124,25 @@ def _vacuum_snapshot_and_drop(
     yadgar_home: Path,
     svc: ServiceController,
     before_bytes: int,
-) -> tuple[Path, Path]:
-    """Phase 2: snapshot and stop daemons (live DB kept intact until /import succeeds).
+) -> Path:
+    """Phase 2 (v5.69 P2): stop the real backend, then snapshot a QUIESCED DB.
 
-    The rename of surreal_db → .bloated-<ts> is deferred to phase 3 so that a
-    failed /import can atomically restore the original DB without operator
-    intervention.
+    Order is STOP-then-COPY (flipped from the pre-P2 copy-then-stop): copying a
+    live, lock-held surrealkv dir can capture a torn segment (the BC-F3 hazard).
+    The canonical ``surreal_db`` is NOT renamed or emptied here — the P2 side-path
+    build + verified atomic swap (Phase 3) is the only thing that touches it, and
+    only after a fully-verified compacted DB exists on a side path.  Every abort
+    path therefore leaves the canonical untouched; the ``.pre-vacuum-<ts>``
+    snapshot below is belt-and-suspenders.
 
     Returns:
-        (snapshot_path, bloated_path)  — bloated_path is the *intended* rename
-        target; the actual rename is performed by _vacuum_restart_and_import.
+        snapshot_path — the quiesced pre-vacuum snapshot.
     """
     ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     snapshot_path = yadgar_home / f"surreal_db.pre-vacuum-{ts}"
-    bloated_path = yadgar_home / f"surreal_db.bloated-{ts}"
+
+    print("[vacuum] phase 2: stopping daemons (quiesce before snapshot) ...", flush=True)
+    svc.stop()
 
     print(
         f"[vacuum] phase 2: snapshot {db_path} → {snapshot_path} "
@@ -146,9 +151,150 @@ def _vacuum_snapshot_and_drop(
     )
     shutil.copytree(str(db_path), str(snapshot_path))
 
-    print("[vacuum] stopping daemons ...", flush=True)
-    svc.stop()
+    # NOTE: surreal_db is NOT renamed/emptied here. Phase 3 (side-build + atomic
+    # swap) is the only step that touches the canonical, and only post-verify.
 
-    # NOTE: surreal_db is NOT renamed here. Phase 3 handles rename + rollback.
+    return snapshot_path
 
-    return snapshot_path, bloated_path
+
+# ---------------------------------------------------------------------------
+# Atomic swap + crash-mid-swap recovery (v5.69 P2)
+#
+# Pure filesystem operations (same-dir os.rename) — not patched by tests, so
+# they live here.  Re-exported from yadgar.vacuum.__init__ so callers/tests can
+# reference them as yadgar.vacuum._atomic_swap / _recover_interrupted_swap.
+# ---------------------------------------------------------------------------
+
+
+def _atomic_swap(db_path: Path, side_path: Path) -> Path:
+    """Atomically swap the verified side DB in for the canonical DB.
+
+    Same-directory renames only (same filesystem -> atomic per-rename):
+      1. canonical  -> surreal_db.old-<ts>
+      2. side_path  -> canonical
+    If step 2 fails, immediately rename .old back to canonical (rollback).
+
+    A SIGKILL/OOM/power-loss BETWEEN the two renames leaves canonical ABSENT +
+    .old/.new present -- see _recover_interrupted_swap (runs at vacuum start).
+
+    Returns:
+        The .old-<ts> path (the previous canonical, retained for rollback /
+        retention pruning).
+    Raises:
+        on a rename failure that could not be rolled back (caller surfaces it).
+    """
+    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    old_path = db_path.parent / f"surreal_db.old-{ts}"
+
+    print(f"[vacuum] swap: {db_path} -> {old_path} ...", flush=True)
+    os.rename(str(db_path), str(old_path))  # rename 1: canonical out of the way
+    try:
+        print(f"[vacuum] swap: {side_path} -> {db_path} ...", flush=True)
+        os.rename(str(side_path), str(db_path))  # rename 2: side in as canonical
+    except OSError as exc:
+        # rename 2 failed -- canonical is absent. Roll back rename 1 immediately.
+        print(
+            f"[vacuum] ERROR: swap rename-2 failed ({exc}); rolling back {old_path} "
+            f"-> {db_path} ...",
+            file=sys.stderr,
+        )
+        os.rename(str(old_path), str(db_path))
+        raise
+    return old_path
+
+
+def _rmtree_globs(yadgar_home: Path, *patterns: str) -> None:
+    """Best-effort remove every dir matching any of *patterns* under yadgar_home."""
+    for pat in patterns:
+        for stale in yadgar_home.glob(pat):
+            shutil.rmtree(str(stale), ignore_errors=True)
+
+
+def _sweep_stale_building(yadgar_home: Path) -> None:
+    """Discard any UNVERIFIED `surreal_db.building-*` staging (never promotable).
+
+    Runs at vacuum start before the current run creates its own `.building`, so
+    anything found is an orphan from a crashed prior build.  M2: a `.building-*`
+    is unverified by construction — recovery must NEVER promote it.
+    """
+    stale_building = sorted(yadgar_home.glob("surreal_db.building-*"))
+    if stale_building:
+        print(
+            f"[vacuum] RECOVERY: discarding UNVERIFIED side-build staging "
+            f"{[p.name for p in stale_building]} (never promotable).",
+            file=sys.stderr,
+        )
+        _rmtree_globs(yadgar_home, "surreal_db.building-*")
+
+
+def _recover_interrupted_swap(yadgar_home: Path, db_path: Path) -> None:
+    """Complete or roll back a swap interrupted by a crash between the two renames.
+
+    Crash-mid-swap end-state: canonical ABSENT, surreal_db.old-<ts> (the
+    original) and surreal_db.new-<ts> (the verified compacted DB) both present.
+    Because .new was already EXACT-count-verified before the crash window opened
+    (the swap only begins post-verify), the deterministic resolution is to
+    COMPLETE the swap: promote .new -> canonical, then retire .old.  If no .new
+    exists (crash before side-build finished, or .new already promoted) we ROLL
+    BACK the newest .old -> canonical.
+
+    M2 — `.building-*` is the UNVERIFIED staging name (side-build in progress); a
+    crash mid-build leaves an `.building-*` partial that recovery MUST NEVER
+    promote (only the structurally-verified `.new-*` is promotable).  Any stale
+    `.building-*` is swept FIRST — before the canonical-present early-return —
+    because recovery runs once at vacuum start, before the current run creates its
+    own `.building`, so anything found here is an orphan from a crashed prior run.
+
+    Assumes a SINGLE in-flight swap (vacuum is not concurrent -- P3's lock + the
+    nightly serialization enforce this).  If multiple .old/.new pairs exist
+    (multiple prior crashes) we pick the NEWEST by timestamp and warn.
+
+    NO-OP when canonical is present -- nothing to recover.
+
+    RESIDUAL WINDOW (documented, not silent): this runs at VACUUM start.  Wiring
+    it into daemon start is deferred to a follow-up; until then, a crash mid-swap
+    leaves the canonical absent until the next vacuum run invokes this routine.
+    The backend will not start on an absent canonical in that window -- operator-
+    visible (fails fast), not silent data loss.
+    """
+    # Sweep stale `.building-*` (UNVERIFIED partials) FIRST — before the
+    # canonical-present early-return — and NEVER promote one.
+    _sweep_stale_building(yadgar_home)
+
+    if db_path.exists():
+        return  # canonical present -> no interrupted swap
+
+    olds = sorted(yadgar_home.glob("surreal_db.old-*"))
+    news = sorted(yadgar_home.glob("surreal_db.new-*"))
+    if not olds and not news:
+        return  # canonical absent but no swap staging -- not our case
+
+    print(
+        f"[vacuum] RECOVERY: canonical {db_path} is ABSENT with swap staging "
+        f"present (old={[p.name for p in olds]} new={[p.name for p in news]}). "
+        "Completing/rolling back interrupted swap ...",
+        file=sys.stderr,
+    )
+    if len(olds) > 1 or len(news) > 1:
+        print(
+            "[vacuum] RECOVERY WARNING: multiple swap-staging dirs found -- "
+            "assuming single in-flight swap, using the NEWEST pair.",
+            file=sys.stderr,
+        )
+
+    if news:
+        # .new was verified pre-crash -> COMPLETE the swap.
+        newest_new = news[-1]
+        print(f"[vacuum] RECOVERY: promoting {newest_new.name} -> {db_path.name}", file=sys.stderr)
+        os.rename(str(newest_new), str(db_path))
+        _rmtree_globs(yadgar_home, "surreal_db.old-*", "surreal_db.new-*", "surreal_db.building-*")
+    elif olds:
+        # No .new -> roll back the original.
+        newest_old = olds[-1]
+        print(
+            f"[vacuum] RECOVERY: rolling back {newest_old.name} -> {db_path.name}", file=sys.stderr
+        )
+        os.rename(str(newest_old), str(db_path))
+        _rmtree_globs(yadgar_home, "surreal_db.old-*", "surreal_db.building-*")
+
+    print(f"[vacuum] RECOVERY: canonical restored at {db_path}.", file=sys.stderr)

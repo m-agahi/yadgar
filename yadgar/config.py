@@ -505,6 +505,18 @@ class Settings(BaseSettings):
     # Set to False to disable the backstop threshold trigger entirely.
     VACUUM_AUTO_ENABLED: bool = True
 
+    # v5.69 P3: sensitive-job lock + signal drain.
+    # A sensitive job (e.g. vacuum) writes a lock file under YADGAR_DATA_DIR so an
+    # EXTERNAL shutdown signal cannot interrupt it mid-swap (06-16 data loss).
+    # SENSITIVE_LOCK_TTL_SEC: a lock older than this is treated as STALE and reaped
+    #   (alongside the dead-PID check) so a crashed job never deadlocks shutdown.
+    #   Default is generous — ~2x the worst-case vacuum — to never reap a live job.
+    SENSITIVE_LOCK_TTL_SEC: int = 7200  # YADGAR_SENSITIVE_LOCK_TTL_SEC
+    # SENSITIVE_DRAIN_TIMEOUT_SEC: max seconds the signal handler waits for an
+    #   in-process sensitive job to release the lock before REFUSING the shutdown
+    #   (returns without shutting down — never interrupts mid-swap).
+    SENSITIVE_DRAIN_TIMEOUT_SEC: float = 300.0  # YADGAR_SENSITIVE_DRAIN_TIMEOUT_SEC
+
     # v5.0 perf settings
     # TTL for the entity-set cache in WriteGate._compute_temporal_novelty and
     # _compute_structural_novelty.  Avoids a get_all_entities() DB call on every

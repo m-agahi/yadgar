@@ -534,9 +534,103 @@ def shutdown():
         pass
 
 
+_SENSITIVE_DRAIN_POLL_SEC = 0.05  # poll interval while draining (models drain.py)
+
+
+def _drain_sensitive_lock(timeout: float) -> bool:
+    """Bounded synchronous wait for an in-process sensitive job to release its lock.
+
+    Models ``yadgar.drain.drain_in_flight_requests`` (poll-until-clear with a
+    deadline) but synchronous — the signal handler runs in the main thread, not an
+    event loop.  Returns True if the lock cleared (released or became stale) before
+    the timeout, False on timeout.  NEVER shuts down on timeout — the caller
+    REFUSES the shutdown instead, so a still-running swap is never interrupted.
+    """
+    from yadgar import sensitive_lock  # noqa: PLC0415
+
+    deadline = time.monotonic() + timeout
+    while sensitive_lock.is_held_by_live_job():
+        if time.monotonic() >= deadline:
+            logger.warning(
+                "sensitive-job drain timed out after %.1fs — REFUSING shutdown "
+                "(job still holds the lock; will not interrupt mid-swap)",
+                timeout,
+            )
+            return False
+        time.sleep(_SENSITIVE_DRAIN_POLL_SEC)
+    logger.info("sensitive-job lock cleared — proceeding with shutdown")
+    return True
+
+
 def _signal_handler(signum, frame):
-    """Handle SIGINT/SIGTERM for graceful shutdown."""
-    logger.info("Received signal %s, shutting down...", signum)
+    """Handle SIGINT/SIGTERM for graceful shutdown.
+
+    v5.69 P3 — sensitive-job drain:  if a sensitive job (vacuum) holds the lock,
+    an EXTERNAL shutdown signal must NOT interrupt it mid-swap (the 06-16
+    data-loss mode).  We distinguish the vacuum's OWN teardown from an external
+    operator stop via the lock's pid:
+
+      * lock held by a LIVE job whose ``pid == os.getpid()``  → the sensitive job
+        runs in THIS process; an external signal targeting it would interrupt the
+        swap → DRAIN (bounded) and only shut down once the lock clears; on timeout
+        REFUSE (return without shutting down).
+      * lock held by a LIVE job whose ``pid != os.getpid()``  → the job runs in a
+        SEPARATE process (the vacuum runs as ``yadgar-vacuum.service``, not inside
+        core).  That separate vacuum stops core via ``ServiceController.stop()``
+        (systemctl stop yadgar yadgar-backend), which delivers core THIS same
+        SIGTERM.  We must let that teardown proceed — blocking it would deadlock
+        the vacuum's own stop → SIGKILL.  So we PROCEED (immediate shutdown).
+      * no lock, or a STALE lock (dead pid / TTL-expired)     → behave exactly as
+        before P3: immediate shutdown.
+
+    DOCUMENTED RESIDUAL RACE (narrow, accepted for 5.69):  an EXTERNAL operator
+    ``systemctl stop yadgar`` arriving at core WHILE a separate-process vacuum
+    holds the lock is indistinguishable here from the vacuum's own
+    ``ServiceController.stop()`` — both are a SIGTERM to core with the lock pid !=
+    core's pid — so we proceed and core shuts down.  This is acceptable because
+    the vacuum's atomic-swap design (P2) never leaves the canonical empty/partial
+    even if core dies (the swap is gated behind a verified side-build; crash
+    mid-swap is recovered at next start).  The clean fix is systemd
+    ``RefuseManualStop`` on yadgar.service — out of scope for 5.69, tracked as a
+    follow-up.
+    """
+    logger.info("Received signal %s", signum)
+    try:
+        from yadgar import sensitive_lock  # noqa: PLC0415
+
+        payload = sensitive_lock.read()
+        if sensitive_lock.is_held_by_live_job():
+            in_process = (payload or {}).get("pid") == os.getpid()
+            if in_process:
+                # External stop targeting THIS process while it runs a sensitive
+                # job → drain before shutting down; refuse on timeout.
+                _settings = get_settings()
+                timeout = float(getattr(_settings, "SENSITIVE_DRAIN_TIMEOUT_SEC", 300.0))
+                logger.warning(
+                    "signal %s arrived while an in-process sensitive job (job=%s) "
+                    "holds the lock — draining up to %.1fs before shutdown",
+                    signum,
+                    (payload or {}).get("job"),
+                    timeout,
+                )
+                if not _drain_sensitive_lock(timeout):
+                    # REFUSED: do not shut down, do not exit — never interrupt
+                    # the swap.  systemd will eventually SIGKILL if it must, but
+                    # we will not voluntarily empty the store mid-vacuum.
+                    return
+            else:
+                # Separate-process job holds the lock (vacuum stopping core) —
+                # proceed so the vacuum's own teardown is not deadlocked.
+                logger.info(
+                    "signal %s while a separate-process sensitive job (pid=%s) holds "
+                    "the lock — proceeding (vacuum-initiated stop is authorized)",
+                    signum,
+                    (payload or {}).get("pid"),
+                )
+    except Exception:  # noqa: BLE001 — never let lock logic block a real shutdown
+        logger.debug("sensitive-lock check in signal handler failed (non-fatal)", exc_info=True)
+
+    logger.info("shutting down (signal %s)", signum)
     shutdown()
     sys.exit(0)
 

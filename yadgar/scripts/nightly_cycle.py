@@ -51,6 +51,14 @@ from yadgar.vacuum import cmd_vacuum_impl
 _log = logging.getLogger("yadgar.nightly_cycle")
 
 _UNIT_CORE = "yadgar"
+_UNIT_BACKEND = "yadgar-backend"
+
+# Bounded retry/backoff around systemctl --user (v5.69 P5).  The host has a
+# history of transient systemd/D-Bus flakiness (the 06-16 restore failed on a
+# systemctl --user/D-Bus error); a small bounded retry absorbs that without
+# masking a genuinely-down unit.  Kept tiny — NOT infinite.
+_SYSTEMCTL_RETRIES = 3
+_SYSTEMCTL_BACKOFF_SEC = 0.5
 
 # ---------------------------------------------------------------------------
 # Low-level helpers (patched in tests)
@@ -58,12 +66,62 @@ _UNIT_CORE = "yadgar"
 
 
 def _run_systemctl(action: str, unit: str) -> None:
-    """Run ``systemctl --user <action> <unit>``. Raises RuntimeError on failure."""
+    """Run ``systemctl --user <action> <unit>`` with bounded retry.
+
+    Retries up to ``_SYSTEMCTL_RETRIES`` times with linear backoff to absorb
+    transient systemd/D-Bus flakiness (v5.69 P5).  Raises RuntimeError with the
+    LAST failure's stderr if every attempt fails.
+    """
     cmd = ["systemctl", "--user", action, unit]
-    result = subprocess.run(cmd, capture_output=True)
-    if result.returncode != 0:
-        stderr = result.stderr.decode(errors="replace").strip()
-        raise RuntimeError(f"systemctl --user {action} {unit} failed: {stderr}")
+    last_stderr = ""
+    for attempt in range(1, _SYSTEMCTL_RETRIES + 1):
+        result = subprocess.run(cmd, capture_output=True)
+        if result.returncode == 0:
+            return
+        last_stderr = result.stderr.decode(errors="replace").strip()
+        if attempt < _SYSTEMCTL_RETRIES:
+            _log.warning(
+                "systemctl --user %s %s failed (attempt %d/%d): %s — retrying",
+                action,
+                unit,
+                attempt,
+                _SYSTEMCTL_RETRIES,
+                last_stderr,
+            )
+            time.sleep(_SYSTEMCTL_BACKOFF_SEC * attempt)
+    raise RuntimeError(
+        f"systemctl --user {action} {unit} failed after {_SYSTEMCTL_RETRIES} "
+        f"attempts: {last_stderr}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Service-control seam (v5.69 P0)
+#
+# Module-level wrappers around _run_systemctl so the e2e harness can patch a
+# single, real, importable seam (yadgar.scripts.nightly_cycle._stop_service /
+# ._start_service) instead of the no-longer-matching guard that silently
+# no-opped.  Pure refactor — every nightly start/stop now routes through these.
+# Behavior is identical to calling _run_systemctl directly.
+# ---------------------------------------------------------------------------
+
+
+def _stop_service(unit: str) -> None:
+    """Stop a systemd --user unit. Wraps _run_systemctl('stop', unit).
+
+    Patch seam: the e2e service_stub replaces this with a no-op recorder so no
+    test can trigger a real systemctl stop.
+    """
+    _run_systemctl("stop", unit)
+
+
+def _start_service(unit: str) -> None:
+    """Start a systemd --user unit. Wraps _run_systemctl('start', unit).
+
+    Patch seam: the e2e service_stub replaces this with a no-op recorder so no
+    test can trigger a real systemctl start.
+    """
+    _run_systemctl("start", unit)
 
 
 # ---------------------------------------------------------------------------
@@ -101,12 +159,41 @@ def _log_start(action: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _stop_both_units() -> None:
+    """Stop BOTH yadgar AND yadgar-backend (v5.69 P5 — releases the surrealkv lock).
+
+    Order: core first, THEN backend.  ``yadgar.service`` has only weak
+    ``After``+``Wants`` on ``yadgar-backend`` (not ``BindsTo``/``PartOf``), so
+    stopping only ``yadgar`` leaves the backend holding the surrealkv file lock —
+    the root cause of the nightly "exit 30": step-3 then opens StorageEngine
+    EMBEDDED and contends with the still-locked dir.  Stopping the backend too
+    releases the lock so embedded consolidation + a consistent copytree can run.
+    """
+    _stop_service(_UNIT_CORE)
+    _stop_service(_UNIT_BACKEND)
+
+
+def _start_both_units() -> None:
+    """Start BOTH units in dependency order (v5.69 P5): backend THEN core.
+
+    ``yadgar.service`` declares ``After``+``Wants`` ``yadgar-backend`` — the
+    backend must be up before core, which connects to it on start.
+    """
+    _start_service(_UNIT_BACKEND)
+    _start_service(_UNIT_CORE)
+
+
 def _step_stop_core() -> int:
-    """Step 1: Stop yadgar core. Returns 0 on success, 10 on failure (FATAL)."""
+    """Step 1: Stop yadgar core AND backend. Returns 0 on success, 10 on failure (FATAL).
+
+    v5.69 P5: stops BOTH units so the surrealkv lock is released before step-3
+    opens StorageEngine embedded (kills the exit-30 contention) and before the
+    snapshot copytree (kills the torn-backup hazard).
+    """
     _log_start("stop_core")
     t0 = time.monotonic()
     try:
-        _run_systemctl("stop", _UNIT_CORE)
+        _stop_both_units()
         _log_step("stop_core", "ok", (time.monotonic() - t0) * 1000)
         return 0
     except Exception as exc:
@@ -176,10 +263,22 @@ def _step_consolidation(db_path: Path, settings: Settings) -> int:
 
 
 def _step_vacuum(db_path: Path, backend_url: str, service_mode: str | None) -> int:
-    """Step 4: Vacuum. Returns 0 on success, 40 on failure (non-fatal)."""
+    """Step 4: Vacuum. Returns 0 on success, 40 on failure (non-fatal).
+
+    v5.69 P5: step 1 stopped BOTH units (so step-3 consolidation could open
+    StorageEngine embedded without lock contention).  Consolidation closed its
+    embedded storage in its ``finally`` (lock released), so the backend can — and
+    MUST — be restarted before vacuum: ``cmd_vacuum_impl`` requires the backend
+    REACHABLE (it does ``GET /export`` + a reachability preflight before it stops
+    the backend itself for the swap).  This is the "stop → embedded → restart"
+    dance whose D-Bus restart failed on 06-16; the bounded ``_run_systemctl``
+    retry now protects it.  A start failure falls through to the except → 40
+    (non-fatal), same as any other vacuum-step error.
+    """
     _log_start("vacuum")
     t0 = time.monotonic()
     try:
+        _start_service(_UNIT_BACKEND)
         vacuum_args = SimpleNamespace(
             backend_url=backend_url,
             service_mode=service_mode,
@@ -204,11 +303,16 @@ def _step_vacuum(db_path: Path, backend_url: str, service_mode: str | None) -> i
 
 
 def _step_post_backup(db_path: Path, snapshot_dir: Path) -> int:
-    """Step 5: Stop core, then post-backup snapshot. Returns 0 on success, 50 on failure."""
+    """Step 5: Stop both units, then post-backup snapshot. Returns 0 on success, 50 on failure.
+
+    v5.69 P5: vacuum (step 4) leaves both units running again, so re-stop BOTH
+    before the post-backup copytree — a quiesced (lock-released) dir is the only
+    one a copytree can capture consistently.
+    """
     _log_start("stop_core_post")
     t0 = time.monotonic()
     try:
-        _run_systemctl("stop", _UNIT_CORE)
+        _stop_both_units()
         _log_step("stop_core_post", "ok", (time.monotonic() - t0) * 1000)
     except Exception as exc:
         record_exception("nightly_cycle.stop_core_post", exc)
@@ -257,11 +361,15 @@ def _step_prune(snapshot_dir: Path, retention: int) -> int:
 
 
 def _step_start_core() -> int:
-    """Step 7: Ensure core is running. Returns 0 on success, 70 on failure."""
+    """Step 7: Ensure both units are running. Returns 0 on success, 70 on failure.
+
+    v5.69 P5: start BOTH units in dependency order (backend THEN core) — the
+    nightly stopped both, so it must bring both back.
+    """
     _log_start("start_core")
     t0 = time.monotonic()
     try:
-        _run_systemctl("start", _UNIT_CORE)
+        _start_both_units()
         _log_step("start_core", "ok", (time.monotonic() - t0) * 1000)
         return 0
     except Exception as exc:

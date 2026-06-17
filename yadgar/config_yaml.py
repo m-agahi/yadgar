@@ -539,6 +539,14 @@ FIELD_META: dict[str, dict[str, str]] = {
         "section": "logging",
     },
     # misc
+    "sensitive_lock_ttl_sec": {
+        "desc": "Seconds before a sensitive-job lock (vacuum) is treated as stale and reaped",
+        "section": "misc",
+    },
+    "sensitive_drain_timeout_sec": {
+        "desc": "Max seconds the signal handler drains an in-process sensitive job before refusing shutdown",
+        "section": "misc",
+    },
     "contextual_prefix_enabled": {
         "desc": "Prepend contextual prefix to improve embedding quality",
         "section": "misc",

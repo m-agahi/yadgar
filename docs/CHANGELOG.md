@@ -7,6 +7,50 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.69.0]
+
+Nightly-safety bundle. Closes the 2026-06-16 data-loss class: vacuum is now
+atomic and crash-recoverable, sensitive jobs cannot be interrupted mid-flight,
+backups are consistent under concurrent writes, and the nightly job stops both
+service units so it never races the live daemon.
+
+### Added
+
+- **Atomic vacuum** (`yadgar/`, vacuum path): side-path build
+  (`.building-<ts>` → verified → `.new-<ts>`) with an exact per-table row-count
+  gate, then an atomic same-directory swap. A `_recover_interrupted_swap`
+  startup-recovery step restores the canonical DB if a crash lands mid-swap and
+  discards any unverified `.building-*` partial. Proves BC-E1, BC-E2
+  (`test_vacuum_backup_safety.py::TestBCE1_RowCountsPreserved`,
+  `TestBCE2_VacuumAtomicity`).
+- **Sensitive-job lock** (`yadgar/sensitive_lock.py`): a sensitive job in
+  progress refuses/drains an external shutdown signal via a signal-handler drain,
+  so no shutdown can land mid in-process vacuum; vacuums are serialized. Proves
+  BC-E3 (`test_vacuum_backup_safety.py::TestBCE3_SensitiveJobLock`).
+- **Quiesced / export backup** (`create_snapshot` via `GET /export` → `.surql`,
+  `restore_snapshot`): a backup is a complete restorable copy, restores the
+  daemon to full state, and stays consistent even when taken under concurrent
+  writes. Proves BC-F1, BC-F2, BC-F3
+  (`test_vacuum_backup_safety.py::TestBCF1_BackupRoundTrip`,
+  `TestBCF2_RestoreToFullState`, `TestBCF3_QuiescedBackup`).
+
+### Fixed
+
+- **Nightly unit-coupling exit 30** (nightly cycle): the nightly job now stops
+  BOTH units (`yadgar` and `yadgar-backend`) before vacuuming and restarts the
+  backend before the vacuum step, instead of leaving one unit live and racing
+  the canonical DB. `_run_systemctl` now retries transient failures. Fixes the
+  exit-30 half of the nightly failure.
+
+### Known issues
+
+- **BC-D1 — nightly embedded consolidation still blocked.** The real nightly
+  cycle cannot complete exit 0 because the surrealdb SDK 2.0.0 cannot
+  embedded-open a database written by surreal server 3.0.5 (surrealkv format
+  skew), so step-3 consolidation fails on read. Tracked for a follow-up release
+  (the SDK/server alignment is its own change); the BC-D1 e2e ships skipped, not
+  faked.
+
 ## [5.68.0]
 
 ### Added (behavior-contract e2e safety net — Phase 1)
