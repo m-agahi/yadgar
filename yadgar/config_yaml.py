@@ -39,6 +39,10 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Number of domain-aware background worker processes",
         "section": "daemon",
     },
+    "astrocyte_pool_enabled": {
+        "desc": "Enable domain-aware astrocyte pool consolidation (set False to disable)",
+        "section": "daemon",
+    },
     "narrative_interval_hours": {
         "desc": "Hours between autobiographical narrative updates",
         "section": "daemon",

@@ -77,6 +77,7 @@ class Settings(BaseSettings):
     SYNAPTIC_WINDOW_MINUTES: int = 30
     SYNAPTIC_BOOST: float = 0.2
     NUM_ASTROCYTE_PROCESSES: int = 4
+    ASTROCYTE_POOL_ENABLED: bool = True  # Set False to disable domain-aware consolidation
     NARRATIVE_INTERVAL_HOURS: int = 24
     CONTEXTUAL_PREFIX_ENABLED: bool = True
     CURATION_SIMILARITY_THRESHOLD: float = 0.95  # Only merge near-exact duplicates

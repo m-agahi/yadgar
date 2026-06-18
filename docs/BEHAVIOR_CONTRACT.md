@@ -16,8 +16,8 @@ Run: `make e2e` (local, real `surreal`) + pre-push hook; **excluded from CI**
 (`-m 'not e2e'`).
 
 **Surface (recounted v5.71, self-enforced by `scripts/check_contract_coverage.py`):**
-**233 SHALLs / 38 subsystems.** Today: **12 ✅ · 206 ⏳ · 15 ❌.** Of the 206 ⏳:
-**70 `[r]` (real-path coverage exists) · 104 `[u]` (unit-only) · 32 none.**
+**233 SHALLs / 38 subsystems.** Today: **15 ✅ · 205 ⏳ · 13 ❌.** Of the 205 ⏳:
+**70 `[r]` (real-path coverage exists) · 103 `[u]` (unit-only) · 32 none.**
 Goal: every SHALL → ✅ or ❌.
 
 **Lint rules** (`scripts/check_contract_coverage.py`, run as a non-e2e pytest):
@@ -50,7 +50,7 @@ Goal: every SHALL → ✅ or ❌.
 - BC-C2 heat decay lowers heat; below cold_threshold → archived. ⏳[r] P1
 - BC-C3 old+not-recently-accessed derived purged; recent spared; protected spared (v5.66). ⏳[u] P1
 - BC-C4 nightly sleep phases run (dream/community/cluster/reembed_stale/compress/auto_narrate). ❌ #37 P1
-- BC-C5a AstrocytePool domain consolidation executes (assign→consolidate per domain produces a summary). ❌ #40 P2
+- BC-C5a AstrocytePool domain consolidation executes (assign→consolidate per domain produces a summary). ✅ `tests/e2e/test_phase2_subsystems.py::TestBCAC2_AstrocyteDomainConsolidation::test_consolidate_domain_produces_summary` P2
 - BC-C5b if astrocyte pool is disabled, config reports it disabled + emits exactly one startup warning. ⏳ #40 P2
 
 ### D. Nightly cycle (host job; tests use TEMP data dir + stubbed service control)
@@ -170,8 +170,8 @@ Goal: every SHALL → ✅ or ❌.
 - BC-SC6 auto_narrate writes a project story. ❌ #41 (get_project_story dead) P2
 
 ### Astrocyte pool
-- BC-AC1 assign_memory routes a memory to a domain. ⏳[u] P2
-- BC-AC2 domain consolidation runs per domain. ❌ #40 P2
+- BC-AC1 assign_memory routes a memory to a domain. ✅ `tests/test_astrocyte_pool.py::TestMemoryAssignment` P2
+- BC-AC2 domain consolidation runs per domain. ✅ `tests/e2e/test_phase2_subsystems.py::TestBCAC2_AstrocyteDomainConsolidation::test_consolidate_domain_produces_summary` P2
 - BC-AC3a consensus_retrieve merges results across domains into one ranked set. ❌ #41 P2
 - BC-AC3b if consensus_retrieve is disabled/removed, config reports it absent + emits exactly one startup warning. ⏳ #41 P2
 

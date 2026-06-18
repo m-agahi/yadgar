@@ -591,13 +591,6 @@ class TestBCC4_NightlySleepCycleRuns:
 class TestBCAC2_AstrocyteDomainConsolidation:
     """BC-AC2 / BC-C5a: AstrocytePool domain consolidation produces a per-domain summary."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="❌ BC-AC2/BC-C5a #40 — consolidate_domain applies decay + entity "
-        "extraction but emits NO domain summary; the SHALL ('assign→consolidate "
-        "per domain produces a summary') is unmet. Flips to xpass when #40 adds "
-        "domain summarization.",
-    )
     def test_consolidate_domain_produces_summary(self, e2e_engines):
         """assign_memory → consolidate_domain SHALL produce a non-empty domain summary."""
         import yadgar.server._state as _st
@@ -625,6 +618,9 @@ class TestBCAC2_AstrocyteDomainConsolidation:
             thermodynamics=_st._thermo,
             settings=settings,
         )
+        # Create the 4 domain process records (runs at daemon startup in prod);
+        # without it consolidate_domain has no process to consolidate.
+        pool.init_processes()
 
         # Route each memory to a domain, then consolidate that domain.
         assigned_domains: set[str] = set()

@@ -224,6 +224,25 @@ class _OrchestratorMixin:
             self._run_graph_phases(stats)
             self._run_curation_phases(stats)
 
+            # Domain-aware consolidation (entity extraction per domain).
+            # Heat decay is owned solely by _apply_decay above — re-wiring here
+            # cannot cause double-decay because consolidate_domain no longer writes heat.
+            _pool = getattr(self, "_pool", None)
+            _astro_settings = getattr(self, "_settings", None)
+            if _pool is not None and getattr(_astro_settings, "ASTROCYTE_POOL_ENABLED", True):
+                try:
+                    _t = time.monotonic()
+                    logger.info("phase_start: domain_consolidation")
+                    self._run_domain_consolidation()
+                    _dur_ms = int((time.monotonic() - _t) * 1000)
+                    logger.info("phase_end: domain_consolidation duration_ms=%d", _dur_ms)
+                    _warn_slow_phase("domain_consolidation", _dur_ms)
+                except Exception as _exc:
+                    from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+                    record_exception("consolidation.phase_domain_consolidation", _exc)
+                    logger.exception("Domain consolidation failed")
+
             # Run formal causal discovery (PC algorithm) periodically.
             # v5.1 C1: placed after all memory-producing phases so counters are fully populated.
             self._run_causal_discovery_phase(stats)

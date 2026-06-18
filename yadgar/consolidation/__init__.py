@@ -132,12 +132,18 @@ class ConsolidationScheduler(
 
         # Initialize astrocyte pool for domain-aware consolidation
         self._pool = None
-        try:
-            PoolCls = _get_pool_class()
-            self._pool = PoolCls(storage, embeddings, self._graph, self._thermo, settings)
-            self._pool.init_processes()
-        except Exception:
-            logger.exception("Failed to initialize AstrocytePool")
+        if not getattr(settings, "ASTROCYTE_POOL_ENABLED", True):
+            logger.warning(
+                "AstrocytePool is DISABLED (ASTROCYTE_POOL_ENABLED=False). "
+                "Domain-aware consolidation will not run."
+            )
+        else:
+            try:
+                PoolCls = _get_pool_class()
+                self._pool = PoolCls(storage, embeddings, self._graph, self._thermo, settings)
+                self._pool.init_processes()
+            except Exception:
+                logger.exception("Failed to initialize AstrocytePool")
 
         # v4.9: vacuum auto-trigger cooldown timestamp (in-memory; resets on restart)
         self._last_vacuum_at: datetime | None = None
