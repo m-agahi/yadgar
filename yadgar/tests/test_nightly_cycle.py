@@ -78,11 +78,13 @@ def _run_with_mocks(
         snap_mock.side_effect = snap_side_effect
 
     mock_ctl = MagicMock(return_value=None)
+    mock_maint = MagicMock(return_value=None)  # v5.50.3: _maintenance_http mock
     mock_prune = MagicMock(return_value=[])
     mock_vac = MagicMock(return_value=vac_return)
 
     base = dict(
         _run_systemctl=mock_ctl,
+        _maintenance_http=mock_maint,  # v5.50.3: core stop/start now uses HTTP
         create_snapshot=snap_mock,
         prune_snapshots=mock_prune,
         cmd_vacuum_impl=mock_vac,
@@ -106,6 +108,7 @@ def _run_with_mocks(
             "storage": mock_storage,
             "sched": mock_sched,
             "ctl": mock_ctl,
+            "maint": mock_maint,
             "snap": snap_mock,
             "prune": mock_prune,
             "vac": mock_vac,
@@ -138,13 +141,18 @@ class TestHappyPath:
         assert code == 0
 
     def test_step_order_matches_lifecycle(self, tmp_path: Path) -> None:
-        """Verify call ordering: stop → pre-backup → consolidate → vacuum → stop → post-backup → prune → start."""
+        """Verify call ordering: enter-maint → pre-backup → consolidate → vacuum → post-backup → prune → exit-maint."""
         mod = _import_module()
 
         call_order = []
 
         def _ctl(action, unit):
+            # v5.50.3: core no longer uses systemctl; backend still does
             call_order.append(f"systemctl_{action}_{unit}")
+
+        def _maint_http(action, url):
+            # v5.50.3: core stop/start replaced by maintenance HTTP
+            call_order.append(f"maintenance_{action}")
 
         mock_storage = MagicMock()
         mock_sched = MagicMock()
@@ -183,6 +191,7 @@ class TestHappyPath:
         with patch.multiple(
             _MODULE,
             _run_systemctl=_ctl,
+            _maintenance_http=_maint_http,  # v5.50.3
             create_snapshot=_snap,
             prune_snapshots=_prune,
             cmd_vacuum_impl=_vacuum,
@@ -195,9 +204,9 @@ class TestHappyPath:
         ):
             mod.main(args)
 
-        # Step 1: stop core first
-        assert call_order[0] == "systemctl_stop_yadgar", (
-            f"First call must be stop yadgar, got: {call_order}"
+        # Step 1: maintenance enter first (replaces systemctl stop yadgar)
+        assert call_order[0] == "maintenance_enter", (
+            f"First call must be maintenance_enter, got: {call_order}"
         )
         # Step 2: pre-backup (first snapshot) before consolidation
         first_snap = call_order.index("create_snapshot")
@@ -219,9 +228,9 @@ class TestHappyPath:
         # Prune after post-backup
         prune_idx = call_order.index("prune_snapshots")
         assert prune_idx > snap_idxs[1], "Prune must come after post-backup snapshot"
-        # Step 7: final start is last systemctl
-        assert call_order[-1] == "systemctl_start_yadgar", (
-            f"Last call must be start yadgar, got: {call_order}"
+        # Step 7: maintenance exit is last (replaces systemctl start yadgar)
+        assert call_order[-1] == "maintenance_exit", (
+            f"Last call must be maintenance_exit, got: {call_order}"
         )
 
     def test_structured_json_logged_per_step(self, tmp_path: Path) -> None:
@@ -255,6 +264,7 @@ class TestHappyPath:
             with patch.multiple(
                 _MODULE,
                 _run_systemctl=MagicMock(),
+                _maintenance_http=MagicMock(return_value=None),  # v5.50.3
                 create_snapshot=MagicMock(return_value=tmp_path / "snap"),
                 prune_snapshots=MagicMock(return_value=[]),
                 cmd_vacuum_impl=MagicMock(return_value=0),
@@ -283,13 +293,13 @@ class TestHappyPath:
         )
 
     def test_core_running_at_exit(self, tmp_path: Path) -> None:
-        """Final systemctl call must be 'start yadgar'."""
+        """Final maintenance action must be 'exit' (replaces systemctl start yadgar, v5.50.3)."""
         mod = _import_module()
 
-        ctl_calls = []
+        maint_calls = []
 
-        def _ctl(action, unit):
-            ctl_calls.append((action, unit))
+        def _maint_http(action, url):
+            maint_calls.append(action)
 
         mock_sched = MagicMock()
         mock_sched.force_consolidate.return_value = {"merged": 0}
@@ -300,7 +310,8 @@ class TestHappyPath:
 
         with patch.multiple(
             _MODULE,
-            _run_systemctl=_ctl,
+            _run_systemctl=MagicMock(),
+            _maintenance_http=_maint_http,
             create_snapshot=MagicMock(return_value=tmp_path / "snap"),
             prune_snapshots=MagicMock(return_value=[]),
             cmd_vacuum_impl=MagicMock(return_value=0),
@@ -313,8 +324,8 @@ class TestHappyPath:
         ):
             mod.main(args)
 
-        assert ("start", "yadgar") in ctl_calls, f"Expected start yadgar, got: {ctl_calls}"
-        assert ctl_calls[-1] == ("start", "yadgar"), f"Start yadgar must be last: {ctl_calls}"
+        assert "exit" in maint_calls, f"Expected maintenance exit, got: {maint_calls}"
+        assert maint_calls[-1] == "exit", f"Maintenance exit must be last: {maint_calls}"
 
 
 # ---------------------------------------------------------------------------
@@ -323,11 +334,17 @@ class TestHappyPath:
 
 
 class TestStopCoreFailure:
-    def test_stop_core_failure_exits_10(self, tmp_path: Path) -> None:
+    def test_stop_core_failure_nonfatal_cycle_proceeds(self, tmp_path: Path) -> None:
+        """v5.72 (#62): maintenance-enter is BEST-EFFORT. If it fails (old/down core,
+        404, unreachable), the nightly does NOT abort — it proceeds through backup +
+        vacuum + prune and exits 0. A down/old core has no external writers to gate,
+        so losing the whole cycle would be strictly worse than a small write-race window.
+        """
         mod = _import_module()
 
-        def _ctl_fail(action, unit):
-            raise RuntimeError("unit not found")
+        def _maint_fail(action, url):
+            if action == "enter":
+                raise ConnectionError("core unreachable")
 
         mock_snap = MagicMock(return_value=tmp_path / "snap")
         mock_vac = MagicMock(return_value=0)
@@ -339,7 +356,8 @@ class TestStopCoreFailure:
 
         with patch.multiple(
             _MODULE,
-            _run_systemctl=_ctl_fail,
+            _run_systemctl=MagicMock(),
+            _maintenance_http=_maint_fail,
             create_snapshot=mock_snap,
             prune_snapshots=mock_prune,
             cmd_vacuum_impl=mock_vac,
@@ -352,10 +370,11 @@ class TestStopCoreFailure:
         ):
             code = mod.main(args)
 
-        assert code == 10
-        mock_snap.assert_not_called()
-        mock_vac.assert_not_called()
-        mock_prune.assert_not_called()
+        # Best-effort enter failure must NOT abort: cycle runs to completion, exit 0.
+        assert code == 0, f"maintenance-enter failure must be non-fatal (exit 0), got {code}"
+        mock_snap.assert_called()  # pre-backup ran despite enter failure
+        mock_vac.assert_called()  # vacuum ran
+        mock_prune.assert_called()  # prune ran
 
 
 # ---------------------------------------------------------------------------
@@ -378,6 +397,7 @@ class TestPreBackupFailure:
         with patch.multiple(
             _MODULE,
             _run_systemctl=MagicMock(),
+            _maintenance_http=MagicMock(return_value=None),  # v5.50.3
             create_snapshot=MagicMock(side_effect=RuntimeError("disk full")),
             prune_snapshots=mock_prune,
             cmd_vacuum_impl=mock_vac,
@@ -421,6 +441,7 @@ class TestConsolidationFailure:
         with patch.multiple(
             _MODULE,
             _run_systemctl=MagicMock(),
+            _maintenance_http=MagicMock(return_value=None),  # v5.50.3
             create_snapshot=_snap,
             prune_snapshots=MagicMock(return_value=[]),
             cmd_vacuum_impl=mock_vac,
@@ -452,6 +473,7 @@ class TestConsolidationFailure:
         with patch.multiple(
             _MODULE,
             _run_systemctl=MagicMock(),
+            _maintenance_http=MagicMock(return_value=None),  # v5.50.3
             create_snapshot=MagicMock(return_value=tmp_path / "snap"),
             prune_snapshots=MagicMock(return_value=[]),
             cmd_vacuum_impl=MagicMock(return_value=0),
@@ -493,6 +515,7 @@ class TestVacuumFailure:
         with patch.multiple(
             _MODULE,
             _run_systemctl=MagicMock(),
+            _maintenance_http=MagicMock(return_value=None),  # v5.50.3
             create_snapshot=_snap,
             prune_snapshots=mock_prune,
             cmd_vacuum_impl=MagicMock(return_value=1),  # non-zero = failure
@@ -523,6 +546,7 @@ class TestVacuumFailure:
         with patch.multiple(
             _MODULE,
             _run_systemctl=MagicMock(),
+            _maintenance_http=MagicMock(return_value=None),  # v5.50.3
             create_snapshot=MagicMock(return_value=tmp_path / "snap"),
             prune_snapshots=MagicMock(return_value=[]),
             cmd_vacuum_impl=MagicMock(return_value=2),  # degraded-success: warn-only invariants
@@ -555,6 +579,7 @@ class TestVacuumFailure:
         with patch.multiple(
             _MODULE,
             _run_systemctl=MagicMock(),
+            _maintenance_http=MagicMock(return_value=None),  # v5.50.3
             create_snapshot=_snap,
             prune_snapshots=MagicMock(return_value=[]),
             cmd_vacuum_impl=MagicMock(return_value=1),
@@ -590,6 +615,7 @@ class TestMultipleFailures:
         with patch.multiple(
             _MODULE,
             _run_systemctl=MagicMock(),
+            _maintenance_http=MagicMock(return_value=None),  # v5.50.3
             create_snapshot=MagicMock(return_value=tmp_path / "snap"),
             prune_snapshots=MagicMock(return_value=[]),
             cmd_vacuum_impl=MagicMock(return_value=1),
@@ -625,6 +651,7 @@ class TestMultipleFailures:
         with patch.multiple(
             _MODULE,
             _run_systemctl=MagicMock(),
+            _maintenance_http=MagicMock(return_value=None),  # v5.50.3
             create_snapshot=_snap,
             prune_snapshots=MagicMock(return_value=[]),
             cmd_vacuum_impl=MagicMock(return_value=0),
@@ -664,6 +691,7 @@ class TestSnapshotLabels:
         with patch.multiple(
             _MODULE,
             _run_systemctl=MagicMock(),
+            _maintenance_http=MagicMock(return_value=None),  # v5.50.3
             create_snapshot=_snap,
             prune_snapshots=MagicMock(return_value=[]),
             cmd_vacuum_impl=MagicMock(return_value=0),
@@ -687,17 +715,20 @@ class TestSnapshotLabels:
 
 
 class TestPostBackupQuiesced:
-    def test_core_stopped_before_post_backup(self, tmp_path: Path) -> None:
-        """Core must be stopped before post-backup snapshot (quiesced consistency)."""
+    def test_core_in_maintenance_before_post_backup(self, tmp_path: Path) -> None:
+        """Core must be in maintenance mode before post-backup snapshot.
+
+        v5.50.3: Core stays UP but enters maintenance mode in step 1 (maintenance_enter).
+        Post-backup (step 5) runs while maintenance is still active (exit is in finally,
+        after steps 3-6). This replaces the old 'core stopped before post-backup' check.
+        """
         mod = _import_module()
 
         call_order = []
 
-        def _ctl(action, unit):
-            call_order.append((action, unit))
+        def _maint_http(action, url):
+            call_order.append(("maintenance", action))
 
-        mock_sched = MagicMock()
-        mock_sched.force_consolidate.return_value = {}
         snap_count = [0]
 
         def _snap(*a, **kw):
@@ -705,13 +736,17 @@ class TestPostBackupQuiesced:
             call_order.append(("create_snapshot", snap_count[0]))
             return tmp_path / "snap"
 
+        mock_sched = MagicMock()
+        mock_sched.force_consolidate.return_value = {}
+
         db_dir = tmp_path / "surreal_db"
         db_dir.mkdir()
         args = _make_args(db_path=str(db_dir))
 
         with patch.multiple(
             _MODULE,
-            _run_systemctl=_ctl,
+            _run_systemctl=MagicMock(),
+            _maintenance_http=_maint_http,
             create_snapshot=_snap,
             prune_snapshots=MagicMock(return_value=[]),
             cmd_vacuum_impl=MagicMock(return_value=0),
@@ -724,23 +759,25 @@ class TestPostBackupQuiesced:
         ):
             mod.main(args)
 
-        # Find index of post-backup (2nd snapshot)
+        # maintenance_enter must appear before post-backup (2nd snapshot)
         post_snap_idx = next(i for i, ev in enumerate(call_order) if ev == ("create_snapshot", 2))
-        # stop yadgar must appear before post-backup
         pre_post_events = call_order[:post_snap_idx]
-        stop_events = [ev for ev in pre_post_events if ev == ("stop", "yadgar")]
-        assert len(stop_events) >= 1, (
-            f"Core must be stopped before post-backup. Events before post-snap: {pre_post_events}"
+        enter_events = [ev for ev in pre_post_events if ev == ("maintenance", "enter")]
+        assert len(enter_events) >= 1, (
+            f"Core must enter maintenance before post-backup. Events before post-snap: {pre_post_events}"
         )
 
-    def test_core_restarted_after_post_backup(self, tmp_path: Path) -> None:
-        """Core must be restarted (step 7) after post-backup."""
+    def test_core_exits_maintenance_after_post_backup(self, tmp_path: Path) -> None:
+        """Core maintenance mode must exit (step 7) after post-backup.
+
+        v5.50.3: maintenance_exit replaces systemctl start yadgar.
+        """
         mod = _import_module()
 
-        call_order = []
+        maint_calls = []
 
-        def _ctl(action, unit):
-            call_order.append((action, unit))
+        def _maint_http(action, url):
+            maint_calls.append(action)
 
         mock_sched = MagicMock()
         mock_sched.force_consolidate.return_value = {}
@@ -751,7 +788,8 @@ class TestPostBackupQuiesced:
 
         with patch.multiple(
             _MODULE,
-            _run_systemctl=_ctl,
+            _run_systemctl=MagicMock(),
+            _maintenance_http=_maint_http,
             create_snapshot=MagicMock(return_value=tmp_path / "snap"),
             prune_snapshots=MagicMock(return_value=[]),
             cmd_vacuum_impl=MagicMock(return_value=0),
@@ -765,8 +803,8 @@ class TestPostBackupQuiesced:
             code = mod.main(args)
 
         assert code == 0
-        assert ("start", "yadgar") in call_order, f"Core must be restarted. Events: {call_order}"
-        assert call_order[-1] == ("start", "yadgar"), f"Start yadgar must be last: {call_order}"
+        assert "exit" in maint_calls, f"Core must exit maintenance. Calls: {maint_calls}"
+        assert maint_calls[-1] == "exit", f"Maintenance exit must be last: {maint_calls}"
 
 
 # ---------------------------------------------------------------------------
@@ -801,6 +839,7 @@ class TestEmbeddedModeGuard:
         with patch.multiple(
             _MODULE,
             _run_systemctl=MagicMock(),
+            _maintenance_http=MagicMock(return_value=None),
             create_snapshot=MagicMock(return_value=tmp_path / "snap"),
             prune_snapshots=MagicMock(return_value=[]),
             cmd_vacuum_impl=MagicMock(return_value=0),
@@ -842,6 +881,7 @@ class TestEmbeddedModeGuard:
         with patch.multiple(
             _MODULE,
             _run_systemctl=MagicMock(),
+            _maintenance_http=MagicMock(return_value=None),
             create_snapshot=MagicMock(return_value=tmp_path / "snap"),
             prune_snapshots=MagicMock(return_value=[]),
             cmd_vacuum_impl=_vacuum_factory,

@@ -342,6 +342,14 @@ def _tool(power: bool = False):
 
         @functools.wraps(func)
         def _instrumented(*args, **kwargs):
+            import yadgar.server._state as _st_ref  # noqa: PLC0415 — late import, read live attr
+
+            if _st_ref._maintenance_mode:
+                return {
+                    "error": "maintenance",
+                    "message": "yadgar nightly maintenance in progress; retry shortly",
+                }
+
             import time as _time
 
             _t0 = _time.monotonic()

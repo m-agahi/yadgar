@@ -28,6 +28,33 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
+def _resolve_db_creds() -> tuple[str, str]:
+    """Return (user, password) using the canonical four-tier env precedence.
+
+    Credential precedence (vacuum is an admin operation, needs root IAM):
+      1. SURREAL_USER / SURREAL_PASS  (preferred — root IAM, same creds used by entrypoint)
+      2. YADGAR_RW_USER / YADGAR_RW_PASS  (canonical post-rename; new installs only write RW)
+      3. YADGAR_DB_USER / YADGAR_DB_PASS  (legacy alias — backward compat for old installs)
+      4. root / root  (built-in SurrealDB default)
+
+    When a USER env var is set without a matching PASS, the password defaults to
+    ``"root"`` (SurrealDB's built-in root password) rather than empty string.
+
+    Lives here (next to ``spawn_surreal``) so the vacuum HTTP client and the
+    side-backend spawn share one source of truth — drift between the two was the
+    root cause of #43 (side backend started root/root while the client sent env
+    creds → HTTP 401 on namespace bootstrap).
+    """
+    if os.environ.get("SURREAL_USER"):
+        return os.environ["SURREAL_USER"], os.environ.get("SURREAL_PASS", "root")
+    if os.environ.get("YADGAR_RW_USER"):
+        return os.environ["YADGAR_RW_USER"], os.environ.get("YADGAR_RW_PASS", "root")
+    if os.environ.get("YADGAR_DB_USER"):
+        return os.environ["YADGAR_DB_USER"], os.environ.get("YADGAR_DB_PASS", "root")
+    return "root", "root"
+
+
 # ---------------------------------------------------------------------------
 # PID registry
 # ---------------------------------------------------------------------------
@@ -48,12 +75,22 @@ _RETRY_BACKOFF_MS = 100  # ms per retry step (linear)
 # ---------------------------------------------------------------------------
 
 
-def spawn_surreal(port: int, data_dir: str, **popen_kwargs: Any) -> subprocess.Popen:
+def spawn_surreal(
+    port: int,
+    data_dir: str,
+    surreal_user: str = "root",
+    surreal_pass: str = "root",
+    **popen_kwargs: Any,
+) -> subprocess.Popen:
     """Start a SurrealDB subprocess bound to *port*, register its PID.
 
     Args:
         port: Local TCP port for `--bind 127.0.0.1:<port>`.
         data_dir: Directory path for `surrealkv://<data_dir>`.
+        surreal_user: SurrealDB root username passed via ``--user``.
+            Defaults to ``"root"`` (built-in SurrealDB default).
+        surreal_pass: SurrealDB root password passed via ``--pass``.
+            Defaults to ``"root"`` (built-in SurrealDB default).
         **popen_kwargs: Extra kwargs forwarded to subprocess.Popen (e.g.
             stdout=subprocess.DEVNULL).  stdout/stderr default to DEVNULL.
 
@@ -77,9 +114,9 @@ def spawn_surreal(port: int, data_dir: str, **popen_kwargs: Any) -> subprocess.P
             "--bind",
             f"127.0.0.1:{port}",
             "--user",
-            "root",
+            surreal_user,
             "--pass",
-            "root",
+            surreal_pass,
             f"surrealkv://{data_dir}",
         ],
         **defaults,

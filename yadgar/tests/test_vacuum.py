@@ -1613,3 +1613,285 @@ class TestLogConsolidationRowURL:
 
         assert urls_used, "_build_http_client must be called"
         assert "8080" in urls_used[0], f"Expected :8080 fallback URL but got {urls_used[0]!r}"
+
+
+# ---------------------------------------------------------------------------
+# #43 — spawn_surreal cred kwargs + _build_and_verify_side_db cred resolution
+#
+# BUG: spawn_surreal hardcoded `--user root --pass root`.  The vacuum HTTP
+# client resolves creds from env (SURREAL_USER/PASS → YADGAR_RW_USER/PASS →
+# YADGAR_DB_USER/PASS → root/root).  When the nightly env has e.g.
+# YADGAR_DB_USER set, the client sends non-root creds to a side backend that
+# only knows root/root → HTTP 401 on _bootstrap_namespace → exit 40.
+#
+# FIX: spawn_surreal accepts surreal_user/surreal_pass kwargs; the side-build
+# resolves env creds with the SAME precedence as _build_http_client and passes
+# them through.  The shared _resolve_db_creds() helper in vacuum/__init__.py
+# encapsulates the four-tier precedence so both callers stay in sync.
+# ---------------------------------------------------------------------------
+
+
+class TestSpawnSurrealCredKwargs:
+    """spawn_surreal passes surreal_user/surreal_pass into the argv.
+
+    FAILS before the fix: the function ignores those kwargs and always passes
+    `--user root --pass root` regardless of arguments.
+    """
+
+    def _mock_proc(self):
+        """Return a MagicMock Popen with a pid attribute (int — atexit iterates it)."""
+        mock_proc = MagicMock()
+        mock_proc.pid = 99999
+        return mock_proc
+
+    def test_spawn_surreal_passes_default_root_creds(self):
+        """No kwargs → argv still contains --user root --pass root."""
+        mock_proc = self._mock_proc()
+
+        with patch("yadgar._surreal_runner.subprocess.Popen", return_value=mock_proc) as mock_popen:
+            from yadgar._surreal_runner import spawn_surreal
+
+            spawn_surreal(port=9999, data_dir="/tmp/test")
+
+        argv = mock_popen.call_args[0][0]
+        assert "--user" in argv
+        assert "--pass" in argv
+        user_idx = argv.index("--user")
+        pass_idx = argv.index("--pass")
+        assert argv[user_idx + 1] == "root", (
+            f"default user should be root, got {argv[user_idx + 1]!r}"
+        )
+        assert argv[pass_idx + 1] == "root", (
+            f"default pass should be root, got {argv[pass_idx + 1]!r}"
+        )
+
+    def test_spawn_surreal_passes_custom_creds_in_argv(self):
+        """surreal_user/surreal_pass kwargs appear in the built argv, not hardcoded root."""
+        mock_proc = self._mock_proc()
+
+        with patch("yadgar._surreal_runner.subprocess.Popen", return_value=mock_proc) as mock_popen:
+            from yadgar._surreal_runner import spawn_surreal
+
+            spawn_surreal(
+                port=9999, data_dir="/tmp/test", surreal_user="myuser", surreal_pass="mypass"
+            )
+
+        argv = mock_popen.call_args[0][0]
+        assert "--user" in argv
+        assert "--pass" in argv
+        user_idx = argv.index("--user")
+        pass_idx = argv.index("--pass")
+        assert argv[user_idx + 1] == "myuser", (
+            f"expected 'myuser' in argv after --user, got {argv[user_idx + 1]!r}"
+        )
+        assert argv[pass_idx + 1] == "mypass", (
+            f"expected 'mypass' in argv after --pass, got {argv[pass_idx + 1]!r}"
+        )
+
+    def test_spawn_surreal_custom_creds_not_mixed_with_popen_kwargs(self):
+        """surreal_user/surreal_pass do NOT leak into Popen kwargs."""
+        mock_proc = self._mock_proc()
+
+        with patch("yadgar._surreal_runner.subprocess.Popen", return_value=mock_proc) as mock_popen:
+            from yadgar._surreal_runner import spawn_surreal
+
+            spawn_surreal(
+                port=9999,
+                data_dir="/tmp/test",
+                surreal_user="myuser",
+                surreal_pass="mypass",
+            )
+
+        popen_kwargs = mock_popen.call_args[1]
+        assert "surreal_user" not in popen_kwargs, "surreal_user must not leak into Popen kwargs"
+        assert "surreal_pass" not in popen_kwargs, "surreal_pass must not leak into Popen kwargs"
+
+
+class TestResolveDatabaseCreds:
+    """_resolve_db_creds() returns the correct (user, pass) per env-var precedence.
+
+    FAILS before the fix: function does not yet exist.
+
+    Precedence (matches _build_http_client exactly):
+      1. SURREAL_USER / SURREAL_PASS   (default pass "root" when user is set)
+      2. YADGAR_RW_USER / YADGAR_RW_PASS
+      3. YADGAR_DB_USER / YADGAR_DB_PASS
+      4. root / root
+    """
+
+    def test_surreal_user_wins(self, monkeypatch):
+        monkeypatch.setenv("SURREAL_USER", "surreal_admin")
+        monkeypatch.setenv("SURREAL_PASS", "surreal_secret")
+        monkeypatch.setenv("YADGAR_RW_USER", "rw_user")
+        monkeypatch.setenv("YADGAR_RW_PASS", "rw_pass")
+        monkeypatch.setenv("YADGAR_DB_USER", "db_user")
+        monkeypatch.setenv("YADGAR_DB_PASS", "db_pass")
+
+        from yadgar.vacuum import _resolve_db_creds
+
+        user, password = _resolve_db_creds()
+        assert user == "surreal_admin"
+        assert password == "surreal_secret"
+
+    def test_surreal_user_without_pass_defaults_root(self, monkeypatch):
+        monkeypatch.setenv("SURREAL_USER", "surreal_admin")
+        monkeypatch.delenv("SURREAL_PASS", raising=False)
+        monkeypatch.delenv("YADGAR_RW_USER", raising=False)
+        monkeypatch.delenv("YADGAR_DB_USER", raising=False)
+
+        from yadgar.vacuum import _resolve_db_creds
+
+        user, password = _resolve_db_creds()
+        assert user == "surreal_admin"
+        assert password == "root"
+
+    def test_yadgar_rw_user_wins_over_db_user(self, monkeypatch):
+        monkeypatch.delenv("SURREAL_USER", raising=False)
+        monkeypatch.delenv("SURREAL_PASS", raising=False)
+        monkeypatch.setenv("YADGAR_RW_USER", "rw_user")
+        monkeypatch.setenv("YADGAR_RW_PASS", "rw_pass")
+        monkeypatch.setenv("YADGAR_DB_USER", "db_user")
+        monkeypatch.setenv("YADGAR_DB_PASS", "db_pass")
+
+        from yadgar.vacuum import _resolve_db_creds
+
+        user, password = _resolve_db_creds()
+        assert user == "rw_user"
+        assert password == "rw_pass"
+
+    def test_yadgar_db_user_fallback(self, monkeypatch):
+        monkeypatch.delenv("SURREAL_USER", raising=False)
+        monkeypatch.delenv("SURREAL_PASS", raising=False)
+        monkeypatch.delenv("YADGAR_RW_USER", raising=False)
+        monkeypatch.delenv("YADGAR_RW_PASS", raising=False)
+        monkeypatch.setenv("YADGAR_DB_USER", "db_user")
+        monkeypatch.setenv("YADGAR_DB_PASS", "db_pass")
+
+        from yadgar.vacuum import _resolve_db_creds
+
+        user, password = _resolve_db_creds()
+        assert user == "db_user"
+        assert password == "db_pass"
+
+    def test_root_default_when_nothing_set(self, monkeypatch):
+        monkeypatch.delenv("SURREAL_USER", raising=False)
+        monkeypatch.delenv("SURREAL_PASS", raising=False)
+        monkeypatch.delenv("YADGAR_RW_USER", raising=False)
+        monkeypatch.delenv("YADGAR_RW_PASS", raising=False)
+        monkeypatch.delenv("YADGAR_DB_USER", raising=False)
+        monkeypatch.delenv("YADGAR_DB_PASS", raising=False)
+
+        from yadgar.vacuum import _resolve_db_creds
+
+        user, password = _resolve_db_creds()
+        assert user == "root"
+        assert password == "root"
+
+
+class TestBuildAndVerifySideDbCreds:
+    """_build_and_verify_side_db resolves env creds and passes them to spawn_surreal.
+
+    FAILS before the fix: spawn_surreal is called with no cred kwargs, so the
+    side backend always starts with root/root regardless of env.
+    """
+
+    def _run_side_build_health_fail(self, monkeypatch):
+        """Drive _build_and_verify_side_db with _wait_for_health → False so it
+        short-circuits right after spawn_surreal (before any HTTP calls).
+        Returns the list of dicts capturing each spawn_surreal call's kwargs."""
+        import tempfile
+        from pathlib import Path
+
+        spawn_calls: list[dict] = []
+
+        def _fake_spawn(port, data_dir, **kwargs):
+            spawn_calls.append({"port": port, "data_dir": data_dir, **kwargs})
+            mock_proc = MagicMock()
+            mock_proc.pid = 99999
+            return mock_proc
+
+        with tempfile.TemporaryDirectory() as td:
+            side_path = Path(td) / "surreal_db.building-test"
+            filtered = Path(td) / "export.surql"
+            filtered.write_bytes(b"INSERT INTO memory {};")
+
+            with patch("yadgar._surreal_runner.spawn_surreal", side_effect=_fake_spawn):
+                with patch("yadgar.vacuum._wait_for_health", return_value=False):
+                    with patch("yadgar._surreal_runner.teardown_surreal_proc"):
+                        from yadgar.vacuum import _build_and_verify_side_db
+
+                        _build_and_verify_side_db(
+                            "http://127.0.0.1:8080",
+                            filtered,
+                            side_path,
+                            {"memory": 1},
+                        )
+
+        return spawn_calls
+
+    def test_side_build_passes_env_creds_to_spawn_surreal_surreal_user(self, monkeypatch):
+        """SURREAL_USER set → spawn_surreal called with those creds."""
+        monkeypatch.setenv("SURREAL_USER", "surreal_admin")
+        monkeypatch.setenv("SURREAL_PASS", "surreal_secret")
+        monkeypatch.delenv("YADGAR_RW_USER", raising=False)
+        monkeypatch.delenv("YADGAR_DB_USER", raising=False)
+
+        spawn_calls = self._run_side_build_health_fail(monkeypatch)
+
+        assert spawn_calls, "spawn_surreal was never called"
+        call = spawn_calls[0]
+        assert call.get("surreal_user") == "surreal_admin", (
+            f"expected surreal_user='surreal_admin', got {call.get('surreal_user')!r}"
+        )
+        assert call.get("surreal_pass") == "surreal_secret", (
+            f"expected surreal_pass='surreal_secret', got {call.get('surreal_pass')!r}"
+        )
+
+    def test_side_build_passes_rw_creds_when_surreal_user_unset(self, monkeypatch):
+        """YADGAR_RW_USER set, SURREAL_USER unset → spawn_surreal gets rw creds."""
+        monkeypatch.delenv("SURREAL_USER", raising=False)
+        monkeypatch.delenv("SURREAL_PASS", raising=False)
+        monkeypatch.setenv("YADGAR_RW_USER", "rw_user")
+        monkeypatch.setenv("YADGAR_RW_PASS", "rw_pass")
+        monkeypatch.delenv("YADGAR_DB_USER", raising=False)
+
+        spawn_calls = self._run_side_build_health_fail(monkeypatch)
+
+        assert spawn_calls, "spawn_surreal was never called"
+        call = spawn_calls[0]
+        assert call.get("surreal_user") == "rw_user", (
+            f"expected surreal_user='rw_user', got {call.get('surreal_user')!r}"
+        )
+        assert call.get("surreal_pass") == "rw_pass"
+
+    def test_side_build_passes_db_creds_when_only_db_user_set(self, monkeypatch):
+        """Only YADGAR_DB_USER set → spawn_surreal gets db creds."""
+        monkeypatch.delenv("SURREAL_USER", raising=False)
+        monkeypatch.delenv("SURREAL_PASS", raising=False)
+        monkeypatch.delenv("YADGAR_RW_USER", raising=False)
+        monkeypatch.delenv("YADGAR_RW_PASS", raising=False)
+        monkeypatch.setenv("YADGAR_DB_USER", "db_user")
+        monkeypatch.setenv("YADGAR_DB_PASS", "db_pass")
+
+        spawn_calls = self._run_side_build_health_fail(monkeypatch)
+
+        assert spawn_calls, "spawn_surreal was never called"
+        call = spawn_calls[0]
+        assert call.get("surreal_user") == "db_user"
+        assert call.get("surreal_pass") == "db_pass"
+
+    def test_side_build_uses_root_when_no_creds_set(self, monkeypatch):
+        """No cred env vars → spawn_surreal called with root/root."""
+        monkeypatch.delenv("SURREAL_USER", raising=False)
+        monkeypatch.delenv("SURREAL_PASS", raising=False)
+        monkeypatch.delenv("YADGAR_RW_USER", raising=False)
+        monkeypatch.delenv("YADGAR_RW_PASS", raising=False)
+        monkeypatch.delenv("YADGAR_DB_USER", raising=False)
+        monkeypatch.delenv("YADGAR_DB_PASS", raising=False)
+
+        spawn_calls = self._run_side_build_health_fail(monkeypatch)
+
+        assert spawn_calls, "spawn_surreal was never called"
+        call = spawn_calls[0]
+        assert call.get("surreal_user") == "root"
+        assert call.get("surreal_pass") == "root"
