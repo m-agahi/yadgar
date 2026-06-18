@@ -402,6 +402,97 @@ class TestConsolidationCycle:
         # (exact behavior depends on embedding similarity and clustering)
         assert stats["skipped_inconsistent"] >= 0
 
+    def test_secret_gated_pattern_skipped_cycle_continues(self, tmp_path):
+        """consolidation_cycle must NOT abort when one pattern's insert_memory raises
+        SecretLeakBlocked.  The secret pattern is skipped (skipped_secret += 1) and
+        all remaining patterns are still evaluated — the cycle completes normally.
+
+        This is a hermetic mock test: no SurrealDB, no real embeddings.
+        Two patterns are fed in via mocked find_recurring_patterns:
+          - pattern_secret: triggers SecretLeakBlocked on insert_memory
+          - pattern_clean:  insert_memory succeeds (returns id 999)
+        Expected outcome: no exception raised, promoted==1, skipped_secret==1.
+        """
+        from unittest.mock import MagicMock, patch
+
+        import numpy as np
+
+        from yadgar.secrets import SecretLeakBlocked
+        from yadgar.storage import StorageEngine
+
+        vec = np.ones(384, dtype=np.float32).tobytes()
+
+        storage_mock = MagicMock(spec=StorageEngine)
+        # First insert raises SecretLeakBlocked (secret pattern); second succeeds (clean pattern)
+        storage_mock.insert_memory.side_effect = [
+            SecretLeakBlocked("secret_detected: GitHub token", "ghp_faketoken123456"),
+            999,
+        ]
+        # No existing semantic memories (duplicate check returns empty)
+        storage_mock.search_vectors.return_value = []
+        # No existing relationships
+        storage_mock.get_relationships_among_entities.return_value = []
+        # Entity lookups return None → triggers insert_entity
+        storage_mock.get_entity_by_name.return_value = None
+        storage_mock.insert_entity.return_value = 1
+        storage_mock.update_memory_fields.return_value = None
+        storage_mock.reinforce_relationship.return_value = None
+        storage_mock.insert_relationship.return_value = None
+        storage_mock.count_memories_by_store_type.return_value = 0
+
+        emb_mock = _make_mock_embeddings(similarity_value=1.0)
+
+        settings = Settings(
+            DB_PATH=str(tmp_path / "secret_test.db"),
+            CLUSTER_SIMILARITY_THRESHOLD=0.0,
+            CURATION_SIMILARITY_THRESHOLD=0.5,
+        )
+
+        cls_store = DualStoreCLS(storage_mock, emb_mock, settings)
+
+        shared_mems = [
+            {
+                "id": 1,
+                "content": "safe content here",
+                "directory_context": "/proj",
+                "embedding": vec,
+            },
+        ]
+        pattern_secret = {
+            "memories": shared_mems,
+            "occurrence_count": 3,
+            "directories": ["/proj"],
+        }
+        pattern_clean = {
+            "memories": shared_mems,
+            "occurrence_count": 3,
+            "directories": ["/proj"],
+        }
+
+        consistent_result = {"consistent": True, "contradictions": []}
+
+        with (
+            patch.object(
+                cls_store, "find_recurring_patterns", return_value=[pattern_secret, pattern_clean]
+            ),
+            patch.object(cls_store, "check_consistency", return_value=consistent_result),
+            # Return a non-degenerate, non-empty schema so _promote_pattern proceeds to insert_memory
+            patch.object(
+                cls_store,
+                "abstract_to_schema",
+                return_value="urllib.request is used for HTTP calls across yadgar/retrieval/core.py",
+            ),
+        ):
+            stats = cls_store.consolidation_cycle()
+
+        # Cycle must not raise; secret pattern skipped, clean pattern promoted
+        assert stats["promoted"] == 1, (
+            f"expected 1 promoted (clean pattern), got {stats['promoted']}"
+        )
+        assert stats["skipped_secret"] == 1, (
+            f"expected 1 skipped_secret (poisoned pattern), got {stats['skipped_secret']}"
+        )
+
 
 # ── Dual-Store Query Tests ────────────────────────────────────────────
 

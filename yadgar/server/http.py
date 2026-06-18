@@ -354,8 +354,12 @@ async def hook_post_compact(request: Request) -> JSONResponse:
             {"status": "error", "message": "Replay engine not initialized"}, status_code=503
         )
 
-    result = replay.restore(directory)
-    return JSONResponse(result)
+    try:
+        result = await asyncio.to_thread(replay.restore, directory)
+        return JSONResponse(result)
+    except Exception as e:
+        logger.exception("hook_post_compact error: %s", e)
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 
 @mcp_server.custom_route("/hooks/block-reflect", methods=["GET"])
@@ -532,7 +536,7 @@ async def hook_session_context(request: Request) -> JSONResponse:
         _pb = getattr(_srv, "project_brief", None) if _srv else None
         if _pb is None:
             from yadgar.server.tools.project import project_brief as _pb  # noqa: PLC0415
-        brief = _pb(directory, mode=mode, branch_hint=branch_hint)
+        brief = await asyncio.to_thread(_pb, directory, mode=mode, branch_hint=branch_hint)
         render = brief.get("_render", "")
 
         # v5.7.9: source-aware prefix — context line before the brief.
@@ -554,7 +558,9 @@ async def hook_session_context(request: Request) -> JSONResponse:
 
                 _storage2 = _gs2()
                 if _storage2 is not None:
-                    _blocks = _storage2.list_blocks(scope=None, directory=directory or None)
+                    _blocks = await asyncio.to_thread(
+                        _storage2.list_blocks, scope=None, directory=directory or None
+                    )
                     _bsection = _rbs(_blocks, directory)
                     if _bsection:
                         render = _bsection + "\n" + render
@@ -572,7 +578,7 @@ async def hook_session_context(request: Request) -> JSONResponse:
                 from yadgar.server.lifecycle import _get_storage as _gs  # noqa: PLC0415
 
                 _storage = _gs()
-                _cp = _storage.get_active_checkpoint(directory)
+                _cp = await asyncio.to_thread(_storage.get_active_checkpoint, directory)
                 if _cp:
                     _task = _cp.get("current_task", "")
                     _ts = _cp.get("created_at", "")
@@ -1644,7 +1650,8 @@ async def _make_event_stream(request: Request):
             now = time.time()
             try:
                 # Drain new graph events
-                new_events = [e for e in _st._event_queue if e["seq"] > last_seq]
+                with _st._event_lock:
+                    new_events = [e for e in _st._event_queue if e["seq"] > last_seq]
                 for e in new_events:
                     last_seq = e["seq"]
                     yield f"data: {json.dumps(e)}\n\n"

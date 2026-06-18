@@ -164,15 +164,6 @@ class CognitiveMap:
 
         return coords
 
-    def update_memory_coordinates(self) -> int:
-        """Compute SR coordinates and update sr_x, sr_y in storage."""
-        coords = self.extract_coordinates(n_dims=2)
-        count = 0
-        for mid, (x, y) in coords.items():
-            self._storage.update_memory_sr_coords(mid, x, y)
-            count += 1
-        return count
-
     # -- Navigation --
 
     def navigate_to(
@@ -219,29 +210,6 @@ class CognitiveMap:
         distances.sort(key=lambda x: x[1], reverse=True)
         return distances[:top_k]
 
-    def get_neighborhood(self, memory_id: int, radius: float = 0.5) -> list[dict]:
-        """Find memories within Euclidean distance 'radius' in SR space."""
-        coords = self.extract_coordinates(n_dims=2)
-        if memory_id not in coords:
-            return []
-
-        center = np.array(coords[memory_id])
-        neighbors: list[dict] = []
-
-        for mid, c in coords.items():
-            if mid == memory_id:
-                continue
-            dist = float(np.linalg.norm(np.array(c) - center))
-            if dist <= radius:
-                mem = self._storage.get_memory(mid)
-                if mem:
-                    mem.pop("embedding", None)
-                    mem["sr_distance"] = round(dist, 6)
-                    neighbors.append(mem)
-
-        neighbors.sort(key=lambda x: x["sr_distance"])
-        return neighbors
-
     # -- Incremental TD update --
 
     def incremental_update(self, from_id: int, to_id: int) -> None:
@@ -264,53 +232,8 @@ class CognitiveMap:
         delta = e_to + self._discount * self._sr_matrix[j] - self._sr_matrix[i]
         self._sr_matrix[i] += self._lr * delta
 
-    # -- Query helpers --
-
-    def get_sr_scores(
-        self, query_embedding: bytes, embeddings_engine, candidate_ids: list[int]
-    ) -> dict[int, float]:
-        """Get SR proximity scores for candidate memories given a query.
-
-        Used as a retrieval signal in HippoRetriever.recall().
-        """
-        if self._sr_matrix is None or self._dirty:
-            self.compute_sr_matrix()
-
-        if self._sr_matrix is None or self._sr_matrix.size == 0:
-            return {}
-
-        coords = self.extract_coordinates(n_dims=2)
-        if not coords:
-            return {}
-
-        # Find query position via embedding similarity
-        vec_hits = self._storage.search_vectors(query_embedding, top_k=5, min_heat=0.0)
-
-        seed_coords = []
-        for mid, _dist in vec_hits:
-            if mid in coords:
-                seed_coords.append(np.array(coords[mid]))
-
-        if not seed_coords:
-            return {}
-
-        query_pos = np.mean(seed_coords, axis=0)
-
-        # Score candidates by proximity
-        result: dict[int, float] = {}
-        for mid in candidate_ids:
-            if mid in coords:
-                dist = float(np.linalg.norm(np.array(coords[mid]) - query_pos))
-                result[mid] = 1.0 / (1.0 + dist)
-
-        return result
-
     def has_sufficient_data(self) -> bool:
         """Check if enough transitions exist for meaningful SR computation."""
         transitions = self._storage.get_all_transitions()
         total_count = sum(t.get("count") or 0 for t in transitions) if transitions else 0
         return total_count >= _MIN_TRANSITIONS
-
-    @property
-    def is_dirty(self) -> bool:
-        return self._dirty

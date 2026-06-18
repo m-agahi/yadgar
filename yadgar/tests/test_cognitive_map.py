@@ -120,36 +120,6 @@ class TestRecordTransition:
         t = storage.get_transition(m1, m2)
         assert t["count"] == 3
 
-    def test_record_transition_marks_dirty(self, storage, cmap):
-        """Recording a transition marks the map as dirty."""
-        m1 = storage.insert_memory(
-            {
-                "content": "a",
-                "tags": [],
-                "directory_context": "/p",
-                "heat": 1.0,
-                "is_stale": False,
-            }
-        )
-        m2 = storage.insert_memory(
-            {
-                "content": "b",
-                "tags": [],
-                "directory_context": "/p",
-                "heat": 1.0,
-                "is_stale": False,
-            }
-        )
-
-        # Compute SR first to set dirty=False
-        cmap.record_transition(m1, m2)
-        cmap.compute_sr_matrix()
-        assert not cmap.is_dirty
-
-        # Now record another transition
-        cmap.record_transition(m2, m1)
-        assert cmap.is_dirty
-
 
 class TestTransitionMatrix:
     def test_transition_matrix_normalized(self, storage, cmap):
@@ -315,34 +285,6 @@ class TestSRMatrix:
         """SR matrix for no data is empty."""
         M = cmap.compute_sr_matrix()
         assert M.shape == (0, 0)
-        assert not cmap.is_dirty
-
-    def test_sr_matrix_clears_dirty(self, storage, cmap):
-        """Computing SR matrix clears the dirty flag."""
-        m1 = storage.insert_memory(
-            {
-                "content": "a",
-                "tags": [],
-                "directory_context": "/p",
-                "heat": 1.0,
-                "is_stale": False,
-            }
-        )
-        m2 = storage.insert_memory(
-            {
-                "content": "b",
-                "tags": [],
-                "directory_context": "/p",
-                "heat": 1.0,
-                "is_stale": False,
-            }
-        )
-
-        cmap.record_transition(m1, m2)
-        assert cmap.is_dirty
-
-        cmap.compute_sr_matrix()
-        assert not cmap.is_dirty
 
 
 class TestCoordinates:
@@ -396,36 +338,7 @@ class TestCoordinates:
 
         cmap.record_transition(m1, m2)
         coords = cmap.extract_coordinates()
-        assert not cmap.is_dirty
         assert len(coords) == 2
-
-    def test_update_memory_coordinates(self, storage, cmap):
-        """update_memory_coordinates writes sr_x, sr_y to storage."""
-        m1 = storage.insert_memory(
-            {
-                "content": "a",
-                "tags": [],
-                "directory_context": "/p",
-                "heat": 1.0,
-                "is_stale": False,
-            }
-        )
-        m2 = storage.insert_memory(
-            {
-                "content": "b",
-                "tags": [],
-                "directory_context": "/p",
-                "heat": 1.0,
-                "is_stale": False,
-            }
-        )
-
-        cmap.record_transition(m1, m2)
-        count = cmap.update_memory_coordinates()
-        assert count == 2
-
-        mem = storage.get_memory(m1)
-        assert mem["sr_x"] != 0.0 or mem["sr_y"] != 0.0
 
 
 class TestNavigateTo:
@@ -456,47 +369,6 @@ class TestNavigateTo:
         query_emb = embeddings.encode("test query")
         results = cmap.navigate_to(query_emb, embeddings)
         assert results == []
-
-
-class TestNeighborhood:
-    def test_neighborhood(self, storage, cmap):
-        """Returns memories within radius in SR space."""
-        mids = []
-        for i in range(5):
-            mid = storage.insert_memory(
-                {
-                    "content": f"memory content {i}",
-                    "tags": [],
-                    "directory_context": "/p",
-                    "heat": 1.0,
-                    "is_stale": False,
-                }
-            )
-            mids.append(mid)
-
-        # Dense connections between first 3
-        for i in range(3):
-            for j in range(3):
-                if i != j:
-                    cmap.record_transition(mids[i], mids[j])
-
-        # Sparse connection to 4th and 5th
-        cmap.record_transition(mids[3], mids[4])
-        cmap.record_transition(mids[4], mids[3])
-
-        cmap.compute_sr_matrix()
-
-        neighbors = cmap.get_neighborhood(mids[0], radius=10.0)
-        # Should include at least some neighbors
-        assert isinstance(neighbors, list)
-        for n in neighbors:
-            assert "sr_distance" in n
-            assert n["id"] != mids[0]
-
-    def test_neighborhood_unknown_memory(self, cmap):
-        """Neighborhood returns empty for unknown memory."""
-        result = cmap.get_neighborhood(99999)
-        assert result == []
 
 
 class TestIncrementalUpdate:
@@ -704,23 +576,3 @@ class TestIntegration:
         assert len(results) == 3
         memory_ids = {mid for mid, _ in results}
         assert memory_ids == {m1, m2, m3}
-
-    def test_get_sr_scores(self, storage, embeddings, settings):
-        """get_sr_scores returns proximity scores for candidate memories."""
-        cmap = CognitiveMap(storage, settings)
-
-        m1 = _make_memory(storage, embeddings, "Alpha beta gamma")
-        m2 = _make_memory(storage, embeddings, "Delta epsilon zeta")
-        m3 = _make_memory(storage, embeddings, "Eta theta iota")
-
-        cmap.record_transition(m1, m2)
-        cmap.record_transition(m2, m3)
-        cmap.record_transition(m3, m1)
-        cmap.compute_sr_matrix()
-
-        query_emb = embeddings.encode("alpha")
-        sr_scores = cmap.get_sr_scores(query_emb, embeddings, [m1, m2, m3])
-
-        assert len(sr_scores) > 0
-        for _mid, score in sr_scores.items():
-            assert 0.0 <= score <= 1.0
