@@ -102,6 +102,20 @@ repos:
         pass_filenames: false
         files: ^(yadgar/.*\.py|scripts/.*\.py|\.complexity-allowlist\.json|\.complexity-config\.json)$
 
+      - id: check-test-weakening
+        name: Block silent test weakening (e2e assert removal / ✅ regression) (#52)
+        language: system
+        entry: python scripts/check_test_weakening.py
+        pass_filenames: false
+        files: ^(yadgar/tests/e2e/.*\.py|docs/BEHAVIOR_CONTRACT\.md)$
+
+      - id: check-e2e-assertions
+        name: Assert every e2e test_* fn has ≥1 real assertion (#52)
+        language: system
+        entry: python scripts/check_e2e_assertions.py
+        pass_filenames: false
+        files: ^yadgar/tests/e2e/.*\.py$
+
   - repo: local
     hooks:
       - id: check-image-size-backend

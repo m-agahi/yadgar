@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Coverage lint for docs/BEHAVIOR_CONTRACT.md (the behavior-contract self-check).
 
-Three rules, all derived from the contract's own header:
+Three original rules, all derived from the contract's own header:
 
   1. A ✅ row MUST cite a resolvable ``path::node`` test reference. A ✅ without a
      resolvable reference is a rejected claim (belief-without-a-test).
@@ -20,12 +20,23 @@ resolved relative to the repo root, with a ``yadgar/`` prefix tried as a fallbac
 ``yadgar/tests/e2e/...``). A reference resolves if the file exists AND every
 ``::``-segment after the path appears as a ``class``/``def`` name in that file.
 
+Tamper-protection extensions (task #52):
+
+  4. LAYER 1 — ✅-count floor: the tally of ✅ rows MUST NOT drop below
+     ``_GREEN_FLOOR``.  Raising the floor is an explicit committed edit.  This
+     catches silent un-verification (✅→⏳/❌) without a floor bump.
+
+  5. LAYER 2 — ✅ ↔ decorator integrity: every node cited by a ✅ row (and its
+     enclosing class if the node is a method) MUST NOT carry a skip/skipif/xfail
+     decorator.  Catches the pattern "flip ✅ but the mapped test is xfail/skipped."
+
 Run as a plain (non-e2e) pytest: ``yadgar/tests/test_contract_coverage.py``.
 Or standalone: ``python scripts/check_contract_coverage.py`` (exit 0 = clean).
 """
 
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -39,6 +50,15 @@ _REF_RE = re.compile(r"([A-Za-z0-9_./-]+\.py(?:::[A-Za-z0-9_]+)+)")
 # Header count lines we assert against (rule 3).
 _STATUS_HDR_RE = re.compile(r"\*\*([0-9]+)\s*✅\s*·\s*([0-9]+)\s*⏳\s*·\s*([0-9]+)\s*❌\.\*\*")
 _TAG_HDR_RE = re.compile(r"\*\*([0-9]+)\s*`\[r\]`.*?·\s*([0-9]+)\s*`\[u\]`.*?·\s*([0-9]+)\s*none")
+
+# ---------------------------------------------------------------------------
+# Layer 1 — ✅-count floor (tamper-protection #52).
+# Raise this constant in an explicit commit whenever green count legitimately grows.
+# ---------------------------------------------------------------------------
+_GREEN_FLOOR = 12
+
+# Decorator names that indicate a test is deliberately disabled.
+_SKIP_DECORATORS = frozenset({"skip", "skipif", "xfail"})
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +118,103 @@ def resolve_ref(ref: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Layer 2 helpers — decorator integrity
+# ---------------------------------------------------------------------------
+def _decorator_name(node: ast.expr) -> str | None:
+    """Extract the bare attribute/name from a decorator expression."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Call):
+        return _decorator_name(node.func)
+    return None
+
+
+def _node_has_skip_decorator(node: ast.AST) -> bool:
+    """Return True if a class/function node carries a skip/skipif/xfail decorator."""
+    decorators = getattr(node, "decorator_list", [])
+    return any(_decorator_name(d) in _SKIP_DECORATORS for d in decorators)
+
+
+def _build_ast_index(src: str) -> dict[str, ast.AST]:
+    """Return name→AST-node for every top-level class and function in *src*."""
+    tree = ast.parse(src)
+    index: dict[str, ast.AST] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            index[node.name] = node
+    return index
+
+
+def check_green_floor(text: str, floor: int = _GREEN_FLOOR) -> list[str]:
+    """Layer 1: actual ✅ count must be >= *floor*. Returns violation strings."""
+    rows = parse_rows(text)
+    n_green = sum(1 for _, s, _ in rows if s == "✅")
+    if n_green < floor:
+        return [
+            f"layer 1 — ✅-count floor violated: {n_green} ✅ rows found, "
+            f"floor is {floor}. "
+            "Raise _GREEN_FLOOR in scripts/check_contract_coverage.py only when "
+            "new e2e-green tests justify it; never lower it silently."
+        ]
+    return []
+
+
+def check_green_integrity(text: str, repo_root: Path = _REPO_ROOT) -> list[str]:
+    """Layer 2: every node cited by a ✅ row must not carry skip/skipif/xfail.
+
+    Checks the specific node named in the reference AND its enclosing class (if
+    the reference is ``File.py::Class::method``).  A skip/xfail on *any* level
+    means the test is not actually running.
+    """
+    errors: list[str] = []
+    rows = parse_rows(text)
+
+    # Cache parsed AST indexes per file path to avoid re-parsing.
+    _ast_cache: dict[Path, dict[str, ast.AST]] = {}
+
+    def _get_index(path: Path) -> dict[str, ast.AST]:
+        if path not in _ast_cache:
+            try:
+                src = path.read_text(encoding="utf-8")
+                _ast_cache[path] = _build_ast_index(src)
+            except SyntaxError:
+                _ast_cache[path] = {}
+        return _ast_cache[path]
+
+    def _candidate_paths_root(rel: str) -> list[Path]:
+        return [repo_root / rel, repo_root / "yadgar" / rel]
+
+    for bc_id, status, line in rows:
+        if status != "✅":
+            continue
+        refs = _REF_RE.findall(line)
+        for ref in refs:
+            parts = ref.split("::")
+            path_part = parts[0]
+            nodes = parts[1:]
+            src_path = next((p for p in _candidate_paths_root(path_part) if p.is_file()), None)
+            if src_path is None:
+                # File resolution failure already reported by rule 2; skip here.
+                continue
+            index = _get_index(src_path)
+            # Walk nodes left-to-right, checking each (class, then method).
+            for node_name in nodes:
+                ast_node = index.get(node_name)
+                if ast_node is None:
+                    # Node not found is a rule-2 issue; skip here.
+                    continue
+                if _node_has_skip_decorator(ast_node):
+                    errors.append(
+                        f"{bc_id}: ✅ cites {ref!r} but node {node_name!r} "
+                        f"carries a skip/skipif/xfail decorator — "
+                        "test is not actually running (layer 2)"
+                    )
+    return errors
+
+
+# ---------------------------------------------------------------------------
 # Checks
 # ---------------------------------------------------------------------------
 def check(text: str) -> list[str]:
@@ -144,6 +261,12 @@ def check(text: str) -> list[str]:
                 f"header tag drift (rule 3): header says {hr} [r] · {hu} [u] · {hn} none; "
                 f"actual {tag['r']} [r] · {tag['u']} [u] · {tag['none']} none"
             )
+
+    # Layer 2 (tamper-protection). Layer 1 (the ✅-count floor) applies to the
+    # REAL contract only — enforced in main()/CLI/pre-commit, NOT on arbitrary
+    # check(text) inputs (e.g. minimal test fixtures with fewer than floor ✅ rows).
+    errors.extend(check_green_integrity(text))
+
     return errors
 
 
@@ -151,7 +274,9 @@ def main() -> int:
     if not _CONTRACT.is_file():
         print(f"ERROR: contract not found at {_CONTRACT}", file=sys.stderr)
         return 1
-    errors = check(_CONTRACT.read_text(encoding="utf-8"))
+    text = _CONTRACT.read_text(encoding="utf-8")
+    errors = check(text)
+    errors.extend(check_green_floor(text))  # Layer 1: floor on the REAL contract
     if errors:
         print("BEHAVIOR_CONTRACT coverage lint FAILED:", file=sys.stderr)
         for e in errors:
