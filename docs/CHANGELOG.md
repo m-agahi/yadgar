@@ -7,6 +7,17 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.70.1] - 2026-06-18
+
+### Fixed
+
+- **BC-D1: nightly consolidation moved to HTTP/server mode** (`yadgar/scripts/nightly_cycle.py`, #51):
+  the nightly cycle no longer pops `YADGAR_DB_URL` or opens StorageEngine in embedded mode.
+  Backend stays up throughout the cycle; consolidation (step 3) and both backups (steps 2 + 5)
+  run over HTTP (`GET /export`, `POST /import`). Only core is stopped (step 1) and restarted
+  (step 7). Eliminates the surrealdb SDK 2.0.0 vs server 3.0.5 surrealkv format-skew failure
+  that caused exit 30 on every nightly run. BC-D1 e2e test unskipped.
+
 ## [5.70.0] - 2026-06-18
 
 ### Added

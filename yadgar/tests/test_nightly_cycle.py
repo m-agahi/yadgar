@@ -544,7 +544,7 @@ class TestVacuumFailure:
         mock_sched.force_consolidate.return_value = {}
         snap_labels = []
 
-        def _snap(db_path, snapshot_dir=None, label="nightly"):
+        def _snap(db_path, snapshot_dir=None, label="nightly", backend_url=None):
             snap_labels.append(label)
             return tmp_path / f"snap-{label}"
 
@@ -653,7 +653,7 @@ class TestSnapshotLabels:
         mock_sched.force_consolidate.return_value = {}
         labels = []
 
-        def _snap(db_path, snapshot_dir=None, label="nightly"):
+        def _snap(db_path, snapshot_dir=None, label="nightly", backend_url=None):
             labels.append(label)
             return tmp_path / f"snap-{label}"
 
@@ -770,13 +770,16 @@ class TestPostBackupQuiesced:
 
 
 # ---------------------------------------------------------------------------
-# YADGAR_DB_URL must be unset when opening StorageEngine in embedded mode
+# YADGAR_DB_URL stays SET (server mode) during consolidation (#51)
 # ---------------------------------------------------------------------------
 
 
 class TestEmbeddedModeGuard:
-    def test_db_url_unset_during_consolidation(self, tmp_path: Path, monkeypatch) -> None:
-        """YADGAR_DB_URL must not be set when StorageEngine is constructed."""
+    def test_db_url_stays_set_during_consolidation_server_mode(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """#51: consolidation now runs in SERVER mode — YADGAR_DB_URL stays SET
+        when StorageEngine is constructed (no embedded pop)."""
         import os
 
         mod = _import_module()
@@ -811,8 +814,8 @@ class TestEmbeddedModeGuard:
             mod.main(args)
 
         assert db_url_at_construction, "StorageEngine must be constructed"
-        assert db_url_at_construction[0] is None, (
-            f"YADGAR_DB_URL must be unset when StorageEngine opens, "
+        assert db_url_at_construction[0] == "http://127.0.0.1:8080", (
+            f"#51: YADGAR_DB_URL must STAY SET (server mode) when StorageEngine opens, "
             f"got: {db_url_at_construction[0]}"
         )
 
