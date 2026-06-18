@@ -62,7 +62,7 @@ class TestNightlyCycleDbPathDerivation:
 
         captured_db_paths = []
 
-        def _snap_capture(db_path, snapshot_dir=None, label="nightly"):
+        def _snap_capture(db_path, snapshot_dir=None, label="nightly", backend_url=None):
             captured_db_paths.append(str(db_path))
             return tmp_path / "snap"
 
@@ -124,7 +124,7 @@ class TestNightlyCycleDbPathDerivation:
 
         captured_db_paths = []
 
-        def _snap_capture(db_path, snapshot_dir=None, label="nightly"):
+        def _snap_capture(db_path, snapshot_dir=None, label="nightly", backend_url=None):
             captured_db_paths.append(str(db_path))
             return tmp_path / "snap"
 
@@ -171,7 +171,7 @@ class TestNightlyCycleDbPathDerivation:
 
         captured_db_paths = []
 
-        def _snap_capture(db_path, snapshot_dir=None, label="nightly"):
+        def _snap_capture(db_path, snapshot_dir=None, label="nightly", backend_url=None):
             captured_db_paths.append(str(db_path))
             return tmp_path / "snap"
 

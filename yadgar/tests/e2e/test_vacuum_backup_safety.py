@@ -1058,15 +1058,6 @@ class TestBCD1_NightlyCompletesExitZero:
     mocked-cycle green would be worse than an honest skip.  See the report.
     """
 
-    @pytest.mark.skip(
-        reason="⏳ BC-D1: surrealdb SDK 2.0.0 cannot embedded-open a surreal-3.0.5-"
-        "written surrealkv dir (2.x→3.x format change) → step-3 consolidation fails "
-        "on READ (IO error: unexpected end of file) before lock contention is "
-        "reachable. P5 stop-both + restart-before-vacuum is correct + unit-tested; "
-        "BC-D1 exit-0 blocked on SDK/server version alignment (uv.lock surrealdb "
-        "2.0.0 vs Dockerfile.backend surreal v3.0.5). Repro: spawn_surreal → seed → "
-        "StorageEngine(surrealkv://dir) fails server-up AND server-down."
-    )
     def test_real_nightly_main_exits_zero_no_contention(self, dedicated_backend, tmp_path, caplog):
         import logging
 

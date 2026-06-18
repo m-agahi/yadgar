@@ -16,7 +16,7 @@ Run: `make e2e` (local, real `surreal`) + pre-push hook; **excluded from CI**
 (`-m 'not e2e'`).
 
 **Surface (recounted v5.71, self-enforced by `scripts/check_contract_coverage.py`):**
-**233 SHALLs / 38 subsystems.** Today: **15 ✅ · 205 ⏳ · 13 ❌.** Of the 205 ⏳:
+**233 SHALLs / 38 subsystems.** Today: **16 ✅ · 205 ⏳ · 12 ❌.** Of the 205 ⏳:
 **70 `[r]` (real-path coverage exists) · 103 `[u]` (unit-only) · 32 none.**
 Goal: every SHALL → ✅ or ❌.
 
@@ -54,7 +54,7 @@ Goal: every SHALL → ✅ or ❌.
 - BC-C5b if astrocyte pool is disabled, config reports it disabled + emits exactly one startup warning. ⏳ #40 P2
 
 ### D. Nightly cycle (host job; tests use TEMP data dir + stubbed service control)
-- BC-D1 nightly completes exit 0 against seeded temp DB. ❌ #51 P1 (skew-blocked: surrealdb SDK 2.0.0 cannot embedded-open a surreal-3.0.5 surrealkv DB; e2e ships skipped, see SDK/server-alignment follow-up)
+- BC-D1 nightly completes exit 0 against seeded temp DB. ✅ `tests/e2e/test_vacuum_backup_safety.py::TestBCD1_NightlyCompletesExitZero::test_real_nightly_main_exits_zero_no_contention` P1
 - BC-D2 pre-backup snapshot at real YADGAR_DATA_DIR/XDG, not stale config (v5.67). ⏳ P1
 - BC-D3 interpreter shutdown clean (no SEGV / unhandled GC). ❌ #43 P1 (resolved via CPython 3.14.4 — the `_asyncio` finalize SEGV was a 3.14.3 bug fixed in 3.14.4; `.venv` now 3.14.4; no dedicated e2e asserts clean exit, so status stays ❌ until a test proves it)
 
@@ -369,7 +369,8 @@ Goal: every SHALL → ✅ or ❌.
   control) + P1 DB-layer tests green + #38, #37 fixed real red→green; the
   data-safety P1 contracts (D1/D3/E1-3/F1) ship `xfail(strict)` linking #43/#44/#45.
 - **v5.69:** vacuum/backup data-safety contracts BC-E1/E2/E3/F1/F2/F3 flipped ✅
-  (real e2e in `test_vacuum_backup_safety.py`). BC-D1 stays ❌ (#51 SDK/server skew).
+  (real e2e in `test_vacuum_backup_safety.py`). BC-D1 flipped ✅ in v5.70.1 (#51 — nightly
+  moved to HTTP/server mode, eliminating the embedded surrealkv SDK/server skew).
 - **v5.71:** contract hardened — header recounted + self-enforced, retrieval (RR),
   in-context/action-stream/anchors/hook/rules/agent-prompt subsystems added,
   BC-MCP exploded to a per-tool table (72), BC-INV exploded per-invariant,

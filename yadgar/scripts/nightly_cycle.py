@@ -3,18 +3,19 @@
 Runs once and exits. systemd timer (PR-1b) handles scheduling.
 
 Lifecycle (steps 1-7):
-  1. Stop yadgar core (releases embedded StorageEngine DB lock).
-  2. Pre-backup snapshot (label="nightly-pre") — only valid because core is down.
-  3. Consolidation — open StorageEngine in embedded mode, run
-     ConsolidationScheduler.run_nightly_consolidation() (a consolidation cycle
-     plus the gated sleep cycle — #37), close storage cleanly.
-     YADGAR_DB_URL must be unset so StorageEngine opens in embedded mode.
-  4. Vacuum — cmd_vacuum_impl manages its own service lifecycle (starts backend,
-     runs export/swap/import, restarts core, runs check_invariants).
-  5. Stop core again for quiesced consistency, then post-backup snapshot
-     (label="nightly-post").
+  1. Stop yadgar CORE only. Backend stays up to serve HTTP consolidation + backup.
+  2. Pre-backup snapshot (label="nightly-pre") — logical HTTP export via backend_url
+     (GET /export), taken while core is down and backend is still up.
+  3. Consolidation — StorageEngine opens in SERVER mode (YADGAR_DB_URL is set;
+     backend is up). ConsolidationScheduler.run_nightly_consolidation() runs via
+     the live HTTP connection — no embedded file lock, no surrealkv format skew.
+     Fixes BC-D1: eliminates the embedded SDK 2.0.0 vs server 3.0.5 format error.
+  4. Vacuum — cmd_vacuum_impl manages the backend within step 4 (export/swap/import),
+     restarts core, runs check_invariants.
+  5. Post-backup snapshot (label="nightly-post") — another logical HTTP export.
+     Backend stays up; no second stop needed.
   6. Prune old snapshots.
-  7. Restart core (final ensure).
+  7. Start yadgar CORE. Backend was never stopped, so only core needs starting.
 
 Exit codes:
   0  — full success
@@ -160,41 +161,18 @@ def _log_start(action: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _stop_both_units() -> None:
-    """Stop BOTH yadgar AND yadgar-backend (v5.69 P5 — releases the surrealkv lock).
-
-    Order: core first, THEN backend.  ``yadgar.service`` has only weak
-    ``After``+``Wants`` on ``yadgar-backend`` (not ``BindsTo``/``PartOf``), so
-    stopping only ``yadgar`` leaves the backend holding the surrealkv file lock —
-    the root cause of the nightly "exit 30": step-3 then opens StorageEngine
-    EMBEDDED and contends with the still-locked dir.  Stopping the backend too
-    releases the lock so embedded consolidation + a consistent copytree can run.
-    """
-    _stop_service(_UNIT_CORE)
-    _stop_service(_UNIT_BACKEND)
-
-
-def _start_both_units() -> None:
-    """Start BOTH units in dependency order (v5.69 P5): backend THEN core.
-
-    ``yadgar.service`` declares ``After``+``Wants`` ``yadgar-backend`` — the
-    backend must be up before core, which connects to it on start.
-    """
-    _start_service(_UNIT_BACKEND)
-    _start_service(_UNIT_CORE)
-
-
 def _step_stop_core() -> int:
-    """Step 1: Stop yadgar core AND backend. Returns 0 on success, 10 on failure (FATAL).
+    """Step 1: Stop yadgar CORE only. Returns 0 on success, 10 on failure (FATAL).
 
-    v5.69 P5: stops BOTH units so the surrealkv lock is released before step-3
-    opens StorageEngine embedded (kills the exit-30 contention) and before the
-    snapshot copytree (kills the torn-backup hazard).
+    Backend stays up throughout the nightly cycle so that consolidation (step 3)
+    and backups (steps 2 + 5) can run over HTTP. Stopping only core releases
+    core's connection without touching the backend's surrealkv lock — no embedded
+    open is attempted at any step (#51 / BC-D1 fix).
     """
     _log_start("stop_core")
     t0 = time.monotonic()
     try:
-        _stop_both_units()
+        _stop_service(_UNIT_CORE)
         _log_step("stop_core", "ok", (time.monotonic() - t0) * 1000)
         return 0
     except Exception as exc:
@@ -208,12 +186,18 @@ def _step_stop_core() -> int:
         return 10
 
 
-def _step_pre_backup(db_path: Path, snapshot_dir: Path) -> int:
-    """Step 2: Pre-backup snapshot. Returns 0 on success, 20 on failure (FATAL)."""
+def _step_pre_backup(db_path: Path, snapshot_dir: Path, backend_url: str) -> int:
+    """Step 2: Pre-backup snapshot via HTTP export. Returns 0 on success, 20 on failure (FATAL).
+
+    Uses backend_url to call GET /export — a transactionally consistent logical
+    snapshot taken while the backend is live. No copytree (no surrealkv lock needed).
+    """
     _log_start("pre_backup")
     t0 = time.monotonic()
     try:
-        create_snapshot(db_path, snapshot_dir=snapshot_dir, label="nightly-pre")
+        create_snapshot(
+            db_path, snapshot_dir=snapshot_dir, label="nightly-pre", backend_url=backend_url
+        )
         _log_step("pre_backup", "ok", (time.monotonic() - t0) * 1000)
         return 0
     except Exception as exc:
@@ -228,14 +212,14 @@ def _step_pre_backup(db_path: Path, snapshot_dir: Path) -> int:
 
 
 def _step_consolidation(db_path: Path, settings: Settings) -> int:
-    """Step 3: Consolidation in embedded mode. Returns 0 on success, 30 on failure.
+    """Step 3: Consolidation in server mode. Returns 0 on success, 30 on failure.
 
-    YADGAR_DB_URL is popped before opening StorageEngine (so it opens in embedded
-    mode, acquiring the file lock that core just released) and restored after.
+    YADGAR_DB_URL remains set so StorageEngine opens in server mode (HTTP
+    connection to the live backend). No embedded open, no surrealkv file lock —
+    eliminates the SDK 2.0.0 vs server 3.0.5 format-skew failure (BC-D1 / #51).
     """
     _log_start("consolidation")
     t0 = time.monotonic()
-    saved_db_url = os.environ.pop("YADGAR_DB_URL", None)
     storage = None
     try:
         storage = StorageEngine(str(db_path))
@@ -263,27 +247,21 @@ def _step_consolidation(db_path: Path, settings: Settings) -> int:
                 storage.close()
             except Exception:
                 pass
-        if saved_db_url is not None:
-            os.environ["YADGAR_DB_URL"] = saved_db_url
 
 
 def _step_vacuum(db_path: Path, backend_url: str, service_mode: str | None) -> int:
     """Step 4: Vacuum. Returns 0 on success, 40 on failure (non-fatal).
 
-    v5.69 P5: step 1 stopped BOTH units (so step-3 consolidation could open
-    StorageEngine embedded without lock contention).  Consolidation closed its
-    embedded storage in its ``finally`` (lock released), so the backend can — and
-    MUST — be restarted before vacuum: ``cmd_vacuum_impl`` requires the backend
-    REACHABLE (it does ``GET /export`` + a reachability preflight before it stops
-    the backend itself for the swap).  This is the "stop → embedded → restart"
-    dance whose D-Bus restart failed on 06-16; the bounded ``_run_systemctl``
-    retry now protects it.  A start failure falls through to the except → 40
-    (non-fatal), same as any other vacuum-step error.
+    Backend is already up (was never stopped). The _start_service(_UNIT_BACKEND)
+    call below is a safety no-op — starting an already-active unit is harmless —
+    kept so that if a prior step somehow left the backend down, vacuum can still
+    recover rather than failing silently.  ``cmd_vacuum_impl`` requires the backend
+    reachable (GET /export + preflight) before it performs the swap.
     """
     _log_start("vacuum")
     t0 = time.monotonic()
     try:
-        _start_service(_UNIT_BACKEND)
+        _start_service(_UNIT_BACKEND)  # safety no-op: backend was never stopped (#51)
         vacuum_args = SimpleNamespace(
             backend_url=backend_url,
             service_mode=service_mode,
@@ -307,39 +285,27 @@ def _step_vacuum(db_path: Path, backend_url: str, service_mode: str | None) -> i
         return 40
 
 
-def _step_post_backup(db_path: Path, snapshot_dir: Path) -> int:
-    """Step 5: Stop both units, then post-backup snapshot. Returns 0 on success, 50 on failure.
+def _step_post_backup(db_path: Path, snapshot_dir: Path, backend_url: str) -> int:
+    """Step 5: Post-backup snapshot via HTTP export. Returns 0 on success, 50 on failure.
 
-    v5.69 P5: vacuum (step 4) leaves both units running again, so re-stop BOTH
-    before the post-backup copytree — a quiesced (lock-released) dir is the only
-    one a copytree can capture consistently.
+    Backend stays up after vacuum (it was never stopped by the nightly cycle).
+    Export via GET /export gives a transactionally consistent artifact — no need
+    to stop the backend first. The old stop-both-for-copytree logic is removed
+    (#51 / BC-D1 fix).
     """
-    _log_start("stop_core_post")
-    t0 = time.monotonic()
-    try:
-        _stop_both_units()
-        _log_step("stop_core_post", "ok", (time.monotonic() - t0) * 1000)
-    except Exception as exc:
-        record_exception("nightly_cycle.stop_core_post", exc)
-        _log_step("stop_core_post", "error", (time.monotonic() - t0) * 1000, error=str(exc))
-        _log.warning(
-            "step 5a (stop core for post-backup) failed — skipping post-backup: %s",
-            exc,
-            extra={"component": "nightly_cycle", "action": "stop_core_post", "outcome": "error"},
-        )
-        return 50
-
     _log_start("post_backup")
     t0 = time.monotonic()
     try:
-        create_snapshot(db_path, snapshot_dir=snapshot_dir, label="nightly-post")
+        create_snapshot(
+            db_path, snapshot_dir=snapshot_dir, label="nightly-post", backend_url=backend_url
+        )
         _log_step("post_backup", "ok", (time.monotonic() - t0) * 1000)
         return 0
     except Exception as exc:
         record_exception("nightly_cycle.post_backup", exc)
         _log_step("post_backup", "error", (time.monotonic() - t0) * 1000, error=str(exc))
         _log.warning(
-            "step 5b (post-backup snapshot) failed — continuing: %s",
+            "step 5 (post-backup snapshot) failed — continuing: %s",
             exc,
             extra={"component": "nightly_cycle", "action": "post_backup", "outcome": "error"},
         )
@@ -366,15 +332,16 @@ def _step_prune(snapshot_dir: Path, retention: int) -> int:
 
 
 def _step_start_core() -> int:
-    """Step 7: Ensure both units are running. Returns 0 on success, 70 on failure.
+    """Step 7: Start yadgar CORE. Returns 0 on success, 70 on failure.
 
-    v5.69 P5: start BOTH units in dependency order (backend THEN core) — the
-    nightly stopped both, so it must bring both back.
+    Backend was never stopped, so only core needs to be started. The backend
+    is already running and serving connections — this restores only the half
+    that was taken down in step 1.
     """
     _log_start("start_core")
     t0 = time.monotonic()
     try:
-        _start_both_units()
+        _start_service(_UNIT_CORE)
         _log_step("start_core", "ok", (time.monotonic() - t0) * 1000)
         return 0
     except Exception as exc:
@@ -429,7 +396,7 @@ def main(args=None) -> int:  # type: ignore[no-untyped-def]
         return code
 
     # Step 2: pre-backup (FATAL on failure)
-    code = _step_pre_backup(db_path, snapshot_dir)
+    code = _step_pre_backup(db_path, snapshot_dir, backend_url)
     if code != 0:
         return code
 
@@ -437,7 +404,7 @@ def main(args=None) -> int:  # type: ignore[no-untyped-def]
     for step_fn in [
         lambda: _step_consolidation(db_path, settings),
         lambda: _step_vacuum(db_path, backend_url, service_mode),
-        lambda: _step_post_backup(db_path, snapshot_dir),
+        lambda: _step_post_backup(db_path, snapshot_dir, backend_url),
         lambda: _step_prune(snapshot_dir, retention),
         lambda: _step_start_core(),
     ]:
