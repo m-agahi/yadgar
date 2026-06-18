@@ -666,3 +666,362 @@ class TestBCEN3a_Doc2QueryEnrichment:
             "BC-EN3a: a stored memory MUST carry doc2query/enrichment synthetic-query "
             "artifacts (#39 — enrichment pipeline is unwired from the write path)."
         )
+
+
+# ===========================================================================
+# GREEN — CLS episodic→semantic promotion
+# BC-CLS1 (episodic grouped from episodes) + BC-CLS2 (repeated patterns abstracted
+# to semantic) + BC-CLS3 (promoted memory derives directory from sources, v5.64).
+#
+# The qualifying conditions for _qualify_cluster require:
+#   - ≥3 cluster members (min_occurrences default)
+#   - ≥2 distinct session_ids (via source_episode_id or created_at[:10])
+#   - Embedding cosine ≥ CLUSTER_SIMILARITY_THRESHOLD (0.7 default)
+#
+# We seed 4 closely-related episodic memories split across two calendar dates (to
+# get session diversity from created_at[:10]).  Same prose repeated with minor
+# variation so their cosine similarity exceeds 0.7.  All stamped with the same
+# yadgar_dir so promoted memory inherits that directory via dominant_directory().
+# ===========================================================================
+
+
+def _insert_mem_dated(
+    e2e_engines,
+    content: str,
+    directory: str,
+    created_at: str,
+    *,
+    heat: float = 0.8,
+) -> int:
+    """Insert a memory with a specific created_at timestamp for session-diversity seeding."""
+    storage = e2e_engines["storage"]
+    emb = _embed(e2e_engines, content)
+    doc = {
+        "content": content,
+        "embedding": emb,
+        "directory_context": directory,
+        "heat": heat,
+        "tags": [],
+        "last_accessed": created_at,
+        "created_at": created_at,
+        "access_count": 0,
+        "is_protected": False,
+    }
+    return storage.insert_memory(doc)
+
+
+class TestBCCLS1_2_3_EpisodicToSemantic:
+    """BC-CLS1 / BC-CLS2 / BC-CLS3: DualStoreCLS consolidation_cycle promotes
+    repeated episodic patterns to a semantic memory stamped with the source directory."""
+
+    def _make_cls(self, e2e_engines):
+        from yadgar.cls_store import DualStoreCLS
+        from yadgar.config import Settings
+
+        settings = Settings(DB_PATH=e2e_engines["db_path"])
+        return DualStoreCLS(
+            storage=e2e_engines["storage"],
+            embeddings=e2e_engines["embeddings"],
+            settings=settings,
+        )
+
+    def test_consolidation_cycle_promotes_semantic_and_stamps_directory(self, e2e_engines):
+        """consolidation_cycle SHALL:
+        1. Group similar episodic memories (BC-CLS1) — find_recurring_patterns returns ≥1.
+        2. Abstract them to a new semantic memory (BC-CLS2) — total_semantic goes 0→≥1.
+        3. Stamp the promoted memory with the dominant source directory (BC-CLS3).
+
+        Session diversity is provided by two distinct created_at dates (≥2 days apart),
+        which _session_proxy uses as a proxy when source_episode_id is absent.
+        All source memories are stamped with yadgar_dir, so dominant_directory() → yadgar_dir.
+        """
+        storage = e2e_engines["storage"]
+        yadgar_dir = e2e_engines["yadgar_dir"]
+
+        # Verify precondition: no semantic memories yet
+        pre_semantic = storage.count_memories_by_store_type("semantic")
+
+        # Day-1 memories (two on 2024-01-10)
+        day1 = "2024-01-10T10:00:00+00:00"
+        day2 = "2024-01-11T10:00:00+00:00"
+
+        # Four paraphrases of the same engineering fact — high embedding similarity
+        # (cosine ~0.88 with all-MiniLM-L6-v2), well above 0.7 threshold.
+        # No negation so check_consistency passes; no _action_stream / auto-abstracted tags.
+        prose_variants = [
+            "The deployment pipeline publishes container images to ECR and triggers "
+            "a rolling restart on the production cluster xcls1seed0001",
+            "Publishing Docker images to ECR then issuing a rolling restart on the "
+            "prod cluster is the standard deployment pipeline xcls1seed0002",
+            "Rolling restarts on the production cluster follow ECR image publication "
+            "as part of our established deployment pipeline xcls1seed0003",
+            "Standard deployment: push container image to ECR, then perform a rolling "
+            "restart across the production cluster xcls1seed0004",
+        ]
+        # Two on day1, two on day2 → _session_proxy sees ≥2 distinct dates
+        for prose in prose_variants[:2]:
+            _insert_mem_dated(e2e_engines, prose, yadgar_dir, day1, heat=0.8)
+        for prose in prose_variants[2:]:
+            _insert_mem_dated(e2e_engines, prose, yadgar_dir, day2, heat=0.8)
+
+        cls = self._make_cls(e2e_engines)
+
+        # BC-CLS1: find_recurring_patterns should find ≥1 qualifying cluster
+        patterns = cls.find_recurring_patterns()
+        assert patterns, (
+            "BC-CLS1: find_recurring_patterns MUST group the similar episodic memories "
+            "into ≥1 qualifying cluster. Got 0 patterns — cluster similarity or "
+            "session-diversity gate may have rejected all candidates."
+        )
+
+        # BC-CLS2: consolidation_cycle promotes to a semantic memory
+        stats = cls.consolidation_cycle()
+        post_semantic = storage.count_memories_by_store_type("semantic")
+        assert stats["promoted"] >= 1, (
+            f"BC-CLS2: consolidation_cycle MUST abstract episodic clusters to ≥1 "
+            f"semantic memory. promoted={stats['promoted']} (stats={stats})"
+        )
+        assert post_semantic > pre_semantic, (
+            f"BC-CLS2: semantic memory count MUST increase after promotion. "
+            f"before={pre_semantic} after={post_semantic}"
+        )
+
+        # BC-CLS3: promoted semantic memory derives directory from sources
+        semantic_rows = storage.get_memories_by_store_type("semantic", limit=50)
+        new_semantics = [r for r in semantic_rows if r.get("heat", 0) > 0]
+        assert new_semantics, "BC-CLS3: at least one semantic row must be present after promotion"
+
+        # The promoted memory must carry yadgar_dir as its directory_context —
+        # dominant_directory() over 4×yadgar_dir should return yadgar_dir (single real dir).
+        promoted_dirs = {r.get("directory_context") for r in new_semantics}
+        assert yadgar_dir in promoted_dirs, (
+            f"BC-CLS3: promoted semantic memory MUST derive directory from source episodics. "
+            f"Expected directory_context={yadgar_dir!r} in promoted rows. "
+            f"Got directories: {promoted_dirs}"
+        )
+
+
+# ===========================================================================
+# GREEN — MMR diversification (BC-RR7)
+# Maximal Marginal Relevance reduces near-duplicate results in the top-k.
+#
+# We construct a Reranker with real storage+embeddings, seed 3 near-duplicates
+# (high mutual cosine) + 1 clearly diverse memory, stamp _retrieval_score
+# so mmr_rerank can measure relevance, then assert the diverse memory appears
+# in the MMR top-k even though its _retrieval_score is lower than the near-dups.
+#
+# mmr_rerank fetches the actual stored embedding via storage.get_memory(id), so
+# memories must be persisted first.
+# ===========================================================================
+
+
+class TestBCRR7_MMRDiversification:
+    """BC-RR7: MMR rerank selects a diverse candidate over a near-duplicate."""
+
+    def _make_reranker(self, e2e_engines):
+        from yadgar.config import Settings
+        from yadgar.retrieval.reranking import Reranker
+
+        settings = Settings(DB_PATH=e2e_engines["db_path"])
+        # Disable ML model — mmr_rerank only uses local embeddings from storage
+        return Reranker(settings, e2e_engines["storage"], ml_client=None)
+
+    def test_mmr_selects_diverse_over_near_dup(self, e2e_engines):
+        """mmr_rerank SHALL return a diverse candidate in top-k even when near-duplicates
+        have higher _retrieval_score, as long as lambda_param < 1 allows diversity.
+
+        BC-RR7 observable: in a set of 3 near-dups + 1 diverse memory, the diverse
+        memory appears in the MMR top-3 output even when its raw retrieval score
+        is 0.1 lower than the near-dups.
+        """
+        storage = e2e_engines["storage"]
+        embeddings = e2e_engines["embeddings"]
+        yadgar_dir = e2e_engines["yadgar_dir"]
+
+        # Near-duplicate trio — same fact stated three ways; expected cosine ~0.88
+        near_dup_contents = [
+            "The CI pipeline compiles the binary, runs tests, and pushes to ECR on "
+            "every merged PR xrr7dup10001",
+            "On every merged pull request the CI system compiles, tests, and pushes "
+            "the binary image to ECR xrr7dup10002",
+            "Merging a PR triggers compilation, test suite execution, and ECR image "
+            "push through the CI pipeline xrr7dup10003",
+        ]
+        diverse_content = (
+            "The board game tournament uses a Swiss pairing system for the first "
+            "three rounds before a single-elimination bracket xrr7div10004"
+        )
+
+        dup_ids = []
+        for c in near_dup_contents:
+            mid = _insert_mem(e2e_engines, c, yadgar_dir, heat=0.8)
+            dup_ids.append(mid)
+        diverse_id = _insert_mem(e2e_engines, diverse_content, yadgar_dir, heat=0.8)
+
+        # Assign scores: near-dups score 0.9, diverse scores 0.8 (10% below near-dups)
+        # The diverse memory should still win on MMR due to low similarity to selected.
+        candidates = []
+        for mid in dup_ids:
+            mem = storage.get_memory(mid)
+            assert mem is not None, f"BC-RR7 setup: memory {mid} must be retrievable"
+            mem["_retrieval_score"] = 0.9
+            candidates.append(mem)
+
+        diverse_mem = storage.get_memory(diverse_id)
+        assert diverse_mem is not None, "BC-RR7 setup: diverse memory must be retrievable"
+        diverse_mem["_retrieval_score"] = 0.8
+        candidates.append(diverse_mem)
+
+        reranker = self._make_reranker(e2e_engines)
+        # Encode the query to get a query embedding for MMR
+        query_embedding = embeddings.encode("deployment pipeline CI ECR")
+
+        # lambda=0.5: equal weight to relevance and diversity.
+        # At 0.5, the diversity penalty on the 2nd/3rd near-dup should exceed the
+        # 0.1 score gap, causing the diverse memory to be selected before the 3rd near-dup.
+        result = reranker.mmr_rerank(
+            list(candidates),  # copy — mmr mutates order
+            query_embedding=query_embedding,
+            top_k=3,
+            lambda_param=0.5,
+        )
+
+        assert len(result) == 3, f"BC-RR7: mmr_rerank must return top_k=3, got {len(result)}"
+
+        result_ids = {r["id"] for r in result}
+        assert diverse_id in result_ids, (
+            "BC-RR7: MMR MUST select the diverse candidate in top-3 even when its "
+            f"_retrieval_score ({0.8}) is lower than near-dups ({0.9}). "
+            f"Result ids: {result_ids}, diverse id: {diverse_id}. "
+            "MMR diversification is not working — lambda_param may be too high, "
+            "or embeddings are not stored with sufficient similarity for the near-dups."
+        )
+
+
+# ===========================================================================
+# GREEN — Convex fusion (BC-RR10)
+# The fusion default is convex combination of normalized signal scores
+# (FUSION_METHOD = "convex" per config default).
+#
+# We test _convex_fuse directly with two competing signals: in signal A, memory
+# M1 scores high; in signal B, M2 scores high.  _convex_fuse with equal weights
+# should pick whichever has the better combined score — not the same top-1 as
+# either signal alone (proving it fuses, not just delegates to one signal).
+# No ML model needed; no storage needed — pure score-dict arithmetic.
+# ===========================================================================
+
+
+class TestBCRR10_ConvexFusion:
+    """BC-RR10: _convex_fuse produces a rank-based convex combination, not a passthrough."""
+
+    def test_convex_fuse_combines_signals(self, e2e_engines):
+        """_convex_fuse SHALL combine two signals such that a memory dominating
+        both signals wins over one that dominates only one signal.
+
+        Observable: M3 (moderate in both vector + fts) ranks higher than M1
+        (strong in vector only) or M2 (strong in fts only) after convex fusion
+        with equal weights.  This proves the function actually combines signals
+        rather than passing through either one.
+        """
+        from yadgar.retrieval.fusion import _convex_fuse
+
+        # Memory IDs (arbitrary ints for this pure-function test)
+        M1, M2, M3 = 1001, 1002, 1003
+
+        signal_scores: dict[str, dict[int, float]] = {
+            "vector": {M1: 0.9, M2: 0.1, M3: 0.6},
+            "fts": {M1: 0.1, M2: 0.9, M3: 0.6},
+        }
+        weights = {"vector": 1.0, "fts": 1.0}
+
+        fused = _convex_fuse(signal_scores, weights)
+        # Result is [(mid, score), ...] sorted descending
+        assert fused, "BC-RR10: _convex_fuse must return a non-empty result"
+        top_id = fused[0][0]
+
+        # After min-max normalisation within each signal:
+        #   vector: M1=1.0, M2=0.0, M3=0.625  (norm = (0.6-0.1)/(0.9-0.1) = 0.625)
+        #   fts:    M2=1.0, M1=0.0, M3=0.625
+        # Combined (equal w=0.5 after normalisation):
+        #   M1 = 0.5*1.0 + 0.5*0.0 = 0.5
+        #   M2 = 0.5*0.0 + 0.5*1.0 = 0.5
+        #   M3 = 0.5*0.625 + 0.5*0.625 = 0.625
+        # M3 should win — it is consistently moderate across both signals.
+        assert top_id == M3, (
+            f"BC-RR10: _convex_fuse MUST rank M3 (consistently moderate) above "
+            f"M1 (vector-only) and M2 (fts-only) with equal weights. "
+            f"top_id={top_id}, expected={M3}. "
+            f"Full fused order: {fused}"
+        )
+
+        # Sanity: all three IDs in output
+        fused_ids = {mid for mid, _ in fused}
+        assert {M1, M2, M3} <= fused_ids, (
+            f"BC-RR10: all input memory IDs must appear in fused output. fused_ids={fused_ids}"
+        )
+
+
+# ===========================================================================
+# GREEN — Confidence gate (BC-RR5)
+# The quality floor / confidence gate drops low-confidence results (CE≈0).
+#
+# compute_signal_confidence returns 0.0 for an empty ranked list (no results
+# found by that signal → zero confidence).  For a populated list it returns
+# a positive score.  Together these assert the gate's discriminating math.
+#
+# detect_adversarial returns {"abstain": True} when the single result is
+# very low-scored, proving the abstain path for near-zero CE.
+# ===========================================================================
+
+
+class TestBCRR5_ConfidenceGate:
+    """BC-RR5: confidence gate / quality floor correctly scores and abstains."""
+
+    def _make_reranker(self, e2e_engines):
+        from yadgar.config import Settings
+        from yadgar.retrieval.reranking import Reranker
+
+        settings = Settings(DB_PATH=e2e_engines["db_path"])
+        return Reranker(settings, e2e_engines["storage"], ml_client=None)
+
+    def test_zero_confidence_for_empty_signal(self, e2e_engines):
+        """compute_signal_confidence(vector, []) SHALL return 0.0 — no results → no confidence."""
+        reranker = self._make_reranker(e2e_engines)
+        conf = reranker.compute_signal_confidence("vector", [])
+        assert conf == 0.0, (
+            f"BC-RR5: empty ranked list MUST yield 0.0 confidence for 'vector' signal. Got {conf}"
+        )
+
+    def test_positive_confidence_for_populated_signal(self, e2e_engines):
+        """compute_signal_confidence(vector, non-empty) SHALL return > 0 — results found."""
+        reranker = self._make_reranker(e2e_engines)
+        # A single result with score 0.7 — confidence = min(1.0, 0.7 * (1 + 0.7)) = 1.0
+        conf = reranker.compute_signal_confidence("vector", [(101, 0.7)])
+        assert conf > 0.0, (
+            f"BC-RR5: non-empty ranked list MUST yield positive confidence. Got {conf}"
+        )
+
+    def test_abstain_on_near_zero_score(self, e2e_engines):
+        """detect_adversarial SHALL return abstain=True when the single result has
+        a near-zero retrieval score (CE≈0 → floor triggers abstain)."""
+        reranker = self._make_reranker(e2e_engines)
+        low_conf_result = [{"_retrieval_score": 0.01, "id": 202, "content": "x"}]
+        analysis = reranker.detect_adversarial(low_conf_result)
+        assert analysis.get("abstain") is True, (
+            "BC-RR5: detect_adversarial MUST set abstain=True for a single near-zero "
+            f"scored result (CE≈0 quality floor). Got: {analysis}"
+        )
+
+    def test_no_abstain_on_high_score(self, e2e_engines):
+        """detect_adversarial SHALL NOT abstain when top result has a high retrieval score."""
+        reranker = self._make_reranker(e2e_engines)
+        # Two results: clear winner (0.9) vs runner-up (0.2) → high z-gap → confident
+        high_conf_results = [
+            {"_retrieval_score": 0.9, "id": 301, "content": "strong match"},
+            {"_retrieval_score": 0.2, "id": 302, "content": "weak match"},
+        ]
+        analysis = reranker.detect_adversarial(high_conf_results)
+        assert analysis.get("abstain") is False, (
+            "BC-RR5: detect_adversarial MUST NOT abstain when top result is high-scored. "
+            f"Got: {analysis}"
+        )
