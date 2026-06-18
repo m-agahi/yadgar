@@ -7,6 +7,16 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.71.0] - 2026-06-18
+
+### Fixed
+- CLS consolidation no longer aborts the whole cycle when one promotable pattern trips the secret-gate — that pattern is skipped (logged + counted in `skipped_secret`) and the cycle continues. (#57)
+- Core daemon event-loop hang: blocking sync I/O in the `post-compact` and `session-context` HTTP hooks is now offloaded via `asyncio.to_thread`, and the SSE event-queue read is `_event_lock`-guarded — one slow backend call can no longer wedge the single-worker daemon. (#58)
+- Active-work watchdog prunes stale markers for removed worktree directories instead of polling dead paths. (#56)
+
+### Removed
+- 4 orphaned `CognitiveMap` helper methods (`update_memory_coordinates`, `get_neighborhood`, `get_sr_scores`, `is_dirty`) — the class stays live via the restore path. (#47)
+
 ## [5.70.1] - 2026-06-18
 
 ### Fixed

@@ -29,6 +29,7 @@ from yadgar.cls_store.patterns import (
 from yadgar.cls_store.promotion import _PromotionMixin
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
+from yadgar.secrets import SecretLeakBlocked
 from yadgar.storage import StorageEngine
 from yadgar.tracing import trace_span
 
@@ -76,6 +77,7 @@ class DualStoreCLS(_ClusteringMixin, _PatternsMixin, _PromotionMixin):
             "patterns_found": 0,
             "promoted": 0,
             "skipped_inconsistent": 0,
+            "skipped_secret": 0,
             "total_episodic": 0,
             "total_semantic": 0,
         }
@@ -97,7 +99,12 @@ class DualStoreCLS(_ClusteringMixin, _PatternsMixin, _PromotionMixin):
                 stats["skipped_inconsistent"] += 1
                 continue
 
-            promoted = self._promote_pattern(pattern)
+            try:
+                promoted = self._promote_pattern(pattern)
+            except SecretLeakBlocked as exc:
+                logger.warning("CLS: pattern skipped — secret-gate blocked promotion: %s", exc)
+                stats["skipped_secret"] += 1
+                continue
             if promoted:
                 stats["promoted"] += 1
 
