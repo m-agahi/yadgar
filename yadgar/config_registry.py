@@ -300,6 +300,7 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_WRRF_COFIRE_PRIOR_WEIGHT", "0.15", "float"),
     # ── v5.62.0 recall quality floor ─────────────────────────────────────────
     ConfigEntry("YADGAR_RECALL_QUALITY_FLOOR", "0.0", "float"),
+    ConfigEntry("YADGAR_ASTROCYTE_POOL_ENABLED", "true", "bool"),
 ]
 
 

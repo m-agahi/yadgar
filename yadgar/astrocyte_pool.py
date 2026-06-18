@@ -4,7 +4,6 @@ import json
 import logging
 import re
 import time
-from datetime import UTC, datetime
 
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
@@ -181,7 +180,11 @@ class AstrocytePool:
     def consolidate_domain(self, process_name: str) -> dict:
         """Run consolidation only on memories assigned to a specific domain process.
 
-        Applies domain-specific decay rates and extracts domain-specific entities.
+        Extracts domain-specific entities from assigned memories.
+        Heat decay is owned exclusively by heat_decay._decay_memories — this method
+        no longer writes heat (avoids the historical double-decay bug where
+        consolidate_domain AND _apply_decay both decayed off the same last_accessed,
+        compounding decay for multi-domain memories).
         """
         proc = self._processes.get(process_name)
         if proc is None:
@@ -194,15 +197,12 @@ class AstrocytePool:
         stats = {
             "process": process_name,
             "memories_processed": 0,
-            "memories_decayed": 0,
             "entities_extracted": 0,
         }
 
-        now = datetime.now(UTC)
-        decay_multiplier = domain_def["decay_multiplier"]
         memory_ids = proc.get("memory_ids", [])
 
-        # Apply domain-specific decay
+        # Scan assigned memories: clean up deleted ones and count live ones.
         for mid in list(memory_ids):
             mem = self._storage.get_memory(mid)
             if mem is None:
@@ -214,21 +214,6 @@ class AstrocytePool:
                 continue
 
             stats["memories_processed"] += 1
-
-            last = datetime.fromisoformat(mem["last_accessed"])
-            hours = (now - last).total_seconds() / 3600.0
-
-            # Domain-adjusted decay: modify hours by inverse of multiplier
-            # Higher multiplier = slower decay = fewer effective hours
-            adjusted_hours = hours / decay_multiplier
-            new_heat = self._thermo.compute_decay(mem, adjusted_hours)
-
-            if new_heat < self._settings.COLD_THRESHOLD:
-                new_heat = 0.0
-
-            if abs(new_heat - mem["heat"]) > 1e-9:
-                self._storage.update_memory_heat(mid, new_heat)
-                stats["memories_decayed"] += 1
 
         # Extract domain-specific entities from assigned memories
         entity_types = domain_def["entity_types"]
@@ -265,6 +250,10 @@ class AstrocytePool:
         proc["memory_ids"] = memory_ids
         proc["entity_ids"] = entity_ids
 
+        stats["summary"] = (
+            f"{process_name}: consolidated {stats['memories_processed']} memories, "
+            f"{stats['entities_extracted']} entities"
+        )
         return stats
 
     # -- d. Consensus Retrieval --

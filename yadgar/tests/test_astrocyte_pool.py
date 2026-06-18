@@ -168,9 +168,14 @@ class TestDomainConsolidation:
         assert result["process"] == "code-patterns"
         assert result["memories_processed"] >= 1
 
-    def test_domain_decay_applied(self, pool, storage):
-        """Errors domain (multiplier 0.7) should decay faster than decisions (1.5)."""
-        mid_err = storage.insert_memory(
+    def test_consolidate_domain_does_not_write_heat(self, pool, storage):
+        """consolidate_domain is decay-free: heat must be unchanged after consolidation.
+
+        Heat decay now lives exclusively in heat_decay._decay_memories (single decay site).
+        This guards against the historical double-decay bug where consolidate_domain AND
+        _apply_decay both wrote heat off the same last_accessed timestamp.
+        """
+        mid = storage.insert_memory(
             {
                 "content": "RuntimeError exception in handler. Bug crash failure.",
                 "directory_context": "/proj",
@@ -178,27 +183,15 @@ class TestDomainConsolidation:
                 "last_accessed": _hours_ago(24),
             }
         )
-        mid_dec = storage.insert_memory(
-            {
-                "content": "We decided to use PostgreSQL. Chose it for reliability. Selected approach.",
-                "directory_context": "/proj",
-                "heat": 0.9,
-                "last_accessed": _hours_ago(24),
-            }
-        )
-
-        pool.assign_memory(storage.get_memory(mid_err))
-        pool.assign_memory(storage.get_memory(mid_dec))
+        heat_before = storage.get_memory(mid)["heat"]
+        pool.assign_memory(storage.get_memory(mid))
 
         pool.consolidate_domain("errors")
-        pool.consolidate_domain("decisions")
 
-        err_mem = storage.get_memory(mid_err)
-        dec_mem = storage.get_memory(mid_dec)
-
-        # Error decayed with multiplier 0.7 (faster), decision with 1.5 (slower)
-        # So error memory should have lower heat
-        assert err_mem["heat"] < dec_mem["heat"]
+        heat_after = storage.get_memory(mid)["heat"]
+        assert heat_after == heat_before, (
+            "consolidate_domain must NOT write heat — single decay authority is heat_decay.py"
+        )
 
     def test_unknown_domain_returns_error(self, pool):
         result = pool.consolidate_domain("nonexistent")

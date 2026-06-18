@@ -7,6 +7,16 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.70.0] - 2026-06-18
+
+### Added
+- Domain-aware (category) heat decay: a single decay pass now applies a per-domain rate — `decisions` 1.5× slower, `errors` 0.7×, `dependencies` 1.2×, `code-patterns` 1.0× — folded into `_decay_memories` (no second decay site → no double-decay). `consolidate_domain` re-wired into the consolidation cycle decay-free (entity extraction + per-domain summary). New `ASTROCYTE_POOL_ENABLED` flag (default on). (#40)
+- Broader Phase-2 e2e coverage: episodic→semantic CLS promotion (BC-CLS1/2/3) and retrieval confidence-gate / MMR / convex-fusion (BC-RR5/7/10). (#46)
+- e2e test-tampering protections: contract ✅-count floor, ✅↔test integrity (no skip/xfail on a green-mapped test), e2e assertion-presence lint, and a pre-commit diff guard. (#52)
+
+### Fixed
+- Memory enrichment (COMET / doc2query / ConceptNet / logic) was silently off: the `insert_memory` user-write paths now thread `settings`/`embeddings_engine`, so the `INDEX_ENRICHMENT_ENABLED` pipeline actually runs. (#39)
+
 ## [5.69.0]
 
 Nightly-safety bundle. Closes the 2026-06-16 data-loss class: vacuum is now

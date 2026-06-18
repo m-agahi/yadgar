@@ -18,6 +18,33 @@ class _HeatDecayMixin:
         if ent_batch:
             self._storage.batch_writes(ent_batch)
 
+    def _build_domain_multiplier_map(self) -> dict[int, float]:
+        """Return {memory_id -> max decay multiplier across all domains}.
+
+        Called once per decay cycle; result passed into _decay_memories.
+        Higher multiplier -> fewer effective hours -> slower decay.
+        MAX tie-break for memories assigned to multiple domains.
+        Returns empty dict when pool is disabled or unavailable (all mults
+        fall through to 1.0, giving identical-to-today behaviour).
+        """
+        if not getattr(self._settings, "ASTROCYTE_POOL_ENABLED", True):
+            return {}
+        try:
+            from yadgar.astrocyte_pool import DOMAIN_DEFINITIONS  # noqa: PLC0415
+
+            domain_mult: dict[int, float] = {}
+            for proc in self._storage.get_astrocyte_processes():
+                proc_name = proc.get("name", "")
+                proc_mult = DOMAIN_DEFINITIONS.get(proc_name, {}).get("decay_multiplier", 1.0)
+                for mid in proc.get("memory_ids", []):
+                    existing = domain_mult.get(mid)
+                    domain_mult[mid] = (
+                        max(existing, proc_mult) if existing is not None else proc_mult
+                    )
+            return domain_mult
+        except Exception:
+            return {}  # pool unavailable -> all mults default 1.0
+
     def _decay_memories(self, stats: dict, now: datetime) -> list[tuple[str, dict | None]]:
         """Compute per-memory heat decay; return batch of DB writes."""
         cold = self._settings.COLD_THRESHOLD
@@ -25,13 +52,17 @@ class _HeatDecayMixin:
         # C2: recall-frequency-modulated decay (MemoryBank parity)
         recall_boost = self._settings.RECALL_BOOST
 
+        # Domain-multiplier map: empty when pool disabled -> all mults fall through to 1.0.
+        # This is the ONLY decay site -- consolidate_domain no longer writes heat.
+        domain_mult = self._build_domain_multiplier_map()
+
         mem_batch: list[tuple[str, dict | None]] = []
         for mem in self._storage.get_all_memories_for_decay():
             if mem.get("is_protected"):
                 continue
             # Decay over time since the LAST decay pass (watermark), not since
             # last access.  Without last_decay_at, every cycle re-applied the full
-            # now-last_accessed span onto already-decayed heat → quadratic
+            # now-last_accessed span onto already-decayed heat -> quadratic
             # over-decay for unaccessed memories.  Fall back to last_accessed for
             # rows written before last_decay_at existed.
             last = datetime.fromisoformat(mem["last_accessed"])
@@ -39,8 +70,12 @@ class _HeatDecayMixin:
             if last_decay_raw:
                 last = max(last, datetime.fromisoformat(last_decay_raw))
             hours = (now - last).total_seconds() / 3600.0
-            # Base decay — uses importance/valence/confidence modifiers
-            new_heat = self._thermo.compute_decay(mem, hours)
+            # Domain-aware decay: divide hours by multiplier (>1 -> slower, <1 -> faster).
+            # MAX tie-break: if memory belongs to multiple domains, use highest multiplier.
+            mult = domain_mult.get(mem["id"], 1.0)
+            adjusted_hours = hours / mult if mult > 0.0 else hours
+            # Base decay -- uses importance/valence/confidence modifiers
+            new_heat = self._thermo.compute_decay(mem, adjusted_hours)
             # C2: add per-cycle recall boost; reset counter atomically in same UPDATE
             access_since_decay = int(mem.get("access_count_since_decay", 0))
             if recall_boost > 0.0 and access_since_decay > 0:
