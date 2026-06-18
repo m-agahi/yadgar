@@ -16,8 +16,8 @@ Run: `make e2e` (local, real `surreal`) + pre-push hook; **excluded from CI**
 (`-m 'not e2e'`).
 
 **Surface (recounted v5.71, self-enforced by `scripts/check_contract_coverage.py`):**
-**233 SHALLs / 38 subsystems.** Today: **6 ✅ · 212 ⏳ · 15 ❌.** Of the 212 ⏳:
-**70 `[r]` (real-path coverage exists) · 110 `[u]` (unit-only) · 32 none.**
+**233 SHALLs / 38 subsystems.** Today: **12 ✅ · 206 ⏳ · 15 ❌.** Of the 206 ⏳:
+**70 `[r]` (real-path coverage exists) · 104 `[u]` (unit-only) · 32 none.**
 Goal: every SHALL → ✅ or ❌.
 
 **Lint rules** (`scripts/check_contract_coverage.py`, run as a non-e2e pytest):
@@ -150,12 +150,12 @@ Goal: every SHALL → ✅ or ❌.
 - BC-RR2 NLI entailment demotes a contradicting passage below an entailing one for the same query. ⏳[u] P1 (`_reranking_nli.nli_rerank`)
 - BC-RR3 adversarial-candidate filter drops/penalises a planted adversarial (prompt-injection / contradictory) candidate. ⏳[u] P2 (`stages/adversarial.AdversarialStage`, `_reranking_confidence.detect_adversarial`)
 - BC-RR4 stored rules rerank: a matching rule boosts/penalises a candidate's rank. ⏳[u] P2 (`reranking._rerank_rules`)
-- BC-RR5 confidence gate / quality floor drops low-confidence (CE≈0) results below the floor. ⏳[u] P1 (`_reranking_confidence.compute_signal_confidence`, `quality._compute_signal_confidence`)
+- BC-RR5 confidence gate / quality floor drops low-confidence (CE≈0) results below the floor. ✅ `tests/e2e/test_phase2_subsystems.py::TestBCRR5_ConfidenceGate::test_zero_confidence_for_empty_signal` (also test_positive_confidence_for_populated_signal, test_abstain_on_near_zero_score, test_no_abstain_on_high_score) P1
 - BC-RR6 multi-passage aggregation: a multi-chunk memory is scored by aggregated passage scores, not a single chunk. ⏳[u] P2 (`_reranking_multi_passage.multi_passage_rerank`)
-- BC-RR7 MMR diversification reduces near-duplicate results in the top-k. ⏳[u] P2 (`_reranking_mmr`)
+- BC-RR7 MMR diversification reduces near-duplicate results in the top-k. ✅ `tests/e2e/test_phase2_subsystems.py::TestBCRR7_MMRDiversification::test_mmr_selects_diverse_over_near_dup` P2
 - BC-RR8 query routing: analyze_query classifies query type and selects the matching retrieval path (factoid vs comparison vs open-domain). ⏳[u] P2 (`query_analysis.analyze_query`, `_classify_query_type`)
 - BC-RR9 query expansion: pseudo-HyDE / semantic-expansion adds boosted FTS subqueries that retrieve an item the raw query misses. ⏳[u] P2 (`query_analysis._pseudo_hyde_expand`, `_collect_semantic_expansions`, `_build_boosted_fts_query`)
-- BC-RR10 fusion default = convex combination of signal scores. ⏳[u] P1 (`fusion._convex_fuse`)
+- BC-RR10 fusion default = convex combination of signal scores. ✅ `tests/e2e/test_phase2_subsystems.py::TestBCRR10_ConvexFusion::test_convex_fuse_combines_signals` P1
 - BC-RR11 WRRF fusion (weighted reciprocal-rank fusion) available + selected by config, produces a rank-based fused order. ⏳[u] P2 (`fusion._wrrf_fuse`)
 - BC-RR12 temporal retrieval: a temporal expression ("yesterday", "last week") parses to a window that scores time-matching memories higher. ⏳[r] P2 (`temporal.parse_temporal_expression`, `scoring._collect_temporal_scores`)
 - BC-RR13 comparison-merge rerank merges the option candidates for a comparison query into a single ranked answer set. ⏳[u] P2 (`reranking._rerank_comparison_merge`)
@@ -183,9 +183,9 @@ Goal: every SHALL → ✅ or ❌.
 - BC-KG5 spreading activation propagates through edges. ⏳[r] P2
 
 ### CLS (episodic→semantic)
-- BC-CLS1 episodic grouped from episodes. ⏳[u] P2
-- BC-CLS2 repeated patterns abstracted to semantic. ⏳[u] P2
-- BC-CLS3 promoted memory derives directory from sources (v5.64 PD-48). ⏳[u] P2
+- BC-CLS1 episodic grouped from episodes. ✅ `tests/e2e/test_phase2_subsystems.py::TestBCCLS1_2_3_EpisodicToSemantic::test_consolidation_cycle_promotes_semantic_and_stamps_directory` P2
+- BC-CLS2 repeated patterns abstracted to semantic. ✅ `tests/e2e/test_phase2_subsystems.py::TestBCCLS1_2_3_EpisodicToSemantic::test_consolidation_cycle_promotes_semantic_and_stamps_directory` P2
+- BC-CLS3 promoted memory derives directory from sources (v5.64 PD-48). ✅ `tests/e2e/test_phase2_subsystems.py::TestBCCLS1_2_3_EpisodicToSemantic::test_consolidation_cycle_promotes_semantic_and_stamps_directory` P2
 
 ### Causal discovery
 - BC-CA1 co-occurring entities create edges. ⏳[r] P2
