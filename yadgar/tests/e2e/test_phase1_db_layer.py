@@ -177,7 +177,8 @@ class TestDataSafetyIsolation:
         """_assert_not_real_data_dir MUST NOT raise on a tmp_path (safe path)."""
         from yadgar.tests.e2e.conftest import _assert_not_real_data_dir
 
-        # This should not raise — tmp_path is never under ~/.local/share/yadgar
+        # tamper-lint: no-assert — assertion is implicit: call must not raise.
+        # The test verifies the guard accepts safe paths without a RuntimeError.
         _assert_not_real_data_dir(tmp_path / "e2e_test.db")
 
 
