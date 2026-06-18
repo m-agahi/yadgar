@@ -137,3 +137,10 @@ _team_inbox_positions: OrderedDict[str, int] = OrderedDict()
 # PLAN_*.md hash dedup: path → sha256 hex of last memorized content.
 # Prevents duplicate memorize calls when hook fires without real content change.
 _plan_file_hashes: dict[str, str] = {}
+
+# ── Nightly maintenance mode (v5.50.3) ──────────────────────────────────────
+# When True, every DB-backed MCP tool fast-fails with a structured maintenance
+# error — no DB call, no hang. Toggled via POST /api/control/maintenance/enter
+# and /exit. Nightly cycle flips this instead of stop/starting the daemon so
+# connected MCP clients don't lose their connection.
+_maintenance_mode: bool = False

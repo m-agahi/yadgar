@@ -7,6 +7,23 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.72.0] - 2026-06-18
+
+Finishes the e2e behavior-contract chapter (except enrichment, deferred to v5.72.1 — needs the model-bundled CI image). Contract tally **16 ✅ → 21 ✅ / 5 ❌** (+2 retired).
+
+### Fixed
+- **Null-embedding corruption + dream no-op (#61):** nightly consolidation hardcoded a local `EmbeddingEngine()`; on the host (no `[ml]` extra) `encode()` returned `None`, so every action-log memory was stored with `embedding=None` (permanently unreachable via similarity) AND dream replay no-op'd. Nightly now selects `RemoteEmbeddingEngine` when `YADGAR_EMBED_URL` is set (backend embed service, up during consolidation). Proves BC-C4/BC-SC1a/BC-SC4/BC-SC6 (dream replay co_occurrence link + insight, reembed_stale, auto_narrate). (#61, #37)
+- **Nightly vacuum exit 40 (#43):** the atomic-vacuum side-backend was spawned with hardcoded `root/root` while the vacuum HTTP client sent env credentials (#51 left them set) → HTTP 401 on namespace bootstrap. Side-backend now spawned with the same creds the client sends (`_resolve_db_creds` shared via `_surreal_runner`). Proves BC-D1 nightly exit 0.
+- **Nightly OTLP span-export noise (#63):** the host nightly flooded logs + hung ~10s at exit trying to reach the container OTLP collector. `YADGAR_OTLP_ENDPOINT` now defaults empty for the nightly CLI.
+- **Profile recall (BC-B5, #38):** e2e now proves profile-sourced results surface in recall.
+- **e2e gate flake (#55):** `YADGAR_CACHE_SNAPSHOT_DIR` is now isolated per-test in conftest.
+
+### Added
+- **No-reconnect nightly maintenance mode (#62):** the core daemon STAYS UP during the nightly (no MCP reconnect for connected Claude instances) — it flips an in-process maintenance flag via `POST /api/control/maintenance/{enter,exit}` instead of being `systemctl stop`-ed. While on, DB-backed MCP tools fast-fail with a structured `maintenance` error (single choke point in `_instrumented`). Enter/exit are best-effort (never abort the nightly; survives an old/down core). True serve-during-nightly HA is scoped to v8 (roadmap stub, #65).
+
+### Removed
+- **BC-CM2 / BC-CM3 retired (#47):** the `CognitiveMap` coordinate/neighborhood methods were deleted in v5.71.0; the contract entries are now marked retired (not failing specs).
+
 ## [5.71.0] - 2026-06-18
 
 ### Fixed

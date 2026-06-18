@@ -534,19 +534,29 @@ class TestBCC4_NightlySleepCycleRuns:
 
     def test_nightly_runs_sleep_cycle_produces_dream_insight(self, e2e_engines):
         """run_nightly_consolidation SHALL run the gated sleep cycle, whose dream
-        replay produces a synthetic 'dream' insight memory for a similar pair."""
+        replay produces BOTH artifacts for a similar pair:
+          (a) BC-C4/BC-SC1a: a synthetic 'dream' insight memory (tags=['dream', ...],
+              content starts with 'Dream connection:')
+          (b) BC-SC1a co_occurrence: a co_occurrence relationship in the entity graph
+              between entity nodes memory:{id_a} and memory:{id_b}.
+
+        dream_replay() calls _create_dream_connection then _create_dream_insight for
+        pairs with cosine > 0.7 (dream.py lines 52-55), so both artifacts are written
+        atomically for any qualifying pair.
+        """
         yadgar_dir = e2e_engines["yadgar_dir"]
         storage = e2e_engines["storage"]
 
         # Two closely-related prose memories: high embedding similarity (> 0.7 so
         # dream replay generates an insight) but not identical (< 0.95 merge
         # threshold). Pure prose with no shared file/function entities so earlier
-        # consolidation phases do not pre-connect them and starve dream replay.
+        # consolidation phases do not pre-connect them via the entity relationship
+        # table and starve dream replay's already-connected guard.
         # Measured pairwise cosine ~0.85 (all-MiniLM-L6-v2): above the 0.7 dream
         # insight threshold, below the 0.95 CURATION_SIMILARITY_THRESHOLD merge
         # threshold — so the pair survives merge_duplicates yet triggers a dream
-        # insight.
-        _insert_mem(
+        # insight and co_occurrence link.
+        id_a = _insert_mem(
             e2e_engines,
             "The overnight maintenance job slowly drains the pending request "
             "queue and rebalances load toward the warmer replica nodes. "
@@ -554,7 +564,7 @@ class TestBCC4_NightlySleepCycleRuns:
             yadgar_dir,
             heat=0.9,
         )
-        _insert_mem(
+        id_b = _insert_mem(
             e2e_engines,
             "During the nightly maintenance window the request queue is "
             "gradually drained while traffic is rebalanced across the warm "
@@ -568,6 +578,7 @@ class TestBCC4_NightlySleepCycleRuns:
         # and the sleep cycle fires on this first nightly run.
         scheduler.run_nightly_consolidation()
 
+        # ── observable (a): dream insight memory ──────────────────────────────
         rows = storage.get_memories_by_heat(min_heat=0.0, limit=500)
         dream_memories = [
             r
@@ -577,9 +588,235 @@ class TestBCC4_NightlySleepCycleRuns:
         ]
         assert dream_memories, (
             "BC-C4/BC-SC1a (#37): the nightly sleep cycle MUST run dream replay and "
-            "produce a synthetic 'dream' insight memory for the similar pair. Found "
+            "produce a synthetic 'dream' insight memory (tags=['dream', ...], "
+            "content starts with 'Dream connection:') for the similar pair. Found "
             "none — the sleep cycle did not run (or dream replay produced nothing). "
             f"Total memories seen: {len(rows)}."
+        )
+
+        # ── observable (b): co_occurrence relationship in entity graph ─────────
+        # dream_replay._create_dream_connection inserts entity nodes named
+        # 'memory:{id}' (type='file') and a relationship of type 'co_occurrence'
+        # (weight=0.5) between them.  get_entity_by_name is the read-back path.
+        ent_a = storage.get_entity_by_name(f"memory:{id_a}")
+        ent_b = storage.get_entity_by_name(f"memory:{id_b}")
+        assert ent_a is not None, (
+            f"BC-SC1a: dream replay MUST create entity node 'memory:{id_a}'. "
+            "Node absent — _create_dream_connection did not run for this pair."
+        )
+        assert ent_b is not None, (
+            f"BC-SC1a: dream replay MUST create entity node 'memory:{id_b}'. "
+            "Node absent — _create_dream_connection did not run for this pair."
+        )
+        # get_relationship_between checks both (src→tgt) and (tgt→src) directions
+        # so insertion order does not matter.
+        rel = storage.get_relationship_between(ent_a["id"], ent_b["id"])
+        assert rel is not None, (
+            f"BC-SC1a: dream replay MUST insert a 'co_occurrence' relationship "
+            f"between entity nodes memory:{id_a} and memory:{id_b}. "
+            "No relationship found — _create_dream_connection failed or the "
+            "pair was skipped by the already-connected guard."
+        )
+        assert rel.get("relationship_type") == "co_occurrence", (
+            f"BC-SC1a: the entity relationship between memory:{id_a} and "
+            f"memory:{id_b} MUST have relationship_type='co_occurrence'. "
+            f"Got: {rel.get('relationship_type')!r}"
+        )
+
+
+# ===========================================================================
+# GREEN — Stale-embedding re-embedding (BC-SC4)
+# SleepComputeEngine.reembed_stale() re-embeds memories whose embedding_model
+# differs from the current model.  Observable: after the sleep cycle, a memory
+# seeded with embedding_model='stale-model-v0' has embedding_model updated to
+# the current model name (all-MiniLM-L6-v2).
+#
+# Seed with a unique sentinel string so merge_duplicates cannot delete the row.
+# Use get_memory(id) after the cycle — it always returns embedding_model (with
+# None default) so the field is always present (storage/memory.py:293).
+# ===========================================================================
+
+
+def _insert_mem_stale(
+    e2e_engines,
+    content: str,
+    directory: str,
+    stale_model: str,
+    *,
+    heat: float = 0.8,
+) -> int:
+    """Insert a memory with an explicit stale embedding_model; return the row id."""
+    storage = e2e_engines["storage"]
+    emb = _embed(e2e_engines, content)
+    now = datetime.now(UTC).isoformat()
+    doc = {
+        "content": content,
+        "embedding": emb,
+        "directory_context": directory,
+        "heat": heat,
+        "tags": [],
+        "last_accessed": now,
+        "created_at": now,
+        "access_count": 0,
+        "is_protected": False,
+        "embedding_model": stale_model,
+    }
+    return storage.insert_memory(doc)
+
+
+class TestBCSC4_ReembedStale:
+    """BC-SC4: reembed_stale updates a memory whose embedding_model is outdated.
+
+    get_memories_needing_reembedding returns memories where
+    'embedding_model IS NONE OR embedding_model != current_model'
+    (storage/vector.py:113-116).  After run_sleep_cycle(), update_memory_embedding
+    sets embedding_model to embeddings.get_model_name() ('all-MiniLM-L6-v2').
+    """
+
+    def _make_scheduler(self, e2e_engines):
+        from yadgar.config import Settings
+        from yadgar.consolidation import ConsolidationScheduler
+
+        settings = Settings(DB_PATH=e2e_engines["db_path"])
+        return ConsolidationScheduler(e2e_engines["storage"], e2e_engines["embeddings"], settings)
+
+    def test_reembed_stale_updates_embedding_model(self, e2e_engines):
+        """run_nightly_consolidation sleep cycle SHALL re-embed a memory whose
+        embedding_model is 'stale-model-v0' (outdated) and update it to
+        the current model name 'all-MiniLM-L6-v2'.
+
+        Before: embedding_model='stale-model-v0' (not equal to current model).
+        After:  embedding_model='all-MiniLM-L6-v2' (current model, from
+                embeddings.get_model_name()).
+
+        The sentinel string 'xsc4reembed' distinguishes this memory from any
+        other test data so merge_duplicates cannot accidentally delete it.
+        """
+        yadgar_dir = e2e_engines["yadgar_dir"]
+        storage = e2e_engines["storage"]
+        embeddings = e2e_engines["embeddings"]
+
+        stale_model = "stale-model-v0"
+        current_model = embeddings.get_model_name()  # "all-MiniLM-L6-v2"
+
+        mem_id = _insert_mem_stale(
+            e2e_engines,
+            "BC-SC4 reembed: the metrics exporter scrapes Prometheus counters and "
+            "pushes them to the time-series store every fifteen seconds xsc4reembed99001",
+            yadgar_dir,
+            stale_model=stale_model,
+            heat=0.8,
+        )
+
+        # Pre-condition: the freshly inserted row carries the stale sentinel
+        pre_row = storage.get_memory(mem_id)
+        assert pre_row is not None, f"BC-SC4 setup: memory {mem_id} must exist before cycle"
+        assert pre_row.get("embedding_model") == stale_model, (
+            f"BC-SC4 setup: expected embedding_model={stale_model!r} before cycle, "
+            f"got {pre_row.get('embedding_model')!r}"
+        )
+
+        scheduler = self._make_scheduler(e2e_engines)
+        # Fresh scheduler: _last_sleep_cycle is None → 6-hour gate opens → cycle fires.
+        scheduler.run_nightly_consolidation()
+
+        # Post-condition: reembed_stale MUST have updated embedding_model to current
+        post_row = storage.get_memory(mem_id)
+        assert post_row is not None, (
+            f"BC-SC4: memory {mem_id} MUST still exist after the sleep cycle "
+            "(merge_duplicates should not have removed a unique memory)."
+        )
+        assert post_row.get("embedding_model") == current_model, (
+            f"BC-SC4 (#37): reembed_stale MUST update the stale memory's "
+            f"embedding_model from {stale_model!r} to {current_model!r}. "
+            f"Got: {post_row.get('embedding_model')!r}. "
+            "Either reembed_stale did not run or the update_memory_embedding "
+            "call did not persist correctly."
+        )
+
+
+# ===========================================================================
+# GREEN — auto_narrate writes a project story (BC-SC6)
+# NarrativeEngine.auto_narrate() finds directories with memories heat > 0.3,
+# checks for a recent narrative entry, and if none exists generates one via
+# generate_narrative() which always inserts a row (storage.insert_narrative_entry).
+#
+# Observable: after run_nightly_consolidation, get_narratives_for_directory(dir)
+# returns ≥1 row, and the row's summary contains the directory string (narrative.py:93
+# always emits "In {directory}, during ...: {count} memories recorded.").
+#
+# We seed ≥1 hot memory so the dir qualifies as active (heat > 0.3), and no
+# prior narrative exists (fresh isolated DB per test), so auto_narrate fires.
+# ===========================================================================
+
+
+class TestBCSC6_AutoNarrateWritesProjectStory:
+    """BC-SC6: auto_narrate generates a narrative entry for the seeded directory.
+
+    auto_narrate() queries active directories (min_heat=0.3), checks for a
+    recent narrative (within NARRATIVE_INTERVAL_HOURS), and calls
+    generate_narrative() if none exists.  generate_narrative() always inserts
+    a narrative_entry row with a summary that includes the directory path.
+    """
+
+    def _make_scheduler(self, e2e_engines):
+        from yadgar.config import Settings
+        from yadgar.consolidation import ConsolidationScheduler
+
+        settings = Settings(DB_PATH=e2e_engines["db_path"])
+        return ConsolidationScheduler(e2e_engines["storage"], e2e_engines["embeddings"], settings)
+
+    def test_auto_narrate_inserts_narrative_for_active_directory(self, e2e_engines):
+        """run_nightly_consolidation sleep cycle SHALL call auto_narrate, which
+        generates a narrative_entry row for a directory with hot memories.
+
+        Observable: get_narratives_for_directory(yadgar_dir) returns ≥1 row
+        AFTER the cycle, and the summary field contains the directory path
+        (guaranteed by generate_narrative line: "In {directory}, during ...").
+
+        Seeding three memories (heat=0.9) ensures the directory qualifies as
+        active (heat > 0.3 threshold) and provides non-zero memory count in
+        the generated summary.
+        """
+        yadgar_dir = e2e_engines["yadgar_dir"]
+        storage = e2e_engines["storage"]
+
+        # Pre-condition: no narrative entries yet in the isolated DB
+        pre_narratives = storage.get_narratives_for_directory(yadgar_dir, limit=10)
+        assert not pre_narratives, (
+            "BC-SC6 setup: fresh isolated DB must have no prior narratives for "
+            f"{yadgar_dir!r}. Got {len(pre_narratives)} existing entries."
+        )
+
+        # Seed hot memories — heat=0.9 keeps them active through one decay pass
+        for i in range(3):
+            _insert_mem(
+                e2e_engines,
+                f"BC-SC6 narrate: the load balancer distributes traffic across "
+                f"healthy backend replicas using round-robin scheduling xsc6narr{i:05d}",
+                yadgar_dir,
+                heat=0.9,
+            )
+
+        scheduler = self._make_scheduler(e2e_engines)
+        # Fresh scheduler: _last_sleep_cycle is None → 6-hour gate opens → cycle fires.
+        scheduler.run_nightly_consolidation()
+
+        # Post-condition: at least one narrative_entry row for yadgar_dir
+        post_narratives = storage.get_narratives_for_directory(yadgar_dir, limit=10)
+        assert post_narratives, (
+            f"BC-SC6 (#37): auto_narrate MUST insert a narrative_entry for directory "
+            f"{yadgar_dir!r} when hot memories are present (heat=0.9 > 0.3 threshold). "
+            "No narrative found — either the sleep cycle did not run, auto_narrate "
+            "skipped the directory, or generate_narrative failed silently."
+        )
+
+        # The summary MUST include the directory path (narrative.py:93 always emits
+        # "In {directory}, during the last N hours: M memories recorded.")
+        summary = post_narratives[0].get("summary", "")
+        assert yadgar_dir in summary, (
+            f"BC-SC6: narrative summary MUST contain the directory path {yadgar_dir!r}. "
+            f"Got summary: {summary!r}"
         )
 
 

@@ -37,8 +37,24 @@ import os
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
+
+# ---------------------------------------------------------------------------
+# v5.72: suppress OTLP exporter BEFORE any yadgar import.
+#
+# yadgar/server/_app.py calls setup_tracing("yadgar-core") at module import
+# time. setup_tracing reads Settings via get_settings() (lru_cache) which
+# pulls YADGAR_OTLP_ENDPOINT from ~/.yadgar/config.yaml. In production that
+# endpoint (http://host.containers.internal:4318) doesn't resolve on the host,
+# so BatchSpanProcessor hangs at exit retrying failed exports (~10 s backoff),
+# flooding WARN logs and blocking the nightly process.
+#
+# Setting env before any yadgar import makes pydantic-settings prefer env over
+# yaml, disabling OTLP for this nightly process only.
+os.environ.setdefault("YADGAR_OTLP_ENDPOINT", "")
 
 import yadgar.paths as _paths
 from yadgar.backup import create_snapshot, default_retention, prune_snapshots
@@ -53,6 +69,26 @@ from yadgar.vacuum import cmd_vacuum_impl
 _log = logging.getLogger("yadgar.nightly_cycle")
 
 _UNIT_CORE = "yadgar"
+
+
+def _make_embedding_engine(settings) -> object:
+    """Return the appropriate embedding engine based on YADGAR_EMBED_URL.
+
+    Mirrors the selector in yadgar/server/lifecycle.py (_init_embedding_client).
+    Imports are lazy (inside the function) so that heavy ML dependencies are not
+    loaded at module import time — only when this function is actually called.
+
+    When YADGAR_EMBED_URL is set: returns RemoteEmbeddingEngine (no local model
+    needed — embeddings computed by the remote service).
+    Otherwise: returns a local EmbeddingEngine (existing behaviour).
+    """
+    if os.environ.get("YADGAR_EMBED_URL"):
+        from yadgar.remote_embeddings import RemoteEmbeddingEngine  # noqa: PLC0415
+
+        return RemoteEmbeddingEngine(settings.EMBEDDING_MODEL)
+    return EmbeddingEngine()
+
+
 _UNIT_BACKEND = "yadgar-backend"
 
 # Bounded retry/backoff around systemctl --user (v5.69 P5).  The host has a
@@ -61,6 +97,48 @@ _UNIT_BACKEND = "yadgar-backend"
 # masking a genuinely-down unit.  Kept tiny — NOT infinite.
 _SYSTEMCTL_RETRIES = 3
 _SYSTEMCTL_BACKOFF_SEC = 0.5
+
+# Default URL for the running yadgar core process (port from settings.PORT = 8765).
+_CORE_URL = os.environ.get("YADGAR_CORE_URL", "http://127.0.0.1:8765")
+
+# ---------------------------------------------------------------------------
+# Maintenance mode HTTP helper (v5.50.3)
+#
+# Replaces systemctl stop/start for the CORE unit.  Core stays UP during the
+# nightly cycle — an in-process flag gates all MCP tools so they fast-fail
+# with a clean structured error instead of hanging or racing the backend.
+# ---------------------------------------------------------------------------
+
+
+def _maintenance_http(action: str, core_url: str = _CORE_URL) -> None:
+    """POST /api/control/maintenance/{action} to the running core.
+
+    action: "enter" or "exit"
+
+    Raises on HTTP error or connection failure — caller converts to exit codes.
+    Auth token from YADGAR_MCP_AUTH_TOKEN if set (same as MCP clients use).
+
+    Patch seam: tests replace this function via patch.multiple(_MODULE, ...).
+    """
+    url = f"{core_url}/api/control/maintenance/{action}"
+    data = b"{}"
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status not in (200, 202):
+                body = resp.read(256).decode(errors="replace")
+                raise RuntimeError(f"maintenance {action} returned HTTP {resp.status}: {body}")
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"maintenance {action} HTTP error {exc.code}: {exc.reason}") from exc
+    except urllib.error.URLError as exc:
+        raise ConnectionError(
+            f"maintenance {action} connection failed to {core_url}: {exc.reason}"
+        ) from exc
+
 
 # ---------------------------------------------------------------------------
 # Low-level helpers (patched in tests)
@@ -161,29 +239,35 @@ def _log_start(action: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _step_stop_core() -> int:
-    """Step 1: Stop yadgar CORE only. Returns 0 on success, 10 on failure (FATAL).
+def _step_stop_core(core_url: str = _CORE_URL) -> int:
+    """Step 1: Enter nightly maintenance mode in core. Always returns 0 (best-effort).
 
-    Backend stays up throughout the nightly cycle so that consolidation (step 3)
-    and backups (steps 2 + 5) can run over HTTP. Stopping only core releases
-    core's connection without touching the backend's surrealkv lock — no embedded
-    open is attempted at any step (#51 / BC-D1 fix).
+    v5.72 (#62): Core STAYS UP — we flip an in-process maintenance flag via HTTP
+    instead of systemctl stop.  All MCP tools fast-fail with a structured error
+    while the flag is on, so connected Claude instances keep their MCP connection
+    without experiencing a reconnect.  Backend stays up throughout (#51 / BC-D1).
+
+    Entering maintenance is BEST-EFFORT, never fatal: if core is unreachable, on
+    an older build without the /maintenance route (404), or otherwise errors, we
+    log a warning and PROCEED. Rationale: a down/old core has no external writers
+    to gate, and aborting the whole nightly (losing consolidation + backups +
+    vacuum) is strictly worse than running with a small write-race window. This
+    also avoids a rollout chicken-and-egg (the pre-5.72 core has no endpoint).
     """
     _log_start("stop_core")
     t0 = time.monotonic()
     try:
-        _stop_service(_UNIT_CORE)
+        _maintenance_http("enter", core_url)
         _log_step("stop_core", "ok", (time.monotonic() - t0) * 1000)
-        return 0
     except Exception as exc:
         record_exception("nightly_cycle.stop_core", exc)
-        _log_step("stop_core", "error", (time.monotonic() - t0) * 1000, error=str(exc))
-        _log.error(
-            "step 1 (stop core) failed — aborting: %s",
+        _log_step("stop_core", "warn", (time.monotonic() - t0) * 1000, error=str(exc))
+        _log.warning(
+            "step 1 (maintenance enter) unreachable — proceeding without write-gate: %s",
             exc,
-            extra={"component": "nightly_cycle", "action": "stop_core", "outcome": "error"},
+            extra={"component": "nightly_cycle", "action": "stop_core", "outcome": "degraded"},
         )
-        return 10
+    return 0
 
 
 def _step_pre_backup(db_path: Path, snapshot_dir: Path, backend_url: str) -> int:
@@ -223,7 +307,7 @@ def _step_consolidation(db_path: Path, settings: Settings) -> int:
     storage = None
     try:
         storage = StorageEngine(str(db_path))
-        embeddings = EmbeddingEngine()
+        embeddings = _make_embedding_engine(settings)
         scheduler = ConsolidationScheduler(storage, embeddings, settings)
         # PR-1 wiring (#37): nightly path runs consolidation + the gated sleep
         # cycle (dream/community/cluster/reembed/compress/narrate). The sleep
@@ -331,28 +415,32 @@ def _step_prune(snapshot_dir: Path, retention: int) -> int:
         return 60
 
 
-def _step_start_core() -> int:
-    """Step 7: Start yadgar CORE. Returns 0 on success, 70 on failure.
+def _step_start_core(core_url: str = _CORE_URL) -> int:
+    """Step 7: Exit nightly maintenance mode in core. Always returns 0 (best-effort).
 
-    Backend was never stopped, so only core needs to be started. The backend
-    is already running and serving connections — this restores only the half
-    that was taken down in step 1.
+    v5.72 (#62): Core was never stopped — flip the maintenance flag back OFF via
+    HTTP so MCP tool dispatch resumes normally. Called in a finally block in
+    main() to guarantee the flag is cleared even if earlier steps failed.
+
+    Exiting maintenance is BEST-EFFORT, never fatal: if core is unreachable or on
+    an older build (404), we log a warning and return 0. A failed exit must not
+    mask the real cycle outcome; and if maintenance was never successfully entered
+    (core down/old), there is nothing to clear.
     """
     _log_start("start_core")
     t0 = time.monotonic()
     try:
-        _start_service(_UNIT_CORE)
+        _maintenance_http("exit", core_url)
         _log_step("start_core", "ok", (time.monotonic() - t0) * 1000)
-        return 0
     except Exception as exc:
         record_exception("nightly_cycle.start_core", exc)
-        _log_step("start_core", "error", (time.monotonic() - t0) * 1000, error=str(exc))
-        _log.error(
-            "step 7 (start core) failed: %s",
+        _log_step("start_core", "warn", (time.monotonic() - t0) * 1000, error=str(exc))
+        _log.warning(
+            "step 7 (maintenance exit) unreachable — flag may remain set if it was on: %s",
             exc,
-            extra={"component": "nightly_cycle", "action": "start_core", "outcome": "error"},
+            extra={"component": "nightly_cycle", "action": "start_core", "outcome": "degraded"},
         )
-        return 70
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -390,27 +478,38 @@ def main(args=None) -> int:  # type: ignore[no-untyped-def]
 
     first_failure: int = 0
 
-    # Step 1: stop core (FATAL on failure)
+    # Step 1: enter maintenance mode (FATAL on failure).
+    # If enter fails, core is NOT in maintenance — skip the finally-exit entirely.
     code = _step_stop_core()
     if code != 0:
         return code
 
-    # Step 2: pre-backup (FATAL on failure)
-    code = _step_pre_backup(db_path, snapshot_dir, backend_url)
-    if code != 0:
-        return code
+    # Steps 2-7: maintenance mode is now ON.
+    # _step_start_core (step 7, maintenance exit) MUST run in finally to guarantee
+    # the flag is cleared even when earlier steps fail (including FATAL step 2).
+    try:
+        # Step 2: pre-backup (FATAL on failure — exits try, finally still runs)
+        code = _step_pre_backup(db_path, snapshot_dir, backend_url)
+        if code != 0:
+            first_failure = code
+            return code  # Python runs finally on return
 
-    # Steps 3-7: non-fatal — always attempt all remaining steps
-    for step_fn in [
-        lambda: _step_consolidation(db_path, settings),
-        lambda: _step_vacuum(db_path, backend_url, service_mode),
-        lambda: _step_post_backup(db_path, snapshot_dir, backend_url),
-        lambda: _step_prune(snapshot_dir, retention),
-        lambda: _step_start_core(),
-    ]:
-        result = step_fn()
-        if result != 0 and first_failure == 0:
-            first_failure = result
+        # Steps 3-6: non-fatal — always attempt all
+        for step_fn in [
+            lambda: _step_consolidation(db_path, settings),
+            lambda: _step_vacuum(db_path, backend_url, service_mode),
+            lambda: _step_post_backup(db_path, snapshot_dir, backend_url),
+            lambda: _step_prune(snapshot_dir, retention),
+        ]:
+            result = step_fn()
+            if result != 0 and first_failure == 0:
+                first_failure = result
+
+    finally:
+        # Step 7: exit maintenance mode — always runs (return, exception, or normal flow).
+        exit_code = _step_start_core()
+        if exit_code != 0 and first_failure == 0:
+            first_failure = exit_code
 
     outcome = "ok" if first_failure == 0 else "error"
     _log.info(

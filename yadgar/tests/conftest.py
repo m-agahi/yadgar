@@ -202,6 +202,7 @@ def isolate_yadgar_paths(tmp_path, monkeypatch):
     monkeypatch.setenv("YADGAR_DATA_DIR", str(data_dir))
     monkeypatch.setenv("YADGAR_CONFIG_FILE", str(config_dir / "config.yaml"))
     monkeypatch.setenv("YADGAR_LOG_DIR", str(data_dir / "logs"))
+    monkeypatch.setenv("YADGAR_CACHE_SNAPSHOT_DIR", str(tmp_path / "embed_cache_snap"))
     monkeypatch.delenv("YADGAR_DB_PATH", raising=False)
 
 

@@ -433,6 +433,52 @@ async def control_restart_handler(request: Request) -> JSONResponse:
 
 
 # ---------------------------------------------------------------------------
+# Maintenance mode handlers (v5.50.3)
+#
+# These endpoints are intentionally NOT gated by YADGAR_DEBUG_APIS_ENABLED —
+# the nightly script must reach them regardless of debug-API settings.
+# They are still protected by BearerAuthMiddleware (path starts with /api/).
+#
+# POST /api/control/maintenance/enter — flip _maintenance_mode ON.
+#   All DB-backed MCP tools fast-fail with a structured error until /exit.
+# POST /api/control/maintenance/exit  — flip _maintenance_mode OFF.
+#   Normal tool dispatch resumes. MUST be called in finally by the nightly cycle.
+# ---------------------------------------------------------------------------
+
+
+async def maintenance_enter_handler(request: Request) -> JSONResponse:
+    """POST /api/control/maintenance/enter — enter nightly maintenance mode.
+
+    Sets _maintenance_mode=True so every MCP tool returns a fast structured error
+    instead of touching the DB. Core stays UP — no MCP disconnect for clients.
+    """
+    import yadgar.server._state as _st  # noqa: PLC0415 — late import, write live attr
+
+    _st._maintenance_mode = True
+    logger.info(
+        "maintenance mode entered",
+        extra={"component": "control", "action": "maintenance_enter", "outcome": "ok"},
+    )
+    return JSONResponse({"status": "maintenance", "maintenance_mode": True})
+
+
+async def maintenance_exit_handler(request: Request) -> JSONResponse:
+    """POST /api/control/maintenance/exit — exit nightly maintenance mode.
+
+    Sets _maintenance_mode=False, restoring normal MCP tool dispatch.
+    The nightly cycle calls this in a finally block to guarantee un-wedge.
+    """
+    import yadgar.server._state as _st  # noqa: PLC0415 — late import, write live attr
+
+    _st._maintenance_mode = False
+    logger.info(
+        "maintenance mode exited",
+        extra={"component": "control", "action": "maintenance_exit", "outcome": "ok"},
+    )
+    return JSONResponse({"status": "active", "maintenance_mode": False})
+
+
+# ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
 
@@ -463,3 +509,17 @@ async def control_action(request: Request) -> JSONResponse:
 async def control_restart(request: Request) -> JSONResponse:
     """Write restart sentinel file for yadgar or yadgar-backend (sentinel-only; no exec)."""
     return await control_restart_handler(request)
+
+
+@mcp_server.custom_route("/api/control/maintenance/enter", methods=["POST"])
+@trace_span("api.control.maintenance.enter")
+async def control_maintenance_enter(request: Request) -> JSONResponse:
+    """Enter nightly maintenance mode — MCP tools fast-fail, core stays UP."""
+    return await maintenance_enter_handler(request)
+
+
+@mcp_server.custom_route("/api/control/maintenance/exit", methods=["POST"])
+@trace_span("api.control.maintenance.exit")
+async def control_maintenance_exit(request: Request) -> JSONResponse:
+    """Exit nightly maintenance mode — restore normal MCP tool dispatch."""
+    return await maintenance_exit_handler(request)

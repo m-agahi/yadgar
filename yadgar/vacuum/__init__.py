@@ -50,6 +50,7 @@ from pathlib import Path
 
 import httpx
 
+from yadgar._surreal_runner import _resolve_db_creds
 from yadgar.ops import ServiceController, detect_service_mode
 from yadgar.vacuum.phases import (
     _atomic_swap,
@@ -75,6 +76,7 @@ __all__ = [
     "_build_and_verify_side_db",
     "_atomic_swap",
     "_recover_interrupted_swap",
+    "_resolve_db_creds",
 ]
 
 # Tables intentionally dropped on /import (see yadgar.vacuum.strip) — excluded
@@ -90,6 +92,11 @@ _STRIPPED_TABLES = frozenset({"action_log"})
 # ---------------------------------------------------------------------------
 
 
+# _resolve_db_creds is imported at module top from yadgar._surreal_runner (next
+# to spawn_surreal) so the HTTP client here and the side-backend spawn share one
+# source of truth; re-exported via __all__ as yadgar.vacuum._resolve_db_creds.
+
+
 def _build_http_client(backend_url: str) -> httpx.Client:
     """Build an httpx.Client with SurrealDB root credentials.
 
@@ -101,18 +108,7 @@ def _build_http_client(backend_url: str) -> httpx.Client:
     """
     import base64
 
-    if os.environ.get("SURREAL_USER"):
-        user = os.environ["SURREAL_USER"]
-        password = os.environ.get("SURREAL_PASS", "root")
-    elif os.environ.get("YADGAR_RW_USER"):
-        user = os.environ["YADGAR_RW_USER"]
-        password = os.environ.get("YADGAR_RW_PASS", "root")
-    elif os.environ.get("YADGAR_DB_USER"):
-        user = os.environ["YADGAR_DB_USER"]
-        password = os.environ.get("YADGAR_DB_PASS", "root")
-    else:
-        user = "root"
-        password = "root"
+    user, password = _resolve_db_creds()
     auth = base64.b64encode(f"{user}:{password}".encode()).decode()
     return httpx.Client(
         base_url=backend_url,
@@ -445,7 +441,13 @@ def _build_and_verify_side_db(
             f"[vacuum] side-build: spawning throwaway surreal on {side_url} → {side_path} ...",
             flush=True,
         )
-        proc = spawn_surreal(port=side_port, data_dir=str(side_path))
+        _side_user, _side_pass = _resolve_db_creds()
+        proc = spawn_surreal(
+            port=side_port,
+            data_dir=str(side_path),
+            surreal_user=_side_user,
+            surreal_pass=_side_pass,
+        )
         if not _wait_for_health(side_url, timeout_s=120.0):
             print(
                 f"[vacuum] ERROR: side backend at {side_url} did not become healthy.",

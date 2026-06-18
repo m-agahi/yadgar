@@ -16,7 +16,7 @@ Run: `make e2e` (local, real `surreal`) + pre-push hook; **excluded from CI**
 (`-m 'not e2e'`).
 
 **Surface (recounted v5.71, self-enforced by `scripts/check_contract_coverage.py`):**
-**233 SHALLs / 38 subsystems.** Today: **16 ✅ · 205 ⏳ · 12 ❌.** Of the 205 ⏳:
+**233 SHALLs / 38 subsystems.** Today: **21 ✅ · 205 ⏳ · 5 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47) Of the 205 ⏳:
 **70 `[r]` (real-path coverage exists) · 103 `[u]` (unit-only) · 32 none.**
 Goal: every SHALL → ✅ or ❌.
 
@@ -43,13 +43,13 @@ Goal: every SHALL → ✅ or ❌.
 - BC-B2 same directory filter on wiki results in recall. ⏳[r] P1
 - BC-B3 recall/wiki_query raise on absent/empty directory. ⏳[r] P1
 - BC-B4 'system' not eligible. ⏳[r] P1
-- BC-B5 profile-sourced results surface when a profile exists. ❌ #38 P1
+- BC-B5 profile-sourced results surface when a profile exists. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCB5_ProfileRecallSurfaces::test_profile_appears_in_recall` P1
 
 ### C. Consolidation / decay / archive / purge
 - BC-C1 a cycle completes, check_invariants 0 violations (seeded real DB). ⏳[r] P1
 - BC-C2 heat decay lowers heat; below cold_threshold → archived. ⏳[r] P1
 - BC-C3 old+not-recently-accessed derived purged; recent spared; protected spared (v5.66). ⏳[u] P1
-- BC-C4 nightly sleep phases run (dream/community/cluster/reembed_stale/compress/auto_narrate). ❌ #37 P1
+- BC-C4 nightly sleep phases run (dream/community/cluster/reembed_stale/compress/auto_narrate). ✅ `tests/e2e/test_phase2_subsystems.py::TestBCC4_NightlySleepCycleRuns::test_nightly_runs_sleep_cycle_produces_dream_insight` P1
 - BC-C5a AstrocytePool domain consolidation executes (assign→consolidate per domain produces a summary). ✅ `tests/e2e/test_phase2_subsystems.py::TestBCAC2_AstrocyteDomainConsolidation::test_consolidate_domain_produces_summary` P2
 - BC-C5b if astrocyte pool is disabled, config reports it disabled + emits exactly one startup warning. ⏳ #40 P2
 
@@ -161,13 +161,13 @@ Goal: every SHALL → ✅ or ❌.
 - BC-RR13 comparison-merge rerank merges the option candidates for a comparison query into a single ranked answer set. ⏳[u] P2 (`reranking._rerank_comparison_merge`)
 
 ### Sleep compute (gated behind #37 wiring)
-- BC-SC1a dream replay surfaces latent memory pairs (a co-activated pair becomes a derived link). ❌ #37 P2
+- BC-SC1a dream replay surfaces latent memory pairs (a co-activated pair becomes a derived link). ✅ `tests/e2e/test_phase2_subsystems.py::TestBCC4_NightlySleepCycleRuns::test_nightly_runs_sleep_cycle_produces_dream_insight` P2
 - BC-SC1b if dream replay is disabled, config reports it disabled + emits exactly one startup warning. ⏳ #37 P2
 - BC-SC2 community detection clusters the memory graph. ⏳[u] P2
 - BC-SC3 cluster summarization writes semantic summaries. ⏳[u] P2
-- BC-SC4 reembed_stale fixes stale embeddings after a model change. ❌ #37 P2
+- BC-SC4 reembed_stale fixes stale embeddings after a model change. ✅ `tests/e2e/test_phase2_subsystems.py::TestBCSC4_ReembedStale::test_reembed_stale_updates_embedding_model` P2
 - BC-SC5 compress_old_memories gists aged memories. ⏳[u] P2
-- BC-SC6 auto_narrate writes a project story. ❌ #41 (get_project_story dead) P2
+- BC-SC6 auto_narrate writes a project story. ✅ `tests/e2e/test_phase2_subsystems.py::TestBCSC6_AutoNarrateWritesProjectStory::test_auto_narrate_inserts_narrative_for_active_directory` P2
 
 ### Astrocyte pool
 - BC-AC1 assign_memory routes a memory to a domain. ✅ `tests/test_astrocyte_pool.py::TestMemoryAssignment` P2
@@ -355,8 +355,8 @@ Goal: every SHALL → ✅ or ❌.
 
 ### Cognitive map / SR (mostly dead since v5.0 — wire or remove, #41)
 - BC-CM1 SR transition matrix built. ⏳[u] P3
-- BC-CM2 topological/spatial layout (extract_coordinates/update_memory_coordinates — DEAD #41). ❌ #41 P3
-- BC-CM3 get_neighborhood/get_sr_scores/is_dirty (DEAD #41). ❌ #41 P3
+- BC-CM2 topological/spatial layout (extract_coordinates/update_memory_coordinates — DEAD #41). 🗑 RETIRED v5.71.0 (#47) — methods deleted; capability removed, not a failing spec. P3
+- BC-CM3 get_neighborhood/get_sr_scores/is_dirty (DEAD #41). 🗑 RETIRED v5.71.0 (#47) — methods deleted; capability removed, not a failing spec. P3
 
 ### Remaining
 - Drive every UNIT-ONLY + NONE SHALL to a real e2e or an explicit ⏳-with-reason.

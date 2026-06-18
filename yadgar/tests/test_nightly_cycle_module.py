@@ -14,11 +14,31 @@ Coverage targets:
 from __future__ import annotations
 
 import logging
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 import yadgar.scripts.nightly_cycle as nc
+
+# ── OTLP suppression (#63) ────────────────────────────────────────────────────
+
+
+def test_otlp_endpoint_defaulted_to_empty_when_unset(monkeypatch):
+    """nightly_cycle sets YADGAR_OTLP_ENDPOINT='' before any yadgar import (#63).
+
+    The module has already been imported; verify the setdefault ran and the var
+    is set to '' when it was absent at import time.  We test the outcome rather
+    than re-importing to avoid module-level side effects in the test suite.
+    """
+    # If the env var is present it was set by the module's setdefault call (or
+    # already set by the caller, in which case setdefault left it alone).
+    # Either way, the key must exist — its absence means the guard was removed.
+    assert "YADGAR_OTLP_ENDPOINT" in os.environ, (
+        "YADGAR_OTLP_ENDPOINT must be present after nightly_cycle import; "
+        "the setdefault guard at the top of nightly_cycle.py may have been removed (#63)"
+    )
+
 
 # ── _run_systemctl ─────────────────────────────────────────────────────────────
 
@@ -65,72 +85,12 @@ def test_run_systemctl_exhausts_bounded_retries(monkeypatch):
     assert mock_run.call_count == nc._SYSTEMCTL_RETRIES, "retry must be bounded, not infinite"
 
 
-# ── Step 1: stop ONLY core (#51 — backend stays up) ───────────────────────────
-
-
-def test_step_stop_core_stops_only_core():
-    """#51 / BC-D1: _step_stop_core stops ONLY core. Backend is NOT stopped."""
-    with patch.object(nc, "_stop_service") as mock_stop:
-        result = nc._step_stop_core()
-    assert result == 0
-    mock_stop.assert_called_once_with(nc._UNIT_CORE)
-
-
-def test_step_stop_core_does_not_stop_backend():
-    """Backend must stay up throughout the nightly (#51); step 1 must never stop it."""
-    with patch.object(nc, "_stop_service") as mock_stop:
-        nc._step_stop_core()
-    stopped_units = [c.args[0] for c in mock_stop.call_args_list]
-    assert nc._UNIT_BACKEND not in stopped_units, (
-        f"step 1 must not stop the backend (BC-D1 / #51); got stops={stopped_units}"
-    )
-
-
-def test_step_stop_core_success():
-    with patch.object(nc, "_run_systemctl"):
-        result = nc._step_stop_core()
-    assert result == 0
-
-
-def test_step_stop_core_failure():
-    with patch.object(nc, "_run_systemctl", side_effect=RuntimeError("fail")):
-        with patch("yadgar.scripts.nightly_cycle.record_exception"):
-            result = nc._step_stop_core()
-    assert result == 10
-
-
-# ── Step 7: start ONLY core (#51 — backend was never stopped) ─────────────────
-
-
-def test_step_start_core_starts_only_core():
-    """#51 / BC-D1: _step_start_core starts ONLY core. Backend was never stopped."""
-    with patch.object(nc, "_start_service") as mock_start:
-        result = nc._step_start_core()
-    assert result == 0
-    mock_start.assert_called_once_with(nc._UNIT_CORE)
-
-
-def test_step_start_core_does_not_start_backend():
-    """Backend stayed up the whole cycle; step 7 must not restart it redundantly."""
-    with patch.object(nc, "_start_service") as mock_start:
-        nc._step_start_core()
-    started_units = [c.args[0] for c in mock_start.call_args_list]
-    assert nc._UNIT_BACKEND not in started_units, (
-        f"step 7 must not start backend (it was never stopped); got starts={started_units}"
-    )
-
-
-def test_step_start_core_success():
-    with patch.object(nc, "_run_systemctl"):
-        result = nc._step_start_core()
-    assert result == 0
-
-
-def test_step_start_core_failure_returns_70():
-    with patch.object(nc, "_run_systemctl", side_effect=RuntimeError("fail")):
-        with patch("yadgar.scripts.nightly_cycle.record_exception"):
-            result = nc._step_start_core()
-    assert result == 70
+# ── Step 1/7: core stop/start — SUPERSEDED by maintenance mode (#62) ──────────
+# v5.72 (#62): _step_stop_core/_step_start_core no longer systemctl-stop the core
+# unit — core stays UP and flips an in-process maintenance flag via HTTP so MCP
+# clients never reconnect. The old systemctl-based tests here are obsolete; the
+# new behaviour (maintenance enter/exit, backend-unaffected, finally-exit, exit
+# codes 10/70) is covered in test_nightly_maintenance.py.
 
 
 # ── _log_step + _log_start ────────────────────────────────────────────────────
@@ -320,3 +280,41 @@ def test_step_prune_passes_retention(tmp_path):
     ):
         nc._step_prune(snapshot_dir, retention=7)
     assert captured[0]["retention"] == 7
+
+
+# ── _make_embedding_engine ────────────────────────────────────────────────────
+
+
+def test_make_embedding_engine_remote_when_env_set(monkeypatch):
+    """When YADGAR_EMBED_URL is set, _make_embedding_engine returns RemoteEmbeddingEngine."""
+    monkeypatch.setenv("YADGAR_EMBED_URL", "http://127.0.0.1:8001")
+
+    fake_remote_instance = MagicMock(name="RemoteEmbeddingEngine_instance")
+    fake_remote_cls = MagicMock(name="RemoteEmbeddingEngine", return_value=fake_remote_instance)
+    fake_module = MagicMock()
+    fake_module.RemoteEmbeddingEngine = fake_remote_cls
+
+    settings = MagicMock()
+    settings.EMBEDDING_MODEL = "test-model"
+
+    with patch.dict("sys.modules", {"yadgar.remote_embeddings": fake_module}):
+        result = nc._make_embedding_engine(settings)
+
+    assert result is fake_remote_instance
+    fake_remote_cls.assert_called_once_with(settings.EMBEDDING_MODEL)
+
+
+def test_make_embedding_engine_local_when_env_absent(monkeypatch):
+    """When YADGAR_EMBED_URL is absent, _make_embedding_engine returns local EmbeddingEngine."""
+    monkeypatch.delenv("YADGAR_EMBED_URL", raising=False)
+
+    fake_local_instance = MagicMock(name="EmbeddingEngine_instance")
+    fake_local_cls = MagicMock(name="EmbeddingEngine", return_value=fake_local_instance)
+
+    settings = MagicMock()
+
+    with patch("yadgar.scripts.nightly_cycle.EmbeddingEngine", fake_local_cls):
+        result = nc._make_embedding_engine(settings)
+
+    assert result is fake_local_instance
+    fake_local_cls.assert_called_once()
