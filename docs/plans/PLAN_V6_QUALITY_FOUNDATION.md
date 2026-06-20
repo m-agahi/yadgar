@@ -133,6 +133,39 @@ committed; `make eval` runs locally and in CI; ablation harness works.
   doc2query / ConceptNet **only** where they raise recall@k. Decide ConceptNet's
   path (HTTP-API at index-time vs drop) on the numbers.
 
+#### 1.3.1 BC-EN2a — COMET dropped by the FPA filter (v5.73.0, KNOWN-BROKEN ❌)
+**Symptom:** `BC-EN2a` ships ❌ + `xfail(strict=False)`. COMET-BART *does* infer
+(verified live in `yadgar-ci:5.72.0` — 7 inferences from the model directly), but
+`enrichment_comet` lands **empty** in the stored memory.
+
+**Root cause:** the enrichment FPA pass — `_apply_fpa(embedding, terms,
+FPA_SIMILARITY_THRESHOLD=0.25)` — cosine-gates every candidate enrichment term
+against the source content embedding. COMET's output is *abstract commonsense
+traits* ("xNeed: to have money", "xAttr: generous), which are semantically
+DISTANT from the literal content → all COMET terms fall below 0.25 and get
+filtered out. doc2query queries survive (lexically close to content → above
+threshold), which is why **BC-EN3a is ✅** while BC-EN2a is ❌. Same FPA pass,
+opposite outcome by term type.
+
+**This is a measured-tuning decision, NOT a blind fix.** Do not just lower the
+threshold — that would also let in noisy doc2query/ConceptNet terms and could
+*hurt* recall. The v6 harness decides among:
+  1. **Per-source FPA thresholds** — COMET gets a lower (or zero) gate, doc2query
+     keeps 0.25. COMET traits are deliberately abstract; the cosine gate is the
+     wrong instrument for them.
+  2. **Bypass FPA for COMET** entirely, store traits in a separate field, and let
+     retrieval-time scoring (not write-time cosine) decide their value.
+  3. **Cut COMET** — if the ablation shows COMET traits never raise recall@k even
+     when admitted, retire it (matches the Phase 1.3 "keep only where it raises
+     recall@k" rule + the 2.4 "retire wired-but-off losers" stance).
+
+**Acceptance:** either BC-EN2a flips to ✅ (COMET terms stored AND ablation shows
+recall@k ↑) or COMET is formally retired and BC-EN2a is RETIRED 🗑 (not left ❌).
+No silent threshold-nudging without a harness number behind it.
+**Refs:** `yadgar/enrichment/` FPA pass · `FPA_SIMILARITY_THRESHOLD` (config) ·
+e2e `tests/e2e/test_phase2_subsystems.py::TestBCEN2a_CometEnrichment` (xfail) ·
+contract BC-EN2a.
+
 ---
 
 ## Phase 2 — RETRIEVAL QUALITY (Tier-2, measured)

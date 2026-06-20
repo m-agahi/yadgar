@@ -86,6 +86,7 @@ pytest --lf                           # rerun last failures
 - `asyncio_mode = auto` — no `@pytest.mark.asyncio` decorator needed.
 - Add or update tests in the same change. New retrieval / consolidation / storage code without a failing-then-passing test will fail review.
 - Pre-commit invariant scripts (`scripts/check_*.py`) are real test gates — run `pre-commit run --all-files` before pushing.
+- **I32 — capability registry (HARD).** `docs/CAPABILITY_REGISTRY.md` is the source of truth for every feature/algorithm/behaviour (wired or not). When you add or remove a **Settings field** (`config.py`), an **MCP `@_tool`**, a **`_migration_NNN`**, or a **`BC-*`** row, add/update its entry in the SAME change — `scripts/check_capability_coverage.py` (pre-commit + CI `invariant-checks`) fails on any uncatalogued or stale surface item. A green lint proves the catalogue is COMPLETE, not that each `status:` is accurate — verify status when you touch the subsystem.
 
 ## Code style
 
@@ -177,6 +178,7 @@ If your agent dispatches subagents that may write memories, paste the contract f
 
 - [`README.md`](README.md) — human overview, features, benchmark, production scale, roadmap
 - [`docs/architecture.md`](docs/architecture.md) — component map, branch-aware retrieval, security, observability
+- [`docs/CAPABILITY_REGISTRY.md`](docs/CAPABILITY_REGISTRY.md) — source of truth: every feature/algorithm/behaviour (wired or not) + status (I32-enforced)
 - [`docs/configuration.md`](docs/configuration.md) — every env var and config key
 - [`docs/retrieval.md`](docs/retrieval.md) — 8-stage pipeline spec
 - [`docs/memory-lifecycle.md`](docs/memory-lifecycle.md) — heat, decay, consolidation

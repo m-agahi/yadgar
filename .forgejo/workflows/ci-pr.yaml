@@ -64,7 +64,11 @@ jobs:
           pip install -e ".[test,ml]"
           pip install uv
 
-      - name: Run tests (chunk ${{ matrix.group }}/5)
+      # NOTE: Forgejo act_runner does NOT expand ${{ }} expressions in a step
+      # `name:` (only in `run:`/`if:`/`env:`). A literal name avoids the
+      # un-expanded `${{ matrix.group }}` showing in the UI — the chunk number
+      # is already visible in the matrix job name ("test (N)").
+      - name: Run tests (pytest-split chunk, 5-way)
         # --splits/--group: pytest-split partitions the collected set into 5
         # equal chunks and runs only chunk $group.  Every file in the suite is
         # covered across all 5 legs; no manual list maintenance required.
@@ -109,6 +113,9 @@ jobs:
 
       - name: Check I29 — edge dead-capability lint (produced ≡ contracted, no drop-still-produced)
         run: python scripts/check_dead_capability.py
+
+      - name: Check I32 — capability-registry coverage (every setting/tool/migration/BC catalogued)
+        run: python scripts/check_capability_coverage.py
 
   # Gateway: aggregates all 5 test chunks.
   # if: always() is required — without it this job is SKIPPED (not failed)
