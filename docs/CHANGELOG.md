@@ -7,7 +7,12 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
-## [5.74.0] - 2026-06-20
+## [5.75.0] - 2026-06-20
+
+Heat-decay single-writer refactor (#59). Part of the v6 quality-foundation groundwork, shipped in the v5.x line.
+
+### Changed
+- **Heat decay is now "intents → reconcile → single apply" (#59).** `_decay_memories` / `_decay_entities` return `(sql, params)` intent tuples instead of writing; `_reconcile_heat_intents` merges them; a new single-writer facade `yadgar/storage/heat_writer.py` (`HeatWriter.apply_heat_intents`) issues **exactly one** `storage.batch_writes` per cycle for all heat mutations. Collapses the prior two writes (memories + entities) into one. **BC-CSW1** added (contract 235 SHALLs). Behavior preserved — identical decay math, verified by 29/29 existing decay tests + 11 new single-writer tests.
 
 Capability registry — the single source of truth for every feature/algorithm/behaviour (wired or not), enforced by a new coverage invariant. Contract **234 SHALLs** (+BC-I32).
 

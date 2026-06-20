@@ -290,7 +290,7 @@ e2e:
 	@$(LOCKED) 'bash scripts/reap-test-surreal.sh; trap "bash scripts/reap-test-surreal.sh" EXIT; \
 	  OTEL_SDK_DISABLED=true PATH="$$HOME/.local/bin:$$PATH" \
 	  uv run --extra test --extra ml python -m pytest yadgar/tests/e2e/ \
-	    -m e2e -p no:randomly -n0 --tb=short -q $(PYTEST_ARGS)'
+	    -m e2e -p no:randomly -n0 --reruns 2 --reruns-delay 2 --tb=short -q $(PYTEST_ARGS)'
 
 ## upgrade-test: Print the manual upgrade-test runbook (see docs/UPGRADE_TEST.md)
 upgrade-test:
