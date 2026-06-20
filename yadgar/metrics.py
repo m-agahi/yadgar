@@ -19,6 +19,7 @@ Collectors:
 - yadgar_archive_purged_total               Counter — memory_archive rows deleted by nightly retention purge
 - yadgar_archive_retention_skipped_total{reason} Counter — rows skipped by retention purge (protected|anchor|recent)
 - yadgar_hook_recall_timeout_total{handler} Counter — hook recall() calls exceeding HOOK_RECALL_TIMEOUT_S latency budget
+- yadgar_cold_purge_candidates              Gauge   — cold immortal user-memory retention candidates (visibility gate #29)
 """
 
 from __future__ import annotations
@@ -617,6 +618,20 @@ yadgar_hook_recall_timeout_total = Counter(
 )
 
 # ── v5.49.0 — archive retention telemetry ────────────────────────────────────
+
+# ── cold-memory retention DRY-RUN visibility (#29) ───────────────────────────
+# Gauge: count of cold immortal user memories that WOULD be purged (candidates).
+# Set on every nightly retention pass regardless of COLD_MEMORY_PURGE_ENABLED.
+# A non-zero value is an ops signal; rising trend warrants reviewing the config.
+
+yadgar_cold_purge_candidates = Gauge(
+    "yadgar_cold_purge_candidates",
+    "Count of cold immortal user memories that are retention candidates "
+    "(heat<COLD_THRESHOLD, age>COLD_MEMORY_RETENTION_DAYS, access_count=0, "
+    "not protected/anchored). Non-zero = candidates exist; real delete gated by "
+    "COLD_MEMORY_PURGE_ENABLED=true AND COLD_MEMORY_PURGE_DRY_RUN=false.",
+    registry=_registry,
+)
 
 yadgar_archive_purged_total = Counter(
     "yadgar_archive_purged_total",

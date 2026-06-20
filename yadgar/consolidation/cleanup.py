@@ -5,6 +5,7 @@ import logging
 from datetime import UTC, datetime
 
 import yadgar.paths as _paths
+from yadgar.consolidation.cold_retention import _cold_memory_retention_report
 
 logger = logging.getLogger("yadgar.consolidation")
 
@@ -247,6 +248,21 @@ class _CleanupMixin:
                     logger.info("retention: pruned %d old rows from %s", pruned, _table)
             except Exception:
                 logger.debug("retention prune failed for %s (non-fatal)", _table, exc_info=True)
+
+        # cold-memory retention DRY-RUN visibility (#29)
+        # Reports immortal cold user-memory candidates. Deletes nothing by default.
+        # Real delete requires COLD_MEMORY_PURGE_ENABLED=True AND COLD_MEMORY_PURGE_DRY_RUN=False.
+        if self._settings.COLD_MEMORY_RETENTION_DAYS > 0:
+            try:
+                result = _cold_memory_retention_report(self._storage, self._settings)
+                if result["candidates"]:
+                    logger.info(
+                        "retention: cold_memory report — %d candidates, %d deleted",
+                        result["candidates"],
+                        result["deleted"],
+                    )
+            except Exception:
+                logger.debug("retention: cold_memory report failed (non-fatal)", exc_info=True)
 
         # v5.49.0: archive retention — only when enabled
         if self._settings.MEMORY_ARCHIVE_RETENTION_DAYS > 0:

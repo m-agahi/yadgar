@@ -880,13 +880,61 @@ class TestBCAC2_AstrocyteDomainConsolidation:
         )
 
 
+def _require_model_cached(model_name: str) -> None:
+    """Skip the test unless the seq2seq model is in the local HF cache.
+
+    Host `make e2e` has no COMET/doc2query model → these enrichment e2e SKIP there
+    (gate stays green). The model-bundled CI image (yadgar-ci:5.72.0) bakes them →
+    the tests actually run + assert in that image. local_files_only=True never
+    downloads.
+    """
+    try:
+        from transformers import AutoConfig  # noqa: PLC0415
+
+        AutoConfig.from_pretrained(model_name, local_files_only=True)
+    except Exception:
+        pytest.skip(
+            f"{model_name} not in local HF cache — enrichment e2e runs only in the "
+            "model-bundled CI image (yadgar-ci:5.72.0)"
+        )
+
+
 class TestBCEN3a_Doc2QueryEnrichment:
-    """BC-EN3a: doc2query generates synthetic queries for a stored memory."""
+    """BC-EN3a: doc2query/msmarco-t5-small-v1 generates synthetic queries for a stored memory.
+
+    Requires: yadgar-ci:5.72.0 image with doc2query/msmarco-t5-small-v1 baked in.
+
+    Observable: after memorize() + drain, the persisted memory row (re-fetched via
+    storage.get_memory(id) → SELECT * FROM memory:N) carries a non-empty
+    ``enrichment_queries`` list.  This column is written by
+    _enrich_memory_if_enabled (storage/memory.py:227) when DOC2QUERY_ENRICHMENT_ENABLED
+    is True (config default) and the model is present.
+
+    We do NOT assert ``[enrichment]`` in ``enriched_content`` — that marker can
+    appear from LOGIC_ENRICHMENT alone (no model needed) and would not prove doc2query
+    ran.  ``enrichment_queries`` is written ONLY by Doc2QueryExpander.expand().
+
+    Note: search_memories_fts / get_memories_by_heat return SELECT * rows that
+    include enrichment columns when stored, but we use storage.get_memory(id) for
+    the direct record-lookup path (memory.py:289) to guarantee the full row.
+    """
 
     def test_stored_memory_has_synthetic_queries(self, e2e_engines):
-        """A memory written via memorize() SHALL carry enrichment-derived synthetic
-        queries (observable as the '[enrichment]' marker the pipeline appends)."""
+        """A memory written via memorize() SHALL carry a non-empty enrichment_queries
+        list written by doc2query/msmarco-t5-small-v1 (BC-EN3a).
+
+        Real observable: ``enrichment_queries`` is a non-empty list in the persisted
+        memory row (storage/memory.py:227 — result.queries persisted as enrichment_queries).
+        """
         yadgar_dir = e2e_engines["yadgar_dir"]
+        storage = e2e_engines["storage"]
+
+        from yadgar.config import get_settings  # noqa: PLC0415
+
+        _require_model_cached(get_settings().DOC2QUERY_MODEL)
+
+        # Factual prose — doc2query/msmarco-t5-small-v1 handles any factual
+        # document regardless of subject type; no person-subject constraint.
         content = (
             "BC-EN3a enrichment wiring: the connection pool exhausts under burst "
             "load when the reaper interval exceeds the idle timeout xen3a10010"
@@ -894,10 +942,196 @@ class TestBCEN3a_Doc2QueryEnrichment:
         row = _memorize_and_find(e2e_engines, content, yadgar_dir, ["e2e", "bc-en3a"])
         assert row is not None, "test setup: memorize() + drain must persist the memory"
 
-        stored = str(row.get("content", "")) + str(row.get("enriched_content", ""))
-        assert "[enrichment]" in stored, (
-            "BC-EN3a: a stored memory MUST carry doc2query/enrichment synthetic-query "
-            "artifacts (#39 — enrichment pipeline is unwired from the write path)."
+        # Re-fetch via direct record lookup to guarantee all enrichment columns
+        # are present (SELECT * FROM memory:N — memory.py:289).
+        full_row = storage.get_memory(row["id"])
+        assert full_row is not None, f"BC-EN3a: get_memory({row['id']}) must return the stored row"
+
+        queries = full_row.get("enrichment_queries")
+        assert queries and len(queries) > 0, (
+            "BC-EN3a: a stored memory MUST carry a non-empty enrichment_queries list "
+            "written by doc2query/msmarco-t5-small-v1 (storage/memory.py:227). "
+            f"Got enrichment_queries={queries!r}. "
+            "Possible causes: DOC2QUERY_ENRICHMENT_ENABLED=False, model absent from "
+            "CI image, or _enrich_memory_if_enabled guard conditions not met "
+            "(settings/embedding/content-length checks at memory.py:212-218)."
+        )
+
+
+# ===========================================================================
+# GREEN — COMET-BART commonsense inference (BC-EN2a)
+# CometInferencer.infer() generates commonsense triples (xAttr/xIntent/xWant)
+# for a stored memory.  The pipeline writes them to enrichment_comet
+# (storage/memory.py:226).
+#
+# Content shape matters: _extract_predicates (comet.py:33-46) yields useful
+# predicates for sentences with a capitalized named subject or a pronoun subject
+# (^[A-Z][a-z]+\s+\w+ OR ^(?:He|She|They|I|We)\s+).  Generic noun-phrase prose
+# ("the connection pool...") would fall through to the full-content fallback but
+# COMET-BART returns "none" or near-zero-confidence for that shape.
+# We use a named-person event to give COMET a clear xAttr/xIntent predicate.
+# ===========================================================================
+
+
+@pytest.mark.xfail(
+    reason=(
+        "#64: COMET DOES produce inferences (verified in-image: 'Alice migrated...' "
+        "-> 7 incl ['hardworking','to be more efficient']), but the enrichment "
+        "pipeline's FPA filter (FPA_SIMILARITY_THRESHOLD=0.25, enrichment/__init__.py:101) "
+        "drops COMET's abstract commonsense traits (xAttr/xIntent) as cosine-distant "
+        "from concrete content -> enrichment_comet empty. NOT fixed blind: whether "
+        "un-FPA'd COMET helps recall is a measured v6 enrichment-tuning question. BC-EN2a stays ❌."
+    ),
+    strict=False,
+)
+class TestBCEN2a_CometEnrichment:
+    """BC-EN2a: COMET-BART generates commonsense inferences for a stored memory.
+
+    Requires: yadgar-ci:5.72.0 image with mismayil/comet-bart-ai2 baked in.
+
+    Observable: after memorize() + drain, the persisted memory row carries a
+    non-empty ``enrichment_comet`` list written by CometInferencer.infer()
+    (storage/memory.py:226 — result.comet_inferences persisted as enrichment_comet).
+
+    Content uses a person-subject event sentence so _extract_predicates yields a
+    clean predicate (comet.py:44 — '^[A-Z][a-z]+\\s+\\w+' matches "Alice migrated
+    ..."), giving COMET-BART the best chance of returning above-threshold triples.
+    """
+
+    def test_stored_memory_has_comet_inferences(self, e2e_engines):
+        """A memory written via memorize() with person-subject prose SHALL carry a
+        non-empty enrichment_comet list written by mismayil/comet-bart-ai2 (BC-EN2a).
+
+        Real observable: ``enrichment_comet`` is a non-empty list in the persisted
+        memory row (storage/memory.py:226 — result.comet_inferences persisted).
+        """
+        yadgar_dir = e2e_engines["yadgar_dir"]
+        storage = e2e_engines["storage"]
+
+        from yadgar.config import get_settings  # noqa: PLC0415
+
+        _require_model_cached(get_settings().COMET_MODEL)
+
+        # Person-subject prose — _extract_predicates (comet.py:44) matches
+        # '^[A-Z][a-z]+\s+\w+' → "Alice migrated ..." → clean COMET predicate.
+        # xAttr/xIntent/xWant relations are configured in COMET_RELATIONS (config.py:244).
+        content = (
+            "Alice migrated the production database to the new cluster during the "
+            "scheduled maintenance window. She wanted to cut query latency for the "
+            "downstream services. xen2a20020"
+        )
+        row = _memorize_and_find(e2e_engines, content, yadgar_dir, ["e2e", "bc-en2a"])
+        assert row is not None, "test setup: memorize() + drain must persist the memory"
+
+        # Re-fetch via direct record lookup to guarantee all enrichment columns present.
+        full_row = storage.get_memory(row["id"])
+        assert full_row is not None, f"BC-EN2a: get_memory({row['id']}) must return the stored row"
+
+        inferences = full_row.get("enrichment_comet")
+        assert inferences and len(inferences) > 0, (
+            "BC-EN2a: a stored memory MUST carry a non-empty enrichment_comet list "
+            "written by mismayil/comet-bart-ai2 (storage/memory.py:226). "
+            f"Got enrichment_comet={inferences!r}. "
+            "Possible causes: COMET_ENRICHMENT_ENABLED=False, model absent from CI "
+            "image, COMET_MIN_CONFIDENCE too high for returned sequences, or "
+            "_extract_predicates returned no predicates for the content shape."
+        )
+
+
+# ===========================================================================
+# GREEN (network-gated) — ConceptNet HTTP expansion (BC-EN1a)
+# ConceptNetExpander(http_enabled=True)._try_http() queries api.conceptnet.io
+# and returns related concepts.  The expand() method writes them to
+# enrichment_concepts (storage/memory.py:225) when CONCEPTNET_ENRICHMENT_ENABLED
+# is True and the pipeline runs.
+#
+# EN1a is tested by driving ConceptNetExpander directly (not via the full
+# memorize() path) because:
+#   - The index-time pipeline uses http_enabled=False (default off for perf);
+#     flipping it on inside CI would slow every indexed memory by ~5 s/term.
+#   - Direct invocation avoids the daemon overhead and lets us inspect the
+#     exact HTTP result before any FPA filtering.
+#
+# NETWORK LIMITATION: _try_http calls https://api.conceptnet.io — requires
+# outbound internet from the test runner.  In CI (ci-pr.yaml) e2e tests are
+# excluded (-m 'not e2e'); this test is only invoked via `make e2e` in a
+# runner with network access.  If the runner has no outbound, the test is
+# skipped via a preflight probe (NOT xfailed — skip is cleaner for infra gaps).
+#
+# We do NOT depend on the ~9 GB conceptnet_lite SQLite DB (_try_lite is absent
+# from the CI image); _lite_available will be False immediately.  We also pick
+# a term NOT in HARDCODED_EXPANSIONS (conceptnet.py:112-133) — "database" is
+# absent from that dict — so any non-empty result from expand() MUST come from
+# the HTTP path.
+# ===========================================================================
+
+
+class TestBCEN1a_ConceptNetHTTP:
+    """BC-EN1a: ConceptNetExpander(http_enabled=True) fetches related concepts via HTTP.
+
+    NETWORK-GATED: skipped when api.conceptnet.io is unreachable.
+    NOT in the CI matrix (-m e2e excluded from ci-pr.yaml); runs via `make e2e` only.
+    """
+
+    def test_http_expand_returns_concepts(self, e2e_engines):
+        """ConceptNetExpander(http_enabled=True).expand() SHALL return ≥1 concept
+        for a term absent from HARDCODED_EXPANSIONS via the api.conceptnet.io HTTP API.
+
+        Real observable: expand() returns a non-empty list for term "database"
+        (absent from HARDCODED_EXPANSIONS) when http_enabled=True.  Because
+        _try_lite returns [] (conceptnet_lite absent from image) and "database"
+        is not in HARDCODED_EXPANSIONS, any non-empty result MUST come from _try_http.
+
+        Network gate: preflight httpx GET to api.conceptnet.io with 5 s timeout;
+        pytest.skip on any connection/timeout error so infra gaps don't fail CI.
+        """
+
+        import pytest
+
+        # Preflight probe — skip test if outbound network is unavailable.
+        try:
+            import httpx
+
+            probe_url = "https://api.conceptnet.io/c/en/database?limit=1"
+            resp = httpx.get(
+                probe_url,
+                headers={"Accept": "application/json"},
+                timeout=5.0,
+            )
+            resp.raise_for_status()
+        except Exception as exc:  # noqa: BLE001
+            pytest.skip(
+                f"BC-EN1a: api.conceptnet.io unreachable — network not available "
+                f"in this runner ({type(exc).__name__}: {exc}). "
+                "This test requires outbound internet; run via `make e2e` on a "
+                "network-connected host."
+            )
+
+        from yadgar.config import Settings
+        from yadgar.enrichment.conceptnet import HARDCODED_EXPANSIONS, ConceptNetExpander
+
+        # Confirm "database" is absent from hardcoded expansions so the result
+        # cannot come from _try_hardcoded.
+        assert "database" not in HARDCODED_EXPANSIONS, (
+            "BC-EN1a test design: 'database' must not be in HARDCODED_EXPANSIONS "
+            "so we can prove the result came from the HTTP path. "
+            "Choose a different term if 'database' was added to the dict."
+        )
+
+        settings = Settings()
+        expander = ConceptNetExpander(http_enabled=True)
+        # Provide content containing only "database" as a non-stop content term
+        # so _extract_terms yields ["database"] and expand() queries that term.
+        content = "The database cluster stores persistent records."
+        concepts = expander.expand(content, settings)
+
+        assert concepts and len(concepts) > 0, (
+            "BC-EN1a: ConceptNetExpander(http_enabled=True).expand() MUST return ≥1 "
+            "concept for 'database' (absent from HARDCODED_EXPANSIONS) via the "
+            "api.conceptnet.io HTTP API. Got empty list. "
+            "Check that _try_http is called (http_enabled=True sets _http_available=True "
+            "in __init__) and that the API returned edges above CONCEPTNET_MIN_EDGE_WEIGHT "
+            f"({settings.CONCEPTNET_MIN_EDGE_WEIGHT})."
         )
 
 

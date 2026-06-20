@@ -32,6 +32,17 @@ def phase_store(ctx: MemorizeContext) -> None:
     else:
         _store_direct(ctx, storage, embeddings, fhash)
 
+    # Shadow gate stamp (v5.73.0) — overwrite surprise_score with the GATE's surprisal
+    # (distinct from ctx.surprise which is the thermo heat-boost score) + stamp would_reject.
+    # Both fields are None when the gate is disabled; skip the update to avoid a no-op write.
+    if ctx.gate_surprisal is not None or ctx.would_reject is not None:
+        shadow_fields: dict = {}
+        if ctx.gate_surprisal is not None:
+            shadow_fields["surprise_score"] = ctx.gate_surprisal
+        if ctx.would_reject is not None:
+            shadow_fields["would_reject"] = ctx.would_reject
+        storage.update_memory_fields(ctx.memory_id, **shadow_fields)
+
     # CLS dual-store: classify memory as episodic or semantic
     if _st._consolidation is not None and _st._consolidation.cls is not None:
         store_type = _st._consolidation.cls.classify_memory(ctx.content, ctx.tags, ctx.context)

@@ -39,6 +39,8 @@ import contextlib
 import os
 import shutil
 import signal
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -1129,4 +1131,91 @@ class TestBCD1_NightlyCompletesExitZero:
         assert log_count >= 1, (
             f"BC-D1: no consolidation_log row after the cycle (vacuum did not "
             f"complete). count={log_count} raw={rows}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# BC-D3 — interpreter shutdown clean (no SEGV / unhandled GC).
+#
+# The _asyncio finalize SEGV was a CPython 3.14.3 bug (fixed in 3.14.4, and
+# patched by #48).  BC-D3 stays ❌ not because the SEGV still occurs but
+# because no e2e asserts clean exit.  This class closes that gap.
+#
+# Strategy: run ``python -m yadgar restore <dir>`` as a REAL subprocess in
+# server mode (YADGAR_DB_URL set → HTTP path, no embedded surrealkv open).
+# Server mode avoids the 2.x SDK / 3.x server surrealkv skew documented in
+# the BC-D1 skip docstring, yet still exercises the full interpreter finalize
+# path (surrealdb SDK imports asyncio even in server mode, so the _asyncio
+# finalizer fires on exit).
+#
+# The subprocess's env inherits `os.environ` and overrides only the four
+# keys that point the restore entrypoint at the dedicated backend.  A clean
+# Python exit surfaces as returncode 0; SIGSEGV is -11 in subprocess
+# (POSIX), 139 when the shell encodes it.
+# ---------------------------------------------------------------------------
+
+
+class TestBCD3_CleanShutdown:
+    """BC-D3: ``yadgar restore`` SHALL exit 0 with no SIGSEGV.
+
+    Runs the real ``python -m yadgar restore <directory>`` entrypoint as a
+    subprocess against a seeded dedicated backend (server mode, HTTP).  Asserts
+    that the interpreter shuts down cleanly: exit 0, no SIGSEGV (-11 / 139),
+    no "Segmentation fault" / "core dumped" on stderr.  This is the direct
+    test that flips BC-D3 from ❌ to ✅.
+
+    Skipped when ``surreal`` is not on PATH (identical guard to the rest of
+    this file's ``dedicated_backend``-based tests).
+    """
+
+    def test_restore_exits_zero_no_segv(self, dedicated_backend, tmp_path):
+        backend = dedicated_backend
+        _seed_memories(backend.url, 4)
+        assert _table_count(backend.url, "memory") == 4, "BC-D3 setup: 4 seeded rows expected"
+
+        # Subprocess env: server mode via HTTP so there is no embedded
+        # surrealkv open (avoids the 2.x/3.x on-disk format skew and the
+        # yadgar.lock contention with the live backend process).
+        env = os.environ.copy()
+        env["YADGAR_DB_URL"] = backend.url
+        env["YADGAR_ALLOW_ROOT"] = "1"
+        env["YADGAR_DB_USER"] = "root"
+        env["YADGAR_DB_PASS"] = "root"
+        # Point YADGAR_DATA_DIR away from production; tmp_path is already temp.
+        env["YADGAR_DATA_DIR"] = str(tmp_path)
+
+        # ``yadgar restore`` takes a project directory argument; tmp_path is
+        # safe and exercises the full code path (restore returns empty context
+        # for an unknown dir — that is not an error).
+        proc = subprocess.run(
+            [sys.executable, "-m", "yadgar", "restore", str(tmp_path)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=env,
+        )
+
+        # -- 1. SEGV check (most specific — distinguishes crash from logic error) --
+        assert proc.returncode not in (-11, 139), (
+            f"BC-D3: `yadgar restore` crashed with SIGSEGV "
+            f"(returncode={proc.returncode}). "
+            f"This is the _asyncio finalize crash fixed in CPython 3.14.4 / #48. "
+            f"stderr={proc.stderr!r}"
+        )
+
+        # -- 2. Shell-level crash string check (covers wrapped SEGV messages) --
+        stderr_lower = proc.stderr.lower()
+        assert "segmentation fault" not in stderr_lower, (
+            f"BC-D3: 'Segmentation fault' found in stderr — interpreter crashed. "
+            f"stderr={proc.stderr!r}"
+        )
+        assert "core dumped" not in stderr_lower, (
+            f"BC-D3: 'core dumped' found in stderr — interpreter crashed. stderr={proc.stderr!r}"
+        )
+
+        # -- 3. Clean exit (the primary SHALL) --
+        assert proc.returncode == 0, (
+            f"BC-D3: `yadgar restore` did not exit 0 "
+            f"(returncode={proc.returncode}). "
+            f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
         )

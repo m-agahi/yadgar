@@ -447,6 +447,57 @@ class WriteGate:
             )
             return (False, surprisal, f"below_threshold (effective={effective_threshold:.2f})")
 
+    def would_reject_at(
+        self,
+        content: str,
+        directory: str,
+        tags: list[str],
+        threshold: float,
+        surprisal: float | None = None,
+    ) -> bool:
+        """Shadow-gate helper: would the gate REJECT this content at the given threshold?
+
+        Faithful to should_store() logic — uses the same adaptive (continuity-adjusted)
+        threshold. Called with WRITE_GATE_SHADOW_THRESHOLD; the actual WRITE_GATE_THRESHOLD
+        is NOT used here, so a disabled gate (threshold=0.0) still produces meaningful shadow
+        decisions.
+
+        Bypass conditions (error/decision keywords, important/critical tags) → False (not
+        rejected) because those memories are always stored regardless of surprisal.
+
+        Args:
+            content:   Memory content.
+            directory: Directory context (same as passed to should_store).
+            tags:      Memory tags.
+            threshold: Shadow base threshold to evaluate against (typically
+                       settings.WRITE_GATE_SHADOW_THRESHOLD).
+            surprisal: Pre-computed surprisal from should_store() — reused to avoid a
+                       second embedding call. When None, compute_surprisal() is called.
+
+        Returns:
+            True  — gate WOULD reject at this threshold (surprisal < effective_threshold).
+            False — gate WOULD pass (surprisal >= effective_threshold or bypass applies).
+        """
+        if threshold <= 0.0:
+            return False  # shadow threshold disabled — nothing would be rejected
+
+        content_lower = content.lower()
+
+        # Bypass conditions → always stored, never rejected
+        if (
+            _ERROR_BYPASS_RE.search(content_lower)
+            or _DECISION_BYPASS_RE.search(content_lower)
+            or (_BYPASS_TAGS & set(t.lower() for t in tags))
+        ):
+            return False
+
+        if surprisal is None:
+            surprisal = self.compute_surprisal(content, directory, tags)
+        continuity = self._compute_task_continuity(content, directory)
+        discount = continuity * self._settings.WRITE_GATE_CONTINUITY_DISCOUNT
+        effective_threshold = max(0.1, threshold - discount)
+        return surprisal < effective_threshold
+
     # ── Event Boundary Detection ─────────────────────────────────────────
 
     def compute_boundary_signal(self, content: str, previous_content: str) -> float:

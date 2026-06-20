@@ -18,6 +18,10 @@ def phase_embed(ctx: MemorizeContext, settings) -> dict | None:
 
     Mutations on ctx:
     - gate_result set from write gate
+    - gate_surprisal set from write gate (shadow mode — the GATE's surprisal, distinct
+      from ctx.surprise which is the thermo score used for heat boost)
+    - would_reject set: True if gate WOULD reject at WRITE_GATE_SHADOW_THRESHOLD
+      (informational only — WRITE_GATE_THRESHOLD=0.0 means nothing is actually dropped)
     - contextual_prefix set from retriever
     - embedding set from embeddings engine
     - surprise, importance, valence, initial_heat set from thermo
@@ -30,6 +34,17 @@ def phase_embed(ctx: MemorizeContext, settings) -> dict | None:
     if _st._write_gate is not None:
         should_store, surprisal, reason = _st._write_gate.should_store(
             ctx.content, ctx.context, ctx.tags
+        )
+        # Shadow mode: capture gate's surprisal (distinct from thermo ctx.surprise).
+        # Pass the already-computed surprisal to would_reject_at() to avoid a second
+        # embedding call. The shadow decision is faithful to the gate's adaptive logic.
+        ctx.gate_surprisal = surprisal
+        ctx.would_reject = _st._write_gate.would_reject_at(
+            ctx.content,
+            ctx.context,
+            ctx.tags,
+            settings.WRITE_GATE_SHADOW_THRESHOLD,
+            surprisal=surprisal,
         )
         ctx.gate_result = {"surprisal": round(surprisal, 4), "gate_reason": reason}
         if not should_store:

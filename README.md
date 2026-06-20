@@ -28,6 +28,7 @@
 - **Cross-project anchor dedup** — `audit_anchors()` surfaces cosine ≥ 0.95 pairs across different `directory_context` values; PD-23 `migration_grace` expiry handler ships alongside.
 - **Wiki sync with repo** — drift detection, master-only regen dispatch, cleanup of merged-branch wikis; pairs with the `repo-wiki` skill shipped via [ccpm](https://codeberg.org/maxagahi/ccpm).
 - **Nightly consolidation** — heat decay, episodic→semantic promotion via Complementary Learning Systems, dream insights, causal-DAG discovery, duplicate merging.
+- **Nightly brain cycle without MCP drop (v5.72)** — dream/sleep phase forms associative `co_occurrence` links + insights, reembeds stale memories, and auto-narrates — all while the core daemon stays up in maintenance mode; no MCP reconnect required.
 - **Hippocampal-replay session bootstrap** — top anchors, hot memories, and active-work pointer auto-injected when Claude opens a session.
 - **Auto-capture hook** — records tool usage with per-source token-bucket rate limit and sanitization (ANSI, control chars, bidi-override stripped).
 - **db-lockdown 2026 hook schema** — PreToolUse hook ships as `yadgar/hooks/db-lockdown-check.py` (installed globally by `install_hooks`); emits `hookEventName` field required by Claude Code 2026 schema.

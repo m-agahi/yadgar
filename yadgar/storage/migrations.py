@@ -845,6 +845,27 @@ def _migration_019_wiki_page_type(storage) -> None:
     )
 
 
+def _migration_022_shadow_gate_fields(storage) -> None:
+    """Add shadow-gate fields to memory table (v5.73.0).
+
+    surprise_score (option<float>) — the WRITE GATE's surprisal score, distinct from
+      the thermo compute_surprise() score used for heat boost.  Already usable via
+      update_memory_fields; DEFINE FIELD IF NOT EXISTS is idempotent.
+    would_reject (option<bool>)   — True when gate WOULD reject at WRITE_GATE_SHADOW_THRESHOLD.
+      WRITE_GATE_THRESHOLD stays 0.0 — nothing is dropped; this is a shadow stamp only.
+
+    Both fields are nullable (option<>) so pre-migration rows have NONE (no boost/effect).
+    No backfill needed — historical memories simply lack the shadow stamp.
+    Idempotent: DEFINE FIELD IF NOT EXISTS is safe to re-run.
+    """
+    storage._q("DEFINE FIELD IF NOT EXISTS surprise_score ON TABLE memory TYPE option<float>;")
+    storage._q("DEFINE FIELD IF NOT EXISTS would_reject ON TABLE memory TYPE option<bool>;")
+    _log.info(
+        "migration_022: added surprise_score (gate surprisal) + would_reject "
+        "(shadow decision) fields to memory table (nullable, v5.73.0)"
+    )
+
+
 _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {"version": "001_hnsw_indexes", "fn": _migration_001_hnsw_indexes},
     {"version": "002_relationship_indexes", "fn": _migration_002_relationship_indexes},
@@ -917,6 +938,10 @@ _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {
         "version": "021_memory_cofire_prior",
         "fn": _migration_021_memory_cofire_prior,
+    },
+    {
+        "version": "022_shadow_gate_fields",
+        "fn": _migration_022_shadow_gate_fields,
     },
 ]
 

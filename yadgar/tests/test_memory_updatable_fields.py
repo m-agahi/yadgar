@@ -45,6 +45,8 @@ KNOWN_MEMORY_FIELDS: frozenset[str] = frozenset(
         "heat",
         "importance",
         "surprise_score",
+        # v5.73.0 #68 — shadow gate decision column (migration 022)
+        "would_reject",
         "emotional_valence",
         # ── Access tracking ────────────────────────────────────────────────
         "last_accessed",

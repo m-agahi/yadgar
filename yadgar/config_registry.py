@@ -276,6 +276,10 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_UPDATE_DEBUG_APIS_ENABLED", "off", "string"),
     # ── v5.50.2 control API gate ──────────────────────────────────────────────
     ConfigEntry("YADGAR_DEBUG_APIS_ENABLED", "false", "bool"),
+    # ── cold-memory retention DRY-RUN visibility (#29) ───────────────────────
+    ConfigEntry("YADGAR_COLD_MEMORY_RETENTION_DAYS", "90", "int"),
+    ConfigEntry("YADGAR_COLD_MEMORY_PURGE_ENABLED", "false", "bool"),
+    ConfigEntry("YADGAR_COLD_MEMORY_PURGE_DRY_RUN", "true", "bool"),
     # ── v5.49.0 memory archive retention knobs ────────────────────────────────
     ConfigEntry("YADGAR_MEMORY_ARCHIVE_RETENTION_DAYS", "90", "int"),
     ConfigEntry("YADGAR_MEMORY_ARCHIVE_RETENTION_CIRCUIT_BREAKER", "500", "int"),
@@ -301,6 +305,10 @@ _REGISTRY: list[ConfigEntry] = [
     # ── v5.62.0 recall quality floor ─────────────────────────────────────────
     ConfigEntry("YADGAR_RECALL_QUALITY_FLOOR", "0.0", "float"),
     ConfigEntry("YADGAR_ASTROCYTE_POOL_ENABLED", "true", "bool"),
+    # ── v5.73.0 surprise-gate shadow mode ────────────────────────────────────
+    # Shadow threshold for auditing — memories below this are stamped would_reject=True
+    # but nothing is dropped (WRITE_GATE_THRESHOLD stays 0.0).
+    ConfigEntry("YADGAR_WRITE_GATE_SHADOW_THRESHOLD", "0.15", "float"),
 ]
 
 

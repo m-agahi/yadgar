@@ -52,6 +52,14 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Minimum score to store a memory (0.0 = store everything)",
         "section": "memory_lifecycle",
     },
+    "write_gate_shadow_threshold": {
+        "desc": (
+            "Shadow-mode threshold (v5.73.0): memories below this score are stamped "
+            "would_reject=True but are STILL stored (WRITE_GATE_THRESHOLD stays 0.0). "
+            "Used to audit which memories would be dropped at a candidate threshold."
+        ),
+        "section": "memory_lifecycle",
+    },
     "write_gate_continuity_discount": {
         "desc": "Threshold reduction for task-continuous content",
         "section": "memory_lifecycle",
@@ -991,6 +999,31 @@ FIELD_META: dict[str, dict[str, str]] = {
         ),
         "section": "memory_archive_retention",
     },
+    # cold-memory retention DRY-RUN visibility (#29)
+    "cold_memory_retention_days": {
+        "desc": (
+            "Age threshold (days) for cold user-memory retention candidates (default 90). "
+            "Memories older than this with heat<COLD_THRESHOLD and access_count=0 are "
+            "surfaced in the nightly report. Set to 0 to disable candidate detection entirely."
+        ),
+        "section": "cold_memory_retention",
+    },
+    "cold_memory_purge_enabled": {
+        "desc": (
+            "Master gate for cold-memory hard deletes (default false). "
+            "When false the pass only logs candidates and emits a metric — deletes nothing. "
+            "Set true only after reviewing the yadgar_cold_purge_candidates gauge trend."
+        ),
+        "section": "cold_memory_retention",
+    },
+    "cold_memory_purge_dry_run": {
+        "desc": (
+            "Dry-run gate (default true). When true no memory is deleted even if "
+            "COLD_MEMORY_PURGE_ENABLED=true. Both this AND COLD_MEMORY_PURGE_ENABLED must "
+            "be set (enabled=true, dry_run=false) to trigger real deletes."
+        ),
+        "section": "cold_memory_retention",
+    },
     # v5.48.0 — update mechanism
     "update_check_on_start": {
         "desc": (
@@ -1105,6 +1138,7 @@ SECTION_TITLES: dict[str, str] = {
     "wiki_write_wait": "Wiki Write Wait / Read-Your-Writes (v5.41.2)",
     "update": "Update Mechanism (v5.48.0)",
     "memory_archive_retention": "Memory Archive Retention (v5.49.0)",
+    "cold_memory_retention": "Cold-Memory Retention DRY-RUN Visibility (#29)",
     "backend_model_preload": "Backend Model Preload Warm-Up (v5.5.0)",
     "hooks": "Hook Recall Latency Budget (v5.51.0)",
     "stats_cache": "Stats Cache (v5.51.0)",
