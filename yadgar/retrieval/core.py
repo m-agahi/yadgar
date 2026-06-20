@@ -95,28 +95,6 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
             logger.debug("COMET query expansion failed: %s", e)
             return []
 
-    # -- Vector search --
-
-    def _dual_vector_search(self, query_embedding, top_k: int) -> list[tuple[int, float]]:
-        """Search both explicit and implicit vector spaces."""
-        if not getattr(self._settings, "DUAL_VECTORS_ENABLED", False):
-            return []
-
-        explicit_results = self._storage.search_vectors(query_embedding, top_k)
-        implicit_results = self._storage.search_implicit_vectors(query_embedding, top_k)
-
-        # Merge with weighted combination
-        explicit_weight = 1 - self._settings.IMPLICIT_VECTOR_WEIGHT
-        implicit_weight = self._settings.IMPLICIT_VECTOR_WEIGHT
-
-        scores = {}
-        for mid, score in explicit_results:
-            scores[mid] = explicit_weight * score
-        for mid, score in implicit_results:
-            scores[mid] = scores.get(mid, 0) + implicit_weight * score
-
-        return sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
-
     # -- a. Personalized PageRank Retrieval --
 
     def ppr_retrieve(self, query: str, top_k: int = 10) -> list[tuple[int, float]]:
@@ -428,7 +406,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
 
         Each signal produces a ranked list of memory IDs. Scores are fused as:
           WRRF_score(d) = Σ_i [ w_i / (k + rank_i(d)) ]
-        where k = WRRF_K (default 60) and w_i are per-signal weights from settings.
+        where k is the RRF constant and w_i are per-signal weights from settings.
         An optional heuristic reranker refines the final ordering.
 
         Args:

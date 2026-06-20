@@ -36,7 +36,6 @@ def storage(tmp_path):
 def settings(tmp_path):
     return Settings(
         DB_PATH=str(tmp_path / "causal_dispatch.db"),
-        IDLE_THRESHOLD_SECONDS=1,
         DECAY_FACTOR=0.95,
         COLD_THRESHOLD=0.05,
     )

@@ -204,11 +204,9 @@ class TestFastProfileGraphPriorBoost:
         s.WRRF_FTS_WEIGHT = 0.5
         s.WRRF_PPR_WEIGHT = 0.5
         s.WRRF_SPREADING_WEIGHT = 0.3
-        s.CONFIDENCE_GATING_ENABLED = False
         s.FUSION_METHOD = "wrrf"
         s.FUSION_NORM = "zscore"
         s.COMBMNZ_ENABLED = False
-        s.WRRF_K = 60
         return s
 
     def test_high_prior_memory_ranks_higher_than_zero_prior(self):
@@ -348,11 +346,9 @@ class TestGraphPriorWeightZeroDisables:
         s.WRRF_FTS_WEIGHT = 0.5
         s.WRRF_PPR_WEIGHT = 0.5
         s.WRRF_SPREADING_WEIGHT = 0.3
-        s.CONFIDENCE_GATING_ENABLED = False
         s.FUSION_METHOD = "wrrf"
         s.FUSION_NORM = "zscore"
         s.COMBMNZ_ENABLED = False
-        s.WRRF_K = 60
 
         storage = MagicMock()
         storage.get_memory_graph_priors.return_value = {1: 0.9, 2: 0.1}
@@ -452,11 +448,9 @@ class TestNullGraphPriorSafe:
         s.WRRF_FTS_WEIGHT = 0.5
         s.WRRF_PPR_WEIGHT = 0.5
         s.WRRF_SPREADING_WEIGHT = 0.3
-        s.CONFIDENCE_GATING_ENABLED = False
         s.FUSION_METHOD = "wrrf"
         s.FUSION_NORM = "zscore"
         s.COMBMNZ_ENABLED = False
-        s.WRRF_K = 60
 
         storage = MagicMock()
         # Return empty dict — no memory has graph_prior set

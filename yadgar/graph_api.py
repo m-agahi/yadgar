@@ -97,7 +97,8 @@ class GraphAPI:
         edges.extend(self._build_temporal_edges(slot_map))
 
         # ── Transition edges ──────────────────────────────────────────────────
-        edges.extend(self._build_transition_edges(mem_ids))
+        transition_edges, weak_edges_hidden = self._build_transition_edges(mem_ids)
+        edges.extend(transition_edges)
 
         # ── Wiki nodes ────────────────────────────────────────────────────────
         wiki_pages, wiki_slug_to_id = self._assemble_wiki_nodes(nodes)
@@ -133,7 +134,11 @@ class GraphAPI:
             )
             yadgar_graph_api_orphan_edges_dropped_total.inc(orphan_count)
 
-        return {"nodes": nodes, "edges": filtered_edges}
+        return {
+            "nodes": nodes,
+            "edges": filtered_edges,
+            "weak_edges_hidden": weak_edges_hidden,  # F4 affordance — never silently drop DB truth
+        }
 
     def _assemble_memory_nodes(
         self, nodes: list[dict], max_memories: int
@@ -191,21 +196,32 @@ class GraphAPI:
                     )
         return result
 
-    def _build_transition_edges(self, mem_ids: set[int]) -> list[dict]:
-        """Build transition (co-recall) edges from memory_transition table."""
+    def _build_transition_edges(self, mem_ids: set[int]) -> tuple[list[dict], int]:
+        """Build transition (co-recall) edges from memory_transition table.
+
+        Returns (edges, weak_hidden) where weak_hidden is the count of count<2
+        transitions that exist in the DB but are excluded from the payload.
+        The caller surfaces this as 'weak_edges_hidden' in the graph response
+        (F4 fidelity affordance — never silently drop DB truth).
+        """
         role = EDGE_TYPES.get("transition", {}).get("role", "retrieval")
         try:
             transitions = self._s.get_all_transitions()
         except Exception:
             transitions = []
         result = []
+        weak_hidden = 0
         for t in transitions:
             from_id = self._extract_id(t.get("from_memory_id"))
             to_id = self._extract_id(t.get("to_memory_id"))
             count = int(t.get("count") or 0)
-            if from_id is None or to_id is None or count < 2:
+            if from_id is None or to_id is None:
                 continue
             if from_id not in mem_ids or to_id not in mem_ids:
+                continue
+            if count < 2:
+                # F4: don't silently drop — track for affordance
+                weak_hidden += 1
                 continue
             result.append(
                 {
@@ -216,7 +232,7 @@ class GraphAPI:
                     "role": role,
                 }
             )
-        return result
+        return result, weak_hidden
 
     def _assemble_wiki_nodes(self, nodes: list[dict]) -> tuple[list[dict], dict[str, str]]:
         """Fetch wiki pages, append node dicts, return (wiki_pages, wiki_slug_to_id)."""

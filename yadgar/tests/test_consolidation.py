@@ -23,7 +23,6 @@ def storage(tmp_path):
 def settings(tmp_path):
     return Settings(
         DB_PATH=str(tmp_path / "test.db"),
-        IDLE_THRESHOLD_SECONDS=1,
         DECAY_FACTOR=0.95,
         COLD_THRESHOLD=0.05,
         DAEMON_CHECK_INTERVAL=1,
@@ -142,7 +141,6 @@ class TestColdArchival:
         """
         settings = Settings(
             DB_PATH=str(tmp_path / "test_pertype.db"),
-            IDLE_THRESHOLD_SECONDS=1,
             DECAY_FACTOR=0.95,
             COLD_THRESHOLD=0.02,
             ACTION_STREAM_COLD_THRESHOLD=0.1,
@@ -181,7 +179,6 @@ class TestColdArchival:
         """Normal memories are archived when heat drops below COLD_THRESHOLD=0.02."""
         settings = Settings(
             DB_PATH=str(tmp_path / "test_global_cold.db"),
-            IDLE_THRESHOLD_SECONDS=1,
             DECAY_FACTOR=0.95,
             COLD_THRESHOLD=0.02,
             ACTION_STREAM_COLD_THRESHOLD=0.1,

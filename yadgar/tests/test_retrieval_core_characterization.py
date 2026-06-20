@@ -13,7 +13,7 @@ Design decisions:
 - Embeddings: stub DeterministicEmbeddings — content-hash-based vectors,
   no model download, fully deterministic
 - All ML-based re-rankers disabled (CROSS_ENCODER_ENABLED=False,
-  NLI_RERANKING_ENABLED=False, ADVERSARIAL_*, MULTI_PASSAGE_*, CONFIDENCE_GATING_ENABLED=False)
+  NLI_RERANKING_ENABLED=False, ADVERSARIAL_*, MULTI_PASSAGE_*)
 - rules_engine=None, engram=None, metacognition=None passed to Retriever
 - Fixture keyed by memory content strings (NOT raw record IDs — IDs are
   not stable across fresh-DB runs)
@@ -164,7 +164,6 @@ def _make_settings(db_path: str) -> Settings:
         ADVERSARIAL_DETECTION_ENABLED=False,
         ADVERSARIAL_DIVERSITY_ENFORCEMENT=False,
         MULTI_PASSAGE_RERANKING_ENABLED=False,
-        CONFIDENCE_GATING_ENABLED=False,
         COMPARISON_DUAL_SEARCH_ENABLED=False,
         TEMPORAL_RETRIEVAL_ENABLED=False,
         QUERY_EXPANSION_ENABLED=False,

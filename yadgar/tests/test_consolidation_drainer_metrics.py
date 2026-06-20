@@ -28,11 +28,9 @@ from yadgar.storage import StorageEngine
 def tmp_settings(tmp_path):
     return Settings(
         DB_PATH=str(tmp_path / "metrics_test.db"),
-        IDLE_THRESHOLD_SECONDS=1,
         DECAY_FACTOR=0.95,
         COLD_THRESHOLD=0.05,
         DAEMON_CHECK_INTERVAL=1,
-        CONSOLIDATION_COOLDOWN_SECONDS=0,
     )
 
 

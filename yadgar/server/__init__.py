@@ -130,7 +130,6 @@ import yadgar.server.tools  # noqa: F401
 
 from yadgar.server.tools import (  # noqa: F401
     memorize,
-    remember,
     recall,
     project_brief,
     bootstrap_project,

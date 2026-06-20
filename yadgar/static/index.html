@@ -1523,6 +1523,11 @@ let _zoomFitDone = false;
 let _edgeToggleState = {};
 // v5.54.3: tracks which lazy edge types have been fetched (prevents double-fetch)
 let _lazyEdgesLoaded = {};
+// F2 fidelity: timestamp of last successful /api/graph load.
+// SSE-injected nodes carry write-time heat; after decay runs, displayed heat
+// diverges from DB. When the SSE pushes a memory_added after load, we mark
+// the view stale so the user knows to Reload for accurate heat values.
+let _lastGraphLoadTime = 0;
 
 // ── Colour helpers ──────────────────────────────────────────────────────────
 function heatColor(h) {
@@ -1863,7 +1868,15 @@ async function loadGraph() {
     detectAndRenderClusters();
     // B: zoom-to-fit ALL nodes (including disconnected) on load
     graph.zoomToFit(600, 50);
-    status('live', 'ok');
+    // F2: stamp load time so SSE can mark view stale when heat drifts.
+    _lastGraphLoadTime = Date.now();
+    // F4: surface weak-edge affordance when the server suppressed count<2 transitions.
+    const weakHidden = d.weak_edges_hidden || 0;
+    if (weakHidden > 0) {
+      status(`live · ${weakHidden} weak edge${weakHidden === 1 ? '' : 's'} hidden (count<2)`, 'ok');
+    } else {
+      status('live', 'ok');
+    }
   } catch (e) { status(`⚠ ${e.message}`, 'err'); }
 
   try {
@@ -2288,7 +2301,13 @@ function connectSSE() {
               return false;
             })();
         if (added) {
-          status(`+1 memory · ${allNodes.length} total`, 'ok');
+          // F2 fidelity: SSE nodes carry write-time heat. After consolidation/decay
+          // the displayed heat diverges from DB until Reload. Show stale indicator.
+          const ageSec = _lastGraphLoadTime > 0
+            ? Math.round((Date.now() - _lastGraphLoadTime) / 1000)
+            : null;
+          const ageStr = ageSec !== null ? ` (${ageSec}s ago)` : '';
+          status(`+1 memory · heat may be stale — ↺ Reload for live values${ageStr}`, 'ok');
           applyFilters();
         }
       } else if ((msg.event === 'wiki_added' || msg.event === 'wiki_updated') && msg.node) {

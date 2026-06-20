@@ -335,7 +335,7 @@ class TestAllMCPToolsRegistered:
         tool_names = {t.name for t in tools}
 
         expected_tools = {
-            "remember",
+            "memorize",
             "recall",
             "forget",
             "project_brief",

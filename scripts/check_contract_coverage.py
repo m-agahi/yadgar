@@ -55,7 +55,7 @@ _TAG_HDR_RE = re.compile(r"\*\*([0-9]+)\s*`\[r\]`.*?·\s*([0-9]+)\s*`\[u\]`.*?·
 # Layer 1 — ✅-count floor (tamper-protection #52).
 # Raise this constant in an explicit commit whenever green count legitimately grows.
 # ---------------------------------------------------------------------------
-_GREEN_FLOOR = 12
+_GREEN_FLOOR = 13
 
 # Decorator names that indicate a test is deliberately disabled.
 _SKIP_DECORATORS = frozenset({"skip", "skipif", "xfail"})

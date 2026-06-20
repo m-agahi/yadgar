@@ -21,7 +21,7 @@ import yadgar.server.tools.bookmarks  # noqa: F401 — side-effects: tool regist
 import yadgar.server.tools.blocks  # noqa: F401 — side-effects: tool registration (v5.33.0)
 
 # Re-export everything that tests or external code import directly
-from yadgar.server.tools.memorize import memorize, remember
+from yadgar.server.tools.memorize import memorize
 from yadgar.server.tools.recall import recall
 from yadgar.server.tools.project import (
     project_brief,
@@ -125,7 +125,6 @@ from yadgar.server.tools.blocks import (
 
 __all__ = [
     "memorize",
-    "remember",
     "recall",
     "project_brief",
     "bootstrap_project",

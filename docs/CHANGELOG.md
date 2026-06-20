@@ -7,6 +7,27 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.76.0] - 2026-06-20
+
+v6 quality-foundation groundwork — **Wave 1 batch** of four trains, shipped together in the v5.x line (v6 reserved for the LLM release). Contract **234 SHALLs · 27 ✅ · 203 ⏳ · 2 ❌**.
+
+### Dead-config / dead-code cleanup (#41)
+- **25 dead `Settings` removed** (`config.py` + `config_yaml.py` + `config_registry.py`, I25 three-way-sync preserved): `WRRF_K`, 5× `CONFIDENCE_*`, `BELIEF_MIN_CONFIDENCE`, `BELIEF_SEARCH_PRIORITY_FOR_OPEN_DOMAIN`, 3× `TEMPORAL_BOOST_WEIGHT`/`DECAY_DAYS`/`EXACT_MATCH_BOOST`, `QUERY_PREFIX`, `EMBEDDING_CACHE_SIZE`, `PLASTICITY_SPIKE`/`PLASTICITY_HALF_LIFE_HOURS`, `STABILITY_INCREMENT`, 2× `RECONSOLIDATION_*`, `CONSOLIDATION_COOLDOWN_SECONDS`, `IDLE_THRESHOLD_SECONDS`, `FRACTAL_LEVELS`, `COMPRESSION_GIST_AGE_HOURS`/`COMPRESSION_TAG_AGE_HOURS`, `DUAL_VECTORS_ENABLED`.
+- **Dead code removed:** `_dual_vector_search()` (`retrieval/core.py`), `_apply_confidence_gating()` (`retrieval/fusion.py`), and the **`remember` MCP tool** stub (no-op redirect) — contract **BC-T2** 🗑 DELETED.
+- **Kept (verified live):** `TEMPORAL_RETRIEVAL_ENABLED` (caller `scoring.py:280`), `BELIEF_HIGH_CONFIDENCE_BOOST` (`fusion.py:425`), `WRRF_CANDIDATE_MULTIPLIER` + `IMPLICIT_EMBEDDING_MODEL` (CONFIG-ONLY). Each candidate grep-verified before removal.
+
+### Viz data-fidelity (#33)
+- F1 connection-count derived from the full edge-toggle set (fixes entity "0 connections"); F3 typed node ids; F4 "N weak edges hidden" affordance for `count<2` edges; F2 heat-staleness "reload" indicator; F5 single-source-of-truth fidelity test.
+- **BC-VZ1 ✅** (graph REST entity-neighborhood + scores, real e2e) and **BC-VZ2 ✅** (`viz_search` whole-DB by design for the god's-eye overlay — intentional dir-scoping bypass documented at `http.py`, not a BC-B3 violation; multi-directory e2e).
+
+### e2e Phase 3 + cognitive-map decision (#47)
+- **cognitive_map KEPT + wired** (decision): `compute_sr_matrix()` / SR transition recall path retained, proven by **BC-CM1 ✅** (discriminating e2e: seeds transitions, asserts matrix + `navigate_to` ranking). The recall-rebuild (#30) keeps the SR machinery.
+- Honest contract pass — flips only verified-green; reverted unverifiable ✅ claims rather than pollute the contract.
+
+### v6 eval-harness keystone (Phase 0)
+- `make eval` adapter (recall@k / MRR / nDCG@k / latency p50/p95) reusing the LongMemEval + ablation infra + `isolated_surreal()`; bootstrap golden set (`benchmarks/golden/`, auto-drafted, flagged for human curation) + reproducible generator; committed baseline report; **non-gating** CI eval workflow.
+- Data-quality metrics (Phase 0.2): valid-embedding %, duplicate/zombie rate, domain-coverage, surprise-distribution → Prometheus + `yadgar stats` (I23 writers wired).
+
 ## [5.75.0] - 2026-06-20
 
 Heat-decay single-writer refactor (#59). Part of the v6 quality-foundation groundwork, shipped in the v5.x line.

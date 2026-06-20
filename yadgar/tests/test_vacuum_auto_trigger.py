@@ -81,7 +81,6 @@ def _make_scheduler(
 
     settings = Settings(
         DB_PATH="/tmp/test.db",
-        IDLE_THRESHOLD_SECONDS=300,
         DAEMON_CHECK_INTERVAL=30,
         VACUUM_AUTO_ENABLED=vacuum_auto_enabled,
         VACUUM_AUTO_THRESHOLD_BYTES=vacuum_auto_threshold_bytes,

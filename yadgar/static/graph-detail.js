@@ -250,18 +250,31 @@ export function createDetailPanel({ wikiCatColor, heatColorFn, allLinksFn, fetch
         <div class="det-val" style="color:#8b949e">${String(node.created_at).slice(0, 19)}</div>
       </div>`);
 
+    // F1 fidelity fix: derive count from the SAME rendered edge set (_edgeToggleState),
+    // not a hardcoded subset of 4 types. Entity nodes wired by co_occurrence/imports/
+    // calls/resolved_by/caused_by previously showed "0 connections" while their edges
+    // were visibly drawn. Now we group ALL incident edges by type dynamically.
     const allLinks = allLinksFn();
     const conns = allLinks.filter((l) => {
       const s = (l.source && l.source.id != null ? l.source.id : l.source);
       const t = (l.target && l.target.id != null ? l.target.id : l.target);
       return s === node.id || t === node.id;
     });
-    const bySem    = conns.filter((l) => l.type === 'semantic').length;
-    const byTmp    = conns.filter((l) => l.type === 'temporal').length;
-    const byTrn    = conns.filter((l) => l.type === 'transition').length;
-    const byMemWiki = conns.filter((l) => l.type === 'memory_wiki').length;
-    let connText = `${bySem} semantic · ${byTmp} temporal · ${byTrn} transition`;
-    if (byMemWiki) connText += ` · ${byMemWiki} wiki`;
+    // Group by type dynamically — single source of truth with the rendered edge list.
+    /** @type {Map<string, number>} */
+    const byType = new Map();
+    for (const l of conns) {
+      const et = l.type || 'unknown';
+      byType.set(et, (byType.get(et) || 0) + 1);
+    }
+    let connText;
+    if (byType.size === 0) {
+      connText = '0 connections';
+    } else {
+      connText = Array.from(byType.entries())
+        .map(([et, n]) => `${n} ${et}`)
+        .join(' · ');
+    }
     rows.push(`<div class="det-sec">
       <div class="det-lbl">Connections</div>
       <div class="det-val" style="color:#8b949e">${connText}</div>

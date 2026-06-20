@@ -404,3 +404,104 @@ describe('removeSseNode — wiki_deleted', () => {
     expect(allNodes.some((n) => n.slug === 'keep')).toBe(true);
   });
 });
+
+// ── F1 fidelity: connection count from all edge types ────────────────────────
+//
+// The panel should count ALL incident edges, not a hardcoded subset of 4.
+// Entity nodes wired only by co_occurrence/imports showed "0 connections"
+// with the old formula. The new formula groups all edge types dynamically.
+
+describe('showDetail — F1 connection count covers all edge types', () => {
+  let showDetail;
+
+  function makePanel(links) {
+    buildDom();
+    const wikiCatColor = () => ({});
+    const heatColorFn = (h) => `hsl(${h * 100},60%,50%)`;
+    const allLinksFn = () => links;
+    const fetchImpl = () => new Promise(() => {});
+    ({ showDetail } = createDetailPanel({
+      wikiCatColor,
+      heatColorFn,
+      allLinksFn,
+      fetchImpl,
+    }));
+  }
+
+  it('entity node with co_occurrence edge shows non-zero count', () => {
+    // entity:1 connected via co_occurrence — old formula (4 types) gave 0
+    const links = [{ source: 'entity:1', target: 'entity:2', type: 'co_occurrence' }];
+    makePanel(links);
+    const node = { type: 'entity', id: 'entity:1', label: 'E1', heat: 0.5 };
+    showDetail(node);
+    const body = document.getElementById('det-body').innerHTML;
+    // Should NOT show "0 connections"
+    expect(body).not.toContain('0 connections');
+    // Should contain "1 co_occurrence"
+    expect(body).toContain('1 co_occurrence');
+  });
+
+  it('entity node with no edges shows "0 connections"', () => {
+    const links = [{ source: 'entity:99', target: 'entity:100', type: 'co_occurrence' }];
+    makePanel(links);
+    const node = { type: 'entity', id: 'entity:1', label: 'E1', heat: 0.5 };
+    showDetail(node);
+    const body = document.getElementById('det-body').innerHTML;
+    expect(body).toContain('0 connections');
+  });
+
+  it('memory node with semantic + temporal edges counts both', () => {
+    const links = [
+      { source: 'mem:1', target: 'mem:2', type: 'semantic' },
+      { source: 'mem:1', target: 'mem:3', type: 'temporal' },
+    ];
+    makePanel(links);
+    const node = { type: 'memory', id: 'mem:1', content: 'hello', heat: 0.7 };
+    showDetail(node);
+    const body = document.getElementById('det-body').innerHTML;
+    expect(body).toContain('1 semantic');
+    expect(body).toContain('1 temporal');
+  });
+
+  it('entity node with imports + calls edges counts all types', () => {
+    const links = [
+      { source: 'entity:5', target: 'entity:6', type: 'imports' },
+      { source: 'entity:5', target: 'entity:7', type: 'calls' },
+      { source: 'entity:5', target: 'entity:8', type: 'caused_by' },
+    ];
+    makePanel(links);
+    const node = { type: 'entity', id: 'entity:5', label: 'E5', heat: 0.3 };
+    showDetail(node);
+    const body = document.getElementById('det-body').innerHTML;
+    expect(body).toContain('1 imports');
+    expect(body).toContain('1 calls');
+    expect(body).toContain('1 caused_by');
+    // Must NOT show "0 connections"
+    expect(body).not.toContain('0 connections');
+  });
+
+  it('counts target-side edges too (not just source)', () => {
+    // entity:2 is the TARGET, not source
+    const links = [{ source: 'entity:1', target: 'entity:2', type: 'co_occurrence' }];
+    makePanel(links);
+    const node = { type: 'entity', id: 'entity:2', label: 'E2', heat: 0.5 };
+    showDetail(node);
+    const body = document.getElementById('det-body').innerHTML;
+    expect(body).toContain('1 co_occurrence');
+    expect(body).not.toContain('0 connections');
+  });
+
+  it('wiki node connections use wiki edge types (wiki_crossref, memory_wiki)', () => {
+    const links = [
+      { source: 'wiki:1', target: 'wiki:2', type: 'wiki_crossref' },
+      { source: 'mem:10', target: 'wiki:1', type: 'memory_wiki' },
+    ];
+    makePanel(links);
+    const node = { type: 'wiki', id: 'wiki:1', slug: 'test', label: 'Test', category: 'analysis' };
+    showDetail(node);
+    // Wiki branch uses separate byXref/byMemWiki counts (different code path)
+    const body = document.getElementById('det-body').innerHTML;
+    expect(body).toContain('1 cross-refs');
+    expect(body).toContain('1 source memories');
+  });
+});

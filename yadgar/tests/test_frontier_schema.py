@@ -217,20 +217,6 @@ class TestFrontierConfig:
         assert s.HOPFIELD_MAX_PATTERNS == 5000
         assert isinstance(s.HOPFIELD_MAX_PATTERNS, int)
 
-    def test_reconsolidation_thresholds(self):
-        s = Settings()
-        assert s.RECONSOLIDATION_LOW_THRESHOLD == 0.3
-        assert s.RECONSOLIDATION_HIGH_THRESHOLD == 0.7
-
-    def test_plasticity_settings(self):
-        s = Settings()
-        assert s.PLASTICITY_SPIKE == 0.3
-        assert s.PLASTICITY_HALF_LIFE_HOURS == 6.0
-
-    def test_stability_increment(self):
-        s = Settings()
-        assert s.STABILITY_INCREMENT == 0.1
-
     def test_excitability_settings(self):
         s = Settings()
         assert s.EXCITABILITY_HALF_LIFE_HOURS == 6.0
@@ -239,11 +225,6 @@ class TestFrontierConfig:
     def test_write_gate_threshold(self):
         s = Settings()
         assert s.WRITE_GATE_THRESHOLD == 0.0
-
-    def test_compression_age_settings(self):
-        s = Settings()
-        assert s.COMPRESSION_GIST_AGE_HOURS == 168.0
-        assert s.COMPRESSION_TAG_AGE_HOURS == 720.0
 
     def test_sr_settings(self):
         s = Settings()
