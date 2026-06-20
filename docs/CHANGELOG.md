@@ -7,6 +7,20 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.74.0] - 2026-06-20
+
+Capability registry — the single source of truth for every feature/algorithm/behaviour (wired or not), enforced by a new coverage invariant. Contract **234 SHALLs** (+BC-I32).
+
+### Added
+- **`docs/CAPABILITY_REGISTRY.md` (#71):** 216 entries cataloguing the complete surface — **317 Settings fields · 72 MCP tools · 21 migrations · 233 BC-\* behaviours = 643 items, 100% covered**. Each entry: status (LIVE/DORMANT/SHADOW/DEAD/CONFIG-ONLY), category, the settings/tools/migrations/BC it owns, code refs, runtime wiring, and a plain-language explanation. Status distribution: 193 LIVE · 11 DORMANT · 7 CONFIG-ONLY · 3 DEAD · 1 SHADOW.
+- **I32 coverage lint (`scripts/check_capability_coverage.py`):** AST-enumerates the four authoritative surfaces (no imports) and asserts every item is catalogued; flags ORPHAN (uncatalogued), STALE (entry cites a vanished item), MALFORMED (bad status / unresolved ref). Wired into pre-commit (`check-capability-coverage`) + CI `invariant-checks`, with pytest `yadgar/tests/test_capability_coverage.py`. **BC-I32** added to the contract.
+- **Honest scope boundary:** a green I32 proves the catalogue is COMPLETE, not that each `status:` is accurate (status correctness needs call-graph truth — a human/review responsibility, documented in the registry header).
+
+### Notes
+- **Dead-config audit fuel for #41:** the registry surfaced confirmed dead/config-only knobs — `WRRF_K`, `WRRF_CANDIDATE_MULTIPLIER`, 3× `TEMPORAL_*`, 4× `CONFIDENCE_*`, 2× `BELIEF_*`, `QUERY_PREFIX`, `EMBEDDING_CACHE_SIZE`, dual-vector, `consensus_retrieve` (BC-AC3a), `PLASTICITY_*`/`STABILITY_INCREMENT`/`RECONSOLIDATION_*`, `CONSOLIDATION_COOLDOWN_SECONDS`, `IDLE_THRESHOLD_SECONDS`, `FRACTAL_LEVELS`, `COMPRESSION_*_AGE_HOURS`, `remember` tool (DEAD stub).
+- **#40 corrected:** AstrocytePool domain consolidation IS wired (cycle-invoked path at `orchestrator.py`); the old daemon path was the dead one.
+- **EN2a follow-through:** `PLAN_V6_QUALITY_FOUNDATION.md` §1.3.1 documents the FPA-drops-COMET root cause + 3 decision options + acceptance bar (flip ✅ or retire 🗑, no silent threshold-nudging).
+
 ## [5.73.0] - 2026-06-20
 
 e2e-chapter follow-through + data-quality visibility + deploy hardening. Contract **21 ✅ → 23 ✅ / 2 ❌** (BC-D3, BC-EN3a flipped; BC-EN1a → ⏳; BC-EN2a honest ❌).

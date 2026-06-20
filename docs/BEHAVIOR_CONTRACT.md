@@ -16,8 +16,8 @@ Run: `make e2e` (local, real `surreal`) + pre-push hook; **excluded from CI**
 (`-m 'not e2e'`).
 
 **Surface (recounted v5.71, self-enforced by `scripts/check_contract_coverage.py`):**
-**233 SHALLs / 38 subsystems.** Today: **23 ✅ · 206 ⏳ · 2 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47) Of the 206 ⏳:
-**70 `[r]` (real-path coverage exists) · 103 `[u]` (unit-only) · 33 none.**
+**234 SHALLs / 38 subsystems.** Today: **23 ✅ · 207 ⏳ · 2 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47) Of the 207 ⏳:
+**70 `[r]` (real-path coverage exists) · 104 `[u]` (unit-only) · 33 none.**
 Goal: every SHALL → ✅ or ❌.
 
 **Lint rules** (`scripts/check_contract_coverage.py`, run as a non-e2e pytest):
@@ -264,6 +264,7 @@ Goal: every SHALL → ✅ or ❌.
 - BC-I29 no dead capability: stored ≡ used ≡ shown (edge types). ⏳[ci] P2 (`scripts/check_dead_capability.py`)
 - BC-I30 complexity-cap integrity: caps configurable, allowlist gated, no silent baselining. ⏳[ci] P2 (`scripts/check_complexity.py`)
 - BC-I31 directory scoping: single is_directory_eligible predicate, hard-require, no 'system'. ⏳[r] P1 (ties DC1)
+- BC-I32 capability-registry coverage: every Settings field, MCP tool, migration, and BC-* is catalogued in CAPABILITY_REGISTRY. ⏳[u] P2 (`scripts/check_capability_coverage.py`; test `yadgar/tests/test_capability_coverage.py`)
 
 ### MCP tool surface (72 registered tools — `yadgar/server/tools/*`)
 > Replaces the old single BC-MCP umbrella. Each registered `@_tool` gets a row;

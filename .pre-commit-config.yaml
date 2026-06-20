@@ -95,6 +95,13 @@ repos:
         pass_filenames: false
         files: ^(yadgar/graph_api\.py|yadgar/viz_meta\.py|docs/EDGE_CONTRACT\.md)$
 
+      - id: check-capability-coverage
+        name: Check I32 capability-registry coverage (every setting/tool/migration/BC catalogued)
+        language: system
+        entry: python scripts/check_capability_coverage.py
+        pass_filenames: false
+        files: ^(yadgar/config\.py|yadgar/storage/migrations\.py|yadgar/server/tools/.*\.py|docs/BEHAVIOR_CONTRACT\.md|docs/CAPABILITY_REGISTRY\.md)$
+
       - id: check-complexity-allowlist
         name: Check I30 complexity-cap integrity (HARD gated, rationale required, no stale entries)
         language: system
