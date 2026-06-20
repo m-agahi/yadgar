@@ -1,22 +1,56 @@
-"""Thermodynamic heat decay mixin for ConsolidationScheduler."""
+"""Thermodynamic heat decay mixin for ConsolidationScheduler.
+
+Architecture (T4 — BC-CSW1 single-writer):
+    Cycle phases COLLECT heat-change intents (SQL, params) instead of writing
+    directly.  A reconcile step merges the intent lists.  A SINGLE
+    HeatWriter.apply_heat_intents() call applies the reconciled set — one
+    storage.batch_writes for all heat mutations per cycle.
+"""
 
 import logging
 from datetime import UTC, datetime
 
+from yadgar.storage.heat_writer import HeatWriter
+
 logger = logging.getLogger("yadgar.consolidation")
+
+
+def _reconcile_heat_intents(
+    mem_intents: list[tuple[str, dict | None]],
+    ent_intents: list[tuple[str, dict | None]],
+) -> list[tuple[str, dict | None]]:
+    """Merge memory and entity heat intents into one ordered list.
+
+    Each intent targets a unique (table, id) pair — no deduplication is needed
+    because _decay_memories and _decay_entities each emit at most one UPDATE per
+    record.  This reconcile step exists to make the single-writer contract
+    explicit: all heat mutations across both tables are combined before the
+    single batch_writes call.
+
+    Args:
+        mem_intents: UPDATE statements for memory table (from _decay_memories).
+        ent_intents: UPDATE statements for entity table (from _decay_entities).
+
+    Returns:
+        Combined list: memories first, then entities.  Order within each group
+        is preserved (stable, deterministic — same as before the refactor).
+    """
+    return list(mem_intents) + list(ent_intents)
 
 
 class _HeatDecayMixin:
     """Applies thermodynamic decay to memory and entity heat values."""
 
     def _apply_decay(self, stats: dict) -> None:
+        """Collect memory + entity heat intents, reconcile, apply once (BC-CSW1)."""
         now = datetime.now(UTC)
-        mem_batch = self._decay_memories(stats, now)
-        if mem_batch:
-            self._storage.batch_writes(mem_batch)
-        ent_batch = self._decay_entities(now)
-        if ent_batch:
-            self._storage.batch_writes(ent_batch)
+        # Phase 1 — collect intents (no writes yet)
+        mem_intents = self._decay_memories(stats, now)
+        ent_intents = self._decay_entities(now)
+        # Phase 2 — reconcile: merge both intent lists (one entry per id)
+        all_intents = _reconcile_heat_intents(mem_intents, ent_intents)
+        # Phase 3 — single apply via HeatWriter facade (BC-CSW1)
+        HeatWriter(self._storage).apply_heat_intents(all_intents)
 
     def _build_domain_multiplier_map(self) -> dict[int, float]:
         """Return {memory_id -> max decay multiplier across all domains}.

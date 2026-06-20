@@ -16,7 +16,7 @@ Run: `make e2e` (local, real `surreal`) + pre-push hook; **excluded from CI**
 (`-m 'not e2e'`).
 
 **Surface (recounted v5.71, self-enforced by `scripts/check_contract_coverage.py`):**
-**234 SHALLs / 38 subsystems.** Today: **23 ✅ · 207 ⏳ · 2 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47) Of the 207 ⏳:
+**235 SHALLs / 38 subsystems.** Today: **24 ✅ · 207 ⏳ · 2 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47) Of the 207 ⏳:
 **70 `[r]` (real-path coverage exists) · 104 `[u]` (unit-only) · 33 none.**
 Goal: every SHALL → ✅ or ❌.
 
@@ -52,6 +52,7 @@ Goal: every SHALL → ✅ or ❌.
 - BC-C4 nightly sleep phases run (dream/community/cluster/reembed_stale/compress/auto_narrate). ✅ `tests/e2e/test_phase2_subsystems.py::TestBCC4_NightlySleepCycleRuns::test_nightly_runs_sleep_cycle_produces_dream_insight` P1
 - BC-C5a AstrocytePool domain consolidation executes (assign→consolidate per domain produces a summary). ✅ `tests/e2e/test_phase2_subsystems.py::TestBCAC2_AstrocyteDomainConsolidation::test_consolidate_domain_produces_summary` P2
 - BC-C5b if astrocyte pool is disabled, config reports it disabled + emits exactly one startup warning. ⏳ #40 P2
+- BC-CSW1 one consolidation cycle issues exactly ONE storage.batch_writes call for all heat mutations (memories + entities combined); no phase other than HeatWriter.apply_heat_intents writes heat. ✅ `tests/e2e/test_heat_single_writer_e2e.py::TestBCCSW1_HeatSingleWriterE2E::test_single_batch_writes_for_heat_real_cycle` P1
 
 ### D. Nightly cycle (host job; tests use TEMP data dir + stubbed service control)
 - BC-D1 nightly completes exit 0 against seeded temp DB. ✅ `tests/e2e/test_vacuum_backup_safety.py::TestBCD1_NightlyCompletesExitZero::test_real_nightly_main_exits_zero_no_contention` P1
