@@ -1012,6 +1012,17 @@ FIELD_META: dict[str, dict[str, str]] = {
         ),
         "section": "recall_quality",
     },
+    # v6 T6 — unified-scoped-recall fan-out flag
+    "unified_recall_enabled": {
+        "desc": (
+            "Enable the unified fan-out recall path (v6 T6, default false). "
+            "When true, recall() fans out to MemoryProvider + WikiProvider, pools results, "
+            "and returns a combined deduped list. When false (default), recall() uses the "
+            "exact legacy path with zero behavior change. "
+            "Steps 3–5 (DB-level DirectoryFilter, cross-encoder fusion, type= param) ship later."
+        ),
+        "section": "unified_recall",
+    },
 }
 
 
@@ -1049,6 +1060,7 @@ SECTION_TITLES: dict[str, str] = {
     "hooks": "Hook Recall Latency Budget (v5.51.0)",
     "stats_cache": "Stats Cache (v5.51.0)",
     "recall_quality": "Recall Quality Floor (v5.62.0)",
+    "unified_recall": "Unified Scoped Recall (v6 T6)",
 }
 
 # Ordered list of sections for deterministic output

@@ -321,6 +321,13 @@ class Settings(BaseSettings):
     # Set to 0.0 to disable entirely; missing CE scores are always preserved.
     RECALL_QUALITY_FLOOR: float = 0.0
 
+    # v6 T6 (unified-scoped-recall) — fan-out recall flag (I25 three-way registered).
+    # When True, recall() routes through the SourceProvider fan-out orchestrator
+    # (MemoryProvider + WikiProvider pooled + simple dedup).  When False (default),
+    # recall() uses the EXACT legacy path — ZERO behavior change.
+    # Steps 3–5 (DirectoryFilter, fusion, type= param) ship in later passes.
+    UNIFIED_RECALL_ENABLED: bool = False
+
     # v5.51.0: Hook recall latency budget (I25 three-way registered).
     # Maximum seconds asyncio.wait_for may wait for retriever.recall in hook handlers.
     # On timeout: WARN log + yadgar_hook_recall_timeout_total incremented + empty returned.

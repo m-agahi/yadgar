@@ -185,6 +185,7 @@ def _build_response(ctx: MemorizeContext, storage, settings) -> dict:
         return {
             "stored": True,
             "id": ctx.memory_id,
+            "memory_id": ctx.memory_id,
             "curation_action": ctx.curation_action,
             "warning": "memory written but not found on readback",
         }
@@ -220,6 +221,7 @@ def _build_response(ctx: MemorizeContext, storage, settings) -> dict:
         memory["provenance_agent"] = ctx.provenance_agent_resolved
         memory["vector_clock"] = clock
 
+    memory["memory_id"] = ctx.memory_id
     memory["curation_action"] = ctx.curation_action
 
     if ctx.gate_result is not None:

@@ -8,6 +8,7 @@
   "heat": 1.0,
   "id": 42,
   "is_protected": false,
+  "memory_id": 42,
   "provenance_agent": "default",
   "tags": [
     "test",

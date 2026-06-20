@@ -86,7 +86,12 @@ def load_golden_set(path: Path) -> tuple[list[dict], dict]:
     """Load golden pairs from a JSONL file.
 
     Returns (pairs, header) where header is the metadata sentinel line (query_id=HEADER).
-    Filters out HEADER lines and pairs marked as bootstrap placeholders with no real IDs.
+    Filters out HEADER lines and pairs with no relevant IDs (neither memory nor wiki).
+
+    v6-T6 schema additions:
+      relevant_wiki_slugs[]  — wiki slugs relevant for this query (mixed-type cases)
+      type                   — "memory" | "wiki" | "all" annotation (informational,
+                               used to segment reporting; not used for routing)
     """
     pairs: list[dict] = []
     header: dict = {}
@@ -101,14 +106,15 @@ def load_golden_set(path: Path) -> tuple[list[dict], dict]:
             if obj.get("query_id") == "HEADER":
                 header = obj
                 continue
-            ids = obj.get("relevant_memory_ids", [])
-            if not ids:
+            mem_ids = obj.get("relevant_memory_ids", [])
+            wiki_slugs = obj.get("relevant_wiki_slugs", [])
+            if not mem_ids and not wiki_slugs:
                 skipped += 1
                 continue
             pairs.append(obj)
 
     if skipped:
-        print(f"  Skipped {skipped} pairs with empty relevant_memory_ids")
+        print(f"  Skipped {skipped} pairs with empty relevant_memory_ids and relevant_wiki_slugs")
 
     is_bootstrap = header.get("bootstrap", False)
     curated_pairs = [p for p in pairs if not p.get("needs_curation", False)]
@@ -186,6 +192,38 @@ def create_eval_engines(settings: Settings):
 # ── Per-query eval ─────────────────────────────────────────────────────────────
 
 
+def _extract_retrieved_keys(results: list[dict]) -> list[str]:
+    """Extract a unified namespace key list from retriever results.
+
+    Keys use a prefixed namespace so memory IDs and wiki slugs can coexist in
+    the same string list consumed by compute_recall / compute_ndcg / MRR:
+      "mem:<int_id>"   — for memory rows (type=memory or no _source tag)
+      "wiki:<slug>"    — for wiki rows (_source="wiki")
+
+    v6-T6: used by evaluate_pair for both memory-only and mixed-type scoring.
+    The same prefix scheme is used in gold_keys (built in evaluate_pair) so the
+    primitives from run_longmemeval work unmodified.
+    """
+    keys: list[str] = []
+    for m in results:
+        if m.get("_source") == "wiki":
+            slug = m.get("slug") or m.get("id", "")
+            if slug:
+                keys.append(f"wiki:{slug}")
+        else:
+            mid = m.get("id")
+            if mid is None:
+                continue
+            try:
+                raw = mid
+                if isinstance(raw, str) and ":" in raw:
+                    raw = raw.split(":", 1)[1]
+                keys.append(f"mem:{int(raw)}")
+            except (TypeError, ValueError):
+                pass
+    return keys
+
+
 def evaluate_pair(
     pair: dict,
     retriever: Retriever,
@@ -196,10 +234,26 @@ def evaluate_pair(
 
     Uses memory-id granularity (not session granularity like LongMemEval).
 
+    v6-T6: unified namespace scoring. Gold set may specify:
+      - relevant_memory_ids[]   — integer memory IDs mapped to "mem:<id>" keys
+      - relevant_wiki_slugs[]   — wiki slug strings mapped to "wiki:<slug>" keys
+    Retrieved results are similarly mapped via _extract_retrieved_keys().
+    This allows compute_recall / compute_ndcg / MRR from run_longmemeval to work
+    across both memory and wiki results with zero primitive changes.
+
     Returns a metrics dict including latency_ms.
     """
     query = pair["query"]
-    gold_ids = set(int(mid) for mid in pair["relevant_memory_ids"])
+    # Build unified gold key set (prefixed namespace)
+    gold_keys: set[str] = set()
+    for mid in pair.get("relevant_memory_ids", []):
+        try:
+            gold_keys.add(f"mem:{int(mid)}")
+        except (TypeError, ValueError):
+            pass
+    for slug in pair.get("relevant_wiki_slugs", []):
+        if slug:
+            gold_keys.add(f"wiki:{slug}")
 
     t0 = time.perf_counter()
     try:
@@ -213,33 +267,23 @@ def evaluate_pair(
         }
     elapsed_ms = (time.perf_counter() - t0) * 1000
 
-    retrieved_ids = []
-    for m in results:
-        if "id" not in m:
-            continue
-        try:
-            raw = m["id"]
-            # SurrealDB may return "memory:123" or just 123
-            if isinstance(raw, str) and ":" in raw:
-                raw = raw.split(":", 1)[1]
-            retrieved_ids.append(int(raw))
-        except (TypeError, ValueError):
-            pass
+    retrieved_keys = _extract_retrieved_keys(results)
 
     metrics: dict = {
         "query_id": pair["query_id"],
         "derivation": pair.get("derivation", "unknown"),
+        "type": pair.get("type", "memory"),
         "bootstrap": pair.get("bootstrap", True),
         "needs_curation": pair.get("needs_curation", True),
         "latency_ms": elapsed_ms,
-        "retrieved_count": len(retrieved_ids),
-        "gold_count": len(gold_ids),
+        "retrieved_count": len(retrieved_keys),
+        "gold_count": len(gold_keys),
     }
 
     # recall@k + nDCG@k — reuse primitives from run_longmemeval
-    # Adapter: primitives accept list[str], set[str]; we pass str(id)
-    retrieved_str = [str(i) for i in retrieved_ids]
-    gold_str = {str(i) for i in gold_ids}
+    # Unified namespace: both gold and retrieved use prefixed string keys.
+    retrieved_str = retrieved_keys
+    gold_str = gold_keys
 
     for k in k_values:
         metrics[f"recall@{k}"] = compute_recall(retrieved_str, gold_str, k)
@@ -291,11 +335,18 @@ def aggregate_metrics(per_query: list[dict], k_values: list[int]) -> dict:
     agg["latency_mean_ms"] = statistics.mean(latencies)
 
     # By derivation type
-    for derivation in ("paraphrase", "tag_lookup", "recency_anchor"):
+    for derivation in ("paraphrase", "tag_lookup", "recency_anchor", "wiki_primary"):
         subset = [m for m in valid if m.get("derivation") == derivation]
         if subset:
             agg[f"mrr_{derivation}"] = sum(m["mrr"] for m in subset) / len(subset)
             agg[f"recall@10_{derivation}"] = sum(m["recall@10"] for m in subset) / len(subset)
+
+    # v6-T6: by query type (memory / wiki / all)
+    for qtype in ("memory", "wiki", "all"):
+        subset = [m for m in valid if m.get("type") == qtype]
+        if subset:
+            agg[f"mrr_type_{qtype}"] = sum(m["mrr"] for m in subset) / len(subset)
+            agg[f"recall@10_type_{qtype}"] = sum(m["recall@10"] for m in subset) / len(subset)
 
     # Bootstrap vs curated split
     curated = [m for m in valid if not m.get("needs_curation", True)]
@@ -341,11 +392,18 @@ def print_summary_table(agg: dict, golden_header: dict) -> None:
     print(f"  mean = {agg.get('latency_mean_ms', 0.0):.1f} ms")
     print()
     print("  ── By derivation type ─────────────────────────────────")
-    for deriv in ("paraphrase", "tag_lookup", "recency_anchor"):
+    for deriv in ("paraphrase", "tag_lookup", "recency_anchor", "wiki_primary"):
         mrr_k = f"mrr_{deriv}"
         r10_k = f"recall@10_{deriv}"
         if mrr_k in agg:
             print(f"  {deriv:<18}  MRR={agg[mrr_k]:.4f}  R@10={agg[r10_k]:.4f}")
+    print()
+    print("  ── By query type (v6-T6 unified recall) ───────────────")
+    for qtype in ("memory", "wiki", "all"):
+        mrr_k = f"mrr_type_{qtype}"
+        r10_k = f"recall@10_type_{qtype}"
+        if mrr_k in agg:
+            print(f"  type={qtype:<8}           MRR={agg[mrr_k]:.4f}  R@10={agg[r10_k]:.4f}")
     print("=" * 60)
     if is_bootstrap:
         print()
@@ -368,7 +426,7 @@ def write_json_report(
     path.parent.mkdir(parents=True, exist_ok=True)
     report = {
         "benchmark": "yadgar-native-eval",
-        "version": "v6-phase0",
+        "version": "v6-t6-step0",
         "timestamp": datetime.now(UTC).isoformat(),
         "golden_set": golden_path,
         "bootstrap_warning": golden_header.get("bootstrap", False),

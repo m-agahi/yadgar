@@ -1493,6 +1493,37 @@ def _project_brief_signals(
     return result
 
 
+def _build_recent_writes(storage, resolved: str, limit: int = 10) -> list[dict]:
+    """Fetch memories written in the last 24h for this project, newest first.
+
+    Returns a compact list: id, created_at, content (≤150 chars), tags.
+    Used by _project_brief_restore to surface recent work after compaction.
+    """
+    from datetime import timedelta
+
+    cutoff = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
+    try:
+        rows = storage.get_recent_memories_since(
+            since=cutoff,
+            limit=limit,
+            directory=resolved if resolved else None,
+        )
+    except Exception:
+        return []
+    result = []
+    for row in rows:
+        content = row.get("content") or ""
+        result.append(
+            {
+                "id": row.get("id"),
+                "created_at": row.get("created_at"),
+                "content": content[:150],
+                "tags": row.get("tags") or [],
+            }
+        )
+    return result
+
+
 def _project_brief_restore(
     resolved: str,
     mode: str,
@@ -1509,6 +1540,8 @@ def _project_brief_restore(
         "key_wiki_pages": _build_wiki_pages(storage, limit=3, directory=resolved),
         # v5.53.0: grouped wiki catalog (metadata-only, length-capped).
         "wiki_catalog": _build_wiki_catalog(storage, resolved),
+        # #35: recent writes in last 24h — helps agent recall what was stored before compaction.
+        "recent_writes": _build_recent_writes(storage, resolved),
     }
 
 
@@ -1646,7 +1679,7 @@ def project_brief(directory: str, mode: str = "catalog", branch_hint: str | None
 
 @_tool(power=True)
 def bootstrap_project(directory: str, content: str) -> dict:
-    """Replace this directory's _project_init memory atomically.
+    """Replace this directory's _project_init memory with caller-supplied content.
 
     Content must be concise markdown: wiki slugs, key memory IDs, conventions,
     lookup tips. Hard cap: 2000 chars. Raises ValueError on overflow.
@@ -1657,6 +1690,12 @@ def bootstrap_project(directory: str, content: str) -> dict:
     v5.33.0: also seeds default memory blocks (current_task + gotchas) if they
     don't already exist for this directory. Idempotent — existing blocks are
     not overwritten.
+
+    STALENESS NOTE: caller-supplied content will not refresh automatically.
+    For auto-generated and always-current project context, prefer seed_project()
+    which scans the directory and rewrites _project_init on each run.
+    Use bootstrap_project only when you need a hand-curated init string that
+    seed_project's auto-scan cannot capture.
     """
     # v5.10.2: secret gate — scan content before any state mutation
     _gate = gate_or_reject(content)
