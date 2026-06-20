@@ -821,6 +821,38 @@ class _MemoryMixin:
             )
         return self._rows_to_dicts(rows)
 
+    def get_recent_memories_since(
+        self,
+        since: str,
+        limit: int = 10,
+        directory: str | None = None,
+    ) -> list[dict]:
+        """Return memories created since the given ISO-8601 cutoff, newest first.
+
+        Args:
+            since: ISO-8601 UTC datetime string (cutoff; memories after this are returned).
+            limit: max rows (caller is responsible for capping; default 10).
+            directory: restrict to this directory_context. None or 'global' = all directories.
+        """
+        params: dict = {"lim": limit, "since": since}
+        if directory and directory != "global":
+            rows = self._q(
+                "SELECT id, content, created_at, tags, store_type, heat, is_protected, "
+                "directory_context FROM memory "
+                "WHERE heat > 0 AND created_at >= $since AND directory_context = $dir "
+                "ORDER BY created_at DESC LIMIT $lim",
+                {**params, "dir": directory},
+            )
+        else:
+            rows = self._q(
+                "SELECT id, content, created_at, tags, store_type, heat, is_protected, "
+                "directory_context FROM memory "
+                "WHERE heat > 0 AND created_at >= $since "
+                "ORDER BY created_at DESC LIMIT $lim",
+                params,
+            )
+        return self._rows_to_dicts(rows)
+
     # ------------------------------------------------------------------ Graph prior (v5.54.1)
 
     def get_memory_graph_priors(self, memory_ids: list[int]) -> dict[int, float]:

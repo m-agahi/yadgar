@@ -81,6 +81,7 @@ def cli():
         export,
         install_hooks,
         install_subagents,
+        repo_wiki,
         restore,
         rules,
         seed,
@@ -101,6 +102,7 @@ def cli():
     seed.register(subparsers)
     config.register(subparsers)
     rules.register(subparsers)
+    repo_wiki.register(subparsers)
     viz.register(subparsers)
     setup.register(subparsers)
     daemon.register(subparsers)

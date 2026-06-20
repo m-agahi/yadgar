@@ -613,6 +613,20 @@ config knobs.
 - **wiring:** Called during consolidation cycles. `assign_memory()` routes memories to domain-specialist astrocyte processes. `consolidate_domain()` runs domain-level summarization. Both are exercised in e2e tests (BC-AC1, BC-AC2 marked ✅).
 - **explanation:** Domain-aware consolidation: memories are assigned to semantic domains (e.g. "code", "decisions") by the astrocyte pool. Each domain runs its own consolidation pass, producing domain summaries. This supplements the global consolidation by maintaining domain-coherent clusters. The pool can be disabled via `ASTROCYTE_POOL_ENABLED=False`; when disabled a startup warning is emitted (BC-C5b pending #40).
 
+### CAP-RETR-039 — Unified Scoped Recall Fan-Out (v6 T6)
+
+- **status:** DORMANT
+- **category:** retrieval
+- **settings:** `UNIFIED_RECALL_ENABLED`
+- **tools:** `recall`
+- **migrations:** —
+- **bc:** —
+- **refs:** `yadgar/retrieval/providers/base.py::SourceProvider`, `yadgar/retrieval/providers/base.py::Candidate`, `yadgar/retrieval/providers/memory.py::MemoryProvider`, `yadgar/retrieval/providers/wiki.py::WikiProvider`, `yadgar/server/tools/recall.py::_fanout_recall`
+- **wiring:** When `UNIFIED_RECALL_ENABLED=True`, `recall()` routes through `_fanout_recall()` which builds a `[MemoryProvider, WikiProvider]` list, calls `candidates()` on each with a shared `Scope`, pools the results, and deduplicates by content. When `UNIFIED_RECALL_ENABLED=False` (default), the legacy path is taken with zero behavior change. Steps 3–5 (DB-level DirectoryFilter, cross-encoder fusion, `type=` param) are not yet wired.
+- **explanation:** First step of the unified recall architecture (v6 T6 — `[[unified-scoped-recall]]`). `SourceProvider` is an ABC with `type: str` + `candidates(query, scope, limit) -> list[Candidate]`. `MemoryProvider` wraps `Retriever.recall()`; `WikiProvider` wraps `WikiStore.query()`. Both return `Candidate` dataclasses with a unified schema and a `raw` field for lossless pass-through. The fan-out is gated behind `UNIFIED_RECALL_ENABLED` (default False) so existing callers see no change until the full pipeline (Steps 3–5) ships.
+
+---
+
 ### CAP-STOR-001 — SurrealDB transport layer and batch writes
 - **status:** LIVE
 - **category:** storage
@@ -1740,6 +1754,20 @@ config knobs.
 - **wiring:** `project_brief(mode='signals')` → `_project_brief_signals()` → `_compute_anchor_signals()` → `_fetch_anchor_promote_ids()`. Queries all project anchors, filters by triple AND: `word_count > ANCHOR_PROMOTE_WORDS`, `header_count >= ANCHOR_PROMOTE_HEADERS`, and `tags ∩ {rule, pattern, convention, playbook, workflow, recipe} ≠ ∅`. Returns IDs of qualifying anchors, capped at 3 (`_SIGNALS_CANDIDATES_K`).
 - **explanation:** Detects oversized, structured anchors that have grown rich enough to warrant promotion to wiki pages. The triple-AND filter ensures only anchors with substantial content (`ANCHOR_PROMOTE_WORDS` words, default 500), multiple markdown headers (`ANCHOR_PROMOTE_HEADERS`, default 2), AND playbook/pattern tags qualify. When candidates are found, a `promote_anchor_to_wiki` recommended_action appears in the `project_brief(mode='signals')` payload, nudging the agent to create a wiki page and replace the anchor with a reference.
 
+### CAP-WIKI-020 — Native repo-wiki generation (T8, Option A)
+
+- **status:** LIVE
+- **category:** wiki
+- **settings:** —
+- **tools:** `repo_wiki_generate`
+- **migrations:** —
+- **bc:** —
+- **refs:** `yadgar/repo_wiki/__init__.py`, `yadgar/repo_wiki/scanner.py`, `yadgar/repo_wiki/generator.py`, `yadgar/server/tools/repo_wiki.py`, `yadgar/cli/repo_wiki.py`
+- **wiring:** MCP: `repo_wiki_generate(directory, ...)` → `scan_repo(directory)` → `generate_wiki_pages(records, directory_context)` → returns page dicts for caller to submit via `wiki_add`. CLI: `yadgar repo-wiki [REPO_PATH]` → same pipeline → submits via daemon REST `/hooks/wiki-generate`. Registered via `@_tool` in `yadgar/server/tools/repo_wiki.py`, imported into `yadgar/server/tools/__init__.py`. CLI registered in `yadgar/__main__.py` via `repo_wiki.register(subparsers)`. No Settings flag (pure read-only operation; no behavioral gating needed).
+- **explanation:** Native Python AST-based code-structure wiki generator. Walks a repository (reusing `_should_skip_dir` from `seed._scan`), parses each `.py` file with `ast.parse`, extracts module docstrings, function/method signatures and docstrings, and class hierarchies. Emits one wiki page per module (per-module granularity, not per-function) with `directory_context` stamped to the repo root absolute path — fixing the prior `global` mis-stamp that affected 364 `fn-`/`mod-` pages written by the external `/repo-wiki:repo-wiki` skill. Option B (AST-graph via tree-sitter + leidenalg community detection) is a noted follow-on, not built here.
+
+---
+
 ### CAP-OPS-001 — DLQ inspection and replay (dead-letter queue)
 - **status:** LIVE
 - **category:** ops
@@ -2135,6 +2163,17 @@ config knobs.
 - **refs:** `yadgar/storage/__init__.py`
 - **wiring:** `StorageEngine.__init__()` applies schema migrations by issuing HTTP requests to the SurrealDB backend. Each migration request uses `MIGRATION_HTTP_TIMEOUT_SEC` (default 30 s) as the httpx timeout, distinct from the operational `BACKEND_HTTP_TIMEOUT_SEC` (5 s). This is set once at startup during `StorageEngine` initialisation.
 - **explanation:** Schema migrations (DDL statements, backfill queries) can take significantly longer than operational read/write queries due to lock contention and large-table scans. `MIGRATION_HTTP_TIMEOUT_SEC` (default 30 s) gives migrations a longer deadline than the operational 5 s cap, preventing spurious migration failures on large databases or loaded backends without also allowing operational queries to time out slowly.
+
+### CAP-OPS-037 — recent_memories: time-ranked memory surface without classifier
+- **status:** LIVE
+- **category:** ops
+- **settings:** —
+- **tools:** `recent_memories`
+- **migrations:** —
+- **bc:** —
+- **refs:** `yadgar/server/tools/admin_other.py::recent_memories`, `yadgar/storage/memory.py::get_recent_memories_since`
+- **wiring:** MCP client → `recent_memories(limit, since, directory)` → `_parse_since_duration(since)` converts duration string or ISO cutoff → `storage.get_recent_memories_since(since, limit, directory)` → returns rows ordered by `created_at DESC`. `limit` is capped at 100; `since` accepts `'24h'`, `'7d'`, `'30m'` duration strings or ISO-8601 UTC datetime; `directory='global'` or empty queries all directories. Content truncated to 300 chars per entry. Also feeds `_project_brief_restore()` via `_build_recent_writes()` to populate the `recent_writes` section of `restore` output.
+- **explanation:** Surfaces recently stored memories ordered by creation time without invoking the embedding/classifier pipeline. Useful after context compaction (when `restore` has already fired) to inspect what was written in the last N hours. The `restore` tool's output now includes a `recent_writes` section (last 10 memories in last 24h) built from this storage method, helping agents reconstruct work that was stored just before compaction. `memorize()` responses also now include an explicit `memory_id` field alongside the full memory dict for stable programmatic access.
 
 ### CAP-VIZ-001 — Wiki node category colors
 

@@ -7,6 +7,21 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.78.0] - 2026-06-20
+
+v6 Wave-2 batch — three trains. Recall-rebuild foundation (flag-gated, dormant), tool-surface + fresh-memory, repo-wiki-native. Tool surface 72 → 73 (net; `remember` gone in v5.76).
+
+### Recall rebuild — Steps 0–2 (#30, behind `UNIFIED_RECALL_ENABLED`, default off)
+- `yadgar/retrieval/providers/` — `SourceProvider` ABC + `MemoryProvider`/`WikiProvider` normalizing memory rows and wiki pages to a common `Candidate`. `_fanout_recall()` in `recall.py` pools providers when the flag is on; **flag-off keeps the exact legacy path (zero behaviour change)**. CAP-RETR-039 (DORMANT).
+- Eval harness extended for wiki + mixed-type golden cases (`relevant_wiki_slugs[]`, per-query `type`); committed baseline. Steps 3–5 (DB-level DirectoryFilter, cross-type fusion, `type=` param + `wiki_query` alias) follow in later passes.
+
+### Tool-surface + fresh-memory (#32, #35)
+- New `recent_memories(limit, since, directory)` tool (time-ranked, no classifier) + `storage.get_recent_memories_since`. `restore` gains a "Recent Writes (last 24h)" section. `memorize` now returns `memory_id`. CAP-OPS-037.
+- `reembed_all` verified working (BC-ADM1 e2e green); `bootstrap_project`/`seed_project` reconciled (seed owns init).
+
+### Repo-wiki-native (#34, Option A)
+- New `yadgar/repo_wiki/` package — AST scanner + page generator emitting directory-stamped `mod-<name>` wiki pages (signatures + docstrings). CLI `yadgar repo-wiki` + MCP tool `repo_wiki_generate`. CAP-WIKI-020. (Direct `wiki_add` wiring deferred until the recall rebuild stabilises `wiki.py`.)
+
 ## [5.77.0] - 2026-06-20
 
 e2e Phase-3 closure (#47) — 13 critical-path behaviours promoted to **✅ e2e-proven** against a live SurrealDB. No code change; contract honesty pass. Tally **40 ✅ · 190 ⏳ · 2 ❌**.

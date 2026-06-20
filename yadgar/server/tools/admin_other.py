@@ -1,10 +1,12 @@
 """Remaining admin MCP tools: forget, validate_memory, consolidate_now, reembed_all,
-memory_stats, add_rule, get_rules, memory_get, wiki_get, memory_update, wiki_update."""
+recent_memories, memory_stats, add_rule, get_rules, memory_get, wiki_get, memory_update,
+wiki_update."""
 
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+import re
+from datetime import UTC, datetime, timedelta
 
 import yadgar.server._state as _st
 from yadgar.config import get_settings
@@ -161,6 +163,102 @@ def reembed_all() -> dict:
         "reembedded": total,
         "total_missing": len(rows),
         "model": embeddings.model_name,
+    }
+
+
+# ── Duration parser for recent_memories ───────────────────────────────────
+
+_DURATION_RE = re.compile(r"^(\d+)(m|h|d)$", re.IGNORECASE)
+
+_UNIT_SECONDS: dict[str, int] = {"m": 60, "h": 3600, "d": 86400}
+
+
+def _parse_since_duration(since: str) -> str:
+    """Convert a duration string ('24h', '7d', '30m') or ISO datetime to cutoff ISO string.
+
+    Duration strings: <N>(m|h|d) where m=minutes, h=hours, d=days.
+    ISO strings are returned as-is after validation.
+    Returns an ISO-8601 UTC string.
+    """
+    m = _DURATION_RE.match(since.strip())
+    if m:
+        amount = int(m.group(1))
+        unit = m.group(2).lower()
+        delta = timedelta(seconds=amount * _UNIT_SECONDS[unit])
+        return (datetime.now(UTC) - delta).isoformat()
+    # Try parsing as ISO datetime
+    try:
+        dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        return dt.isoformat()
+    except ValueError:
+        # Fall back to 24h if unparseable
+        logger.warning("recent_memories: could not parse since=%r, defaulting to 24h", since)
+        return (datetime.now(UTC) - timedelta(hours=24)).isoformat()
+
+
+@_tool()
+def recent_memories(
+    limit: int = 10,
+    since: str = "24h",
+    directory: str = "",
+) -> dict:
+    """Return recently stored memories, newest first, without classifier dependency.
+
+    Useful for a quick summary of what was memorized recently — e.g. after
+    compaction to see what the session wrote before context was lost.
+
+    Args:
+        limit: max memories to return (default 10, capped at 100).
+        since: how far back to look. Duration string ('24h', '7d', '30m') or
+               ISO-8601 UTC datetime. Default '24h'.
+        directory: restrict to this project directory. Pass 'global' or omit
+                   to search across all directories.
+
+    Returns:
+        {
+            "memories": [
+                {id, created_at, content (≤300 chars), tags, store_type,
+                 heat, is_protected, directory_context}
+            ],
+            "count": <int>,
+            "since": <ISO cutoff>,
+            "directory": <str>,
+        }
+    """
+    storage = _get_storage()
+    effective_limit = min(max(1, limit), 100)
+    effective_dir = directory.strip() if directory else ""
+    since_iso = _parse_since_duration(since)
+
+    rows = storage.get_recent_memories_since(
+        since=since_iso,
+        limit=effective_limit,
+        directory=effective_dir if effective_dir else None,
+    )
+
+    memories = []
+    for row in rows:
+        content = row.get("content") or ""
+        if len(content) > 300:
+            content = content[:297] + "..."
+        memories.append(
+            {
+                "id": row.get("id"),
+                "created_at": row.get("created_at"),
+                "content": content,
+                "tags": row.get("tags") or [],
+                "store_type": row.get("store_type"),
+                "heat": row.get("heat"),
+                "is_protected": row.get("is_protected", False),
+                "directory_context": row.get("directory_context"),
+            }
+        )
+
+    return {
+        "memories": memories,
+        "count": len(memories),
+        "since": since_iso,
+        "directory": effective_dir or "global",
     }
 
 

@@ -78,6 +78,88 @@ def _dedup_by_content(memories: list[dict]) -> list[dict]:
     return result
 
 
+# ---------------------------------------------------------------------------
+# v6 T6 fan-out recall orchestrator (UNIFIED_RECALL_ENABLED=True path only)
+# ---------------------------------------------------------------------------
+
+
+def _fanout_recall(
+    query: str,
+    max_results: int,
+    min_heat: float,
+    directory: str,
+    current_branch: str | None,
+    default_branch: str | None,
+) -> list[dict]:
+    """Fan out recall to MemoryProvider + WikiProvider, pool + dedup results.
+
+    Called ONLY when UNIFIED_RECALL_ENABLED=True.  Flag-False takes the
+    legacy body below — this function is never entered in production until
+    the flag is explicitly enabled.
+
+    Step 2 scope (Steps 3–5 are out of scope here):
+      - Build MemoryProvider + WikiProvider from server state.
+      - Call each provider's candidates() with a shared Scope.
+      - Pool results (concatenate raw dicts from both providers).
+      - Apply existing _dedup_by_content() — same dedup as legacy path.
+      - Return at most max_results items.
+
+    NOT done here (deferred to Steps 3–5):
+      - DB-level DirectoryFilter (Step 3) — Python post-filter deferred.
+      - Cross-encoder fusion / per-type quotas / MMR (Step 4).
+      - type= param routing (Step 5).
+      - Quality floor / branch boost / postmortem boost — these remain in
+        the legacy path; Step 2 returns a simple pooled list.
+
+    Args:
+        query: Search query.
+        max_results: Maximum results to return.
+        min_heat: Minimum heat threshold forwarded to MemoryProvider.
+        directory: Caller directory (required, validated upstream).
+        current_branch: Active git branch or None.
+        default_branch: Repo default branch or None.
+
+    Returns:
+        List of raw memory/wiki dicts from both providers, deduped by content,
+        trimmed to max_results.
+    """
+    from yadgar.retrieval.providers.base import Scope  # noqa: PLC0415
+    from yadgar.retrieval.providers.memory import MemoryProvider  # noqa: PLC0415
+    from yadgar.retrieval.providers.wiki import WikiProvider  # noqa: PLC0415
+
+    scope = Scope(
+        directory=directory,
+        branch=current_branch,
+        default_branch=default_branch,
+        min_heat=min_heat,
+    )
+
+    # Candidate pool size: ask for more than max_results so pooling + dedup
+    # has material to work with.  3× matches the legacy retriever multiplier.
+    pool_limit = max_results * 3
+
+    pooled: list[dict] = []
+
+    # Memory provider — always available when retriever is initialised
+    if _st._retriever is not None:
+        memory_provider = MemoryProvider(_st._retriever)
+        for cand in memory_provider.candidates(query, scope, limit=pool_limit):
+            pooled.append(cand.raw)
+
+    # Wiki provider — available when wiki store is initialised
+    if _st._wiki is not None:
+        wiki_provider = WikiProvider(_st._wiki)
+        for cand in wiki_provider.candidates(query, scope, limit=pool_limit):
+            raw = cand.raw  # already has _source="wiki" set by WikiProvider
+            raw.pop("embedding", None)
+            pooled.append(raw)
+
+    # Sort by native retrieval score descending, then dedup by content
+    pooled.sort(key=lambda m: m.get("_retrieval_score", m.get("heat", 0.0)), reverse=True)
+    pooled = _dedup_by_content(pooled)
+    return pooled[:max_results]
+
+
 @_tool()
 def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all recall variants
     query: str,
@@ -177,6 +259,24 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
         # detection returns None (container scenario / no .git in _cwd).
         if not _current_branch and branch_hint:
             _current_branch = branch_hint
+
+        # v6 T6: UNIFIED_RECALL_ENABLED gate — early exit to fan-out path.
+        # When True: fan out to MemoryProvider + WikiProvider, pool, dedup, return.
+        # When False (default): fall through to the EXACT legacy body below.
+        # The gate is intentionally placed AFTER branch detection so the fan-out
+        # has _current_branch / _default_branch available.  _dir_stripped is
+        # guaranteed non-empty by the v5.65 Fix D check at function top.
+        # The `merged` assignment ensures the finally-block metrics see a count.
+        if settings.UNIFIED_RECALL_ENABLED:
+            merged = _fanout_recall(
+                query=query,
+                max_results=max_results,
+                min_heat=min_heat,
+                directory=_dir_stripped,
+                current_branch=_current_branch,
+                default_branch=_default_branch,
+            )
+            return merged
 
         # Use HippoRetriever for unified 4-signal recall
         retriever = _st._retriever
