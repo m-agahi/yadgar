@@ -657,7 +657,7 @@ class _MemoryMixin:
         for k, v in fields.items():
             if k in _EMBEDDING_FIELDS and isinstance(v, bytes):
                 converted[k] = self._bytes_to_floats(v)
-            elif k in ("is_protected", "is_stale", "is_prospective", "compressed"):
+            elif k in ("is_protected", "is_stale", "is_prospective", "compressed", "would_reject"):
                 converted[k] = bool(v)
             else:
                 converted[k] = v

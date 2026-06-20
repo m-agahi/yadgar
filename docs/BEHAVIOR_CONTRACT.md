@@ -16,8 +16,8 @@ Run: `make e2e` (local, real `surreal`) + pre-push hook; **excluded from CI**
 (`-m 'not e2e'`).
 
 **Surface (recounted v5.71, self-enforced by `scripts/check_contract_coverage.py`):**
-**233 SHALLs / 38 subsystems.** Today: **21 ✅ · 205 ⏳ · 5 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47) Of the 205 ⏳:
-**70 `[r]` (real-path coverage exists) · 103 `[u]` (unit-only) · 32 none.**
+**233 SHALLs / 38 subsystems.** Today: **23 ✅ · 206 ⏳ · 2 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47) Of the 206 ⏳:
+**70 `[r]` (real-path coverage exists) · 103 `[u]` (unit-only) · 33 none.**
 Goal: every SHALL → ✅ or ❌.
 
 **Lint rules** (`scripts/check_contract_coverage.py`, run as a non-e2e pytest):
@@ -56,7 +56,7 @@ Goal: every SHALL → ✅ or ❌.
 ### D. Nightly cycle (host job; tests use TEMP data dir + stubbed service control)
 - BC-D1 nightly completes exit 0 against seeded temp DB. ✅ `tests/e2e/test_vacuum_backup_safety.py::TestBCD1_NightlyCompletesExitZero::test_real_nightly_main_exits_zero_no_contention` P1
 - BC-D2 pre-backup snapshot at real YADGAR_DATA_DIR/XDG, not stale config (v5.67). ⏳ P1
-- BC-D3 interpreter shutdown clean (no SEGV / unhandled GC). ❌ #43 P1 (resolved via CPython 3.14.4 — the `_asyncio` finalize SEGV was a 3.14.3 bug fixed in 3.14.4; `.venv` now 3.14.4; no dedicated e2e asserts clean exit, so status stays ❌ until a test proves it)
+- BC-D3 interpreter shutdown clean (no SEGV / unhandled GC). ✅ `tests/e2e/test_vacuum_backup_safety.py::TestBCD3_CleanShutdown::test_restore_exits_zero_no_segv` P1 (SEGV resolved via CPython 3.14.4; e2e asserts `yadgar restore` exits 0, no SIGSEGV/-11/139)
 
 ### E. Vacuum (DATA-SAFETY — caused 2026-06-16 data loss)
 - BC-E1 post-vacuum row counts == pre-vacuum, per table. ✅ `tests/e2e/test_vacuum_backup_safety.py::TestBCE1_RowCountsPreserved::test_memory_count_unchanged` P1
@@ -193,11 +193,11 @@ Goal: every SHALL → ✅ or ❌.
 - BC-CA3 causal DAG inferred from dependency patterns. ⏳[u] P3
 
 ### Enrichment
-- BC-EN1a ConceptNet expansion adds related terms to a query/memory. ❌ #39 P2
+- BC-EN1a ConceptNet expansion adds related terms to a query/memory. ⏳ #64 P2 (HTTP path wired — ConceptNetExpander(http_enabled=True); e2e `tests/e2e/test_phase2_subsystems.py::TestBCEN1a_ConceptNetHTTP` is network-gated to api.conceptnet.io → skips offline, provable only on a networked runner; lite-DB ~9GB not bundled)
 - BC-EN1b if ConceptNet expansion is disabled, config reports it disabled + emits exactly one startup warning. ⏳ #39 P2
-- BC-EN2a COMET commonsense expansion adds inferred commonsense triples. ❌ #39 P2
+- BC-EN2a COMET commonsense expansion adds inferred commonsense triples. ❌ #64 P2 (COMET DOES infer — verified in yadgar-ci:5.72.0 — but the pipeline FPA filter (FPA_SIMILARITY_THRESHOLD=0.25) drops its abstract traits as cosine-distant from content → enrichment_comet empty; test xfail'd; v6 enrichment-tuning decides FPA-for-COMET)
 - BC-EN2b if COMET expansion is disabled, config reports it disabled + emits exactly one startup warning. ⏳ #39 P2
-- BC-EN3a doc2query generates synthetic queries for a stored memory. ❌ #39 P2
+- BC-EN3a doc2query generates synthetic queries for a stored memory. ✅ `tests/e2e/test_phase2_subsystems.py::TestBCEN3a_Doc2QueryEnrichment::test_stored_memory_has_synthetic_queries` P2 (proven in yadgar-ci:5.72.0; model-skip-guarded so host make-e2e skips)
 - BC-EN3b if doc2query is disabled, config reports it disabled + emits exactly one startup warning. ⏳ #39 P2
 
 ### Metacognition

@@ -7,6 +7,25 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.73.0] - 2026-06-20
+
+e2e-chapter follow-through + data-quality visibility + deploy hardening. Contract **21 ✅ → 23 ✅ / 2 ❌** (BC-D3, BC-EN3a flipped; BC-EN1a → ⏳; BC-EN2a honest ❌).
+
+### Added
+- **Enrichment models in CI (#64):** `yadgar-ci:5.72.0` bakes COMET-BART + doc2query. Real e2e: **BC-EN3a ✅** (doc2query synthetic queries, model-skip-guarded). **BC-EN2a** documented ❌ — COMET *does* infer, but the pipeline FPA filter (cosine 0.25) drops its abstract traits → empty (xfail'd; v6 enrichment-tuning to decide FPA-for-COMET). **BC-EN1a** ConceptNet HTTP path wired (`http_enabled=True`), e2e network-gated → ⏳. CI image pin bumped 5.46.9 → 5.72.0.
+- **BC-D3 clean-shutdown e2e (#66):** asserts `yadgar restore` exits 0, no SIGSEGV — proves the SEGV-free shutdown (CPython 3.14.4). BC-D3 ✅.
+- **Surprise-gate SHADOW mode (#68):** every memory stamped with `surprise_score` (the write-gate's surprisal) + `would_reject` at `WRITE_GATE_SHADOW_THRESHOLD=0.15` — **drops nothing** (`WRITE_GATE_THRESHOLD` stays 0.0). Migration 022. Makes the gate's would-drop decisions queryable for v6 tuning.
+- **Cold-memory retention DRY-RUN (#29):** nightly pass reports immortal cold user-memories (heat<cold, age>90d, access_count=0, unprotected) + a `yadgar_cold_purge_candidates` gauge. **Deletes nothing** — real purge double-gated (`COLD_MEMORY_PURGE_ENABLED=False` AND `COLD_MEMORY_PURGE_DRY_RUN=True`).
+- **Flake pipx hybrid (#70):** `homeManagerModule` now mirrors the dogfood setup — pipx host-CLI install (`UV_NO_CACHE=1`) + nightly/vacuum systemd units running the pipx binary, daemons stay container units. Fully declared (no `yadgar-setup`).
+
+### Fixed
+- **Deploy: stale uv index cache (#69):** `home-manager switch` could fail on a freshly-published version ("no version X") because uv served a stale 600s-cached PyPI `/simple` listing (uv #16281). `UV_NO_CACHE=1` on the pipx install forces a fresh fetch (nix-side; in the flake module).
+
+### Docs
+- v6 quality-foundation plan (`docs/plans/PLAN_V6_QUALITY_FOUNDATION.md`): eval-harness keystone (LongMemEval + ablation) → data quality → retrieval → brain dynamics → LLM generative consolidation.
+- architecture.md (nightly maintenance-mode + dream cycle), AGENTS.md (verify-agents-vs-source rule + pipx uv-cache gotcha), README.
+
+
 ## [5.72.0] - 2026-06-18
 
 Finishes the e2e behavior-contract chapter (except enrichment, deferred to v5.72.1 — needs the model-bundled CI image). Contract tally **16 ✅ → 21 ✅ / 5 ❌** (+2 retired).

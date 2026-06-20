@@ -29,6 +29,8 @@ yadgar daemon configure-mcp  # writes ~/.claude.json with bearer header
 
 `configure-mcp` reads `$YADGAR_MCP_AUTH_TOKEN` from env at invocation time — if unset the header is omitted and `/mcp` returns 401.
 
+**uv cache gotcha (fresh PyPI publish):** installing a just-published version back-to-back can hit uv's cached PyPI simple-index (600 s freshness window). uv won't auto-retry on version-not-found, producing `No solution: no version X` (see [uv#16281](https://github.com/astral-sh/uv/issues/16281)). Workaround: `UV_NO_CACHE=1 pipx install yadgar==<ver>` or `rm -rf ~/.cache/uv/simple-v* && pipx install yadgar==<ver>`.
+
 ### Dev path — repo checkout
 
 ```bash
@@ -166,6 +168,8 @@ curl -s http://127.0.0.1:8765/metrics | head
 - Pre-commit will fail loudly on: large file (>2 MB), gitleaks hit, complexity over 15, missing metric writer, missing trace span, secret-gate drift, config three-way-sync drift, allowlist drift.
 
 ## Subagent contract
+
+**Verify subagent claims before integrating.** File edits, contract flips, test assertions, and command output from a subagent are claims, not truth. Re-read the artifact (the actual file, `gh pr view --json body`, `aws describe-*`, etc.) before relaying the result as done. A passing-looking diff excerpt in a report is not a passing test.
 
 If your agent dispatches subagents that may write memories, paste the contract from [`docs/CLAUDE_SUBAGENT_CONTRACT.md`](docs/CLAUDE_SUBAGENT_CONTRACT.md) into the global `~/.claude/CLAUDE.md`, then run `yadgar install_hooks --scope global`. The `SubagentStop` hook scans the final report for a `## Yadgar findings` section and persists each bullet as a memory tagged with the agent type. Opt-in — Yadgar works without it.
 

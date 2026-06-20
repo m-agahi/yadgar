@@ -12,7 +12,7 @@ FROM python:3.14-slim
 
 LABEL org.opencontainers.image.source="https://codeberg.org/maxagahi/yadgar"
 LABEL org.opencontainers.image.description="yadgar CI runner image — Python 3.14 + make + git + test deps + SurrealDB + HF model"
-LABEL org.opencontainers.image.version="5.46.9"
+LABEL org.opencontainers.image.version="5.72.0"
 
 # System deps needed in CI:
 #   make             — Makefile integration tests (B6 fix)
@@ -72,5 +72,20 @@ RUN python -c "\
 from sentence_transformers import SentenceTransformer; \
 SentenceTransformer('all-MiniLM-L6-v2'); \
 print('HF model all-MiniLM-L6-v2 baked successfully')"
+
+# Bake enrichment seq2seq models into image (v5.72.0 — enables real BC-EN2a/EN3a
+# e2e without a runtime HF download). COMET-BART (~1GB) for commonsense triples,
+# doc2query/msmarco-t5-small (~230MB) for synthetic queries. Stored at the default
+# HF cache /root/.cache/huggingface/hub so CometInferencer/Doc2QueryExpander
+# (yadgar/enrichment/_seq2seq.py) load them offline.
+# NOTE: ConceptNet (BC-EN1a) is NOT baked — conceptnet_lite's local DB is ~9GB
+# (impractical for a CI image); EN1a uses the HTTP API path or stays deferred.
+RUN python -c "\
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM; \
+AutoTokenizer.from_pretrained('mismayil/comet-bart-ai2'); \
+AutoModelForSeq2SeqLM.from_pretrained('mismayil/comet-bart-ai2'); \
+AutoTokenizer.from_pretrained('doc2query/msmarco-t5-small-v1'); \
+AutoModelForSeq2SeqLM.from_pretrained('doc2query/msmarco-t5-small-v1'); \
+print('enrichment seq2seq models (comet-bart + doc2query) baked successfully')"
 
 ENV PYTHONUNBUFFERED=1

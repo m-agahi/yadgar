@@ -198,6 +198,9 @@ _MEMORY_UPDATABLE_FIELDS = frozenset(
         "graph_prior",
         # v5.54.2 — precomputed co-recall (transition-edge) prior (consolidation phase, additive boost in fusion)
         "cofire_prior",
+        # v5.73.0 — shadow gate fields (surprise_score = gate surprisal; would_reject = shadow decision)
+        # surprise_score was already present; would_reject is new.
+        "would_reject",
     }
 )
 

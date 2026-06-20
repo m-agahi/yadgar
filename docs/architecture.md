@@ -118,6 +118,18 @@ Dream replay runs separately in `_maybe_sleep_cycle()` — triggered at most onc
 
 **Embedded-mode compatibility (v5.63):** `storage/client.py` runs `batch_writes` per-statement in embedded SurrealDB Python SDK mode (not a single batch call). The `_inline_int_record_ids` helper rewrites `type::record('t', $int)` syntax — rejected by the embedded SDK — to `t:{int}` syntax before execution. Without this, every nightly consolidation run failed silently in embedded mode.
 
+### Nightly cycle (v5.72)
+
+Full end-to-end nightly lifecycle (proven in production; #37/#43/#51/#61/#62):
+
+1. **Maintenance enter** — core daemon stays up (no `systemctl stop`, no MCP reconnect); flips an in-process maintenance flag via `POST /api/control/maintenance/enter`. DB-backed MCP tools fast-fail with `{"error": "maintenance"}` at a single choke point (`server._instrumented`). Enter is best-effort/non-fatal.
+2. **Pre-backup export** — HTTP export of DB snapshot over server mode (core + backend both running).
+3. **Consolidation** — full cycle over HTTP/server mode (not embedded). When `YADGAR_EMBED_URL` is set, embeddings come from the backend embed service (not a local model).
+4. **Dream/sleep cycle** (`_maybe_sleep_cycle`) — fires nightly: dream replay builds `co_occurrence` links + insights; `reembed_stale` reprocesses changed memories; `auto_narrate` produces autobiographical summary. All run without dropping the MCP connection.
+5. **Atomic vacuum** — `vacuum_now()` with fail-safe HTTP-mode side-backend credentials (#43).
+6. **Post-backup export** — second HTTP snapshot after vacuum.
+7. **Maintenance exit** — `POST /api/control/maintenance/exit`; daemon resumes serving MCP tools normally. Exit is best-effort/non-fatal.
+
 ## Module Responsibilities
 
 | Module | Responsibility |
@@ -203,6 +215,7 @@ SurrealDB tables:
 
 - **stdio** (default): Claude Code spawns yadgar as a child process. Zero network, lowest latency.
 - **streamable-HTTP** (`--transport streamable-http --port 8765`): Persistent daemon. One process serves all Claude sessions. Required for Docker.
+- **Nightly maintenance mode (v5.72):** Core daemon stays up during the nightly cycle — no MCP reconnect required. In-process maintenance flag (`POST /api/control/maintenance/{enter,exit}`) causes DB-backed MCP tools to fast-fail with `{"error": "maintenance"}` while consolidation, vacuum, backup, and dream/sleep steps run over HTTP against the live backend.
 
 ## Docker Deployment
 

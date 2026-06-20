@@ -31,7 +31,7 @@ class MemorizeContext:
     embedding: list[float] | None = None
     provenance_agent_resolved: str = "default"
 
-    # Thermo scores
+    # Thermo scores (thermo.compute_surprise — HEAT BOOST only, NOT the gate's surprisal)
     surprise: float = 0.0
     importance: float = 0.5
     valence: float = 0.0
@@ -39,6 +39,14 @@ class MemorizeContext:
 
     # Gate result (from write gate phase)
     gate_result: dict | None = None
+
+    # Shadow gate fields (v5.73.0).
+    # gate_surprisal: the surprisal returned by _write_gate.should_store() — distinct from
+    #   ctx.surprise (thermo score for heat boost). None when gate is disabled.
+    # would_reject: True if gate WOULD reject at WRITE_GATE_SHADOW_THRESHOLD.
+    #   Nothing is actually dropped — WRITE_GATE_THRESHOLD stays 0.0.
+    gate_surprisal: float | None = None
+    would_reject: bool | None = None
 
     # Contextual prefix for richer embedding semantics
     contextual_prefix: str | None = None

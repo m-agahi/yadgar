@@ -140,12 +140,28 @@ def _extract_terms(content: str) -> list[str]:
 
 
 class ConceptNetExpander:
-    """Query ConceptNet for related concepts."""
+    """Query ConceptNet for related concepts.
 
-    def __init__(self) -> None:
+    Parameters
+    ----------
+    http_enabled:
+        When True, the HTTP path (_try_http) is attempted as a fallback after
+        the local conceptnet_lite DB.  Defaults to False because the
+        api.conceptnet.io endpoint adds ~5 s per term and requires outbound
+        internet access — neither is acceptable for the default index-time
+        pipeline.  Set True only for testing or explicit opt-in use.
+    """
+
+    def __init__(self, *, http_enabled: bool = False) -> None:
         self._conceptnet_lite = None
         self._lite_available: bool | None = None
-        self._http_available: bool | None = None
+        # _http_available is the sentinel that gates _try_http.
+        # True  → try HTTP on next call
+        # False → HTTP permanently disabled (import error or repeated failure)
+        # None  → not yet attempted
+        # The _try_http implementation already checks `is not True` to disable
+        # itself; we honour http_enabled by setting the initial sentinel.
+        self._http_available: bool | None = True if http_enabled else None
 
     def _try_lite(self, term: str, relations: list[str], min_weight: float) -> list[str]:
         """Try conceptnet_lite local SQLite database."""
@@ -183,9 +199,13 @@ class ConceptNetExpander:
         return results
 
     def _try_http(self, term: str, relations: list[str], min_weight: float) -> list[str]:
-        """Try ConceptNet HTTP API. Disabled by default — too slow for batch use."""
-        # HTTP API is 5s/request — unusable for batch enrichment
-        # Skip straight to hardcoded. Enable via self._http_available = None to test.
+        """Try ConceptNet HTTP API.
+
+        Disabled by default (http_enabled=False in __init__) — ~5 s/term is
+        too slow for batch index-time enrichment.  Enabled explicitly by
+        constructing ConceptNetExpander(http_enabled=True), which sets
+        _http_available=True so this method fires.
+        """
         if self._http_available is not True:
             return []
         try:

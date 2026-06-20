@@ -95,6 +95,11 @@ class Settings(BaseSettings):
     EXCITABILITY_HALF_LIFE_HOURS: float = 6.0  # Engram excitability decay half-life
     EXCITABILITY_BOOST: float = 0.5  # Excitability increase on slot activation
     WRITE_GATE_THRESHOLD: float = 0.0  # Store everything — no write gate filtering
+    # v5.73.0: shadow-only threshold for auditing — memories below this WOULD be rejected
+    # if the gate were active, but are STILL stored (WRITE_GATE_THRESHOLD stays 0.0).
+    # Used to stamp would_reject=True on low-surprisal memories for later threshold tuning.
+    # (I25 three-way registered: env YADGAR_WRITE_GATE_SHADOW_THRESHOLD, yaml, registry)
+    WRITE_GATE_SHADOW_THRESHOLD: float = 0.15
     COMPRESSION_GIST_AGE_HOURS: float = 168.0  # 7 days before gist compression
     COMPRESSION_TAG_AGE_HOURS: float = 720.0  # 30 days before tag compression
     SR_DISCOUNT: float = 0.9  # Successor representation discount factor γ
@@ -406,6 +411,14 @@ class Settings(BaseSettings):
     # Skip archives whose created_at is more recent than this many days ago
     # (prevents thrash-purging recently-created archives that landed old archived_at).
     MEMORY_ARCHIVE_RETENTION_THRASH_GUARD_DAYS: int = 7
+
+    # cold-memory retention DRY-RUN visibility (#29)
+    # Identifies cold immortal user memories that have no existing retention gate.
+    # SAFETY: by default this ONLY reports — it DELETES NOTHING.
+    # Real delete requires BOTH COLD_MEMORY_PURGE_ENABLED=True AND COLD_MEMORY_PURGE_DRY_RUN=False.
+    COLD_MEMORY_RETENTION_DAYS: int = 90  # age threshold for candidate detection
+    COLD_MEMORY_PURGE_ENABLED: bool = False  # master gate — OFF by default (report only)
+    COLD_MEMORY_PURGE_DRY_RUN: bool = True  # dry-run gate — ON by default (never deletes)
 
     # action_log retention — processed rows older than this are pruned each
     # consolidation cycle to prevent unbounded table growth.

@@ -97,6 +97,8 @@ def _make_mock_settings(**overrides):
         "MICRO_CHECKPOINT_ENABLED": False,
         "CRDT_AGENT_ID": "test-agent",
         "HOT_THRESHOLD": 0.5,
+        # v5.73.0 #68 — shadow-gate threshold read by phase_embed
+        "WRITE_GATE_SHADOW_THRESHOLD": 0.15,
     }
     defaults.update(overrides)
     return SimpleNamespace(**defaults)

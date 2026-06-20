@@ -75,6 +75,12 @@ process them.
 
 ---
 
+## Claim verification (main thread responsibility)
+
+Before the main thread integrates any subagent output — file edits, contract flips, test assertions, command output — it must verify the claim against the actual artifact. Re-read the file; check `gh pr view --json body`; re-describe AWS resources. A report that says a change was made is a claim, not truth. See `AGENTS.md § Subagent contract` for the full rule.
+
+---
+
 ## Install note
 
 **One-time setup:**

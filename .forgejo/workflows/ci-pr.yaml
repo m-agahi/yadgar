@@ -32,7 +32,7 @@ jobs:
     # curl, and pre-installed test deps. Replaces python:3.14-slim (B6 fix).
     # Image built locally and pushed to dockerhub per PD-42 carve-out.
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.46.9
+      image: docker.io/openfantasy/yadgar-ci:5.72.0
     # fail-fast: false — each chunk runs independently; one failure does NOT
     # abort the others.  Aggregation happens in the `test-gate` job below.
     strategy:
@@ -54,7 +54,7 @@ jobs:
 
       - name: Install dependencies
         # SurrealDB v3.0.5 and HuggingFace all-MiniLM-L6-v2 are baked into
-        # yadgar-ci:5.46.9 — no cache/install steps needed.
+        # yadgar-ci:5.72.0 — no cache/install steps needed.
         # No --no-cache-dir: pip cache at /root/.cache/pip avoids re-downloading
         # torch + sentence-transformers (~1 GB) on every run.
         # uv: required by test_v5_46_10_wheel_bundle (uv build --wheel subprocess)
@@ -82,7 +82,7 @@ jobs:
   invariant-checks:
     runs-on: ubuntu-latest
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.46.9
+      image: docker.io/openfantasy/yadgar-ci:5.72.0
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v6
 
