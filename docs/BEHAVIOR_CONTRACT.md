@@ -16,8 +16,8 @@ Run: `make e2e` (local, real `surreal`) + pre-push hook; **excluded from CI**
 (`-m 'not e2e'`).
 
 **Surface (recounted v5.71, self-enforced by `scripts/check_contract_coverage.py`):**
-**234 SHALLs / 38 subsystems.** Today: **27 ✅ · 203 ⏳ · 2 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47; + 1 🗑 DELETED — BC-T2 remember tool, v6 T3) Of the 203 ⏳:
-**70 `[r]` (real-path coverage exists) · 100 `[u]` (unit-only) · 33 none.**
+**234 SHALLs / 38 subsystems.** Today: **40 ✅ · 190 ⏳ · 2 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47; + 1 🗑 DELETED — BC-T2 remember tool, v6 T3) Of the 190 ⏳:
+**61 `[r]` (real-path coverage exists) · 96 `[u]` (unit-only) · 33 none.**
 Goal: every SHALL → ✅ or ❌.
 
 **Lint rules** (`scripts/check_contract_coverage.py`, run as a non-e2e pytest):
@@ -34,21 +34,21 @@ Goal: every SHALL → ✅ or ❌.
 ## PHASE 1 — critical paths (v5.68; gates pre-push)
 
 ### A. Write / memorize
-- BC-A1 memorize(content, directory=D) → retrievable, stamped D. ⏳[r] P1
-- BC-A2 write-gate stores novel, dedups near-identical. ⏳[r] P1
-- BC-A3 every write gets an embedding. ⏳[r] P1
+- BC-A1 memorize(content, directory=D) → retrievable, stamped D. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCA1_MemorizeRecallRoundTrip::test_memorize_recall_roundtrip` P1
+- BC-A2 write-gate stores novel, dedups near-identical. ✅ `tests/e2e/test_phase2_subsystems.py::TestBCA2_WriteGateSurprise::test_gate_stores_novel_rejects_near_dup` P1
+- BC-A3 every write gets an embedding. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCA3_EmbeddingOnWrite::test_memorize_generates_embedding` P1
 
 ### B. Recall + directory scoping (v5.62/64/65)
-- BC-B1 recall(directory=A) includes A+global, excludes other dir B (memories). ⏳[r] P1
-- BC-B2 same directory filter on wiki results in recall. ⏳[r] P1
-- BC-B3 recall/wiki_query raise on absent/empty directory. ⏳[r] P1
-- BC-B4 'system' not eligible. ⏳[r] P1
+- BC-B1 recall(directory=A) includes A+global, excludes other dir B (memories). ✅ `tests/e2e/test_phase1_db_layer.py::TestBCB1_DirectoryFilter::test_excludes_other_project` P1
+- BC-B2 same directory filter on wiki results in recall. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCB2_WikiDirectoryFilter::test_aws_wiki_excluded_from_yadgar_recall` P1
+- BC-B3 recall/wiki_query raise on absent/empty directory. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCB3_DirectoryRequired::test_recall_raises_without_directory` P1
+- BC-B4 'system' not eligible. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCB4_SystemTagExcluded::test_system_memory_not_returned` P1
 - BC-B5 profile-sourced results surface when a profile exists. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCB5_ProfileRecallSurfaces::test_profile_appears_in_recall` P1
 
 ### C. Consolidation / decay / archive / purge
-- BC-C1 a cycle completes, check_invariants 0 violations (seeded real DB). ⏳[r] P1
-- BC-C2 heat decay lowers heat; below cold_threshold → archived. ⏳[r] P1
-- BC-C3 old+not-recently-accessed derived purged; recent spared; protected spared (v5.66). ⏳[u] P1
+- BC-C1 a cycle completes, check_invariants 0 violations (seeded real DB). ✅ `tests/e2e/test_phase1_db_layer.py::TestBCC1_ConsolidationRuns::test_consolidation_completes_no_violations` P1
+- BC-C2 heat decay lowers heat; below cold_threshold → archived. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCC2_HeatDecay::test_heat_decay_lowers_heat` P1
+- BC-C3 old+not-recently-accessed derived purged; recent spared; protected spared (v5.66). ✅ `tests/e2e/test_phase1_db_layer.py::TestBCC3_PurgeAndSpare::test_old_unaccessed_purged` P1
 - BC-C4 nightly sleep phases run (dream/community/cluster/reembed_stale/compress/auto_narrate). ✅ `tests/e2e/test_phase2_subsystems.py::TestBCC4_NightlySleepCycleRuns::test_nightly_runs_sleep_cycle_produces_dream_insight` P1
 - BC-C5a AstrocytePool domain consolidation executes (assign→consolidate per domain produces a summary). ✅ `tests/e2e/test_phase2_subsystems.py::TestBCAC2_AstrocyteDomainConsolidation::test_consolidate_domain_produces_summary` P2
 - BC-C5b if astrocyte pool is disabled, config reports it disabled + emits exactly one startup warning. ⏳ #40 P2
@@ -104,10 +104,10 @@ Goal: every SHALL → ✅ or ❌.
 - BC-PC4 _build_wiki_pages scoped to dir (was leaking all wikis, v5.65). ⏳[r] P1
 
 ### G2. Checkpoint / restore
-- BC-CK1 checkpoint(dir,...) then restore(dir) returns task/decisions/next-steps. ⏳[u] P1
+- BC-CK1 checkpoint(dir,...) then restore(dir) returns task/decisions/next-steps. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCCK1_CheckpointRestore::test_checkpoint_restore_roundtrip` P1
 
 ### H2. reembed_all / admin (P1 subset)
-- BC-ADM1 reembed_all re-embeds every missing-embedding row (v5.67). ⏳[u] P1
+- BC-ADM1 reembed_all re-embeds every missing-embedding row (v5.67). ✅ `tests/e2e/test_phase1_db_layer.py::TestBCADM1_ReembedAll::test_reembed_fills_missing_embeddings` P1
 
 ### DB-CONTRACT (directory/branch, v5.42–v5.65, PD-46..49)
 - BC-DC1 eligible set = {caller_dir, global, '', None}; single is_directory_eligible predicate (I31). ⏳[r] P1
@@ -209,7 +209,7 @@ Goal: every SHALL → ✅ or ❌.
 
 ### Predictive coding / surprise
 - BC-PCd1 novel memory triggers surprise heat boost. ⏳[r] P2
-- BC-PCd2 should_store gates redundant writes. ⏳[u] P2
+- BC-PCd2 should_store gates redundant writes. ✅ `tests/e2e/test_phase2_subsystems.py::TestBCA2_WriteGateSurprise::test_gate_stores_novel_rejects_near_dup` P2
 
 ### Engram / Hopfield
 - BC-EG1 slot allocation sets excitability/plasticity/stability. ⏳[r] P2

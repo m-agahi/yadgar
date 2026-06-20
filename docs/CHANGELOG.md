@@ -7,6 +7,17 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.77.0] - 2026-06-20
+
+e2e Phase-3 closure (#47) — 13 critical-path behaviours promoted to **✅ e2e-proven** against a live SurrealDB. No code change; contract honesty pass. Tally **40 ✅ · 190 ⏳ · 2 ❌**.
+
+### Verified (⏳ → ✅, real e2e)
+- **Write:** BC-A1 memorize→recall round-trip · BC-A2 write-gate stores-novel/dedups · BC-A3 embedding-on-write.
+- **Recall scoping:** BC-B1 directory filter (excl other project, incl global) · BC-B2 wiki dir filter · BC-B3 recall/wiki_query raise on absent/empty dir · BC-B4 'system' excluded.
+- **Consolidation:** BC-C1 cycle completes 0 violations · BC-C2 heat decay lowers heat / archives cold · BC-C3 old-unaccessed purged, recent+protected spared.
+- **Ops:** BC-CK1 checkpoint→restore round-trip · BC-ADM1 reembed_all fills missing embeddings · BC-PCd2 should_store gates redundant writes.
+- Tests existed in `tests/e2e/test_phase1_db_layer.py` + `test_phase2_subsystems.py`; this release verifies them green (`make e2e`, 67 passed) and cites each `path::node` per the contract's ✅ rule.
+
 ## [5.76.0] - 2026-06-20
 
 v6 quality-foundation groundwork — **Wave 1 batch** of four trains, shipped together in the v5.x line (v6 reserved for the LLM release). Contract **234 SHALLs · 27 ✅ · 203 ⏳ · 2 ❌**.
