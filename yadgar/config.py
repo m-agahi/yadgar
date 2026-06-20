@@ -50,7 +50,6 @@ class YamlConfigSource(PydanticBaseSettingsSource):
 class Settings(BaseSettings):
     HOST: str = "127.0.0.1"
     PORT: int = 8765
-    IDLE_THRESHOLD_SECONDS: int = 300
     DECAY_FACTOR: float = 0.9995  # ~34% heat after 3 months without access
     COLD_THRESHOLD: float = 0.02  # Archive memories below this heat (~6 months of no access)
     ACTION_STREAM_COLD_THRESHOLD: float = (
@@ -69,7 +68,6 @@ class Settings(BaseSettings):
     SURPRISE_BOOST: float = 0.3
     EMOTIONAL_DECAY_RESISTANCE: float = 0.5
     DREAM_REPLAY_PAIRS: int = 20
-    FRACTAL_LEVELS: int = 3
     CLUSTER_SIMILARITY_THRESHOLD: float = 0.7
     PPR_DAMPING: float = 0.85
     PPR_ITERATIONS: int = 50
@@ -87,11 +85,6 @@ class Settings(BaseSettings):
     # v3 frontier settings
     HOPFIELD_BETA: float = 8.0  # Hopfield sharpness (low=blended, high=precise)
     HOPFIELD_MAX_PATTERNS: int = 5000  # Max patterns in Hopfield energy store
-    RECONSOLIDATION_LOW_THRESHOLD: float = 0.3  # Below this: no modification on recall
-    RECONSOLIDATION_HIGH_THRESHOLD: float = 0.7  # Above this: archive old + create new
-    PLASTICITY_SPIKE: float = 0.3  # How much plasticity increases on access
-    PLASTICITY_HALF_LIFE_HOURS: float = 6.0  # Plasticity decay half-life
-    STABILITY_INCREMENT: float = 0.1  # Stability increase per successful retrieval
     EXCITABILITY_HALF_LIFE_HOURS: float = 6.0  # Engram excitability decay half-life
     EXCITABILITY_BOOST: float = 0.5  # Excitability increase on slot activation
     WRITE_GATE_THRESHOLD: float = 0.0  # Store everything — no write gate filtering
@@ -100,8 +93,6 @@ class Settings(BaseSettings):
     # Used to stamp would_reject=True on low-surprisal memories for later threshold tuning.
     # (I25 three-way registered: env YADGAR_WRITE_GATE_SHADOW_THRESHOLD, yaml, registry)
     WRITE_GATE_SHADOW_THRESHOLD: float = 0.15
-    COMPRESSION_GIST_AGE_HOURS: float = 168.0  # 7 days before gist compression
-    COMPRESSION_TAG_AGE_HOURS: float = 720.0  # 30 days before tag compression
     SR_DISCOUNT: float = 0.9  # Successor representation discount factor γ
     SR_UPDATE_RATE: float = 0.1  # Incremental SR update learning rate
     COGNITIVE_LOAD_LIMIT: int = 4  # Max chunks in active context (Cowan's 4±1)
@@ -144,7 +135,6 @@ class Settings(BaseSettings):
     ACTION_STREAM_ENABLED: bool = True  # Capture tool actions in sensory buffer
 
     # v6: WRRF (Weighted Reciprocal Rank Fusion) settings
-    WRRF_K: int = 60  # RRF constant k
     WRRF_CANDIDATE_MULTIPLIER: int = 10  # Candidate pool = max_results * this
     WRRF_VECTOR_WEIGHT: float = 1.0
     WRRF_FTS_WEIGHT: float = 0.5
@@ -160,18 +150,8 @@ class Settings(BaseSettings):
     CODE_KEYWORDS: str = "function,class,method,variable,import,error,bug,fix,refactor,implement,API,endpoint,database,schema,test,deploy"
     RELATIONAL_KEYWORDS: str = "relationship,connection,related,between,link,cause,effect,impact,influence,depend,lead to,result in"
 
-    # v8: Confidence gating settings
-    CONFIDENCE_GATING_ENABLED: bool = True
-    CONFIDENCE_MIN_RESULTS: int = 3
-    CONFIDENCE_SCORE_SPREAD_THRESHOLD: float = 0.15
-    CONFIDENCE_TOP_SCORE_THRESHOLD: float = 0.5
-    CONFIDENCE_FALLBACK_STRATEGY: str = "expand"
-
     # v9: Temporal retrieval settings
     TEMPORAL_RETRIEVAL_ENABLED: bool = True
-    TEMPORAL_BOOST_WEIGHT: float = 0.4
-    TEMPORAL_DECAY_DAYS: int = 30
-    TEMPORAL_EXACT_MATCH_BOOST: float = 2.0
 
     # v10: Cross-encoder reranking settings
     CROSS_ENCODER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
@@ -194,8 +174,6 @@ class Settings(BaseSettings):
 
     # v14: Embedding enhancement settings
     CANDIDATE_POOL_MULTIPLIER: int = 20
-    EMBEDDING_CACHE_SIZE: int = 128
-    QUERY_PREFIX: str = ""
 
     # v5.51.0: Fast profile candidate pool override (I25 three-way registered).
     # Candidate pool = max_results * multiplier. Global default=20 is too large for
@@ -261,9 +239,7 @@ class Settings(BaseSettings):
 
     # v19 Derived Beliefs (Hindsight)
     DERIVED_BELIEFS_ENABLED: bool = True
-    BELIEF_MIN_CONFIDENCE: float = 0.3
     BELIEF_HIGH_CONFIDENCE_BOOST: float = 1.2
-    BELIEF_SEARCH_PRIORITY_FOR_OPEN_DOMAIN: bool = True
 
     # v20 Comparison Query Routing
     COMPARISON_DUAL_SEARCH_ENABLED: bool = True
@@ -291,8 +267,8 @@ class Settings(BaseSettings):
     MULTI_PASSAGE_CLUSTER_OVERLAP_THRESHOLD: float = 0.3
     MULTI_PASSAGE_MAX_CLUSTER_SIZE: int = 3
 
-    # v25 Dual-Vector Architecture (prep only, not active until DualCSE trained)
-    DUAL_VECTORS_ENABLED: bool = False
+    # v25 Dual-Vector Architecture (prep only — _dual_vector_search removed in v6 T3)
+    # IMPLICIT_EMBEDDING_MODEL retained as CONFIG-ONLY pending future DualCSE implementation.
     IMPLICIT_EMBEDDING_MODEL: str = ""
 
     # v5.41.2: wiki write wait timeout (opt-in read-your-writes path)
@@ -389,11 +365,6 @@ class Settings(BaseSettings):
     # for framing overhead.  Whichever limit fires first (statements or bytes)
     # starts a new chunk.
     MAX_BATCH_BYTES: int = 1_000_000
-
-    # Consolidation cooldown — idle-triggered cycles fire at most once per this
-    # many seconds, preventing back-to-back runs when last_activity stays stale
-    # after a cycle completes.  Set to 0 to restore legacy back-to-back behaviour.
-    CONSOLIDATION_COOLDOWN_SECONDS: int = 1800
 
     # check_invariants per-table query timeout in seconds.  On timeout the table
     # is skipped (logged at WARN) and the remaining tables still run.

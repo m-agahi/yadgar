@@ -1,4 +1,4 @@
-"""Tests for v22-v25 reranking features: GTE-Reranker, NLI, multi-passage, dual-vector."""
+"""Tests for v22-v25 reranking features: GTE-Reranker, NLI, multi-passage."""
 
 import pytest
 
@@ -22,7 +22,6 @@ def settings(tmp_path):
         GTE_RERANKER_ENABLED=False,
         NLI_RERANKING_ENABLED=False,
         MULTI_PASSAGE_RERANKING_ENABLED=False,
-        DUAL_VECTORS_ENABLED=False,
         CROSS_ENCODER_ENABLED=False,
     )
 
@@ -113,17 +112,6 @@ class TestScoreSinglePair:
         assert score == 0.0
 
 
-# ── _dual_vector_search ──────────────────────────────────────────────
-
-
-class TestDualVectorSearch:
-    def test_dual_vector_disabled(self, retriever, embeddings):
-        """With DUAL_VECTORS_ENABLED=False, returns empty list."""
-        embedding = embeddings.encode("test")
-        result = retriever._dual_vector_search(embedding, top_k=5)
-        assert result == []
-
-
 # ── _multi_passage_rerank ────────────────────────────────────────────
 
 
@@ -149,7 +137,6 @@ class TestAllFeaturesToggleable:
             GTE_RERANKER_ENABLED=False,
             NLI_RERANKING_ENABLED=False,
             MULTI_PASSAGE_RERANKING_ENABLED=False,
-            DUAL_VECTORS_ENABLED=False,
             CROSS_ENCODER_ENABLED=False,
             QUERY_ROUTING_ENABLED=False,
         )

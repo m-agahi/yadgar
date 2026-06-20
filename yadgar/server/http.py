@@ -1752,6 +1752,23 @@ async def api_viz_search(request: Request) -> JSONResponse:
 
         node_ids: list[str] = []
 
+        # BC-VZ2 — INTENTIONAL whole-DB (unscoped) search for the viz god's-eye overlay.
+        #
+        # The viz is a localhost, auth-gated admin tool that renders ALL projects' nodes
+        # in a single graph.  Search-highlight must find any node visible in that graph
+        # regardless of which project directory it belongs to — scoping the query to a
+        # single directory would silently exclude nodes that are already drawn on screen,
+        # breaking the UX.
+        #
+        # Mechanism: Retriever.recall() has no `directory` parameter (whole-DB by design);
+        # WikiStore.query() also has no `directory` parameter.  Neither call passes one.
+        # This is NOT a BC-B3 violation: BC-B3's directory-scoping requirement lives at the
+        # MCP-tool layer (the scoped `recall` / `wiki_query` MCP tools), not at the
+        # in-process method level used here.  Cross-project exposure is acceptable here
+        # because this endpoint is localhost-only and admin-gated.
+        #
+        # Do NOT add a directory= filter here without revisiting BC-VZ2 first.
+
         # Memory recall
         retriever = _st._retriever
         if retriever is not None:
@@ -1772,7 +1789,7 @@ async def api_viz_search(request: Request) -> JSONResponse:
             except Exception as _exc:
                 logger.debug("viz_search recall error: %s", _exc)
 
-        # Wiki query
+        # Wiki query — also whole-DB, same intentional bypass as recall above (BC-VZ2).
         wiki = _st._wiki
         if wiki is not None:
             try:

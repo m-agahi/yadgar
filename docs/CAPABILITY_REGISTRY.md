@@ -113,15 +113,15 @@ config knobs.
 
 ### CAP-RETR-003 — Dead WRRF-K / Dead Candidate-Multiplier Config
 
-- **status:** CONFIG-ONLY
+- **status:** DEAD (v6 T3 — deleted from config.py; WRRF_K removed)
 - **category:** retrieval
-- **settings:** `WRRF_K`, `WRRF_CANDIDATE_MULTIPLIER`
+- **settings:** `WRRF_CANDIDATE_MULTIPLIER` (retained CONFIG-ONLY); WRRF_K deleted
 - **tools:** —
 - **migrations:** —
 - **bc:** —
 - **refs:** `yadgar/config.py`
-- **wiring:** `WRRF_K` is referenced only in a docstring comment in `yadgar/retrieval/core.py` — no production caller passes it to any function. The standalone `_wrrf_fuse()` function accepts a `k` parameter but is not called by the pipeline (the `_FusionMixin._wrrf_fuse` method is a different implementation that does not read `WRRF_K`). `WRRF_CANDIDATE_MULTIPLIER` has no consumer in production code; `CANDIDATE_POOL_MULTIPLIER` is the live setting.
-- **explanation:** These two settings are leftovers from an earlier design iteration. `WRRF_K` was the RRF constant `k` used in rank-based Reciprocal Rank Fusion, but the live fusion path uses score-normalisation rather than rank position. `WRRF_CANDIDATE_MULTIPLIER` was superseded by `CANDIDATE_POOL_MULTIPLIER` (the global default). Both are dead config (#41 cleanup candidates).
+- **wiring:** `WRRF_K` deleted from `config.py` in v6 T3 dead-config cleanup. `WRRF_CANDIDATE_MULTIPLIER` retained as CONFIG-ONLY — no production consumer; `CANDIDATE_POOL_MULTIPLIER` is the live setting.
+- **explanation:** `WRRF_K` was the RRF constant `k` used in rank-based Reciprocal Rank Fusion — no production caller. Deleted. `WRRF_CANDIDATE_MULTIPLIER` superseded by `CANDIDATE_POOL_MULTIPLIER` but retained pending explicit removal.
 
 ---
 
@@ -239,15 +239,15 @@ config knobs.
 
 ### CAP-RETR-012 — Dead Temporal Boost / Decay Config
 
-- **status:** CONFIG-ONLY
+- **status:** DEAD (v6 T3 — deleted from config.py)
 - **category:** retrieval
-- **settings:** `TEMPORAL_BOOST_WEIGHT`, `TEMPORAL_DECAY_DAYS`, `TEMPORAL_EXACT_MATCH_BOOST`
+- **settings:** — (TEMPORAL_BOOST_WEIGHT, TEMPORAL_DECAY_DAYS, TEMPORAL_EXACT_MATCH_BOOST all deleted)
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/config.py`
-- **wiring:** No production caller reads `TEMPORAL_BOOST_WEIGHT`, `TEMPORAL_DECAY_DAYS`, or `TEMPORAL_EXACT_MATCH_BOOST`. The live temporal scoring in `_collect_temporal_scores` uses hardcoded weights 0.8/0.6 and rank-based scoring, not these settings.
-- **explanation:** Three temporal tuning knobs that were planned but never wired into the retrieval pipeline. The actual temporal score weighting and decay are hardcoded in `_ScoringMixin._collect_temporal_scores`. These are dead config (#41 cleanup candidates).
+- **refs:** —
+- **wiring:** Deleted from `config.py` in v6 T3. No production caller ever read these. The live temporal scoring in `_collect_temporal_scores` uses hardcoded weights 0.8/0.6 and rank-based scoring.
+- **explanation:** Three temporal tuning knobs that were planned but never wired into the retrieval pipeline. Removed in v6 T3 dead-config cleanup (#41).
 
 ---
 
@@ -337,29 +337,29 @@ config knobs.
 
 ### CAP-RETR-019 — Confidence Gating (Signal Weight Zeroing)
 
-- **status:** LIVE
+- **status:** DEAD (v6 T3 — code deleted)
 - **category:** retrieval
-- **settings:** `CONFIDENCE_GATING_ENABLED`
-- **tools:** `recall`
+- **settings:** — (CONFIDENCE_GATING_ENABLED, CONFIDENCE_MIN_RESULTS, CONFIDENCE_SCORE_SPREAD_THRESHOLD, CONFIDENCE_TOP_SCORE_THRESHOLD, CONFIDENCE_FALLBACK_STRATEGY all deleted)
+- **tools:** —
 - **migrations:** —
-- **bc:** `BC-RR5`
-- **refs:** `yadgar/retrieval/fusion.py::_FusionMixin._apply_confidence_gating`, `yadgar/retrieval/_reranking_confidence.py::_ConfidenceMixin.compute_signal_confidence`
-- **wiring:** `_fuse_scores()` calls `_apply_confidence_gating()` when `CONFIDENCE_GATING_ENABLED=True` (default True). For each signal, `compute_signal_confidence()` evaluates the signal's result quality (top score, gap, count, spread); if below per-signal thresholds, the weight is zeroed before fusion.
-- **explanation:** Before fusing signals, evaluates whether each signal produced meaningful results. Vector confidence uses top score × (1 + score gap); FTS uses result count / 5; PPR and spreading use (max − mean) / max; temporal uses count / 3. Any signal falling below its confidence threshold (default 0.1, stored in non-public settings) has its weight set to zero so it does not pollute the fusion. This prevents a near-empty graph from injecting noise into retrieval.
+- **bc:** `BC-RR5` (now satisfied by CAP-RETR-027)
+- **refs:** —
+- **wiring:** `_apply_confidence_gating()` and its call site in `_fuse_scores()` removed from `yadgar/retrieval/fusion.py` in v6 T3. `CONFIDENCE_GATING_ENABLED` and related settings removed from `config.py`.
+- **explanation:** Confidence gating zeroed signal weights below per-signal thresholds before fusion. Removed in v6 T3 dead-config/code cleanup (#41) — default was `True` (behavior change). `compute_signal_confidence` in `_reranking_confidence.py` remains for use by adversarial detection (BC-RR5 coverage continues via CAP-RETR-027).
 
 ---
 
 ### CAP-RETR-020 — Dead Confidence Fallback Config
 
-- **status:** CONFIG-ONLY
+- **status:** DEAD (v6 T3 — merged into CAP-RETR-019 retirement)
 - **category:** retrieval
-- **settings:** `CONFIDENCE_MIN_RESULTS`, `CONFIDENCE_SCORE_SPREAD_THRESHOLD`, `CONFIDENCE_TOP_SCORE_THRESHOLD`, `CONFIDENCE_FALLBACK_STRATEGY`
+- **settings:** — (CONFIDENCE_MIN_RESULTS, CONFIDENCE_SCORE_SPREAD_THRESHOLD, CONFIDENCE_TOP_SCORE_THRESHOLD, CONFIDENCE_FALLBACK_STRATEGY all deleted)
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/config.py`
-- **wiring:** No production code reads these four settings. The live confidence gating uses per-signal threshold constants computed inline in `compute_signal_confidence`; the fallback strategy ("expand") has no implementation.
-- **explanation:** Four settings from a planned confidence-fallback feature (v8 in config comments): minimum result count before gating fires, score spread and top-score thresholds for the gate, and a strategy for when confidence is too low (e.g. expand the query). None are consumed by production code. Dead config (#41 cleanup candidates).
+- **refs:** —
+- **wiring:** All four settings deleted from `config.py` in v6 T3. Never read by production code.
+- **explanation:** Dead config from v8 confidence-fallback feature design, removed in v6 T3 (#41).
 
 ---
 
@@ -379,15 +379,15 @@ config knobs.
 
 ### CAP-RETR-022 — Dual-Vector Architecture
 
-- **status:** DORMANT
+- **status:** DEAD (v6 T3 — code deleted; IMPLICIT_EMBEDDING_MODEL retained CONFIG-ONLY)
 - **category:** retrieval
-- **settings:** `DUAL_VECTORS_ENABLED`, `IMPLICIT_EMBEDDING_MODEL`
+- **settings:** `IMPLICIT_EMBEDDING_MODEL` (CONFIG-ONLY, retained for future use); DUAL_VECTORS_ENABLED deleted
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/retrieval/core.py::Retriever._dual_vector_search`
-- **wiring:** `_dual_vector_search()` is defined on `Retriever` but has no caller in production code beyond itself. `DUAL_VECTORS_ENABLED` defaults to `False`. The method exists but is never invoked from `recall()` or `recall_via_pipeline()` — it would need to be explicitly called.
-- **explanation:** A prep scaffold for a dual-embedding architecture where each memory would be encoded with both an explicit (content-based) and an implicit (context/association-based) embedding. At query time, results from both spaces would be merged with `IMPLICIT_VECTOR_WEIGHT`-weighted combination. Not trained or wired; `IMPLICIT_EMBEDDING_MODEL` is an empty string. The feature is marked "not active until DualCSE trained" in config comments.
+- **refs:** —
+- **wiring:** `_dual_vector_search()` and `DUAL_VECTORS_ENABLED` deleted from `yadgar/retrieval/core.py` and `config.py` in v6 T3. `IMPLICIT_EMBEDDING_MODEL` retained in config.py as CONFIG-ONLY — no production consumer after method removal, but kept as placeholder for future DualCSE implementation.
+- **explanation:** Prep scaffold for dual-embedding architecture removed in v6 T3 (#41). `DUAL_VECTORS_ENABLED` setting and `_dual_vector_search()` method deleted. `IMPLICIT_EMBEDDING_MODEL` remains for future DualCSE work.
 
 ---
 
@@ -491,15 +491,15 @@ config knobs.
 
 ### CAP-RETR-030 — Dead Belief Config
 
-- **status:** CONFIG-ONLY
+- **status:** DEAD (v6 T3 — deleted from config.py)
 - **category:** retrieval
-- **settings:** `BELIEF_MIN_CONFIDENCE`, `BELIEF_SEARCH_PRIORITY_FOR_OPEN_DOMAIN`
+- **settings:** — (BELIEF_MIN_CONFIDENCE, BELIEF_SEARCH_PRIORITY_FOR_OPEN_DOMAIN both deleted)
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/config.py`
-- **wiring:** No production code reads `BELIEF_MIN_CONFIDENCE` or `BELIEF_SEARCH_PRIORITY_FOR_OPEN_DOMAIN`. The belief search in `_search_profiles_and_beliefs` applies `BELIEF_HIGH_CONFIDENCE_BOOST` for beliefs above 0.7 but does not reference either of these settings. The open-domain priority flag has no wired effect.
-- **explanation:** Two belief-retrieval tuning knobs that were planned but never implemented. `BELIEF_MIN_CONFIDENCE` was intended to filter out low-confidence beliefs before surface; the live code searches all beliefs and applies a boost for high-confidence ones. `BELIEF_SEARCH_PRIORITY_FOR_OPEN_DOMAIN` was intended to route more belief lookups for open-domain queries but has no caller. Dead config (#41 cleanup candidates).
+- **refs:** —
+- **wiring:** Both settings deleted from `config.py` in v6 T3. No production code ever read them.
+- **explanation:** Two belief-retrieval tuning knobs that were planned but never implemented. Removed in v6 T3 dead-config cleanup (#41).
 
 ---
 
@@ -519,15 +519,15 @@ config knobs.
 
 ### CAP-RETR-032 — Dead Query Prefix and Embedding Cache Size Config
 
-- **status:** CONFIG-ONLY
+- **status:** DEAD (v6 T3 — deleted from config.py)
 - **category:** retrieval
-- **settings:** `QUERY_PREFIX`, `EMBEDDING_CACHE_SIZE`
+- **settings:** — (QUERY_PREFIX, EMBEDDING_CACHE_SIZE both deleted)
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/config.py`
-- **wiring:** `QUERY_PREFIX` is defined in config but never read — the embedding engine uses `MODEL_QUERY_PREFIX` (a module-level constant dict in `embeddings.py`) keyed by model name. `EMBEDDING_CACHE_SIZE` is defined in config but the embed service LRU cache is sized via `YADGAR_EMBED_CACHE_MAX_ENTRIES` environment variable, not this setting.
-- **explanation:** Two dead configuration knobs. `QUERY_PREFIX` was likely intended as an override for the model-specific query prefix but was never wired into `encode_query()`. `EMBEDDING_CACHE_SIZE` was superseded by the env-var-driven LRU cache in `embed_service.py`. Dead config (#41 cleanup candidates).
+- **refs:** —
+- **wiring:** Both settings deleted from `config.py` in v6 T3. Never read by production code — embedding engine uses `MODEL_QUERY_PREFIX` constant dict; embed service cache uses `YADGAR_EMBED_CACHE_MAX_ENTRIES`.
+- **explanation:** Two dead configuration knobs removed in v6 T3 (#41). `QUERY_PREFIX` was never wired into `encode_query()`. `EMBEDDING_CACHE_SIZE` was superseded by env-var-driven LRU cache.
 
 ---
 
@@ -870,7 +870,7 @@ config knobs.
 - **status:** LIVE
 - **category:** storage
 - **settings:** `BRANCH_ENFORCEMENT`
-- **tools:** `anchor`, `remember`
+- **tools:** `anchor`
 - **migrations:** —
 - **bc:** `BC-ST1`
 - **refs:** `yadgar/storage/branch.py::BranchFilter`, `yadgar/storage/branch.py::_build_branch_clause`, `yadgar/server/tools/wiki.py`
@@ -881,7 +881,7 @@ config knobs.
 - **status:** LIVE
 - **category:** storage
 - **settings:** `DIRECTORY_ENFORCEMENT`
-- **tools:** `remember`, `anchor`, `memory_get`, `memory_update`, `forget`, `validate_memory`
+- **tools:** `anchor`, `memory_get`, `memory_update`, `forget`, `validate_memory`
 - **migrations:** —
 - **bc:** `BC-DC1`, `BC-DC2`
 - **refs:** `yadgar/storage/memory.py::get_memories_for_directory`, `yadgar/server/tools/wiki.py`, `yadgar/file_queue/dlq.py`
@@ -900,15 +900,15 @@ config knobs.
 - **explanation:** The four MCP-exposed memory admin tools provide controlled read/write/delete/validate access to individual memory rows. `memory_update` intentionally restricts the updatable field set at the MCP layer (4 fields) compared to the storage-layer `_MEMORY_UPDATABLE_FIELDS` allowlist (22+ fields) to prevent unintended mutation of heat, embeddings, or temporal metadata via the public API.
 
 ### CAP-STOR-027 — remember tool (deprecated stub)
-- **status:** DEAD
+- **status:** DEAD (v6 T3 — stub deleted)
 - **category:** storage
 - **settings:** —
-- **tools:** `remember`
+- **tools:** — (remember deleted)
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/server/tools/memorize.py::remember`
-- **wiring:** The `remember` tool is registered as a `@_tool()` but immediately returns `{"stored": False, "reason": "Tool renamed to memorize — call memorize() instead"}` without performing any storage operation.
-- **explanation:** `remember` was the original name of the `memorize` tool. It was renamed to `memorize` in v5.x. The stub remains registered to provide a clear error message to callers using the old name. It performs no storage operations and is effectively dead code kept for backward-compatible error reporting.
+- **refs:** —
+- **wiring:** `remember` `@_tool()` registration and function deleted from `yadgar/server/tools/memorize.py` in v6 T3. Also removed from `__init__.py` imports and `__all__`. Clients using `remember` will now receive a tool-not-found error from FastMCP.
+- **explanation:** `remember` was the original name of the `memorize` tool, renamed in v5.x. The no-op redirect stub was removed in v6 T3 dead-code cleanup (#41). Callers must update to `memorize()`.
 
 ### CAP-STOR-028 — Anchor tier system (anchor tool)
 - **status:** LIVE
@@ -991,7 +991,7 @@ config knobs.
 - **status:** LIVE
 - **category:** security
 - **settings:** —
-- **tools:** `remember`, `anchor`
+- **tools:** `memorize`, `anchor`
 - **migrations:** —
 - **bc:** `BC-S1`, `BC-S2`, `BC-S3`
 - **refs:** `yadgar/storage/memory.py::_validate_memory_secrets`, `yadgar/storage/memory.py::_MemoryMixin.insert_memory`
@@ -1029,7 +1029,7 @@ config knobs.
 - **bc:** —
 - **refs:** `yadgar/server/tools/memorize.py::memorize`, `yadgar/server/tools/_memorize_phases/context.py`
 - **wiring:** MCP client calls `memorize()` → registered via `@_tool()` decorator in `memorize.py` → constructs `MemorizeContext` → sequentially calls `phase_validate`, `phase_resolve_branch`, `phase_embed`, `phase_contradiction`, `phase_store`, `phase_post_write`. Each phase returns a rejection dict (short-circuit) or `None` (continue). Final response is the stored memory dict.
-- **explanation:** `memorize` is the primary write-path MCP tool. It accepts `content`, `context` (must be an absolute directory path), `tags`, optional protection/tier/TTL fields, and a `branch_hint`. It orchestrates six phases: input validation + secret-gate, branch resolution, write-gate + embedding + thermo scoring, contradiction detection, storage (via curator or direct insert), and post-write hooks (synaptic boost, reinjection, shadow-gate stamp, CRDT clock, viz event). The `remember` tool is a deprecated no-op shim that rejects with a rename message.
+- **explanation:** `memorize` is the primary write-path MCP tool. It accepts `content`, `context` (must be an absolute directory path), `tags`, optional protection/tier/TTL fields, and a `branch_hint`. It orchestrates six phases: input validation + secret-gate, branch resolution, write-gate + embedding + thermo scoring, contradiction detection, storage (via curator or direct insert), and post-write hooks (synaptic boost, reinjection, shadow-gate stamp, CRDT clock, viz event). The `remember` no-op redirect stub was deleted in v6 T3 (see CAP-STOR-027).
 
 ---
 
@@ -1358,24 +1358,24 @@ config knobs.
 ### CAP-CONS-008 — Community Detection & Cluster Summarization (sleep cycle phases 2-3)
 - **status:** LIVE
 - **category:** brain-dynamics
-- **settings:** `FRACTAL_LEVELS`
+- **settings:** —
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-C4`
 - **refs:** `yadgar/sleep_compute/community.py::_CommunityMixin.detect_communities`, `yadgar/sleep_compute/community.py::_CommunityMixin.generate_cluster_summaries`, `yadgar/sleep_compute/__init__.py::SleepComputeEngine.run_sleep_cycle`
-- **wiring:** `run_sleep_cycle()` → `detect_communities()` then `generate_cluster_summaries()`. Both run in the nightly sleep cycle gated by the 6-hour guard. `detect_communities()` builds a networkx Graph from all active entity relationships and runs Louvain community detection (fallback: label propagation). `generate_cluster_summaries()` generates text summaries and centroid embeddings for clusters with > 3 members, then groups level-1 clusters into level-2 root clusters by directory context.
-- **explanation:** Identifies coherent memory clusters using graph-community detection on the entity co-occurrence graph. Communities (groups of entities that co-occur frequently) are stored as `memory_cluster` records, and memories mentioning those entities are assigned to clusters. Level-2 (root) clusters group level-1 communities by dominant directory context, implementing a two-level hierarchical structure. FRACTAL_LEVELS (default 3) is defined in config but only two levels (1 and 2) are actually created by `generate_cluster_summaries` — level 3 is not yet implemented, making FRACTAL_LEVELS partially CONFIG-ONLY beyond 2.
+- **wiring:** `run_sleep_cycle()` → `detect_communities()` then `generate_cluster_summaries()`. Both run in the nightly sleep cycle gated by the 6-hour guard. `detect_communities()` builds a networkx Graph from all active entity relationships and runs Louvain community detection (fallback: label propagation). `generate_cluster_summaries()` generates text summaries and centroid embeddings for clusters with > 3 members, then groups level-1 clusters into level-2 root clusters by directory context. `FRACTAL_LEVELS` was deleted in v6 T3 — only 2 levels (community + root) are built; deeper clustering remains future work.
+- **explanation:** Identifies coherent memory clusters using graph-community detection on the entity co-occurrence graph. Communities (groups of entities that co-occur frequently) are stored as `memory_cluster` records, and memories mentioning those entities are assigned to clusters. Level-2 (root) clusters group level-1 communities by dominant directory context, implementing a two-level hierarchical structure. `FRACTAL_LEVELS` was CONFIG-ONLY (deleted v6 T3) — only 2 levels are built regardless.
 
 ### CAP-CONS-009 — Re-embedding & Memory Compression (sleep cycle phases 4-5)
 - **status:** LIVE
 - **category:** consolidation
-- **settings:** `COMPRESSION_GIST_AGE_HOURS`, `COMPRESSION_TAG_AGE_HOURS`
+- **settings:** —
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-C4`
 - **refs:** `yadgar/sleep_compute/embed_compress.py::_EmbedCompressMixin.reembed_stale`, `yadgar/sleep_compute/embed_compress.py::_EmbedCompressMixin.compress_old_memories`, `yadgar/sleep_compute/__init__.py::SleepComputeEngine.run_sleep_cycle`
-- **wiring:** `run_sleep_cycle()` → `reembed_stale()` → `compress_old_memories()`. Both run nightly in the sleep cycle. `reembed_stale()` fetches memories whose `embedding_model` differs from the current model and re-encodes them in batches of 50. `compress_old_memories()` uses a `days_threshold=30` hard-coded value (ignoring COMPRESSION_GIST_AGE_HOURS/COMPRESSION_TAG_AGE_HOURS — those settings exist in config and config_yaml but are not read by `compress_old_memories()`). The compression itself keeps entity-bearing sentences and re-embeds the compressed content.
-- **explanation:** Two maintenance passes run during the nightly sleep cycle. Re-embedding updates embeddings when the active model changes (e.g., after a model upgrade) to keep all memories in the same vector space. Memory compression extracts key sentences from verbose old memories (> 1000 chars, older than 30 days) using entity-pattern regex, keeping file paths, function defs, error types, and import statements. COMPRESSION_GIST_AGE_HOURS and COMPRESSION_TAG_AGE_HOURS are defined and documented but the compress_old_memories implementation uses a hard-coded 30-day threshold, making those two settings CONFIG-ONLY (no consumer reads them in production code paths).
+- **wiring:** `run_sleep_cycle()` → `reembed_stale()` → `compress_old_memories()`. Both run nightly in the sleep cycle. `reembed_stale()` fetches memories whose `embedding_model` differs from the current model and re-encodes them in batches of 50. `compress_old_memories()` uses a `days_threshold=30` hard-coded value. `COMPRESSION_GIST_AGE_HOURS` and `COMPRESSION_TAG_AGE_HOURS` were CONFIG-ONLY and deleted in v6 T3.
+- **explanation:** Two maintenance passes run during the nightly sleep cycle. Re-embedding updates embeddings when the active model changes. Memory compression extracts key sentences from verbose old memories (> 1000 chars, older than 30 days) using entity-pattern regex. `COMPRESSION_GIST_AGE_HOURS` and `COMPRESSION_TAG_AGE_HOURS` were never read by `compress_old_memories()` — deleted in v6 T3 (#41).
 
 ### CAP-CONS-010 — Narrative Auto-Generation (sleep cycle phase 6)
 - **status:** LIVE
@@ -1402,13 +1402,13 @@ config knobs.
 ### CAP-CONS-012 — Consolidation Cycle & Cooldown
 - **status:** LIVE
 - **category:** consolidation
-- **settings:** `CONSOLIDATION_COOLDOWN_SECONDS`, `IDLE_THRESHOLD_SECONDS`
+- **settings:** —
 - **tools:** `consolidate_now`
 - **migrations:** —
 - **bc:** `BC-C1`
 - **refs:** `yadgar/consolidation/__init__.py::ConsolidationScheduler.force_consolidate`, `yadgar/consolidation/__init__.py::ConsolidationScheduler.run_nightly_consolidation`, `yadgar/server/tools/admin_other.py::consolidate_now`
-- **wiring:** `consolidate_now` MCP tool → `force_consolidate()` → `_consolidation_cycle()`. The nightly cron calls `run_nightly_consolidation()` which runs the cycle then `_maybe_sleep_cycle()`. `CONSOLIDATION_COOLDOWN_SECONDS` is defined in config (default 1800s) but `force_consolidate()` explicitly ignores it — the docstring states "Ignores CONSOLIDATION_COOLDOWN_SECONDS — an explicit user/MCP request beats throttling." The background daemon and idle-triggered consolidation (which would have used IDLE_THRESHOLD_SECONDS for trigger timing) were removed in v5.7.0. IDLE_THRESHOLD_SECONDS remains in config but has no runtime consumer in the production path. CONSOLIDATION_COOLDOWN_SECONDS is effectively dead code.
-- **explanation:** The main consolidation cycle orchestrates six phases: (1) episodic phases — decay, episode processing, prune, duplicate merge; (2) graph phases — similarity linking, causality detection, graph/cofire priors; (3) curation phases — memify, CLS consolidation, action log; (4) domain consolidation via AstrocytePool; (5) formal causal discovery (periodic); (6) retention tasks. The `consolidate_now` MCP tool exposes this on-demand, with `mode="light"` (cycle only) or `mode="full"` (cycle + full sleep cycle + anchor audit). CONSOLIDATION_COOLDOWN_SECONDS was intended for daemon-triggered cooldown but the daemon was removed in v5.7.0 — it is currently CONFIG-ONLY.
+- **wiring:** `consolidate_now` MCP tool → `force_consolidate()` → `_consolidation_cycle()`. The nightly cron calls `run_nightly_consolidation()` which runs the cycle then `_maybe_sleep_cycle()`. `CONSOLIDATION_COOLDOWN_SECONDS` and `IDLE_THRESHOLD_SECONDS` were CONFIG-ONLY (daemon removed in v5.7.0) — both deleted in v6 T3.
+- **explanation:** The main consolidation cycle orchestrates six phases: (1) episodic phases — decay, episode processing, prune, duplicate merge; (2) graph phases — similarity linking, causality detection, graph/cofire priors; (3) curation phases — memify, CLS consolidation, action log; (4) domain consolidation via AstrocytePool; (5) formal causal discovery (periodic); (6) retention tasks. The `consolidate_now` MCP tool exposes this on-demand. `CONSOLIDATION_COOLDOWN_SECONDS` and `IDLE_THRESHOLD_SECONDS` deleted in v6 T3 (#41) — the background daemon was removed in v5.7.0; these settings had no runtime consumer.
 
 ### CAP-CONS-013 — Vacuum (DB compaction)
 - **status:** LIVE
@@ -1433,15 +1433,15 @@ config knobs.
 - **explanation:** Implements the Josselyn & Frankland (2007) / Rashid et al. (2016) engram cell model — NOT Hopfield networks. Neurons (memory slots) compete via CREB-like excitability: the most excited slot wins the allocation competition, and memories written during the same excited window share a slot, creating temporal associations with zero explicit logic. After ~3 half-lives (~18 hours with default settings), a slot's excitability drops below the warm threshold and the next write starts a new temporal cluster. Lateral inhibition (reducing neighbors' excitability) sharpens cluster boundaries.
 
 ### CAP-CONS-015 — Plasticity / Stability / Reconsolidation (schema fields — dead config)
-- **status:** CONFIG-ONLY
+- **status:** DEAD (v6 T3 — all 5 settings deleted from config.py)
 - **category:** brain-dynamics
-- **settings:** `PLASTICITY_SPIKE`, `PLASTICITY_HALF_LIFE_HOURS`, `STABILITY_INCREMENT`, `RECONSOLIDATION_LOW_THRESHOLD`, `RECONSOLIDATION_HIGH_THRESHOLD`
+- **settings:** — (PLASTICITY_SPIKE, PLASTICITY_HALF_LIFE_HOURS, STABILITY_INCREMENT, RECONSOLIDATION_LOW_THRESHOLD, RECONSOLIDATION_HIGH_THRESHOLD all deleted)
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/config.py`, `yadgar/models.py`
-- **wiring:** These five settings exist in config and the memory schema has `plasticity`, `stability`, and `reconsolidation_count` fields (written at insert time with hardcoded values: plasticity=1.0, stability=0.0). However, no production code reads `PLASTICITY_SPIKE`, `PLASTICITY_HALF_LIFE_HOURS`, `STABILITY_INCREMENT`, `RECONSOLIDATION_LOW_THRESHOLD`, or `RECONSOLIDATION_HIGH_THRESHOLD` at runtime — confirmed by exhaustive grep across `yadgar/` excluding tests and config. The fields exist in the DB schema and are written with defaults, but the dynamic reconsolidation algorithm (modifying memories on recall based on plasticity/stability state, archiving high-plasticity memories above RECONSOLIDATION_HIGH_THRESHOLD) has not been implemented. Status: CONFIG-ONLY.
-- **explanation:** Reconsolidation theory (Nader et al. 2000) predicts that retrieved memories become temporarily labile (plastic) and can be updated or extinguished. The schema was built to support this — `plasticity` spikes on access and decays with ~6h half-life, `stability` accumulates with successful retrievals — but the behavioral logic that would read these settings and modify/archive memories on recall has not been written. The settings and DB fields await implementation.
+- **refs:** `yadgar/models.py` (DB schema fields retained)
+- **wiring:** Settings deleted from `config.py` in v6 T3. The memory schema still has `plasticity`, `stability`, and `reconsolidation_count` fields (written at insert time with hardcoded values: plasticity=1.0, stability=0.0). No production code ever read these settings.
+- **explanation:** Reconsolidation theory (Nader et al. 2000) schema support remains in DB fields but the behavioral logic was never implemented. Config settings deleted in v6 T3 (#41). DB schema fields retained for future implementation.
 
 ### CAP-CONS-016 — Derived Beliefs
 - **status:** LIVE
@@ -1473,8 +1473,8 @@ config knobs.
 - **migrations:** —
 - **bc:** `BC-CM1`
 - **refs:** `yadgar/cognitive_map.py::CognitiveMap`, `yadgar/restoration.py`, `yadgar/server/lifecycle.py`
-- **wiring:** `CognitiveMap` is instantiated in `server/lifecycle.py` at startup and passed to `RestorationEngine`. During context restore (`restore` MCP tool), if `has_sufficient_data()` returns True, `navigate_to()` computes SR-based memory ranking using the transition matrix. The SR x/y coordinates (for layout) are stored on memory rows but `update_memory_sr_coords()` is called from `cognitive_map.py` compute paths.
-- **explanation:** The Successor Representation (Dayan 1993) predicts future states from current position in a learned transition graph. `build_transition_matrix()` counts memory-to-memory transitions from the `memory_transition` table, applies discount factor γ, and computes the SR matrix as `(I - γT)^{-1}`. `navigate_to()` uses the SR to rank memories by expected future relevance given a query memory as starting state. SR x/y coordinates stored on memories are used for 2D layout visualization. BC-CM1 (SR transition matrix built) is implemented.
+- **wiring:** `CognitiveMap` is instantiated in `server/lifecycle.py::_init_secondary_engines()` and passed to `CheckpointRestore`. Every `recall` call records a transition via `_st._cognitive_map.record_transition()` + `incremental_update()` (recall.py:329-338). During `restore` MCP tool, `CheckpointRestore._predict_memories()` calls `has_sufficient_data()` (needs ≥20 transitions) and then `navigate_to()` — results are iterated into the `predicted` list and included in the restore output. Spatial layout methods (extract_coordinates/update_memory_sr_coords/get_neighborhood/get_sr_scores) were retired in v5.71.0 (#47). BC-CM1 e2e-proven in v5.75 (train T5): `tests/e2e/test_phase3_closure.py::TestBCCM1_SRTransitionMatrixBuilt`.
+- **explanation:** The Successor Representation (Dayan 1993) predicts future states from current position in a learned transition graph. `build_transition_matrix()` counts memory-to-memory transitions from the `memory_transition` table, applies discount factor γ, and computes the SR matrix as `(I - γT)^{-1}`. `navigate_to()` uses the SR to rank memories by expected future relevance given a query memory as starting state. The SR result feeds `CheckpointRestore._predict_memories()` and surfaces in the `restore` tool output as predicted next-retrieval candidates. BC-CM1 (SR transition matrix built) is LIVE and e2e-proven.
 
 ### CAP-CONS-019 — Action Log Processing
 - **status:** LIVE
@@ -1488,15 +1488,15 @@ config knobs.
 - **explanation:** The hot path (PostToolCall hook) writes raw tool-call records to the `action_log` table. The cold path (this cleanup pass) consolidates them into retrievable memories: actions within a 30-minute window and same directory are grouped, tool-call counts and summaries are built, and a session-activity memory is inserted for groups with ≥ 3 calls. Secret-blocked entries are quarantined to `~/.local/state/yadgar/quarantine/action_log_poison.jsonl`. This implements BC-AS1 (action records persist) and provides the substrate for BC-AS2 (directory-scoped recall of action memories).
 
 ### CAP-CONS-020 — Compression Settings (CONFIG-ONLY)
-- **status:** CONFIG-ONLY
+- **status:** DEAD (v6 T3 — all 3 settings deleted from config.py)
 - **category:** config
-- **settings:** `COMPRESSION_GIST_AGE_HOURS`, `COMPRESSION_TAG_AGE_HOURS`, `FRACTAL_LEVELS`
+- **settings:** — (COMPRESSION_GIST_AGE_HOURS, COMPRESSION_TAG_AGE_HOURS, FRACTAL_LEVELS all deleted)
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/config.py`
-- **wiring:** `COMPRESSION_GIST_AGE_HOURS` (168h), `COMPRESSION_TAG_AGE_HOURS` (720h), and `FRACTAL_LEVELS` (3) are defined in config and documented in config_yaml. No production code outside of config and config_yaml reads these settings. `compress_old_memories()` in `SleepComputeEngine` uses a hardcoded `days_threshold=30` (not COMPRESSION_GIST_AGE_HOURS). `FRACTAL_LEVELS` was intended for a multi-level clustering hierarchy but only 2 levels are built. All three settings are CONFIG-ONLY pending implementation of the gist/tag compression tiers and deeper fractal clustering.
-- **explanation:** Three planned-but-unimplemented rate-distortion compression controls. The gist/tag compression model would progressively compress memories: at COMPRESSION_GIST_AGE_HOURS (7 days) a memory would be reduced to its key gist, and at COMPRESSION_TAG_AGE_HOURS (30 days) further to just tags. FRACTAL_LEVELS would support a hierarchical cluster tree deeper than the current 2-level (community + root) structure. The schema (compression_level field, 0=full/1=gist/2=tag) is present in models.py and storage, but the age-triggered compression logic does not yet read these config values.
+- **refs:** —
+- **wiring:** All three settings deleted from `config.py` and `config_yaml.py` in v6 T3. `compress_old_memories()` uses hardcoded `days_threshold=30`. `FRACTAL_LEVELS` was intended for multi-level clustering but only 2 levels are built.
+- **explanation:** Three planned-but-unimplemented rate-distortion compression controls. Never read by production code. Removed in v6 T3 dead-config cleanup (#41). The schema (compression_level field) and 2-level cluster hierarchy remain implemented.
 
 ### CAP-CONS-021 — Derived Memory Pruning (memify_prune)
 - **status:** LIVE
@@ -1627,7 +1627,7 @@ config knobs.
 - **migrations:** —
 - **bc:** `BC-CU3`
 - **refs:** `yadgar/curation/__init__.py::MemoryCurator.curate_on_remember`, `yadgar/curation/ingestion.py::find_similar_memories`
-- **wiring:** `memorize()` (or `remember()`) → `MemoryCurator.curate_on_remember()` → `find_similar_memories()` (cosine search) → for any pair with similarity ≥ `CURATION_SIMILARITY_THRESHOLD` AND textual Jaccard > 0.5, existing memory is merged via `merge_memory()`. Also used by `cls_store/promotion.py` for cluster promotion decisions.
+- **wiring:** `memorize()` → `MemoryCurator.curate_on_remember()` → `find_similar_memories()` (cosine search) → for any pair with similarity ≥ `CURATION_SIMILARITY_THRESHOLD` AND textual Jaccard > 0.5, existing memory is merged via `merge_memory()`. Also used by `cls_store/promotion.py` for cluster promotion decisions.
 - **explanation:** Controls the cosine similarity threshold above which two memories with sufficient textual overlap are merged (deduplicated) rather than stored as separate records. Default 0.95 (near-exact duplicates only). The merge operation keeps the highest-heat memory, combining tags and updating the embedding. This prevents accumulating semantically-identical records across sessions. Lower values cause more aggressive merging; the textual-overlap guard prevents merging memories that score high on embeddings but carry genuinely different information (e.g. two functions with similar names).
 
 ### CAP-WIKI-009 — Curation prune passes (BC-CU1, BC-CU2)
@@ -1759,7 +1759,7 @@ config knobs.
 - **migrations:** —
 - **bc:** —
 - **refs:** `yadgar/file_queue/queue.py`, `yadgar/file_queue/apply.py`, `yadgar/file_queue/__init__.py`
-- **wiring:** All MCP write tools (`memorize`, `wiki_add`, `checkpoint`, `anchor`, `remember`, `update_active_work`) call `_get_file_queue().enqueue()` to write an atomic `.json` file under `DATA_DIR/queue/`. A background `QueueDrainer` thread polls every `QUEUE_DRAIN_INTERVAL` seconds, applies each operation via `apply.py` handlers, archives successes to `DATA_DIR/archive/`, and moves exhausted entries to `DATA_DIR/dlq/`.
+- **wiring:** All MCP write tools (`memorize`, `wiki_add`, `checkpoint`, `anchor`, `update_active_work`) call `_get_file_queue().enqueue()` to write an atomic `.json` file under `DATA_DIR/queue/`. A background `QueueDrainer` thread polls every `QUEUE_DRAIN_INTERVAL` seconds, applies each operation via `apply.py` handlers, archives successes to `DATA_DIR/archive/`, and moves exhausted entries to `DATA_DIR/dlq/`.
 - **explanation:** The file queue is the write-path backbone: MCP tools return immediately after writing a timestamped JSON payload to the filesystem (`queue_dir`), decoupling write latency from DB commit latency. The drainer thread processes entries in arrival order, applies exponential back-off (`QUEUE_BACKOFF_BASE_S` → `QUEUE_BACKOFF_MAX_S`) on transient failures, and promotes entries to the DLQ after `QUEUE_MAX_PERMANENT_ATTEMPTS` or `QUEUE_MAX_TRANSIENT_ATTEMPTS` exhaustion. `wait=True` callers in `wiki_add` can block on a per-job `threading.Event` for read-your-writes semantics.
 
 ### CAP-OPS-003 — Vacuum: threshold-driven auto-vacuum backstop
@@ -2229,8 +2229,8 @@ config knobs.
 - **migrations:** —
 - **bc:** `BC-VZ2`
 - **refs:** `yadgar/server/http.py::api_viz_search`, `yadgar/server/http.py::api_viz_config`, `yadgar/static/index.html`
-- **wiring:** `GET /api/viz/config` → `api_viz_config` → returns `match_color`, `pinned_color`, `dim_opacity` under `search`. Frontend stores in `YADGAR_VIZ_CONFIG.search`; 2D canvas draw applies `dim_opacity` to `__dimmed` nodes and uses `pinned_color` / `match_color` as stroke for search-matched and clicked-to-pin nodes. `GET /api/viz/search?q=<query>` → `api_viz_search` → dispatches `recall()` + wiki `query()` → returns matching node IDs; frontend marks them for highlight/dim.
-- **explanation:** Three settings control the visual feedback of the in-graph search feature. `VIZ_SEARCH_MATCH_COLOR` (default `#ffffff`) is the stroke color for nodes returned by a search query. `VIZ_SEARCH_PINNED_COLOR` (default `#ffd700` gold) is the stroke color for nodes manually pinned by clicking. `VIZ_SEARCH_DIM_OPACITY` (default 0.18) sets the opacity for all non-matching nodes when a search is active, creating a dimming/highlight effect. The search query itself is handled by `GET /api/viz/search` which dispatches retrieval recall and wiki query, returning matched node IDs; this endpoint bypasses directory scoping (noted in BC-VZ2 as a behaviour to decide on).
+- **wiring:** `GET /api/viz/config` → `api_viz_config` → returns `match_color`, `pinned_color`, `dim_opacity` under `search`. Frontend stores in `YADGAR_VIZ_CONFIG.search`; 2D canvas draw applies `dim_opacity` to `__dimmed` nodes and uses `pinned_color` / `match_color` as stroke for search-matched and clicked-to-pin nodes. `GET /api/viz/search?q=<query>` → `api_viz_search` → dispatches `recall()` + wiki `query()` (both whole-DB, no directory= param) → returns matching node IDs from ALL projects; frontend marks them for highlight/dim.
+- **explanation:** Three settings control the visual feedback of the in-graph search feature. `VIZ_SEARCH_MATCH_COLOR` (default `#ffffff`) is the stroke color for nodes returned by a search query. `VIZ_SEARCH_PINNED_COLOR` (default `#ffd700` gold) is the stroke color for nodes manually pinned by clicking. `VIZ_SEARCH_DIM_OPACITY` (default 0.18) sets the opacity for all non-matching nodes when a search is active, creating a dimming/highlight effect. The search endpoint `GET /api/viz/search` dispatches retrieval recall and wiki query with no directory scoping — this is INTENTIONAL: the viz is a god's-eye admin overlay (localhost, auth-gated) rendering every project's nodes in one graph; search-highlight must find any visible node regardless of project directory. The directory-scoping bypass is documented in the code (see `api_viz_search`, http.py, BC-VZ2 comment) and locked by e2e test BC-VZ2.
 
 ### CAP-VIZ-009 — Health refresh interval (daemon health scraper)
 
@@ -2459,7 +2459,7 @@ config knobs.
 - **migrations:** —
 - **bc:** `BC-I26`
 - **refs:** `scripts/check_secret_gate.py`, `yadgar/secrets.py`, `yadgar/security/allowlist.py`, `docs/ARCHITECTURE_INVARIANTS.md`
-- **wiring:** Enforced by the `check-secret-gate` pre-commit hook on changes to `yadgar/server/tools/**/*.py`. Every `@_tool`-decorated function with write parameters (`content`, `current_task`, etc.) must call `gate_or_reject()` or carry a `# secret-gate: skip` annotation. Known delegating tools (`seed_project`, `remember`, `wiki_approve`) are explicitly exempted. This invariant ties directly to BC-S1 (secret patterns blocked at API).
+- **wiring:** Enforced by the `check-secret-gate` pre-commit hook on changes to `yadgar/server/tools/**/*.py`. Every `@_tool`-decorated function with write parameters (`content`, `current_task`, etc.) must call `gate_or_reject()` or carry a `# secret-gate: skip` annotation. Known delegating tools (`seed_project`, `wiki_approve`) are explicitly exempted (`remember` deleted in v6 T3). This invariant ties directly to BC-S1 (secret patterns blocked at API).
 - **explanation:** I26 mandates that secret scanning is a single-entry-point gate: the `gate_or_reject()` function in `yadgar/secrets.py`. No write tool is permitted to bypass this gate without an explicit annotation. The gate checks incoming content against known secret patterns (API keys, tokens, passwords) and either rejects the write or routes it through the allowlist bypass path (which triggers an audit — I28). Keeping the gate at a single chokepoint ensures that new write tools cannot accidentally skip secret scanning.
 
 ---
@@ -2534,7 +2534,7 @@ config knobs.
 
 ---
 
-### CAP-INFRA-020 — MCP tool surface: write-path tools (memorize / remember / recall)
+### CAP-INFRA-020 — MCP tool surface: write-path tools (memorize / recall)
 
 - **status:** LIVE
 - **category:** mcp-tool
@@ -2543,8 +2543,8 @@ config knobs.
 - **migrations:** —
 - **bc:** `BC-T1`, `BC-T2`, `BC-T3`
 - **refs:** `yadgar/server/tools/memorize.py`, `yadgar/server/tools/recall.py`, `docs/BEHAVIOR_CONTRACT.md`
-- **wiring:** `memorize` and `remember` are registered `@_tool` functions in `memorize.py`; `remember` is an alias. `recall` is a registered `@_tool` in `recall.py`. All are reachable via the FastMCP server on every client request. Contract rows BC-T1/T2/T3 cross-reference BC-A1 (memorize stores novel content) and BC-B1..B4 (recall respects directory scoping).
-- **explanation:** These three tools form the primary episodic write and read surface. `memorize` accepts content and a directory, runs it through the write gate, queues it for drainer processing (embedding + dedup), and returns a memory id. `remember` is a thin alias with identical semantics. `recall` performs vector + FTS retrieval, applies the full reranking pipeline (CE, NLI, MMR, rules, confidence gate), and returns directory-scoped results. All three are callable from any MCP client session.
+- **wiring:** `memorize` is a registered `@_tool` function in `memorize.py`. `recall` is a registered `@_tool` in `recall.py`. Both are reachable via the FastMCP server on every client request. Contract rows BC-T1/T2/T3 cross-reference BC-A1 (memorize stores novel content) and BC-B1..B4 (recall respects directory scoping). `remember` stub deleted in v6 T3 (see CAP-STOR-027).
+- **explanation:** These two tools form the primary episodic write and read surface. `memorize` accepts content and a directory, runs it through the write gate, queues it for drainer processing (embedding + dedup), and returns a memory id. `recall` performs vector + FTS retrieval, applies the full reranking pipeline (CE, NLI, MMR, rules, confidence gate), and returns directory-scoped results. Both are callable from any MCP client session.
 
 ---
 
@@ -2712,3 +2712,29 @@ config knobs.
 - **refs:** `scripts/check_capability_coverage.py`, `yadgar/tests/test_capability_coverage.py`, `docs/CAPABILITY_REGISTRY.md`
 - **wiring:** Enforced by `scripts/check_capability_coverage.py` (pre-commit hook `check-capability-coverage` + CI `invariant-checks` step) and the pytest `yadgar/tests/test_capability_coverage.py`. AST-enumerates the four authoritative surfaces (Settings fields in `config.py`, `@_tool` decorators in `server/tools/`, `_migration_NNN` functions, `BC-*` rows in BEHAVIOR_CONTRACT) and asserts every item is referenced by some entry in this file; flags ORPHAN (uncatalogued), STALE (entry cites a vanished item), and MALFORMED (bad status / unresolved ref).
 - **explanation:** This is the self-referential invariant that keeps THIS registry honest. It guarantees catalogue completeness, not status correctness (see "Scope of the guarantee" at the top). It makes the registry the durable source of truth the e2e behavior contract, the v6 plan, and the #41 dead-config audit all draw "what exists" from — adding any surface item without cataloguing it here fails the build.
+
+
+### CAP-EVAL-001 — v6 Phase 0 eval harness (native golden set + make eval)
+
+- **status:** LIVE
+- **category:** quality
+- **settings:** —
+- **tools:** —
+- **migrations:** —
+- **bc:** —
+- **refs:** `benchmarks/run_eval.py`, `benchmarks/build_golden_bootstrap.py`, `benchmarks/golden/golden_set.jsonl`, `benchmarks/reports/`, `Makefile`, `docs/plans/PLAN_V6_QUALITY_FOUNDATION.md`
+- **wiring:** `make eval` → `benchmarks/run_eval.py` → loads `benchmarks/golden/golden_set.jsonl`, spawns isolated SurrealDB via `spawn_surreal_for_benchmark()` (reused from `run_longmemeval.py`), runs yadgar `recall()` per golden pair, scores recall@k/MRR/nDCG@k + latency p50/p95, prints summary table, writes JSON report to `benchmarks/reports/`. Reuses `compute_recall()`/`compute_ndcg()` primitives from `run_longmemeval.py`. Bootstrap generator: `benchmarks/build_golden_bootstrap.py` samples stored memories and derives paraphrased queries — outputs a BOOTSTRAP-marked set REQUIRING HUMAN CURATION. CI: non-gating `workflow_dispatch` job in `.forgejo/workflows/eval.yaml`.
+- **explanation:** The v6 Phase 0 keystone. Converts "I believe recall is good" into a measured number against a committed baseline. The golden set is intentionally marked as a bootstrap (auto-drafted from stored memories) and must be curated before the harness graduates to a gating quality check. The baseline report in `benchmarks/reports/baseline-v5.74.md` is committed so there is a number to track regressions against. Phase-0 exit criterion: `make eval` runs locally and in CI; baseline numbers are committed.
+
+
+### CAP-EVAL-002 — v6 Phase 0.2 data-quality metrics (Prometheus + yadgar stats)
+
+- **status:** LIVE
+- **category:** quality
+- **settings:** —
+- **tools:** —
+- **migrations:** —
+- **bc:** —
+- **refs:** `yadgar/metrics.py`, `yadgar/cli/stats.py`, `yadgar/tests/test_v6_data_quality_stats.py`, `docs/plans/PLAN_V6_QUALITY_FOUNDATION.md`
+- **wiring:** Seven Prometheus Gauges declared in `yadgar/metrics.py` (v6 Phase 0.2 block): `yadgar_data_quality_embedding_valid_ratio`, `yadgar_data_quality_null_embedding_count`, `yadgar_data_quality_duplicate_rate`, `yadgar_data_quality_zombie_rate`, `yadgar_data_quality_domain_coverage`, `yadgar_data_quality_surprise_p50`, `yadgar_data_quality_surprise_p95`. Writers: `_collect_data_quality()` in `yadgar/metrics.py` (called on every `/metrics` scrape, alongside `_collect_queue_depths()`). Stats CLI: `_query_data_quality()` in `yadgar/cli/stats.py` populates `StatsData.dq_*` fields, printed in the `DATA QUALITY (v6 Phase 0.2)` section of `yadgar stats` output and included in the JSON output from `yadgar stats --format json`. I23 compliance: `check_metric_writers.py` verifies `_collect_data_quality()` as the writer for all seven gauges.
+- **explanation:** The Phase-0.2 dashboard metrics that make corpus health visible without running the full eval harness. Null-embedding count is the hardest signal: `embedding_valid_ratio < 1.0` indicates the corruption class that the v5.66 zombie purge and today's reembed_all fix targeted. Duplicate-rate (sim-links / active memories) measures write-gate efficiency. Zombie-rate (stale / total) measures consolidation health. Domain-coverage measures astrocyte effectiveness. Surprise distribution (p50/p95) provides a histogram summary for Phase-1 write-gate tuning. All seven are best-effort (swallowed DB errors) so a degraded DB doesn't break the /metrics endpoint.

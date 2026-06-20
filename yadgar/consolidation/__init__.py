@@ -155,11 +155,7 @@ class ConsolidationScheduler(
         self.last_activity = datetime.now(UTC)
 
     def force_consolidate(self) -> dict:
-        """Run a consolidation cycle immediately. Returns the cycle stats.
-
-        Ignores CONSOLIDATION_COOLDOWN_SECONDS — an explicit user/MCP request
-        beats throttling.
-        """
+        """Run a consolidation cycle immediately. Returns the cycle stats."""
         return self._consolidation_cycle()
 
     def run_nightly_consolidation(self) -> dict:

@@ -216,7 +216,6 @@ def _make_settings_mock():
     s.NLI_ONLY_FOR_OPEN_DOMAIN = True
     s.NLI_WEIGHT = 0.5
     s.MULTI_PASSAGE_RERANKING_ENABLED = False
-    s.WRRF_K = 60
     s.WRRF_VECTOR_WEIGHT = 1.0
     s.WRRF_FTS_WEIGHT = 1.0
     s.SPREADING_ACTIVATION_ENABLED = False

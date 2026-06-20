@@ -36,7 +36,7 @@ YADGAR_BACKEND_VERSION := $(shell grep -m1 '^BACKEND_VERSION' $(REPO_ROOT)yadgar
         install-hooks install-agents config-sync install-rules \
         seed-anchors detect-runtime detect-os install-runtime clean check \
         pull-images bootstrap-secrets enable-units enable-units-linux enable-units-macos \
-        _enable-units-auto restore upgrade-test
+        _enable-units-auto restore upgrade-test eval
 
 all: setup
 
@@ -291,6 +291,17 @@ e2e:
 	  OTEL_SDK_DISABLED=true PATH="$$HOME/.local/bin:$$PATH" \
 	  uv run --extra test --extra ml python -m pytest yadgar/tests/e2e/ \
 	    -m e2e -p no:randomly -n0 --reruns 2 --reruns-delay 2 --tb=short -q $(PYTEST_ARGS)'
+
+## eval: Run the v6 Phase 0 eval harness (native golden set, recall@k/MRR/nDCG/latency).
+## Requires: `surreal` on PATH (or YADGAR_DB_URL set to a running instance).
+## NON-GATING: informational quality measurement, not a merge gate.
+## Golden set is a bootstrap (auto-drafted) — see benchmarks/golden/golden_set.jsonl.
+eval:
+	@echo "==> Running v6 Phase 0 eval harness ..."
+	@echo "    Golden set: benchmarks/golden/golden_set.jsonl"
+	@echo "    WARNING: golden set is BOOTSTRAP (auto-drafted) — REQUIRES HUMAN CURATION."
+	@echo "    Results are informational only until the golden set is reviewed."
+	@OTEL_SDK_DISABLED=true uv run --extra test --extra ml python benchmarks/run_eval.py
 
 ## upgrade-test: Print the manual upgrade-test runbook (see docs/UPGRADE_TEST.md)
 upgrade-test:

@@ -1,0 +1,554 @@
+"""Yadgar native eval harness — Phase 0 measurement (v6 Quality Foundation).
+
+Runs a golden set of (query, relevant_memory_ids[]) pairs through yadgar recall
+against an isolated/local SurrealDB instance and computes:
+
+  - recall@k   (k = 1, 5, 10, 20)
+  - MRR        (mean reciprocal rank)
+  - nDCG@k     (k = 1, 5, 10, 20)
+  - latency    p50 / p95 per query
+
+Output: a summary table printed to stdout + a machine-readable JSON report written
+to benchmarks/reports/<name>.json.
+
+# BOOTSTRAP NOTE: the default golden set is auto-drafted and REQUIRES HUMAN CURATION.
+# Results on the bootstrap set are informational only — not a trusted quality signal
+# until the golden set has been reviewed and curated.
+
+Reuse policy (v6 plan §0.0):
+  - Metric primitives: compute_recall() / compute_ndcg() from run_longmemeval
+  - MRR loop: from run_longmemeval.evaluate_retrieval
+  - Isolated SurrealDB: spawn_surreal_for_benchmark / YADGAR_DB_URL server-mode
+  - Settings factory: make_benchmark_settings from run_longmemeval
+
+Usage:
+  # Against fresh isolated SurrealDB (requires `surreal` on PATH):
+  python benchmarks/run_eval.py
+
+  # Against existing server (skip spawn):
+  YADGAR_DB_URL=http://127.0.0.1:8000 python benchmarks/run_eval.py
+
+  # Custom golden set:
+  python benchmarks/run_eval.py --golden benchmarks/golden/my_set.jsonl
+
+  # Custom report output:
+  python benchmarks/run_eval.py --output benchmarks/reports/my_run.json
+
+  # Dry-run (print config, skip scoring):
+  python benchmarks/run_eval.py --dry-run
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import statistics
+import sys
+import tempfile
+import time
+from datetime import UTC, datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# ── Reused primitives from run_longmemeval ─────────────────────────────────────
+
+from benchmarks.run_longmemeval import (
+    compute_ndcg,
+    compute_recall,
+    get_surreal_version,
+    get_yadgar_commit,
+    make_benchmark_settings,
+    spawn_surreal_for_benchmark,
+)
+from yadgar._surreal_runner import teardown_surreal_proc
+from yadgar.config import Settings
+from yadgar.curation import MemoryCurator
+from yadgar.embeddings import EmbeddingEngine
+from yadgar.knowledge_graph import KnowledgeGraph
+from yadgar.retrieval import Retriever
+from yadgar.storage import StorageEngine
+from yadgar.thermodynamics import MemoryThermodynamics
+
+# ── Constants ───────────────────────────────────────────────────────────────────
+
+_REPO_ROOT = Path(__file__).parent.parent
+_GOLDEN_DEFAULT = _REPO_ROOT / "benchmarks" / "golden" / "golden_set.jsonl"
+_REPORTS_DIR = _REPO_ROOT / "benchmarks" / "reports"
+_K_VALUES = [1, 5, 10, 20]
+
+# ── Golden set I/O ─────────────────────────────────────────────────────────────
+
+
+def load_golden_set(path: Path) -> tuple[list[dict], dict]:
+    """Load golden pairs from a JSONL file.
+
+    Returns (pairs, header) where header is the metadata sentinel line (query_id=HEADER).
+    Filters out HEADER lines and pairs marked as bootstrap placeholders with no real IDs.
+    """
+    pairs: list[dict] = []
+    header: dict = {}
+    skipped = 0
+
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            obj = json.loads(line)
+            if obj.get("query_id") == "HEADER":
+                header = obj
+                continue
+            ids = obj.get("relevant_memory_ids", [])
+            if not ids:
+                skipped += 1
+                continue
+            pairs.append(obj)
+
+    if skipped:
+        print(f"  Skipped {skipped} pairs with empty relevant_memory_ids")
+
+    is_bootstrap = header.get("bootstrap", False)
+    curated_pairs = [p for p in pairs if not p.get("needs_curation", False)]
+    bootstrap_pairs = [p for p in pairs if p.get("needs_curation", False)]
+
+    print(
+        f"  Loaded {len(pairs)} pairs ({len(curated_pairs)} curated, {len(bootstrap_pairs)} bootstrap/uncurated)"
+    )
+    if is_bootstrap:
+        print("  WARNING: golden set is a BOOTSTRAP — auto-drafted, REQUIRES HUMAN CURATION.")
+        print("  Results are informational only until the set is reviewed.")
+
+    return pairs, header
+
+
+# ── Self-seeding ───────────────────────────────────────────────────────────────
+
+
+def seed_pairs_into_storage(
+    pairs: list[dict],
+    storage: StorageEngine,
+    embeddings: EmbeddingEngine,
+    settings: Settings,
+) -> list[dict]:
+    """Ingest golden pair content into an isolated DB and remap relevant_memory_ids.
+
+    Each pair's `memory_content_preview` (or `content` if present) is stored as a
+    real memory row.  The returned list is a shallow copy of `pairs` with
+    `relevant_memory_ids` replaced by the real integer IDs assigned by SurrealDB.
+
+    This makes the harness self-contained: spawning an isolated SurrealDB
+    and running `make eval` on a clean checkout produces real, non-zero metrics.
+    """
+    remapped: list[dict] = []
+    for pair in pairs:
+        content = pair.get("content") or pair.get("memory_content_preview") or pair.get("query")
+        memory_payload = {
+            "content": content,
+            "directory_context": "eval-bootstrap",
+            "tags": pair.get("tags", []),
+            "heat": 1.0,
+        }
+        try:
+            real_id = storage.insert_memory(
+                memory_payload,
+                embeddings_engine=embeddings,
+                settings=settings,
+            )
+        except Exception as exc:
+            print(f"  WARNING: seed failed for {pair['query_id']}: {exc}", file=sys.stderr)
+            remapped.append(pair)
+            continue
+        new_pair = dict(pair)
+        new_pair["relevant_memory_ids"] = [real_id]
+        new_pair["_seeded_id"] = real_id
+        remapped.append(new_pair)
+    return remapped
+
+
+# ── Engine factory ─────────────────────────────────────────────────────────────
+
+
+def create_eval_engines(settings: Settings):
+    """Create minimal engine set for eval (no data dir — server-mode only)."""
+    db_path = os.environ.get("YADGAR_DB_PATH", settings.DB_PATH)
+    storage = StorageEngine(db_path)
+    embeddings = EmbeddingEngine(settings.EMBEDDING_MODEL)
+    kg = KnowledgeGraph(storage, settings)
+    thermo = MemoryThermodynamics(storage, embeddings, settings)
+    retriever = Retriever(storage, embeddings, kg, settings)
+    curator = MemoryCurator(storage, embeddings, thermo, settings)
+    return storage, embeddings, retriever, curator
+
+
+# ── Per-query eval ─────────────────────────────────────────────────────────────
+
+
+def evaluate_pair(
+    pair: dict,
+    retriever: Retriever,
+    k_values: list[int],
+    max_results: int = 50,
+) -> dict:
+    """Run recall for one golden pair and compute metrics.
+
+    Uses memory-id granularity (not session granularity like LongMemEval).
+
+    Returns a metrics dict including latency_ms.
+    """
+    query = pair["query"]
+    gold_ids = set(int(mid) for mid in pair["relevant_memory_ids"])
+
+    t0 = time.perf_counter()
+    try:
+        results = retriever.recall(query, max_results=max_results, min_heat=0.0)
+    except Exception as exc:
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        return {
+            "query_id": pair["query_id"],
+            "error": str(exc),
+            "latency_ms": elapsed_ms,
+        }
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+
+    retrieved_ids = []
+    for m in results:
+        if "id" not in m:
+            continue
+        try:
+            raw = m["id"]
+            # SurrealDB may return "memory:123" or just 123
+            if isinstance(raw, str) and ":" in raw:
+                raw = raw.split(":", 1)[1]
+            retrieved_ids.append(int(raw))
+        except (TypeError, ValueError):
+            pass
+
+    metrics: dict = {
+        "query_id": pair["query_id"],
+        "derivation": pair.get("derivation", "unknown"),
+        "bootstrap": pair.get("bootstrap", True),
+        "needs_curation": pair.get("needs_curation", True),
+        "latency_ms": elapsed_ms,
+        "retrieved_count": len(retrieved_ids),
+        "gold_count": len(gold_ids),
+    }
+
+    # recall@k + nDCG@k — reuse primitives from run_longmemeval
+    # Adapter: primitives accept list[str], set[str]; we pass str(id)
+    retrieved_str = [str(i) for i in retrieved_ids]
+    gold_str = {str(i) for i in gold_ids}
+
+    for k in k_values:
+        metrics[f"recall@{k}"] = compute_recall(retrieved_str, gold_str, k)
+        metrics[f"ndcg@{k}"] = compute_ndcg(retrieved_str, gold_str, k)
+
+    # MRR
+    mrr = 0.0
+    for rank, rid in enumerate(retrieved_str):
+        if rid in gold_str:
+            mrr = 1.0 / (rank + 1)
+            break
+    metrics["mrr"] = mrr
+
+    return metrics
+
+
+# ── Aggregation ────────────────────────────────────────────────────────────────
+
+
+def aggregate_metrics(per_query: list[dict], k_values: list[int]) -> dict:
+    """Aggregate per-query metrics into mean values + latency percentiles."""
+    valid = [m for m in per_query if "error" not in m]
+    errors = [m for m in per_query if "error" in m]
+
+    if not valid:
+        return {"error": "all queries failed"}
+
+    n = len(valid)
+    agg: dict = {
+        "n_pairs": len(per_query),
+        "n_valid": n,
+        "n_errors": len(errors),
+    }
+
+    # Metric means
+    for k in k_values:
+        agg[f"recall@{k}"] = sum(m[f"recall@{k}"] for m in valid) / n
+        agg[f"ndcg@{k}"] = sum(m[f"ndcg@{k}"] for m in valid) / n
+    agg["mrr"] = sum(m["mrr"] for m in valid) / n
+
+    # Latency percentiles
+    latencies = sorted(m["latency_ms"] for m in valid)
+    agg["latency_p50_ms"] = statistics.median(latencies)
+    # p95: use quantiles if enough points, else max
+    if len(latencies) >= 20:
+        agg["latency_p95_ms"] = statistics.quantiles(latencies, n=20)[18]  # 95th percentile
+    else:
+        agg["latency_p95_ms"] = max(latencies)
+    agg["latency_mean_ms"] = statistics.mean(latencies)
+
+    # By derivation type
+    for derivation in ("paraphrase", "tag_lookup", "recency_anchor"):
+        subset = [m for m in valid if m.get("derivation") == derivation]
+        if subset:
+            agg[f"mrr_{derivation}"] = sum(m["mrr"] for m in subset) / len(subset)
+            agg[f"recall@10_{derivation}"] = sum(m["recall@10"] for m in subset) / len(subset)
+
+    # Bootstrap vs curated split
+    curated = [m for m in valid if not m.get("needs_curation", True)]
+    uncurated = [m for m in valid if m.get("needs_curation", True)]
+    agg["n_curated"] = len(curated)
+    agg["n_bootstrap_only"] = len(uncurated)
+    if curated:
+        agg["mrr_curated"] = sum(m["mrr"] for m in curated) / len(curated)
+        agg["recall@10_curated"] = sum(m["recall@10"] for m in curated) / len(curated)
+
+    return agg
+
+
+# ── Report output ──────────────────────────────────────────────────────────────
+
+
+def print_summary_table(agg: dict, golden_header: dict) -> None:
+    """Print a human-readable summary table to stdout."""
+    is_bootstrap = golden_header.get("bootstrap", False)
+    print()
+    print("=" * 60)
+    print("  Yadgar Eval Harness — Phase 0 Baseline")
+    if is_bootstrap:
+        print("  *** BOOTSTRAP golden set — REQUIRES HUMAN CURATION ***")
+    print("=" * 60)
+    print(
+        f"  Pairs evaluated : {agg.get('n_pairs', '?')}  (valid: {agg.get('n_valid', '?')}, errors: {agg.get('n_errors', 0)})"
+    )
+    print(
+        f"  Curated pairs   : {agg.get('n_curated', 0)}  (bootstrap only: {agg.get('n_bootstrap_only', 0)})"
+    )
+    print()
+    print("  ── Retrieval metrics (all pairs) ──────────────────────")
+    for k in _K_VALUES:
+        r = agg.get(f"recall@{k}", 0.0)
+        n = agg.get(f"ndcg@{k}", 0.0)
+        print(f"  recall@{k:<3}  = {r:.4f}    nDCG@{k:<3}  = {n:.4f}")
+    print(f"  MRR       = {agg.get('mrr', 0.0):.4f}")
+    print()
+    print("  ── Latency ────────────────────────────────────────────")
+    print(f"  p50  = {agg.get('latency_p50_ms', 0.0):.1f} ms")
+    print(f"  p95  = {agg.get('latency_p95_ms', 0.0):.1f} ms")
+    print(f"  mean = {agg.get('latency_mean_ms', 0.0):.1f} ms")
+    print()
+    print("  ── By derivation type ─────────────────────────────────")
+    for deriv in ("paraphrase", "tag_lookup", "recency_anchor"):
+        mrr_k = f"mrr_{deriv}"
+        r10_k = f"recall@10_{deriv}"
+        if mrr_k in agg:
+            print(f"  {deriv:<18}  MRR={agg[mrr_k]:.4f}  R@10={agg[r10_k]:.4f}")
+    print("=" * 60)
+    if is_bootstrap:
+        print()
+        print("  IMPORTANT: These numbers are from a MACHINE-GENERATED bootstrap")
+        print("  golden set and should NOT be treated as ground-truth quality metrics.")
+        print("  Human curation of golden_set.jsonl is required before using this")
+        print("  as a regression gate. See benchmarks/golden/golden_set.jsonl.")
+    print()
+
+
+def write_json_report(
+    path: Path,
+    agg: dict,
+    per_query: list[dict],
+    golden_header: dict,
+    reproducibility: dict,
+    golden_path: str,
+) -> None:
+    """Write machine-readable JSON report."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    report = {
+        "benchmark": "yadgar-native-eval",
+        "version": "v6-phase0",
+        "timestamp": datetime.now(UTC).isoformat(),
+        "golden_set": golden_path,
+        "bootstrap_warning": golden_header.get("bootstrap", False),
+        "note": (
+            "BOOTSTRAP — auto-drafted, REQUIRES HUMAN CURATION. "
+            "Numbers are informational only until golden_set.jsonl is curated."
+            if golden_header.get("bootstrap", False)
+            else "Golden set curated."
+        ),
+        "aggregated": agg,
+        "per_query": per_query,
+        "reproducibility": reproducibility,
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
+    print(f"Report written to: {path}")
+
+
+# ── Main runner ────────────────────────────────────────────────────────────────
+
+
+def run_eval(
+    golden_path: Path = _GOLDEN_DEFAULT,
+    output_path: Path | None = None,
+    max_results: int = 50,
+    dry_run: bool = False,
+    no_seed: bool = False,
+    settings_overrides: dict | None = None,
+) -> dict:
+    """Run the full eval pipeline. Returns aggregated metrics dict."""
+    print("Yadgar Eval Harness — Phase 0")
+    print(f"Golden set: {golden_path}")
+
+    # ── Load golden set ─────────────────────────────────────────────────
+    pairs, golden_header = load_golden_set(golden_path)
+    if not pairs:
+        print("No pairs to evaluate — exiting.", file=sys.stderr)
+        sys.exit(1)
+
+    if dry_run:
+        print(f"Dry-run: {len(pairs)} pairs loaded. Exiting without scoring.")
+        return {}
+
+    # ── Settings ────────────────────────────────────────────────────────
+    settings = make_benchmark_settings(**(settings_overrides or {}))
+
+    # Build reproducibility metadata
+    reproducibility = {
+        "yadgar_commit": get_yadgar_commit(),
+        "surreal_version": get_surreal_version(),
+        "embedding_model": settings.EMBEDDING_MODEL,
+        "python_version": sys.version,
+        "run_date_utc": datetime.now(UTC).isoformat(),
+        "golden_pairs": len(pairs),
+        "self_seeded": not no_seed and not bool(os.environ.get("YADGAR_EVAL_NO_SEED")),
+    }
+
+    # ── Surreal server lifecycle ────────────────────────────────────────
+    _spawned_proc = None
+    _surreal_tmpdir = None
+    _server_mode = bool(os.environ.get("YADGAR_DB_URL"))
+
+    if not _server_mode:
+        if not shutil.which("surreal"):
+            print(
+                "WARNING: `surreal` binary not on PATH. "
+                "Falling back to embedded mode — FULLTEXT retrieval will fail. "
+                "Set YADGAR_DB_URL=http://127.0.0.1:8000 or install SurrealDB.",
+                file=sys.stderr,
+            )
+        else:
+            _surreal_tmpdir = tempfile.mkdtemp(prefix="yadgar_eval_surreal_")
+            print(f"Starting SurrealDB server (tmpdir: {_surreal_tmpdir}) ...")
+            _spawned_proc, _port = spawn_surreal_for_benchmark(_surreal_tmpdir)
+            os.environ["YADGAR_DB_URL"] = f"http://127.0.0.1:{_port}"
+            print(f"SurrealDB started on port {_port}")
+
+    try:
+        # ── Engine init ───────────────────────────────────────────────
+        print("Loading embedding model...")
+        storage, embeddings, retriever, curator = create_eval_engines(settings)
+
+        # ── Self-seeding (isolated DB only) ──────────────────────────
+        # When using an isolated/fresh SurrealDB, seed the golden pair
+        # content so there are real memories to retrieve against.
+        # Skip seeding when YADGAR_DB_URL points at a live corpus (no_seed=True)
+        # or when the caller explicitly opts out.
+        if not no_seed and not bool(os.environ.get("YADGAR_EVAL_NO_SEED")):
+            n_before_seed = len(pairs)
+            print(f"Seeding {n_before_seed} pairs into isolated DB ...")
+            pairs = seed_pairs_into_storage(pairs, storage, embeddings, settings)
+            print(f"Seeded {len(pairs)} pairs. Eval will use remapped IDs.")
+        else:
+            print("Skipping self-seed (--no-seed or YADGAR_EVAL_NO_SEED set).")
+
+        # ── Eval loop ────────────────────────────────────────────────
+        per_query: list[dict] = []
+        n = len(pairs)
+        print(f"Evaluating {n} pairs ...")
+        for i, pair in enumerate(pairs):
+            if (i + 1) % 10 == 0 or i == 0:
+                print(f"  [{i + 1}/{n}] {pair['query_id']}: {pair['query'][:60]}...")
+            metrics = evaluate_pair(pair, retriever, _K_VALUES, max_results=max_results)
+            per_query.append(metrics)
+
+        # ── Aggregate ─────────────────────────────────────────────────
+        agg = aggregate_metrics(per_query, _K_VALUES)
+
+        # ── Output ────────────────────────────────────────────────────
+        print_summary_table(agg, golden_header)
+
+        if output_path is None:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_path = _REPORTS_DIR / f"eval_{ts}.json"
+
+        write_json_report(
+            path=output_path,
+            agg=agg,
+            per_query=per_query,
+            golden_header=golden_header,
+            reproducibility=reproducibility,
+            golden_path=str(golden_path),
+        )
+
+        return agg
+
+    finally:
+        if _spawned_proc is not None:
+            teardown_surreal_proc(_spawned_proc)
+        if _surreal_tmpdir:
+            import shutil as _shutil
+
+            _shutil.rmtree(_surreal_tmpdir, ignore_errors=True)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Yadgar native eval harness — Phase 0 quality measurement."
+    )
+    parser.add_argument(
+        "--golden",
+        type=Path,
+        default=_GOLDEN_DEFAULT,
+        help=f"Path to golden_set.jsonl (default: {_GOLDEN_DEFAULT})",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Path for the JSON report (default: benchmarks/reports/eval_<timestamp>.json)",
+    )
+    parser.add_argument(
+        "--max-results",
+        type=int,
+        default=50,
+        help="Max recall() results per query (default: 50)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Load config and golden set but skip scoring",
+    )
+    parser.add_argument(
+        "--no-seed",
+        action="store_true",
+        help=(
+            "Skip self-seeding golden pair content into isolated DB. "
+            "Use when YADGAR_DB_URL points at a live corpus with real memories."
+        ),
+    )
+    args = parser.parse_args()
+
+    run_eval(
+        golden_path=args.golden,
+        output_path=args.output,
+        max_results=args.max_results,
+        dry_run=args.dry_run,
+        no_seed=args.no_seed,
+    )
+
+
+if __name__ == "__main__":
+    main()

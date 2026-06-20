@@ -540,40 +540,6 @@ class TestDetectAdversarial:
         assert result["is_uncertain"] is True
 
 
-class TestConfidenceGating:
-    def test_gating_zeros_low_confidence_signal(
-        self, storage, embeddings, graph, settings, tmp_path
-    ):
-        """Signals below threshold should have their weight zeroed."""
-        settings_gated = Settings(
-            DB_PATH=str(tmp_path / "gated.db"),
-            CONFIDENCE_GATING_ENABLED=True,
-            QUERY_ROUTING_ENABLED=False,
-        )
-        retriever = Retriever(storage, embeddings, graph, settings_gated)
-
-        # Insert only 1 memory so FTS returns very few results → low confidence
-        _make_memory(storage, embeddings, "lonely memory about testing")
-
-        results = retriever.recall("testing", max_results=5)
-        # Should still return results (vector signal always passes)
-        # The test verifies no crash and that gating logic executes
-        assert isinstance(results, list)
-
-    def test_gating_disabled(self, storage, embeddings, graph, tmp_path):
-        """When gating is disabled, all signals pass through."""
-        settings_off = Settings(
-            DB_PATH=str(tmp_path / "off.db"),
-            CONFIDENCE_GATING_ENABLED=False,
-            QUERY_ROUTING_ENABLED=False,
-        )
-        retriever = Retriever(storage, embeddings, graph, settings_off)
-        _make_memory(storage, embeddings, "test memory")
-
-        results = retriever.recall("test", max_results=5)
-        assert isinstance(results, list)
-
-
 class TestCandidatePoolMultiplier:
     def test_candidate_pool_multiplier(self, storage, embeddings, graph, tmp_path):
         """Verify that candidate_k uses CANDIDATE_POOL_MULTIPLIER setting."""

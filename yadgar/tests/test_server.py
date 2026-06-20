@@ -280,7 +280,7 @@ def test_mcp_server_has_tools():
     tools = mcp_server_tools()
     tool_names = {t.name for t in tools}
     expected = {
-        "remember",
+        "memorize",
         "recall",
         "forget",
         "validate_memory",

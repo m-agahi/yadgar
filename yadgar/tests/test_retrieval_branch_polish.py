@@ -31,7 +31,6 @@ class TestC2BranchFilterInSurrealQL:
             ADVERSARIAL_DETECTION_ENABLED=False,
             ADVERSARIAL_DIVERSITY_ENFORCEMENT=False,
             MULTI_PASSAGE_RERANKING_ENABLED=False,
-            CONFIDENCE_GATING_ENABLED=False,
             COMPARISON_DUAL_SEARCH_ENABLED=False,
             TEMPORAL_RETRIEVAL_ENABLED=False,
             QUERY_EXPANSION_ENABLED=False,
@@ -405,7 +404,6 @@ class TestC5TemporalBranchFilter:
             ADVERSARIAL_DETECTION_ENABLED=False,
             ADVERSARIAL_DIVERSITY_ENFORCEMENT=False,
             MULTI_PASSAGE_RERANKING_ENABLED=False,
-            CONFIDENCE_GATING_ENABLED=False,
             COMPARISON_DUAL_SEARCH_ENABLED=False,
             TEMPORAL_RETRIEVAL_ENABLED=True,  # <-- enabled
             QUERY_EXPANSION_ENABLED=False,

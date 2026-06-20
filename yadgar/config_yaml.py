@@ -31,10 +31,6 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Seconds between astrocyte background loop wakeups (lower = more responsive, higher = less CPU)",
         "section": "daemon",
     },
-    "idle_threshold_seconds": {
-        "desc": "Idle seconds before triggering consolidation (e.g. 3600 to only consolidate after 1h of no Claude sessions)",
-        "section": "daemon",
-    },
     "num_astrocyte_processes": {
         "desc": "Number of domain-aware background worker processes",
         "section": "daemon",
@@ -66,14 +62,6 @@ FIELD_META: dict[str, dict[str, str]] = {
     },
     "write_gate_continuity_window": {
         "desc": "Number of recent stores to track for continuity detection",
-        "section": "memory_lifecycle",
-    },
-    "compression_gist_age_hours": {
-        "desc": "Hours before gist-compressing old memories (default 168 = 7 days)",
-        "section": "memory_lifecycle",
-    },
-    "compression_tag_age_hours": {
-        "desc": "Hours before tag-compressing very old memories (default 720 = 30 days)",
         "section": "memory_lifecycle",
     },
     "decision_auto_protect": {
@@ -150,10 +138,6 @@ FIELD_META: dict[str, dict[str, str]] = {
         "section": "thermodynamics",
     },
     # retrieval_fusion
-    "wrrf_k": {
-        "desc": "RRF constant k (higher = smoother rank blending)",
-        "section": "retrieval_fusion",
-    },
     "wrrf_candidate_multiplier": {
         "desc": "Candidate pool size = max_results * this",
         "section": "retrieval_fusion",
@@ -277,42 +261,9 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Comma-separated keywords that trigger relational routing",
         "section": "query_routing",
     },
-    # confidence_gating
-    "confidence_gating_enabled": {
-        "desc": "Reject low-confidence result sets and trigger fallback",
-        "section": "confidence_gating",
-    },
-    "confidence_min_results": {
-        "desc": "Minimum results required before gating is applied",
-        "section": "confidence_gating",
-    },
-    "confidence_score_spread_threshold": {
-        "desc": "Minimum spread between top scores to be confident",
-        "section": "confidence_gating",
-    },
-    "confidence_top_score_threshold": {
-        "desc": "Minimum top score to pass confidence gate",
-        "section": "confidence_gating",
-    },
-    "confidence_fallback_strategy": {
-        "desc": "Strategy when gate fails: expand or relax",
-        "section": "confidence_gating",
-    },
     # temporal_retrieval
     "temporal_retrieval_enabled": {
         "desc": "Boost memories that match temporal expressions in query",
-        "section": "temporal_retrieval",
-    },
-    "temporal_boost_weight": {
-        "desc": "Weight of temporal boost signal",
-        "section": "temporal_retrieval",
-    },
-    "temporal_decay_days": {
-        "desc": "Days over which temporal relevance decays",
-        "section": "temporal_retrieval",
-    },
-    "temporal_exact_match_boost": {
-        "desc": "Extra boost multiplier for exact date matches",
         "section": "temporal_retrieval",
     },
     # embedding_enhancement
@@ -322,22 +273,6 @@ FIELD_META: dict[str, dict[str, str]] = {
     },
     "fast_profile_candidate_multiplier": {
         "desc": "Candidate pool multiplier used only for profile='fast' (default 3; overrides global candidate_pool_multiplier on fast path)",
-        "section": "embedding_enhancement",
-    },
-    "embedding_cache_size": {
-        "desc": "LRU cache size for embedding results",
-        "section": "embedding_enhancement",
-    },
-    "query_prefix": {
-        "desc": "Optional prefix prepended to all queries before embedding",
-        "section": "embedding_enhancement",
-    },
-    "dual_vectors_enabled": {
-        "desc": "Enable dual-vector architecture (explicit + implicit)",
-        "section": "embedding_enhancement",
-    },
-    "implicit_embedding_model": {
-        "desc": "Model for implicit/latent embedding channel",
         "section": "embedding_enhancement",
     },
     # graph_knowledge
@@ -374,26 +309,6 @@ FIELD_META: dict[str, dict[str, str]] = {
     # neuromorphic
     "cognitive_load_limit": {
         "desc": "Max chunks in active context (Cowan's 4±1 rule)",
-        "section": "neuromorphic",
-    },
-    "reconsolidation_low_threshold": {
-        "desc": "Below this heat: no modification on recall",
-        "section": "neuromorphic",
-    },
-    "reconsolidation_high_threshold": {
-        "desc": "Above this heat: archive old version and create updated memory",
-        "section": "neuromorphic",
-    },
-    "plasticity_spike": {
-        "desc": "How much plasticity increases on each memory access",
-        "section": "neuromorphic",
-    },
-    "plasticity_half_life_hours": {
-        "desc": "Plasticity decay half-life in hours",
-        "section": "neuromorphic",
-    },
-    "stability_increment": {
-        "desc": "Stability increase per successful retrieval",
         "section": "neuromorphic",
     },
     "excitability_half_life_hours": {
@@ -490,16 +405,8 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Derive and store higher-order beliefs from episodic memories",
         "section": "profiles_beliefs",
     },
-    "belief_min_confidence": {
-        "desc": "Minimum confidence to store a derived belief",
-        "section": "profiles_beliefs",
-    },
     "belief_high_confidence_boost": {
         "desc": "Score multiplier for high-confidence beliefs",
-        "section": "profiles_beliefs",
-    },
-    "belief_search_priority_for_open_domain": {
-        "desc": "Prioritize beliefs for open-domain queries",
         "section": "profiles_beliefs",
     },
     # adversarial
@@ -1116,7 +1023,6 @@ SECTION_TITLES: dict[str, str] = {
     "retrieval_fusion": "Retrieval & Fusion (WRRF)",
     "reranking": "Reranking",
     "query_routing": "Query Routing",
-    "confidence_gating": "Confidence Gating",
     "temporal_retrieval": "Temporal Retrieval",
     "embedding_enhancement": "Embedding Enhancement",
     "graph_knowledge": "Graph & Knowledge",

@@ -29,7 +29,6 @@ from yadgar.thermodynamics import MemoryThermodynamics
 def settings(tmp_path):
     return Settings(
         DB_PATH=str(tmp_path / "test.db"),
-        IDLE_THRESHOLD_SECONDS=1,
         DECAY_FACTOR=0.95,
         COLD_THRESHOLD=0.05,
         DAEMON_CHECK_INTERVAL=1,
@@ -965,7 +964,7 @@ class TestAllMCPTools:
         tool_names = {t.name for t in tools}
 
         expected_tools = {
-            "remember",
+            "memorize",
             "recall",
             "forget",
             "project_brief",

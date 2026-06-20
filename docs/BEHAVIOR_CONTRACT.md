@@ -16,8 +16,8 @@ Run: `make e2e` (local, real `surreal`) + pre-push hook; **excluded from CI**
 (`-m 'not e2e'`).
 
 **Surface (recounted v5.71, self-enforced by `scripts/check_contract_coverage.py`):**
-**235 SHALLs / 38 subsystems.** Today: **24 ✅ · 207 ⏳ · 2 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47) Of the 207 ⏳:
-**70 `[r]` (real-path coverage exists) · 104 `[u]` (unit-only) · 33 none.**
+**234 SHALLs / 38 subsystems.** Today: **27 ✅ · 203 ⏳ · 2 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47; + 1 🗑 DELETED — BC-T2 remember tool, v6 T3) Of the 203 ⏳:
+**70 `[r]` (real-path coverage exists) · 100 `[u]` (unit-only) · 33 none.**
 Goal: every SHALL → ✅ or ❌.
 
 **Lint rules** (`scripts/check_contract_coverage.py`, run as a non-e2e pytest):
@@ -275,7 +275,7 @@ Goal: every SHALL → ✅ or ❌.
 | BC id | Tool | Status | Note |
 |-------|------|--------|------|
 | BC-T1 | memorize | ⏳[r] | =A1 |
-| BC-T2 | remember | ⏳[u] | alias of memorize |
+| BC-T2 | remember | 🗑 DELETED | stub deleted v6 T3 — use memorize |
 | BC-T3 | recall | ⏳[r] | =B1..B4 |
 | BC-T4 | project_brief | ⏳[r] | =PC1 |
 | BC-T5 | seed_project | ⏳[u] | =PC2 |
@@ -348,15 +348,15 @@ Goal: every SHALL → ✅ or ❌.
 | BC-T72 | dlq_dismiss | ⏳[u] | DLQ dismiss |
 
 ### Viz / graph API
-- BC-VZ1 graph REST returns entity neighborhood + scores. ⏳[u] P2
-- BC-VZ2 viz_search returns matching node ids (note: bypasses dir scoping — decide if intended). ⏳[u] P2
+- BC-VZ1 graph REST returns entity neighborhood + scores. ✅ `tests/e2e/test_viz_graph_fidelity_e2e.py::TestBCVZ1_GraphRESTEntityNeighborhoodScores::test_co_occurrence_edge_endpoints_match_seeded_entity_ids` P2
+- BC-VZ2 viz_search returns matching node ids from ALL directories — whole-DB by design for the god's-eye overlay; dir-scoping intentionally bypassed (not a BC-B3 violation: scoping lives at the MCP-tool layer, not the in-process method; localhost auth-gated). ✅ `tests/e2e/test_viz_graph_fidelity_e2e.py::TestBCVZ2_VizSearchWholeDB::test_viz_search_returns_nodes_from_all_directories` P2
 
 ---
 
 ## PHASE 3 — closure (dead-or-decide + remaining gaps)
 
 ### Cognitive map / SR (mostly dead since v5.0 — wire or remove, #41)
-- BC-CM1 SR transition matrix built. ⏳[u] P3
+- BC-CM1 SR transition matrix built. ✅ `tests/e2e/test_phase3_closure.py::TestBCCM1_SRTransitionMatrixBuilt` P3
 - BC-CM2 topological/spatial layout (extract_coordinates/update_memory_coordinates — DEAD #41). 🗑 RETIRED v5.71.0 (#47) — methods deleted; capability removed, not a failing spec. P3
 - BC-CM3 get_neighborhood/get_sr_scores/is_dirty (DEAD #41). 🗑 RETIRED v5.71.0 (#47) — methods deleted; capability removed, not a failing spec. P3
 

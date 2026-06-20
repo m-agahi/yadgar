@@ -112,27 +112,6 @@ class _FusionMixin:
     and ``self._reranker`` — all available on the Retriever instance via MRO.
     """
 
-    def _apply_confidence_gating(self, signal_weights: dict, scores: dict) -> None:
-        """Zero-out signal weights that fall below their confidence threshold (in-place)."""
-        _conf_name_map = {"spread": "spreading"}
-        thresholds = {
-            "vector": getattr(self._settings, "CONFIDENCE_THRESHOLD_VECTOR", 0.1),
-            "fts": getattr(self._settings, "CONFIDENCE_THRESHOLD_FTS", 0.1),
-            "ppr": getattr(self._settings, "CONFIDENCE_THRESHOLD_PPR", 0.1),
-            "spread": getattr(self._settings, "CONFIDENCE_THRESHOLD_SPREADING", 0.1),
-            "temporal": getattr(self._settings, "CONFIDENCE_THRESHOLD_TEMPORAL", 0.1),
-        }
-        for sig in list(signal_weights.keys()):
-            ranked = sorted(
-                [(mid, s[sig]) for mid, s in scores.items() if s[sig] > 0],
-                key=lambda x: x[1],
-                reverse=True,
-            )
-            conf_name = _conf_name_map.get(sig, sig)
-            confidence = self._reranker.compute_signal_confidence(conf_name, ranked)
-            if confidence < thresholds.get(sig, 0.1):
-                signal_weights[sig] = 0.0
-
     @staticmethod
     def _normalize_signal(
         sig: str,
@@ -213,7 +192,7 @@ class _FusionMixin:
         w_temporal: float,
         open_domain_mode: bool,
     ) -> tuple[list, dict]:
-        """Build signal weights, apply confidence gating, and fuse scores.
+        """Build signal weights and fuse scores.
 
         Returns (fused_sorted_list, fused_scores_dict).
         """
@@ -227,9 +206,6 @@ class _FusionMixin:
             signal_weights["temporal"] = w_temporal
         if open_domain_mode:
             signal_weights["fts"] *= getattr(self._settings, "OPEN_DOMAIN_FTS_BOOST", 1.6)
-
-        if getattr(self._settings, "CONFIDENCE_GATING_ENABLED", False):
-            self._apply_confidence_gating(signal_weights, scores)
 
         fusion_method = getattr(self._settings, "FUSION_METHOD", "wrrf")
 

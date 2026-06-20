@@ -647,6 +647,61 @@ yadgar_archive_retention_skipped_total = Counter(
     registry=_registry,
 )
 
+# ── v6 Phase 0.2 — Data-quality gauges (I23 writers in _collect_data_quality) ──
+# These gauges are refreshed on every /metrics scrape (alongside queue depths).
+# They measure corpus health and are the Prometheus half of the Phase-0.2 spec:
+# "Export as Prometheus metrics + a yadgar stats section."
+
+yadgar_data_quality_embedding_valid_ratio = Gauge(
+    "yadgar_data_quality_embedding_valid_ratio",
+    "Fraction of non-stale memory rows whose embedding IS NOT NULL (0.0–1.0). "
+    "A value < 1.0 indicates null-embedding corruption — Phase-1.2 hard invariant target.",
+    registry=_registry,
+)
+
+yadgar_data_quality_duplicate_rate = Gauge(
+    "yadgar_data_quality_duplicate_rate",
+    "Near-duplicate density: count of memory_similarity_link edges divided by "
+    "total active memories. High values suggest low write-gate threshold or "
+    "aggressive ingestion without curation.",
+    registry=_registry,
+)
+
+yadgar_data_quality_zombie_rate = Gauge(
+    "yadgar_data_quality_zombie_rate",
+    "Fraction of memories that are stale (is_stale=true). High values indicate "
+    "consolidation is not archiving / vacuum is not running.",
+    registry=_registry,
+)
+
+yadgar_data_quality_domain_coverage = Gauge(
+    "yadgar_data_quality_domain_coverage",
+    "Fraction of non-stale memories with a non-null domain assignment "
+    "(from astrocyte / consolidation). Low values mean domain-consolidation is not firing.",
+    registry=_registry,
+)
+
+yadgar_data_quality_surprise_p50 = Gauge(
+    "yadgar_data_quality_surprise_p50",
+    "Median surprise_score across non-stale memories with a non-null surprise_score. "
+    "Part of the surprise-distribution summary for Phase-0.2 dashboard.",
+    registry=_registry,
+)
+
+yadgar_data_quality_surprise_p95 = Gauge(
+    "yadgar_data_quality_surprise_p95",
+    "95th-percentile surprise_score across non-stale memories with a non-null "
+    "surprise_score. Used to detect surprise-score distribution drift.",
+    registry=_registry,
+)
+
+yadgar_data_quality_null_embedding_count = Gauge(
+    "yadgar_data_quality_null_embedding_count",
+    "Absolute count of non-stale memory rows with embedding IS NULL. "
+    "This is the Phase-0.2 hard-invariant visibility metric: must be 0 in a healthy corpus.",
+    registry=_registry,
+)
+
 # Stable, bounded set of loop label values (8 loops audited; 2 are not standalone while-True).
 # Active labels:
 #   metrics_sampler          — graph_api.py sample_system_metrics (lifecycle.py thread)
@@ -751,6 +806,103 @@ def _collect_queue_depths() -> None:
         pass  # non-fatal
 
 
+def _dq_count(storage, sql: str) -> int:
+    """Execute a COUNT(*) GROUP ALL query and return the integer result."""
+    try:
+        res = storage._q(sql)
+        return res[0][0].get("count", 0) if res and res[0] else 0
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _dq_set_embedding_gauges(storage, total: int) -> None:
+    """Set null-embedding count and valid-ratio gauges."""
+    null_emb = _dq_count(
+        storage,
+        "SELECT count() FROM memory WHERE is_stale = false AND embedding IS NONE GROUP ALL",
+    )
+    yadgar_data_quality_null_embedding_count.set(null_emb)
+    yadgar_data_quality_embedding_valid_ratio.set((total - null_emb) / total if total > 0 else 0.0)
+
+
+def _parse_surprise_scores(rows) -> list[float]:
+    """Extract finite surprise_score floats from a SELECT result (best-effort)."""
+    scores: list[float] = []
+    if not (rows and rows[0]):
+        return scores
+    for row in rows[0]:
+        sv = row.get("surprise_score")
+        if sv is None:
+            continue
+        try:
+            scores.append(float(sv))
+        except Exception:  # noqa: BLE001 - skip non-numeric
+            pass
+    return scores
+
+
+def _dq_set_surprise_gauges(storage) -> None:
+    """Set surprise p50 and p95 gauges."""
+    import statistics as _stats  # noqa: PLC0415
+
+    try:
+        surp_rows = storage._q(
+            "SELECT surprise_score FROM memory "
+            "WHERE is_stale = false AND surprise_score IS NOT NONE "
+            "AND surprise_score > 0 "
+            "LIMIT 5000"
+        )
+    except Exception:  # noqa: BLE001
+        return
+    scores = _parse_surprise_scores(surp_rows)
+    if not scores:
+        return
+    yadgar_data_quality_surprise_p50.set(_stats.median(scores))
+    p95 = _stats.quantiles(scores, n=20)[18] if len(scores) >= 20 else max(scores)
+    yadgar_data_quality_surprise_p95.set(p95)
+
+
+def _collect_data_quality() -> None:
+    """Refresh Phase-0.2 data-quality gauges from the live DB.
+
+    Called on every /metrics scrape.  All DB errors are silently swallowed
+    so that a degraded DB doesn't break the metrics endpoint.
+
+    I23 compliance: this is the declared writer for all seven
+    yadgar_data_quality_* gauges declared above.
+    """
+    try:
+        import yadgar.server._state as _st  # noqa: PLC0415
+
+        if _st._storage is None:
+            return
+        storage = _st._storage
+
+        total = _dq_count(storage, "SELECT count() FROM memory WHERE is_stale = false GROUP ALL")
+        if total == 0:
+            return
+
+        _dq_set_embedding_gauges(storage, total)
+
+        sim_links = _dq_count(storage, "SELECT count() FROM memory_similarity_link GROUP ALL")
+        yadgar_data_quality_duplicate_rate.set(sim_links / total)
+
+        stale = _dq_count(storage, "SELECT count() FROM memory WHERE is_stale = true GROUP ALL")
+        total_all = total + stale
+        yadgar_data_quality_zombie_rate.set(stale / total_all if total_all > 0 else 0.0)
+
+        domain_count = _dq_count(
+            storage,
+            "SELECT count() FROM memory WHERE is_stale = false AND domain IS NOT NONE GROUP ALL",
+        )
+        yadgar_data_quality_domain_coverage.set(domain_count / total)
+
+        _dq_set_surprise_gauges(storage)
+
+    except Exception:  # noqa: BLE001
+        pass  # non-fatal — data-quality metrics are best-effort
+
+
 async def metrics_handler(request: Request) -> Response:
     """ASGI handler for the /metrics Prometheus endpoint.
 
@@ -767,6 +919,7 @@ async def metrics_handler(request: Request) -> Response:
     # Refresh dynamic gauges before scrape
     _collect_queue_depths()
     _collect_process_metrics()
+    _collect_data_quality()
 
     output = generate_latest(_registry)
     return Response(

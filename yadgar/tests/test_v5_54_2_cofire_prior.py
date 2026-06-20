@@ -181,11 +181,9 @@ class TestFastProfileCofirePriorBoost:
         s.WRRF_FTS_WEIGHT = 0.5
         s.WRRF_PPR_WEIGHT = 0.5
         s.WRRF_SPREADING_WEIGHT = 0.3
-        s.CONFIDENCE_GATING_ENABLED = False
         s.FUSION_METHOD = "wrrf"
         s.FUSION_NORM = "zscore"
         s.COMBMNZ_ENABLED = False
-        s.WRRF_K = 60
         return s
 
     def test_high_cofire_prior_ranks_higher(self):
@@ -313,11 +311,9 @@ class TestCofirePriorWeightZeroDisables:
         s.WRRF_FTS_WEIGHT = 0.5
         s.WRRF_PPR_WEIGHT = 0.5
         s.WRRF_SPREADING_WEIGHT = 0.3
-        s.CONFIDENCE_GATING_ENABLED = False
         s.FUSION_METHOD = "wrrf"
         s.FUSION_NORM = "zscore"
         s.COMBMNZ_ENABLED = False
-        s.WRRF_K = 60
 
         storage = MagicMock()
 
@@ -369,11 +365,9 @@ class TestNullCofirePriorSafe:
         s.WRRF_FTS_WEIGHT = 0.5
         s.WRRF_PPR_WEIGHT = 0.5
         s.WRRF_SPREADING_WEIGHT = 0.3
-        s.CONFIDENCE_GATING_ENABLED = False
         s.FUSION_METHOD = "wrrf"
         s.FUSION_NORM = "zscore"
         s.COMBMNZ_ENABLED = False
-        s.WRRF_K = 60
 
         storage = MagicMock()
         storage.get_memory_cofire_priors.return_value = {}  # all NULL
@@ -435,11 +429,9 @@ class TestBothBoostsCoexist:
         s.WRRF_FTS_WEIGHT = 0.5
         s.WRRF_PPR_WEIGHT = 0.5
         s.WRRF_SPREADING_WEIGHT = 0.3
-        s.CONFIDENCE_GATING_ENABLED = False
         s.FUSION_METHOD = "wrrf"
         s.FUSION_NORM = "zscore"
         s.COMBMNZ_ENABLED = False
-        s.WRRF_K = 60
 
         storage = MagicMock()
         # Memory 1: high graph_prior only; memory 2: high cofire_prior only

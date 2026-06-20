@@ -1,4 +1,4 @@
-"""memorize and remember MCP tool registrations."""
+"""memorize MCP tool registration."""
 
 from __future__ import annotations
 
@@ -145,17 +145,3 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 10-arg signature
     phase_store(ctx)
 
     return phase_post_write(ctx, settings)
-
-
-@_tool()
-def remember(
-    content: str,
-    context: str,
-    tags: list[str],
-    is_protected: bool = False,
-) -> dict:
-    """Renamed to memorize. Update your MCP config or CLAUDE.md."""
-    return {
-        "stored": False,
-        "reason": "Tool renamed to memorize — call memorize() instead",
-    }

@@ -81,6 +81,14 @@ class StatsData:
     triggers_fired: int = 0
     # Tags
     top_tags: list = field(default_factory=list)
+    # v6 Phase 0.2 — Data-quality metrics
+    dq_null_embedding_count: int = 0
+    dq_embedding_valid_ratio: float = 0.0
+    dq_duplicate_rate: float = 0.0
+    dq_zombie_rate: float = 0.0
+    dq_domain_coverage: float = 0.0
+    dq_surprise_p50: float | None = None
+    dq_surprise_p95: float | None = None
 
 
 # ── HTTP path ─────────────────────────────────────────────────────────────────
@@ -400,6 +408,94 @@ def _query_top_tags(db, project, sd):
     sd.top_tags = sorted(tag_counts.items(), key=lambda x: -x[1])[:10]
 
 
+# ── v6 Phase 0.2 — Data-quality query ────────────────────────────────────────
+
+
+def _parse_surprise_scores(rows) -> list[float]:
+    """Extract finite surprise_score floats from a SELECT result (best-effort)."""
+    scores: list[float] = []
+    if not (rows and rows[0]):
+        return scores
+    for row in rows[0]:
+        sv = row.get("surprise_score")
+        if sv is None:
+            continue
+        try:
+            scores.append(float(sv))
+        except Exception:  # noqa: BLE001 - skip non-numeric
+            pass
+    return scores
+
+
+def _dq_null_embedding(db, sd, total):
+    try:
+        null_count = _count(
+            db.query(
+                "SELECT count() FROM memory WHERE is_stale = false AND embedding IS NONE GROUP ALL"
+            )
+        )
+        sd.dq_null_embedding_count = null_count
+        sd.dq_embedding_valid_ratio = (total - null_count) / total
+    except Exception:  # noqa: BLE001 - best-effort telemetry
+        pass
+
+
+def _dq_duplicate(db, sd, total):
+    try:
+        sim_links = _count(db.query("SELECT count() FROM memory_similarity_link GROUP ALL"))
+        sd.dq_duplicate_rate = sim_links / total
+    except Exception:  # noqa: BLE001 - best-effort telemetry
+        pass
+
+
+def _dq_zombie(sd, total):
+    total_with_stale = total + sd.stale
+    if total_with_stale > 0:
+        sd.dq_zombie_rate = sd.stale / total_with_stale
+
+
+def _dq_domain(db, sd, total):
+    try:
+        domain_count = _count(
+            db.query(
+                "SELECT count() FROM memory WHERE is_stale = false AND domain IS NOT NONE GROUP ALL"
+            )
+        )
+        sd.dq_domain_coverage = domain_count / total
+    except Exception:  # noqa: BLE001 - best-effort telemetry
+        pass
+
+
+def _dq_surprise(db, sd):
+    import statistics as _stats  # noqa: PLC0415
+
+    try:
+        surp_rows = db.query(
+            "SELECT surprise_score FROM memory "
+            "WHERE is_stale = false AND surprise_score IS NOT NONE "
+            "AND surprise_score > 0 LIMIT 5000"
+        )
+    except Exception:  # noqa: BLE001 - best-effort telemetry
+        return
+    scores = _parse_surprise_scores(surp_rows)
+    if not scores:
+        return
+    sd.dq_surprise_p50 = _stats.median(scores)
+    sd.dq_surprise_p95 = _stats.quantiles(scores, n=20)[18] if len(scores) >= 20 else max(scores)
+
+
+def _query_data_quality(db, sd):
+    """Populate sd with Phase-0.2 data-quality fields (best-effort telemetry)."""
+    total = sd.total  # already computed by _query_core_counts
+    if total == 0:
+        return
+    _dq_null_embedding(db, sd, total)
+    _dq_duplicate(db, sd, total)
+    _dq_zombie(sd, total)
+    _dq_domain(db, sd, total)
+    _dq_surprise(db, sd)
+
+
 # ── Output renderers ───────────────────────────────────────────────────────────
 
 
@@ -447,6 +543,19 @@ def _build_json_output(sd):
         "narratives": sd.narrative_count,
         "triggers": {"active": sd.triggers_active, "fired": sd.triggers_fired},
         "top_tags": dict(sd.top_tags),
+        "data_quality": {
+            "null_embedding_count": sd.dq_null_embedding_count,
+            "embedding_valid_ratio": round(sd.dq_embedding_valid_ratio, 4),
+            "duplicate_rate": round(sd.dq_duplicate_rate, 4),
+            "zombie_rate": round(sd.dq_zombie_rate, 4),
+            "domain_coverage": round(sd.dq_domain_coverage, 4),
+            "surprise_p50": round(sd.dq_surprise_p50, 4)
+            if sd.dq_surprise_p50 is not None
+            else None,
+            "surprise_p95": round(sd.dq_surprise_p95, 4)
+            if sd.dq_surprise_p95 is not None
+            else None,
+        },
     }
     if sd.project_rows:
         data["projects"] = [
@@ -561,6 +670,25 @@ def _print_table_output(sd, project):
             print(f"  {count:5d}  {tag}")
         print()
 
+    # v6 Phase 0.2 — Data quality section
+    print("DATA QUALITY (v6 Phase 0.2)")
+    print(
+        f"  Null embeddings:  {sd.dq_null_embedding_count}  (valid ratio: {sd.dq_embedding_valid_ratio:.1%})"
+    )
+    print(f"  Duplicate rate:   {sd.dq_duplicate_rate:.4f}  (sim-links / active memories)")
+    print(f"  Zombie rate:      {sd.dq_zombie_rate:.1%}  (stale / total)")
+    print(f"  Domain coverage:  {sd.dq_domain_coverage:.1%}  (memories with domain assigned)")
+    if sd.dq_surprise_p50 is not None:
+        print(f"  Surprise p50:     {sd.dq_surprise_p50:.4f}")
+        print(
+            f"  Surprise p95:     {sd.dq_surprise_p95:.4f}"
+            if sd.dq_surprise_p95 is not None
+            else ""
+        )
+    else:
+        print("  Surprise scores:  n/a (no non-zero scores found)")
+    print()
+
 
 # ── DB direct-access path ──────────────────────────────────────────────────────
 
@@ -610,6 +738,7 @@ def _run_db_path(args):
         _query_action_log(db, sd)
         _query_subsystems(db, sd)
         _query_top_tags(db, project, sd)
+        _query_data_quality(db, sd)
 
     except Exception as e:
         print(f"Failed to query database: {e}", file=sys.stderr)
