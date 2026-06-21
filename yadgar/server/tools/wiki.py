@@ -576,6 +576,11 @@ def wiki_query(
     branch_hint: Caller branch for §25 branch filter (v5.43.0).
         Uses branch_hint when daemon-side _detect_branch returns None (container scenario).
         Resolution order: _detect_branch(directory) → branch_hint → None (canonical slot).
+
+    DEPRECATION (v6 T6 Step 5): When UNIFIED_RECALL_ENABLED=True, prefer
+    ``recall(query, directory=..., type="wiki")`` which routes through the
+    unified fan-out path with CE fusion and per-type quotas. This function
+    remains fully functional for one release cycle as a thin alias.
     """
     import time as _time  # noqa: PLC0415
 
@@ -587,6 +592,19 @@ def wiki_query(
             "wiki_query: directory is required (caller must supply project dir; "
             "container cannot detect it via os.getcwd())"
         )
+
+    # v6 T6 Step 5: deprecation notice when unified recall is active.
+    # Emit once per call (INFO level) to signal callers should migrate to recall(type="wiki").
+    try:
+        from yadgar.config import get_settings as _get_settings  # noqa: PLC0415
+
+        if _get_settings().UNIFIED_RECALL_ENABLED:
+            logger.info(
+                "wiki_query is deprecated in the unified recall path. "
+                "Use recall(query, directory=..., type='wiki') instead."
+            )
+    except Exception:
+        pass
 
     _wiki_query_t0 = _time.monotonic()
     results: list[dict] = []

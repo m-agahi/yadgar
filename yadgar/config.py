@@ -328,6 +328,16 @@ class Settings(BaseSettings):
     # Steps 3–5 (DirectoryFilter, fusion, type= param) ship in later passes.
     UNIFIED_RECALL_ENABLED: bool = False
 
+    # v6 T6 Step 4: cross-type fusion settings (I25 three-way registered).
+    # Per-type quotas: max candidates from each source before CE rerank.
+    # Prevents one source from starving the other in the pool.
+    RECALL_MEMORY_QUOTA: int = 5
+    RECALL_WIKI_QUOTA: int = 5
+    # Additive prior weights: native_score contribution to final CE-boosted score.
+    # Small (0.1) so CE relevance dominates but native signals tie-break.
+    RECALL_MEMORY_PRIOR_WEIGHT: float = 0.1
+    RECALL_WIKI_PRIOR_WEIGHT: float = 0.1
+
     # v5.51.0: Hook recall latency budget (I25 three-way registered).
     # Maximum seconds asyncio.wait_for may wait for retriever.recall in hook handlers.
     # On timeout: WARN log + yadgar_hook_recall_timeout_total incremented + empty returned.

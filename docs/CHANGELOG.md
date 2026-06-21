@@ -7,6 +7,22 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.79.0] - 2026-06-21
+
+Unified-scoped-recall Steps 0/3/4/5 — the recall rebuild, redone test-first after the first attempt was parked (mock-only-tested, never real-gated). Machinery complete + e2e-proven; **`UNIFIED_RECALL_ENABLED` stays default OFF** (dormant) — the default-flip is a separate measured release gated on a curated golden set. Contract **240 SHALLs · 46 ✅**.
+
+### Added (behind `UNIFIED_RECALL_ENABLED`, default off)
+- **Step 0:** `benchmarks/run_eval.py` now routes through the MCP `recall` tool (was calling `retriever.recall()` directly → measured the legacy path regardless of flag; every `make eval` gate was vacuous until this fix).
+- **Step 3:** `ScopeFilter` dataclass bundling branch + directory filters (deletes the I30 param-count allowlist debt), threaded DB-level through storage/scoring/core/wiki. Clean `directory_context` clause (field-absent legacy rows already normalized by migration 018). **BC-G2 ✅**.
+- **Step 4:** cross-type fusion — per-type quotas → GTE cross-encoder rerank (the equalizer) → additive native priors → provenance dedup (`memory.id ∈ wiki.source_memory_ids`).
+- **Step 5:** `recall(type="all"|"memory"|"wiki")` + `wiki_query` deprecation log.
+- **New BC-U1–U5** (✅, real live-SurrealDB e2e in `tests/e2e/`): memory+wiki returned, relevance-outranks-heat, type filtering, invalid raises, alias equivalence.
+
+### Lessons encoded (post-mortem of the parked attempt)
+- Every step has a **live-DB e2e written first** (mock unit tests are supplementary, never the gate); e2e live in `yadgar/tests/e2e/` and are confirmed `make e2e`-collected (gate-reachability); `test_directory_scoping_v562` is a per-step parity gate. See `docs/plans/unified-scoped-recall-v2-steps3-5.md`.
+
+### Verification
+Parity 39/39 (flag-off + flag-on) · e2e 83 passed / 0 failed · I32/I30/contract/ruff green · flag default off confirmed.
 ## [5.78.0] - 2026-06-20
 
 v6 Wave-2 batch — three trains. Recall-rebuild foundation (flag-gated, dormant), tool-surface + fresh-memory, repo-wiki-native. Tool surface 72 → 73 (net; `remember` gone in v5.76).

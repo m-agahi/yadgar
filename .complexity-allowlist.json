@@ -162,13 +162,13 @@
   {
     "path": "yadgar/server/tools/recall.py",
     "function": "recall",
-    "lineno": 20,
+    "lineno": 196,
     "metrics": {
       "cyclomatic": 55,
-      "fn_loc": 293,
+      "fn_loc": 358,
       "nesting": 6
     },
-    "rationale": "PERMANENT. 7-phase retrieval dispatcher (validation, branch detection, retriever dispatch, FTS+vector fallback, filtering, 4 boost passes, wiki blend). Behavior-rich phases 6a-6d (branch convex-combo boost, postmortem boost, heat update, SR transition) have only mirror/mock test coverage + source-string-match tests \u2014 NO real-call behavioral guard. A structural extract risks silent behavior change and would spuriously break the inspect.getsource string-match tests. Allowlisted permanently; revisit only after real-call boost/blend tests exist.",
+    "rationale": "PERMANENT. 7-phase retrieval dispatcher (validation, branch detection, retriever dispatch, FTS+vector fallback, filtering, 4 boost passes, wiki blend). Behavior-rich phases 6a-6d (branch convex-combo boost, postmortem boost, heat update, SR transition) have only mirror/mock test coverage + source-string-match tests \u2014 NO real-call behavioral guard. A structural extract risks silent behavior change and would spuriously break the inspect.getsource string-match tests. Allowlisted permanently; revisit only after real-call boost/blend tests exist. fn_loc updated 293\u2192358 (v6 T6 Steps 3-5 added _fanout_recall gate, type= param validation, _source stamping \u2014 same permanent rationale applies).",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
