@@ -322,11 +322,11 @@ class Settings(BaseSettings):
     RECALL_QUALITY_FLOOR: float = 0.0
 
     # v6 T6 (unified-scoped-recall) — fan-out recall flag (I25 three-way registered).
-    # When True, recall() routes through the SourceProvider fan-out orchestrator
-    # (MemoryProvider + WikiProvider pooled + simple dedup).  When False (default),
-    # recall() uses the EXACT legacy path — ZERO behavior change.
-    # Steps 3–5 (DirectoryFilter, fusion, type= param) ship in later passes.
-    UNIFIED_RECALL_ENABLED: bool = False
+    # When True (default as of v5.80), recall() routes through the SourceProvider
+    # fan-out orchestrator (MemoryProvider + WikiProvider pooled + simple dedup).
+    # When False, recall() uses the EXACT legacy path — ZERO behavior change.
+    # Steps 3–5 (DirectoryFilter, fusion, type= param) now LIVE as the default path.
+    UNIFIED_RECALL_ENABLED: bool = True
 
     # v6 T6 Step 4: cross-type fusion settings (I25 three-way registered).
     # Per-type quotas: max candidates from each source before CE rerank.

@@ -86,6 +86,35 @@ def _dedup_by_content(memories: list[dict]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# v5.80 helper — convert Candidate objects to raw dicts for fan-out output
+# ---------------------------------------------------------------------------
+
+
+def _candidates_to_dicts(candidates: list) -> list[dict]:
+    """Convert Candidate objects to raw dicts, stamping _source and stripping embeddings.
+
+    Shared by both the single-provider bypass and the multi-provider fuse path.
+
+    - Stamps ``raw["_source"] = cand.type`` (idempotent for wiki; MemoryProvider
+      does not set it, so this is the canonical write for memory results).
+    - Strips ``embedding`` bytes — never returned to callers.
+
+    Args:
+        candidates: Candidate objects from a provider or fuse_candidates output.
+
+    Returns:
+        List of raw dicts with _source stamped and embedding removed.
+    """
+    pooled: list[dict] = []
+    for cand in candidates:
+        raw = cand.raw
+        raw["_source"] = cand.type  # "memory" or "wiki" — idempotent for wiki
+        raw.pop("embedding", None)
+        pooled.append(raw)
+    return pooled
+
+
+# ---------------------------------------------------------------------------
 # v6 T6 fan-out recall orchestrator (UNIFIED_RECALL_ENABLED=True path only)
 # ---------------------------------------------------------------------------
 
@@ -160,36 +189,126 @@ def _fanout_recall(
         memory_provider = MemoryProvider(_st._retriever)
         memory_candidates = memory_provider.candidates(query, scope, limit=pool_limit)
 
-    # Wiki provider — active when type_filter is "all" or "wiki"
-    if type_filter in ("all", "wiki") and _st._wiki is not None:
+    # Wiki provider — active when type_filter is "all" or "wiki".
+    # Parity with the legacy path (recall() body): wiki blending is skipped for
+    # episodic/temporal queries ("what happened yesterday"), which want memories
+    # not reference docs. Only suppress under type="all" (the default that mirrors
+    # legacy); an explicit type="wiki" honors the caller's stated intent.
+    _skip_wiki_episodic = type_filter == "all" and _is_episodic_query(query)
+    if type_filter in ("all", "wiki") and _st._wiki is not None and not _skip_wiki_episodic:
         wiki_provider = WikiProvider(_st._wiki)
         wiki_candidates = wiki_provider.candidates(query, scope, limit=pool_limit)
 
-    # Step 4: fuse candidates via CE rerank + per-type quotas + provenance dedup
-    fused = fuse_candidates(
-        memory_candidates=memory_candidates,
-        wiki_candidates=wiki_candidates,
-        query=query,
-        retriever=_st._retriever,
-        max_results=max_results,
-        settings=settings,
-    )
-
-    # Convert Candidate objects to raw dicts (fan-out returns raw dicts).
-    # Stamp _source from Candidate.type so callers can distinguish memory vs wiki.
-    # WikiProvider already sets _source="wiki" on raw dicts; MemoryProvider does not —
-    # we normalize here so all results are self-describing (required for recall(type=) tests).
-    pooled: list[dict] = []
-    for cand in fused:
-        raw = cand.raw
-        raw["_source"] = cand.type  # "memory" or "wiki" — idempotent for wiki
-        # Strip embedding bytes — never returned to callers
-        raw.pop("embedding", None)
-        pooled.append(raw)
+    # Step 4: fuse candidates — but ONLY when multiple providers are active.
+    #
+    # Single-provider bypass (v5.80 regression fix):
+    # When type_filter is "memory" or "wiki", exactly one provider is active and
+    # that provider already returns a properly-ranked list (MemoryProvider wraps
+    # Retriever.recall() which applies WRRF + GTE ranking; WikiProvider wraps
+    # WikiStore.query() which applies hybrid BM25+vector ranking). Calling
+    # fuse_candidates on a single-provider pool cross-encoder-reranks the
+    # candidates a SECOND time, producing a different order that degrades MRR
+    # (measured: type=memory MRR dropped from 0.84 → 0.74 before this fix).
+    #
+    # Fix: when only one pool has candidates, return them in NATIVE order,
+    # converting Candidate→dict with _source stamping. Skip fuse entirely.
+    # This covers BOTH the explicit single-provider filters (type="memory"/
+    # "wiki") AND type="all" where one pool came back empty (e.g. no relevant
+    # wiki). Cross-type CE interleaving only makes sense with two non-empty
+    # pools; with one pool, fusing CE-reranks it a SECOND time and reorders it,
+    # which is exactly the 0.84→0.74 MRR regression this guard prevents.
+    if not memory_candidates or not wiki_candidates:
+        # Single non-empty pool: native ordering preserved, no CE double-rank.
+        candidates = memory_candidates or wiki_candidates
+        pooled = _candidates_to_dicts(candidates)
+    else:
+        # Multi-provider path (type="all"): cross-type CE fusion needed.
+        fused = fuse_candidates(
+            memory_candidates=memory_candidates,
+            wiki_candidates=wiki_candidates,
+            query=query,
+            retriever=_st._retriever,
+            max_results=max_results,
+            settings=settings,
+        )
+        pooled = _candidates_to_dicts(fused)
 
     # Final dedup by content (handles any duplicates fusion didn't catch)
     pooled = _dedup_by_content(pooled)
     return pooled[:max_results]
+
+
+def _record_recall_sr_transition(merged: list[dict]) -> None:
+    """Record an SR (successor-representation) transition: previous recall → this one.
+
+    Links the top MEMORY of the current recall to the top memory of the prior recall
+    on the cognitive map (wiki rows are not map nodes). Split out of
+    _apply_recall_side_effects to keep nesting within the I13 cap.
+    """
+    if _st._cognitive_map is None or not merged:
+        return
+    session_key = "default"
+    top_id = next(
+        (m.get("id") for m in merged if m.get("_source") != "wiki" and m.get("id") is not None),
+        None,
+    )
+    if top_id is None:
+        return
+    prev_id = _st._last_recalled_ids.get(session_key)
+    if prev_id is not None and prev_id != top_id:
+        try:
+            _st._cognitive_map.record_transition(prev_id, top_id, session_key)
+            _st._cognitive_map.incremental_update(prev_id, top_id)
+        except Exception:
+            logger.debug("SR transition recording failed")
+    _bounded_set(_st._last_recalled_ids, session_key, top_id)
+
+
+def _apply_recall_side_effects(merged: list[dict], query: str, storage) -> None:
+    """Post-retrieval bookkeeping shared by the legacy and fan-out recall paths.
+
+    Boosts heat (+0.1) and updates last_accessed for each recalled MEMORY (wiki
+    rows and synthetic dicts without a persisted id are skipped), records
+    metamemory access, records SR (successor-representation) transitions on the
+    cognitive map, captures the recall action, and ticks the auto-checkpoint
+    counter.
+
+    Extracted in v5.80 so the fan-out path (which early-returns from recall())
+    performs the SAME side effects as the legacy path. Without this, fan-out
+    recalls would not reinforce heat on access — breaking the heat-ranking model
+    (regression caught by test_server::test_recall_boosts_heat under the flip).
+    """
+    now = storage._now_iso()
+    thermo = _st._thermo
+    for m in merged:
+        mid = m.get("id")
+        if mid is None or m.get("_source") == "wiki":
+            continue
+        new_heat = min(m.get("heat", 0.0) + 0.1, 1.0)
+        storage.update_memory_heat(mid, new_heat)
+        storage.update_memory_last_accessed(mid, now)
+        m["heat"] = new_heat
+        m["last_accessed"] = now
+        if thermo is not None:
+            thermo.record_access(mid, was_useful=True)
+
+    # SR transitions: link previous recall → current recall.
+    _record_recall_sr_transition(merged)
+
+    # Action stream: log this recall operation.
+    buffer = _st._buffer
+    if buffer is not None:
+        result_count = len(merged)
+        buffer.capture_action(
+            "recall",
+            "",
+            f"query='{query[:80]}' results={result_count}",
+            f"found_{result_count}",
+        )
+
+    # Track tool call for auto-checkpoint interval.
+    if _st._replay is not None:
+        _st._replay.record_tool_call()
 
 
 @_tool()
@@ -312,7 +431,14 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
         # has _current_branch / _default_branch available.  _dir_stripped is
         # guaranteed non-empty by the v5.65 Fix D check at function top.
         # The `merged` assignment ensures the finally-block metrics see a count.
-        if settings.UNIFIED_RECALL_ENABLED:
+        # Fan-out applies only to the DEFAULT (no-profile) recall. An explicit
+        # profile routes through the legacy plugin pipeline below: profiles tune
+        # *memory* retrieval (e.g. the hook-supplied profile="fast" fast-path that
+        # skips CE/NLI/MP), which is orthogonal to fan-out's cross-source (memory +
+        # wiki) fusion. Gating on `profile is None` preserves the profile fast-path
+        # with zero feature loss. NOTE: `type` is therefore ignored when a profile
+        # is set (the legacy path is memory-only).
+        if settings.UNIFIED_RECALL_ENABLED and profile is None:
             merged = _fanout_recall(
                 query=query,
                 max_results=max_results,
@@ -322,6 +448,10 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
                 default_branch=_default_branch,
                 type_filter=type,
             )
+            # Same post-retrieval bookkeeping as the legacy path (heat boost,
+            # last_accessed, metamemory, SR transitions, action log) — fan-out
+            # must reinforce heat on access too.
+            _apply_recall_side_effects(merged, query, storage)
             return merged
 
         # Use HippoRetriever for unified 4-signal recall
@@ -454,53 +584,13 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
 
         merged = merged[:max_results]
 
-        # Boost heat, update last_accessed, and record metamemory access
-        # Guard: synthetic/injected dicts (e.g. profile/belief entries) may omit 'id'
-        # or 'heat'. Skip heat-boost for those — they have no persisted storage row.
-        now = storage._now_iso()
-        thermo = _st._thermo
-        for m in merged:
-            mid = m.get("id")
-            if mid is None:
-                continue
-            new_heat = min(m.get("heat", 0.0) + 0.1, 1.0)
-            storage.update_memory_heat(mid, new_heat)
-            storage.update_memory_last_accessed(mid, now)
-            m["heat"] = new_heat
-            m["last_accessed"] = now
-            if thermo is not None:
-                thermo.record_access(mid, was_useful=True)
-
-        # Record SR transitions: link previous recall → current recall
-        if _st._cognitive_map is not None and merged:
-            session_key = "default"
-            top_id = merged[0].get("id")
-            prev_id = _st._last_recalled_ids.get(session_key)
-            if prev_id is not None and prev_id != top_id:
-                try:
-                    _st._cognitive_map.record_transition(prev_id, top_id, session_key)
-                    _st._cognitive_map.incremental_update(prev_id, top_id)
-                except Exception:
-                    logger.debug("SR transition recording failed")
-            _bounded_set(_st._last_recalled_ids, session_key, top_id)
+        # Post-retrieval bookkeeping (heat boost, last_accessed, metamemory, SR
+        # transitions, action log) — shared verbatim with the fan-out path via
+        # _apply_recall_side_effects so both paths reinforce heat identically.
+        _apply_recall_side_effects(merged, query, storage)
 
         # Reconsolidation disabled: memories are never rewritten on retrieval.
         # Content integrity must be preserved exactly as stored.
-
-        # Action stream: log this recall operation
-        buffer = _st._buffer
-        if buffer is not None:
-            result_count = len(merged)
-            buffer.capture_action(
-                "recall",
-                "",
-                f"query='{query[:80]}' results={result_count}",
-                f"found_{result_count}",
-            )
-
-        # Track tool call for auto-checkpoint interval
-        if _st._replay is not None:
-            _st._replay.record_tool_call()
 
         # Wiki blending — relevance-gated, skip for episodic/temporal queries
         if _st._wiki is not None and not _is_episodic_query(query):

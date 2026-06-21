@@ -16,7 +16,7 @@ Run: `make e2e` (local, real `surreal`) + pre-push hook; **excluded from CI**
 (`-m 'not e2e'`).
 
 **Surface (recounted v6 T6, self-enforced by `scripts/check_contract_coverage.py`):**
-**240 SHALLs / 39 subsystems.** Today: **46 ✅ · 190 ⏳ · 2 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47; + 1 🗑 DELETED — BC-T2 remember tool, v6 T3) Of the 190 ⏳:
+**243 SHALLs / 39 subsystems.** Today: **49 ✅ · 190 ⏳ · 2 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47; + 1 🗑 DELETED — BC-T2 remember tool, v6 T3) Of the 190 ⏳:
 **61 `[r]` (real-path coverage exists) · 96 `[u]` (unit-only) · 33 none.**
 Goal: every SHALL → ✅ or ❌.
 
@@ -88,6 +88,9 @@ Goal: every SHALL → ✅ or ❌.
 - BC-U3 recall(type="wiki") returns wiki pages ONLY — zero memory results. ✅ `tests/e2e/test_type_param_e2e.py::TestTypeParamE2E::test_type_wiki_returns_only_wiki` P1
 - BC-U4 a high-CE wiki page is retrievable even when irrelevant high-heat memories flood the memory pool (quota gate). ✅ `tests/e2e/test_fusion_e2e.py::TestFusionE2E::test_quota_prevents_source_starvation` P1
 - BC-U5 recall(type=<invalid>) raises ValueError immediately, before any retrieval work. ✅ `tests/e2e/test_type_param_e2e.py::TestTypeParamE2E::test_type_invalid_raises_before_retrieval` P1
+- BC-U6 recall(type="memory") preserves the retriever's native order (single-provider bypass; no CE double-rerank). ✅ `tests/e2e/test_type_param_e2e.py::TestTypeParamE2E::test_type_memory_order_matches_legacy` P1
+- BC-U7 recall(type="all") preserves memory relative order when a relevant wiki is present (fuse interleaves wiki by CE, never reorders memories). ✅ `tests/e2e/test_type_param_e2e.py::TestTypeParamE2E::test_type_all_memory_order_parity_with_relevant_wiki` P1
+- BC-U8 recall(type="all") with an empty wiki pool preserves memory native order via the single-provider bypass (no fuse on a memory-only pool). ✅ `tests/e2e/test_type_param_e2e.py::TestTypeParamE2E::test_type_all_wiki_pool_empty_preserves_memory_order` P1
 
 ### H. Hooks (directory stamping)
 - BC-H1 tool-usage capture hook stamps caller cwd. ⏳[u] P2

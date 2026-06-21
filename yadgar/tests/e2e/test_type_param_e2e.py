@@ -157,6 +157,133 @@ class TestTypeParamE2E:
             f"got wiki_slugs={wiki_slugs_in_results}"
         )
 
+    def test_type_memory_order_matches_legacy(self, e2e_engines, monkeypatch):
+        """recall(type="memory") fan-out returns results in the SAME ORDER as legacy recall.
+
+        Ref: BC-U2 (strengthened) — the previous e2e only checked membership.
+        The v5.80 regression was that fuse_candidates CE-reranked single-provider
+        results into a different order, dropping the correct memory from rank 1.
+        This test verifies the bypass restores native ordering.
+
+        Methodology:
+        - Seed several memories with distinct relevance signals via graded content.
+        - Use legacy retriever.recall() as the oracle order (pre-filter for memory only).
+        - Use fan-out recall(type="memory") as the candidate.
+        - Assert the top-k memory IDs are in the same order.
+        - Monkeypatch heat updates to prevent heat mutation across calls from
+          perturbing the second recall's ranking.
+        """
+        storage = e2e_engines["storage"]
+        embeddings = e2e_engines["embeddings"]
+
+        unique = "xztype_order501"
+
+        # Insert 3 memories with distinct heat so ordering is deterministic
+        # when CE is unavailable (fallback to native_score = retrieval_score ~ heat).
+        # Content is similar enough that both recall paths score them, but graded heat
+        # means the native ordering is unambiguous: high > mid > low.
+        mem_high = _insert_mem(storage, embeddings, f"order parity high relevance {unique}")
+        mem_mid = _insert_mem(storage, embeddings, f"order parity mid relevance {unique}")
+        mem_low = _insert_mem(storage, embeddings, f"order parity low relevance {unique}")
+
+        # Set explicit heat scores to create deterministic ordering
+        storage.update_memory_heat(mem_high, 0.9)
+        storage.update_memory_heat(mem_mid, 0.5)
+        storage.update_memory_heat(mem_low, 0.1)
+
+        # Insert a wiki page with same tokens — should be EXCLUDED from type=memory results
+        _insert_wiki(
+            title=f"Order Parity Wiki {unique}",
+            content=f"order parity high relevance {unique}",
+        )
+
+        # Freeze heat updates so that the legacy call does not raise heat on the
+        # memories and perturb the fan-out call's ranking.
+        import sys
+
+        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+
+        # Monkey-patch storage.update_memory_heat to a no-op for parity measurement
+        monkeypatch.setattr(storage, "update_memory_heat", lambda mid, heat: None)
+        monkeypatch.setattr(storage, "update_memory_last_accessed", lambda mid, ts: None)
+
+        _rm = sys.modules.get("yadgar.server.tools.recall")
+        if _rm is None:
+            import yadgar.server.tools.recall as _rm  # type: ignore[no-redef]
+
+        from yadgar.server import _state as _st
+
+        assert _st._retriever is not None, "Retriever must be initialized for order parity test"
+
+        # Legacy oracle: Retriever.recall() native memory ordering
+        legacy_results = _st._retriever.recall(
+            f"order parity {unique}",
+            max_results=20,
+            min_heat=0.0,
+        )
+        legacy_mem_ids = [
+            m.get("id") for m in legacy_results if m.get("id") in {mem_high, mem_mid, mem_low}
+        ]
+
+        if len(legacy_mem_ids) < 2:
+            pytest.skip(
+                f"Legacy recall returned fewer than 2 seeded memories "
+                f"(got {legacy_mem_ids}); cannot assert order"
+            )
+
+        # Fan-out: recall(type="memory") — should bypass fuse_candidates, return native order
+        _rm.settings.UNIFIED_RECALL_ENABLED = True
+        try:
+            fanout_results = _rm.recall(
+                query=f"order parity {unique}",
+                directory=YADGAR_DIR,
+                max_results=20,
+                type="memory",  # noqa: A002
+            )
+        finally:
+            _rm.settings.UNIFIED_RECALL_ENABLED = False
+
+        fanout_mem_ids = [
+            r.get("id") for r in fanout_results if r.get("id") in {mem_high, mem_mid, mem_low}
+        ]
+
+        assert fanout_mem_ids == legacy_mem_ids, (
+            f"recall(type='memory') fan-out order must match legacy recall order. "
+            f"legacy_order={legacy_mem_ids}, fanout_order={fanout_mem_ids}. "
+            f"If they differ, the single-provider bypass is not in effect (double CE-rerank regression)."
+        )
+
+    def test_type_wiki_order_returns_results(self, e2e_engines, monkeypatch):
+        """recall(type="wiki") fan-out returns non-empty wiki results (coverage preserved).
+
+        Ref: BC-U3 (order parity addendum) — wiki coverage must be non-zero after
+        the v5.80 single-provider bypass. The bypass skips fuse_candidates but must
+        still return the WikiProvider's native results.
+
+        Success criterion: at least 1 wiki result for an on-topic query.
+        (Strict order vs wiki_query() is not asserted because WikiProvider and
+        wiki_query() may apply different post-filters; coverage is the signal.)
+        """
+        storage = e2e_engines["storage"]
+        embeddings = e2e_engines["embeddings"]
+
+        unique = "xztype_order502"
+        _insert_mem(storage, embeddings, f"wiki order parity memory {unique}")
+        wiki_slug = _insert_wiki(
+            title=f"Wiki Order Parity {unique}",
+            content=f"wiki order parity test content {unique}",
+        )
+
+        results = _run_recall(monkeypatch, f"wiki order parity test {unique}", type_filter="wiki")
+
+        wiki_results = [r for r in results if r.get("_source") == "wiki"]
+        assert len(wiki_results) >= 1, (
+            f"recall(type='wiki') must return ≥1 wiki results after v5.80 bypass; "
+            f"got 0. Wiki slug={wiki_slug!r}. "
+            f"Sources in results: {[r.get('_source') for r in results]}"
+        )
+
     def test_type_all_returns_both(self, e2e_engines, monkeypatch):
         """recall(type="all") returns both memory and wiki results.
 
@@ -220,6 +347,222 @@ class TestTypeParamE2E:
                 )
         finally:
             _rm.settings.UNIFIED_RECALL_ENABLED = False
+
+    def test_type_all_memory_order_parity_with_relevant_wiki(self, e2e_engines, monkeypatch):
+        """recall(type="all") preserves relative memory order while inserting relevant wiki.
+
+        Ref: v5.80 fanout-fusion-fix — the double-rerank bug.
+
+        The double-rerank regression: fuse_candidates CE-reranked ALL pooled candidates
+        including memory candidates that MemoryProvider already ranked via WRRF+GTE.
+        This reordered the memory subset → MRR 0.81→0.63.
+
+        This test seeds 3 memories with GRADED HEAT (0.9/0.5/0.1) so that native order
+        (heat-driven) CONFLICTS with arbitrary CE order — a test that is green both before
+        and after the fix would not be discriminating. The test is red on unmodified
+        fuse_candidates (which CE-reranks memories) and green after the fix (memories
+        stay in WRRF/heat native order).
+
+        Methodology:
+          - Seed mem_high/mem_mid/mem_low with graded heat (0.9/0.5/0.1).
+          - Seed one relevant wiki page for the same query.
+          - Oracle = retriever.recall() order for the seeded memories (native WRRF/heat rank).
+          - Candidate = recall(type="all") order for the seeded memories in the result.
+          - Assert memories appear in SAME relative order as oracle.
+          - Assert the wiki page appears in the results (coverage preserved).
+        """
+        storage = e2e_engines["storage"]
+        embeddings = e2e_engines["embeddings"]
+
+        unique = "xztype_all_order601"
+
+        # Insert 3 memories with distinct heat — creates a graded native order that
+        # cross-encoder ranking can invert when double-ranking is active.
+        # Heat 0.9 > 0.5 > 0.1 → native order: high, mid, low.
+        mem_high = _insert_mem(storage, embeddings, f"type all order parity high heat {unique}")
+        mem_mid = _insert_mem(storage, embeddings, f"type all order parity mid heat {unique}")
+        mem_low = _insert_mem(storage, embeddings, f"type all order parity low heat {unique}")
+
+        storage.update_memory_heat(mem_high, 0.9)
+        storage.update_memory_heat(mem_mid, 0.5)
+        storage.update_memory_heat(mem_low, 0.1)
+
+        # One relevant wiki page — must appear in type=all results (coverage assertion).
+        wiki_slug = _insert_wiki(
+            title=f"Type All Order Wiki {unique}",
+            content=f"type all order parity wiki knowledge {unique}",
+        )
+
+        import sys
+
+        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+
+        # Freeze heat updates to prevent the oracle call from perturbing the fanout call.
+        monkeypatch.setattr(storage, "update_memory_heat", lambda mid, heat: None)
+        monkeypatch.setattr(storage, "update_memory_last_accessed", lambda mid, ts: None)
+
+        _rm = sys.modules.get("yadgar.server.tools.recall")
+        if _rm is None:
+            import yadgar.server.tools.recall as _rm  # type: ignore[no-redef]
+
+        from yadgar.server import _state as _st
+
+        assert _st._retriever is not None, "Retriever must be initialized for order parity test"
+
+        # Oracle: native memory ordering from Retriever.recall() (WRRF+GTE, no CE double-rank).
+        legacy_results = _st._retriever.recall(
+            f"type all order parity {unique}",
+            max_results=20,
+            min_heat=0.0,
+        )
+        seeded_ids = {mem_high, mem_mid, mem_low}
+        legacy_mem_ids = [m.get("id") for m in legacy_results if m.get("id") in seeded_ids]
+
+        if len(legacy_mem_ids) < 2:
+            pytest.skip(
+                f"Legacy recall returned fewer than 2 seeded memories "
+                f"(got {legacy_mem_ids}); cannot assert order"
+            )
+
+        # Fan-out: recall(type="all") — fuse_candidates must NOT reorder memories.
+        _rm.settings.UNIFIED_RECALL_ENABLED = True
+        try:
+            fanout_results = _rm.recall(
+                query=f"type all order parity {unique}",
+                directory=YADGAR_DIR,
+                max_results=20,
+                type="all",  # noqa: A002
+            )
+        finally:
+            _rm.settings.UNIFIED_RECALL_ENABLED = False
+
+        fanout_mem_ids = [
+            r.get("id")
+            for r in fanout_results
+            if r.get("_source") == "memory" and r.get("id") in seeded_ids
+        ]
+
+        # PRIMARY assertion: memories in same relative order as legacy.
+        assert fanout_mem_ids == legacy_mem_ids, (
+            f"recall(type='all') must preserve memory relative order vs legacy recall. "
+            f"legacy_order={legacy_mem_ids}, fanout_order={fanout_mem_ids}. "
+            f"If they differ, fuse_candidates is CE-reranking memories (double-rerank regression)."
+        )
+
+        # SECONDARY assertion: wiki page appears in results (coverage must be preserved).
+        fanout_wiki_slugs = {
+            r.get("slug") or r.get("id") for r in fanout_results if r.get("_source") == "wiki"
+        }
+        assert any(wiki_slug in str(s) for s in fanout_wiki_slugs), (
+            f"recall(type='all') must include wiki slug='{wiki_slug}'; "
+            f"fanout_wiki_slugs={fanout_wiki_slugs}. "
+            f"Wiki coverage must be preserved after fusion fix."
+        )
+
+    def test_type_all_wiki_pool_empty_preserves_memory_order(self, e2e_engines, monkeypatch):
+        """recall(type="all") preserves native memory order when the wiki pool is empty.
+
+        Ref: v5.80 fanout-fusion-fix — gap (d), BC-U6.
+
+        The single-provider bypass must trigger whenever EITHER pool is empty — not
+        only for explicit type="memory"/"wiki". Under type="all" with no wiki
+        candidates (no relevant wiki page, or wiki store unavailable), the pre-fix
+        code still called fuse_candidates on the memory-only pool → CE-reranked it a
+        SECOND time → reordered it (the same double-rerank class, MRR 0.84→0.74). The
+        fix routes an empty other-pool to the native-order bypass.
+
+        This is the discriminating scenario the relevant-wiki parity test does NOT
+        cover: there, both pools are non-empty so the fuse path runs; here the wiki
+        pool is empty so the bypass path must run.
+
+        Methodology:
+          - Seed 3 memories with graded heat (0.9/0.5/0.1) so native order is defined.
+          - Force the wiki pool empty (disable the wiki store for this call).
+          - Oracle = retriever.recall() native order.
+          - Candidate = recall(type="all") memory order.
+          - Assert identical relative order (bypass preserved native order, no CE rerank)
+            and that no wiki results appear (pool was empty).
+
+        Red on the pre-fix code (fuse_candidates CE-reranks the memory-only pool),
+        green after the fix (empty other-pool → native-order bypass).
+        """
+        storage = e2e_engines["storage"]
+        embeddings = e2e_engines["embeddings"]
+
+        unique = "xztype_all_emptywiki733"
+
+        mem_high = _insert_mem(storage, embeddings, f"type all empty wiki high heat {unique}")
+        mem_mid = _insert_mem(storage, embeddings, f"type all empty wiki mid heat {unique}")
+        mem_low = _insert_mem(storage, embeddings, f"type all empty wiki low heat {unique}")
+
+        storage.update_memory_heat(mem_high, 0.9)
+        storage.update_memory_heat(mem_mid, 0.5)
+        storage.update_memory_heat(mem_low, 0.1)
+
+        import sys
+
+        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr(storage, "update_memory_heat", lambda mid, heat: None)
+        monkeypatch.setattr(storage, "update_memory_last_accessed", lambda mid, ts: None)
+
+        from yadgar.server import _state as _st
+
+        assert _st._retriever is not None, "Retriever must be initialized for order parity test"
+
+        # Oracle: native memory ordering from Retriever.recall().
+        legacy_results = _st._retriever.recall(
+            f"type all empty wiki {unique}",
+            max_results=20,
+            min_heat=0.0,
+        )
+        seeded_ids = {mem_high, mem_mid, mem_low}
+        legacy_mem_ids = [m.get("id") for m in legacy_results if m.get("id") in seeded_ids]
+
+        if len(legacy_mem_ids) < 2:
+            pytest.skip(
+                f"Legacy recall returned fewer than 2 seeded memories "
+                f"(got {legacy_mem_ids}); cannot assert order"
+            )
+
+        _rm = sys.modules.get("yadgar.server.tools.recall")
+        if _rm is None:
+            import yadgar.server.tools.recall as _rm  # type: ignore[no-redef]
+
+        # Force the wiki pool EMPTY for the type="all" call: with _st._wiki=None,
+        # WikiProvider is never constructed and wiki_candidates stays [] →
+        # exercises the `not wiki_candidates` bypass branch under type="all".
+        monkeypatch.setattr(_st, "_wiki", None)
+
+        _rm.settings.UNIFIED_RECALL_ENABLED = True
+        try:
+            fanout_results = _rm.recall(
+                query=f"type all empty wiki {unique}",
+                directory=YADGAR_DIR,
+                max_results=20,
+                type="all",  # noqa: A002
+            )
+        finally:
+            _rm.settings.UNIFIED_RECALL_ENABLED = False
+
+        # No wiki should appear — the pool was forced empty.
+        assert not any(r.get("_source") == "wiki" for r in fanout_results), (
+            "wiki pool was forced empty; no wiki results expected"
+        )
+
+        fanout_mem_ids = [
+            r.get("id")
+            for r in fanout_results
+            if r.get("_source") == "memory" and r.get("id") in seeded_ids
+        ]
+
+        assert fanout_mem_ids == legacy_mem_ids, (
+            f"recall(type='all') with an empty wiki pool must preserve memory native "
+            f"order (single-provider bypass). legacy_order={legacy_mem_ids}, "
+            f"fanout_order={fanout_mem_ids}. If they differ, fuse_candidates is "
+            f"CE-reranking the memory-only pool (double-rerank regression, gap d)."
+        )
 
     def test_wiki_query_alias_equivalent_to_type_wiki(self, e2e_engines, monkeypatch, caplog):
         """wiki_query() and recall(type="wiki") return the same wiki slugs.
