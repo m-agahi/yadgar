@@ -7,6 +7,27 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.80.0] - 2026-06-21
+
+Unified-scoped-recall **default-flip** + fan-out fusion regression fixes. `UNIFIED_RECALL_ENABLED` now defaults **ON** — `recall()` fans out to memory + wiki providers, fuses cross-type, and scopes by directory. Three ranking/parity regressions found pre-flip (via the eval pre-run + a unit ordering test the prior activation attempt tried to rationalize past) were fixed before enabling. Contract **243 SHALLs · 49 ✅** (BC-U6/U7/U8 added). Migration 023 backfills any residual field-absent memory rows to `'global'` as a pre-flip gate.
+
+### Changed
+- **`UNIFIED_RECALL_ENABLED` default OFF → ON** (`config.py` + `config_registry.py`). `recall()` routes through `_fanout_recall()` by default; set `=False` to revert to the legacy path.
+- **Fan-out applies only to the default (no-profile) recall.** An explicit `profile=` routes the legacy plugin pipeline — profiles tune *memory* retrieval (incl. the hook `profile="fast"` fast-path), orthogonal to fan-out's cross-source fusion. Preserves the fast-path with zero feature loss.
+
+### Fixed
+- **Double-rerank regression (empty-other-pool):** `_fanout_recall` now bypasses `fuse_candidates` whenever EITHER pool is empty — covering explicit `type="memory"`/`"wiki"` AND `type="all"` where one pool returned nothing (e.g. no relevant wiki). Fusing a single-pool would CE-rerank an already-ranked memory pool a second time and reorder it (measured MRR 0.84 → 0.74). **BC-U8 ✅**.
+- **Fan-out skipped heat reinforcement:** the fan-out path early-returned before the post-retrieval bookkeeping. Extracted `_apply_recall_side_effects` (heat +0.1, `last_accessed`, metamemory, SR transitions, action log) — shared verbatim by the legacy and fan-out paths so both reinforce heat on access.
+- **Fan-out blended wiki on episodic queries:** mirrored the legacy `_is_episodic_query` gate — `type="all"` temporal/episodic queries ("what happened yesterday") no longer blend wiki (explicit `type="wiki"` still honors caller intent).
+
+### Added
+- **Migration 023** — memory `directory_context` pre-flip backfill (mirrors migration 018's memory phases): relax ASSERT → Python-filter absent/empty/NULL → UPDATE to `'global'` → re-tighten. Idempotent; a no-op on databases already through 018. **CAP-STOR-038**.
+- **BC-U6/U7/U8** (✅, live-SurrealDB e2e): `type="memory"` preserves native order; `type="all"` preserves memory order with relevant wiki present; `type="all"` preserves memory native order with an empty wiki pool (single-provider bypass).
+- Registry **CAP-RETR-039** flipped DORMANT → LIVE; empty-pool-bypass semantics documented.
+
+### Verification
+Fan-out unit suite green · unified-recall e2e 22/22 (fusion/type/scope/migration, live SurrealDB) · 2 flip-collateral regressions isolated via flag-on/off diff and fixed · I32/contract/ruff green.
+
 ## [5.79.0] - 2026-06-21
 
 Unified-scoped-recall Steps 0/3/4/5 — the recall rebuild, redone test-first after the first attempt was parked (mock-only-tested, never real-gated). Machinery complete + e2e-proven; **`UNIFIED_RECALL_ENABLED` stays default OFF** (dormant) — the default-flip is a separate measured release gated on a curated golden set. Contract **240 SHALLs · 46 ✅**.

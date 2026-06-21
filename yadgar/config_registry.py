@@ -303,7 +303,7 @@ _REGISTRY: list[ConfigEntry] = [
     # v5.54.2: precomputed co-recall (transition-edge) prior weight (additive boost in all profiles)
     ConfigEntry("YADGAR_WRRF_COFIRE_PRIOR_WEIGHT", "0.15", "float"),
     # ── v6 T6 unified-scoped-recall fan-out flag + fusion settings ────────────
-    ConfigEntry("YADGAR_UNIFIED_RECALL_ENABLED", "false", "bool"),
+    ConfigEntry("YADGAR_UNIFIED_RECALL_ENABLED", "true", "bool"),
     # v6 T6 Step 4: cross-type fusion per-type quotas and prior weights.
     ConfigEntry("YADGAR_RECALL_MEMORY_QUOTA", "5", "int"),
     ConfigEntry("YADGAR_RECALL_WIKI_QUOTA", "5", "int"),

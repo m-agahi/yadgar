@@ -662,8 +662,17 @@ def run_eval(
             if (i + 1) % 10 == 0 or i == 0:
                 print(f"  [{i + 1}/{n}] {pair['query_id']}: {pair['query'][:60]}...")
             if unified:
+                # v5.80: route each pair through the recall type that matches its
+                # golden annotation so per-type MRR exercises the real code path
+                # (e.g. type=memory pairs go through recall(type="memory") which
+                # exercises the single-provider bypass introduced in v5.80).
+                # Pairs without a type annotation default to "all".
+                pair_type = pair.get("type", "all")
+                if pair_type not in ("memory", "wiki", "all"):
+                    pair_type = "all"
                 metrics = evaluate_pair_unified(
-                    pair, eval_directory, _K_VALUES, max_results=max_results
+                    pair, eval_directory, _K_VALUES, max_results=max_results,
+                    type_filter=pair_type,
                 )
             else:
                 metrics = evaluate_pair(pair, retriever, _K_VALUES, max_results=max_results)

@@ -866,6 +866,76 @@ def _migration_022_shadow_gate_fields(storage) -> None:
     )
 
 
+def _migration_023_memory_directory_context_backfill(storage) -> None:
+    """Pre-flip backfill: guarantee all memory rows have directory_context='global' (v5.80).
+
+    Context:
+      Migration 016 Phase D/E and migration 018 Phase D/E/F both backfilled memory rows
+      with absent/empty/NULL directory_context to 'global'.  On any DB that ran 018 the
+      memory.directory_context DEFINE FIELD ASSERT (NOT NULL, len > 0) prevents any new
+      field-absent insert, so this migration is effectively a no-op on deployed databases.
+
+      This migration runs as a defensive pre-flip gate immediately before
+      UNIFIED_RECALL_ENABLED is enabled by default (v5.80).  It re-checks and repairs
+      any residual field-absent rows on databases that may have been upgraded in a
+      non-standard order or that ran 016 but not 018 (edge case).
+
+    Phases mirror migration 018 memory phases (D/E/F):
+      Phase A — temporarily relax memory.directory_context to option<string> so the
+                UPDATE does not trigger the ASSERT coerce error on field-absent rows.
+                (SurrealDB v3 validates ASSERT on every UPDATE including the SET field,
+                causing "Expected `string` but found `NONE`" on field-absent rows.)
+                OVERWRITE is required because 016 already defined this field.
+      Phase B — fetch all memory rows; Python-filter for absent/empty/NULL
+                directory_context; UPDATE each to 'global'. Skip already-stamped rows.
+      Phase C — re-tighten memory.directory_context to the original NOT NULL string
+                ASSERT (restores the constraint relaxed in Phase A).
+
+    Idempotent: rows already having a non-empty directory_context are skipped.
+    On a fully-migrated database this migration touches 0 rows.
+    """
+    # Phase A: temporarily relax the ASSERT so field-absent rows accept the UPDATE.
+    storage._q("DEFINE FIELD OVERWRITE directory_context ON TABLE memory TYPE option<string>;")
+
+    # Phase B: fetch all rows; Python-filter catches field-absent (key missing),
+    # explicit NULL (IS NONE), and empty string — same filter as 016 + 018.
+    all_mem_rows = storage._q("SELECT id, directory_context FROM memory")
+    rows_to_fix = [r for r in all_mem_rows if r.get("directory_context") in (None, "")]
+    mem_backfilled = 0
+
+    for row in rows_to_fix:
+        raw_id = row.get("id")
+        try:
+            num_id = storage._extract_id(raw_id)
+        except Exception:
+            _log.warning("migration_023: could not parse memory id %r — skipping", raw_id)
+            continue
+        try:
+            storage._q(
+                "UPDATE type::record('memory', $id) SET directory_context = 'global'",
+                {"id": num_id},
+            )
+            mem_backfilled += 1
+        except Exception as _e:
+            _log.warning(
+                "migration_023: memory backfill failed for id=%s: %s",
+                raw_id,
+                _e,
+            )
+
+    _log.info(
+        "migration_023: backfilled %d memory rows with directory_context='global' "
+        "(pre-flip gate for UNIFIED_RECALL_ENABLED default-on)",
+        mem_backfilled,
+    )
+
+    # Phase C: re-tighten memory.directory_context to NOT NULL string.
+    storage._q(
+        "DEFINE FIELD OVERWRITE directory_context ON TABLE memory TYPE string "
+        "ASSERT $value != NONE AND string::len($value) > 0;"
+    )
+
+
 _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {"version": "001_hnsw_indexes", "fn": _migration_001_hnsw_indexes},
     {"version": "002_relationship_indexes", "fn": _migration_002_relationship_indexes},
@@ -942,6 +1012,10 @@ _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {
         "version": "022_shadow_gate_fields",
         "fn": _migration_022_shadow_gate_fields,
+    },
+    {
+        "version": "023_memory_directory_context_backfill",
+        "fn": _migration_023_memory_directory_context_backfill,
     },
 ]
 

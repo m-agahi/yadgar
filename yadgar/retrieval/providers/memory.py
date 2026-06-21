@@ -51,8 +51,11 @@ class MemoryProvider(SourceProvider):
             limit: Maximum candidates to return before directory filtering.
 
         Returns:
-            List of Candidate(type="memory", ...) sorted by native_score descending,
+            List of Candidate(type="memory", ...) in the retriever's NATIVE order
+            (Retriever.recall owns ranking: WRRF + rerank pipeline + optional
+            rule/metacognition reordering — NOT necessarily native_score-descending),
             filtered to scope.directory (same eligible set as is_directory_eligible).
+            Order is preserved verbatim so callers must not assume a score sort.
         """
         results = self._retriever.recall(
             query,

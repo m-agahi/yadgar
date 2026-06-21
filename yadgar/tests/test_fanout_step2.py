@@ -328,18 +328,32 @@ class TestFanoutRecall:
         for r in results:
             assert isinstance(r, dict)
 
-    def test_sorted_by_retrieval_score_descending(self):
-        """Pool is sorted by _retrieval_score descending before max_results trim."""
+    def test_preserves_retriever_native_order(self):
+        """Single-provider bypass preserves the retriever's native order verbatim.
+
+        Retriever.recall() owns ranking: WRRF + heuristic/CE/NLI/MP (each ending
+        in a _retrieval_score sort), THEN optional rule/metacognition reordering
+        that can move items away from strict _retrieval_score order. The fan-out
+        must NOT re-sort — re-sorting by _retrieval_score would override the
+        retriever's final ranking, which is exactly the double-rerank regression
+        (type=memory MRR 0.84 → 0.74). This supersedes the Step-2 "sort pool by
+        _retrieval_score then trim" model, which wrongly assumed fan-out owns
+        ordering.
+
+        Mock retriever returns ids [1, 2] in an order that is NOT
+        _retrieval_score-descending, to prove the bypass preserves the provider
+        order rather than imposing a score sort.
+        """
         mems = [
-            _make_memory_dict(1, 0.5),  # lower score
-            _make_memory_dict(2, 0.9),  # higher score
+            _make_memory_dict(1, 0.5),  # retriever emits this first despite lower score
+            _make_memory_dict(2, 0.9),
         ]
         mock_retriever = _make_mock_retriever(mems)
 
         results = self._call_fanout(retriever=mock_retriever, wiki=None, max_results=10)
 
-        scores = [r.get("_retrieval_score", r.get("heat", 0.0)) for r in results]
-        assert scores == sorted(scores, reverse=True), "Results not sorted by score descending"
+        ids = [r["id"] for r in results]
+        assert ids == [1, 2], "Bypass must preserve retriever native order, not re-sort"
 
 
 # ---------------------------------------------------------------------------

@@ -615,15 +615,15 @@ config knobs.
 
 ### CAP-RETR-039 — Unified Scoped Recall Fan-Out (v6 T6)
 
-- **status:** DORMANT
+- **status:** LIVE
 - **category:** retrieval
 - **settings:** `UNIFIED_RECALL_ENABLED`, `RECALL_MEMORY_QUOTA`, `RECALL_WIKI_QUOTA`, `RECALL_MEMORY_PRIOR_WEIGHT`, `RECALL_WIKI_PRIOR_WEIGHT`
 - **tools:** `recall`, `wiki_query`
-- **migrations:** —
-- **bc:** `BC-G11`, `BC-U1`, `BC-U2`, `BC-U3`, `BC-U4`, `BC-U5`
+- **migrations:** `023`
+- **bc:** `BC-G11`, `BC-U1`, `BC-U2`, `BC-U3`, `BC-U4`, `BC-U5`, `BC-U6`, `BC-U7`, `BC-U8`
 - **refs:** `yadgar/retrieval/providers/base.py::SourceProvider`, `yadgar/retrieval/providers/base.py::Candidate`, `yadgar/retrieval/providers/memory.py::MemoryProvider`, `yadgar/retrieval/providers/wiki.py::WikiProvider`, `yadgar/retrieval/providers/fusion.py::fuse_candidates`, `yadgar/storage/scope.py::ScopeFilter`, `yadgar/server/tools/recall.py::_fanout_recall`
-- **wiring:** When `UNIFIED_RECALL_ENABLED=True`, `recall()` routes through `_fanout_recall()`. Steps 0–5 (v6 T6): (0) eval harness; (3a) ScopeFilter dataclass; (3b) directory scoping in MemoryProvider + WikiProvider; (4) cross-type CE fusion via `fuse_candidates` (per-type quotas → CE rerank → additive prior boost → provenance dedup → trim); (5) `recall(type=)` param for source-type filtering + `wiki_query` deprecation log. `RECALL_MEMORY_QUOTA`/`RECALL_WIKI_QUOTA` bound each source's candidate pool before CE rerank. `RECALL_MEMORY_PRIOR_WEIGHT`/`RECALL_WIKI_PRIOR_WEIGHT` are additive priors folded into CE scores. Flag default is `False` — no behavior change for existing callers.
-- **explanation:** Unified recall architecture (v6 T6 — `[[unified-scoped-recall]]`). `SourceProvider` ABC with `type: str` + `candidates(query, scope, limit) -> list[Candidate]`. Both providers apply Python-side `is_directory_eligible()` post-filter matching the legacy path. `fuse_candidates` in `yadgar/retrieval/providers/fusion.py` runs CE rerank, additive prior boost, and cross-type provenance dedup (memory id ∈ wiki.source_memory_ids → keep higher-CE). `recall(type="memory"|"wiki"|"all")` routes to the appropriate provider subset. `wiki_query` emits INFO deprecation log when flag is ON. All gated behind `UNIFIED_RECALL_ENABLED=False` default.
+- **wiring:** `recall()` routes through `_fanout_recall()` by default (v5.80: `UNIFIED_RECALL_ENABLED=True`). Steps 0–5 (v6 T6): (0) eval harness; (3a) ScopeFilter dataclass; (3b) directory scoping in MemoryProvider + WikiProvider; (4) cross-type CE fusion via `fuse_candidates` (per-type quotas → CE rerank → additive prior boost → provenance dedup → trim); (5) `recall(type=)` param for source-type filtering + `wiki_query` deprecation log. `RECALL_MEMORY_QUOTA`/`RECALL_WIKI_QUOTA` bound each source's candidate pool before CE rerank. `RECALL_MEMORY_PRIOR_WEIGHT`/`RECALL_WIKI_PRIOR_WEIGHT` are additive priors folded into CE scores. Set `UNIFIED_RECALL_ENABLED=False` to revert to the legacy path.
+- **explanation:** Unified recall architecture (v6 T6 — `[[unified-scoped-recall]]`). `SourceProvider` ABC with `type: str` + `candidates(query, scope, limit) -> list[Candidate]`. Both providers apply Python-side `is_directory_eligible()` post-filter matching the legacy path. `fuse_candidates` in `yadgar/retrieval/providers/fusion.py` runs CE rerank, additive prior boost, and cross-type provenance dedup (memory id ∈ wiki.source_memory_ids → keep higher-CE). `recall(type="memory"|"wiki"|"all")` routes to the appropriate provider subset. `wiki_query` emits INFO deprecation log when flag is ON. LIVE as of v5.80: `UNIFIED_RECALL_ENABLED=True` is now the default. Fusion fixes shipped in v5.80 (single-provider bypass + memory-order-stable fuse_candidates) ensure no memory-ranking regression. The single-provider bypass triggers whenever EITHER pool is empty — covering explicit `type="memory"`/`"wiki"` AND `type="all"` where one pool returned no candidates (e.g. no relevant wiki); `fuse_candidates` runs only when both pools are non-empty, so a memory-only pool is never CE-reranked a second time (BC-U6/U7/U8).
 
 ---
 
@@ -1033,6 +1033,17 @@ config knobs.
 - **refs:** `yadgar/storage/ops.py`, `yadgar/storage/memory.py::get_all_memories_for_decay`
 - **wiring:** The nightly cron script calls the daemon's consolidation cycle which reads memories via `get_all_memories_for_decay()`, applies heat decay, archives cold memories, runs CLS and causal phases, and writes results back. `BC-D1`: nightly exits 0 against a seeded DB (e2e proven). `BC-D2`: pre-backup snapshot uses real `YADGAR_DATA_DIR`/XDG path. `BC-D3`: interpreter shutdown is clean (no SEGV).
 - **explanation:** The nightly cycle is the primary path through which storage-layer read/write/decay operations exercise the full stack. Most storage primitives (heat update, archival, cluster insert, similarity link, consolidation log) run exclusively in this path, not on the real-time request path. BC-D1 is e2e green; BC-D2 and BC-D3 are also e2e green.
+
+### CAP-STOR-038 — Migration 023: memory directory_context pre-flip backfill
+- **status:** LIVE
+- **category:** storage
+- **settings:** —
+- **tools:** —
+- **migrations:** `023`
+- **bc:** —
+- **refs:** `yadgar/storage/migrations.py::_migration_023_memory_directory_context_backfill`
+- **wiring:** Applied once at server-mode startup after v5.80. Defensive pre-flip gate immediately before `UNIFIED_RECALL_ENABLED` defaults to `True`. Phases: (A) relax `memory.directory_context` to `option<string>` via `DEFINE FIELD OVERWRITE`; (B) Python-side fetch-all + filter for absent/empty/NULL rows, UPDATE each to `'global'`; (C) re-tighten to `string ASSERT NOT NULL, len > 0`. On any DB that ran migration 018, this migration touches 0 rows (field-absent memory inserts were already blocked by the 018 ASSERT).
+- **explanation:** Guarantees all memory rows have a non-empty `directory_context` before the unified fan-out recall path (v6 T6) becomes the default. Migration 018 Phase D/E/F already covered this for deployed databases; migration 023 is a belt-and-suspenders idempotent repair for any edge-case DB that ran 016 without 018, or was written before the ASSERT was applied. Uses the same `DEFINE FIELD OVERWRITE` relax/backfill/re-tighten pattern as migration 018 (necessary because SurrealDB v3 validates ASSERT on every UPDATE — field-absent rows trigger a coerce error without the relax step).
 
 ### CAP-WRITE-001 — `memorize` MCP tool (write-path entry point)
 - **status:** LIVE
