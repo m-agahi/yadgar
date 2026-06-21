@@ -1016,10 +1016,38 @@ FIELD_META: dict[str, dict[str, str]] = {
     "unified_recall_enabled": {
         "desc": (
             "Enable the unified fan-out recall path (v6 T6, default false). "
-            "When true, recall() fans out to MemoryProvider + WikiProvider, pools results, "
-            "and returns a combined deduped list. When false (default), recall() uses the "
-            "exact legacy path with zero behavior change. "
-            "Steps 3–5 (DB-level DirectoryFilter, cross-encoder fusion, type= param) ship later."
+            "When true, recall() fans out to MemoryProvider + WikiProvider, applies "
+            "DB-level directory scoping, cross-type CE fusion with per-type quotas, "
+            "and returns a combined relevance-ranked list. "
+            "When false (default), recall() uses the exact legacy path with zero behavior change."
+        ),
+        "section": "unified_recall",
+    },
+    "recall_memory_quota": {
+        "desc": (
+            "v6 T6 Step 4: Max memory candidates in the fusion pool before CE rerank (default 5). "
+            "Prevents memory candidates from starving wiki candidates."
+        ),
+        "section": "unified_recall",
+    },
+    "recall_wiki_quota": {
+        "desc": (
+            "v6 T6 Step 4: Max wiki candidates in the fusion pool before CE rerank (default 5). "
+            "Prevents wiki candidates from being starved by memory candidates."
+        ),
+        "section": "unified_recall",
+    },
+    "recall_memory_prior_weight": {
+        "desc": (
+            "v6 T6 Step 4: Additive prior weight for memory native_score in CE fusion (default 0.1). "
+            "CE score is primary; prior is a tie-shaper."
+        ),
+        "section": "unified_recall",
+    },
+    "recall_wiki_prior_weight": {
+        "desc": (
+            "v6 T6 Step 4: Additive prior weight for wiki native_score in CE fusion (default 0.1). "
+            "CE score is primary; prior is a tie-shaper."
         ),
         "section": "unified_recall",
     },

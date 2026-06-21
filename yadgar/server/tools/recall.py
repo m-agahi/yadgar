@@ -6,6 +6,10 @@ import logging
 
 import yadgar.server._state as _st
 from yadgar.config import get_settings
+from yadgar.retrieval.providers.base import Scope
+from yadgar.retrieval.providers.fusion import fuse_candidates
+from yadgar.retrieval.providers.memory import MemoryProvider
+from yadgar.retrieval.providers.wiki import WikiProvider
 from yadgar.server._app import _tool
 from yadgar.server._helpers import _bounded_set, _is_episodic_query
 from yadgar.server.lifecycle import _get_embeddings, _get_storage
@@ -14,6 +18,9 @@ from yadgar.storage.directory import is_directory_eligible
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
+
+# Valid type filter values for recall(type=) param (Step 5).
+_VALID_RECALL_TYPES: frozenset[str] = frozenset({"all", "memory", "wiki"})
 
 
 # ---------------------------------------------------------------------------
@@ -90,26 +97,36 @@ def _fanout_recall(
     directory: str,
     current_branch: str | None,
     default_branch: str | None,
+    type_filter: str = "all",
 ) -> list[dict]:
-    """Fan out recall to MemoryProvider + WikiProvider, pool + dedup results.
+    """Fan out recall to MemoryProvider + WikiProvider, fuse + dedup results.
 
     Called ONLY when UNIFIED_RECALL_ENABLED=True.  Flag-False takes the
     legacy body below — this function is never entered in production until
     the flag is explicitly enabled.
 
-    Step 2 scope (Steps 3–5 are out of scope here):
-      - Build MemoryProvider + WikiProvider from server state.
-      - Call each provider's candidates() with a shared Scope.
-      - Pool results (concatenate raw dicts from both providers).
-      - Apply existing _dedup_by_content() — same dedup as legacy path.
-      - Return at most max_results items.
+    Step 3 additions (directory scoping):
+      - MemoryProvider applies Python-side is_directory_eligible filter.
+      - WikiProvider applies Python-side is_directory_eligible filter.
 
-    NOT done here (deferred to Steps 3–5):
-      - DB-level DirectoryFilter (Step 3) — Python post-filter deferred.
-      - Cross-encoder fusion / per-type quotas / MMR (Step 4).
-      - type= param routing (Step 5).
-      - Quality floor / branch boost / postmortem boost — these remain in
-        the legacy path; Step 2 returns a simple pooled list.
+    Step 4 additions (cross-type fusion):
+      - Per-type quotas (RECALL_MEMORY_QUOTA / RECALL_WIKI_QUOTA) applied
+        before pooling so neither source starves.
+      - Cross-encoder rerank over query↔Candidate.content (GTE reranker via
+        Retriever, falls back to native_score when unavailable).
+      - Additive prior boost per type (RECALL_MEMORY_PRIOR_WEIGHT /
+        RECALL_WIKI_PRIOR_WEIGHT) after CE scoring.
+      - Cross-type provenance dedup: memory.id ∈ wiki.source_memory_ids →
+        keep higher-CE candidate.
+
+    Step 5 additions (type_filter routing):
+      - type_filter="all" (default): both providers active.
+      - type_filter="memory": only MemoryProvider, skip WikiProvider.
+      - type_filter="wiki": only WikiProvider, skip MemoryProvider.
+
+    NOTE: MemoryProvider, WikiProvider, fuse_candidates are module-level imports
+    (NOT function-local) so monkeypatch targets bind correctly in tests. This
+    directly fixes the Finding-C AttributeError failure mode from the first attempt.
 
     Args:
         query: Search query.
@@ -118,15 +135,12 @@ def _fanout_recall(
         directory: Caller directory (required, validated upstream).
         current_branch: Active git branch or None.
         default_branch: Repo default branch or None.
+        type_filter: One of {"all", "memory", "wiki"}. Selects provider subset.
 
     Returns:
-        List of raw memory/wiki dicts from both providers, deduped by content,
-        trimmed to max_results.
+        List of raw memory/wiki dicts from providers, fused by CE rerank,
+        deduped by content, trimmed to max_results.
     """
-    from yadgar.retrieval.providers.base import Scope  # noqa: PLC0415
-    from yadgar.retrieval.providers.memory import MemoryProvider  # noqa: PLC0415
-    from yadgar.retrieval.providers.wiki import WikiProvider  # noqa: PLC0415
-
     scope = Scope(
         directory=directory,
         branch=current_branch,
@@ -134,28 +148,46 @@ def _fanout_recall(
         min_heat=min_heat,
     )
 
-    # Candidate pool size: ask for more than max_results so pooling + dedup
+    # Candidate pool size: ask for more than max_results so fusion + dedup
     # has material to work with.  3× matches the legacy retriever multiplier.
     pool_limit = max_results * 3
 
-    pooled: list[dict] = []
+    memory_candidates = []
+    wiki_candidates = []
 
-    # Memory provider — always available when retriever is initialised
-    if _st._retriever is not None:
+    # Memory provider — active when type_filter is "all" or "memory"
+    if type_filter in ("all", "memory") and _st._retriever is not None:
         memory_provider = MemoryProvider(_st._retriever)
-        for cand in memory_provider.candidates(query, scope, limit=pool_limit):
-            pooled.append(cand.raw)
+        memory_candidates = memory_provider.candidates(query, scope, limit=pool_limit)
 
-    # Wiki provider — available when wiki store is initialised
-    if _st._wiki is not None:
+    # Wiki provider — active when type_filter is "all" or "wiki"
+    if type_filter in ("all", "wiki") and _st._wiki is not None:
         wiki_provider = WikiProvider(_st._wiki)
-        for cand in wiki_provider.candidates(query, scope, limit=pool_limit):
-            raw = cand.raw  # already has _source="wiki" set by WikiProvider
-            raw.pop("embedding", None)
-            pooled.append(raw)
+        wiki_candidates = wiki_provider.candidates(query, scope, limit=pool_limit)
 
-    # Sort by native retrieval score descending, then dedup by content
-    pooled.sort(key=lambda m: m.get("_retrieval_score", m.get("heat", 0.0)), reverse=True)
+    # Step 4: fuse candidates via CE rerank + per-type quotas + provenance dedup
+    fused = fuse_candidates(
+        memory_candidates=memory_candidates,
+        wiki_candidates=wiki_candidates,
+        query=query,
+        retriever=_st._retriever,
+        max_results=max_results,
+        settings=settings,
+    )
+
+    # Convert Candidate objects to raw dicts (fan-out returns raw dicts).
+    # Stamp _source from Candidate.type so callers can distinguish memory vs wiki.
+    # WikiProvider already sets _source="wiki" on raw dicts; MemoryProvider does not —
+    # we normalize here so all results are self-describing (required for recall(type=) tests).
+    pooled: list[dict] = []
+    for cand in fused:
+        raw = cand.raw
+        raw["_source"] = cand.type  # "memory" or "wiki" — idempotent for wiki
+        # Strip embedding bytes — never returned to callers
+        raw.pop("embedding", None)
+        pooled.append(raw)
+
+    # Final dedup by content (handles any duplicates fusion didn't catch)
     pooled = _dedup_by_content(pooled)
     return pooled[:max_results]
 
@@ -169,6 +201,7 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
     stage_overrides: dict[str, dict] | None = None,
     directory: str | None = None,
     branch_hint: str | None = None,
+    type: str = "all",  # noqa: A002 — shadows built-in but matches MCP schema convention
 ) -> list[dict]:
     """Semantic + keyword search filtered by heat. Boosts accessed memories.
 
@@ -187,10 +220,16 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
     detection per DP-1 (directory is canonical; branch_hint is fallback).
     Resolution order: _detect_branch(directory or os.getcwd()) → branch_hint → None.
 
+    type (v6 T6 Step 5): source type filter. Valid values: "all" (default),
+    "memory" (only memories), "wiki" (only wiki pages). Only effective in the
+    unified fan-out path (UNIFIED_RECALL_ENABLED=True). Legacy path ignores this
+    parameter. Raises ValueError on unrecognised value.
+
     Raises ValueError immediately (before any retrieval work) if profile is
     set to an unrecognised value, or if directory is absent/empty (v5.65 Fix D:
     daemon runs in a container — os.getcwd() returns the container path and
-    would mis-scope results; callers MUST supply the real host directory).
+    would mis-scope results; callers MUST supply the real host directory), or
+    if type is not one of {"all", "memory", "wiki"}.
     """
     import time as _time  # noqa: PLC0415
 
@@ -202,6 +241,12 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
         raise ValueError(
             "recall: directory is required (caller must supply project dir; "
             "container cannot detect it via os.getcwd())"
+        )
+
+    # v6 T6 Step 5: validate type param early — before any expensive setup.
+    if type not in _VALID_RECALL_TYPES:
+        raise ValueError(
+            f"recall: type={type!r} is not valid. Valid values: {sorted(_VALID_RECALL_TYPES)}"
         )
 
     # I3: validate profile BEFORE any expensive setup or DB access.
@@ -275,6 +320,7 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
                 directory=_dir_stripped,
                 current_branch=_current_branch,
                 default_branch=_default_branch,
+                type_filter=type,
             )
             return merged
 

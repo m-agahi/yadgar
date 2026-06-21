@@ -1,7 +1,11 @@
 """WikiProvider — wraps WikiStore.query as a SourceProvider.
 
 Part of v6 T6 (unified-scoped-recall), Step 1 — pure extraction.
-No entry-point code calls this yet (wired in Step 2 behind UNIFIED_RECALL_ENABLED).
+Step 3 (v6 T6): adds directory scoping via is_directory_eligible post-filter.
+
+WikiStore.query() does not currently accept a directory parameter. Step 3
+applies a Python-side directory post-filter matching the is_directory_eligible
+eligible set, consistent with the legacy recall + wiki_query paths.
 """
 
 from __future__ import annotations
@@ -9,6 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from yadgar.retrieval.providers.base import Candidate, Scope, SourceProvider
+from yadgar.storage.directory import is_directory_eligible
 
 if TYPE_CHECKING:
     from yadgar.wiki import WikiStore
@@ -19,6 +24,9 @@ class WikiProvider(SourceProvider):
 
     Calls ``WikiStore.query()`` and maps returned wiki page dicts to normalized
     Candidate objects with ``type="wiki"``.
+
+    Step 3: applies is_directory_eligible() post-filter so wiki results are
+    scoped to the caller directory, matching the legacy wiki_query path.
 
     The ``raw`` field on each Candidate carries the original wiki page dict
     (including ``_retrieval_score`` from the wiki hybrid search) so the
@@ -34,22 +42,29 @@ class WikiProvider(SourceProvider):
         return "wiki"
 
     def candidates(self, query: str, scope: Scope, limit: int) -> list[Candidate]:
-        """Call WikiStore.query() and return normalized Candidates.
+        """Call WikiStore.query() and return normalized, directory-scoped Candidates.
 
         Args:
             query: Search query.
-            scope: Scope (directory/branch carried for Step 3; not applied here).
-            limit: Maximum candidates to return.
+            scope: Scope carrying directory for the Python-side directory post-filter.
+            limit: Maximum candidates to return from WikiStore before filtering.
 
         Returns:
-            List of Candidate(type="wiki", ...) sorted by native_score descending.
+            List of Candidate(type="wiki", ...) sorted by native_score descending,
+            filtered to scope.directory (same eligible set as is_directory_eligible).
         """
         results = self._wiki.query(query, max_results=limit)
 
+        # Step 3: Python-side directory post-filter.
+        # Eligible: {scope.directory, 'global', '', None}. 'system' excluded (v5.65).
+        caller_dir = scope.directory if scope.directory else None
         candidates: list[Candidate] = []
         for page in results:
             pid = page.get("id")
             if pid is None:
+                continue
+            dc = page.get("directory_context")
+            if not is_directory_eligible(dc, caller_dir):
                 continue
             native_score = float(page.get("_retrieval_score", 0.0))
             # Tag raw dict so orchestrator can set _source="wiki" downstream
@@ -62,7 +77,7 @@ class WikiProvider(SourceProvider):
                     title=page.get("title"),
                     content=page.get("content", ""),
                     native_score=native_score,
-                    directory_context=page.get("directory_context"),
+                    directory_context=dc,
                     branch=page.get("branch"),
                     raw=raw,
                 )

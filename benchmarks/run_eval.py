@@ -230,7 +230,7 @@ def evaluate_pair(
     k_values: list[int],
     max_results: int = 50,
 ) -> dict:
-    """Run recall for one golden pair and compute metrics.
+    """Run recall for one golden pair and compute metrics (legacy path).
 
     Uses memory-id granularity (not session granularity like LongMemEval).
 
@@ -240,6 +240,10 @@ def evaluate_pair(
     Retrieved results are similarly mapped via _extract_retrieved_keys().
     This allows compute_recall / compute_ndcg / MRR from run_longmemeval to work
     across both memory and wiki results with zero primitive changes.
+
+    NOTE: This function routes through retriever.recall() (legacy path) which is
+    memory-only.  Wiki-gold pairs will show recall@k=0 on this path regardless
+    of the golden set.  Use evaluate_pair_unified() for the fan-out path.
 
     Returns a metrics dict including latency_ms.
     """
@@ -290,6 +294,107 @@ def evaluate_pair(
         metrics[f"ndcg@{k}"] = compute_ndcg(retrieved_str, gold_str, k)
 
     # MRR
+    mrr = 0.0
+    for rank, rid in enumerate(retrieved_str):
+        if rid in gold_str:
+            mrr = 1.0 / (rank + 1)
+            break
+    metrics["mrr"] = mrr
+
+    return metrics
+
+
+# ── Unified-recall eval pair (Step 0 — routes through MCP recall tool) ────────
+
+
+def evaluate_pair_unified(
+    pair: dict,
+    directory: str,
+    k_values: list[int],
+    max_results: int = 50,
+    type_filter: str = "all",
+) -> dict:
+    """Run recall for one golden pair via the MCP recall tool (fan-out path).
+
+    Step 0 fix: unlike evaluate_pair() which calls retriever.recall() (memories
+    only), this function calls yadgar.server.tools.recall.recall() — the same
+    entry point MCP callers use — so fusion + directory-scoping + wiki results
+    are exercised.
+
+    Args:
+        pair: Golden pair dict with query, relevant_memory_ids, relevant_wiki_slugs.
+        directory: Caller directory passed to recall() (required by v5.65 Fix D).
+        k_values: k values for recall@k and nDCG@k.
+        max_results: Max results to fetch per query.
+        type_filter: "all" | "memory" | "wiki" (Step 5; default "all").
+
+    Returns:
+        Metrics dict with recall@k, nDCG@k, mrr, latency_ms (same schema as
+        evaluate_pair() so aggregate_metrics() works unchanged).
+    """
+    import sys as _sys
+
+    # Get the MCP recall tool (registered by @_tool() — module-level attribute)
+    # Must go through sys.modules because @_tool() replaces the local name.
+    _recall_module = _sys.modules.get("yadgar.server.tools.recall")
+    if _recall_module is None:
+        import yadgar.server.tools.recall as _recall_module  # noqa: PLC0415
+
+    recall_fn = getattr(_recall_module, "recall")
+
+    query = pair["query"]
+
+    # Build unified gold key set (prefixed namespace — same as evaluate_pair)
+    gold_keys: set[str] = set()
+    for mid in pair.get("relevant_memory_ids", []):
+        try:
+            gold_keys.add(f"mem:{int(mid)}")
+        except (TypeError, ValueError):
+            pass
+    for slug in pair.get("relevant_wiki_slugs", []):
+        if slug:
+            gold_keys.add(f"wiki:{slug}")
+
+    t0 = time.perf_counter()
+    try:
+        # Build kwargs — type= only passed in Step 5 when supported
+        kwargs: dict = {"max_results": max_results, "min_heat": 0.0, "directory": directory}
+        if type_filter != "all":
+            kwargs["type"] = type_filter
+
+        results = recall_fn(query, **kwargs)
+    except TypeError:
+        # Fallback: older recall() signature without type= (Steps 0-4)
+        results = recall_fn(query, max_results=max_results, min_heat=0.0, directory=directory)
+    except Exception as exc:
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        return {
+            "query_id": pair["query_id"],
+            "error": str(exc),
+            "latency_ms": elapsed_ms,
+        }
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+
+    retrieved_keys = _extract_retrieved_keys(results)
+
+    metrics: dict = {
+        "query_id": pair["query_id"],
+        "derivation": pair.get("derivation", "unknown"),
+        "type": pair.get("type", "memory"),
+        "bootstrap": pair.get("bootstrap", True),
+        "needs_curation": pair.get("needs_curation", True),
+        "latency_ms": elapsed_ms,
+        "retrieved_count": len(retrieved_keys),
+        "gold_count": len(gold_keys),
+    }
+
+    retrieved_str = retrieved_keys
+    gold_str = gold_keys
+
+    for k in k_values:
+        metrics[f"recall@{k}"] = compute_recall(retrieved_str, gold_str, k)
+        metrics[f"ndcg@{k}"] = compute_ndcg(retrieved_str, gold_str, k)
+
     mrr = 0.0
     for rank, rid in enumerate(retrieved_str):
         if rid in gold_str:
@@ -454,9 +559,19 @@ def run_eval(
     max_results: int = 50,
     dry_run: bool = False,
     no_seed: bool = False,
+    unified: bool = False,
+    eval_directory: str = "eval-bootstrap",
     settings_overrides: dict | None = None,
 ) -> dict:
-    """Run the full eval pipeline. Returns aggregated metrics dict."""
+    """Run the full eval pipeline. Returns aggregated metrics dict.
+
+    Args:
+        unified: When True, routes through the MCP recall tool (fan-out path)
+            instead of retriever.recall(). Requires UNIFIED_RECALL_ENABLED=True
+            in the yadgar server for wiki results to appear.
+        eval_directory: Directory context for unified recall calls. Defaults to
+            "eval-bootstrap" (matching the seed_pairs_into_storage stamp).
+    """
     print("Yadgar Eval Harness — Phase 0")
     print(f"Golden set: {golden_path}")
 
@@ -523,13 +638,35 @@ def run_eval(
             print("Skipping self-seed (--no-seed or YADGAR_EVAL_NO_SEED set).")
 
         # ── Eval loop ────────────────────────────────────────────────
+        if unified:
+            print(
+                f"Unified mode: routing through MCP recall tool (fan-out path), "
+                f"directory={eval_directory!r}"
+            )
+            # Unified path: init the server stack so the MCP tool can access storage.
+            from yadgar import server as _srv  # noqa: PLC0415
+
+            _srv.init_engines(db_path=os.environ.get("YADGAR_DB_PATH", settings.DB_PATH))
+            # Enable unified recall for this run
+            os.environ["YADGAR_UNIFIED_RECALL_ENABLED"] = "true"
+            import importlib  # noqa: PLC0415
+
+            import yadgar.config as _ycfg  # noqa: PLC0415
+
+            _ycfg.get_settings.cache_clear()
+
         per_query: list[dict] = []
         n = len(pairs)
         print(f"Evaluating {n} pairs ...")
         for i, pair in enumerate(pairs):
             if (i + 1) % 10 == 0 or i == 0:
                 print(f"  [{i + 1}/{n}] {pair['query_id']}: {pair['query'][:60]}...")
-            metrics = evaluate_pair(pair, retriever, _K_VALUES, max_results=max_results)
+            if unified:
+                metrics = evaluate_pair_unified(
+                    pair, eval_directory, _K_VALUES, max_results=max_results
+                )
+            else:
+                metrics = evaluate_pair(pair, retriever, _K_VALUES, max_results=max_results)
             per_query.append(metrics)
 
         # ── Aggregate ─────────────────────────────────────────────────
@@ -597,6 +734,26 @@ def main() -> None:
             "Use when YADGAR_DB_URL points at a live corpus with real memories."
         ),
     )
+    parser.add_argument(
+        "--unified",
+        choices=["on", "off"],
+        default="off",
+        help=(
+            "Routing mode. 'on': route through MCP recall tool (fan-out path, "
+            "exercises fusion + wiki + directory-scoping). "
+            "'off' (default): legacy retriever.recall() path (memory-only). "
+            "Requires UNIFIED_RECALL_ENABLED server setting when 'on'."
+        ),
+    )
+    parser.add_argument(
+        "--eval-directory",
+        type=str,
+        default="eval-bootstrap",
+        help=(
+            "Directory context for unified recall calls (default: 'eval-bootstrap'). "
+            "Only used with --unified on."
+        ),
+    )
     args = parser.parse_args()
 
     run_eval(
@@ -605,6 +762,8 @@ def main() -> None:
         max_results=args.max_results,
         dry_run=args.dry_run,
         no_seed=args.no_seed,
+        unified=(args.unified == "on"),
+        eval_directory=args.eval_directory,
     )
 
 

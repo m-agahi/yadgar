@@ -617,13 +617,13 @@ config knobs.
 
 - **status:** DORMANT
 - **category:** retrieval
-- **settings:** `UNIFIED_RECALL_ENABLED`
-- **tools:** `recall`
+- **settings:** `UNIFIED_RECALL_ENABLED`, `RECALL_MEMORY_QUOTA`, `RECALL_WIKI_QUOTA`, `RECALL_MEMORY_PRIOR_WEIGHT`, `RECALL_WIKI_PRIOR_WEIGHT`
+- **tools:** `recall`, `wiki_query`
 - **migrations:** —
-- **bc:** —
-- **refs:** `yadgar/retrieval/providers/base.py::SourceProvider`, `yadgar/retrieval/providers/base.py::Candidate`, `yadgar/retrieval/providers/memory.py::MemoryProvider`, `yadgar/retrieval/providers/wiki.py::WikiProvider`, `yadgar/server/tools/recall.py::_fanout_recall`
-- **wiring:** When `UNIFIED_RECALL_ENABLED=True`, `recall()` routes through `_fanout_recall()` which builds a `[MemoryProvider, WikiProvider]` list, calls `candidates()` on each with a shared `Scope`, pools the results, and deduplicates by content. When `UNIFIED_RECALL_ENABLED=False` (default), the legacy path is taken with zero behavior change. Steps 3–5 (DB-level DirectoryFilter, cross-encoder fusion, `type=` param) are not yet wired.
-- **explanation:** First step of the unified recall architecture (v6 T6 — `[[unified-scoped-recall]]`). `SourceProvider` is an ABC with `type: str` + `candidates(query, scope, limit) -> list[Candidate]`. `MemoryProvider` wraps `Retriever.recall()`; `WikiProvider` wraps `WikiStore.query()`. Both return `Candidate` dataclasses with a unified schema and a `raw` field for lossless pass-through. The fan-out is gated behind `UNIFIED_RECALL_ENABLED` (default False) so existing callers see no change until the full pipeline (Steps 3–5) ships.
+- **bc:** `BC-G11`, `BC-U1`, `BC-U2`, `BC-U3`, `BC-U4`, `BC-U5`
+- **refs:** `yadgar/retrieval/providers/base.py::SourceProvider`, `yadgar/retrieval/providers/base.py::Candidate`, `yadgar/retrieval/providers/memory.py::MemoryProvider`, `yadgar/retrieval/providers/wiki.py::WikiProvider`, `yadgar/retrieval/providers/fusion.py::fuse_candidates`, `yadgar/storage/scope.py::ScopeFilter`, `yadgar/server/tools/recall.py::_fanout_recall`
+- **wiring:** When `UNIFIED_RECALL_ENABLED=True`, `recall()` routes through `_fanout_recall()`. Steps 0–5 (v6 T6): (0) eval harness; (3a) ScopeFilter dataclass; (3b) directory scoping in MemoryProvider + WikiProvider; (4) cross-type CE fusion via `fuse_candidates` (per-type quotas → CE rerank → additive prior boost → provenance dedup → trim); (5) `recall(type=)` param for source-type filtering + `wiki_query` deprecation log. `RECALL_MEMORY_QUOTA`/`RECALL_WIKI_QUOTA` bound each source's candidate pool before CE rerank. `RECALL_MEMORY_PRIOR_WEIGHT`/`RECALL_WIKI_PRIOR_WEIGHT` are additive priors folded into CE scores. Flag default is `False` — no behavior change for existing callers.
+- **explanation:** Unified recall architecture (v6 T6 — `[[unified-scoped-recall]]`). `SourceProvider` ABC with `type: str` + `candidates(query, scope, limit) -> list[Candidate]`. Both providers apply Python-side `is_directory_eligible()` post-filter matching the legacy path. `fuse_candidates` in `yadgar/retrieval/providers/fusion.py` runs CE rerank, additive prior boost, and cross-type provenance dedup (memory id ∈ wiki.source_memory_ids → keep higher-CE). `recall(type="memory"|"wiki"|"all")` routes to the appropriate provider subset. `wiki_query` emits INFO deprecation log when flag is ON. All gated behind `UNIFIED_RECALL_ENABLED=False` default.
 
 ---
 

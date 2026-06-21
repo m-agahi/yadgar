@@ -72,6 +72,7 @@ from yadgar.storage.narrative import _NarrativeMixin
 from yadgar.storage.ops import _OpsMixin
 from yadgar.storage.queue import _QueueMixin
 from yadgar.storage.rules import _RulesMixin
+from yadgar.storage.scope import ScopeFilter as ScopeFilter
 from yadgar.storage.user import _UserMixin
 from yadgar.storage.vector import _VectorMixin
 from yadgar.storage.wiki import _WikiMixin

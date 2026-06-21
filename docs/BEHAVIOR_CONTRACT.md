@@ -15,8 +15,8 @@ contract e2e yet) · ❌ = KNOWN-BROKEN (ships `xfail(strict)`, links fix task).
 Run: `make e2e` (local, real `surreal`) + pre-push hook; **excluded from CI**
 (`-m 'not e2e'`).
 
-**Surface (recounted v5.71, self-enforced by `scripts/check_contract_coverage.py`):**
-**234 SHALLs / 38 subsystems.** Today: **40 ✅ · 190 ⏳ · 2 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47; + 1 🗑 DELETED — BC-T2 remember tool, v6 T3) Of the 190 ⏳:
+**Surface (recounted v6 T6, self-enforced by `scripts/check_contract_coverage.py`):**
+**240 SHALLs / 39 subsystems.** Today: **46 ✅ · 190 ⏳ · 2 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47; + 1 🗑 DELETED — BC-T2 remember tool, v6 T3) Of the 190 ⏳:
 **61 `[r]` (real-path coverage exists) · 96 `[u]` (unit-only) · 33 none.**
 Goal: every SHALL → ✅ or ❌.
 
@@ -80,6 +80,14 @@ Goal: every SHALL → ✅ or ❌.
 - BC-G8 wiki_cleanup_merged_branches removes merged-branch pages. ⏳[u] P2
 - BC-G9 wiki edit primitives (set_metadata/anchor-text/positional/structural) mutate as specified, versioned. ⏳[u] P2
 - BC-G10 wiki_set_metadata reaches ALL rows of a slug across branches (the migration found dup-row stragglers it couldn't touch). ⏳ P2
+- BC-G11 fan-out recall (UNIFIED_RECALL_ENABLED=True) scopes wiki results to caller directory (same eligible-set rule as legacy). ✅ `tests/e2e/test_scope_filter_e2e.py::TestScopeFilterE2E::test_db_clause_excludes_other_dir` P1
+
+### U. Unified recall fan-out (v6 T6 — UNIFIED_RECALL_ENABLED flag-ON only)
+- BC-U1 recall(type="all") returns BOTH mem:<id> and wiki:<slug> when both exist in scope. ✅ `tests/e2e/test_fusion_e2e.py::TestFusionE2E::test_fanout_returns_memory_and_wiki` P1
+- BC-U2 recall(type="memory") returns memories ONLY — zero wiki results. ✅ `tests/e2e/test_type_param_e2e.py::TestTypeParamE2E::test_type_memory_returns_only_memories` P1
+- BC-U3 recall(type="wiki") returns wiki pages ONLY — zero memory results. ✅ `tests/e2e/test_type_param_e2e.py::TestTypeParamE2E::test_type_wiki_returns_only_wiki` P1
+- BC-U4 a high-CE wiki page is retrievable even when irrelevant high-heat memories flood the memory pool (quota gate). ✅ `tests/e2e/test_fusion_e2e.py::TestFusionE2E::test_quota_prevents_source_starvation` P1
+- BC-U5 recall(type=<invalid>) raises ValueError immediately, before any retrieval work. ✅ `tests/e2e/test_type_param_e2e.py::TestTypeParamE2E::test_type_invalid_raises_before_retrieval` P1
 
 ### H. Hooks (directory stamping)
 - BC-H1 tool-usage capture hook stamps caller cwd. ⏳[u] P2
