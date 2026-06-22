@@ -88,6 +88,36 @@ pytest --lf                           # rerun last failures
 - Pre-commit invariant scripts (`scripts/check_*.py`) are real test gates — run `pre-commit run --all-files` before pushing.
 - **I32 — capability registry (HARD).** `docs/CAPABILITY_REGISTRY.md` is the source of truth for every feature/algorithm/behaviour (wired or not). When you add or remove a **Settings field** (`config.py`), an **MCP `@_tool`**, a **`_migration_NNN`**, or a **`BC-*`** row, add/update its entry in the SAME change — `scripts/check_capability_coverage.py` (pre-commit + CI `invariant-checks`) fails on any uncatalogued or stale surface item. A green lint proves the catalogue is COMPLETE, not that each `status:` is accurate — verify status when you touch the subsystem.
 
+## Running benchmarks (eval / LongMemEval)
+
+Two harnesses, both NON-GATING (informational quality measurement, not merge gates):
+
+- **`make eval`** — native golden set (`benchmarks/golden/golden_set.jsonl`), recall@k/MRR/nDCG. Fast. The golden set is an auto-drafted **bootstrap** (needs human curation) — treat numbers as indicative only.
+- **`make longmemeval`** — **LongMemEval** (the rigorous external benchmark, MIT-licensed dataset in `benchmarks/data/longmemeval/`). 500 questions, multi-session haystacks + gold answers; **self-seeds a frozen corpus per question into an isolated SurrealDB** (decay-proof, reproducible). This is the PRIMARY retrieval-quality measure. Defaults to retrieval-only + a stratified subset; `Q=<n>` overrides (`Q=0` = all 500).
+
+**Baseline to beat (v5.26.0, full 500):** overall recall@5 **0.87** · recall@10 **0.91** · MRR **0.93** · qa_accuracy **0.69**.
+
+### Must-knows (learned the hard way — 2026-06-22)
+
+- **Always pass `--unified`** to measure the live recall path (v5.80 fan-out + directory-scoping + MCP recall tool). Without it the runner calls `Retriever.recall()` directly = the LEGACY path. In `--unified` mode the runner calls `init_engines()` once to populate server `_state`; if you see `StorageEngine not initialized` on every question, that wiring regressed — fix it, don't ignore.
+- **Retrieval-only vs full QA:** add nothing → retrieval metrics only (fast, free). Drop `--retrieval-only` and add `--model claude-sonnet-4-6` → reader+judge LLM round-trips per question (adds `qa_accuracy`). Full QA is ~60–180s/question → **full 500 ≈ 7–22h**. Uses the Claude Code subscription (`claude -p`), not API billing.
+- **`--resume` + a stable `--output`** make it restartable: it skips questions already in `<output>_hypotheses.jsonl`. Re-run the exact same command to continue after any interruption.
+- **NEVER pipe the run through `head`** (`... | head -50`) — `head` closes the pipe after N lines → SIGPIPE/BrokenPipeError kills the run. Redirect to a logfile instead: `> /tmp/lme.log 2>&1`.
+
+### How to launch a LONG run (CRITICAL for AI agents)
+
+For multi-hour runs (full QA), launch as a **single plain background process** — `Bash(run_in_background=true)` — redirected to a logfile. You get ONE completion notification; re-launch with `--resume` if it dies.
+
+```bash
+PYTHONUNBUFFERED=1 OTEL_SDK_DISABLED=true uv run --extra test --extra ml \
+  python benchmarks/run_longmemeval.py --unified --variant s --model claude-sonnet-4-6 \
+  --output benchmarks/reports/lme_full.json --resume > /tmp/lme.log 2>&1
+```
+
+- **Do NOT wrap a long run in a sub-Agent, and do NOT arm a per-question Monitor.** An Agent re-wakes on every monitor event and re-reads its full context (~50k tokens) PER QUESTION → ~tens of millions of tokens over a 500-q run. A `Bash(run_in_background)` task is the correct mechanism: it persists across turns and notifies once on exit.
+- Watch progress cheaply by reading the logfile (`grep -c '\[.*/500\]' /tmp/lme.log`) or the hypotheses JSONL line count — NOT with a streaming per-line Monitor.
+- The run self-spawns + tears down its own isolated SurrealDB on a free port. If a kill leaks one, `bash scripts/reap-test-surreal.sh` cleans stale `yadgar_bench_surreal_*`. Never kill the production `entrypoint-backend.sh` / its `sleep 21600`.
+
 ## Code style
 
 - **Lint + format:** `ruff` (target `py314`, line length 100). Rules: `E, W, F, I, UP, B, C901, PLR0913`; ignores `E501, B008, UP007`. Max complexity 15, max args 8.
