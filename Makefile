@@ -36,7 +36,7 @@ YADGAR_BACKEND_VERSION := $(shell grep -m1 '^BACKEND_VERSION' $(REPO_ROOT)yadgar
         install-hooks install-agents config-sync install-rules \
         seed-anchors detect-runtime detect-os install-runtime clean check \
         pull-images bootstrap-secrets enable-units enable-units-linux enable-units-macos \
-        _enable-units-auto restore upgrade-test eval
+        _enable-units-auto restore upgrade-test eval longmemeval
 
 all: setup
 
@@ -302,6 +302,16 @@ eval:
 	@echo "    WARNING: golden set is BOOTSTRAP (auto-drafted) — REQUIRES HUMAN CURATION."
 	@echo "    Results are informational only until the golden set is reviewed."
 	@OTEL_SDK_DISABLED=true uv run --extra test --extra ml python benchmarks/run_eval.py
+
+## longmemeval: Run LongMemEval (external memory benchmark) via the unified MCP recall path (v5.80 fan-out).
+## Retrieval-only + a stratified subset by default (fast iteration). Override: `make longmemeval Q=100`,
+## pass extra flags via ARGS=..., full 500-q run: `make longmemeval Q=0 ARGS="--output benchmarks/reports/lme_full.json"`.
+## Requires: `surreal` on PATH (or YADGAR_DB_URL set). NON-GATING: informational quality measurement.
+Q ?= 30
+longmemeval:
+	@echo "==> LongMemEval (unified MCP recall · retrieval-only) — $(Q) questions (0=all) ..."
+	@OTEL_SDK_DISABLED=true uv run --extra test --extra ml python benchmarks/run_longmemeval.py \
+	    --unified --retrieval-only --variant s --stratify-per-type --max-questions $(Q) $(ARGS)
 
 ## upgrade-test: Print the manual upgrade-test runbook (see docs/UPGRADE_TEST.md)
 upgrade-test:

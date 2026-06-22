@@ -59,6 +59,10 @@ from yadgar.retrieval import Retriever
 from yadgar.storage import StorageEngine
 from yadgar.thermodynamics import MemoryThermodynamics
 
+# Directory the haystack is ingested under; recall must scope to the same value
+# when routed through the unified MCP path (directory-scoped fan-out).
+BENCHMARK_DIRECTORY = "/benchmark/longmemeval"
+
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
@@ -193,11 +197,15 @@ def compute_dataset_sha256(path: Path) -> str:
 def get_yadgar_commit() -> str | None:
     """Return current git HEAD SHA (40 hex chars), or None on failure."""
     try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
-            cwd=str(Path(__file__).parent.parent),
-            stderr=subprocess.DEVNULL,
-        ).decode().strip()
+        return (
+            subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=str(Path(__file__).parent.parent),
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
     except Exception:
         return None
 
@@ -205,10 +213,14 @@ def get_yadgar_commit() -> str | None:
 def get_claude_version() -> str | None:
     """Return `claude --version` output string, or None if binary absent."""
     try:
-        return subprocess.check_output(
-            ["claude", "--version"],
-            stderr=subprocess.DEVNULL,
-        ).decode().strip()
+        return (
+            subprocess.check_output(
+                ["claude", "--version"],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
     except Exception:
         return None
 
@@ -216,10 +228,14 @@ def get_claude_version() -> str | None:
 def get_surreal_version() -> str | None:
     """Return `surreal version` output string, or None if binary absent."""
     try:
-        return subprocess.check_output(
-            ["surreal", "version"],
-            stderr=subprocess.DEVNULL,
-        ).decode().strip()
+        return (
+            subprocess.check_output(
+                ["surreal", "version"],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
     except Exception:
         return None
 
@@ -463,7 +479,7 @@ def ingest_question_haystack(
                     "content": content,
                     "embedding": embedding,
                     "tags": tags,
-                    "directory_context": "/benchmark/longmemeval",
+                    "directory_context": BENCHMARK_DIRECTORY,
                     "heat": 1.0,
                     "is_stale": False,
                     "file_hash": None,
@@ -514,15 +530,48 @@ def compute_recall(retrieved_session_ids: list[str], gold_session_ids: set[str],
     return found / len(gold_session_ids)
 
 
+def _unified_recall(query: str, max_results: int, directory: str) -> list[dict]:
+    """Retrieve via the MCP recall tool (the unified fan-out path).
+
+    Mirrors run_eval.py's Step-0 fix: route through the SAME entry point MCP
+    callers use (yadgar.server.tools.recall.recall) instead of Retriever.recall(),
+    so v5.80's fan-out + directory-scoping + single-provider bypass are actually
+    measured. type="memory" because LongMemEval haystacks are memory-only (no
+    wiki); the flag is forced ON so the measurement is unambiguous regardless of
+    the isolated DB's config defaults. Returns the same list[dict] (each carrying
+    'id') as Retriever.recall, so the caller's id→session mapping is unchanged.
+    """
+    import sys as _sys
+
+    rm = _sys.modules.get("yadgar.server.tools.recall")
+    if rm is None:
+        import yadgar.server.tools.recall as rm  # type: ignore[no-redef]
+
+    rm.settings.UNIFIED_RECALL_ENABLED = True
+    recall_fn = rm.recall
+    try:
+        return recall_fn(
+            query, max_results=max_results, min_heat=0.0, directory=directory, type="memory"
+        )
+    except TypeError:
+        # Older signature without type= (pre-Step-5)
+        return recall_fn(query, max_results=max_results, min_heat=0.0, directory=directory)
+
+
 def evaluate_retrieval(
     question: dict,
     retriever: Retriever,
     session_map: dict[str, list[int]],
     max_results: int = 50,
+    unified: bool = False,
+    directory: str = BENCHMARK_DIRECTORY,
 ) -> dict:
     """Run retrieval and compute session-level metrics.
 
     Returns dict with recall@k and ndcg@k for k in {5, 10, 50}.
+
+    unified: when True, route through the MCP recall tool (fan-out / unified
+    path, v5.80) instead of Retriever.recall() (legacy memory-only path).
     """
     query = question["question"]
     gold_session_ids = set(question["answer_session_ids"])
@@ -534,7 +583,10 @@ def evaluate_retrieval(
 
     # Run retrieval (catch FTS5 syntax errors from apostrophes etc.)
     try:
-        results = retriever.recall(query, max_results=max_results, min_heat=0.0)
+        if unified:
+            results = _unified_recall(query, max_results, directory)
+        else:
+            results = retriever.recall(query, max_results=max_results, min_heat=0.0)
     except Exception as e:
         logger.warning("Retrieval failed for question %s: %s", question["question_id"], e)
         results = []
@@ -693,7 +745,7 @@ def judge_answer(question: dict, hypothesis: str) -> dict:
             json_str = response[response.index("{") : response.rindex("}") + 1]
             result = json.loads(json_str)
             return {"correct": bool(result.get("correct", False)), "raw": response}
-    except (json.JSONDecodeError, ValueError):
+    except json.JSONDecodeError, ValueError:
         pass
 
     # Fallback: look for yes/true/correct in response
@@ -743,6 +795,7 @@ def run_benchmark(
     output_path: str | None = None,
     stratify_per_type: bool = False,
     resume: bool = False,
+    unified: bool = False,
 ) -> dict:
     """Run the full LongMemEval benchmark.
 
@@ -769,6 +822,7 @@ def run_benchmark(
     if max_questions > 0:
         if stratify_per_type and question_types:
             from collections import defaultdict
+
             buckets: dict[str, list[dict]] = defaultdict(list)
             for q in data:
                 buckets[q["question_type"]].append(q)
@@ -789,10 +843,7 @@ def run_benchmark(
                     break
                 i += 1
             data = interleaved
-            print(
-                f"Stratified to {len(data)} questions "
-                f"(~{per_type} per type, interleaved)"
-            )
+            print(f"Stratified to {len(data)} questions (~{per_type} per type, interleaved)")
         else:
             data = data[:max_questions]
             print(f"Limited to {max_questions} questions")
@@ -804,7 +855,9 @@ def run_benchmark(
         variant_name = dataset_path.stem.replace("longmemeval_", "").replace("_cleaned", "")
         mode = "retrieval" if retrieval_only else "full"
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = str(Path(__file__).parent / "results" / f"longmemeval_{variant_name}_{mode}_{ts}.json")
+        output_path = str(
+            Path(__file__).parent / "results" / f"longmemeval_{variant_name}_{mode}_{ts}.json"
+        )
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     hyp_path = output_path.replace(".json", "_hypotheses.jsonl")
@@ -829,6 +882,7 @@ def run_benchmark(
         "timestamp": datetime.now(UTC).isoformat(),
         "total_questions": len(data),
         "retrieval_only": retrieval_only,
+        "unified_recall": unified,
         "max_results": max_results,
         "top_k_context": top_k_context,
         "settings_overrides": settings_overrides or {},
@@ -857,6 +911,7 @@ def run_benchmark(
 
     if not _server_mode:
         import shutil
+
         if not shutil.which("surreal"):
             print(
                 "WARNING: `surreal` binary not on PATH. "
@@ -871,6 +926,16 @@ def run_benchmark(
             os.environ["YADGAR_ALLOW_ROOT"] = "1"
             _server_mode = True
             print(f"SurrealDB ready on port {_port}")
+
+    # Unified mode: populate the server _state so the MCP recall tool can access
+    # storage/retriever/wiki (mirrors run_eval.py). init_engines binds to the same
+    # DB via YADGAR_DB_URL (server mode). Done once before the loop. Without this,
+    # the MCP recall path raises "StorageEngine not initialized".
+    if unified:
+        from yadgar import server as _srv  # noqa: PLC0415
+
+        print("Unified mode: initializing server engines for MCP recall path ...")
+        _srv.init_engines(db_path=os.environ.get("YADGAR_DB_PATH", settings.DB_PATH))
 
     start_time = time.monotonic()
 
@@ -927,7 +992,7 @@ def run_benchmark(
                 # Phase 1b: Retrieval evaluation
                 t_retrieve = time.monotonic()
                 retrieval_metrics = evaluate_retrieval(
-                    question, retriever, session_map, max_results=max_results
+                    question, retriever, session_map, max_results=max_results, unified=unified
                 )
                 retrieve_time = time.monotonic() - t_retrieve
 
@@ -985,14 +1050,15 @@ def run_benchmark(
             except Exception as _qerr:
                 # Don't let one bad question kill the whole run — record it as error
                 # so per-type aggregates remain comparable across runs.
-                print(f"\n  ERROR on {qid}: {type(_qerr).__name__}: {_qerr}",
-                      flush=True)
-                results["per_query"].append({
-                    "question_id": qid,
-                    "question_type": qtype,
-                    "is_abstention": is_abs,
-                    "error": f"{type(_qerr).__name__}: {_qerr}",
-                })
+                print(f"\n  ERROR on {qid}: {type(_qerr).__name__}: {_qerr}", flush=True)
+                results["per_query"].append(
+                    {
+                        "question_id": qid,
+                        "question_type": qtype,
+                        "is_abstention": is_abs,
+                        "error": f"{type(_qerr).__name__}: {_qerr}",
+                    }
+                )
             finally:
                 if storage is not None:
                     try:
@@ -1002,6 +1068,7 @@ def run_benchmark(
                 # Clean up per-question embedded tmpdir (server mode: None, skip).
                 if _q_tmpdir_path is not None:
                     import shutil as _q_shutil
+
                     _q_shutil.rmtree(_q_tmpdir_path, ignore_errors=True)
 
     finally:
@@ -1010,6 +1077,7 @@ def run_benchmark(
             teardown_surreal_proc(_spawned_proc)
         if _surreal_tmpdir is not None:
             import shutil as _shutil
+
             _shutil.rmtree(_surreal_tmpdir, ignore_errors=True)
         # Remove env var we injected (don't pollute caller env on function return).
         if _spawned_proc is not None:
@@ -1203,6 +1271,13 @@ def main():
         "incremental JSONL. Requires --output to be set explicitly so the path "
         "is stable across invocations.",
     )
+    parser.add_argument(
+        "--unified",
+        action="store_true",
+        help="Route retrieval through the unified MCP recall tool (v5.80 fan-out + "
+        "directory-scoping) instead of the legacy Retriever.recall() path. Measures "
+        "the path real MCP callers use.",
+    )
 
     args = parser.parse_args()
 
@@ -1226,6 +1301,7 @@ def main():
         output_path=args.output,
         stratify_per_type=args.stratify_per_type,
         resume=args.resume,
+        unified=args.unified,
     )
 
 
