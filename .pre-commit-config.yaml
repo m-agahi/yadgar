@@ -165,3 +165,8 @@ repos:
         entry: make e2e
         pass_filenames: false
         stages: [pre-push]
+        # Only gate pushes that touch code or the behavior contract. Docs-only /
+        # non-code pushes (plans, *.md, *.json, configs) skip the slow e2e run —
+        # they cannot change e2e outcomes. BEHAVIOR_CONTRACT.md is included
+        # because the e2e suite asserts its SHALL statements.
+        files: '(\.py$|(^|/)Makefile$|(^|/)pyproject\.toml$|(^|/)conftest\.py$|^docs/BEHAVIOR_CONTRACT\.md$)'
