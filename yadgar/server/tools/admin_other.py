@@ -204,14 +204,15 @@ def recent_memories(
 ) -> dict:
     """Return recently stored memories, newest first, without classifier dependency.
 
-    Useful for a quick summary of what was memorized recently — e.g. after
-    compaction to see what the session wrote before context was lost.
+    Use for quick temporal context ("what did I memorize in the last 24h?") or to
+    recover what the session wrote before a context compaction. For semantic search
+    use recall(); for fetching a single memory by ID use memory_get().
 
     Args:
-        limit: max memories to return (default 10, capped at 100).
-        since: how far back to look. Duration string ('24h', '7d', '30m') or
+        limit: Max memories to return (default 10, capped at 100).
+        since: How far back to look. Duration string ('24h', '7d', '30m') or
                ISO-8601 UTC datetime. Default '24h'.
-        directory: restrict to this project directory. Pass 'global' or omit
+        directory: Restrict to this project directory. Pass 'global' or omit
                    to search across all directories.
 
     Returns:
@@ -468,10 +469,17 @@ def get_rules(directory: str = "") -> list[dict]:
 
 @_tool()
 def memory_get(memory_id: int) -> dict | None:
-    """Fetch a memory record by integer ID.
+    """Fetch a memory by numeric ID (direct lookup).
 
-    Returns the memory dict, or None if not found.
-    Embedding bytes are stripped from the response.
+    Use when you already have a memory ID (from a prior recall result, error message,
+    or recent_memories output). For discovery/search use recall(query, directory);
+    for recent temporal context use recent_memories().
+
+    Args:
+        memory_id: Integer ID of the memory to fetch.
+
+    Returns:
+        Memory dict with all fields (embedding bytes stripped), or None if not found.
     """
     result = _st._storage.get_memory(int(memory_id))
     if result is None:
@@ -485,10 +493,17 @@ def memory_get(memory_id: int) -> dict | None:
 
 @_tool()
 def wiki_get(page_id: int) -> dict | None:
-    """Fetch a wiki page by integer ID.
+    """Fetch a wiki page by numeric ID (direct lookup).
 
-    Returns the wiki page dict, or None if not found.
-    Embedding bytes are stripped from the response.
+    Use when you already have a page_id (from wiki_list, wiki_add, or an error
+    message). For slug-based access use wiki_read(slug); for search use
+    recall(type="wiki", query=..., directory=...).
+
+    Args:
+        page_id: Integer ID of the wiki page to fetch.
+
+    Returns:
+        Wiki page dict with all fields (embedding bytes stripped), or None if not found.
     """
     result = _st._storage.get_wiki_page(int(page_id))
     if result is None:

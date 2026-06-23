@@ -348,6 +348,27 @@ class _WikiMixin:
         )
         return self._row_to_dict(rows[0]) if rows else None
 
+    @trace_span("storage.wiki.get_wiki_page_ids_by_slug")
+    def get_wiki_page_ids_by_slug(self, slug: str) -> list[int]:
+        """Return ALL integer page_ids for a given slug across all branches.
+
+        Unlike get_wiki_page_by_slug (LIMIT 1), this returns every row whose
+        slug matches — including per-branch rows and 'global' stragglers.
+        Used by WikiStore.set_metadata_by_slug to update all rows in one call.
+
+        Returns an empty list when no rows exist for the slug.
+        """
+        rows = self._q(
+            "SELECT id FROM wiki_page WHERE slug = $slug",
+            {"slug": slug},
+        )
+        ids: list[int] = []
+        for row in rows:
+            d = self._row_to_dict(row)
+            if d is not None and "id" in d:
+                ids.append(int(d["id"]))
+        return ids
+
     def get_wiki_page_by_slug_and_branch(
         self,
         slug: str,

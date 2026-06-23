@@ -16,7 +16,7 @@ Run: `make e2e` (local, real `surreal`) + pre-push hook; **excluded from CI**
 (`-m 'not e2e'`).
 
 **Surface (recounted v6 T6, self-enforced by `scripts/check_contract_coverage.py`):**
-**243 SHALLs / 39 subsystems.** Today: **49 ✅ · 190 ⏳ · 2 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47; + 1 🗑 DELETED — BC-T2 remember tool, v6 T3) Of the 190 ⏳:
+**248 SHALLs / 39 subsystems.** Today: **55 ✅ · 190 ⏳ · 1 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47; + 1 🗑 DELETED — BC-T2 remember tool, v6 T3) Of the 190 ⏳:
 **61 `[r]` (real-path coverage exists) · 96 `[u]` (unit-only) · 33 none.**
 Goal: every SHALL → ✅ or ❌.
 
@@ -79,7 +79,7 @@ Goal: every SHALL → ✅ or ❌.
 - BC-G7 wiki bookmarks CRUD. ⏳[r] P2
 - BC-G8 wiki_cleanup_merged_branches removes merged-branch pages. ⏳[u] P2
 - BC-G9 wiki edit primitives (set_metadata/anchor-text/positional/structural) mutate as specified, versioned. ⏳[u] P2
-- BC-G10 wiki_set_metadata reaches ALL rows of a slug across branches (the migration found dup-row stragglers it couldn't touch). ⏳ P2
+- BC-G10 wiki_set_metadata reaches ALL rows of a slug across branches (the migration found dup-row stragglers it couldn't touch). ✅ `tests/e2e/test_wiki_set_metadata_allrows.py::TestWikiSetMetadataAllRows::test_set_metadata_updates_all_rows_for_slug` P2
 - BC-G11 fan-out recall (UNIFIED_RECALL_ENABLED=True) scopes wiki results to caller directory (same eligible-set rule as legacy). ✅ `tests/e2e/test_scope_filter_e2e.py::TestScopeFilterE2E::test_db_clause_excludes_other_dir` P1
 
 ### U. Unified recall fan-out (v6 T6 — UNIFIED_RECALL_ENABLED flag-ON only)
@@ -184,7 +184,7 @@ Goal: every SHALL → ✅ or ❌.
 ### Astrocyte pool
 - BC-AC1 assign_memory routes a memory to a domain. ✅ `tests/test_astrocyte_pool.py::TestMemoryAssignment` P2
 - BC-AC2 domain consolidation runs per domain. ✅ `tests/e2e/test_phase2_subsystems.py::TestBCAC2_AstrocyteDomainConsolidation::test_consolidate_domain_produces_summary` P2
-- BC-AC3a consensus_retrieve merges results across domains into one ranked set. ❌ #41 P2
+- BC-AC3a consensus_retrieve merges results across domains into one ranked set. ✅ `tests/e2e/test_landscape_recall_e2e.py::TestLandscapeRecallE2E` P2
 - BC-AC3b if consensus_retrieve is disabled/removed, config reports it absent + emits exactly one startup warning. ⏳ #41 P2
 
 ### Knowledge graph / entities
@@ -361,6 +361,11 @@ Goal: every SHALL → ✅ or ❌.
 ### Viz / graph API
 - BC-VZ1 graph REST returns entity neighborhood + scores. ✅ `tests/e2e/test_viz_graph_fidelity_e2e.py::TestBCVZ1_GraphRESTEntityNeighborhoodScores::test_co_occurrence_edge_endpoints_match_seeded_entity_ids` P2
 - BC-VZ2 viz_search returns matching node ids from ALL directories — whole-DB by design for the god's-eye overlay; dir-scoping intentionally bypassed (not a BC-B3 violation: scoping lives at the MCP-tool layer, not the in-process method; localhost auth-gated). ✅ `tests/e2e/test_viz_graph_fidelity_e2e.py::TestBCVZ2_VizSearchWholeDB::test_viz_search_returns_nodes_from_all_directories` P2
+- BC-VZ-R1 every edge in the default /api/graph payload SHALL carry role ∈ {retrieval, informational}; transition + entity typed-relation edges SHALL have role=retrieval; temporal/causal/wiki_crossref/memory_wiki/semantic/memory_similarity_link SHALL have role=informational. ✅ `tests/e2e/test_viz_fidelity_v2_e2e.py::TestBCVZR1_EdgeRoleVocabulary::test_every_edge_has_valid_role_in_retrieval_informational` P2
+- BC-VZ-R2 the default /api/graph payload SHALL NOT include any edge with type=semantic (lazy-path only; available on-demand via /api/graph/edges?type=semantic). ✅ `tests/e2e/test_viz_fidelity_v2_e2e.py::TestBCVZR2_NoSemanticInDefaultPayload::test_no_semantic_edges_in_default_payload` P2
+- BC-VZ-R3 /api/graph payload SHALL include clusters[] sourced from real memory_cluster rows; each entry SHALL have id, source=memory_cluster, label, level, member_node_ids listing the mem:{id} nodes assigned to that cluster. ✅ `tests/e2e/test_viz_fidelity_v2_e2e.py::TestBCVZR3_ClusterPayload::test_seeded_cluster_appears_in_payload_with_correct_member_ids` P2
+- BC-VZ-R4 memory_similarity_link rows from the CLS phase SHALL appear as edges in the default /api/graph payload with type=memory_similarity_link and role=informational. ✅ `tests/e2e/test_viz_fidelity_v2_e2e.py::TestBCVZR4_SimilarityLinkEdges::test_seeded_similarity_link_appears_as_edge` P2
+- BC-VZ-F2 the yadgar daemon SHALL emit an SSE heat_updated event whenever a memory or entity heat score changes (real-time frontend patch without full reload). ⏳ e2e pending — SSE bus wiring not yet verified.
 
 ---
 

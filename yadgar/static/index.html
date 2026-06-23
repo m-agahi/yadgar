@@ -101,15 +101,9 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
 .stat-lbl { color: #8b949e; }
 .stat-val { color: #c9d1d9; font-weight: bold; }
 
-/* ── Disconnected clusters panel ───────────────────────── */
+/* ── Memory clusters panel (v5.80: real memory_cluster rows) ── */
 #cluster-panel { display: flex; flex-direction: column; gap: 4px; }
-#cluster-panel-toggle {
-  cursor: pointer; display: flex; justify-content: space-between;
-  align-items: center; user-select: none;
-}
-#cluster-panel-toggle:hover { color: #58a6ff; }
 #cluster-list { display: flex; flex-direction: column; gap: 3px; margin-top: 2px; }
-#cluster-list.collapsed { display: none; }
 .cluster-item {
   padding: 3px 6px;
   background: #21262d;
@@ -121,9 +115,21 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 5px;
 }
 .cluster-item:hover { background: #30363d; border-color: #58a6ff; color: #58a6ff; }
+.cluster-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 #cluster-none { color: #8b949e; font-size: 11px; }
+/* ── Edge legend role note ──────────────────────────────── */
+.edge-legend-role-note {
+  font-size: 9px;
+  color: #6e7681;
+  margin-top: 4px;
+  line-height: 1.4;
+  font-style: italic;
+}
 
 /* ── Canvas ────────────────────────────────────────────── */
 #canvas-wrap { flex: 1; position: relative; min-width: 0; }
@@ -990,11 +996,9 @@ body.dh-open #dh-toggle { right: 480px; }
       <div class="stat-row"><span class="stat-lbl">Visible</span><span class="stat-val" id="s-vis">—</span></div>
     </div>
     <div id="cluster-panel">
-      <div class="sec-title" id="cluster-panel-toggle" onclick="toggleClusterPanel()">
-        Disconnected Clusters <span id="cluster-chevron">▼</span>
-      </div>
+      <div class="sec-title">Memory Clusters</div>
       <div id="cluster-list">
-        <span id="cluster-none" style="display:none">None detected</span>
+        <span id="cluster-none">None</span>
       </div>
     </div>
   </div>
@@ -1069,18 +1073,20 @@ body.dh-open #dh-toggle { right: 480px; }
     <label style="pointer-events:auto"><input type="checkbox" id="fo-show-transition" checked> <span style="color:#3fb950">■</span> Transitions</label>
     <label style="pointer-events:auto"><input type="checkbox" id="fo-show-wiki-crossref" checked> <span style="color:#d2a8ff">■</span> Wiki Links</label>
     <label style="pointer-events:auto"><input type="checkbox" id="fo-show-memory-wiki" checked> <span style="color:#ffa657">■</span> Mem→Wiki</label>
+    <!-- v5.80: role semantics note -->
+    <div id="fo-edge-role-note" class="edge-legend-role-note">retrieval = affects recall ranking; informational = stored relationship, not a ranking signal</div>
   </div>
 </div>
 
-<!-- Clusters overlay -->
+<!-- Memory Clusters overlay (v5.80: real memory_cluster rows) -->
 <div class="floating-overlay" data-overlay-name="clusters" style="left:220px;top:180px">
   <div class="overlay-grip">
-    ⋮ Clusters
+    ⋮ Memory Clusters
     <button class="overlay-collapse" title="Collapse">−</button>
   </div>
   <div class="overlay-body">
     <div id="fo-cluster-list" style="display:flex;flex-direction:column;gap:3px">
-      <span id="fo-cluster-none" style="color:#8b949e;font-size:10px">None detected</span>
+      <span id="fo-cluster-none" style="color:#8b949e;font-size:10px">None</span>
     </div>
   </div>
 </div>
@@ -1440,7 +1446,7 @@ function _renderEdgeLegendOverlay() {
       const lbl = document.createElement('label');
       lbl.style.pointerEvents = 'auto';
       // Role badge CSS class
-      lbl.className = 'edge-legend-row' + (edge.role === 'retrieval' ? ' edge-role-retrieval' : ' edge-role-display');
+      lbl.className = 'edge-legend-row' + (edge.role === 'retrieval' ? ' edge-role-retrieval' : ' edge-role-informational');
 
       cb = document.createElement('input');
       cb.type = 'checkbox';
@@ -1529,6 +1535,75 @@ let _lazyEdgesLoaded = {};
 // the view stale so the user knows to Reload for accurate heat values.
 let _lastGraphLoadTime = 0;
 
+// ── Memory cluster state (v5.80: real memory_cluster rows) ──────────────────
+// Palette of visually distinct colors for cluster tinting (up to 12 clusters).
+const _CLUSTER_PALETTE = [
+  '#e06c75', '#61afef', '#e5c07b', '#98c379',
+  '#c678dd', '#56b6c2', '#d19a66', '#be5046',
+  '#528bff', '#f0c000', '#7ec8e3', '#a8cc8c',
+];
+// Map from node id → cluster ring color (populated by _applyClusterColors).
+let _nodeClusterColorMap = {};
+// Clusters data stored for _flyToCluster reuse.
+let _memoryClusters = [];
+
+// Apply cluster colors to node map and store cluster list.
+function _applyClusterColors(clusters) {
+  _nodeClusterColorMap = {};
+  _memoryClusters = clusters || [];
+  for (let i = 0; i < _memoryClusters.length; i++) {
+    const cl = _memoryClusters[i];
+    const color = _CLUSTER_PALETTE[i % _CLUSTER_PALETTE.length];
+    cl.__color = color;
+    for (const nid of (cl.member_node_ids || [])) {
+      _nodeClusterColorMap[nid] = color;
+    }
+  }
+}
+
+// Render memory clusters into sidebar (#cluster-list) and floating overlay (#fo-cluster-list).
+function renderMemoryClusters(clusters) {
+  _applyClusterColors(clusters);
+
+  const list = document.getElementById('cluster-list');
+  const none = document.getElementById('cluster-none');
+  if (!list) return;
+  // Clear previous items
+  for (const el of Array.from(list.querySelectorAll('.cluster-item'))) el.remove();
+
+  if (!_memoryClusters.length) {
+    if (none) { none.style.display = ''; none.textContent = 'None'; }
+    return;
+  }
+  if (none) none.style.display = 'none';
+
+  for (let i = 0; i < _memoryClusters.length; i++) {
+    const cl = _memoryClusters[i];
+    const color = cl.__color;
+    const memberCount = (cl.member_node_ids || []).length;
+
+    const item = document.createElement('div');
+    item.className = 'cluster-item';
+    item.title = `${cl.label} — ${memberCount} member(s), source: ${cl.source || 'memory_cluster'}`;
+
+    const dot = document.createElement('span');
+    dot.className = 'cluster-dot';
+    dot.style.background = color;
+    item.appendChild(dot);
+
+    const txt = document.createTextNode(`${cl.label} (${memberCount})`);
+    item.appendChild(txt);
+
+    // Click: fly to centroid of member nodes in current graph layout
+    item.addEventListener('click', () => {
+      const memberSet = new Set(cl.member_node_ids || []);
+      const nodes = allNodes.filter(n => memberSet.has(n.id));
+      _flyToCluster(nodes);
+    });
+    list.appendChild(item);
+  }
+}
+
 // ── Colour helpers ──────────────────────────────────────────────────────────
 function heatColor(h) {
   h = Math.max(0, Math.min(1, h || 0));
@@ -1538,12 +1613,16 @@ function heatColor(h) {
 
 // ── 3D node colour resolver (S2.1) ──────────────────────────────────────────
 // Used by .nodeColor() in 3D mode and by _applySearchHighlight re-trigger.
+// v5.80: clustered memory nodes use cluster color; unclustered use heat color.
 function _nodeColorFor(node) {
   const dimOpacity = YADGAR_VIZ_CONFIG.search.dim_opacity;
   if (node.__dimmed) return `rgba(80,80,80,${dimOpacity})`;
   const mod = window._graphDetailModule;
   const nt = mod ? mod.nodeType(node) : (node.type || '');
   if (nt === 'wiki') return _wikiCatColor()[node.category] || '#8b949e';
+  // v5.80: use cluster tint when node belongs to a real memory_cluster
+  const clusterColor = _nodeClusterColorMap[node.id];
+  if (clusterColor) return clusterColor;
   return heatColor(node.heat || 0);
 }
 
@@ -1599,7 +1678,7 @@ function _buildEdgeTypeMapFromConfig() {
   _edgeTypeMap = {};
   for (const e of edges) {
     _edgeTypeMap[e.key] = {
-      role: e.role || 'display',
+      role: e.role || 'informational',
       color: e.color || '#484f58',
       default_on: e.default_on !== false,
       lazy: e.lazy === true,
@@ -1616,20 +1695,21 @@ function _hexToRgbaInline(hex, alpha) {
   } catch { return `rgba(130,130,130,${alpha})`; }
 }
 
-// Role-distinguished link color: retrieval=full-opacity, display=dimmed(0.45)
+// Role-distinguished link color: retrieval=full-opacity, informational=dimmed(0.35)
 function _linkColor(l) {
   const meta = _edgeTypeMap[l.type];
   const baseColor = (meta && meta.color) || _edgeColor()[l.type] || '#484f58';
   if (meta && meta.role === 'retrieval') return baseColor;
-  return _hexToRgbaInline(baseColor, 0.45);
+  // informational edges: muted opacity — stored relationship, not a ranking signal
+  return _hexToRgbaInline(baseColor, 0.35);
 }
-// Role-distinguished link width: retrieval=1.5, transition=count-scaled, semantic=0.8, display=1.0
+// Role-distinguished link width: retrieval=1.5, transition=count-scaled, informational=0.8
 function _linkWidth(l) {
   if (l.type === 'transition') return Math.min(4, 1 + Math.log2(l.count || 1));
   const meta = _edgeTypeMap[l.type];
   if (meta && meta.role === 'retrieval') return 1.5;
-  if (l.type === 'semantic') return 0.8;
-  return 1.0;
+  // informational (including memory_similarity_link, temporal, wiki_crossref, etc.): thinner
+  return 0.8;
 }
 function _arrowLen(l) { return (l.type === 'transition' || l.type === 'memory_wiki' || l.type === 'wiki_crossref') ? YADGAR_VIZ_CONFIG.edge.arrow_len : 0; }
 
@@ -1809,6 +1889,15 @@ function drawNode(node, ctx, scale) {
   // Memory node
   const heat = node.heat || 0;
   const r = node.__pinned ? 9 : 6;
+  // v5.80: cluster ring — drawn behind the heat-filled circle
+  const clusterColor = _nodeClusterColorMap[node.id];
+  if (clusterColor) {
+    ctx.beginPath();
+    ctx.arc(node.x, node.y, r + 2.5 / scale + 1.5, 0, 2 * Math.PI);
+    ctx.strokeStyle = clusterColor;
+    ctx.lineWidth = 2.5 / scale;
+    ctx.stroke();
+  }
 
   ctx.beginPath();
   ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
@@ -1863,9 +1952,10 @@ async function loadGraph() {
       console.warn(`[yadgar viz] dropped ${dropped} orphan edges (endpoints not in node set). Backend payload drift?`);
     }
     calcDegrees();
+    // v5.80: consume real clusters[] from backend (memory_cluster rows)
+    renderMemoryClusters(d.clusters || []);
     graph.graphData({ nodes: allNodes, links: allLinks });
     applyFilters();
-    detectAndRenderClusters();
     // B: zoom-to-fit ALL nodes (including disconnected) on load
     graph.zoomToFit(600, 50);
     // F2: stamp load time so SSE can mark view stale when heat drifts.
@@ -1903,93 +1993,7 @@ function calcDegrees() {
   for (const n of allNodes) n.__deg = deg[n.id] || 0;
 }
 
-// ── Disconnected cluster detection (BFS, v5.3.10) ───────────────────────────
-let _clusterPanelOpen = true;
-
-function toggleClusterPanel() {
-  _clusterPanelOpen = !_clusterPanelOpen;
-  document.getElementById('cluster-list').classList.toggle('collapsed', !_clusterPanelOpen);
-  document.getElementById('cluster-chevron').textContent = _clusterPanelOpen ? '▼' : '▶';
-}
-
-function _inferClusterLabel(nodes) {
-  // Most-common tags[0]; fallback to directory_context prefix
-  const freq = {};
-  for (const n of nodes) {
-    const tag = n.tags?.[0] || (n.directory_context || '').split('/').filter(Boolean)[0];
-    if (tag) freq[tag] = (freq[tag] || 0) + 1;
-  }
-  const best = Object.entries(freq).sort((a,b) => b[1]-a[1])[0];
-  return best ? best[0] : 'unlabeled';
-}
-
-function detectAndRenderClusters() {
-  if (!allNodes.length) return;
-
-  // Build adjacency map using resolved IDs
-  const adj = {};
-  for (const n of allNodes) adj[n.id] = new Set();
-  for (const l of allLinks) {
-    const s = l.source?.id ?? l.source;
-    const t = l.target?.id ?? l.target;
-    if (adj[s] && adj[t]) { adj[s].add(t); adj[t].add(s); }
-  }
-
-  // BFS flood-fill to find connected components
-  const visited = new Set();
-  const components = [];
-  for (const n of allNodes) {
-    if (visited.has(n.id)) continue;
-    const comp = [];
-    const queue = [n.id];
-    visited.add(n.id);
-    while (queue.length) {
-      const cur = queue.shift();
-      comp.push(cur);
-      for (const nb of (adj[cur] || [])) {
-        if (!visited.has(nb)) { visited.add(nb); queue.push(nb); }
-      }
-    }
-    components.push(comp);
-  }
-
-  // Largest component = main graph; rest are disconnected
-  components.sort((a,b) => b.length - a.length);
-  const orphans = components.slice(1).filter(c => c.length >= 3);
-
-  console.log('[yadgar-viz] cluster detection: total components=' + components.length +
-    ', main=' + (components[0]?.length ?? 0) +
-    ', disconnected(≥3)=' + orphans.length +
-    (orphans.length ? ', sizes=' + orphans.map(c=>c.length).join(',') : ''));
-
-  // Build node lookup for centroid calculation
-  const nodeById = {};
-  for (const n of allNodes) nodeById[n.id] = n;
-
-  // Render sidebar
-  const list = document.getElementById('cluster-list');
-  const none = document.getElementById('cluster-none');
-  // Remove old cluster items (keep #cluster-none)
-  for (const el of Array.from(list.querySelectorAll('.cluster-item'))) el.remove();
-
-  if (!orphans.length) {
-    none.style.display = '';
-    return;
-  }
-  none.style.display = 'none';
-
-  for (const comp of orphans) {
-    const compNodes = comp.map(id => nodeById[id]).filter(Boolean);
-    const label = _inferClusterLabel(compNodes);
-    const item = document.createElement('div');
-    item.className = 'cluster-item';
-    item.title = `${label} — ${comp.length} nodes`;
-    item.textContent = `${label} (${comp.length})`;
-    item.addEventListener('click', () => _flyToCluster(compNodes));
-    list.appendChild(item);
-  }
-}
-
+// ── Fly-to-cluster (used by renderMemoryClusters click handlers) ─────────────
 function _flyToCluster(nodes) {
   if (!graph || !nodes.length) return;
   const xs = nodes.map(n => n.x).filter(v => v != null);
@@ -2335,6 +2339,27 @@ function connectSSE() {
         }
         status(`wiki removed · ${allNodes.length} total`, 'ok');
         applyFilters();
+      } else if (msg.event === 'heat_updated' && msg.updates) {
+        // v5.80: patch node heat values without a full reload.
+        // msg.updates: [{id: "mem:N", heat: float}, ...]
+        let patched = 0;
+        const updateMap = {};
+        for (const u of msg.updates) { if (u.id) updateMap[u.id] = u.heat; }
+        for (const n of allNodes) {
+          if (n.id in updateMap) {
+            n.heat = updateMap[n.id];
+            patched++;
+          }
+        }
+        if (patched > 0) {
+          applyFilters();
+          if (_graphMode === '3d') {
+            graph.nodeColor(_nodeColorFor).nodeThreeObject(_makeNodeThreeObject);
+          } else {
+            graph.nodeCanvasObject(drawNode).nodeCanvasObjectMode(() => 'replace');
+          }
+          status(`heat updated (${patched} node${patched === 1 ? '' : 's'})`, 'ok');
+        }
       }
     } catch(_) {}
   };
@@ -3327,7 +3352,7 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
     if (orig) statObserver.observe(orig, { childList: true, characterData: true, subtree: true });
   }
 
-  // Sync cluster items from hidden #cluster-list → #fo-cluster-list
+  // Sync memory cluster items from hidden #cluster-list → #fo-cluster-list (v5.80)
   // Click on overlay item delegates to corresponding original item (preserves _flyToCluster binding).
   function _syncClusterOverlay() {
     const origList = document.getElementById('cluster-list');

@@ -8,6 +8,9 @@ v5.50.13: extracted from scattered literals in graph_api.py / index.html.
 v5.54.3: added `role` field (retrieval|display) per EDGE_CONTRACT; added 5
     entity typed-relation types (co_occurrence, imports, calls, resolved_by,
     caused_by) — the retrieval-active entity graph now visible in viz.
+v5.80 (#80 viz-fidelity-v2): renamed role "display" → "informational" to
+    reflect accurate semantics (these edges carry real structural info, not
+    mere decoration). Added memory_similarity_link edge type.
 """
 
 from __future__ import annotations
@@ -24,10 +27,11 @@ if TYPE_CHECKING:
 # Colors come from Settings at response time (see http.py api_viz_config).
 # 'causal' uses fallback #484f58 — no VIZ_EDGE_COLOR_CAUSAL setting.
 #
-# role (v5.54.3, per docs/EDGE_CONTRACT.md):
-#   "retrieval" — feeds recall ranking (PPR / spreading / precomputed prior).
-#                 These are the load-bearing edges; styled solid/brighter.
-#   "display"   — viz only; decorative / structural teaching. Styled dashed/dimmer.
+# role (v5.54.3, per docs/EDGE_CONTRACT.md; renamed v5.80 viz-fidelity-v2):
+#   "retrieval"     — feeds recall ranking (PPR / spreading / precomputed prior).
+#                     These are the load-bearing edges; styled solid/brighter.
+#   "informational" — structural or derived; not wired to retrieval scoring.
+#                     Styled dashed/dimmer. Renamed from "display" in v5.80.
 #
 # Entity typed-relations (co_occurrence/imports/calls/resolved_by/caused_by):
 #   role=retrieval — these power PPR + spreading in balanced/full profiles, and
@@ -35,24 +39,24 @@ if TYPE_CHECKING:
 #   capability — previously invisible in the viz.
 #
 # default_on (v5.54.3): whether the toggle is checked by default.
-#   retrieval-role edges default ON; heavy display-only (semantic) OFF.
+#   retrieval-role edges default ON; heavy informational-only (semantic) OFF.
 EDGE_TYPES: dict[str, dict] = {
-    # ── Display-only (semantic similarity — redundant with vector retrieval) ──
+    # ── Informational (semantic similarity — redundant with vector retrieval) ─
     "semantic": {
         "label": "Semantic",
-        "description": "Cosine-similarity link between nodes with similar content (≥0.75 threshold). Display only — redundant with the vector signal recall already uses.",
+        "description": "Cosine-similarity link between nodes with similar content (≥0.75 threshold). Informational — redundant with the vector signal recall already uses.",
         "settings_color_key": "VIZ_EDGE_COLOR_SEMANTIC",
         "fallback_color": "#1f6feb",
-        "role": "display",
+        "role": "informational",
         "default_on": False,  # lazy; heavy O(n²) — off by default
     },
-    # ── Display-only (temporal slot co-membership — weak signal) ─────────────
+    # ── Informational (temporal slot co-membership — weak signal) ────────────
     "temporal": {
         "label": "Temporal",
-        "description": "Co-occurrence in time: two memories stored within the same temporal slot. Display only — weak signal, not wired to retrieval.",
+        "description": "Co-occurrence in time: two memories stored within the same temporal slot. Informational — weak signal, not wired to retrieval.",
         "settings_color_key": "VIZ_EDGE_COLOR_TEMPORAL",
         "fallback_color": "#6e40c9",
-        "role": "display",
+        "role": "informational",
         "default_on": True,
     },
     # ── Retrieval-active (co-recall precomputed prior, v5.54.2) ──────────────
@@ -64,31 +68,40 @@ EDGE_TYPES: dict[str, dict] = {
         "role": "retrieval",
         "default_on": True,
     },
-    # ── Display-only (wiki structure) ─────────────────────────────────────────
+    # ── Informational (wiki structure) ────────────────────────────────────────
     "wiki_crossref": {
         "label": "Wiki Link",
-        "description": "Explicit cross-reference between two wiki pages (from page [[link]] syntax). Display only.",
+        "description": "Explicit cross-reference between two wiki pages (from page [[link]] syntax). Informational — structural, not retrieval-active.",
         "settings_color_key": "VIZ_EDGE_COLOR_WIKI_CROSSREF",
         "fallback_color": "#d2a8ff",
-        "role": "display",
+        "role": "informational",
         "default_on": True,
     },
-    # ── Display-only (memory→wiki provenance) ────────────────────────────────
+    # ── Informational (memory→wiki provenance) ───────────────────────────────
     "memory_wiki": {
         "label": "Mem→Wiki",
-        "description": "A memory was used as a source when the linked wiki page was created. Display only.",
+        "description": "A memory was used as a source when the linked wiki page was created. Informational — provenance link, not retrieval-active.",
         "settings_color_key": "VIZ_EDGE_COLOR_MEMORY_WIKI",
         "fallback_color": "#ffa657",
-        "role": "display",
+        "role": "informational",
         "default_on": True,
     },
-    # ── Display-only (PC-algorithm causal discovery) ──────────────────────────
+    # ── Informational (PC-algorithm causal discovery) ─────────────────────────
     "causal": {
         "label": "Causal",
-        "description": "Causal relationship between two entity nodes, inferred by causal-discovery algorithm. Display only — causal ≠ retrieval relevance.",
+        "description": "Causal relationship between two entity nodes, inferred by causal-discovery algorithm. Informational — causal ≠ retrieval relevance.",
         "settings_color_key": None,  # No VIZ_EDGE_COLOR_CAUSAL — renders at fallback
         "fallback_color": "#484f58",
-        "role": "display",
+        "role": "informational",
+        "default_on": True,
+    },
+    # ── Informational (near-duplicate memory pairs from CLS phase) ────────────
+    "memory_similarity_link": {
+        "label": "Near-Duplicate",
+        "description": "Near-duplicate memory pair detected by CLS phase (cosine ≥ threshold). Informational — structural dedup signal, not a retrieval edge.",
+        "settings_color_key": None,
+        "fallback_color": "#58a6ff",
+        "role": "informational",
         "default_on": True,
     },
     # ── Retrieval-active entity typed-relations (the big hidden capability) ───
@@ -234,7 +247,7 @@ def build_legend(settings: Settings) -> dict:
             "color": edge_colors[key],
             "label": meta["label"],
             "description": meta["description"],
-            "role": meta.get("role", "display"),
+            "role": meta.get("role", "informational"),
             "default_on": meta.get("default_on", True),
             "lazy": key in LAZY_EDGE_TYPES,
         }

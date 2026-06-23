@@ -1603,22 +1603,32 @@ def _project_brief_catalog_full(ctx: dict) -> dict:
 
 @_tool()
 def project_brief(directory: str, mode: str = "catalog", branch_hint: str | None = None) -> dict:
-    """Return a layered project context snapshot.
+    """Return a layered project context snapshot for the given directory.
 
-    mode="signals" (<100 tokens): pure binary signals + age numerics + recommended_actions.
-      Audience: stop-hook — needs minimal flags to decide which write actions to fire.
-      No anchors, no hot_memories, no wiki keys, no _render.
-    mode="restore" (<800 tokens): anchors + hot_memories + checkpoint + wiki keys.
-      Audience: post-/clear, post-/compact context restoration.
-      Single top_anchors list with scope field per entry.  No signal flags, no _render.
-    mode="catalog" (~500 tokens): DEPRECATED (v5.7.12). Kept for back-compat.
-      Returns current full shape: signals, anchors, presence flags, hot_memories,
-      key_wiki_pages, checkpoint, _render.  Will be removed in v5.8.
-    mode="full" (~1050 tokens): superset of catalog + inlined init_memory, active_work,
-      expanded hot_memories, and key_wiki_pages.
-    branch_hint: optional branch name supplied by the host-side hook (v5.1.9).
-      When present, used directly — host has git visibility; container does not.
-      When absent, falls back to _get_current_branch(resolved).
+    Choose mode based on your use-case — new callers should use "signals" or "restore":
+
+    mode="signals" (<100 tokens): stop-hook mode. Binary flags + age numerics +
+        recommended_actions only. No anchors, no hot_memories, no wiki keys, no _render.
+        Use in stop-hooks that need minimal signals to decide which write actions to fire.
+    mode="restore" (~800 tokens): post-compaction context restoration. Returns
+        anchors + hot_memories + checkpoint + wiki keys. Single top_anchors list with
+        scope field per entry. No signal flags, no _render.
+        Use after /clear or /compact to reconstruct working context.
+    mode="catalog" (~500 tokens): DEPRECATED (v5.7.12) — avoid for new calls.
+        Kept for back-compat. Returns signals, anchors, presence flags, hot_memories,
+        key_wiki_pages, checkpoint, _render. Will be removed in v5.8.
+    mode="full" (~1050 tokens): debug superset of catalog + inlined init_memory,
+        active_work, expanded hot_memories, and key_wiki_pages. Use for deep
+        debugging; too verbose for routine session start.
+
+    Args:
+        directory: Project root directory path (required).
+        mode: One of "signals", "restore", "catalog" (deprecated), "full".
+            Default "catalog" is kept only for back-compat — prefer "signals" or
+            "restore" for all new callers.
+        branch_hint: Optional branch name from the host-side hook (v5.1.9). When
+            present, used directly (host has git visibility; container does not).
+            When absent, falls back to _get_current_branch(resolved).
     """
     resolved = _resolve_project_root(directory)
     storage = _get_storage()

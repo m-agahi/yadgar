@@ -7,6 +7,26 @@ from yadgar.tracing import trace_span
 _log = logging.getLogger(__name__)
 
 
+def _coerce_record_id(raw_id) -> int | None:
+    """Coerce a SurrealDB record id (int, RecordID, or 'table:NN' string) to int, or None."""
+    if raw_id is None:
+        return None
+    if isinstance(raw_id, int):
+        return raw_id
+    if hasattr(raw_id, "id"):
+        try:
+            return int(raw_id.id)
+        except Exception:
+            return None
+    s = str(raw_id)
+    if ":" in s:
+        s = s.rsplit(":", 1)[-1]
+    try:
+        return int(s.strip("'\""))
+    except Exception:
+        return None
+
+
 class _ClusterMixin:
     """Memory cluster + similarity link CRUD — mixed into StorageEngine."""
 
@@ -135,3 +155,35 @@ class _ClusterMixin:
         """Return all memory_similarity_link rows. Used for pre-loading before batch writes."""
         rows = self._q("SELECT * FROM memory_similarity_link")
         return self._rows_to_dicts(rows)
+
+    # ------------------------------------------------------------------ Cluster read helpers (v5.80)
+
+    def get_memory_clusters(self) -> list[dict]:
+        """Return all memory_cluster rows (for viz consumption).
+
+        v5.80 (#80 viz-fidelity-v2): previously DORMANT — now consumed by
+        GraphAPI.get_full_graph() to surface real cluster data in clusters[].
+        """
+        rows = self._q("SELECT * FROM memory_cluster ORDER BY heat DESC")
+        return self._rows_to_dicts(rows)
+
+    def get_cluster_members(self, cluster_id: int) -> list[int]:
+        """Return integer memory IDs assigned to *cluster_id*.
+
+        Membership is stored as cluster_id on the memory row (set by
+        sleep_compute/community.py via update_memory_fields).
+
+        v5.80 (#80 viz-fidelity-v2): first consumer — used by GraphAPI to
+        populate member_node_ids in clusters[].
+        """
+        cid = int(cluster_id)
+        rows = self._q(
+            "SELECT id FROM memory WHERE cluster_id = $cid",
+            {"cid": cid},
+        )
+        result: list[int] = []
+        for row in rows:
+            mid = _coerce_record_id(row.get("id"))
+            if mid is not None:
+                result.append(mid)
+        return result

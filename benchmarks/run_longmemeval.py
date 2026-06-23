@@ -530,7 +530,9 @@ def compute_recall(retrieved_session_ids: list[str], gold_session_ids: set[str],
     return found / len(gold_session_ids)
 
 
-def _unified_recall(query: str, max_results: int, directory: str) -> list[dict]:
+def _unified_recall(
+    query: str, max_results: int, directory: str, mode: str | None = None
+) -> list[dict]:
     """Retrieve via the MCP recall tool (the unified fan-out path).
 
     Mirrors run_eval.py's Step-0 fix: route through the SAME entry point MCP
@@ -540,6 +542,11 @@ def _unified_recall(query: str, max_results: int, directory: str) -> list[dict]:
     wiki); the flag is forced ON so the measurement is unambiguous regardless of
     the isolated DB's config defaults. Returns the same list[dict] (each carrying
     'id') as Retriever.recall, so the caller's id→session mapping is unchanged.
+
+    mode: optional recall mode (e.g. "landscape" → consensus_retrieve, #67). When
+    set, it is passed through to the recall tool; mode dispatch takes precedence
+    over type. Lets the benchmark measure an alternate retrieval mode (landscape)
+    vs the default arm against the same frozen corpus.
     """
     import sys as _sys
 
@@ -549,12 +556,18 @@ def _unified_recall(query: str, max_results: int, directory: str) -> list[dict]:
 
     rm.settings.UNIFIED_RECALL_ENABLED = True
     recall_fn = rm.recall
+    kwargs: dict = {
+        "max_results": max_results,
+        "min_heat": 0.0,
+        "directory": directory,
+        "type": "memory",
+    }
+    if mode:
+        kwargs["mode"] = mode
     try:
-        return recall_fn(
-            query, max_results=max_results, min_heat=0.0, directory=directory, type="memory"
-        )
+        return recall_fn(query, **kwargs)
     except TypeError:
-        # Older signature without type= (pre-Step-5)
+        # Older signature without type=/mode= — fall back to the minimal call.
         return recall_fn(query, max_results=max_results, min_heat=0.0, directory=directory)
 
 
@@ -565,6 +578,7 @@ def evaluate_retrieval(
     max_results: int = 50,
     unified: bool = False,
     directory: str = BENCHMARK_DIRECTORY,
+    mode: str | None = None,
 ) -> dict:
     """Run retrieval and compute session-level metrics.
 
@@ -572,6 +586,9 @@ def evaluate_retrieval(
 
     unified: when True, route through the MCP recall tool (fan-out / unified
     path, v5.80) instead of Retriever.recall() (legacy memory-only path).
+    mode: optional recall mode (e.g. "landscape", #67) forwarded to the unified
+    recall tool. Only effective with unified=True. Lets the benchmark measure an
+    alternate mode against the same frozen corpus.
     """
     query = question["question"]
     gold_session_ids = set(question["answer_session_ids"])
@@ -584,7 +601,7 @@ def evaluate_retrieval(
     # Run retrieval (catch FTS5 syntax errors from apostrophes etc.)
     try:
         if unified:
-            results = _unified_recall(query, max_results, directory)
+            results = _unified_recall(query, max_results, directory, mode=mode)
         else:
             results = retriever.recall(query, max_results=max_results, min_heat=0.0)
     except Exception as e:
@@ -796,6 +813,7 @@ def run_benchmark(
     stratify_per_type: bool = False,
     resume: bool = False,
     unified: bool = False,
+    mode: str | None = None,
 ) -> dict:
     """Run the full LongMemEval benchmark.
 
@@ -883,6 +901,7 @@ def run_benchmark(
         "total_questions": len(data),
         "retrieval_only": retrieval_only,
         "unified_recall": unified,
+        "recall_mode": mode,
         "max_results": max_results,
         "top_k_context": top_k_context,
         "settings_overrides": settings_overrides or {},
@@ -992,7 +1011,12 @@ def run_benchmark(
                 # Phase 1b: Retrieval evaluation
                 t_retrieve = time.monotonic()
                 retrieval_metrics = evaluate_retrieval(
-                    question, retriever, session_map, max_results=max_results, unified=unified
+                    question,
+                    retriever,
+                    session_map,
+                    max_results=max_results,
+                    unified=unified,
+                    mode=mode,
                 )
                 retrieve_time = time.monotonic() - t_retrieve
 
@@ -1278,6 +1302,13 @@ def main():
         "directory-scoping) instead of the legacy Retriever.recall() path. Measures "
         "the path real MCP callers use.",
     )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default=None,
+        help="Recall mode forwarded to the unified recall tool (e.g. 'landscape' for "
+        "consensus_retrieve, #67). Only effective with --unified. Default arm = no mode.",
+    )
 
     args = parser.parse_args()
 
@@ -1301,6 +1332,7 @@ def main():
         output_path=args.output,
         stratify_per_type=args.stratify_per_type,
         resume=args.resume,
+        mode=args.mode,
         unified=args.unified,
     )
 

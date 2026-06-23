@@ -1333,6 +1333,79 @@ class WikiStore:
             "version_id": new_version,
         }
 
+    def set_metadata_by_slug(
+        self,
+        slug: str,
+        field: str,
+        value: str | None,
+    ) -> dict:
+        """Set directory_context or branch on ALL rows sharing a slug.
+
+        Unlike set_metadata(page_id, ...) which targets one row, this method
+        fetches EVERY page_id for the slug (across all branches + global
+        stragglers) via storage.get_wiki_page_ids_by_slug and applies
+        set_metadata to each.
+
+        Field validation + no-op detection delegate to set_metadata per row
+        so the audit trail, version rows, and idempotency all work correctly.
+
+        Returns:
+            {ok: True, slug, rows_updated, page_ids}   on success
+            {ok: False, error}                          on validation failure or slug not found
+
+        Ref: BC-G10.
+        """
+        # Validate field + value up front (mirrors set_metadata validation).
+        if field not in self._METADATA_FIELDS:
+            return {
+                "ok": False,
+                "error": f"invalid field '{field}' — allowed: {sorted(self._METADATA_FIELDS)}",
+            }
+        if field == "directory_context":
+            if not value or (value != "global" and not value.startswith("/")):
+                return {
+                    "ok": False,
+                    "error": (
+                        "directory_context must be 'global' or an absolute path "
+                        f"(starts with '/'); got {value!r}"
+                    ),
+                }
+        elif field == "branch":
+            if value is not None and value == "":
+                return {
+                    "ok": False,
+                    "error": "branch must be null (canonical) or a non-empty string",
+                }
+
+        page_ids = self._storage.get_wiki_page_ids_by_slug(slug)
+        if not page_ids:
+            return {"ok": False, "error": f"Wiki page '{slug}' not found"}
+
+        rows_updated = 0
+        for pid in page_ids:
+            result = self.set_metadata(pid, field, value)
+            if result.get("ok") and result.get("changed"):
+                rows_updated += 1
+
+        logger.info(
+            "set_metadata_by_slug: slug=%r field=%s value=%r rows_total=%d rows_updated=%d",
+            slug,
+            field,
+            value,
+            len(page_ids),
+            rows_updated,
+        )
+        return {
+            "ok": True,
+            "slug": slug,
+            "rows_updated": rows_updated,
+            "page_ids": page_ids,
+            # Back-compat keys for callers that check the single-row shape.
+            # page_id = first resolved id; changed = any row was updated.
+            "page_id": page_ids[0],
+            "changed": rows_updated > 0,
+        }
+
     def _apply_text_edit(
         self,
         page_id: int,
