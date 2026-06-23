@@ -4,6 +4,11 @@ v5.54.3: entity typed-relation edges (co_occurrence/imports/calls/resolved_by/ca
 now included in the default /api/graph payload with role="retrieval" sourced from
 EDGE_TYPES (viz_meta.py). Semantic edges moved to lazy path (/api/graph/edges?type=semantic)
 — not in the default payload. All edges carry a `role` field.
+
+v5.80 (#80 viz-fidelity-v2): role vocabulary renamed display→informational in viz_meta.
+clusters[] added to get_full_graph() payload (real memory_cluster rows via
+get_memory_clusters() + get_cluster_members()). memory_similarity_link edges added
+(_build_similarity_link_edges) with role="informational".
 """
 
 import gc
@@ -121,6 +126,9 @@ class GraphAPI:
         # ── Entity typed-relation edges (v5.54.3 — retrieval-active, was invisible) ─
         edges.extend(self._build_entity_rel_edges())
 
+        # ── Memory similarity-link edges (v5.80 — informational near-duplicate links) ─
+        edges.extend(self._build_similarity_link_edges(mem_ids))
+
         # ── Orphan-edge filter (v5.10.9) ──────────────────────────────────────
         node_ids = {n["id"] for n in nodes}
         filtered_edges = [
@@ -134,10 +142,14 @@ class GraphAPI:
             )
             yadgar_graph_api_orphan_edges_dropped_total.inc(orphan_count)
 
+        # ── Cluster payload (v5.80 — real memory_cluster rows) ────────────────
+        clusters = self._build_clusters_payload(mem_ids)
+
         return {
             "nodes": nodes,
             "edges": filtered_edges,
             "weak_edges_hidden": weak_edges_hidden,  # F4 affordance — never silently drop DB truth
+            "clusters": clusters,  # BC-VZ-R3: real memory_cluster rows (informational)
         }
 
     def _assemble_memory_nodes(
@@ -179,7 +191,7 @@ class GraphAPI:
 
     def _build_temporal_edges(self, slot_map: dict[int, list[tuple[int, str]]]) -> list[dict]:
         """Build temporal edges from slot_map (memories sharing an engram slot)."""
-        role = EDGE_TYPES.get("temporal", {}).get("role", "display")
+        role = EDGE_TYPES.get("temporal", {}).get("role", "informational")
         result = []
         for _slot, members in slot_map.items():
             if len(members) > 10:
@@ -266,7 +278,7 @@ class GraphAPI:
 
     def _build_wiki_crossref_edges(self, wiki_slug_to_id: dict[str, str]) -> list[dict]:
         """Build wiki cross-reference edges from wiki_crossref table."""
-        role = EDGE_TYPES.get("wiki_crossref", {}).get("role", "display")
+        role = EDGE_TYPES.get("wiki_crossref", {}).get("role", "informational")
         try:
             crossrefs = self._s.get_all_wiki_crossrefs()
         except Exception:
@@ -281,7 +293,7 @@ class GraphAPI:
 
     def _build_memory_wiki_edges(self, wiki_pages: list[dict], mem_ids: set[int]) -> list[dict]:
         """Build memory→wiki edges from wiki_page.source_memory_ids."""
-        role = EDGE_TYPES.get("memory_wiki", {}).get("role", "display")
+        role = EDGE_TYPES.get("memory_wiki", {}).get("role", "informational")
         result = []
         for wp in wiki_pages:
             raw_id = self._extract_id(wp.get("id"))
@@ -308,7 +320,7 @@ class GraphAPI:
         C1: filter out invalidated edges by default.
         v5.29.0: as_of parameter enables point-in-time graph snapshots.
         """
-        role = EDGE_TYPES.get("causal", {}).get("role", "display")
+        role = EDGE_TYPES.get("causal", {}).get("role", "informational")
         try:
             causal_edges_raw = self._s.get_all_causal_edges(
                 include_invalidated=include_invalidated, as_of=as_of
@@ -362,6 +374,73 @@ class GraphAPI:
                     "type": rel_type,
                     "weight": float(rel.get("weight") or 1.0),
                     "role": EDGE_TYPES[rel_type].get("role", "retrieval"),
+                }
+            )
+        return result
+
+    def _build_similarity_link_edges(self, mem_ids: set[int]) -> list[dict]:
+        """Build memory_similarity_link edges from CLS-phase near-duplicate links.
+
+        v5.80 (#80 viz-fidelity-v2): first viz consumer of memory_similarity_link.
+        role="informational" — structural dedup signal, not a retrieval edge.
+        Only emits edges where both endpoints are in the current node set.
+        """
+        role = EDGE_TYPES.get("memory_similarity_link", {}).get("role", "informational")
+        try:
+            links = self._s.get_all_memory_similarity_links()
+        except Exception:
+            links = []
+        result = []
+        for lnk in links:
+            src_id = self._extract_id(lnk.get("source_memory_id"))
+            tgt_id = self._extract_id(lnk.get("target_memory_id"))
+            if src_id is None or tgt_id is None:
+                continue
+            if src_id not in mem_ids or tgt_id not in mem_ids:
+                continue
+            result.append(
+                {
+                    "source": f"mem:{src_id}",
+                    "target": f"mem:{tgt_id}",
+                    "type": "memory_similarity_link",
+                    "weight": float(lnk.get("weight") or 0.0),
+                    "role": role,
+                }
+            )
+        return result
+
+    def _build_clusters_payload(self, mem_ids: set[int]) -> list[dict]:
+        """Assemble clusters[] from real memory_cluster rows.
+
+        v5.80 (#80 viz-fidelity-v2): flips memory_cluster viz-consumption from
+        DORMANT to LIVE. Queries get_memory_clusters() + get_cluster_members(cid).
+        member_node_ids is intersected with rendered mem_ids so the frontend can
+        safely render a convex hull over present nodes.
+
+        Returns [] if no clusters exist or storage is unavailable.
+        """
+        try:
+            cluster_rows = self._s.get_memory_clusters()
+        except Exception:
+            return []
+        result = []
+        for cr in cluster_rows:
+            raw_id = self._extract_id(cr.get("id"))
+            if raw_id is None:
+                continue
+            try:
+                member_int_ids = self._s.get_cluster_members(raw_id)
+            except Exception:
+                member_int_ids = []
+            # Intersect with rendered node set — only emit members visible in this graph
+            member_node_ids = [f"mem:{mid}" for mid in member_int_ids if mid in mem_ids]
+            result.append(
+                {
+                    "id": raw_id,
+                    "source": "memory_cluster",
+                    "label": cr.get("name") or f"cluster:{raw_id}",
+                    "level": int(cr.get("level") or 0),
+                    "member_node_ids": member_node_ids,
                 }
             )
         return result
@@ -436,7 +515,7 @@ class GraphAPI:
         if len(embeddings_for_sem) < 2:
             return {"edges": []}
 
-        _sem_role = EDGE_TYPES.get("semantic", {}).get("role", "display")
+        _sem_role = EDGE_TYPES.get("semantic", {}).get("role", "informational")
         raw_edges = self._compute_semantic_edges(embeddings_for_sem, top_k=top_k)
         # Stamp role on each edge
         for e in raw_edges:

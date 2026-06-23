@@ -22,6 +22,10 @@ settings = get_settings()
 # Valid type filter values for recall(type=) param (Step 5).
 _VALID_RECALL_TYPES: frozenset[str] = frozenset({"all", "memory", "wiki"})
 
+# Valid mode values for recall(mode=) param (v6 BC-AC3a landscape).
+# None = normal (default). "landscape" = consensus_retrieve across astrocyte domains.
+_VALID_RECALL_MODES: frozenset[str] = frozenset({"landscape"})
+
 
 # ---------------------------------------------------------------------------
 # v5.62.0 recall quality helpers — quality floor + dedup
@@ -112,6 +116,59 @@ def _candidates_to_dicts(candidates: list) -> list[dict]:
         raw.pop("embedding", None)
         pooled.append(raw)
     return pooled
+
+
+# ---------------------------------------------------------------------------
+# v6 BC-AC3a landscape recall — consensus_retrieve exposed as opt-in mode
+# ---------------------------------------------------------------------------
+
+
+def _landscape_recall(
+    query: str,
+    max_results: int,
+    directory: str,
+    storage,
+) -> list[dict]:
+    """Run AstrocytePool.consensus_retrieve and directory-scope the results.
+
+    Called ONLY when mode="landscape".  Returns a ranked consensus list where
+    each row carries ``consensus_score`` (float) and ``voting_domains`` (list[str]).
+
+    Directory scoping (v5.65 contract): consensus_retrieve does NOT scope by
+    directory itself, so results are post-filtered with is_directory_eligible()
+    — the same predicate used by the fan-out and legacy paths.
+
+    Returns [] gracefully when the pool is unavailable (ASTROCYTE_POOL_ENABLED=False
+    or pool init failed).
+
+    Args:
+        query: Search query forwarded to consensus_retrieve.
+        max_results: Number of rows to return after post-filtering.  Passed
+            directly to consensus_retrieve as top_k so the pool trims first, then
+            we directory-filter.  Pass a generous value (e.g. max_results * 3) in
+            production callers to compensate for post-filter shrinkage; the
+            MCP tool passes max_results directly (documented tradeoff).
+        directory: Caller project directory (required, validated upstream).
+        storage: StorageEngine instance (used by side-effects call).
+
+    Returns:
+        List of memory dicts with consensus_score / voting_domains, scoped to
+        directory, trimmed to max_results.
+    """
+    if _st._pool is None:
+        logger.debug("landscape_recall: pool unavailable — returning []")
+        return []
+
+    # Fetch a generous candidate pool; directory filter may shrink results below
+    # max_results when top_k == max_results.  Documented known tradeoff: callers
+    # wanting strict top-k across directory-filtered results should pass a larger
+    # max_results.
+    raw = _st._pool.consensus_retrieve(query, top_k=max_results)
+
+    # Directory scope — same predicate as fan-out and legacy paths.
+    scoped = [r for r in raw if is_directory_eligible(r.get("directory_context"), directory)]
+
+    return scoped[:max_results]
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +369,7 @@ def _apply_recall_side_effects(merged: list[dict], query: str, storage) -> None:
 
 
 @_tool()
-def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all recall variants
+def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point for all recall variants
     query: str,
     max_results: int = 5,
     min_heat: float = 0.0,
@@ -321,34 +378,54 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
     directory: str | None = None,
     branch_hint: str | None = None,
     type: str = "all",  # noqa: A002 — shadows built-in but matches MCP schema convention
+    mode: str | None = None,
 ) -> list[dict]:
-    """Semantic + keyword search filtered by heat. Boosts accessed memories.
+    """Primary semantic + keyword retrieval tool. Use for discovery and context loading.
 
-    profile (v5.31.1): optional retrieval profile name. When provided, routes
-    through the v5.31.0 plugin pipeline instead of the legacy monolithic path.
-    Valid values: "fast", "balanced", "full", "debug". When None (default),
-    behavior is identical to pre-v5.31.1 — zero change for existing callers.
+    Prefer recall() over memory_get()/wiki_get() when you don't already have a
+    numeric ID — those tools are for direct ID lookups, not search. Prefer
+    recall(type="wiki") over wiki_query() for wiki-only searches.
 
-    stage_overrides (v5.31.1): per-call stage disable map, e.g.
-    {"nli": {"enabled": False}}. Only used when profile is set. Passed
-    through to Retriever.recall_via_pipeline(stage_overrides=...).
+    Args:
+        query: Search text. Combined semantic (embedding) + keyword scoring.
+        directory: REQUIRED. Host-side project directory (e.g. "/home/user/myapp").
+            Results are scoped to this directory plus global wiki pages. Do NOT omit
+            or pass empty — daemon runs in a container and cannot detect the real path
+            via os.getcwd(). Raises ValueError if absent/empty.
+        max_results: Max results to return (default 5). Higher = slower + more tokens;
+            keep <=10 for targeted lookups, <=20 for broad exploration.
+        min_heat: Heat floor (default 0.0 = no filter). Pass >0.5 to restrict to
+            stable, frequently-accessed memories only.
+        type: Source type filter — "all" (default), "memory" (memories only), "wiki"
+            (wiki pages only). Only effective when profile=None and mode=None, and only
+            on the unified fan-out path (UNIFIED_RECALL_ENABLED=True); legacy path
+            ignores it. Raises ValueError on unrecognised value.
+        profile: Optional retrieval profile — "fast", "balanced", "full", "debug".
+            When set, routes through the v5.31 plugin pipeline and ignores type.
+            When None (default), uses legacy monolithic path. Raises ValueError on
+            unrecognised value.
+        stage_overrides: Per-call stage disable map, e.g. {"nli": {"enabled": False}}.
+            Only used when profile is set.
+        branch_hint: Caller-supplied branch name. Fallback when daemon cannot detect
+            the branch (container scenario). Resolution order:
+            _detect_branch(directory) → branch_hint → None.
+        mode: Opt-in recall mode. None (default) = normal precise recall.
+            "landscape" = broad cross-domain recall via consensus_retrieve across all
+            astrocyte domains — each domain votes independently and results are merged
+            into one ranked list with consensus_score and voting_domains per row.
+            Use mode="landscape" for broad or exploratory queries where cross-domain
+            breadth and diversity matter more than precise top-k ranking (e.g. "what
+            do I know about X" spanning multiple unrelated past projects). SLOWER than
+            normal recall (votes across all domains); opt-in only — omit for normal
+            targeted retrieval. Mutually exclusive with profile/type: mode wins when
+            set, those params are ignored. Raises ValueError on unrecognised value.
 
-    branch_hint (v5.43.0): caller-supplied branch name. Used when daemon-side
-    _detect_branch returns None (container scenario). Allows long-running agents
-    to supply branch context for each recall call. Secondary to directory-based
-    detection per DP-1 (directory is canonical; branch_hint is fallback).
-    Resolution order: _detect_branch(directory or os.getcwd()) → branch_hint → None.
+    Returns:
+        List of memory/wiki dicts ranked by relevance + heat. landscape mode adds
+        consensus_score (float) and voting_domains (list[str]) per row.
 
-    type (v6 T6 Step 5): source type filter. Valid values: "all" (default),
-    "memory" (only memories), "wiki" (only wiki pages). Only effective in the
-    unified fan-out path (UNIFIED_RECALL_ENABLED=True). Legacy path ignores this
-    parameter. Raises ValueError on unrecognised value.
-
-    Raises ValueError immediately (before any retrieval work) if profile is
-    set to an unrecognised value, or if directory is absent/empty (v5.65 Fix D:
-    daemon runs in a container — os.getcwd() returns the container path and
-    would mis-scope results; callers MUST supply the real host directory), or
-    if type is not one of {"all", "memory", "wiki"}.
+    Raises:
+        ValueError: if directory is empty, or profile/type/mode is unrecognised.
     """
     import time as _time  # noqa: PLC0415
 
@@ -366,6 +443,12 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
     if type not in _VALID_RECALL_TYPES:
         raise ValueError(
             f"recall: type={type!r} is not valid. Valid values: {sorted(_VALID_RECALL_TYPES)}"
+        )
+
+    # v6 BC-AC3a: validate mode param early — before any expensive setup.
+    if mode is not None and mode not in _VALID_RECALL_MODES:
+        raise ValueError(
+            f"recall: mode={mode!r} is not valid. Valid values: {sorted(_VALID_RECALL_MODES)} or None"
         )
 
     # I3: validate profile BEFORE any expensive setup or DB access.
@@ -386,6 +469,19 @@ def recall(  # noqa: C901 - cohesive: MCP tool — single entry point for all re
         # Record activity on consolidation engine
         if _st._consolidation is not None:
             _st._consolidation.record_activity()
+
+        # v6 BC-AC3a: landscape mode — exclusive dispatch, wins over type/profile.
+        # Placed here: after storage init (side-effects need storage) and before
+        # branch detection (landscape needs neither branch context nor fan-out flag).
+        if mode == "landscape":
+            merged = _landscape_recall(
+                query=query,
+                max_results=max_results,
+                directory=_dir_stripped,
+                storage=storage,
+            )
+            _apply_recall_side_effects(merged, query, storage)
+            return merged
 
         # §25 Branch context — detect before retrieval so we can push the filter into
         # SurrealQL (C2) rather than post-filtering in Python.

@@ -8,7 +8,8 @@ Tests:
 5. Entity typed-relation types all represented (co_occurrence/imports/calls/resolved_by/caused_by).
 6. EDGE_TYPES has role + default_on + lazy for all keys (including new entity types).
 7. LAZY_EDGE_TYPES contains only "semantic".
-8. Role for entity types is "retrieval", for semantic/temporal/causal is "display".
+8. Role for entity types is "retrieval", for semantic/temporal/causal is "informational"
+   (v5.80 #80: renamed from "display").
 9. build_legend emits role + default_on + lazy per edge.
 """
 
@@ -42,6 +43,8 @@ def _make_mock(
     s.get_all_causal_edges.return_value = causal_rows or []
     s.get_relationships_by_types.return_value = entity_rels or []
     s.get_all_entities.return_value = entity_rows or []
+    s.get_all_memory_similarity_links.return_value = []
+    s.get_memory_clusters.return_value = []
     return s
 
 
@@ -264,7 +267,9 @@ class TestAllEdgesHaveRole:
         assert causal, "Expected causal edges"
         for c in causal:
             assert "role" in c, "causal edge missing 'role' field"
-            assert c["role"] == "display", f"causal role expected display, got {c['role']}"
+            assert c["role"] == "informational", (
+                f"causal role expected informational, got {c['role']}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -285,10 +290,11 @@ class TestEdgeTypesRegistry:
         "calls",
         "resolved_by",
         "caused_by",
+        "memory_similarity_link",  # v5.80 #80 viz-fidelity-v2
     }
 
-    def test_all_11_edge_types_present(self):
-        """EDGE_TYPES has all 11 edge types including 5 entity relation types."""
+    def test_all_12_edge_types_present(self):
+        """EDGE_TYPES has all 12 edge types including 5 entity relation types + memory_similarity_link."""
         missing = self.EXPECTED_TYPES - set(EDGE_TYPES.keys())
         assert not missing, f"EDGE_TYPES missing: {missing}"
 
@@ -296,8 +302,8 @@ class TestEdgeTypesRegistry:
         """Every entry in EDGE_TYPES has a 'role' field."""
         for key, meta in EDGE_TYPES.items():
             assert "role" in meta, f"EDGE_TYPES['{key}'] missing 'role'"
-            assert meta["role"] in ("retrieval", "display"), (
-                f"EDGE_TYPES['{key}']['role'] must be 'retrieval' or 'display', got {meta['role']}"
+            assert meta["role"] in ("retrieval", "informational"), (
+                f"EDGE_TYPES['{key}']['role'] must be 'retrieval' or 'informational', got {meta['role']}"
             )
 
     def test_all_types_have_default_on_field(self):
@@ -313,12 +319,15 @@ class TestEdgeTypesRegistry:
                 f"Expected EDGE_TYPES['{t}']['role'] == 'retrieval'"
             )
 
-    def test_display_types_have_display_role(self):
-        """semantic/temporal/causal/wiki_crossref/memory_wiki have role='display'."""
-        display_types = ["semantic", "temporal", "causal", "wiki_crossref", "memory_wiki"]
-        for t in display_types:
-            assert EDGE_TYPES[t]["role"] == "display", (
-                f"Expected EDGE_TYPES['{t}']['role'] == 'display'"
+    def test_informational_types_have_informational_role(self):
+        """semantic/temporal/causal/wiki_crossref/memory_wiki have role='informational'.
+
+        v5.80 #80: renamed from "display" to "informational".
+        """
+        informational_types = ["semantic", "temporal", "causal", "wiki_crossref", "memory_wiki"]
+        for t in informational_types:
+            assert EDGE_TYPES[t]["role"] == "informational", (
+                f"Expected EDGE_TYPES['{t}']['role'] == 'informational' (renamed from display in v5.80)"
             )
 
     def test_transition_has_retrieval_role(self):
@@ -381,7 +390,7 @@ class TestBuildLegendEmitsRoleFields:
         legend = build_legend(settings)
         for edge in legend["edges"]:
             assert "role" in edge, f"legend edge '{edge['key']}' missing 'role'"
-            assert edge["role"] in ("retrieval", "display"), (
+            assert edge["role"] in ("retrieval", "informational"), (
                 f"legend edge '{edge['key']}' role invalid: {edge['role']}"
             )
 
@@ -419,8 +428,8 @@ class TestBuildLegendEmitsRoleFields:
         assert co is not None, "co_occurrence missing from legend"
         assert co["lazy"] is False
 
-    def test_legend_has_all_11_edge_types(self, settings):
-        """build_legend includes all 11 edge types (including entity relation types)."""
+    def test_legend_has_all_12_edge_types(self, settings):
+        """build_legend includes all 12 edge types (entity relation types + memory_similarity_link)."""
         from yadgar.viz_meta import build_legend
 
         legend = build_legend(settings)
@@ -437,6 +446,7 @@ class TestBuildLegendEmitsRoleFields:
             "calls",
             "resolved_by",
             "caused_by",
+            "memory_similarity_link",  # v5.80 #80 viz-fidelity-v2
         }
         missing = expected - keys
         assert not missing, f"Legend missing edge types: {missing}"

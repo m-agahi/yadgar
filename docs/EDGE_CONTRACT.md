@@ -18,12 +18,16 @@ Authoritative role declaration for every graph edge/relation in yadgar. Enforces
 | **causal** | PC-algorithm causal discovery (`consolidation/causal.py`), deferred | yes | **viz only** (the one entity-subset currently rendered) | **display** | keep rendering; not fed to retrieval (causal ≠ relevance). |
 | **semantic** | computed at viz-build time (`graph_api._compute_semantic_edges`, KNN ≥0.75) | **no** (display-only compute) | **viz only** | **display** | KEEP as display, but it's REDUNDANT with the vector retrieval signal — do NOT wire to retrieval (noise, not signal). Lazy-compute per toggle (5.54.3). |
 | **temporal** | computed at viz-build from `memory.slot_index` (engram slot co-membership) | no (computed) | **viz only** | **display** | weak signal; display only. Lazy-compute per toggle. |
+| **memory_similarity_link** | CLS phase (`consolidation/cls.py`), deferred | yes (`memory_similarity_link` table) | **viz only** (near-duplicate dedup signal) | **display** | v5.80 #80: rendered in viz as informational edge (role="informational" in EDGE_TYPES; role vocab renamed from "display"→"informational" in viz_meta.py — see note below). Not wired to retrieval ranking. |
 
 ## Decisions (brutal honesty)
 - **Not every edge becomes retrieval.** `semantic` = the vector signal recall already runs; wiring it in is cost+noise. `temporal` is weak. Both stay **display**. Resisting "use every edge" is the whole point of this contract (anti leverage-theater).
 - **The biggest hidden capability** = the entity graph (drives retrieval, invisible in viz). 5.54.1 makes it help everyday recall; 5.54.3 makes it visible.
 - **The dead high-value edges** = `transition` + the memory↔wiki bridges (`wiki_crossref`/`memory_wiki`). Of these: **`transition` is now activated (v5.54.2)** via the cofire_prior precompute path. The wiki bridges (`wiki_crossref`/`memory_wiki`) are **NOT wired to retrieval** — option A confirmed 2026-06-12: recall already surfaces wiki via a parallel semantic query (`recall.py:273`), making an edge-bridge leverage-theater per I29. Both wiki edge rows downgraded from `retrieval` → **display**.
 - **Viz fidelity (5.54.3):** render ALL edge types, per-type toggleable, **role-styled** (retrieval vs display) so "show all" showcases real capability without implying a decorative edge does work it doesn't. Lazy-compute heavy types; reheat physics on toggle.
+
+## Vocabulary note — viz role rename (v5.80 #80)
+The `display` role in this contract table describes the retrieval posture ("viz-display-only, not wired to retrieval"). In `viz_meta.py` the edge `role` field was renamed from `"display"` → `"informational"` for all non-retrieval types (v5.80 #80 viz-fidelity-v2). This contract table retains `display` as the canonical term for the posture; the viz `role` field uses `"informational"` for more accurate semantics. The two are equivalent: display-role edge ↔ role="informational" in viz JSON.
 
 ## Enforcement
 Per I29: any future edge/relation added MUST land a row here with a declared role + consumer, or it's a rejectable orphan. 5.54.4 GCs anything that ends this train still in `drop`.

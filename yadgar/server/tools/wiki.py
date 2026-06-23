@@ -1209,10 +1209,15 @@ def wiki_set_metadata(
     slug: str,
     field: str,
     value: str | None,
-    directory: str | None = None,
-    branch_hint: str | None = None,
+    directory: str | None = None,  # noqa: ARG001 — kept for API back-compat
+    branch_hint: str | None = None,  # noqa: ARG001 — kept for API back-compat
 ) -> dict:
-    """Set directory_context or branch on a wiki page (Layer 4 metadata primitive).
+    """Set directory_context or branch on ALL rows sharing a slug (BC-G10 fix).
+
+    Reaches every row for the slug — per-branch rows + 'global' stragglers —
+    not just the single row returned by §25 resolution. This fixes the bug
+    where wiki_set_metadata reported changed=False even though straggler rows
+    were never touched (only one row was resolved via LIMIT 1 resolution).
 
     field must be 'directory_context' or 'branch'. Other fields are rejected.
 
@@ -1220,9 +1225,9 @@ def wiki_set_metadata(
       directory_context: 'global' or an absolute path (starts with '/').
       branch: null (sets canonical slot, resolves via IS NONE) or non-empty string.
 
-    Idempotent: no-op when current value already matches (no version row created).
-    On real change: creates a wiki_page_version row (v5.41 versioning).
-    Logs old + new value for audit trail.
+    Idempotent per row: no version row created when the value already matches.
+    On real change per row: creates a wiki_page_version row (v5.41 versioning).
+    Logs old + new value per row for audit trail.
 
     Bypasses v5.39 similarity gate (metadata revision, not a new page).
 
@@ -1230,18 +1235,14 @@ def wiki_set_metadata(
         slug: Wiki page slug.
         field: Metadata field to set. Must be 'directory_context' or 'branch'.
         value: New value. For branch, null clears it (sets canonical slot).
-        directory: Caller directory for §25 resolution (v5.42.5).
-        branch_hint: Caller branch for §25 resolution (v5.42.5).
+        directory: Kept for API back-compat (unused — all-rows path needs no §25 resolution).
+        branch_hint: Kept for API back-compat (unused — same reason).
 
-    Returns: {ok, page_id, changed, version_id} or {ok: False, error}.
+    Returns: {ok, slug, rows_updated, page_ids} or {ok: False, error}.
+    Preserved keys for back-compat callers that inspect {ok, slug}.
     """
     assert _st._wiki is not None, "WikiStore not initialized"
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
-    if page_id is None:
-        return {"ok": False, "error": f"Wiki page '{slug}' not found"}
-    result = _st._wiki.set_metadata(page_id, field, value)
-    result["slug"] = slug
-    return result
+    return _st._wiki.set_metadata_by_slug(slug, field, value)
 
 
 # ── v5.61.0: Layer 1 — Anchor-text primitives ────────────────────────────────

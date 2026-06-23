@@ -7,6 +7,28 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+## [5.81.0] - 2026-06-23
+
+Two cars: **wiki `set_metadata` all-rows (BC-G10)** + **viz-fidelity-v2 (#80)**. Contract **248 SHALLs · 54 ✅**.
+
+### Fixed
+- **BC-G10 — `wiki_set_metadata` now reaches ALL rows of a slug** (across branches + global page_id stragglers), not just the one row `_resolve_page_id_by_slug` returned. New `storage.get_wiki_page_ids_by_slug` + `WikiStore.set_metadata_by_slug` (loops every page_id, per-row version trail). The slug-based tool could not re-stamp global stragglers before (proven live: `changed:false`, page stayed global). **BC-G10 ✅** (live e2e). #54.
+
+### Changed (viz-fidelity-v2, #80 — the graph viz now shows reality)
+- **`/api/graph` edges carry a `role`** — `retrieval` (transition + entity-relationship types; these affect recall ranking) vs `informational` (temporal/causal/wiki-crossref/provenance; stored but not ranking signals). Frontend legend distinguishes them (retrieval solid/prominent, informational dimmed).
+- **Real clusters surfaced** — `clusters[]` from the `memory_cluster` table (DORMANT→LIVE in viz); frontend renders cluster tint rings (2D+3D) + a "Memory Clusters" sidebar. **BC-VZ-R3 ✅**.
+- **Decoration removed** — render-time `semantic` cosine edges dropped from the default payload (**BC-VZ-R2 ✅**); the client-side BFS "disconnected components" panel (a layout artifact mislabeled as structure) deleted from the frontend.
+- `memory_similarity_link` surfaced as an `informational` edge type.
+- SSE `heat_updated` handler added frontend-side (backend emit = BC-VZ-F2, ⏳).
+- **BC-VZ-R1 ✅** every edge has a valid role.
+
+### Notes
+- The wiki stragglers (aws-org-migration→aws-work; 2× meridian) get re-stamped via the now-correct MCP tool after deploy — no SQL/migration (per the data-repair-via-MCP rule).
+- Frontend cluster render + legend need a browser smoke against a v5.81 daemon (not CI-gated).
+
+### Verification
+make e2e 103 passed / 0 failed (incl new test_wiki_set_metadata_allrows + test_viz_fidelity_v2_e2e) · contract/I32/I13/I30/ruff green · py3.14 except-tuple landmine fixed (except Exception).
+
 ## [5.80.0] - 2026-06-21
 
 Unified-scoped-recall **default-flip** + fan-out fusion regression fixes. `UNIFIED_RECALL_ENABLED` now defaults **ON** — `recall()` fans out to memory + wiki providers, fuses cross-type, and scopes by directory. Three ranking/parity regressions found pre-flip (via the eval pre-run + a unit ordering test the prior activation attempt tried to rationalize past) were fixed before enabling. Contract **243 SHALLs · 49 ✅** (BC-U6/U7/U8 added). Migration 023 backfills any residual field-absent memory rows to `'global'` as a pre-flip gate.

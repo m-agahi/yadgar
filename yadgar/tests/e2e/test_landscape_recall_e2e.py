@@ -1,0 +1,275 @@
+"""E2E tests for recall(mode="landscape") — BC-AC3a.
+
+Exposes AstrocytePool.consensus_retrieve() via the recall() MCP tool
+as an opt-in "landscape" mode.  Landscape recall merges results across
+all astrocyte domains into one ranked consensus list; results carry
+``consensus_score`` and ``voting_domains`` metadata.
+
+ASSERTIONS:
+    a. recall(mode="landscape") returns a merged ranked list.
+    b. Results carry ``consensus_score`` (float > 0).
+    c. A cross-domain memory (keywords in ≥2 domains) has ≥2 voting_domains.
+    d. Directory scoping is respected: a memory stored under a DIFFERENT
+       directory must not appear in landscape results scoped to yadgar_dir.
+    e. Invalid mode raises ValueError before any DB work.
+
+TEST PLAN
+---------
+- Seed memories through the storage + pool assign path (not async drain) —
+  mirrors test_astrocyte_pool.py approach on the live e2e DB.
+- Cross-domain memory uses content with both code-domain keywords
+  ("def", "class", "function") and error-domain keywords ("error", "bug",
+  "exception") — same "fix_handler" pattern that test_astrocyte_pool.py
+  uses for TestConsensusRetrieval::test_cross_domain_boost.
+- Foreign-dir memory uses the other_dir fixture path.
+- Assertion on ≥1 result for landscape mode (not strict top-1 because
+  the pool may have other memories from concurrent e2e fixture seeding).
+
+MARKERS: @pytest.mark.e2e — collected by make e2e / scripts/reap-test-surreal.sh.
+
+Ref: BC-AC3a, CAP-RETR-025.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.e2e
+
+_UNIQUE_TAG = "xzlandscape801"
+_YADGAR_DIR = "/home/test/yadgar-project"
+_OTHER_DIR = "/home/test/other-project"
+
+# Domain-crossing content: code keywords (def/class/function) + error keywords
+# (error/bug/exception) → assigned to both "code-patterns" and "errors" domains.
+_CROSS_DOMAIN_CONTENT = (
+    f"def fix_handler(): resolved TypeError exception in the function implementation {_UNIQUE_TAG}"
+)
+# Single-domain content (code only).
+_CODE_ONLY_CONTENT = f"class DataPipeline: implements transform method {_UNIQUE_TAG}"
+# Foreign-dir content — same tokens so pool would score it, but wrong directory.
+_FOREIGN_CONTENT = (
+    f"def fix_handler(): resolved TypeError exception in function {_UNIQUE_TAG}_foreign"
+)
+
+
+def _insert_and_assign(e2e_engines, content: str, directory: str, heat: float = 0.9) -> int:
+    """Insert a memory with embedding and assign it to the astrocyte pool.
+
+    Mirrors test_astrocyte_pool.py seeding: insert via storage.insert_memory(),
+    then call _st._pool.assign_memory(mem).  Returns the inserted memory id.
+    """
+    import yadgar.server._state as _st
+
+    storage = e2e_engines["storage"]
+    embeddings = e2e_engines["embeddings"]
+
+    emb = embeddings.encode(content)
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC).isoformat()
+    mid = storage.insert_memory(
+        {
+            "content": content,
+            "embedding": emb,
+            "directory_context": directory,
+            "heat": heat,
+            "tags": [_UNIQUE_TAG],
+            "last_accessed": now,
+            "created_at": now,
+            "access_count": 0,
+            "is_protected": False,
+        }
+    )
+
+    # Assign to astrocyte pool so consensus_retrieve has domain membership data.
+    assert _st._pool is not None, "AstrocytePool must be initialized by e2e_engines"
+    mem = storage.get_memory(mid)
+    assert mem is not None, f"get_memory({mid}) returned None after insert"
+    _st._pool.assign_memory(mem)
+
+    return mid
+
+
+def _run_landscape_recall(
+    monkeypatch,
+    query: str,
+    directory: str = _YADGAR_DIR,
+    max_results: int = 20,
+) -> list[dict]:
+    """Run recall(mode="landscape") via the MCP tool module."""
+    import sys
+
+    monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
+    monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+
+    _rm = sys.modules.get("yadgar.server.tools.recall")
+    if _rm is None:
+        import yadgar.server.tools.recall as _rm  # type: ignore[no-redef]
+
+    return _rm.recall(
+        query=query,
+        directory=directory,
+        max_results=max_results,
+        mode="landscape",
+    )
+
+
+class TestLandscapeRecallE2E:
+    """E2E tests for recall(mode="landscape") — BC-AC3a."""
+
+    def test_landscape_returns_nonempty_list(self, e2e_engines, monkeypatch):
+        """recall(mode="landscape") returns ≥1 result for a relevant query.
+
+        Ref: BC-AC3a (a).
+        """
+        _insert_and_assign(e2e_engines, _CROSS_DOMAIN_CONTENT, _YADGAR_DIR)
+
+        results = _run_landscape_recall(monkeypatch, f"fix handler exception {_UNIQUE_TAG}")
+        assert len(results) >= 1, (
+            f"recall(mode='landscape') must return ≥1 result for seeded cross-domain memory; "
+            f"got {results}"
+        )
+
+    def test_landscape_results_carry_consensus_score(self, e2e_engines, monkeypatch):
+        """recall(mode="landscape") stamps each result with consensus_score > 0.
+
+        Ref: BC-AC3a (b).
+        """
+        _insert_and_assign(e2e_engines, _CROSS_DOMAIN_CONTENT, _YADGAR_DIR)
+
+        results = _run_landscape_recall(monkeypatch, f"fix handler exception {_UNIQUE_TAG}")
+        assert results, "No results returned; cannot assert consensus_score"
+
+        for r in results:
+            assert "consensus_score" in r, (
+                f"Result missing consensus_score: {r.get('content', '')[:60]}"
+            )
+            assert isinstance(r["consensus_score"], (int, float)), (
+                f"consensus_score must be numeric; got {type(r['consensus_score'])}"
+            )
+            assert r["consensus_score"] > 0, (
+                f"consensus_score must be > 0; got {r['consensus_score']}"
+            )
+
+    def test_cross_domain_memory_has_multiple_voting_domains(self, e2e_engines, monkeypatch):
+        """A memory with keywords in ≥2 domains carries ≥2 voting_domains.
+
+        Ref: BC-AC3a (c).
+        """
+        mid = _insert_and_assign(e2e_engines, _CROSS_DOMAIN_CONTENT, _YADGAR_DIR, heat=0.95)
+
+        results = _run_landscape_recall(monkeypatch, f"fix handler exception {_UNIQUE_TAG}")
+        target = next((r for r in results if r.get("id") == mid), None)
+        assert target is not None, (
+            f"Cross-domain memory id={mid} not found in landscape results; "
+            f"all ids: {[r.get('id') for r in results]}"
+        )
+        voting = target.get("voting_domains", [])
+        assert len(voting) >= 2, (
+            f"Cross-domain memory must have ≥2 voting_domains; got {voting}. "
+            f"content={_CROSS_DOMAIN_CONTENT[:60]}"
+        )
+
+    def test_directory_scoping_excludes_foreign_dir(self, e2e_engines, monkeypatch):
+        """recall(mode="landscape", directory=X) must exclude memories from directory Y.
+
+        Ref: BC-AC3a (d) — directory contract.
+        """
+        # Seed a memory in the target directory.
+        target_mid = _insert_and_assign(e2e_engines, _CROSS_DOMAIN_CONTENT, _YADGAR_DIR)
+        # Seed an otherwise-matching memory in a foreign directory.
+        foreign_mid = _insert_and_assign(e2e_engines, _FOREIGN_CONTENT, _OTHER_DIR)
+
+        results = _run_landscape_recall(
+            monkeypatch,
+            f"fix handler exception {_UNIQUE_TAG}",
+            directory=_YADGAR_DIR,
+        )
+        result_ids = {r.get("id") for r in results}
+
+        # Target directory memory must appear.
+        assert target_mid in result_ids, (
+            f"Memory from target dir must appear in landscape results; "
+            f"target_mid={target_mid}, result_ids={result_ids}"
+        )
+
+        # Foreign directory memory must NOT appear.
+        assert foreign_mid not in result_ids, (
+            f"Memory from foreign dir ({_OTHER_DIR!r}) must be excluded from landscape "
+            f"results scoped to {_YADGAR_DIR!r}; foreign_mid={foreign_mid} found in results."
+        )
+
+    def test_invalid_mode_raises_valueerror(self, e2e_engines, monkeypatch):
+        """recall(mode="bogus") raises ValueError before any DB work.
+
+        Ref: BC-AC3a validation gate.
+        """
+        import sys
+
+        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+
+        _rm = sys.modules.get("yadgar.server.tools.recall")
+        if _rm is None:
+            import yadgar.server.tools.recall as _rm  # type: ignore[no-redef]
+
+        with pytest.raises(ValueError, match="mode"):
+            _rm.recall(
+                query="any query",
+                directory=_YADGAR_DIR,
+                mode="bogus",
+            )
+
+    def test_none_mode_uses_normal_recall(self, e2e_engines, monkeypatch):
+        """mode=None (default) must NOT trigger landscape path — normal recall behavior.
+
+        Ensures the default path is 100% unchanged when mode is absent.
+        """
+        import sys
+
+        storage = e2e_engines["storage"]
+        embeddings = e2e_engines["embeddings"]
+
+        unique = f"{_UNIQUE_TAG}_default"
+        emb = embeddings.encode(f"default mode normal recall content {unique}")
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC).isoformat()
+        mid = storage.insert_memory(
+            {
+                "content": f"default mode normal recall content {unique}",
+                "embedding": emb,
+                "directory_context": _YADGAR_DIR,
+                "heat": 0.9,
+                "tags": [],
+                "last_accessed": now,
+                "created_at": now,
+                "access_count": 0,
+                "is_protected": False,
+            }
+        )
+
+        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+
+        _rm = sys.modules.get("yadgar.server.tools.recall")
+        if _rm is None:
+            import yadgar.server.tools.recall as _rm  # type: ignore[no-redef]
+
+        # mode=None — must not raise, must not carry consensus_score keys.
+        results = _rm.recall(
+            query=f"default mode normal recall {unique}",
+            directory=_YADGAR_DIR,
+            max_results=10,
+            mode=None,
+        )
+        # Verify it doesn't break (returns a list).
+        assert isinstance(results, list), f"recall(mode=None) must return list; got {type(results)}"
+        # None of the normal results should carry consensus_score (not landscape path).
+        landscape_contamination = [r for r in results if "consensus_score" in r]
+        assert not landscape_contamination, (
+            f"mode=None must not return landscape-stamped results; "
+            f"got consensus_score in: {[r.get('content', '')[:40] for r in landscape_contamination]}"
+        )
+        _ = mid  # seeded for query relevance; silence unused warning

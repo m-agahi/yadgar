@@ -192,6 +192,32 @@ def create_eval_engines(settings: Settings):
 # ── Per-query eval ─────────────────────────────────────────────────────────────
 
 
+def compute_diversity(results: list[dict]) -> int | None:
+    """Count the number of UNIQUE astrocyte domains across the top-k results.
+
+    Intended for landscape mode recall where results carry ``voting_domains``.
+    Returns None (gracefully) when no result has ``voting_domains`` — this keeps
+    standard eval runs unaffected (landscape mode is not in the default eval loop).
+
+    Used as a future before/after metric for landscape vs balanced recall.
+
+    Args:
+        results: Per-query recall output (list of memory dicts).
+
+    Returns:
+        Count of unique astrocyte domain names present across all voting_domains
+        fields, or None if no result carries voting_domains.
+    """
+    all_domains: set[str] = set()
+    has_any = False
+    for r in results:
+        domains = r.get("voting_domains")
+        if isinstance(domains, list):
+            all_domains.update(domains)
+            has_any = True
+    return len(all_domains) if has_any else None
+
+
 def _extract_retrieved_keys(results: list[dict]) -> list[str]:
     """Extract a unified namespace key list from retriever results.
 
@@ -219,7 +245,7 @@ def _extract_retrieved_keys(results: list[dict]) -> list[str]:
                 if isinstance(raw, str) and ":" in raw:
                     raw = raw.split(":", 1)[1]
                 keys.append(f"mem:{int(raw)}")
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 pass
     return keys
 
@@ -253,7 +279,7 @@ def evaluate_pair(
     for mid in pair.get("relevant_memory_ids", []):
         try:
             gold_keys.add(f"mem:{int(mid)}")
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             pass
     for slug in pair.get("relevant_wiki_slugs", []):
         if slug:
@@ -300,6 +326,12 @@ def evaluate_pair(
             mrr = 1.0 / (rank + 1)
             break
     metrics["mrr"] = mrr
+
+    # Diversity metric (landscape mode): unique astrocyte domains in top-k.
+    # Absent from standard eval runs (voting_domains not present on legacy results).
+    diversity = compute_diversity(results)
+    if diversity is not None:
+        metrics["diversity_domains"] = diversity
 
     return metrics
 
@@ -349,7 +381,7 @@ def evaluate_pair_unified(
     for mid in pair.get("relevant_memory_ids", []):
         try:
             gold_keys.add(f"mem:{int(mid)}")
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             pass
     for slug in pair.get("relevant_wiki_slugs", []):
         if slug:
@@ -402,6 +434,12 @@ def evaluate_pair_unified(
             break
     metrics["mrr"] = mrr
 
+    # Diversity metric (landscape mode): unique astrocyte domains in top-k.
+    # Absent from standard eval runs (voting_domains not present on unified results).
+    diversity = compute_diversity(results)
+    if diversity is not None:
+        metrics["diversity_domains"] = diversity
+
     return metrics
 
 
@@ -452,6 +490,12 @@ def aggregate_metrics(per_query: list[dict], k_values: list[int]) -> dict:
         if subset:
             agg[f"mrr_type_{qtype}"] = sum(m["mrr"] for m in subset) / len(subset)
             agg[f"recall@10_type_{qtype}"] = sum(m["recall@10"] for m in subset) / len(subset)
+
+    # Diversity metric (landscape mode): avg unique domains per query.
+    # Only aggregated when landscape results carry voting_domains — skip gracefully otherwise.
+    _diversity_vals = [m["diversity_domains"] for m in valid if "diversity_domains" in m]
+    if _diversity_vals:
+        agg["avg_diversity_domains"] = sum(_diversity_vals) / len(_diversity_vals)
 
     # Bootstrap vs curated split
     curated = [m for m in valid if not m.get("needs_curation", True)]
@@ -671,7 +715,10 @@ def run_eval(
                 if pair_type not in ("memory", "wiki", "all"):
                     pair_type = "all"
                 metrics = evaluate_pair_unified(
-                    pair, eval_directory, _K_VALUES, max_results=max_results,
+                    pair,
+                    eval_directory,
+                    _K_VALUES,
+                    max_results=max_results,
                     type_filter=pair_type,
                 )
             else:
