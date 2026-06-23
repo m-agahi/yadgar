@@ -408,6 +408,7 @@ def ingest_question_haystack(
     curator: MemoryCurator,
     thermo: MemoryThermodynamics,
     settings: Settings,
+    enrich: bool = True,
 ) -> dict[str, list[int]]:
     """Ingest a question's haystack sessions into Yadgar.
 
@@ -484,7 +485,15 @@ def ingest_question_haystack(
                     "is_stale": False,
                     "file_hash": None,
                     "embedding_model": embeddings.get_model_name(),
-                }
+                },
+                # Fidelity (v5.82): when enrich=True, forward settings+embeddings so
+                # the index-time enrichment pipeline (COMET / ConceptNet / Logic /
+                # Doc2Query / FPA) runs during eval ingest — matching production
+                # memorize(). Omitting them makes the enrichment guard in
+                # storage/memory.py silently no-op, so the eval would measure
+                # retrieval over a RAW (un-enriched) corpus, unfaithful to prod.
+                embeddings_engine=embeddings if enrich else None,
+                settings=settings if enrich else None,
             )
 
             # Set importance and surprise scores
@@ -814,6 +823,7 @@ def run_benchmark(
     resume: bool = False,
     unified: bool = False,
     mode: str | None = None,
+    enrich: bool = True,
 ) -> dict:
     """Run the full LongMemEval benchmark.
 
@@ -1002,7 +1012,8 @@ def run_benchmark(
                 # Phase 1a: Ingest haystack
                 t_ingest = time.monotonic()
                 session_map = ingest_question_haystack(
-                    question, storage, embeddings, curator, thermo, settings
+                    question, storage, embeddings, curator, thermo, settings,
+                    enrich=enrich,
                 )
                 ingest_time = time.monotonic() - t_ingest
 
@@ -1309,6 +1320,15 @@ def main():
         help="Recall mode forwarded to the unified recall tool (e.g. 'landscape' for "
         "consensus_retrieve, #67). Only effective with --unified. Default arm = no mode.",
     )
+    parser.add_argument(
+        "--enrich",
+        choices=["on", "off"],
+        default="on",
+        help="Run index-time enrichment (COMET/ConceptNet/Logic/Doc2Query/FPA) during "
+        "haystack ingest, matching production memorize() (default: on). 'off' ingests "
+        "a RAW corpus (faster, but un-faithful to prod — use only for quick smokes). "
+        "Enrichment adds per-memory model inference, so full-500 enriched runs are slow.",
+    )
 
     args = parser.parse_args()
 
@@ -1334,6 +1354,7 @@ def main():
         resume=args.resume,
         mode=args.mode,
         unified=args.unified,
+        enrich=(args.enrich == "on"),
     )
 
 
