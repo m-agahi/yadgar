@@ -8,7 +8,7 @@ worktree `.claude/worktrees/agent-aa3f01e785f26af58`.
 theme: retrieval (architecture)
 priority: high (usefulness centerpiece, blocked on a clean redo)
 
-Parent design: [`docs/plans/unified-scoped-recall.md`](unified-scoped-recall.md).
+Parent design: [`docs/plans/archive/unified-scoped-recall.md`](archive/unified-scoped-recall.md).
 Steps 0–2 already shipped on master @ v5.78 (providers, `_fanout_recall`,
 `UNIFIED_RECALL_ENABLED` dormant flag, extended eval harness + golden set).
 This plan covers ONLY Steps 3–5 plus a Step 0 prerequisite.
@@ -553,8 +553,8 @@ budget. That is a future task, referenced here, out of scope.
   is designed pluggable for it but does not implement it here).
 
 ## 10. Related
-- [`unified-scoped-recall.md`](unified-scoped-recall.md) — parent design.
-- [`recall-scoping-restamp.md`](recall-scoping-restamp.md) — shipped the Python
+- [`unified-scoped-recall.md`](archive/unified-scoped-recall.md) — parent design.
+- [`recall-scoping-restamp.md`](archive/recall-scoping-restamp.md) — shipped the Python
   quick filter; this builds the DB-level filter it deferred.
 - Parked (broken) attempt: branch `feat/v6-t6-recall-345`, commits `7b4fa554`,
   `56ecd393` — read for the fusion logic to port; do NOT reuse its tests.
