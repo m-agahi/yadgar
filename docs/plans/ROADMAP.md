@@ -44,6 +44,7 @@ Single source of truth for **open** plans. Shipped/dead plans live in
 |------|-------|--------|-------|
 | [ce-perf-options](ce-perf-options.md) | infra-ops | partial / undecided | Cross-encoder perf menu; options A/C folded earlier, option B (int8) never shipped. Close or pick B. |
 | [roadmap-freshness](roadmap-freshness.md) | infra-ops | deferred (v5.99 — design open) | Roadmap-staleness signal; deferred on an async-write-queue design problem. |
+| [viz-config-control-panel](viz-config-control-panel.md) | viz / config / ops | **skeleton — discuss first** | Browser config control panel in the viz UI: view/edit all 299 settings (source/restart/destructive metadata) via extended `/admin/config` + `PATCH /admin/config/<key>` sanctioned writer; guarded restart + armed destructive confirm + audit. Motivated by the CLI `COLD_MEMORY_PURGE_ENABLED` flip + manual restart this session. Mockup: `viz-config-control-panel.mockup.html`. |
 
 ### Horizon — v6 / v7 (skeletons + indices, not ready to build)
 | Plan | Theme | Notes |

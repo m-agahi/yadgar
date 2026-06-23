@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Yadgar · Neural Console — Config Control Panel (mockup)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,900;1,9..144,500&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    /* deep-ink base */
+    --ink-0:#0a0907;          /* near-black canvas */
+    --ink-1:#13110d;          /* panel */
+    --ink-2:#1c1913;          /* raised card */
+    --ink-3:#272219;          /* hover / border-strong */
+    --line:#332c20;           /* hairline */
+    --line-soft:#241f17;
+    /* heat accent — amber -> coral, Yadgar's core motif */
+    --heat-1:#ffb347;         /* amber */
+    --heat-2:#ff7a3c;         /* orange */
+    --heat-3:#ff5e57;         /* coral */
+    --heat-glow:rgba(255,122,60,.22);
+    /* synapse — cool teal for active/info */
+    --syn:#3fd0c9;
+    --syn-dim:#1f5e5b;
+    --syn-glow:rgba(63,208,201,.18);
+    /* alarm */
+    --red:#ff4d4d;
+    --red-deep:#b81e1e;
+    --red-glow:rgba(255,77,77,.20);
+    /* text */
+    --tx-0:#f4ecdd;           /* high */
+    --tx-1:#cdc3b2;           /* body */
+    --tx-2:#8c8273;           /* muted */
+    --tx-3:#5c554a;           /* faint */
+    --mono:'IBM Plex Mono',ui-monospace,monospace;
+    --disp:'Fraunces',Georgia,serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--ink-0);
+    color:var(--tx-1);
+    font-family:var(--mono);
+    font-size:13px;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+    overflow:hidden;
+    position:relative;
+  }
+  /* grid + grain atmosphere */
+  body::before{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+    background-image:
+      linear-gradient(var(--line-soft) 1px,transparent 1px),
+      linear-gradient(90deg,var(--line-soft) 1px,transparent 1px);
+    background-size:46px 46px;
+    opacity:.35;
+    mask-image:radial-gradient(ellipse 120% 90% at 30% 0%,#000 30%,transparent 80%);
+  }
+  body::after{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:1;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* ===== shell ===== */
+  .shell{position:relative;z-index:2;height:100vh;display:flex;flex-direction:column}
+
+  header{
+    display:flex;align-items:center;gap:24px;
+    padding:14px 26px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,rgba(28,25,19,.7),rgba(10,9,7,.4));
+    backdrop-filter:blur(6px);
+  }
+  .brand{display:flex;align-items:baseline;gap:12px}
+  .brand .glyph{
+    font-family:var(--disp);font-weight:900;font-size:26px;color:var(--heat-1);
+    letter-spacing:-.02em;line-height:1;
+    text-shadow:0 0 18px var(--heat-glow);
+  }
+  .brand .sub{font-family:var(--disp);font-style:italic;font-weight:500;color:var(--tx-2);font-size:15px}
+  .statusline{display:flex;align-items:center;gap:22px;margin-left:auto;font-size:11.5px}
+  .stat{display:flex;align-items:center;gap:7px;color:var(--tx-2)}
+  .stat b{color:var(--tx-0);font-weight:600}
+  .stat .dot{width:7px;height:7px;border-radius:50%;background:var(--syn);box-shadow:0 0 8px var(--syn)}
+  .stat .dot.heat{background:var(--heat-2);box-shadow:0 0 8px var(--heat-2);animation:pulse 2.4s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:.5;transform:scale(.85)}50%{opacity:1;transform:scale(1.15)}}
+  .pending-chip{
+    font-size:11px;padding:3px 10px;border-radius:999px;
+    border:1px solid var(--heat-2);color:var(--heat-1);
+    background:var(--heat-glow);box-shadow:0 0 14px var(--heat-glow) inset;
+  }
+
+  .body{flex:1;display:grid;grid-template-columns:226px 1fr 320px;min-height:0}
+
+  /* ===== left rail ===== */
+  .rail{border-right:1px solid var(--line);padding:16px 12px;overflow-y:auto;background:rgba(10,9,7,.5)}
+  .search{
+    width:100%;background:var(--ink-2);border:1px solid var(--line);
+    color:var(--tx-0);font-family:var(--mono);font-size:12px;
+    padding:9px 11px;border-radius:7px;margin-bottom:16px;outline:none;
+  }
+  .search::placeholder{color:var(--tx-3)}
+  .search:focus{border-color:var(--syn-dim);box-shadow:0 0 0 3px var(--syn-glow)}
+  .rail-lbl{font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--tx-3);margin:4px 8px 10px}
+  .cat{
+    display:flex;align-items:center;gap:9px;
+    padding:8px 10px;border-radius:7px;cursor:pointer;
+    color:var(--tx-2);position:relative;transition:.18s;margin-bottom:1px;
+  }
+  .cat:hover{color:var(--tx-0);background:var(--ink-1)}
+  .cat .tick{width:3px;height:14px;border-radius:2px;background:transparent;transition:.18s}
+  .cat .nm{flex:1;font-size:12px}
+  .cat .ct{font-size:10.5px;color:var(--tx-3)}
+  .cat .pd{
+    font-size:9.5px;min-width:16px;text-align:center;padding:1px 5px;border-radius:999px;
+    background:var(--heat-3);color:#1a0c06;font-weight:600;
+  }
+  .cat.on{color:var(--heat-1);background:linear-gradient(90deg,var(--heat-glow),transparent)}
+  .cat.on .tick{background:var(--heat-1);box-shadow:0 0 10px var(--heat-1)}
+  .cat.on .ct{color:var(--heat-2)}
+
+  /* ===== center ===== */
+  .center{overflow-y:auto;padding:22px 30px 80px}
+  .grp{margin-bottom:34px}
+  .grp-head{display:flex;align-items:baseline;gap:14px;margin-bottom:16px;padding-bottom:9px;border-bottom:1px solid var(--line)}
+  .grp-head h2{font-family:var(--disp);font-weight:600;font-size:23px;color:var(--tx-0);letter-spacing:-.01em}
+  .grp-head .sec{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--tx-3)}
+  .grp-head .glow{
+    position:absolute;width:340px;height:120px;border-radius:50%;
+    background:radial-gradient(var(--heat-glow),transparent 70%);
+    filter:blur(30px);margin-top:-30px;margin-left:-40px;pointer-events:none;z-index:-1;
+  }
+
+  .card{
+    background:linear-gradient(180deg,var(--ink-2),var(--ink-1));
+    border:1px solid var(--line);border-radius:11px;padding:16px 18px;margin-bottom:13px;
+    position:relative;opacity:0;transform:translateY(10px);
+    animation:reveal .5s cubic-bezier(.2,.7,.3,1) forwards;
+  }
+  @keyframes reveal{to{opacity:1;transform:none}}
+  .card-top{display:flex;align-items:flex-start;gap:14px}
+  .card-id{flex:1;min-width:0}
+  .knob{font-family:var(--mono);font-weight:600;font-size:13.5px;color:var(--tx-0);letter-spacing:-.01em}
+  .desc{font-size:11.5px;color:var(--tx-2);margin-top:4px;line-height:1.45;font-family:var(--mono)}
+  .badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;align-items:center}
+  .badge{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;padding:3px 8px;border-radius:5px;font-weight:500}
+  .b-default{border:1px dashed var(--tx-3);color:var(--tx-3)}
+  .b-yaml{border:1px solid var(--syn-dim);color:var(--syn);background:var(--syn-glow)}
+  .b-env{border:1px solid var(--tx-3);color:var(--tx-2);background:#100e0a}
+  .b-env .lock{margin-right:4px}
+  .pill-restart{
+    font-size:9.5px;letter-spacing:.06em;padding:3px 9px;border-radius:999px;
+    border:1px solid var(--heat-2);color:var(--heat-1);background:var(--heat-glow);
+    display:inline-flex;align-items:center;gap:5px;
+  }
+  .pill-restart .spin{display:inline-block}
+  .kind-tag{font-size:9.5px;color:var(--tx-3);letter-spacing:.08em;text-transform:uppercase}
+
+  /* control area */
+  .ctl{margin-top:14px;display:flex;align-items:center;gap:16px}
+
+  /* toggle */
+  .toggle{position:relative;width:52px;height:28px;border-radius:999px;cursor:pointer;flex:none;
+    background:var(--ink-3);border:1px solid var(--line);transition:.22s}
+  .toggle .knobdot{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;
+    background:var(--tx-2);transition:.22s cubic-bezier(.4,1.4,.5,1)}
+  .toggle.on{background:linear-gradient(90deg,var(--heat-2),var(--heat-1));border-color:var(--heat-1);
+    box-shadow:0 0 16px var(--heat-glow)}
+  .toggle.on .knobdot{left:27px;background:#1a0c06}
+  .toggle-lbl{font-size:12px;color:var(--tx-1)}
+  .toggle-lbl b{color:var(--heat-1)}
+
+  /* slider */
+  .slider-wrap{flex:1;display:flex;align-items:center;gap:16px}
+  .track{flex:1;height:5px;border-radius:999px;background:var(--ink-3);position:relative}
+  .track .fill{position:absolute;left:0;top:0;bottom:0;border-radius:999px;
+    background:linear-gradient(90deg,var(--heat-2),var(--heat-1))}
+  .track.heatpulse .fill{animation:heatbreathe 3s ease-in-out infinite}
+  @keyframes heatbreathe{0%,100%{box-shadow:0 0 6px var(--heat-glow)}50%{box-shadow:0 0 18px var(--heat-2)}}
+  .track .grip{position:absolute;top:50%;width:15px;height:15px;border-radius:50%;
+    background:var(--heat-1);transform:translate(-50%,-50%);box-shadow:0 0 10px var(--heat-2);border:2px solid var(--ink-0)}
+  .sval{font-family:var(--mono);font-weight:600;font-size:15px;color:var(--heat-1);min-width:78px;text-align:right}
+  .sval .unit{color:var(--tx-3);font-size:11px;font-weight:400}
+
+  /* select / text */
+  .field{background:var(--ink-0);border:1px solid var(--line);color:var(--tx-0);
+    font-family:var(--mono);font-size:12.5px;padding:8px 11px;border-radius:7px;min-width:200px}
+  .field:focus{outline:none;border-color:var(--syn-dim);box-shadow:0 0 0 3px var(--syn-glow)}
+  .locked-val{font-family:var(--mono);font-size:13px;color:var(--tx-1);padding:7px 0}
+
+  /* destructive */
+  .card.destructive{border-color:var(--red-deep);background:linear-gradient(180deg,#1f100e,#150a08)}
+  .card.destructive::before{content:"";position:absolute;inset:0;border-radius:11px;pointer-events:none;
+    box-shadow:0 0 0 1px var(--red-deep) inset,0 0 24px var(--red-glow) inset}
+  .danger-tag{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--red);
+    border:1px solid var(--red-deep);padding:3px 8px;border-radius:5px;background:var(--red-glow)}
+  .knob.danger{color:#ffd9d4}
+  .arm-row{margin-top:14px;display:flex;align-items:center;gap:14px}
+  .btn-arm{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;
+    padding:9px 16px;border-radius:7px;cursor:pointer;border:1px solid var(--red-deep);
+    color:var(--red);background:transparent;transition:.18s}
+  .btn-arm:hover{background:var(--red-glow)}
+  .btn-arm.armed{background:var(--red);color:#1a0606;border-color:var(--red);font-weight:600;
+    animation:armthrob 1s ease-in-out infinite}
+  @keyframes armthrob{0%,100%{box-shadow:0 0 0 0 var(--red-glow)}50%{box-shadow:0 0 0 8px transparent}}
+  .arm-note{font-size:11px;color:var(--red)}
+  .arm-countdown{font-size:11px;color:var(--tx-2)}
+
+  /* ===== right commit tray ===== */
+  .tray{border-left:1px solid var(--line);background:rgba(10,9,7,.6);display:flex;flex-direction:column;min-height:0}
+  .tray-head{padding:16px 18px;border-bottom:1px solid var(--line)}
+  .tray-head h3{font-family:var(--disp);font-weight:600;font-size:18px;color:var(--tx-0)}
+  .tray-head .n{font-size:11px;color:var(--tx-2);margin-top:3px}
+  .tray-body{flex:1;overflow-y:auto;padding:14px 16px}
+  .chg{background:var(--ink-2);border:1px solid var(--line);border-radius:8px;padding:11px 13px;margin-bottom:10px}
+  .chg .ck{font-size:11.5px;color:var(--tx-0);font-weight:600;word-break:break-all}
+  .chg .diff{display:flex;align-items:center;gap:9px;margin-top:7px;font-size:12px;flex-wrap:wrap}
+  .chg .old{color:var(--tx-3);text-decoration:line-through}
+  .chg .arr{color:var(--syn)}
+  .chg .new{color:var(--heat-1);font-weight:600}
+  .chg .meta{margin-top:8px;display:flex;gap:6px;flex-wrap:wrap}
+  .tray-foot{padding:14px 16px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:11px}
+  .btn{font-family:var(--mono);font-size:12px;letter-spacing:.05em;text-transform:uppercase;font-weight:600;
+    padding:12px;border-radius:8px;cursor:pointer;border:1px solid;text-align:center;transition:.18s}
+  .btn-apply{border-color:var(--syn);color:var(--ink-0);background:var(--syn);box-shadow:0 0 18px var(--syn-glow)}
+  .btn-apply:hover{filter:brightness(1.12)}
+  .btn-restart{border-color:var(--heat-2);color:var(--heat-1);background:var(--heat-glow)}
+  .btn-restart:hover{background:rgba(255,122,60,.32)}
+  .restart-warn{font-size:10.5px;line-height:1.5;color:var(--heat-2);
+    border-left:2px solid var(--heat-2);padding-left:9px}
+  .restart-warn .x{color:var(--red)}
+  .empty{color:var(--tx-3);font-size:11.5px;text-align:center;padding:24px 0;font-style:italic;font-family:var(--disp)}
+
+  /* scrollbars */
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:var(--ink-3);border-radius:9px}
+  ::-webkit-scrollbar-thumb:hover{background:var(--line)}
+
+  .legend{position:fixed;bottom:8px;left:236px;z-index:5;font-size:9.5px;color:var(--tx-3);letter-spacing:.06em}
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <header>
+    <div class="brand">
+      <span class="glyph">Yadgar</span>
+      <span class="sub">— neural console</span>
+    </div>
+    <div class="statusline">
+      <div class="stat"><span class="dot heat"></span> daemon <b>v5.81.0</b></div>
+      <div class="stat"><span class="dot"></span> 299 knobs · 15 categories</div>
+      <div class="stat">pending <span class="pending-chip">3 changes</span></div>
+      <div class="stat" style="color:var(--heat-2)">⟲ restart pending</div>
+    </div>
+  </header>
+
+  <div class="body">
+
+    <!-- LEFT RAIL -->
+    <nav class="rail">
+      <input class="search" placeholder="search 299 settings…">
+      <div class="rail-lbl">Capability categories</div>
+      <div class="cat"><span class="tick"></span><span class="nm">retrieval</span><span class="ct">41</span></div>
+      <div class="cat"><span class="tick"></span><span class="nm">storage</span><span class="ct">22</span></div>
+      <div class="cat"><span class="tick"></span><span class="nm">gate</span><span class="ct">9</span><span class="pd">1</span></div>
+      <div class="cat on"><span class="tick"></span><span class="nm">brain-dynamics</span><span class="ct">28</span><span class="pd">2</span></div>
+      <div class="cat"><span class="tick"></span><span class="nm">enrichment</span><span class="ct">17</span></div>
+      <div class="cat"><span class="tick"></span><span class="nm">consolidation</span><span class="ct">19</span></div>
+      <div class="cat"><span class="tick"></span><span class="nm">wiki</span><span class="ct">24</span></div>
+      <div class="cat"><span class="tick"></span><span class="nm">curation</span><span class="ct">15</span></div>
+      <div class="cat"><span class="tick"></span><span class="nm">write-path</span><span class="ct">11</span></div>
+      <div class="cat"><span class="tick"></span><span class="nm">ops</span><span class="ct">26</span></div>
+      <div class="cat"><span class="tick"></span><span class="nm">viz</span><span class="ct">13</span></div>
+      <div class="cat"><span class="tick"></span><span class="nm">security</span><span class="ct">8</span></div>
+      <div class="cat"><span class="tick"></span><span class="nm">observability</span><span class="ct">14</span></div>
+      <div class="cat"><span class="tick"></span><span class="nm">mcp-tool</span><span class="ct">12</span></div>
+      <div class="cat"><span class="tick"></span><span class="nm">config</span><span class="ct">28</span></div>
+    </nav>
+
+    <!-- CENTER -->
+    <main class="center">
+
+      <section class="grp">
+        <div class="grp-head"><div class="glow"></div>
+          <h2>brain-dynamics</h2><span class="sec">section · heat & decay</span>
+        </div>
+
+        <!-- slider: heat decay (pulsing heat motif) -->
+        <div class="card" style="animation-delay:.04s">
+          <div class="card-top">
+            <div class="card-id">
+              <span class="knob">decay_factor</span>
+              <div class="desc">Per-cycle multiplicative heat decay. Lower → memories cool faster. The core of Yadgar's forgetting curve.</div>
+            </div>
+            <span class="kind-tag">float</span>
+          </div>
+          <div class="ctl">
+            <div class="slider-wrap">
+              <div class="track heatpulse"><div class="fill" style="width:92%"></div><div class="grip" style="left:92%"></div></div>
+              <div class="sval">0.9995</div>
+            </div>
+          </div>
+          <div class="badges"><span class="badge b-yaml">yaml</span></div>
+        </div>
+
+        <!-- slider: importance decay, edited (pending) -->
+        <div class="card" style="animation-delay:.09s">
+          <div class="card-top">
+            <div class="card-id">
+              <span class="knob">importance_decay_factor</span>
+              <div class="desc">Decay applied to the importance scalar separately from heat. <span style="color:var(--syn)">Edited — pending.</span></div>
+            </div>
+            <span class="kind-tag">float</span>
+          </div>
+          <div class="ctl">
+            <div class="slider-wrap">
+              <div class="track"><div class="fill" style="width:78%"></div><div class="grip" style="left:78%"></div></div>
+              <div class="sval">0.9990</div>
+            </div>
+          </div>
+          <div class="badges">
+            <span class="badge b-yaml">yaml</span>
+            <span class="pill-restart"><span class="spin">⟲</span> restart required</span>
+          </div>
+        </div>
+
+        <!-- slider: hopfield beta -->
+        <div class="card" style="animation-delay:.14s">
+          <div class="card-top">
+            <div class="card-id">
+              <span class="knob">hopfield_beta</span>
+              <div class="desc">Inverse temperature for the Hopfield associative-recall sharpening. Higher → crisper attractors.</div>
+            </div>
+            <span class="kind-tag">float</span>
+          </div>
+          <div class="ctl">
+            <div class="slider-wrap">
+              <div class="track"><div class="fill" style="width:53%"></div><div class="grip" style="left:53%"></div></div>
+              <div class="sval">8.0<span class="unit"> β</span></div>
+            </div>
+          </div>
+          <div class="badges"><span class="badge b-yaml">yaml</span><span class="pill-restart"><span class="spin">⟲</span> restart required</span></div>
+        </div>
+
+        <!-- ENV locked -->
+        <div class="card" style="animation-delay:.19s">
+          <div class="card-top">
+            <div class="card-id">
+              <span class="knob">num_astrocyte_processes</span>
+              <div class="desc">Worker count for the astrocyte decay pool. Set by deployment env — yaml cannot override it.</div>
+            </div>
+            <span class="kind-tag">int</span>
+          </div>
+          <div class="ctl"><span class="locked-val">4</span></div>
+          <div class="badges"><span class="badge b-env"><span class="lock">🔒</span> env · locked</span></div>
+        </div>
+      </section>
+
+      <section class="grp">
+        <div class="grp-head"><h2>enrichment</h2><span class="sec">section · retrieval_fusion</span></div>
+
+        <!-- FPA slider -->
+        <div class="card" style="animation-delay:.24s">
+          <div class="card-top">
+            <div class="card-id">
+              <span class="knob">fpa_threshold</span>
+              <div class="desc">Floor for the fixed-point-attractor enrichment exemption. Memories above this skip re-enrichment.</div>
+            </div>
+            <span class="kind-tag">float</span>
+          </div>
+          <div class="ctl">
+            <div class="slider-wrap">
+              <div class="track"><div class="fill" style="width:25%"></div><div class="grip" style="left:25%"></div></div>
+              <div class="sval">0.25</div>
+            </div>
+          </div>
+          <div class="badges"><span class="badge b-yaml">yaml</span></div>
+        </div>
+
+        <!-- toggle, default source -->
+        <div class="card" style="animation-delay:.29s">
+          <div class="card-top">
+            <div class="card-id">
+              <span class="knob">contextual_prefix_enabled</span>
+              <div class="desc">Prepend a synthesized context prefix to each chunk before embedding.</div>
+            </div>
+            <span class="kind-tag">bool</span>
+          </div>
+          <div class="ctl">
+            <div class="toggle on"><div class="knobdot"></div></div>
+            <span class="toggle-lbl"><b>true</b></span>
+          </div>
+          <div class="badges"><span class="badge b-default">default</span></div>
+        </div>
+      </section>
+
+      <section class="grp">
+        <div class="grp-head"><h2>gate</h2><span class="sec">section · write_gate &amp; quality</span></div>
+
+        <!-- quality floor slider, edited -->
+        <div class="card" style="animation-delay:.34s">
+          <div class="card-top">
+            <div class="card-id">
+              <span class="knob">write_gate_shadow_threshold</span>
+              <div class="desc">Quality floor below which a write is shadow-logged but not committed. <span style="color:var(--syn)">Edited — pending.</span></div>
+            </div>
+            <span class="kind-tag">float</span>
+          </div>
+          <div class="ctl">
+            <div class="slider-wrap">
+              <div class="track"><div class="fill" style="width:20%"></div><div class="grip" style="left:20%"></div></div>
+              <div class="sval">0.20</div>
+            </div>
+          </div>
+          <div class="badges"><span class="badge b-default">default</span></div>
+        </div>
+      </section>
+
+      <section class="grp">
+        <div class="grp-head"><h2>storage</h2><span class="sec">section · cold-tier lifecycle</span></div>
+
+        <!-- DESTRUCTIVE armed card -->
+        <div class="card destructive" style="animation-delay:.39s">
+          <div class="card-top">
+            <div class="card-id">
+              <span class="knob danger">COLD_MEMORY_PURGE_ENABLED</span>
+              <div class="desc" style="color:#e7a39a">When on, the consolidation cycle permanently deletes cold-tier memories below <span class="knob danger">cold_threshold</span>. <b style="color:var(--red)">⚠ deletes data — irreversible.</b></div>
+            </div>
+            <span class="danger-tag">destructive</span>
+          </div>
+          <div class="ctl">
+            <div class="toggle"><div class="knobdot"></div></div>
+            <span class="toggle-lbl">false</span>
+          </div>
+          <div class="arm-row">
+            <button class="btn-arm armed">⚠ confirm enable purge</button>
+            <span class="arm-note">Armed — click again to commit</span>
+            <span class="arm-countdown">expires in 7s</span>
+          </div>
+          <div class="badges" style="margin-top:12px">
+            <span class="badge b-default">default</span>
+            <span class="pill-restart"><span class="spin">⟲</span> restart required</span>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- RIGHT COMMIT TRAY -->
+    <aside class="tray">
+      <div class="tray-head">
+        <h3>Commit tray</h3>
+        <div class="n">3 pending changes · 2 need restart</div>
+      </div>
+      <div class="tray-body">
+        <div class="chg">
+          <div class="ck">importance_decay_factor</div>
+          <div class="diff"><span class="old">0.9999</span><span class="arr">→</span><span class="new">0.9990</span></div>
+          <div class="meta"><span class="badge b-yaml">yaml</span><span class="pill-restart">⟲ restart</span></div>
+        </div>
+        <div class="chg">
+          <div class="ck">write_gate_shadow_threshold</div>
+          <div class="diff"><span class="old">0.15</span><span class="arr">→</span><span class="new">0.20</span></div>
+          <div class="meta"><span class="badge b-yaml">yaml</span></div>
+        </div>
+        <div class="chg">
+          <div class="ck">COLD_MEMORY_PURGE_ENABLED</div>
+          <div class="diff"><span class="old">false</span><span class="arr">→</span><span class="new" style="color:var(--red)">true</span></div>
+          <div class="meta"><span class="danger-tag">destructive</span><span class="pill-restart">⟲ restart</span></div>
+        </div>
+      </div>
+      <div class="tray-foot">
+        <button class="btn btn-apply">Apply 3 changes</button>
+        <button class="btn btn-restart">⟲ Restart daemon</button>
+        <div class="restart-warn"><span class="x">⚠</span> Restart re-reads config but <b>drops the live MCP connection</b>. This console will reconnect once the daemon reports a new start time.</div>
+      </div>
+    </aside>
+
+  </div>
+</div>
+<div class="legend">NEURAL CONSOLE · static mockup — sample values only · heat=amber→coral, synapse=teal, alarm=red</div>
+
+<script>
+  // minimal interactivity to make the mockup feel live (not load-bearing)
+  document.querySelectorAll('.cat').forEach(c=>c.addEventListener('click',()=>{
+    document.querySelector('.cat.on')?.classList.remove('on');
+    c.classList.add('on');
+  }));
+  document.querySelectorAll('.toggle').forEach(t=>t.addEventListener('click',e=>{
+    if(t.closest('.destructive')) return; // destructive needs the arm flow
+    t.classList.toggle('on');
+    const lbl=t.parentElement.querySelector('.toggle-lbl');
+    if(lbl) lbl.innerHTML=t.classList.contains('on')?'<b>true</b>':'false';
+  }));
+  // armed countdown demo
+  let n=7; const cd=document.querySelector('.arm-countdown');
+  setInterval(()=>{ if(!cd)return; n=n<=1?7:n-1; cd.textContent='expires in '+n+'s'; },1000);
+</script>
+</body>
+</html>
