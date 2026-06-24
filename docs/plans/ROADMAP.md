@@ -30,6 +30,7 @@ Single source of truth for **open** plans. Shipped/dead plans live in
 | Plan | Theme | Status | Notes |
 |------|-------|--------|-------|
 | [en2a-comet-fpa-v5.82](en2a-comet-fpa-v5.82.md) | enrichment / eval | **Next — v5.82** | COMET-FPA ablation: measure `make longmemeval` baseline → apply COMET-FPA exemption → re-run → compare recall@k → flip-or-retire COMET. Prerequisite landed in v5.81 (`091d958`). Only genuinely-open recall-adjacent task. |
+| [adr-capture-system](adr-capture-system.md) | memory / decisions | **P0 shipping** | ADR capture into Yadgar wiki (source of truth, per-project page). P0 = stop-hook prompt redesign (capture-first + mandatory 11-field/ADR-NNNN schema) — this PR. P1 = `adr_add` tool + `adr_due` nudge; P2 = project_brief surfacing; P3 = models.py schema home. |
 | [db-audit-fix](db-audit-fix.md) | data-integrity | **skeleton — discuss first** | Audit + fix live-store issues (legacy `last_decay_at`, 6-week-dead aftermath, entity heat, wiki↔memory link, archive tier, orphans). User has thoughts to bring before scoping. |
 
 ### In-flight migrations / investigations

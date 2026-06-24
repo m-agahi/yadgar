@@ -24,39 +24,78 @@ import yadgar.paths as _paths
 INTERVAL = 25  # human messages between checkpoints
 
 _PROMPT_TEMPLATE = """\
-Yadgar checkpoint. Evaluate signals and act.
+Yadgar checkpoint. CAPTURE FIRST (steps 1-2), then maintenance (steps 3-4).
+Decisions and findings scroll out of context and are lost forever; maintenance
+signals re-fire next checkpoint. Capture is the irreplaceable work — if you must
+triage anything away under length pressure, drop maintenance, NEVER capture.
 
-1. Call `project_brief("{directory}", mode="signals")`.
+1. ADR CAPTURE (always run; the Yadgar wiki is the source of truth — no file,
+   works for non-git projects too).
+   Page: slug "{project}-adr-log", tag "adr", scoped to this directory.
+   - Find it: wiki_read("{project}-adr-log", directory="{directory}"). If absent,
+     create with wiki_add(title="{project} ADR Log", content="<one-line header>",
+     tags=["adr"], directory="{directory}", wait=True). NOTE: wiki_add commits
+     directly — do NOT call wiki_approve (it only promotes drafts and errors on a
+     live page).
+   - Scan THIS session for durable decisions since the last checkpoint.
+     KEEP (precision over recall): a clear durable decision — architecture, a
+     tool/config choice, an approach committed-to, a scope cut; a conclusion we
+     commit to and stop investing in (NOT a passing status report); a fix that
+     changes an approach or contract. A user "record this" ALWAYS qualifies.
+     SKIP: routine work (git push, branch cleanup, progress/status checks),
+     in-flux or abandoned ideas, pure status ("tests pass"), routine corrections
+     (typos, lint).
+   - Read existing entries FIRST; append ONLY new decisions (dedup by decision,
+     not wording).
+   - Entry schema — ALL fields MANDATORY (write "none"/"n/a" if truly empty,
+     never omit, so it stays machine-parseable):
+       ADR-NNNN — <title>   (NNNN = 4-digit zero-padded, project-sequential: ADR-0001, ADR-0002, …)
+       status:          open | accepted | superseded | rejected | deprecated
+       date:            <ISO date>
+       context:         <what triggered this decision>
+       decision:        <what was decided>
+       rationale:       <why — the reasoning>
+       alternatives:    <options considered + why rejected; "none">
+       consequences:    <trade-offs / costs / caveats / flags>
+       revisit_trigger: <condition to reconsider>
+       supersedes:      ADR-NNNN | none
+     A decision still unresolved this session → status: open, with the pending
+     question in revisit_trigger; confirm/close it in a later checkpoint.
+   - Append via wiki_append_section("{project}-adr-log", section_heading="ADR-NNNN: <title>",
+     content=<the fields above>, directory="{directory}", wait=True). Verify with
+     wiki_history("{project}-adr-log", directory="{directory}").
 
-2. Iterate `recommended_actions` and execute each:
-   - action="bootstrap_project": propose <=1500-char init memory summarising the
-     project, then call `bootstrap_project("{directory}", content)`.
-   - action="refresh_active_work": summarise current task + open work,
-     then call `update_active_work("{directory}", content)`.
-   - action="refresh_checkpoint": call `checkpoint("{directory}", current_task=...,
-     key_decisions=..., next_steps=..., files_being_edited=..., open_questions=...)`.
+2. STRUCTURAL WRITE-BACK (always consider). Durable repo-structure / convention /
+   module-purpose findings from THIS session → the EXISTING wiki page that owns
+   the topic (wiki_list → slug → wiki_read; update via wiki_add(replace_slug=<slug>,
+   ..., directory="{directory}", wait=True); no near-duplicate pages). If no page
+   fits, create one with wiki_add(tags=[...], directory="{directory}", wait=True).
+   Verify wiki_history. Facts/structure only — decisions go in step 1.
 
-3. Also check the `signals` dict:
-   - `stale_wiki_count > 0` AND on master/main/default branch → call
-     `wiki_refresh_stale("{directory}")` to get stale slugs, then dispatch a
-     background Agent to run /repo-wiki:repo-wiki update for each stale slug.
-     After each update, call `wiki_diff` or `wiki_history` on the updated page
-     to verify the change before continuing.
+3. Call project_brief("{directory}", mode="signals").
 
-4. Write-back: if this session produced durable findings about repo structure,
-   conventions, module purposes, or key decisions — consolidate them onto the
-   EXISTING wiki page (use the session-start catalog to find the right slug via
-   `wiki_list`→slug→`wiki_read`). Update with `wiki_add(replace_slug=<slug>, ...)`.
-   Do NOT create a near-duplicate page. After the update, call `wiki_history` on
-   the slug to confirm the new version was recorded.
+4. MAINTENANCE — for each entry in recommended_actions:
+   - ANCHOR HYGIENE: if any of audit_anchors / forget_expired_anchors /
+     merge_redundant_anchors / promote_anchor_to_wiki appear, handle them with ONE
+     flow: audit_anchors("{directory}", dry_run=True) → review →
+     audit_anchors("{directory}", dry_run=False) to apply forgets/merges. The tool
+     self-guards (never drops semantic_immortal or protected-legacy anchors). For
+     any promote draft it returns, wiki_add it only if wiki-worthy (step-2 rules),
+     else skip. Run this flow at most once.
+   - Else if the action has a `suggested_call`: run it verbatim, supplying content
+     from THIS session for placeholders (content='...', key_decisions=[...]) — the
+     suggested_call is the exact shape; supply only the content, don't invent it.
+     (Covers refresh_active_work, consider_refresh_active_work, refresh_checkpoint,
+     consider_refresh_checkpoint, extract_last_session_findings, update_roadmap,
+     review_rejections.)
+   - bootstrap_project (no suggested_call): propose a <=1500-char project-summary
+     memory, then bootstrap_project("{directory}", content).
+   - Any action type NOT covered above AND with no suggested_call → SKIP and flag
+     it in your reply (do not improvise the mechanics).
 
-5. Otherwise: capture any key decisions via memorize / wiki_add.
-
-[yadgar] Checkpoint saved for {directory}.
-If user does /clear or session ends, resume via: restore(directory="{directory}")
-
-Then look at your last message — if mid-thought, repeat the question so
-conversation continues naturally.
+[yadgar] Checkpoint cadence reached — capture, then continue. If you were
+mid-thought, repeat your last question so the conversation continues. Resume after
+/clear or session end: restore(directory="{directory}").
 """
 
 
@@ -170,7 +209,8 @@ def main() -> None:
     state[session_id] = session_state
     _save_state(state)
 
-    prompt = _PROMPT_TEMPLATE.format(directory=directory)
+    project = os.path.basename(directory.rstrip("/")) or "project"
+    prompt = _PROMPT_TEMPLATE.format(directory=directory, project=project)
     print(json.dumps({"decision": "block", "reason": prompt}))
 
 
