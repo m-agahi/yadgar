@@ -975,12 +975,14 @@ class TestBCEN3a_Doc2QueryEnrichment:
 
 @pytest.mark.xfail(
     reason=(
-        "#64: COMET DOES produce inferences (verified in-image: 'Alice migrated...' "
-        "-> 7 incl ['hardworking','to be more efficient']), but the enrichment "
-        "pipeline's FPA filter (FPA_SIMILARITY_THRESHOLD=0.25, enrichment/__init__.py:101) "
-        "drops COMET's abstract commonsense traits (xAttr/xIntent) as cosine-distant "
-        "from concrete content -> enrichment_comet empty. NOT fixed blind: whether "
-        "un-FPA'd COMET helps recall is a measured v6 enrichment-tuning question. BC-EN2a stays ❌."
+        "BC-EN2a WON'T-IMPLEMENT — COMET retired to dormant per ADR-0004. The en2a "
+        "ablation (benchmarks/reports/en2a_comet_ablation_2026-06-24.md) DECIDED the "
+        "open question: un-FPA'd COMET does NOT help recall (multi-session R@5 -4.2pt) "
+        "at ~17h/10-core cost → net-negative. COMET_ENRICHMENT_ENABLED now defaults "
+        "False; the code is retained dormant. COMET still DOES produce inferences "
+        "(verified in-image), but the pipeline FPA filter drops its abstract traits → "
+        "enrichment_comet empty. Test kept xfail/skip (not deleted) to guard the "
+        "dormant code path. BC-EN2a stays ❌ — intentional, non-blocking."
     ),
     strict=False,
 )

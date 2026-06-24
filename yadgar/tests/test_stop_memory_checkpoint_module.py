@@ -232,3 +232,64 @@ class TestMain:
         out = capsys.readouterr().out
         # Should not crash, prints {} (no transcript_path)
         assert out.strip() == "{}"
+
+    def test_block_prompt_injects_default_branch_into_wiki_calls(self, tmp_path, capsys):
+        """#19: the blocked prompt must carry branch_hint= on the wiki write calls.
+
+        The ADR-log wiki write contract REQUIRES branch_hint (else missing_branch),
+        and the ADR log is project-canonical so it must target the default branch.
+        main() computes the default branch and injects it as {default_branch}.
+        """
+        state_path = tmp_path / "state.json"
+        transcript = tmp_path / "t.jsonl"
+        lines = [json.dumps({"role": "user", "content": f"msg {i}"}) for i in range(25)]
+        transcript.write_text("\n".join(lines))
+
+        mod = _load_module()
+        stdin_data = {
+            "session_id": "s1",
+            "transcript_path": str(transcript),
+            "stop_hook_active": False,
+            "cwd": str(tmp_path),
+        }
+        # Force a deterministic default branch so the assertion is exact.
+        with patch.object(mod, "_default_branch", return_value="trunk"):
+            with patch("sys.stdin", io.StringIO(json.dumps(stdin_data))):
+                with patch.object(mod._paths, "STOP_HOOK_STATE_PATH", state_path):
+                    mod.main()
+        out = capsys.readouterr().out
+        reason = json.loads(out)["reason"]
+        # Every wiki write in the prompt must carry the resolved default branch.
+        assert 'branch_hint="trunk"' in reason
+        # Specifically on the ADR create (wiki_add) and append (wiki_append_section).
+        assert "wiki_add(" in reason and "wiki_append_section(" in reason
+        # The {default_branch} placeholder must be fully substituted (no leftovers).
+        assert "{default_branch}" not in reason
+
+    def test_default_branch_resolves_from_git_symbolic_ref(self, tmp_path):
+        """_default_branch parses `git symbolic-ref refs/remotes/origin/HEAD`."""
+        mod = _load_module()
+
+        class _R:
+            returncode = 0
+            stdout = "refs/remotes/origin/main\n"
+
+        with patch("subprocess.run", return_value=_R()):
+            assert mod._default_branch(str(tmp_path)) == "main"
+
+    def test_default_branch_falls_back_to_master_for_non_git(self, tmp_path):
+        """Non-git dir / no remote HEAD / any error → 'master' fallback (ADR
+        supports non-git projects)."""
+        mod = _load_module()
+
+        # Non-zero return code (no remote HEAD) → fallback.
+        class _R:
+            returncode = 128
+            stdout = ""
+
+        with patch("subprocess.run", return_value=_R()):
+            assert mod._default_branch(str(tmp_path)) == "master"
+
+        # Subprocess raising (git missing) → fallback, no crash.
+        with patch("subprocess.run", side_effect=FileNotFoundError("git")):
+            assert mod._default_branch(str(tmp_path)) == "master"

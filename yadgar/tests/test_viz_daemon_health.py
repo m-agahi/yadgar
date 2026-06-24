@@ -525,3 +525,53 @@ class TestVizHealthRefreshEnvKnob:
 
         cfg.get_settings.cache_clear()
         assert sleep_calls == [10.0], f"expected [10.0], got {sleep_calls}"
+
+
+# ---------------------------------------------------------------------------
+# fix(metrics): dlq_size excludes .error.json sidecars
+# ---------------------------------------------------------------------------
+
+
+class TestCollectQueueDepthsExcludesErrorSidecars:
+    """_collect_queue_depths() must not double-count .error.json sidecar files."""
+
+    def _make_settings(self, tmp_path):
+        class _FakeSettings:
+            DATA_DIR = str(tmp_path)
+
+        return _FakeSettings()
+
+    def _call(self, tmp_path, monkeypatch):
+        from yadgar import metrics as m
+
+        monkeypatch.setattr(
+            "yadgar.config.get_settings",
+            lambda: self._make_settings(tmp_path),
+        )
+        # Ensure all three queue dirs exist so the loop doesn't skip them.
+        (tmp_path / "queue").mkdir(exist_ok=True)
+        (tmp_path / "archive").mkdir(exist_ok=True)
+        dlq = tmp_path / "dlq"
+        dlq.mkdir(exist_ok=True)
+        return m, dlq
+
+    def test_empty_dlq_depth_is_zero(self, tmp_path, monkeypatch):
+        m, _dlq = self._call(tmp_path, monkeypatch)
+        m._collect_queue_depths()
+        assert m.yadgar_dlq_size._value.get() == 0.0
+
+    def test_one_entry_with_sidecar_counts_as_one(self, tmp_path, monkeypatch):
+        m, dlq = self._call(tmp_path, monkeypatch)
+        (dlq / "0001_x.json").write_text("{}")
+        (dlq / "0001_x.json.error.json").write_text("{}")
+        m._collect_queue_depths()
+        assert m.yadgar_dlq_size._value.get() == 1.0
+
+    def test_two_entries_with_sidecars_count_as_two(self, tmp_path, monkeypatch):
+        m, dlq = self._call(tmp_path, monkeypatch)
+        (dlq / "0001_x.json").write_text("{}")
+        (dlq / "0001_x.json.error.json").write_text("{}")
+        (dlq / "0002_y.json").write_text("{}")
+        (dlq / "0002_y.json.error.json").write_text("{}")
+        m._collect_queue_depths()
+        assert m.yadgar_dlq_size._value.get() == 2.0

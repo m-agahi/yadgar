@@ -38,6 +38,12 @@ def _reset_tracer_provider():
     OTel uses a private _TRACER_PROVIDER_SET_ONCE Once guard that blocks
     repeated set_tracer_provider calls. We reset the internal '_done' flag
     and clear _TRACER_PROVIDER before installing a new provider.
+
+    C2 isolation fix (obs-train): also tears down the span-log QueueListener
+    and forces yadgar.tracing.propagate=True. Without this, a test that sets
+    propagate=False (e.g. test_span_emit_json) poisons _SPAN_LOG_PREV_PROPAGATE;
+    _stop_span_log_queue() then restores False, leaving caplog blind to yadgar.tracing
+    WARNING records in subsequent tests (test_invalid_endpoint_does_not_crash).
     """
     try:
         from opentelemetry import trace
@@ -55,11 +61,19 @@ def _reset_tracer_provider():
         new_provider = TracerProvider()
         trace.set_tracer_provider(new_provider)
 
-        # Reset setup_tracing idempotency guard
+        # Reset setup_tracing idempotency guard + C2 P2 span-log queue
         try:
+            import logging
+
             import yadgar.tracing as _tr
 
             _tr._SETUP_DONE.clear()
+            # C2 P2: stop the QueueListener (removes QueueHandler, restores propagate
+            # from _SPAN_LOG_PREV_PROPAGATE). Then unconditionally force propagate=True
+            # so a poisoned saved value (False, from line 348 test_span_emit_json) does
+            # not bleed into the next test and hide caplog records.
+            _tr._stop_span_log_queue()
+            logging.getLogger("yadgar.tracing").propagate = True
         except Exception:
             pass
     except Exception:
@@ -427,6 +441,210 @@ class TestLogSpanProcessor:
             assert any(r.levelno == _logging.INFO for r in records)
         finally:
             proc_logger.removeHandler(cap)
+
+
+# ---------------------------------------------------------------------------
+# 6b. C2 P2 — span logging off the event-loop via QueueHandler/QueueListener
+# ---------------------------------------------------------------------------
+
+
+class TestSpanLogOffThread:
+    def test_emit_span_log_does_not_block_on_slow_handler(self):
+        """C2 P2: span-log emission enqueues + returns fast; never blocks on the
+        downstream handler. Records still reach the downstream handler (drained
+        via the listener)."""
+        import logging as _logging
+        import time as _time
+
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+
+        from yadgar import tracing as tr
+
+        seen: list[_logging.LogRecord] = []
+
+        class _SlowHandler(_logging.Handler):
+            def emit(self, record: _logging.LogRecord) -> None:
+                _time.sleep(0.5)  # simulate a slow/locked downstream handler
+                seen.append(record)
+
+        slow = _SlowHandler()
+        slow.setLevel(_logging.DEBUG)
+
+        # span_end logs at INFO; ensure the logger doesn't filter them out.
+        tr_logger = _logging.getLogger("yadgar.tracing")
+        _saved_level = tr_logger.level
+        tr_logger.setLevel(_logging.DEBUG)
+
+        # A prior test may have left a listener installed (install is idempotent).
+        # Tear it down so our slow handler is the one wired up.
+        tr._stop_span_log_queue()
+
+        # Wire the off-thread span-log queue with the slow handler as the downstream.
+        listener = tr._install_span_log_queue(downstream_handlers=[slow])
+        assert listener is not None, "expected a QueueListener to be installed"
+
+        try:
+            processor = tr.LogSpanProcessor(service_name="test-offthread")
+            provider = TracerProvider(resource=Resource.create({"service.name": "test-offthread"}))
+            provider.add_span_processor(processor)
+
+            from opentelemetry import trace
+
+            once = getattr(trace, "_TRACER_PROVIDER_SET_ONCE", None)
+            if once is not None and hasattr(once, "_done"):
+                once._done = False
+            if hasattr(trace, "_TRACER_PROVIDER"):
+                trace._TRACER_PROVIDER = None
+            trace.set_tracer_provider(provider)
+
+            tracer = trace.get_tracer("test")
+            t0 = _time.perf_counter()
+            with tracer.start_as_current_span("test.offthread"):
+                pass
+            elapsed = _time.perf_counter() - t0
+
+            # The span-ending thread must NOT have blocked on the 0.5s handler.
+            assert elapsed < 0.1, (
+                f"span end blocked on the slow handler (elapsed={elapsed:.3f}s) — "
+                "logging is still on the calling thread"
+            )
+            # Nothing delivered yet (handler is slow, runs on the listener thread).
+            assert seen == [] or len(seen) == 0
+        finally:
+            # stop() drains the queue + joins the listener thread.
+            tr._stop_span_log_queue()
+            tr_logger.setLevel(_saved_level)
+
+        # After draining, the record reached the downstream handler.
+        assert any(
+            getattr(r, "event", None) == "span_end" or r.getMessage() == "span_end" for r in seen
+        ), "span_end record never reached the downstream handler after draining"
+
+
+# ---------------------------------------------------------------------------
+# 6c. C2 P3 — OTLP exporter circuit-breaker + rate-limited failure logging
+# ---------------------------------------------------------------------------
+
+
+class _FlakyExporter:
+    """Stand-in SpanExporter: returns SUCCESS/FAILURE per a scripted plan."""
+
+    def __init__(self, results: list[bool]) -> None:
+        # results[i] True -> SUCCESS, False -> FAILURE; last value repeats.
+        self._results = results
+        self.export_calls = 0
+        self.shutdown_called = False
+
+    def export(self, spans):
+        from opentelemetry.sdk.trace.export import SpanExportResult
+
+        self.export_calls += 1
+        idx = min(self.export_calls - 1, len(self._results) - 1)
+        ok = self._results[idx]
+        return SpanExportResult.SUCCESS if ok else SpanExportResult.FAILURE
+
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        return True
+
+    def shutdown(self) -> None:
+        self.shutdown_called = True
+
+
+class TestOtlpCircuitBreaker:
+    def _cb(self, inner, **kw):
+        from yadgar.tracing import _CircuitBreakerSpanExporter
+
+        return _CircuitBreakerSpanExporter(inner, **kw)
+
+    def test_circuit_opens_after_k_failures_and_short_circuits(self):
+        """C2 P3: after K consecutive failures the circuit OPENS and export()
+        short-circuits (returns FAILURE) WITHOUT touching the underlying exporter."""
+        from opentelemetry.sdk.trace.export import SpanExportResult
+
+        inner = _FlakyExporter([False])  # always fails
+        clock = [0.0]
+        cb = self._cb(
+            inner,
+            failure_threshold=3,
+            reset_timeout_sec=60.0,
+            time_fn=lambda: clock[0],
+        )
+
+        for _ in range(3):
+            assert cb.export([]) is SpanExportResult.FAILURE
+        assert inner.export_calls == 3, "underlying called once per failure pre-open"
+
+        # Circuit now OPEN: further exports short-circuit, no new underlying calls.
+        for _ in range(5):
+            assert cb.export([]) is SpanExportResult.FAILURE
+        assert inner.export_calls == 3, "open circuit must NOT call the underlying exporter"
+
+    def test_failure_logging_rate_limited(self):
+        """C2 P3: failure logging is rate-limited to once per open-circuit window,
+        not once per failed batch."""
+        from unittest.mock import patch as _patch
+
+        inner = _FlakyExporter([False])
+        clock = [0.0]
+        cb = self._cb(
+            inner,
+            failure_threshold=2,
+            reset_timeout_sec=60.0,
+            time_fn=lambda: clock[0],
+        )
+
+        with _patch.object(
+            __import__("yadgar.tracing", fromlist=["logger"]).logger, "warning"
+        ) as warn:
+            # Drive 2 failures to open + many more exports within the same window.
+            for _ in range(10):
+                cb.export([])
+            # Exactly one "circuit opened" warning for this window, not 10.
+            assert warn.call_count == 1, (
+                f"expected 1 rate-limited warning per open window, got {warn.call_count}"
+            )
+
+    def test_circuit_half_opens_and_closes_on_recovery(self):
+        """C2 P3: after the reset window the circuit HALF-OPENS (probes the
+        underlying); on success it CLOSES and exports flow normally again."""
+        from opentelemetry.sdk.trace.export import SpanExportResult
+
+        # 3 failures to open, then SUCCESS once the collector recovers.
+        inner = _FlakyExporter([False, False, False, True])
+        clock = [0.0]
+        cb = self._cb(
+            inner,
+            failure_threshold=3,
+            reset_timeout_sec=60.0,
+            time_fn=lambda: clock[0],
+        )
+
+        for _ in range(3):
+            cb.export([])  # open the circuit
+        calls_at_open = inner.export_calls
+
+        # Still within the window -> short-circuit, no underlying call.
+        cb.export([])
+        assert inner.export_calls == calls_at_open
+
+        # Advance past the reset window -> half-open probe hits the underlying.
+        clock[0] += 61.0
+        result = cb.export([])
+        assert inner.export_calls == calls_at_open + 1, "half-open must probe the underlying"
+        assert result is SpanExportResult.SUCCESS
+
+        # Closed again: subsequent exports flow straight through.
+        cb.export([])
+        assert inner.export_calls == calls_at_open + 2
+
+    def test_shutdown_delegates_to_inner(self):
+        """C2 P3: shutdown/force_flush delegate to the wrapped exporter."""
+        inner = _FlakyExporter([True])
+        cb = self._cb(inner, failure_threshold=3, reset_timeout_sec=60.0)
+        assert cb.force_flush() is True
+        cb.shutdown()
+        assert inner.shutdown_called is True
 
 
 # ---------------------------------------------------------------------------

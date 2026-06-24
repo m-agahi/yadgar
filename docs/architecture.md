@@ -75,7 +75,7 @@ consolidation/orchestrator.py (ConsolidationScheduler)
 5. **Similarity gate (wiki_add only, drainer-deferred — v5.41.5)** — gate runs in drainer pre-apply stage (not request path; preserves I9 ≤5ms p50). Near-duplicate detected → DLQ with `failure_reason=duplicate_detected`. `wait=True` callers receive sync rejection payload; `wait=False` callers see `{"queued": True, "similarity_check": "deferred"}`.
 6. **Write gate (memorize only)** — similarity scored against recent memories; too similar → rejected (threshold configurable)
 7. **Embedding** — sentence-transformer encodes content; cached
-8. **Index-time enrichment** — ConceptNet/COMET/doc2query terms appended to embedding text (optional)
+8. **Index-time enrichment** — ConceptNet/COMET/doc2query terms appended to embedding text (optional) — NOTE: COMET retired to dormant 2026-06-24 (ADR-0004; net-negative recall); code retained, flag off by default.
 9. **Storage** — record inserted into SurrealDB with `heat=1.0`, `confidence`, tags, `directory_context`, `branch`
 10. **Versioning snapshot (wiki_add only, v5.41.0)** — wiki_page write triggers `wiki_page_version` snapshot insert in the same compound `BEGIN; CREATE...; CREATE...; COMMIT` transaction (v5.41.1 atomicity).
 11. **Reinjection** — related existing memories surfaced back to the caller (optional)
@@ -297,6 +297,10 @@ Secret patterns block storage of AWS, GCP service-account JSON, Stripe (`sk_live
 Structured JSON logs via `YADGAR_LOG_FORMAT=json`. `RequestLoggingMiddleware` (in `yadgar/log_config.py`) emits one INFO line per request with `request_id`, `tool_name`, `duration_ms`, `status`, `trace_id` (from `x-request-id` header).
 
 Consolidation phase markers use `phase_start: <name>` / `phase_end: <name> duration_ms=N`. Wiki snapshot loop in `entrypoint-backend.sh` writes `/data/wiki_*.jsonl` every 6 hours with 14-day retention.
+
+`/health` (auth-exempt) probes the db + embed dependencies concurrently (`asyncio.gather`) under a 3 s outer bound. **It returns HTTP 200 only when `status=="ok"`, and HTTP 503 on any non-ok ("degraded") status** (v5.83 obs-train) so the container `curl -f` healthcheck actually detects db/embed outages instead of reading a degraded server as healthy. The handler is stateless; anti-flap is delegated to the container healthcheck retries (compose core service: 10 s interval × 6 retries). Daemon-side consumers tolerate the 503: `daemon.status()` surfaces the degraded detail and `_health_ok()` still treats a responding-but-503 server as alive (liveness ≠ full-health).
+
+Distributed tracing (`yadgar/tracing.py`) wraps the optional OTLP exporter in a circuit breaker (`_CircuitBreakerSpanExporter`: opens after 5 consecutive export failures for 60 s, then half-open probes) so a down collector cannot drive a retry/log flood — OTLP stays enabled, the breaker just stops the flood. Per-span `span_end` log lines are emitted off the event-loop thread via a `QueueHandler`/`QueueListener` (drained in `shutdown_tracing`) so an export flood can never stall a request handler such as `/health`. `OTLP_INSECURE` is reserved/no-op for the HTTP exporter — the `OTLP_ENDPOINT` URL scheme (`http://` vs `https://`) decides transport security.
 
 ## Secret Gate Allowlist (v5.13.0)
 

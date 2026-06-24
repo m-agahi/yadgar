@@ -7,6 +7,34 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+### Observability train (obs-train, PR #122) — /health 503 contract + OTLP resilience
+
+Triggered by core flagged unhealthy while still serving + a ~14 h OTLP retry/log flood with no collector reachable. Keeps OTLP + metrics ENABLED; three cars (C1 health-masking, C2 handler/OTLP robustness, C3 nix collector + healthcheck tune).
+
+#### Changed (BREAKING — health contract)
+- **`/health` now returns HTTP 503 when `status != "ok"` (degraded); HTTP 200 only when `"ok"`** (was: always 200, even degraded). Same JSON body. This is the C1 fix — the container `curl -f` healthcheck previously read a db/embed outage as healthy (outage-masking false-negative). The handler is stateless; anti-flap is delegated to the container healthcheck retries, not an in-handler counter. (`yadgar/server/http.py`)
+- **`daemon.py` consumers tolerate 503:** `status()` reads the `HTTPError` body on a 503 and shows the degraded detail (not "unreachable"); `_health_ok()` treats a responding-but-503 server as alive (liveness ≠ full-health/readiness, which the container healthcheck enforces).
+
+#### Changed (robustness + resilience)
+- **`/health` handler probes db + embed concurrently** (`asyncio.gather`, ~2 s vs the old ~4 s serial) under an outer `asyncio.wait_for(_HEALTH_TIMEOUT_SEC=3.0)` bound, so a hung probe yields 503 instead of stalling the handler.
+- **Span logs emitted off the event loop** via `QueueHandler` + `QueueListener` (drained in `shutdown_tracing`) so an OTLP retry flood can't stall request handlers through the shared logging-handler lock. (`yadgar/tracing.py`)
+- **OTLP exporter wrapped in a circuit breaker** (`_CircuitBreakerSpanExporter`: opens after 5 consecutive failures for 60 s, half-open probe, rate-limited `otlp_circuit_open` logging). Stops the retry/log flood when the collector is down; OTLP stays enabled. (CB-1 pattern — see `ARCHITECTURE_INVARIANTS.md`)
+- **`OTLP_INSECURE` documented as reserved / no-op for the HTTP exporter** — transport security is decided by the `OTLP_ENDPOINT` URL scheme (`http://` vs `https://`), not by the flag. Kept (not removed) to avoid churning the I25 three-way config sync. `OTLP_TIMEOUT_SEC` default is 3 s.
+
+#### Infra (nix, separate, commit `4fc96b8`)
+- otel-collector now listens at `:4318` (OTLP activation target).
+- yadgar-core healthcheck tuned: `--health-timeout 5s→8s`, `--health-interval 30s→15s`, retries default 3. (docker-compose core service unchanged: `interval 10s` / `timeout 5s` / `retries 6` already meets-or-exceeds this intent — a 503 raises `HTTPError` → non-zero exit → correctly unhealthy.)
+
+#### Docs/contracts
+- `ARCHITECTURE_INVARIANTS.md` I19 mechanism updated (span logs routed off-loop via QueueListener; `propagate=False`; ordering now load-bearing) + CB-1 patterns-library entry gains the OTLP exporter as a second user.
+- `CAPABILITY_REGISTRY.md` CAP-OPS-015 (OTLP: circuit breaker + OTLP_INSECURE no-op + `setup_tracing` name fix) + new CAP-OPS-038 (/health 200-ok / 503-degraded contract).
+- `architecture.md` Observability section documents the 503 contract + OTLP resilience.
+
+### COMET enrichment retired to dormant (ADR-0004)
+
+#### Changed
+- **COMET enrichment retired to dormant** (ADR-0004): the en2a ablation proved un-FPA'd COMET net-negative for recall (multi-session R@5 −4.2pt) at ~17h/10-core cost. `COMET_ENRICHMENT_ENABLED` flag default flipped True→False; COMET code retained dormant (NOT deleted; shared `transformers`/`torch` deps untouched; model lazy-loaded so dormant = cost-free). BC-EN2b implemented — daemon emits exactly one startup warning when COMET is disabled, and `/admin/config` now surfaces the flag. (`yadgar/config.py`, `yadgar/config_registry.py`, `yadgar/server/lifecycle.py`)
+
 ## [5.81.0] - 2026-06-23
 
 Two cars: **wiki `set_metadata` all-rows (BC-G10)** + **viz-fidelity-v2 (#80)**. Contract **248 SHALLs · 54 ✅**.

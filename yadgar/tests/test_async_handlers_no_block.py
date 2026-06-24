@@ -74,18 +74,21 @@ class TestHealthCheckAsync:
     """Q5: health_check must use async httpx, not blocking httpx.get."""
 
     def test_health_check_uses_async_client(self):
-        """health_check must use AsyncClient.get, not httpx.get."""
+        """The health probe path must use AsyncClient.get, not blocking httpx.get.
+
+        C2 P1 hoisted the probe logic out of health_check into the module-level
+        _build_health_payload helper (so health_check stays under the complexity
+        cap); the Q5 invariant now lives there.
+        """
         import inspect
 
-        import yadgar.server as srv
+        import yadgar.server.http as srv_http
 
-        source = inspect.getsource(srv.health_check)
+        source = inspect.getsource(srv_http._build_health_payload)
         assert "AsyncClient" in source, (
-            "health_check must use httpx.AsyncClient (Q5 — not blocking httpx.get)"
+            "health probe path must use httpx.AsyncClient (Q5 — not blocking httpx.get)"
         )
-        assert "httpx.get" not in source or "AsyncClient" in source, (
-            "health_check must not use blocking httpx.get"
-        )
+        assert "httpx.get" not in source, "health probe path must not use blocking httpx.get"
 
 
 class TestMetricsLock:

@@ -95,6 +95,9 @@ class EnrichmentPipeline:
                 logger.warning("ConceptNet enrichment failed: %s", e)
 
         # COMET commonsense inference
+        # RETIRED / DORMANT per ADR-0004 + benchmarks/reports/en2a_comet_ablation_2026-06-24.md
+        # (net-negative recall, prohibitive cost). Intentionally retained — NOT dead code.
+        # Do not enable without re-validating against the ablation. Gate defaults False.
         if settings.COMET_ENRICHMENT_ENABLED:
             try:
                 inferences = self._get_comet().infer(content, settings)

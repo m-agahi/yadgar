@@ -17,8 +17,10 @@ floor: ~45-50% (pure helpers + mocked subprocess paths).
 
 from __future__ import annotations
 
+import io
 import json
 import platform
+import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -345,6 +347,70 @@ def test_health_ok_false_on_error():
     d = YadgarDaemon()
     with patch("urllib.request.urlopen", side_effect=OSError("refused")):
         assert d._health_ok(8765) is False
+
+
+# ── YadgarDaemon._health_ok — 503 degraded ───────────────────────────────────
+
+
+def test_health_ok_true_on_503_degraded():
+    from yadgar.daemon import YadgarDaemon
+
+    d = YadgarDaemon()
+    err = urllib.error.HTTPError(
+        "http://127.0.0.1:8765/health",
+        503,
+        "degraded",
+        {},
+        io.BytesIO(b'{"status":"degraded"}'),
+    )
+    with patch("urllib.request.urlopen", side_effect=err):
+        assert d._health_ok(8765) is True
+
+
+def test_health_ok_false_on_urlerror():
+    from yadgar.daemon import YadgarDaemon
+
+    d = YadgarDaemon()
+    with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("refused")):
+        assert d._health_ok(8765) is False
+
+
+# ── YadgarDaemon.status — 503 degraded ───────────────────────────────────────
+
+
+def test_status_shows_degraded_detail_on_503():
+    from yadgar.daemon import YadgarDaemon
+
+    d = YadgarDaemon()
+    body = json.dumps({"status": "degraded", "db": "ok", "embed": "down"}).encode()
+    err = urllib.error.HTTPError(
+        "http://127.0.0.1:8765/health",
+        503,
+        "degraded",
+        {},
+        io.BytesIO(body),
+    )
+    with patch.object(d, "_container_running", return_value=True):
+        with patch("urllib.request.urlopen", side_effect=err):
+            result = d.status()
+
+    assert result["running"] is True
+    assert result["status"] == "degraded"
+    assert result["db"] == "ok"
+    assert result["embed"] == "down"
+    assert result.get("health") != "unreachable"
+
+
+def test_status_unreachable_on_urlerror():
+    from yadgar.daemon import YadgarDaemon
+
+    d = YadgarDaemon()
+    with patch.object(d, "_container_running", return_value=True):
+        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("refused")):
+            result = d.status()
+
+    assert result["running"] is True
+    assert result["health"] == "unreachable"
 
 
 # ── YadgarDaemon.start — already_running ─────────────────────────────────────

@@ -112,7 +112,12 @@ class Settings(BaseSettings):
     OTLP_ENDPOINT: str = ""  # HTTP endpoint, e.g. http://tempo:4318/v1/traces. Empty = disabled.
     OTLP_HEADERS: str = ""  # Comma-separated k=v pairs for auth/tenant headers.
     OTLP_TIMEOUT_SEC: int = 3  # Exporter timeout (s). Short so a dead collector fails fast.
-    OTLP_INSECURE: bool = True  # True → plain HTTP (default). False → TLS.
+    # OTLP_INSECURE: reserved / no-op for the HTTP OTLPSpanExporter (C2 P3). For the
+    # opentelemetry-exporter-otlp-proto-http exporter, transport security is decided
+    # by the OTLP_ENDPOINT URL scheme (http:// vs https://), not by a flag — so this
+    # knob has no effect on the http exporter. Kept (not removed) to avoid churning the
+    # I25 three-way config sync (config.py + config_yaml.py + config_registry.py).
+    OTLP_INSECURE: bool = True  # reserved/no-op for http exporter — scheme decides TLS.
 
     # v5.7.11 backend cache knob (formerly env-only, now yaml-overridable)
     DBSIZE_CACHE_TTL_SEC: int = 60  # /admin/dbsize cache TTL in seconds. 0 = disabled.
@@ -213,7 +218,9 @@ class Settings(BaseSettings):
     CONCEPTNET_RELATIONS: str = (
         "IsA,UsedFor,HasProperty,AtLocation,MotivatedByGoal,CausesDesire,CapableOf"
     )
-    COMET_ENRICHMENT_ENABLED: bool = True
+    COMET_ENRICHMENT_ENABLED: bool = (
+        False  # RETIRED/DORMANT per ADR-0004 (en2a ablation: net-negative recall)
+    )
     COMET_QUERY_EXPANSION_ENABLED: bool = False  # COMET at query time for open_domain
     COMET_MODEL: str = "mismayil/comet-bart-ai2"
     COMET_NUM_BEAMS: int = 5

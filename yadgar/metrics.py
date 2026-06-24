@@ -798,7 +798,11 @@ def _collect_queue_depths() -> None:
         for queue_name in ("queue", "archive", "dlq"):
             q_dir = data_dir / queue_name
             if q_dir.is_dir():
-                depth = sum(1 for _ in q_dir.iterdir() if _.suffix == ".json")
+                depth = sum(
+                    1
+                    for _ in q_dir.iterdir()
+                    if _.suffix == ".json" and not _.name.endswith(".error.json")
+                )
                 yadgar_queue_depth.labels(queue=queue_name).set(depth)
                 if queue_name == "dlq":
                     yadgar_dlq_size.set(depth)

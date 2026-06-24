@@ -16,8 +16,8 @@ Run: `make e2e` (local, real `surreal`) + pre-push hook; **excluded from CI**
 (`-m 'not e2e'`).
 
 **Surface (recounted v6 T6, self-enforced by `scripts/check_contract_coverage.py`):**
-**248 SHALLs / 39 subsystems.** Today: **55 ✅ · 190 ⏳ · 1 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47; + 1 🗑 DELETED — BC-T2 remember tool, v6 T3) Of the 190 ⏳:
-**61 `[r]` (real-path coverage exists) · 96 `[u]` (unit-only) · 33 none.**
+**248 SHALLs / 39 subsystems.** Today: **56 ✅ · 189 ⏳ · 1 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47; + 1 🗑 DELETED — BC-T2 remember tool, v6 T3) Of the 189 ⏳:
+**61 `[r]` (real-path coverage exists) · 96 `[u]` (unit-only) · 32 none.**
 Goal: every SHALL → ✅ or ❌.
 
 **Lint rules** (`scripts/check_contract_coverage.py`, run as a non-e2e pytest):
@@ -207,8 +207,8 @@ Goal: every SHALL → ✅ or ❌.
 ### Enrichment
 - BC-EN1a ConceptNet expansion adds related terms to a query/memory. ⏳ #64 P2 (HTTP path wired — ConceptNetExpander(http_enabled=True); e2e `tests/e2e/test_phase2_subsystems.py::TestBCEN1a_ConceptNetHTTP` is network-gated to api.conceptnet.io → skips offline, provable only on a networked runner; lite-DB ~9GB not bundled)
 - BC-EN1b if ConceptNet expansion is disabled, config reports it disabled + emits exactly one startup warning. ⏳ #39 P2
-- BC-EN2a COMET commonsense expansion adds inferred commonsense triples. ❌ #64 P2 (COMET DOES infer — verified in yadgar-ci:5.72.0 — but the pipeline FPA filter (FPA_SIMILARITY_THRESHOLD=0.25) drops its abstract traits as cosine-distant from content → enrichment_comet empty; test xfail'd; v6 enrichment-tuning decides FPA-for-COMET)
-- BC-EN2b if COMET expansion is disabled, config reports it disabled + emits exactly one startup warning. ⏳ #39 P2
+- BC-EN2a COMET commonsense expansion adds inferred commonsense triples. ❌ WON'T-IMPLEMENT — COMET retired to dormant per ADR-0004 (en2a ablation `benchmarks/reports/en2a_comet_ablation_2026-06-24.md` decided un-FPA'd COMET does NOT help recall: multi-session R@5 −4.2pt, ~17h/10-core → net-negative). COMET DOES infer (verified yadgar-ci:5.72.0) but the FPA filter (FPA_SIMILARITY_THRESHOLD=0.25) drops its abstract traits → enrichment_comet empty. Code retained dormant (flag off by default); test stays xfail/skip to guard the dormant path (`tests/e2e/test_phase2_subsystems.py::TestBCEN2a_CometEnrichment`). #64 P2
+- BC-EN2b if COMET expansion is disabled, config reports it disabled + emits exactly one startup warning. ✅ `tests/test_comet_dormant_warning.py::TestBCEN2bStartupWarning::test_disabled_emits_exactly_one_warning` P2 — `config_registry.warn_comet_dormant()` called once at startup (`server/lifecycle.py` `main()`) emits exactly one WARNING when disabled, none when enabled; `YADGAR_COMET_ENRICHMENT_ENABLED` registered in `_REGISTRY` so `/admin/config` + startup.config report it disabled. #39
 - BC-EN3a doc2query generates synthetic queries for a stored memory. ✅ `tests/e2e/test_phase2_subsystems.py::TestBCEN3a_Doc2QueryEnrichment::test_stored_memory_has_synthetic_queries` P2 (proven in yadgar-ci:5.72.0; model-skip-guarded so host make-e2e skips)
 - BC-EN3b if doc2query is disabled, config reports it disabled + emits exactly one startup warning. ⏳ #39 P2
 

@@ -34,9 +34,10 @@ triage anything away under length pressure, drop maintenance, NEVER capture.
    Page: slug "{project}-adr-log", tag "adr", scoped to this directory.
    - Find it: wiki_read("{project}-adr-log", directory="{directory}"). If absent,
      create with wiki_add(title="{project} ADR Log", content="<one-line header>",
-     tags=["adr"], directory="{directory}", wait=True). NOTE: wiki_add commits
-     directly — do NOT call wiki_approve (it only promotes drafts and errors on a
-     live page).
+     tags=["adr"], directory="{directory}", branch_hint="{default_branch}", wait=True).
+     The ADR log is project-canonical — it lives on the default branch ({default_branch}),
+     never a feature branch. NOTE: wiki_add commits directly — do NOT call wiki_approve
+     (it only promotes drafts and errors on a live page).
    - Scan THIS session for durable decisions since the last checkpoint.
      KEEP (precision over recall): a clear durable decision — architecture, a
      tool/config choice, an approach committed-to, a scope cut; a conclusion we
@@ -62,14 +63,15 @@ triage anything away under length pressure, drop maintenance, NEVER capture.
      A decision still unresolved this session → status: open, with the pending
      question in revisit_trigger; confirm/close it in a later checkpoint.
    - Append via wiki_append_section("{project}-adr-log", section_heading="ADR-NNNN: <title>",
-     content=<the fields above>, directory="{directory}", wait=True). Verify with
-     wiki_history("{project}-adr-log", directory="{directory}").
+     content=<the fields above>, directory="{directory}", branch_hint="{default_branch}",
+     wait=True). Verify with wiki_history("{project}-adr-log", directory="{directory}").
 
 2. STRUCTURAL WRITE-BACK (always consider). Durable repo-structure / convention /
    module-purpose findings from THIS session → the EXISTING wiki page that owns
    the topic (wiki_list → slug → wiki_read; update via wiki_add(replace_slug=<slug>,
-   ..., directory="{directory}", wait=True); no near-duplicate pages). If no page
-   fits, create one with wiki_add(tags=[...], directory="{directory}", wait=True).
+   ..., directory="{directory}", branch_hint="{default_branch}", wait=True); no
+   near-duplicate pages). If no page fits, create one with wiki_add(tags=[...],
+   directory="{directory}", branch_hint="{default_branch}", wait=True).
    Verify wiki_history. Facts/structure only — decisions go in step 1.
 
 3. Call project_brief("{directory}", mode="signals").
@@ -145,6 +147,34 @@ def _count_human_messages(transcript_path: str) -> int:
     return count
 
 
+def _default_branch(directory: str) -> str:
+    """Return the repo's default branch name (e.g. "master").
+
+    The ADR log is project-canonical and must live on the default branch, not a
+    feature branch. Resolves via `git symbolic-ref refs/remotes/origin/HEAD`.
+    Falls back to "master" for non-git projects or any failure — the ADR system
+    supports non-git projects too.
+    """
+    try:
+        import subprocess
+
+        out = subprocess.run(
+            ["git", "-C", directory, "symbolic-ref", "refs/remotes/origin/HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        ref = out.stdout.strip()
+        # ref looks like "refs/remotes/origin/master" — take the last segment
+        if out.returncode == 0 and ref:
+            name = ref.rsplit("/", 1)[-1]
+            if name:
+                return name
+    except Exception:
+        pass
+    return "master"
+
+
 def _state_file_path() -> Path:
     """Return path to stop-hook-state.json under XDG state dir."""
     return _paths.STOP_HOOK_STATE_PATH
@@ -210,7 +240,10 @@ def main() -> None:
     _save_state(state)
 
     project = os.path.basename(directory.rstrip("/")) or "project"
-    prompt = _PROMPT_TEMPLATE.format(directory=directory, project=project)
+    default_branch = _default_branch(directory)
+    prompt = _PROMPT_TEMPLATE.format(
+        directory=directory, project=project, default_branch=default_branch
+    )
     print(json.dumps({"decision": "block", "reason": prompt}))
 
 

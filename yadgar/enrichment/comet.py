@@ -1,4 +1,10 @@
-"""COMET-BART commonsense inference engine."""
+"""COMET-BART commonsense inference engine.
+
+RETIRED / DORMANT per ADR-0004 + benchmarks/reports/en2a_comet_ablation_2026-06-24.md
+(net-negative recall, prohibitive cost). Intentionally retained — NOT dead code.
+Do not enable without re-validating against the ablation. The model is lazy-loaded,
+so this code is cost-free while COMET_ENRICHMENT_ENABLED is False (the default).
+"""
 
 import logging
 import re

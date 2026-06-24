@@ -243,56 +243,102 @@ def _hook_observe_response(hook: str, status_code: int) -> None:
             pass
 
 
+# C2 P1 (obs-train, docs/plans/observability-health-otlp-fix.md): outer bound on the
+# whole /health handler body so it can never exceed this even if a dependency probe
+# hangs. The container healthcheck uses --health-timeout 5s; with db+embed probed
+# CONCURRENTLY (asyncio.gather, ~2s not the old serial ~4s) plus this hard cap, the
+# handler returns within budget (degraded/503 on timeout, never a hang).
+_HEALTH_TIMEOUT_SEC = 3.0
+
+
+async def _probe_dependency(client, url: str) -> bool:
+    """Probe a dependency's /health. True iff it returns HTTP 200; never raises."""
+    try:
+        r = await client.get(f"{url}/health")
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def _uptime_seconds() -> float:
+    return round(time.time() - _st._start_time, 1) if _st._start_time else 0
+
+
+async def _build_health_payload() -> dict:
+    """Build the /health payload, probing db + embed CONCURRENTLY (C2 P1).
+
+    Total latency is bounded by the slowest single probe (~2s), not the sum of
+    both (~4s, the old serial behaviour). Caller wraps this in asyncio.wait_for.
+    """
+    import httpx  # noqa: PLC0415
+
+    session_count = 0
+    if mcp_server._session_manager is not None:
+        session_count = len(mcp_server._session_manager._server_instances)
+
+    db_url = os.environ.get("YADGAR_DB_URL")
+    embed_url = os.environ.get("YADGAR_EMBED_URL")
+    db_ok = None
+    embed_ok = None
+
+    # §9 Q5: async httpx client to avoid blocking the event loop.
+    async with httpx.AsyncClient(timeout=2.0) as _aclient:
+        tasks = []
+        if db_url:
+            tasks.append(("db", _probe_dependency(_aclient, db_url)))
+        if embed_url:
+            tasks.append(("embed", _probe_dependency(_aclient, embed_url)))
+        if tasks:
+            results = await asyncio.gather(*(coro for _, coro in tasks))
+            for (label, _), ok in zip(tasks, results, strict=True):
+                if label == "db":
+                    db_ok = ok
+                else:
+                    embed_ok = ok
+
+    payload: dict = {
+        "status": "ok",
+        "version": __version__,
+        "transport": _st._active_transport,
+        "uptime_seconds": _uptime_seconds(),
+        "active_sessions": session_count,
+    }
+    if db_ok is not None:
+        payload["db"] = db_ok
+    if embed_ok is not None:
+        payload["embed"] = embed_ok
+    if db_ok is False or embed_ok is False:
+        payload["status"] = "degraded"
+    return payload
+
+
 @mcp_server.custom_route("/health", methods=["GET"])
 @trace_span("hook.health")
 async def health_check(request: Request) -> JSONResponse:
     """Health check endpoint."""
-    import httpx
-
     _t0 = time.perf_counter()
     _caught_exc: BaseException | None = None
     try:
-        session_count = 0
-        if mcp_server._session_manager is not None:
-            session_count = len(mcp_server._session_manager._server_instances)
+        try:
+            # C2 P1: hard outer bound — a hung probe trips this and yields the
+            # degraded/503 path below instead of stalling the handler.
+            payload = await asyncio.wait_for(_build_health_payload(), timeout=_HEALTH_TIMEOUT_SEC)
+        except TimeoutError:
+            payload = {
+                "status": "degraded",
+                "version": __version__,
+                "transport": _st._active_transport,
+                "uptime_seconds": _uptime_seconds(),
+                "active_sessions": 0,
+                "error": "health probe timed out",
+            }
 
-        db_url = os.environ.get("YADGAR_DB_URL")
-        embed_url = os.environ.get("YADGAR_EMBED_URL")
-
-        db_ok = None
-        embed_ok = None
-
-        # §9 Q5: Use async httpx client to avoid blocking the event loop.
-        async with httpx.AsyncClient(timeout=2.0) as _aclient:
-            if db_url:
-                try:
-                    r = await _aclient.get(f"{db_url}/health")
-                    db_ok = r.status_code == 200
-                except Exception:
-                    db_ok = False
-
-            if embed_url:
-                try:
-                    r = await _aclient.get(f"{embed_url}/health")
-                    embed_ok = r.status_code == 200
-                except Exception:
-                    embed_ok = False
-
-        payload: dict = {
-            "status": "ok",
-            "version": __version__,
-            "transport": _st._active_transport,
-            "uptime_seconds": round(time.time() - _st._start_time, 1) if _st._start_time else 0,
-            "active_sessions": session_count,
-        }
-        if db_ok is not None:
-            payload["db"] = db_ok
-        if embed_ok is not None:
-            payload["embed"] = embed_ok
-        if db_ok is False or embed_ok is False:
-            payload["status"] = "degraded"
-
-        _resp = JSONResponse(payload)
+        # C1 (obs-train): 503 on any non-ok status so the container healthcheck
+        # (curl -f) actually detects db/embed outages instead of reading them healthy.
+        # Stateless on purpose — anti-flap is delegated to the podman/docker healthcheck
+        # retries (docker-compose.yml core service uses --health-retries 6), not an
+        # in-handler failure counter.
+        _resp = JSONResponse(payload, status_code=200 if payload["status"] == "ok" else 503)
         _hook_observe_response("health", _resp.status_code)
         return _resp
     except Exception as _exc:

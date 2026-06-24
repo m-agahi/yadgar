@@ -14,8 +14,11 @@ OTLP knobs (all optional, yaml/env/default via Settings):
   YADGAR_OTLP_ENDPOINT      — HTTP endpoint, e.g. http://tempo:4318/v1/traces.
                               Empty/unset → OTLP exporter disabled.
   YADGAR_OTLP_HEADERS       — Comma-separated k=v pairs for auth/tenant headers.
-  YADGAR_OTLP_TIMEOUT_SEC   — Exporter timeout in seconds (default 10).
-  YADGAR_OTLP_INSECURE      — true → plain HTTP (default). false → TLS.
+  YADGAR_OTLP_TIMEOUT_SEC   — Exporter timeout in seconds (default 3).
+  YADGAR_OTLP_INSECURE      — reserved / no-op for the HTTP exporter. Transport
+                              security is decided by the OTLP_ENDPOINT URL scheme
+                              (http:// vs https://), not by this flag. Kept (not
+                              removed) to avoid churning the I25 three-way config sync.
 
 W3C TraceContext propagation: use opentelemetry-instrumentation-httpx (outbound)
 and opentelemetry-instrumentation-fastapi (inbound) in the service setup code.
@@ -26,10 +29,107 @@ from __future__ import annotations
 import functools
 import inspect
 import logging
+import logging.handlers
+import queue
 import threading
 from typing import Any
 
 logger = logging.getLogger("yadgar.tracing")
+
+# ---------------------------------------------------------------------------
+# C2 P2 (obs-train, docs/plans/observability-health-otlp-fix.md):
+# span-logging off the event-loop via QueueHandler + QueueListener
+# ---------------------------------------------------------------------------
+#
+# LogSpanProcessor._emit_span_log calls a SYNCHRONOUS stdlib logger.info per span
+# on the span-ending thread. For @trace_span-decorated async handlers (e.g. the
+# /health handler) that thread is the EVENT LOOP thread. Under an OTLP retry flood
+# the span-log shares the downstream logging-handler lock with the OTLP worker and
+# can stall the event loop.
+#
+# Fix: attach a QueueHandler to the "yadgar.tracing" logger so the calling thread
+# only does queue.put() (never touches the slow downstream handler's lock), and run
+# a QueueListener on a background thread that forwards records to the real
+# downstream handler(s). Same records, same content — just delivered off-thread.
+_SPAN_LOG_QUEUE: queue.SimpleQueue[Any] | None = None
+_SPAN_LOG_LISTENER: logging.handlers.QueueListener | None = None
+_SPAN_LOG_HANDLER: logging.handlers.QueueHandler | None = None
+_SPAN_LOG_PREV_PROPAGATE: bool | None = None
+_SPAN_LOG_LOCK = threading.Lock()
+
+
+def _install_span_log_queue(
+    downstream_handlers: list[logging.Handler] | None = None,
+) -> logging.handlers.QueueListener | None:
+    """Route the 'yadgar.tracing' logger through a QueueHandler/QueueListener.
+
+    The calling (event-loop) thread only enqueues; a background listener thread
+    forwards records to ``downstream_handlers``. When not supplied, a snapshot of
+    the ROOT logger's handlers is used (the daemon sink — yadgar propagates to
+    root). Idempotent: repeated calls do not stack handlers or spawn extra
+    listener threads. Returns the active listener (or None if no downstream sink).
+    """
+    global _SPAN_LOG_QUEUE, _SPAN_LOG_LISTENER, _SPAN_LOG_HANDLER, _SPAN_LOG_PREV_PROPAGATE
+
+    with _SPAN_LOG_LOCK:
+        if _SPAN_LOG_LISTENER is not None:
+            return _SPAN_LOG_LISTENER  # already installed (idempotent)
+
+        if downstream_handlers is None:
+            downstream_handlers = list(logging.getLogger().handlers)
+        if not downstream_handlers:
+            # No sink to forward to — leave synchronous propagation in place.
+            return None
+
+        q: queue.SimpleQueue[Any] = queue.SimpleQueue()
+        qhandler = logging.handlers.QueueHandler(q)
+        listener = logging.handlers.QueueListener(
+            q, *downstream_handlers, respect_handler_level=True
+        )
+        listener.start()
+
+        tr_logger = logging.getLogger("yadgar.tracing")
+        _SPAN_LOG_PREV_PROPAGATE = tr_logger.propagate
+        tr_logger.addHandler(qhandler)
+        # Prevent double-delivery: records go via the QueueHandler only, not also
+        # up to root's handlers synchronously on the calling thread.
+        tr_logger.propagate = False
+
+        _SPAN_LOG_QUEUE = q
+        _SPAN_LOG_LISTENER = listener
+        _SPAN_LOG_HANDLER = qhandler
+        return listener
+
+
+def _stop_span_log_queue() -> None:
+    """Stop the span-log listener (drains the queue + joins the thread) and detach.
+
+    Idempotent and safe to call when never installed. Restores the prior propagate
+    flag on the 'yadgar.tracing' logger.
+    """
+    global _SPAN_LOG_QUEUE, _SPAN_LOG_LISTENER, _SPAN_LOG_HANDLER, _SPAN_LOG_PREV_PROPAGATE
+
+    with _SPAN_LOG_LOCK:
+        listener = _SPAN_LOG_LISTENER
+        qhandler = _SPAN_LOG_HANDLER
+        prev_propagate = _SPAN_LOG_PREV_PROPAGATE
+
+        tr_logger = logging.getLogger("yadgar.tracing")
+        if qhandler is not None:
+            tr_logger.removeHandler(qhandler)
+        if prev_propagate is not None:
+            tr_logger.propagate = prev_propagate
+
+        _SPAN_LOG_QUEUE = None
+        _SPAN_LOG_LISTENER = None
+        _SPAN_LOG_HANDLER = None
+        _SPAN_LOG_PREV_PROPAGATE = None
+
+    # stop() blocks until the queue drains + the thread joins — do it outside the
+    # lock so a slow downstream handler can't deadlock concurrent install/stop.
+    if listener is not None:
+        listener.stop()
+
 
 # ---------------------------------------------------------------------------
 # OTel availability gate
@@ -124,6 +224,9 @@ def _build_otlp_exporter():  # type: ignore[return]
             headers=headers if headers else None,
             timeout=timeout,
         )
+        # C2 P3: wrap in the circuit breaker so a down collector stops the
+        # retry/log flood after K consecutive failures (OTLP stays enabled).
+        wrapped = _CircuitBreakerSpanExporter(exporter)
         logger.info(
             "otlp_exporter_init",
             extra={
@@ -132,9 +235,12 @@ def _build_otlp_exporter():  # type: ignore[return]
                 "endpoint": endpoint,
                 "timeout_sec": timeout,
                 "headers_count": len(headers),
+                "circuit_breaker": True,
+                "cb_failure_threshold": _OTLP_CB_FAILURE_THRESHOLD,
+                "cb_reset_sec": _OTLP_CB_RESET_SEC,
             },
         )
-        return exporter
+        return wrapped
     except Exception as exc:
         logger.warning(
             "otlp_exporter_init_failed",
@@ -147,6 +253,114 @@ def _build_otlp_exporter():  # type: ignore[return]
             },
         )
         return None
+
+
+# ---------------------------------------------------------------------------
+# C2 P3 (obs-train, docs/plans/observability-health-otlp-fix.md):
+# OTLP exporter circuit-breaker + rate-limited failure logging
+# ---------------------------------------------------------------------------
+#
+# The OTLPSpanExporter + BatchSpanProcessor have NO app-level circuit-breaker: when
+# the collector is down they retry on the SDK's ~5s cadence FOREVER and log every
+# failed batch (the observed 14h flood). The breaker wraps the underlying exporter so
+# that after K consecutive export() failures the circuit OPENS — export() returns
+# FAILURE WITHOUT a network attempt for a backoff window, then HALF-OPENS to probe;
+# a probe success CLOSES it. Failure logging is rate-limited to once per open window.
+# OTLP stays ENABLED; this just stops the flood when the collector is unreachable.
+_OTLP_CB_FAILURE_THRESHOLD = 5  # consecutive failures before opening the circuit
+_OTLP_CB_RESET_SEC = 60.0  # open-circuit backoff window before a half-open probe
+
+if _OTEL_AVAILABLE:
+    import time as _time
+    from collections.abc import Sequence
+
+    from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
+
+    class _CircuitBreakerSpanExporter(SpanExporter):
+        """Wrap a SpanExporter with a consecutive-failure circuit breaker.
+
+        States: CLOSED (normal), OPEN (short-circuit export, no network), HALF_OPEN
+        (one probe allowed after the reset window). Failure logging is rate-limited
+        to once per open-circuit window so a dead collector cannot drive a log flood.
+        Thread-safe: BatchSpanProcessor calls export() from its worker thread.
+        """
+
+        def __init__(
+            self,
+            inner: SpanExporter,
+            failure_threshold: int = _OTLP_CB_FAILURE_THRESHOLD,
+            reset_timeout_sec: float = _OTLP_CB_RESET_SEC,
+            time_fn=None,
+        ) -> None:
+            self._inner = inner
+            self._failure_threshold = max(1, int(failure_threshold))
+            self._reset_timeout_sec = float(reset_timeout_sec)
+            self._time_fn = time_fn or _time.monotonic
+            self._lock = threading.Lock()
+            self._consecutive_failures = 0
+            self._opened_at: float | None = None  # monotonic ts when circuit opened
+            self._logged_this_window = False
+
+        def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
+            now = self._time_fn()
+
+            with self._lock:
+                if self._opened_at is not None:
+                    # Circuit is OPEN. Short-circuit unless the reset window elapsed.
+                    if (now - self._opened_at) < self._reset_timeout_sec:
+                        return SpanExportResult.FAILURE
+                    # else: window elapsed -> fall through as a HALF_OPEN probe.
+
+            # CLOSED or HALF_OPEN: attempt the real export (outside the lock so a slow
+            # underlying export does not serialize the breaker's bookkeeping).
+            try:
+                result = self._inner.export(spans)
+            except Exception:  # noqa: BLE001 — treat an exporter raise as a failure
+                result = SpanExportResult.FAILURE
+
+            with self._lock:
+                if result == SpanExportResult.SUCCESS:
+                    # Recovery: close the circuit, reset counters + log gate.
+                    self._consecutive_failures = 0
+                    self._opened_at = None
+                    self._logged_this_window = False
+                    return result
+
+                # Failure path.
+                self._consecutive_failures += 1
+                if (
+                    self._opened_at is None
+                    and self._consecutive_failures >= self._failure_threshold
+                ):
+                    self._opened_at = now
+                elif self._opened_at is not None:
+                    # Half-open probe failed -> re-open with a fresh window.
+                    self._opened_at = now
+                    self._logged_this_window = False
+
+                if self._opened_at is not None and not self._logged_this_window:
+                    self._logged_this_window = True
+                    logger.warning(
+                        "otlp_circuit_open",
+                        extra={
+                            "event": "otlp_circuit_open",
+                            "component": "tracing",
+                            "consecutive_failures": self._consecutive_failures,
+                            "reset_timeout_sec": self._reset_timeout_sec,
+                            "action": (
+                                "short-circuiting OTLP export until the collector "
+                                "recovers (rate-limited: once per open window)"
+                            ),
+                        },
+                    )
+                return result
+
+        def force_flush(self, timeout_millis: int = 30000) -> bool:
+            return self._inner.force_flush(timeout_millis)
+
+        def shutdown(self) -> None:
+            self._inner.shutdown()
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +519,10 @@ def setup_tracing(service_name: str) -> None:
 
     _otel_trace.set_tracer_provider(provider)
     _SETUP_DONE.add(service_name)
+
+    # C2 P2: route per-span logging off the calling (event-loop) thread.
+    _install_span_log_queue()
+
     logger.info(
         "tracing_init",
         extra={
@@ -330,6 +548,9 @@ def shutdown_tracing(timeout_sec: float = 3.0) -> None:
 
     Idempotent and safe to call when tracing was never set up.
     """
+    # C2 P2: stop the off-thread span-log listener first (drains + joins).
+    _stop_span_log_queue()
+
     provider = _otel_trace.get_tracer_provider()
     shutdown = getattr(provider, "shutdown", None)
     if not callable(shutdown):

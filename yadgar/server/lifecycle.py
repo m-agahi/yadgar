@@ -740,10 +740,13 @@ def main(
         from yadgar.config_registry import (  # noqa: PLC0415
             _set_config_gauges,
             emit_startup_config_log,
+            warn_comet_dormant,
         )
 
         emit_startup_config_log()
         _set_config_gauges()
+        # BC-EN2b: announce COMET dormant state exactly once at startup (ADR-0004).
+        warn_comet_dormant(get_settings())
     except Exception:
         logger.debug("startup config-dump failed (non-fatal)", exc_info=True)
 
