@@ -16,6 +16,7 @@ import platform
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -526,6 +527,16 @@ class YadgarDaemon:
                 "backend_container": backend_name,
                 **health,
             }
+        except urllib.error.HTTPError as e:
+            health = json.loads(e.read().decode())
+            return {
+                "running": True,
+                "container": profile.container_name,
+                "port": profile.port,
+                "backend_running": backend_running,
+                "backend_container": backend_name,
+                **health,
+            }
         except Exception:
             return {
                 "running": True,
@@ -902,6 +913,10 @@ WantedBy=default.target
     def _health_ok(self, port: int) -> bool:
         try:
             _safe_urlopen(f"http://127.0.0.1:{port}/health", timeout=1)
+            return True
+        except urllib.error.HTTPError:
+            # liveness = server responding at all; full-health (503-on-degraded)
+            # enforced by the container's curl -f healthcheck, not this gate.
             return True
         except Exception:
             return False

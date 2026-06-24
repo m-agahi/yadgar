@@ -14,17 +14,6 @@
   },
   {
     "path": "yadgar/server/http.py",
-    "function": "health_check",
-    "lineno": 248,
-    "metrics": {
-      "nesting": 5
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
-  },
-  {
-    "path": "yadgar/server/http.py",
     "function": "hook_auto_capture",
     "lineno": 393,
     "metrics": {

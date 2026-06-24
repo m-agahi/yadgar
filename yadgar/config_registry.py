@@ -312,6 +312,10 @@ _REGISTRY: list[ConfigEntry] = [
     # ── v5.62.0 recall quality floor ─────────────────────────────────────────
     ConfigEntry("YADGAR_RECALL_QUALITY_FLOOR", "0.0", "float"),
     ConfigEntry("YADGAR_ASTROCYTE_POOL_ENABLED", "true", "bool"),
+    # ── COMET enrichment (RETIRED/DORMANT per ADR-0004) ───────────────────────
+    # Surfaced here so /admin/config + startup.config report it disabled (BC-EN2b).
+    # Default flipped True→False on retire (en2a ablation: net-negative recall).
+    ConfigEntry("YADGAR_COMET_ENRICHMENT_ENABLED", "false", "bool"),
     # ── v5.73.0 surprise-gate shadow mode ────────────────────────────────────
     # Shadow threshold for auditing — memories below this are stamped would_reject=True
     # but nothing is dropped (WRITE_GATE_THRESHOLD stays 0.0).
@@ -381,3 +385,25 @@ def emit_startup_config_log() -> None:
             "config": table,
         },
     )
+
+
+def warn_comet_dormant(settings) -> None:
+    """BC-EN2b: emit exactly ONE startup warning when COMET enrichment is disabled.
+
+    COMET enrichment was retired to dormant per ADR-0004 (en2a ablation: net-negative
+    recall, prohibitive cost). The flag defaults to False; the code is retained but
+    inert. When disabled we announce the dormant state once at startup so operators
+    know the (still-present) COMET branch is intentionally off. When someone re-enables
+    it, this goes silent — re-enabling is their explicit choice and the warning would
+    be noise.
+
+    "Exactly once" is guaranteed by the single call site (lifecycle.main), NOT an
+    in-function guard — a module-level guard would leak across tests. Pure + hermetic:
+    takes a Settings instance, reads no env, loads no model.
+    """
+    if not settings.COMET_ENRICHMENT_ENABLED:
+        logger.warning(
+            "COMET enrichment is disabled (retired to dormant per ADR-0004 — "
+            "net-negative recall in the en2a ablation). The COMET code is retained "
+            "but inert; re-validate against the ablation before re-enabling."
+        )

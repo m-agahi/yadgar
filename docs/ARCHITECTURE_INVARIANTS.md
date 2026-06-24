@@ -151,7 +151,9 @@ Every input validator + parser + migration MUST have a Hypothesis property test 
 
 ### I19. File handler installed before tracing (v5.6.4)
 
-`configure_logging()` MUST be called before `setup_tracing()` in every process entry point (core app, backend lifespan, stdio main). The `RotatingJSONLFileHandler` (Sink B) attaches to the root logger; `LogSpanProcessor` emits via `logger.info()` which propagates to root. If tracing starts first, span logs reach no file handler and are silently dropped.
+`configure_logging()` MUST be called before `setup_tracing()` in every process entry point (core app, backend lifespan, stdio main). The `RotatingJSONLFileHandler` (Sink B) attaches to the root logger; `LogSpanProcessor` emits the per-span `span_end` line via `logger.info()` on the `"yadgar.tracing"` logger, which reaches that root handler. If tracing starts first, span logs reach no file handler and are silently dropped.
+
+**v5.83 (obs-train) — span logs routed off the event loop:** `setup_tracing()` now also calls `_install_span_log_queue()`, which attaches a `QueueHandler` to the `"yadgar.tracing"` logger and sets `propagate=False`. The calling (event-loop) thread only enqueues; a background `QueueListener` forwards records to a **snapshot of the root logger's handlers taken at install time**. This keeps the span-log emit off the event-loop thread (so an OTLP retry flood can't stall `/health` via the shared logging-handler lock) and makes the ordering requirement LOAD-BEARING: if `configure_logging()` has not installed root handlers before `setup_tracing()` runs, the listener captures an empty downstream and span logs are dropped. `shutdown_tracing()` calls `_stop_span_log_queue()` first (drains the queue + joins the listener) before tearing down the provider.
 
 **Enforcement:** `yadgar/server/_app.py` calls `configure_logging` at module import time (before `setup_tracing`). `yadgar/embed_service.py` calls them in lifespan order. Violations are detectable: `grep 'setup_tracing' ... | head` must appear after `configure_logging` in every call site.
 
@@ -476,6 +478,8 @@ Shipped: v5.3.10 (N4) — `RemoteMLClient` `/rerank` endpoints.
 **Code:** `yadgar/ml_client.py::_CircuitBreaker` + per-endpoint instances on `RemoteMLClient`.
 **Tests:** `yadgar/tests/test_circuit_breaker.py` (18 tests, includes v5.4.2 + v5.5.3 gauge additions).
 **Env:** `YADGAR_CIRCUIT_BREAKER_ENABLED` (default 1), `_FAILURE_THRESHOLD` (3), `_OPEN_DURATION_SEC` (60).
+
+**v5.83 (obs-train) — second user: OTLP span export.** `yadgar/tracing.py::_CircuitBreakerSpanExporter` wraps the `OTLPSpanExporter` with the same CLOSED→OPEN→HALF_OPEN machine: threshold `_OTLP_CB_FAILURE_THRESHOLD` (5 consecutive `export()` failures), reset window `_OTLP_CB_RESET_SEC` (60s), one HALF_OPEN probe per window. While OPEN, `export()` returns `FAILURE` with NO network attempt; a probe success CLOSES it. Failure logging is rate-limited to once per open window (`otlp_circuit_open`). Purpose: kill the observed 14h OTLP retry/log flood when no collector is reachable. OTLP stays ENABLED — the breaker stops the flood, it does NOT disable tracing. Logging-only failure path → declares no new metric (I23 stays green). Tests: `yadgar/tests/test_otlp_exporter.py`, `yadgar/tests/test_tracing.py`.
 
 **Why this matters (don't break):** v5.3.9 `BindsTo → Wants` decoupled core from backend lifecycle. Without CB-1, core busy-loops retrying against a struggling backend (the v5.3.10 CPU incident). CB-1 is the architectural pair to the decouple — removing it re-introduces the CPU regression.
 

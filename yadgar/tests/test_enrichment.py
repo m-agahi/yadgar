@@ -225,3 +225,26 @@ class TestEnrichmentPipeline:
         assert result.queries == []
         assert len(result.logic_expansions) > 0, "Expected logic expansions"
         assert "[enrichment]" in result.enriched_content
+
+    def test_comet_disabled_skips_comet_branch(self):
+        """COMET retired/dormant (ADR-0004): disabled → pipeline never touches COMET.
+
+        With COMET_ENRICHMENT_ENABLED=False the enrich() COMET branch must be
+        skipped — _get_comet() is never called and comet_inferences stays empty.
+        """
+        settings = _settings(COMET_ENRICHMENT_ENABLED=False, ENRICHMENT_MIN_CONTENT_LENGTH=5)
+        pipeline = EnrichmentPipeline(settings)
+        content = "went camping at Yellowstone last summer"
+        with patch.object(pipeline, "_get_comet") as mock_get_comet:
+            result = pipeline.enrich(content, self._dummy_embedding(), settings)
+            mock_get_comet.assert_not_called()
+        assert result.comet_inferences == []
+
+
+class TestCometRetiredDefault:
+    """ADR-0004: COMET retired to dormant — flag default must be False."""
+
+    def test_comet_enrichment_default_is_false(self):
+        from yadgar.config import Settings as _Settings
+
+        assert _Settings().COMET_ENRICHMENT_ENABLED is False

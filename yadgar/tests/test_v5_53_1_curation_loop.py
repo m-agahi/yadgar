@@ -480,8 +480,13 @@ class TestWriteBackNudgeInStopHook:
         transcript.write_text("\n".join(lines))
         return transcript
 
-    def test_prompt_contains_wiki_refresh_stale(self, tmp_path):
-        """Block reason must mention wiki_refresh_stale (stale regen path)."""
+    def test_prompt_contains_adr_capture_step(self, tmp_path):
+        """Block reason must drive the ADR-capture write-back (#121 redesign).
+
+        Replaces the old wiki_refresh_stale assertion: the #121 ADR redesign
+        removed the stale-regen path and made ADR capture the primary write-back
+        nudge. The intent (nudge the right write-back) survives, retargeted.
+        """
         transcript = self._make_transcript(tmp_path, 25)
         state_dir = tmp_path / ".yadgar"
         state_dir.mkdir()
@@ -498,12 +503,19 @@ class TestWriteBackNudgeInStopHook:
 
         assert result.get("decision") == "block"
         reason = result.get("reason", "")
-        assert "wiki_refresh_stale" in reason, (
-            f"Prompt must mention wiki_refresh_stale, got: {reason[:300]}"
+        # ADR capture is the primary write-back: it names the canonical ADR-log
+        # page, the capture verb, and the append mechanism.
+        assert "ADR CAPTURE" in reason, f"Prompt must drive ADR capture, got: {reason[:400]}"
+        assert "-adr-log" in reason and "wiki_append_section" in reason, (
+            f"Prompt must reference the ADR-log page + append mechanism, got: {reason[:400]}"
+        )
+        # The removed stale-regen path must NOT have crept back in.
+        assert "wiki_refresh_stale" not in reason, (
+            "wiki_refresh_stale was deliberately removed by the #121 ADR redesign"
         )
 
-    def test_prompt_contains_write_back_consolidate_step(self, tmp_path):
-        """Block reason must include write-back / consolidation nudge."""
+    def test_prompt_contains_structural_write_back_step(self, tmp_path):
+        """Block reason must include the structural write-back nudge (step 2)."""
         transcript = self._make_transcript(tmp_path, 25)
         state_dir = tmp_path / ".yadgar"
         state_dir.mkdir()
@@ -520,9 +532,13 @@ class TestWriteBackNudgeInStopHook:
 
         assert result.get("decision") == "block"
         reason = result.get("reason", "")
-        # Look for the write-back nudge keywords
-        assert "consolidate" in reason.lower() or "replace_slug" in reason, (
-            f"Prompt must mention consolidation/replace_slug for write-back, got: {reason[:400]}"
+        # New write-back nudge: update the existing topic-owning page in place via
+        # replace_slug, rather than spawning near-duplicate pages.
+        assert "STRUCTURAL WRITE-BACK" in reason, (
+            f"Prompt must include structural write-back step, got: {reason[:400]}"
+        )
+        assert "replace_slug" in reason, (
+            f"Prompt must nudge update-in-place via replace_slug, got: {reason[:400]}"
         )
 
     def test_prompt_contains_wiki_history_verification(self, tmp_path):

@@ -1,5 +1,6 @@
 """Tests for Streamable HTTP transport migration, health endpoint, and session management."""
 
+import asyncio
 import subprocess
 import sys
 
@@ -63,6 +64,145 @@ class TestHealthEndpoint:
         client = self._get_client("sse")
         resp = client.get("/health")
         assert resp.json()["active_sessions"] == 0
+
+    def test_health_returns_503_when_db_probe_degraded(self, monkeypatch):
+        """C1: a down db probe -> status 'degraded' -> HTTP 503 so curl -f fails."""
+        import httpx
+
+        server._active_transport = "sse"
+        server._start_time = 1000000.0
+        monkeypatch.setenv("YADGAR_DB_URL", "http://db.invalid:9999")
+
+        class _FakeResp:
+            status_code = 500
+
+        class _FakeClient:
+            def __init__(self, *a, **k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def get(self, *a, **k):
+                return _FakeResp()
+
+        monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+        client = self._get_client("sse")
+        resp = client.get("/health")
+        assert resp.status_code == 503
+        data = resp.json()
+        assert data["status"] == "degraded"
+        assert data["db"] is False
+
+    def test_health_returns_200_when_probes_ok(self, monkeypatch):
+        """C1: healthy probes -> status 'ok' -> HTTP 200 (unchanged)."""
+        import httpx
+
+        server._active_transport = "sse"
+        server._start_time = 1000000.0
+        monkeypatch.setenv("YADGAR_DB_URL", "http://db.invalid:9999")
+
+        class _FakeResp:
+            status_code = 200
+
+        class _FakeClient:
+            def __init__(self, *a, **k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def get(self, *a, **k):
+                return _FakeResp()
+
+        monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+        client = self._get_client("sse")
+        resp = client.get("/health")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["db"] is True
+
+    def test_health_probes_db_and_embed_concurrently(self, monkeypatch):
+        """C2 P1: db + embed probes run concurrently (asyncio.gather), not serially.
+
+        Each probe sleeps ~1s; serial would be ~2s, concurrent should be ~1s.
+        Assert wall-time well under the serial sum.
+        """
+        import time as _time
+
+        import httpx
+
+        server._active_transport = "sse"
+        server._start_time = 1000000.0
+        monkeypatch.setenv("YADGAR_DB_URL", "http://db.invalid:9999")
+        monkeypatch.setenv("YADGAR_EMBED_URL", "http://embed.invalid:9999")
+
+        class _FakeResp:
+            status_code = 200
+
+        class _FakeClient:
+            def __init__(self, *a, **k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def get(self, *a, **k):
+                await asyncio.sleep(1.0)
+                return _FakeResp()
+
+        monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+        client = self._get_client("sse")
+        t0 = _time.perf_counter()
+        resp = client.get("/health")
+        elapsed = _time.perf_counter() - t0
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+        # Serial would be ~2s; concurrent ~1s. Generous bound to avoid CI flake.
+        assert elapsed < 1.5, f"probes ran serially (elapsed={elapsed:.2f}s)"
+
+    def test_health_outer_timeout_trips_503_on_hang(self, monkeypatch):
+        """C2 P1: a hanging probe trips the outer asyncio.wait_for bound -> 503, no hang."""
+        import time as _time
+
+        import httpx
+
+        server._active_transport = "sse"
+        server._start_time = 1000000.0
+        monkeypatch.setenv("YADGAR_DB_URL", "http://db.invalid:9999")
+        # Shrink the outer bound so the test is fast.
+        monkeypatch.setattr(server.http, "_HEALTH_TIMEOUT_SEC", 0.3, raising=False)
+
+        class _FakeClient:
+            def __init__(self, *a, **k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def get(self, *a, **k):
+                await asyncio.sleep(30)  # hang well past the outer bound
+
+        monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+        client = self._get_client("sse")
+        t0 = _time.perf_counter()
+        resp = client.get("/health")
+        elapsed = _time.perf_counter() - t0
+        assert resp.status_code == 503, "outer timeout must yield 503, not 200 or a hang"
+        assert elapsed < 5.0, f"handler hung past the outer bound (elapsed={elapsed:.2f}s)"
 
 
 # ── Session Management ────────────────────────────────────────────────

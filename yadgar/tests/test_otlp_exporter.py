@@ -37,6 +37,11 @@ def _reset_tracing():
         import yadgar.tracing as _tr
 
         _tr._SETUP_DONE.clear()
+        # C2 P2/P3: setup_tracing installs a span-log QueueListener and flips
+        # yadgar.tracing.propagate=False. Tear it down between tests so a leftover
+        # listener (idempotent install) and the propagate flag don't bleed across
+        # tests (e.g. caplog on yadgar.tracing relies on propagation).
+        _tr._stop_span_log_queue()
     except Exception:
         pass
 
@@ -71,6 +76,21 @@ def _get_processors(provider):
     return list(getattr(multi, "_span_processors", []))
 
 
+def _otlp_exporter(proc):
+    """Return the OTLPSpanExporter behind a BatchSpanProcessor, or None.
+
+    C2 P3 wraps the OTLPSpanExporter in a _CircuitBreakerSpanExporter, so the
+    BatchSpanProcessor's span_exporter is now the breaker; unwrap ._inner to reach
+    the real OTLPSpanExporter.
+    """
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+    exporter = getattr(proc, "span_exporter", None)
+    # Unwrap the circuit breaker (C2 P3) if present.
+    exporter = getattr(exporter, "_inner", exporter)
+    return exporter if isinstance(exporter, OTLPSpanExporter) else None
+
+
 # ---------------------------------------------------------------------------
 # 1. No endpoint set — no OTLP exporter; LogSpanProcessor present
 # ---------------------------------------------------------------------------
@@ -81,7 +101,6 @@ class TestNoEndpoint:
         """With YADGAR_OTLP_ENDPOINT unset, no OTLPSpanExporter is registered."""
         monkeypatch.delenv("YADGAR_OTLP_ENDPOINT", raising=False)
 
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
         from yadgar.tracing import setup_tracing
@@ -96,8 +115,7 @@ class TestNoEndpoint:
         otlp_batch_procs = [
             p
             for p in processors
-            if isinstance(p, BatchSpanProcessor)
-            and isinstance(getattr(p, "span_exporter", None), OTLPSpanExporter)
+            if isinstance(p, BatchSpanProcessor) and _otlp_exporter(p) is not None
         ]
         assert len(otlp_batch_procs) == 0, (
             f"Expected 0 OTLP BatchSpanProcessors, got {len(otlp_batch_procs)}"
@@ -133,7 +151,6 @@ class TestWithEndpoint:
         monkeypatch.setenv("YADGAR_OTLP_ENDPOINT", "http://127.0.0.1:4318/v1/traces")
         monkeypatch.delenv("YADGAR_OTLP_HEADERS", raising=False)
 
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
         from yadgar.tracing import setup_tracing
@@ -148,8 +165,7 @@ class TestWithEndpoint:
         otlp_batch_procs = [
             p
             for p in processors
-            if isinstance(p, BatchSpanProcessor)
-            and isinstance(getattr(p, "span_exporter", None), OTLPSpanExporter)
+            if isinstance(p, BatchSpanProcessor) and _otlp_exporter(p) is not None
         ]
         assert len(otlp_batch_procs) == 1, (
             f"Expected 1 OTLP BatchSpanProcessor, got {len(otlp_batch_procs)}: {processors}"
@@ -177,7 +193,6 @@ class TestWithEndpoint:
         """Both LogSpanProcessor and BatchSpanProcessor(OTLP) registered when endpoint set."""
         monkeypatch.setenv("YADGAR_OTLP_ENDPOINT", "http://127.0.0.1:4318/v1/traces")
 
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
         from yadgar.tracing import LogSpanProcessor, setup_tracing
@@ -193,8 +208,7 @@ class TestWithEndpoint:
         otlp_procs = [
             p
             for p in processors
-            if isinstance(p, BatchSpanProcessor)
-            and isinstance(getattr(p, "span_exporter", None), OTLPSpanExporter)
+            if isinstance(p, BatchSpanProcessor) and _otlp_exporter(p) is not None
         ]
         assert len(log_procs) == 1
         assert len(otlp_procs) == 1
@@ -292,7 +306,6 @@ class TestOtlpTimeout:
         monkeypatch.setenv("YADGAR_OTLP_ENDPOINT", "http://127.0.0.1:4318/v1/traces")
         monkeypatch.delenv("YADGAR_OTLP_TIMEOUT_SEC", raising=False)
 
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
         from yadgar.tracing import setup_tracing
@@ -307,13 +320,12 @@ class TestOtlpTimeout:
             (
                 p
                 for p in processors
-                if isinstance(p, BatchSpanProcessor)
-                and isinstance(getattr(p, "span_exporter", None), OTLPSpanExporter)
+                if isinstance(p, BatchSpanProcessor) and _otlp_exporter(p) is not None
             ),
             None,
         )
         assert otlp_proc is not None
-        exporter = otlp_proc.span_exporter
+        exporter = _otlp_exporter(otlp_proc)
         # OTLPSpanExporter stores timeout_sec as _timeout
         assert exporter._timeout == 3
 
@@ -322,7 +334,6 @@ class TestOtlpTimeout:
         monkeypatch.setenv("YADGAR_OTLP_ENDPOINT", "http://127.0.0.1:4318/v1/traces")
         monkeypatch.setenv("YADGAR_OTLP_TIMEOUT_SEC", "30")
 
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
         from yadgar.tracing import setup_tracing
@@ -337,13 +348,12 @@ class TestOtlpTimeout:
             (
                 p
                 for p in processors
-                if isinstance(p, BatchSpanProcessor)
-                and isinstance(getattr(p, "span_exporter", None), OTLPSpanExporter)
+                if isinstance(p, BatchSpanProcessor) and _otlp_exporter(p) is not None
             ),
             None,
         )
         assert otlp_proc is not None
-        exporter = otlp_proc.span_exporter
+        exporter = _otlp_exporter(otlp_proc)
         assert exporter._timeout == 30
 
 
@@ -370,7 +380,6 @@ class TestYamlOverride:
 
         cfg.get_settings.cache_clear()
 
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
         from yadgar.tracing import setup_tracing
@@ -384,8 +393,7 @@ class TestYamlOverride:
         otlp_procs = [
             p
             for p in processors
-            if isinstance(p, BatchSpanProcessor)
-            and isinstance(getattr(p, "span_exporter", None), OTLPSpanExporter)
+            if isinstance(p, BatchSpanProcessor) and _otlp_exporter(p) is not None
         ]
         assert len(otlp_procs) == 1, (
             f"Expected 1 OTLP exporter via yaml override, got {len(otlp_procs)}"
@@ -406,7 +414,6 @@ class TestYamlOverride:
 
         cfg.get_settings.cache_clear()
 
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
         from yadgar.tracing import setup_tracing
@@ -421,14 +428,13 @@ class TestYamlOverride:
             (
                 p
                 for p in processors
-                if isinstance(p, BatchSpanProcessor)
-                and isinstance(getattr(p, "span_exporter", None), OTLPSpanExporter)
+                if isinstance(p, BatchSpanProcessor) and _otlp_exporter(p) is not None
             ),
             None,
         )
         assert otlp_proc is not None
-        assert otlp_proc.span_exporter._timeout == 25, (
-            f"Expected timeout=25 from yaml, got {otlp_proc.span_exporter._timeout}"
+        assert _otlp_exporter(otlp_proc)._timeout == 25, (
+            f"Expected timeout=25 from yaml, got {_otlp_exporter(otlp_proc)._timeout}"
         )
 
     def test_yaml_headers_override(self, monkeypatch, tmp_path):
@@ -450,6 +456,8 @@ class TestYamlOverride:
 
         exporter = _build_otlp_exporter()
         assert exporter is not None, "Expected exporter from yaml override"
+        # C2 P3: unwrap the circuit breaker to reach the underlying OTLPSpanExporter.
+        exporter = getattr(exporter, "_inner", exporter)
         # OTLPSpanExporter stores parsed headers in _headers
         headers = getattr(exporter, "_headers", None)
         # headers may be a dict or list of tuples depending on OTel version
