@@ -517,6 +517,11 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Token-budget upper bound for signals mode payload (default 350; raise if new action types added)",
         "section": "project_brief",
     },
+    # v5.84.0 car #12: ADR nudge threshold
+    "adr_due_warn_hours": {
+        "desc": "Hours of ADR log inactivity (vs active_work) before capture_adr fires in signals mode (default 12)",
+        "section": "project_brief",
+    },
     # anchor_hygiene (v5.8.0)
     "anchor_conditional_ttl_days": {
         "desc": "Default valid_until offset (days) for tier=conditional anchors (default 90)",

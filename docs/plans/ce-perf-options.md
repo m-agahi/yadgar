@@ -1,8 +1,34 @@
 # PLAN — v5.11+: Cross-Encoder Inference Performance Options (menu, version-assigned)
 
-**Status:** drafted 2026-05-29 for future discussion. Each option is INDIVIDUALLY assigned a version slot per user direction 2026-05-29 evening; selection criteria after 72h soak.
+**Status:** drafted 2026-05-29. **2026-06-25: user picked option B (int8 CE) to ship — see new §"Option B — concrete ship plan" at the end. The menu below is retained as the decision record.** improvement-train #29 group A car #4.
 
-**Master at draft time:** core v5.10.3 (about to ship) + backend v5.4.0 deployed.
+**Master at draft time:** core v5.10.3 + backend v5.4.0 deployed.
+
+> **AUDIT 2026-06-25 (improvement-train #29).** The menu is a 2026-05-29 decision
+> record and reads as stale in places (version slots like "backend-v5.4.2" never
+> materialized; the project is now at v5.81). Re-verified the CE load path against
+> current code so option B is buildable — **and the plan's old assumption that the CE
+> lives in `embed_service.py` is WRONG now**:
+> - The cross-encoder is loaded in **`yadgar/backend/ml_client.py`**, not
+>   `embed_service.py`. Load chain: `ml_client.py` tries **GTE-reranker**
+>   (`Alibaba-NLP/gte-reranker-modernbert-base`, ~line 352) → **FlashRank** (ONNX,
+>   already low-latency) → **sentence-transformers `CrossEncoder`**
+>   (`_try_st_cross_encoder`, load at **line 434** `CrossEncoder(ce_model)`,
+>   `predict()` at line 446). The fp32 MiniLM `CrossEncoder` is the **fallback**, not
+>   the primary, on current master.
+> - Config: `CROSS_ENCODER_MODEL` (`config.py:162`, default
+>   `cross-encoder/ms-marco-MiniLM-L-6-v2`), `CROSS_ENCODER_ENABLED` (163),
+>   `CROSS_ENCODER_TOP_K=10` (164), `CROSS_ENCODER_WEIGHT=0.6` (165). Env knobs
+>   `YADGAR_CROSS_ENCODER_*`. **These ARE I25 three-way Settings fields** (config.py +
+>   config_yaml FIELD_META + config_registry) — the backend reads them via `settings`
+>   when present (`ml_client._try_st_cross_encoder`), falling back to a literal default
+>   only when `settings is None`. So a new model knob added as a Settings field obeys
+>   I25; a backend-only `os.getenv` knob would NOT — pick deliberately (see option B).
+> - NO existing int8/ONNX CE-weight quantization. (`embeddings.py` has
+>   `quantize()`/`dequantize()` but that is float32→int8 for STORAGE of embedding
+>   vectors, unrelated to CE model weights. `benchmarks/run_locomo_jscore.py` uses
+>   BitsAndBytes 4-bit for an LLM, not the CE.) FlashRank already gives an ONNX path —
+>   relevant prior art for option B.
 
 ## Version slot assignments
 
@@ -189,3 +215,70 @@ Without these numbers, picking an option is gut-feeling. With them, decision is 
 - Update Grafana dashboard with cache hit-rate panel + cold-path P95 panel.
 - Document tuning knobs in MIGRATION_NOTES for whichever option ships.
 - Operational runbook: "if cache hit-rate drops below X%, investigate Y."
+
+---
+
+## Option B — concrete ship plan (chosen 2026-06-25, improvement-train #29 car #4)
+
+User direction: ship int8 CE quantization. This section is the buildable spec; the
+menu above is the rationale.
+
+### What ships
+An **opt-in quantized cross-encoder load path** in the sentence-transformers
+fallback branch of `yadgar/backend/ml_client.py`, gated so the current fp32 default
+is unchanged unless explicitly enabled. The GTE-reranker primary + FlashRank (ONNX)
+fallback stay as-is; option B targets the `_try_st_cross_encoder` branch (load at
+**line 434**, `predict()` at **446**) which is the fp32 MiniLM path.
+
+### Load-path change
+Two viable mechanisms — pick at impl time by what installs cleanly in the backend
+image:
+1. **sentence-transformers ONNX backend** (modern ST): `CrossEncoder(model_name,
+   backend="onnx", model_kwargs={"file_name": "model_qint8_avx512.onnx"})`. The
+   quantized ONNX export of `cross-encoder/ms-marco-MiniLM-L-6-v2` is published on
+   HF. Lowest-friction if the pinned ST version supports `backend=`.
+2. **optimum.onnxruntime** (`ORTModelForSequenceClassification` + tokenizer) wrapped
+   to expose `.predict(pairs)`. More code, no ST-version dependency.
+FlashRank already proves ONNX runs in this image — prior art for (1)/(2).
+
+### Config knob — DECISION REQUIRED (the I25 wrinkle)
+Add ONE knob. Two placements, mutually exclusive:
+- **(preferred) I25 three-way Settings field** `CROSS_ENCODER_BACKEND` (values
+  `st` | `onnx-int8`, default `st`) added in lockstep to `config.py` +
+  `config_yaml.py` FIELD_META + `config_registry.py` (`YADGAR_CROSS_ENCODER_BACKEND`),
+  enforced by `test_config_three_way_sync.py`. `ml_client` already reads
+  `settings.CROSS_ENCODER_*` when `settings` is present, so this is consistent with
+  the existing knobs. **Do this unless there's a reason the backend can't see Settings
+  at load time.**
+- (only if Settings is genuinely unavailable in the backend load path) a bare
+  `os.getenv("YADGAR_CROSS_ENCODER_BACKEND")` in `ml_client` — but then it must NOT
+  be added to the I25 three-way (it would fail the sync test as an orphan). The audit
+  found `ml_client` DOES receive `settings`, so the I25 field is the right call.
+  **[FLAG: confirm `settings` is threaded to `_try_st_cross_encoder` at runtime
+  before finalizing.]**
+
+### TDD outline (failing first)
+- `test_ce_backend_default_is_st` — assert `Settings().CROSS_ENCODER_BACKEND == "st"`
+  (red until the field exists).
+- `test_ce_onnx_backend_loads` — with `CROSS_ENCODER_BACKEND="onnx-int8"`,
+  `_try_st_cross_encoder` returns a predictor whose `.predict([[q,d]])` yields a
+  float score (mock/skip-guard the actual ONNX download in CI, mirroring the
+  COMET-test hermeticity rule — do NOT pull weights in CI).
+- `test_config_three_way_sync` stays green (the new field added to all three).
+- **Accuracy gate (offline, not CI):** A/B the int8 vs fp32 CE on the LongMemEval
+  recall set; accept if recall@k degradation < 2% (menu §B risk). Record the number
+  in the PR. Reuses the `make longmemeval` harness (benchmark-runbook wiki).
+
+### Contracts / config
+- I25 three-way sync (the new `CROSS_ENCODER_BACKEND` field).
+- No BEHAVIOR_CONTRACT row changes (rerank is a scoring component; recall BCs are
+  outcome-level and must stay green — run the recall e2e suite).
+- `CAPABILITY_REGISTRY.md`: note the optional int8 CE backend under the rerank
+  capability.
+
+### Risks
+- Accuracy regression on edge cases — gated by the <2% offline A/B above.
+- ONNX export availability / image install friction — mitigated by the two-mechanism
+  choice + FlashRank prior art.
+- **Open toolchain sub-choice (optimum-intel vs onnxruntime vs ST-onnx) is a user/impl
+  decision** — flagged, not pre-picked.

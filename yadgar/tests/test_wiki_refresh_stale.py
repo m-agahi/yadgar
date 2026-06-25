@@ -60,6 +60,29 @@ def _sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _make_wiki_page_singular(base: Path, slug: str, source_file: str, page_hash: str) -> Path:
+    """Create one wiki page using the SINGULAR `source_file:` frontmatter field.
+
+    Real repo-wiki pages store `source_file` (singular) — a single path string,
+    which may be a FILE or a DIRECTORY (e.g. architecture.md → `yadgar/`,
+    overview.md → `.`). The plural `source_files:` list form is only used by the
+    older test fixtures.
+    """
+    wiki_dir = base / ".local-review" / "wiki"
+    wiki_dir.mkdir(parents=True, exist_ok=True)
+    content = (
+        f"---\n"
+        f"wiki_schema_version: 2\n"
+        f"slug: {slug}\n"
+        f"title: {slug}\n"
+        f"hash: {page_hash}\n"
+        f"source_file: {source_file}\n"
+        f"---\n\n# {slug}\n\nContent here.\n"
+    )
+    (wiki_dir / f"{slug}.md").write_text(content)
+    return wiki_dir
+
+
 # ── master-only enforcement ────────────────────────────────────────────────────
 
 
@@ -319,3 +342,137 @@ def test_return_dict_has_required_keys(tmp_path):
     assert "stale" in result
     assert "dispatched_agent_id" in result
     assert isinstance(result["stale"], list)
+
+
+# ── Bug #9: singular source_file field + directory-source hashing ──────────────
+
+
+def test_singular_source_file_field_detected(tmp_path):
+    """Real pages store `source_file` (SINGULAR). The staleness scan must read it.
+
+    Prior code only read `source_files`/`sources` (plural), so a page with the
+    singular field was never considered for staleness — `stale_wiki_count` was
+    pinned at always-0. With a deliberately wrong stored hash, the singular-field
+    page must now be detected as stale.
+    """
+    from yadgar.server.tools.project import _compute_source_hash
+
+    src = tmp_path / "yadgar" / "server.py"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text("# source code")
+
+    # Sanity: a single FILE source is still hashed via read_bytes.
+    file_hash = _compute_source_hash([str(src)], hashlib)
+    assert file_hash and file_hash != ""
+
+    _make_wiki_page_singular(tmp_path, "mod-server", str(src), "0" * 64)
+
+    with (
+        patch("yadgar.server._get_current_branch", return_value="master"),
+        patch("subprocess.check_output", return_value=b"refs/remotes/origin/master"),
+    ):
+        result = server.wiki_refresh_stale(directory=str(tmp_path))
+
+    assert "mod-server" in result["stale"], (
+        "singular `source_file` page with wrong hash must be flagged stale"
+    )
+
+
+def test_directory_source_not_always_stale(tmp_path):
+    """A page whose `source_file` is a DIRECTORY must not be always-stale.
+
+    Real index pages use directory sources (`yadgar/`, `.`). `Path(dir).read_bytes()`
+    raises IsADirectoryError → naive code returns "" → page is ALWAYS stale →
+    `stale_wiki_count` flips from always-0 to always-N.
+
+    Correct behaviour (manifest hash over dir contents):
+      - unchanged dir  → stored hash == computed hash → NOT stale
+      - touch/add file → manifest changes → computed != stored → STALE
+    """
+    from yadgar.server.tools.project import _compute_source_hash
+
+    # Build a directory with a couple of files.
+    src_dir = tmp_path / "yadgar"
+    (src_dir / "sub").mkdir(parents=True, exist_ok=True)
+    (src_dir / "a.py").write_text("# a")
+    (src_dir / "sub" / "b.py").write_text("# b")
+
+    # Baseline manifest hash computed by the SAME function — must be non-empty.
+    baseline_hash = _compute_source_hash([str(src_dir)], hashlib)
+    assert baseline_hash and baseline_hash != "", (
+        "directory source must produce a stable non-empty manifest hash"
+    )
+
+    _make_wiki_page_singular(tmp_path, "architecture", str(src_dir), baseline_hash)
+
+    # 1) Unchanged directory → NOT stale.
+    with (
+        patch("yadgar.server._get_current_branch", return_value="master"),
+        patch("subprocess.check_output", return_value=b"refs/remotes/origin/master"),
+    ):
+        result = server.wiki_refresh_stale(directory=str(tmp_path))
+    assert "architecture" not in result["stale"], (
+        "unchanged directory-sourced page must NOT be stale (always-N bug)"
+    )
+
+    # 2) Add a new file under the directory → STALE.
+    (src_dir / "sub" / "c.py").write_text("# c new file")
+    new_hash = _compute_source_hash([str(src_dir)], hashlib)
+    assert new_hash != baseline_hash, "manifest hash must change when a file is added"
+
+    with (
+        patch("yadgar.server._get_current_branch", return_value="master"),
+        patch("subprocess.check_output", return_value=b"refs/remotes/origin/master"),
+    ):
+        result = server.wiki_refresh_stale(directory=str(tmp_path))
+    assert "architecture" in result["stale"], (
+        "adding a file under the directory source must mark the page stale"
+    )
+
+
+def test_stale_wiki_count_not_always_n_for_dir_source(tmp_path):
+    """`_compute_stale_wiki_count` must report 0 for an up-to-date dir-sourced page.
+
+    This is the metric-level regression: a naive field-only fix flips the count
+    from always-0 to always-N. With the manifest hash, an unchanged dir-sourced
+    page contributes 0.
+    """
+    from yadgar.server.tools.project import _compute_source_hash, _compute_stale_wiki_count
+
+    src_dir = tmp_path / "pkg"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    (src_dir / "m.py").write_text("# module")
+
+    baseline_hash = _compute_source_hash([str(src_dir)], hashlib)
+    _make_wiki_page_singular(tmp_path, "overview", str(src_dir), baseline_hash)
+
+    count = _compute_stale_wiki_count(str(tmp_path))
+    assert count == 0, f"unchanged dir-sourced page must yield stale_wiki_count==0, got {count}"
+
+
+def test_directory_manifest_ignores_pycache_churn(tmp_path):
+    """__pycache__/*.pyc artifacts must NOT affect the directory manifest hash.
+
+    Those files are rewritten on every interpreter run; if they fed the manifest
+    the page would flip to always-stale on a live tree.
+    """
+    from yadgar.server.tools.project import _compute_source_hash
+
+    src_dir = tmp_path / "pkg"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    (src_dir / "m.py").write_text("# module")
+
+    baseline = _compute_source_hash([str(src_dir)], hashlib)
+
+    # Simulate compiled-cache churn under the directory.
+    cache = src_dir / "__pycache__"
+    cache.mkdir()
+    (cache / "m.cpython-313.pyc").write_bytes(b"\x00\x01compiled-bytes")
+
+    after = _compute_source_hash([str(src_dir)], hashlib)
+    assert after == baseline, "__pycache__/*.pyc must not change the directory manifest hash"
+
+    # But a real source change still flips it.
+    (src_dir / "m.py").write_text("# module CHANGED")
+    changed = _compute_source_hash([str(src_dir)], hashlib)
+    assert changed != baseline, "a real source edit must still change the manifest hash"

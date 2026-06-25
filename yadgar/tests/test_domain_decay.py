@@ -72,7 +72,7 @@ class TestDomainDecayRate:
 
         # Mock storage: decisions memory in decisions domain, errors in errors domain
         mock_storage = MagicMock()
-        mock_storage.get_all_memories_for_decay.return_value = [mem_decisions, mem_errors]
+        mock_storage.get_all_memories_for_decay_scalar.return_value = [mem_decisions, mem_errors]
         mock_storage.get_astrocyte_processes.return_value = [
             _make_proc("decisions", [1]),
             _make_proc("errors", [2]),
@@ -230,7 +230,7 @@ class TestMaxTieBreak:
         mem = _make_mem(mid, 0.9, last_accessed)
 
         mock_storage = MagicMock()
-        mock_storage.get_all_memories_for_decay.return_value = [mem]
+        mock_storage.get_all_memories_for_decay_scalar.return_value = [mem]
         mock_storage.get_astrocyte_processes.return_value = [
             # Same memory in both domains — MAX tie-break should pick 1.5
             _make_proc("decisions", [mid]),

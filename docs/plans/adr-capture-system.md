@@ -1,6 +1,37 @@
 # PLAN — ADR capture system (Yadgar wiki as source of truth)
 
-Status: **PHASED — P0 shipping in this PR (stop-hook prompt); P1–P3 planned.** Designed 2026-06-24 (human + instance, item-by-item review + opus design agent + advisor).
+Status: **PHASED — P0 SHIPPED (PR #121, `eeaec40`); P1–P3 + #19-read-side open.** Designed 2026-06-24 (human + instance, item-by-item review + opus design agent + advisor).
+
+> **AUDIT 2026-06-25 (improvement-train #29, group B).** Verified against current code:
+> - **P0 is DONE — shipped in PR #121 (`eeaec40` / `ea83d70`), deployed.** The
+>   stop-hook `_PROMPT_TEMPLATE` (`yadgar/hooks/stop-memory-checkpoint.py:26`) is
+>   capture-first (ADR step 1 → structural step 2 → project_brief step 3 →
+>   maintenance step 4; preamble line 27), uses `<project>-adr-log` + tag `adr`
+>   (line 34), `wiki_add`/`wiki_append_section` with the explicit "do NOT
+>   wiki_approve" note (lines 36-40, 65), mandatory 11-field schema (lines 51-62),
+>   `branch_hint="{default_branch}"` WRITE-side (lines 37/66/72/74, computed by
+>   `_default_branch()` at line 150, substituted in `main()` at 242-245), dead
+>   `refresh_stale_wiki` removed, footer "Checkpoint cadence reached" (line 98).
+>   Test `test_stop_memory_checkpoint_module.py` green — now **20 tests** (plan
+>   said 17). Installed copy via `install_hooks_lib.py:129-130`. **The "P0 shipping
+>   in THIS PR" header was stale → flipped to SHIPPED above.**
+> - **#19 (stop-hook ADR READ-side branch_hint) added below** as P0.5 — write-side
+>   shipped, read-side gap is real (see new §P0.5).
+> - **Bug A line drift:** the dead gate is now at `project.py:1862` (not 1865-66) and
+>   reads `fm.get("source_files") or fm.get("sources")` — BOTH wrong; disk frontmatter
+>   key is `source_file` (singular). Fix must add `source_file`. Detail corrected in
+>   §Bug fixes below.
+> - **Bug B nuance:** the IN-REPO generator `sync_instructions()`
+>   (`yadgar/server/tools/misc.py:517`) is ALREADY CORRECT (says `wiki_add`, no
+>   `wiki_approve`). The stale "wiki_add + wiki_approve for new pages" text survives
+>   ONLY in Max's nix dotfiles (`~/git/nix`, OUT OF THIS REPO — unverifiable here)
+>   and one archived plan. So Bug B's in-repo surface is effectively closed; the real
+>   fix is the out-of-repo nix file. Detail corrected in §Bug fixes.
+> - **P1/P2/P3 still unbuilt** (no `adr_add`/`adr_due`/`decide` in code).
+>   `yadgar/models.py` exists, **234 lines, 16 record classes** — already a
+>   substantial de-facto schema home, so P3 (1) "consolidate scattered shapes into
+>   models.py" is partly done; the ADR shape is the missing piece. (An earlier
+>   verification pass mis-measured it at 56 lines; the real figure is 234/16.)
 
 theme: memory / decisions-log / stop-hook
 priority: high (decisions + rationale are the fastest-rotting, highest-value artifact; lost when context scrolls)
@@ -24,6 +55,51 @@ Every entry MUST contain ALL fields (write "none"/"n/a" if empty, never omit —
 - Test `test_stop_memory_checkpoint_module.py` green (17).
 - **Deploy:** installed copy `~/.claude/hooks/yadgar-stop-memory-checkpoint.py` refreshes on next session start / `install_hooks`.
 
+## P0.5 — #19: stop-hook ADR prompt READ-side branch_hint (write-side shipped)
+**Problem (verified 2026-06-25).** P0 shipped the WRITE-side: ADR `wiki_add` /
+`wiki_append_section` calls pin `branch_hint="{default_branch}"` so decisions land
+on the project-canonical default branch. But the prompt's two READ calls —
+`wiki_read("{project}-adr-log", directory="{directory}")` at
+`stop-memory-checkpoint.py:35` and `wiki_history(...)` at line 67 — **omit
+`branch_hint`**. Wiki reads ARE branch-filtered (§25). **`wiki_read` (`yadgar/server/tools/wiki.py:686`)
+and `wiki_history` (`wiki.py:1013`) both take `branch_hint` and resolve in order:
+(1) `directory + branch=$effective_branch`, (2) `directory + branch IS NULL`
+(project-canonical), (3) `global`.** The P0 write pins the ADR page to
+`branch_hint="{default_branch}"` (e.g. `master`), so the page is stored under
+**`branch=master`, NOT NULL**. On a **feature branch**, a `wiki_read` WITHOUT
+`branch_hint` detects the feature branch → step (1) looks for `branch=feature` (miss)
+→ step (2) `branch IS NULL` (miss — the page is under `master`, not NULL) → step (3)
+global (miss). So the dedup-read **can fail to find the canonical ADR page** and the
+instance re-creates it / appends a duplicate ADR-NNNN. Write-default / read-current
+asymmetry. (Reads are deliberately "more permissive" than writes per §25, but that
+permissiveness covers the NULL-canonical case, not a default-branch-pinned page.)
+
+**Fix.** Add `branch_hint="{default_branch}"` to the `wiki_read` (line 35) and
+`wiki_history` (line 67) calls in `_PROMPT_TEMPLATE`, so the read targets the same
+branch the write pins to. One-template edit; `{default_branch}` is already computed
+and substituted in `main()`.
+
+**TDD outline (failing first).** Two layers — the string test alone is insufficient
+(it passes regardless of whether the tools honor the kwarg):
+1. *Template test* (`test_stop_memory_checkpoint_module.py`): assert the rendered
+   prompt's ADR `wiki_read`/`wiki_history` lines contain `branch_hint="{default_branch}"`
+   (red today → green after the edit). Cheap guard against regression.
+2. *Mechanism test* (the load-bearing one, live/seeded wiki — mirror existing wiki
+   branch-scope tests): `wiki_add` an ADR page with `branch_hint="master"` from a
+   non-master cwd; assert `wiki_read(slug, directory=…)` WITHOUT `branch_hint` from a
+   feature-branch context **misses** it (codifies the bug), and `wiki_read(...,
+   branch_hint="master")` **finds** it (codifies the fix). This proves the §25
+   resolution behaves as the fix assumes — the string test cannot.
+
+**Contracts.** Touches the §25 branch-filter contract on the wiki read path (no new
+BC; the fix makes ADR read+write branch-consistent). No I25 config change.
+
+**Adjacent (separate, do NOT fold here):** `restore()` / `project_brief(mode=restore|signals)`
+do not surface the *stored* checkpoint `branch_hint` back to a resuming session
+(`project.py:1654/1666` restore+signals payloads omit branch; catalog/full include it
+at 1679). That is a resume-ergonomics gap, not the ADR-dedup bug. Track separately if
+the user wants it — out of #19 scope.
+
 ## P1 — `adr_add` MCP tool + `adr_due` nudge (the robust version)
 Move ADR capture off the prompt so the user never formulates it:
 - **`adr_add` / `decide` MCP tool** — the 11-field schema as **validated typed params** → server validates + appends to `<project>-adr-log`. This is **storage-level schema enforcement** (not markdown discipline) and makes ADRs machine-structured for v6 reasoning.
@@ -39,9 +115,29 @@ Verified: yadgar has **no canonical schema registry**; SurrealDB is SCHEMALESS b
 - (2) Typed-record + tool-validation per NEW type (ADR via `adr_add` first).
 - (3) A full DB-level schema-registry seeded at setup = its own v6 design doc/bet (pros: write-validation, versioned schemas, typed data for v6 reasoning; cons: fights SurrealDB flexibility, big migration). Natural generalization of the existing EDGE_CONTRACT/CAPABILITY_REGISTRY declare-the-contract pattern.
 
-## Bug fixes (separate tasks)
-- **Bug A (task #9):** `stale_wiki_count` dead — `project.py:1865-66` checks `source_files` (plural) but disk has `source_file` (singular) → always 0 → `refresh_stale_wiki` never fires. Fix gate or remove feature.
-- **Bug B (task #10):** CLAUDE.md says "wiki_add + wiki_approve for new pages" but `wiki_add` commits directly + `wiki_approve` errors on live pages. Verify the v5.39 similarity-gate draft path, then fix the memory-rules text in BOTH places CLAUDE.md is produced: normal-user (setup script / repo nix flake) AND Max's `yadgar.nix`.
+## Bug fixes (separate tasks) — see group C of improvement-train.md
+- **Bug A (task #9):** `stale_wiki_count` dead. **Current code (verified 2026-06-25):**
+  `project.py:1862` reads `fm.get("source_files") or fm.get("sources") or []`, and the
+  stale-scan repeats the same check at `~2055-2058` (`_scan_stale_wiki_slugs` /
+  `_compute_stale_wiki_count`). The on-disk wiki frontmatter key is **`source_file`
+  (singular)** — neither `source_files` nor `sources` matches → always `[]` →
+  `stale_wiki_count` always 0 → no staleness signal ever fires. Fix: read
+  `fm.get("source_file") or fm.get("source_files") or fm.get("sources")` (or remove the
+  dead feature). `project_brief` confirmed `stale_wiki_count: 0` live. Code-only edit
+  in `project.py` — planned here, NOT made (scope wall: docs/plans only).
+- **Bug B (task #10):** "wiki_add + wiki_approve for new pages" convention is wrong
+  (`wiki_add` commits directly: `server/tools/wiki.py`; `wiki_approve` looks up a draft
+  and errors on a live slug: `wiki.py:841-879`; the v5.39 similarity-gate DRAFT path
+  still exists — drafts created only on a similarity collision via `wiki_check_duplicate`,
+  so the common path has no draft to approve). **In-repo status (verified 2026-06-25):**
+  the in-repo generator `sync_instructions()` (`server/tools/misc.py:517`) is **already
+  correct** — it emits `wiki_add(title, content, append=False)` with no `wiki_approve`.
+  The stale text survives ONLY in (a) Max's nix dotfiles (`~/git/nix`, e.g.
+  `dotfiles/common/claude.md` — OUT OF THIS REPO, **unverifiable here, hand to user**)
+  and (b) one archived plan (`archive/PLAN_V5_45_0_SETUP_FOUNDATION.md:158`, history —
+  do not edit). So the real Bug-B fix is the out-of-repo nix file; the in-repo memory
+  rules need no change. The "similarity-gate draft-path check still pending" item in the
+  global memory rules can be closed: draft path exists + is similarity-collision-only.
 
 ## v6 — contradiction-detection
 Once ADRs are structured (P1) + read-first (P2), the in-session instance can check "does this new decision contradict ADR-NNNN?" at log time; the v6 daemon LLM does periodic full-corpus contradiction sweeps. Decisions get heat/decay/supersede lifecycle.

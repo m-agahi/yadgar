@@ -84,11 +84,6 @@ class TestContentIntegrity:
             f"Content was modified:\nExpected: {content!r}\nGot:      {match['content']!r}"
         )
 
-    @pytest.mark.skip(
-        reason="pre-existing recall-content flake, unrelated to obs-train PR#122; "
-        "tracked separately (failed 6/6 CI reruns on a branch 0-behind master; "
-        "obs train touched no recall/memory code)"
-    )
     def test_specific_detail_preserved(self):
         """Specific identifiers (IDs, paths, item names) survive retrieval unchanged."""
         content = "Codeberg PAT is stored in 1Password item zqq55bz2qi53gw375jlm2sh4jq"

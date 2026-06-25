@@ -391,9 +391,171 @@ class _MemoryMixin:
         )
         return self._rows_to_dicts(rows)
 
+    def get_all_memories_for_decay_scalar(self) -> list[dict]:
+        """Return scalar-only projection for heat decay computation (C2).
+
+        Identical WHERE clause as get_all_memories_for_decay but excludes the
+        large `content` and `embedding` columns that the decay math never reads.
+
+        Fields returned — the complete set that _decay_memories + compute_decay
+        access:
+            id, heat, is_protected, last_accessed, last_decay_at,
+            access_count_since_decay, tags,
+            importance, emotional_valence, confidence
+
+        The original get_all_memories_for_decay() is kept unchanged for the 4
+        other callers that need content/cluster_id/compressed/etc.
+
+        None-stripping: explicit projection causes SurrealDB to return None for
+        unset optional columns (a full-row scan omits them entirely).  We strip
+        None values from each row so that callers' .get(field, default)
+        fallbacks work identically — the key must be absent, not
+        present-with-None, for .get() defaults to fire.
+        """
+        rows = self._q(
+            "SELECT meta::id(id) AS id, heat, is_protected, last_accessed, last_decay_at, "
+            "access_count_since_decay, tags, importance, emotional_valence, confidence "
+            "FROM memory WHERE heat > 0 AND (is_protected = false OR is_protected = NONE)"
+        )
+        dicts = self._rows_to_dicts(rows)
+        # Strip None-valued keys so .get(field, default) in decay math fires correctly.
+        return [{k: v for k, v in d.items() if v is not None} for d in dicts if d is not None]
+
     def get_all_memories_with_embeddings(self) -> list[dict]:
         rows = self._q("SELECT * FROM memory WHERE embedding IS NOT NONE AND heat > 0")
         return self._rows_to_dicts(rows)
+
+    # ------------------------------------------------------------------
+    # C1 projected helpers — avoid SELECT * for bulk embedding/heat scans.
+    # These return only the columns needed; the full-row shims above are
+    # kept for callers that need content/metadata (see deferred list below).
+    #
+    # Deferred callers (all need extra fields beyond id+embedding or id+heat):
+    #   get_all_memories_with_embeddings:
+    #     dream.py:23         — MIGRATED to C3 two-phase fetch (get_candidate_memory_ids
+    #                           + get_memories_by_ids_projected)
+    #     community.py:179    — _build_cluster_summary/_compute_centroid need content+cluster_id
+    #   get_all_memories_for_decay:
+    #     heat_decay.py:94    — MIGRATED to get_all_memories_for_decay_scalar() (C2)
+    #     community.py:162    — _find_memories_for_entities needs content
+    #     community.py:231    — _create_root_clusters needs cluster_id, directory_context
+    #     embed_compress.py:56 — needs created_at, content, compressed
+    #     gap_detection.py:20  — needs heat, tags, confidence, content, id
+    # ------------------------------------------------------------------
+
+    def get_candidate_memory_ids(self) -> list[int]:
+        """Return all memory IDs that have an embedding and heat > 0.
+
+        Projects only id — avoids fetching content/metadata/embedding.
+        Used by C3 two-phase fetch pattern: sample IDs first (cheap), then
+        fetch only the sampled rows via get_memories_by_ids_projected().
+        Filter matches get_all_memories_with_embeddings exactly so population
+        set and size are identical (preserves uniform random-pair semantics).
+        """
+        rows = self._q(
+            "SELECT meta::id(id) AS id FROM memory WHERE embedding IS NOT NONE AND heat > 0"
+        )
+        result: list[int] = []
+        for row in rows:
+            if row is None:
+                continue
+            mem_id = self._extract_id(row.get("id"))
+            if mem_id is not None:
+                result.append(mem_id)
+        return result
+
+    def get_memories_by_ids_projected(self, ids: list[int]) -> list[dict]:
+        """Return id, embedding, and content for a given list of memory ids.
+
+        Projected (not SELECT *) — returns only the fields dream_replay needs:
+          - id        → _build_connected_pair_index_by_ids, _ensure_memory_entity
+          - embedding → similarity check
+          - content   → _create_dream_insight
+        Rows pass through _rows_to_dicts so id is a bare int and embedding is
+        bytes — identical to the row format produced by get_all_memories_with_embeddings.
+        Used by C3 two-phase fetch: phase-2 fetch for only the ~40 sampled ids.
+
+        Note: inlines record ids directly into the query (WHERE id IN [memory:N, ...])
+        because parameterised IN with string values is not supported by the embedded
+        SurrealKV SDK (it expects native RecordID objects which the Python SDK does not
+        expose as a public parameter type in embedded mode).
+        """
+        if not ids:
+            return []
+        id_list = ", ".join(f"memory:{i}" for i in ids)
+        rows = self._q(
+            f"SELECT meta::id(id) AS id, embedding, content FROM memory WHERE id IN [{id_list}]"
+        )
+        return self._rows_to_dicts(rows)
+
+    def iter_embeddings_minimal(self) -> list[tuple[int, bytes]]:
+        """Return (id, embedding) for every memory that has an embedding and heat > 0.
+
+        Projects only id and embedding — avoids fetching content/metadata columns.
+        Use instead of get_all_memories_with_embeddings() when only the vector is needed.
+        """
+        rows = self._q(
+            "SELECT meta::id(id) AS id, embedding FROM memory "
+            "WHERE embedding IS NOT NONE AND heat > 0"
+        )
+        result: list[tuple[int, bytes]] = []
+        for row in rows:
+            if row is None:
+                continue
+            emb = row.get("embedding")
+            if emb is None:
+                continue
+            mem_id = self._extract_id(row.get("id"))
+            if mem_id is None:
+                continue
+            if isinstance(emb, list):
+                emb = self._floats_to_bytes(emb)
+            result.append((mem_id, emb))
+        return result
+
+    def get_embeddings_by_ids(self, ids: list[int]) -> list[tuple[int, bytes]]:
+        """Return (id, embedding) for a given list of memory ids.
+
+        Projects only id and embedding. Used by C3 two-phase fetch pattern
+        (sample candidate IDs first, then fetch only their vectors).
+        """
+        if not ids:
+            return []
+        rows = self._q(
+            "SELECT meta::id(id) AS id, embedding FROM memory WHERE id IN $ids",
+            {"ids": [f"memory:{i}" for i in ids]},
+        )
+        result: list[tuple[int, bytes]] = []
+        for row in rows:
+            if row is None:
+                continue
+            emb = row.get("embedding")
+            if emb is None:
+                continue
+            mem_id = self._extract_id(row.get("id"))
+            if mem_id is None:
+                continue
+            if isinstance(emb, list):
+                emb = self._floats_to_bytes(emb)
+            result.append((mem_id, emb))
+        return result
+
+    def get_ids_with_heat(self) -> list[tuple[int, float]]:
+        """Return (id, heat) for every memory with heat > 0.
+
+        Projects only id and heat — avoids fetching content/metadata columns.
+        Use instead of get_all_memories_for_decay() when only heat values are needed.
+        """
+        rows = self._q("SELECT meta::id(id) AS id, heat FROM memory WHERE heat > 0")
+        result: list[tuple[int, float]] = []
+        for row in rows:
+            if row is None:
+                continue
+            mem_id = self._extract_id(row.get("id"))
+            if mem_id is None:
+                continue
+            result.append((mem_id, float(row.get("heat", 0.0))))
+        return result
 
     def get_memories_with_embeddings(
         self, limit: int | None = None, order_by: str = "last_accessed"

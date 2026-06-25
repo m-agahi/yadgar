@@ -20,19 +20,37 @@ class _DreamMixin:
         """
         stats = {"pairs_examined": 0, "connections_found": 0, "insights_generated": 0}
 
-        memories = self._storage.get_all_memories_with_embeddings()
-        if len(memories) < 2:
+        # C3 two-phase fetch: sample IDs first (cheap, no content/embedding pull),
+        # then fetch only the ~40 sampled rows with projected fields.
+        candidate_ids = self._storage.get_candidate_memory_ids()
+        n = len(candidate_ids)
+        if n < 2:
             return stats
 
-        max_pairs = len(memories) * (len(memories) - 1) // 2
+        max_pairs = n * (n - 1) // 2
         num_pairs = min(self._settings.DREAM_REPLAY_PAIRS, max_pairs)
 
-        pairs = _generate_random_pairs(memories, num_pairs)
-        mem_entity_id, connected_pairs = self._build_connected_pair_index(memories, pairs)
+        # Generate pairs as index pairs into candidate_ids (same RNG semantics as
+        # the old path: uniform random.sample over range(n), identical population size).
+        pairs = _generate_random_pairs_from_count(n, num_pairs)
+
+        # Resolve index pairs → memory ids for the entity/connection index.
+        # Collect unique ids to fetch only the rows we actually need.
+        sampled_ids = {candidate_ids[i] for pair in pairs for i in pair}
+        rows = self._storage.get_memories_by_ids_projected(list(sampled_ids))
+        rows_by_id = {row["id"]: row for row in rows}
+
+        mem_entity_id, connected_pairs = self._build_connected_pair_index_by_ids(
+            sampled_ids, pairs, candidate_ids
+        )
 
         for idx_a, idx_b in pairs:
-            mem_a = memories[idx_a]
-            mem_b = memories[idx_b]
+            id_a = candidate_ids[idx_a]
+            id_b = candidate_ids[idx_b]
+            mem_a = rows_by_id.get(id_a)
+            mem_b = rows_by_id.get(id_b)
+            if mem_a is None or mem_b is None:
+                continue
 
             if mem_a["embedding"] is None or mem_b["embedding"] is None:
                 continue
@@ -60,21 +78,24 @@ class _DreamMixin:
 
         return stats
 
-    def _build_connected_pair_index(
+    def _build_connected_pair_index_by_ids(
         self,
-        memories: list[dict],
+        sampled_mem_ids: set[int],
         pairs: set[tuple[int, int]],
+        candidate_ids: list[int],
     ) -> tuple[dict[int, int], set[tuple[int, int]]]:
-        """Build entity-id lookup and connected-pair set for the candidate pairs.
+        """Build entity-id lookup and connected-pair set for the sampled memory ids.
+
+        C3 variant: takes raw memory ids directly (not index→memories[i] indirection).
+        Same logic as _build_connected_pair_index but works from the id list produced
+        by get_candidate_memory_ids() rather than full memory row dicts.
 
         Pre-builds a connected-pair index via ONE bulk fetch instead of one
         get_relationship_between HTTP call per pair (_memories_connected).
         """
-        candidate_mem_ids = {memories[i]["id"] for idx_pair in pairs for i in idx_pair}
-
         # Resolve memory-entity names → entity ids (only for already-existing entities).
         mem_entity_id: dict[int, int] = {}
-        for mid in candidate_mem_ids:
+        for mid in sampled_mem_ids:
             ent = self._storage.get_entity_by_name(f"memory:{mid}")
             if ent is not None:
                 mem_entity_id[mid] = ent["id"]
@@ -139,19 +160,34 @@ class _DreamMixin:
         )
 
 
+def _generate_random_pairs_from_count(
+    n: int,
+    num_pairs: int,
+) -> set[tuple[int, int]]:
+    """Generate a set of random unique index pairs for a population of size n.
+
+    C3 replacement for _generate_random_pairs: takes population size (int) instead
+    of a list of memory dicts, so it works with the id-only candidate list.
+    RNG semantics are identical to _generate_random_pairs: uniform random.sample
+    over range(n), same attempt budget.
+    """
+    pairs: set[tuple[int, int]] = set()
+    attempts = 0
+    max_attempts = num_pairs * 10
+    while len(pairs) < num_pairs and attempts < max_attempts:
+        i, j = random.sample(range(n), 2)
+        pairs.add((min(i, j), max(i, j)))
+        attempts += 1
+    return pairs
+
+
 def _generate_random_pairs(
     memories: list[dict],
     num_pairs: int,
 ) -> set[tuple[int, int]]:
     """Generate a set of random unique index pairs from memories.
 
-    Attempts up to num_pairs * 10 times to reach num_pairs distinct pairs.
+    Kept for backward compatibility. New callers should use
+    _generate_random_pairs_from_count(len(memories), num_pairs) instead.
     """
-    pairs: set[tuple[int, int]] = set()
-    attempts = 0
-    max_attempts = num_pairs * 10
-    while len(pairs) < num_pairs and attempts < max_attempts:
-        i, j = random.sample(range(len(memories)), 2)
-        pairs.add((min(i, j), max(i, j)))
-        attempts += 1
-    return pairs
+    return _generate_random_pairs_from_count(len(memories), num_pairs)

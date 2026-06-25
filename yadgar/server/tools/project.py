@@ -1248,37 +1248,25 @@ def _build_recommended_actions(
                 }
             )
 
-    # v5.8.0 anchor hygiene actions
-    audit_threshold = int(cfg.ANCHOR_AUDIT_THRESHOLD)
-    if anchor_count_project > audit_threshold:
+    # v5.8.0 anchor hygiene actions — gated on actual actionability, not raw count.
+    # Only emit audit_anchors when there is work to do: expired anchors without grace,
+    # redundant pairs above cosine threshold, or oversized anchors promotable to wiki.
+    # Phantom action names (forget_expired_anchors, merge_redundant_anchors,
+    # promote_anchor_to_wiki) are internal audit-action strings, not MCP tools —
+    # all cases collapse to a single "audit_anchors" recommendation with a reason
+    # that names what is actionable.
+    actionable_parts: list[str] = []
+    if expired_no_grace_count >= 1:
+        actionable_parts.append(f"{expired_no_grace_count} expired")
+    if redundancy_count >= 1:
+        actionable_parts.append(f"{redundancy_count} redundant pairs")
+    if promote_count >= 1:
+        actionable_parts.append(f"{promote_count} promotable")
+    if actionable_parts:
         actions.append(
             {
                 "action": "audit_anchors",
-                "reason": f"count={anchor_count_project} > threshold={audit_threshold}",
-            }
-        )
-
-    if redundancy_count >= 1:
-        actions.append(
-            {
-                "action": "merge_redundant_anchors",
-                "reason": f"redundancy_pairs={redundancy_count}",
-            }
-        )
-
-    if promote_count >= 1:
-        actions.append(
-            {
-                "action": "promote_anchor_to_wiki",
-                "reason": f"oversized={promote_count}",
-            }
-        )
-
-    if expired_no_grace_count >= 1:
-        actions.append(
-            {
-                "action": "forget_expired_anchors",
-                "reason": f"expired={expired_no_grace_count}",
+                "reason": "; ".join(actionable_parts),
             }
         )
 
@@ -1374,6 +1362,138 @@ def _apply_rejection_signal(resolved: str, actions: list) -> int:
         return 0
 
 
+# ── v5.84.0 car #12: ADR nudge signal ─────────────────────────────────────────
+
+
+def _get_adr_log_updated_at(storage, resolved: str) -> float | None:
+    """Return ADR log wiki page updated_at as a unix timestamp float.
+
+    Queries wiki_page table directly for the project's ADR log slug.
+    Returns None when page not found or timestamp unparseable.
+    Same pattern as _get_roadmap_wiki_updated_at.
+    """
+    import os as _os  # noqa: PLC0415
+
+    project_name = _os.path.basename(resolved)
+    slug = f"{project_name}-adr-log"
+    try:
+        rows = storage._q(
+            "SELECT updated_at FROM wiki_page WHERE slug = $slug LIMIT 1",
+            {"slug": slug},
+        )
+        if not rows:
+            return None
+        ts_raw = rows[0].get("updated_at")
+        if ts_raw is None:
+            return None
+        if isinstance(ts_raw, (int, float)):
+            return float(ts_raw)
+        # ISO string
+        ts_str = str(ts_raw).rstrip("Z").replace("Z", "+00:00")
+        dt = datetime.fromisoformat(ts_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt.timestamp()
+    except Exception:
+        return None
+
+
+def _get_active_work_updated_at(storage, resolved: str) -> float | None:
+    """Return the most recent _active_work memory created_at as a unix timestamp float.
+
+    Returns None when no _active_work memory is found for this directory.
+    """
+    try:
+        rows = storage._q(
+            "SELECT created_at FROM memory WHERE directory_context = $dir "
+            "AND '_active_work' INSIDE tags LIMIT 1",
+            {"dir": resolved},
+        )
+        if not rows:
+            return None
+        ts_raw = rows[0].get("created_at")
+        if ts_raw is None:
+            return None
+        if isinstance(ts_raw, (int, float)):
+            return float(ts_raw)
+        ts_str = str(ts_raw).rstrip("Z").replace("Z", "+00:00")
+        dt = datetime.fromisoformat(ts_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt.timestamp()
+    except Exception:
+        return None
+
+
+def _apply_adr_signal(resolved: str, storage, actions: list) -> None:
+    """Append capture_adr action when decisions are likely uncaptured.
+
+    Heuristic: active_work was updated more recently than the ADR log by
+    > ADR_DUE_WARN_HOURS.  Fires only when there is evidence of session activity
+    (active_work present).  Silent when active_work absent or ADR log is fresh.
+    Never raises.
+
+    Same structural pattern as _apply_roadmap_signal / _apply_rejection_signal.
+    """
+    if storage is None:
+        return
+    try:
+        cfg = get_settings()
+        warn_hours = cfg.ADR_DUE_WARN_HOURS
+
+        active_work_ts = _get_active_work_updated_at(storage, resolved)
+        if active_work_ts is None:
+            # No session activity detected — silent.
+            return
+
+        adr_ts = _get_adr_log_updated_at(storage, resolved)
+        now = time.time()
+
+        if adr_ts is None:
+            # ADR log absent but active_work present — always fire (0 ADRs captured yet).
+            active_work_age_h = (now - active_work_ts) / 3600.0
+            actions.append(
+                {
+                    "action": "capture_adr",
+                    "reason": (
+                        f"active_work updated {active_work_age_h:.1f}h ago; "
+                        "ADR log absent — no decisions captured yet"
+                    ),
+                    "suggested_call": (
+                        f"adr_add(directory={resolved!r}, title='...', status='open', "
+                        "date='YYYY-MM-DD', context='...', decision='...', "
+                        "rationale='...', alternatives='...', consequences='...', "
+                        "revisit_trigger='...', supersedes='none')"
+                    ),
+                }
+            )
+            return
+
+        # Both timestamps available — fire when ADR log is stale relative to active_work.
+        delta_hours = (active_work_ts - adr_ts) / 3600.0
+        if delta_hours > warn_hours:
+            active_work_age_h = (now - active_work_ts) / 3600.0
+            adr_age_h = (now - adr_ts) / 3600.0
+            actions.append(
+                {
+                    "action": "capture_adr",
+                    "reason": (
+                        f"active_work updated {active_work_age_h:.1f}h ago; "
+                        f"last ADR {adr_age_h:.1f}h ago "
+                        f"(delta {delta_hours:.1f}h > threshold {warn_hours}h)"
+                    ),
+                    "suggested_call": (
+                        f"adr_add(directory={resolved!r}, title='...', status='open', "
+                        "date='YYYY-MM-DD', context='...', decision='...', "
+                        "rationale='...', alternatives='...', consequences='...', "
+                        "revisit_trigger='...', supersedes='none')"
+                    ),
+                }
+            )
+    except Exception:
+        return
+
+
 def _omit_sentinel(d: dict, key: str, value: object, sentinel: object) -> None:
     """Set d[key]=value only when value != sentinel (for budget-trimming optional fields)."""
     if value != sentinel:
@@ -1445,6 +1565,9 @@ def _project_brief_signals(
 
     # v5.42.0: DLQ rejection signal — pending_rejections_count + review_rejections action.
     pending_rejections_count = _apply_rejection_signal(resolved, recommended_actions)
+
+    # v5.84.0 car #12: ADR nudge signal — capture_adr action when decisions uncaptured.
+    _apply_adr_signal(resolved, storage, recommended_actions)
 
     # v5.53.1: compute real stale wiki count (TTL-cached, cheap for hot path).
     stale_wiki_count = _compute_stale_wiki_count(resolved)
@@ -1524,6 +1647,35 @@ def _build_recent_writes(storage, resolved: str, limit: int = 10) -> list[dict]:
     return result
 
 
+def _build_adr_log(resolved: str) -> dict:
+    """Build the adr_log field for restore mode (car #13).
+
+    Returns a cheap metadata-only dict: slug + up to 3 most-recent IDs.
+    Full body is never included to keep the restore payload token-budget safe.
+
+    Uses lazy imports to avoid circular imports:
+      - adr.py imports project.py helpers at module level (_get_default_branch,
+        _resolve_project_root), so a top-level import of adr in project.py would
+        create a circular dependency at load time. Lazy import inside the function
+        body is safe because both modules are fully loaded by the time it is called.
+      - wiki.py also imports project.py helpers; same pattern applies.
+    """
+    from yadgar.server.tools.adr import adr_log_slug, parse_adr_ids  # noqa: PLC0415
+    from yadgar.server.tools.wiki import wiki_read  # noqa: PLC0415
+
+    slug = adr_log_slug(resolved)
+    default_branch = _get_default_branch(resolved)
+    try:
+        page = wiki_read(slug, directory=resolved, branch_hint=default_branch)
+        if "error" in page or not page.get("content"):
+            latest_ids: list[str] = []
+        else:
+            latest_ids = parse_adr_ids(page["content"])[:3]
+    except Exception:
+        latest_ids = []
+    return {"slug": slug, "latest_ids": latest_ids}
+
+
 def _project_brief_restore(
     resolved: str,
     mode: str,
@@ -1542,6 +1694,8 @@ def _project_brief_restore(
         "wiki_catalog": _build_wiki_catalog(storage, resolved),
         # #35: recent writes in last 24h — helps agent recall what was stored before compaction.
         "recent_writes": _build_recent_writes(storage, resolved),
+        # car #13: ADR log first-class in restore context (slug + up to 3 latest IDs).
+        "adr_log": _build_adr_log(resolved),
     }
 
 
@@ -1859,7 +2013,9 @@ def _is_wiki_page_stale(md_path: Path, yaml_mod) -> bool:
     if fm is None:
         return False
     stored_hash = fm.get("hash") or fm.get("sha256") or ""
-    source_files = fm.get("source_files") or fm.get("sources") or []
+    # Real repo-wiki pages store `source_file` (SINGULAR, one path string that
+    # may be a file OR a directory). Older fixtures use `source_files`/`sources`.
+    source_files = fm.get("source_files") or fm.get("sources") or fm.get("source_file") or []
     if isinstance(source_files, str):
         source_files = [source_files]
     if not source_files:
@@ -1962,23 +2118,74 @@ def _parse_frontmatter(raw: str, yaml_mod) -> dict | None:
 
 
 def _compute_source_hash(source_files: list[str], hashlib_mod) -> str:
-    """Compute SHA256 over all source file contents, concatenated in order.
+    """Compute SHA256 over all source contents, concatenated in order.
 
-    Missing files contribute an empty byte string (the page is stale).
+    Each entry may be a FILE or a DIRECTORY:
+      - FILE → hash its raw bytes (existing behaviour).
+      - DIRECTORY → hash a stable recursive MANIFEST of the files under it
+        (sorted relative path + size + per-file content digest). Real index
+        pages store directory sources (`architecture.md` → ``yadgar/``,
+        `overview.md` → ``.``); ``Path(dir).read_bytes()`` would raise
+        IsADirectoryError and pin every such page to "always stale", so the
+        manifest path keeps the hash content-stable: it changes iff a file
+        under the directory is added, removed, or modified.
+
+    mtime is deliberately NOT part of the manifest — it is not content-stable
+    across checkouts/clones and would resurrect always-stale in CI.
+
+    Missing sources contribute an empty hash (the page is treated as stale).
     """
     h = hashlib_mod.sha256()
     any_content = False
     for path_str in source_files:
+        p = Path(path_str)
         try:
-            data = Path(path_str).read_bytes()
-            h.update(data)
-            any_content = True
-        except (OSError, FileNotFoundError) as _e:
-            # Missing source file → hash will differ from stored hash
+            if p.is_dir():
+                if _hash_directory_manifest(p, h, hashlib_mod):
+                    any_content = True
+            else:
+                data = p.read_bytes()
+                h.update(data)
+                any_content = True
+        except OSError:
+            # Missing/unreadable source (FileNotFoundError ⊆ OSError, includes
+            # IsADirectoryError for non-manifest paths) → hash differs from stored.
             return ""
     if not any_content:
         return ""
     return h.hexdigest()
+
+
+def _hash_directory_manifest(directory: Path, h, hashlib_mod) -> bool:
+    """Fold a stable recursive manifest of ``directory`` into accumulator ``h``.
+
+    Returns True if at least one file was folded in. The manifest is built from
+    files in SORTED relative-path order; for each file we mix in its relative
+    path, byte size, and SHA256 of its contents. This makes the resulting hash
+    invariant to traversal order and to mtime, while changing whenever any file
+    under the directory is added, removed, or edited.
+    """
+    any_file = False
+    # Exclude churn-y, non-source artifacts so the manifest stays stable on a
+    # live tree (e.g. __pycache__/*.pyc are rewritten on every interpreter run
+    # and would otherwise flip the hash every check → always-stale).
+    files = sorted(
+        p
+        for p in directory.rglob("*")
+        if p.is_file() and "__pycache__" not in p.parts and p.suffix not in (".pyc", ".pyo")
+    )
+    for fp in files:
+        rel = fp.relative_to(directory).as_posix()
+        data = fp.read_bytes()
+        file_digest = hashlib_mod.sha256(data).hexdigest()
+        h.update(rel.encode("utf-8"))
+        h.update(b"\0")
+        h.update(str(len(data)).encode("utf-8"))
+        h.update(b"\0")
+        h.update(file_digest.encode("utf-8"))
+        h.update(b"\0")
+        any_file = True
+    return any_file
 
 
 def _wiki_refresh_stale_impl(
@@ -2052,7 +2259,10 @@ def _wiki_refresh_stale_impl(
             if fm is None:
                 continue
             stored_hash = fm.get("hash") or fm.get("sha256") or ""
-            source_files = fm.get("source_files") or fm.get("sources") or []
+            # Singular `source_file` is the real-page form (file or directory).
+            source_files = (
+                fm.get("source_files") or fm.get("sources") or fm.get("source_file") or []
+            )
             if isinstance(source_files, str):
                 source_files = [source_files]
             if not source_files:

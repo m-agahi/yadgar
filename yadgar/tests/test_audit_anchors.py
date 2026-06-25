@@ -498,23 +498,12 @@ class TestEnvKnobs:
 class TestSuggestedCall:
     """audit_anchors action in recommended_actions has suggested_call field."""
 
-    def test_audit_anchors_action_has_suggested_call(self, storage, monkeypatch):
-        from yadgar.config import get_settings
-
-        original_settings = get_settings()
-        # Force audit_anchors action by setting ANCHOR_AUDIT_THRESHOLD=0 so
-        # anchor_count=1 > 0 triggers the action.
-
-        class _FakeSettings:
-            def __getattr__(self, name):
-                if name == "ANCHOR_AUDIT_THRESHOLD":
-                    return 0
-                return getattr(original_settings, name)
-
-        monkeypatch.setattr("yadgar.server.tools.project.get_settings", lambda: _FakeSettings())
-
-        # Insert 1 anchor so anchor_count_project=1 > threshold=0
-        _insert_anchor(storage, "trigger audit action")
+    def test_audit_anchors_action_has_suggested_call(self, storage):
+        # Force audit_anchors action via an expired anchor (actionability gate — car #20 fix).
+        # The old count-only gate (ANCHOR_AUDIT_THRESHOLD=0) is removed; expired anchor is
+        # the simplest way to make audit_anchors actionable.
+        past = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+        _insert_anchor(storage, "trigger audit action", valid_until=past, migration_grace=False)
 
         result = server.project_brief(_DIR, mode="signals")
         actions = result.get("recommended_actions", [])

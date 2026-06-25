@@ -55,6 +55,8 @@ def _make_runner(memories: list[dict], entities: list[dict], cold_threshold: flo
     """Return a _HeatDecayMixin runner with mocked storage/thermo/settings."""
     mock_storage = MagicMock()
     mock_storage.get_all_memories_for_decay.return_value = memories
+    # C2: decay reads via the scalar projection now (storage.get_all_memories_for_decay_scalar)
+    mock_storage.get_all_memories_for_decay_scalar.return_value = memories
     mock_storage.get_all_entities_for_decay.return_value = entities
     mock_storage.get_astrocyte_processes.return_value = []
     mock_storage.batch_writes = MagicMock()

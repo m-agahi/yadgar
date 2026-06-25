@@ -32,7 +32,7 @@ triage anything away under length pressure, drop maintenance, NEVER capture.
 1. ADR CAPTURE (always run; the Yadgar wiki is the source of truth — no file,
    works for non-git projects too).
    Page: slug "{project}-adr-log", tag "adr", scoped to this directory.
-   - Find it: wiki_read("{project}-adr-log", directory="{directory}"). If absent,
+   - Find it: wiki_read("{project}-adr-log", directory="{directory}", branch_hint="{default_branch}"). If absent,
      create with wiki_add(title="{project} ADR Log", content="<one-line header>",
      tags=["adr"], directory="{directory}", branch_hint="{default_branch}", wait=True).
      The ADR log is project-canonical — it lives on the default branch ({default_branch}),
@@ -77,10 +77,9 @@ triage anything away under length pressure, drop maintenance, NEVER capture.
 3. Call project_brief("{directory}", mode="signals").
 
 4. MAINTENANCE — for each entry in recommended_actions:
-   - ANCHOR HYGIENE: if any of audit_anchors / forget_expired_anchors /
-     merge_redundant_anchors / promote_anchor_to_wiki appear, handle them with ONE
-     flow: audit_anchors("{directory}", dry_run=True) → review →
-     audit_anchors("{directory}", dry_run=False) to apply forgets/merges. The tool
+   - ANCHOR HYGIENE: if audit_anchors appears, run it once:
+     audit_anchors("{directory}", dry_run=True) → review actions list →
+     audit_anchors("{directory}", dry_run=False) to apply forget/merge. The tool
      self-guards (never drops semantic_immortal or protected-legacy anchors). For
      any promote draft it returns, wiki_add it only if wiki-worthy (step-2 rules),
      else skip. Run this flow at most once.

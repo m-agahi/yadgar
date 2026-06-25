@@ -215,6 +215,62 @@ class CausalDAGEdge(BaseModel):
     is_validated: bool = False
 
 
+# -- v5 models --
+
+# Valid ADR status values — canonical list; adr_add's _VALID_STATUSES is built from this.
+_ADR_VALID_STATUSES: frozenset[str] = frozenset(
+    {"open", "accepted", "superseded", "rejected", "deprecated"}
+)
+
+
+class ADR(BaseModel):
+    """Typed record shape for an Architecture Decision Record entry.
+
+    Represents the 10 content fields stored in the ADR log wiki page.
+    ``directory`` is a routing argument in ``adr_add``, not part of the record.
+    ``adr_id`` is assigned sequentially by ``adr_add`` and is optional here
+    (None until assigned).
+
+    FastMCP derives the JSON Schema for ``adr_add`` from flat keyword args —
+    the model is used as shape/post-validation inside the tool body, not as
+    the tool signature. Validation (empty-field check, status enum) stays in
+    ``adr_add`` to preserve exact error messages expected by the test suite.
+    """
+
+    adr_id: str | None = None
+    title: str
+    status: str  # One of _ADR_VALID_STATUSES; enforced by adr_add, not pydantic
+    date: str
+    context: str
+    decision: str
+    rationale: str
+    alternatives: str
+    consequences: str
+    revisit_trigger: str
+    supersedes: str
+
+    def to_body_dict(self) -> dict[str, str]:
+        """Return ordered dict of the 9 body fields (title excluded — used as heading).
+
+        Field order matches the flat-bullet rendering in ``_build_adr_body``.
+        """
+        return {
+            "status": self.status,
+            "date": self.date,
+            "context": self.context,
+            "decision": self.decision,
+            "rationale": self.rationale,
+            "alternatives": self.alternatives,
+            "consequences": self.consequences,
+            "revisit_trigger": self.revisit_trigger,
+            "supersedes": self.supersedes,
+        }
+
+    def to_markdown_body(self) -> str:
+        """Return the flat-bullet markdown body for this ADR, matching adr_add output."""
+        return "".join(f"- {k}: {v}\n" for k, v in self.to_body_dict().items())
+
+
 # -- v4 models --
 
 
