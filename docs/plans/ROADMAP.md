@@ -16,6 +16,12 @@ Single source of truth for **open** plans. Shipped/dead plans live in
 
 ## Latest shipped
 
+> **Tag lag (2026-06-25):** master is past v5.81 — PRs #116–#122 are merged
+> (plan-archive sweep #116, recall=DONE #118, viz control-panel plan #120,
+> **stop-hook ADR-capture P0 #121 `eeaec40`**, **obs-train C1+C2 #122 `2785d9c`**) but
+> no new `vX.Y` tag was cut for them yet; obs-train + COMET-retire sit in CHANGELOG
+> `[Unreleased]`. Update this list when the next version is tagged.
+
 - **v5.81** (`091d958`) — viz-fidelity-v2 (BC-VZ-R1/2/3) + wiki BC-G10 + landscape recall (BC-AC3a) + MCP tool descriptions.
 - **v5.80** (`22206d9`) — unified-recall default-flip + fan-out fusion regression fixes.
 - **v5.79** (`52e81cf`) — unified-scoped-recall steps 0/3/4/5 (test-first redo, real e2e).
@@ -29,8 +35,9 @@ Single source of truth for **open** plans. Shipped/dead plans live in
 ### Active / next
 | Plan | Theme | Status | Notes |
 |------|-------|--------|-------|
-| [en2a-comet-fpa-v5.82](en2a-comet-fpa-v5.82.md) | enrichment / eval | **Next — v5.82** | COMET-FPA ablation: measure `make longmemeval` baseline → apply COMET-FPA exemption → re-run → compare recall@k → flip-or-retire COMET. Prerequisite landed in v5.81 (`091d958`). Only genuinely-open recall-adjacent task. |
-| [adr-capture-system](adr-capture-system.md) | memory / decisions | **P0 shipping** | ADR capture into Yadgar wiki (source of truth, per-project page). P0 = stop-hook prompt redesign (capture-first + mandatory 11-field/ADR-NNNN schema) — this PR. P1 = `adr_add` tool + `adr_due` nudge; P2 = project_brief surfacing; P3 = models.py schema home. |
+| [improvement-train](improvement-train.md) | umbrella (#29) | **NEW — 3 PRs (A perf / B adr / C bugs)** | Umbrella for issue #29: A=embedding-scan perf + int8 CE + scrape tune; B=ADR-capture follow-through (P0 shipped, P0.5/#19 + P1/P2/P3 open); C=bug fixes (#9 stale-gate, #10 convention, #25 COMET-warn likely-closed, #21 recall flake). Suggested order C→B→A. Several cars already DONE/CLOSED — see umbrella. |
+| [en2a-comet-fpa-v5.82](archive/en2a-comet-fpa-v5.82.md) + [comet-retire-dormant](archive/comet-retire-dormant.md) | enrichment / eval | **SHIPPED → archived — ADR-0004 RETIRE (in CHANGELOG `[Unreleased]`)** | Ablation concluded: un-FPA'd COMET net-negative recall (−4.2pt) at ~17h/10-core → retired to dormant (flag default True→False), BC-EN2b warning shipped. NOT improvement-train #29. Both plan docs archived 2026-06-25; verdict report `benchmarks/reports/en2a_comet_ablation_2026-06-24.md`. |
+| [adr-capture-system](adr-capture-system.md) | memory / decisions | **P0 SHIPPED (#121); P0.5/#19 + P1–P3 open** | ADR capture into Yadgar wiki (per-project page, source of truth). P0 (stop-hook capture-first + 11-field schema) shipped `eeaec40`. Open: #19 read-side branch_hint (P0.5), `adr_add`+`adr_due` (P1), project_brief surfacing (P2), models.py ADR shape (P3). Group B of improvement-train. |
 | [db-audit-fix](db-audit-fix.md) | data-integrity | **skeleton — discuss first** | Audit + fix live-store issues (legacy `last_decay_at`, 6-week-dead aftermath, entity heat, wiki↔memory link, archive tier, orphans). User has thoughts to bring before scoping. |
 
 ### In-flight migrations / investigations
@@ -43,7 +50,12 @@ Single source of truth for **open** plans. Shipped/dead plans live in
 ### Infra / ops
 | Plan | Theme | Status | Notes |
 |------|-------|--------|-------|
-| [ce-perf-options](ce-perf-options.md) | infra-ops | partial / undecided | Cross-encoder perf menu; options A/C folded earlier, option B (int8) never shipped. Close or pick B. |
+| [ce-perf-options](ce-perf-options.md) | infra-ops | **option B chosen — buildable** | Cross-encoder perf menu; option B (int8/ONNX CE) picked 2026-06-25 → concrete §"Option B" added (load path `ml_client._try_st_cross_encoder`, gated, fp32 default). improvement-train A2 / #4. Toolchain sub-choice = user/impl decision. |
+| [cpu-burst-rootcause-and-embedding-scan-fix](cpu-burst-rootcause-and-embedding-scan-fix.md) | perf | **Part 2 buildable; Part 1 OPEN (host-side)** | Part 2 = kill `SELECT *` consolidation scans (projection + server-side decay + sample-then-fetch + incremental linking). Part 1 = fan-burst still open (observer-effect / surrealkv suspect, hand to user). improvement-train A1 / #30–33. |
+| [process-exporter-scrape-interval](process-exporter-scrape-interval.md) | observability / nix | **nix-only — hand to user** | High-res Prometheus scrape 2s→5s (observer-effect diagnostic). No in-repo change; edit `~/git/nix/modules/observability/prometheus.nix`. improvement-train A3 / #34. |
+| [anchor-signal-gap](anchor-signal-gap.md) | signals / anchors | **NEW — buildable** | project_brief over-signals `audit_anchors` (count>15 gate ignores actionable items) + phantom action names (`forget_expired_anchors` etc. aren't tools). improvement-train B5 / #20. |
+| [comet-dormant-startup-warning](comet-dormant-startup-warning.md) | observability | **likely CLOSED — user decision** | #25: warning IS reached on streamable-http (refutes ticket premise); residual = server-log vs client-visible. improvement-train C3. |
+| [recall-content-integrity-flake](recall-content-integrity-flake.md) | recall / test | **NEW — investigate** | #21: unquarantine `test_specific_detail_preserved`; it's a ranking miss (PAT vs "personal access token"), not content drop. Don't overfit recall. improvement-train C4. |
 | [roadmap-freshness](roadmap-freshness.md) | infra-ops | deferred (v5.99 — design open) | Roadmap-staleness signal; deferred on an async-write-queue design problem. |
 | [viz-config-control-panel](viz-config-control-panel.md) | viz / config / ops | **skeleton — discuss first** | Browser config control panel in the viz UI: view/edit all 299 settings (source/restart/destructive metadata) via extended `/admin/config` + `PATCH /admin/config/<key>` sanctioned writer; guarded restart + armed destructive confirm + audit. Motivated by the CLI `COLD_MEMORY_PURGE_ENABLED` flip + manual restart this session. Mockup: `viz-config-control-panel.mockup.html`. |
 

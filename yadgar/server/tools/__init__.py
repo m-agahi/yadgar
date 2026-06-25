@@ -20,6 +20,7 @@ import yadgar.server.tools.audit  # noqa: F401 — side-effects: tool registrati
 import yadgar.server.tools.bookmarks  # noqa: F401 — side-effects: tool registration
 import yadgar.server.tools.blocks  # noqa: F401 — side-effects: tool registration (v5.33.0)
 import yadgar.server.tools.repo_wiki  # noqa: F401 — side-effects: tool registration (T8)
+import yadgar.server.tools.adr  # noqa: F401 — side-effects: tool registration (car #12)
 
 # Re-export everything that tests or external code import directly
 from yadgar.server.tools.memorize import memorize
@@ -124,6 +125,7 @@ from yadgar.server.tools.blocks import (
     block_update,
 )
 from yadgar.server.tools.repo_wiki import repo_wiki_generate
+from yadgar.server.tools.adr import adr_add
 
 __all__ = [
     "memorize",
@@ -199,6 +201,7 @@ __all__ = [
     "block_update",
     "archive_purge",
     "repo_wiki_generate",
+    "adr_add",
     # Private helpers re-exported for test access
     "_detect_branch",
     "_detect_branch_cached",

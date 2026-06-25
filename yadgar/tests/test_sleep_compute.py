@@ -2,7 +2,7 @@
 
 import random
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -662,3 +662,166 @@ def test_dream_replay_correctness_skips_connected(tmp_path, settings):
     )
     assert stats["connections_found"] == 0
     engine.close()
+
+
+# ── C3 dream_replay two-phase fetch tests ────────────────────────────────────
+
+
+class TestDreamReplayTwoPhase:
+    """C3: dream_replay MUST sample IDs first, then fetch only sampled rows.
+
+    The old path called get_all_memories_with_embeddings() which pulled ~3000
+    rows (SELECT * with full content + embedding) just to sample ~40 vectors.
+    The two-phase path calls get_candidate_memory_ids() (ids only, cheap) then
+    get_memories_by_ids_projected(ids) (content+embedding for ~40 rows only).
+
+    Assert: get_all_memories_with_embeddings is NOT called during dream_replay.
+    Assert: get_memories_by_ids_projected receives ≤ 2·DREAM_REPLAY_PAIRS ids.
+    Assert: dream insight still produced (content + embedding still present).
+    """
+
+    def _make_engine(self, tmp_path, n: int = 60, pairs: int = 10):
+        high_settings = Settings(
+            DB_PATH=str(tmp_path / "test.db"),
+            DREAM_REPLAY_PAIRS=pairs,
+        )
+        engine = StorageEngine(str(tmp_path / "dream_c3.db"))
+        mock_emb = MagicMock(spec=EmbeddingEngine)
+        mock_emb.get_model_name.return_value = "all-MiniLM-L6-v2"
+        mock_emb.encode.return_value = np.ones(384, dtype=np.float32).tobytes()
+        mock_emb.similarity.return_value = 0.1  # below threshold — no writes
+        graph = KnowledgeGraph(engine, high_settings)
+        thermo = MemoryThermodynamics(engine, mock_emb, high_settings)
+        curator = MemoryCurator(engine, mock_emb, thermo, high_settings)
+        sleep_eng = SleepComputeEngine(engine, mock_emb, graph, curator, thermo, high_settings)
+
+        vec = np.ones(384, dtype=np.float32).tobytes()
+        for i in range(n):
+            engine.insert_memory(
+                {
+                    "content": f"c3 test memory {i}",
+                    "embedding": vec,
+                    "directory_context": "/proj",
+                    "heat": 0.5,
+                    "is_stale": False,
+                    "embedding_model": "all-MiniLM-L6-v2",
+                }
+            )
+
+        return sleep_eng, engine, high_settings
+
+    def test_dream_replay_does_not_call_get_all_memories(self, tmp_path):
+        """dream_replay MUST NOT call get_all_memories_with_embeddings (C3 gate).
+
+        Seeds 60 memories so the population is much larger than DREAM_REPLAY_PAIRS=10.
+        Patches the method with a sentinel that raises AssertionError if called,
+        while providing the two-phase helpers via normal storage.
+        """
+        sleep_eng, engine, _settings = self._make_engine(tmp_path, n=60, pairs=10)
+
+        try:
+
+            def _must_not_be_called():
+                raise AssertionError(
+                    "C3: dream_replay called get_all_memories_with_embeddings() — "
+                    "must use two-phase fetch (get_candidate_memory_ids + "
+                    "get_memories_by_ids_projected) instead."
+                )
+
+            with patch.object(engine, "get_all_memories_with_embeddings", _must_not_be_called):
+                random.seed(42)
+                sleep_eng.dream_replay()  # must not raise
+        finally:
+            engine.close()
+
+    def test_dream_replay_fetches_bounded_rows(self, tmp_path):
+        """get_memories_by_ids_projected receives ≤ 2·DREAM_REPLAY_PAIRS ids (C3 bound).
+
+        With DREAM_REPLAY_PAIRS=10 and 60 candidate memories, the by-ids fetch
+        should receive at most 20 ids (pairs × 2 unique members per pair, deduped).
+        """
+        PAIRS = 10
+        sleep_eng, engine, _settings = self._make_engine(tmp_path, n=60, pairs=PAIRS)
+
+        try:
+            fetched_id_batches: list[list[int]] = []
+            real_fetch = engine.get_memories_by_ids_projected
+
+            def spy_fetch(ids):
+                fetched_id_batches.append(list(ids))
+                return real_fetch(ids)
+
+            with patch.object(engine, "get_memories_by_ids_projected", spy_fetch):
+                random.seed(42)
+                sleep_eng.dream_replay()
+
+            assert fetched_id_batches, (
+                "C3: dream_replay never called get_memories_by_ids_projected — "
+                "two-phase fetch not implemented."
+            )
+            total_ids = sum(len(b) for b in fetched_id_batches)
+            assert total_ids <= 2 * PAIRS, (
+                f"C3: dream_replay fetched {total_ids} rows but DREAM_REPLAY_PAIRS={PAIRS} "
+                f"so ≤{2 * PAIRS} rows expected (≤ 2·pairs unique memory ids). "
+                "Two-phase fetch is not bounding the row fetch correctly."
+            )
+        finally:
+            engine.close()
+
+    def test_dream_replay_insight_still_works_with_two_phase(self, tmp_path):
+        """Insight generation still works after C3 refactor (content + embedding present).
+
+        Seeds 2 memories with high similarity so dream replay generates an insight.
+        Asserts the dream insight memory is created — i.e. content is present in
+        the projected rows returned by get_memories_by_ids_projected.
+        """
+        high_settings = Settings(
+            DB_PATH=str(tmp_path / "test.db"),
+            DREAM_REPLAY_PAIRS=10,
+        )
+        engine = StorageEngine(str(tmp_path / "dream_c3_insight.db"))
+        mock_emb = MagicMock(spec=EmbeddingEngine)
+        mock_emb.get_model_name.return_value = "all-MiniLM-L6-v2"
+        mock_emb.encode.return_value = np.ones(384, dtype=np.float32).tobytes()
+        mock_emb.similarity.return_value = 0.85  # above 0.7 → insight generated
+
+        graph = KnowledgeGraph(engine, high_settings)
+        thermo = MemoryThermodynamics(engine, mock_emb, high_settings)
+        curator = MemoryCurator(engine, mock_emb, thermo, high_settings)
+        sleep_eng = SleepComputeEngine(engine, mock_emb, graph, curator, thermo, high_settings)
+
+        vec = np.ones(384, dtype=np.float32).tobytes()
+        engine.insert_memory(
+            {
+                "content": "C3 insight test memory alpha",
+                "embedding": vec,
+                "directory_context": "/proj",
+                "heat": 0.8,
+            }
+        )
+        engine.insert_memory(
+            {
+                "content": "C3 insight test memory beta",
+                "embedding": vec,
+                "directory_context": "/proj",
+                "heat": 0.8,
+            }
+        )
+
+        try:
+            random.seed(42)
+            stats = sleep_eng.dream_replay()
+
+            assert stats["insights_generated"] >= 1, (
+                "C3: dream_replay must still generate insights after two-phase fetch refactor. "
+                f"stats={stats}"
+            )
+            dream_mems = engine._q(
+                "SELECT * FROM memory WHERE string::contains(content, 'Dream connection:')"
+            )
+            assert len(dream_mems) >= 1, (
+                "C3: dream insight memory must be created — content field must be present "
+                "in projected rows from get_memories_by_ids_projected."
+            )
+        finally:
+            engine.close()

@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 import pytest
 
 from yadgar.models import (
+    ADR,
     AstrocyteProcess,
     CausalDAGEdge,
     Checkpoint,
@@ -526,3 +527,113 @@ class TestCheckpoint:
         assert len(cp.files_being_edited) == 2
         assert cp.epoch == 3
         assert cp.is_active is True
+
+
+# ---------------------------------------------------------------------------
+# ADR (Architecture Decision Record) — v5 model
+# ---------------------------------------------------------------------------
+
+_VALID_ADR_FIELDS = dict(
+    title="Use SurrealDB for persistent storage",
+    status="accepted",
+    date="2026-06-25",
+    context="We need durable key-value + graph storage.",
+    decision="Adopt SurrealDB embedded as the single backend.",
+    rationale="Supports relational and graph queries; no separate process.",
+    alternatives="SQLite (no graph), PostgreSQL (separate process).",
+    consequences="Adds ~30MB to binary; migration required.",
+    revisit_trigger="If SurrealDB p95 exceeds 500ms.",
+    supersedes="none",
+)
+
+
+class TestADR:
+    def test_construction_valid(self):
+        adr = ADR(**_VALID_ADR_FIELDS)
+        assert adr.title == "Use SurrealDB for persistent storage"
+        assert adr.status == "accepted"
+        assert adr.date == "2026-06-25"
+        assert adr.supersedes == "none"
+
+    def test_adr_id_defaults_none(self):
+        adr = ADR(**_VALID_ADR_FIELDS)
+        assert adr.adr_id is None
+
+    def test_adr_id_can_be_set(self):
+        adr = ADR(adr_id="ADR-0003", **_VALID_ADR_FIELDS)
+        assert adr.adr_id == "ADR-0003"
+
+    def test_all_ten_content_fields_present(self):
+        adr = ADR(**_VALID_ADR_FIELDS)
+        for field in (
+            "title",
+            "status",
+            "date",
+            "context",
+            "decision",
+            "rationale",
+            "alternatives",
+            "consequences",
+            "revisit_trigger",
+            "supersedes",
+        ):
+            assert hasattr(adr, field), f"ADR model missing field: {field!r}"
+
+    def test_to_body_dict_round_trip(self):
+        """to_body_dict() returns keys matching the flat-bullet rendering in _build_adr_body."""
+        adr = ADR(**_VALID_ADR_FIELDS)
+        d = adr.to_body_dict()
+        assert isinstance(d, dict)
+        # Must contain exactly the 9 body fields (excludes title — used as heading)
+        expected_keys = {
+            "status",
+            "date",
+            "context",
+            "decision",
+            "rationale",
+            "alternatives",
+            "consequences",
+            "revisit_trigger",
+            "supersedes",
+        }
+        assert set(d.keys()) == expected_keys, (
+            f"to_body_dict() keys mismatch. Expected {expected_keys}, got {set(d.keys())}"
+        )
+        assert d["status"] == "accepted"
+        assert d["supersedes"] == "none"
+
+    def test_to_body_dict_order_matches_rendering(self):
+        """to_body_dict() preserves field order matching _build_adr_body bullet sequence."""
+        adr = ADR(**_VALID_ADR_FIELDS)
+        d = adr.to_body_dict()
+        keys = list(d.keys())
+        expected_order = [
+            "status",
+            "date",
+            "context",
+            "decision",
+            "rationale",
+            "alternatives",
+            "consequences",
+            "revisit_trigger",
+            "supersedes",
+        ]
+        assert keys == expected_order, (
+            f"to_body_dict() field order wrong. Expected {expected_order}, got {keys}"
+        )
+
+    def test_to_markdown_body_format(self):
+        """to_markdown_body() produces the exact flat-bullet format adr_add uses."""
+        adr = ADR(**_VALID_ADR_FIELDS)
+        body = adr.to_markdown_body()
+        assert "- status: accepted\n" in body
+        assert "- date: 2026-06-25\n" in body
+        assert "- supersedes: none\n" in body
+        # Must NOT use sub-headings or bold bullets
+        assert "### " not in body
+        assert "- **" not in body
+
+    def test_no_directory_field(self):
+        """directory is NOT a field on ADR — it's a routing arg, not part of the record."""
+        adr = ADR(**_VALID_ADR_FIELDS)
+        assert not hasattr(adr, "directory")

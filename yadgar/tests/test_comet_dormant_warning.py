@@ -40,6 +40,37 @@ class TestBCEN2bStartupWarning:
         )
 
 
+class TestBCEN2bWarningNotSwallowed:
+    """BC-EN2b hardening: the dormant warning must fire even if the sibling
+    startup-diagnostics calls (emit_startup_config_log / _set_config_gauges)
+    raise. Previously all three shared ONE try/except whose `except` logged at
+    DEBUG, so a raise in either sibling silently skipped the warning.
+    """
+
+    def test_warning_fires_even_when_config_log_raises(self, caplog, monkeypatch):
+        import yadgar.config_registry as _cr
+        from yadgar.server.lifecycle import _emit_startup_diagnostics
+
+        def _boom(*_a, **_k):
+            raise RuntimeError("emit_startup_config_log exploded in the container")
+
+        monkeypatch.setattr(_cr, "emit_startup_config_log", _boom)
+
+        settings = Settings(COMET_ENRICHMENT_ENABLED=False)
+        with caplog.at_level(logging.WARNING, logger="yadgar.config_registry"):
+            # Must NOT raise (diagnostics are non-fatal) AND must still warn.
+            _emit_startup_diagnostics(settings)
+
+        comet_warnings = [
+            r for r in caplog.records if r.levelno == logging.WARNING and "COMET" in r.getMessage()
+        ]
+        assert len(comet_warnings) == 1, (
+            "warn_comet_dormant must still emit even when emit_startup_config_log raises; "
+            f"got {[r.getMessage() for r in comet_warnings]}"
+        )
+        assert "ADR-0004" in comet_warnings[0].getMessage()
+
+
 class TestBCEN2bConfigReportsDisabled:
     """Second clause: config surfaces the COMET flag (via the registry / /admin/config)."""
 

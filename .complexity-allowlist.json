@@ -350,5 +350,38 @@
     "rationale": "PERMANENT. v5.55 extract from insert_memory: 5-term enable guard + 6-field result mapping + set_parts loop/conditional re-encode; further splitting degrades locality without reducing branch count \u2014 cohesive enrichment pipeline, single responsibility.",
     "added": "2026-06-14",
     "added_by": "insert-memory-refactor"
+  },
+  {
+    "path": "yadgar/storage/memory.py",
+    "function": "<file>",
+    "lineno": 1,
+    "metrics": {
+      "file_loc": 1027
+    },
+    "rationale": "C1 optimization-train car adds 88 LOC (3 projected helpers + deferred-caller table comment). Methods cannot be extracted to a new mixin without breaking the class_methods count \u2014 storage split is a larger refactor tracked separately.",
+    "added": "2026-06-25",
+    "added_by": "feat/opt-embedding-scans"
+  },
+  {
+    "path": "yadgar/server/tools/adr.py",
+    "function": "_build_adr_body",
+    "lineno": 70,
+    "metrics": {
+      "params": 11
+    },
+    "rationale": "PERMANENT. ADR schema has 10 mandatory content fields (title, status, date, context, decision, rationale, alternatives, consequences, revisit_trigger, supersedes) plus adr_id. Each field maps to a distinct semantic slot in the ADR template; collapsing into a dict or dataclass would break the FastMCP tool signature (which must be flat keyword args for schema generation). The 11-param limit is inherent to the ADR structure, not accidental complexity.",
+    "added": "2026-06-25",
+    "added_by": "feat/improvement-train"
+  },
+  {
+    "path": "yadgar/server/tools/adr.py",
+    "function": "adr_add",
+    "lineno": 104,
+    "metrics": {
+      "params": 11
+    },
+    "rationale": "PERMANENT. Same ADR-schema constraint as _build_adr_body: 10 mandatory content fields + directory = 11 total. FastMCP derives the JSON Schema from function parameters directly; a **kwargs variant loses schema enforcement. The 11-field ADR structure is a conscious design choice (matches Nygard ADR format) and must be preserved as a flat tool signature.",
+    "added": "2026-06-25",
+    "added_by": "feat/improvement-train"
   }
 ]

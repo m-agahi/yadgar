@@ -91,7 +91,7 @@ class _HeatDecayMixin:
         domain_mult = self._build_domain_multiplier_map()
 
         mem_batch: list[tuple[str, dict | None]] = []
-        for mem in self._storage.get_all_memories_for_decay():
+        for mem in self._storage.get_all_memories_for_decay_scalar():
             if mem.get("is_protected"):
                 continue
             # Decay over time since the LAST decay pass (watermark), not since

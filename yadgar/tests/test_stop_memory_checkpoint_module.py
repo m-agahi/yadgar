@@ -263,6 +263,14 @@ class TestMain:
         assert 'branch_hint="trunk"' in reason
         # Specifically on the ADR create (wiki_add) and append (wiki_append_section).
         assert "wiki_add(" in reason and "wiki_append_section(" in reason
+        # READ side: the ADR-log wiki_read must also pin branch_hint (§25 fix —
+        # branch_hint-less reads on a feature branch miss master-scoped pages,
+        # causing spurious "absent → create" and duplicate ADR logs).
+        assert "wiki_read(" in reason
+        assert reason.count('branch_hint="trunk"') >= 3, (
+            "Expected branch_hint on wiki_read (ADR find), wiki_add (create), "
+            "and wiki_append_section (append)"
+        )
         # The {default_branch} placeholder must be fully substituted (no leftovers).
         assert "{default_branch}" not in reason
 

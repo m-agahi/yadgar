@@ -582,6 +582,10 @@ class Settings(BaseSettings):
     # Default 350 covers 2 soft actions + suggested_call fields with headroom.
     # Raise if new action types push the payload above this ceiling.
     SIGNALS_TOKEN_BUDGET_SOFT: int = 350
+    # v5.84.0 car #12: ADR nudge threshold.
+    # Hours of inactivity on the ADR log (relative to active_work) before the
+    # capture_adr recommended_action fires in signals mode.
+    ADR_DUE_WARN_HOURS: float = 12.0
 
     # v5.8.0: anchor hygiene TTL knobs
     # Default valid_until offset (days) for tier=conditional anchors.

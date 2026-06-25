@@ -242,11 +242,12 @@ class TestTokenBudget:
         assert len(promote) <= 3
         # Verify _truncated flag set (10 pairs > 3)
         assert result.get("_truncated") is True
-        # Full payload (incl. fixed fields + candidates) must stay within 160 tokens.
-        # The 100-token budget applies to the incremental candidates overhead (tested in
-        # test_token_budget_pathological); the full payload has a fixed-cost baseline ~80 tokens.
+        # Full payload (incl. fixed fields + candidates + audit_anchors action) must stay
+        # within 200 tokens.  After the anchor-signal-gap fix (car #20), actionable anchors
+        # correctly emit a single audit_anchors action (with suggested_call), which adds
+        # ~25 tokens vs the prior budget of 160.  200 is the updated safe bound.
         tokens = len(json.dumps(result)) // 4
-        assert tokens <= 160, f"signals too large with K=3 cap: {tokens} tokens"
+        assert tokens <= 200, f"signals too large with K=3 cap: {tokens} tokens"
 
     def test_token_budget_pathological(self):
         """Pathological seed: 10 redundancy + 10 promote candidates — candidates overhead ≤100 tokens.
@@ -495,57 +496,89 @@ class TestPromoteDetection:
 
 
 class TestRecommendedActionsAudit:
-    """audit_anchors emitted when anchor_count_project > ANCHOR_AUDIT_THRESHOLD (default 15)."""
+    """audit_anchors emitted only when there are actionable items (not on raw count alone).
+
+    Post anchor-signal-gap fix (car #20): the count-only gate is removed.
+    audit_anchors fires when expired_no_grace_count > 0 OR redundancy_count > 0 OR
+    promote_count > 0.  Count alone (even above ANCHOR_AUDIT_THRESHOLD) is not sufficient.
+    """
 
     def test_audit_anchors_not_emitted_below_threshold(self, storage, monkeypatch):
         from yadgar.config import get_settings
 
         monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 15, raising=False)
-        # Insert 10 anchors
+        # Insert 10 healthy anchors — no expired/redundant/promotable
         for i in range(10):
             _insert_anchor(storage, f"anchor {i}", directory=_DIR)
         result = server.project_brief(_DIR, mode="signals")
         actions = [a["action"] for a in result["recommended_actions"]]
         assert "audit_anchors" not in actions
 
-    def test_audit_anchors_emitted_above_threshold(self, storage, monkeypatch):
+    def test_audit_anchors_not_emitted_above_threshold_when_nothing_actionable(
+        self, storage, monkeypatch
+    ):
+        """Count > threshold alone does not fire audit_anchors if nothing is actionable."""
         from yadgar.config import get_settings
 
         monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 5, raising=False)
-        # Insert 6 anchors
+        # Insert 6 healthy anchors with no expired/redundant/promotable content
         for i in range(6):
             _insert_anchor(storage, f"audit anchor {i}", directory=_DIR)
         result = server.project_brief(_DIR, mode="signals")
         actions = [a["action"] for a in result["recommended_actions"]]
-        assert "audit_anchors" in actions
+        assert "audit_anchors" not in actions, (
+            "audit_anchors should NOT fire on count alone — actionability gate required"
+        )
 
-    def test_audit_anchors_reason_contains_count(self, storage, monkeypatch):
+    def test_audit_anchors_emitted_when_expired_and_above_threshold(self, storage, monkeypatch):
+        """audit_anchors fires when there are expired anchors (regardless of threshold)."""
         from yadgar.config import get_settings
 
-        monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 2, raising=False)
-        for i in range(3):
-            _insert_anchor(storage, f"reason anchor {i}", directory=_DIR)
+        monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 100, raising=False)
+        past = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+        _insert_anchor(
+            storage, "expired audit", directory=_DIR, valid_until=past, migration_grace=False
+        )
+        result = server.project_brief(_DIR, mode="signals")
+        actions = [a["action"] for a in result["recommended_actions"]]
+        assert "audit_anchors" in actions
+
+    def test_audit_anchors_reason_names_actionable_items(self, storage, monkeypatch):
+        """When audit_anchors fires, reason string names what is actionable."""
+        from yadgar.config import get_settings
+
+        monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 100, raising=False)
+        past = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+        _insert_anchor(storage, "reason exp a", directory=_DIR, valid_until=past)
+        _insert_anchor(storage, "reason exp b", directory=_DIR, valid_until=past)
         result = server.project_brief(_DIR, mode="signals")
         action = next(
             (a for a in result["recommended_actions"] if a["action"] == "audit_anchors"), None
         )
         assert action is not None
-        assert "count=" in action.get("reason", "")
-        assert "threshold=" in action.get("reason", "")
+        # Reason names the type of actionable item (e.g. "2 expired")
+        assert "expired" in action.get("reason", ""), (
+            f"Expected 'expired' in reason, got: {action.get('reason')}"
+        )
 
 
 class TestRecommendedActionsRedundancy:
-    """merge_redundant_anchors emitted when len(anchor_redundancy_candidates) >= 1."""
+    """Redundancy → audit_anchors (not phantom merge_redundant_anchors).
+
+    Post anchor-signal-gap fix (car #20): merge_redundant_anchors is no longer emitted as
+    a recommended action name.  When redundancy pairs exist, a single audit_anchors action
+    is emitted with a reason mentioning the pair count.
+    """
 
     def test_merge_not_emitted_when_no_pairs(self):
         result = server.project_brief(_DIR, mode="signals")
         actions = [a["action"] for a in result["recommended_actions"]]
         assert "merge_redundant_anchors" not in actions
 
-    def test_merge_emitted_when_pairs_present(self, storage, monkeypatch):
+    def test_audit_anchors_emitted_when_pairs_present(self, storage, monkeypatch):
+        """Redundancy pairs → audit_anchors recommended (not the phantom merge_redundant_anchors)."""
         from yadgar.server.tools import project as proj_mod
 
-        # Inject a redundancy pair via monkeypatch
         original = proj_mod._compute_anchor_signals
 
         def patched(storage_obj, resolved, cfg):
@@ -557,9 +590,11 @@ class TestRecommendedActionsRedundancy:
 
         result = server.project_brief(_DIR, mode="signals")
         actions = [a["action"] for a in result["recommended_actions"]]
-        assert "merge_redundant_anchors" in actions
+        assert "merge_redundant_anchors" not in actions, "phantom name must not appear"
+        assert "audit_anchors" in actions, "audit_anchors must fire when redundancy present"
 
-    def test_merge_reason_contains_pair_count(self, storage, monkeypatch):
+    def test_audit_reason_contains_redundant_pairs_count(self, storage, monkeypatch):
+        """audit_anchors reason mentions redundant pairs when they are present."""
         from yadgar.server.tools import project as proj_mod
 
         original = proj_mod._compute_anchor_signals
@@ -573,22 +608,30 @@ class TestRecommendedActionsRedundancy:
 
         result = server.project_brief(_DIR, mode="signals")
         action = next(
-            (a for a in result["recommended_actions"] if a["action"] == "merge_redundant_anchors"),
+            (a for a in result["recommended_actions"] if a["action"] == "audit_anchors"),
             None,
         )
-        assert action is not None
-        assert "redundancy_pairs=" in action.get("reason", "")
+        assert action is not None, "audit_anchors action must be present"
+        assert "redundant" in action.get("reason", ""), (
+            f"Expected 'redundant' in reason, got: {action.get('reason')}"
+        )
 
 
 class TestRecommendedActionsPromote:
-    """promote_anchor_to_wiki emitted when len(anchor_promote_candidates) >= 1."""
+    """Promotable anchors → audit_anchors (not phantom promote_anchor_to_wiki).
+
+    Post anchor-signal-gap fix (car #20): promote_anchor_to_wiki is no longer emitted as
+    a recommended action name.  When promotable anchors exist, a single audit_anchors action
+    is emitted with a reason mentioning the promotable count.
+    """
 
     def test_promote_not_emitted_when_no_candidates(self):
         result = server.project_brief(_DIR, mode="signals")
         actions = [a["action"] for a in result["recommended_actions"]]
         assert "promote_anchor_to_wiki" not in actions
 
-    def test_promote_emitted_when_candidates_present(self, storage):
+    def test_audit_anchors_emitted_when_candidates_present(self, storage):
+        """Promotable anchor → audit_anchors recommended (not phantom promote_anchor_to_wiki)."""
         _insert_anchor(
             storage,
             _HEADERS_CONTENT,
@@ -597,9 +640,11 @@ class TestRecommendedActionsPromote:
         )
         result = server.project_brief(_DIR, mode="signals")
         actions = [a["action"] for a in result["recommended_actions"]]
-        assert "promote_anchor_to_wiki" in actions
+        assert "promote_anchor_to_wiki" not in actions, "phantom name must not appear"
+        assert "audit_anchors" in actions, "audit_anchors must fire when promotable anchors present"
 
-    def test_promote_reason_contains_oversized_count(self, storage):
+    def test_audit_reason_contains_promotable_count(self, storage):
+        """audit_anchors reason mentions promotable when promotable anchors exist."""
         _insert_anchor(
             storage,
             _HEADERS_CONTENT,
@@ -608,34 +653,43 @@ class TestRecommendedActionsPromote:
         )
         result = server.project_brief(_DIR, mode="signals")
         action = next(
-            (a for a in result["recommended_actions"] if a["action"] == "promote_anchor_to_wiki"),
+            (a for a in result["recommended_actions"] if a["action"] == "audit_anchors"),
             None,
         )
-        assert action is not None
-        assert "oversized=" in action.get("reason", "")
+        assert action is not None, "audit_anchors action must be present"
+        assert "promotable" in action.get("reason", ""), (
+            f"Expected 'promotable' in reason, got: {action.get('reason')}"
+        )
 
 
 class TestRecommendedActionsForgetExpired:
-    """forget_expired_anchors emitted for expired rows with migration_grace=False."""
+    """Expired anchors → audit_anchors (not phantom forget_expired_anchors).
 
-    def test_forget_not_emitted_when_no_expired(self, storage):
+    Post anchor-signal-gap fix (car #20): forget_expired_anchors is no longer emitted as
+    a recommended action name.  When expired anchors (grace=False) exist, a single
+    audit_anchors action is emitted with a reason mentioning the expired count.
+    """
+
+    def test_forget_phantom_name_never_emitted_when_no_expired(self, storage):
         future = (datetime.now(UTC) + timedelta(days=30)).isoformat()
         _insert_anchor(storage, "live anchor", directory=_DIR, valid_until=future)
         result = server.project_brief(_DIR, mode="signals")
         actions = [a["action"] for a in result["recommended_actions"]]
         assert "forget_expired_anchors" not in actions
 
-    def test_forget_emitted_when_expired_no_grace(self, storage):
+    def test_audit_anchors_emitted_when_expired_no_grace(self, storage):
+        """Expired anchor (grace=False) → audit_anchors (not phantom forget_expired_anchors)."""
         past = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
         _insert_anchor(
             storage, "expired anchor", directory=_DIR, valid_until=past, migration_grace=False
         )
         result = server.project_brief(_DIR, mode="signals")
         actions = [a["action"] for a in result["recommended_actions"]]
-        assert "forget_expired_anchors" in actions
+        assert "forget_expired_anchors" not in actions, "phantom name must not appear"
+        assert "audit_anchors" in actions, "audit_anchors must fire when expired anchor present"
 
-    def test_forget_not_emitted_for_grace_period_rows(self, storage):
-        """migration_grace=True protects from forget_expired_anchors action."""
+    def test_forget_phantom_name_not_emitted_for_grace_period_rows(self, storage):
+        """migration_grace=True does not trigger any anchor action (no phantom, no audit_anchors)."""
         past = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
         _insert_anchor(
             storage, "grace anchor", directory=_DIR, valid_until=past, migration_grace=True
@@ -644,17 +698,20 @@ class TestRecommendedActionsForgetExpired:
         actions = [a["action"] for a in result["recommended_actions"]]
         assert "forget_expired_anchors" not in actions
 
-    def test_forget_reason_contains_expired_count(self, storage):
+    def test_audit_reason_contains_expired_count(self, storage):
+        """audit_anchors reason mentions expired count when expired anchors exist."""
         past = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
         _insert_anchor(storage, "exp a", directory=_DIR, valid_until=past)
         _insert_anchor(storage, "exp b", directory=_DIR, valid_until=past)
         result = server.project_brief(_DIR, mode="signals")
         action = next(
-            (a for a in result["recommended_actions"] if a["action"] == "forget_expired_anchors"),
+            (a for a in result["recommended_actions"] if a["action"] == "audit_anchors"),
             None,
         )
-        assert action is not None
-        assert "expired=" in action.get("reason", "")
+        assert action is not None, "audit_anchors action must be present"
+        assert "expired" in action.get("reason", ""), (
+            f"Expected 'expired' in reason, got: {action.get('reason')}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -664,16 +721,18 @@ class TestRecommendedActionsForgetExpired:
 
 class TestRecommendedActionsOrder:
     """Actions appear in fixed order: bootstrap, refresh_active_work, refresh_checkpoint,
-    audit_anchors, merge_redundant_anchors, promote_anchor_to_wiki, forget_expired_anchors."""
+    audit_anchors (single consolidated entry).
+
+    Post anchor-signal-gap fix (car #20): the four separate anchor-hygiene action names
+    (audit_anchors, merge_redundant_anchors, promote_anchor_to_wiki, forget_expired_anchors)
+    are collapsed into a single audit_anchors entry.  Order rule: audit_anchors always
+    comes after the baseline actions.
+    """
 
     def test_deterministic_order_with_all_actions(self, storage, monkeypatch):
-        from yadgar.config import get_settings
         from yadgar.server.tools import project as proj_mod
 
-        # Trigger audit_anchors by lowering threshold
-        monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 0, raising=False)
-
-        # Trigger forget_expired_anchors
+        # Trigger audit_anchors via expired anchor (actionability gate)
         past = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
         _insert_anchor(storage, "exp order", directory=_DIR, valid_until=past)
 
@@ -694,20 +753,23 @@ class TestRecommendedActionsOrder:
         result2 = server.project_brief(_DIR, mode="signals")
         assert result1["recommended_actions"] == result2["recommended_actions"]
 
-        # Verify anchor actions appear after baseline actions
+        # Exactly one audit_anchors action — no phantom names
         action_names = [a["action"] for a in result1["recommended_actions"]]
-        anchor_actions = [
-            "audit_anchors",
-            "merge_redundant_anchors",
-            "promote_anchor_to_wiki",
-            "forget_expired_anchors",
-        ]
-        anchor_positions = [action_names.index(a) for a in anchor_actions if a in action_names]
-        # All anchor actions come after any baseline actions
+        assert action_names.count("audit_anchors") == 1, (
+            f"Expected exactly 1 audit_anchors, got: {action_names}"
+        )
+        assert "merge_redundant_anchors" not in action_names
+        assert "promote_anchor_to_wiki" not in action_names
+        assert "forget_expired_anchors" not in action_names
+
+        # audit_anchors comes after any baseline actions
         baseline_actions = ["bootstrap_project", "refresh_active_work", "refresh_checkpoint"]
         baseline_positions = [action_names.index(a) for a in baseline_actions if a in action_names]
-        if baseline_positions and anchor_positions:
-            assert max(baseline_positions) < min(anchor_positions)
+        audit_pos = action_names.index("audit_anchors")
+        if baseline_positions:
+            assert max(baseline_positions) < audit_pos, (
+                "audit_anchors must appear after all baseline actions"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -766,3 +828,161 @@ class TestEnvKnobs:
         assert "anchor_promote_words" in FIELD_META
         assert "anchor_promote_headers" in FIELD_META
         assert "anchor_audit_threshold" in FIELD_META
+
+
+# ---------------------------------------------------------------------------
+# 8. Actionability gate + phantom-name elimination (fix: anchor-signal-gap)
+# ---------------------------------------------------------------------------
+
+_PHANTOM_NAMES = frozenset(
+    {"forget_expired_anchors", "merge_redundant_anchors", "promote_anchor_to_wiki"}
+)
+
+
+class TestNoPhantomActionNames:
+    """No recommended action name should be a phantom (non-existent MCP tool).
+
+    The only valid anchor hygiene action is audit_anchors.
+    merge_redundant_anchors, promote_anchor_to_wiki, and forget_expired_anchors
+    are internal audit-action strings, not MCP tools — they must not appear as
+    recommended_actions entries that consumers can act on.
+    """
+
+    def test_no_phantom_names_when_no_actionable(self, storage, monkeypatch):
+        """16 healthy anchors (no expired/redundant/promotable) → no phantom names."""
+        from yadgar.config import get_settings
+
+        monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 5, raising=False)
+        for i in range(16):
+            _insert_anchor(storage, f"healthy anchor {i}", directory=_DIR)
+        result = server.project_brief(_DIR, mode="signals")
+        action_names = {a["action"] for a in result["recommended_actions"]}
+        assert not action_names & _PHANTOM_NAMES, (
+            f"Phantom action names found: {action_names & _PHANTOM_NAMES}"
+        )
+
+    def test_no_phantom_names_when_expired_present(self, storage):
+        """Expired anchor present → audit_anchors recommended, NOT forget_expired_anchors."""
+        past = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+        _insert_anchor(storage, "expired", directory=_DIR, valid_until=past, migration_grace=False)
+        result = server.project_brief(_DIR, mode="signals")
+        action_names = {a["action"] for a in result["recommended_actions"]}
+        assert not action_names & _PHANTOM_NAMES, (
+            f"Phantom action names found: {action_names & _PHANTOM_NAMES}"
+        )
+
+    def test_no_phantom_names_when_redundancy_present(self, storage, monkeypatch):
+        """Redundancy pairs present → audit_anchors recommended, NOT merge_redundant_anchors."""
+        from yadgar.server.tools import project as proj_mod
+
+        original = proj_mod._compute_anchor_signals
+
+        def patched(storage_obj, resolved, cfg):
+            base = original(storage_obj, resolved, cfg)
+            base["anchor_redundancy_candidates"] = [[1, 2, 0.95]]
+            return base
+
+        monkeypatch.setattr(proj_mod, "_compute_anchor_signals", patched)
+        result = server.project_brief(_DIR, mode="signals")
+        action_names = {a["action"] for a in result["recommended_actions"]}
+        assert not action_names & _PHANTOM_NAMES, (
+            f"Phantom action names found: {action_names & _PHANTOM_NAMES}"
+        )
+
+    def test_no_phantom_names_when_promote_present(self, storage):
+        """Promotable anchor present → audit_anchors recommended, NOT promote_anchor_to_wiki."""
+        _insert_anchor(storage, _HEADERS_CONTENT, directory=_DIR, tags=["recipe"])
+        result = server.project_brief(_DIR, mode="signals")
+        action_names = {a["action"] for a in result["recommended_actions"]}
+        assert not action_names & _PHANTOM_NAMES, (
+            f"Phantom action names found: {action_names & _PHANTOM_NAMES}"
+        )
+
+
+class TestAuditAnchorActionabilityGate:
+    """audit_anchors fires only when there is actual work to do, not on raw count alone."""
+
+    def test_no_audit_signal_when_count_above_threshold_but_nothing_actionable(
+        self, storage, monkeypatch
+    ):
+        """16 healthy anchors (count > 15) with zero expired/redundant/promotable
+        → audit_anchors NOT recommended. This is the core over-signal fix."""
+        from yadgar.config import get_settings
+
+        monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 15, raising=False)
+        # Insert 16 healthy anchors: no expiry, no embeddings (no redundancy), no promo tags
+        for i in range(16):
+            _insert_anchor(storage, f"unique healthy anchor {i}", directory=_DIR)
+        result = server.project_brief(_DIR, mode="signals")
+        action_names = [a["action"] for a in result["recommended_actions"]]
+        assert "audit_anchors" not in action_names, (
+            "audit_anchors should NOT fire when count > threshold but nothing is actionable"
+        )
+
+    def test_audit_signal_fires_when_expired_present(self, storage, monkeypatch):
+        """audit_anchors fires when an expired (grace=False) anchor exists."""
+        from yadgar.config import get_settings
+
+        monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 100, raising=False)
+        past = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+        _insert_anchor(storage, "expired", directory=_DIR, valid_until=past, migration_grace=False)
+        result = server.project_brief(_DIR, mode="signals")
+        action_names = [a["action"] for a in result["recommended_actions"]]
+        assert "audit_anchors" in action_names, (
+            "audit_anchors should fire when expired anchor present"
+        )
+
+    def test_audit_signal_fires_when_redundancy_present(self, storage, monkeypatch):
+        """audit_anchors fires when redundancy pairs exist."""
+        from yadgar.config import get_settings
+        from yadgar.server.tools import project as proj_mod
+
+        monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 100, raising=False)
+        original = proj_mod._compute_anchor_signals
+
+        def patched(storage_obj, resolved, cfg):
+            base = original(storage_obj, resolved, cfg)
+            base["anchor_redundancy_candidates"] = [[1, 2, 0.95]]
+            return base
+
+        monkeypatch.setattr(proj_mod, "_compute_anchor_signals", patched)
+        result = server.project_brief(_DIR, mode="signals")
+        action_names = [a["action"] for a in result["recommended_actions"]]
+        assert "audit_anchors" in action_names, (
+            "audit_anchors should fire when redundancy candidates present"
+        )
+
+    def test_audit_signal_fires_when_promote_present(self, storage, monkeypatch):
+        """audit_anchors fires when promote candidates exist."""
+        from yadgar.config import get_settings
+
+        monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 100, raising=False)
+        _insert_anchor(storage, _HEADERS_CONTENT, directory=_DIR, tags=["recipe"])
+        result = server.project_brief(_DIR, mode="signals")
+        action_names = [a["action"] for a in result["recommended_actions"]]
+        assert "audit_anchors" in action_names, (
+            "audit_anchors should fire when promote candidates present"
+        )
+
+    def test_audit_reason_names_actionable_items(self, storage, monkeypatch):
+        """When audit_anchors fires, reason includes what is actionable."""
+        from yadgar.config import get_settings
+
+        monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 100, raising=False)
+        past = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+        _insert_anchor(storage, "expired", directory=_DIR, valid_until=past, migration_grace=False)
+        result = server.project_brief(_DIR, mode="signals")
+        action = next(
+            (a for a in result["recommended_actions"] if a["action"] == "audit_anchors"), None
+        )
+        assert action is not None
+        # Reason should mention expired count
+        assert "expired" in action.get("reason", ""), (
+            f"Expected 'expired' in reason, got: {action.get('reason')}"
+        )
+
+    def test_no_audit_signal_with_zero_anchors(self):
+        """Empty project → no audit_anchors signal."""
+        result = server.project_brief(_DIR, mode="signals")
+        action_names = [a["action"] for a in result["recommended_actions"]]
+        assert "audit_anchors" not in action_names

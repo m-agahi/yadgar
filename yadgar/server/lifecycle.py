@@ -690,6 +690,47 @@ def _maybe_auto_check_for_update() -> None:
     logger.debug("update check thread started (daemon=True)")
 
 
+def _emit_startup_diagnostics(settings) -> None:
+    """Emit startup config diagnostics and the BC-EN2b COMET-dormant warning.
+
+    The config-dump (emit_startup_config_log) and gauge-seeding (_set_config_gauges)
+    are best-effort and may raise in some container environments. They MUST NOT
+    be able to swallow the COMET dormant warning — historically all three shared
+    one try/except whose `except` logged at DEBUG, so a raise in either sibling
+    silently skipped warn_comet_dormant (the v5.x "silent dogfood" observation).
+
+    Each concern now has its OWN try/except so warn_comet_dormant always fires
+    regardless of the other two. The import itself is also isolated so an import
+    failure cannot skip the warning either.
+    """
+    try:
+        from yadgar.config_registry import (  # noqa: PLC0415
+            _set_config_gauges,
+            emit_startup_config_log,
+            warn_comet_dormant,
+        )
+    except Exception:
+        logger.debug("config_registry import failed (non-fatal)", exc_info=True)
+        return
+
+    try:
+        emit_startup_config_log()
+    except Exception:
+        logger.debug("emit_startup_config_log failed (non-fatal)", exc_info=True)
+
+    try:
+        _set_config_gauges()
+    except Exception:
+        logger.debug("_set_config_gauges failed (non-fatal)", exc_info=True)
+
+    # BC-EN2b: announce COMET dormant state exactly once at startup (ADR-0004).
+    # Own try/except — must always fire even if the calls above raised.
+    try:
+        warn_comet_dormant(settings)
+    except Exception:
+        logger.debug("warn_comet_dormant failed (non-fatal)", exc_info=True)
+
+
 def main(
     port: int | None = None,
     db_path: str | None = None,
@@ -735,20 +776,11 @@ def main(
         watch_directory=None,
     )
 
-    # v5.6.7 PR-J: emit startup config-dump log + seed config gauges
-    try:
-        from yadgar.config_registry import (  # noqa: PLC0415
-            _set_config_gauges,
-            emit_startup_config_log,
-            warn_comet_dormant,
-        )
-
-        emit_startup_config_log()
-        _set_config_gauges()
-        # BC-EN2b: announce COMET dormant state exactly once at startup (ADR-0004).
-        warn_comet_dormant(get_settings())
-    except Exception:
-        logger.debug("startup config-dump failed (non-fatal)", exc_info=True)
+    # v5.6.7 PR-J: emit startup config-dump log + seed config gauges.
+    # BC-EN2b: warn_comet_dormant gets its OWN try/except so a failure in
+    # emit_startup_config_log / _set_config_gauges can never silently swallow
+    # the dormant warning (see _emit_startup_diagnostics).
+    _emit_startup_diagnostics(get_settings())
 
     # Auto-sync CLAUDE.md on every startup so rules stay current
     try:

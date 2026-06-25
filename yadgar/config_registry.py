@@ -226,6 +226,8 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_CHECKPOINT_WARN_HOURS", "12.0", "float"),
     ConfigEntry("YADGAR_AUTO_REFRESH_ACTIVE_WORK", "false", "bool"),
     ConfigEntry("YADGAR_SIGNALS_TOKEN_BUDGET_SOFT", "350", "int"),
+    # ── v5.84.0 car #12: ADR nudge threshold ────────────────────────────────────
+    ConfigEntry("YADGAR_ADR_DUE_WARN_HOURS", "12.0", "float"),
     # ── anchor hygiene TTL knobs (v5.8.0) ────────────────────────────────────
     ConfigEntry("YADGAR_ANCHOR_CONDITIONAL_TTL_DAYS", "90", "int"),
     ConfigEntry("YADGAR_ANCHOR_EPHEMERAL_TTL_DAYS", "14", "int"),
