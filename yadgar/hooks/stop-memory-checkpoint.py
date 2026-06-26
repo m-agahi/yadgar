@@ -24,7 +24,7 @@ import yadgar.paths as _paths
 INTERVAL = 25  # human messages between checkpoints
 
 _PROMPT_TEMPLATE = """\
-Yadgar checkpoint. CAPTURE FIRST (steps 1-2), then maintenance (steps 3-4).
+Yadgar checkpoint. CAPTURE FIRST (steps 1-3), then maintenance (steps 4-5).
 Decisions and findings scroll out of context and are lost forever; maintenance
 signals re-fire next checkpoint. Capture is the irreplaceable work — if you must
 triage anything away under length pressure, drop maintenance, NEVER capture.
@@ -73,9 +73,16 @@ triage anything away under length pressure, drop maintenance, NEVER capture.
    directory="{directory}", branch_hint="{default_branch}", wait=True).
    Verify wiki_history. Facts/structure only — decisions go in step 1.
 
-3. Call project_brief("{directory}", mode="signals").
+3. AGENT-PROMPT CAPTURE (only if the library is enabled — skip silently otherwise).
+   Scan THIS session for a reusable SUBAGENT DISPATCH PROMPT you crafted or
+   refined — one worth reusing for a recurring task shape (review, debug, explore,
+   implement, etc.). If genuinely reusable (NOT a one-off, NOT trivial), call
+   agent_prompt_save(directory="{directory}", pattern=<kebab-task-shape>,
+   content=<the prompt>, purpose=<one line>). Skip one-offs and trivial prompts.
 
-4. MAINTENANCE — for each entry in recommended_actions:
+4. Call project_brief("{directory}", mode="signals").
+
+5. MAINTENANCE — for each entry in recommended_actions:
    - ANCHOR HYGIENE: if audit_anchors appears, run it once:
      audit_anchors("{directory}", dry_run=True) → review actions list →
      audit_anchors("{directory}", dry_run=False) to apply forget/merge. The tool

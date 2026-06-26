@@ -452,7 +452,7 @@ def test_signals_token_budget_with_soft_actions_bounded(monkeypatch, flush_queue
     (tested in test_signals_mode_token_budget). Active data + suggested_call
     fields expand the payload but remain within acceptable bounds.
 
-    SIGNALS_TOKEN_BUDGET_SOFT (default 350, configurable via env/yaml) is the
+    SIGNALS_TOKEN_BUDGET_SOFT (default 400, configurable via env/yaml) is the
     upper bound. Raise it if new action types push the payload above this ceiling.
     Real cost: ~10 stop-hook fires per long session × 175 token average
     (mix of empty + non-empty payloads) = ~1.75 KB — under 1% of 200K context.

@@ -580,9 +580,11 @@ class Settings(BaseSettings):
     # Default OFF — preserves user-curated _active_work semantic. Enable via systemd unit env.
     AUTO_REFRESH_ACTIVE_WORK: bool = False
     # Token-budget upper bound for signals mode payload (tokens ≈ len(json) // 4).
-    # Default 350 covers 2 soft actions + suggested_call fields with headroom.
+    # Default 400 covers 2 soft actions + the capture_adr / capture_agent_prompt
+    # nudges + suggested_call fields with headroom (v5.85 #126 added
+    # capture_agent_prompt, pushing the worst case from ~340 to ~371).
     # Raise if new action types push the payload above this ceiling.
-    SIGNALS_TOKEN_BUDGET_SOFT: int = 350
+    SIGNALS_TOKEN_BUDGET_SOFT: int = 400
     # v5.84.0 car #12: ADR nudge threshold.
     # Hours of inactivity on the ADR log (relative to active_work) before the
     # capture_adr recommended_action fires in signals mode.
