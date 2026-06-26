@@ -148,9 +148,9 @@ Goal: every SHALL → ✅ or ❌.
 - BC-RU2 get_rules is directory-scoped (a rule added for dir A absent from get_rules(dir B)). ⏳ P2
 - BC-RU3 stored rules are applied at retrieval time (BC-RR4 rules-rerank consumes them). ⏳ P2
 
-### AP. Agent-prompt library (agent_prompt_save / agent_prompt_get / agent_dispatch_prelude — `yadgar/server/tools/agent_prompts.py`, `dispatch_helper.py`)
-- BC-AP1 agent_prompt_save(name,body) then agent_prompt_get(name) returns the saved body. ⏳[u] P2
-- BC-AP2 agent_prompt_get on an unknown name returns not-found (not a stale/other prompt). ⏳ P2
+### AP. Agent-prompt library (agent_prompt_save / agent_dispatch_prelude — `yadgar/server/tools/agent_prompts.py`, `dispatch_helper.py`)
+- BC-AP1 agent_prompt_save(name,body) then an exact-key read (internal _read_agent_prompt slug-read; semantic lookup is recall(type="wiki", tags=["agent-prompt"])) returns the saved body. ⏳[u] P2
+- BC-AP2 an exact-key read of an unknown name returns not-found (not a stale/other prompt). ⏳ P2
 - BC-AP3 agent_dispatch_prelude(dir) returns the standard dispatch prelude with dir-scoped context injected. ⏳[u] P2
 
 ---
@@ -301,7 +301,7 @@ Goal: every SHALL → ✅ or ❌.
 | BC-T14 | add_rule | ⏳[u] | =RU1 |
 | BC-T15 | get_rules | ⏳[u] | =RU1/RU2 |
 | BC-T16 | agent_prompt_save | ⏳[u] | =AP1 |
-| BC-T17 | agent_prompt_get | ⏳[u] | =AP1/AP2 |
+| BC-T17 | recall(type=wiki, tags=[agent-prompt]) / _read_agent_prompt | ⏳[u] | =AP1/AP2 |
 | BC-T18 | agent_dispatch_prelude | ⏳[u] | =AP3 |
 | BC-T19 | block_create | ⏳[u] | =IC1 |
 | BC-T20 | block_get | ⏳[u] | =IC1 |

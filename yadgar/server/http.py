@@ -956,6 +956,40 @@ async def hook_seed_anchor(request: Request) -> JSONResponse:
         _hook_observe("seed_anchor", _t0, _caught_exc)
 
 
+@mcp_server.custom_route("/hooks/seed-agent-prompts", methods=["POST"])
+@trace_span("hook.seed_agent_prompts")
+async def hook_seed_agent_prompts(request: Request) -> JSONResponse:
+    """Seed the 4 built-in starter agent-prompts via daemon (v5.85 S8).
+
+    Called by `yadgar seed --agent-prompts` CLI after daemon start.
+    Accepts an empty POST body (no required fields).
+
+    Response:
+        {"status": "ok", "created": N, "skipped": M}
+    """
+    _t0 = time.perf_counter()
+    _caught_exc: BaseException | None = None
+    try:
+        import sys as _sys  # noqa: PLC0415
+
+        _srv = _sys.modules.get("yadgar.server.tools.agent_prompts")
+        _seed_fn = getattr(_srv, "seed_agent_prompts", None) if _srv else None
+        if _seed_fn is None:
+            from yadgar.server.tools.agent_prompts import (
+                seed_agent_prompts as _seed_fn,  # noqa: PLC0415
+            )
+
+        result = await asyncio.to_thread(_seed_fn)
+        created = result.get("created", 0)
+        skipped = result.get("skipped", 0)
+        return JSONResponse({"status": "ok", "created": created, "skipped": skipped})
+    except Exception as _exc:
+        _caught_exc = _exc
+        raise
+    finally:
+        _hook_observe("seed_agent_prompts", _t0, _caught_exc)
+
+
 @mcp_server.custom_route("/hooks/file-changed", methods=["POST"])
 @trace_span("hook.file_changed")
 async def hook_file_changed(request: Request) -> JSONResponse:

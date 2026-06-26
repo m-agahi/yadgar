@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.84.0"
+version = "5.85.0"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "Apache-2.0"
@@ -151,7 +151,7 @@ max-args = 8  # I13 hard cap (params)
 
 [project.optional-dependencies]
 ml = [
-    "sentence-transformers>=2.2.0",
+    "sentence-transformers[onnx]>=2.2.0",
     # Pin below 1.4 — hf-xet 1.4 deprecates download_files() but huggingface_hub
     # 1.12 still calls it, emitting DeprecationWarning. Revisit when
     # huggingface_hub adopts XetSession (upstream tracking required).

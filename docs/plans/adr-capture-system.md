@@ -32,6 +32,70 @@ Status: **PHASED — P0 SHIPPED (PR #121, `eeaec40`); P1–P3 + #19-read-side op
 >   substantial de-facto schema home, so P3 (1) "consolidate scattered shapes into
 >   models.py" is partly done; the ADR shape is the missing piece. (An earlier
 >   verification pass mis-measured it at 56 lines; the real figure is 234/16.)
+>
+> ---
+>
+> > **AUDIT 2026-06-26 (v5.85 train, car #37) — STALE-CLAIM FLIP. The 2026-06-25
+> > note above is now WRONG on the load-bearing point.** Verified directly against
+> > current `master`:
+> > - **P1 IS SHIPPED.** `adr_add` is a live MCP tool — `yadgar/server/tools/adr.py`
+> >   (285 lines), registered at `yadgar/server/tools/__init__.py:128` (import) +
+> >   `:204` (`__all__`). `adr_due` nudge is wired into `project_brief` via
+> >   `_apply_adr_signal(...)` (`project.py:1428`, called at `:1570`). Landed in
+> >   commits `0940ed4` (feat) + `a61f445` (test) → merged in `6e1629c` (#124). The
+> >   2026-06-25 audit's "no `adr_add`/`adr_due`/`decide` in code" claim is FALSE on
+> >   today's tree. **This is the exact C1/C2 trap from the previous train — a plan
+> >   claim that went stale between writing and the next train. P2 (project_brief
+> >   first-class ADR surface) is partly done via the `adr_due` signal; P3 schema
+> >   home unchanged.**
+> > - **What car #37 ACTUALLY is now:** the *prompt-migration* — move the stop-hook
+> >   ADR capture from manual `wiki_read`+`wiki_append_section` (still present at
+> >   `yadgar/hooks/stop-memory-checkpoint.py:35` read / `:65` append) onto the
+> >   now-shipped `adr_add` tool. P1's tool is done; the hook still hand-rolls the
+> >   capture. See the new §P1-migration below for the concrete, dedup-preserving spec.
+> > - **`adr_add` dedup behavior (verified):** `adr_add` reads the existing log
+> >   first (`adr.py:215`, `branch_hint=default_branch`) and assigns the next
+> >   sequential id via `_next_adr_id` (`adr.py:92`) — i.e. **ID-collision dedup
+> >   ONLY**, NOT decision-level dedup. The current prompt does "dedup by decision,
+> >   not wording" (`stop-memory-checkpoint.py:49`). A naive "lean: if adr_due call
+> >   adr_add" migration would therefore **REGRESS** the decision-dedup the task
+> >   requires us to keep. The migration MUST preserve it — see §P1-migration.
+>
+> ## P1-migration — stop-hook ADR capture → `adr_add` (car #37, v5.85)
+> Replace the hand-rolled ADR capture in `_PROMPT_TEMPLATE`
+> (`stop-memory-checkpoint.py:34-67`) with a call to the shipped `adr_add` tool,
+> **without losing decision-level dedup or the read-first behavior.**
+>
+> **The dedup constraint is load-bearing (task requirement, not a flag).** `adr_add`
+> only prevents ID collisions; it does NOT check "is this decision already logged".
+> So one of these MUST hold in the migrated prompt:
+> - **(A, recommended for car #37 — keep dedup in the prompt):** the lean prompt
+>   still instructs *read the existing ADR log first, skip decisions already
+>   recorded (by decision, not wording), then call `adr_add` only for genuinely new
+>   ones.* `adr_add` handles ID assignment + schema validation + branch-pinned
+>   append; the prompt keeps the KEEP/SKIP + decision-dedup judgement it has today.
+>   This is the smallest correct change and matches "extraction needs no daemon LLM —
+>   the in-session instance does the dedup judgement."
+> - **(B, larger — push dedup into the tool):** add a decision-similarity check to
+>   `adr_add` (e.g. embed the `decision` field, compare to existing entries, return
+>   `{"skipped": "duplicate of ADR-NNNN"}` above a threshold). Heavier; touches
+>   `adr.py` + tests + a new threshold knob. Defer unless the prompt-side dedup
+>   proves unreliable.
+>
+> **TDD outline (failing first):**
+> 1. *Template test* (`test_stop_memory_checkpoint_module.py`): assert the rendered
+>    prompt (a) calls `adr_add(...)` for ADR capture, (b) STILL contains a
+>    read-existing-first + dedup-by-decision instruction (guards against the
+>    regression), (c) no longer hand-rolls `wiki_append_section` for ADRs. Red today.
+> 2. *Tool test* (already green, `test_adr.py`): `adr_add` round-trip — confirms the
+>    tool the prompt now calls behaves (read-first, next-id, branch-pinned append).
+>
+> **Effort: S.** ~30-line template rewrite (net reduction) + 1 template test edit;
+> `adr_add` already exists and is tested. **Risk: LOW** if approach (A); the only way
+> this goes wrong like C1/C2 is shipping the *lean* version (B-style "just call
+> adr_add") and silently dropping decision-dedup → duplicate ADRs accumulate. The
+> template test in step 1.b is the guard. **User-decision flag:** approach A vs B
+> (recommend A; revisit B only if prompt-side dedup is observed failing).
 
 theme: memory / decisions-log / stop-hook
 priority: high (decisions + rationale are the fastest-rotting, highest-value artifact; lost when context scrolls)

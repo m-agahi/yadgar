@@ -441,3 +441,236 @@ class TestVersioningRegression:
         assert len(rows) == 2, f"Expected 2 version rows after upsert, got {len(rows)}"
         assert rows[0]["version"] == 1
         assert rows[1]["version"] == 2
+
+
+# ── L. Auto-linking pass (v5.85 car #5) ──────────────────────────────────────
+
+
+class TestAutolink:
+    """wiki autolink inserts [[slug]] cross-refs by matching other pages' titles.
+
+    Safety guards (non-negotiable): dry-run default, verbatim/fence guard,
+    length/specificity guard, similarity guard, idempotency, and no metadata
+    clobbering on the apply path.
+    """
+
+    _DIR = "/home/max/git/yadgar"
+
+    def _opts(self, **kw):
+        kw.setdefault("directory_context", self._DIR)
+        return WikiAddOptions(**kw)
+
+    def test_autolink_inserts_link(self):
+        """Title of A mentioned in B's body → apply wraps it in [[a-slug]]."""
+        _wiki().add(
+            "Recall Pipeline",
+            "How retrieval scoring works.",
+            "reference",
+            opts=self._opts(),
+        )
+        _wiki().add(
+            "Memorize Path",
+            "The Recall Pipeline ranks memories before storage.",
+            "reference",
+            opts=self._opts(),
+        )
+        result = _wiki().autolink(directory=self._DIR, dry_run=False, similarity_threshold=0.0)
+        page = _wiki().read("memorize-path")
+        assert "[[recall-pipeline]]" in page["content"]
+        assert "recall-pipeline" in page["links"]
+        backlinks = _wiki()._storage.get_wiki_backlinks("recall-pipeline")
+        assert "memorize-path" in backlinks
+        assert result["applied"] is True
+
+    def test_autolink_dry_run_no_mutation(self):
+        """dry_run=True (DEFAULT) returns proposals but never mutates content."""
+        _wiki().add("Recall Pipeline", "scoring details", "reference", opts=self._opts())
+        _wiki().add(
+            "Memorize Path",
+            "The Recall Pipeline ranks memories.",
+            "reference",
+            opts=self._opts(),
+        )
+        before = _wiki().read("memorize-path")["content"]
+        result = _wiki().autolink(directory=self._DIR, similarity_threshold=0.0)
+        after = _wiki().read("memorize-path")["content"]
+        assert after == before  # unchanged
+        assert result["applied"] is False
+        assert any(
+            p["page"] == "memorize-path" and p["target"] == "recall-pipeline"
+            for p in result["proposals"]
+        )
+
+    def test_autolink_default_is_dry_run(self):
+        """Calling autolink with no dry_run arg must NOT mutate (safe default)."""
+        _wiki().add("Recall Pipeline", "scoring details", "reference", opts=self._opts())
+        _wiki().add(
+            "Memorize Path",
+            "The Recall Pipeline ranks memories.",
+            "reference",
+            opts=self._opts(),
+        )
+        before = _wiki().read("memorize-path")["content"]
+        _wiki().autolink(directory=self._DIR, similarity_threshold=0.0)
+        assert _wiki().read("memorize-path")["content"] == before
+
+    def test_autolink_skips_code_fences(self):
+        """A title inside a fenced code block is NOT wrapped."""
+        _wiki().add("Recall Pipeline", "scoring details", "reference", opts=self._opts())
+        _wiki().add(
+            "Memorize Path",
+            "Run it:\n\n```\nRecall Pipeline --flag\n```\n",
+            "reference",
+            opts=self._opts(),
+        )
+        _wiki().autolink(directory=self._DIR, dry_run=False, similarity_threshold=0.0)
+        page = _wiki().read("memorize-path")
+        assert "[[recall-pipeline]]" not in page["content"]
+
+    def test_autolink_skips_inline_code(self):
+        """A title inside inline `backticks` is NOT wrapped."""
+        _wiki().add("Recall Pipeline", "scoring details", "reference", opts=self._opts())
+        _wiki().add(
+            "Memorize Path",
+            "Invoke `Recall Pipeline` to score.",
+            "reference",
+            opts=self._opts(),
+        )
+        _wiki().autolink(directory=self._DIR, dry_run=False, similarity_threshold=0.0)
+        page = _wiki().read("memorize-path")
+        assert "[[recall-pipeline]]" not in page["content"]
+
+    def test_autolink_idempotent(self):
+        """Run twice; second run reports 0 insertions, no double-wrap."""
+        _wiki().add("Recall Pipeline", "scoring details", "reference", opts=self._opts())
+        _wiki().add(
+            "Memorize Path",
+            "The Recall Pipeline ranks memories.",
+            "reference",
+            opts=self._opts(),
+        )
+        _wiki().autolink(directory=self._DIR, dry_run=False, similarity_threshold=0.0)
+        content_after_first = _wiki().read("memorize-path")["content"]
+        result2 = _wiki().autolink(directory=self._DIR, dry_run=False, similarity_threshold=0.0)
+        content_after_second = _wiki().read("memorize-path")["content"]
+        assert content_after_first == content_after_second
+        assert content_after_second.count("[[recall-pipeline]]") == 1
+        assert len(result2["proposals"]) == 0
+
+    def test_autolink_skips_already_linked(self):
+        """A page that already links the target is left untouched (idempotency)."""
+        _wiki().add("Recall Pipeline", "scoring details", "reference", opts=self._opts())
+        _wiki().add(
+            "Memorize Path",
+            "See [[recall-pipeline]] — the Recall Pipeline ranks memories.",
+            "reference",
+            opts=self._opts(),
+        )
+        before = _wiki().read("memorize-path")["content"]
+        _wiki().autolink(directory=self._DIR, dry_run=False, similarity_threshold=0.0)
+        after = _wiki().read("memorize-path")["content"]
+        assert after == before
+        assert after.count("[[recall-pipeline]]") == 1
+
+    def test_autolink_skips_short_titles(self):
+        """A title shorter than min_title_len is never auto-linked."""
+        _wiki().add("API", "interface stuff", "reference", opts=self._opts())
+        _wiki().add(
+            "Memorize Path",
+            "The API is used everywhere in API code.",
+            "reference",
+            opts=self._opts(),
+        )
+        result = _wiki().autolink(
+            directory=self._DIR, dry_run=False, min_title_len=6, similarity_threshold=0.0
+        )
+        page = _wiki().read("memorize-path")
+        assert "[[api]]" not in page["content"]
+        assert not any(p["target"] == "api" for p in result["proposals"])
+
+    def test_autolink_word_boundary(self):
+        """A title must match on word boundaries — 'Memory' must not hit 'Memorize'."""
+        _wiki().add("Memory", "memory subsystem", "reference", opts=self._opts())
+        _wiki().add(
+            "Other Page",
+            "We Memorize things in the store.",
+            "reference",
+            opts=self._opts(),
+        )
+        _wiki().autolink(directory=self._DIR, dry_run=False, similarity_threshold=0.0)
+        page = _wiki().read("other-page")
+        assert "[[memory]]" not in page["content"]
+        assert "Memorize" in page["content"]
+
+    def test_autolink_semantic_guard_rejects(self):
+        """A coincidental title match below the similarity threshold is rejected."""
+        _wiki().add("Recall Pipeline", "scoring details", "reference", opts=self._opts())
+        _wiki().add(
+            "Memorize Path",
+            "The Recall Pipeline ranks memories.",
+            "reference",
+            opts=self._opts(),
+        )
+        # Threshold of 0.999 — no two distinct fixtures clear it → rejected.
+        result = _wiki().autolink(
+            directory=self._DIR,
+            dry_run=False,
+            similarity_threshold=0.999,
+            semantic_guard=True,
+        )
+        page = _wiki().read("memorize-path")
+        assert "[[recall-pipeline]]" not in page["content"]
+        assert len(result["proposals"]) == 0
+
+    def test_autolink_no_self_link(self):
+        """A page that mentions its own title is not linked to itself."""
+        _wiki().add(
+            "Recall Pipeline",
+            "The Recall Pipeline scores memories.",
+            "reference",
+            opts=self._opts(),
+        )
+        _wiki().autolink(directory=self._DIR, dry_run=False, similarity_threshold=0.0)
+        page = _wiki().read("recall-pipeline")
+        assert "[[recall-pipeline]]" not in page["content"]
+
+    def test_autolink_preserves_metadata_on_apply(self):
+        """Apply must NOT clobber a page's directory_context or category.
+
+        WikiStore.add() upsert defaults category→'reference' and
+        directory_context→'global'. The apply path must read each page's own
+        metadata and pass it back, or curated pages silently move to 'global'.
+        """
+        _wiki().add("Recall Pipeline", "scoring details", "decision", opts=self._opts())
+        _wiki().add(
+            "Memorize Path",
+            "The Recall Pipeline ranks memories.",
+            "decision",
+            opts=self._opts(),
+        )
+        _wiki().autolink(directory=self._DIR, dry_run=False, similarity_threshold=0.0)
+        page = _wiki().read("memorize-path")
+        assert page["content"].__contains__("[[recall-pipeline]]")
+        assert page["directory_context"] == self._DIR  # NOT moved to 'global'
+        assert page["category"] == "decision"  # NOT reset to 'reference'
+
+    def test_autolink_directory_scoped(self):
+        """A page in project A is not linked into a page from project B."""
+        _wiki().add(
+            "Recall Pipeline",
+            "scoring details",
+            "reference",
+            opts=WikiAddOptions(directory_context="/home/max/git/projectA"),
+        )
+        _wiki().add(
+            "Memorize Path",
+            "The Recall Pipeline ranks memories.",
+            "reference",
+            opts=WikiAddOptions(directory_context="/home/max/git/projectB"),
+        )
+        result = _wiki().autolink(
+            directory="/home/max/git/projectB", dry_run=False, similarity_threshold=0.0
+        )
+        page = _wiki().read("memorize-path")
+        assert "[[recall-pipeline]]" not in page["content"]
+        assert len(result["proposals"]) == 0

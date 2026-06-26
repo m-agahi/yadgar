@@ -184,6 +184,7 @@ def _fanout_recall(
     current_branch: str | None,
     default_branch: str | None,
     type_filter: str = "all",
+    tags: list[str] | None = None,
 ) -> list[dict]:
     """Fan out recall to MemoryProvider + WikiProvider, fuse + dedup results.
 
@@ -222,6 +223,9 @@ def _fanout_recall(
         current_branch: Active git branch or None.
         default_branch: Repo default branch or None.
         type_filter: One of {"all", "memory", "wiki"}. Selects provider subset.
+        tags: Tag include filter for wiki retrieval. When set, triggers SQL pre-filter
+              (search_wiki_vectors_tagged) and suppresses the default agent-prompt exclude.
+              None (default) = general recall with agent-prompt exclusion active.
 
     Returns:
         List of raw memory/wiki dicts from providers, fused by CE rerank,
@@ -241,6 +245,25 @@ def _fanout_recall(
     memory_candidates = []
     wiki_candidates = []
 
+    # S6 kill-gate: when AGENT_PROMPT_LIBRARY_ENABLED is False the library is INERT.
+    # Strip the agent-prompt include tag so the include path never fires; the exclude
+    # below then naturally turns back on (tags becomes None) → tagged recall returns
+    # nothing. Read the flag at call time off the cached settings singleton.
+    # Read the flag via get_settings() fresh at call time (NOT the module-level
+    # captured `settings`): the flag is runtime-flippable and the cached singleton
+    # may be re-resolved, so the live lookup is the correct source of truth.
+    if not get_settings().AGENT_PROMPT_LIBRARY_ENABLED and tags:
+        tags = [t for t in tags if t != "agent-prompt"] or None
+
+    # S3 precedence: tags=["agent-prompt"] suppresses the default exclude.
+    # Without tags, general recall excludes agent-prompt pages to avoid polluting
+    # general wiki results with tool-prompt fragments. S6: also exclude the global
+    # agent-prompt-toc page (tag "agent-prompt-toc" ≠ "agent-prompt") — otherwise the
+    # TOC would reintroduce the every-project leak S3 exists to kill. Targeted
+    # recall(tags=["agent-prompt"]) still won't pull the TOC (SQL pre-filter on
+    # "agent-prompt"), so excluding it here is safe for both directions.
+    _wiki_exclude = None if tags else ["agent-prompt", "agent-prompt-toc"]
+
     # Memory provider — active when type_filter is "all" or "memory"
     if type_filter in ("all", "memory") and _st._retriever is not None:
         memory_provider = MemoryProvider(_st._retriever)
@@ -253,7 +276,7 @@ def _fanout_recall(
     # legacy); an explicit type="wiki" honors the caller's stated intent.
     _skip_wiki_episodic = type_filter == "all" and _is_episodic_query(query)
     if type_filter in ("all", "wiki") and _st._wiki is not None and not _skip_wiki_episodic:
-        wiki_provider = WikiProvider(_st._wiki)
+        wiki_provider = WikiProvider(_st._wiki, tags=tags, exclude_tags=_wiki_exclude)
         wiki_candidates = wiki_provider.candidates(query, scope, limit=pool_limit)
 
     # Step 4: fuse candidates — but ONLY when multiple providers are active.
@@ -379,6 +402,7 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
     branch_hint: str | None = None,
     type: str = "all",  # noqa: A002 — shadows built-in but matches MCP schema convention
     mode: str | None = None,
+    tags: list[str] | None = None,
 ) -> list[dict]:
     """Primary semantic + keyword retrieval tool. Use for discovery and context loading.
 
@@ -419,6 +443,12 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
             normal recall (votes across all domains); opt-in only — omit for normal
             targeted retrieval. Mutually exclusive with profile/type: mode wins when
             set, those params are ignored. Raises ValueError on unrecognised value.
+        tags: Tag include filter for wiki results. When set, triggers SQL pre-filter
+            in WikiStore.query() — brute-force cosine over pages tagged with tags[0]
+            (avoids HNSW global-pool dilution). Also suppresses the default
+            agent-prompt exclude so tagged results are not accidentally hidden.
+            None (default) = general recall with agent-prompt pages excluded from wiki
+            results. Only effective on the unified fan-out path (UNIFIED_RECALL_ENABLED=True).
 
     Returns:
         List of memory/wiki dicts ranked by relevance + heat. landscape mode adds
@@ -543,6 +573,7 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
                 current_branch=_current_branch,
                 default_branch=_default_branch,
                 type_filter=type,
+                tags=tags,
             )
             # Same post-retrieval bookkeeping as the legacy path (heat boost,
             # last_accessed, metamemory, SR transitions, action log) — fan-out

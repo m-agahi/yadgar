@@ -105,6 +105,7 @@ Building blocks (in order):
   8. config-sync
   9. install-rules (append CLAUDE.md fragment)
   10. seed-anchors
+  11. seed-agent-prompts
 
 See https://codeberg.org/maxagahi/yadgar for full documentation.
 EOF
@@ -362,7 +363,7 @@ _detect_os() {
 # ── setup steps ───────────────────────────────────────────────────────────────
 
 _step_detect() {
-    log "Step 1/10: Detecting runtime + OS..."
+    log "Step 1/11: Detecting runtime + OS..."
 
     # Try to detect runtime; on failure offer to install
     if ! RUNTIME=$(_detect_runtime 2>/dev/null); then
@@ -381,7 +382,7 @@ _step_detect() {
 }
 
 _step_pull_images() {
-    log "Step 2/10: Pulling container images..."
+    log "Step 2/11: Pulling container images..."
     local version backend_version
     version=$(_resolve_yadgar_version)
     backend_version=$(_resolve_backend_version)
@@ -398,7 +399,7 @@ _step_pull_images() {
 }
 
 _step_bootstrap_secrets() {
-    log "Step 3/10: Bootstrapping secrets..."
+    log "Step 3/11: Bootstrapping secrets..."
     local scripts_dir
     scripts_dir="$(_locate_setup_scripts)"
 
@@ -438,7 +439,7 @@ _step_inject_secrets() {
 }
 
 _step_generate_units() {
-    log "Step 4/10: Generating daemon units (${OS})..."
+    log "Step 4/11: Generating daemon units (${OS})..."
     local scripts_dir
     scripts_dir="$(_locate_setup_scripts)"
     local yadgar_dir="${YADGAR_DIR:-${HOME}/.local/share/yadgar}"
@@ -508,7 +509,7 @@ _step_pre_create_dirs() {
 }
 
 _step_enable_units() {
-    log "Step 5/10: Enabling daemon units..."
+    log "Step 5/11: Enabling daemon units..."
     case "$OS" in
         linux|linux-other)
             run systemctl --user daemon-reload
@@ -549,17 +550,17 @@ _step_enable_units() {
 }
 
 _step_install_hooks() {
-    log "Step 6/10: Installing Claude Code git hooks..."
+    log "Step 6/11: Installing Claude Code git hooks..."
     run yadgar install-hooks --scope global
 }
 
 _step_install_agents() {
-    log "Step 7/10: Installing subagent templates..."
+    log "Step 7/11: Installing subagent templates..."
     run yadgar install-subagents
 }
 
 _step_config_sync() {
-    log "Step 8/10: Syncing config..."
+    log "Step 8/11: Syncing config..."
     local yadgar_dir="${YADGAR_DIR:-${HOME}/.local/share/yadgar}"
     local config_file="${YADGAR_CONFIG_FILE:-${HOME}/.config/yadgar/config.yaml}"
     if [ ! -f "$config_file" ]; then
@@ -570,7 +571,7 @@ _step_config_sync() {
 }
 
 _step_install_rules() {
-    log "Step 9/10: Appending CLAUDE.md rules fragment..."
+    log "Step 9/11: Appending CLAUDE.md rules fragment..."
     local assets_dir
     assets_dir="$(_locate_install_assets)"
     local fragment="${assets_dir}/CLAUDE.md.fragment"
@@ -639,7 +640,7 @@ _wait_for_daemon() {
 }
 
 _step_seed_anchors() {
-    log "Step 10/10: Seeding canonical anchors..."
+    log "Step 10/11: Seeding canonical anchors..."
     local assets_dir
     assets_dir="$(_locate_install_assets)"
     local anchors_yaml="${assets_dir}/seeds/anchors.yaml"
@@ -661,6 +662,19 @@ _step_seed_anchors() {
     fi
 
     run yadgar seed --anchors "$anchors_yaml"
+}
+
+_step_seed_agent_prompts() {
+    log "Step 11/11: Seeding built-in starter agent-prompts..."
+    if [ "$DRYRUN" -eq 0 ]; then
+        if ! _wait_for_daemon 120; then
+            warn "Daemon failed to start in 120s. Skipping agent-prompt seed."
+            info "After daemon starts, run manually:"
+            info "  yadgar seed --agent-prompts"
+            return 0
+        fi
+    fi
+    run yadgar seed --agent-prompts
 }
 
 # ── doctor probes ─────────────────────────────────────────────────────────────
@@ -737,12 +751,13 @@ main() {
     # Phase 5: Enable units
     _step_enable_units
 
-    # Phase 6-10: Application-level setup (yadgar CLI building blocks)
+    # Phase 6-11: Application-level setup (yadgar CLI building blocks)
     _step_install_hooks
     _step_install_agents
     _step_config_sync
     _step_install_rules
     _step_seed_anchors
+    _step_seed_agent_prompts
 
     echo ""
     if [ "$DRYRUN" -eq 1 ]; then

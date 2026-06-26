@@ -41,47 +41,48 @@ evolving decisions or analysis.
 
 ## Retrieval
 
-To get the latest prompt for a pattern:
+> **v5.85 (ADR-0007):** the bespoke `agent_prompt_get` / `agent_prompt_search`
+> MCP tools were removed. One wiki page per pattern at the deterministic slug
+> `agent-prompt-<pattern>` (no `-vN` suffix — wiki versioning carries history).
+
+Semantic lookup of saved prompts is the unified recall path:
 
 ```python
-# Via MCP tool
-result = agent_prompt_get("dispatch-fix-bug")
-# Returns: {"version": 3, "slug": "agent-prompt-dispatch-fix-bug-v3", "content": "...", ...}
+# Via MCP tool — SQL pre-filter over agent-prompt pages (dilution-safe)
+results = recall("audit this PR for vulns", type="wiki", tags=["agent-prompt"], directory="global")
+# Each result carries the "agent-prompt" tag. General recall (no tags) EXCLUDES them.
 ```
 
-Internally this queries:
-```
-SELECT * FROM wiki_page
-WHERE tags CONTAINS "task:<pattern>" AND tags CONTAINS "agent-prompt"
-```
-then sorts by the `vN` suffix of the slug descending and returns the first result.
+Exact-key lookup (used internally by `agent_dispatch_prelude`) reads the
+deterministic slug directly via the internal `_read_agent_prompt(slug)` helper —
+not an MCP tool, not semantic recall.
 
-To save a new version:
+To save a prompt (upserts one page per pattern; second save bumps the wiki version):
 
 ```python
-result = agent_prompt_save("dispatch-fix-bug", "Updated prompt text...")
-# Returns: {"saved": True, "version": 4, "slug": "agent-prompt-dispatch-fix-bug-v4"}
+result = agent_prompt_save("dispatch-fix-bug", "Updated prompt text...", directory="global")
+# Returns: {"saved": True, "version": 2, "slug": "agent-prompt-dispatch-fix-bug", "page_id": ...}
 ```
 
 ## MCP tools
 
 | Tool | Description |
 |---|---|
-| `agent_prompt_get(pattern)` | Returns latest version dict, or None if absent |
-| `agent_prompt_save(pattern, content)` | Creates vN+1, returns saved=True + version + slug |
+| `agent_prompt_save(pattern, content, directory)` | Upserts one page per pattern; returns saved=True + version + slug |
+| `recall(query, type="wiki", tags=["agent-prompt"], directory)` | Semantic lookup of agent-prompt pages (replaces the removed `agent_prompt_search`) |
 
-## Using prompts at dispatch time (v5.3.4 M2 preview)
+## Using prompts at dispatch time
 
-The planned `dispatch` helper (v5.3.4) will:
-1. Call `agent_prompt_get(<task-pattern>)` to get the latest prompt.
-2. Inject the prompt + yadgar protocol into the subagent's instructions.
-3. After the subagent returns, process its `## Yadgar findings` section.
+`agent_dispatch_prelude(pattern, task_topic)` resolves the prompt for a pattern
+via the internal deterministic slug-read (`agent-prompt-<pattern>`), injects it
+plus the yadgar protocol into the subagent's instructions, then the orchestrator
+processes the subagent's `## Yadgar findings` section on return.
 
-Until v5.3.4, call `agent_prompt_get` manually in your dispatch prompt:
+To pull a prompt manually in your own dispatch prompt, use semantic recall:
 
 ```python
-prompt_page = agent_prompt_get("dispatch-fix-bug")
-prompt_text = prompt_page["content"] if prompt_page else DEFAULT_PROMPT
+hits = recall("fix the bug", type="wiki", tags=["agent-prompt"], directory="global")
+prompt_text = hits[0]["content"] if hits else DEFAULT_PROMPT
 
 Agent(
     subagent_type="general-purpose",

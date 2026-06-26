@@ -269,7 +269,7 @@ config knobs.
 
 - **status:** LIVE
 - **category:** retrieval
-- **settings:** `CROSS_ENCODER_ENABLED`, `CROSS_ENCODER_MODEL`, `CROSS_ENCODER_TOP_K`, `CROSS_ENCODER_WEIGHT`, `HEAVY_RERANK_ENABLED`
+- **settings:** `CROSS_ENCODER_ENABLED`, `CROSS_ENCODER_MODEL`, `CROSS_ENCODER_TOP_K`, `CROSS_ENCODER_WEIGHT`, `CROSS_ENCODER_BACKEND`, `HEAVY_RERANK_ENABLED`
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** `BC-RR1`
@@ -643,11 +643,11 @@ config knobs.
 - **category:** storage
 - **settings:** —
 - **tools:** —
-- **migrations:** `001`, `002`, `003`, `004`, `005`, `006`, `007`, `008`, `009`, `010`, `011`, `012`, `013`, `014`, `015`, `016`, `018`, `019`, `020`, `021`, `022`
+- **migrations:** `001`, `002`, `003`, `004`, `005`, `006`, `007`, `008`, `009`, `010`, `011`, `012`, `013`, `014`, `015`, `016`, `018`, `019`, `020`, `021`, `022`, `023`, `024`, `025`
 - **bc:** `BC-ST2`
 - **refs:** `yadgar/storage/migrations.py::_MigrationsMixin`, `yadgar/storage/migrations.py::_run_migrations`, `yadgar/storage/migrations.py::_init_schema`
 - **wiring:** `StorageEngine._init_schema()` is called once on startup from `StorageEngine.__init__()` (via `_ClientMixin` assembly). It defines all tables, analysers, and indexes, then calls `_run_migrations()`. `_run_migrations()` is a no-op in embedded mode; in server mode it acquires a file lock and calls `_run_migrations_locked()` which iterates `_MIGRATIONS` in order, skipping already-applied versions recorded in the `schema_version` table. Each migration is applied exactly once; the version string is appended to `schema_version` atomically after `fn(storage)` returns.
-- **explanation:** The migration runner enforces forward-only, exactly-once schema evolution. It uses an flock on `STATE_DIR/.migration.lock` to serialise concurrent daemon starts. Migrations are append-only (never reordered or edited). The `_MIGRATIONS` list contains 21 entries (versions 001–022, with 017 reserved). All migrations use `DEFINE FIELD IF NOT EXISTS` or `DEFINE INDEX IF NOT EXISTS` DDL which is idempotent, so a failed-then-rerun migration does not corrupt the schema.
+- **explanation:** The migration runner enforces forward-only, exactly-once schema evolution. It uses an flock on `STATE_DIR/.migration.lock` to serialise concurrent daemon starts. Migrations are append-only (never reordered or edited). The `_MIGRATIONS` list contains 23 entries (versions 001–024, with 017 reserved). All migrations use `DEFINE FIELD IF NOT EXISTS` or `DEFINE INDEX IF NOT EXISTS` DDL which is idempotent, so a failed-then-rerun migration does not corrupt the schema.
 
 ### CAP-STOR-003 — Migration 001: HNSW vector index upgrade
 - **status:** LIVE
@@ -1044,6 +1044,28 @@ config knobs.
 - **refs:** `yadgar/storage/migrations.py::_migration_023_memory_directory_context_backfill`
 - **wiring:** Applied once at server-mode startup after v5.80. Defensive pre-flip gate immediately before `UNIFIED_RECALL_ENABLED` defaults to `True`. Phases: (A) relax `memory.directory_context` to `option<string>` via `DEFINE FIELD OVERWRITE`; (B) Python-side fetch-all + filter for absent/empty/NULL rows, UPDATE each to `'global'`; (C) re-tighten to `string ASSERT NOT NULL, len > 0`. On any DB that ran migration 018, this migration touches 0 rows (field-absent memory inserts were already blocked by the 018 ASSERT).
 - **explanation:** Guarantees all memory rows have a non-empty `directory_context` before the unified fan-out recall path (v6 T6) becomes the default. Migration 018 Phase D/E/F already covered this for deployed databases; migration 023 is a belt-and-suspenders idempotent repair for any edge-case DB that ran 016 without 018, or was written before the ASSERT was applied. Uses the same `DEFINE FIELD OVERWRITE` relax/backfill/re-tighten pattern as migration 018 (necessary because SurrealDB v3 validates ASSERT on every UPDATE — field-absent rows trigger a coerce error without the relax step).
+
+### CAP-STOR-039 — Migration 024: hash + source_file fields on wiki_page
+- **status:** LIVE
+- **category:** storage
+- **settings:** —
+- **tools:** —
+- **migrations:** `024`
+- **bc:** —
+- **refs:** `yadgar/storage/migrations.py::_migration_024_wiki_page_hash_source`, `yadgar/storage/wiki.py::insert_wiki_page`, `yadgar/repo_wiki/generator.py::generate_module_page`, `yadgar/server/tools/project.py::_scan_stale_wiki_slugs_db`
+- **wiring:** Applied once at startup. Adds `hash` and `source_file` (`option<string>`) fields to `wiki_page`. Generator stamps each module page dict with SHA256(file bytes) and abs path. `insert_wiki_page` passes them through when present. `_scan_stale_wiki_slugs_db` queries DB pages with `page_type='code'` and compares stored hash to live file hash. `_scan_stale_wiki_slugs` merges DB results with disk scan.
+- **explanation:** Bridges the store divergence: the wiki staleness checker previously only scanned `.local-review/wiki/*.md` on disk, while module pages written by `repo_wiki_generate` live in the DB with no hash/source_file fields. Migration 024 adds nullable fields; generator and storage layer populate them; checker reads them from DB for `page_type='code'` pages (v5.85.0 car #36).
+
+### CAP-STOR-040 — Migration 025: agent-prompt -vN slug collapse (v5.85 S7)
+- **status:** LIVE
+- **category:** storage
+- **settings:** —
+- **tools:** —
+- **migrations:** `025`
+- **bc:** —
+- **refs:** `yadgar/storage/migrations.py::_migration_025_agent_prompt_slug_collapse`
+- **wiring:** Applied once at startup. Queries all wiki_page rows tagged `agent-prompt` with slugs matching `-v\d+$`. Groups by pattern, keeps highest-version content, creates a bare `agent-prompt-<pattern>` page, then deletes the versioned pages. Idempotent: no-op when no versioned slugs exist.
+- **explanation:** v5.85 S7 rework changes the storage convention from one-page-per-version (slug `agent-prompt-<pattern>-vN`) to one-page-per-pattern (slug `agent-prompt-<pattern>`), with wiki versioning carrying history. This migration collapses existing versioned pages for any installations that ran the Phase 1 code (v5.3.0 A4). New installs see no -vN pages and the migration is a no-op.
 
 ### CAP-WRITE-001 — `memorize` MCP tool (write-path entry point)
 - **status:** LIVE
@@ -1593,12 +1615,12 @@ config knobs.
 - **status:** LIVE
 - **category:** wiki
 - **settings:** `WIKI_SLUG_PREFIX`, `WIKI_EMBED_FAILURE_BLOCKS_WRITE`
-- **tools:** `wiki_add`, `wiki_read`, `wiki_list`, `wiki_delete`, `wiki_query`, `wiki_lint`, `wiki_drafts`, `wiki_approve`, `wiki_discard`, `wiki_check_duplicate`, `wiki_coverage`, `wiki_get`, `wiki_update`
+- **tools:** `wiki_add`, `wiki_read`, `wiki_list`, `wiki_delete`, `wiki_query`, `wiki_lint`, `wiki_autolink`, `wiki_drafts`, `wiki_approve`, `wiki_discard`, `wiki_check_duplicate`, `wiki_coverage`, `wiki_get`, `wiki_update`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/server/tools/wiki.py::wiki_read`, `yadgar/server/tools/wiki.py::wiki_list`, `yadgar/server/tools/wiki.py::wiki_delete`, `yadgar/server/tools/wiki.py::wiki_query`, `yadgar/server/tools/wiki.py::wiki_lint`, `yadgar/server/tools/wiki.py::wiki_drafts`, `yadgar/server/tools/wiki.py::wiki_approve`, `yadgar/server/tools/wiki.py::wiki_discard`, `yadgar/server/tools/wiki_coverage.py::wiki_coverage`, `yadgar/server/tools/admin_other.py::wiki_get`, `yadgar/server/tools/admin_other.py::wiki_update`
-- **wiring:** All tools are `@_tool()`-registered and reachable directly via MCP. `wiki_add` enqueues to `FileQueue` (async) or uses sync write path. `wiki_read`, `wiki_list`, `wiki_delete`, `wiki_get` delegate to `_st._wiki` (WikiStore). `wiki_query` performs keyword+semantic search with §25 branch and directory filtering. `wiki_lint` calls `_st._wiki.lint()`. Draft tools (`wiki_drafts`, `wiki_approve`, `wiki_discard`) operate on the wiki_draft table via `_get_storage()`. `wiki_coverage` scans filesystem `.py` files and cross-references wiki pages tagged `mod`/`fn`. `wiki_update` delegates to `_st._storage.update_wiki_page()`. `WIKI_SLUG_PREFIX` is injected into the `FileQueue` wiki mirror path at lifecycle init. `WIKI_EMBED_FAILURE_BLOCKS_WRITE` controls whether an embedding failure causes the write to be blocked.
-- **explanation:** The core wiki management surface. `wiki_add` creates or upserts pages (async-queued by default, with similarity gate and secret gate). `wiki_read` resolves a slug using §25 4-step directory+branch resolution. `wiki_list` returns metadata-only page listings scoped to a directory. `wiki_query` performs combined FTS + semantic search with branch-aware filtering and a 1.5× current-branch score boost. `wiki_lint` identifies orphan pages, broken cross-references, and stale/low-confidence pages. Draft tools support a review workflow where pages land as candidates before promotion. `wiki_coverage` computes Python module coverage by `mod`/`fn` tagged wiki pages. `wiki_get`/`wiki_update` provide integer-ID-based fetch and field-patch access.
+- **refs:** `yadgar/server/tools/wiki.py::wiki_read`, `yadgar/server/tools/wiki.py::wiki_list`, `yadgar/server/tools/wiki.py::wiki_delete`, `yadgar/server/tools/wiki.py::wiki_query`, `yadgar/server/tools/wiki.py::wiki_lint`, `yadgar/server/tools/wiki.py::wiki_autolink`, `yadgar/server/tools/wiki.py::wiki_drafts`, `yadgar/server/tools/wiki.py::wiki_approve`, `yadgar/server/tools/wiki.py::wiki_discard`, `yadgar/server/tools/wiki_coverage.py::wiki_coverage`, `yadgar/server/tools/admin_other.py::wiki_get`, `yadgar/server/tools/admin_other.py::wiki_update`
+- **wiring:** All tools are `@_tool()`-registered and reachable directly via MCP. `wiki_add` enqueues to `FileQueue` (async) or uses sync write path. `wiki_read`, `wiki_list`, `wiki_delete`, `wiki_get` delegate to `_st._wiki` (WikiStore). `wiki_query` performs keyword+semantic search with §25 branch and directory filtering. `wiki_lint` calls `_st._wiki.lint()`. `wiki_autolink` calls `_st._wiki.autolink()` (dry-run by default; on apply it re-passes each page's own metadata to avoid clobber). Draft tools (`wiki_drafts`, `wiki_approve`, `wiki_discard`) operate on the wiki_draft table via `_get_storage()`. `wiki_coverage` scans filesystem `.py` files and cross-references wiki pages tagged `mod`/`fn`. `wiki_update` delegates to `_st._storage.update_wiki_page()`. `WIKI_SLUG_PREFIX` is injected into the `FileQueue` wiki mirror path at lifecycle init. `WIKI_EMBED_FAILURE_BLOCKS_WRITE` controls whether an embedding failure causes the write to be blocked.
+- **explanation:** The core wiki management surface. `wiki_add` creates or upserts pages (async-queued by default, with similarity gate and secret gate). `wiki_read` resolves a slug using §25 4-step directory+branch resolution. `wiki_list` returns metadata-only page listings scoped to a directory. `wiki_query` performs combined FTS + semantic search with branch-aware filtering and a 1.5× current-branch score boost. `wiki_lint` identifies orphan pages, broken cross-references, and stale/low-confidence pages. `wiki_autolink` scans page bodies for verbatim mentions of other pages' titles and inserts `[[slug]]` cross-refs (dry-run default; verbatim/length/similarity/idempotency guards). Draft tools support a review workflow where pages land as candidates before promotion. `wiki_coverage` computes Python module coverage by `mod`/`fn` tagged wiki pages. `wiki_get`/`wiki_update` provide integer-ID-based fetch and field-patch access.
 
 ### CAP-WIKI-004 — Wiki versioning and history (history/read_version/diff/restore)
 - **status:** LIVE
@@ -1721,16 +1743,27 @@ config knobs.
 - **wiring:** `@_tool(power=True)`-registered in `misc.py`. Called directly by MCP clients or the Claude Code `install_hooks` flow. Reads `~/.claude/CLAUDE.md`, finds or appends the `## Memory System — Yadgar` section using a regex, and atomically replaces the file via `tempfile.mkstemp` + `os.replace`.
 - **explanation:** Writes or updates the Yadgar protocol block in the user's global `CLAUDE.md` file so Claude Code sessions receive up-to-date tool usage instructions. The section is version-stamped and idempotent: re-running replaces only the Yadgar section, leaving the rest of `CLAUDE.md` intact. Uses atomic write (tmp + rename) to prevent corruption on crash. BC-HK2: a stale block is replaced, not duplicated.
 
-### CAP-WIKI-015 — Agent prompt versioning (agent_prompt_get/save/dispatch_prelude)
+### CAP-WIKI-015 — Agent prompt library (save + dispatch_prelude slug-read)
 - **status:** LIVE
 - **category:** wiki
 - **settings:** —
-- **tools:** `agent_prompt_get`, `agent_prompt_save`, `agent_dispatch_prelude`
+- **tools:** `agent_prompt_save`, `agent_dispatch_prelude`
 - **migrations:** —
 - **bc:** `BC-AP1`, `BC-AP2`, `BC-AP3`
-- **refs:** `yadgar/server/tools/agent_prompts.py::agent_prompt_get`, `yadgar/server/tools/agent_prompts.py::agent_prompt_save`, `yadgar/server/tools/dispatch_helper.py::agent_dispatch_prelude`
-- **wiring:** `agent_prompt_save` is `@_tool()`-registered in `agent_prompts.py`; routes through `_st._wiki.add()` with `branch + directory` provenance (v5.42.5). `agent_prompt_get` queries `wiki_page WHERE tags CONTAINS $tag AND tags CONTAINS 'agent-prompt'`, finds the highest `vN` suffix in slug. `agent_dispatch_prelude` is `@_tool()`-registered in `dispatch_helper.py`; calls `agent_prompt_get()` then optionally `recall()` + `wiki_query()` (when `include_context=True`) to build a markdown prelude string capped at 2000 chars (4000 with context).
-- **explanation:** A versioned agent-prompt registry stored as wiki pages. `agent_prompt_save(pattern, content)` creates a new version page with slug `agent-prompt-<pattern>-v<N>` where N is auto-incremented. `agent_prompt_get(pattern)` retrieves the highest-versioned page for a pattern. `agent_dispatch_prelude(pattern, task_topic)` composes a standard markdown prelude for subagent dispatch: the Yadgar protocol contract block, the latest saved prompt for the pattern (if any), and a recall hint for the task topic. The v5.44.0 X1 extension adds opt-in `include_context=True` mode which auto-prefetches recall + wiki_query results and embeds them in the prelude.
+- **refs:** `yadgar/server/tools/agent_prompts.py::agent_prompt_save`, `yadgar/server/tools/agent_prompts.py::_read_agent_prompt`, `yadgar/server/tools/dispatch_helper.py::agent_dispatch_prelude`
+- **wiring:** `agent_prompt_save` is `@_tool()`-registered in `agent_prompts.py`; routes through `_st._wiki.add()` with `branch + directory` provenance (v5.42.5), one page per pattern at deterministic slug `agent-prompt-<pattern>` (wiki versioning carries history). The internal `_read_agent_prompt(slug, storage)` helper (no decorator, NOT an MCP tool) does the exact-key slug read via `get_wiki_page_by_slug` + `get_max_version_for_page`. `agent_dispatch_prelude` is `@_tool()`-registered in `dispatch_helper.py`; calls `_read_agent_prompt(f"agent-prompt-{pattern}")` then optionally `recall()` + `wiki_query()` (when `include_context=True`) to build a markdown prelude string capped at 2000 chars (4000 with context).
+- **explanation:** An agent-prompt library stored as wiki pages (v5.85 S4/S5 rework). `agent_prompt_save(pattern, content)` upserts one page per pattern at slug `agent-prompt-<pattern>`; the second save bumps the wiki page version, not a new `-vN` page. The exact-key lookup is the internal `_read_agent_prompt(slug)` helper (the bespoke `agent_prompt_get` MCP tool was removed); semantic lookup is `recall(type="wiki", tags=["agent-prompt"])` (the bespoke `agent_prompt_search` tool collapsed into the tag-aware recall path — see CAP-WIKI-017). `agent_dispatch_prelude(pattern, task_topic)` composes a standard markdown prelude for subagent dispatch: the Yadgar protocol contract block, the latest saved prompt for the pattern via the slug-read (if any), and a recall hint for the task topic. The v5.44.0 X1 extension adds opt-in `include_context=True` mode which auto-prefetches recall + wiki_query results and embeds them in the prelude.
+
+### CAP-WIKI-017 — Agent-prompt semantic lookup via tag-aware recall (collapse)
+- **status:** LIVE
+- **category:** wiki
+- **settings:** `AGENT_PROMPT_LIBRARY_ENABLED`
+- **tools:** `recall`
+- **migrations:** —
+- **bc:** —
+- **refs:** `yadgar/server/tools/recall.py::recall`, `yadgar/storage/wiki.py::search_wiki_vectors_tagged`
+- **wiring:** Semantic retrieval of agent-prompt pages is `recall(type="wiki", tags=["agent-prompt"])` (v5.85 S3/S4 collapse — the bespoke `agent_prompt_search` tool was removed). The `tags` include-filter threads `recall → _fanout_recall → WikiProvider → WikiStore.query`, routing the wiki vector collector to the SQL pre-filter `StorageEngine.search_wiki_vectors_tagged(embedding, include_tag, top_k)` — a tag-scoped brute-force cosine over `tags CONTAINS $tag` rows, avoiding the global-corpus dilution of the generic HNSW `search_wiki_vectors`. Conversely, general recall (no `tags`) excludes `agent-prompt` via a post-rank `exclude_tags` filter so the library does not pollute normal recall; requesting `tags=["agent-prompt"]` suppresses that default exclude (precedence).
+- **explanation:** v5.85 car #6 rework (ADR-0007) — the agent-prompt passive library. The previously-bespoke `agent_prompt_search` semantic tool collapsed into the unified recall path: targeted lookup is `recall(type="wiki", tags=["agent-prompt"])`, which returns the best-matching saved dispatch prompts ranked by cosine similarity over only the agent-prompt subset (SQL pre-filter, dilution-safe). The `AGENT_PROMPT_LIBRARY_ENABLED` kill-gate is intended to make the library inert when False. Heat-based ranking is deliberately deferred: `wiki_page` has no heat column, so ranking is by semantic similarity only.
 
 ### CAP-WIKI-016 — Session-end sentinel capture
 - **status:** LIVE
@@ -2688,8 +2721,8 @@ config knobs.
 - **migrations:** —
 - **bc:** `BC-T16`, `BC-T17`, `BC-T18`
 - **refs:** `yadgar/server/tools/agent_prompts.py`, `yadgar/server/tools/dispatch_helper.py`, `docs/BEHAVIOR_CONTRACT.md`
-- **wiring:** `agent_prompt_save` and `agent_prompt_get` are in `agent_prompts.py`; `agent_dispatch_prelude` is in `dispatch_helper.py`. All three registered `@_tool`. Cross-refs: BC-T16 = BC-AP1, BC-T17 = BC-AP1/AP2, BC-T18 = BC-AP3.
-- **explanation:** `agent_prompt_save` stores a named prompt template for later retrieval. `agent_prompt_get` retrieves a named template by exact name (returning not-found for unknown names, never a stale match). `agent_dispatch_prelude` assembles the standard agent-dispatch prelude, injecting directory-scoped context from `project_brief`. Together these tools support the orchestrator pattern: the main thread stores reusable subagent prompts and retrieves them at dispatch time, enriched with current project context.
+- **wiring:** `agent_prompt_save` is in `agent_prompts.py`; `agent_dispatch_prelude` is in `dispatch_helper.py`. Both registered `@_tool`. The exact-key lookup is the internal `_read_agent_prompt(slug)` helper (the `agent_prompt_get` tool was removed in v5.85 S4); semantic lookup is `recall(type="wiki", tags=["agent-prompt"])`. Cross-refs: BC-T16 = BC-AP1, BC-T17 = BC-AP1/AP2, BC-T18 = BC-AP3.
+- **explanation:** `agent_prompt_save` stores a named prompt template (one wiki page per pattern, wiki-versioned) for later retrieval. Exact-name retrieval is the internal `_read_agent_prompt(slug)` helper (returning not-found for unknown slugs, never a stale match); semantic retrieval is the tag-aware recall path. `agent_dispatch_prelude` assembles the standard agent-dispatch prelude, injecting directory-scoped context from `project_brief`. Together these support the orchestrator pattern: the main thread stores reusable subagent prompts and retrieves them at dispatch time, enriched with current project context.
 
 ---
 
@@ -2812,3 +2845,16 @@ config knobs.
 - **refs:** `yadgar/server/tools/adr.py`, `yadgar/server/tools/project.py`, `yadgar/tests/test_adr.py`
 - **wiring:** `adr_add` is a `@_tool(power=True)` function in `yadgar/server/tools/adr.py`, registered via `yadgar/server/tools/__init__.py`. It reads the `<project>-adr-log` wiki page (branch-pinned to the default branch via `branch_hint=default_branch`), scans `## ADR-NNNN:` headers to assign the next sequential ID, then appends the new entry via `wiki_append_section(..., position="new_section_bottom")`. If the log is absent it creates it via `wiki_add(wait=True)`. The `_apply_adr_signal` function in `project.py` is wired at the end of `_project_brief_signals` (after `_apply_rejection_signal`) and appends a `capture_adr` recommended_action when `active_work` was updated more than `ADR_DUE_WARN_HOURS` (default 12h) more recently than the ADR log. The signal is silent when active_work is absent (no session activity).
 - **explanation:** Architecture Decision Records are the durable artefact that links decisions to context and consequences. Without a nudge, ADRs are consistently skipped during active feature work. The `adr_add` tool provides a 10-field structured capture surface (context, decision, rationale, alternatives, consequences, revisit_trigger, supersedes, status, date, title); the `adr_due` heuristic fires the `capture_adr` recommended_action when the gap between last active_work and last ADR update exceeds `ADR_DUE_WARN_HOURS`. ID assignment is sequential from header scan (regex `^## ADR-(\d{4})` re.MULTILINE) so body-text references to external ADR IDs are never mistaken for assigned IDs.
+
+
+### CAP-WIKI-002 — Agent-prompt starter library seed (v5.85 S8)
+
+- **status:** LIVE
+- **category:** mcp-tool
+- **settings:** —
+- **tools:** `seed_agent_prompts`
+- **migrations:** —
+- **bc:** —
+- **refs:** `yadgar/server/tools/agent_prompts.py::seed_agent_prompts`, `yadgar/server/tools/agent_prompts.py::STARTER_PROMPTS`, `yadgar/server/http.py::hook_seed_agent_prompts`, `yadgar/cli/seed.py::_seed_agent_prompts`, `scripts/install/yadgar-setup.sh::_step_seed_agent_prompts`
+- **wiring:** `seed_agent_prompts` is `@_tool(power=True)` in `agent_prompts.py`. It iterates the 4 `STARTER_PROMPTS` constants (patterns: `code-review`, `debug-investigate`, `explore-codebase`, `implement-tdd`), checks each via `_read_agent_prompt(slug)` (create-if-absent), and calls `agent_prompt_save` for absent patterns. TOC and library anchor are managed by `agent_prompt_save`; this function does not duplicate that logic. REST hook `/hooks/seed-agent-prompts` in `http.py` wraps the function for daemon-side execution. CLI: `yadgar seed --agent-prompts` posts to `/hooks/seed-agent-prompts`; dry-run prints without HTTP calls. Install step `_step_seed_agent_prompts` in `yadgar-setup.sh` (step 11/11) waits for daemon, then calls `yadgar seed --agent-prompts`.
+- **explanation:** Bootstraps the agent-prompt library with 4 opinionated dispatch starters so a fresh installation has immediately usable patterns for the most common subagent tasks (code review, debug, codebase exploration, TDD implementation). Idempotent: any pattern already saved is skipped; the TOC and discovery anchor are guaranteed by `agent_prompt_save`'s existing S6 logic, so the seeder never creates duplicates regardless of how many times it runs.

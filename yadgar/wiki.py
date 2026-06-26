@@ -462,6 +462,121 @@ def _collect_headings(lines: list[str], pattern: re.Pattern[str], result: list[s
                 result.append(heading)
 
 
+# ── Auto-linking helpers (v5.85 car #5) ──────────────────────────────────────
+
+
+def _autolink_masked_regions(content: str) -> list[tuple[int, int]]:
+    """Return (start, end) char-offset spans that must NOT receive auto-links.
+
+    Masks: fenced code blocks (``` / ~~~), inline code (`...`), existing
+    [[wikilinks]], and markdown/bare URLs. Auto-link insertion inside any of
+    these would corrupt verbatim content or double-wrap an existing link.
+    """
+    regions: list[tuple[int, int]] = []
+
+    # Fenced code blocks — span from the opening fence line to the closing fence
+    # line (inclusive). Tracks ``` and ~~~ the same way _find_section_headings does.
+    in_fence = False
+    fence_marker = ""
+    pos = 0
+    for line in content.split("\n"):
+        line_start = pos
+        line_end = pos + len(line)
+        stripped = line.lstrip()
+        is_fence = stripped.startswith("```") or stripped.startswith("~~~")
+        if is_fence:
+            marker = stripped[:3]
+            if not in_fence:
+                in_fence = True
+                fence_marker = marker
+                regions.append((line_start, line_end))
+            elif marker == fence_marker:
+                in_fence = False
+                regions.append((line_start, line_end))
+        elif in_fence:
+            regions.append((line_start, line_end))
+        pos = line_end + 1  # +1 for the '\n' removed by split
+
+    # Inline code spans `...` (kept simple: backtick to next backtick).
+    for m in re.finditer(r"`[^`\n]+`", content):
+        regions.append((m.start(), m.end()))
+    # Existing [[wikilinks]] — never wrap inside one.
+    for m in re.finditer(r"\[\[[^\]]+\]\]", content):
+        regions.append((m.start(), m.end()))
+    # Markdown link targets [text](url) and bare URLs.
+    for m in re.finditer(r"\]\([^)]*\)|https?://\S+", content):
+        regions.append((m.start(), m.end()))
+
+    return regions
+
+
+def _autolink_in_masked(start: int, end: int, regions: list[tuple[int, int]]) -> bool:
+    """Return True if [start, end) overlaps any masked region."""
+    return any(start < r_end and end > r_start for r_start, r_end in regions)
+
+
+def _autolink_find_insertions(
+    content: str,
+    title_to_slug: list[tuple[str, str]],
+    existing_links: set[str],
+    self_slug: str,
+    min_title_len: int,
+    max_links: int,
+) -> list[dict]:
+    """Find safe [[slug]] insertion points in content.
+
+    Returns a list of proposal dicts {target, title, offset, length} where
+    offset/length describe the verbatim title span to wrap. At most one
+    insertion per target slug (first eligible occurrence). Respects:
+    fenced/inline code + existing-link masks, word boundaries, min title length,
+    self-link skip, already-linked skip, and a per-page cap.
+
+    title_to_slug must be sorted longest-title-first so a longer title wins over
+    a shorter one that is its substring.
+    """
+    masked = _autolink_masked_regions(content)
+    proposals: list[dict] = []
+    used_slugs: set[str] = set()
+
+    for title, slug in title_to_slug:
+        if len(proposals) >= max_links:
+            break
+        if len(title) < min_title_len:
+            continue
+        if slug == self_slug or slug in existing_links or slug in used_slugs:
+            continue
+        # Verbatim, word-boundary, case-sensitive match.
+        pattern = re.compile(r"\b" + re.escape(title) + r"\b")
+        for m in pattern.finditer(content):
+            if _autolink_in_masked(m.start(), m.end(), masked):
+                continue
+            proposals.append(
+                {
+                    "target": slug,
+                    "title": title,
+                    "offset": m.start(),
+                    "length": m.end() - m.start(),
+                }
+            )
+            used_slugs.add(slug)
+            break  # one insertion per target
+
+    return proposals
+
+
+def _autolink_apply_insertions(content: str, proposals: list[dict]) -> str:
+    """Wrap each proposed span in [[slug]], inserting right-to-left.
+
+    Descending-offset order keeps earlier offsets valid as later spans grow.
+    """
+    out = content
+    for p in sorted(proposals, key=lambda x: x["offset"], reverse=True):
+        start = p["offset"]
+        end = start + p["length"]
+        out = out[:start] + "[[" + p["target"] + "]]" + out[end:]
+    return out
+
+
 @dataclass
 class WikiAddOptions:
     """Optional metadata bundle for WikiStore.add().
@@ -693,18 +808,105 @@ class WikiStore:
         except Exception:
             logger.debug("Wiki vector search failed for query '%s'", query)
 
+    def _collect_wiki_vector_scores_tagged(
+        self, query: str, scores: dict[int, float], max_results: int, include_tag: str
+    ) -> None:
+        """Collect vector scores for pages matching include_tag via SQL pre-filter.
+
+        Used by the include path (query(include_tag=...) when a caller requests tag-targeted
+        retrieval, e.g. recall(tags=["agent-prompt"])).  Skips the HNSW global pool to prevent
+        corpus dilution — uses storage.search_wiki_vectors_tagged() brute-force cosine instead.
+
+        Returns similarity directly (NOT distance) — do NOT apply 1/(1+sim) conversion.
+        """
+        try:
+            query_embedding = self._embeddings.encode_query(query)
+            if query_embedding is not None:
+                vec_results = self._storage.search_wiki_vectors_tagged(
+                    query_embedding, include_tag=include_tag, top_k=max_results * 3
+                )
+                if vec_results:
+                    for page_id, sim in vec_results:
+                        scores[page_id] = scores.get(page_id, 0.0) + 0.6 * sim
+        except Exception:
+            logger.debug(
+                "Wiki tagged vector search failed for query '%s' tag '%s'", query, include_tag
+            )
+
+    def _collect_scores_dispatch(
+        self, query: str, scores: dict[int, float], max_results: int, include_tag: str | None
+    ) -> None:
+        """Dispatch score collection to tagged (include_tag set) or hybrid (default) path.
+
+        Extracted from query() to keep cyclomatic complexity within I13 cap.
+        Include path: SQL pre-filter, vector-only (no FTS, no HNSW dilution).
+        Default path: hybrid FTS + HNSW vector.
+        """
+        if include_tag:
+            self._collect_wiki_vector_scores_tagged(query, scores, max_results, include_tag)
+        else:
+            self._collect_wiki_fts_scores(query, scores, max_results)
+            self._collect_wiki_vector_scores(query, scores, max_results)
+
+    @staticmethod
+    def _tag_filter_pass(
+        page: dict,
+        include_tag: str | None,
+        exclude_tags: list[str] | None,
+        require_any_tags: list[str] | None = None,
+    ) -> bool:
+        """Return True if page passes tag-filter rules, False if it should be dropped.
+
+        Extracted to keep query() post-rank loop within the I13 cyclomatic cap.
+        Consolidates three separate tag-filter checks into one call:
+          - require_any_tags: post-rank include (was the ``tags`` param check in query).
+          - include_tag: S3 pre-filter guard (page must have this exact tag).
+          - exclude_tags: S3 exclusion (page must not have any of these tags).
+
+        Args:
+            page: Wiki page dict (must have a 'tags' key).
+            include_tag: If set, page must have this tag to pass.
+            exclude_tags: If set, page must NOT have any of these tags to pass.
+            require_any_tags: If set, page must have at least one of these tags to pass.
+                              Replaces the existing ``if tags:`` block in query().
+        """
+        page_tags = page.get("tags") or []
+        if require_any_tags and not any(t in page_tags for t in require_any_tags):
+            return False
+        if include_tag and include_tag not in page_tags:
+            return False
+        if exclude_tags and any(t in page_tags for t in exclude_tags):
+            return False
+        return True
+
     @trace_span("wiki.query")
-    def query(
+    def query(  # noqa: PLR0913
         self,
         query: str,
         tags: list[str] | None = None,
         category: str | None = None,
         max_results: int = 5,
+        include_tag: str | None = None,
+        exclude_tags: list[str] | None = None,
     ) -> list[dict]:
         """Hybrid search: FTS + vector, filtered by tags/category.
 
         Combines BM25 keyword scores with cosine similarity scores using
         min-max normalization and reciprocal rank fusion.
+
+        Args:
+            query: Search text.
+            tags: Post-rank include filter — only pages having any of these tags pass.
+                  Used by wiki_query MCP tool for user-facing tag filtering.
+            category: Post-rank category filter — only pages with this category pass.
+            max_results: Maximum results to return.
+            include_tag: Triggers SQL pre-filter path via search_wiki_vectors_tagged.
+                         When set, skips HNSW and FTS entirely — vector-only brute-force
+                         over pages tagged with include_tag (avoids corpus dilution).
+                         Post-rank also enforces this tag.
+            exclude_tags: Post-rank exclude filter — pages having ANY of these tags are
+                          dropped. Used by recall() to suppress agent-prompt pages from
+                          general retrieval.
         """
         # P11: set dynamic span attributes on the active wiki.query span.
         try:
@@ -721,11 +923,9 @@ class WikiStore:
 
         scores: dict[int, float] = {}
 
-        # 1. FTS search with BM25 scores
-        self._collect_wiki_fts_scores(query, scores, max_results)
-
-        # 2. Vector similarity search (embed_query + hnsw)
-        self._collect_wiki_vector_scores(query, scores, max_results)
+        # Dispatch to tagged (include_tag set) or hybrid (default) score collection.
+        # Include path: SQL pre-filter, vector-only; default: hybrid FTS + HNSW vector.
+        self._collect_scores_dispatch(query, scores, max_results, include_tag)
 
         if not scores:
             return []
@@ -737,13 +937,11 @@ class WikiStore:
             page = self._storage.get_wiki_page(page_id)
             if page is None:
                 continue
-            # Filter by tags if provided
-            if tags:
-                page_tags = page.get("tags", [])
-                if not any(t in page_tags for t in tags):
-                    continue
             # Filter by category if provided
             if category and page.get("category") != category:
+                continue
+            # Unified tag filter: require_any_tags (was tags), include_tag, exclude_tags
+            if not self._tag_filter_pass(page, include_tag, exclude_tags, require_any_tags=tags):
                 continue
             page["_retrieval_score"] = score
             results.append(page)
@@ -1022,6 +1220,151 @@ class WikiStore:
                 "format_violation_count": format_violation_count,
             },
         }
+
+    # ── Auto-linking pass (v5.85 car #5) ──────────────────────────────────
+
+    def _autolink_title_map(
+        self, directory: str | None, min_title_len: int
+    ) -> list[tuple[str, str]]:
+        """Build a sorted (title, slug) list for auto-linking.
+
+        Metadata-only (no content load). Directory-scoped to caller dir + global.
+        Drops titles shorter than min_title_len and ambiguous titles (one title
+        mapping to multiple distinct slugs). Sorted longest-title-first so a
+        longer title wins over a shorter substring title.
+        """
+        catalog = self._storage.list_wiki_catalog(directory=directory)
+        by_title: dict[str, set[str]] = {}
+        for row in catalog:
+            title = (row.get("title") or "").strip()
+            slug = row.get("slug") or ""
+            if not title or not slug or len(title) < min_title_len:
+                continue
+            by_title.setdefault(title, set()).add(slug)
+        pairs = [
+            (title, next(iter(slugs)))
+            for title, slugs in by_title.items()
+            if len(slugs) == 1  # drop ambiguous titles
+        ]
+        return sorted(pairs, key=lambda p: len(p[0]), reverse=True)
+
+    def autolink(
+        self,
+        directory: str | None = None,
+        dry_run: bool = True,
+        min_title_len: int = 6,
+        max_links_per_page: int = 20,
+        similarity_threshold: float = 0.70,
+        semantic_guard: bool = True,
+    ) -> dict:
+        """Auto-insert [[slug]] cross-refs by matching other pages' titles in body.
+
+        SAFE BY DEFAULT: dry_run=True returns proposed insertions WITHOUT
+        mutating any page. dry_run=False applies via the add() upsert path,
+        re-syncing crossrefs and bumping versions.
+
+        Guards (all MVP, non-negotiable):
+        - dry_run default — no accidental corpus mutation.
+        - verbatim/fence guard — never links inside code fences, inline code,
+          existing [[...]], or URLs.
+        - length/specificity guard — min_title_len + word-boundary verbatim match
+          (no fuzzy, no mid-word).
+        - similarity guard — when semantic_guard, the target must rank
+          >= similarity_threshold via find_similar_wiki_pages (kills coincidental
+          title collisions).
+        - idempotent — skips targets already in page.links and spans already
+          wrapped; a second run proposes nothing.
+        - no metadata clobber — apply re-passes each page's own category +
+          directory_context + page_type so curated pages never silently move to
+          'global'/'reference'.
+
+        Returns {applied, dry_run, proposals: [{page, target, title}],
+                 pages_changed, links_added}.
+        """
+        title_to_slug = self._autolink_title_map(directory, min_title_len)
+        pages = self._storage.list_wiki_pages(directory=directory)
+
+        proposals_out: list[dict] = []
+        pages_changed = 0
+
+        for page in pages:
+            slug = page.get("slug", "")
+            content = page.get("content", "") or ""
+            existing_links = set(page.get("links", []) or [])
+            page_proposals = _autolink_find_insertions(
+                content,
+                title_to_slug,
+                existing_links,
+                self_slug=slug,
+                min_title_len=min_title_len,
+                max_links=max_links_per_page,
+            )
+            if semantic_guard and page_proposals:
+                page_proposals = self._autolink_filter_by_similarity(
+                    page, page_proposals, similarity_threshold
+                )
+            if not page_proposals:
+                continue
+
+            for p in page_proposals:
+                proposals_out.append({"page": slug, "target": p["target"], "title": p["title"]})
+
+            if not dry_run:
+                self._autolink_write_page(page, content, page_proposals)
+                pages_changed += 1
+
+        return {
+            "applied": (not dry_run) and pages_changed > 0,
+            "dry_run": dry_run,
+            "proposals": proposals_out,
+            "pages_changed": pages_changed,
+            "links_added": len(proposals_out),
+        }
+
+    def _autolink_filter_by_similarity(
+        self, page: dict, proposals: list[dict], threshold: float
+    ) -> list[dict]:
+        """Keep only proposals whose target clears the similarity threshold.
+
+        Uses find_similar_wiki_pages on the source page; a proposed target is
+        accepted only if it appears in the similar set. threshold<=0 disables
+        the gate (every proposal passes) — used by tests for determinism.
+        """
+        if threshold <= 0.0:
+            return proposals
+        similar = self.find_similar_wiki_pages(
+            page.get("title", ""),
+            page.get("content", "") or "",
+            branch=page.get("branch"),
+            threshold=threshold,
+            top_k=50,
+            exclude_slug=page.get("slug"),
+        )
+        allowed = {s["slug"] for s in similar}
+        return [p for p in proposals if p["target"] in allowed]
+
+    def _autolink_write_page(self, page: dict, content: str, proposals: list[dict]) -> None:
+        """Apply insertions and upsert WITHOUT clobbering page metadata.
+
+        Re-passes the page's own category, directory_context, page_type, branch,
+        and confidence so the add() upsert never resets them to defaults.
+        Tags the page 'auto-linked' so editors can see machine edits.
+        """
+        new_content = _autolink_apply_insertions(content, proposals)
+        if new_content == content:
+            return
+        self.add(
+            title=page.get("title", ""),
+            content=new_content,
+            category=page.get("category", "reference"),
+            tags=["auto-linked"],
+            opts=WikiAddOptions(
+                confidence=page.get("confidence", "medium"),
+                branch=page.get("branch"),
+                directory_context=page.get("directory_context"),
+                page_type=page.get("page_type"),
+            ),
+        )
 
     # ── Versioning API ────────────────────────────────────────────────────
 

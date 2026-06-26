@@ -20,6 +20,9 @@ directory_context is always the repo root absolute path, never 'global'.
 
 from __future__ import annotations
 
+import hashlib as _hashlib
+from pathlib import Path as _Path
+
 from yadgar.repo_wiki.scanner import ClassRecord, FunctionRecord, ModuleRecord
 
 # Slug prefix for module pages.  Choose "mod-" to match existing wiki conventions.
@@ -90,9 +93,22 @@ def generate_module_page(rec: ModuleRecord, directory_context: str) -> dict:
     directory_context: absolute path to the repo root — used as the
     directory_context stamp so recall scopes pages to the correct project.
     This is the key fix vs. the external skill which defaulted to 'global'.
+
+    v5.85.0 (car #36): each page dict now carries ``hash`` = SHA256(file bytes)
+    and ``source_file`` = absolute path to the module file.  These fields allow
+    the staleness checker to compare against live file contents via DB lookup
+    instead of only scanning .local-review/wiki/*.md on disk.
     """
     slug = _slugify(rec.module_name)
     title = rec.module_name
+
+    # Compute source hash — same bytes path as checker's _compute_source_hash file branch.
+    abs_path = str((_Path(directory_context) / rec.module_path).resolve())
+    try:
+        file_bytes = _Path(abs_path).read_bytes()
+        file_hash = _hashlib.sha256(file_bytes).hexdigest()
+    except OSError:
+        file_hash = ""
 
     # --- Build content ---
     sections: list[str] = []
@@ -112,6 +128,8 @@ def generate_module_page(rec: ModuleRecord, directory_context: str) -> dict:
             "category": "code",
             "page_type": "code",
             "directory_context": directory_context,
+            "hash": file_hash,
+            "source_file": abs_path,
         }
 
     # Module docstring
@@ -162,6 +180,8 @@ def generate_module_page(rec: ModuleRecord, directory_context: str) -> dict:
         "category": "code",
         "page_type": "code",
         "directory_context": directory_context,
+        "hash": file_hash,
+        "source_file": abs_path,
     }
 
 

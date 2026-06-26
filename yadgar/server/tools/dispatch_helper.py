@@ -82,8 +82,9 @@ def agent_dispatch_prelude(
 
     Args:
         pattern:        Task pattern identifier used to look up agent_prompt
-                        (e.g. "dispatch-fix-bug"). Passes directly to
-                        agent_prompt_get(). Pass "" to skip prompt lookup.
+                        (e.g. "dispatch-fix-bug"). Resolved to the deterministic
+                        slug agent-prompt-<pattern> via the internal slug-read.
+                        Pass "" to skip prompt lookup.
         task_topic:     Short description of the task — injected as a recall hint
                         so the subagent knows which yadgar memories to surface.
         storage:        StorageEngine instance (injected for testing; otherwise
@@ -108,12 +109,17 @@ def agent_dispatch_prelude(
 
     sections: list[str] = [_YADGAR_CONTRACT]
 
-    # Optional: latest agent_prompt for pattern
-    if pattern:
-        try:
-            from yadgar.server.tools.agent_prompts import agent_prompt_get  # noqa: PLC0415
+    # Optional: latest agent_prompt for pattern.
+    # v5.85 S5: deterministic internal slug-read (the agent_prompt_get tool was
+    # removed). This is an exact-key read, NOT semantic recall.
+    # S6 kill-gate: AGENT_PROMPT_LIBRARY_ENABLED=False → inject no prompt (inert).
+    from yadgar.config import get_settings  # noqa: PLC0415
 
-            prompt_result = agent_prompt_get(pattern, storage=storage)
+    if pattern and get_settings().AGENT_PROMPT_LIBRARY_ENABLED:
+        try:
+            from yadgar.server.tools.agent_prompts import _read_agent_prompt  # noqa: PLC0415
+
+            prompt_result = _read_agent_prompt(f"agent-prompt-{pattern}", storage=storage)
             if prompt_result and prompt_result.get("content"):
                 raw_content = prompt_result["content"]
                 version = prompt_result.get("version", "?")
@@ -124,7 +130,7 @@ def agent_dispatch_prelude(
                     snippet = raw_content[:available]
                     sections.append(f"## Agent-prompt [{pattern} v{version}]\n\n{snippet}")
         except Exception as _e:
-            logger.debug("agent_dispatch_prelude: agent_prompt_get failed: %s", _e)
+            logger.debug("agent_dispatch_prelude: _read_agent_prompt failed: %s", _e)
 
     # Recall hint
     if task_topic:

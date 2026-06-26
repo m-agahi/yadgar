@@ -506,8 +506,8 @@ class TestWriteBackNudgeInStopHook:
         # ADR capture is the primary write-back: it names the canonical ADR-log
         # page, the capture verb, and the append mechanism.
         assert "ADR CAPTURE" in reason, f"Prompt must drive ADR capture, got: {reason[:400]}"
-        assert "-adr-log" in reason and "wiki_append_section" in reason, (
-            f"Prompt must reference the ADR-log page + append mechanism, got: {reason[:400]}"
+        assert "-adr-log" in reason and "adr_add" in reason, (
+            f"Prompt must reference the ADR-log page + adr_add tool, got: {reason[:400]}"
         )
         # The removed stale-regen path must NOT have crept back in.
         assert "wiki_refresh_stale" not in reason, (

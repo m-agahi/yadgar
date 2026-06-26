@@ -50,6 +50,10 @@ PAGE_TYPES: dict[str, list[str]] = {
         "Summary",
         "Findings",
     ],
+    "agent_prompt": [
+        "Purpose",
+        "Prompt",
+    ],
 }
 
 

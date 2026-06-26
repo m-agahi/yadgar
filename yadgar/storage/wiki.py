@@ -158,6 +158,15 @@ class _WikiMixin:
             page_set += ", page_type = $page_type, wiki_schema_version = $wiki_schema_version"
             params["page_type"] = page["page_type"]
             params["wiki_schema_version"] = page.get("wiki_schema_version", 1)
+        # v5.85.0 (car #36): hash + source_file for built-in module pages (page_type='code').
+        # These fields allow the staleness checker to compare stored hash vs live file contents
+        # via DB query instead of disk scan only.
+        if page.get("hash") is not None:
+            page_set += ", hash = $hash"
+            params["hash"] = page["hash"]
+        if page.get("source_file") is not None:
+            page_set += ", source_file = $source_file"
+            params["source_file"] = page["source_file"]
 
         # Single compound transaction: wiki_page + wiki_page_version version=1.
         # I1: no LLM/embed inside txn — pure DB writes only.
@@ -677,6 +686,28 @@ class _WikiMixin:
             results.append((pid, dist))
             if len(results) >= top_k:
                 break
+        return results
+
+    @trace_span("storage.wiki.search_wiki_vectors_tagged")
+    def search_wiki_vectors_tagged(
+        self, query_embedding: bytes, include_tag: str, top_k: int = 5
+    ) -> list[tuple[int, float]]:
+        """Brute-force cosine over ``tags CONTAINS $tag`` rows. Returns (page_id, similarity).
+        Tag-scoped brute-force vector search (any tag). No HNSW — avoids dilution.
+        Returns similarity NOT distance — accumulate directly, skip 1/(1+distance).
+        """
+        floats = self._bytes_to_floats(query_embedding)
+        rows = self._q(
+            "SELECT id, vector::similarity::cosine(embedding, $qv) AS sim "
+            "FROM wiki_page WHERE tags CONTAINS $tag AND embedding IS NOT NONE "
+            "ORDER BY sim DESC LIMIT $lim",
+            {"qv": floats, "tag": include_tag, "lim": top_k},
+        )
+        results: list[tuple[int, float]] = []
+        for row in rows:
+            pid = self._extract_id(row.get("id"))
+            sim = float(row.get("sim", 0.0))
+            results.append((pid, sim))
         return results
 
     # ------------------------------------------------------------------ Embedding backfill helpers

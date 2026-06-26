@@ -823,6 +823,50 @@ def wiki_lint() -> dict:
 
 
 @_tool(power=True)
+def wiki_autolink(
+    directory: str | None = None,
+    dry_run: bool = True,
+    min_title_len: int = 6,
+    max_links_per_page: int = 20,
+    similarity_threshold: float = 0.70,
+    semantic_guard: bool = True,
+) -> dict:
+    """Auto-insert [[slug]] cross-refs by matching other pages' titles in body text.
+
+    SAFE BY DEFAULT — dry_run=True returns the proposed [[slug]] insertions
+    WITHOUT mutating any page. Run dry-run first, review the proposals, then call
+    again with dry_run=False to apply via the wiki upsert path (re-syncs
+    crossrefs, bumps versions, tags changed pages 'auto-linked').
+
+    Guards (all enforced, non-negotiable):
+    - dry_run default (no accidental corpus mutation)
+    - verbatim guard — never links inside code fences, inline code, existing
+      [[...]], or URLs
+    - length/specificity guard — min_title_len + word-boundary verbatim match
+    - similarity guard — semantic_guard requires the target to clear
+      similarity_threshold (kills coincidental title collisions)
+    - idempotent — skips already-linked targets; a second run proposes nothing
+    - no metadata clobber — each page keeps its own category/directory_context
+
+    directory: absolute project path; scopes both the title map and the pages
+        scanned to that dir + 'global'.
+
+    Returns {applied, dry_run, proposals:[{page,target,title}], pages_changed,
+             links_added}.
+    """
+    assert _st._wiki is not None, "WikiStore not initialized"
+    _dir = (directory or "").strip().rstrip("/") or None
+    return _st._wiki.autolink(
+        directory=_dir,
+        dry_run=dry_run,
+        min_title_len=min_title_len,
+        max_links_per_page=max_links_per_page,
+        similarity_threshold=similarity_threshold,
+        semantic_guard=semantic_guard,
+    )
+
+
+@_tool(power=True)
 def wiki_drafts() -> list[dict]:
     """List all pending wiki drafts awaiting review.
 

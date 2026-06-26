@@ -220,6 +220,33 @@ Without these numbers, picking an option is gut-feeling. With them, decision is 
 
 ## Option B — concrete ship plan (chosen 2026-06-25, improvement-train #29 car #4)
 
+> **AUDIT 2026-06-26 (v5.85 train, car #4) — verified-current; one FLAG resolved,
+> one claim corrected.**
+> - **FLAG at §"Config knob" lines ~257-258 (`settings` threaded to
+>   `_try_st_cross_encoder`?) → RESOLVED YES.** `_try_st_cross_encoder` reads
+>   `settings.CROSS_ENCODER_MODEL` at `yadgar/backend/ml_client.py:428`; `settings`
+>   is stored on the client at `:339` (`self._settings`) and re-read at `:415`. The
+>   bare-`os.getenv` fallback path is therefore NOT needed; use the I25 three-way
+>   Settings field. (`CROSS_ENCODER_MODEL` defined `config.py:162`,
+>   `CROSS_ENCODER_ENABLED` `:163`.)
+> - **CORRECTION — "consistent with the existing knobs" (line ~250) is MISLEADING.**
+>   The existing `CROSS_ENCODER_*` fields are **NOT in `config_registry.py`**
+>   (`grep -c CROSS_ENCODER config_registry.py` → 0). They pass the I25 three-way
+>   sync test only via the **grandfathered env-only allowlist**
+>   (`tests/config_env_only_allowlist.txt`). A *new* `CROSS_ENCODER_BACKEND` knob
+>   will **NOT** inherit that grandfathering — it must be added to
+>   `config_registry.py` explicitly (a `ConfigEntry(...)` row) or
+>   `test_config_three_way_sync.py` will FAIL. So the I25 step is "config.py +
+>   FIELD_META + **a real registry row**", not "follow the existing CE knobs"
+>   (which dodge the registry). This is the one place the plan understates the work.
+> - **Everything else verified accurate:** load path at `ml_client.py:434`,
+>   `predict()` at `:446`, GTE primary + FlashRank fallback unchanged, the <2%
+>   offline A/B gate is the right gate. **Effort M, Risk M — unchanged.**
+> - **How this goes wrong like C1/C2:** the trap here is the registry omission — if
+>   the implementer copies the grandfathered CE knobs' pattern (no registry row),
+>   the three-way-sync test breaks and looks like an unrelated failure. The corrected
+>   note above pre-empts it.
+
 User direction: ship int8 CE quantization. This section is the buildable spec; the
 menu above is the rationale.
 
@@ -254,8 +281,12 @@ Add ONE knob. Two placements, mutually exclusive:
   `os.getenv("YADGAR_CROSS_ENCODER_BACKEND")` in `ml_client` — but then it must NOT
   be added to the I25 three-way (it would fail the sync test as an orphan). The audit
   found `ml_client` DOES receive `settings`, so the I25 field is the right call.
-  **[FLAG: confirm `settings` is threaded to `_try_st_cross_encoder` at runtime
-  before finalizing.]**
+  **[FLAG RESOLVED 2026-06-26: `settings` IS threaded —
+  `ml_client.py:428` reads `settings.CROSS_ENCODER_MODEL`, stored at `:339`. Use the
+  I25 Settings field; the bare-getenv fallback is unnecessary. NOTE: the new
+  `CROSS_ENCODER_BACKEND` knob needs an explicit `config_registry.py` row — the
+  existing CE knobs are grandfathered via the env-only allowlist and a new knob will
+  not inherit that, see the AUDIT note at the top of this section.]**
 
 ### TDD outline (failing first)
 - `test_ce_backend_default_is_st` — assert `Settings().CROSS_ENCODER_BACKEND == "st"`

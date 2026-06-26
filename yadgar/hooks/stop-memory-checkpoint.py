@@ -32,12 +32,10 @@ triage anything away under length pressure, drop maintenance, NEVER capture.
 1. ADR CAPTURE (always run; the Yadgar wiki is the source of truth — no file,
    works for non-git projects too).
    Page: slug "{project}-adr-log", tag "adr", scoped to this directory.
-   - Find it: wiki_read("{project}-adr-log", directory="{directory}", branch_hint="{default_branch}"). If absent,
-     create with wiki_add(title="{project} ADR Log", content="<one-line header>",
-     tags=["adr"], directory="{directory}", branch_hint="{default_branch}", wait=True).
-     The ADR log is project-canonical — it lives on the default branch ({default_branch}),
-     never a feature branch. NOTE: wiki_add commits directly — do NOT call wiki_approve
-     (it only promotes drafts and errors on a live page).
+   - Read existing ADRs FIRST: wiki_read("{project}-adr-log", directory="{directory}",
+     branch_hint="{default_branch}"). If the page is absent the log is empty — no
+     prior ADRs to dedup against. Do NOT create the log manually; adr_add handles
+     creation automatically.
    - Scan THIS session for durable decisions since the last checkpoint.
      KEEP (precision over recall): a clear durable decision — architecture, a
      tool/config choice, an approach committed-to, a scope cut; a conclusion we
@@ -46,25 +44,26 @@ triage anything away under length pressure, drop maintenance, NEVER capture.
      SKIP: routine work (git push, branch cleanup, progress/status checks),
      in-flux or abandoned ideas, pure status ("tests pass"), routine corrections
      (typos, lint).
-   - Read existing entries FIRST; append ONLY new decisions (dedup by decision,
-     not wording).
-   - Entry schema — ALL fields MANDATORY (write "none"/"n/a" if truly empty,
-     never omit, so it stays machine-parseable):
-       ADR-NNNN — <title>   (NNNN = 4-digit zero-padded, project-sequential: ADR-0001, ADR-0002, …)
-       status:          open | accepted | superseded | rejected | deprecated
-       date:            <ISO date>
-       context:         <what triggered this decision>
-       decision:        <what was decided>
-       rationale:       <why — the reasoning>
-       alternatives:    <options considered + why rejected; "none">
-       consequences:    <trade-offs / costs / caveats / flags>
-       revisit_trigger: <condition to reconsider>
-       supersedes:      ADR-NNNN | none
-     A decision still unresolved this session → status: open, with the pending
-     question in revisit_trigger; confirm/close it in a later checkpoint.
-   - Append via wiki_append_section("{project}-adr-log", section_heading="ADR-NNNN: <title>",
-     content=<the fields above>, directory="{directory}", branch_hint="{default_branch}",
-     wait=True). Verify with wiki_history("{project}-adr-log", directory="{directory}").
+   - Dedup by decision, NOT by wording: if the substance of a decision is already
+     logged in the ADRs you read above, SKIP it — even if the wording differs.
+     Only call adr_add for genuinely new decisions.
+   - For each new decision call:
+       adr_add(
+           directory="{directory}",
+           title=<short human-readable title>,
+           status=<open|accepted|superseded|rejected|deprecated>,
+           date=<ISO date>,
+           context=<what triggered this decision>,
+           decision=<what was decided>,
+           rationale=<why — the reasoning>,
+           alternatives=<options considered + why rejected; "none" if none>,
+           consequences=<trade-offs / costs / caveats / flags; "none" if none>,
+           revisit_trigger=<condition to reconsider; "none" if none>,
+           supersedes=<ADR-NNNN or "none">,
+       )
+     adr_add assigns the ADR-NNNN id, formats, and branch-pins the entry.
+     ALL fields mandatory — write "none" if truly empty (keeps it machine-parseable).
+     A decision still unresolved this session → status: open, revisit_trigger = pending question.
 
 2. STRUCTURAL WRITE-BACK (always consider). Durable repo-structure / convention /
    module-purpose findings from THIS session → the EXISTING wiki page that owns

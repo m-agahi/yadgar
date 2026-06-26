@@ -197,6 +197,14 @@ FIELD_META: dict[str, dict[str, str]] = {
         "desc": "Cross-encoder score weight in blend (retrieval gets 1-this)",
         "section": "reranking",
     },
+    "cross_encoder_backend": {
+        "desc": (
+            "Cross-encoder inference backend: 'st' (fp32 torch, default) or "
+            "'onnx-int8' (opt-in quantized ONNX, requires onnxruntime). "
+            "Default 'st' preserves existing behavior."
+        ),
+        "section": "reranking",
+    },
     "gte_reranker_enabled": {
         "desc": "Enable GTE-Reranker (ModernBERT-based)",
         "section": "reranking",
@@ -1007,6 +1015,16 @@ FIELD_META: dict[str, dict[str, str]] = {
         ),
         "section": "update",
     },
+    # v5.85 car #6 — Agent-prompt Tier-1 passive library (Phase 1) kill-gate
+    "agent_prompt_library_enabled": {
+        "desc": (
+            "Enable the agent-prompt Tier-1 passive library (default true). "
+            "When true, agent-prompt pages are retrievable via recall(type='wiki', "
+            "tags=['agent-prompt']) and the save/dispatch surface is active. "
+            "When false, the library is intended to be inert."
+        ),
+        "section": "agent_prompt_library",
+    },
     # v5.62.0 — recall quality floor
     "recall_quality_floor": {
         "desc": (
@@ -1094,6 +1112,7 @@ SECTION_TITLES: dict[str, str] = {
     "stats_cache": "Stats Cache (v5.51.0)",
     "recall_quality": "Recall Quality Floor (v5.62.0)",
     "unified_recall": "Unified Scoped Recall (v6 T6)",
+    "agent_prompt_library": "Agent-Prompt Passive Library (v5.85)",
 }
 
 # Ordered list of sections for deterministic output

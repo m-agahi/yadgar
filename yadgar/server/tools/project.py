@@ -1676,6 +1676,29 @@ def _build_adr_log(resolved: str) -> dict:
     return {"slug": slug, "latest_ids": latest_ids}
 
 
+def _build_agent_prompt_toc(storage) -> dict:
+    """Build the agent_prompt_toc field for restore mode (S6 discovery surface).
+
+    GLOBAL (not per-project): reads the fixed slug `agent-prompt-toc` (saved with
+    directory_context='global'), so it surfaces in EVERY project's restore.
+    Returns a cheap metadata-only dict: slug + capped pattern list (no body) to
+    keep the restore token budget safe. Graceful on any error → empty patterns.
+    """
+    from yadgar.server.tools.agent_prompts import (  # noqa: PLC0415
+        _TOC_ROW_RE,
+        _TOC_SLUG,
+    )
+
+    patterns: list[str] = []
+    try:
+        page = storage.get_wiki_page_by_slug(_TOC_SLUG)
+        if page and page.get("content"):
+            patterns = [m.group("pattern") for m in _TOC_ROW_RE.finditer(page["content"])][:20]
+    except Exception:
+        patterns = []
+    return {"slug": _TOC_SLUG, "patterns": patterns}
+
+
 def _project_brief_restore(
     resolved: str,
     mode: str,
@@ -1683,7 +1706,7 @@ def _project_brief_restore(
     checkpoint_rows: list,
 ) -> dict:
     """Build restore mode payload (<800 tokens)."""
-    return {
+    out = {
         "_resolved_directory": resolved,
         "_mode": mode,
         "top_anchors": _build_anchor_rows_restore(storage, resolved),
@@ -1697,6 +1720,11 @@ def _project_brief_restore(
         # car #13: ADR log first-class in restore context (slug + up to 3 latest IDs).
         "adr_log": _build_adr_log(resolved),
     }
+    # S6: surface the global agent-prompt TOC — gated by AGENT_PROMPT_LIBRARY_ENABLED.
+    # Flag-False suppresses the surface entirely (library is inert).
+    if get_settings().AGENT_PROMPT_LIBRARY_ENABLED:
+        out["agent_prompt_toc"] = _build_agent_prompt_toc(storage)
+    return out
 
 
 def _project_brief_catalog_full(ctx: dict) -> dict:
@@ -2000,6 +2028,10 @@ _stale_count_cache: dict[str, tuple[int, float]] = {}
 def _is_wiki_page_stale(md_path: Path, yaml_mod) -> bool:
     """Return True if a single .md wiki page has hash drift vs its source files.
 
+    External fn/index pages (entity_id: fn:* or api:*) are classified
+    'external-sourced, not tracked' — the checker cannot reproduce their
+    per-function or IR-based hash, so they must not be flagged stale.
+
     Extracted from _scan_stale_wiki_slugs to reduce cyclomatic complexity (I13).
     Never raises — returns False on any read/parse error.
     """
@@ -2012,6 +2044,12 @@ def _is_wiki_page_stale(md_path: Path, yaml_mod) -> bool:
     fm = _parse_frontmatter(raw, yaml_mod)
     if fm is None:
         return False
+
+    # External fn/index pages: entity_id starts with "fn:" or "api:" — not tracked.
+    entity_id = fm.get("entity_id", "")
+    if entity_id.startswith("fn:") or entity_id.startswith("api:"):
+        return False  # external-sourced, not tracked
+
     stored_hash = fm.get("hash") or fm.get("sha256") or ""
     # Real repo-wiki pages store `source_file` (SINGULAR, one path string that
     # may be a file OR a directory). Older fixtures use `source_files`/`sources`.
@@ -2025,7 +2063,14 @@ def _is_wiki_page_stale(md_path: Path, yaml_mod) -> bool:
 
 
 def _scan_stale_wiki_slugs(directory: str) -> list[str]:
-    """Pure side-effect-free scan of .local-review/wiki/*.md for hash-drift.
+    """Pure side-effect-free scan of wiki pages for hash-drift.
+
+    Checks both:
+    1. DB-stored built-in code pages (page_type='code') via _scan_stale_wiki_slugs_db.
+    2. Disk .local-review/wiki/*.md files (for externally-authored pages) via disk scan.
+
+    For disk-scanned pages, external fn/index pages (entity_id: fn:* or api:*) are
+    classified 'external-sourced, not tracked' and excluded from stale results.
 
     Returns list of stale slugs.  Does NOT write a queue file, does NOT detect
     branch — callers that need those concerns use _wiki_refresh_stale_impl.
@@ -2037,15 +2082,29 @@ def _scan_stale_wiki_slugs(directory: str) -> list[str]:
     except ImportError:
         _yaml = None
 
+    # DB path: built-in code pages (car #36 store bridge)
+    db_stale = _scan_stale_wiki_slugs_db(directory)
+
+    # Disk path: externally-authored pages (keep as fallback)
     wiki_dir = Path(directory) / ".local-review" / "wiki"
     if not wiki_dir.exists():
-        return []
+        return db_stale
 
-    return [
+    disk_stale = [
         md_path.stem
         for md_path in wiki_dir.glob("*.md")
         if md_path.exists() and _is_wiki_page_stale(md_path, _yaml)
     ]
+
+    # Merge, dedup (DB slugs take precedence — disk scan may overlap on module pages
+    # that have BOTH a DB entry and a .local-review file from an older skill run)
+    seen: set[str] = set(db_stale)
+    result = list(db_stale)
+    for slug in disk_stale:
+        if slug not in seen:
+            seen.add(slug)
+            result.append(slug)
+    return result
 
 
 def _compute_stale_wiki_count(resolved: str) -> int:
@@ -2186,6 +2245,50 @@ def _hash_directory_manifest(directory: Path, h, hashlib_mod) -> bool:
         h.update(b"\0")
         any_file = True
     return any_file
+
+
+def _scan_stale_wiki_slugs_db(directory: str) -> list[str]:
+    """Scan DB-stored wiki pages with page_type='code' for hash drift.
+
+    For each built-in code page in the DB scoped to ``directory``:
+      - Read stored ``hash`` + ``source_file`` fields.
+      - Compute live SHA256(source file bytes) via _compute_source_hash.
+      - If stored hash != live hash, mark page stale.
+
+    Returns list of stale slugs. Never raises.
+    This is the store bridge (car #36): checker reads DB pages (not disk) for
+    built-in code pages (page_type='code').
+    """
+    import hashlib as _hl  # noqa: PLC0415
+
+    try:
+        from yadgar.server.lifecycle import _get_storage  # noqa: PLC0415
+
+        storage = _get_storage()
+    except Exception:
+        return []
+
+    try:
+        # Query pages with page_type='code' scoped to this directory
+        rows = storage._q(
+            "SELECT slug, hash, source_file FROM wiki_page "
+            "WHERE page_type = 'code' AND directory_context = $dir",
+            {"dir": directory},
+        )
+    except Exception:
+        return []
+
+    stale = []
+    for row in rows:
+        stored_hash = row.get("hash") or ""
+        source_file = row.get("source_file") or ""
+        slug = row.get("slug") or ""
+        if not stored_hash or not source_file or not slug:
+            continue
+        current_hash = _compute_source_hash([source_file], _hl)
+        if (current_hash or stored_hash) and current_hash != stored_hash:
+            stale.append(slug)
+    return stale
 
 
 def _wiki_refresh_stale_impl(
