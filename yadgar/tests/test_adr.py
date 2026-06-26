@@ -495,3 +495,134 @@ class TestAdrDueSignal:
         assert "adr_add" in suggested, (
             f"suggested_call should contain 'adr_add', got: {suggested!r}"
         )
+
+
+class TestAgentPromptSignal:
+    """Tests for _apply_agent_prompt_signal (ADR-0007 agent-prompt capture nudge).
+
+    Mirrors _apply_adr_signal: activity-gated, freshness-gated, but keyed on the
+    GLOBAL agent-prompt TOC page (`agent-prompt-toc`) instead of the ADR log, and
+    HARD-gated on AGENT_PROMPT_LIBRARY_ENABLED (silent when the library is off).
+    """
+
+    def _make_mock_storage(self, toc_ts: float | None = None, active_work_ts: float | None = None):
+        """Mock storage with configurable TOC/active_work timestamps.
+
+        active_work_ts: unix timestamp for _active_work memory (or None = not found)
+        toc_ts: unix timestamp for the agent-prompt-toc wiki page (or None = absent)
+        """
+        mock = MagicMock()
+
+        def mock_q(query, params=None):
+            params = params or {}
+            slug = params.get("slug", "")
+            if "agent-prompt-toc" in slug:
+                if toc_ts is None:
+                    return []
+                return [{"updated_at": toc_ts}]
+            if "_active_work" in query or "active_work" in query:
+                if active_work_ts is None:
+                    return []
+                return [{"created_at": active_work_ts}]
+            return []
+
+        mock._q.side_effect = mock_q
+        return mock
+
+    def test_fires_when_active_work_recent_but_toc_stale(self):
+        """capture_agent_prompt fires when active_work is recent but the TOC is stale."""
+        from yadgar.server.tools.project import _apply_agent_prompt_signal
+
+        now = time.time()
+        storage = self._make_mock_storage(
+            toc_ts=now - 25 * 3600,
+            active_work_ts=now - 0.5 * 3600,
+        )
+        actions: list = []
+        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+            mock_settings.return_value.ADR_DUE_WARN_HOURS = 12.0
+            mock_settings.return_value.AGENT_PROMPT_LIBRARY_ENABLED = True
+            _apply_agent_prompt_signal("/tmp/testproject", storage, actions)
+        assert len(actions) == 1, f"Expected 1 action, got: {actions}"
+        assert actions[0]["action"] == "capture_agent_prompt", (
+            f"Expected action='capture_agent_prompt', got: {actions[0]}"
+        )
+
+    def test_silent_when_toc_fresh(self):
+        """No capture_agent_prompt when the TOC was updated recently."""
+        from yadgar.server.tools.project import _apply_agent_prompt_signal
+
+        now = time.time()
+        storage = self._make_mock_storage(
+            toc_ts=now - 1 * 3600,
+            active_work_ts=now - 0.5 * 3600,
+        )
+        actions: list = []
+        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+            mock_settings.return_value.ADR_DUE_WARN_HOURS = 12.0
+            mock_settings.return_value.AGENT_PROMPT_LIBRARY_ENABLED = True
+            _apply_agent_prompt_signal("/tmp/testproject", storage, actions)
+        fired = [a for a in actions if a.get("action") == "capture_agent_prompt"]
+        assert len(fired) == 0, f"Expected no nudge when TOC is fresh, got: {fired}"
+
+    def test_silent_when_no_activity(self):
+        """No capture_agent_prompt when active_work is absent (no session activity)."""
+        from yadgar.server.tools.project import _apply_agent_prompt_signal
+
+        now = time.time()
+        storage = self._make_mock_storage(
+            toc_ts=now - 48 * 3600,
+            active_work_ts=None,
+        )
+        actions: list = []
+        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+            mock_settings.return_value.ADR_DUE_WARN_HOURS = 12.0
+            mock_settings.return_value.AGENT_PROMPT_LIBRARY_ENABLED = True
+            _apply_agent_prompt_signal("/tmp/testproject", storage, actions)
+        fired = [a for a in actions if a.get("action") == "capture_agent_prompt"]
+        assert len(fired) == 0, f"Expected no nudge when active_work absent, got: {fired}"
+
+    def test_silent_when_library_disabled(self):
+        """KILL-GATE: AGENT_PROMPT_LIBRARY_ENABLED=False → fully silent, even when
+        every other trigger condition is met."""
+        from yadgar.server.tools.project import _apply_agent_prompt_signal
+
+        now = time.time()
+        # Conditions that WOULD fire if enabled: recent activity, stale TOC.
+        storage = self._make_mock_storage(
+            toc_ts=now - 25 * 3600,
+            active_work_ts=now - 0.5 * 3600,
+        )
+        actions: list = []
+        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+            mock_settings.return_value.ADR_DUE_WARN_HOURS = 12.0
+            mock_settings.return_value.AGENT_PROMPT_LIBRARY_ENABLED = False
+            _apply_agent_prompt_signal("/tmp/testproject", storage, actions)
+        fired = [a for a in actions if a.get("action") == "capture_agent_prompt"]
+        assert len(fired) == 0, (
+            f"KILL-GATE breached: nudge fired with library disabled, got: {fired}"
+        )
+
+    def test_suggested_call_names_agent_prompt_save(self):
+        """When it fires, suggested_call is a valid agent_prompt_save call."""
+        from yadgar.server.tools.project import _apply_agent_prompt_signal
+
+        now = time.time()
+        storage = self._make_mock_storage(
+            toc_ts=now - 25 * 3600,
+            active_work_ts=now - 0.5 * 3600,
+        )
+        actions: list = []
+        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+            mock_settings.return_value.ADR_DUE_WARN_HOURS = 12.0
+            mock_settings.return_value.AGENT_PROMPT_LIBRARY_ENABLED = True
+            _apply_agent_prompt_signal("/tmp/testproject", storage, actions)
+        assert len(actions) == 1
+        suggested = actions[0].get("suggested_call", "")
+        # Must name the tool and carry the three required args (pattern/content/directory).
+        assert "agent_prompt_save" in suggested, (
+            f"suggested_call should contain 'agent_prompt_save', got: {suggested!r}"
+        )
+        assert "directory=" in suggested and "pattern=" in suggested and "content=" in suggested, (
+            f"suggested_call must include pattern/content/directory, got: {suggested!r}"
+        )

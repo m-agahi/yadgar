@@ -522,7 +522,7 @@ FIELD_META: dict[str, dict[str, str]] = {
         "section": "active_work_watchdog",
     },
     "signals_token_budget_soft": {
-        "desc": "Token-budget upper bound for signals mode payload (default 350; raise if new action types added)",
+        "desc": "Token-budget upper bound for signals mode payload (default 400; raise if new action types added)",
         "section": "project_brief",
     },
     # v5.84.0 car #12: ADR nudge threshold

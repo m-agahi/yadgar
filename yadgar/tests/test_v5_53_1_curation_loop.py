@@ -562,3 +562,33 @@ class TestWriteBackNudgeInStopHook:
         assert "wiki_history" in reason or "wiki_diff" in reason, (
             f"Prompt must mention wiki_history or wiki_diff for verification, got: {reason[:400]}"
         )
+
+    def test_prompt_contains_agent_prompt_capture_step(self, tmp_path):
+        """Block reason must drive the agent-prompt capture step (ADR-0007 capture loop).
+
+        The capture loop mirrors the ADR step: scan THIS session for a reusable
+        SUBAGENT DISPATCH PROMPT and persist it via agent_prompt_save so the
+        library grows. The step names the capture trigger + the tool.
+        """
+        transcript = self._make_transcript(tmp_path, 25)
+        state_dir = tmp_path / ".yadgar"
+        state_dir.mkdir()
+
+        with patch.dict(os.environ, {"HOME": str(tmp_path)}):
+            result = self._run_hook(
+                self._HOOK_PATH,
+                {
+                    "session_id": "sess-agent-prompt-1",
+                    "transcript_path": str(transcript),
+                    "stop_hook_active": False,
+                },
+            )
+
+        assert result.get("decision") == "block"
+        reason = result.get("reason", "")
+        assert "AGENT-PROMPT CAPTURE" in reason, (
+            f"Prompt must include the agent-prompt capture step, got: {reason[:600]}"
+        )
+        assert "agent_prompt_save" in reason, (
+            f"Prompt must name the agent_prompt_save tool, got: {reason[:600]}"
+        )

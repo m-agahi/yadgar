@@ -1494,6 +1494,110 @@ def _apply_adr_signal(resolved: str, storage, actions: list) -> None:
         return
 
 
+def _get_agent_prompt_toc_updated_at(storage, resolved: str) -> float | None:
+    """Return the global agent-prompt TOC page updated_at as a unix timestamp float.
+
+    The TOC (slug `agent-prompt-toc`, directory_context='global') is upserted on
+    EVERY agent_prompt_save, so its updated_at is a faithful "library last grew"
+    signal.  Returns None when the page is absent or the timestamp is unparseable.
+    Same pattern as _get_adr_log_updated_at.
+    """
+    try:
+        rows = storage._q(
+            "SELECT updated_at FROM wiki_page WHERE slug = $slug LIMIT 1",
+            {"slug": "agent-prompt-toc"},
+        )
+        if not rows:
+            return None
+        ts_raw = rows[0].get("updated_at")
+        if ts_raw is None:
+            return None
+        if isinstance(ts_raw, (int, float)):
+            return float(ts_raw)
+        ts_str = str(ts_raw).rstrip("Z").replace("Z", "+00:00")
+        dt = datetime.fromisoformat(ts_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt.timestamp()
+    except Exception:
+        return None
+
+
+def _apply_agent_prompt_signal(resolved: str, storage, actions: list) -> None:
+    """Append capture_agent_prompt action when the prompt library looks stale.
+
+    ADR-0007 capture loop. Mirrors _apply_adr_signal structurally but keyed on the
+    GLOBAL agent-prompt TOC instead of the ADR log:
+
+    - HARD kill-gate FIRST: silent when AGENT_PROMPT_LIBRARY_ENABLED is False
+      (reuses the existing flag — no new knob).
+    - Activity gate: active_work present (evidence the session did real work).
+    - Freshness gate: active_work updated > ADR_DUE_WARN_HOURS more recently than
+      the TOC last grew (reuses the ADR cadence threshold — no new knob).
+      Absent TOC + active_work present → fire (library never seeded).
+
+    Cadence note: the TOC is GLOBAL, so a save in any project refreshes it and
+    suppresses the nudge everywhere — fine for an ambient cadence nudge. The
+    precise per-session "is this prompt reusable?" scan lives in the stop-hook
+    step; this nudge only reminds at the same age basis the ADR nudge uses.
+    Never raises.
+    """
+    if storage is None:
+        return
+    try:
+        cfg = get_settings()
+        # Kill-gate: library disabled → fully silent.
+        if not cfg.AGENT_PROMPT_LIBRARY_ENABLED:
+            return
+        warn_hours = cfg.ADR_DUE_WARN_HOURS
+
+        active_work_ts = _get_active_work_updated_at(storage, resolved)
+        if active_work_ts is None:
+            # No session activity detected — silent.
+            return
+
+        toc_ts = _get_agent_prompt_toc_updated_at(storage, resolved)
+        now = time.time()
+        suggested_call = (
+            f"agent_prompt_save(directory={resolved!r}, pattern='<kebab-task-shape>', "
+            "content='<the dispatch prompt>', purpose='<one line>')"
+        )
+
+        if toc_ts is None:
+            # TOC absent but active_work present — library never seeded; fire.
+            active_work_age_h = (now - active_work_ts) / 3600.0
+            actions.append(
+                {
+                    "action": "capture_agent_prompt",
+                    "reason": (
+                        f"active_work updated {active_work_age_h:.1f}h ago; "
+                        "agent-prompt library empty — no reusable prompts captured yet"
+                    ),
+                    "suggested_call": suggested_call,
+                }
+            )
+            return
+
+        # Both timestamps available — fire when the library is stale vs active_work.
+        delta_hours = (active_work_ts - toc_ts) / 3600.0
+        if delta_hours > warn_hours:
+            active_work_age_h = (now - active_work_ts) / 3600.0
+            toc_age_h = (now - toc_ts) / 3600.0
+            actions.append(
+                {
+                    "action": "capture_agent_prompt",
+                    "reason": (
+                        f"active_work updated {active_work_age_h:.1f}h ago; "
+                        f"agent-prompt library last grew {toc_age_h:.1f}h ago "
+                        f"(delta {delta_hours:.1f}h > threshold {warn_hours}h)"
+                    ),
+                    "suggested_call": suggested_call,
+                }
+            )
+    except Exception:
+        return
+
+
 def _omit_sentinel(d: dict, key: str, value: object, sentinel: object) -> None:
     """Set d[key]=value only when value != sentinel (for budget-trimming optional fields)."""
     if value != sentinel:
@@ -1568,6 +1672,10 @@ def _project_brief_signals(
 
     # v5.84.0 car #12: ADR nudge signal — capture_adr action when decisions uncaptured.
     _apply_adr_signal(resolved, storage, recommended_actions)
+
+    # ADR-0007 capture loop: agent-prompt nudge — capture_agent_prompt action when the
+    # prompt library is stale (gated on AGENT_PROMPT_LIBRARY_ENABLED; silent when off).
+    _apply_agent_prompt_signal(resolved, storage, recommended_actions)
 
     # v5.53.1: compute real stale wiki count (TTL-cached, cheap for hot path).
     stale_wiki_count = _compute_stale_wiki_count(resolved)
