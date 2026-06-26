@@ -7,6 +7,12 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+### Agent-prompt library rework (v5.85, ADR-0007) — collapse bespoke tools into recall tags
+
+#### Removed (BREAKING — MCP tool surface)
+- **`agent_prompt_get` and `agent_prompt_search` MCP tools removed.** Semantic lookup is now `recall(type="wiki", tags=["agent-prompt"])` (the tag-aware recall path with an SQL pre-filter via `search_wiki_vectors_tagged`); exact-key lookup is the internal `_read_agent_prompt(slug)` helper (no longer an MCP tool). `agent_prompt_save` is unchanged and stays a tool. Dead `StorageEngine.search_agent_prompt_vectors` (generalized to `search_wiki_vectors_tagged` in S3) and the `-vN` slug helpers removed. (`yadgar/server/tools/agent_prompts.py`)
+- **`agent_dispatch_prelude` rewired** from `agent_prompt_get` to the internal deterministic slug-read (`agent-prompt-<pattern>`) — exact-key, not recall. Version label preserved. (`yadgar/server/tools/dispatch_helper.py`)
+
 ### Observability train (obs-train, PR #122) — /health 503 contract + OTLP resilience
 
 Triggered by core flagged unhealthy while still serving + a ~14 h OTLP retry/log flood with no collector reachable. Keeps OTLP + metrics ENABLED; three cars (C1 health-masking, C2 handler/OTLP robustness, C3 nix collector + healthcheck tune).

@@ -6,6 +6,66 @@
 **Owner:** —
 **Depends on:** existing viz REST backend (`yadgar/graph_api.py` + `yadgar/server/http.py`), `/admin/config` endpoint (`yadgar/server/admin_config.py`), config three-way-sync (I25).
 
+> **AUDIT 2026-06-26 (v5.85 train, car #8) — MAJOR DRIFT. The plan is unaware that a
+> runtime config WRITE path AND a live frontend editor ALREADY EXIST. The "build a
+> net-new `PATCH /admin/config/<key>` surface + a from-scratch panel" framing is
+> wrong and would create a parallel, duplicate write path. PIVOT REQUIRED before
+> building.** Verified against `master`:
+> - **Runtime config WRITE already ships:** `POST /api/control/config`
+>   (`yadgar/server/routes/control.py:271`, registered at the bottom of the file)
+>   sets ONE knob, coerces type, range-validates, writes YAML (`chmod 0o600`) + sets
+>   `os.environ`, returns reload classification (hot vs restart). Plus
+>   `GET /api/control/config` (`:251`, returns `{name, kind, current, default,
+>   source, reload}`) and `POST /api/control/restart/{yadgar|backend}` (writes a
+>   sentinel, no exec). A `_WRITE_BLOCKED` set (`:197`) already guards
+>   security/enforcement knobs.
+> - **A live frontend editor already ships:** `yadgar/static/control.js` (19.6 KB),
+>   wired into the SPA — filter/group dropdowns, inline typed editing, reload-class
+>   pill, restart-confirm UI. The plan's "build the panel" is really "**redesign +
+>   extend** the existing one."
+> - **The plan's `/admin/config` (`admin_config.py`) is a SEPARATE, read-only,
+>   minimal endpoint** (`{name, value, source, kind}`, no write). The plan proposed
+>   adding `PATCH` *there*, parallel to the already-working `/api/control/` write
+>   path — **two write surfaces, two auth gates (`/admin` Bearer vs `/api/control`
+>   `YADGAR_DEBUG_APIS_ENABLED`), and a THIRD coercion code path** (CLI
+>   `config_yaml.py:coerce_value` + control.py `_coerce_json_value` already diverge).
+>   This is the classic over-build trap — the inverse of last train's C1: not "zero
+>   change" but "rebuild what exists."
+> - **REVISED SCOPE — extend, don't parallel:**
+>   1. **Backend (S):** extend `GET /api/control/config` response with the 4 missing
+>      fields — `description` (from `FIELD_META[key].desc`), `category` (section→cat
+>      map), `enum_choices`, `locked` (derived: env-only allowlist entries). Reuse
+>      the existing `POST /api/control/config` for writes; do NOT add `PATCH
+>      /admin/config`.
+>   2. **Metadata (M):** add `restart_required` + `destructive` per-knob (the only
+>      genuinely net-new backend concept). If stored on `ConfigEntry`, update
+>      `test_config_three_way_sync.py`. Conservative default `restart_required=True`.
+>   3. **Write-correctness (S):** fix `POST /api/control/config` to return 409 on
+>      env-locked knobs instead of silently shadowing env (`control.py:337`).
+>   4. **Frontend (L — the real effort spike):** redesign `control.js` toward the
+>      NEURAL CONSOLE mockup — 15-capability rail (group by category not prefix),
+>      diff tray, two-step armed confirm for destructive knobs, restart warning.
+>   5. **Audit (S):** log every write + restart with old→new diff.
+> - **The body below (the `/admin/config` PATCH design, the "299 enumeration", the
+>   per-setting-metadata table) is still useful as the DATA-MODEL reference** — the
+>   four-extra-fields table, the env-only-vs-yaml split, the destructive/restart
+>   metadata, and the section→category mapping all carry over. Only the
+>   *endpoint/namespace choice* changes: target the existing `/api/control/` surface
+>   + `control.js`, not a new `/admin/config PATCH` + new panel.
+> - **Effort honest: M (backend extend) + L (frontend redesign) = solidly L overall**
+>   if the NEURAL CONSOLE aesthetic bar is met; the backend alone is S-M. **Risk M:**
+>   I25 churn on `ConfigEntry` field adds; section→category drift; armed-confirm UX
+>   needs a real 10s-window test or it's security theater.
+> - **User-decision flags:** (a) extend `/api/control/` [recommended] vs consciously
+>   migrate all config routes to `/admin/` (coherence, bigger refactor); (b) unify
+>   the 3 coercion paths into one `set_config_value()` (good hygiene, orthogonal);
+>   (c) how high to set the aesthetic bar — the mockup is ~30% of the UI effort on
+>   its own.
+> - **How this goes wrong like C1/C2:** build the parallel `/admin/config PATCH` as
+>   originally written → ship a second write path that diverges from
+>   `/api/control/config` on coercion/validation → a knob that writes fine via one
+>   path corrupts via the other. The pivot above is the guard.
+
 ---
 
 ## Problem / motivation

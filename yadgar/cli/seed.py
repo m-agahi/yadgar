@@ -175,8 +175,80 @@ def _seed_anchors(anchors: list[dict], db_path: str | None, dry_run: bool) -> di
     return results
 
 
+def _seed_agent_prompts(db_path: str | None, dry_run: bool) -> dict:
+    """Seed the 4 built-in starter agent-prompts via daemon REST endpoint.
+
+    Mirrors _seed_anchors. POST to /hooks/seed-agent-prompts; daemon handles
+    the idempotency (create-if-absent per pattern).
+    dry_run: prints what would be seeded, makes zero HTTP calls.
+    """
+    _STARTER_PATTERNS = [
+        "code-review",
+        "debug-investigate",
+        "explore-codebase",
+        "implement-tdd",
+    ]
+    results = {"seeded": True, "created": 0, "skipped": 0, "dry_run": dry_run}
+
+    if dry_run:
+        for pat in _STARTER_PATTERNS:
+            print(
+                f"  [DRY RUN] Would seed agent-prompt: {pat}",
+                file=sys.stderr,
+            )
+        results["created"] = len(_STARTER_PATTERNS)
+        return results
+
+    if not _daemon_health_ok():
+        print("  WARN: Daemon not running. Skipping agent-prompt seed.", file=sys.stderr)
+        print("  To seed manually, start the daemon then run:", file=sys.stderr)
+        print("    systemctl --user start yadgar.target", file=sys.stderr)
+        print("    yadgar seed --agent-prompts", file=sys.stderr)
+        results["skipped"] = len(_STARTER_PATTERNS)
+        results["reason"] = "daemon_unreachable"
+        return results
+
+    token = _read_auth_token()
+    url = f"{_DAEMON_BASE}/hooks/seed-agent-prompts"
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    payload = json.dumps({}).encode()
+    try:
+        req = urllib.request.Request(url, data=payload, headers=headers)
+        resp = urllib.request.urlopen(req, timeout=30.0)  # noqa: S310
+        resp_data = json.loads(resp.read().decode())
+        results["created"] = resp_data.get("created", 0)
+        results["skipped"] = resp_data.get("skipped", 0)
+    except Exception as e:
+        print(f"  WARN: seed-agent-prompts failed: {e}", file=sys.stderr)
+        results["skipped"] = len(_STARTER_PATTERNS)
+        results["reason"] = "request_failed"
+
+    return results
+
+
 def cmd_seed(args):
     """Bootstrap memory for an existing project by scanning its structure."""
+    # Handle --agent-prompts mode
+    if getattr(args, "agent_prompts", False):
+        result = _seed_agent_prompts(db_path=getattr(args, "db_path", None), dry_run=args.dry_run)
+        if args.dry_run:
+            print(
+                f"\n[DRY RUN] Would seed {result['created']} starter agent-prompts",
+                file=sys.stderr,
+            )
+        elif result.get("reason") == "daemon_unreachable":
+            pass  # instructional message already printed in _seed_agent_prompts
+        else:
+            print(
+                f"\nSeeded {result['created']} agent-prompts ({result['skipped']} skipped, already present)",
+                file=sys.stderr,
+            )
+        print(json.dumps(result))
+        return
+
     # Handle --anchors mode
     if getattr(args, "anchors", None):
         anchors_path = args.anchors
@@ -246,6 +318,12 @@ def register(subparsers):
         default=None,
         metavar="FILE",
         help="YAML file of anchor entries to seed into memory (v5.45.0+)",
+    )
+    p.add_argument(
+        "--agent-prompts",
+        action="store_true",
+        default=False,
+        help="Seed the 4 built-in starter agent-prompts into the library (v5.85 S8)",
     )
     p.add_argument("--db-path", type=str, default=None, help="Database path")
     p.add_argument(

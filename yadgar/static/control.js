@@ -1,12 +1,14 @@
 /**
- * control.js — Control tab implementation for the yadgar viz SPA (v5.50.2).
+ * control.js — Control tab implementation for the yadgar viz SPA (v5.85.0).
  *
- * Fills the empty #tab-control shell shipped in v5.50.0.
+ * Fills the #tab-control shell.
  *
  * Features:
  *   - Actions row: consolidate / vacuum / re-embed / update
- *   - Config editor: filter + group dropdown + inline type-aware edit
- *     + reload/restart pill + validation hint on save
+ *   - Config editor: filter + category dropdown + section sub-group headers
+ *     + inline type-aware edit + reload/restart pill + source badge
+ *     + locked badge for env-set knobs (409-aware) + description tooltip
+ *     + validation hint on save
  *   - Restart buttons: typed-name confirmation required before firing
  *
  * Gate: all API calls require YADGAR_DEBUG_APIS_ENABLED=on (server returns 403 otherwise).
@@ -20,6 +22,7 @@
  *   parseEditValue         — coerce input string to typed value for POST
  *   buildRestartConfirmMsg — return the expected confirm string for a service URL segment
  *   isRestartEnabled       — check confirm input matches expected service name
+ *   getKnobCategory        — extract category from knob (with 'all' pass-through)
  */
 
 // ---------------------------------------------------------------------------
@@ -39,8 +42,9 @@ export function classifyReload(reload) {
  * Filter and optionally group-filter a knob list.
  *
  * @param {Array<Object>} knobs  - array from GET /api/control/config
- * @param {string} filterText    - case-insensitive substring match on name
- * @param {string} group         - prefix group: 'all' | 'viz' | 'physics' | 'embedding' | 'storage' | 'misc'
+ * @param {string} filterText    - case-insensitive substring match on name or description
+ * @param {string} group         - 'all' | capability category (from knob.category)
+ *                                 | legacy prefix groups: 'viz' | 'physics' | 'embedding' | 'storage' | 'misc'
  * @returns {Array<Object>} filtered knobs
  */
 export function filterKnobs(knobs, filterText, group) {
@@ -48,30 +52,56 @@ export function filterKnobs(knobs, filterText, group) {
 
   if (filterText) {
     const lower = filterText.toLowerCase();
-    result = result.filter(k => k.name.toLowerCase().includes(lower));
+    result = result.filter(k =>
+      k.name.toLowerCase().includes(lower) ||
+      (k.description && k.description.toLowerCase().includes(lower)),
+    );
   }
 
-  const groupPrefixes = {
-    viz:       'YADGAR_VIZ_',
-    physics:   'YADGAR_VIZ_PHYSICS_',
-    embedding: 'YADGAR_EMBEDDING_',
-    storage:   'YADGAR_DB_',
-    misc:      null,  // handled below
-  };
+  // Category-based filtering (v5.85): if the knob has a 'category' field,
+  // use it directly. Otherwise fall back to legacy prefix matching.
+  const capabilityCategories = new Set([
+    'retrieval', 'storage', 'write-path', 'consolidation', 'enrichment',
+    'gate', 'wiki', 'curation', 'mcp-tool', 'observability', 'security',
+    'ops', 'brain-dynamics', 'viz', 'config',
+  ]);
 
   if (group && group !== 'all') {
-    if (group === 'misc') {
-      const knownPrefixes = Object.values(groupPrefixes).filter(Boolean);
-      result = result.filter(k => !knownPrefixes.some(p => k.name.startsWith(p)));
+    if (capabilityCategories.has(group)) {
+      // Category-based filter: use knob.category if present, else skip
+      result = result.filter(k => (k.category || 'config') === group);
     } else {
-      const prefix = groupPrefixes[group];
-      if (prefix) {
-        result = result.filter(k => k.name.startsWith(prefix));
+      // Legacy prefix-based filter (backwards compat)
+      const groupPrefixes = {
+        viz:       'YADGAR_VIZ_',
+        physics:   'YADGAR_VIZ_PHYSICS_',
+        embedding: 'YADGAR_EMBEDDING_',
+        storage:   'YADGAR_DB_',
+      };
+      if (group === 'misc') {
+        const knownPrefixes = Object.values(groupPrefixes).filter(Boolean);
+        result = result.filter(k => !knownPrefixes.some(p => k.name.startsWith(p)));
+      } else {
+        const prefix = groupPrefixes[group];
+        if (prefix) {
+          result = result.filter(k => k.name.startsWith(prefix));
+        }
       }
     }
   }
 
   return result;
+}
+
+/**
+ * Return the capability category of a knob, or 'config' if not present.
+ * Pass-through for 'all'.
+ *
+ * @param {Object} knob - knob object from GET /api/control/config
+ * @returns {string}
+ */
+export function getKnobCategory(knob) {
+  return knob.category || 'config';
 }
 
 /**
@@ -220,16 +250,25 @@ function _buildShell() {
   <div class="ctrl-buttons"></div>
 </div>
 <div class="ctrl-config-section ctrl-section">
-  <div class="ctrl-section-title">CONFIG EDITOR</div>
+  <div class="ctrl-section-title">CONFIG EDITOR <span class="ctrl-knob-count"></span></div>
   <div class="ctrl-config-controls">
-    <input type="text" class="ctrl-filter" placeholder="filter…" />
+    <input type="text" class="ctrl-filter" placeholder="search name or description…" />
     <select class="ctrl-group">
-      <option value="all">all groups</option>
-      <option value="viz">viz</option>
-      <option value="physics">physics</option>
-      <option value="embedding">embedding</option>
+      <option value="all">all categories</option>
+      <option value="retrieval">retrieval</option>
       <option value="storage">storage</option>
-      <option value="misc">misc</option>
+      <option value="write-path">write-path</option>
+      <option value="consolidation">consolidation</option>
+      <option value="enrichment">enrichment</option>
+      <option value="gate">gate</option>
+      <option value="wiki">wiki</option>
+      <option value="curation">curation</option>
+      <option value="observability">observability</option>
+      <option value="security">security</option>
+      <option value="ops">ops</option>
+      <option value="brain-dynamics">brain-dynamics</option>
+      <option value="viz">viz</option>
+      <option value="config">config</option>
     </select>
   </div>
   <div class="ctrl-config-table-wrap">
@@ -240,6 +279,7 @@ function _buildShell() {
           <th>TYPE</th>
           <th>CURRENT</th>
           <th>DEFAULT</th>
+          <th>SOURCE</th>
           <th>RELOAD</th>
           <th>EDIT</th>
         </tr>
@@ -336,15 +376,32 @@ function _renderActions(container, root) {
 // ── Config editor ────────────────────────────────────────────────────────────
 
 function _renderConfigEditor(container, knobs) {
-  const tbody    = container.querySelector('.ctrl-config-tbody');
-  const filterEl = container.querySelector('.ctrl-filter');
-  const groupEl  = container.querySelector('.ctrl-group');
+  const tbody     = container.querySelector('.ctrl-config-tbody');
+  const filterEl  = container.querySelector('.ctrl-filter');
+  const groupEl   = container.querySelector('.ctrl-group');
+  const countEl   = container.querySelector('.ctrl-knob-count');
   if (!tbody || !filterEl || !groupEl) return;
 
   function _refresh() {
     const filtered = filterKnobs(knobs, filterEl.value, groupEl.value);
     tbody.innerHTML = '';
+    if (countEl) countEl.textContent = `(${filtered.length} knobs)`;
+
+    // Group by section within the filtered set for sub-group headers
+    let lastSection = null;
     for (const knob of filtered) {
+      const section = knob.section || 'misc';
+      if (section !== lastSection) {
+        const sectionRow = document.createElement('tr');
+        sectionRow.className = 'ctrl-section-header-row';
+        const sectionTd = document.createElement('td');
+        sectionTd.colSpan = 7;
+        sectionTd.className = 'ctrl-section-header';
+        sectionTd.textContent = section;
+        sectionRow.appendChild(sectionTd);
+        tbody.appendChild(sectionRow);
+        lastSection = section;
+      }
       tbody.appendChild(_buildKnobRow(knob, knobs, _refresh));
     }
   }
@@ -357,13 +414,19 @@ function _renderConfigEditor(container, knobs) {
 function _buildKnobRow(knob, allKnobs, refreshFn) {
   const tr = document.createElement('tr');
   tr.dataset.name = knob.name;
+  if (knob.locked) tr.classList.add('ctrl-row--locked');
 
   const reloadLabel = classifyReload(knob.reload);
   const reloadClass = knob.reload === 'hot_reload' ? 'ctrl-pill--hot' : 'ctrl-pill--restart';
 
-  // Build cells via DOM methods — knob data is server-provided and must not be injected raw.
-  const tdName = _el('td', { class: 'ctrl-knob-name', title: knob.name });
-  tdName.textContent = knob.name.replace('YADGAR_', '');
+  // Build cells via DOM methods — knob data is server-provided; never inject raw as HTML.
+  // Short name: strip YADGAR_ prefix; full name in title for hover.
+  const shortName = knob.name.replace('YADGAR_', '');
+  const nameTitle = knob.description
+    ? `${knob.name}\n\n${knob.description}`
+    : knob.name;
+  const tdName = _el('td', { class: 'ctrl-knob-name', title: nameTitle });
+  tdName.textContent = shortName;
 
   const tdType = _el('td', { class: 'ctrl-knob-type' });
   tdType.textContent = knob.kind;
@@ -374,6 +437,18 @@ function _buildKnobRow(knob, allKnobs, refreshFn) {
 
   const tdDefault = _el('td', { class: 'ctrl-knob-default' });
   tdDefault.textContent = knob.default;
+
+  // SOURCE badge: ENV (locked) / YAML / DEFAULT
+  const tdSource = _el('td', { class: 'ctrl-knob-source' });
+  const sourceLabel = (knob.source || 'default').toUpperCase();
+  const sourceClass = knob.locked
+    ? 'ctrl-pill ctrl-pill--env'
+    : sourceLabel === 'YAML'
+      ? 'ctrl-pill ctrl-pill--yaml'
+      : 'ctrl-pill ctrl-pill--default';
+  const sourcePill = _el('span', { class: sourceClass });
+  sourcePill.textContent = knob.locked ? '🔒 ENV' : sourceLabel;
+  tdSource.appendChild(sourcePill);
 
   const tdReload = _el('td');
   const pill = _el('span', { class: `ctrl-pill ${reloadClass}` });
@@ -386,15 +461,22 @@ function _buildKnobRow(knob, allKnobs, refreshFn) {
   tr.appendChild(tdType);
   tr.appendChild(tdCurrent);
   tr.appendChild(tdDefault);
+  tr.appendChild(tdSource);
   tr.appendChild(tdReload);
   tr.appendChild(editCell);
 
-  const editBtn  = _el('button', { class: 'ctrl-btn ctrl-btn--sm', 'aria-label': `edit ${knob.name}` }, '✎');
-  editCell.appendChild(editBtn);
-
-  editBtn.addEventListener('click', () => {
-    _openInlineEdit(tr, knob, allKnobs, refreshFn);
-  });
+  if (knob.locked) {
+    // Locked knobs are read-only — show a lock indicator instead of edit button
+    const lockSpan = _el('span', { class: 'ctrl-knob-locked-hint', title: 'Set via env var — unset env to allow yaml edit' });
+    lockSpan.textContent = 'env-only';
+    editCell.appendChild(lockSpan);
+  } else {
+    const editBtn = _el('button', { class: 'ctrl-btn ctrl-btn--sm', 'aria-label': `edit ${knob.name}` }, '✎');
+    editCell.appendChild(editBtn);
+    editBtn.addEventListener('click', () => {
+      _openInlineEdit(tr, knob, allKnobs, refreshFn);
+    });
+  }
 
   return tr;
 }
@@ -454,6 +536,11 @@ function _openInlineEdit(tr, knob, allKnobs, refreshFn) {
         const idx = allKnobs.findIndex(k => k.name === knob.name);
         if (idx !== -1) allKnobs[idx] = Object.assign({}, allKnobs[idx], { current: body.value ?? String(value) });
         refreshFn();
+      } else if (r.status === 409) {
+        // Env-locked: the knob is set via env var — yaml write would be shadowed
+        hint.textContent = body.error || 'env-locked: unset the env var to allow yaml edit';
+        hint.className   = 'ctrl-edit-hint ctrl-edit-hint--error';
+        saveBtn.disabled = false;
       } else {
         hint.textContent = body.error || `error ${r.status}`;
         hint.className   = 'ctrl-edit-hint ctrl-edit-hint--error';

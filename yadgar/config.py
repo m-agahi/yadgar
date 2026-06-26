@@ -163,6 +163,7 @@ class Settings(BaseSettings):
     CROSS_ENCODER_ENABLED: bool = True  # FlashRank ONNX is fast enough for CPU
     CROSS_ENCODER_TOP_K: int = 10
     CROSS_ENCODER_WEIGHT: float = 0.6  # CE weight in blend (retrieval gets 1-this)
+    CROSS_ENCODER_BACKEND: str = "st"  # "st" (fp32 default) | "onnx-int8" (opt-in quantized)
 
     # v12: Graph signal optimization settings
     GRAPH_MAX_HOPS: int = 2
@@ -799,6 +800,14 @@ class Settings(BaseSettings):
     # Maximum age in seconds for an upgrade lock before it's treated as stale.
     # Default 3600 = 1 hour.  Allows recovery if the upgrader process was killed mid-run.
     UPDATE_LOCK_MAX_AGE_SECONDS: int = 3600
+
+    # v5.85 car #6 — Agent-prompt Tier-1 passive library kill-gate.
+    # When True, agent-prompt pages are retrievable via recall(type="wiki",
+    # tags=["agent-prompt"]) and the save/dispatch surface is active. When False,
+    # the library is intended to be inert. Default True — the library is pull-only
+    # (no auto-injection), so it is non-intrusive when on.
+    # (I25 three-way registered: env YADGAR_AGENT_PROMPT_LIBRARY_ENABLED, yaml, registry)
+    AGENT_PROMPT_LIBRARY_ENABLED: bool = True
 
     model_config = {"env_prefix": "YADGAR_"}
 

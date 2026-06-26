@@ -13,7 +13,7 @@ import yadgar.server.tools.recall  # noqa: F401 — side-effects: tool registrat
 import yadgar.server.tools.admin  # noqa: F401 — side-effects: tool registration
 import yadgar.server.tools.wiki  # noqa: F401 — side-effects: tool registration
 import yadgar.server.tools.misc  # noqa: F401 — side-effects: tool registration
-import yadgar.server.tools.agent_prompts  # noqa: F401 — side-effects: none (pure functions)
+import yadgar.server.tools.agent_prompts  # noqa: F401 — side-effects: tool registration (S8)
 import yadgar.server.tools.wiki_coverage  # noqa: F401 — side-effects: tool registration
 import yadgar.server.tools.dispatch_helper  # noqa: F401 — side-effects: tool registration
 import yadgar.server.tools.audit  # noqa: F401 — side-effects: tool registration
@@ -71,6 +71,7 @@ from yadgar.server.tools.wiki import (
     wiki_delete,
     wiki_list,
     wiki_lint,
+    wiki_autolink,
     wiki_drafts,
     wiki_approve,
     wiki_discard,
@@ -103,8 +104,8 @@ from yadgar.server.tools.misc import (
     resource_processes,
 )
 from yadgar.server.tools.agent_prompts import (
-    agent_prompt_get,
     agent_prompt_save,
+    seed_agent_prompts,
 )
 from yadgar.server.tools.dispatch_helper import agent_dispatch_prelude
 from yadgar.server.tools.wiki_coverage import wiki_coverage
@@ -158,6 +159,7 @@ __all__ = [
     "wiki_delete",
     "wiki_list",
     "wiki_lint",
+    "wiki_autolink",
     "wiki_drafts",
     "wiki_approve",
     "wiki_discard",
@@ -182,12 +184,11 @@ __all__ = [
     "resource_hot",
     "resource_stale",
     "resource_processes",
-    "agent_prompt_get",
     "agent_prompt_save",
+    "seed_agent_prompts",
     "agent_dispatch_prelude",
     "wiki_coverage",
     "audit_anchors",
-    "agent_dispatch_prelude",
     "bookmark_add",
     "bookmark_remove",
     "bookmark_list",

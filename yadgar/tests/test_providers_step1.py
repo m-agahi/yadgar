@@ -251,7 +251,9 @@ class TestWikiProvider:
     def test_candidates_calls_wiki_query(self, mock_wiki, default_scope):
         provider = WikiProvider(mock_wiki)
         provider.candidates("test query", default_scope, limit=5)
-        mock_wiki.query.assert_called_once_with("test query", max_results=5)
+        mock_wiki.query.assert_called_once_with(
+            "test query", max_results=5, include_tag=None, exclude_tags=None
+        )
 
     def test_candidates_returns_candidate_objects(self, mock_wiki, default_scope):
         provider = WikiProvider(mock_wiki)

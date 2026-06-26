@@ -312,6 +312,40 @@ class TestGenerateModulePage:
         # _internal should NOT appear in the rendered page
         assert "_internal" not in page["content"]
 
+    def test_generator_stamps_hash(self, fixture_repo: Path) -> None:
+        """generate_module_page must include hash = SHA256(file bytes) + source_file."""
+        rec = scan_python_module(fixture_repo / "mypkg" / "core.py", fixture_repo)
+        page = generate_module_page(rec, str(fixture_repo))
+        assert "hash" in page, "page must carry a 'hash' field"
+        assert "source_file" in page, "page must carry a 'source_file' field"
+        # hash must be non-empty hex
+        assert len(page["hash"]) == 64, f"expected 64-char sha256 hex, got: {page['hash']!r}"
+        # source_file must be an absolute path pointing to the module file
+        src = Path(page["source_file"])
+        assert src.is_absolute(), "source_file must be absolute"
+        assert src.exists(), "source_file must point to existing file"
+
+    def test_module_hash_matches_checker_algo(self, fixture_repo: Path) -> None:
+        """Generator SHA256(file bytes) must equal checker's _compute_source_hash([file])."""
+        import hashlib
+
+        from yadgar.server.tools.project import _compute_source_hash
+
+        rec = scan_python_module(fixture_repo / "mypkg" / "core.py", fixture_repo)
+        page = generate_module_page(rec, str(fixture_repo))
+        checker_hash = _compute_source_hash([page["source_file"]], hashlib)
+        assert page["hash"] == checker_hash, (
+            f"generator hash {page['hash']!r} != checker hash {checker_hash!r}"
+        )
+
+    def test_generator_stamps_hash_on_parse_error(self, fixture_repo: Path) -> None:
+        """Even parse-error pages should get hash + source_file (file is readable even if unparseable)."""
+        rec = scan_python_module(fixture_repo / "mypkg" / "broken.py", fixture_repo)
+        page = generate_module_page(rec, str(fixture_repo))
+        assert "hash" in page
+        assert "source_file" in page
+        assert len(page["hash"]) == 64
+
 
 class TestGenerateWikiPages:
     def test_returns_list_of_dicts(self, fixture_repo: Path) -> None:

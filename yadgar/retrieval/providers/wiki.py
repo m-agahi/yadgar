@@ -32,10 +32,23 @@ class WikiProvider(SourceProvider):
     (including ``_retrieval_score`` from the wiki hybrid search) so the
     fan-out orchestrator can pass it through to callers with ``_source="wiki"``
     set — matching the existing wiki-blend schema in recall.py.
+
+    S3 (tag-aware recall):
+      ``tags``: when set, passes ``include_tag=tags[0]`` to WikiStore.query() — triggers
+      SQL pre-filter path (no HNSW dilution). Single-tag assumption is safe; agent-prompt
+      is the only real caller.
+      ``exclude_tags``: when set, passes to WikiStore.query() — post-rank exclusion.
     """
 
-    def __init__(self, wiki: WikiStore) -> None:
+    def __init__(
+        self,
+        wiki: WikiStore,
+        tags: list[str] | None = None,
+        exclude_tags: list[str] | None = None,
+    ) -> None:
         self._wiki = wiki
+        self._tags = tags
+        self._exclude_tags = exclude_tags
 
     @property
     def type(self) -> str:
@@ -53,7 +66,13 @@ class WikiProvider(SourceProvider):
             List of Candidate(type="wiki", ...) sorted by native_score descending,
             filtered to scope.directory (same eligible set as is_directory_eligible).
         """
-        results = self._wiki.query(query, max_results=limit)
+        include_tag = self._tags[0] if self._tags else None
+        results = self._wiki.query(
+            query,
+            max_results=limit,
+            include_tag=include_tag,
+            exclude_tags=self._exclude_tags,
+        )
 
         # Step 3: Python-side directory post-filter.
         # Eligible: {scope.directory, 'global', '', None}. 'system' excluded (v5.65).

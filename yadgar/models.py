@@ -271,6 +271,23 @@ class ADR(BaseModel):
         return "".join(f"- {k}: {v}\n" for k, v in self.to_body_dict().items())
 
 
+class AgentPrompt(BaseModel):
+    """Typed record shape for an agent-prompt library entry.
+
+    Represents the content fields stored as a wiki page with slug
+    ``agent-prompt-<pattern>``. ``directory`` is a routing arg in
+    ``agent_prompt_save``, not part of the record.
+
+    FastMCP derives the JSON Schema for ``agent_prompt_save`` from flat
+    keyword args — the model is used as shape/post-validation inside the
+    tool body, not as the tool signature.
+    """
+
+    pattern: str  # slug stem: agent-prompt-<pattern>
+    purpose: str  # one-line description; feeds the TOC
+    content: str  # the dispatch-prompt body
+
+
 # -- v4 models --
 
 

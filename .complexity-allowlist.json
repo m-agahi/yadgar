@@ -290,9 +290,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 1841
+      "file_loc": 2251
     },
-    "rationale": "pre-existing large file; v5.61.0 +281 LOC for edit primitives (L4+L1) + ~484 LOC for L2+L3 (positional/structural primitives + helpers); scheduled for refactor post-v5.64",
+    "rationale": "pre-existing large file; v5.61.0 +281 LOC for edit primitives (L4+L1) + ~484 LOC for L2+L3 (positional/structural primitives + helpers); scheduled for refactor post-v5.64. Updated v5.85 S3: +81 LOC for tag-aware recall helpers (_collect_wiki_vector_scores_tagged, _collect_scores_dispatch, _tag_filter_pass extended).",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },

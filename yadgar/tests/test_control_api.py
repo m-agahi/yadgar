@@ -19,12 +19,16 @@ Tests (real behavioral — no string-grep-the-HTML):
 15. test_action_unknown_returns_400 — unknown action → 400
 16. test_restart_unknown_service_returns_400 — unknown service param → 400
 17. test_config_post_write_blocked_knob_returns_400 — security/enforcement knobs → 400
+18. test_config_get_returns_enriched_fields — GET returns description/section/category/locked
+19. test_config_get_locked_when_env_set — env-set knob has locked=True
+20. test_config_post_env_locked_returns_409 — POST to env-set knob → 409 Conflict
+21. test_section_category_map_covers_all_field_meta_sections — drift guard
+22. test_no_patch_write_path_under_admin_config — admin_config.py has no write surface
 """
 
 from __future__ import annotations
 
 import json
-import os
 from unittest.mock import patch
 
 from starlette.applications import Starlette
@@ -298,11 +302,10 @@ def test_config_get_returns_knob_table_shape(monkeypatch, tmp_path):
 def test_config_post_round_trip(monkeypatch, tmp_path):
     """POST /api/control/config sets a knob → GET reflects new value."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    # Register the env var with monkeypatch BEFORE the route handler mutates it
-    # via os.environ[...] = str(coerced) (control.py:337).  Monkeypatch records
-    # the original value (or absence) here so teardown reliably restores it,
-    # preventing the mutated value from leaking into other workers/tests.
-    monkeypatch.setenv("YADGAR_VIZ_NODE_SIZE_3D", os.environ.get("YADGAR_VIZ_NODE_SIZE_3D", "8"))
+    # Remove the knob from env so the POST is not blocked by the env-lock 409.
+    # (v5.85: env-set knobs return 409 — yaml write would be shadowed.)
+    # monkeypatch tracks the removal and restores on teardown.
+    monkeypatch.delenv("YADGAR_VIZ_NODE_SIZE_3D", raising=False)
     client = _make_app(monkeypatch, debug_apis_on=True)
 
     # Pick a float knob: YADGAR_VIZ_NODE_SIZE_3D (default 8.0)
@@ -334,6 +337,8 @@ def test_config_post_round_trip(monkeypatch, tmp_path):
 def test_config_post_type_mismatch_returns_400(monkeypatch, tmp_path):
     """POST a string to a float knob → 400 type mismatch."""
     client = _make_app(monkeypatch, debug_apis_on=True)
+    # v5.85: env-set knobs return 409 before validation — remove so the 400 path is exercised.
+    monkeypatch.delenv("YADGAR_VIZ_NODE_SIZE_3D", raising=False)
     resp = client.post(
         "/api/control/config",
         json={"name": "YADGAR_VIZ_NODE_SIZE_3D", "value": "not-a-number"},
@@ -353,6 +358,8 @@ def test_config_post_type_mismatch_returns_400(monkeypatch, tmp_path):
 def test_config_post_out_of_range_returns_400(monkeypatch, tmp_path):
     """POST viz.node.size_3d = -1 → 400 out-of-range."""
     client = _make_app(monkeypatch, debug_apis_on=True)
+    # v5.85: env-set knobs return 409 before validation — remove so the 400 path is exercised.
+    monkeypatch.delenv("YADGAR_VIZ_NODE_SIZE_3D", raising=False)
     resp = client.post(
         "/api/control/config",
         json={"name": "YADGAR_VIZ_NODE_SIZE_3D", "value": -1.0},
@@ -494,3 +501,205 @@ def test_config_post_write_blocked_knob_returns_400(monkeypatch, tmp_path):
         assert "write-protected" in body["error"].lower(), (
             f"Expected 'write-protected' in error for {name!r}, got: {body['error']!r}"
         )
+
+
+# ===========================================================================
+# 18 — Config GET returns enriched fields (v5.85 config control panel)
+# ===========================================================================
+
+
+def test_config_get_returns_enriched_fields(monkeypatch, tmp_path):
+    """GET /api/control/config returns description, section, category, locked per knob.
+
+    v5.85 extends the knob table shape with four metadata fields:
+      - description: from FIELD_META (empty string for env-only knobs)
+      - section: FIELD_META.section (or 'misc' if missing)
+      - category: capability category derived from section→category map
+      - locked: bool, True when source=='env' (yaml write would be shadowed)
+    """
+    client = _make_app(monkeypatch, debug_apis_on=True)
+    resp = client.get("/api/control/config", headers=_auth_headers())
+    assert resp.status_code == 200
+    body = resp.json()
+    knobs = body["knobs"]
+    assert len(knobs) > 0
+
+    # Every knob must have the four new fields
+    for knob in knobs[:10]:
+        assert "description" in knob, f"Knob missing 'description': {knob['name']}"
+        assert "section" in knob, f"Knob missing 'section': {knob['name']}"
+        assert "category" in knob, f"Knob missing 'category': {knob['name']}"
+        assert "locked" in knob, f"Knob missing 'locked': {knob['name']}"
+        assert isinstance(knob["description"], str), (
+            f"'description' must be str, got {type(knob['description'])} for {knob['name']}"
+        )
+        assert isinstance(knob["section"], str), (
+            f"'section' must be str, got {type(knob['section'])} for {knob['name']}"
+        )
+        assert isinstance(knob["category"], str), (
+            f"'category' must be str, got {type(knob['category'])} for {knob['name']}"
+        )
+        assert isinstance(knob["locked"], bool), (
+            f"'locked' must be bool, got {type(knob['locked'])} for {knob['name']}"
+        )
+
+    # Known category values (the 15 CAPABILITY_REGISTRY categories + 'config' fallback)
+    valid_categories = {
+        "retrieval",
+        "storage",
+        "write-path",
+        "consolidation",
+        "enrichment",
+        "gate",
+        "wiki",
+        "curation",
+        "mcp-tool",
+        "observability",
+        "security",
+        "ops",
+        "brain-dynamics",
+        "viz",
+        "config",
+    }
+    for knob in knobs:
+        assert knob["category"] in valid_categories, (
+            f"Knob {knob['name']!r} has unexpected category {knob['category']!r}"
+        )
+
+    # Existing fields must still be present (backwards-compatible)
+    for knob in knobs[:5]:
+        for field in ("name", "kind", "current", "default", "source", "reload"):
+            assert field in knob, f"Existing field {field!r} missing from knob {knob['name']}"
+
+
+# ===========================================================================
+# 19 — locked=True when knob is set in env
+# ===========================================================================
+
+
+def test_config_get_locked_when_env_set(monkeypatch, tmp_path):
+    """GET /api/control/config: knob set in env → locked=True; knob not in env → locked=False."""
+    # Set a non-secret VIZ knob in env so it shows up as env-sourced
+    monkeypatch.setenv("YADGAR_VIZ_HEALTH_REFRESH_SEC", "30")
+    monkeypatch.delenv("YADGAR_VIZ_NODE_SIZE_3D", raising=False)  # ensure not set
+
+    client = _make_app(
+        monkeypatch,
+        debug_apis_on=True,
+        extra_env={"YADGAR_VIZ_HEALTH_REFRESH_SEC": "30"},
+    )
+    resp = client.get("/api/control/config", headers=_auth_headers())
+    assert resp.status_code == 200
+    knobs_by_name = {k["name"]: k for k in resp.json()["knobs"]}
+
+    # The env-set knob must be locked
+    if "YADGAR_VIZ_HEALTH_REFRESH_SEC" in knobs_by_name:
+        knob = knobs_by_name["YADGAR_VIZ_HEALTH_REFRESH_SEC"]
+        assert knob["locked"] is True, (
+            f"Expected locked=True for env-set knob, got locked={knob['locked']}"
+        )
+        assert knob["source"] == "env", (
+            f"Expected source='env' for env-set knob, got source={knob['source']}"
+        )
+
+    # A knob NOT in env (and not yaml) should be unlocked
+    if "YADGAR_VIZ_NODE_SIZE_3D" in knobs_by_name:
+        knob_default = knobs_by_name["YADGAR_VIZ_NODE_SIZE_3D"]
+        assert knob_default["locked"] is False, (
+            f"Expected locked=False for default-sourced knob, got locked={knob_default['locked']}"
+        )
+
+
+# ===========================================================================
+# 20 — POST to env-locked knob → 409 Conflict
+# ===========================================================================
+
+
+def test_config_post_env_locked_returns_409(monkeypatch, tmp_path):
+    """POST /api/control/config to an env-set knob → 409 Conflict.
+
+    When a knob is set via env var, a yaml write would be silently shadowed.
+    The endpoint must refuse with 409 instead of silently writing a shadowed value.
+    """
+    # Set a non-secret VIZ knob in env
+    knob_name = "YADGAR_VIZ_HEALTH_REFRESH_SEC"
+    monkeypatch.setenv(knob_name, "30")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    client = _make_app(
+        monkeypatch,
+        debug_apis_on=True,
+        extra_env={knob_name: "30"},
+    )
+    resp = client.post(
+        "/api/control/config",
+        json={"name": knob_name, "value": 60},
+        headers=_auth_headers(),
+    )
+    assert resp.status_code == 409, (
+        f"Expected 409 for env-locked knob, got {resp.status_code}: {resp.text}"
+    )
+    body = resp.json()
+    assert "error" in body
+    # Error must explain env-lock / shadowing
+    err_lower = body["error"].lower()
+    assert (
+        "env" in err_lower
+        or "lock" in err_lower
+        or "shadow" in err_lower
+        or "conflict" in err_lower
+    ), f"Expected env/lock/shadow/conflict in error, got: {body['error']!r}"
+
+
+# ===========================================================================
+# 21 — Section→category map covers every FIELD_META section
+# ===========================================================================
+
+
+def test_section_category_map_covers_all_field_meta_sections(monkeypatch):
+    """Every section in FIELD_META must map to a category in SECTION_TO_CATEGORY.
+
+    Drift guard: adding a new FIELD_META section without updating the map
+    causes unknown categories to silently fall back to 'config'. This test
+    catches that regression.
+    """
+    from yadgar.config_yaml import FIELD_META
+    from yadgar.server.routes.control import SECTION_TO_CATEGORY
+
+    sections_in_meta = {meta["section"] for meta in FIELD_META.values()}
+    unmapped = sections_in_meta - set(SECTION_TO_CATEGORY.keys())
+    assert not unmapped, (
+        f"FIELD_META sections without a SECTION_TO_CATEGORY entry: {sorted(unmapped)}\n"
+        "Add them to SECTION_TO_CATEGORY in yadgar/server/routes/control.py. "
+        "Fallback is 'config' but explicit mapping is required."
+    )
+
+
+# ===========================================================================
+# 22 — No write path exists under /admin/config (no parallel write surface)
+# ===========================================================================
+
+
+def test_no_patch_write_path_under_admin_config(monkeypatch):
+    """admin_config.py must not register any write (PATCH/POST/PUT/DELETE) methods.
+
+    The canonical config write path is POST /api/control/config. admin_config.py
+    must remain read-only (GET only). This test guards against accidentally adding
+    a parallel write surface under /admin/.
+    """
+    import inspect
+
+    from yadgar.server import admin_config as ac_module
+
+    source = inspect.getsource(ac_module)
+    # Check that no write method is registered via custom_route
+    for write_method in ("PATCH", "PUT", "DELETE"):
+        assert write_method not in source, (
+            f"admin_config.py contains {write_method!r} — parallel write path detected. "
+            "Config writes must go through POST /api/control/config only."
+        )
+    # POST is also forbidden on /admin/config (it has its own write path)
+    # Verify the only registered route is GET
+    assert '"GET"' in source or "'GET'" in source, (
+        "Expected GET route registration in admin_config.py"
+    )

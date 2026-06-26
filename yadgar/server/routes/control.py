@@ -1,8 +1,10 @@
-"""Control API routes — v5.50.2.
+"""Control API routes — v5.85.0.
 
 Endpoints:
   GET  /api/control/config               — full knob table with reload classification
-  POST /api/control/config               — set ONE knob (validates type + range)
+                                           + enriched fields (description/section/category/locked)
+  POST /api/control/config               — set ONE knob (validates type + range);
+                                           returns 409 when knob is env-locked
   POST /api/control/action/{consolidate|vacuum|reembed} — trigger admin actions
   POST /api/control/restart/{yadgar|backend} — write sentinel file only (NO exec)
 
@@ -15,6 +17,12 @@ Restart design (SECURITY-CRITICAL):
   - Does NOT call os.execv, subprocess, systemctl, or any restart mechanism.
   - A systemd .path + .service unit (documented in MIGRATION_NOTES.md) does the
     actual restart. Until those units are installed, the endpoint is inert.
+
+Config write path (SINGLE SURFACE):
+  - POST /api/control/config is the ONE sanctioned write path.
+  - admin_config.py (GET /admin/config) is read-only and stays that way.
+  - Env-locked knobs (source=='env') return 409 — a yaml write would be silently
+    shadowed by the env var, so we refuse rather than create false confidence.
 
 Registered as a side-effect import in yadgar/server/__init__.py.
 """
@@ -37,6 +45,91 @@ from yadgar.server.tools.admin_vacuum import vacuum_now
 from yadgar.tracing import trace_span
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Section → capability category mapping (v5.85.0)
+# ---------------------------------------------------------------------------
+# Maps every FIELD_META.section to one of the 15 CAPABILITY_REGISTRY categories:
+#   retrieval, storage, write-path, consolidation, enrichment, gate, wiki,
+#   curation, mcp-tool, observability, security, ops, brain-dynamics, viz, config
+#
+# A section not listed here is a drift violation (test_section_category_map_covers_all
+# catches it). Explicit fallback in _enrich_knob: 'config'.
+#
+# Maintenance rule: when a new FIELD_META section is added, update this map.
+
+SECTION_TO_CATEGORY: dict[str, str] = {
+    # core / daemon / ops
+    "core": "ops",
+    "daemon": "ops",
+    "logging": "ops",
+    "misc": "config",
+    "update": "ops",
+    "backend_cache": "ops",
+    "backend_hot_path_cache": "ops",
+    "backend_model_preload": "ops",
+    "stats_cache": "ops",
+    "active_work_watchdog": "ops",
+    "hooks": "ops",
+    "cpu_burst_detection": "ops",
+    # memory lifecycle / write-path
+    "memory_lifecycle": "write-path",
+    "memory_archive_retention": "write-path",
+    "cold_memory_retention": "write-path",
+    "session_end_capture": "write-path",
+    # thermodynamics / brain-dynamics
+    "thermodynamics": "brain-dynamics",
+    "neuromorphic": "brain-dynamics",
+    # retrieval
+    "retrieval_fusion": "retrieval",
+    "reranking": "retrieval",
+    "query_routing": "retrieval",
+    "temporal_retrieval": "retrieval",
+    "embedding_enhancement": "retrieval",
+    "graph_knowledge": "retrieval",
+    "unified_recall": "retrieval",
+    "recall_quality": "retrieval",
+    # enrichment
+    "enrichment": "enrichment",
+    "profiles_beliefs": "enrichment",
+    "adversarial": "gate",
+    # wiki
+    "wiki_similarity_gate": "wiki",
+    "wiki_staleness": "wiki",
+    "wiki_write_wait": "wiki",
+    "memory_blocks": "wiki",
+    # observability
+    "observability": "observability",
+    # viz
+    "viz_config": "viz",
+    # project_brief / anchor
+    "project_brief": "ops",
+    "anchor_hygiene": "ops",
+    "agent_prompt_library": "ops",
+}
+
+
+def _get_category(section: str) -> str:
+    """Return capability category for a FIELD_META section; fallback 'config'."""
+    return SECTION_TO_CATEGORY.get(section, "config")
+
+
+def _enrich_knob(knob: dict, field_meta_key: str) -> dict:
+    """Add description/section/category/locked fields to a knob dict in-place.
+
+    field_meta_key: lowercase-no-prefix name (e.g. 'viz_node_size_3d').
+    Mutates and returns the dict.
+    """
+    from yadgar.config_yaml import FIELD_META  # noqa: PLC0415 — keep import at call site
+
+    meta = FIELD_META.get(field_meta_key, {})
+    section = meta.get("section", "misc")
+    knob["description"] = meta.get("desc", "")
+    knob["section"] = section
+    knob["category"] = _get_category(section)
+    knob["locked"] = knob.get("source") == "env"
+    return knob
+
 
 # ---------------------------------------------------------------------------
 # Reload-vs-restart classification
@@ -249,27 +342,65 @@ def _write_restart_sentinel(service: str) -> Path:
 
 
 async def control_config_get_handler(request: Request) -> JSONResponse:
-    """GET /api/control/config — full knob table with classification."""
+    """GET /api/control/config — full knob table with classification + enriched metadata."""
     entries = list_config()
     knobs = []
     for entry in entries:
         if entry._should_redact():
             continue
-        knobs.append(
-            {
-                "name": entry.name,
-                "kind": entry.kind,
-                "current": entry._raw_value(),
-                "default": entry.default,
-                "source": entry.source(),
-                "reload": _classify_knob(entry.name),
-            }
-        )
+        source = entry.source()
+        knob = {
+            "name": entry.name,
+            "kind": entry.kind,
+            "current": entry._raw_value(),
+            "default": entry.default,
+            "source": source,
+            "reload": _classify_knob(entry.name),
+        }
+        field_meta_key = entry.name.removeprefix("YADGAR_").lower()
+        _enrich_knob(knob, field_meta_key)
+        knobs.append(knob)
     return JSONResponse({"knobs": knobs})
 
 
+def _write_knob_to_yaml(entry_name: str, coerced: object) -> str | None:
+    """Persist a coerced knob value to YAML config (chmod 0o600).
+
+    Returns an error string on failure, None on success.
+    Extracted to keep control_config_post_handler under I13 cyclomatic cap.
+    """
+    try:
+        from ruamel.yaml.comments import CommentedMap  # noqa: PLC0415
+
+        from yadgar.config_yaml import get_config_path, load_yaml, save_yaml  # noqa: PLC0415
+
+        path = get_config_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        yaml_data = load_yaml(path) if path.exists() else CommentedMap()
+        if not isinstance(yaml_data, CommentedMap):
+            yaml_data = CommentedMap(yaml_data or {})
+
+        yaml_key = entry_name.removeprefix("YADGAR_").lower()
+        yaml_data[yaml_key] = coerced
+        save_yaml(path, yaml_data)
+        import os as _os  # noqa: PLC0415
+
+        _os.chmod(path, 0o600)
+        return None
+    except Exception as exc:
+        return str(exc)
+
+
 async def control_config_post_handler(request: Request) -> JSONResponse:
-    """POST /api/control/config — set ONE knob; validates type + range."""
+    """POST /api/control/config — set ONE knob; validates type + range.
+
+    Returns:
+      200  — knob updated (yaml + env)
+      400  — bad input / unknown knob / type mismatch / range violation / write-blocked
+      409  — knob is env-locked (source=env); yaml write would be silently shadowed
+      500  — yaml persistence failed
+    """
     try:
         body = await request.json()
     except Exception:
@@ -292,11 +423,23 @@ async def control_config_post_handler(request: Request) -> JSONResponse:
     if entry is None:
         return JSONResponse({"error": f"unknown knob: {name!r}"}, status_code=400)
 
-    if entry._should_redact():
+    if entry._should_redact() or entry.name in _WRITE_BLOCKED:
         return JSONResponse({"error": f"knob {name!r} is write-protected"}, status_code=400)
 
-    if entry.name in _WRITE_BLOCKED:
-        return JSONResponse({"error": f"knob {name!r} is write-protected"}, status_code=400)
+    # Env-locked: yaml write would be silently shadowed by the env var — refuse with 409.
+    if entry.source() == "env":
+        return JSONResponse(
+            {
+                "error": (
+                    f"knob {name!r} is env-locked (source=env): a yaml write would be "
+                    "silently shadowed by the environment variable. "
+                    "Unset the env var to allow yaml configuration."
+                ),
+                "source": "env",
+                "locked": True,
+            },
+            status_code=409,
+        )
 
     # Coerce + validate type
     coerced, err = _coerce_json_value(raw_value, entry.kind)
@@ -308,30 +451,11 @@ async def control_config_post_handler(request: Request) -> JSONResponse:
     if range_err:
         return JSONResponse({"error": range_err}, status_code=400)
 
-    # Persist: write to YAML config (survives restart) AND set in process env (immediate)
-    try:
-        from ruamel.yaml.comments import CommentedMap  # noqa: PLC0415
-
-        from yadgar.config_yaml import get_config_path, load_yaml, save_yaml  # noqa: PLC0415
-
-        path = get_config_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-
-        yaml_data = load_yaml(path) if path.exists() else CommentedMap()
-        if not isinstance(yaml_data, CommentedMap):
-            yaml_data = CommentedMap(yaml_data or {})
-
-        # YAML key = lowercase without YADGAR_ prefix
-        yaml_key = entry.name.removeprefix("YADGAR_").lower()
-        yaml_data[yaml_key] = coerced
-        save_yaml(path, yaml_data)
-        import os as _os
-
-        _os.chmod(path, 0o600)
-
-    except Exception as exc:
-        logger.warning("Failed to persist knob %s to YAML: %s", name, exc)
-        return JSONResponse({"error": f"failed to persist: {exc}"}, status_code=500)
+    # Persist to YAML (survives restart)
+    persist_err = _write_knob_to_yaml(entry.name, coerced)
+    if persist_err:
+        logger.warning("Failed to persist knob %s to YAML: %s", name, persist_err)
+        return JSONResponse({"error": f"failed to persist: {persist_err}"}, status_code=500)
 
     # Update process environment immediately (hot-reload knobs take effect without restart)
     os.environ[entry.name] = str(coerced)

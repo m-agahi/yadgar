@@ -936,6 +936,101 @@ def _migration_023_memory_directory_context_backfill(storage) -> None:
     )
 
 
+def _migration_024_wiki_page_hash_source(storage) -> None:
+    """Add hash (option<string>) and source_file (option<string>) to wiki_page (v5.85.0).
+
+    Built-in module pages (page_type='code') carry a SHA256 hash of their source
+    file and the abs path to that file.  The staleness checker reads these fields
+    from DB instead of disk frontmatter for built-in pages.
+
+    DEFINE FIELD IF NOT EXISTS is idempotent — safe to run twice.
+    """
+    storage._q("DEFINE FIELD IF NOT EXISTS hash ON TABLE wiki_page TYPE option<string>;")
+    storage._q("DEFINE FIELD IF NOT EXISTS source_file ON TABLE wiki_page TYPE option<string>;")
+    _log.info("migration_024: added hash + source_file fields to wiki_page (additive/nullable)")
+
+
+def _migration_025_agent_prompt_slug_collapse(storage) -> None:
+    """Collapse agent-prompt-<pattern>-vN pages to one page per pattern (v5.85 S7).
+
+    The as-shipped Phase 1 (commit fabab7e) wrote versioned slugs
+    agent-prompt-<pattern>-vN. The rework uses one slug per pattern
+    (wiki versioning carries history). This migration collapses any
+    existing -vN pages to the latest content under the bare slug.
+
+    Idempotent: no-op when no -vN agent-prompt slugs exist.
+    """
+    import re as _re  # noqa: PLC0415
+
+    _ver_re = _re.compile(r"^(agent-prompt-.+)-v(\d+)$")
+
+    # Fetch all agent-prompt wiki pages
+    rows = storage._q(
+        "SELECT id, slug, content, tags, title, directory_context, "
+        "category, confidence, source_memory_ids FROM wiki_page "
+        "WHERE tags CONTAINS 'agent-prompt'"
+    )
+
+    # Separate versioned from bare slugs
+    versioned: list[dict] = []
+    for row in rows:
+        slug = row.get("slug", "")
+        m = _ver_re.match(slug)
+        if m:
+            row["_pattern"] = m.group(1)  # e.g. "agent-prompt-dispatch-fix-bug"
+            row["_ver"] = int(m.group(2))
+            versioned.append(row)
+
+    if not versioned:
+        _log.info("migration_025: no versioned agent-prompt slugs found — no-op")
+        return
+
+    # Group by pattern, keep highest version
+    best: dict[str, dict] = {}
+    for row in versioned:
+        pat = row["_pattern"]
+        prev = best.get(pat)
+        if prev is None or row["_ver"] > prev["_ver"]:
+            best[pat] = row
+
+    for pattern_slug, row in best.items():
+        bare_slug = pattern_slug  # already "agent-prompt-<pattern>"
+        existing = storage.get_wiki_page_by_slug(bare_slug)
+        content = row.get("content", "")
+        tags = row.get("tags", [])
+        directory_context = row.get("directory_context", "global")
+        title = row.get("title", "").split(" v")[0]  # strip " v2" from title if present
+        category = row.get("category", "reference")
+        confidence = row.get("confidence", "high")
+
+        if existing is None:
+            page_id = storage.insert_wiki_page(
+                {
+                    "slug": bare_slug,
+                    "title": title,
+                    "content": content,
+                    "tags": tags,
+                    "links": [],
+                    "category": category,
+                    "confidence": confidence,
+                    "source_memory_ids": row.get("source_memory_ids", []),
+                    "directory_context": directory_context,
+                    "page_type": "agent_prompt",
+                    "wiki_schema_version": 1,
+                }
+            )
+            _log.info("migration_025: created %s (page_id=%s)", bare_slug, page_id)
+        else:
+            _log.info("migration_025: bare slug %s already exists — skipping insert", bare_slug)
+
+    # Delete all versioned pages
+    for row in versioned:
+        page_id = storage._extract_id(row.get("id"))
+        if page_id is not None:
+            storage.delete_wiki_page(page_id)
+            _log.info("migration_025: deleted %s", row.get("slug"))
+
+
 _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {"version": "001_hnsw_indexes", "fn": _migration_001_hnsw_indexes},
     {"version": "002_relationship_indexes", "fn": _migration_002_relationship_indexes},
@@ -1016,6 +1111,14 @@ _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {
         "version": "023_memory_directory_context_backfill",
         "fn": _migration_023_memory_directory_context_backfill,
+    },
+    {
+        "version": "024_wiki_page_hash_source",
+        "fn": _migration_024_wiki_page_hash_source,
+    },
+    {
+        "version": "025_agent_prompt_slug_collapse",
+        "fn": _migration_025_agent_prompt_slug_collapse,
     },
 ]
 

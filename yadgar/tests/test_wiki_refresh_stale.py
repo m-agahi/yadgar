@@ -476,3 +476,139 @@ def test_directory_manifest_ignores_pycache_churn(tmp_path):
     (src_dir / "m.py").write_text("# module CHANGED")
     changed = _compute_source_hash([str(src_dir)], hashlib)
     assert changed != baseline, "a real source edit must still change the manifest hash"
+
+
+# ── DB-path staleness tests (car #36 store bridge) ────────────────────────────
+
+
+class TestCheckerDbPath:
+    """DB-backed staleness path for built-in page_type='code' pages."""
+
+    def test_checker_db_path_not_stale_when_match(self, tmp_path):
+        """DB page with hash matching live file → NOT stale (no .local-review file)."""
+        import hashlib
+
+        from yadgar.server.tools.project import _scan_stale_wiki_slugs_db
+
+        # Write a source file
+        src = tmp_path / "pkg" / "mod.py"
+        src.parent.mkdir(parents=True, exist_ok=True)
+        src.write_bytes(b"# module content")
+
+        correct_hash = hashlib.sha256(src.read_bytes()).hexdigest()
+
+        # Insert a page into DB with page_type="code", hash, source_file
+        from yadgar.server.lifecycle import _get_storage
+
+        storage = _get_storage()
+        storage.insert_wiki_page(
+            {
+                "slug": "mod-pkg-mod",
+                "title": "pkg.mod",
+                "content": "# pkg.mod",
+                "tags": ["code-structure", "module"],
+                "category": "code",
+                "page_type": "code",
+                "directory_context": str(tmp_path),
+                "hash": correct_hash,
+                "source_file": str(src),
+            }
+        )
+
+        stale = _scan_stale_wiki_slugs_db(str(tmp_path))
+        assert "mod-pkg-mod" not in stale, "DB page with matching hash must NOT be stale"
+
+    def test_checker_db_path_stale_on_drift(self, tmp_path):
+        """DB page with hash not matching live file → stale."""
+        from yadgar.server.lifecycle import _get_storage
+        from yadgar.server.tools.project import _scan_stale_wiki_slugs_db
+
+        src = tmp_path / "pkg" / "mod2.py"
+        src.parent.mkdir(parents=True, exist_ok=True)
+        src.write_bytes(b"# original content")
+
+        storage = _get_storage()
+        storage.insert_wiki_page(
+            {
+                "slug": "mod-pkg-mod2",
+                "title": "pkg.mod2",
+                "content": "# pkg.mod2",
+                "tags": ["code-structure", "module"],
+                "category": "code",
+                "page_type": "code",
+                "directory_context": str(tmp_path),
+                "hash": "0" * 64,  # deliberately wrong
+                "source_file": str(src),
+            }
+        )
+
+        stale = _scan_stale_wiki_slugs_db(str(tmp_path))
+        assert "mod-pkg-mod2" in stale, "DB page with wrong hash must be stale"
+
+    def test_checker_db_path_stale_when_source_changes(self, tmp_path):
+        """Mutate source file → DB page becomes stale."""
+        import hashlib
+
+        from yadgar.server.lifecycle import _get_storage
+        from yadgar.server.tools.project import _scan_stale_wiki_slugs_db
+
+        src = tmp_path / "pkg" / "mod3.py"
+        src.parent.mkdir(parents=True, exist_ok=True)
+        src.write_bytes(b"# original")
+
+        original_hash = hashlib.sha256(src.read_bytes()).hexdigest()
+
+        storage = _get_storage()
+        storage.insert_wiki_page(
+            {
+                "slug": "mod-pkg-mod3",
+                "title": "pkg.mod3",
+                "content": "# pkg.mod3",
+                "tags": ["code-structure"],
+                "category": "code",
+                "page_type": "code",
+                "directory_context": str(tmp_path),
+                "hash": original_hash,
+                "source_file": str(src),
+            }
+        )
+
+        # Not stale yet
+        assert "mod-pkg-mod3" not in _scan_stale_wiki_slugs_db(str(tmp_path))
+
+        # Mutate source
+        src.write_bytes(b"# CHANGED")
+        assert "mod-pkg-mod3" in _scan_stale_wiki_slugs_db(str(tmp_path))
+
+    def test_external_fn_page_not_stale_not_tracked(self, tmp_path):
+        """External fn pages (entity_id: fn:*) on disk must NOT be flagged stale.
+
+        The checker can't reproduce SHA256(sig+body) per-function hashing, so
+        these pages are classified 'external-sourced, not tracked' — not stale.
+        """
+        # Create a disk fn page with entity_id: fn:* (wrong hash would normally trigger)
+        wiki_dir = tmp_path / ".local-review" / "wiki"
+        wiki_dir.mkdir(parents=True, exist_ok=True)
+        src = tmp_path / "pkg" / "fn.py"
+        src.parent.mkdir(parents=True, exist_ok=True)
+        src.write_bytes(b"def foo(): pass")
+
+        content = (
+            f"---\n"
+            f"wiki_schema_version: 2\n"
+            f"slug: fn-pkg-foo\n"
+            f"entity_id: fn:pkg.foo\n"
+            f"hash: {'0' * 64}\n"
+            f"source_file: {src}\n"
+            f"---\n\n# fn:pkg.foo\n"
+        )
+        (wiki_dir / "fn-pkg-foo.md").write_text(content)
+
+        # Run the full stale scan (disk path) — fn pages must NOT appear
+        from yadgar.server.tools.project import _scan_stale_wiki_slugs
+
+        stale = _scan_stale_wiki_slugs(str(tmp_path))
+        assert "fn-pkg-foo" not in stale, (
+            "External fn page (entity_id: fn:*) must not be flagged stale — "
+            "checker cannot reproduce per-function hash"
+        )

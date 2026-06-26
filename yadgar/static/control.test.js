@@ -44,12 +44,14 @@ import {
 // Sample fixture data
 // ---------------------------------------------------------------------------
 
+// category matches the real GET /api/control/config contract (control.py _enrich_knob):
+// section viz_config -> "viz"; section core -> "ops" (SECTION_TO_CATEGORY).
 const _SAMPLE_KNOBS = [
-  { name: 'YADGAR_VIZ_NODE_SIZE_3D',          kind: 'float',  current: '8.0',  default: '8.0',  source: 'default', reload: 'hot_reload' },
-  { name: 'YADGAR_VIZ_EDGE_OPACITY',           kind: 'float',  current: '0.9',  default: '0.9',  source: 'default', reload: 'hot_reload' },
-  { name: 'YADGAR_VIZ_PHYSICS_CHARGE_STRENGTH',kind: 'float',  current: '-18.0',default: '-18.0',source: 'default', reload: 'hot_reload' },
-  { name: 'YADGAR_EMBEDDING_MODEL',            kind: 'string', current: 'all-MiniLM-L6-v2', default: 'all-MiniLM-L6-v2', source: 'default', reload: 'restart_required' },
-  { name: 'YADGAR_PORT',                       kind: 'int',    current: '8765', default: '8765', source: 'default', reload: 'restart_required' },
+  { name: 'YADGAR_VIZ_NODE_SIZE_3D',          kind: 'float',  current: '8.0',  default: '8.0',  source: 'default', reload: 'hot_reload',        category: 'viz' },
+  { name: 'YADGAR_VIZ_EDGE_OPACITY',           kind: 'float',  current: '0.9',  default: '0.9',  source: 'default', reload: 'hot_reload',        category: 'viz' },
+  { name: 'YADGAR_VIZ_PHYSICS_CHARGE_STRENGTH',kind: 'float',  current: '-18.0',default: '-18.0',source: 'default', reload: 'hot_reload',        category: 'viz' },
+  { name: 'YADGAR_EMBEDDING_MODEL',            kind: 'string', current: 'all-MiniLM-L6-v2', default: 'all-MiniLM-L6-v2', source: 'default', reload: 'restart_required', category: 'ops' },
+  { name: 'YADGAR_PORT',                       kind: 'int',    current: '8765', default: '8765', source: 'default', reload: 'restart_required', category: 'ops' },
 ];
 
 // ---------------------------------------------------------------------------

@@ -106,6 +106,7 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_OLLAMA_URL", "http://localhost:11434", "string"),
     ConfigEntry("YADGAR_OLLAMA_MODEL", "qwen3:8b", "string"),
     ConfigEntry("YADGAR_CONFLICT_K", "5", "int"),
+    ConfigEntry("YADGAR_CROSS_ENCODER_BACKEND", "st", "string"),
     # ── Logging ─────────────────────────────────────────────────────────────
     ConfigEntry("YADGAR_BACKEND_LOG_LEVEL", "warn", "string"),
     ConfigEntry("YADGAR_CORE_LOG_LEVEL", "WARNING", "string"),
@@ -322,6 +323,8 @@ _REGISTRY: list[ConfigEntry] = [
     # Shadow threshold for auditing — memories below this are stamped would_reject=True
     # but nothing is dropped (WRITE_GATE_THRESHOLD stays 0.0).
     ConfigEntry("YADGAR_WRITE_GATE_SHADOW_THRESHOLD", "0.15", "float"),
+    # ── v5.85 car #6 agent-prompt Tier-1 passive library (Phase 1) kill-gate ──
+    ConfigEntry("YADGAR_AGENT_PROMPT_LIBRARY_ENABLED", "true", "bool"),
 ]
 
 
