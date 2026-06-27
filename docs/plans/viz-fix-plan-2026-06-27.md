@@ -90,13 +90,16 @@ weak-edge affordance [89], edge-weight slider [70]. All S, low priority.
 
 ---
 
-## Open decisions (need user input before P0.4 / P4.2)
+## Decisions (RESOLVED — user 2026-06-27)
 
-1. **imports/calls/resolved_by** — DROP from the viz edge-type list (honest: not applicable to a prose
-   corpus), or FIX `resolved_by` (the only genuinely-broken handler) if error-resolution edges are wanted?
-   Recommendation: **drop all 3 from viz** (they're code-repo artifacts); revisit if/when code memories exist.
-2. **Config panel (P4.2)** — invest in making it real (L), or accept it as a debug-only tool and just
-   un-gate/clean the empty shell? Recommendation: defer P4.2; it's a separate train.
+1. **imports/calls/resolved_by** → **FIX `resolved_by`** (extractor emits "error", handler targets
+   "solution" — make them agree, `cls.py:155` + `knowledge_graph.py:228`); **DROP imports + calls** from
+   the viz edge-type list/legend (code-only, irrelevant to a prose corpus).
+2. **Config panel (P4.2)** → **INVEST — build it real** (un-gate, GET→populate→edit→apply→restart). Own
+   car in the v5.86 train.
+
+All viz work is **added to the v5.86 train** as cars (Batch 1 quick-wins, Batch 2 data, Batch 3
+interaction, Batch 4 config panel).
 
 ## Suggested sequencing
 
