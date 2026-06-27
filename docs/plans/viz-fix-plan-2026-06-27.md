@@ -1,6 +1,6 @@
 # Viz fix plan — 2026-06-27
 
-**STATUS: DRAFT — root-caused, ready for sequencing/build approval.**
+**STATUS: SHIPPED in v5.86 (PR #127) — Batch 1/2/3 + config-panel P1/P2 + the OT-C4 car. DEFERRED to v5.87 (task #60): config-panel P3/P4 (restart/destructive/audit) + Prometheus retention (#53, nix). Viz triage #55 (90-item wiki checklist) still ~22/90 user-verified.**
 
 Post-refactor the viz has real regressions (user report 2026-06-27). Triage = 90-item
 checklist in wiki `viz-triage-checklist-2026-06-27-needs-user-verdict` + task #55 (verdicts).
