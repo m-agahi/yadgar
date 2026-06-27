@@ -387,6 +387,117 @@ class TestAdrAddRoundTrip:
         assert "## ADR-0001" in content, f"ADR-0001 header missing from log: {content[:500]!r}"
         assert "## ADR-0002" in content, f"ADR-0002 header missing from log: {content[:500]!r}"
 
+    def test_adr_add_body_header_does_not_poison_id_scan(self, tmp_path):
+        """A col-0 ``## ADR-NNNN`` line inside a body field must not poison _next_adr_id.
+
+        RED before fix: ``to_markdown_body`` rendered field values flush-left, so a
+        body line ``## ADR-9999`` landed at column 0 and matched ``^## ADR-(\\d{4})``,
+        making the *next* adr_add return ADR-10000 instead of ADR-0002.
+        """
+        import re
+
+        from yadgar.server.tools.adr import adr_add
+        from yadgar.server.tools.wiki import wiki_read
+
+        project_dir = str(tmp_path / "myproj")
+        __import__("os").makedirs(project_dir, exist_ok=True)
+
+        # First ADR's `context` references another ADR id on its own line.
+        poison_params = dict(
+            _VALID_ADR_PARAMS,
+            directory=project_dir,
+            context="Considered the older approach:\n## ADR-9999: a referenced decision\nthat we discuss inline.",
+        )
+
+        with (
+            patch("yadgar.server.tools.adr._resolve_project_root", return_value=project_dir),
+            patch("yadgar.server.tools.adr._get_default_branch", return_value="master"),
+        ):
+            result1 = adr_add(**poison_params)
+            result2 = adr_add(**dict(_VALID_ADR_PARAMS, directory=project_dir, title="Second ADR"))
+
+        assert result1.get("adr_id") == "ADR-0001", f"First call: {result1}"
+        # The bug returned ADR-10000 here (9999 + 1) — must be ADR-0002.
+        assert result2.get("adr_id") == "ADR-0002", (
+            f"Body ## ADR-9999 poisoned the id scan; expected ADR-0002, got: {result2}"
+        )
+
+        page = wiki_read("myproj-adr-log", directory=project_dir, branch_hint="master")
+        content = page.get("content", "")
+        # Exactly the two real ADR headers must be detectable at column 0.
+        real_headers = re.findall(r"^## ADR-(\d{4})", content, re.MULTILINE)
+        assert real_headers == ["0001", "0002"], (
+            f"col-0 ## ADR- scan must see only real headers, got: {real_headers!r}"
+        )
+        # The referenced id must still be present somewhere (content preserved).
+        assert "ADR-9999" in content, f"Referenced ADR-9999 text lost from log: {content[:600]!r}"
+
+    def test_adr_add_multiline_markdown_fields_roundtrip(self, tmp_path):
+        """Arbitrary multi-line markdown in any field is stored without structural corruption.
+
+        Realistic stop-hook payload: multi-line prose with markdown headers, a table,
+        a fenced code block, an unbalanced fence, bullets, em-dashes, ``:`` and ``|``.
+        After two appends, both ADR headers must be parseable and content preserved.
+        """
+        import re
+
+        from yadgar.server.tools.adr import adr_add
+        from yadgar.server.tools.wiki import wiki_read
+
+        project_dir = str(tmp_path / "myproj")
+        __import__("os").makedirs(project_dir, exist_ok=True)
+
+        nasty_context = (
+            "We hit a problem this session. Several things:\n\n"
+            "## Background\n"
+            "- the pipeline broke at step 3\n"
+            "- fallback to wiki_append_section\n\n"
+            "| col | val |\n| --- | --- |\n| a   | b   |\n\n"
+            "```python\ndef f(x): return x | 0\n```\n\n"
+            "---\n\n"
+            "Em-dash here — and a stray : colon and a {brace} too."
+        )
+        consequences_unbalanced_fence = "Consequences:\n```\nunbalanced fence start\n"
+
+        params = dict(
+            _VALID_ADR_PARAMS,
+            directory=project_dir,
+            title="Harden adr_add | multi-line: test",
+            context=nasty_context,
+            consequences=consequences_unbalanced_fence,
+            alternatives="## Alt 1\n- foo\n## Alt 2\n- bar",
+        )
+
+        with (
+            patch("yadgar.server.tools.adr._resolve_project_root", return_value=project_dir),
+            patch("yadgar.server.tools.adr._get_default_branch", return_value="master"),
+        ):
+            r1 = adr_add(**params)
+            r2 = adr_add(**dict(params, title="Second multi-line ADR"))
+
+        assert r1.get("adr_id") == "ADR-0001", f"First call: {r1}"
+        assert r2.get("adr_id") == "ADR-0002", f"Second call: {r2}"
+
+        page = wiki_read("myproj-adr-log", directory=project_dir, branch_hint="master")
+        content = page.get("content", "")
+        # Exactly two real ADR section headers — body markdown must not inject extras
+        # or swallow them (unbalanced fence / col-0 ## must be neutralised).
+        real_headers = re.findall(r"^## ADR-(\d{4})", content, re.MULTILINE)
+        assert real_headers == ["0001", "0002"], (
+            f"Multi-line body corrupted header scan, got: {real_headers!r}"
+        )
+        # No body markdown leaks as a col-0 heading: the only ## headers are the
+        # two ADR sections (## ADR-0001 / ## ADR-0002). "## Background", "## Alt 1",
+        # "## Alt 2" from field values must be indented off column 0.
+        col0_headers = re.findall(r"^(#{2,3} .*)$", content, re.MULTILINE)
+        assert all(h.startswith("## ADR-") for h in col0_headers), (
+            f"Body markdown leaked as col-0 headings: {col0_headers!r}"
+        )
+        # Content survives (round-trip): distinctive fragments still present.
+        assert "the pipeline broke at step 3" in content, "table/prose content lost"
+        assert "def f(x): return x | 0" in content, "fenced code content lost"
+        assert "Em-dash here — " in content, "em-dash content lost"
+
 
 # ── 1e. adr_due signal tests ──────────────────────────────────────────────────
 

@@ -1,5 +1,7 @@
 # Improvement Train (#29) — umbrella
 
+**Status:** umbrella #29 — #4 + #9 shipped v5.85; B1-B5 + C4 still open.
+
 Created 2026-06-25. Umbrella for issue **#29**: a batch of independent improvements
 grouped into **three coherent sub-PRs** (A perf, B ADR-capture, C bugs/cleanup) — NOT
 one mega-PR. Each car has its own plan doc (or section) below. All cites verified

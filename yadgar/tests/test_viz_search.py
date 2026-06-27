@@ -150,6 +150,7 @@ class TestVizSearchEndpoint:
         with patch("yadgar.server.http._st") as mock_st:
             mock_st._retriever = None
             mock_st._wiki = None
+            mock_st._storage = None
 
             from starlette.applications import Starlette
             from starlette.routing import Route
@@ -162,3 +163,61 @@ class TestVizSearchEndpoint:
             resp = client.get("/api/viz/search?q=anything")
             assert resp.status_code == 200
             assert resp.json()["node_ids"] == []
+
+    # ------------------------------------------------------------------
+    # P0.2 — exact-title precedence (viz-fix-plan-2026-06-27)
+    #
+    # Bug: search routes through recall() WRRF capped at top-5, so a memory
+    # whose content EXACTLY matches the query can fall out of the top-5 and
+    # never light up (user searched a title, the wrong node highlighted).
+    # Fix: query memories whose content exactly/prefix-matches the query and
+    # prepend their ids to node_ids (deduped), regardless of recall ranking.
+    # ------------------------------------------------------------------
+
+    def test_exact_title_match_prepended_even_when_outside_recall_top5(self, _patch_state) -> None:
+        mock_st, retriever, wiki = _patch_state
+        wiki.query.return_value = []
+
+        # recall returns 5 DECOY memories that out-rank the exact match — the
+        # exact-title node (id 777) is NOT among them, reproducing the bug.
+        retriever.recall.return_value = [_make_recall_result(i) for i in range(1, 6)]
+
+        # storage._q resolves the exact/prefix-title match to memory id 777.
+        mock_st._storage = MagicMock()
+        mock_st._storage._q.return_value = [{"id": 777, "content": "Project Phoenix launch plan"}]
+
+        from starlette.applications import Starlette
+        from starlette.routing import Route
+        from starlette.testclient import TestClient
+
+        from yadgar.server.http import api_viz_search
+
+        app = Starlette(routes=[Route("/api/viz/search", api_viz_search, methods=["GET"])])
+        client = TestClient(app)
+        resp = client.get("/api/viz/search?q=Project Phoenix launch plan")
+        assert resp.status_code == 200
+        node_ids = resp.json()["node_ids"]
+        # The exact-title node is present despite being outside recall's top-5...
+        assert "mem:777" in node_ids
+        # ...and takes precedence (prepended ahead of the WRRF recall results).
+        assert node_ids[0] == "mem:777"
+
+    def test_exact_title_storage_error_swallowed(self, _patch_state) -> None:
+        mock_st, retriever, wiki = _patch_state
+        retriever.recall.return_value = [_make_recall_result(42)]
+        wiki.query.return_value = []
+        mock_st._storage = MagicMock()
+        mock_st._storage._q.side_effect = RuntimeError("db down")
+
+        from starlette.applications import Starlette
+        from starlette.routing import Route
+        from starlette.testclient import TestClient
+
+        from yadgar.server.http import api_viz_search
+
+        app = Starlette(routes=[Route("/api/viz/search", api_viz_search, methods=["GET"])])
+        client = TestClient(app)
+        resp = client.get("/api/viz/search?q=test")
+        assert resp.status_code == 200
+        # recall path still works even when the title-precedence query fails
+        assert "mem:42" in resp.json()["node_ids"]

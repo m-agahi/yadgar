@@ -1192,3 +1192,73 @@ class TestPruneOldRows:
         )
         pruned = storage.prune_old_rows("narrative_entry", older_than_days=0)
         assert pruned == 0
+
+
+class TestConsolidationWatermark:
+    """v5.86 (OT-C4): persisted incremental similarity-linking watermarks."""
+
+    def test_watermark_default_none(self, storage):
+        assert storage.get_consolidation_watermark("similarity_linking") is None
+
+    def test_watermark_roundtrip(self, storage):
+        ts = "2026-06-27T12:00:00+00:00"
+        storage.set_consolidation_watermark("similarity_linking", ts)
+        assert storage.get_consolidation_watermark("similarity_linking") == ts
+
+    def test_watermark_upsert_in_place(self, storage):
+        storage.set_consolidation_watermark("similarity_linking", "2026-06-26T00:00:00+00:00")
+        storage.set_consolidation_watermark("similarity_linking", "2026-06-27T00:00:00+00:00")
+        assert (
+            storage.get_consolidation_watermark("similarity_linking") == "2026-06-27T00:00:00+00:00"
+        )
+
+    def test_watermark_keys_independent(self, storage):
+        storage.set_consolidation_watermark("similarity_linking", "2026-06-27T00:00:00+00:00")
+        storage.set_consolidation_watermark("full_reconcile", "2026-06-20T00:00:00+00:00")
+        assert (
+            storage.get_consolidation_watermark("similarity_linking") == "2026-06-27T00:00:00+00:00"
+        )
+        assert storage.get_consolidation_watermark("full_reconcile") == "2026-06-20T00:00:00+00:00"
+
+    def test_watermark_rejects_bad_key(self, storage):
+        with pytest.raises(ValueError):
+            storage.set_consolidation_watermark("bad key; DROP", "x")
+
+
+class TestGetMemoriesWithEmbeddingsSince:
+    """v5.86 (OT-C4): `since=` filters to memories created on/after a watermark."""
+
+    def test_since_filters_old_memories(self, storage):
+        import numpy as np
+
+        vec = np.array([1.0] + [0.0] * 383, dtype=np.float32).tobytes()
+        old_id = storage.insert_memory(
+            _make_memory(
+                content="old", embedding=vec, heat=1.0, created_at="2026-06-01T00:00:00+00:00"
+            )
+        )
+        new_id = storage.insert_memory(
+            _make_memory(
+                content="new", embedding=vec, heat=1.0, created_at="2026-06-26T00:00:00+00:00"
+            )
+        )
+
+        all_mems = storage.get_memories_with_embeddings()
+        all_ids = {m["id"] for m in all_mems}
+        assert {old_id, new_id} <= all_ids
+
+        recent = storage.get_memories_with_embeddings(since="2026-06-20T00:00:00+00:00")
+        recent_ids = {m["id"] for m in recent}
+        assert new_id in recent_ids
+        assert old_id not in recent_ids
+
+    def test_since_none_returns_all(self, storage):
+        import numpy as np
+
+        vec = np.array([1.0] + [0.0] * 383, dtype=np.float32).tobytes()
+        storage.insert_memory(
+            _make_memory(
+                content="m1", embedding=vec, heat=1.0, created_at="2026-06-01T00:00:00+00:00"
+            )
+        )
+        assert len(storage.get_memories_with_embeddings(since=None)) == 1

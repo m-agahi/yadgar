@@ -208,7 +208,7 @@ class TestF1ConnectionCount:
         entity_rows = [_entity_row(1), _entity_row(2), _entity_row(3)]
         entity_rels = [
             _entity_rel(1, 2, "co_occurrence"),
-            _entity_rel(1, 3, "imports"),
+            _entity_rel(1, 3, "resolved_by"),
         ]
         s = _make_storage(entity_rows=entity_rows, entity_rels=entity_rels)
         result = GraphAPI(s).get_full_graph()
@@ -216,14 +216,17 @@ class TestF1ConnectionCount:
         # entity:1 is the source of both rels → 2 edges
         count = _count_edges_for_node("entity:1", result["edges"])
         assert count == 2, (
-            f"entity:1 should have 2 incident edges (co_occurrence + imports), got {count}"
+            f"entity:1 should have 2 incident edges (co_occurrence + resolved_by), got {count}"
         )
 
     def test_all_edge_types_reachable_for_count(self):
-        """All 11 EDGE_TYPES can appear in allLinks; panel can count any of them."""
+        """All viz entity-rel EDGE_TYPES can appear in allLinks; panel can count any.
+
+        v5.86 VIZ Batch-2 (P0.4): imports/calls dropped from the viz set.
+        """
         from yadgar.viz_meta import EDGE_TYPES
 
-        entity_rel_types = ["co_occurrence", "imports", "calls", "resolved_by", "caused_by"]
+        entity_rel_types = ["co_occurrence", "resolved_by", "caused_by"]
         entity_rows = [_entity_row(i) for i in range(1, 12)]
         entity_rels = [_entity_rel(i, i + 5, rt) for i, rt in enumerate(entity_rel_types, 1)]
         s = _make_storage(entity_rows=entity_rows, entity_rels=entity_rels)
@@ -327,7 +330,7 @@ class TestF5FidelityInvariant:
         entity_rows = [_entity_row(7), _entity_row(8)]
         entity_rels = [
             _entity_rel(7, 8, "co_occurrence"),
-            _entity_rel(7, 8, "calls"),
+            _entity_rel(7, 8, "caused_by"),
         ]
         s = _make_storage(entity_rows=entity_rows, entity_rels=entity_rels)
         result = GraphAPI(s).get_full_graph()

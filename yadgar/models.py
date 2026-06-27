@@ -223,6 +223,24 @@ _ADR_VALID_STATUSES: frozenset[str] = frozenset(
 )
 
 
+def _indent_continuation(value: str) -> str:
+    """Indent every line after the first by two spaces (markdown list continuation).
+
+    Keeps the first line flush so the ``- {key}: {first line}`` bullet shape is
+    preserved, but pushes continuation lines off column 0.  This neutralises any
+    embedded ``## heading`` or ```` ``` ```` fence inside a multi-line ADR field
+    value, which would otherwise be parsed as a real markdown structure by the
+    ADR id scan (``^## ADR-NNNN``) and ``wiki_append_section`` heading detection.
+    Blank lines are left empty (no trailing indent whitespace).
+    """
+    lines = value.split("\n")
+    if len(lines) == 1:
+        return value
+    head, *rest = lines
+    indented_rest = [f"  {ln}" if ln else ln for ln in rest]
+    return "\n".join([head, *indented_rest])
+
+
 class ADR(BaseModel):
     """Typed record shape for an Architecture Decision Record entry.
 
@@ -267,8 +285,21 @@ class ADR(BaseModel):
         }
 
     def to_markdown_body(self) -> str:
-        """Return the flat-bullet markdown body for this ADR, matching adr_add output."""
-        return "".join(f"- {k}: {v}\n" for k, v in self.to_body_dict().items())
+        """Return the flat-bullet markdown body for this ADR, matching adr_add output.
+
+        Each field renders as ``- {key}: {first line}`` followed by any
+        continuation lines indented two spaces (standard markdown list
+        continuation).  Indentation is mandatory for correctness, not cosmetics:
+        a multi-line value flushed to column 0 would let an embedded ``## ...``
+        line be parsed as a real heading — poisoning ``_next_adr_id``'s
+        ``^## ADR-NNNN`` scan (sequential IDs jump to e.g. ADR-10000) and
+        ``wiki_append_section``'s section detection.  Indenting pushes such
+        lines (and stray ```` ``` ```` fences) off column 0 so neither parser
+        misfires, while keeping the ``- {key}: `` flat-bullet shape intact.
+        """
+        return "".join(
+            f"- {k}: {_indent_continuation(str(v))}\n" for k, v in self.to_body_dict().items()
+        )
 
 
 class AgentPrompt(BaseModel):

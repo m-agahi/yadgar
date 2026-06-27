@@ -31,13 +31,32 @@ _FROM_IMPORT_RE = re.compile(r"(?:^|\n)\s*from\s+([\w.]+)\s+import\s+([\w, ]+)")
 _DEF_RE = re.compile(r"\bdef\s+(\w+)\s*\(")
 _CALL_RE = re.compile(r"\b(\w+)\s*\(")
 _ERROR_FIX_RE = re.compile(
-    r"(?:fix(?:ed)?|resolv(?:ed|e|ing)|solved?)\s+(?:the\s+)?(\w*(?:Error|Exception|error|bug|issue))",
+    r"(?:fix(?:ed)?|resolv(?:ed|e|ing)|solved?)\s+(?:the\s+)?(\w*(?:Error|Exception|error|bug|issue))"
+    # Optional resolution clause ("... by <doing something>") → the solution entity.
+    r"(?:\s+(?:by|with|using|via)\s+(\w+(?:\s+\w+){0,3}))?",
     re.IGNORECASE,
 )
 _DECIDED_RE = re.compile(
     r"decided\s+to\s+use\s+(\w+(?:\s+\w+){0,2})\s+instead\s+of\s+(\w+(?:\s+\w+){0,2})",
     re.IGNORECASE,
 )
+
+
+def _error_fix_entities(match: re.Match[str]) -> list[tuple[str, str, str]]:
+    """Build entity triples for one error-fix match.
+
+    Emits the error entity tagged with the ``resolved_by`` relationship context
+    AND the resolution entity typed ``solution`` (when a "...by/with <fix>"
+    clause is present). The CLS handler (_apply_one_typed_relationship) links the
+    solution → error via ``resolved_by``; without the solution entity that edge
+    is provably dead (the handler finds no "solution"-typed entity to attach).
+    """
+    error_name = match.group(1)
+    triples: list[tuple[str, str, str]] = [(error_name, "error", "resolved_by")]
+    solution = (match.group(2) or "").strip()
+    if solution:
+        triples.append((solution, "solution", ""))
+    return triples
 
 
 class KnowledgeGraph:
@@ -225,7 +244,7 @@ class KnowledgeGraph:
 
         # Error-fix pattern -> "resolved_by"
         for m in _ERROR_FIX_RE.finditer(content):
-            results.append((m.group(1), "error", "resolved_by"))
+            results.extend(_error_fix_entities(m))
 
         # Decision pattern -> "decided_to_use"
         for m in _DECIDED_RE.finditer(content):

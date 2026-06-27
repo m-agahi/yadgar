@@ -471,6 +471,19 @@
 .bm-preview-star.starred { color: var(--star); }
 .bm-preview-star:hover { color: var(--star); }
 
+/* P3.10 [57]: live refresh control */
+.bm-preview-refresh {
+  background: none;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  color: var(--text-mute, #8b949e);
+  padding: 2px;
+  line-height: 1;
+  transition: color 0.1s;
+}
+.bm-preview-refresh:hover { color: var(--accent, #58a6ff); }
+
 .bm-preview-body {
   flex: 1;
   overflow-y: auto;

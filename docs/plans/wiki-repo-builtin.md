@@ -1,7 +1,6 @@
 # PLAN — Wiki-repo BUILT-IN + shared stale-hash (absorbs #36 residual)
 
-**Status:** PLANNED (NEW, v5.85 train car #36). Scoped 2026-06-26, code-grounded
-against `master`. Riskiest car — read the "car vs train" call below.
+**Status:** PARTIAL — store-bridge shipped v5.85 (#36); fn/index hash parity deferred to #47 (XL).
 **Theme:** wiki / repo-docs / staleness / external-skill removal
 **Effort:** M (module-only, recommended scope) · XL (full fn/index parity — its OWN
 train, do NOT attempt in one car) · **Risk:** M→XL by scope

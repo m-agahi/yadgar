@@ -990,6 +990,17 @@ config knobs.
 - **wiring:** `SIMILARITY_LINK_THRESHOLD=0.78` (default minimum cosine to create a link). `MAX_SIMILARITY_LINKS_PER_MEMORY=15` (default degree cap). Both consumed by `consolidation/cls.py` during the CLS (episodic→semantic) phase: for each memory pair with cosine ≥ threshold, if the degree cap is not exceeded, a `memory_similarity_link` row is created via `insert_memory_similarity_link`. Also checked by `admin_invariants.py` for the invariant ceiling.
 - **explanation:** Bounds the `memory_similarity_link` graph to prevent unbounded growth. `SIMILARITY_LINK_THRESHOLD` sets the cosine floor for edge creation; `MAX_SIMILARITY_LINKS_PER_MEMORY` caps the per-node degree so the graph remains sparse and fast to traverse. The CLS phase runs during the nightly consolidation cycle and during `consolidate_now(mode='full')`.
 
+### CAP-STOR-035 — Incremental similarity-linking + full reconcile (OT-C4)
+- **status:** DORMANT
+- **category:** storage
+- **settings:** `SIMILARITY_LINKING_INCREMENTAL_ENABLED`, `SIMILARITY_LINKING_RECONCILE_INTERVAL_DAYS`
+- **tools:** —
+- **migrations:** —
+- **bc:** —
+- **refs:** `yadgar/consolidation/cls.py::_link_similar_memories_incremental`, `yadgar/consolidation/cls.py::_collect_link_candidates_rect`, `yadgar/consolidation/orchestrator.py::_run_graph_phases`, `yadgar/consolidation/__init__.py::run_nightly_consolidation`, `yadgar/storage/ops.py::get_consolidation_watermark`
+- **wiring:** v5.86 car #1 (OT-C4). DEFAULT OFF — `SIMILARITY_LINKING_INCREMENTAL_ENABLED=False` so production runs the full N×N `_link_similar_memories` every cycle exactly as before. When True, `_run_graph_phases` calls `_link_similar_memories_incremental(stats, since=<watermark>)` (probe = memories created since the persisted `similarity_linking` watermark, corpus = full candidate set), then bumps the watermark to the cycle-start timestamp. `run_nightly_consolidation` runs a MANDATORY full reconcile (`_link_similar_memories`) after `_maybe_sleep_cycle` whenever that sleep cycle re-embedded/compressed memories (old↔old similarity changed) OR `SIMILARITY_LINKING_RECONCILE_INTERVAL_DAYS` (default 7) elapsed since the last `full_reconcile` watermark. Watermarks persist in the `consolidation_meta` singleton table.
+- **explanation:** Re-embedding mutates existing embeddings, so old↔old cosine similarity changes invisibly to an incremental-by-`created_at` pass. The full reconcile is the safety net: it re-runs the complete pass whenever embeddings actually changed or weekly, guaranteeing eventual consistency of the link graph while the per-cycle incremental path keeps consolidation O(N_new × N) instead of O(N²). With the flag OFF the incremental path and the post-sleep reconcile call are both inert — behavior is byte-identical to the prior full-only pass.
+
 ### CAP-STOR-034 — Memory cluster and prospective memory retention
 - **status:** LIVE
 - **category:** storage

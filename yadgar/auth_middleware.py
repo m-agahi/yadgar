@@ -79,7 +79,8 @@ class BearerAuthMiddleware:
 
         # Debug-API gate: must fire before auth-required check (gate-off → 403 even with valid token,
         # and even when auth is disabled). Applies only to the new control API paths, NOT /api/control/update.
-        if _is_debug_api_path(path) and not _is_debug_apis_enabled():
+        method: str = scope.get("method", "GET")
+        if _is_debug_api_path(path, method) and not _is_debug_apis_enabled():
             response = JSONResponse(
                 {"error": "debug APIs disabled"},
                 status_code=403,
@@ -165,13 +166,21 @@ def _observe_auth_duration(t0: float) -> None:
         pass
 
 
-def _is_debug_api_path(path: str) -> bool:
-    """Return True when path is gated by YADGAR_DEBUG_APIS_ENABLED.
+def _is_debug_api_path(path: str, method: str = "GET") -> bool:
+    """Return True when path+method is gated by YADGAR_DEBUG_APIS_ENABLED.
 
     Covers /api/control/config, /api/control/action/*, /api/control/restart/*,
     and /api/logs/* (v5.52.0 log streaming endpoints).
     Explicitly excludes /api/control/update (governed by YADGAR_UPDATE_DEBUG_APIS_ENABLED).
+
+    Method-aware (v5.86, car #8): the read-only config viewer
+    ``GET /api/control/config`` is NOT gated — config display is non-sensitive
+    (redacted knobs are skipped server-side, env-sourced knobs render locked), so
+    the panel populates without the debug flag. Bearer auth still applies. Only
+    mutating paths (POST config / action / restart) stay behind the flag.
     """
+    if path == "/api/control/config" and method.upper() == "GET":
+        return False
     for prefix in _DEBUG_API_PREFIXES:
         if path.startswith(prefix):
             return True

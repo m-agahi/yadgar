@@ -91,7 +91,7 @@ consolidation/orchestrator.py (ConsolidationScheduler)
    - Spreading activation from seed entities
 4. **WRRF fusion** — Weighted Reciprocal Rank Fusion blends signal lists
 5. **Confidence gate** — low-confidence result sets trigger fallback strategy
-6. **Reranking** — cross-encoder (FlashRank or GTE-ModernBERT) scores top-K pairs
+6. **Reranking** — cross-encoder (FlashRank or GTE-ModernBERT) scores top-K pairs. Opt-in int8-onnx backend available via `YADGAR_CROSS_ENCODER_BACKEND=onnx-int8` (BACKEND_VERSION 5.8.0); default remains fp32 (`"st"`). Gated at load time in `ml_client._try_st_cross_encoder`. (`yadgar/config.py`, `yadgar/backend/ml_client.py`)
 7. **NLI entailment** — optional DeBERTa entailment signal blended in
 8. **Multi-passage aggregation** — evidence clusters formed for open-domain queries
 9. **Adversarial filter** — score-gap and diversity checks before return
@@ -99,6 +99,8 @@ consolidation/orchestrator.py (ConsolidationScheduler)
 `recall()` accepts a `profile` kwarg (`"fast"`, `"balanced"`, `"full"`, `"debug"`) + `stage_overrides` (v5.31.0), plus `directory` and `branch_hint` (v5.43.0) for caller-context-driven branch detection — same daemon-CWD-avoidance pattern as `wiki_read`. Profile routes through the `RetrievalPipeline` stage orchestrator (`retrieval/pipeline.py`) instead of the monolithic path. Each stage is a `RetrievalStage` instance composable via plugin registry.
 
 `wiki_read(slug)` uses §25 4-step directory-aware resolution (v5.42.5, `storage/wiki.py:314`): (1) `directory=caller_dir AND branch=current_branch`, (2) `directory=caller_dir AND branch IS NULL`, (3) `directory='global' AND branch IS NULL`, (4) not found → error dict. When no `directory` is supplied, falls back to legacy 3-step branch-only resolution. `branch_hint` parameter (v5.42.3/v5.42.6) supplies the caller's branch when daemon-side `_detect_branch` returns None (container scenario).
+
+**Agent-prompt library (v5.85, ADR-0007):** Agent-prompts are wiki pages tagged `["agent-prompt"]`; lookup is `recall(type="wiki", tags=["agent-prompt"])` and exact-key reads use a deterministic `agent-prompt-<pattern>` slug (no vN versioning). `agent_dispatch_prelude` resolves the slug directly; `agent_prompt_save` is the only MCP write tool. A capture loop (v5.85.1) runs on session stop: `project_brief(mode="catalog")` is called via stop-hook to prime the next session's context.
 
 ### Consolidation path (background daemon)
 
@@ -334,6 +336,8 @@ Distributed tracing (`yadgar/tracing.py`) wraps the optional OTLP exporter in a 
 **MCP tools** (`block_create`, `block_get`, `block_update`, `block_delete`, `block_list`): per-block `max_chars` enforced server-side; total `MEMORY_BLOCKS_TOTAL_BUDGET_CHARS` ceiling reserved at restore time. Block content rendered by `blocks_render.py`. Use cases: persistent task lists, decision logs, semi-permanent context that should never decay.
 
 v5.42.5 F3 enforces: `block_create(scope="project", directory=None)` rejected at MCP boundary (`blocks.py:33` — directory required when scope is project).
+
+**Wiki auto-linking (v5.85):** `wiki_autolink` MCP tool scans each page's body for mentions of other pages' titles and inserts `[[slug]]` cross-references (first occurrence per target). Validates target slug exists before inserting; `wiki_crossref` edges are populated automatically on the subsequent `wiki_add` write. Intended as a periodic "connect the corpus" pass — does not rewrite prose.
 
 ## Similarity Gate (v5.39.0, drainer-deferred v5.41.5)
 

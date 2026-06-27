@@ -1811,6 +1811,48 @@ async def api_wiki_read(request: Request) -> JSONResponse:
     )
 
 
+async def _viz_exact_title_node_ids(q: str) -> list[str]:
+    """Resolve memories whose content exactly/prefix-matches `q` → ['mem:<id>', ...].
+
+    P0.2 (viz-fix-plan-2026-06-27): api_viz_search routes through recall()
+    (WRRF-ranked, capped at top-5), so a memory whose content EXACTLY (or by
+    prefix) matches the query can drop out of the top-5 and never highlight —
+    the user searches a title and the wrong node lights up. These exact matches
+    are PREPENDED to the search result so they always win, independent of WRRF
+    ranking. Memories have no `title` column; the viz node label is content[:60],
+    so "title" == leading content here. Whole-DB by design (BC-VZ2).
+
+    Extracted from api_viz_search to keep that handler under the I30/C901
+    complexity caps. Storage/DB errors are swallowed (best-effort precedence).
+    """
+    storage = _st._storage
+    if storage is None:
+        return []
+    node_ids: list[str] = []
+    try:
+        rows = await asyncio.to_thread(
+            storage._q,
+            "SELECT id, content FROM memory "
+            "WHERE string::lowercase(content) = string::lowercase($q) "
+            "OR string::starts_with(string::lowercase(content), string::lowercase($q)) "
+            "ORDER BY heat DESC LIMIT 20",
+            {"q": q},
+        )
+    except Exception as _exc:
+        logger.debug("viz_search exact-title error: %s", _exc)
+        return []
+    # Guard: only iterate a real list (mocked/None storage → skip).
+    if not isinstance(rows, list):
+        return []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        raw_id = GraphAPI._extract_id(row.get("id"))
+        if raw_id is not None:
+            node_ids.append(f"mem:{raw_id}")
+    return node_ids
+
+
 @mcp_server.custom_route("/api/viz/search", methods=["GET"])
 @trace_span("hook.viz_search")
 async def api_viz_search(request: Request) -> JSONResponse:
@@ -1830,7 +1872,10 @@ async def api_viz_search(request: Request) -> JSONResponse:
         if not q:
             return JSONResponse({"node_ids": [], "query": ""}, headers=_CORS)
 
-        node_ids: list[str] = []
+        # P0.2 — exact/prefix-title matches first (extracted to keep this handler
+        # under the I30/C901 complexity cap). These PREPEND ahead of WRRF recall
+        # so an exact-title node can't be displaced out of recall's top-5.
+        node_ids: list[str] = await _viz_exact_title_node_ids(q)
 
         # BC-VZ2 — INTENTIONAL whole-DB (unscoped) search for the viz god's-eye overlay.
         #
@@ -1878,8 +1923,9 @@ async def api_viz_search(request: Request) -> JSONResponse:
                     raw_id = wp.get("id")
                     if raw_id is not None:
                         # id may be a RecordID — extract numeric part
-                        from yadgar.graph_api import GraphAPI  # noqa: PLC0415
-
+                        # (GraphAPI imported at module scope; a function-local
+                        #  re-import here would make GraphAPI local to the whole
+                        #  function and break the earlier exact-title use.)
                         nid = GraphAPI._extract_id(raw_id)
                         if nid is not None:
                             node_ids.append(f"wiki:{nid}")

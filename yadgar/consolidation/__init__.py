@@ -172,7 +172,11 @@ class ConsolidationScheduler(
         so the gated sleep runs only on the nightly cron, avoiding a double-fire.
         """
         stats = self._consolidation_cycle()
-        self._maybe_sleep_cycle()
+        sleep_stats = self._maybe_sleep_cycle()
+        # v5.86 (OT-C4): mandatory full similarity-link reconcile after sleep when
+        # re-embedding mutated old↔old similarity, or on the weekly cadence. Inert
+        # unless SIMILARITY_LINKING_INCREMENTAL_ENABLED (default OFF).
+        self._maybe_full_reconcile(sleep_stats)
         return stats
 
     # -- Properties --

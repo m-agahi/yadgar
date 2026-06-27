@@ -128,6 +128,11 @@ def _enrich_knob(knob: dict, field_meta_key: str) -> dict:
     knob["section"] = section
     knob["category"] = _get_category(section)
     knob["locked"] = knob.get("source") == "env"
+    # P4.1: enum_choices — allowed values for fixed-set string knobs (e.g.
+    # log_format → json/text/human). Empty list for free-form/numeric knobs so
+    # the config panel can branch on a <select> vs a free-text input.
+    choices = meta.get("choices")
+    knob["enum_choices"] = list(choices) if isinstance(choices, (list, tuple)) else []
     return knob
 
 
@@ -220,64 +225,11 @@ def _validate_range(name: str, value: object) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Type coercion from JSON payload
+# Type coercion: delegated to the shared writer (yadgar.config_yaml.coerce_value /
+# set_config_value) — annotation-driven, identical to the CLI. The POST handler
+# calls those directly; no local coercion helpers (avoids the divergent second
+# write path the plan audit warned about).
 # ---------------------------------------------------------------------------
-
-
-def _coerce_int(raw: object) -> tuple[object, str | None]:
-    """Coerce to int; return (value, error)."""
-    if isinstance(raw, bool):
-        return None, "type mismatch: expected int, got bool"
-    if isinstance(raw, (int, float)):
-        if isinstance(raw, float) and not raw.is_integer():
-            return None, f"type mismatch: expected int, got float {raw}"
-        return int(raw), None
-    if isinstance(raw, str):
-        try:
-            return int(raw), None
-        except ValueError:
-            return None, f"type mismatch: expected int, got {type(raw).__name__} {raw!r}"
-    return None, f"type mismatch: expected int, got {type(raw).__name__}"
-
-
-def _coerce_float(raw: object) -> tuple[object, str | None]:
-    """Coerce to float; return (value, error)."""
-    if isinstance(raw, bool):
-        return None, "type mismatch: expected float, got bool"
-    if isinstance(raw, (int, float)):
-        return float(raw), None
-    if isinstance(raw, str):
-        try:
-            return float(raw), None
-        except ValueError:
-            return None, f"type mismatch: expected float, got string {raw!r}"
-    return None, f"type mismatch: expected float, got {type(raw).__name__}"
-
-
-def _coerce_bool(raw: object) -> tuple[object, str | None]:
-    """Coerce to bool; return (value, error)."""
-    if isinstance(raw, bool):
-        return raw, None
-    if isinstance(raw, str) and raw.lower() in ("true", "1", "yes", "on"):
-        return True, None
-    if isinstance(raw, str) and raw.lower() in ("false", "0", "no", "off"):
-        return False, None
-    return None, f"type mismatch: expected bool, got {type(raw).__name__} {raw!r}"
-
-
-def _coerce_json_value(raw: object, kind: str) -> tuple[object, str | None]:
-    """Coerce a JSON-decoded value to the target kind.
-
-    Returns (coerced_value, error_message). error_message is None on success.
-    """
-    if kind == "int":
-        return _coerce_int(raw)
-    if kind == "float":
-        return _coerce_float(raw)
-    if kind == "bool":
-        return _coerce_bool(raw)
-    # string — accept anything stringifiable
-    return str(raw), None
 
 
 # ---------------------------------------------------------------------------
@@ -363,43 +315,18 @@ async def control_config_get_handler(request: Request) -> JSONResponse:
     return JSONResponse({"knobs": knobs})
 
 
-def _write_knob_to_yaml(entry_name: str, coerced: object) -> str | None:
-    """Persist a coerced knob value to YAML config (chmod 0o600).
-
-    Returns an error string on failure, None on success.
-    Extracted to keep control_config_post_handler under I13 cyclomatic cap.
-    """
-    try:
-        from ruamel.yaml.comments import CommentedMap  # noqa: PLC0415
-
-        from yadgar.config_yaml import get_config_path, load_yaml, save_yaml  # noqa: PLC0415
-
-        path = get_config_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-
-        yaml_data = load_yaml(path) if path.exists() else CommentedMap()
-        if not isinstance(yaml_data, CommentedMap):
-            yaml_data = CommentedMap(yaml_data or {})
-
-        yaml_key = entry_name.removeprefix("YADGAR_").lower()
-        yaml_data[yaml_key] = coerced
-        save_yaml(path, yaml_data)
-        import os as _os  # noqa: PLC0415
-
-        _os.chmod(path, 0o600)
-        return None
-    except Exception as exc:
-        return str(exc)
-
-
 async def control_config_post_handler(request: Request) -> JSONResponse:
     """POST /api/control/config — set ONE knob; validates type + range.
 
     Returns:
       200  — knob updated (yaml + env)
-      400  — bad input / unknown knob / type mismatch / range violation / write-blocked
+      400  — bad input / unknown knob / range violation / write-blocked
       409  — knob is env-locked (source=env); yaml write would be silently shadowed
+      422  — value not coercible to the knob's type (type mismatch)
       500  — yaml persistence failed
+
+    Coercion + persistence go through the shared yadgar.config_yaml writer
+    (coerce_value + set_config_value) — the same path as `yadgar config set`.
     """
     try:
         body = await request.json()
@@ -441,21 +368,30 @@ async def control_config_post_handler(request: Request) -> JSONResponse:
             status_code=409,
         )
 
-    # Coerce + validate type
-    coerced, err = _coerce_json_value(raw_value, entry.kind)
-    if err:
-        return JSONResponse({"error": err}, status_code=400)
+    # Coerce via the SHARED writer's annotation-driven coercion (identical path to
+    # the CLI). Coercion failure → 422 (well-formed request, value not coercible).
+    from yadgar.config_yaml import coerce_value  # noqa: PLC0415 — call-site import
 
-    # Range check
+    yaml_key = entry.name.removeprefix("YADGAR_").lower()
+    try:
+        coerced = coerce_value(yaml_key, str(raw_value))
+    except (ValueError, TypeError) as exc:
+        return JSONResponse({"error": f"type mismatch: {exc}"}, status_code=422)
+
+    # Range check (semantic bound, distinct from type coercion) → 400.
     range_err = _validate_range(entry.name, coerced)
     if range_err:
         return JSONResponse({"error": range_err}, status_code=400)
 
-    # Persist to YAML (survives restart)
-    persist_err = _write_knob_to_yaml(entry.name, coerced)
-    if persist_err:
-        logger.warning("Failed to persist knob %s to YAML: %s", name, persist_err)
-        return JSONResponse({"error": f"failed to persist: {persist_err}"}, status_code=500)
+    # Persist via the SINGLE sanctioned writer (set_config_value) — same path as
+    # `yadgar config set`. Never hand-write yaml here.
+    try:
+        from yadgar.config_yaml import set_config_value  # noqa: PLC0415
+
+        coerced = set_config_value(yaml_key, raw_value)
+    except Exception as exc:  # noqa: BLE001 — surface yaml/io failures as 500
+        logger.warning("Failed to persist knob %s to YAML: %s", name, exc)
+        return JSONResponse({"error": f"failed to persist: {exc}"}, status_code=500)
 
     # Update process environment immediately (hot-reload knobs take effect without restart)
     os.environ[entry.name] = str(coerced)

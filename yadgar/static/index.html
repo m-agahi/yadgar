@@ -102,8 +102,10 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
 .stat-val { color: #c9d1d9; font-weight: bold; }
 
 /* ── Memory clusters panel (v5.80: real memory_cluster rows) ── */
-#cluster-panel { display: flex; flex-direction: column; gap: 4px; }
-#cluster-list { display: flex; flex-direction: column; gap: 3px; margin-top: 2px; }
+/* P3.2: cap the cluster list height so a long cluster set scrolls rather than
+   running off-screen (mirrors the .overlay-body cap for the floating variant). */
+#cluster-panel { display: flex; flex-direction: column; gap: 4px; max-height: 50vh; overflow-y: auto; }
+#cluster-list { display: flex; flex-direction: column; gap: 3px; margin-top: 2px; max-height: 40vh; overflow-y: auto; }
 .cluster-item {
   padding: 3px 6px;
   background: #21262d;
@@ -924,6 +926,10 @@ body.dh-open #dh-toggle { right: 480px; }
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* P3.2: cap height so a long legend / cluster list scrolls inside the overlay
+     instead of running off the bottom of the viewport. */
+  max-height: 60vh;
+  overflow-y: auto;
 }
 
 /* Collapsed: hide body */
@@ -952,6 +958,8 @@ body.dh-open #dh-toggle { right: 480px; }
     <input id="search" type="search" placeholder="Semantic search…" style="width:180px">
     <button class="btn" id="search-btn" onclick="runSearch()">⌕ Search</button>
     <button class="btn" id="search-clear-btn" onclick="clearSearch()" style="display:none">✕ Clear</button>
+    <label id="search-hide-label" title="When on, search hides non-matches instead of dimming them" style="font-size:11px;color:#8b949e;display:inline-flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" id="search-hide-mode"> Hide</label>
+    <button class="btn" id="focus-clear-btn" onclick="clearFocus()" style="display:none" title="Exit focus mode">✕ Focus</button>
     <button class="btn" onclick="fitGraph()">⊞ Fit</button>
     <button class="btn" onclick="resetLayout()">⟳ Reset</button>
     <button class="btn" id="mode-btn" onclick="toggleMode()">2D</button>
@@ -972,14 +980,14 @@ body.dh-open #dh-toggle { right: 480px; }
   <div id="left">
     <div>
       <div class="sec-title">Edge Types</div>
-      <label><input type="checkbox" id="show-semantic" checked> <span style="color:#1f6feb">■</span> Semantic</label>
-      <label><input type="checkbox" id="show-temporal" checked> <span style="color:#6e40c9">■</span> Temporal</label>
-      <label><input type="checkbox" id="show-transition" checked> <span style="color:#3fb950">■</span> Transitions</label>
-      <label><input type="checkbox" id="show-wiki-crossref" checked> <span style="color:#d2a8ff">■</span> Wiki Links</label>
-      <label><input type="checkbox" id="show-memory-wiki" checked> <span style="color:#ffa657">■</span> Mem→Wiki</label>
+      <!-- P0.1: hidden edge-type checkboxes removed. Edge legend + filter state is
+           owned by _renderEdgeLegendOverlay() / _edgeToggleState (the floating
+           overlay). These hidden mirrors were legacy duplication. -->
     </div>
     <div>
       <div class="sec-title">Node Types</div>
+      <label><input type="checkbox" id="show-memory" checked> <span style="color:#58a6ff">●</span> Memory</label>
+      <label><input type="checkbox" id="show-entity" checked> <span style="color:#7ee787">◆</span> Entity</label>
       <label><input type="checkbox" id="show-wiki" checked> <span style="color:#d2a8ff">⬡</span> Wiki</label>
     </div>
     <div>
@@ -1055,6 +1063,8 @@ body.dh-open #dh-toggle { right: 480px; }
     <button class="overlay-collapse" title="Collapse">−</button>
   </div>
   <div class="overlay-body">
+    <label style="pointer-events:auto"><input type="checkbox" id="fo-show-memory" checked> <span style="color:#58a6ff">●</span> Memory</label>
+    <label style="pointer-events:auto"><input type="checkbox" id="fo-show-entity" checked> <span style="color:#7ee787">◆</span> Entity</label>
     <label style="pointer-events:auto"><input type="checkbox" id="fo-show-wiki" checked> <span style="color:#d2a8ff">⬡</span> Wiki</label>
   </div>
 </div>
@@ -1067,12 +1077,11 @@ body.dh-open #dh-toggle { right: 480px; }
     <button class="overlay-collapse" title="Collapse">−</button>
   </div>
   <div class="overlay-body" id="fo-edge-legend-body">
-    <!-- Populated by _renderEdgeLegendOverlay() after loadVizConfig(). Fallback below. -->
-    <label style="pointer-events:auto"><input type="checkbox" id="fo-show-semantic" checked> <span style="color:#1f6feb">■</span> Semantic</label>
-    <label style="pointer-events:auto"><input type="checkbox" id="fo-show-temporal" checked> <span style="color:#6e40c9">■</span> Temporal</label>
-    <label style="pointer-events:auto"><input type="checkbox" id="fo-show-transition" checked> <span style="color:#3fb950">■</span> Transitions</label>
-    <label style="pointer-events:auto"><input type="checkbox" id="fo-show-wiki-crossref" checked> <span style="color:#d2a8ff">■</span> Wiki Links</label>
-    <label style="pointer-events:auto"><input type="checkbox" id="fo-show-memory-wiki" checked> <span style="color:#ffa657">■</span> Mem→Wiki</label>
+    <!-- P0.1: edge rows are the SOLE responsibility of _renderEdgeLegendOverlay()
+         (driven by YADGAR_VIZ_CONFIG.legend.edges from viz_meta.py). The previous
+         hardcoded fallback lied — it showed "Semantic" as a default-on stored edge
+         when semantic is lazy/off-by-default — so it was removed. On config-load
+         failure the legend renders empty rather than misrepresenting the graph. -->
     <!-- v5.80: role semantics note -->
     <div id="fo-edge-role-note" class="edge-legend-role-note">retrieval = affects recall ranking; informational = stored relationship, not a ranking signal</div>
   </div>
@@ -1473,7 +1482,14 @@ function _renderEdgeLegendOverlay() {
         lbl.appendChild(badge);
       }
 
-      body.appendChild(lbl);
+      // P0.1: insert edge rows ABOVE the role-semantics note so the note stays
+      // last (it was previously after the now-removed hardcoded fallback labels).
+      const roleNote = document.getElementById('fo-edge-role-note');
+      if (roleNote && roleNote.parentNode === body) {
+        body.insertBefore(lbl, roleNote);
+      } else {
+        body.appendChild(lbl);
+      }
 
       // Wire change listener at creation (never orphaned — only created once)
       cb.addEventListener('change', () => {
@@ -1484,6 +1500,9 @@ function _renderEdgeLegendOverlay() {
           _fetchLazyEdges(edge.key);
         }
         applyFilters();
+        // P3.1: reheat so the layout adapts to the changed edge set instead of
+        // showing a stale frozen graph (also wakes the paused render loop).
+        _reheatSimulation();
       });
     } else {
       // ── Update existing row in-place (don't replace <input> — preserves listeners) ─
@@ -1643,29 +1662,56 @@ function _nodeColorFor(node) {
 // Wiki nodes → OctahedronGeometry; memory/other nodes → return null (ForceGraph default sphere).
 // Respects YADGAR_VIZ_CONFIG.node.wiki_shape: 'octahedron' | 'sphere'.
 // Exported for unit tests: window._makeNodeThreeObject = _makeNodeThreeObject.
+// NOTE: keep in lock-step with graph-node-factory.js makeNodeThreeObject()
+// (the unit-tested copy). index.html can't import the ES module, so the logic
+// is duplicated here; edit BOTH or the browser and tests diverge silently.
 function _makeNodeThreeObject(node) {
-  const shape = YADGAR_VIZ_CONFIG.node.wiki_shape || 'octahedron';
-  const mod = window._graphDetailModule;
-  const nt = mod ? mod.nodeType(node) : (node.type || '');
-  if (nt !== 'wiki' || shape !== 'octahedron') return null; // ForceGraph default sphere
   const THREE = window.THREE;
   if (!THREE) return null;
+  const mod = window._graphDetailModule;
+  const nt = mod ? mod.nodeType(node) : (node.type || '');
   const nodeRelSize = YADGAR_VIZ_CONFIG.node.size_3d || 8;
   const radius = Math.cbrt(1) * nodeRelSize;  // matches ForceGraph's own sphere sizing (nodeVal defaults to 1)
-  const geo = new THREE.OctahedronGeometry(radius, 0);
   const color = _nodeColorFor(node) || '#8b949e';
-  // MeshBasicMaterial: unlit, transparent:false (default) → depthWrite:true → solid rendering
-  const mat = new THREE.MeshBasicMaterial({ color });
-  return new THREE.Mesh(geo, mat);
+
+  // wiki → octahedron (config-gated). Wiki wins even if also _anchor-tagged.
+  const shape = YADGAR_VIZ_CONFIG.node.wiki_shape || 'octahedron';
+  if (nt === 'wiki') {
+    if (shape !== 'octahedron') return null; // sphere override → ForceGraph default
+    const geo = new THREE.OctahedronGeometry(radius, 0);
+    // MeshBasicMaterial: unlit, transparent:false (default) → depthWrite:true → solid rendering
+    const mat = new THREE.MeshBasicMaterial({ color });
+    return new THREE.Mesh(geo, mat);
+  }
+
+  // P3.7 / item #6: anchored/protected memories get a distinct GEOMETRY (cube)
+  // vs the default sphere. is_protected is absent from the graph payload, so the
+  // '_anchor' tag (added by restoration.anchor_memory alongside is_protected) is
+  // the available signal. Gated on type==='memory' so untyped/temporal stay null.
+  if (nt === 'memory' && Array.isArray(node.tags) && node.tags.includes('_anchor')) {
+    const side = radius * 1.4; // slightly larger so anchors read as prominent
+    const geo = new THREE.BoxGeometry(side, side, side);
+    const mat = new THREE.MeshBasicMaterial({ color });
+    return new THREE.Mesh(geo, mat);
+  }
+
+  // Plain memory / other → null → ForceGraph default sphere (cheap; CPU-safe).
+  // .nodeColor(_nodeColorFor) still tints the default sphere, so per-node DIM
+  // works on these via the color path (dimmed → solid dark RGB) without a mesh.
+  return null;
 }
 // Expose for unit tests
 if (typeof window !== 'undefined') window._makeNodeThreeObject = _makeNodeThreeObject;
 
 // ── Graph initialisation ────────────────────────────────────────────────────
 function _nodeLabel(n) {
+  // P3.6 [46]: connections count is shown inline on the hover tooltip. In 3D,
+  // per-node sprite badges are the expensive three.js path (would regress the
+  // CPU win), so the degree rides the existing nodeLabel tooltip instead.
+  const deg = (n.__deg != null) ? ` · ${n.__deg} conn` : '';
   return n.type === 'wiki'
-    ? `[wiki:${n.category}] ${n.label}`
-    : `[heat=${(n.heat||0).toFixed(3)}] ${(n.content || n.label || '').slice(0, 120)}`;
+    ? `[wiki:${n.category}]${deg} ${n.label}`
+    : `[heat=${(n.heat||0).toFixed(3)}]${deg} ${(n.content || n.label || '').slice(0, 120)}`;
 }
 
 // ── Edge styling helpers (v5.54.3: role-distinguished, driven from legend) ────
@@ -1699,6 +1745,12 @@ function _hexToRgbaInline(hex, alpha) {
 function _linkColor(l) {
   const meta = _edgeTypeMap[l.type];
   const baseColor = (meta && meta.color) || _edgeColor()[l.type] || '#484f58';
+  // P0.3: when a search is active, fade edges whose endpoints are dimmed so the
+  // matched subgraph stands out (previously only nodes dimmed; edges stayed lit).
+  // l.source/.target are node objects post-layout (id strings pre-layout).
+  if ((l.source && l.source.__dimmed) || (l.target && l.target.__dimmed)) {
+    return _hexToRgbaInline(baseColor, YADGAR_VIZ_CONFIG.search.dim_opacity);
+  }
   if (meta && meta.role === 'retrieval') return baseColor;
   // informational edges: muted opacity — stored relationship, not a ranking signal
   return _hexToRgbaInline(baseColor, 0.35);
@@ -1712,6 +1764,60 @@ function _linkWidth(l) {
   return 0.8;
 }
 function _arrowLen(l) { return (l.type === 'transition' || l.type === 'memory_wiki' || l.type === 'wiki_crossref') ? YADGAR_VIZ_CONFIG.edge.arrow_len : 0; }
+
+// P1.1: CPU fix — force-graph + 3d-force-graph run an unconditional rAF render
+// loop (60fps forever, even when idle/static). Pause it when the scene goes
+// static (onEngineStop) and resume on user interaction / simulation reheat.
+// Symmetric gate: every pause must have a reachable resume or the canvas freezes.
+let _graphAnimationPaused = false;
+function _pauseGraphAnimation() {
+  if (!graph || _graphAnimationPaused) return;
+  if (typeof graph.pauseAnimation === 'function') {
+    graph.pauseAnimation();
+    _graphAnimationPaused = true;
+  }
+}
+function _resumeGraphAnimation() {
+  if (!graph || !_graphAnimationPaused) return;
+  if (typeof graph.resumeAnimation === 'function') {
+    graph.resumeAnimation();
+    _graphAnimationPaused = false;
+  }
+}
+
+// ── P1.1 (Batch-3 completion): idle re-pause debounce ────────────────────────
+// Batch-1 only re-paused via reheat→cool→onEngineStop. After a pan/zoom that does
+// NOT reheat the sim (e.g. a canvas drag, or a hover that woke the loop), the rAF
+// loop stayed awake at 60fps forever. Fix: a debounce timer armed on every canvas
+// interaction; if the engine has cooled AND no interaction fires for IDLE_MS, pause.
+// onEngineStop sets _engineCooled=true (physics settled); resume clears it only if
+// a reheat is in flight. Mouse-move keeps the loop awake (3D hover raycast needs it).
+const _IDLE_PAUSE_MS = 4000;
+let _engineCooled = false;
+let _idlePauseTimer = null;
+function _armIdlePause() {
+  if (_idlePauseTimer) clearTimeout(_idlePauseTimer);
+  _idlePauseTimer = setTimeout(() => {
+    _idlePauseTimer = null;
+    // Only pause if physics has settled — pausing mid-layout freezes a half-cooked
+    // frame. If still hot, onEngineStop will arm the pause when it cools.
+    if (_engineCooled) _pauseGraphAnimation();
+  }, _IDLE_PAUSE_MS);
+}
+// Called on every canvas interaction: wake the loop and (re)start the idle countdown.
+function _onCanvasActivity() {
+  _resumeGraphAnimation();
+  _armIdlePause();
+}
+// P1.1/P3.1: reheat the force simulation AND wake the render loop. Any code that
+// restarts physics must go through here so a paused rAF loop resumes — otherwise
+// the layout re-cooks invisibly and the canvas shows a stale frame.
+function _reheatSimulation() {
+  if (!graph) return;
+  _engineCooled = false;  // physics about to run again → block idle-pause until it cools
+  _resumeGraphAnimation();
+  if (typeof graph.d3ReheatSimulation === 'function') graph.d3ReheatSimulation();
+}
 
 function initGraph(mode) {
   if (!mode) mode = _graphMode;
@@ -1758,7 +1864,8 @@ function initGraph(mode) {
         const vis = new Set(allNodes.filter(n => n.__visible !== false).map(n => n.id));
         return vis.has(s) && vis.has(t);
       })
-      .onNodeClick(showDetail)
+      .onNodeClick(_onNodeClickInteractive)
+      .onNodeHover(_onNodeHover)          // P3.4 [45]: neighborhood highlight
       .onBackgroundClick(closeDetail)
       .onEngineTick(() => {
         _engineTickCount++;
@@ -1769,6 +1876,19 @@ function initGraph(mode) {
             graph.zoomToFit(YADGAR_VIZ_CONFIG.layout.zoom_fit_transition_ms, YADGAR_VIZ_CONFIG.layout.zoom_fit_padding);
           }
         }
+      })
+      // P1.1: 3D had NO onEngineStop — the rAF render loop ran at 60fps forever
+      // even after the layout went static, burning CPU when focused/idle. Pause
+      // the render loop once physics settles; user interaction resumes it.
+      .onEngineStop(() => {
+        // v5.10.8 Bug A guard: only treat physics as settled after it has
+        // actually run (≥50 ticks). If the engine stops at 0 ticks (no data,
+        // or immediate stop on init), the layout never ran — marking it cooled
+        // and pausing the rAF loop here would freeze nodes before they settle.
+        if (_engineTickCount < 50) return;
+        // P1.1: stop the rAF render loop once the scene is static (CPU fix).
+        _engineCooled = true;   // physics settled — idle-pause may now fire
+        _pauseGraphAnimation();
       });
     graph.d3Force('link').distance(YADGAR_VIZ_CONFIG.physics.link_distance_3d);  // v5.10.11: 3D-only; v5.11.0: config-driven
   } else {
@@ -1791,7 +1911,8 @@ function initGraph(mode) {
         ctx.arc(node.x, node.y, 8, 0, 2 * Math.PI);
         ctx.fill();
       })
-      .onNodeClick(showDetail)
+      .onNodeClick(_onNodeClickInteractive)
+      .onNodeHover(_onNodeHover)          // P3.4 [45]: neighborhood highlight
       .onBackgroundClick(closeDetail)
       .onNodeDrag((node) => {
         graph.enableZoomInteraction(false);
@@ -1825,6 +1946,9 @@ function initGraph(mode) {
         for (const n of graph.graphData().nodes) {
           if (n.fx == null) { n.fx = n.x; n.fy = n.y; }
         }
+        // P1.1: stop the rAF render loop once the scene is static (CPU fix).
+        _engineCooled = true;   // physics settled — idle-pause may now fire
+        _pauseGraphAnimation();
       });
 
     // Softer repulsion — default -30 spreads clusters too far; v5.11.0: config-driven
@@ -1835,6 +1959,19 @@ function initGraph(mode) {
   window.addEventListener('resize', () => {
     graph.width(wrap.clientWidth).height(wrap.clientHeight);
   });
+
+  // P1.1: a freshly-built graph starts with its render loop running.
+  _graphAnimationPaused = false;
+  _engineCooled = false;
+  // Resume the render loop on any user interaction with the canvas, and (re)arm
+  // the idle-pause countdown. pointermove is included so 3D hover raycasting keeps
+  // working (it runs inside the render loop) and so the loop stays awake while the
+  // cursor moves — when it stops for _IDLE_PAUSE_MS and the engine has cooled, the
+  // debounce pauses the loop (CPU ~0). Batch-1 only paused via reheat→cool; this
+  // closes the pan/zoom/hover-keeps-awake gap.
+  for (const evt of ['pointerdown', 'pointermove', 'pointerup', 'wheel']) {
+    wrap.addEventListener(evt, _onCanvasActivity, { passive: true });
+  }
 }
 
 // ── 2D/3D mode toggle (V4) ────────────────────────────────────────────────────
@@ -1851,6 +1988,30 @@ function toggleMode() {
   } else {
     loadGraph();
   }
+}
+
+// P3.6 [46]: connection-count badge. __deg is precomputed by calcDegrees().
+// Drawn at the node's upper-right, gated behind zoom (cheap: only when zoomed in,
+// matching the label gate) so a 2476-node overview stays clean. DRY for both branches.
+function _drawDegreeBadge(node, ctx, scale, r) {
+  const deg = node.__deg || 0;
+  if (deg <= 0 || scale <= 2) return;
+  const txt = String(deg);
+  const sz = 8 / scale;
+  const bx = node.x + r * 0.85;
+  const by = node.y - r * 0.85;
+  const pad = 1.5 / scale;
+  ctx.font = `${sz}px monospace`;
+  const w = ctx.measureText(txt).width + pad * 2;
+  ctx.fillStyle = 'rgba(13,17,23,0.85)';
+  ctx.beginPath();
+  ctx.arc(bx, by, Math.max(w / 2, sz * 0.7), 0, 2 * Math.PI);
+  ctx.fill();
+  ctx.fillStyle = '#58a6ff';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(txt, bx, by);
+  ctx.textBaseline = 'alphabetic'; // restore default for subsequent label draws
 }
 
 function drawNode(node, ctx, scale) {
@@ -1883,6 +2044,7 @@ function drawNode(node, ctx, scale) {
       ctx.textAlign = 'center';
       ctx.fillText(node.label.slice(0, 28), node.x, node.y + r + sz * 1.2);
     }
+    _drawDegreeBadge(node, ctx, scale, r); // P3.6 [46]
     ctx.globalAlpha = 1.0;
     return;
   }
@@ -1917,6 +2079,7 @@ function drawNode(node, ctx, scale) {
     ctx.textAlign = 'center';
     ctx.fillText(node.label.slice(0, 28), node.x, node.y + r + sz * 1.2);
   }
+  _drawDegreeBadge(node, ctx, scale, r); // P3.6 [46]
   ctx.globalAlpha = 1.0;
 }
 
@@ -2018,25 +2181,60 @@ function _flyToCluster(nodes) {
 // ── Filters (v5.54.3: dynamic per-type toggle from _edgeToggleState) ─────────
 // _edgeToggleState is populated by _renderEdgeLegendOverlay from legend.edges.
 // Supports all 11 edge types (entity relations + legacy). No hardcoded type list.
+// P3.8 [51]: a missing toggle element means "show" (back-compat: only #show-wiki
+// existed before). Each node-type toggle reads checked, defaulting true.
+function _typeToggleOn(id) {
+  const el = document.getElementById(id);
+  return el ? el.checked : true;
+}
+
 function applyFilters() {
   if (!graph) return;
-  const showWiki = document.getElementById('show-wiki').checked;
+  const showWiki   = _typeToggleOn('show-wiki');
+  const showMemory = _typeToggleOn('show-memory');   // P3.8 [51]
+  const showEntity = _typeToggleOn('show-entity');   // P3.8 [51]
   const minH    = parseFloat(document.getElementById('heat-slider').value);
   const q       = document.getElementById('search').value.toLowerCase().trim();
+  const hasPins = _searchPinnedIds.size > 0;   // an API search has run
+
+  // P3.5 [47] focus mode: when a node is focused, only it + its neighbors are
+  // eligible to be visible. Computed once per call from the link graph.
+  const focusSet = _focusNodeId ? _neighborSet(_focusNodeId) : null;
 
   // Mark visibility on nodes — they stay in the force layout either way
   const vis = new Set();
   let visCount = 0;
   for (const n of allNodes) {
+    // 1. node-type + heat gate
+    let visible;
     if (n.type === 'wiki') {
-      n.__visible = showWiki;
-    } else {
-      n.__visible = (n.heat || 0) >= minH;
+      visible = showWiki;
+    } else if (n.type === 'entity') {
+      visible = showEntity && (n.heat || 0) >= minH;
+    } else { // memory (and any other heat-bearing type)
+      visible = showMemory && (n.heat || 0) >= minH;
     }
     n.__match = q && (
       (n.content||'').toLowerCase().includes(q) ||
       (n.label||'').toLowerCase().includes(q)
     );
+    // 2. P3.9 [60] search hide-mode: when on, a non-matching node is hidden
+    //    (not just dimmed) while a search is active. Hide on the SAME signal the
+    //    dim/ring use — the API pin set (_searchPinnedIds) when a semantic search
+    //    has run — so a pinned (ringed) node is never simultaneously hidden. Falls
+    //    back to the local substring match when the box has text but no search ran.
+    if (visible && _searchHideMode) {
+      if (hasPins) {
+        if (!_searchPinnedIds.has(n.id)) visible = false;
+      } else if (q && !n.__match) {
+        visible = false;
+      }
+    }
+    // 3. P3.5 [47] focus hide: outside the focused neighborhood → hidden.
+    if (visible && focusSet && !focusSet.has(n.id)) {
+      visible = false;
+    }
+    n.__visible = visible;
     if (n.__visible) { vis.add(n.id); visCount++; }
   }
 
@@ -2093,7 +2291,9 @@ async function _fetchLazyEdges(edgeType) {
       calcDegrees();
       graph.graphData({ nodes: allNodes, links: allLinks });
       // Gentle reheat: bump alpha briefly so the layout adapts (not a full reset)
-      if (graph.d3ReheatSimulation) graph.d3ReheatSimulation();
+      // P1.1: resume the render loop — reheating restarts physics, so the paused
+      // rAF loop must wake or the new layout never paints.
+      _reheatSimulation();
     }
     applyFilters();
     status(`${edgeType}: ${validEdges.length} edge(s) loaded`, 'ok');
@@ -2145,6 +2345,9 @@ async function runSearch() {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
     _searchPinnedIds = new Set(d.node_ids || []);
+    // P3.9 [60]: applyFilters first so hide-mode acts on the fresh pin set
+    // (visibility), then the highlight applies the dim/ring on the survivors.
+    applyFilters();
     _applySearchHighlight();
     document.getElementById('search-clear-btn').style.display = '';
     status(`Search: ${_searchPinnedIds.size} match(es) for "${q}"`, 'ok');
@@ -2165,45 +2368,127 @@ function clearSearch() {
   status('Search cleared', 'ok');
 }
 
-function _applySearchHighlight() {
-  if (!graph) return;
+// ── Interaction state (Batch-3) ──────────────────────────────────────────────
+// __dimmed has three possible sources: search pins, hover neighborhood, focus.
+// They must compose through ONE writer (_recomputeDim) or one clobbers another.
+let _hoverNodeId = null;          // P3.4 [45]: node currently hovered (null = none)
+let _hoverNeighbors = null;       // Set of ids in hovered node's neighborhood (incl self)
+let _focusNodeId = null;          // P3.5 [47]: isolated node (null = focus off)
+let _searchHideMode = false;      // P3.9 [60]: search HIDES non-matches vs only dimming
+
+// DRY neighbor lookup — id-set of a node + its immediate neighbors. Used by
+// hover-highlight (dim the rest) and focus-mode (hide the rest). Built from
+// allLinks; endpoints may be node objects (post-layout) or id strings (pre).
+function _neighborSet(nodeId) {
+  const s = new Set([nodeId]);
+  if (!nodeId) return s;
+  for (const l of allLinks) {
+    const src = l.source?.id ?? l.source, tgt = l.target?.id ?? l.target;
+    if (src === nodeId) s.add(tgt);
+    else if (tgt === nodeId) s.add(src);
+  }
+  return s;
+}
+
+// Single writer of n.__dimmed. Composes search pins + hover neighborhood.
+// (Focus mode hides via __visible in applyFilters, so it isn't a dim source.)
+// Precedence: hover (transient, follows the cursor) overrides search dim.
+function _recomputeDim() {
   const hasPins = _searchPinnedIds.size > 0;
   for (const n of allNodes) {
     n.__pinned = _searchPinnedIds.has(n.id);
-    // De-emphasise non-matched nodes when a search is active
-    n.__dimmed = hasPins && !n.__pinned;
+    if (_hoverNeighbors) {
+      // Hover active: dim everything outside the hovered neighborhood.
+      n.__dimmed = !_hoverNeighbors.has(n.id);
+    } else if (hasPins) {
+      // Search active (no hover): dim non-matched.
+      n.__dimmed = !n.__pinned;
+    } else {
+      n.__dimmed = false;
+    }
   }
-  // S2.3: branch on mode — 3D uses nodeColor re-evaluation;
-  // 2D uses nodeCanvasObject (which is 2D-only and throws in 3D mode).
+}
+
+// Shared render re-apply for a dim/color change that does NOT alter layout.
+// Re-wires the node + link accessors so ForceGraph repaints __dimmed/color.
+// NEVER reheats (that would scatter nodes on every hover) — just wakes the loop.
+function _repaintDimState() {
+  if (!graph) return;
+  _resumeGraphAnimation();
   if (_graphMode === '3d') {
-    // v5.50.6: re-wire nodeThreeObject + nodeColor so ForceGraph3D refreshes
-    // both the custom mesh (wiki octahedra) and the default sphere material (color).
-    graph.nodeColor(_nodeColorFor).nodeThreeObject(_makeNodeThreeObject);
-    if (hasPins) {
-      // Zoom toward matched nodes in 3D
-      const matched = allNodes.filter(n => n.__pinned);
-      if (matched.length > 0) {
-        graph.zoomToFit(600, 50, n => n.__pinned);
-      }
-    }
+    // 3D re-wires node accessors but not link accessors → re-apply linkColor too,
+    // else edges miss the new __dimmed state. nodeColor tints the default sphere
+    // (dimmed → dark RGB), nodeThreeObject refreshes wiki octahedra / anchor cubes.
+    graph.nodeColor(_nodeColorFor).nodeThreeObject(_makeNodeThreeObject).linkColor(_linkColor);
   } else {
-    // 2D: use canvas draw override
     graph.nodeCanvasObject(drawNode).nodeCanvasObjectMode(() => 'replace');
-    if (hasPins) {
-      // Center on matched nodes
-      const matched = allNodes.filter(n => n.__pinned);
-      if (matched.length > 0) {
-        const xs = matched.map(n => n.x).filter(x => x != null);
-        const ys = matched.map(n => n.y).filter(y => y != null);
-        if (xs.length > 0) {
-          const cx = xs.reduce((a, b) => a + b, 0) / xs.length;
-          const cy = ys.reduce((a, b) => a + b, 0) / ys.length;
-          graph.centerAt(cx, cy, 600);
-          graph.zoom(2.5, 600);
-        }
-      }
+  }
+}
+
+function _applySearchHighlight() {
+  if (!graph) return;
+  _recomputeDim();
+  _repaintDimState();
+  const hasPins = _searchPinnedIds.size > 0;
+  if (!hasPins) return;
+  const matched = allNodes.filter(n => n.__pinned);
+  if (matched.length === 0) return;
+  if (_graphMode === '3d') {
+    graph.zoomToFit(600, 50, n => n.__pinned);
+  } else {
+    const xs = matched.map(n => n.x).filter(x => x != null);
+    const ys = matched.map(n => n.y).filter(y => y != null);
+    if (xs.length > 0) {
+      const cx = xs.reduce((a, b) => a + b, 0) / xs.length;
+      const cy = ys.reduce((a, b) => a + b, 0) / ys.length;
+      graph.centerAt(cx, cy, 600);
+      graph.zoom(2.5, 600);
     }
   }
+}
+
+// ── P3.4 [45]: hover → neighborhood highlight ────────────────────────────────
+// Highlight hovered node + its edges + immediate neighbors; dim the rest.
+// Clears on un-hover (node === null). Works in 2D (drawNode reads __dimmed) and
+// 3D (color path + re-wired linkColor). Pure repaint — no layout reheat.
+function _onNodeHover(node) {
+  const newId = node ? node.id : null;
+  if (newId === _hoverNodeId) return; // no change
+  _hoverNodeId = newId;
+  _hoverNeighbors = newId ? _neighborSet(newId) : null;
+  _recomputeDim();
+  _repaintDimState();
+}
+
+// ── P3.5 [47]: focus mode (isolate a node + its edges) ───────────────────────
+// Modifier-click (Shift / Ctrl / Cmd / Alt) a node → show ONLY it + neighbors.
+// Re-modifier-clicking the same node (or clearFocus) exits. Plain click is the
+// usual detail-panel open. Reversible via __visible (applyFilters owns it).
+function _onNodeClickInteractive(node, event) {
+  const modifier = event && (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey);
+  if (modifier && node) {
+    _toggleFocus(node.id);
+    return;
+  }
+  showDetail(node);
+}
+
+function _toggleFocus(nodeId) {
+  _focusNodeId = (_focusNodeId === nodeId) ? null : nodeId;
+  applyFilters();          // applyFilters reads _focusNodeId → __visible
+  _reheatSimulation();     // node set changed → re-layout the isolated subgraph
+  const fb = document.getElementById('focus-clear-btn');
+  if (fb) fb.style.display = _focusNodeId ? '' : 'none';
+  if (_focusNodeId) {
+    status('Focus mode: isolated node + neighbors (click ✕ or modifier-click to exit)', 'ok');
+  } else {
+    status('Focus mode off', 'ok');
+  }
+}
+
+function clearFocus() {
+  if (_focusNodeId === null) return;
+  _toggleFocus(_focusNodeId); // toggles off
 }
 
 // ── System metrics ───────────────────────────────────────────────────────────
@@ -2720,24 +3005,18 @@ function _initLogPanels() {
 document.addEventListener('DOMContentLoaded', _initLogPanels);
 
 // ── Event bindings ───────────────────────────────────────────────────────────
-// Wire hidden sidebar edge checkboxes: update _edgeToggleState then re-filter.
-// v5.54.3: _edgeToggleState is the canonical driver; hidden checkboxes mirror it.
-[
-  ['show-semantic',      'semantic'],
-  ['show-temporal',      'temporal'],
-  ['show-transition',    'transition'],
-  ['show-wiki-crossref', 'wiki_crossref'],
-  ['show-memory-wiki',   'memory_wiki'],
-].forEach(([id, type]) => {
-  const el = document.getElementById(id);
-  if (el) el.addEventListener('change', () => {
-    _edgeToggleState[type] = el.checked;
-    applyFilters();
-  });
-});
+// P0.1: the hidden-sidebar edge-checkbox mirror was removed. _edgeToggleState is
+// the canonical filter driver and is now wired directly by _renderEdgeLegendOverlay()
+// at row-creation time (the dynamic floating overlay is the single source).
 // wiki node toggle (not an edge type — directly calls applyFilters)
-const _showWikiEl = document.getElementById('show-wiki');
-if (_showWikiEl) _showWikiEl.addEventListener('change', applyFilters);
+// P3.1: reheat after the filter so the layout re-settles around the changed node
+// set (and the paused render loop wakes), instead of a frozen stale graph.
+// P3.8 [51]: node-type toggles (wiki/memory/entity). Each flips __visible via
+// applyFilters, then reheats so the layout re-settles around the new node set.
+for (const _id of ['show-wiki', 'show-memory', 'show-entity']) {
+  const _el = document.getElementById(_id);
+  if (_el) _el.addEventListener('change', () => { applyFilters(); _reheatSimulation(); });
+}
 
 document.getElementById('heat-slider').addEventListener('input', e => {
   document.getElementById('heat-val').textContent = parseFloat(e.target.value).toFixed(2);
@@ -2746,6 +3025,16 @@ document.getElementById('heat-slider').addEventListener('input', e => {
 
 document.getElementById('search').addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); runSearch(); }
+});
+
+// P3.9 [60]: search hide-mode toggle. Flips whether a search HIDES non-matches
+// (__visible=false via applyFilters) or only dims them (default). Re-applies
+// both filters (visibility) and the dim highlight so the change takes effect live.
+const _searchHideEl = document.getElementById('search-hide-mode');
+if (_searchHideEl) _searchHideEl.addEventListener('change', () => {
+  _searchHideMode = _searchHideEl.checked;
+  applyFilters();
+  _applySearchHighlight();
 });
 
 // Close overlays on Escape (no-op placeholder — debug is now a tab pane)
@@ -3066,6 +3355,14 @@ function _switchTab(tabName) {
     const link = document.querySelector('#tab-bar a[data-tab="' + tabName + '"]');
     if (link) link.classList.add('active');
   }
+  // P1.2: the force-graph render loop keeps running on the (now display:none)
+  // home canvas while another tab is active — pure wasted CPU. Pause it when
+  // leaving home; resume when returning so the graph repaints + stays live.
+  if (tabName === 'home') {
+    _resumeGraphAnimation();
+  } else {
+    _pauseGraphAnimation();
+  }
   // Per-tab data fetches (not in tabs.js — tab module handles only DOM activation)
   if (tabName === 'stats') _tabStatsRefresh();
   if (tabName === 'health') _tabHealthRefresh();
@@ -3297,38 +3594,22 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
   }
 
   // Edge type checkboxes
-  // v5.54.3: _renderEdgeLegendOverlay now wires change listeners at creation for
-  // dynamically-created types (entity relations, causal, etc.). Legacy pairs below
-  // only need to sync hidden sidebar originals (for backward compat with any code
-  // that reads #show-semantic etc.). The real filter driver is _edgeToggleState.
-  const edgePairs = [
-    ['fo-show-semantic',    'show-semantic'],
-    ['fo-show-temporal',    'show-temporal'],
-    ['fo-show-transition',  'show-transition'],
-    ['fo-show-wiki-crossref','show-wiki-crossref'],
-    ['fo-show-memory-wiki', 'show-memory-wiki'],
-  ];
-  for (const [foId, origId] of edgePairs) {
-    const fo   = document.getElementById(foId);
-    const orig = document.getElementById(origId);
-    if (!fo || !orig) continue;
-    // Keep the hidden sidebar checkbox in sync with the overlay (for backward compat)
-    fo.addEventListener('change', () => {
-      orig.checked = fo.checked;
-      orig.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    orig.addEventListener('change', () => { fo.checked = orig.checked; });
-  }
+  // P0.1: the hidden-sidebar edge mirror (fo-show-* ↔ show-*) was removed.
+  // _renderEdgeLegendOverlay() wires each edge row's change listener directly to
+  // _edgeToggleState at creation, so no separate sync loop is needed.
 
-  // Node type checkboxes
-  const foWiki   = document.getElementById('fo-show-wiki');
-  const origWiki = document.getElementById('show-wiki');
-  if (foWiki && origWiki) {
-    foWiki.addEventListener('change', () => {
-      origWiki.checked = foWiki.checked;
-      origWiki.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    origWiki.addEventListener('change', () => { foWiki.checked = origWiki.checked; });
+  // Node type checkboxes — sidebar is canonical; overlay mirrors via dispatch.
+  // P3.8 [51]: memory + entity toggles added alongside the original wiki one.
+  for (const _key of ['wiki', 'memory', 'entity']) {
+    const fo   = document.getElementById(`fo-show-${_key}`);
+    const orig = document.getElementById(`show-${_key}`);
+    if (fo && orig) {
+      fo.addEventListener('change', () => {
+        orig.checked = fo.checked;
+        orig.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      orig.addEventListener('change', () => { fo.checked = orig.checked; });
+    }
   }
 
   // Sync graph stats from hidden spans to floating overlay spans

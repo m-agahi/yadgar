@@ -16,7 +16,7 @@ from ruamel.yaml.comments import CommentedMap
 
 import yadgar.paths as _paths
 
-FIELD_META: dict[str, dict[str, str]] = {
+FIELD_META: dict[str, dict[str, object]] = {
     # core
     "db_path": {"desc": "SurrealDB storage path", "section": "core"},
     "port": {"desc": "HTTP server port (daemon mode, default 8742)", "section": "core"},
@@ -41,6 +41,21 @@ FIELD_META: dict[str, dict[str, str]] = {
     },
     "narrative_interval_hours": {
         "desc": "Hours between autobiographical narrative updates",
+        "section": "daemon",
+    },
+    "similarity_linking_incremental_enabled": {
+        "desc": (
+            "v5.86 (OT-C4): link only memories created since the last run "
+            "(probe×corpus), with a periodic full reconcile. Default False — "
+            "the full N×N pass runs every cycle until enabled."
+        ),
+        "section": "daemon",
+    },
+    "similarity_linking_reconcile_interval_days": {
+        "desc": (
+            "Days between mandatory full similarity-link reconcile passes "
+            "(safety net for re-embedding that mutates old↔old similarity)."
+        ),
         "section": "daemon",
     },
     # memory_lifecycle
@@ -460,10 +475,17 @@ FIELD_META: dict[str, dict[str, str]] = {
     "core_log_level": {
         "desc": "Log level for the core yadgar MCP server (DEBUG/INFO/WARNING/ERROR)",
         "section": "logging",
+        "choices": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
     },
     "backend_log_level": {
         "desc": "Log level for the backend container (embed service + SurrealDB)",
         "section": "logging",
+        "choices": ["debug", "info", "warn", "error"],
+    },
+    "log_format": {
+        "desc": "Log output format (json | text | human)",
+        "section": "logging",
+        "choices": ["json", "text", "human"],
     },
     # misc
     "sensitive_lock_ttl_sec": {
@@ -1380,28 +1402,32 @@ def cmd_config_get(args) -> None:
         print(f"Desc:    {desc}")
 
 
-def cmd_config_set(args) -> None:
-    """Update a key in ~/.config/yadgar/config.yaml.
+def set_config_value(key: str, raw: object) -> object:
+    """Sanctioned single writer for one config knob — shared by CLI + Control API.
 
-    Loads the existing file with ruamel.yaml (preserving comments),
-    sets the value with proper type coercion, saves back.
+    Coerces ``raw`` to the right Python type via ``coerce_value`` (which reads
+    ``Settings.model_fields[KEY].annotation`` — the authoritative type source,
+    handling Optional[...] / int / float / bool / list uniformly), then
+    load/mutate/dumps ~/.config/yadgar/config.yaml with ruamel (comment-preserving)
+    and chmod 0o600.
+
+    ``raw`` may be a string (CLI args) or an already-typed JSON value
+    (int/float/bool from the API) — non-string inputs are stringified first so
+    BOTH callers run the identical annotation-driven coercion path. This is the
+    only sanctioned yaml write path; never hand-write yaml bypassing this fn.
+
+    Returns the coerced value. Raises ValueError/TypeError on coercion failure
+    (CLI maps to exit(1); API maps to HTTP 422). Raises KeyError when ``key`` is
+    not a known Settings field.
     """
     from yadgar.config import Settings
 
-    key = args.key.lower()
-    key_upper = key.upper()
-    raw_value = args.value
+    key = key.lower()
+    if key.upper() not in Settings.model_fields:
+        raise KeyError(key)
 
-    if key_upper not in Settings.model_fields:
-        print(f"Unknown setting: {key!r}", file=sys.stderr)
-        print("Run 'yadgar config list' to see all settings.", file=sys.stderr)
-        sys.exit(1)
-
-    try:
-        value = coerce_value(key, raw_value)
-    except (ValueError, TypeError) as e:
-        print(f"Invalid value for {key!r}: {e}", file=sys.stderr)
-        sys.exit(1)
+    raw_str = raw if isinstance(raw, str) else str(raw)
+    value = coerce_value(key, raw_str)
 
     path = get_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1425,9 +1451,30 @@ def cmd_config_set(args) -> None:
         y.dump(data, f)
     # S2 (H-9): restrict config.yaml to owner read/write only — it may contain credentials.
     os.chmod(path, 0o600)
+    return value
+
+
+def cmd_config_set(args) -> None:
+    """Update a key in ~/.config/yadgar/config.yaml (CLI front-end).
+
+    Delegates the coercion + comment-preserving yaml write to the shared
+    :func:`set_config_value` so the CLI and the Control-tab API run one
+    validation path.
+    """
+    key = args.key.lower()
+
+    try:
+        value = set_config_value(key, args.value)
+    except KeyError:
+        print(f"Unknown setting: {key!r}", file=sys.stderr)
+        print("Run 'yadgar config list' to see all settings.", file=sys.stderr)
+        sys.exit(1)
+    except (ValueError, TypeError) as e:
+        print(f"Invalid value for {key!r}: {e}", file=sys.stderr)
+        sys.exit(1)
 
     print(f"Set {key} = {value!r}")
-    print(f"Config: {path}")
+    print(f"Config: {get_config_path()}")
 
 
 def cmd_config_edit(args) -> None:

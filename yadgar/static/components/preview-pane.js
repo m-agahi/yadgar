@@ -118,14 +118,17 @@ export class PreviewPane {
    * @param {function(string): void} opts.onClose   - called when user closes preview
    * @param {function(string, boolean): void} opts.onStarToggle - (slug, newStarred)
    * @param {function(string): void} opts.onXrefClick - [[slug]] link clicked
+   * @param {function(string): void} [opts.onRefresh] - P3.10 [57]: re-fetch the
+   *        currently-shown page live (called with the active slug). Optional.
    * @param {object|null} [opts.markedInstance]     - injected marked (tests)
    * @param {object|null} [opts.domPurifyInstance]  - injected DOMPurify (tests)
    */
-  constructor({ container, onClose, onStarToggle, onXrefClick, markedInstance = null, domPurifyInstance = null }) {
+  constructor({ container, onClose, onStarToggle, onXrefClick, onRefresh = null, markedInstance = null, domPurifyInstance = null }) {
     this._container = container;
     this._onClose = onClose;
     this._onStarToggle = onStarToggle;
     this._onXrefClick = onXrefClick;
+    this._onRefresh = onRefresh;
     this._marked = markedInstance || (typeof window !== 'undefined' ? window.marked : null);
     this._purify = domPurifyInstance || (typeof window !== 'undefined' ? window.DOMPurify : null);
     this._slug = null;
@@ -152,6 +155,15 @@ export class PreviewPane {
     this._titleEl = document.createElement('span');
     this._titleEl.className = 'bm-preview-title';
 
+    // P3.10 [57]: live refresh — re-fetch the shown page without a viz reload.
+    this._refreshBtn = document.createElement('button');
+    this._refreshBtn.className = 'bm-preview-refresh';
+    this._refreshBtn.textContent = '↺';
+    this._refreshBtn.title = 'Refresh — re-fetch latest content/version';
+    this._refreshBtn.addEventListener('click', () => {
+      if (this._slug && this._onRefresh) this._onRefresh(this._slug);
+    });
+
     this._starBtn = document.createElement('button');
     this._starBtn.className = 'bm-preview-star';
     this._starBtn.title = 'Toggle bookmark (Ctrl+B / ⌘B)';
@@ -165,6 +177,7 @@ export class PreviewPane {
 
     this._header.appendChild(this._closeBtn);
     this._header.appendChild(this._titleEl);
+    this._header.appendChild(this._refreshBtn);
     this._header.appendChild(this._starBtn);
 
     // Body

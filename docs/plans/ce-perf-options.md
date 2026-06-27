@@ -1,6 +1,6 @@
 # PLAN — v5.11+: Cross-Encoder Inference Performance Options (menu, version-assigned)
 
-**Status:** drafted 2026-05-29. **2026-06-25: user picked option B (int8 CE) to ship — see new §"Option B — concrete ship plan" at the end. The menu below is retained as the decision record.** improvement-train #29 group A car #4.
+**Status:** option B (int8-onnx) shipped v5.85; options E/G/A/C remain open (decision record).
 
 **Master at draft time:** core v5.10.3 + backend v5.4.0 deployed.
 

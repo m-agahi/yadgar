@@ -558,26 +558,35 @@ class _MemoryMixin:
         return result
 
     def get_memories_with_embeddings(
-        self, limit: int | None = None, order_by: str = "last_accessed"
+        self,
+        limit: int | None = None,
+        order_by: str = "last_accessed",
+        since: str | None = None,
     ) -> list[dict]:
         """Return memories that have embeddings, ordered by `order_by` DESC.
 
         When `limit` is None behaves identically to get_all_memories_with_embeddings.
         Intended for callers that build an N×N similarity matrix and need to bound N.
+
+        When `since` (an ISO-8601 timestamp) is provided, only memories whose
+        `created_at >= since` are returned. v5.86 (OT-C4) uses this to fetch the
+        incremental "probe" set of recently-created memories.
         """
         allowed_order = {"last_accessed", "heat", "created_at"}
         if order_by not in allowed_order:
             order_by = "last_accessed"
+        where = "embedding IS NOT NONE AND heat > 0"
+        params: dict = {}
+        if since is not None:
+            where += " AND created_at >= $since"
+            params["since"] = since
         if limit is None:
-            rows = self._q(
-                f"SELECT * FROM memory WHERE embedding IS NOT NONE AND heat > 0 "
-                f"ORDER BY {order_by} DESC"
-            )
+            rows = self._q(f"SELECT * FROM memory WHERE {where} ORDER BY {order_by} DESC", params)
         else:
+            params["lim"] = int(limit)
             rows = self._q(
-                f"SELECT * FROM memory WHERE embedding IS NOT NONE AND heat > 0 "
-                f"ORDER BY {order_by} DESC LIMIT $lim",
-                {"lim": int(limit)},
+                f"SELECT * FROM memory WHERE {where} ORDER BY {order_by} DESC LIMIT $lim",
+                params,
             )
         return self._rows_to_dicts(rows)
 

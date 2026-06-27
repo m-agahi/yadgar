@@ -1,0 +1,192 @@
+"""VIZ Batch-2 backend (car 6 of v5.86 train) — TDD RED→GREEN.
+
+Covers:
+- P0.4: imports/calls dropped from viz edge-type list + legend (resolved_by kept).
+- P2.1: mem↔wiki bridge built from the reverse memory.wiki_refs field.
+- P2.2: clusters report real member_count even when members are off the
+        top-500-hottest heat cap (so the sidebar shows non-empty clusters).
+
+P0.4's resolved_by extractor/handler fix is tested at the consolidation layer in
+test_consolidation.py::test_process_episodes_creates_resolved_by_relationship.
+"""
+
+from __future__ import annotations
+
+from unittest.mock import MagicMock
+
+from yadgar.graph_api import GraphAPI
+from yadgar.viz_meta import EDGE_TYPES, build_legend
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _mem_row(mid, *, heat=1.0, wiki_refs=None, cluster_id=None, slot_index=None):
+    return {
+        "id": mid,
+        "content": f"mem {mid}",
+        "heat": heat,
+        "tags": [],
+        "directory_context": "/x",
+        "created_at": "2024-01-01",
+        "slot_index": slot_index,
+        "embedding": None,
+        "cluster_id": cluster_id,
+        "wiki_refs": wiki_refs or [],
+    }
+
+
+def _wiki_row(wid, slug):
+    return {
+        "id": wid,
+        "title": f"Page {slug}",
+        "slug": slug,
+        "category": "reference",
+        "tags": [],
+        "links": [],
+        "source_memory_ids": [],  # always empty on every write path — the bug
+        "embedding": None,
+        "updated_at": "2024-01-01",
+    }
+
+
+def _make_storage(*, memory_rows=None, wiki_rows=None, clusters=None, cluster_members=None):
+    """Storage mock that routes the two _q SELECTs (memory then wiki) correctly.
+
+    cluster_members: dict[cluster_id -> list[int member mem ids]].
+    """
+    s = MagicMock()
+    mem = memory_rows or []
+    wik = wiki_rows or []
+
+    def _q_side_effect(sql, *args, **kwargs):
+        if "FROM memory" in sql:
+            return mem
+        if "FROM wiki_page" in sql:
+            return wik
+        return []
+
+    s._q.side_effect = _q_side_effect
+    s.get_all_transitions.return_value = []
+    s.get_all_wiki_crossrefs.return_value = []
+    s.get_all_causal_edges.return_value = []
+    s.get_relationships_by_types.return_value = []
+    s.get_all_entities.return_value = []
+    s.get_all_memory_similarity_links.return_value = []
+    s.get_memory_clusters.return_value = clusters or []
+    members = cluster_members or {}
+    s.get_cluster_members.side_effect = lambda cid: members.get(cid, [])
+    return s
+
+
+# ---------------------------------------------------------------------------
+# P0.4 — imports/calls dropped from viz edge-type list + legend (resolved_by kept)
+# ---------------------------------------------------------------------------
+
+
+class TestImportsCallsDroppedFromViz:
+    def test_imports_absent_from_edge_types(self):
+        """`imports` is removed from EDGE_TYPES (code-only, always empty on prose)."""
+        assert "imports" not in EDGE_TYPES
+
+    def test_calls_absent_from_edge_types(self):
+        """`calls` is removed from EDGE_TYPES (code-only, always empty on prose)."""
+        assert "calls" not in EDGE_TYPES
+
+    def test_resolved_by_kept_in_edge_types(self):
+        """`resolved_by` stays — it's now genuinely populated (P0.4 fix)."""
+        assert "resolved_by" in EDGE_TYPES
+
+    def test_co_occurrence_and_caused_by_kept(self):
+        assert "co_occurrence" in EDGE_TYPES
+        assert "caused_by" in EDGE_TYPES
+
+    def test_imports_calls_absent_from_legend(self):
+        """The dynamic legend (driven by EDGE_TYPES) no longer advertises imports/calls."""
+        from yadgar.config import get_settings
+
+        get_settings.cache_clear()
+        settings = get_settings()
+        get_settings.cache_clear()
+        keys = {e["key"] for e in build_legend(settings)["edges"]}
+        assert "imports" not in keys
+        assert "calls" not in keys
+        assert "resolved_by" in keys
+
+    def test_entity_rel_query_excludes_imports_calls(self):
+        """graph_api no longer queries storage for imports/calls relationships."""
+        s = _make_storage()
+        GraphAPI(s).get_full_graph()
+        s.get_relationships_by_types.assert_called_once()
+        queried = set(s.get_relationships_by_types.call_args[0][0])
+        assert "imports" not in queried
+        assert "calls" not in queried
+        assert {"co_occurrence", "resolved_by", "caused_by"} <= queried
+
+
+# ---------------------------------------------------------------------------
+# P2.1 — mem↔wiki bridge from reverse memory.wiki_refs
+# ---------------------------------------------------------------------------
+
+
+class TestMemWikiBridge:
+    def test_memory_wiki_edge_built_from_wiki_refs(self):
+        """A memory whose wiki_refs holds a loaded page slug → a memory_wiki edge."""
+        mem = [_mem_row(1, wiki_refs=["some-page"])]
+        wik = [_wiki_row(10, "some-page")]
+        s = _make_storage(memory_rows=mem, wiki_rows=wik)
+        result = GraphAPI(s).get_full_graph()
+        mw = [e for e in result["edges"] if e.get("type") == "memory_wiki"]
+        assert mw, "expected a memory_wiki edge from memory.wiki_refs"
+        assert mw[0]["source"] == "mem:1"
+        assert mw[0]["target"] == "wiki:10"
+        assert mw[0]["role"] == "informational"
+
+    def test_no_edge_when_wiki_refs_empty(self):
+        mem = [_mem_row(1, wiki_refs=[])]
+        wik = [_wiki_row(10, "some-page")]
+        s = _make_storage(memory_rows=mem, wiki_rows=wik)
+        result = GraphAPI(s).get_full_graph()
+        mw = [e for e in result["edges"] if e.get("type") == "memory_wiki"]
+        assert mw == []
+
+    def test_ref_to_unloaded_page_dropped(self):
+        """wiki_refs slug whose page is not in the loaded set produces no edge."""
+        mem = [_mem_row(1, wiki_refs=["missing-page"])]
+        wik = [_wiki_row(10, "some-page")]
+        s = _make_storage(memory_rows=mem, wiki_rows=wik)
+        result = GraphAPI(s).get_full_graph()
+        mw = [e for e in result["edges"] if e.get("type") == "memory_wiki"]
+        assert mw == []
+
+
+# ---------------------------------------------------------------------------
+# P2.2 — cluster heat-cap: real member_count even for off-screen members
+# ---------------------------------------------------------------------------
+
+
+class TestClusterMemberCount:
+    def test_offscreen_cluster_reports_real_member_count(self):
+        """A cluster whose members are all outside the rendered node set still
+        reports member_count > 0 (not dropped / not zeroed)."""
+        # Rendered memory: id 1. Cluster 7's members are 900, 901 — off-screen.
+        mem = [_mem_row(1)]
+        clusters = [{"id": 7, "name": "offscreen", "level": 0}]
+        members = {7: [900, 901, 902]}
+        s = _make_storage(memory_rows=mem, clusters=clusters, cluster_members=members)
+        result = GraphAPI(s).get_full_graph()
+        cl = [c for c in result["clusters"] if c["id"] == 7]
+        assert cl, "cluster must still be emitted even with no on-screen members"
+        assert cl[0]["member_count"] == 3, "member_count must reflect the REAL DB count"
+        assert cl[0]["member_node_ids"] == [], "no on-screen members → empty node id list"
+
+    def test_onscreen_cluster_member_count_matches_db(self):
+        mem = [_mem_row(1), _mem_row(2)]
+        clusters = [{"id": 5, "name": "live", "level": 1}]
+        members = {5: [1, 2, 3]}  # 1,2 on-screen; 3 off-screen
+        s = _make_storage(memory_rows=mem, clusters=clusters, cluster_members=members)
+        result = GraphAPI(s).get_full_graph()
+        cl = [c for c in result["clusters"] if c["id"] == 5][0]
+        assert cl["member_count"] == 3
+        assert set(cl["member_node_ids"]) == {"mem:1", "mem:2"}
