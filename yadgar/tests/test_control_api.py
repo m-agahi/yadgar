@@ -11,7 +11,7 @@ Tests (real behavioral — no string-grep-the-HTML):
 7.  test_restart_valid_backend_writes_sentinel_not_exec — same for backend
 8.  test_config_get_returns_knob_table_shape — knobs list has required fields
 9.  test_config_post_round_trip — set knob → GET → new value present
-10. test_config_post_type_mismatch_returns_400 — string to float knob → 400
+10. test_config_post_type_mismatch_returns_422 — string to float knob → 422
 11. test_config_post_out_of_range_returns_400 — node_size = -1 → 400
 12. test_action_consolidate_calls_consolidate_now — mock consolidate_now called
 13. test_action_vacuum_calls_vacuum_now — mock vacuum_now called
@@ -94,18 +94,20 @@ def _auth_headers() -> dict:
 
 
 def test_403_when_debug_apis_disabled(monkeypatch, tmp_path):
+    """WRITES + actions stay gated by YADGAR_DEBUG_APIS_ENABLED.
+
+    GET /api/control/config is intentionally NOT in this list — the read-only
+    config viewer is usable without the debug flag (see
+    test_config_get_not_gated_by_debug_flag). Only mutating paths are gated.
+    """
     client = _make_app(monkeypatch, debug_apis_on=False)
     paths = [
-        ("GET", "/api/control/config"),
         ("POST", "/api/control/config"),
         ("POST", "/api/control/action/consolidate"),
         ("POST", "/api/control/restart/yadgar"),
     ]
     for method, path in paths:
-        if method == "GET":
-            resp = client.get(path, headers=_auth_headers())
-        else:
-            resp = client.post(path, json={}, headers=_auth_headers())
+        resp = client.post(path, json={}, headers=_auth_headers())
         assert resp.status_code == 403, (
             f"Expected 403 for {method} {path}, got {resp.status_code}: {resp.text}"
         )
@@ -113,6 +115,32 @@ def test_403_when_debug_apis_disabled(monkeypatch, tmp_path):
         assert body.get("error") == "debug APIs disabled", (
             f"Expected error='debug APIs disabled' for {path}, got {body}"
         )
+
+
+def test_config_get_not_gated_by_debug_flag(monkeypatch, tmp_path):
+    """GET /api/control/config (read-only viewer) works WITHOUT the debug flag.
+
+    Config display is non-sensitive (redacted knobs are skipped, env-sourced
+    knobs render locked). Auth is still enforced — only the debug gate is lifted
+    for the read path. Writes (POST) remain gated (test_403_when_debug_apis_disabled).
+    """
+    client = _make_app(monkeypatch, debug_apis_on=False)
+    resp = client.get("/api/control/config", headers=_auth_headers())
+    assert resp.status_code == 200, (
+        f"GET config must be ungated; got {resp.status_code}: {resp.text}"
+    )
+    body = resp.json()
+    assert "knobs" in body and isinstance(body["knobs"], list)
+    assert len(body["knobs"]) > 0
+
+
+def test_config_get_still_requires_auth(monkeypatch, tmp_path):
+    """Un-gating the debug flag does NOT remove bearer auth on GET config."""
+    client = _make_app(monkeypatch, debug_apis_on=False)
+    resp = client.get("/api/control/config")  # no auth header
+    assert resp.status_code == 401, (
+        f"GET config must still require auth; got {resp.status_code}: {resp.text}"
+    )
 
 
 # ===========================================================================
@@ -334,20 +362,27 @@ def test_config_post_round_trip(monkeypatch, tmp_path):
 # ===========================================================================
 
 
-def test_config_post_type_mismatch_returns_400(monkeypatch, tmp_path):
-    """POST a string to a float knob → 400 type mismatch."""
+def test_config_post_type_mismatch_returns_422(monkeypatch, tmp_path):
+    """POST a non-coercible value to a float knob → 422 Unprocessable Entity.
+
+    v5.86 car #8: coercion failures now return 422 (was 400). 400 stays for
+    structural problems (bad JSON, missing fields, unknown knob, write-blocked);
+    422 is reserved for "well-formed request, value can't be coerced to the
+    knob's type" — the shared set_config_value() writer raises and the API maps
+    it to 422.
+    """
     client = _make_app(monkeypatch, debug_apis_on=True)
-    # v5.85: env-set knobs return 409 before validation — remove so the 400 path is exercised.
+    # env-set knobs return 409 before validation — remove so the 422 path is exercised.
     monkeypatch.delenv("YADGAR_VIZ_NODE_SIZE_3D", raising=False)
     resp = client.post(
         "/api/control/config",
         json={"name": "YADGAR_VIZ_NODE_SIZE_3D", "value": "not-a-number"},
         headers=_auth_headers(),
     )
-    assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
+    assert resp.status_code == 422, f"Expected 422, got {resp.status_code}: {resp.text}"
     body = resp.json()
     assert "error" in body
-    assert "type mismatch" in body["error"].lower() or "mismatch" in body["error"].lower()
+    assert "mismatch" in body["error"].lower() or "invalid" in body["error"].lower()
 
 
 # ===========================================================================
@@ -570,6 +605,43 @@ def test_config_get_returns_enriched_fields(monkeypatch, tmp_path):
     for knob in knobs[:5]:
         for field in ("name", "kind", "current", "default", "source", "reload"):
             assert field in knob, f"Existing field {field!r} missing from knob {knob['name']}"
+
+
+# ===========================================================================
+# P4.1 (viz-fix-plan-2026-06-27) — enum_choices on fixed-set string knobs
+# ===========================================================================
+
+
+def test_config_get_returns_enum_choices(monkeypatch, tmp_path):
+    """GET /api/control/config returns enum_choices for fixed-set string knobs.
+
+    P4.1: the config panel renders a <select> for enum-typed knobs, so each
+    knob must advertise its allowed values via `enum_choices` (a list).
+      - YADGAR_LOG_FORMAT is validator-backed ({json, text, human}) → non-empty.
+      - Free-form / numeric knobs (e.g. YADGAR_PORT) → empty list.
+    """
+    client = _make_app(monkeypatch, debug_apis_on=True)
+    resp = client.get("/api/control/config", headers=_auth_headers())
+    assert resp.status_code == 200
+    knobs = {k["name"]: k for k in resp.json()["knobs"]}
+
+    # Every knob carries the key (list type, possibly empty)
+    for knob in knobs.values():
+        assert "enum_choices" in knob, f"Knob missing 'enum_choices': {knob['name']}"
+        assert isinstance(knob["enum_choices"], list), (
+            f"'enum_choices' must be a list, got {type(knob['enum_choices'])} for {knob['name']}"
+        )
+
+    # Enum knob: LOG_FORMAT advertises its validated allowed set
+    assert "YADGAR_LOG_FORMAT" in knobs
+    log_format_choices = knobs["YADGAR_LOG_FORMAT"]["enum_choices"]
+    assert set(log_format_choices) == {"json", "text", "human"}, (
+        f"LOG_FORMAT enum_choices wrong: {log_format_choices}"
+    )
+
+    # Non-enum knob: PORT has no fixed set → empty list
+    assert "YADGAR_PORT" in knobs
+    assert knobs["YADGAR_PORT"]["enum_choices"] == []
 
 
 # ===========================================================================

@@ -34,7 +34,7 @@ def _make_mock_storage(nodes_rows, causal_edges_rows, entity_rels=None, entity_r
     return s
 
 
-def _mem_row(raw_id, content="test", slot=None):
+def _mem_row(raw_id, content="test", slot=None, cluster_id=None):
     return {
         "id": raw_id,
         "content": content,
@@ -44,6 +44,7 @@ def _mem_row(raw_id, content="test", slot=None):
         "created_at": "2024-01-01",
         "slot_index": slot,
         "embedding": None,
+        "cluster_id": cluster_id,
     }
 
 
@@ -85,6 +86,25 @@ class TestGraphStatsTemporalEdges:
 
 
 # ── v5.10.9: Orphan-edge filter ───────────────────────────────────────────────
+
+
+class TestMemoryNodeClusterId:
+    """P2.3 (viz-fix-plan-2026-06-27): memory nodes must carry cluster_id.
+
+    cluster_id is a column on the memory row; the viz tints nodes by cluster.
+    Without it on the node payload the frontend can't colour by cluster.
+    """
+
+    def test_memory_node_carries_cluster_id(self):
+        mem_rows = [_mem_row(1, "alpha", cluster_id=7), _mem_row(2, "beta", cluster_id=None)]
+        s = _make_mock_storage(mem_rows, [])
+        result = GraphAPI(s).get_full_graph()
+        by_id = {n["id"]: n for n in result["nodes"] if n.get("type") == "memory"}
+        assert "cluster_id" in by_id["mem:1"]
+        assert by_id["mem:1"]["cluster_id"] == 7
+        # absent/None cluster_id still surfaces the key (explicitly None)
+        assert "cluster_id" in by_id["mem:2"]
+        assert by_id["mem:2"]["cluster_id"] is None
 
 
 class TestOrphanEdgeFilter:

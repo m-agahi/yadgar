@@ -27,6 +27,19 @@ _EXTRA_WHERE_PATTERN = _re.compile(
     _re.IGNORECASE,
 )
 
+_META_KEY_PATTERN = _re.compile(r"^[a-z0-9_]+$")
+
+
+def _sanitize_meta_key(key: str) -> str:
+    """Validate a consolidation_meta record key (lowercase alnum + underscore only).
+
+    Keys are interpolated into the record id (`consolidation_meta:<key>`) so they
+    must never contain query-breaking characters. Callers pass fixed literals.
+    """
+    if not _META_KEY_PATTERN.match(key or ""):
+        raise ValueError(f"invalid consolidation_meta key: {key!r}")
+    return key
+
 
 class _OpsMixin:
     """Operational tables (consolidation_log, stats, engram_slot, checkpoint, prune) —
@@ -53,6 +66,32 @@ class _OpsMixin:
             },
         )
         return cid
+
+    # --------------------------------------------------- Consolidation Watermark
+    # v5.86 (OT-C4): persisted timestamps that drive incremental similarity-linking.
+    # Stored as singleton rows in `consolidation_meta` keyed by a stable record id
+    # so reads are O(1) and writes are upsert-in-place (no per-write row growth).
+
+    @trace_span("storage.ops.get_consolidation_watermark")
+    def get_consolidation_watermark(self, key: str) -> str | None:
+        """Return the persisted ISO-8601 watermark for `key`, or None if unset.
+
+        `key` is a short identifier (e.g. "similarity_linking", "full_reconcile").
+        """
+        safe = _sanitize_meta_key(key)
+        rows = self._q(f"SELECT ts FROM consolidation_meta:{safe}")
+        if rows and rows[0].get("ts"):
+            return str(rows[0]["ts"])
+        return None
+
+    @trace_span("storage.ops.set_consolidation_watermark")
+    def set_consolidation_watermark(self, key: str, value: str) -> None:
+        """Upsert the watermark for `key` to the ISO-8601 timestamp `value`."""
+        safe = _sanitize_meta_key(key)
+        self._q(
+            f"UPSERT consolidation_meta:{safe} SET ts = $ts, updated_at = $now",
+            {"ts": value, "now": self._now_iso()},
+        )
 
     # ------------------------------------------------------------------ Stats
 

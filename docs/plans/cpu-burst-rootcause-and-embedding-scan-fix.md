@@ -1,5 +1,7 @@
 # CPU/Fan Burst Root-Cause Validation + Consolidation Embedding-Scan Efficiency Fix
 
+**Status:** Part 2 (embedding scan) buildable; Part 1 (host fan-burst) deferred — see task #26 (2026-06-27: likely non-yadgar / observer-effect, unresolved).
+
 Investigation date: 2026-06-25. Read-only investigation + design. No code edited.
 
 > **AUDIT 2026-06-25 (improvement-train #29, group A car #30–33).** Part 2 cites

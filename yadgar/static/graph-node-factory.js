@@ -24,15 +24,33 @@
  */
 export function makeNodeThreeObject(node, THREE, config, colorFn) {
   if (!THREE) return null;
-  const shape = (config && config.wiki_shape) || 'octahedron';
-  if (node.type !== 'wiki' || shape !== 'octahedron') return null;
-
   const nodeRelSize = (config && config.size_3d) || 8;
   const radius = Math.cbrt(1) * nodeRelSize; // nodeVal defaults to 1
-
-  const geo = new THREE.OctahedronGeometry(radius, 0);
   const color = (colorFn && colorFn(node)) || '#8b949e';
-  // MeshBasicMaterial: unlit, transparent:false (default) → depthWrite:true → solid rendering
-  const mat = new THREE.MeshBasicMaterial({ color });
-  return new THREE.Mesh(geo, mat);
+
+  // wiki → octahedron (config-gated). Wiki wins even if also _anchor-tagged.
+  const shape = (config && config.wiki_shape) || 'octahedron';
+  if (node.type === 'wiki') {
+    if (shape !== 'octahedron') return null; // sphere override → ForceGraph default
+    const geo = new THREE.OctahedronGeometry(radius, 0);
+    // MeshBasicMaterial: unlit, transparent:false (default) → depthWrite:true → solid rendering
+    const mat = new THREE.MeshBasicMaterial({ color });
+    return new THREE.Mesh(geo, mat);
+  }
+
+  // P3.7 / item #6: anchored/protected memories get a distinct GEOMETRY (cube)
+  // vs the default sphere. is_protected is absent from the graph payload, so the
+  // '_anchor' tag (added by restoration.anchor_memory alongside is_protected) is
+  // the available signal. Gated on type==='memory' so untyped/temporal stay null.
+  if (node.type === 'memory' && Array.isArray(node.tags) && node.tags.includes('_anchor')) {
+    const side = radius * 1.4; // slightly larger so anchors read as prominent
+    const geo = new THREE.BoxGeometry(side, side, side);
+    const mat = new THREE.MeshBasicMaterial({ color });
+    return new THREE.Mesh(geo, mat);
+  }
+
+  // Plain memory / other → null → ForceGraph default sphere (cheap; CPU-safe).
+  // .nodeColor(_nodeColorFor) still tints the default sphere, so per-node DIM
+  // works on these via the color path (dimmed → solid dark RGB) without a mesh.
+  return null;
 }

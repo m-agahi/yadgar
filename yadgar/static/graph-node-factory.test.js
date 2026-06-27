@@ -36,6 +36,15 @@ class FakeMaterial {
   }
 }
 
+class FakeBoxGeometry {
+  constructor(w, h, d) {
+    this.type = 'BoxGeometry';
+    this.w = w;
+    this.h = h;
+    this.d = d;
+  }
+}
+
 class FakeMesh {
   constructor(geometry, material) {
     this.geometry = geometry;
@@ -47,6 +56,7 @@ class FakeMesh {
 const FAKE_THREE = {
   OctahedronGeometry: FakeGeometry,
   SphereGeometry: FakeSphereGeometry,
+  BoxGeometry: FakeBoxGeometry,
   MeshBasicMaterial: FakeMaterial,
   Mesh: FakeMesh,
 };
@@ -121,6 +131,51 @@ describe('makeNodeThreeObject — memory/other nodes', () => {
     const node = { id: 'entity:789' };
     const result = makeNodeThreeObject(node, FAKE_THREE, DEFAULT_CONFIG, colorFn);
     expect(result).toBeNull();
+  });
+
+  it('returns null for a plain memory node carrying no _anchor tag', () => {
+    const node = { type: 'memory', id: 'mem:1', tags: ['work', 'note'] };
+    const result = makeNodeThreeObject(node, FAKE_THREE, DEFAULT_CONFIG, colorFn);
+    expect(result).toBeNull();
+  });
+});
+
+// ── P3.7 / item #6: anchored/protected memory nodes get a distinct 3D shape ──
+// Anchored memories carry the '_anchor' tag (restoration.anchor_memory adds it
+// alongside is_protected=True). is_protected itself is NOT in the graph payload,
+// so the '_anchor' tag is the available signal. Distinct geometry (BoxGeometry,
+// rendered as a cube/diamond) marks them vs the default sphere for plain memories.
+describe('makeNodeThreeObject — anchored memory shape [54]', () => {
+  it('returns a Mesh for memory nodes tagged _anchor', () => {
+    const node = { type: 'memory', id: 'mem:a', tags: ['_anchor', 'decision'] };
+    const result = makeNodeThreeObject(node, FAKE_THREE, DEFAULT_CONFIG, colorFn);
+    expect(result).not.toBeNull();
+    expect(result).toBeInstanceOf(FakeMesh);
+  });
+
+  it('anchored memory geometry is BoxGeometry (distinct from sphere/octahedron)', () => {
+    const node = { type: 'memory', id: 'mem:a', tags: ['_anchor'] };
+    const result = makeNodeThreeObject(node, FAKE_THREE, DEFAULT_CONFIG, colorFn);
+    expect(result.geometry.type).toBe('BoxGeometry');
+  });
+
+  it('anchored memory material is MeshBasicMaterial with transparent:false (shard fix preserved)', () => {
+    const node = { type: 'memory', id: 'mem:a', tags: ['_anchor'] };
+    const result = makeNodeThreeObject(node, FAKE_THREE, DEFAULT_CONFIG, colorFn);
+    expect(result.material.type).toBe('MeshBasicMaterial');
+    expect(result.material.transparent).toBe(false);
+  });
+
+  it('anchored memory color comes from colorFn (honors dim/cluster/heat)', () => {
+    const node = { type: 'memory', id: 'mem:a', tags: ['_anchor'] };
+    const result = makeNodeThreeObject(node, FAKE_THREE, DEFAULT_CONFIG, () => '#112233');
+    expect(result.material.color).toBe('#112233');
+  });
+
+  it('wiki node still wins octahedron even if also _anchor-tagged', () => {
+    const node = { type: 'wiki', id: 'wiki:a', tags: ['_anchor'] };
+    const result = makeNodeThreeObject(node, FAKE_THREE, DEFAULT_CONFIG, colorFn);
+    expect(result.geometry.type).toBe('OctahedronGeometry');
   });
 });
 

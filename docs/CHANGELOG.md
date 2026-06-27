@@ -7,39 +7,86 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
-### Agent-prompt library rework (v5.85, ADR-0007) — collapse bespoke tools into recall tags
-
-#### Removed (BREAKING — MCP tool surface)
-- **`agent_prompt_get` and `agent_prompt_search` MCP tools removed.** Semantic lookup is now `recall(type="wiki", tags=["agent-prompt"])` (the tag-aware recall path with an SQL pre-filter via `search_wiki_vectors_tagged`); exact-key lookup is the internal `_read_agent_prompt(slug)` helper (no longer an MCP tool). `agent_prompt_save` is unchanged and stays a tool. Dead `StorageEngine.search_agent_prompt_vectors` (generalized to `search_wiki_vectors_tagged` in S3) and the `-vN` slug helpers removed. (`yadgar/server/tools/agent_prompts.py`)
-- **`agent_dispatch_prelude` rewired** from `agent_prompt_get` to the internal deterministic slug-read (`agent-prompt-<pattern>`) — exact-key, not recall. Version label preserved. (`yadgar/server/tools/dispatch_helper.py`)
-
-### Observability train (obs-train, PR #122) — /health 503 contract + OTLP resilience
-
-Triggered by core flagged unhealthy while still serving + a ~14 h OTLP retry/log flood with no collector reachable. Keeps OTLP + metrics ENABLED; three cars (C1 health-masking, C2 handler/OTLP robustness, C3 nix collector + healthcheck tune).
-
-#### Changed (BREAKING — health contract)
-- **`/health` now returns HTTP 503 when `status != "ok"` (degraded); HTTP 200 only when `"ok"`** (was: always 200, even degraded). Same JSON body. This is the C1 fix — the container `curl -f` healthcheck previously read a db/embed outage as healthy (outage-masking false-negative). The handler is stateless; anti-flap is delegated to the container healthcheck retries, not an in-handler counter. (`yadgar/server/http.py`)
-- **`daemon.py` consumers tolerate 503:** `status()` reads the `HTTPError` body on a 503 and shows the degraded detail (not "unreachable"); `_health_ok()` treats a responding-but-503 server as alive (liveness ≠ full-health/readiness, which the container healthcheck enforces).
-
-#### Changed (robustness + resilience)
-- **`/health` handler probes db + embed concurrently** (`asyncio.gather`, ~2 s vs the old ~4 s serial) under an outer `asyncio.wait_for(_HEALTH_TIMEOUT_SEC=3.0)` bound, so a hung probe yields 503 instead of stalling the handler.
-- **Span logs emitted off the event loop** via `QueueHandler` + `QueueListener` (drained in `shutdown_tracing`) so an OTLP retry flood can't stall request handlers through the shared logging-handler lock. (`yadgar/tracing.py`)
-- **OTLP exporter wrapped in a circuit breaker** (`_CircuitBreakerSpanExporter`: opens after 5 consecutive failures for 60 s, half-open probe, rate-limited `otlp_circuit_open` logging). Stops the retry/log flood when the collector is down; OTLP stays enabled. (CB-1 pattern — see `ARCHITECTURE_INVARIANTS.md`)
-- **`OTLP_INSECURE` documented as reserved / no-op for the HTTP exporter** — transport security is decided by the `OTLP_ENDPOINT` URL scheme (`http://` vs `https://`), not by the flag. Kept (not removed) to avoid churning the I25 three-way config sync. `OTLP_TIMEOUT_SEC` default is 3 s.
-
-#### Infra (nix, separate, commit `4fc96b8`)
-- otel-collector now listens at `:4318` (OTLP activation target).
-- yadgar-core healthcheck tuned: `--health-timeout 5s→8s`, `--health-interval 30s→15s`, retries default 3. (docker-compose core service unchanged: `interval 10s` / `timeout 5s` / `retries 6` already meets-or-exceeds this intent — a 503 raises `HTTPError` → non-zero exit → correctly unhealthy.)
-
-#### Docs/contracts
-- `ARCHITECTURE_INVARIANTS.md` I19 mechanism updated (span logs routed off-loop via QueueListener; `propagate=False`; ordering now load-bearing) + CB-1 patterns-library entry gains the OTLP exporter as a second user.
-- `CAPABILITY_REGISTRY.md` CAP-OPS-015 (OTLP: circuit breaker + OTLP_INSECURE no-op + `setup_tracing` name fix) + new CAP-OPS-038 (/health 200-ok / 503-degraded contract).
-- `architecture.md` Observability section documents the 503 contract + OTLP resilience.
-
 ### COMET enrichment retired to dormant (ADR-0004)
 
 #### Changed
 - **COMET enrichment retired to dormant** (ADR-0004): the en2a ablation proved un-FPA'd COMET net-negative for recall (multi-session R@5 −4.2pt) at ~17h/10-core cost. `COMET_ENRICHMENT_ENABLED` flag default flipped True→False; COMET code retained dormant (NOT deleted; shared `transformers`/`torch` deps untouched; model lazy-loaded so dormant = cost-free). BC-EN2b implemented — daemon emits exactly one startup warning when COMET is disabled, and `/admin/config` now surfaces the flag. (`yadgar/config.py`, `yadgar/config_registry.py`, `yadgar/server/lifecycle.py`)
+
+## [5.86.0] - 2026-06-27
+
+v5.86 train — viz regression fixes + consolidation perf + reliability.
+
+#### Fixed (viz)
+- **CPU**: the force-graph render loop ran unconditionally at 60fps even focused-idle — added `pauseAnimation`/`resumeAnimation` gating (static + interaction + tab-switch) + a re-pause-on-idle debounce. (`static/index.html`)
+- **Search**: exact-title matches dropped out of the WRRF top-5 and lit the wrong node — exact/prefix-title precedence in `api_viz_search`; edges now dim with their endpoints on search (2D + 3D). (`server/http.py`, `static/index.html`)
+- **Legend**: removed the stale hardcoded "Semantic" fallback + unlabeled top group; the dynamic role-grouped legend is the single source. (`static/index.html`, `viz_meta.py`)
+- **Data fidelity**: `resolved_by` edges were never produced (extractor/handler type mismatch) — fixed; mem↔wiki bridge wired from `memory.wiki_refs`; clusters report real `member_count` (no longer empty under the heat cap); `imports`/`calls` dropped (code-only, empty on a prose corpus). (`knowledge_graph.py`, `consolidation/cls.py`, `graph_api.py`)
+- **Interaction**: 3D render-path overhaul (per-node dim, shape variation, anchor cubes), hover-neighborhood highlight, focus mode, connection-count badge, memory/wiki/entity node-type filters, search hide-mode, live bookmarked-wiki refresh, panel scroll, reheat-on-toggle, node `cluster_id` + `enum_choices` in the API. (`static/`, `graph_api.py`, `server/routes/control.py`)
+
+#### Added
+- **OT-C4 incremental similarity-linking** (probe×corpus) + periodic full-reconcile safety net, behind `SIMILARITY_LINKING_INCREMENTAL_ENABLED` (default **off**) — re-embedding mutates old embeddings so full-reconcile is mandatory; triggers on embedding-change or weekly. (`consolidation/`, `storage/`)
+- **Config editor usable**: `GET /api/control/config` un-gated from the debug flag (writes stay gated); unified `set_config_value` writer shared by CLI + API; 422 on coercion failure. (`auth_middleware.py`, `config_yaml.py`, `server/routes/control.py`)
+
+#### Fixed (other)
+- **adr_add**: multi-line ADR field values rendered flush-left, so an embedded `## ` line poisoned the ADR id-scan (returned ADR-10000 not ADR-0002) — indent continuation lines. (`models.py`)
+
+#### Docs
+- Archived shipped plans, CHANGELOG backfill (v5.83–v5.85.1), plan-status headers, architecture.md v5.85 notes.
+
+Deferred to v5.87: config-panel restart/destructive/audit (P3/P4); Prometheus retention + #26 burst monitor (nix).
+
+## [5.85.1] - 2026-06-27
+
+Agent-prompt capture loop shipped as a fast-follow to v5.85.0 (commit `3773ce9`, PR #126).
+
+### Added
+- **Stop-hook capture step** — `stop-hook` now includes an agent-prompt recall step: after each session ends, the hook calls `project_brief(mode="catalog")` to surface the current project context, priming the next session's agent-prompt lookup. (`yadgar/server/tools/agent_prompts.py`, hooks entrypoint)
+- **`project_brief` nudge** — `agent_dispatch_prelude` injects a reminder to call `project_brief` when no agent-prompt page exists for the caller pattern, rather than silently returning empty. Reduces cold-start blank-slate sessions.
+
+## [5.85.0] - 2026-06-26
+
+v5.85 train (`426768c`, PR #125): ADR-tool migration + int8-onnx CE backend + wiki auto-linking + repo-wiki store-bridge + agent-prompt library rework + viz /api/control extend.
+
+### Added
+- **`adr_add` MCP tool** — dedicated ADR write tool migrated from `wiki_append_section`; enforces schema (11-field ADR structure) at write time. Previous `adr_add` via `wiki_append_section` path removed. (`yadgar/server/tools/adr.py`)
+- **int8-onnx cross-encoder backend** (`YADGAR_CROSS_ENCODER_BACKEND=onnx-int8`, BACKEND_VERSION 5.8.0) — opt-in quantized ONNX CE via `model_qint8_avx512.onnx`; default remains `"st"` (fp32). Gated at load time in `ml_client._try_st_cross_encoder`. (`yadgar/backend/ml_client.py`, `yadgar/config.py`)
+- **`wiki_autolink` MCP tool** — auto-inserts `[[slug]]` cross-references across wiki pages: scans each page body for mentions of other pages' titles and wraps the first occurrence, feeding the existing `wiki_crossref` graph. Validates target slug exists before inserting; never manufactures broken refs. (`yadgar/server/tools/wiki.py`, `yadgar/wiki.py`)
+- **Repo-wiki store-bridge (#36)** — `repo_wiki_generate` now writes pages directly into the yadgar wiki store (SurrealDB) rather than only to `.local-review/wiki/`. Bridge uses the existing `wiki_add` path with dedup gate; staleness detection via SHA256 hash parity.
+- **Agent-prompt library rework (ADR-0007)** — `agent_prompt_get` and `agent_prompt_search` MCP tools removed; lookup collapsed to `recall(type="wiki", tags=["agent-prompt"])`. `agent_dispatch_prelude` rewired to deterministic slug-read (`agent-prompt-<pattern>`). `agent_prompt_save` unchanged. Dead slug-vN versioning helpers + dedup logic removed. (`yadgar/server/tools/agent_prompts.py`, `yadgar/server/tools/dispatch_helper.py`)
+- **Viz `/api/control` extend** — `/admin/config` now exposes the full config surface; `PATCH /admin/config/<key>` provides a sanctioned write path. SOURCE badges in the viz UI distinguish env-var vs default vs config-file origins.
+
+## [5.84.0] - 2026-06-25
+
+Improvement train (`6e1629c`, PR #124): ADR-capture tooling + consolidation perf + bug fixes (improvement-train #29 group B+C cars).
+
+### Fixed
+- **`stale_wiki_count` source_file field** — `fix(bugs): stale_wiki_count source_file field + BC-EN2b startup-path verify` (`8808d9a`): `source_file` was missing from the stale-count query result set; BC-EN2b startup-warning path now verified reachable in integration.
+- **ADR-capture tooling** — multiple follow-through fixes to the stop-hook ADR schema (11-field capture-first prompt) shipped in #121; edge cases in branch_hint resolution tightened.
+- **Consolidation perf** — batch-size and projection-query improvements to the consolidation scan; reduces SELECT * fan-out on large stores (improvement-train A-series groundwork).
+
+## [5.83.0] - 2026-06-24
+
+obs-train + ADR-capture prompt redesign, shipped as `2785d9c` (PR #122) + prior cars `#116–#121`.
+
+### Changed (BREAKING — health contract)
+- **`/health` now returns HTTP 503 when `status != "ok"` (degraded); HTTP 200 only when `"ok"`** (was: always 200, even degraded). Same JSON body. C1 fix — container `curl -f` healthcheck previously read a db/embed outage as healthy. (`yadgar/server/http.py`)
+- **`daemon.py` consumers tolerate 503:** `status()` reads the `HTTPError` body on a 503 and shows the degraded detail (not "unreachable"); `_health_ok()` treats a responding-but-503 server as alive (liveness ≠ full-health/readiness, which the container healthcheck enforces).
+
+### Changed (robustness + resilience)
+- **`/health` handler probes db + embed concurrently** (`asyncio.gather`, ~2 s vs old ~4 s serial) under `asyncio.wait_for(_HEALTH_TIMEOUT_SEC=3.0)`; hung probe yields 503 instead of stalling.
+- **Span logs emitted off the event loop** via `QueueHandler` + `QueueListener` (drained in `shutdown_tracing`); OTLP retry flood can't stall request handlers through the shared logging-handler lock. (`yadgar/tracing.py`)
+- **OTLP circuit breaker** (`_CircuitBreakerSpanExporter`: opens after 5 consecutive failures for 60 s, half-open probe, rate-limited logging). Stops the retry/log flood when the collector is down; OTLP stays enabled. (`yadgar/tracing.py`)
+
+### Added
+- **ADR-capture prompt redesign** (#121, `eeaec40`) — stop-hook prompt rewritten to capture-first + mandatory 11-field ADR schema; reduces post-session ADR omissions.
+- **Plan archive sweep + roadmap refresh** (#116, `649c4cc`) — 10 shipped plans archived; ROADMAP refreshed post-v5.81.
+- **Recall = DONE docs** (#118, `3c86aa6`) — `unified-scoped-recall-v2` plan retired; roadmap updated with recall-done note.
+- **Viz config control panel plan** (#120, `03fdced`) — skeleton plan + NEURAL CONSOLE mockup added to docs/plans.
+- **Pre-commit e2e skip on docs-only changes** (#117, `2856d24`) — e2e pre-push hook now skips when only docs changed.
+
+### Docs/contracts
+- `ARCHITECTURE_INVARIANTS.md` I19 mechanism updated (span logs routed off-loop via QueueListener; `propagate=False`) + CB-1 patterns-library entry gains the OTLP exporter as a second user.
+- `CAPABILITY_REGISTRY.md` CAP-OPS-015 (OTLP: circuit breaker + `OTLP_INSECURE` no-op + `setup_tracing` name fix) + new CAP-OPS-038 (`/health` 200-ok / 503-degraded contract).
 
 ## [5.81.0] - 2026-06-23
 

@@ -77,8 +77,12 @@ class TestEntityEdgesInDefaultPayload:
         assert "co_occurrence" in types, f"co_occurrence missing from edges: {types}"
 
     def test_all_entity_rel_types_in_payload(self):
-        """All 5 entity typed-relation types appear when present in storage."""
-        rel_types = ["co_occurrence", "imports", "calls", "resolved_by", "caused_by"]
+        """All viz entity typed-relation types appear when present in storage.
+
+        v5.86 VIZ Batch-2 (P0.4): imports/calls dropped (code-only, always empty
+        on a prose corpus). Remaining set: co_occurrence/resolved_by/caused_by.
+        """
+        rel_types = ["co_occurrence", "resolved_by", "caused_by"]
         entity_rels = [_entity_rel(i, i + 10, rt) for i, rt in enumerate(rel_types, start=1)]
         entity_rows = [_entity_row(i, f"E{i}") for i in range(1, 16)]
         s = _make_mock(entity_rels=entity_rels, entity_rows=entity_rows)
@@ -101,22 +105,28 @@ class TestEntityEdgesInDefaultPayload:
         )
 
     def test_entity_rel_edge_has_type_field(self):
-        """Entity relation edges carry the correct 'type' field."""
-        entity_rels = [_entity_rel(1, 2, "imports")]
+        """Entity relation edges carry the correct 'type' field.
+
+        v5.86 VIZ Batch-2 (P0.4): uses resolved_by (imports dropped from viz).
+        """
+        entity_rels = [_entity_rel(1, 2, "resolved_by")]
         entity_rows = [_entity_row(1, "X"), _entity_row(2, "Y")]
         s = _make_mock(entity_rels=entity_rels, entity_rows=entity_rows)
         result = GraphAPI(s).get_full_graph()
-        import_edges = [e for e in result["edges"] if e.get("type") == "imports"]
-        assert import_edges, "Expected imports edge in result"
-        assert import_edges[0]["type"] == "imports"
+        resolved_edges = [e for e in result["edges"] if e.get("type") == "resolved_by"]
+        assert resolved_edges, "Expected resolved_by edge in result"
+        assert resolved_edges[0]["type"] == "resolved_by"
 
-    def test_get_relationships_by_types_called_with_five_types(self):
-        """GraphAPI calls get_relationships_by_types with exactly the 5 expected types."""
+    def test_get_relationships_by_types_called_with_viz_types(self):
+        """GraphAPI queries get_relationships_by_types with the viz entity-rel set.
+
+        v5.86 VIZ Batch-2 (P0.4): imports/calls dropped from the queried set.
+        """
         s = _make_mock()
         GraphAPI(s).get_full_graph()
         s.get_relationships_by_types.assert_called_once()
         call_args = s.get_relationships_by_types.call_args[0][0]
-        expected = {"co_occurrence", "imports", "calls", "resolved_by", "caused_by"}
+        expected = {"co_occurrence", "resolved_by", "caused_by"}
         assert set(call_args) == expected, f"Expected types {expected}, got {set(call_args)}"
 
     def test_entity_rel_edges_orphan_filtered(self):
@@ -286,17 +296,24 @@ class TestEdgeTypesRegistry:
         "memory_wiki",
         "causal",
         "co_occurrence",
-        "imports",
-        "calls",
         "resolved_by",
         "caused_by",
         "memory_similarity_link",  # v5.80 #80 viz-fidelity-v2
     }
 
-    def test_all_12_edge_types_present(self):
-        """EDGE_TYPES has all 12 edge types including 5 entity relation types + memory_similarity_link."""
+    def test_all_edge_types_present(self):
+        """EDGE_TYPES has all viz edge types.
+
+        v5.86 VIZ Batch-2 (P0.4): imports/calls dropped (code-only, always empty
+        on a prose corpus) — down from 12 to 10 types.
+        """
         missing = self.EXPECTED_TYPES - set(EDGE_TYPES.keys())
         assert not missing, f"EDGE_TYPES missing: {missing}"
+
+    def test_imports_calls_dropped(self):
+        """imports/calls are NOT in EDGE_TYPES (P0.4 — code-only, legend was lying)."""
+        assert "imports" not in EDGE_TYPES
+        assert "calls" not in EDGE_TYPES
 
     def test_all_types_have_role_field(self):
         """Every entry in EDGE_TYPES has a 'role' field."""
@@ -313,7 +330,7 @@ class TestEdgeTypesRegistry:
 
     def test_entity_rel_types_have_retrieval_role(self):
         """Entity typed-relation types have role='retrieval'."""
-        entity_rel_types = ["co_occurrence", "imports", "calls", "resolved_by", "caused_by"]
+        entity_rel_types = ["co_occurrence", "resolved_by", "caused_by"]
         for t in entity_rel_types:
             assert EDGE_TYPES[t]["role"] == "retrieval", (
                 f"Expected EDGE_TYPES['{t}']['role'] == 'retrieval'"
@@ -340,7 +357,7 @@ class TestEdgeTypesRegistry:
 
     def test_non_semantic_entity_types_default_on_true(self):
         """Entity typed-relation types default ON."""
-        for t in ["co_occurrence", "imports", "calls", "resolved_by", "caused_by"]:
+        for t in ["co_occurrence", "resolved_by", "caused_by"]:
             assert EDGE_TYPES[t]["default_on"] is True, f"Expected {t} default_on=True"
 
 
@@ -356,7 +373,7 @@ class TestLazyEdgeTypes:
 
     def test_entity_types_not_lazy(self):
         """Entity typed-relation types are not lazy (stored/cheap)."""
-        for t in ["co_occurrence", "imports", "calls", "resolved_by", "caused_by"]:
+        for t in ["co_occurrence", "resolved_by", "caused_by"]:
             assert t not in LAZY_EDGE_TYPES, f"Expected {t} not in LAZY_EDGE_TYPES"
 
     def test_temporal_not_lazy(self):
@@ -428,8 +445,12 @@ class TestBuildLegendEmitsRoleFields:
         assert co is not None, "co_occurrence missing from legend"
         assert co["lazy"] is False
 
-    def test_legend_has_all_12_edge_types(self, settings):
-        """build_legend includes all 12 edge types (entity relation types + memory_similarity_link)."""
+    def test_legend_has_all_edge_types(self, settings):
+        """build_legend includes all viz edge types.
+
+        v5.86 VIZ Batch-2 (P0.4): imports/calls dropped — the legend no longer
+        advertises code-only edges that are always empty on a prose corpus.
+        """
         from yadgar.viz_meta import build_legend
 
         legend = build_legend(settings)
@@ -442,11 +463,11 @@ class TestBuildLegendEmitsRoleFields:
             "memory_wiki",
             "causal",
             "co_occurrence",
-            "imports",
-            "calls",
             "resolved_by",
             "caused_by",
             "memory_similarity_link",  # v5.80 #80 viz-fidelity-v2
         }
         missing = expected - keys
         assert not missing, f"Legend missing edge types: {missing}"
+        assert "imports" not in keys
+        assert "calls" not in keys

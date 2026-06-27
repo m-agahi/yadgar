@@ -81,6 +81,13 @@ class Settings(BaseSettings):
     CURATION_SIMILARITY_THRESHOLD: float = 0.95  # Only merge near-exact duplicates
     SIMILARITY_LINK_THRESHOLD: float = 0.78  # Min cosine to create a memory_similarity_link
     MAX_SIMILARITY_LINKS_PER_MEMORY: int = 15  # Degree cap — bounds memory_similarity_link size
+    # v5.86 (OT-C4): incremental similarity-linking. Default OFF — production
+    # behavior is the full N×N pass every cycle until this is enabled.
+    # (I25 three-way registered: env YADGAR_SIMILARITY_LINKING_INCREMENTAL_ENABLED, yaml, registry)
+    SIMILARITY_LINKING_INCREMENTAL_ENABLED: bool = False
+    # Days between mandatory full-reconcile passes (safety net for re-embedding
+    # that mutates old↔old similarity, which incremental-by-created_at misses).
+    SIMILARITY_LINKING_RECONCILE_INTERVAL_DAYS: int = 7
 
     # v3 frontier settings
     HOPFIELD_BETA: float = 8.0  # Hopfield sharpness (low=blended, high=precise)

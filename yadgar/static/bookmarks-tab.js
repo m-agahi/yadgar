@@ -300,6 +300,8 @@ export function initBookmarksTab(tabContainer) {
     onClose: _closePreview,
     onStarToggle: _onStarToggle,
     onXrefClick: _loadPreview,
+    // P3.10 [57]: refresh re-fetches content + version history live (no viz reload).
+    onRefresh: _loadPreview,
   });
   _mainArea.appendChild(_previewContainer);
 

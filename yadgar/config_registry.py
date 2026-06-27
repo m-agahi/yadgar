@@ -325,6 +325,9 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_WRITE_GATE_SHADOW_THRESHOLD", "0.15", "float"),
     # ── v5.85 car #6 agent-prompt Tier-1 passive library (Phase 1) kill-gate ──
     ConfigEntry("YADGAR_AGENT_PROMPT_LIBRARY_ENABLED", "true", "bool"),
+    # ── v5.86 car #1 (OT-C4) incremental similarity-linking (default OFF) ──────
+    ConfigEntry("YADGAR_SIMILARITY_LINKING_INCREMENTAL_ENABLED", "false", "bool"),
+    ConfigEntry("YADGAR_SIMILARITY_LINKING_RECONCILE_INTERVAL_DAYS", "7", "int"),
 ]
 
 

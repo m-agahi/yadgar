@@ -15,7 +15,7 @@ config YAML.  Set to 0 to disable.
 
 import logging
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from yadgar.config import get_settings
 from yadgar.tracing import trace_span
@@ -49,22 +49,107 @@ def _warn_slow_phase(phase: str, duration_ms: int) -> None:
 class _OrchestratorMixin:
     """Main consolidation cycle orchestrator."""
 
-    def _maybe_sleep_cycle(self) -> None:
-        """Run a full sleep cycle if at least 6 hours since the last one."""
+    def _maybe_sleep_cycle(self) -> dict | None:
+        """Run a full sleep cycle if at least 6 hours since the last one.
+
+        Returns the run_sleep_cycle() stats (incl. `reembedded`/`compressed`) when
+        a cycle ran, else None. v5.86 (OT-C4): the caller uses these to decide
+        whether a full similarity-link reconcile is needed (re-embedding mutates
+        old↔old similarity).
+        """
         now = datetime.now(UTC)
         if self._last_sleep_cycle is not None:
             hours_since = (now - self._last_sleep_cycle).total_seconds() / 3600.0
             if hours_since < 6.0:
-                return
+                return None
         try:
             stats = self._sleep_engine.run_sleep_cycle()
             self._last_sleep_cycle = now
             logger.info("Sleep cycle complete: %s", stats)
+            return stats
         except Exception as _exc:
             from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
 
             record_exception("consolidation.sleep_cycle", _exc)
             logger.exception("Sleep cycle failed")
+            return None
+
+    # ── v5.86 (OT-C4) incremental similarity-linking ───────────────────────────
+
+    _SIMILARITY_WATERMARK_KEY = "similarity_linking"
+    _FULL_RECONCILE_WATERMARK_KEY = "full_reconcile"
+
+    def _run_similarity_linking(self, stats: dict) -> None:
+        """In-cycle similarity linking — incremental fast-path when enabled, else full.
+
+        DEFAULT OFF: with SIMILARITY_LINKING_INCREMENTAL_ENABLED False this calls
+        the unchanged full N×N pass. When True it links only memories created
+        since the persisted watermark (probe×corpus), then bumps the watermark to
+        the cycle-start timestamp (captured BEFORE the fetch so a memory created
+        mid-run is re-processed next cycle, never skipped). The mandatory full
+        reconcile (post-sleep / weekly) remains the safety net for re-embedding.
+        """
+        if not getattr(self._settings, "SIMILARITY_LINKING_INCREMENTAL_ENABLED", False):
+            self._link_similar_memories(stats)
+            return
+
+        run_start = datetime.now(UTC).isoformat()
+        since = self._storage.get_consolidation_watermark(self._SIMILARITY_WATERMARK_KEY)
+        if since is None:
+            # First incremental run with no watermark → do a full pass to seed the
+            # graph, then record the watermark so later cycles go incremental.
+            self._link_similar_memories(stats)
+        else:
+            self._link_similar_memories_incremental(stats, since=since)
+        self._storage.set_consolidation_watermark(self._SIMILARITY_WATERMARK_KEY, run_start)
+
+    def _full_reconcile_due(self, embeddings_changed: bool) -> bool:
+        """True when a full reconcile must run: embeddings changed OR weekly cadence."""
+        if embeddings_changed:
+            return True
+        last = self._storage.get_consolidation_watermark(self._FULL_RECONCILE_WATERMARK_KEY)
+        if last is None:
+            return True
+        interval_days = getattr(self._settings, "SIMILARITY_LINKING_RECONCILE_INTERVAL_DAYS", 7)
+        try:
+            last_dt = datetime.fromisoformat(last)
+        except ValueError:
+            return True
+        return datetime.now(UTC) - last_dt >= timedelta(days=interval_days)
+
+    def _maybe_full_reconcile(self, sleep_stats: dict | None) -> None:
+        """Post-sleep safety net: re-run the FULL pass when embeddings mutated or weekly.
+
+        Only fires when SIMILARITY_LINKING_INCREMENTAL_ENABLED is True — with the
+        flag OFF the in-cycle full pass already covers everything, so this is inert
+        (production behavior unchanged). `sleep_stats` is the run_sleep_cycle()
+        result; re-embedding/compression there changes old↔old similarity that an
+        incremental-by-created_at pass cannot see.
+        """
+        if not getattr(self._settings, "SIMILARITY_LINKING_INCREMENTAL_ENABLED", False):
+            return
+        s = sleep_stats or {}
+        embeddings_changed = bool(s.get("reembedded", 0)) or bool(s.get("compressed", 0))
+        if not self._full_reconcile_due(embeddings_changed):
+            return
+        try:
+            _t = time.monotonic()
+            logger.info(
+                "phase_start: full_reconcile_links embeddings_changed=%s", embeddings_changed
+            )
+            self._link_similar_memories({})
+            now_iso = datetime.now(UTC).isoformat()
+            self._storage.set_consolidation_watermark(self._FULL_RECONCILE_WATERMARK_KEY, now_iso)
+            # A full reconcile also re-establishes the incremental baseline.
+            self._storage.set_consolidation_watermark(self._SIMILARITY_WATERMARK_KEY, now_iso)
+            _dur_ms = int((time.monotonic() - _t) * 1000)
+            logger.info("phase_end: full_reconcile_links duration_ms=%d", _dur_ms)
+            _warn_slow_phase("full_reconcile_links", _dur_ms)
+        except Exception as _exc:
+            from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+            record_exception("consolidation.phase_full_reconcile_links", _exc)
+            logger.exception("Full similarity-link reconcile failed")
 
     def _run_episodic_phases(self, stats: dict) -> None:
         """Phase group 1: decay, episode processing, pruning, duplicate merge."""
@@ -98,7 +183,7 @@ class _OrchestratorMixin:
         try:
             _t = time.monotonic()
             logger.info("phase_start: link_similar")
-            self._link_similar_memories(stats)
+            self._run_similarity_linking(stats)
             _dur_ms = int((time.monotonic() - _t) * 1000)
             logger.info("phase_end: link_similar duration_ms=%d", _dur_ms)
             _warn_slow_phase("link_similar", _dur_ms)

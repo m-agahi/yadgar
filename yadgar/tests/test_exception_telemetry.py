@@ -324,6 +324,10 @@ def test_consolidation_orchestrator_link_similar_failure():
         def __init__(self):
             self._settings = MagicMock()
             self._settings.VACUUM_AUTO_ENABLED = False
+            # OT-C4: pin the incremental flag OFF so dispatch takes the full
+            # _link_similar_memories path (a bare MagicMock attr is truthy and
+            # would wrongly route to _link_similar_memories_incremental).
+            self._settings.SIMILARITY_LINKING_INCREMENTAL_ENABLED = False
             self._storage = MagicMock()
             self._storage.get_episodes_since.return_value = []
             self._storage.probe_vector_indexes.return_value = True

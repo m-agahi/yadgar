@@ -5,9 +5,11 @@ Referenced by graph_api.py (edge type keys), http.py (legend block), and
 the frontend help.js renderer.
 
 v5.50.13: extracted from scattered literals in graph_api.py / index.html.
-v5.54.3: added `role` field (retrieval|display) per EDGE_CONTRACT; added 5
-    entity typed-relation types (co_occurrence, imports, calls, resolved_by,
-    caused_by) — the retrieval-active entity graph now visible in viz.
+v5.54.3: added `role` field (retrieval|display) per EDGE_CONTRACT; added
+    entity typed-relation types (co_occurrence, resolved_by, caused_by;
+    imports/calls also added then, but dropped from the viz in v5.86 Batch-2
+    P0.4 — code-only, always empty on a prose corpus) — the retrieval-active
+    entity graph now visible in viz.
 v5.80 (#80 viz-fidelity-v2): renamed role "display" → "informational" to
     reflect accurate semantics (these edges carry real structural info, not
     mere decoration). Added memory_similarity_link edge type.
@@ -33,7 +35,8 @@ if TYPE_CHECKING:
 #   "informational" — structural or derived; not wired to retrieval scoring.
 #                     Styled dashed/dimmer. Renamed from "display" in v5.80.
 #
-# Entity typed-relations (co_occurrence/imports/calls/resolved_by/caused_by):
+# Entity typed-relations (co_occurrence/resolved_by/caused_by — imports/calls
+# dropped from viz in v5.86 Batch-2, P0.4: code-only, always empty on prose):
 #   role=retrieval — these power PPR + spreading in balanced/full profiles, and
 #   the precomputed graph_prior in fast profile (v5.54.1). The biggest hidden
 #   capability — previously invisible in the viz.
@@ -116,22 +119,11 @@ EDGE_TYPES: dict[str, dict] = {
         "role": "retrieval",
         "default_on": True,
     },
-    "imports": {
-        "label": "Imports",
-        "description": "Import dependency: one entity imports another (code context). Retrieval-active via entity graph.",
-        "settings_color_key": None,
-        "fallback_color": "#79c0ff",
-        "role": "retrieval",
-        "default_on": True,
-    },
-    "calls": {
-        "label": "Calls",
-        "description": "Function call relationship: one entity calls another. Retrieval-active via entity graph.",
-        "settings_color_key": None,
-        "fallback_color": "#56d364",
-        "role": "retrieval",
-        "default_on": True,
-    },
+    # v5.86 VIZ Batch-2 (P0.4): "imports" + "calls" removed from the viz registry.
+    # They populate only from literal source code; on a prose work-summary corpus
+    # they are always empty, so advertising them made the legend lie. They remain
+    # valid entity-graph relations (VALID_REL_TYPES, retrieval-active) — just not
+    # surfaced in the viz. resolved_by is now genuinely populated and stays.
     "resolved_by": {
         "label": "Resolved By",
         "description": "Error resolved by an entity (error→fix pattern). Retrieval-active via entity graph.",

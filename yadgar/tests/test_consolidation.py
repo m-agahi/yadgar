@@ -579,6 +579,33 @@ def test_process_episodes_correctness_relationships_created(tmp_path, settings):
     engine.close()
 
 
+def test_process_episodes_creates_resolved_by_relationship(tmp_path, settings):
+    """P0.4: a memory describing an error AND its resolution creates a resolved_by edge.
+
+    Pre-fix this was provably dead: the extractor emitted (error, "error",
+    "resolved_by") but the handler looked for a never-emitted "solution" entity,
+    so _find_entity_by_type returned None and no edge was ever created.
+    """
+    engine = StorageEngine(str(tmp_path / "pe_resolved.db"))
+    emb = EmbeddingEngine()
+    emb._unavailable = True
+    sched = ConsolidationScheduler(engine, emb, settings)
+
+    engine.insert_episode(
+        {
+            "session_id": "s_resolve",
+            "directory": "/proj",
+            "raw_content": "Fixed the ValueError by adding a null guard",
+        }
+    )
+    sched._last_consolidated_episode_id = 0
+    sched._process_new_episodes({"episodes_processed": 0})
+
+    resolved = engine.get_relationships_by_types(["resolved_by"])
+    assert resolved, "expected a resolved_by relationship to be created"
+    engine.close()
+
+
 # ── _merge_duplicates numpy-vectorised perf tests (v4.4.10) ─────────────────
 
 
@@ -763,6 +790,338 @@ class TestSimilarityLinkDegreeCap:
 
         assert degree, "expected some similarity links to be created"
         assert max(degree.values()) <= 3, f"degree cap violated: {degree}"
+
+
+def _canonical_link_set(storage) -> set[tuple[int, int]]:
+    """Return the undirected link set as canonical (lo, hi) id pairs."""
+    out: set[tuple[int, int]] = set()
+    for link in storage.get_all_memory_similarity_links():
+        a, b = link["source_memory_id"], link["target_memory_id"]
+        out.add((a, b) if a < b else (b, a))
+    return out
+
+
+def _cluster_vec(cluster: int, jitter: int) -> bytes:
+    """Deterministic 384-d unit vector: same cluster → high cosine, diff → ~0."""
+    rng = np.random.default_rng(cluster * 1000)
+    base = rng.standard_normal(384).astype(np.float32)
+    base /= np.linalg.norm(base)
+    # tiny jitter keeps intra-cluster pairs distinct but well above threshold
+    noise = np.random.default_rng(cluster * 1000 + jitter + 1).standard_normal(384)
+    noise = noise.astype(np.float32) * 0.02
+    vec = base + noise
+    vec /= np.linalg.norm(vec)
+    return vec.tobytes()
+
+
+class TestIncrementalSimilarityLinking:
+    """v5.86 (OT-C4): incremental probe×corpus linking equals the full N×N pass."""
+
+    # Cluster layout: 5 olds + 4 news across 2 clusters so that BOTH old↔old AND
+    # new↔new same-cluster pairs exist (the cases a degenerate fixture hides).
+    #   olds  idx 0..4 → clusters [0, 0, 1, 0, 1]  (cluster0 has 3 olds, cluster1 has 2)
+    #   news  idx 5..8 → clusters [0, 1, 0, 1]      (each cluster gains 2 news)
+    _OLD_CLUSTERS = [0, 0, 1, 0, 1]
+    _NEW_CLUSTERS = [0, 1, 0, 1]
+
+    def _insert_olds(self, storage):
+        """Insert the OLD memories (created_at < watermark). Returns old_ids."""
+        old_ts = "2026-06-01T00:00:00+00:00"
+        old_ids = []
+        for i, cl in enumerate(self._OLD_CLUSTERS):
+            old_ids.append(
+                storage.insert_memory(
+                    {
+                        "content": f"old {i}",
+                        "embedding": _cluster_vec(cl, i),
+                        "directory_context": "/proj",
+                        "heat": 1.0,
+                        "created_at": old_ts,
+                    }
+                )
+            )
+        return old_ids
+
+    def _insert_news(self, storage):
+        """Insert the NEW memories (created_at >= watermark)."""
+        new_ts = "2026-06-26T00:00:00+00:00"
+        for j, cl in enumerate(self._NEW_CLUSTERS):
+            storage.insert_memory(
+                {
+                    "content": f"new {j}",
+                    "embedding": _cluster_vec(cl, 100 + j),
+                    "directory_context": "/proj",
+                    "heat": 1.0,
+                    "created_at": new_ts,
+                }
+            )
+
+    def _new_sched(self, storage, settings):
+        emb = EmbeddingEngine()
+        emb._unavailable = True
+        return ConsolidationScheduler(storage, emb, settings)
+
+    def test_incremental_equals_full_with_stable_embeddings(self, tmp_path):
+        """Incremental(probe=new) yields SAME links as full pass.
+
+        Faithful to production: old↔old links are PRE-SEEDED (an olds-only pass =
+        "prior runs"), then the incremental run adds only new↔* pairs. The full
+        store re-runs the complete pass. Equivalence must hold over a corpus that
+        actually contains old↔old AND new↔new same-cluster pairs.
+        """
+        watermark = "2026-06-20T00:00:00+00:00"
+        settings_full = Settings(
+            DB_PATH=str(tmp_path / "full.db"),
+            SIMILARITY_LINK_THRESHOLD=0.5,
+            MAX_SIMILARITY_LINKS_PER_MEMORY=15,
+        )
+        settings_inc = Settings(
+            DB_PATH=str(tmp_path / "inc.db"),
+            SIMILARITY_LINK_THRESHOLD=0.5,
+            MAX_SIMILARITY_LINKS_PER_MEMORY=15,
+        )
+
+        # --- Full pass: insert olds + news, then ONE full pass over the corpus ---
+        full_store = StorageEngine(str(tmp_path / "full.db"))
+        sched_full = self._new_sched(full_store, settings_full)
+        old_ids = self._insert_olds(full_store)
+        self._insert_news(full_store)
+        sched_full._link_similar_memories({})
+        full_links = _canonical_link_set(full_store)
+        full_store.close()
+
+        # --- Incremental: olds-only full pass (= "prior runs", seeds old↔old),
+        #     THEN insert news, THEN incremental cycle (probe = since watermark) ---
+        inc_store = StorageEngine(str(tmp_path / "inc.db"))
+        sched_inc = self._new_sched(inc_store, settings_inc)
+        self._insert_olds(inc_store)
+        sched_inc._link_similar_memories({})  # prior runs — only olds exist yet
+        self._insert_news(inc_store)
+        sched_inc._link_similar_memories_incremental({}, since=watermark)
+        inc_links = _canonical_link_set(inc_store)
+        inc_store.close()
+
+        # Sanity: the fixture must actually contain an old↔old same-cluster link,
+        # otherwise this test degenerates to the trivial case.
+        old_old_pairs = {(a, b) if a < b else (b, a) for a in old_ids for b in old_ids if a != b}
+        assert full_links & old_old_pairs, "fixture must contain ≥1 old↔old link"
+
+        assert full_links, "expected the full pass to create some links"
+        assert inc_links == full_links, (
+            f"incremental != full\nfull-only={full_links - inc_links}\n"
+            f"inc-only={inc_links - full_links}"
+        )
+
+    def test_incremental_includes_new_old_links(self, tmp_path):
+        """Probe (new) must link to OLD corpus members, not just other new ones."""
+        watermark = "2026-06-20T00:00:00+00:00"
+        settings = Settings(
+            DB_PATH=str(tmp_path / "no.db"),
+            SIMILARITY_LINK_THRESHOLD=0.5,
+            MAX_SIMILARITY_LINKS_PER_MEMORY=15,
+        )
+        store = StorageEngine(str(tmp_path / "no.db"))
+        # 1 old + 1 new in the SAME cluster → a single new↔old link expected.
+        emb = EmbeddingEngine()
+        emb._unavailable = True
+        sched = ConsolidationScheduler(store, emb, settings)
+        old_id = store.insert_memory(
+            {
+                "content": "old c0",
+                "embedding": _cluster_vec(0, 0),
+                "directory_context": "/proj",
+                "heat": 1.0,
+                "created_at": "2026-06-01T00:00:00+00:00",
+            }
+        )
+        new_id = store.insert_memory(
+            {
+                "content": "new c0",
+                "embedding": _cluster_vec(0, 1),
+                "directory_context": "/proj",
+                "heat": 1.0,
+                "created_at": "2026-06-26T00:00:00+00:00",
+            }
+        )
+        sched._link_similar_memories_incremental({}, since=watermark)
+        links = _canonical_link_set(store)
+        store.close()
+        expected = (old_id, new_id) if old_id < new_id else (new_id, old_id)
+        assert expected in links, f"new↔old link missing: {links}"
+
+    def test_incremental_no_self_links(self, tmp_path):
+        """A probe memory present in both probe and corpus must not link to itself."""
+        watermark = "2026-06-20T00:00:00+00:00"
+        settings = Settings(
+            DB_PATH=str(tmp_path / "self.db"),
+            SIMILARITY_LINK_THRESHOLD=0.5,
+            MAX_SIMILARITY_LINKS_PER_MEMORY=15,
+        )
+        store = StorageEngine(str(tmp_path / "self.db"))
+        emb = EmbeddingEngine()
+        emb._unavailable = True
+        sched = ConsolidationScheduler(store, emb, settings)
+        store.insert_memory(
+            {
+                "content": "lonely new",
+                "embedding": _cluster_vec(0, 0),
+                "directory_context": "/proj",
+                "heat": 1.0,
+                "created_at": "2026-06-26T00:00:00+00:00",
+            }
+        )
+        sched._link_similar_memories_incremental({}, since=watermark)
+        links = _canonical_link_set(store)
+        store.close()
+        assert all(a != b for a, b in links), f"self-link created: {links}"
+        assert links == set(), "no links expected for a single isolated memory"
+
+
+class TestSimilarityLinkingDispatch:
+    """v5.86 (OT-C4): in-cycle dispatch + post-sleep full reconcile, default OFF."""
+
+    def _sched(self, store, **overrides):
+        base = dict(SIMILARITY_LINK_THRESHOLD=0.5, MAX_SIMILARITY_LINKS_PER_MEMORY=15)
+        base.update(overrides)
+        settings = Settings(DB_PATH=store._db_path if hasattr(store, "_db_path") else ":m:", **base)
+        emb = EmbeddingEngine()
+        emb._unavailable = True
+        return ConsolidationScheduler(store, emb, settings)
+
+    def test_default_off_runs_full_pass_and_no_watermark(self, tmp_path):
+        """Flag OFF (default): full pass runs, no watermark is written."""
+        store = StorageEngine(str(tmp_path / "off.db"))
+        sched = self._sched(store)  # default: incremental disabled
+        for i in range(3):
+            store.insert_memory(
+                {
+                    "content": f"m{i}",
+                    "embedding": _cluster_vec(0, i),
+                    "directory_context": "/proj",
+                    "heat": 1.0,
+                }
+            )
+        sched._run_similarity_linking({})
+        links = _canonical_link_set(store)
+        wm = store.get_consolidation_watermark("similarity_linking")
+        store.close()
+        assert links, "full pass should have created links"
+        assert wm is None, "default-OFF must not write a watermark"
+
+    def test_flag_on_first_run_seeds_then_bumps_watermark(self, tmp_path):
+        """Flag ON, no prior watermark: full seed pass + watermark written."""
+        store = StorageEngine(str(tmp_path / "on.db"))
+        sched = self._sched(store, SIMILARITY_LINKING_INCREMENTAL_ENABLED=True)
+        for i in range(3):
+            store.insert_memory(
+                {
+                    "content": f"m{i}",
+                    "embedding": _cluster_vec(0, i),
+                    "directory_context": "/proj",
+                    "heat": 1.0,
+                }
+            )
+        assert store.get_consolidation_watermark("similarity_linking") is None
+        sched._run_similarity_linking({})
+        wm = store.get_consolidation_watermark("similarity_linking")
+        store.close()
+        assert wm is not None, "flag ON must persist a watermark after the run"
+
+    def test_full_reconcile_inert_when_flag_off(self, tmp_path):
+        """Flag OFF: post-sleep reconcile does NOT fire (production unchanged)."""
+        store = StorageEngine(str(tmp_path / "inert.db"))
+        sched = self._sched(store)  # OFF
+        called = {"n": 0}
+        orig = sched._link_similar_memories
+
+        def spy(stats):
+            called["n"] += 1
+            return orig(stats)
+
+        sched._link_similar_memories = spy
+        sched._maybe_full_reconcile({"reembedded": 5})
+        store.close()
+        assert called["n"] == 0, "reconcile must be inert when flag OFF"
+
+    def test_full_reconcile_fires_on_reembed(self, tmp_path):
+        """Flag ON + sleep re-embedded memories → full reconcile runs."""
+        store = StorageEngine(str(tmp_path / "reembed.db"))
+        sched = self._sched(store, SIMILARITY_LINKING_INCREMENTAL_ENABLED=True)
+        called = {"n": 0}
+        orig = sched._link_similar_memories
+
+        def spy(stats):
+            called["n"] += 1
+            return orig(stats)
+
+        sched._link_similar_memories = spy
+        sched._maybe_full_reconcile({"reembedded": 3, "compressed": 0})
+        wm = store.get_consolidation_watermark("full_reconcile")
+        store.close()
+        assert called["n"] == 1, "reconcile must fire when embeddings changed"
+        assert wm is not None, "full_reconcile watermark must be written"
+
+    def test_full_reconcile_skipped_when_nothing_changed_and_recent(self, tmp_path):
+        """Flag ON, no re-embed, recent reconcile watermark → skip."""
+        store = StorageEngine(str(tmp_path / "skip.db"))
+        sched = self._sched(
+            store,
+            SIMILARITY_LINKING_INCREMENTAL_ENABLED=True,
+            SIMILARITY_LINKING_RECONCILE_INTERVAL_DAYS=7,
+        )
+        from datetime import UTC as _UTC
+        from datetime import datetime as _dt
+
+        store.set_consolidation_watermark("full_reconcile", _dt.now(_UTC).isoformat())
+        called = {"n": 0}
+        sched._link_similar_memories = lambda stats: called.__setitem__("n", called["n"] + 1)
+        sched._maybe_full_reconcile({"reembedded": 0, "compressed": 0})
+        store.close()
+        assert called["n"] == 0, "must skip when nothing changed and reconcile is recent"
+
+    def test_full_reconcile_relinks_changed_old_pair(self, tmp_path):
+        """Embedding mutation on an OLD memory → full reconcile links the new pair.
+
+        This is the safety-net case: an incremental-by-created_at pass would miss
+        an old↔old pair whose similarity only crossed the threshold after a
+        re-embed. The full reconcile must catch it.
+        """
+        store = StorageEngine(str(tmp_path / "changed.db"))
+        sched = self._sched(store, SIMILARITY_LINKING_INCREMENTAL_ENABLED=True)
+        old_ts = "2026-06-01T00:00:00+00:00"
+        # Two OLD memories in DIFFERENT clusters → initially NOT linked.
+        a = store.insert_memory(
+            {
+                "content": "old A",
+                "embedding": _cluster_vec(0, 0),
+                "directory_context": "/proj",
+                "heat": 1.0,
+                "created_at": old_ts,
+            }
+        )
+        b = store.insert_memory(
+            {
+                "content": "old B",
+                "embedding": _cluster_vec(1, 0),
+                "directory_context": "/proj",
+                "heat": 1.0,
+                "created_at": old_ts,
+            }
+        )
+        # Seed the link graph (different clusters → no a↔b link yet).
+        sched._link_similar_memories({})
+        before = _canonical_link_set(store)
+        key = (a, b) if a < b else (b, a)
+        assert key not in before, "different-cluster pair should not be linked initially"
+
+        # Simulate a re-embed: B's embedding now matches A's cluster.
+        store.update_memory_fields(b, embedding=_cluster_vec(0, 1))
+
+        # Full reconcile (triggered by reembedded>0) must now link a↔b.
+        sched._maybe_full_reconcile({"reembedded": 1})
+        after = _canonical_link_set(store)
+        store.close()
+        assert key in after, f"reconcile failed to link changed old pair: {after}"
 
 
 # ── SIMILARITY_MATRIX_MAX_CANDIDATES cap tests ──────────────────────────────

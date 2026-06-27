@@ -396,11 +396,14 @@ class _CLSMixin:
     @staticmethod
     def _build_valid_embedding_matrix(
         memories: list[dict],
+        min_count: int = 2,
     ) -> tuple[list[int], object] | None:
         """Build normalized embedding matrix from memories with valid embeddings.
 
         Returns (ids, matrix) where matrix is an NxD numpy float32 array,
-        or None if fewer than 2 valid embeddings exist.
+        or None if fewer than `min_count` valid embeddings exist. The full N×N
+        pass needs ≥2 (default); the incremental probe set may legitimately have
+        only one member (probe-of-1 × corpus-of-N), so callers pass min_count=1.
         """
         import numpy as np
 
@@ -417,7 +420,7 @@ class _CLSMixin:
             except Exception:
                 continue
 
-        if len(valid) < 2:
+        if len(valid) < min_count:
             return None
 
         ids = [v[0] for v in valid]
@@ -514,12 +517,27 @@ class _CLSMixin:
 
         return batch
 
+    def _load_existing_links_and_degree(self) -> tuple[dict[tuple[int, int], dict], dict[int, int]]:
+        """Pre-load all existing links + per-memory degree to avoid per-pair reads."""
+        existing_links: dict[tuple[int, int], dict] = {}
+        degree: dict[int, int] = {}
+        for link in self._storage.get_all_memory_similarity_links():
+            src_id, tgt_id = link["source_memory_id"], link["target_memory_id"]
+            existing_links[(src_id, tgt_id)] = link
+            degree[src_id] = degree.get(src_id, 0) + 1
+            degree[tgt_id] = degree.get(tgt_id, 0) + 1
+        return existing_links, degree
+
     def _link_similar_memories(self, stats: dict) -> None:
         """Create memory_similarity_link records between semantically similar memories.
 
         Uses numpy matrix multiplication for fast pairwise cosine similarity,
         then upserts into memory_similarity_link (no entity-table rows created).
         Capped per cycle to keep consolidation fast.
+
+        This is the FULL pass (every candidate × every candidate). v5.86 (OT-C4)
+        adds an incremental fast-path (`_link_similar_memories_incremental`); this
+        method stays the default and the weekly/post-reembed safety-net reconcile.
         """
         max_candidates = self._settings.SIMILARITY_MATRIX_MAX_CANDIDATES
         memories = self._storage.get_memories_with_embeddings(
@@ -535,14 +553,7 @@ class _CLSMixin:
 
         sim_matrix = matrix @ matrix.T  # N x N — pairwise cosine via matmul
 
-        # Pre-load all existing links to avoid per-pair read roundtrips.
-        existing_links: dict[tuple[int, int], dict] = {}
-        degree: dict[int, int] = {}
-        for link in self._storage.get_all_memory_similarity_links():
-            src_id, tgt_id = link["source_memory_id"], link["target_memory_id"]
-            existing_links[(src_id, tgt_id)] = link
-            degree[src_id] = degree.get(src_id, 0) + 1
-            degree[tgt_id] = degree.get(tgt_id, 0) + 1
+        existing_links, degree = self._load_existing_links_and_degree()
 
         threshold = self._settings.SIMILARITY_LINK_THRESHOLD
         max_new_links = 100
@@ -550,6 +561,122 @@ class _CLSMixin:
 
         pending_inserts, pending_reinforces = self._collect_link_candidates(
             ids, sim_matrix, existing_links, degree, threshold, max_new_links, max_degree
+        )
+
+        batch = self._build_similarity_batch(pending_inserts, pending_reinforces)
+        self._storage.batch_writes(batch)
+
+        stats["similarity_links_created"] = len(pending_inserts)
+
+    @staticmethod
+    def _collect_link_candidates_rect(
+        probe_ids: list[int],
+        corpus_ids: list[int],
+        sim_matrix: object,
+        existing_links: dict,
+        degree: dict[int, int],
+        threshold: float,
+        max_new_links: int,
+        max_degree: int,
+    ) -> tuple[list[tuple[int, int, float]], list[tuple[int, float]]]:
+        """Rectangular variant of _collect_link_candidates for the incremental path.
+
+        `sim_matrix` is probe×corpus (len(probe_ids) rows, len(corpus_ids) cols).
+        Each candidate pair has at least one *probe* (recently-created) endpoint —
+        the only pairs a full pass would newly link when older embeddings are
+        unchanged. Self-pairs (same memory id) are skipped, and the canonical
+        (lo, hi) key is de-duplicated via a seen-set (a probe∩corpus overlap can
+        otherwise surface the same pair twice).
+        """
+        import numpy as np
+
+        rows, cols = np.where(sim_matrix >= threshold)
+        sims = sim_matrix[rows, cols]
+        order = np.argsort(-sims)
+
+        pending_inserts: list[tuple[int, int, float]] = []
+        pending_reinforces: list[tuple[int, float]] = []
+        seen: set[tuple[int, int]] = set()
+        links_created = 0
+
+        for idx in order:
+            if links_created >= max_new_links:
+                break
+            i, j = int(rows[idx]), int(cols[idx])
+            mid_a, mid_b = probe_ids[i], corpus_ids[j]
+            if mid_a == mid_b:
+                continue  # self-pair (same memory in both probe and corpus)
+
+            key = (mid_a, mid_b) if mid_a < mid_b else (mid_b, mid_a)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            sim = float(sims[idx])
+            existing = existing_links.get(key)
+            if existing:
+                if sim > existing.get("weight", 0):
+                    pending_reinforces.append((existing["id"], sim - existing["weight"]))
+                continue
+
+            if degree.get(mid_a, 0) >= max_degree or degree.get(mid_b, 0) >= max_degree:
+                continue
+
+            pending_inserts.append((key[0], key[1], round(sim, 4)))
+            degree[mid_a] = degree.get(mid_a, 0) + 1
+            degree[mid_b] = degree.get(mid_b, 0) + 1
+            links_created += 1
+
+        return pending_inserts, pending_reinforces
+
+    def _link_similar_memories_incremental(self, stats: dict, since: str) -> None:
+        """Link only memories created since `since` against the full candidate corpus.
+
+        Probe = memories with created_at >= since (capped). Corpus = the full
+        candidate set (same cap/order as the full pass). With stable embeddings,
+        every link the full pass would create that prior runs missed has at least
+        one probe endpoint, so probe×corpus is link-set-equivalent to the full
+        N×N pass while costing O(N_probe × N) instead of O(N²).
+        """
+        max_candidates = self._settings.SIMILARITY_MATRIX_MAX_CANDIDATES
+        probe_mems = self._storage.get_memories_with_embeddings(
+            limit=max_candidates, order_by="created_at", since=since
+        )
+        if not probe_mems:
+            stats["similarity_links_created"] = 0
+            return
+        corpus_mems = self._storage.get_memories_with_embeddings(
+            limit=max_candidates, order_by="last_accessed"
+        )
+        if len(corpus_mems) < 2:
+            stats["similarity_links_created"] = 0
+            return
+
+        probe_result = self._build_valid_embedding_matrix(probe_mems, min_count=1)
+        corpus_result = self._build_valid_embedding_matrix(corpus_mems, min_count=2)
+        if probe_result is None or corpus_result is None:
+            stats["similarity_links_created"] = 0
+            return
+        probe_ids, probe_matrix = probe_result
+        corpus_ids, corpus_matrix = corpus_result
+
+        sim_matrix = probe_matrix @ corpus_matrix.T  # N_probe × N_corpus cosine
+
+        existing_links, degree = self._load_existing_links_and_degree()
+
+        threshold = self._settings.SIMILARITY_LINK_THRESHOLD
+        max_new_links = 100
+        max_degree = self._settings.MAX_SIMILARITY_LINKS_PER_MEMORY
+
+        pending_inserts, pending_reinforces = self._collect_link_candidates_rect(
+            probe_ids,
+            corpus_ids,
+            sim_matrix,
+            existing_links,
+            degree,
+            threshold,
+            max_new_links,
+            max_degree,
         )
 
         batch = self._build_similarity_batch(pending_inserts, pending_reinforces)

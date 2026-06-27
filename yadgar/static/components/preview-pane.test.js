@@ -225,6 +225,41 @@ describe('PreviewPane component', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  // P3.10 [57]: live refresh control — re-fetch the wiki page without a full
+  // viz reload. onRefresh is optional (back-compat for callers that omit it).
+  it('renders a refresh button in the header', () => {
+    expect(container.querySelector('.bm-preview-refresh')).toBeTruthy();
+  });
+
+  it('clicking refresh calls onRefresh with the active slug', () => {
+    const onRefresh = vi.fn();
+    const c2 = document.createElement('div');
+    const p2 = new PreviewPane({
+      container: c2, onClose, onStarToggle, onXrefClick, onRefresh,
+      markedInstance: markedMock, domPurifyInstance: purifyMock,
+    });
+    p2.show({ slug: 'live-slug', title: 'L', content: '' }, false);
+    c2.querySelector('.bm-preview-refresh').click();
+    expect(onRefresh).toHaveBeenCalledWith('live-slug');
+  });
+
+  it('clicking refresh with no page loaded does not call onRefresh', () => {
+    const onRefresh = vi.fn();
+    const c3 = document.createElement('div');
+    const p3 = new PreviewPane({
+      container: c3, onClose, onStarToggle, onXrefClick, onRefresh,
+      markedInstance: markedMock, domPurifyInstance: purifyMock,
+    });
+    c3.querySelector('.bm-preview-refresh').click();
+    expect(onRefresh).not.toHaveBeenCalled();
+  });
+
+  it('refresh button is safe when onRefresh is omitted (no throw)', () => {
+    pane.show({ slug: 'p', title: 'P', content: '' }, false);
+    const refreshBtn = container.querySelector('.bm-preview-refresh');
+    expect(() => refreshBtn.click()).not.toThrow();
+  });
+
   it('setStarred() updates star without calling onStarToggle', () => {
     pane.show({ slug: 'p', title: 'P', content: '' }, false);
     pane.setStarred(true);

@@ -1192,6 +1192,7 @@ class _MigrationsMixin:
             "entity",
             "relationship",
             "consolidation_log",
+            "consolidation_meta",
             "file_hash",
             "memory_cluster",
             "prospective_memory",

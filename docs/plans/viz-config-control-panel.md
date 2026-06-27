@@ -1,6 +1,6 @@
 # viz-config-control-panel
 
-**Status:** skeleton — design proposed, not started. Discuss before building.
+**Status:** PARTIAL — #8 (v5.85) shipped the /api/control extend + SOURCE badges; full NEURAL-CONSOLE redesign deferred.
 **Theme:** viz / config / ops
 **Target:** unassigned (version stamped at ship)
 **Owner:** —

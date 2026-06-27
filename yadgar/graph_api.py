@@ -1,6 +1,7 @@
 """Graph API — assembles graph JSON for knowledge graph visualization.
 
-v5.54.3: entity typed-relation edges (co_occurrence/imports/calls/resolved_by/caused_by)
+v5.54.3: entity typed-relation edges (co_occurrence/resolved_by/caused_by;
+imports/calls dropped in v5.86 Batch-2 P0.4 — code-only, empty on prose)
 now included in the default /api/graph payload with role="retrieval" sourced from
 EDGE_TYPES (viz_meta.py). Semantic edges moved to lazy path (/api/graph/edges?type=semantic)
 — not in the default payload. All edges carry a `role` field.
@@ -96,7 +97,7 @@ class GraphAPI:
         edges: list[dict] = []
 
         # ── Memory nodes + slot map ───────────────────────────────────────────
-        mem_ids, slot_map = self._assemble_memory_nodes(nodes, max_memories)
+        mem_ids, slot_map, wiki_refs_map = self._assemble_memory_nodes(nodes, max_memories)
 
         # ── Temporal edges ────────────────────────────────────────────────────
         edges.extend(self._build_temporal_edges(slot_map))
@@ -106,7 +107,7 @@ class GraphAPI:
         edges.extend(transition_edges)
 
         # ── Wiki nodes ────────────────────────────────────────────────────────
-        wiki_pages, wiki_slug_to_id = self._assemble_wiki_nodes(nodes)
+        _wiki_pages, wiki_slug_to_id = self._assemble_wiki_nodes(nodes)
 
         # NOTE: Semantic edges NOT computed here (v5.54.3 lazy — O(n²) KNN).
         # Fetch on-demand via /api/graph/edges?type=semantic when toggle flips ON.
@@ -114,8 +115,8 @@ class GraphAPI:
         # ── Wiki cross-reference edges ────────────────────────────────────────
         edges.extend(self._build_wiki_crossref_edges(wiki_slug_to_id))
 
-        # ── Memory → Wiki edges ───────────────────────────────────────────────
-        edges.extend(self._build_memory_wiki_edges(wiki_pages, mem_ids))
+        # ── Memory → Wiki edges (P2.1: reverse memory.wiki_refs bridge) ───────
+        edges.extend(self._build_memory_wiki_edges(wiki_refs_map, wiki_slug_to_id))
 
         # ── Entity nodes (required so entity edges pass orphan filter) ────────
         self._assemble_entity_nodes(nodes)
@@ -154,24 +155,35 @@ class GraphAPI:
 
     def _assemble_memory_nodes(
         self, nodes: list[dict], max_memories: int
-    ) -> tuple[set[int], dict[int, list[tuple[int, str]]]]:
-        """Fetch memory rows, append node dicts, return (mem_ids, slot_map)."""
+    ) -> tuple[set[int], dict[int, list[tuple[int, str]]], dict[int, list[str]]]:
+        """Fetch memory rows, append node dicts.
+
+        Returns (mem_ids, slot_map, wiki_refs_map). wiki_refs_map is
+        {mem_id: [wiki_slug, ...]} sourced from the memory.wiki_refs column —
+        the reverse of wiki_page.source_memory_ids (which is always empty on
+        every write path). Used by _build_memory_wiki_edges (P2.1).
+        """
         try:
             memories = self._s._q(
                 "SELECT id, content, heat, tags, directory_context, created_at, "
-                "slot_index, embedding FROM memory ORDER BY heat DESC LIMIT $lim",
+                "slot_index, embedding, cluster_id, wiki_refs FROM memory "
+                "ORDER BY heat DESC LIMIT $lim",
                 {"lim": max_memories},
             )
         except Exception:
             memories = []
         mem_ids: set[int] = set()
         slot_map: dict[int, list[tuple[int, str]]] = {}
+        wiki_refs_map: dict[int, list[str]] = {}
         for m in memories:
             raw_id = self._extract_id(m.get("id"))
             if raw_id is None:
                 continue
             node_id = f"mem:{raw_id}"
             mem_ids.add(raw_id)
+            refs = m.get("wiki_refs") or []
+            if refs:
+                wiki_refs_map[raw_id] = [str(r) for r in refs]
             nodes.append(
                 {
                     "id": node_id,
@@ -182,12 +194,14 @@ class GraphAPI:
                     "tags": m.get("tags") or [],
                     "directory": m.get("directory_context") or "",
                     "created_at": str(m.get("created_at") or ""),
+                    # P2.3: cluster_id (column on the memory row) → viz cluster tint
+                    "cluster_id": self._extract_id(m.get("cluster_id")),
                 }
             )
             slot = m.get("slot_index")
             if slot is not None:
                 slot_map.setdefault(int(slot), []).append((raw_id, str(m.get("created_at") or "")))
-        return mem_ids, slot_map
+        return mem_ids, slot_map, wiki_refs_map
 
     def _build_temporal_edges(self, slot_map: dict[int, list[tuple[int, str]]]) -> list[dict]:
         """Build temporal edges from slot_map (memories sharing an engram slot)."""
@@ -291,25 +305,33 @@ class GraphAPI:
                 result.append({"source": src, "target": tgt, "type": "wiki_crossref", "role": role})
         return result
 
-    def _build_memory_wiki_edges(self, wiki_pages: list[dict], mem_ids: set[int]) -> list[dict]:
-        """Build memory→wiki edges from wiki_page.source_memory_ids."""
+    def _build_memory_wiki_edges(
+        self, wiki_refs_map: dict[int, list[str]], wiki_slug_to_id: dict[str, str]
+    ) -> list[dict]:
+        """Build memory→wiki edges from the reverse memory.wiki_refs field (P2.1).
+
+        v5.86 VIZ Batch-2 (P2.1): the old path read wiki_page.source_memory_ids,
+        which is always empty/None on every wiki write path → the bridge was dead.
+        WikiStore._link_memories writes the reverse side (memory.wiki_refs holds
+        the linked page slugs), so we build the bridge from there. Slugs whose
+        page isn't in the loaded node set (wiki_slug_to_id) are skipped — the
+        orphan filter would drop them anyway.
+        """
         role = EDGE_TYPES.get("memory_wiki", {}).get("role", "informational")
         result = []
-        for wp in wiki_pages:
-            raw_id = self._extract_id(wp.get("id"))
-            if raw_id is None:
-                continue
-            wiki_nid = f"wiki:{raw_id}"
-            for mid in wp.get("source_memory_ids") or []:
-                if isinstance(mid, int) and mid in mem_ids:
-                    result.append(
-                        {
-                            "source": f"mem:{mid}",
-                            "target": wiki_nid,
-                            "type": "memory_wiki",
-                            "role": role,
-                        }
-                    )
+        for mid, slugs in wiki_refs_map.items():
+            for slug in slugs:
+                wiki_nid = wiki_slug_to_id.get(slug)
+                if wiki_nid is None:
+                    continue
+                result.append(
+                    {
+                        "source": f"mem:{mid}",
+                        "target": wiki_nid,
+                        "type": "memory_wiki",
+                        "role": role,
+                    }
+                )
         return result
 
     def _build_causal_edges(
@@ -350,12 +372,16 @@ class GraphAPI:
     def _build_entity_rel_edges(self) -> list[dict]:
         """Build entity typed-relation edges (v5.54.3 — the big hidden capability).
 
-        co_occurrence/imports/calls/resolved_by/caused_by power PPR + spreading
-        + graph_prior in retrieval. Previously INVISIBLE in the viz.
+        co_occurrence/resolved_by/caused_by power PPR + spreading + graph_prior
+        in retrieval. Previously INVISIBLE in the viz. (v5.86 Batch-2 P0.4 dropped
+        imports/calls — code-only relations, always empty on a prose corpus.)
         Uses get_relationships_by_types — avoids the PC-algorithm causal edges
         (separate path via _build_causal_edges / get_all_causal_edges).
         """
-        _ENTITY_REL_TYPES = ["co_occurrence", "imports", "calls", "resolved_by", "caused_by"]
+        # v5.86 VIZ Batch-2 (P0.4): imports/calls dropped — code-only relations,
+        # always empty on a prose corpus, made the legend lie. resolved_by is now
+        # genuinely populated (extractor emits the solution entity); kept.
+        _ENTITY_REL_TYPES = ["co_occurrence", "resolved_by", "caused_by"]
         try:
             entity_rels = self._s.get_relationships_by_types(_ENTITY_REL_TYPES)
         except Exception:
@@ -417,6 +443,11 @@ class GraphAPI:
         member_node_ids is intersected with rendered mem_ids so the frontend can
         safely render a convex hull over present nodes.
 
+        v5.86 VIZ Batch-2 (P2.2): each cluster also carries member_count — the REAL
+        pre-intersection DB member count. Members may be off-screen (outside the
+        top-heat node cap), so member_node_ids can be empty while the cluster is
+        non-empty; the sidebar uses member_count so real clusters aren't shown empty.
+
         Returns [] if no clusters exist or storage is unavailable.
         """
         try:
@@ -441,6 +472,11 @@ class GraphAPI:
                     "label": cr.get("name") or f"cluster:{raw_id}",
                     "level": int(cr.get("level") or 0),
                     "member_node_ids": member_node_ids,
+                    # P2.2: REAL member count from the DB (pre-intersection). Members
+                    # may be off-screen (outside the top-heat node cap) so member_node_ids
+                    # can be empty while the cluster is non-empty — the sidebar needs the
+                    # true count, otherwise 761/769 clusters render as empty.
+                    "member_count": len(member_int_ids),
                 }
             )
         return result
