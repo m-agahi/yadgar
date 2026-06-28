@@ -11,22 +11,22 @@
  */
 
 /**
- * Map /api/info + vizConfig to info-tab field values.
+ * Map /api/info to About-tab field values.
  * Returns null for missing fields (caller renders '—').
  *
+ * v5.87 car A: the viz-config fields (edge variant/opacity/width, charge,
+ * wiki shape) were removed from the About page — config now lives only under
+ * System → Config. The `vizConfig` param is accepted for call-site
+ * compatibility but no longer read.
+ *
  * @param {Object} info      - response from /api/info (may be {})
- * @param {Object} vizConfig - YADGAR_VIZ_CONFIG structure
+ * @param {Object} [vizConfig] - unused (kept for back-compat)
  * @returns {Object} map of element-id → value | null
  */
 export function mapInfoData(info, vizConfig) {
   return {
     'ti-version':    info.version                           ?? null,
     'ti-python':     info.python_version                    ?? null,
-    'ti-variant':    vizConfig?.edge?.variant               ?? null,
-    'ti-opacity':    vizConfig?.edge?.opacity               ?? null,
-    'ti-width':      vizConfig?.edge?.width_3d_multiplier   ?? null,
-    'ti-charge':     vizConfig?.physics?.charge_strength    ?? null,
-    'ti-wiki-shape': vizConfig?.node?.wiki_shape            ?? null,
   };
 }
 

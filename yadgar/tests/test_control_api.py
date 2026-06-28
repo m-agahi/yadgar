@@ -747,6 +747,28 @@ def test_section_category_map_covers_all_field_meta_sections(monkeypatch):
     )
 
 
+def test_no_knobs_resolve_to_catchall_config_category():
+    """Every FIELD_META knob must resolve to a non-catch-all category.
+
+    The 'config' category is a catch-all fallback in _get_category for sections
+    not listed in SECTION_TO_CATEGORY. No knob should resolve to it — all sections
+    used in FIELD_META must be explicitly mapped to a real category.
+
+    If this fails, reassign the offending knobs' 'section' field in
+    yadgar/config_yaml.py FIELD_META to an existing, explicitly mapped section.
+    Do NOT create new sections.
+    """
+    from yadgar.config_yaml import FIELD_META
+    from yadgar.server.routes.control import _get_category
+
+    catchall = [name for name, m in FIELD_META.items() if _get_category(m["section"]) == "config"]
+    assert catchall == [], (
+        f"Knobs resolving to catch-all 'config' category: {sorted(catchall)}\n"
+        "Reassign each knob's 'section' in yadgar/config_yaml.py FIELD_META "
+        "to an existing section that maps to a real category in SECTION_TO_CATEGORY."
+    )
+
+
 # ===========================================================================
 # 22 — No write path exists under /admin/config (no parallel write surface)
 # ===========================================================================

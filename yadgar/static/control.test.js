@@ -1,5 +1,5 @@
 /**
- * control.test.js — Behavioral tests for control.js (v5.50.2).
+ * control.test.js — Behavioral tests for control.js (v5.87.0).
  *
  * Tests:
  *   Pure helpers (no DOM):
@@ -21,13 +21,22 @@
  *    16. isRestartEnabled — correct match → true
  *    17. isRestartEnabled — mismatch → false
  *    18. isRestartEnabled — backend typed wrong → false
+ *   groupKnobsByCategory (B1.2):
+ *    19. returns array of {category, label, knobs} groups
+ *    20. groups in deterministic CATEGORY_ORDER, absent categories omitted
+ *    21. knobs within each group alpha-sorted by name
+ *    22. label maps category to human-friendly Title Case
+ *    23. unknown categories appended alpha-sorted after CATEGORY_ORDER
+ *    24. empty knob array returns empty groups array
  *   DOM / wiring:
- *    19. config row edit fires POST with correct value
- *    20. restart button disabled until correct name typed
- *    21. restart button fires POST /api/control/restart/<segment> with confirm
- *    22. update button greys out on 404 from /api/control/update
- *    23. update button live on 200 from /api/control/update
- *    24. 403 response shows warning banner and disables sections
+ *    25. config row edit fires POST with correct value
+ *    26. restart button disabled until correct name typed
+ *    27. restart button fires POST /api/control/restart/<segment> with confirm
+ *    28. update button greys out on 404 from /api/control/update
+ *    29. update button live on 200 from /api/control/update
+ *    30. 403 response shows warning banner and disables sections
+ *    31. each knob row has a help icon linking to cfgref anchor
+ *    32. clicking help icon calls switchTab('config-ref')
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -37,6 +46,7 @@ import {
   parseEditValue,
   buildRestartConfirmMsg,
   isRestartEnabled,
+  groupKnobsByCategory,
   initControlTab,
 } from './control.js';
 
@@ -189,6 +199,83 @@ describe('isRestartEnabled', () => {
 
   it('backend: "backend" typed (wrong) → false', () => {
     expect(isRestartEnabled('backend', 'backend')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// groupKnobsByCategory (B1.2)
+// ---------------------------------------------------------------------------
+
+// Mixed-category fixture with out-of-order names
+const _CAT_KNOBS = [
+  { name: 'YADGAR_VIZ_EDGE_OPACITY',    kind: 'float',  category: 'viz',          reload: 'hot_reload'      },
+  { name: 'YADGAR_VIZ_NODE_SIZE',       kind: 'float',  category: 'viz',          reload: 'hot_reload'      },
+  { name: 'YADGAR_EMBED_MODEL',         kind: 'string', category: 'retrieval',    reload: 'restart_required'},
+  { name: 'YADGAR_PORT',                kind: 'int',    category: 'ops',          reload: 'restart_required'},
+  { name: 'YADGAR_LOG_LEVEL',           kind: 'string', category: 'ops',          reload: 'hot_reload'      },
+  { name: 'YADGAR_CONSOLIDATE_ENABLED', kind: 'bool',   category: 'write-path',   reload: 'hot_reload'      },
+  { name: 'YADGAR_UNKNOWN_FUTURE',      kind: 'string', category: 'new-category', reload: 'hot_reload'      },
+];
+
+describe('groupKnobsByCategory', () => {
+  it('returns array of {category, label, knobs} groups', () => {
+    const groups = groupKnobsByCategory(_CAT_KNOBS);
+    expect(Array.isArray(groups)).toBe(true);
+    for (const g of groups) {
+      expect(g).toHaveProperty('category');
+      expect(g).toHaveProperty('label');
+      expect(g).toHaveProperty('knobs');
+      expect(Array.isArray(g.knobs)).toBe(true);
+    }
+  });
+
+  it('groups in deterministic CATEGORY_ORDER; absent categories omitted', () => {
+    const groups = groupKnobsByCategory(_CAT_KNOBS);
+    const cats = groups.map(g => g.category);
+    // retrieval comes before write-path comes before viz comes before ops
+    expect(cats.indexOf('retrieval')).toBeLessThan(cats.indexOf('write-path'));
+    expect(cats.indexOf('write-path')).toBeLessThan(cats.indexOf('viz'));
+    expect(cats.indexOf('viz')).toBeLessThan(cats.indexOf('ops'));
+    // enrichment has no knobs — must be absent
+    expect(cats).not.toContain('enrichment');
+  });
+
+  it('knobs within each group are alpha-sorted by name', () => {
+    const groups = groupKnobsByCategory(_CAT_KNOBS);
+    const vizGroup = groups.find(g => g.category === 'viz');
+    expect(vizGroup).toBeDefined();
+    const names = vizGroup.knobs.map(k => k.name);
+    expect(names).toEqual([...names].sort());
+    // ops: LOG before PORT
+    const opsGroup = groups.find(g => g.category === 'ops');
+    const opsNames = opsGroup.knobs.map(k => k.name);
+    expect(opsNames).toEqual([...opsNames].sort());
+  });
+
+  it('label maps category to human-friendly Title Case', () => {
+    const groups = groupKnobsByCategory(_CAT_KNOBS);
+    const bycat = Object.fromEntries(groups.map(g => [g.category, g.label]));
+    expect(bycat['viz']).toBe('Viz');
+    expect(bycat['ops']).toBe('Ops');
+    expect(bycat['write-path']).toBe('Write Path');
+    expect(bycat['retrieval']).toBe('Retrieval');
+  });
+
+  it('unknown categories are appended alpha-sorted after CATEGORY_ORDER entries', () => {
+    const groups = groupKnobsByCategory(_CAT_KNOBS);
+    const cats = groups.map(g => g.category);
+    // new-category is unknown → must appear after all known categories
+    const knownIdx = Math.max(
+      cats.indexOf('retrieval'), cats.indexOf('ops'),
+      cats.indexOf('write-path'), cats.indexOf('viz'),
+    );
+    const unknownIdx = cats.indexOf('new-category');
+    expect(unknownIdx).toBeGreaterThan(knownIdx);
+  });
+
+  it('empty knob array returns empty groups array', () => {
+    const groups = groupKnobsByCategory([]);
+    expect(groups).toEqual([]);
   });
 });
 
@@ -385,5 +472,69 @@ describe('initControlTab DOM wiring', () => {
     // Actions section should be disabled (pointer-events: none)
     const actionsRow = root.querySelector('.ctrl-actions-row');
     expect(actionsRow.style.pointerEvents).toBe('none');
+  });
+
+  // 25. Each knob row has a help icon (ctrl-knob-help) with href targeting cfgref anchor
+  it('each knob row has a help icon linking to cfgref-<name> anchor', async () => {
+    const knobFixture = [
+      { name: 'YADGAR_VIZ_NODE_SIZE', kind: 'float', current: '8.0', default: '8.0',
+        source: 'default', reload: 'hot_reload', category: 'viz', description: 'Node size' },
+      { name: 'YADGAR_PORT', kind: 'int', current: '8765', default: '8765',
+        source: 'default', reload: 'restart_required', category: 'ops', description: 'Port' },
+    ];
+    globalThis.fetch = vi.fn(async (url, opts) => {
+      if (typeof url === 'string' && url.includes('/api/control/config') && !(opts?.method === 'POST')) {
+        return { ok: true, status: 200, json: async () => ({ knobs: knobFixture }) };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+
+    await initControlTab(root);
+
+    for (const knob of knobFixture) {
+      const row = root.querySelector(`tr[data-name="${knob.name}"]`);
+      expect(row, `row for ${knob.name}`).not.toBeNull();
+      const helpEl = row.querySelector('.ctrl-knob-help');
+      expect(helpEl, `help icon for ${knob.name}`).not.toBeNull();
+      const expectedAnchor = `cfgref-${knob.name}`;
+      // href or dataset must reference the anchor
+      const href = helpEl.getAttribute('href') || helpEl.dataset.anchor || '';
+      expect(href).toContain(expectedAnchor);
+    }
+  });
+
+  // 26. Clicking help icon calls window.YadgarTabs.switchTab('config-ref')
+  it('clicking help icon calls switchTab("config-ref") and scrolls to anchor', async () => {
+    const switchTabMock = vi.fn();
+    window.YadgarTabs = { switchTab: switchTabMock };
+
+    const knobFixture = [
+      { name: 'YADGAR_VIZ_NODE_SIZE', kind: 'float', current: '8.0', default: '8.0',
+        source: 'default', reload: 'hot_reload', category: 'viz', description: 'Node size' },
+    ];
+    globalThis.fetch = vi.fn(async (url, opts) => {
+      if (typeof url === 'string' && url.includes('/api/control/config') && !(opts?.method === 'POST')) {
+        return { ok: true, status: 200, json: async () => ({ knobs: knobFixture }) };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+
+    // Set up a target element that scrollIntoView can be called on
+    const anchorEl = document.createElement('div');
+    anchorEl.id = 'cfgref-YADGAR_VIZ_NODE_SIZE';
+    anchorEl.scrollIntoView = vi.fn();
+    document.body.appendChild(anchorEl);
+
+    await initControlTab(root);
+
+    const helpEl = root.querySelector('.ctrl-knob-help');
+    expect(helpEl).not.toBeNull();
+    helpEl.click();
+
+    expect(switchTabMock).toHaveBeenCalledWith('config-ref');
+
+    // Cleanup
+    document.body.removeChild(anchorEl);
+    delete window.YadgarTabs;
   });
 });

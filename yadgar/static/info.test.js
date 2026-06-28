@@ -40,44 +40,22 @@ describe('mapInfoData', () => {
     expect(result['ti-python']).toBe('3.12.3');
   });
 
-  it('extracts edge variant from viz config', () => {
-    const result = mapInfoData(MOCK_INFO, MOCK_VIZ_CONFIG);
-    expect(result['ti-variant']).toBe('line');
-  });
-
-  it('extracts edge opacity from viz config', () => {
-    const result = mapInfoData(MOCK_INFO, MOCK_VIZ_CONFIG);
-    expect(result['ti-opacity']).toBe(0.8);
-  });
-
-  it('extracts edge width_3d_multiplier from viz config', () => {
-    const result = mapInfoData(MOCK_INFO, MOCK_VIZ_CONFIG);
-    expect(result['ti-width']).toBe(1.5);
-  });
-
-  it('extracts charge_strength from viz config physics', () => {
-    const result = mapInfoData(MOCK_INFO, MOCK_VIZ_CONFIG);
-    expect(result['ti-charge']).toBe(-120);
-  });
-
-  it('extracts wiki_shape from viz config node', () => {
-    const result = mapInfoData(MOCK_INFO, MOCK_VIZ_CONFIG);
-    expect(result['ti-wiki-shape']).toBe('diamond');
-  });
-
   it('returns null for missing info fields', () => {
     const result = mapInfoData({}, MOCK_VIZ_CONFIG);
     expect(result['ti-version']).toBeNull();
     expect(result['ti-python']).toBeNull();
   });
 
-  it('returns null for missing viz config fields', () => {
-    const result = mapInfoData(MOCK_INFO, { edge: {}, physics: {}, node: {} });
-    expect(result['ti-variant']).toBeNull();
-    expect(result['ti-opacity']).toBeNull();
-    expect(result['ti-width']).toBeNull();
-    expect(result['ti-charge']).toBeNull();
-    expect(result['ti-wiki-shape']).toBeNull();
+  // v5.87 car A: viz-config (variant/opacity/width/charge/wiki-shape) was removed
+  // from the About page — config now lives only under System → Config. mapInfoData
+  // no longer emits those keys.
+  it('does not emit viz-config fields (moved to System → Config)', () => {
+    const result = mapInfoData(MOCK_INFO, MOCK_VIZ_CONFIG);
+    expect(result).not.toHaveProperty('ti-variant');
+    expect(result).not.toHaveProperty('ti-opacity');
+    expect(result).not.toHaveProperty('ti-width');
+    expect(result).not.toHaveProperty('ti-charge');
+    expect(result).not.toHaveProperty('ti-wiki-shape');
   });
 });
 

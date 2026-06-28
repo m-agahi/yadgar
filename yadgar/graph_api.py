@@ -3,8 +3,13 @@
 v5.54.3: entity typed-relation edges (co_occurrence/resolved_by/caused_by;
 imports/calls dropped in v5.86 Batch-2 P0.4 — code-only, empty on prose)
 now included in the default /api/graph payload with role="retrieval" sourced from
-EDGE_TYPES (viz_meta.py). Semantic edges moved to lazy path (/api/graph/edges?type=semantic)
-— not in the default payload. All edges carry a `role` field.
+EDGE_TYPES (viz_meta.py). All edges carry a `role` field.
+
+v5.87 (C3): semantic edges removed entirely — they were lazy/off-by-default,
+O(n²) KNN, and informational (redundant with the vector signal recall uses). The
+legend toggle did nothing useful, so the edge type was dropped from EDGE_TYPES +
+LAZY_EDGE_TYPES and its on-demand compute path (_get/_compute_semantic_edges,
+_parse_embedding_vectors, _deduplicated_edges) was deleted.
 
 v5.80 (#80 viz-fidelity-v2): role vocabulary renamed display→informational in viz_meta.
 clusters[] added to get_full_graph() payload (real memory_cluster rows via
@@ -90,8 +95,8 @@ class GraphAPI:
         include_invalidated: when False (default), excludes invalidated KG edges.
         as_of (v5.29.0): ISO-8601 timestamp for point-in-time graph snapshot.
 
-        v5.54.3: entity typed-relation edges added; semantic moved to lazy path;
-        all edges carry `role` field sourced from EDGE_TYPES.
+        v5.54.3: entity typed-relation edges added; all edges carry `role`
+        field sourced from EDGE_TYPES. (v5.87 C3: semantic edge type removed.)
         """
         nodes: list[dict] = []
         edges: list[dict] = []
@@ -108,9 +113,6 @@ class GraphAPI:
 
         # ── Wiki nodes ────────────────────────────────────────────────────────
         _wiki_pages, wiki_slug_to_id = self._assemble_wiki_nodes(nodes)
-
-        # NOTE: Semantic edges NOT computed here (v5.54.3 lazy — O(n²) KNN).
-        # Fetch on-demand via /api/graph/edges?type=semantic when toggle flips ON.
 
         # ── Wiki cross-reference edges ────────────────────────────────────────
         edges.extend(self._build_wiki_crossref_edges(wiki_slug_to_id))
@@ -488,76 +490,20 @@ class GraphAPI:
         max_memories: int = 500,
         top_k: int = 8,
     ) -> dict:
-        """On-demand edge computation for lazy edge types (e.g. semantic).
+        """On-demand edge computation for lazy edge types.
 
-        v5.54.3: semantic edges are O(n²) KNN — not computed in get_full_graph.
-        This endpoint computes them on-demand when the frontend toggle flips ON.
+        Generic gate for any edge type in LAZY_EDGE_TYPES. v5.87 C3: that set is
+        now empty (semantic, its only member, was removed) so every type returns
+        the not-lazy-computed error. Kept for future lazy edge types.
 
         Returns {"edges": [...]} (no nodes — caller merges into existing graph).
         """
         if edge_type not in LAZY_EDGE_TYPES:
             return {"edges": [], "error": f"Edge type '{edge_type}' is not lazy-computed."}
 
-        if edge_type == "semantic":
-            return self._get_semantic_edges(max_memories=max_memories, top_k=top_k)
-
+        # v5.87 C3: LAZY_EDGE_TYPES is now empty (semantic removed) — this point
+        # is unreachable. Kept as a generic gate for any future lazy edge type.
         return {"edges": []}
-
-    def _get_semantic_edges(self, max_memories: int = 500, top_k: int = 8) -> dict:
-        """Compute semantic edges on-demand (lazy path for /api/graph/edges?type=semantic).
-
-        Collects embeddings from memory + wiki nodes, computes cosine-similarity KNN.
-        """
-        embeddings_for_sem: list[tuple[str, bytes]] = []
-        node_ids_for_orphan: set[str] = set()
-
-        # Collect memory embeddings
-        try:
-            memories = self._s._q(
-                "SELECT id, embedding FROM memory ORDER BY heat DESC LIMIT $lim",
-                {"lim": max_memories},
-            )
-        except Exception:
-            memories = []
-
-        for m in memories or []:
-            raw_id = self._extract_id(m.get("id"))
-            if raw_id is None:
-                continue
-            nid = f"mem:{raw_id}"
-            node_ids_for_orphan.add(nid)
-            emb = m.get("embedding")
-            if emb and len(embeddings_for_sem) < 200:
-                embeddings_for_sem.append((nid, emb))
-
-        # Collect wiki embeddings
-        try:
-            wiki_pages = self._s._q(
-                "SELECT id, embedding FROM wiki_page ORDER BY updated_at DESC LIMIT 200"
-            )
-        except Exception:
-            wiki_pages = []
-
-        for wp in wiki_pages or []:
-            raw_id = self._extract_id(wp.get("id"))
-            if raw_id is None:
-                continue
-            nid = f"wiki:{raw_id}"
-            node_ids_for_orphan.add(nid)
-            emb = wp.get("embedding")
-            if emb and len(embeddings_for_sem) < 400:
-                embeddings_for_sem.append((nid, emb))
-
-        if len(embeddings_for_sem) < 2:
-            return {"edges": []}
-
-        _sem_role = EDGE_TYPES.get("semantic", {}).get("role", "informational")
-        raw_edges = self._compute_semantic_edges(embeddings_for_sem, top_k=top_k)
-        # Stamp role on each edge
-        for e in raw_edges:
-            e["role"] = _sem_role
-
-        return {"edges": raw_edges}
 
     @trace_span("graph_api.get_graph_stats")
     def get_graph_stats(self) -> dict:
@@ -665,31 +611,6 @@ class GraphAPI:
                 }
             )
 
-    def _compute_semantic_edges(
-        self,
-        embeddings_list: list[tuple[str, bytes]],
-        threshold: float = 0.75,
-        top_k: int = 5,
-    ) -> list[dict]:
-        """Compute pairwise cosine similarity; return top-K edges per node above threshold."""
-        try:
-            import numpy as np
-
-            ids, vecs = _parse_embedding_vectors(embeddings_list, np)
-            if len(ids) < 2:
-                return []
-
-            matrix = np.stack(vecs)
-            norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-            norms = np.where(norms == 0, 1e-10, norms)
-            matrix = matrix / norms
-            sim = matrix @ matrix.T
-
-            return _deduplicated_edges(sim, ids, threshold, top_k)
-        except Exception as exc:
-            logger.debug("Semantic edge computation failed: %s", exc)
-            return []
-
     @staticmethod
     def _extract_id(raw) -> int | None:
         """Extract numeric ID from a SurrealDB record ID (e.g. 'entity:42' → 42).
@@ -717,61 +638,6 @@ class GraphAPI:
             return int(s)
         except (ValueError, TypeError) as _e:
             return None
-
-
-# ── Semantic edge helpers (module-level so they're testable independently) ─────
-
-
-def _parse_embedding_vectors(
-    embeddings_list: list[tuple[str, bytes]], np
-) -> tuple[list[str], list]:
-    """Parse raw embedding data into (ids, vecs) lists, skipping malformed entries."""
-    ids: list[str] = []
-    vecs: list = []
-    for node_id, emb_data in embeddings_list:
-        try:
-            if isinstance(emb_data, (bytes, bytearray)):
-                arr = np.frombuffer(emb_data, dtype=np.float32).copy()
-            elif isinstance(emb_data, list):
-                arr = np.array(emb_data, dtype=np.float32)
-            else:
-                continue
-            if arr.size > 0:
-                ids.append(node_id)
-                vecs.append(arr)
-        except Exception:
-            pass
-    return ids, vecs
-
-
-def _deduplicated_edges(
-    sim,
-    ids: list[str],
-    threshold: float,
-    top_k: int,
-) -> list[dict]:
-    """Scan similarity matrix; return deduplicated top-K edges above threshold."""
-    n = len(ids)
-    seen: set[tuple[int, int]] = set()
-    result: list[dict] = []
-    for i in range(n):
-        neighbours = sorted(
-            ((float(sim[i, j]), j) for j in range(n) if j != i and float(sim[i, j]) >= threshold),
-            reverse=True,
-        )
-        for s, j in neighbours[:top_k]:
-            key = (min(i, j), max(i, j))
-            if key not in seen:
-                seen.add(key)
-                result.append(
-                    {
-                        "source": ids[key[0]],
-                        "target": ids[key[1]],
-                        "type": "semantic",
-                        "similarity": round(s, 3),
-                    }
-                )
-    return result
 
 
 # ── System metrics (no extra deps — reads /proc) ──────────────────────────────

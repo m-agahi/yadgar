@@ -33,6 +33,7 @@ describe('resolveTab', () => {
     expect(resolveTab('#control')).toBe('control');
     expect(resolveTab('#debug')).toBe('debug');
     expect(resolveTab('#help')).toBe('help');
+    expect(resolveTab('#config-ref')).toBe('config-ref');
   });
 
   it('falls back to home for unknown hash', () => {
@@ -55,7 +56,7 @@ describe('resolveTab', () => {
 // ── VALID_TABS — exported set ─────────────────────────────────────────────────
 
 describe('VALID_TABS', () => {
-  it('contains all eight defined tabs', () => {
+  it('contains all nine defined tabs', () => {
     expect(VALID_TABS.has('home')).toBe(true);
     expect(VALID_TABS.has('stats')).toBe(true);
     expect(VALID_TABS.has('health')).toBe(true);
@@ -64,10 +65,12 @@ describe('VALID_TABS', () => {
     expect(VALID_TABS.has('control')).toBe(true);
     expect(VALID_TABS.has('debug')).toBe(true);
     expect(VALID_TABS.has('help')).toBe(true);
+    // v5.87 car A: Config Reference sub-page under the Help menu
+    expect(VALID_TABS.has('config-ref')).toBe(true);
   });
 
-  it('has exactly 8 entries', () => {
-    expect(VALID_TABS.size).toBe(8);
+  it('has exactly 9 entries', () => {
+    expect(VALID_TABS.size).toBe(9);
   });
 });
 
@@ -77,10 +80,13 @@ import { switchTab } from './tabs.js';
 
 /**
  * Build a minimal DOM matching the SPA tab structure.
- * Returns document with #tab-bar + 7 .tab-pane divs.
+ * Returns document with #tab-bar + one .tab-pane div per routing key.
+ * Flat structure is intentional: switchTab() queries by
+ * `#tab-bar a[data-tab=X]` + `.tab-pane`, so dropdown nesting in the real
+ * page is irrelevant to its contract.
  */
 function makeTabDOM() {
-  const tabs = ['home', 'stats', 'health', 'bookmarks', 'info', 'control', 'debug', 'help'];
+  const tabs = ['home', 'stats', 'health', 'bookmarks', 'info', 'control', 'debug', 'help', 'config-ref'];
 
   // tab bar
   const tabBar = document.createElement('nav');
@@ -115,7 +121,7 @@ describe('switchTab DOM behavior', () => {
   });
 
   it('activates correct pane + link for each tab', () => {
-    const tabs = ['home', 'stats', 'health', 'bookmarks', 'info', 'control', 'debug', 'help'];
+    const tabs = ['home', 'stats', 'health', 'bookmarks', 'info', 'control', 'debug', 'help', 'config-ref'];
     for (const t of tabs) {
       switchTab(t);
       expect(document.getElementById('tab-' + t).classList.contains('active')).toBe(true);

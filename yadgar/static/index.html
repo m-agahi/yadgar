@@ -559,6 +559,65 @@ body.dh-open #dh-toggle { right: 480px; }
 #tab-bar a.tab-link:hover { color: #c9d1d9; }
 #tab-bar a.tab-link.active { color: #58a6ff; border-bottom-color: #58a6ff; }
 
+/* ── v5.87 car A: two-level menu IA — top-level groups + dropdown sub-pages ── */
+#tab-bar .nav-group {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+}
+/* Top-level trigger for a dropdown group (System, Help) */
+#tab-bar .nav-group > .nav-group-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 14px;
+  font-size: 11px;
+  font-family: inherit;
+  color: #8b949e;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+}
+#tab-bar .nav-group > .nav-group-label:hover { color: #c9d1d9; }
+#tab-bar .nav-group > .nav-group-label::after { content: '▾'; font-size: 8px; opacity: 0.7; }
+/* Parent shows active when one of its child links is active */
+#tab-bar .nav-group:has(.tab-link.active) > .nav-group-label {
+  color: #58a6ff;
+  border-bottom-color: #58a6ff;
+}
+/* Dropdown panel — hidden until hover/focus-within/open */
+#tab-bar .nav-group > .nav-group-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 160px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 0 0 4px 4px;
+  flex-direction: column;
+  padding: 4px 0;
+  z-index: 60;
+  display: none;
+}
+#tab-bar .nav-group:hover > .nav-group-menu,
+#tab-bar .nav-group:focus-within > .nav-group-menu,
+#tab-bar .nav-group.open > .nav-group-menu { display: flex; }
+/* Dropdown items: full-width rows, not underline tabs */
+#tab-bar .nav-group-menu a.tab-link {
+  display: block;
+  padding: 5px 16px;
+  border-bottom: none;
+  border-left: 2px solid transparent;
+}
+#tab-bar .nav-group-menu a.tab-link.active {
+  border-bottom: none;
+  border-left-color: #58a6ff;
+  background: #1c2128;
+}
+
 /* ── v5.50.0 Tab containers ───────────────────────────────── */
 .tab-pane {
   display: none;
@@ -785,6 +844,82 @@ body.dh-open #dh-toggle { right: 480px; }
 }
 .ctrl-restart-confirm-input:focus { border-color: #f85149; outline: none; }
 
+/* ── v5.87 B2a Config-editor help icon ──────────────────────────────────────── */
+.ctrl-knob-help-cell { text-align: center; width: 24px; }
+.ctrl-knob-help {
+  color: #484f58;
+  font-size: 12px;
+  text-decoration: none;
+  cursor: pointer;
+  padding: 0 2px;
+  transition: color 0.15s;
+}
+.ctrl-knob-help:hover { color: #58a6ff; }
+
+/* ── v5.87 B2b Config Reference tab ──────────────────────────────────────────── */
+.cfgref-body { max-width: 760px; }
+.cfgref-banner { font-size: 12px; padding: 10px 12px; border-radius: 4px; margin: 0 0 12px; }
+.cfgref-banner--warn  { background: #2a1a2a; color: #e6a817; }
+.cfgref-banner--error { background: #2a1a1a; color: #f85149; }
+
+.cfgref-group { margin-bottom: 24px; }
+.cfgref-group-header {
+  color: #58a6ff;
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin: 0 0 10px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #30363d;
+}
+
+.cfgref-knob {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 5px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  scroll-margin-top: 12px;
+}
+.cfgref-knob:target { border-color: #58a6ff; }
+.cfgref-knob-name {
+  color: #c9d1d9;
+  font-family: monospace;
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+.cfgref-knob-desc {
+  color: #8b949e;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0 0 10px;
+}
+
+.cfgref-knob-meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 0;
+  font-size: 11px;
+}
+.cfgref-knob-meta dt {
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-size: 10px;
+}
+.cfgref-knob-meta dd {
+  color: #c9d1d9;
+  font-family: monospace;
+  margin: 0;
+}
+.cfgref-enum-list {
+  margin: 0;
+  padding-left: 16px;
+  color: #58a6ff;
+}
+
 /* ── v5.50.13 Help tab ──────────────────────────────────────────────────────── */
 #tab-help {
   padding: 16px 20px;
@@ -935,6 +1070,38 @@ body.dh-open #dh-toggle { right: 480px; }
 /* Collapsed: hide body */
 .floating-overlay.collapsed .overlay-body { display: none; }
 .floating-overlay.collapsed { border-bottom: none; }
+
+/* v5.87 car A: fully hide an overlay (vs collapse which keeps the grip).
+   The memory-cluster panel defaults to this; the View control toggles it. */
+.floating-overlay.overlay-hidden { display: none; }
+
+/* v5.87 car A: View control (panel show/hide) in the graph topbar */
+#view-menu { position: relative; display: inline-flex; }
+#view-menu-panel {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  min-width: 180px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 6px 0;
+  z-index: 60;
+  display: none;
+}
+#view-menu.open #view-menu-panel { display: block; }
+#view-menu-panel label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  font-size: 11px;
+  color: #c9d1d9;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#view-menu-panel label:hover { background: #1c2128; }
 </style>
 </head>
 <body>
@@ -943,15 +1110,35 @@ body.dh-open #dh-toggle { right: 480px; }
 <div id="topbar">
   <h1>YADGAR</h1>
   <!-- Tab nav (inline, v5.50.5 merged into topbar) -->
+  <!-- v5.87 car A: 4 top-level menus — Graph, Bookmarks, System, Help.
+       Leaf links keep their original data-tab routing keys (home/bookmarks/...);
+       dropdown groups wrap the same .tab-link anchors so switchTab() + the hash
+       router are untouched. 'home' stays the routing key for the Graph tab so the
+       CPU-pause gate (tabName === 'home') and #tab-home CSS keep working. -->
   <div id="tab-bar">
-    <a href="#home" class="tab-link" data-tab="home">Home</a>
-    <a href="#stats" class="tab-link" data-tab="stats">Stats</a>
-    <a href="#health" class="tab-link" data-tab="health">Health</a>
+    <!-- Graph (leaf) — was Home -->
+    <a href="#home" class="tab-link" data-tab="home">Graph</a>
+    <!-- Bookmarks (leaf) -->
     <a href="#bookmarks" class="tab-link" data-tab="bookmarks">Bookmarks</a>
-    <a href="#info" class="tab-link" data-tab="info">Info</a>
-    <a href="#control" class="tab-link" data-tab="control">Control</a>
-    <a href="#debug" class="tab-link" data-tab="debug">Debug</a>
-    <a href="#help" class="tab-link" data-tab="help">Help</a>
+    <!-- System (group): Config · Health · Stats -->
+    <div class="nav-group" data-group="system">
+      <button type="button" class="nav-group-label" aria-haspopup="true" aria-expanded="false">System</button>
+      <div class="nav-group-menu" role="menu">
+        <a href="#control" class="tab-link" data-tab="control" role="menuitem">Config</a>
+        <a href="#health" class="tab-link" data-tab="health" role="menuitem">Health</a>
+        <a href="#stats" class="tab-link" data-tab="stats" role="menuitem">Stats</a>
+      </div>
+    </div>
+    <!-- Help (group): Guide · Config Reference · About · Debug -->
+    <div class="nav-group" data-group="help">
+      <button type="button" class="nav-group-label" aria-haspopup="true" aria-expanded="false">Help</button>
+      <div class="nav-group-menu" role="menu">
+        <a href="#help" class="tab-link" data-tab="help" role="menuitem">Guide</a>
+        <a href="#config-ref" class="tab-link" data-tab="config-ref" role="menuitem">Config Reference</a>
+        <a href="#info" class="tab-link" data-tab="info" role="menuitem">About</a>
+        <a href="#debug" class="tab-link" data-tab="debug" role="menuitem">Debug</a>
+      </div>
+    </div>
   </div>
   <!-- Graph controls (right side) -->
   <div id="topbar-graph-controls">
@@ -964,6 +1151,16 @@ body.dh-open #dh-toggle { right: 480px; }
     <button class="btn" onclick="resetLayout()">⟳ Reset</button>
     <button class="btn" id="mode-btn" onclick="toggleMode()">2D</button>
     <button class="btn" onclick="loadGraph()">↺ Reload</button>
+    <!-- v5.87 car A: View control — show/hide floating panels. The memory-cluster
+         panel defaults OFF and is recovered here. -->
+    <span id="view-menu">
+      <button type="button" class="btn" id="view-menu-btn" aria-haspopup="true" aria-expanded="false" title="Show / hide panels">▦ View</button>
+      <div id="view-menu-panel" role="menu">
+        <label role="menuitemcheckbox">
+          <input type="checkbox" id="view-toggle-clusters"> Memory Clusters panel
+        </label>
+      </div>
+    </span>
     <span id="status-dot"></span>
     <span id="status-text">Connecting…</span>
   </div>
@@ -1087,8 +1284,9 @@ body.dh-open #dh-toggle { right: 480px; }
   </div>
 </div>
 
-<!-- Memory Clusters overlay (v5.80: real memory_cluster rows) -->
-<div class="floating-overlay" data-overlay-name="clusters" style="left:220px;top:180px">
+<!-- Memory Clusters overlay (v5.80: real memory_cluster rows)
+     v5.87 car A: defaults OFF (.overlay-hidden) — recoverable via the View control. -->
+<div class="floating-overlay overlay-hidden" data-overlay-name="clusters" style="left:220px;top:180px">
   <div class="overlay-grip">
     ⋮ Memory Clusters
     <button class="overlay-collapse" title="Collapse">−</button>
@@ -1271,15 +1469,14 @@ body.dh-open #dh-toggle { right: 480px; }
       <div class="ti-author-meta">Sweden · <a href="https://codeberg.org/maxagahi" target="_blank">codeberg.org/maxagahi</a></div>
     </div>
   </div>
-  <div class="tab-section-title">Viz Config (active)</div>
-  <div class="tab-card" style="max-width:400px">
-    <div class="tab-kv"><span class="k">Edge variant</span><span class="v" id="ti-variant">—</span></div>
-    <div class="tab-kv"><span class="k">Edge opacity</span><span class="v" id="ti-opacity">—</span></div>
-    <div class="tab-kv"><span class="k">Edge width ×</span><span class="v" id="ti-width">—</span></div>
-    <div class="tab-kv"><span class="k">Charge strength</span><span class="v" id="ti-charge">—</span></div>
-    <div class="tab-kv"><span class="k">Wiki shape (cfg)</span><span class="v" id="ti-wiki-shape">—</span></div>
-  </div>
 </div><!-- /#tab-info -->
+
+<!-- ── Tab: Config Reference (v5.87 car B2b) ──────────────────────────
+     Per-knob reference; rendered by config-ref.js initConfigRefTab() on first open. -->
+<div id="tab-config-ref" class="tab-pane" style="padding:16px 20px;overflow:auto">
+  <div class="tab-section-title" style="margin-top:0">Config Reference</div>
+  <div class="cfgref-body"><!-- filled by config-ref.js initConfigRefTab() --></div>
+</div><!-- /#tab-config-ref -->
 
 <!-- ── Tab: Control (v5.50.2) ────────────────────────────── -->
 <div id="tab-control" class="tab-pane">
@@ -1380,7 +1577,7 @@ let YADGAR_VIZ_CONFIG = {
     heat: { hue_start: 240, hue_end: 0, sat_base: 60, sat_gain: 30, light_base: 40, light_gain: 20 },
   },
   edge: {
-    color: { semantic: '#1f6feb', temporal: '#6e40c9', transition: '#3fb950', wiki_crossref: '#d2a8ff', memory_wiki: '#ffa657' },
+    color: { temporal: '#6e40c9', transition: '#3fb950', wiki_crossref: '#d2a8ff', memory_wiki: '#ffa657' },  // v5.87 C3: semantic removed
     width_3d_multiplier: 1.8, arrow_len: 5, opacity: 0.9, variant: 'C',
   },
   physics: { charge_strength: -18, link_distance_2d: 30, link_distance_3d: 36 },
@@ -1495,13 +1692,20 @@ function _renderEdgeLegendOverlay() {
       cb.addEventListener('change', () => {
         // Update applyFilters state and re-filter
         _edgeToggleState[edge.key] = cb.checked;
-        // Lazy types: trigger on-demand fetch when flipped ON for first time
+        // Lazy types: trigger on-demand fetch when flipped ON for first time.
+        // _fetchLazyEdges rebuilds graphData with the visible force set itself.
         if (edge.lazy && cb.checked && !_lazyEdgesLoaded[edge.key]) {
           _fetchLazyEdges(edge.key);
+        } else if (graph) {
+          // C1: rebuild the d3 force-link set from the visible edge types so a
+          // toggled-OFF type's links leave the force — otherwise the (now hidden)
+          // link force keeps the formerly-linked nodes clumped on reheat.
+          graph.graphData({ nodes: allNodes, links: _visibleForceLinks() });
         }
         applyFilters();
         // P3.1: reheat so the layout adapts to the changed edge set instead of
         // showing a stale frozen graph (also wakes the paused render loop).
+        // With the force set now rebuilt above, formerly-linked nodes drift apart.
         _reheatSimulation();
       });
     } else {
@@ -1553,6 +1757,78 @@ let _lazyEdgesLoaded = {};
 // diverges from DB. When the SSE pushes a memory_added after load, we mark
 // the view stale so the user knows to Reload for accurate heat values.
 let _lastGraphLoadTime = 0;
+
+// ── v5.87 C2: warm-start node positions (persist + seed) ────────────────────
+// On a FRESH page reload the in-memory allNodes is empty, so the in-session
+// posMap below restores nothing and the d3 force layout runs its full cold
+// settle from a phyllotaxis spiral — the graph "flies around" for the cooldown
+// window on every reload. We persist settled positions to localStorage on
+// onEngineStop and seed them back here so first paint shows the laid-out graph
+// and the sim settles in far fewer ticks.
+//
+// Inline copy of the unit-tested viz_positions.js (the plain <script> can't
+// import the ES module — same convention as _visibleForceLinks). Keep in sync.
+const _POS_STORE_KEY = 'yadgar-graph-positions';
+function _isFiniteNum(v) { return typeof v === 'number' && Number.isFinite(v); }
+function _serializeNodePositions(nodes) {
+  const out = {};
+  for (const n of (nodes || [])) {
+    if (!n || n.id == null) continue;
+    if (!_isFiniteNum(n.x) || !_isFiniteNum(n.y)) continue;
+    const rec = { x: n.x, y: n.y };
+    if (_isFiniteNum(n.z)) rec.z = n.z;   // z only in 3D mode
+    out[n.id] = rec;
+  }
+  return out;
+}
+function _restoreNodePositions(nodes, saved) {
+  if (!saved) return 0;
+  let count = 0;
+  for (const n of (nodes || [])) {
+    if (!n || n.id == null) continue;
+    const p = saved[n.id];
+    if (!p || !_isFiniteNum(p.x) || !_isFiniteNum(p.y)) continue;
+    // x/y/z ONLY — never fx/fy/fz: hard pins would freeze the layout so new
+    // nodes could not integrate, and would break the 2D onEngineStop pinning.
+    n.x = p.x; n.y = p.y;
+    if (_isFiniteNum(p.z)) n.z = p.z;
+    count++;
+  }
+  return count;
+}
+function _pruneStalePositions(saved, currentIds) {
+  const keep = currentIds instanceof Set ? currentIds : new Set(currentIds || []);
+  const out = {};
+  for (const id of Object.keys(saved || {})) {
+    if (keep.has(id)) out[id] = saved[id];
+  }
+  return out;
+}
+function _parsePositionStore(json) {
+  if (!json || typeof json !== 'string') return {};
+  try {
+    const v = JSON.parse(json);
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+    return v;
+  } catch { return {}; }
+}
+// Read the persisted store (safe — never throws).
+function _loadSavedPositions() {
+  try { return _parsePositionStore(localStorage.getItem(_POS_STORE_KEY)); }
+  catch { return {}; }   // localStorage may throw in private mode
+}
+// Persist settled positions, pruned to the live node set so the store stays
+// bounded. Called from onEngineStop (after the >=50-tick settle guard).
+function _persistNodePositions(nodes) {
+  try {
+    const ids = new Set((nodes || []).map(n => n && n.id).filter(id => id != null));
+    const map = _pruneStalePositions(_serializeNodePositions(nodes), ids);
+    localStorage.setItem(_POS_STORE_KEY, JSON.stringify(map));
+  } catch { /* QuotaExceededError / private mode — warm-start is best-effort */ }
+}
+// True once a fresh load seeded saved positions onto allNodes — lets initGraph
+// cap cooldownTicks so the sim relaxes the scaffold instead of a full cold run.
+let _warmStarted = false;
 
 // ── Memory cluster state (v5.80: real memory_cluster rows) ──────────────────
 // Palette of visually distinct colors for cluster tinting (up to 12 clusters).
@@ -1765,6 +2041,24 @@ function _linkWidth(l) {
 }
 function _arrowLen(l) { return (l.type === 'transition' || l.type === 'memory_wiki' || l.type === 'wiki_crossref') ? YADGAR_VIZ_CONFIG.edge.arrow_len : 0; }
 
+// v5.87 C1: the link set handed to graph.graphData() (and thus the d3 link FORCE)
+// must EXCLUDE edge types toggled off — otherwise the invisible link force keeps
+// the formerly-linked nodes clumped after a toggle-off (linkVisibility hides them
+// visually but the force still binds them). Mirrors visibleForceLinks() in
+// viz_filters.js (unit-tested). Keys off edge-TYPE only via _edgeToggleState —
+// deliberately NOT node-visibility (__visible) or search/focus, which live on the
+// visual linkVisibility layer (folding them here would rebuild+reheat on every
+// search keystroke → graph jumps while typing). Every graphData({links}) site
+// MUST use this, or a later call resurrects hidden types into the force.
+function _visibleForceLinks() {
+  return allLinks.filter(l => {
+    const t = l && l.type;
+    if (!t) return true;                       // unknown type: keep
+    if (t in _edgeToggleState) return !!_edgeToggleState[t];
+    return true;                               // type not toggled: render-from-source
+  });
+}
+
 // P1.1: CPU fix — force-graph + 3d-force-graph run an unconditional rAF render
 // loop (60fps forever, even when idle/static). Pause it when the scene goes
 // static (onEngineStop) and resume on user interaction / simulation reheat.
@@ -1886,6 +2180,8 @@ function initGraph(mode) {
         // or immediate stop on init), the layout never ran — marking it cooled
         // and pausing the rAF loop here would freeze nodes before they settle.
         if (_engineTickCount < 50) return;
+        // v5.87 C2: persist settled positions for warm-start on next reload.
+        _persistNodePositions(graph.graphData().nodes);
         // P1.1: stop the rAF render loop once the scene is static (CPU fix).
         _engineCooled = true;   // physics settled — idle-pause may now fire
         _pauseGraphAnimation();
@@ -1942,6 +2238,8 @@ function initGraph(mode) {
         // If engine stops at 0 ticks (e.g. no data, or immediate stop on init),
         // all n.x values are still 0 — pinning would clump everything at origin.
         if (_engineTickCount < 50) return;
+        // v5.87 C2: persist settled positions (x/y, not the pins) for warm-start.
+        _persistNodePositions(graph.graphData().nodes);
         // After layout settles, pin everything so forces can't push nodes around
         for (const n of graph.graphData().nodes) {
           if (n.fx == null) { n.fx = n.x; n.fy = n.y; }
@@ -1981,8 +2279,8 @@ function toggleMode() {
   // Re-initialise graph, then reload data
   initGraph(_graphMode);
   if (allNodes.length > 0) {
-    // Re-apply existing data to new renderer
-    graph.graphData({ nodes: allNodes, links: allLinks });
+    // Re-apply existing data to new renderer (C1: force set = visible edge types only)
+    graph.graphData({ nodes: allNodes, links: _visibleForceLinks() });
     applyFilters();
     status(`Switched to ${_graphMode.toUpperCase()} mode`, 'ok');
   } else {
@@ -2099,6 +2397,16 @@ async function loadGraph() {
     for (const n of allNodes) { if (n.x != null) posMap[n.id] = { x: n.x, y: n.y, vx: n.vx, vy: n.vy }; }
     allNodes = d.nodes || [];
     for (const n of allNodes) { const p = posMap[n.id]; if (p) Object.assign(n, p); }
+    // v5.87 C2 warm-start: on a FRESH page reload the in-session posMap is empty
+    // (allNodes was []), so seed positions from the localStorage store. Only
+    // touches nodes the in-session pass left without coords, so in-session
+    // positions (fresher) always win. Sets _warmStarted so initGraph can cap
+    // cooldownTicks and skip the long cold settle.
+    const _seeded = _restoreNodePositions(
+      allNodes.filter(n => !_isFiniteNum(n.x)),
+      _loadSavedPositions(),
+    );
+    _warmStarted = _seeded > 0;
     allLinks = d.edges || [];
     // v5.10.9: filter orphan edges before passing to force-graph library.
     // force-graph throws 'node not found: <id>' synchronously when a link references
@@ -2117,7 +2425,17 @@ async function loadGraph() {
     calcDegrees();
     // v5.80: consume real clusters[] from backend (memory_cluster rows)
     renderMemoryClusters(d.clusters || []);
-    graph.graphData({ nodes: allNodes, links: allLinks });
+    // v5.87 C2: when seeded from saved positions, cap the cooldown so the sim
+    // relaxes the warm scaffold (~60 ticks) instead of the full cold settle
+    // (cooldownTime=15000ms default ≈ hundreds of ticks). 60 is deliberately
+    // ABOVE the onEngineStop >=50-tick guard so v5.86 idle-pause still arms and
+    // 2D pinning still fires. Cold load keeps the default (Infinity) for a full
+    // first-time layout.
+    if (typeof graph.cooldownTicks === 'function') {
+      graph.cooldownTicks(_warmStarted ? 60 : Infinity);
+    }
+    // C1: force set = visible edge types only (hidden types must not bind nodes)
+    graph.graphData({ nodes: allNodes, links: _visibleForceLinks() });
     applyFilters();
     // B: zoom-to-fit ALL nodes (including disconnected) on load
     graph.zoomToFit(600, 50);
@@ -2289,7 +2607,9 @@ async function _fetchLazyEdges(edgeType) {
     // We FREEZE (don't reheat) for lazy heavy types — user can hit Reset to re-layout.
     if (afterCount !== beforeCount) {
       calcDegrees();
-      graph.graphData({ nodes: allNodes, links: allLinks });
+      // C1: force set = visible edge types only — passing raw allLinks here would
+      // resurrect every hidden edge type back into the force on each lazy fetch.
+      graph.graphData({ nodes: allNodes, links: _visibleForceLinks() });
       // Gentle reheat: bump alpha briefly so the layout adapts (not a full reset)
       // P1.1: resume the render loop — reheating restarts physics, so the paused
       // rAF loop must wake or the new layout never paints.
@@ -3346,7 +3666,7 @@ function _switchTab(tabName) {
     window.YadgarTabs.switchTab(tabName);
   } else {
     // Fallback: inline activation (same logic as tabs.js) if module not yet loaded
-    const _VALID = new Set(['home','stats','health','bookmarks','info','control','debug','help']);
+    const _VALID = new Set(['home','stats','health','bookmarks','info','control','debug','help','config-ref']);
     if (!_VALID.has(tabName)) tabName = 'home';
     document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('#tab-bar .tab-link').forEach(a => a.classList.remove('active'));
@@ -3372,6 +3692,7 @@ function _switchTab(tabName) {
   // endpoint (403) that the browser logs to the console, so it must not run on
   // page load. window._lazyInitControlTab is defined in the module script.
   if (tabName === 'control') window._lazyInitControlTab?.();
+  if (tabName === 'config-ref') window._lazyInitConfigRefTab?.();
 }
 
 // Stats tab: fetch /api/graph/stats + charts from /api/metrics/*
@@ -3470,13 +3791,9 @@ function _tabInfoRefresh() {
     if (fields) {
       Object.entries(fields).forEach(([id, v]) => set(id, v));
     } else {
+      // v5.87 car A: viz-config stripped from About — config lives in System → Config.
       set('ti-version', d.version ?? '—');
       set('ti-python', d.python_version ?? '—');
-      set('ti-variant', YADGAR_VIZ_CONFIG.edge.variant ?? '—');
-      set('ti-opacity', YADGAR_VIZ_CONFIG.edge.opacity ?? '—');
-      set('ti-width', YADGAR_VIZ_CONFIG.edge.width_3d_multiplier ?? '—');
-      set('ti-charge', YADGAR_VIZ_CONFIG.physics.charge_strength ?? '—');
-      set('ti-wiki-shape', YADGAR_VIZ_CONFIG.node.wiki_shape ?? '—');
     }
   }).catch(() => {});
 }
@@ -3498,6 +3815,72 @@ function _tabHelpRefresh() {
 
 // Listen for hash changes (back/forward navigation)
 window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
+
+// v5.87 car A: dropdown menu interaction for the two-level nav (System, Help).
+// CSS handles :hover/:focus-within open; this adds click-to-toggle on the
+// group label + click-outside / item-click to close. Pure nav UX — does not
+// touch routing (sub-items are plain hash <a> links handled by _switchTab).
+(function initNavMenus() {
+  const groups = Array.from(document.querySelectorAll('#tab-bar .nav-group'));
+  const closeAll = (except) => {
+    for (const g of groups) {
+      if (g === except) continue;
+      g.classList.remove('open');
+      const lbl = g.querySelector('.nav-group-label');
+      if (lbl) lbl.setAttribute('aria-expanded', 'false');
+    }
+  };
+  for (const g of groups) {
+    const label = g.querySelector('.nav-group-label');
+    if (label) {
+      label.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const willOpen = !g.classList.contains('open');
+        closeAll(g);
+        g.classList.toggle('open', willOpen);
+        label.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+      });
+    }
+    // Picking a sub-page closes the menu (the hash link still navigates).
+    g.querySelectorAll('.tab-link').forEach(a =>
+      a.addEventListener('click', () => closeAll(null)));
+  }
+  // Click anywhere else closes any open menu.
+  document.addEventListener('click', () => closeAll(null));
+})();
+
+// v5.87 car A: View control — show/hide floating panels. The memory-cluster
+// panel defaults OFF (.overlay-hidden in markup); the checkbox toggles it.
+// Does not touch renderMemoryClusters()/_flyToCluster — those operate on the
+// panel's inner content regardless of the container's visibility.
+(function initViewMenu() {
+  const wrap = document.getElementById('view-menu');
+  const btn = document.getElementById('view-menu-btn');
+  const clusterToggle = document.getElementById('view-toggle-clusters');
+  const clusterOverlay = document.querySelector('.floating-overlay[data-overlay-name="clusters"]');
+  if (!wrap || !btn) return;
+
+  // Sync the checkbox to the overlay's current (default-hidden) state.
+  if (clusterToggle && clusterOverlay) {
+    clusterToggle.checked = !clusterOverlay.classList.contains('overlay-hidden');
+    clusterToggle.addEventListener('change', () => {
+      clusterOverlay.classList.toggle('overlay-hidden', !clusterToggle.checked);
+    });
+  }
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = !wrap.classList.contains('open');
+    wrap.classList.toggle('open', open);
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  // Keep the panel open while interacting with its controls.
+  wrap.addEventListener('click', (e) => e.stopPropagation());
+  document.addEventListener('click', () => {
+    wrap.classList.remove('open');
+    btn.setAttribute('aria-expanded', 'false');
+  });
+})();
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 // v5.11.0: fetch viz config before initGraph so value-based ForceGraph setters
@@ -3530,6 +3913,7 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
   import * as Overlays from './overlays.js';
   import { initBookmarksTab } from './bookmarks-tab.js';
   import { initControlTab } from './control.js';
+  import { initConfigRefTab } from './config-ref.js';
   import { nodeType as _nodeTypeModule, createDetailPanel, ingestSseNode, removeSseNode } from './graph-detail.js';
   import * as Help from './help.js';
   window.YadgarTabs    = Tabs;
@@ -3565,6 +3949,17 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
     if (_ctrlInited || !_ctrlTab) return;
     _ctrlInited = true;
     initControlTab(_ctrlTab);
+  };
+
+  // ── v5.87 car B2b: Lazy-init Config Reference tab ─────────────────────────
+  // initConfigRefTab fetches GET /api/control/config (gated 403 endpoint) so
+  // defer until the user actually opens the tab, same pattern as control tab.
+  const _cfgRefTab = document.getElementById('tab-config-ref');
+  let _cfgRefInited = false;
+  window._lazyInitConfigRefTab = () => {
+    if (_cfgRefInited || !_cfgRefTab) return;
+    _cfgRefInited = true;
+    initConfigRefTab(_cfgRefTab);
   };
 
   // ── v5.50.0: Init floating overlays at DOMContentLoaded ──────────────────

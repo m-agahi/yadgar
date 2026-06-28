@@ -80,7 +80,6 @@ def test_viz_config_endpoint_returns_yaml_values(tmp_path, monkeypatch):
 
     assert data["node"]["size_3d"] == 12
     assert data["physics"]["charge_strength"] == -20
-    assert data["edge"]["color"]["semantic"] == "#ff0000"
     assert data["search"]["dim_opacity"] == 0.5
 
     get_settings.cache_clear()
@@ -135,7 +134,6 @@ def test_viz_config_defaults_search_and_colors(tmp_path, monkeypatch):
     assert data["search"]["dim_opacity"] == pytest.approx(0.18)
     assert data["search"]["match_color"] == "#ffffff"
     assert data["search"]["pinned_color"] == "#ffd700"
-    assert data["edge"]["color"]["semantic"] == "#1f6feb"
     assert data["edge"]["color"]["temporal"] == "#6e40c9"
     assert data["edge"]["color"]["transition"] == "#3fb950"
     assert data["edge"]["color"]["wiki_crossref"] == "#d2a8ff"
