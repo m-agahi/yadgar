@@ -16,6 +16,7 @@ Single source of truth for **open** plans. Shipped/dead plans live in
 
 ## Latest shipped
 
+- **v5.87** (#128) — viz-UX overhaul (live-feedback): physics edge-release fix (hidden edges drop from the d3 force → nodes separate), slow-reload fix (warm-start positions from localStorage), semantic edge removed; menu IA 8→4 (Graph/Bookmarks/System/Help), About config-strip, cluster panel default-off + View toggle; config editor grouped-by-category + alpha + emptied misc catch-all + per-knob tooltip & Config Reference page. Deferred: config-panel P3/P4 (#60), Prometheus retention (#53), viz-triage remainder (#55).
 - **v5.86** (#127) — viz regression train: CPU rAF-pause + idle-debounce, search exact-title + edge-dim fixes, honest legend, 3D render-path overhaul + interaction layer (hover/focus/badge/filters/hide-mode), data fidelity (resolved_by fix, mem↔wiki bridge, cluster member_count, dropped imports/calls); OT-C4 incremental similarity-linking + mandatory full-reconcile (default-off, ADR-0008); config editor un-gated (`GET /api/control/config`) + unified `set_config_value`; `adr_add` multi-line-field fix. Deferred to v5.87: config-panel P3/P4 (#60), Prometheus retention (#53).
 - **v5.85.1** (`3773ce9`) — agent-prompt capture loop: stop-hook step + `project_brief` nudge (#126).
 - **v5.85** (`426768c`) — int8-onnx CE backend + wiki auto-linking (`wiki_autolink` MCP tool) + repo-wiki store-bridge (#36) + agent-prompt library rework (ADR-0007) + viz /api/control extend.
