@@ -2,13 +2,14 @@
 
 Tests:
 1. /api/graph includes entity-relation edges with type + role fields.
-2. semantic edges NOT in default /api/graph payload (lazy path).
-3. Lazy endpoint get_edges_by_type("semantic") returns semantic edges on request.
+2. semantic edges NOT in default /api/graph payload.
+3. v5.87 C3: semantic removed from EDGE_TYPES + LAZY_EDGE_TYPES; the lazy
+   endpoint now gates "semantic" out (backend method dormant/unreachable).
 4. All edges in default payload carry a `role` field.
-5. Entity typed-relation types all represented (co_occurrence/imports/calls/resolved_by/caused_by).
+5. Entity typed-relation types all represented (co_occurrence/resolved_by/caused_by).
 6. EDGE_TYPES has role + default_on + lazy for all keys (including new entity types).
-7. LAZY_EDGE_TYPES contains only "semantic".
-8. Role for entity types is "retrieval", for semantic/temporal/causal is "informational"
+7. LAZY_EDGE_TYPES is empty (v5.87 C3 — semantic was its only member).
+8. Role for entity types is "retrieval", for temporal/causal is "informational"
    (v5.80 #80: renamed from "display").
 9. build_legend emits role + default_on + lazy per edge.
 """
@@ -163,12 +164,14 @@ class TestSemanticNotInDefaultPayload:
 
 
 class TestLazySemanticEndpoint:
-    def test_get_edges_by_type_semantic_returns_edges_structure(self):
-        """get_edges_by_type('semantic') returns a dict with 'edges' key."""
+    def test_get_edges_by_type_semantic_now_gated_out(self):
+        """v5.87 C3: semantic was removed from LAZY_EDGE_TYPES, so the lazy
+        endpoint now gates it out with an error like any non-lazy type. The
+        backend semantic compute path was deleted entirely."""
         s = _make_mock()
         result = GraphAPI(s).get_edges_by_type("semantic")
-        assert "edges" in result, "Lazy semantic result must have 'edges' key"
-        assert isinstance(result["edges"], list)
+        assert "error" in result, "semantic is no longer lazy → should return error"
+        assert result["edges"] == []
 
     def test_get_edges_by_type_unknown_type_returns_error(self):
         """get_edges_by_type with a non-lazy type returns an error."""
@@ -289,7 +292,6 @@ class TestAllEdgesHaveRole:
 
 class TestEdgeTypesRegistry:
     EXPECTED_TYPES = {
-        "semantic",
         "temporal",
         "transition",
         "wiki_crossref",
@@ -305,10 +307,16 @@ class TestEdgeTypesRegistry:
         """EDGE_TYPES has all viz edge types.
 
         v5.86 VIZ Batch-2 (P0.4): imports/calls dropped (code-only, always empty
-        on a prose corpus) — down from 12 to 10 types.
+        on a prose corpus).
+        v5.87 C3: semantic dropped (lazy/off, O(n²), informational — the legend
+        checkbox did nothing useful).
         """
         missing = self.EXPECTED_TYPES - set(EDGE_TYPES.keys())
         assert not missing, f"EDGE_TYPES missing: {missing}"
+
+    def test_semantic_dropped(self):
+        """semantic is NOT in EDGE_TYPES (v5.87 C3 — removed the dead legend toggle)."""
+        assert "semantic" not in EDGE_TYPES
 
     def test_imports_calls_dropped(self):
         """imports/calls are NOT in EDGE_TYPES (P0.4 — code-only, legend was lying)."""
@@ -341,7 +349,7 @@ class TestEdgeTypesRegistry:
 
         v5.80 #80: renamed from "display" to "informational".
         """
-        informational_types = ["semantic", "temporal", "causal", "wiki_crossref", "memory_wiki"]
+        informational_types = ["temporal", "causal", "wiki_crossref", "memory_wiki"]
         for t in informational_types:
             assert EDGE_TYPES[t]["role"] == "informational", (
                 f"Expected EDGE_TYPES['{t}']['role'] == 'informational' (renamed from display in v5.80)"
@@ -351,9 +359,9 @@ class TestEdgeTypesRegistry:
         """transition is retrieval-active (co-recall prior, v5.54.2)."""
         assert EDGE_TYPES["transition"]["role"] == "retrieval"
 
-    def test_semantic_default_on_false(self):
-        """semantic is off by default (heavy lazy type)."""
-        assert EDGE_TYPES["semantic"]["default_on"] is False
+    def test_semantic_not_in_registry(self):
+        """semantic was removed from EDGE_TYPES (v5.87 C3)."""
+        assert "semantic" not in EDGE_TYPES
 
     def test_non_semantic_entity_types_default_on_true(self):
         """Entity typed-relation types default ON."""
@@ -367,9 +375,10 @@ class TestEdgeTypesRegistry:
 
 
 class TestLazyEdgeTypes:
-    def test_semantic_is_lazy(self):
-        """LAZY_EDGE_TYPES contains 'semantic'."""
-        assert "semantic" in LAZY_EDGE_TYPES
+    def test_semantic_not_lazy(self):
+        """LAZY_EDGE_TYPES no longer contains 'semantic' (v5.87 C3 — emptied)."""
+        assert "semantic" not in LAZY_EDGE_TYPES
+        assert len(LAZY_EDGE_TYPES) == 0
 
     def test_entity_types_not_lazy(self):
         """Entity typed-relation types are not lazy (stored/cheap)."""
@@ -427,14 +436,13 @@ class TestBuildLegendEmitsRoleFields:
         for edge in legend["edges"]:
             assert "lazy" in edge, f"legend edge '{edge['key']}' missing 'lazy'"
 
-    def test_legend_semantic_lazy_true(self, settings):
-        """build_legend: semantic edge has lazy=True."""
+    def test_legend_semantic_absent(self, settings):
+        """build_legend: semantic edge is gone (v5.87 C3 — no dead legend toggle)."""
         from yadgar.viz_meta import build_legend
 
         legend = build_legend(settings)
         sem = next((e for e in legend["edges"] if e["key"] == "semantic"), None)
-        assert sem is not None
-        assert sem["lazy"] is True
+        assert sem is None, "semantic must not appear in the legend after v5.87 C3"
 
     def test_legend_co_occurrence_lazy_false(self, settings):
         """build_legend: co_occurrence edge has lazy=False."""
@@ -456,7 +464,6 @@ class TestBuildLegendEmitsRoleFields:
         legend = build_legend(settings)
         keys = {e["key"] for e in legend["edges"]}
         expected = {
-            "semantic",
             "temporal",
             "transition",
             "wiki_crossref",

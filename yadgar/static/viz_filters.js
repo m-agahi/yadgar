@@ -34,6 +34,25 @@ export function buildEdgeTypeMap(legendEdges) {
 }
 
 /**
+ * Filter a links array down to those whose edge TYPE is toggled on — the set
+ * that must be fed to the d3 force simulation (graph.graphData().links).
+ *
+ * v5.87 C1: the force-link layer must exclude hidden edge types, otherwise the
+ * invisible link force keeps formerly-linked nodes clumped after a toggle-off.
+ * Keys off edge-TYPE only (via edgeVisible) — deliberately NOT node-visibility
+ * (`__visible`) or search/focus state, which belong on the visual linkVisibility
+ * layer. Folding node visibility in here would rebuild+reheat the sim on every
+ * search keystroke (graph jumps while typing) and scatter hidden nodes on re-show.
+ *
+ * @param {Array<{type}>} links - all links (allLinks)
+ * @param {Object} toggleState - {type: boolean} per-type checkbox state
+ * @returns {Array} links whose type is toggled on
+ */
+export function visibleForceLinks(links, toggleState) {
+  return (links || []).filter(l => edgeVisible(l, toggleState || {}));
+}
+
+/**
  * Return the checkbox element ID for a given edge type key.
  * Convention: underscores → hyphens, prefixed with "fo-show-".
  *

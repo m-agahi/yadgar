@@ -239,7 +239,8 @@ class TestF1ConnectionCount:
                 f"Edge type '{rt}' missing from payload — panel cannot count it"
             )
 
-        # The 11 possible types in EDGE_TYPES (semantic is lazy/absent from default)
+        # All types in EDGE_TYPES (v5.87 C3: semantic removed entirely; the
+        # subtraction is now a harmless no-op kept for documentation).
         expected_in_default = set(EDGE_TYPES.keys()) - {"semantic"}
         # We only check types that have data in this mock — just entity rels
         for rt in entity_rel_types:

@@ -44,15 +44,13 @@ if TYPE_CHECKING:
 # default_on (v5.54.3): whether the toggle is checked by default.
 #   retrieval-role edges default ON; heavy informational-only (semantic) OFF.
 EDGE_TYPES: dict[str, dict] = {
-    # ── Informational (semantic similarity — redundant with vector retrieval) ─
-    "semantic": {
-        "label": "Semantic",
-        "description": "Cosine-similarity link between nodes with similar content (≥0.75 threshold). Informational — redundant with the vector signal recall already uses.",
-        "settings_color_key": "VIZ_EDGE_COLOR_SEMANTIC",
-        "fallback_color": "#1f6feb",
-        "role": "informational",
-        "default_on": False,  # lazy; heavy O(n²) — off by default
-    },
+    # v5.87 C3: "semantic" removed from the viz registry. It was lazy/off-by-
+    # default, O(n²) KNN, and informational (redundant with the vector signal
+    # recall already uses). The legend checkbox surfaced but did nothing useful,
+    # so it was dropped to stop the legend advertising a dead/unwanted toggle.
+    # The backend on-demand compute path (_get/_compute_semantic_edges +
+    # _parse_embedding_vectors / _deduplicated_edges) was deleted with it, so the
+    # produced≡contracted invariant (I29 / drift-guard) stays satisfied.
     # ── Informational (temporal slot co-membership — weak signal) ────────────
     "temporal": {
         "label": "Temporal",
@@ -147,7 +145,9 @@ EDGE_TYPES: dict[str, dict] = {
 # ---------------------------------------------------------------------------
 # Types that are NOT included in the default /api/graph payload.
 # Fetched on-demand via /api/graph/edges?type=<type> when toggle flips ON.
-LAZY_EDGE_TYPES: frozenset[str] = frozenset({"semantic"})
+# v5.87 C3: emptied — "semantic" was the only lazy type and was removed from the
+# viz (see EDGE_TYPES note above). get_edges_by_type() now gates every type out.
+LAZY_EDGE_TYPES: frozenset[str] = frozenset()
 
 # ---------------------------------------------------------------------------
 # Node type descriptions (informational — shapes/colors still driven by code)

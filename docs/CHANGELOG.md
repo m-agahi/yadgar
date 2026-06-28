@@ -12,6 +12,22 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 #### Changed
 - **COMET enrichment retired to dormant** (ADR-0004): the en2a ablation proved un-FPA'd COMET net-negative for recall (multi-session R@5 −4.2pt) at ~17h/10-core cost. `COMET_ENRICHMENT_ENABLED` flag default flipped True→False; COMET code retained dormant (NOT deleted; shared `transformers`/`torch` deps untouched; model lazy-loaded so dormant = cost-free). BC-EN2b implemented — daemon emits exactly one startup warning when COMET is disabled, and `/admin/config` now surfaces the flag. (`yadgar/config.py`, `yadgar/config_registry.py`, `yadgar/server/lifecycle.py`)
 
+## [5.87.0] - 2026-06-28
+
+v5.87 viz-UX overhaul (#128) — from live-5.86 user feedback.
+
+#### Fixed (viz bugs)
+- **Physics edge-release**: hiding an edge type only set `linkVisibility` (visual), so the d3 link force still bound the nodes and they stayed clumped. `_visibleForceLinks()` now rebuilds `graphData` from only the visible edge types → the force drops the hidden links → nodes separate on reheat (2D + 3D). (`static/index.html`, `viz_filters.js`)
+- **Slow reload**: every reload ran a full ~15s cold force-layout from a spiral. Now settled node positions persist to `localStorage` (`onEngineStop`) and warm-start on reload with `cooldownTicks(60)` (kept above the idle-pause's `<50` guard). (`static/index.html`, `viz_positions.js`)
+- **Semantic edge** removed from the legend entirely (dead, expensive O(n²) KNN, unwanted) — incl. the backend compute path (I29 dead-capability hook required full deletion). (`viz_meta.py`, `graph_api.py`)
+
+#### Changed (UX)
+- **Menu IA**: 8 flat tabs → 4 menus — **Graph** (was Home) · **Bookmarks** · **System** {Config (was Control), Health, Stats} · **Help** {Guide, Config Reference, About (was Info), Debug}. Dropdowns wrap the existing tab anchors (router/CPU-pause wiring intact). (`static/index.html`, `tabs.js`)
+- **About** (was Info) no longer shows viz-config (that was a bug); the memory-cluster floating panel now defaults **off** behind a new **View** toggle.
+- **Config editor**: grouped by capability category + alpha-sorted within group; the `misc`/`config` catch-all is empty (8 stray knobs reassigned to real sections); each knob gets a hover tooltip + an `ⓘ` deep-link to a new **Config Reference** page (Help → Config Reference). (`server/routes/control.py`, `config_yaml.py`, `static/control.js`, `static/config-ref.js`)
+
+Deferred to v5.88+: config-panel P3/P4 (#60); Prometheus retention (#53); remaining viz-triage items (#55).
+
 ## [5.86.0] - 2026-06-27
 
 v5.86 train — viz regression fixes + consolidation perf + reliability.

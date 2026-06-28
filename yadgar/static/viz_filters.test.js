@@ -24,6 +24,7 @@ import {
   linksChanged,
   edgeLinkColor,
   edgeLinkWidth,
+  visibleForceLinks,
   _hexToRgba,
 } from './viz_filters.js';
 
@@ -163,6 +164,42 @@ describe('edgeVisible — per-type toggle on/off', () => {
     for (const t of ['co_occurrence', 'imports', 'calls', 'resolved_by', 'caused_by']) {
       expect(edgeVisible({ type: t }, toggleAllOn)).toBe(true);
     }
+  });
+});
+
+// ── visibleForceLinks — C1 physics: force set excludes hidden edge types ──────
+
+describe('visibleForceLinks — d3 force link set (v5.87 C1)', () => {
+  const LINKS = [
+    { source: 'a', target: 'b', type: 'temporal' },
+    { source: 'b', target: 'c', type: 'temporal' },
+    { source: 'c', target: 'd', type: 'transition' },
+    { source: 'd', target: 'e', type: 'co_occurrence' },
+  ];
+
+  it('drops links whose edge type is toggled OFF (so the force no longer binds them)', () => {
+    const state = { temporal: false, transition: true, co_occurrence: true };
+    const out = visibleForceLinks(LINKS, state);
+    expect(out.map(l => l.type)).toEqual(['transition', 'co_occurrence']);
+    // No temporal links survive → their endpoints are no longer force-bound.
+    expect(out.some(l => l.type === 'temporal')).toBe(false);
+  });
+
+  it('keeps all links when every type is ON', () => {
+    const state = { temporal: true, transition: true, co_occurrence: true };
+    expect(visibleForceLinks(LINKS, state).length).toBe(4);
+  });
+
+  it('keeps a type absent from toggle state (render-from-source default-visible)', () => {
+    // co_occurrence not in state → defaults visible; temporal explicitly off
+    const out = visibleForceLinks(LINKS, { temporal: false });
+    expect(out.map(l => l.type)).toEqual(['transition', 'co_occurrence']);
+  });
+
+  it('handles null/undefined inputs gracefully', () => {
+    expect(visibleForceLinks(null, {})).toEqual([]);
+    expect(visibleForceLinks(undefined, null)).toEqual([]);
+    expect(visibleForceLinks(LINKS, null).length).toBe(4); // null state → all visible
   });
 });
 

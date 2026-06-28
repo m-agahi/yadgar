@@ -490,32 +490,32 @@ FIELD_META: dict[str, dict[str, object]] = {
     # misc
     "sensitive_lock_ttl_sec": {
         "desc": "Seconds before a sensitive-job lock (vacuum) is treated as stale and reaped",
-        "section": "misc",
+        "section": "core",
     },
     "sensitive_drain_timeout_sec": {
         "desc": "Max seconds the signal handler drains an in-process sensitive job before refusing shutdown",
-        "section": "misc",
+        "section": "core",
     },
     "contextual_prefix_enabled": {
         "desc": "Prepend contextual prefix to improve embedding quality",
-        "section": "misc",
+        "section": "embedding_enhancement",
     },
     "curation_similarity_threshold": {
         "desc": "Minimum similarity to trigger memory curation/merging",
-        "section": "misc",
+        "section": "memory_lifecycle",
     },
-    "crdt_agent_id": {"desc": "Agent identifier for multi-agent CRDT sync", "section": "misc"},
+    "crdt_agent_id": {"desc": "Agent identifier for multi-agent CRDT sync", "section": "core"},
     "replay_max_restore_memories": {
         "desc": "Maximum memories included in context restoration",
-        "section": "misc",
+        "section": "session_end_capture",
     },
     "replay_anchor_heat": {
         "desc": "Heat assigned to anchored (protected) memories",
-        "section": "misc",
+        "section": "session_end_capture",
     },
     "replay_checkpoint_auto_interval": {
         "desc": "Auto-checkpoint every N tool calls",
-        "section": "misc",
+        "section": "session_end_capture",
     },
     # project_brief (v5.7.12)
     "active_work_stale_hours": {

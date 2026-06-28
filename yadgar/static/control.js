@@ -1,13 +1,13 @@
 /**
- * control.js — Control tab implementation for the yadgar viz SPA (v5.85.0).
+ * control.js — Control tab implementation for the yadgar viz SPA (v5.87.0).
  *
  * Fills the #tab-control shell.
  *
  * Features:
  *   - Actions row: consolidate / vacuum / re-embed / update
- *   - Config editor: filter + category dropdown + section sub-group headers
- *     + inline type-aware edit + reload/restart pill + source badge
- *     + locked badge for env-set knobs (409-aware) + description tooltip
+ *   - Config editor: filter + category groups (B1.2) + inline type-aware edit
+ *     + reload/restart pill + source badge + locked badge + description tooltip
+ *     + per-knob help icon deep-linking to Config Reference page (B2a)
  *     + validation hint on save
  *   - Restart buttons: typed-name confirmation required before firing
  *
@@ -23,6 +23,7 @@
  *   buildRestartConfirmMsg — return the expected confirm string for a service URL segment
  *   isRestartEnabled       — check confirm input matches expected service name
  *   getKnobCategory        — extract category from knob (with 'all' pass-through)
+ *   groupKnobsByCategory   — group sorted knobs by capability category (B1.2)
  */
 
 // ---------------------------------------------------------------------------
@@ -102,6 +103,67 @@ export function filterKnobs(knobs, filterText, group) {
  */
 export function getKnobCategory(knob) {
   return knob.category || 'config';
+}
+
+/**
+ * Deterministic order for known capability categories.
+ * Any category NOT in this list is appended at the end, alpha-sorted.
+ */
+const CATEGORY_ORDER = [
+  'retrieval', 'write-path', 'brain-dynamics', 'enrichment',
+  'gate', 'wiki', 'viz', 'observability', 'ops', 'config',
+];
+
+/**
+ * Map a category key to a human-friendly Title Case display label.
+ * Hyphen-separated words are split and each word Title-Cased.
+ *
+ * @param {string} cat - category key e.g. 'write-path', 'brain-dynamics'
+ * @returns {string} display label e.g. 'Write Path', 'Brain Dynamics'
+ */
+function _categoryLabel(cat) {
+  return cat
+    .split('-')
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+/**
+ * Group a knob array by capability category, in deterministic order.
+ * Within each group, knobs are sorted alphabetically by name.
+ * Categories absent from the knob set are omitted.
+ * Unknown categories (not in CATEGORY_ORDER) are appended alpha-sorted at the end.
+ *
+ * @param {Array<Object>} knobs - knob objects from GET /api/control/config
+ * @returns {Array<{category: string, label: string, knobs: Array<Object>}>}
+ */
+export function groupKnobsByCategory(knobs) {
+  // Bucket knobs by category
+  const byCategory = new Map();
+  for (const knob of knobs) {
+    const cat = getKnobCategory(knob);
+    if (!byCategory.has(cat)) byCategory.set(cat, []);
+    byCategory.get(cat).push(knob);
+  }
+
+  const result = [];
+
+  // Emit known categories in order
+  for (const cat of CATEGORY_ORDER) {
+    if (!byCategory.has(cat)) continue;
+    const sorted = byCategory.get(cat).slice().sort((a, b) => a.name.localeCompare(b.name));
+    result.push({ category: cat, label: _categoryLabel(cat), knobs: sorted });
+  }
+
+  // Emit unknown categories alpha-sorted
+  const knownSet = new Set(CATEGORY_ORDER);
+  const unknown = [...byCategory.keys()].filter(c => !knownSet.has(c)).sort();
+  for (const cat of unknown) {
+    const sorted = byCategory.get(cat).slice().sort((a, b) => a.name.localeCompare(b.name));
+    result.push({ category: cat, label: _categoryLabel(cat), knobs: sorted });
+  }
+
+  return result;
 }
 
 /**
@@ -282,6 +344,7 @@ function _buildShell() {
           <th>SOURCE</th>
           <th>RELOAD</th>
           <th>EDIT</th>
+          <th>REF</th>
         </tr>
       </thead>
       <tbody class="ctrl-config-tbody"></tbody>
@@ -387,22 +450,20 @@ function _renderConfigEditor(container, knobs) {
     tbody.innerHTML = '';
     if (countEl) countEl.textContent = `(${filtered.length} knobs)`;
 
-    // Group by section within the filtered set for sub-group headers
-    let lastSection = null;
-    for (const knob of filtered) {
-      const section = knob.section || 'misc';
-      if (section !== lastSection) {
-        const sectionRow = document.createElement('tr');
-        sectionRow.className = 'ctrl-section-header-row';
-        const sectionTd = document.createElement('td');
-        sectionTd.colSpan = 7;
-        sectionTd.className = 'ctrl-section-header';
-        sectionTd.textContent = section;
-        sectionRow.appendChild(sectionTd);
-        tbody.appendChild(sectionRow);
-        lastSection = section;
+    // B1.2: Group by capability category (deterministic order, alpha-sorted within group)
+    const groups = groupKnobsByCategory(filtered);
+    for (const group of groups) {
+      const sectionRow = document.createElement('tr');
+      sectionRow.className = 'ctrl-section-header-row';
+      const sectionTd = document.createElement('td');
+      sectionTd.colSpan = 8;
+      sectionTd.className = 'ctrl-section-header';
+      sectionTd.textContent = group.label;
+      sectionRow.appendChild(sectionTd);
+      tbody.appendChild(sectionRow);
+      for (const knob of group.knobs) {
+        tbody.appendChild(_buildKnobRow(knob, knobs, _refresh));
       }
-      tbody.appendChild(_buildKnobRow(knob, knobs, _refresh));
     }
   }
 
@@ -457,6 +518,23 @@ function _buildKnobRow(knob, allKnobs, refreshFn) {
 
   const editCell = _el('td', { class: 'ctrl-knob-edit-cell' });
 
+  // B2a: Help icon — deep-links to Config Reference page anchor
+  const tdHelp = _el('td', { class: 'ctrl-knob-help-cell' });
+  const helpLink = _el('a', {
+    class: 'ctrl-knob-help',
+    href: `#cfgref-${knob.name}`,
+    title: `${knob.description || knob.name} — open full reference`,
+    'aria-label': `config reference for ${knob.name}`,
+  }, 'ⓘ');
+  helpLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    // Switch to config-ref tab first, then scroll to anchor
+    window.YadgarTabs?.switchTab?.('config-ref');
+    const target = document.getElementById(`cfgref-${knob.name}`);
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  tdHelp.appendChild(helpLink);
+
   tr.appendChild(tdName);
   tr.appendChild(tdType);
   tr.appendChild(tdCurrent);
@@ -464,6 +542,7 @@ function _buildKnobRow(knob, allKnobs, refreshFn) {
   tr.appendChild(tdSource);
   tr.appendChild(tdReload);
   tr.appendChild(editCell);
+  tr.appendChild(tdHelp);
 
   if (knob.locked) {
     // Locked knobs are read-only — show a lock indicator instead of edit button
