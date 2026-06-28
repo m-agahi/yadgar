@@ -12,6 +12,11 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 #### Changed
 - **COMET enrichment retired to dormant** (ADR-0004): the en2a ablation proved un-FPA'd COMET net-negative for recall (multi-session R@5 −4.2pt) at ~17h/10-core cost. `COMET_ENRICHMENT_ENABLED` flag default flipped True→False; COMET code retained dormant (NOT deleted; shared `transformers`/`torch` deps untouched; model lazy-loaded so dormant = cost-free). BC-EN2b implemented — daemon emits exactly one startup warning when COMET is disabled, and `/admin/config` now surfaces the flag. (`yadgar/config.py`, `yadgar/config_registry.py`, `yadgar/server/lifecycle.py`)
 
+## [5.87.1] - 2026-06-28
+
+#### Fixed
+- **Graph blank/slow on load**: v5.87 warm-start caps `cooldownTicks(60)`, but the camera auto-zoom-fit only fired at tick 80 → it never fired → `onEngineStop` paused the render loop with nodes off-screen → blank canvas until a tab-away→back→Reset forced a resume+reheat. Now `onEngineStop` does an instant `zoomToFit(0)` catch-up (≥50 ticks, once) and defers the pause one rAF so the fitted frame paints; `resetLayout` re-arms the fit. Idle-CPU pause unchanged. (`static/index.html`, `viz_helpers.js`)
+
 ## [5.87.0] - 2026-06-28
 
 v5.87 viz-UX overhaul (#128) — from live-5.86 user feedback.

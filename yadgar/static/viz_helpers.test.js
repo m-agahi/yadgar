@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { _fmtBytes, _fmtUptime, _linkWidth, esc, findOrphanEdgeEndpoints } from './viz_helpers.js';
+import { _fmtBytes, _fmtUptime, _linkWidth, esc, findOrphanEdgeEndpoints, shouldFitOnStop } from './viz_helpers.js';
 
 // ── _fmtBytes ─────────────────────────────────────────────────────────────────
 
@@ -192,5 +192,48 @@ describe('findOrphanEdgeEndpoints', () => {
   it('handles empty payload gracefully', () => {
     expect(findOrphanEdgeEndpoints({ nodes: [], edges: [] }).size).toBe(0);
     expect(findOrphanEdgeEndpoints({}).size).toBe(0);
+  });
+});
+
+// ── shouldFitOnStop (v5.87.1: warm-start blank-canvas fix) ──────────────────────
+//
+// Bug: warm-start caps cooldownTicks(60) but the inline auto-fit fires only at
+// engineTickCount === auto_zoom_fit_tick_threshold (80). 60 < 80 → the engine
+// stops before the camera is ever fitted → nodes off-screen → blank canvas until
+// the user tab-aways/back + Resets (which reheats the sim past tick 80). This
+// helper decides, inside onEngineStop, whether a catch-up fit is still owed.
+
+describe('shouldFitOnStop', () => {
+  it('returns false before the engine has actually run (settle guard)', () => {
+    // tickCount below minTicks → layout never ran; do not fit (or pause).
+    expect(shouldFitOnStop(0, false, 50)).toBe(false);
+    expect(shouldFitOnStop(49, false, 50)).toBe(false);
+  });
+
+  it('returns true on warm-start stop (60) when fit never fired', () => {
+    // The exact bug: cooldownTicks(60) stops below the 80-tick fit threshold,
+    // so the inline tick-80 fit never fired → catch-up owed.
+    expect(shouldFitOnStop(60, false, 50)).toBe(true);
+  });
+
+  it('returns false when a fit already fired (cold / inline-fit path)', () => {
+    // Cold load runs past 80 → onEngineTick already fitted (sets zoomFitDone) →
+    // no catch-up owed. zoomFitDone also guards against stomping its 800ms pan.
+    expect(shouldFitOnStop(120, true, 50)).toBe(false);
+  });
+
+  it('returns true past the threshold when no fit fired (Reload-button path)', () => {
+    // Reload calls loadGraph WITHOUT initGraph, so _engineTickCount is not reset
+    // and is already > the inline fit threshold → the `=== 80` inline fit can
+    // never fire. The catch-up must still fit, else the canvas stays blank.
+    expect(shouldFitOnStop(80, false, 50)).toBe(true);
+    expect(shouldFitOnStop(81, false, 50)).toBe(true);
+    expect(shouldFitOnStop(180, false, 50)).toBe(true);
+  });
+
+  it('owes a fit iff settled and not yet fitted (regardless of threshold)', () => {
+    expect(shouldFitOnStop(50, false, 50)).toBe(true);
+    expect(shouldFitOnStop(79, false, 50)).toBe(true);
+    expect(shouldFitOnStop(79, true, 50)).toBe(false);
   });
 });

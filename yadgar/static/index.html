@@ -2113,6 +2113,50 @@ function _reheatSimulation() {
   if (typeof graph.d3ReheatSimulation === 'function') graph.d3ReheatSimulation();
 }
 
+// ── v5.87.1: settle-fit-then-pause for onEngineStop ──────────────────────────
+// Inline copy of the unit-tested shouldFitOnStop (viz_helpers.js) — the plain
+// <script> can't import the ES module (same convention as _visibleForceLinks /
+// _restoreNodePositions). Keep in sync.
+//
+// Bug: warm-start (v5.87 C2) caps cooldownTicks(60) so the engine stops at ~60
+// ticks, but the inline onEngineTick auto-fit fires only at tick
+// auto_zoom_fit_tick_threshold (80). 60 < 80 → the camera is never fitted to the
+// warm-started node bounds → nodes sit off-screen → the canvas looks blank until
+// the user tab-aways/back (resumes the rAF loop) + Resets (reheats the sim, whose
+// tick counter — reset only in initGraph — continues 61→80 and trips the inline
+// fit). This catch-up does an INSTANT fit (0ms transition: nothing in flight to
+// interrupt, unlike raising the cap which would freeze the 800ms pan mid-flight),
+// then defers the pause by one rAF so the fitted frame actually paints.
+function _shouldFitOnStop(tickCount, fitDone, minTicks) {
+  // No fitThreshold gate: stomp protection is covered by fitDone (the inline fit
+  // sets _zoomFitDone before its transition); gating on the threshold would
+  // suppress the catch-up on the Reload path (counter not reset → already >80).
+  return !fitDone && tickCount >= minTicks;
+}
+function _settleFitAndPause() {
+  if (!graph) return;
+  if (_shouldFitOnStop(_engineTickCount, _zoomFitDone, 50)) {
+    _zoomFitDone = true;
+    if (typeof graph.zoomToFit === 'function') {
+      // 0ms = instant: the warm-started bounds are already final, so there is no
+      // multi-frame pan to interrupt before we pause the loop one frame later.
+      graph.zoomToFit(0, YADGAR_VIZ_CONFIG.layout.zoom_fit_padding);
+    }
+  }
+  // Defer the pause one rAF so the (possibly just-fitted) frame paints before the
+  // render loop stops. force-graph keeps its last drawn frame, so pausing AFTER a
+  // painted+fitted frame leaves the graph visible; pausing before it would freeze
+  // an unfitted (blank-looking) frame.
+  const _raf = (typeof requestAnimationFrame === 'function')
+    ? requestAnimationFrame
+    : (fn) => setTimeout(fn, 16);
+  _raf(() => {
+    // If a reheat landed in this one-frame gap (_engineCooled flipped back to
+    // false), physics is running again — don't pause a live loop.
+    if (_engineCooled) _pauseGraphAnimation();
+  });
+}
+
 function initGraph(mode) {
   if (!mode) mode = _graphMode;
   // v5.10.8 Bug A: reset tick counter so 2D↔3D toggle restarts the guard.
@@ -2182,9 +2226,13 @@ function initGraph(mode) {
         if (_engineTickCount < 50) return;
         // v5.87 C2: persist settled positions for warm-start on next reload.
         _persistNodePositions(graph.graphData().nodes);
-        // P1.1: stop the rAF render loop once the scene is static (CPU fix).
+        // v5.87.1: warm-start caps cooldownTicks(60), but the inline onEngineTick
+        // fit fires only at tick auto_zoom_fit_tick_threshold (80). 60 < 80 → the
+        // camera was never fitted → nodes off-screen → blank canvas until the user
+        // tab-aways/back + Resets. Catch up with an INSTANT fit (0ms, nothing to
+        // interrupt) so the warm-started frame is on-screen before we pause.
         _engineCooled = true;   // physics settled — idle-pause may now fire
-        _pauseGraphAnimation();
+        _settleFitAndPause();
       });
     graph.d3Force('link').distance(YADGAR_VIZ_CONFIG.physics.link_distance_3d);  // v5.10.11: 3D-only; v5.11.0: config-driven
   } else {
@@ -2244,9 +2292,13 @@ function initGraph(mode) {
         for (const n of graph.graphData().nodes) {
           if (n.fx == null) { n.fx = n.x; n.fy = n.y; }
         }
-        // P1.1: stop the rAF render loop once the scene is static (CPU fix).
+        // v5.87.1: warm-start caps cooldownTicks(60), but the inline onEngineTick
+        // fit fires only at tick auto_zoom_fit_tick_threshold (80). 60 < 80 → the
+        // camera was never fitted → nodes off-screen → blank canvas until the user
+        // tab-aways/back + Resets. Catch up with an INSTANT fit (0ms, nothing to
+        // interrupt) so the warm-started frame is on-screen before we pause.
         _engineCooled = true;   // physics settled — idle-pause may now fire
-        _pauseGraphAnimation();
+        _settleFitAndPause();
       });
 
     // Softer repulsion — default -30 spreads clusters too far; v5.11.0: config-driven
@@ -2983,6 +3035,11 @@ function status(msg, state) {
 function fitGraph() { graph?.zoomToFit(400, 40); }
 function resetLayout() {
   if (!graph) return;
+  // v5.87.1: re-arm the auto-fit so the re-layout re-fits the camera. Without
+  // this, _zoomFitDone (set true by the v5.87.1 catch-up on initial load) stays
+  // true, so neither the inline tick-80 fit nor the onEngineStop catch-up fires
+  // on Reset — the historical tab-away/back + Reset recovery would break.
+  _zoomFitDone = false;
   const d = graph.graphData();
   d.nodes.forEach(n => { n.fx = undefined; n.fy = undefined; delete n.x; delete n.y; delete n.vx; delete n.vy; });
   // v5.10.8 Bug B: direct re-data instead of empty-then-restore (which leaked
