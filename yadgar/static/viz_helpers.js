@@ -83,3 +83,37 @@ export function findOrphanEdgeEndpoints(payload) {
   }
   return orphans;
 }
+
+/**
+ * v5.87.1 — decide whether onEngineStop still owes a catch-up zoom-to-fit.
+ *
+ * Root cause of the "graph blank on initial load until tab-away/back + Reset"
+ * bug: warm-start (v5.87 C2) caps cooldownTicks(60) so the engine stops at ~60
+ * internal ticks, but the inline auto-fit in onEngineTick fires only at
+ * engineTickCount === auto_zoom_fit_tick_threshold (80). 60 < 80 → the camera is
+ * never fitted to the warm-started node bounds → nodes sit off-screen → blank
+ * canvas. (Reset works because _engineTickCount is reset only in initGraph, so a
+ * post-load reheat continues 61→…→80 and finally trips the inline fit.)
+ *
+ * Returns true whenever the engine settled enough to have a real layout
+ * (>= minTicks) but no fit has happened yet this load. We deliberately do NOT
+ * gate on the inline fit threshold: stomp protection against an in-flight 800ms
+ * pan is already covered by zoomFitDone (the inline fit sets it true in the same
+ * block before starting its transition), and the catch-up fit is instant (0ms) so
+ * it never creates an in-flight transition. Gating on the threshold instead would
+ * wrongly suppress the catch-up on the Reload-button path, where _engineTickCount
+ * is NOT reset (only initGraph resets it) so the counter is already past the
+ * threshold and the inline `=== threshold` fit can never fire → blank canvas.
+ *
+ * Pure function — no DOM/global dependencies (the actual zoomToFit + deferred
+ * pause stay in index.html; this only encodes the timing decision for unit tests).
+ * Keep in sync with the inline copy in index.html onEngineStop handlers.
+ *
+ * @param {number} engineTickCount - ticks the engine ran this settle (positions valid >= minTicks)
+ * @param {boolean} zoomFitDone - whether a fit has already fired this load
+ * @param {number} minTicks - settle guard; below this the layout never ran (typ. 50)
+ * @returns {boolean} true if a catch-up fit is owed before pausing the render loop
+ */
+export function shouldFitOnStop(engineTickCount, zoomFitDone, minTicks) {
+  return !zoomFitDone && engineTickCount >= minTicks;
+}
