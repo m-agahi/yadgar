@@ -166,26 +166,49 @@ def _observe_auth_duration(t0: float) -> None:
         pass
 
 
+# Operational control paths moved OFF the debug gate by ADR-0013 (v5.88.2).
+# They remain protected by bearer auth (401 without a token) and, for the
+# dangerous ones, an in-handler confirm field (restart, vacuum). Carving the
+# three NAMED actions (not the whole /api/control/action/ prefix) means any
+# future, unreviewed action defaults back to gated — fail-safe.
+_UNGATED_OPS_PATHS: frozenset[str] = frozenset(
+    {
+        "/api/control/action/consolidate",
+        "/api/control/action/reembed",
+        "/api/control/action/vacuum",
+    }
+)
+_UNGATED_OPS_PREFIXES: tuple[str, ...] = ("/api/control/restart/",)
+
+
 def _is_debug_api_path(path: str, method: str = "GET") -> bool:
     """Return True when path+method is gated by YADGAR_DEBUG_APIS_ENABLED.
 
-    Covers /api/control/config, /api/control/action/*, /api/control/restart/*,
-    and /api/logs/* (v5.52.0 log streaming endpoints).
     Explicitly excludes /api/control/update (governed by YADGAR_UPDATE_DEBUG_APIS_ENABLED).
 
     ADR-0011 (v5.88.1): ``/api/control/config`` is NOT gated for ANY method —
     config reads AND writes are usable without the debug flag. Reads are
     non-sensitive (redacted knobs skipped, env-sourced knobs render locked);
     writes are protected instead by (a) bearer auth (still required by this
-    middleware) and (b) the env-locked 409 refusal in the control route
-    (env-sourced knobs still cannot be yaml-written). The debug flag previously
-    blocked the live UI from saving any config edit.
+    middleware) and (b) the env-locked 409 refusal in the control route.
 
-    The genuinely dangerous control paths — ``/api/control/action/*`` and
-    ``/api/control/restart/*`` — and ``/api/logs/*`` stay behind the flag.
+    ADR-0013 (v5.88.2): the OPERATIONAL control endpoints are ALSO ungated —
+    ``/api/control/action/{consolidate,reembed,vacuum}`` and
+    ``/api/control/restart/*``. They are protected by bearer auth instead of the
+    debug flag; restart and vacuum additionally require a typed ``confirm`` field
+    in the handler. Only the three named actions are carved out (not the whole
+    ``/api/control/action/`` prefix), so any future action defaults back to gated.
+
+    The only paths that STAY behind the flag are ``/api/logs/*`` — developer
+    log-stream introspection, not a UI control button.
     """
     if path == "/api/control/config":
         return False
+    if path in _UNGATED_OPS_PATHS:
+        return False
+    for prefix in _UNGATED_OPS_PREFIXES:
+        if path.startswith(prefix):
+            return False
     for prefix in _DEBUG_API_PREFIXES:
         if path.startswith(prefix):
             return True
