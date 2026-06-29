@@ -12,6 +12,11 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 #### Changed
 - **COMET enrichment retired to dormant** (ADR-0004): the en2a ablation proved un-FPA'd COMET net-negative for recall (multi-session R@5 −4.2pt) at ~17h/10-core cost. `COMET_ENRICHMENT_ENABLED` flag default flipped True→False; COMET code retained dormant (NOT deleted; shared `transformers`/`torch` deps untouched; model lazy-loaded so dormant = cost-free). BC-EN2b implemented — daemon emits exactly one startup warning when COMET is disabled, and `/admin/config` now surfaces the flag. (`yadgar/config.py`, `yadgar/config_registry.py`, `yadgar/server/lifecycle.py`)
 
+## [5.88.1] - 2026-06-29
+
+#### Changed
+- **Config-editor writes no longer require `YADGAR_DEBUG_APIS_ENABLED`** (ADR-0011): `POST /api/control/config` is gated by bearer auth + the env-locked 409 only — not the debug-APIs flag. The config editor now saves without a debug toggle. `/api/control/action/*`, `/api/control/restart/*`, `/api/logs/*` stay debug-gated. (`auth_middleware.py`)
+
 ## [5.88.0] - 2026-06-29
 
 #### Fixed

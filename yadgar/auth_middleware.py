@@ -173,13 +173,18 @@ def _is_debug_api_path(path: str, method: str = "GET") -> bool:
     and /api/logs/* (v5.52.0 log streaming endpoints).
     Explicitly excludes /api/control/update (governed by YADGAR_UPDATE_DEBUG_APIS_ENABLED).
 
-    Method-aware (v5.86, car #8): the read-only config viewer
-    ``GET /api/control/config`` is NOT gated — config display is non-sensitive
-    (redacted knobs are skipped server-side, env-sourced knobs render locked), so
-    the panel populates without the debug flag. Bearer auth still applies. Only
-    mutating paths (POST config / action / restart) stay behind the flag.
+    ADR-0011 (v5.88.1): ``/api/control/config`` is NOT gated for ANY method —
+    config reads AND writes are usable without the debug flag. Reads are
+    non-sensitive (redacted knobs skipped, env-sourced knobs render locked);
+    writes are protected instead by (a) bearer auth (still required by this
+    middleware) and (b) the env-locked 409 refusal in the control route
+    (env-sourced knobs still cannot be yaml-written). The debug flag previously
+    blocked the live UI from saving any config edit.
+
+    The genuinely dangerous control paths — ``/api/control/action/*`` and
+    ``/api/control/restart/*`` — and ``/api/logs/*`` stay behind the flag.
     """
-    if path == "/api/control/config" and method.upper() == "GET":
+    if path == "/api/control/config":
         return False
     for prefix in _DEBUG_API_PREFIXES:
         if path.startswith(prefix):
