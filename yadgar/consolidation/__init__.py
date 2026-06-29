@@ -177,6 +177,10 @@ class ConsolidationScheduler(
         # re-embedding mutated old↔old similarity, or on the weekly cadence. Inert
         # unless SIMILARITY_LINKING_INCREMENTAL_ENABLED (default OFF).
         self._maybe_full_reconcile(sleep_stats)
+        # v5.88: precompute + cache the 3D graph layout. Nightly-only (never the
+        # light consolidate_now path) + signature-gated. Inert unless
+        # VIZ_PRECOMPUTED_LAYOUT_ENABLED (default OFF).
+        self._maybe_precompute_graph_layout()
         return stats
 
     # -- Properties --

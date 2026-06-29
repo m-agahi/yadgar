@@ -2373,6 +2373,30 @@ config knobs.
 - **wiring:** Three HTTP routes on the daemon: `GET /api/graph` → `api_graph` → `GraphAPI.get_full_graph()` assembles memory + wiki + entity nodes with all typed edges (temporal, transition, wiki_crossref, memory_wiki, causal, entity-typed-relations, memory_similarity_link) plus clusters[] from real memory_cluster rows (v5.80); `GET /api/graph/neighborhood/{node_id}` → `api_graph_neighborhood` → `GraphAPI.get_neighborhood()` returns the 1–2 hop subgraph around a node (partial implementation — currently returns nodes only, edges=[]) satisfying BC-VZ1; `GET /api/graph/edges?type=semantic` → `api_graph_edges_lazy` → `GraphAPI.get_edges_by_type()` computes O(n²) KNN semantic edges on demand. All routes are reachable with default config.
 - **explanation:** `GraphAPI` is the server-side assembly layer that builds the knowledge graph JSON for the visualization frontend. `get_full_graph` fetches memory nodes (heat-ranked, up to 500), wiki nodes, entity nodes, and assembles all edge types from the storage engine; orphan edges (where an endpoint node is absent) are filtered and counted. v5.80 (#80 viz-fidelity-v2): role vocabulary renamed display→informational; clusters[] added from real memory_cluster rows via get_memory_clusters()+get_cluster_members() — memory_cluster viz-consumption is now LIVE (was DORMANT); memory_similarity_link edges added from CLS-phase near-duplicate links with role=informational; semantic edges remain lazy (off by default, on-demand via /api/graph/edges?type=semantic). `get_neighborhood` provides a node-centric subgraph view for BC-VZ1. `get_edges_by_type` handles the lazy semantic edge path.
 
+### CAP-VIZ-012 — Configurable graph node caps
+
+- **status:** LIVE
+- **category:** viz
+- **settings:** `VIZ_MAX_MEMORIES`, `VIZ_MAX_WIKI`, `VIZ_MAX_ENTITIES`
+- **tools:** —
+- **migrations:** —
+- **bc:** —
+- **refs:** `yadgar/server/http.py::api_graph`, `yadgar/graph_api.py::GraphAPI.get_full_graph`, `yadgar/graph_api.py::_limit_clause`
+- **wiring:** `GET /api/graph` → `api_graph` reads `get_settings().VIZ_MAX_MEMORIES`/`VIZ_MAX_WIKI`/`VIZ_MAX_ENTITIES` (query params `max_memories`/`max_wiki`/`max_entities` override per request) → passes them to `GraphAPI.get_full_graph(max_memories, top_k, include_invalidated, as_of, max_wiki, max_entities)`. Memory + wiki caps become SQL `LIMIT` clauses via the shared `_limit_clause(cap)` helper; the entity cap is a post-fetch slice in `_assemble_entity_nodes` (because `get_all_entities` is shared by 9 callers and already returns `ORDER BY heat DESC`).
+- **explanation:** Three settings bound how many nodes of each type the `/api/graph` payload contains, replacing the prior inconsistent caps (memory hard-defaulted to 500, wiki a hardcoded `LIMIT 200`, entities uncapped). Defaults: `VIZ_MAX_MEMORIES`=500, `VIZ_MAX_WIKI`=200, `VIZ_MAX_ENTITIES`=2000 (entities were unbounded; the live graph holds ~1783). For each knob, a value of `0` or `-1` means unlimited — memory/wiki omit the `LIMIT` clause and entities skip the slice. The knobs live in FIELD_META section `viz_config` (category `viz`) so they are editable from the System→Config editor without a new UI.
+
+### CAP-VIZ-013 — Precomputed server-side graph layout
+
+- **status:** LIVE
+- **category:** viz
+- **settings:** `VIZ_PRECOMPUTED_LAYOUT_ENABLED`, `VIZ_LAYOUT_ITERATIONS`
+- **tools:** `consolidate_now`
+- **migrations:** —
+- **bc:** —
+- **refs:** `yadgar/graph_layout.py::compute_graph_layout`, `yadgar/graph_layout.py::graph_signature`, `yadgar/storage/ops.py::get_graph_layout_cache`, `yadgar/storage/ops.py::set_graph_layout_cache`, `yadgar/consolidation/orchestrator.py::_maybe_precompute_graph_layout`, `yadgar/server/http.py::api_graph`
+- **wiring:** OFF by default. When `VIZ_PRECOMPUTED_LAYOUT_ENABLED` is true, the consolidation cycle's `_run_post_cycle_tasks` calls `_maybe_precompute_graph_layout` — gated by a graph-signature check so it is a fast no-op when the graph shape is unchanged, and gated to the nightly/full path so it never blocks the ≤30s light `consolidate_now` budget. When the signature changed it runs `compute_graph_layout` (seeded `networkx.spring_layout(dim=3, iterations=VIZ_LAYOUT_ITERATIONS)`) and persists `{signature, positions, computed_at}` via `set_graph_layout_cache`. `GET /api/graph` → `api_graph`, when the flag is on and the cached signature matches the live graph, attaches `x`/`y`/`z` to each node from `get_graph_layout_cache`; new/uncached nodes get no position (the client places them).
+- **explanation:** The viz historically ran a d3-force COLD layout client-side on every load (~15s for thousands of nodes). This capability moves the layout server-side: computed once during consolidation, cached keyed by an order-independent graph signature (node ids + edge endpoints), and served via `/api/graph` so the viz seeds positions and runs a tiny cooldown for a near-instant first paint. Compute uses capped-iteration seeded `spring_layout` (networkx is already a dep; deterministic via fixed seed + sorted node ids). It is gated three ways — flag, signature-unchanged no-op, and nightly-only — so it never blocks the daemon. Composes with the v5.87 localStorage warm-start (server positions take priority), v5.87.1 camera-fit, and v5.86 idle-pause. Default OFF preserves current behavior exactly (no positions in the payload).
+
 ### CAP-INFRA-001 — Request-path thinness + async threading invariants
 
 - **status:** LIVE

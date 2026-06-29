@@ -151,6 +151,45 @@ class _OrchestratorMixin:
             record_exception("consolidation.phase_full_reconcile_links", _exc)
             logger.exception("Full similarity-link reconcile failed")
 
+    def _maybe_precompute_graph_layout(self) -> None:
+        """v5.88: precompute + cache the 3D graph layout (nightly path only).
+
+        Gated three ways so it never blocks the daemon: (1) the
+        VIZ_PRECOMPUTED_LAYOUT_ENABLED flag (default OFF), (2) a graph-signature
+        no-op — when the live graph shape matches the cached signature nothing is
+        recomputed, and (3) it is only called from run_nightly_consolidation, so
+        the light consolidate_now budget is never charged the spring_layout cost.
+        Non-fatal: any failure is logged + recorded, never raised.
+        """
+        if not getattr(self._settings, "VIZ_PRECOMPUTED_LAYOUT_ENABLED", False):
+            return
+        try:
+            from yadgar.graph_api import GraphAPI  # noqa: PLC0415
+            from yadgar.graph_layout import compute_graph_layout, graph_signature  # noqa: PLC0415
+
+            # Lay out the FULL uncapped graph (caps=0) so positions stay stable
+            # when the per-request /api/graph node caps change.
+            data = GraphAPI(self._storage).get_full_graph(0, 8, False, None, 0, 0)
+            nodes, edges = data.get("nodes", []), data.get("edges", [])
+            sig = graph_signature(nodes, edges)
+            cached = self._storage.get_graph_layout_cache()
+            if cached and cached.get("signature") == sig:
+                return  # graph shape unchanged — keep the cached layout
+
+            _t = time.monotonic()
+            iterations = getattr(self._settings, "VIZ_LAYOUT_ITERATIONS", 50)
+            logger.info("phase_start: precompute_graph_layout nodes=%d", len(nodes))
+            positions = compute_graph_layout(nodes, edges, dim=3, iterations=iterations)
+            self._storage.set_graph_layout_cache(sig, positions, datetime.now(UTC).isoformat())
+            _dur_ms = int((time.monotonic() - _t) * 1000)
+            logger.info("phase_end: precompute_graph_layout duration_ms=%d", _dur_ms)
+            _warn_slow_phase("precompute_graph_layout", _dur_ms)
+        except Exception as _exc:
+            from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+
+            record_exception("consolidation.phase_precompute_graph_layout", _exc)
+            logger.exception("Precompute graph layout failed")
+
     def _run_episodic_phases(self, stats: dict) -> None:
         """Phase group 1: decay, episode processing, pruning, duplicate merge."""
         _t = time.monotonic()

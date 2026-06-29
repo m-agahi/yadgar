@@ -93,6 +93,41 @@ class _OpsMixin:
             {"ts": value, "now": self._now_iso()},
         )
 
+    # --------------------------------------------------- Graph Layout Cache
+    # v5.88: precomputed server-side 3D graph layout. A single singleton row
+    # holds {signature, positions, computed_at} so /api/graph can attach x/y/z
+    # when the flag is on and the cached signature still matches the live graph.
+
+    @trace_span("storage.ops.get_graph_layout_cache")
+    def get_graph_layout_cache(self) -> dict | None:
+        """Return the cached layout {signature, positions, computed_at}, or None.
+
+        ``positions`` is a ``{node_id: [x, y, z]}`` map. Returns None when no
+        layout has been computed yet.
+        """
+        rows = self._q("SELECT signature, positions, computed_at FROM graph_layout_cache:current")
+        if not rows or not rows[0].get("signature"):
+            return None
+        row = rows[0]
+        return {
+            "signature": str(row["signature"]),
+            "positions": dict(row.get("positions") or {}),
+            "computed_at": str(row.get("computed_at") or ""),
+        }
+
+    @trace_span("storage.ops.set_graph_layout_cache")
+    def set_graph_layout_cache(self, signature: str, positions: dict, computed_at: str) -> None:
+        """Upsert the singleton precomputed-layout row in place.
+
+        ``positions`` is bound as a parameter ($pos) so SurrealDB serialises the
+        nested object safely (no raw interpolation).
+        """
+        self._q(
+            "UPSERT graph_layout_cache:current SET "
+            "signature = $sig, positions = $pos, computed_at = $ts, updated_at = $now",
+            {"sig": signature, "pos": positions, "ts": computed_at, "now": self._now_iso()},
+        )
+
     # ------------------------------------------------------------------ Stats
 
     @trace_span("storage.ops.get_memory_stats")

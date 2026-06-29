@@ -1193,6 +1193,7 @@ class _MigrationsMixin:
             "relationship",
             "consolidation_log",
             "consolidation_meta",
+            "graph_layout_cache",
             "file_hash",
             "memory_cluster",
             "prospective_memory",

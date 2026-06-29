@@ -1457,16 +1457,37 @@ async def api_graph(request: Request) -> JSONResponse:
             _resp = JSONResponse({"nodes": [], "edges": []}, status_code=503)
             _hook_observe_response("api_graph", _resp.status_code)
             return _resp
+        from yadgar.config import get_settings  # noqa: PLC0415
+
+        _cfg = get_settings()
+        # Caps are configurable knobs (VIZ_MAX_*); query params override per-request.
+        # 0 or -1 = unlimited (graph_api omits the LIMIT / skips the entity slice).
         try:
-            max_mem = int(request.query_params.get("max_memories", 500))
+            max_mem = int(request.query_params.get("max_memories", _cfg.VIZ_MAX_MEMORIES))
         except (ValueError, TypeError) as _e:
-            max_mem = 500
+            max_mem = _cfg.VIZ_MAX_MEMORIES
         try:
             top_k = int(request.query_params.get("top_k", 8))
         except (ValueError, TypeError) as _e:
             top_k = 8
+        try:
+            max_wiki = int(request.query_params.get("max_wiki", _cfg.VIZ_MAX_WIKI))
+        except (ValueError, TypeError) as _e:
+            max_wiki = _cfg.VIZ_MAX_WIKI
+        try:
+            max_entities = int(request.query_params.get("max_entities", _cfg.VIZ_MAX_ENTITIES))
+        except (ValueError, TypeError) as _e:
+            max_entities = _cfg.VIZ_MAX_ENTITIES
         _t0 = time.time()
-        data = await asyncio.to_thread(GraphAPI(_st._storage).get_full_graph, max_mem, top_k)
+        data = await asyncio.to_thread(
+            GraphAPI(_st._storage).get_full_graph,
+            max_mem,
+            top_k,
+            False,
+            None,
+            max_wiki,
+            max_entities,
+        )
         _elapsed_ms = (time.time() - _t0) * 1000.0
         try:
             from yadgar.metrics import yadgar_viz_api_graph_duration_ms  # noqa: PLC0415
@@ -1474,6 +1495,16 @@ async def api_graph(request: Request) -> JSONResponse:
             yadgar_viz_api_graph_duration_ms.observe(_elapsed_ms)
         except Exception:
             pass
+        # v5.88: attach precomputed positions (by node-id) when the flag is on
+        # and a layout cache exists. Default OFF → no x/y/z (current behavior).
+        if getattr(_cfg, "VIZ_PRECOMPUTED_LAYOUT_ENABLED", False):
+            try:
+                from yadgar.graph_layout import attach_cached_positions  # noqa: PLC0415
+
+                _cache = await asyncio.to_thread(_st._storage.get_graph_layout_cache)
+                attach_cached_positions(data, _cache, enabled=True)
+            except Exception:
+                logger.debug("attach_cached_positions failed (non-fatal)", exc_info=True)
         return JSONResponse(data, headers=_CORS)
     except Exception as _exc:
         _caught_exc = _exc

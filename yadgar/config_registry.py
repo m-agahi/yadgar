@@ -198,6 +198,13 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_VIZ_SEARCH_MATCH_COLOR", "#ffffff", "string"),
     ConfigEntry("YADGAR_VIZ_SEARCH_PINNED_COLOR", "#ffd700", "string"),
     ConfigEntry("YADGAR_VIZ_SEARCH_DIM_OPACITY", "0.18", "float"),
+    # ── Graph node caps (v5.88; 0 or -1 = unlimited) ─────────────────────────
+    ConfigEntry("YADGAR_VIZ_MAX_MEMORIES", "500", "int"),
+    ConfigEntry("YADGAR_VIZ_MAX_WIKI", "200", "int"),
+    ConfigEntry("YADGAR_VIZ_MAX_ENTITIES", "2000", "int"),
+    # ── Precomputed server-side graph layout (v5.88; default OFF) ────────────
+    ConfigEntry("YADGAR_VIZ_PRECOMPUTED_LAYOUT_ENABLED", "false", "bool"),
+    ConfigEntry("YADGAR_VIZ_LAYOUT_ITERATIONS", "50", "int"),
     # ── DB path (embedded mode) ──────────────────────────────────────────────
     ConfigEntry("YADGAR_DB_PATH", str(_paths.DB_PATH), "string"),
     # ── OTLP / Tempo exporter ────────────────────────────────────────────────

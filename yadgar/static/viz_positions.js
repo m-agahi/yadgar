@@ -126,3 +126,25 @@ export function parsePositionStore(json) {
 export function serializePositionStore(map) {
   return JSON.stringify(map || {});
 }
+
+/**
+ * Count nodes that arrive already carrying a finite (x, y) position (v5.88).
+ *
+ * The server-side precomputed-layout feature (VIZ_PRECOMPUTED_LAYOUT_ENABLED)
+ * attaches x/y/z to nodes in the /api/graph payload. Those nodes are already
+ * seeded — so the localStorage warm-start restore (which only touches nodes
+ * WITHOUT finite x) leaves them alone and server positions take priority. This
+ * counter lets the caller know the payload was server-seeded so it can cap
+ * cooldownTicks for a near-instant render (same path as the localStorage
+ * warm-start), instead of running a full cold force settle.
+ *
+ * @param {Array<{x?, y?}>} nodes
+ * @returns {number} count of nodes with finite x AND y
+ */
+export function countSeededPositions(nodes) {
+  let count = 0;
+  for (const n of (nodes || [])) {
+    if (n && _isFiniteNum(n.x) && _isFiniteNum(n.y)) count++;
+  }
+  return count;
+}

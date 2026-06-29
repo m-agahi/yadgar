@@ -18,7 +18,37 @@ import {
   pruneStalePositions,
   parsePositionStore,
   serializePositionStore,
+  countSeededPositions,
 } from './viz_positions.js';
+
+describe('countSeededPositions (v5.88 server precomputed layout)', () => {
+  it('counts nodes that arrive with finite x AND y', () => {
+    const nodes = [
+      { id: 'a', x: 1, y: 2, z: 3 }, // server-seeded
+      { id: 'b', x: 4, y: 5 }, // server-seeded (2D)
+      { id: 'c' }, // bare — client must place
+    ];
+    expect(countSeededPositions(nodes)).toBe(2);
+  });
+
+  it('returns 0 when no node carries a position (default OFF payload)', () => {
+    expect(countSeededPositions([{ id: 'a' }, { id: 'b' }])).toBe(0);
+  });
+
+  it('ignores nodes with NaN/Infinity coords', () => {
+    const nodes = [
+      { id: 'a', x: NaN, y: 2 },
+      { id: 'b', x: 1, y: Infinity },
+      { id: 'c', x: 1, y: 2 },
+    ];
+    expect(countSeededPositions(nodes)).toBe(1);
+  });
+
+  it('handles null/empty input', () => {
+    expect(countSeededPositions(null)).toBe(0);
+    expect(countSeededPositions([])).toBe(0);
+  });
+});
 
 describe('serializeNodePositions', () => {
   it('keeps nodes with finite x and y', () => {

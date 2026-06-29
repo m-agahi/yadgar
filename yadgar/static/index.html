@@ -1812,6 +1812,19 @@ function _parsePositionStore(json) {
     return v;
   } catch { return {}; }
 }
+// v5.88: count nodes that arrive already carrying a finite (x,y) position. The
+// server precomputed-layout feature attaches x/y/z in the /api/graph payload;
+// those nodes are already seeded so the localStorage restore (which only touches
+// nodes WITHOUT finite x) leaves them alone — server positions take priority.
+// A non-zero count means the payload was server-seeded → cap cooldownTicks for a
+// near-instant render. Inline copy of viz_positions.countSeededPositions.
+function _countSeededPositions(nodes) {
+  let count = 0;
+  for (const n of (nodes || [])) {
+    if (n && _isFiniteNum(n.x) && _isFiniteNum(n.y)) count++;
+  }
+  return count;
+}
 // Read the persisted store (safe — never throws).
 function _loadSavedPositions() {
   try { return _parsePositionStore(localStorage.getItem(_POS_STORE_KEY)); }
@@ -2448,6 +2461,15 @@ async function loadGraph() {
     const posMap = {};
     for (const n of allNodes) { if (n.x != null) posMap[n.id] = { x: n.x, y: n.y, vx: n.vx, vy: n.vy }; }
     allNodes = d.nodes || [];
+    // v5.88: server precomputed layout — count nodes that arrived already
+    // carrying x/y/z from /api/graph (VIZ_PRECOMPUTED_LAYOUT_ENABLED). On a FRESH
+    // page reload (the slow cold-load case this targets) the in-session posMap is
+    // empty, so server positions survive the pass below, and the localStorage
+    // restore further down only touches nodes WITHOUT finite x — so server
+    // positions take priority over localStorage on first paint. (On an in-session
+    // reload posMap holds fresher settled x/y which intentionally win, same as
+    // v5.87 — server z is kept; the cooldown relaxes any mix.)
+    const _serverSeeded = _countSeededPositions(allNodes);
     for (const n of allNodes) { const p = posMap[n.id]; if (p) Object.assign(n, p); }
     // v5.87 C2 warm-start: on a FRESH page reload the in-session posMap is empty
     // (allNodes was []), so seed positions from the localStorage store. Only
@@ -2458,7 +2480,9 @@ async function loadGraph() {
       allNodes.filter(n => !_isFiniteNum(n.x)),
       _loadSavedPositions(),
     );
-    _warmStarted = _seeded > 0;
+    // Warm-started when EITHER the server seeded positions OR localStorage did —
+    // both let initGraph cap cooldownTicks for a near-instant render.
+    _warmStarted = (_serverSeeded > 0) || (_seeded > 0);
     allLinks = d.edges || [];
     // v5.10.9: filter orphan edges before passing to force-graph library.
     // force-graph throws 'node not found: <id>' synchronously when a link references
