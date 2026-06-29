@@ -1,7 +1,9 @@
 # PLAN — Wiki-repo BUILT-IN: full buildout (inert → live → discoverable → fn-parity)
 
+> **STATUS: IN REVIEW — DO NOT BUILD.** Awaiting user decisions on §4 (open decisions). This plan supersedes the open portion of `wiki-repo-builtin.md`. Last review pass: 2026-06-29.
+
 **Date:** 2026-06-29
-**Status:** DRAFT — supersedes the open portion of `docs/plans/wiki-repo-builtin.md`
+**Status:** IN REVIEW — DO NOT BUILD (see banner above). Supersedes the open portion of `docs/plans/wiki-repo-builtin.md`
 (which shipped #36: module-level generator + migration 024 hash/source_file columns +
 store-bridge schema + the negative `fn:`/`api:` exclusion fix). This doc is the
 end-to-end completion plan; it does **not** re-derive #36, it builds on it.
@@ -55,6 +57,127 @@ after any phase. This plan is deliberately written so they can.
 | 6's "show as clusters in viz" | Deterministic package-path grouping of `wiki:code` nodes in `graph_api.py`. NOT community detection, NOT memory-ification. |
 | 2 (auto-trigger) | **Nudge-first** (P1, like ADR/agent-prompt nudges). Auto-dispatch behind an I25 knob, **default OFF** — auto-default is a runaway risk. |
 | 7 (#47 fn parity) | **Split 80/20.** P3a fn-hash manifest (M-L, drops external skill). P3b per-fn pages (XL, questionable value). |
+
+---
+
+## 0b. Design rationale & pushbacks
+
+This section is the **why** layer for a cold reviewer: it expands every row of the
+"What collapses" table above into the *reasoning* behind the verdict, names each
+rejected alternative and *why* it was rejected, and consolidates the advisor catches
+in one place. Implementation deltas for each point live in §2 (cross-referenced); this
+section does not restate them — read it for the reasoning, §2 for the how.
+
+### Pushback (a) — the "clusters" ask dissolves; it isn't the hard part
+
+The user framed clustering as the hard, uncertain part. It is only hard under the
+(wrong) assumption that wiki pages must acquire a `cluster_id` the way memories do.
+Drop that assumption and the ask splits into two pieces that are each trivial:
+
+- **"Recall code docs as a cluster"** reduces to the `page_type='code'` filter
+  (P2, §2 Point 5+6) plus slug-prefix grouping. Slugs are package-pathed
+  (`code:yadgar.retrieval.core`), so filtering by `page_type` and ordering by slug
+  *is* the cluster — deterministically, with no new machinery. This is **redundant
+  with the code-index anchor in P2** and needs no `cluster_id`.
+- **"Visible as a cluster in the viz"** reduces to deterministic **package-path
+  grouping** of `wiki:code` nodes in `/api/graph` (§2 Point 6-viz): string-split the
+  module path on its top-level package, emit one group per package. Bounded,
+  deterministic, stable across runs, zero new tables.
+
+**REJECTED alternatives and why:**
+
+- **(i) Memory-ifying code pages (option 6c).** Category error. Code pages are
+  deterministic, regenerated docs that should never decay and should never compete for
+  heat. Putting them in the heat-ranked, decay-gated *memory* store would pollute it
+  with hundreds of code-doc rows that crowd out real episodic memories in `recall`,
+  corrupt heat statistics, and churn consolidation. Code docs are `wiki_page` rows by
+  nature; they must stay there. Hard no.
+- **(ii) Community detection over the wiki-link graph (option 6b).** The
+  `wiki_crossref` link graph and Louvain machinery both exist, so it is *tempting*.
+  But it is **non-deterministic** machinery run to produce a result a one-line string
+  split on the module path gives for free — and it would make the viz grouping jitter
+  between runs. Machinery for no gain.
+
+### Pushback (b) — "schema/MCP for hash" + "MCP vs queue" collapse into ONE batch tool
+
+Original asks 1 (write-seam: schema/MCP for the generator hash) and 4 (MCP vs
+file-queue upload) are the *same* problem viewed twice. Both are answered by a single
+dedicated batch tool, **`wiki_upsert_code_pages`** (idempotent, slug-keyed,
+deletion-reconciling, similarity-gate-exempt, one transaction for the whole list —
+full design in §2 Point 1+4).
+
+**REJECTED — extend `wiki_add` instead:**
+
+- Its UPDATE path **tag-MERGES and confidence-MAXes** (`wiki.py:664-675`). That is
+  *correct* for curated prose (accumulate knowledge over edits) but **WRONG for
+  deterministic regenerated code pages**, where each regen must *fully replace* the
+  prior content — merge semantics would accumulate cruft across regens.
+- `wiki_add` already carries ~14 params; `hash`/`source_file` are meaningless for the
+  ~99% of pages that are `reference`/`adr`/etc. and would invite misuse via bloat.
+
+**REJECTED — the file-queue / `~/.yadgar/queue/` bulk path:**
+
+- It **violates the project's own MCP-is-the-only-write-path hard rule** (the
+  DLQ / similarity-gate write contract). Bypassing the gate lands ungoverned rows.
+- It **loses the transactional `wiki_page` + `wiki_page_version` write integrity**
+  that `insert_wiki_page` guarantees. The throughput concern the queue was meant to
+  address is already solved by the tool's single batch transaction.
+
+A dedicated batch tool gives idempotent slug-keyed **upsert** + **replace-semantics**
+(not merge) + transactional writes, all through the sanctioned MCP surface.
+
+### Pushback (c) — auto-trigger on-by-default is a self-inflicted runaway
+
+The user asked for an auto-trigger on the stop-hook. The stop-hook fires every ~25
+human messages. An **on-by-default** auto-regen would, during normal work, spawn
+repeated background agents and DB-write storms — and risk thrash if a file is
+mid-edit. That is a self-inflicted runaway. Don't ship it that way.
+
+**Design (full deltas in §2 Point 2):** **NUDGE-first** — mirror the existing
+ADR / agent-prompt capture nudges in `project.py` by surfacing "N code pages stale,
+run repo-wiki update" in `recommended_actions`. The agent then decides. Auto-dispatch
+is available but gated behind **all** of: a default-**OFF** I25 knob
+(`YADGAR_REPO_WIKI_AUTO_REFRESH_ENABLED=false`) **AND** a cadence floor
+(`YADGAR_REPO_WIKI_REFRESH_MIN_INTERVAL_S` ≥ 3600s — at most hourly even when on)
+**AND** default-branch-only. The user gets the auto-trigger they asked for, opt-in,
+with guardrails that make a runaway impossible.
+
+**Also (the #47 split):** #47 is **not one XL block**. Splitting it is part of this
+pushback because presenting it monolithically forces an all-or-nothing decision on
+work with wildly different value/cost:
+
+- **P3a — fn-hash manifest** (M-L, the cheap 80%): AST body capture +
+  `SHA256(sig+body)` per function, stored in the module-page frontmatter manifest.
+  This alone reaches per-fn staleness parity, which **lets the external skill be
+  dropped** (and the two-store `.local-review/wiki/` duplication killed at its source).
+- **P3b — per-fn pages + index-IR synthesis** (XL): hundreds-to-thousands of rows plus
+  **non-deterministic LLM index synthesis**. Gold-plating with **no proven consumer** —
+  module pages already render every function as a section. Recommend **defer
+  indefinitely** until a concrete fn-granular recall use-case appears.
+
+### Advisor catches
+
+Two failure modes a naive build would miss. Spelled out here so they are not lost in
+the per-point deltas.
+
+- **Deletion-reconcile.** Regen must **DEPRECATE orphan pages** for deleted/renamed
+  modules — not only upsert the live ones. Slug is deterministic from the module path,
+  so a re-run cleanly overwrites *surviving* modules; but a deleted/renamed module
+  leaves a `page_type='code'` page whose `source_file` no longer exists on disk. If the
+  tool only upserts, those orphans accumulate and the stale checker flags ghosts it can
+  **never refresh** — the staleness signal then lies. Spec the reconcile step: the tool
+  accepts the full current slug-set, and for any existing code page in
+  `directory_context` whose slug is not in the incoming set (or whose `source_file` is
+  gone) it marks the page deprecated (deprecated tag + frontmatter flag) / tombstones it
+  — never silently leaves it live. (Implementation: §2 Point 1+4 "Idempotency +
+  DELETION".)
+- **Supersession.** This plan **supersedes the still-open portion of
+  `docs/plans/wiki-repo-builtin.md`**. If that supersession is not made explicit, the
+  build will run from two live plans and recreate the exact **two-store duplication**
+  (disk `.local-review/wiki/*.md` vs the DB) the subsystem already suffers from. After
+  this plan is accepted, mark `wiki-repo-builtin.md` SUPERSEDED. (Cross-link: the
+  "Reconciliation with `docs/plans/wiki-repo-builtin.md`" section at the end of this
+  document.)
 
 ---
 
@@ -347,19 +470,41 @@ on `wiki_list`/`wiki_query`/`recall(type=wiki)` (P2).
    `wiki_add` untouched. Confirm, or do you want `wiki_add` extended despite the
    merge-semantics + param-bloat downsides?
 2. **Deletion handling: deprecate vs delete.** Orphan code pages (module deleted/
-   renamed) — mark `deprecated` (keep history, visible) or hard-delete? Plan leans
-   deprecate-then-sweep.
+   renamed) — mark `deprecated` (keep history, visible) or hard-delete?
+   **Options:** deprecate-then-sweep | hard-delete on reconcile.
+   **Rec:** deprecate. **Why:** reversible and preserves page history /
+   `wiki_page_version` audit trail; a hard-delete on a false-positive reconcile (e.g. a
+   transient scan miss) is unrecoverable.
 3. **Auto-refresh default.** Plan ships `YADGAR_REPO_WIKI_AUTO_REFRESH_ENABLED=false`
-   (nudge-only by default). You asked for auto-trigger — confirm opt-in is acceptable,
-   or do you insist on auto-on (against the runaway-risk recommendation)?
-4. **Refresh cadence floor.** Default min interval 3600s when auto is ON. Adjust?
-5. **project_brief TOC verbosity.** Summary (count + top package prefixes) vs fuller
-   listing. Plan strongly recommends summary-only.
+   (nudge-only by default). You asked for auto-trigger.
+   **Options:** opt-in (default OFF, nudge-first) | auto-on by default.
+   **Rec:** opt-in / default OFF. **Why:** auto-on fires on a ~25-message cadence →
+   repeated agent spawns + DB-write storms during normal work = self-inflicted runaway
+   (see pushback (c)); nudge-first gives the user the trigger without the blast radius.
+4. **Refresh cadence floor.** Min interval between auto-refreshes when auto is ON.
+   **Options:** 3600s (default) | lower | higher.
+   **Rec:** 3600s. **Why:** lower → write-storm / mid-edit thrash risk on busy repos;
+   higher → staleness window widens. 3600s caps refresh at once/hour while keeping
+   pages reasonably fresh.
+5. **project_brief TOC verbosity.** How much code-wiki structure to surface in the brief.
+   **Options:** summary (count + top package prefixes) | full slug listing.
+   **Rec:** count + anchor / summary-only. **Why:** a full listing on a 300-page repo
+   blows the brief's token budget and buries the actually-hot context (brief bloat); a
+   count + package-prefix summary + the single index anchor gives structure without noise.
 6. **P3b per-fn pages — build or drop?** Plan recommends **drop indefinitely** (P3a
-   captures the value). Confirm, or is there a concrete fn-granular recall use-case
-   that justifies the XL + non-deterministic index synthesis?
-7. **External skill removal timing.** Drop the `.local-review/wiki/` external skill at
-   end of P3a (parity achieved) — or keep it running in parallel for a grace period?
+   captures the value).
+   **Options:** build P3b (per-fn pages + index-IR) | drop indefinitely.
+   **Rec:** drop. **Why:** no proven consumer — module pages already render every
+   function as a section; P3b adds hundreds-to-thousands of rows + non-deterministic LLM
+   index synthesis for fn-granular recall nothing currently needs.
+7. **External skill removal timing.** When to drop the `.local-review/wiki/` external
+   skill.
+   **Options:** remove after P3a green/verified | keep both in parallel for a grace
+   period.
+   **Rec:** remove after P3a green. **Why:** P3a achieves per-fn hash parity, so the
+   external skill becomes pure duplication once it is verified working; keeping both
+   perpetuates the two-store split this plan exists to kill. Remove once P3a is verified,
+   not before.
 
 ---
 
