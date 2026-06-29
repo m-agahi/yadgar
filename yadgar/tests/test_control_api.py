@@ -94,15 +94,15 @@ def _auth_headers() -> dict:
 
 
 def test_403_when_debug_apis_disabled(monkeypatch, tmp_path):
-    """WRITES + actions stay gated by YADGAR_DEBUG_APIS_ENABLED.
+    """Dangerous mutating paths stay gated by YADGAR_DEBUG_APIS_ENABLED.
 
-    GET /api/control/config is intentionally NOT in this list — the read-only
-    config viewer is usable without the debug flag (see
-    test_config_get_not_gated_by_debug_flag). Only mutating paths are gated.
+    ADR-0011: POST /api/control/config is NO LONGER in this list — config writes
+    are protected by bearer auth + the env-locked 409 refusal, not the debug
+    flag (see test_config_post_not_gated_by_debug_flag). Action and restart
+    paths remain genuinely dangerous and stay gated.
     """
     client = _make_app(monkeypatch, debug_apis_on=False)
     paths = [
-        ("POST", "/api/control/config"),
         ("POST", "/api/control/action/consolidate"),
         ("POST", "/api/control/restart/yadgar"),
     ]
@@ -115,6 +115,102 @@ def test_403_when_debug_apis_disabled(monkeypatch, tmp_path):
         assert body.get("error") == "debug APIs disabled", (
             f"Expected error='debug APIs disabled' for {path}, got {body}"
         )
+
+
+def test_config_post_not_gated_by_debug_flag(monkeypatch, tmp_path):
+    """ADR-0011: POST /api/control/config succeeds WITHOUT the debug flag.
+
+    Config writes are protected by (a) bearer auth (still required) and (b) the
+    env-locked 409 refusal in the control route — NOT the debug-APIs gate. On the
+    live UI the editor must be able to save with the flag off. This is the RED
+    test for the fix: pre-fix the middleware returned 403 'debug APIs disabled'.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    # Use a non-env-locked float knob so the write is not refused with 409.
+    monkeypatch.delenv("YADGAR_VIZ_NODE_SIZE_3D", raising=False)
+    client = _make_app(monkeypatch, debug_apis_on=False)
+    resp = client.post(
+        "/api/control/config",
+        json={"name": "YADGAR_VIZ_NODE_SIZE_3D", "value": 9.0},
+        headers=_auth_headers(),
+    )
+    assert resp.status_code != 403, (
+        f"POST config must NOT be debug-gated (ADR-0011); got 403: {resp.text}"
+    )
+    assert resp.status_code == 200, (
+        f"POST config with valid auth + gate off must succeed; got {resp.status_code}: {resp.text}"
+    )
+
+
+def test_config_post_still_requires_auth(monkeypatch, tmp_path):
+    """ADR-0011: un-gating the debug flag does NOT remove bearer auth on POST config."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("YADGAR_VIZ_NODE_SIZE_3D", raising=False)
+    client = _make_app(monkeypatch, debug_apis_on=False)
+    resp = client.post(
+        "/api/control/config",
+        json={"name": "YADGAR_VIZ_NODE_SIZE_3D", "value": 9.0},
+    )  # no auth header
+    assert resp.status_code == 401, (
+        f"POST config must still require auth; got {resp.status_code}: {resp.text}"
+    )
+
+
+def test_config_post_env_locked_returns_409_when_debug_off(monkeypatch, tmp_path):
+    """ADR-0011: env-locked knob POST → 409 even with debug flag OFF.
+
+    The env-lock 409 refusal is the write protection that replaces the debug
+    gate for config writes — it must fire regardless of YADGAR_DEBUG_APIS_ENABLED.
+    """
+    knob_name = "YADGAR_VIZ_HEALTH_REFRESH_SEC"
+    monkeypatch.setenv(knob_name, "30")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    client = _make_app(
+        monkeypatch,
+        debug_apis_on=False,
+        extra_env={knob_name: "30"},
+    )
+    resp = client.post(
+        "/api/control/config",
+        json={"name": knob_name, "value": 60},
+        headers=_auth_headers(),
+    )
+    assert resp.status_code == 409, (
+        f"Expected 409 for env-locked knob with debug off, got {resp.status_code}: {resp.text}"
+    )
+
+
+def test_action_restart_stay_debug_gated(monkeypatch, tmp_path):
+    """Regression guard: action + restart paths stay 403 with debug flag OFF.
+
+    ADR-0011 moves ONLY config-write out of the gate. These genuinely dangerous
+    paths must NOT be accidentally un-gated.
+    """
+    client = _make_app(monkeypatch, debug_apis_on=False)
+    for path in ("/api/control/action/consolidate", "/api/control/restart/yadgar"):
+        resp = client.post(path, json={}, headers=_auth_headers())
+        assert resp.status_code == 403, (
+            f"{path} must stay debug-gated; got {resp.status_code}: {resp.text}"
+        )
+        assert resp.json().get("error") == "debug APIs disabled"
+
+
+def test_is_debug_api_path_config_ungated_actions_gated():
+    """ADR-0011 unit guard on _is_debug_api_path:
+
+    /api/control/config is ungated for BOTH GET and POST; action/restart/logs
+    stay gated regardless of method.
+    """
+    from yadgar.auth_middleware import _is_debug_api_path
+
+    # Config: ungated for every method (ADR-0011)
+    assert _is_debug_api_path("/api/control/config", "GET") is False
+    assert _is_debug_api_path("/api/control/config", "POST") is False
+    # Dangerous mutating paths stay gated
+    assert _is_debug_api_path("/api/control/action/consolidate", "POST") is True
+    assert _is_debug_api_path("/api/control/restart/yadgar", "POST") is True
+    # Logs streaming stays gated
+    assert _is_debug_api_path("/api/logs/poll", "GET") is True
 
 
 def test_config_get_not_gated_by_debug_flag(monkeypatch, tmp_path):
