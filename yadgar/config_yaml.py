@@ -795,6 +795,29 @@ FIELD_META: dict[str, dict[str, object]] = {
         "desc": "Opacity for non-matched dimmed nodes (default 0.18)",
         "section": "viz_config",
     },
+    "viz_max_memories": {
+        "desc": "Max memory nodes in the /api/graph payload (default 500; 0 or -1 = unlimited)",
+        "section": "viz_config",
+    },
+    "viz_max_wiki": {
+        "desc": "Max wiki nodes in the /api/graph payload (default 200; 0 or -1 = unlimited)",
+        "section": "viz_config",
+    },
+    "viz_max_entities": {
+        "desc": "Max entity nodes in the /api/graph payload (default 2000; 0 or -1 = unlimited)",
+        "section": "viz_config",
+    },
+    "viz_precomputed_layout_enabled": {
+        "desc": (
+            "Precompute + cache 3D graph layout server-side during consolidation "
+            "so /api/graph serves x/y/z for near-instant viz render (default OFF)"
+        ),
+        "section": "viz_config",
+    },
+    "viz_layout_iterations": {
+        "desc": "spring_layout iteration cap for the precomputed layout (default 50; lower=faster)",
+        "section": "viz_config",
+    },
     # memory_blocks (v5.35.1)
     "memory_block_max_per_scope": {
         "desc": "Maximum blocks per (scope, directory) tuple (default 10)",

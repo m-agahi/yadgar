@@ -12,6 +12,15 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 #### Changed
 - **COMET enrichment retired to dormant** (ADR-0004): the en2a ablation proved un-FPA'd COMET net-negative for recall (multi-session R@5 −4.2pt) at ~17h/10-core cost. `COMET_ENRICHMENT_ENABLED` flag default flipped True→False; COMET code retained dormant (NOT deleted; shared `transformers`/`torch` deps untouched; model lazy-loaded so dormant = cost-free). BC-EN2b implemented — daemon emits exactly one startup warning when COMET is disabled, and `/admin/config` now surfaces the flag. (`yadgar/config.py`, `yadgar/config_registry.py`, `yadgar/server/lifecycle.py`)
 
+## [5.88.0] - 2026-06-29
+
+#### Fixed
+- **Heat slider dead + rotated the graph**: `overlays.js` set `.overlay-body` `pointer-events:none`, so the browser hit-tested *through* the slider to the canvas — the slider did nothing and the drag rotated the 3D graph. Interactive controls in floating overlays now get `pointer-events:auto` + a delegated `stopPropagation` (pointerdown/move/wheel) so panel interaction never moves the graph. (`static/overlays.js`)
+
+#### Added
+- **Configurable viz node caps**: `YADGAR_VIZ_MAX_MEMORIES` (500), `YADGAR_VIZ_MAX_WIKI` (200), `YADGAR_VIZ_MAX_ENTITIES` (2000 — previously unbounded). `0`/`-1` = unlimited. Set them in System → Config (category `viz`). `/api/graph` honors them; lets you trade load speed vs. completeness. Note: a truly fast "show everything" view needs a precomputed server-side layout (#63) — uncapping here will load slowly for thousands of nodes. (`graph_api.py`, `server/http.py`, config knobs I25-synced + CAP-VIZ-012)
+- **Precomputed server-side graph layout** (`VIZ_PRECOMPUTED_LAYOUT_ENABLED`, default **off**; #63): the nightly consolidation cycle computes node positions once (capped-iteration `networkx.spring_layout` 3D, ~19s/5000 nodes, backgrounded + signature-cached in a `graph_layout_cache` row); `/api/graph` then serves x/y/z so the viz renders **pre-laid-out** instead of running a ~15s client-side cold layout on every load. Composes with the localStorage warm-start (server positions win on cold load), camera-fit, and idle-pause. Knob `VIZ_LAYOUT_ITERATIONS` (50). Toggle on + smoke-check after deploy. (`graph_api.py`, `consolidation/`, `storage/`, `static/index.html`; I25 + CAP-VIZ-013)
+
 ## [5.87.1] - 2026-06-28
 
 #### Fixed

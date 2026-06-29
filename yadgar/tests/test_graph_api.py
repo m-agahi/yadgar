@@ -107,6 +107,109 @@ class TestMemoryNodeClusterId:
         assert by_id["mem:2"]["cluster_id"] is None
 
 
+class TestNodeCaps:
+    """v5.88 FIX2: each node type has a configurable cap; 0/-1 = unlimited.
+
+    Memory + wiki caps are SQL LIMIT clauses (omitted when unlimited). Entity cap
+    is a post-fetch slice on the heat-ordered rows (get_all_entities is shared by
+    9 callers, so we slice in _assemble_entity_nodes rather than add a limit arg).
+    Tests gate by node-id prefix (mem:/wiki:/entity:) per the existing style.
+    """
+
+    @staticmethod
+    def _routing_mock(mem_rows, wiki_rows, entity_rows):
+        """Mock whose _q routes by query text (memory vs wiki) and records calls."""
+        s = MagicMock()
+        captured = {"queries": []}
+
+        def _q(surql, params=None):
+            captured["queries"].append((surql, params))
+            if "FROM wiki_page" in surql:
+                return wiki_rows
+            if "FROM memory" in surql:
+                return mem_rows
+            return []
+
+        s._q.side_effect = _q
+        s.get_all_transitions.return_value = []
+        s.get_all_wiki_crossrefs.return_value = []
+        s.get_all_causal_edges.return_value = []
+        s.get_relationships_by_types.return_value = []
+        s.get_all_entities.return_value = entity_rows
+        s._captured = captured
+        return s
+
+    @staticmethod
+    def _wiki_row(raw_id):
+        return {
+            "id": raw_id,
+            "title": f"page {raw_id}",
+            "slug": f"slug-{raw_id}",
+            "category": "reference",
+            "tags": [],
+            "links": [],
+            "source_memory_ids": [],
+            "embedding": None,
+            "updated_at": "2024-01-01",
+        }
+
+    @staticmethod
+    def _entity_row(raw_id):
+        return {"id": raw_id, "name": f"ent-{raw_id}", "heat": 1.0}
+
+    def _mem_query(self, s):
+        return next(q for q, _ in s._captured["queries"] if "FROM memory" in q)
+
+    def _wiki_query(self, s):
+        return next(q for q, _ in s._captured["queries"] if "FROM wiki_page" in q)
+
+    # ── Memory cap ────────────────────────────────────────────────────────────
+    def test_memory_cap_applies_limit(self):
+        s = self._routing_mock([_mem_row(1)], [], [])
+        GraphAPI(s).get_full_graph(max_memories=42)
+        mq = self._mem_query(s)
+        assert "LIMIT $lim" in mq, f"memory query missing LIMIT: {mq}"
+        params = next(p for q, p in s._captured["queries"] if "FROM memory" in q)
+        assert params == {"lim": 42}
+
+    def test_memory_cap_zero_is_unlimited(self):
+        s = self._routing_mock([_mem_row(1)], [], [])
+        GraphAPI(s).get_full_graph(max_memories=0)
+        mq = self._mem_query(s)
+        assert "LIMIT" not in mq, f"max_memories=0 must omit LIMIT, got: {mq}"
+
+    # ── Wiki cap ──────────────────────────────────────────────────────────────
+    def test_wiki_cap_applies_limit(self):
+        wiki_rows = [self._wiki_row(i) for i in range(5)]
+        s = self._routing_mock([_mem_row(1)], wiki_rows, [])
+        GraphAPI(s).get_full_graph(max_wiki=3)
+        wq = self._wiki_query(s)
+        assert "LIMIT $lim" in wq, f"wiki query missing parameterised LIMIT: {wq}"
+        params = next(p for q, p in s._captured["queries"] if "FROM wiki_page" in q)
+        assert params == {"lim": 3}
+
+    def test_wiki_cap_minus_one_is_unlimited(self):
+        s = self._routing_mock([_mem_row(1)], [self._wiki_row(1)], [])
+        GraphAPI(s).get_full_graph(max_wiki=-1)
+        wq = self._wiki_query(s)
+        assert "LIMIT" not in wq, f"max_wiki=-1 must omit LIMIT, got: {wq}"
+
+    # ── Entity cap (post-fetch slice) ─────────────────────────────────────────
+    def test_entity_cap_slices_node_set(self):
+        entity_rows = [self._entity_row(i) for i in range(10)]
+        s = self._routing_mock([_mem_row(1)], [], entity_rows)
+        result = GraphAPI(s).get_full_graph(max_entities=4)
+        ent_nodes = [n for n in result["nodes"] if n["id"].startswith("entity:")]
+        assert len(ent_nodes) == 4, f"expected 4 entity nodes, got {len(ent_nodes)}"
+
+    def test_entity_cap_zero_is_unlimited(self):
+        entity_rows = [self._entity_row(i) for i in range(10)]
+        s = self._routing_mock([_mem_row(1)], [], entity_rows)
+        result = GraphAPI(s).get_full_graph(max_entities=0)
+        ent_nodes = [n for n in result["nodes"] if n["id"].startswith("entity:")]
+        assert len(ent_nodes) == 10, f"max_entities=0 must keep all, got {len(ent_nodes)}"
+
+
 class TestOrphanEdgeFilter:
     """v5.10.9: get_full_graph must drop edges whose endpoints are absent from node set.
 

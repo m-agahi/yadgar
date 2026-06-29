@@ -123,7 +123,17 @@ export function initOverlays({ canvasSelector, fadeDebounceMs = 200, storage } =
     else                 ov.classList.remove('collapsed');
   }
 
-  // ── 2. Pointer-events: body=none, grip+controls=auto ────────────────────
+  // ── 2. Pointer-events: body=none, grip+interactive controls=auto ────────
+  // The body stays pointer-events:none so clicks on dead panel space fall
+  // through to the graph. But interactive controls (sliders, checkboxes,
+  // buttons, selects, labels, cluster items) MUST be pointer-events:auto —
+  // otherwise the browser hit-tests *through* them to the canvas, so the
+  // control is dead AND the 3D OrbitControls rotates the graph (v5.87 regression
+  // where the heat slider was left inheriting the body's pointer-events:none).
+  // A delegated stopPropagation listener per body then prevents control pointer
+  // events (incl. dynamically-rendered rows) from bubbling to the canvas-activity
+  // handler / auto-fade.
+  const _interactiveSel = 'input, button, select, label, .cluster-item, .overlay-control';
   for (const ov of overlays) {
     const grip    = ov.querySelector('.overlay-grip');
     const colBtn  = ov.querySelector('.overlay-collapse');
@@ -132,6 +142,24 @@ export function initOverlays({ canvasSelector, fadeDebounceMs = 200, storage } =
     if (body)   body.style.pointerEvents   = 'none';
     if (grip)   grip.style.pointerEvents   = 'auto';
     if (colBtn) colBtn.style.pointerEvents = 'auto';
+
+    if (body) {
+      for (const ctrl of body.querySelectorAll(_interactiveSel)) {
+        ctrl.style.pointerEvents = 'auto';
+      }
+      // Delegated swallow: any pointer/wheel event originating from an auto
+      // control bubbles up to the body, where we stop it before it reaches the
+      // graph canvas. Covers controls rendered after init (edge rows, clusters).
+      const _swallow = e => {
+        const t = e.target;
+        if (t && typeof t.closest === 'function' && t.closest(_interactiveSel)) {
+          e.stopPropagation();
+        }
+      };
+      for (const evt of ['pointerdown', 'pointermove', 'wheel']) {
+        body.addEventListener(evt, _swallow);
+      }
+    }
   }
 
   // ── 3. Drag-reposition via .overlay-grip ─────────────────────────────────

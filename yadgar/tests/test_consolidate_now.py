@@ -116,6 +116,18 @@ class TestLightMode:
 
         assert mock_cons._last_sleep_cycle is None
 
+    def test_consolidate_now_light_skips_layout_precompute(self, mock_state):
+        """v5.88: mode='light' must NOT trigger the graph-layout precompute."""
+        mock_cons, mock_slp = mock_state
+
+        with patch("yadgar.config.get_settings") as mock_cfg:
+            mock_cfg.return_value.ANCHOR_AUDIT_CONSOLIDATION_ENABLED = False
+            from yadgar.server.tools.admin_other import consolidate_now
+
+            consolidate_now(mode="light")
+
+        mock_cons._maybe_precompute_graph_layout.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # 2. full mode runs sleep cycle and anchor audit
@@ -137,6 +149,18 @@ class TestFullMode:
 
         mock_slp.run_sleep_cycle.assert_called_once()
         assert "sleep_cycle" in result
+
+    def test_consolidate_now_full_mode_triggers_layout_precompute(self, mock_state):
+        """v5.88: mode='full' is the manual trigger for the graph-layout precompute."""
+        mock_cons, mock_slp = mock_state
+
+        with patch("yadgar.config.get_settings") as mock_cfg:
+            mock_cfg.return_value.ANCHOR_AUDIT_CONSOLIDATION_ENABLED = False
+            from yadgar.server.tools.admin_other import consolidate_now
+
+            consolidate_now(mode="full")
+
+        mock_cons._maybe_precompute_graph_layout.assert_called_once()
 
     def test_consolidate_now_full_mode_runs_anchor_audit_if_enabled(
         self, mock_state, monkeypatch, request

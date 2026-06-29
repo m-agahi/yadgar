@@ -74,6 +74,17 @@ if not _already_registered:
     gc.callbacks.append(_gc_callback)
 
 
+def _limit_clause(cap: int) -> tuple[str, dict]:
+    """Return (sql_suffix, params) for a node cap. 0 or -1 (any <=0) = unlimited.
+
+    Capped → " LIMIT $lim" + {"lim": cap}; unlimited → ("", {}) so the query
+    omits the LIMIT entirely (v5.88 FIX2 configurable node caps).
+    """
+    if cap <= 0:
+        return "", {}
+    return " LIMIT $lim", {"lim": cap}
+
+
 class GraphAPI:
     """Assembles graph data (nodes + edges) from StorageEngine for visualization."""
 
@@ -89,6 +100,8 @@ class GraphAPI:
         top_k: int = 8,
         include_invalidated: bool = False,
         as_of: str | None = None,
+        max_wiki: int = 200,
+        max_entities: int = 2000,
     ) -> dict:
         """Return full graph: memory + wiki + entity nodes with typed edges.
 
@@ -112,7 +125,7 @@ class GraphAPI:
         edges.extend(transition_edges)
 
         # ── Wiki nodes ────────────────────────────────────────────────────────
-        _wiki_pages, wiki_slug_to_id = self._assemble_wiki_nodes(nodes)
+        _wiki_pages, wiki_slug_to_id = self._assemble_wiki_nodes(nodes, max_wiki)
 
         # ── Wiki cross-reference edges ────────────────────────────────────────
         edges.extend(self._build_wiki_crossref_edges(wiki_slug_to_id))
@@ -121,7 +134,7 @@ class GraphAPI:
         edges.extend(self._build_memory_wiki_edges(wiki_refs_map, wiki_slug_to_id))
 
         # ── Entity nodes (required so entity edges pass orphan filter) ────────
-        self._assemble_entity_nodes(nodes)
+        self._assemble_entity_nodes(nodes, max_entities)
 
         # ── Causal edges (PC-algorithm) ───────────────────────────────────────
         edges.extend(self._build_causal_edges(include_invalidated, as_of))
@@ -165,12 +178,13 @@ class GraphAPI:
         the reverse of wiki_page.source_memory_ids (which is always empty on
         every write path). Used by _build_memory_wiki_edges (P2.1).
         """
+        _suffix, _params = _limit_clause(max_memories)
         try:
             memories = self._s._q(
                 "SELECT id, content, heat, tags, directory_context, created_at, "
                 "slot_index, embedding, cluster_id, wiki_refs FROM memory "
-                "ORDER BY heat DESC LIMIT $lim",
-                {"lim": max_memories},
+                "ORDER BY heat DESC" + _suffix,
+                _params,
             )
         except Exception:
             memories = []
@@ -262,12 +276,19 @@ class GraphAPI:
             )
         return result, weak_hidden
 
-    def _assemble_wiki_nodes(self, nodes: list[dict]) -> tuple[list[dict], dict[str, str]]:
-        """Fetch wiki pages, append node dicts, return (wiki_pages, wiki_slug_to_id)."""
+    def _assemble_wiki_nodes(
+        self, nodes: list[dict], max_wiki: int = 200
+    ) -> tuple[list[dict], dict[str, str]]:
+        """Fetch wiki pages, append node dicts, return (wiki_pages, wiki_slug_to_id).
+
+        max_wiki caps the result (0/-1 = unlimited → no LIMIT clause).
+        """
+        _suffix, _params = _limit_clause(max_wiki)
         try:
             wiki_pages = self._s._q(
                 "SELECT id, title, slug, category, tags, links, source_memory_ids, "
-                "embedding, updated_at FROM wiki_page ORDER BY updated_at DESC LIMIT 200"
+                "embedding, updated_at FROM wiki_page ORDER BY updated_at DESC" + _suffix,
+                _params,
             )
         except Exception:
             wiki_pages = []
@@ -562,7 +583,7 @@ class GraphAPI:
 
     # ── Private helpers ───────────────────────────────────────────────────────
 
-    def _assemble_entity_nodes(self, nodes: list[dict]) -> None:
+    def _assemble_entity_nodes(self, nodes: list[dict], max_entities: int = 2000) -> None:
         """Fetch all entities and append entity:* node dicts to *nodes*.
 
         v5.31.1: entity nodes were removed in v5.0.0 monolith split.  Without
@@ -570,11 +591,17 @@ class GraphAPI:
         the orphan filter — making include_invalidated filtering unobservable
         via get_full_graph().  Restoring entity nodes fixes the orphan filter
         for causal edges while keeping all other edge types unchanged.
+
+        v5.88 FIX2: max_entities caps the node set (0/-1 = unlimited). Sliced
+        post-fetch because get_all_entities is shared by 9 callers; it already
+        returns rows ORDER BY heat DESC, so the slice keeps the hottest N.
         """
         try:
             all_entities = self._s.get_all_entities(include_archived=True)
         except Exception:
             all_entities = []
+        if max_entities > 0:
+            all_entities = all_entities[:max_entities]
         for ent in all_entities:
             raw_id = self._extract_id(ent.get("id"))
             if raw_id is None:

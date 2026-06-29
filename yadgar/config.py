@@ -783,6 +783,16 @@ class Settings(BaseSettings):
     VIZ_SEARCH_MATCH_COLOR: str = "#ffffff"  # stroke for matched (search-pinned) nodes
     VIZ_SEARCH_PINNED_COLOR: str = "#ffd700"  # stroke for pinned (clicked-to-pin) nodes
     VIZ_SEARCH_DIM_OPACITY: float = 0.18  # opacity for non-matched dimmed nodes
+    # v5.88 — Graph node caps (I25 three-way registered; 0 or -1 = unlimited)
+    VIZ_MAX_MEMORIES: int = 500  # max memory nodes in /api/graph (0/-1 = all)
+    VIZ_MAX_WIKI: int = 200  # max wiki nodes in /api/graph (0/-1 = all)
+    VIZ_MAX_ENTITIES: int = 2000  # max entity nodes in /api/graph (0/-1 = all)
+    # v5.88 — Precomputed server-side graph layout (I25 three-way registered).
+    # OFF by default (opt-in, safe): when ON, the nightly consolidation cycle
+    # computes 3D node positions once + caches them; /api/graph attaches x/y/z so
+    # the viz renders pre-laid-out instead of a slow cold client-side force settle.
+    VIZ_PRECOMPUTED_LAYOUT_ENABLED: bool = False  # opt-in: server-side layout cache
+    VIZ_LAYOUT_ITERATIONS: int = 50  # spring_layout iteration cap (lower=faster/looser)
 
     # v5.48.0 — Update mechanism (I25 three-way registered)
     # Privacy: auto-check is OFF by default. Enable explicitly in config.yaml.

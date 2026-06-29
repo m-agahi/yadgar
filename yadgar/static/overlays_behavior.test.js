@@ -62,6 +62,14 @@ function makeOverlayDOM(names = ['test-a', 'test-b']) {
     body.className = 'overlay-body';
     body.textContent = 'content';
 
+    // An interactive control inside the body (e.g. heat slider). The pointer-leak
+    // fix must make these reachable (pointer-events:auto) and swallow their
+    // pointer events so they don't fall through / bubble to the graph canvas.
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.className = 'overlay-control';
+    body.appendChild(slider);
+
     grip.appendChild(collapseBtn);
     wrap.appendChild(grip);
     wrap.appendChild(body);
@@ -294,6 +302,55 @@ describe('pointer-events: body=none, grip+controls=auto', () => {
     const overlay = document.querySelector('.floating-overlay[data-overlay-name="test-a"]');
     const btn = overlay.querySelector('.overlay-collapse');
     expect(btn.style.pointerEvents).toBe('auto');
+  });
+});
+
+// ── Pointer-leak: interactive controls reachable + don't rotate the graph ─────
+// Regression for the v5.87 menu-IA overlay rework: the heat slider lived inside
+// .overlay-body (pointer-events:none) so dragging it did nothing AND the pointer
+// fell through to the 3D OrbitControls, rotating the graph. The fix makes
+// interactive controls pointer-events:auto and swallows their pointer events.
+
+describe('pointer-leak: interactive body controls are reachable + swallow pointer events', () => {
+  let ls;
+  beforeEach(() => {
+    ls = makeLocalStorage();
+    makeOverlayDOM();
+    initOverlays({ canvasSelector: '#canvas-wrap', fadeDebounceMs: 200, storage: ls });
+  });
+
+  it('interactive control inside body has pointer-events: auto (reachable)', () => {
+    const overlay = document.querySelector('.floating-overlay[data-overlay-name="test-a"]');
+    const control = overlay.querySelector('.overlay-body .overlay-control');
+    // Without the fix the control inherits the body's pointer-events:none and the
+    // browser hit-tests through it to the canvas → slider dead + graph rotates.
+    expect(control.style.pointerEvents).toBe('auto');
+  });
+
+  it('pointerdown on a body control does not propagate past the overlay body', () => {
+    const overlay = document.querySelector('.floating-overlay[data-overlay-name="test-a"]');
+    const control = overlay.querySelector('.overlay-body .overlay-control');
+
+    // Spy on a document-level listener standing in for the graph canvas-activity
+    // handler. The overlay must stopPropagation so panel drags never reach it.
+    let reachedDocument = false;
+    document.addEventListener('pointerdown', () => { reachedDocument = true; });
+
+    firePointer(control, 'pointerdown', 30, 40);
+
+    expect(reachedDocument).toBe(false);
+  });
+
+  it('wheel on a body control does not propagate past the overlay body', () => {
+    const overlay = document.querySelector('.floating-overlay[data-overlay-name="test-a"]');
+    const control = overlay.querySelector('.overlay-body .overlay-control');
+
+    let reachedDocument = false;
+    document.addEventListener('wheel', () => { reachedDocument = true; });
+
+    control.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -100 }));
+
+    expect(reachedDocument).toBe(false);
   });
 });
 

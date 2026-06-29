@@ -1225,6 +1225,36 @@ class TestConsolidationWatermark:
             storage.set_consolidation_watermark("bad key; DROP", "x")
 
 
+class TestGraphLayoutCache:
+    """v5.88: persisted precomputed graph layout (positions + signature + ts)."""
+
+    def test_cache_default_none(self, storage):
+        assert storage.get_graph_layout_cache() is None
+
+    def test_cache_roundtrip(self, storage):
+        positions = {"mem:1": [0.1, 0.2, 0.3], "wiki:2": [-0.4, 0.5, 0.6]}
+        storage.set_graph_layout_cache("sig-abc", positions, "2026-06-29T00:00:00+00:00")
+        cached = storage.get_graph_layout_cache()
+        assert cached is not None
+        assert cached["signature"] == "sig-abc"
+        assert cached["computed_at"] == "2026-06-29T00:00:00+00:00"
+        assert cached["positions"] == positions
+
+    def test_cache_upsert_in_place(self, storage):
+        storage.set_graph_layout_cache("sig-1", {"a": [0.0, 0.0, 0.0]}, "2026-06-28T00:00:00+00:00")
+        storage.set_graph_layout_cache("sig-2", {"b": [1.0, 1.0, 1.0]}, "2026-06-29T00:00:00+00:00")
+        cached = storage.get_graph_layout_cache()
+        assert cached["signature"] == "sig-2"
+        assert cached["positions"] == {"b": [1.0, 1.0, 1.0]}
+
+    def test_cache_preserves_float_coords(self, storage):
+        positions = {"n": [0.123456, -0.654321, 0.999999]}
+        storage.set_graph_layout_cache("s", positions, "2026-06-29T00:00:00+00:00")
+        cached = storage.get_graph_layout_cache()
+        for got, want in zip(cached["positions"]["n"], positions["n"], strict=False):
+            assert abs(got - want) < 1e-6
+
+
 class TestGetMemoriesWithEmbeddingsSince:
     """v5.86 (OT-C4): `since=` filters to memories created on/after a watermark."""
 

@@ -88,7 +88,8 @@ def consolidate_now(mode: str = "light") -> dict:
 
     mode="full": consolidation cycle + full sleep cycle (dream replay,
         community detection, cluster summaries, re-embedding, compression,
-        auto-narrate) + anchor audit pass (if ANCHOR_AUDIT_CONSOLIDATION_ENABLED).
+        auto-narrate) + anchor audit pass (if ANCHOR_AUDIT_CONSOLIDATION_ENABLED)
+        + graph-layout precompute (if VIZ_PRECOMPUTED_LAYOUT_ENABLED).
         Takes 5–15 minutes. Use for deliberate maintenance before a multi-day
         break or after a large memory import. Also sets the 6-hour sleep cycle
         gate timestamp so the nightly cron does not double-fire.
@@ -109,6 +110,16 @@ def consolidate_now(mode: str = "light") -> dict:
             _st._consolidation._last_sleep_cycle = datetime.now(UTC)
         except Exception:
             logger.exception("Sleep cycle failed during consolidate_now(mode='full')")
+
+    # v5.88: graph-layout precompute — mode='full' is the manual trigger (the
+    # nightly cron triggers it via run_nightly_consolidation). Inert unless
+    # VIZ_PRECOMPUTED_LAYOUT_ENABLED; signature-gated so it is a fast no-op when
+    # the graph shape is unchanged. Never runs in light mode (≤30s budget).
+    if mode == "full":
+        try:
+            _st._consolidation._maybe_precompute_graph_layout()
+        except Exception:
+            logger.exception("Graph-layout precompute failed during consolidate_now (non-fatal)")
 
     # v5.9.0: anchor audit pass as final step — mode='full' only (gated on config flag)
     if mode == "full":
