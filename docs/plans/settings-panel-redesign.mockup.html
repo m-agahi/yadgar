@@ -1,0 +1,1569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Yadgar Settings (mockup)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   RESET + TOKENS
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+
+:root {
+  /* GitHub-dark palette */
+  --bg:        #0d1117;
+  --surface:   #161b22;
+  --surface2:  #1c2128;
+  --border:    #30363d;
+  --border-sub:#21262d;
+  --tx:        #c9d1d9;
+  --tx-muted:  #8b949e;
+  --accent:    #58a6ff;
+  --accent-bg: rgba(88,166,255,.10);
+  --green:     #3fb950;
+  --green-bg:  rgba(63,185,80,.12);
+  --amber:     #d29922;
+  --amber-bg:  rgba(210,153,34,.12);
+  --red:       #f85149;
+  --red-bg:    rgba(248,81,73,.12);
+
+  --font: 'Inter', system-ui, -apple-system, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', monospace;
+
+  --rail-width: 220px;
+  --topbar-h:   52px;
+  --search-h:   56px;
+  --pending-h:  52px;
+
+  --radius: 6px;
+  --radius-sm: 4px;
+}
+
+body {
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--tx);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* ============================================================
+   SHELL
+   ============================================================ */
+.shell {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ============================================================
+   TOP BAR
+   ============================================================ */
+.topbar {
+  height: var(--topbar-h);
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+  gap: 12px;
+}
+.topbar-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--tx);
+  letter-spacing: -0.01em;
+}
+.topbar-status {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-left: auto;
+}
+.status-version {
+  font-size: 12px;
+  color: var(--tx-muted);
+  font-family: var(--mono);
+}
+.status-dot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--tx-muted);
+}
+.status-dot::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+}
+.pending-count {
+  font-size: 12px;
+  color: var(--accent);
+  font-weight: 500;
+  display: none; /* shown via JS */
+}
+.pending-count.visible { display: block; }
+
+/* ============================================================
+   MAIN AREA (below topbar)
+   ============================================================ */
+.main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ============================================================
+   LEFT RAIL
+   ============================================================ */
+.rail {
+  width: var(--rail-width);
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.rail-search-wrap {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-sub);
+}
+.rail-search {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--tx);
+  font-family: var(--font);
+  font-size: 13px;
+  padding: 6px 10px 6px 30px;
+  outline: none;
+  transition: border-color .15s;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238b949e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: 9px center;
+}
+.rail-search:focus { border-color: var(--accent); }
+.rail-search::placeholder { color: var(--tx-muted); }
+
+.rail-section-label {
+  padding: 14px 14px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--tx-muted);
+}
+
+.rail-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  cursor: pointer;
+  border-radius: 0;
+  color: var(--tx-muted);
+  font-size: 13px;
+  border-left: 3px solid transparent;
+  transition: background .1s, color .1s;
+  user-select: none;
+}
+.rail-item:hover { background: var(--surface); color: var(--tx); }
+.rail-item.active {
+  background: var(--accent-bg);
+  color: var(--accent);
+  border-left-color: var(--accent);
+  font-weight: 500;
+}
+.rail-item .rail-count {
+  margin-left: auto;
+  font-size: 11px;
+  background: var(--surface2);
+  border: 1px solid var(--border-sub);
+  border-radius: 10px;
+  padding: 1px 6px;
+  color: var(--tx-muted);
+  font-family: var(--mono);
+}
+.rail-item.active .rail-count {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ============================================================
+   CONTENT AREA
+   ============================================================ */
+.content-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Search results header */
+.content-search-header {
+  display: none;
+  padding: 16px 24px 0;
+  font-size: 12px;
+  color: var(--tx-muted);
+  border-bottom: 1px solid var(--border-sub);
+  padding-bottom: 12px;
+}
+.content-search-header.visible { display: block; }
+.content-search-header strong { color: var(--tx); }
+
+.content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 0 calc(var(--pending-h) + 16px);
+}
+
+/* Category heading */
+.cat-heading {
+  padding: 20px 24px 4px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--tx);
+  letter-spacing: -0.01em;
+}
+
+/* Section group */
+.section-group {
+  padding: 0 24px;
+  margin-top: 16px;
+}
+.section-group + .section-group { margin-top: 8px; }
+
+.section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--tx-muted);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-sub);
+  margin-bottom: 2px;
+}
+
+/* ============================================================
+   SETTING ROW
+   ============================================================ */
+.setting-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-sub);
+  position: relative;
+  transition: background .1s;
+}
+.setting-row:last-child { border-bottom: none; }
+.setting-row:hover { background: transparent; }
+
+/* Left column */
+.row-left {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.row-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--tx);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.row-desc {
+  font-size: 12px;
+  color: var(--tx-muted);
+  line-height: 1.45;
+  margin-top: 1px;
+}
+.row-knob {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--tx-muted);
+  margin-top: 2px;
+  opacity: .8;
+}
+
+/* Right column */
+.row-right {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Disabled state (ENV locked) */
+.setting-row.env-locked .row-label,
+.setting-row.env-locked .row-desc,
+.setting-row.env-locked .row-knob { opacity: .5; }
+.setting-row.env-locked .row-right { opacity: .55; }
+
+/* Changed indicator */
+.setting-row.changed::before {
+  content: '';
+  position: absolute;
+  left: -24px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 24px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+/* ============================================================
+   BADGES
+   ============================================================ */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+.badge-default {
+  color: var(--tx-muted);
+  border-color: var(--border);
+  background: var(--surface2);
+}
+.badge-yaml {
+  color: var(--green);
+  border-color: rgba(63,185,80,.35);
+  background: var(--green-bg);
+}
+.badge-env {
+  color: var(--red);
+  border-color: rgba(248,81,73,.35);
+  background: var(--red-bg);
+  cursor: help;
+}
+.badge-env::before {
+  content: '🔒';
+  font-size: 9px;
+}
+
+/* Restart pill */
+.restart-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--amber);
+  background: var(--amber-bg);
+  border: 1px solid rgba(210,153,34,.35);
+  border-radius: 3px;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
+/* Reset link */
+.reset-btn {
+  font-size: 11px;
+  color: var(--tx-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  transition: color .1s, background .1s;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.reset-btn:hover { color: var(--tx); background: var(--surface2); }
+
+/* Category chip (search results) */
+.cat-chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--tx-muted);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  flex-shrink: 0;
+}
+
+/* Search highlight */
+mark {
+  background: rgba(88,166,255,.22);
+  color: var(--accent);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* ============================================================
+   CONTROLS
+   ============================================================ */
+
+/* Toggle switch */
+.toggle-wrap {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+}
+.toggle-wrap input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  z-index: 1;
+  margin: 0;
+}
+.toggle-wrap input[type="checkbox"]:disabled { cursor: not-allowed; }
+.toggle-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 11px;
+  background: var(--border);
+  transition: background .2s;
+  pointer-events: none;
+}
+.toggle-wrap input:checked + .toggle-track { background: var(--accent); }
+.toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform .2s;
+  pointer-events: none;
+}
+.toggle-wrap input:checked ~ .toggle-thumb { transform: translateX(18px); }
+
+/* Slider + number input */
+.slider-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 220px;
+}
+.slider-bound {
+  font-size: 10px;
+  color: var(--tx-muted);
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  outline: none;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+input[type="range"]:disabled { opacity: .4; cursor: not-allowed; }
+input[type="range"]:disabled::-webkit-slider-thumb { cursor: not-allowed; }
+
+.num-input {
+  width: 64px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--tx);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 3px 6px;
+  text-align: right;
+  outline: none;
+  transition: border-color .15s;
+}
+.num-input:focus { border-color: var(--accent); }
+.num-input:disabled { opacity: .4; cursor: not-allowed; background: var(--surface2); }
+
+/* Select */
+.sel-input {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--tx);
+  font-family: var(--font);
+  font-size: 13px;
+  padding: 5px 28px 5px 9px;
+  outline: none;
+  cursor: pointer;
+  min-width: 140px;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b949e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  transition: border-color .15s;
+}
+.sel-input:focus { border-color: var(--accent); }
+.sel-input:disabled { opacity: .4; cursor: not-allowed; }
+
+/* Text input */
+.text-input {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--tx);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 5px 9px;
+  outline: none;
+  min-width: 240px;
+  transition: border-color .15s;
+}
+.text-input:focus { border-color: var(--accent); }
+.text-input:disabled { opacity: .4; cursor: not-allowed; background: var(--surface2); }
+
+/* ============================================================
+   PENDING BAR (sticky bottom)
+   ============================================================ */
+.pending-bar {
+  position: sticky;
+  bottom: 0;
+  display: none;
+  align-items: center;
+  gap: 10px;
+  padding: 0 24px;
+  height: var(--pending-h);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--tx-muted);
+  z-index: 50;
+  flex-shrink: 0;
+}
+.pending-bar.visible { display: flex; }
+.pending-bar-label { font-weight: 500; color: var(--tx); }
+.pending-spacer { flex: 1; }
+.btn {
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--radius);
+  padding: 6px 14px;
+  cursor: pointer;
+  border: 1px solid;
+  transition: background .15s, border-color .15s, color .15s;
+  outline: none;
+  white-space: nowrap;
+}
+.btn-discard {
+  background: transparent;
+  color: var(--tx-muted);
+  border-color: var(--border);
+}
+.btn-discard:hover { background: var(--surface2); color: var(--tx); border-color: var(--border); }
+.btn-apply {
+  background: var(--accent);
+  color: #0d1117;
+  border-color: var(--accent);
+}
+.btn-apply:hover { background: #79b8ff; border-color: #79b8ff; }
+.btn-restart {
+  background: var(--amber-bg);
+  color: var(--amber);
+  border-color: rgba(210,153,34,.4);
+}
+.btn-restart:hover { background: rgba(210,153,34,.2); }
+
+/* ============================================================
+   SEARCH RESULT VIEW
+   ============================================================ */
+#search-pane {
+  display: none;
+  padding: 0 24px 80px;
+}
+#search-pane.visible { display: block; }
+#category-pane.hidden { display: none; }
+
+.search-result-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border-sub);
+}
+.search-result-row:last-child { border-bottom: none; }
+.search-result-left { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.search-result-name { font-size: 13px; font-weight: 500; color: var(--tx); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.search-result-desc { font-size: 12px; color: var(--tx-muted); }
+.search-result-knob { font-family: var(--mono); font-size: 11px; color: var(--tx-muted); opacity: .8; }
+.search-result-right { flex-shrink: 0; display: flex; align-items: center; gap: 8px; }
+
+/* ============================================================
+   SCROLLBARS (subtle)
+   ============================================================ */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #484f58; }
+
+/* ============================================================
+   TOOLTIP
+   ============================================================ */
+[data-tooltip] { position: relative; }
+[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  background: #2d333b;
+  color: var(--tx);
+  font-size: 11.5px;
+  font-family: var(--font);
+  padding: 5px 9px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+  z-index: 100;
+  pointer-events: none;
+  max-width: 240px;
+  white-space: normal;
+  line-height: 1.4;
+}
+
+/* Empty search state */
+.search-empty {
+  display: none;
+  padding: 48px 0;
+  text-align: center;
+  color: var(--tx-muted);
+  font-size: 13px;
+}
+.search-empty.visible { display: block; }
+</style>
+</head>
+<body>
+
+<div class="shell">
+
+  <!-- ===== TOP BAR ===== -->
+  <header class="topbar">
+    <span class="topbar-title">Yadgar Settings</span>
+    <div class="topbar-status">
+      <span class="status-version">v5.87.0</span>
+      <span class="status-dot">connected</span>
+      <span class="pending-count" id="topbar-pending"></span>
+    </div>
+  </header>
+
+  <!-- ===== MAIN ===== -->
+  <div class="main">
+
+    <!-- LEFT RAIL -->
+    <nav class="rail" id="rail">
+      <div class="rail-search-wrap">
+        <input
+          class="rail-search"
+          id="search-input"
+          type="search"
+          placeholder="Search settings"
+          autocomplete="off"
+          spellcheck="false"
+        >
+      </div>
+      <!-- categories injected by JS -->
+    </nav>
+
+    <!-- CONTENT -->
+    <div class="content-wrap">
+      <div class="content" id="content">
+
+        <div id="search-results-header" class="content-search-header"></div>
+
+        <!-- Search pane (shown when searching) -->
+        <div id="search-pane"></div>
+        <div class="search-empty" id="search-empty">No settings match "<span id="search-empty-q"></span>"</div>
+
+        <!-- Category pane (normal view) -->
+        <div id="category-pane"></div>
+
+      </div>
+
+      <!-- PENDING BAR -->
+      <div class="pending-bar" id="pending-bar">
+        <span class="pending-bar-label" id="pending-label">0 unsaved change(s)</span>
+        <div class="pending-spacer"></div>
+        <button class="btn btn-restart" id="btn-restart" style="display:none" onclick="handleRestart()">↻ Restart daemon</button>
+        <button class="btn btn-discard" onclick="handleDiscard()">Discard</button>
+        <button class="btn btn-apply" onclick="handleApply()">Apply</button>
+      </div>
+    </div>
+
+  </div><!-- /.main -->
+</div><!-- /.shell -->
+
+<script>
+/* ============================================================
+   DATA MODEL
+   ============================================================ */
+const KNOBS = [
+  // ── Retrieval ──────────────────────────────────────────────
+  { id: 'retrieval_mode', category: 'Retrieval', section: 'Strategy',
+    name: 'RETRIEVAL_MODE', label: 'Retrieval strategy',
+    desc: 'Controls how memories are fetched: semantic-only, fan-out fusion, or hybrid.',
+    kind: 'enum', choices: ['semantic', 'fanout', 'hybrid'], value: 'fanout',
+    source: 'yaml', restart: false },
+  { id: 'retrieval_max_results', category: 'Retrieval', section: 'Strategy',
+    name: 'RETRIEVAL_MAX_RESULTS', label: 'Max results per query',
+    desc: 'Upper bound on recalled memories per retrieval call.',
+    kind: 'int', value: 12, min: 1, max: 50, source: 'default', restart: false },
+  { id: 'retrieval_min_score', category: 'Retrieval', section: 'Scoring',
+    name: 'RETRIEVAL_MIN_SCORE', label: 'Minimum similarity score',
+    desc: 'Results below this cosine-similarity threshold are discarded.',
+    kind: 'float', value: 0.34, min: 0, max: 1, source: 'default', restart: false },
+  { id: 'retrieval_fanout_k', category: 'Retrieval', section: 'Strategy',
+    name: 'RETRIEVAL_FANOUT_K', label: 'Fan-out K factor',
+    desc: 'Number of sub-queries generated during fan-out expansion.',
+    kind: 'int', value: 4, min: 1, max: 16, source: 'default', restart: false },
+
+  // ── Write path ─────────────────────────────────────────────
+  { id: 'write_gate_threshold', category: 'Write path', section: 'Gate',
+    name: 'WRITE_GATE_THRESHOLD', label: 'Write gate threshold',
+    desc: 'Minimum novelty score required to persist a new memory. Higher = stricter.',
+    kind: 'float', value: 0.62, min: 0, max: 1, source: 'yaml', restart: false },
+  { id: 'write_batch_size', category: 'Write path', section: 'Batching',
+    name: 'WRITE_BATCH_SIZE', label: 'Write batch size',
+    desc: 'Number of memories queued before a flush is triggered.',
+    kind: 'int', value: 8, min: 1, max: 64, source: 'default', restart: false },
+  { id: 'write_dedup_window_s', category: 'Write path', section: 'Batching',
+    name: 'WRITE_DEDUP_WINDOW_S', label: 'Dedup window (seconds)',
+    desc: 'Memories with the same embedding arriving within this window are de-duplicated.',
+    kind: 'int', value: 30, min: 0, max: 300, source: 'default', restart: false },
+  { id: 'dlq_max_retries', category: 'Write path', section: 'Dead-letter queue',
+    name: 'DLQ_MAX_RETRIES', label: 'DLQ max retries',
+    desc: 'Number of times a failed write is retried before landing in the DLQ.',
+    kind: 'int', value: 3, min: 0, max: 10, source: 'default', restart: false },
+
+  // ── Brain dynamics ─────────────────────────────────────────
+  { id: 'decay_factor', category: 'Brain dynamics', section: 'Heat & decay',
+    name: 'DECAY_FACTOR', label: 'Heat decay factor',
+    desc: 'Per-cycle multiplicative decay applied to memory heat scores. Values near 1 = slow decay.',
+    kind: 'float', value: 0.9995, min: 0.9, max: 1.0, source: 'yaml', restart: true },
+  { id: 'heat_boost_recall', category: 'Brain dynamics', section: 'Heat & decay',
+    name: 'HEAT_BOOST_ON_RECALL', label: 'Heat boost on recall',
+    desc: 'Additive heat increase applied to a memory each time it is recalled.',
+    kind: 'float', value: 0.04, min: 0, max: 0.5, source: 'default', restart: false },
+  { id: 'cold_purge_enabled', category: 'Brain dynamics', section: 'Purge',
+    name: 'COLD_MEMORY_PURGE_ENABLED', label: 'Cold memory purge',
+    desc: 'Automatically delete memories whose heat drops below the purge threshold. Destructive.',
+    kind: 'bool', value: false, source: 'default', restart: false },
+  { id: 'cold_purge_threshold', category: 'Brain dynamics', section: 'Purge',
+    name: 'COLD_MEMORY_PURGE_THRESHOLD', label: 'Purge heat threshold',
+    desc: 'Memories with heat below this value are eligible for cold purge.',
+    kind: 'float', value: 0.01, min: 0, max: 0.5, source: 'default', restart: false },
+
+  // ── Enrichment ─────────────────────────────────────────────
+  { id: 'enrichment_enabled', category: 'Enrichment', section: 'General',
+    name: 'ENRICHMENT_ENABLED', label: 'Enrichment pipeline',
+    desc: 'Runs the async enrichment worker to add embeddings, tags, and summaries.',
+    kind: 'bool', value: true, source: 'default', restart: true },
+  { id: 'enrichment_concurrency', category: 'Enrichment', section: 'General',
+    name: 'ENRICHMENT_CONCURRENCY', label: 'Enrichment workers',
+    desc: 'Number of concurrent enrichment tasks. Raise on beefy hardware.',
+    kind: 'int', value: 2, min: 1, max: 16, source: 'default', restart: false },
+  { id: 'enrichment_model', category: 'Enrichment', section: 'Embedding model',
+    name: 'EMBED_MODEL', label: 'Embedding model',
+    desc: 'Sentence-transformers model identifier used to compute memory embeddings.',
+    kind: 'string', value: 'all-MiniLM-L6-v2', source: 'env', restart: true },
+
+  // ── Gate ───────────────────────────────────────────────────
+  { id: 'gate_similarity_algo', category: 'Gate', section: 'Algorithm',
+    name: 'GATE_SIMILARITY_ALGO', label: 'Similarity algorithm',
+    desc: 'Distance metric used by the write gate to compute novelty.',
+    kind: 'enum', choices: ['cosine', 'dot', 'euclidean'], value: 'cosine', source: 'default', restart: false },
+  { id: 'gate_candidate_k', category: 'Gate', section: 'Algorithm',
+    name: 'GATE_CANDIDATE_K', label: 'Gate candidate K',
+    desc: 'Gate compares incoming memory against the top-K nearest neighbours.',
+    kind: 'int', value: 5, min: 1, max: 20, source: 'default', restart: false },
+
+  // ── Wiki ───────────────────────────────────────────────────
+  { id: 'wiki_default_branch', category: 'Wiki', section: 'Storage',
+    name: 'WIKI_DEFAULT_BRANCH', label: 'Default branch hint',
+    desc: 'Branch wiki pages land on when no branch_hint is supplied by the caller.',
+    kind: 'string', value: 'master', source: 'yaml', restart: false },
+  { id: 'wiki_stale_days', category: 'Wiki', section: 'Staleness',
+    name: 'WIKI_STALE_DAYS', label: 'Stale page threshold (days)',
+    desc: 'Pages not updated within this many days are flagged as stale.',
+    kind: 'int', value: 30, min: 1, max: 365, source: 'default', restart: false },
+  { id: 'wiki_auto_link', category: 'Wiki', section: 'Auto-link',
+    name: 'WIKI_AUTOLINK_ENABLED', label: 'Auto-link on write',
+    desc: 'Automatically cross-link newly written pages to related existing pages.',
+    kind: 'bool', value: true, source: 'default', restart: false },
+
+  // ── Visualization ───────────────────────────────────────────
+  { id: 'viz_precomputed_layout', category: 'Visualization', section: 'Layout',
+    name: 'VIZ_PRECOMPUTED_LAYOUT_ENABLED', label: 'Precomputed layout',
+    desc: 'Use server-side pre-computed positions instead of live D3 force simulation.',
+    kind: 'bool', value: false, source: 'default', restart: true },
+  { id: 'viz_max_wiki', category: 'Visualization', section: 'Node limits',
+    name: 'VIZ_MAX_WIKI', label: 'Max wiki nodes',
+    desc: 'Maximum number of wiki page nodes rendered in the graph.',
+    kind: 'int', value: 400, min: 0, max: 2000, source: 'default', restart: false },
+  { id: 'viz_max_mem', category: 'Visualization', section: 'Node limits',
+    name: 'VIZ_MAX_MEMORIES', label: 'Max memory nodes',
+    desc: 'Maximum number of episodic memory nodes rendered in the graph.',
+    kind: 'int', value: 200, min: 0, max: 2000, source: 'yaml', restart: false },
+  { id: 'viz_charge', category: 'Visualization', section: 'Physics',
+    name: 'VIZ_CHARGE_STRENGTH', label: 'Charge strength',
+    desc: 'D3 many-body charge. More negative = stronger repulsion between nodes.',
+    kind: 'float', value: -30, min: -300, max: 0, source: 'default', restart: false },
+  { id: 'viz_link_dist', category: 'Visualization', section: 'Physics',
+    name: 'VIZ_LINK_DISTANCE', label: 'Link distance',
+    desc: 'Target pixel distance between linked nodes in the force simulation.',
+    kind: 'float', value: 80, min: 20, max: 400, source: 'default', restart: false },
+  { id: 'viz_refresh_ms', category: 'Visualization', section: 'Refresh',
+    name: 'VIZ_REFRESH_INTERVAL_MS', label: 'Graph refresh interval (ms)',
+    desc: 'How often the visualization polls for new nodes. Lower = more live, more load.',
+    kind: 'int', value: 5000, min: 500, max: 60000, source: 'default', restart: false },
+
+  // ── Observability ──────────────────────────────────────────
+  { id: 'log_format', category: 'Observability', section: 'Logging',
+    name: 'LOG_FORMAT', label: 'Log format',
+    desc: 'Output format for daemon logs.',
+    kind: 'enum', choices: ['json', 'text'], value: 'json', source: 'default', restart: false },
+  { id: 'log_level', category: 'Observability', section: 'Logging',
+    name: 'LOG_LEVEL', label: 'Log level',
+    desc: 'Minimum log severity emitted.',
+    kind: 'enum', choices: ['debug', 'info', 'warn', 'error'], value: 'info', source: 'yaml', restart: false },
+  { id: 'metrics_enabled', category: 'Observability', section: 'Metrics',
+    name: 'METRICS_ENABLED', label: 'Prometheus metrics',
+    desc: 'Expose /metrics endpoint for Prometheus scraping.',
+    kind: 'bool', value: true, source: 'default', restart: true },
+
+  // ── Ops ────────────────────────────────────────────────────
+  { id: 'checkpoint_interval_s', category: 'Ops', section: 'Checkpointing',
+    name: 'CHECKPOINT_INTERVAL_S', label: 'Checkpoint interval (s)',
+    desc: 'Seconds between automatic memory checkpoints.',
+    kind: 'int', value: 120, min: 10, max: 3600, source: 'default', restart: false },
+  { id: 'vacuum_enabled', category: 'Ops', section: 'Vacuum',
+    name: 'VACUUM_ENABLED', label: 'Auto-vacuum',
+    desc: 'Periodically compact the embedding index to reclaim space.',
+    kind: 'bool', value: true, source: 'default', restart: false },
+  { id: 'vacuum_interval_h', category: 'Ops', section: 'Vacuum',
+    name: 'VACUUM_INTERVAL_H', label: 'Vacuum interval (hours)',
+    desc: 'How many hours between automatic vacuum runs.',
+    kind: 'int', value: 24, min: 1, max: 168, source: 'default', restart: false },
+
+  // ── MCP tools ──────────────────────────────────────────────
+  { id: 'mcp_timeout_s', category: 'MCP tools', section: 'Transport',
+    name: 'MCP_TOOL_TIMEOUT_S', label: 'Tool call timeout (s)',
+    desc: 'Maximum seconds to wait for an MCP tool response before timing out.',
+    kind: 'int', value: 30, min: 5, max: 120, source: 'default', restart: false },
+  { id: 'mcp_max_parallel', category: 'MCP tools', section: 'Transport',
+    name: 'MCP_MAX_PARALLEL_CALLS', label: 'Max parallel calls',
+    desc: 'Concurrency limit on simultaneous MCP tool dispatches.',
+    kind: 'int', value: 4, min: 1, max: 16, source: 'default', restart: false },
+  { id: 'mcp_rate_limit', category: 'MCP tools', section: 'Transport',
+    name: 'MCP_RATE_LIMIT_RPM', label: 'Rate limit (req/min)',
+    desc: 'Maximum tool calls per minute before throttling kicks in.',
+    kind: 'int', value: 120, min: 10, max: 1000, source: 'yaml', restart: false },
+
+  // ── Security ───────────────────────────────────────────────
+  { id: 'api_token', category: 'Security', section: 'Authentication',
+    name: 'YADGAR_API_TOKEN', label: 'API token',
+    desc: 'Bearer token required for authenticated API calls. Injected via env/nix.',
+    kind: 'string', value: '••••••••••••••••', source: 'env', restart: false },
+  { id: 'tls_enabled', category: 'Security', section: 'TLS',
+    name: 'TLS_ENABLED', label: 'TLS on daemon socket',
+    desc: 'Enforce TLS on the daemon HTTP socket. Required in production.',
+    kind: 'bool', value: true, source: 'env', restart: true },
+  { id: 'allowed_origins', category: 'Security', section: 'CORS',
+    name: 'CORS_ALLOWED_ORIGINS', label: 'CORS allowed origins',
+    desc: 'Comma-separated list of origins permitted to call the API.',
+    kind: 'string', value: 'http://localhost:3000', source: 'default', restart: false },
+
+  // ── Config ─────────────────────────────────────────────────
+  { id: 'config_file_path', category: 'Config', section: 'Paths',
+    name: 'CONFIG_FILE_PATH', label: 'Config file path',
+    desc: 'Absolute path to the YAML config file that persists user settings.',
+    kind: 'string', value: '~/.yadgar/config.yaml', source: 'default', restart: false },
+  { id: 'config_auto_reload', category: 'Config', section: 'Reload',
+    name: 'CONFIG_AUTO_RELOAD', label: 'Auto-reload on file change',
+    desc: 'Watch the config file for changes and hot-reload without restarting.',
+    kind: 'bool', value: true, source: 'default', restart: false },
+  { id: 'config_schema_version', category: 'Config', section: 'Paths',
+    name: 'CONFIG_SCHEMA_VERSION', label: 'Schema version',
+    desc: 'Config schema version. Changing this triggers a migration on next start.',
+    kind: 'int', value: 3, min: 1, max: 99, source: 'yaml', restart: true },
+];
+
+/* ============================================================
+   STATE
+   ============================================================ */
+// currentValues tracks live edits; originalValues tracks what was there before edit
+const originalValues = {};
+const currentValues = {};
+const changedIds = new Set();
+
+KNOBS.forEach(k => {
+  originalValues[k.id] = k.value;
+  currentValues[k.id] = k.value;
+});
+
+// Track source overrides (apply sets source to 'yaml')
+const sourceOverrides = {};
+KNOBS.forEach(k => { sourceOverrides[k.id] = k.source; });
+
+let activeCategory = 'Retrieval';
+let searchQuery = '';
+
+/* ============================================================
+   CATEGORIES (derived from data, ordered)
+   ============================================================ */
+const CATEGORY_ORDER = [
+  'Retrieval','Write path','Brain dynamics','Enrichment','Gate',
+  'Wiki','Visualization','Observability','Ops','MCP tools','Security','Config'
+];
+
+function categoryCounts() {
+  const counts = {};
+  KNOBS.forEach(k => { counts[k.category] = (counts[k.category] || 0) + 1; });
+  return counts;
+}
+
+/* ============================================================
+   PENDING STATE HELPERS
+   ============================================================ */
+function pendingCount() { return changedIds.size; }
+
+function hasRestartPending() {
+  return [...changedIds].some(id => KNOBS.find(k => k.id === id)?.restart);
+}
+
+function updatePendingBar() {
+  const bar = document.getElementById('pending-bar');
+  const label = document.getElementById('pending-label');
+  const restartBtn = document.getElementById('btn-restart');
+  const topbarPending = document.getElementById('topbar-pending');
+  const count = pendingCount();
+
+  if (count > 0) {
+    bar.classList.add('visible');
+    label.textContent = `${count} unsaved change${count === 1 ? '' : 's'}`;
+    restartBtn.style.display = hasRestartPending() ? '' : 'none';
+    topbarPending.textContent = `${count} pending`;
+    topbarPending.classList.add('visible');
+  } else {
+    bar.classList.remove('visible');
+    topbarPending.classList.remove('visible');
+  }
+}
+
+function markChanged(id) {
+  changedIds.add(id);
+  // Update changed indicator on row
+  const row = document.querySelector(`[data-id="${id}"]`);
+  if (row) row.classList.add('changed');
+  // Show reset btn if source is yaml or default
+  const src = sourceOverrides[id];
+  if (src !== 'env') {
+    const resetBtn = row?.querySelector('.reset-btn');
+    if (resetBtn) resetBtn.style.display = '';
+  }
+  updatePendingBar();
+}
+
+function markUnchanged(id) {
+  changedIds.delete(id);
+  const row = document.querySelector(`[data-id="${id}"]`);
+  if (row) row.classList.remove('changed');
+  updatePendingBar();
+}
+
+/* ============================================================
+   APPLY / DISCARD / RESTART
+   ============================================================ */
+function handleApply() {
+  // Simulate save: mark all changed knobs as yaml, clear changes
+  changedIds.forEach(id => {
+    sourceOverrides[id] = 'yaml';
+    originalValues[id] = currentValues[id];
+    // Update badge in DOM
+    const row = document.querySelector(`[data-id="${id}"]`);
+    if (row) {
+      row.classList.remove('changed');
+      const badge = row.querySelector('.badge');
+      if (badge) {
+        badge.className = 'badge badge-yaml';
+        badge.textContent = 'YAML';
+        badge.removeAttribute('data-tooltip');
+      }
+      const resetBtn = row.querySelector('.reset-btn');
+      if (resetBtn) resetBtn.style.display = '';
+    }
+  });
+  changedIds.clear();
+  updatePendingBar();
+}
+
+function handleDiscard() {
+  changedIds.forEach(id => {
+    currentValues[id] = originalValues[id];
+    // Revert the control
+    const row = document.querySelector(`[data-id="${id}"]`);
+    if (row) {
+      revertControl(row, id);
+      row.classList.remove('changed');
+      const resetBtn = row.querySelector('.reset-btn');
+      const src = sourceOverrides[id];
+      if (src !== 'yaml') {
+        if (resetBtn) resetBtn.style.display = 'none';
+      }
+    }
+  });
+  changedIds.clear();
+  updatePendingBar();
+}
+
+function handleRestart() {
+  const ok = confirm('Restarting drops the live connection. Continue?');
+  if (ok) {
+    handleApply(); // apply first
+    // Simulate restart feedback
+    const dot = document.querySelector('.status-dot');
+    if (dot) { dot.textContent = 'restarting…'; dot.style.color = 'var(--amber)'; }
+    setTimeout(() => {
+      if (dot) { dot.textContent = 'connected'; dot.style.color = ''; }
+    }, 1800);
+  }
+}
+
+function revertControl(row, id) {
+  const knob = KNOBS.find(k => k.id === id);
+  if (!knob) return;
+  const val = originalValues[id];
+  if (knob.kind === 'bool') {
+    const cb = row.querySelector('input[type="checkbox"]');
+    if (cb) cb.checked = val;
+  } else if (knob.kind === 'int' || knob.kind === 'float') {
+    const slider = row.querySelector('input[type="range"]');
+    const num = row.querySelector('input[type="number"]');
+    if (slider) slider.value = val;
+    if (num) num.value = val;
+  } else if (knob.kind === 'enum') {
+    const sel = row.querySelector('select');
+    if (sel) sel.value = val;
+  } else if (knob.kind === 'string') {
+    const inp = row.querySelector('input[type="text"]');
+    if (inp) inp.value = val;
+  }
+}
+
+function handleReset(id) {
+  const knob = KNOBS.find(k => k.id === id);
+  if (!knob) return;
+  const def = knob.value; // original default baked in data
+  // If we have an original value that was 'default' source originally, that's the default
+  // For simplicity, treat knob.value (from data) as canonical default
+  currentValues[id] = def;
+  const row = document.querySelector(`[data-id="${id}"]`);
+  if (row) {
+    revertControl(row, id); // revert to current (which we just set to default)
+    // Actually revert control to def directly
+    setControlValue(row, knob, def);
+  }
+  // If value equals original, unmark changed; else mark changed to new value
+  if (def === originalValues[id]) {
+    markUnchanged(id);
+    // Hide reset if default source
+    const src = sourceOverrides[id];
+    if (src === 'yaml') {
+      // it's still yaml but now equals default — show reset still? No, hide it
+      // Actually: reset means "revert to built-in default" which clears the yaml override
+      sourceOverrides[id] = 'default';
+      const badge = row?.querySelector('.badge');
+      if (badge) { badge.className = 'badge badge-default'; badge.textContent = 'Default'; badge.removeAttribute('data-tooltip'); }
+      const resetBtn = row?.querySelector('.reset-btn');
+      if (resetBtn) resetBtn.style.display = 'none';
+      // update original
+      originalValues[id] = def;
+    }
+  } else {
+    markChanged(id);
+  }
+}
+
+function setControlValue(row, knob, val) {
+  if (knob.kind === 'bool') {
+    const cb = row.querySelector('input[type="checkbox"]');
+    if (cb) cb.checked = val;
+  } else if (knob.kind === 'int' || knob.kind === 'float') {
+    const slider = row.querySelector('input[type="range"]');
+    const num = row.querySelector('input[type="number"]');
+    if (slider) slider.value = val;
+    if (num) num.value = val;
+  } else if (knob.kind === 'enum') {
+    const sel = row.querySelector('select');
+    if (sel) sel.value = val;
+  } else if (knob.kind === 'string') {
+    const inp = row.querySelector('input[type="text"]');
+    if (inp) inp.value = val;
+  }
+}
+
+/* ============================================================
+   BUILD CONTROLS
+   ============================================================ */
+function buildControl(knob) {
+  const isEnv = sourceOverrides[knob.id] === 'env';
+  const disabled = isEnv;
+
+  if (knob.kind === 'bool') {
+    const el = document.createElement('div');
+    el.className = 'toggle-wrap';
+    const inp = document.createElement('input');
+    inp.type = 'checkbox';
+    inp.checked = currentValues[knob.id];
+    inp.disabled = disabled;
+    if (!disabled) {
+      inp.addEventListener('change', () => {
+        currentValues[knob.id] = inp.checked;
+        markChanged(knob.id);
+      });
+    }
+    const track = document.createElement('div');
+    track.className = 'toggle-track';
+    const thumb = document.createElement('div');
+    thumb.className = 'toggle-thumb';
+    el.append(inp, track, thumb);
+    return el;
+
+  } else if (knob.kind === 'int' || knob.kind === 'float') {
+    const wrap = document.createElement('div');
+    wrap.className = 'slider-wrap';
+
+    const minLabel = document.createElement('span');
+    minLabel.className = 'slider-bound';
+    minLabel.textContent = knob.min;
+
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = knob.min;
+    slider.max = knob.max;
+    slider.step = knob.kind === 'float' ? (knob.max - knob.min) / 1000 : 1;
+    slider.value = currentValues[knob.id];
+    slider.disabled = disabled;
+
+    const maxLabel = document.createElement('span');
+    maxLabel.className = 'slider-bound';
+    maxLabel.textContent = knob.max;
+
+    const numInp = document.createElement('input');
+    numInp.type = 'number';
+    numInp.className = 'num-input';
+    numInp.min = knob.min;
+    numInp.max = knob.max;
+    numInp.step = knob.kind === 'float' ? 'any' : 1;
+    numInp.value = currentValues[knob.id];
+    numInp.disabled = disabled;
+
+    if (!disabled) {
+      slider.addEventListener('input', () => {
+        const v = parseFloat(slider.value);
+        numInp.value = knob.kind === 'float' ? v.toPrecision(4) : v;
+        currentValues[knob.id] = v;
+        markChanged(knob.id);
+      });
+      numInp.addEventListener('input', () => {
+        const v = parseFloat(numInp.value);
+        if (!isNaN(v) && v >= knob.min && v <= knob.max) {
+          slider.value = v;
+          currentValues[knob.id] = v;
+          markChanged(knob.id);
+        }
+      });
+    }
+
+    wrap.append(minLabel, slider, maxLabel, numInp);
+    return wrap;
+
+  } else if (knob.kind === 'enum') {
+    const sel = document.createElement('select');
+    sel.className = 'sel-input';
+    sel.disabled = disabled;
+    knob.choices.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c;
+      opt.textContent = c;
+      if (c === currentValues[knob.id]) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    if (!disabled) {
+      sel.addEventListener('change', () => {
+        currentValues[knob.id] = sel.value;
+        markChanged(knob.id);
+      });
+    }
+    return sel;
+
+  } else { // string
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.className = 'text-input';
+    inp.value = currentValues[knob.id];
+    inp.disabled = disabled;
+    if (!disabled) {
+      inp.addEventListener('input', () => {
+        currentValues[knob.id] = inp.value;
+        markChanged(knob.id);
+      });
+    }
+    return inp;
+  }
+}
+
+/* ============================================================
+   BUILD BADGE
+   ============================================================ */
+function buildBadge(knob) {
+  const src = sourceOverrides[knob.id];
+  const el = document.createElement('span');
+  el.className = 'badge';
+  if (src === 'env') {
+    el.classList.add('badge-env');
+    el.textContent = 'ENV';
+    el.setAttribute('data-tooltip', 'Set via environment / nix — edit there, not here.');
+  } else if (src === 'yaml') {
+    el.classList.add('badge-yaml');
+    el.textContent = 'YAML';
+  } else {
+    el.classList.add('badge-default');
+    el.textContent = 'Default';
+  }
+  return el;
+}
+
+/* ============================================================
+   BUILD A SETTING ROW
+   ============================================================ */
+function buildRow(knob) {
+  const isEnv = sourceOverrides[knob.id] === 'env';
+  const isYaml = sourceOverrides[knob.id] === 'yaml';
+  const isChanged = changedIds.has(knob.id);
+
+  const row = document.createElement('div');
+  row.className = 'setting-row';
+  row.setAttribute('data-id', knob.id);
+  if (isEnv) row.classList.add('env-locked');
+  if (isChanged) row.classList.add('changed');
+
+  // LEFT
+  const left = document.createElement('div');
+  left.className = 'row-left';
+
+  const labelLine = document.createElement('div');
+  labelLine.className = 'row-label';
+
+  const labelText = document.createElement('span');
+  labelText.textContent = knob.label;
+  labelLine.appendChild(labelText);
+
+  if (knob.restart) {
+    const pill = document.createElement('span');
+    pill.className = 'restart-pill';
+    pill.textContent = '↻ restart required';
+    labelLine.appendChild(pill);
+  }
+
+  const desc = document.createElement('div');
+  desc.className = 'row-desc';
+  desc.textContent = knob.desc;
+
+  const knobName = document.createElement('div');
+  knobName.className = 'row-knob';
+  knobName.textContent = knob.name;
+
+  left.append(labelLine, desc, knobName);
+
+  // RIGHT
+  const right = document.createElement('div');
+  right.className = 'row-right';
+
+  const badge = buildBadge(knob);
+  right.appendChild(badge);
+
+  // Reset btn (visible if yaml source or currently changed)
+  const resetBtn = document.createElement('button');
+  resetBtn.className = 'reset-btn';
+  resetBtn.innerHTML = '⟲ Reset';
+  resetBtn.title = 'Reset to built-in default';
+  resetBtn.style.display = (isYaml || isChanged) && !isEnv ? '' : 'none';
+  resetBtn.addEventListener('click', () => handleReset(knob.id));
+  right.appendChild(resetBtn);
+
+  const control = buildControl(knob);
+  right.appendChild(control);
+
+  row.append(left, right);
+  return row;
+}
+
+/* ============================================================
+   RENDER CATEGORY PANE
+   ============================================================ */
+function renderCategoryPane(category) {
+  const pane = document.getElementById('category-pane');
+  pane.innerHTML = '';
+  pane.classList.remove('hidden');
+  document.getElementById('search-pane').classList.remove('visible');
+  document.getElementById('search-results-header').classList.remove('visible');
+  document.getElementById('search-empty').classList.remove('visible');
+
+  const heading = document.createElement('h2');
+  heading.className = 'cat-heading';
+  heading.textContent = category;
+  pane.appendChild(heading);
+
+  // Group by section
+  const knobs = KNOBS.filter(k => k.category === category);
+  const sections = [];
+  const sectionMap = {};
+  knobs.forEach(k => {
+    if (!sectionMap[k.section]) { sectionMap[k.section] = []; sections.push(k.section); }
+    sectionMap[k.section].push(k);
+  });
+
+  sections.forEach(sec => {
+    const group = document.createElement('div');
+    group.className = 'section-group';
+
+    if (sections.length > 1) {
+      const secLabel = document.createElement('div');
+      secLabel.className = 'section-label';
+      secLabel.textContent = sec;
+      group.appendChild(secLabel);
+    }
+
+    sectionMap[sec].forEach(k => group.appendChild(buildRow(k)));
+    pane.appendChild(group);
+  });
+}
+
+/* ============================================================
+   BUILD RAIL
+   ============================================================ */
+function buildRail() {
+  const rail = document.getElementById('rail');
+  // Clear existing category items (keep search wrap)
+  Array.from(rail.querySelectorAll('.rail-section-label, .rail-item')).forEach(el => el.remove());
+
+  const sectionLabel = document.createElement('div');
+  sectionLabel.className = 'rail-section-label';
+  sectionLabel.textContent = 'Categories';
+  rail.appendChild(sectionLabel);
+
+  const counts = categoryCounts();
+  CATEGORY_ORDER.forEach(cat => {
+    const item = document.createElement('div');
+    item.className = 'rail-item' + (cat === activeCategory ? ' active' : '');
+    item.setAttribute('data-cat', cat);
+    item.addEventListener('click', () => {
+      if (searchQuery) return; // ignore rail clicks during search
+      activeCategory = cat;
+      buildRail();
+      renderCategoryPane(cat);
+    });
+    const name = document.createElement('span');
+    name.textContent = cat;
+    const count = document.createElement('span');
+    count.className = 'rail-count';
+    count.textContent = counts[cat] || 0;
+    item.append(name, count);
+    rail.appendChild(item);
+  });
+}
+
+/* ============================================================
+   SEARCH
+   ============================================================ */
+function highlight(text, query) {
+  if (!query) return document.createTextNode(text);
+  const idx = text.toLowerCase().indexOf(query.toLowerCase());
+  if (idx === -1) return document.createTextNode(text);
+  const frag = document.createDocumentFragment();
+  frag.appendChild(document.createTextNode(text.slice(0, idx)));
+  const mark = document.createElement('mark');
+  mark.textContent = text.slice(idx, idx + query.length);
+  frag.appendChild(mark);
+  frag.appendChild(document.createTextNode(text.slice(idx + query.length)));
+  return frag;
+}
+
+function scoreMatch(knob, q) {
+  const lq = q.toLowerCase();
+  return [knob.label, knob.desc, knob.name, knob.category].some(s => s.toLowerCase().includes(lq));
+}
+
+function renderSearch(q) {
+  const searchPane = document.getElementById('search-pane');
+  const catPane = document.getElementById('category-pane');
+  const header = document.getElementById('search-results-header');
+  const emptyEl = document.getElementById('search-empty');
+  const emptyQ = document.getElementById('search-empty-q');
+
+  catPane.classList.add('hidden');
+  searchPane.classList.add('visible');
+
+  const matches = KNOBS.filter(k => scoreMatch(k, q));
+
+  if (matches.length === 0) {
+    searchPane.innerHTML = '';
+    emptyEl.classList.add('visible');
+    emptyQ.textContent = q;
+    header.classList.remove('visible');
+    return;
+  }
+
+  emptyEl.classList.remove('visible');
+
+  header.classList.add('visible');
+  header.innerHTML = '';
+  header.appendChild(document.createTextNode(`${matches.length} result${matches.length === 1 ? '' : 's'} for `));
+  const strong = document.createElement('strong');
+  strong.textContent = `"${q}"`;
+  header.appendChild(strong);
+
+  searchPane.innerHTML = '';
+  matches.forEach(knob => {
+    const row = document.createElement('div');
+    row.className = 'search-result-row';
+    row.setAttribute('data-id', knob.id);
+    const isChanged = changedIds.has(knob.id);
+    if (isChanged) row.classList.add('changed');
+
+    const left = document.createElement('div');
+    left.className = 'search-result-left';
+
+    const nameLine = document.createElement('div');
+    nameLine.className = 'search-result-name';
+    nameLine.appendChild(highlight(knob.label, q));
+
+    // Category chip
+    const chip = document.createElement('span');
+    chip.className = 'cat-chip';
+    chip.textContent = knob.category;
+    nameLine.appendChild(chip);
+
+    if (knob.restart) {
+      const pill = document.createElement('span');
+      pill.className = 'restart-pill';
+      pill.textContent = '↻ restart required';
+      nameLine.appendChild(pill);
+    }
+
+    const descEl = document.createElement('div');
+    descEl.className = 'search-result-desc';
+    descEl.appendChild(highlight(knob.desc, q));
+
+    const knobEl = document.createElement('div');
+    knobEl.className = 'search-result-knob';
+    knobEl.appendChild(highlight(knob.name, q));
+
+    left.append(nameLine, descEl, knobEl);
+
+    const right = document.createElement('div');
+    right.className = 'search-result-right';
+    right.appendChild(buildBadge(knob));
+
+    const isEnv = sourceOverrides[knob.id] === 'env';
+    const isYaml = sourceOverrides[knob.id] === 'yaml';
+    const resetBtn = document.createElement('button');
+    resetBtn.className = 'reset-btn';
+    resetBtn.innerHTML = '⟲ Reset';
+    resetBtn.style.display = (isYaml || isChanged) && !isEnv ? '' : 'none';
+    resetBtn.addEventListener('click', () => { handleReset(knob.id); renderSearch(q); });
+    right.appendChild(resetBtn);
+
+    right.appendChild(buildControl(knob));
+    row.append(left, right);
+    searchPane.appendChild(row);
+  });
+}
+
+/* ============================================================
+   SEARCH INPUT WIRING
+   ============================================================ */
+document.getElementById('search-input').addEventListener('input', function() {
+  searchQuery = this.value.trim();
+  if (searchQuery) {
+    renderSearch(searchQuery);
+    // Deactivate rail highlight
+    document.querySelectorAll('.rail-item').forEach(el => el.classList.remove('active'));
+  } else {
+    // Restore category view
+    document.getElementById('search-pane').classList.remove('visible');
+    document.getElementById('category-pane').classList.remove('hidden');
+    document.getElementById('search-results-header').classList.remove('visible');
+    document.getElementById('search-empty').classList.remove('visible');
+    buildRail(); // restores active highlight
+  }
+});
+
+/* ============================================================
+   INIT
+   ============================================================ */
+buildRail();
+renderCategoryPane(activeCategory);
+</script>
+</body>
+</html>
