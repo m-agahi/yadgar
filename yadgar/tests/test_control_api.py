@@ -93,27 +93,41 @@ def _auth_headers() -> dict:
 # ===========================================================================
 
 
-def test_403_when_debug_apis_disabled(monkeypatch, tmp_path):
-    """Dangerous mutating paths stay gated by YADGAR_DEBUG_APIS_ENABLED.
+def test_logs_stay_debug_gated_via_middleware(monkeypatch, tmp_path):
+    """ADR-0013 (v5.88.2): /api/logs/* stays behind YADGAR_DEBUG_APIS_ENABLED.
 
-    ADR-0011: POST /api/control/config is NO LONGER in this list — config writes
-    are protected by bearer auth + the env-locked 409 refusal, not the debug
-    flag (see test_config_post_not_gated_by_debug_flag). Action and restart
-    paths remain genuinely dangerous and stay gated.
+    Operational control paths move OFF the debug gate (see
+    test_ops_paths_ungated_with_debug_off); dev introspection (/api/logs/*) is
+    NOT a UI button and stays gated. The middleware gate fires before route
+    resolution, so the path need not be registered on this app. Replaces the
+    old test_403_when_debug_apis_disabled which gated action/restart.
     """
     client = _make_app(monkeypatch, debug_apis_on=False)
-    paths = [
-        ("POST", "/api/control/action/consolidate"),
-        ("POST", "/api/control/restart/yadgar"),
+    resp = client.get("/api/logs/stream", headers=_auth_headers())
+    assert resp.status_code == 403, (
+        f"Expected 403 for /api/logs/stream with debug off, got {resp.status_code}: {resp.text}"
+    )
+    assert resp.json().get("error") == "debug APIs disabled"
+
+
+def test_ops_paths_ungated_with_debug_off(monkeypatch, tmp_path):
+    """ADR-0013: action consolidate/reembed/vacuum + restart are NOT debug-gated.
+
+    With a valid bearer token and YADGAR_DEBUG_APIS_ENABLED=off they reach the
+    handler (never the gate's 403). Each must return a non-403 status. RED before
+    the _is_debug_api_path carve-out.
+    """
+    client = _make_app(monkeypatch, debug_apis_on=False)
+    cases = [
+        ("/api/control/action/consolidate", {}),
+        ("/api/control/action/reembed", {}),
+        ("/api/control/action/vacuum", {"confirm": "vacuum"}),
+        ("/api/control/restart/yadgar", {"confirm": "yadgar"}),
     ]
-    for method, path in paths:
-        resp = client.post(path, json={}, headers=_auth_headers())
-        assert resp.status_code == 403, (
-            f"Expected 403 for {method} {path}, got {resp.status_code}: {resp.text}"
-        )
-        body = resp.json()
-        assert body.get("error") == "debug APIs disabled", (
-            f"Expected error='debug APIs disabled' for {path}, got {body}"
+    for path, body in cases:
+        resp = client.post(path, json=body, headers=_auth_headers())
+        assert resp.status_code != 403, (
+            f"{path} must NOT be debug-gated (ADR-0013); got 403: {resp.text}"
         )
 
 
@@ -180,37 +194,49 @@ def test_config_post_env_locked_returns_409_when_debug_off(monkeypatch, tmp_path
     )
 
 
-def test_action_restart_stay_debug_gated(monkeypatch, tmp_path):
-    """Regression guard: action + restart paths stay 403 with debug flag OFF.
+def test_ops_paths_still_require_auth_when_debug_off(monkeypatch, tmp_path):
+    """ADR-0013: un-gating operational paths does NOT remove bearer auth.
 
-    ADR-0011 moves ONLY config-write out of the gate. These genuinely dangerous
-    paths must NOT be accidentally un-gated.
+    Without an Authorization header (debug off) the auth check returns 401 — the
+    paths are no longer intercepted by the debug-gate 403, but auth still applies.
+    RED before the carve-out (currently the gate 403s before auth runs).
     """
+    monkeypatch.setenv(_YADGAR_STATE_DIR_ENV, str(tmp_path))
     client = _make_app(monkeypatch, debug_apis_on=False)
-    for path in ("/api/control/action/consolidate", "/api/control/restart/yadgar"):
-        resp = client.post(path, json={}, headers=_auth_headers())
-        assert resp.status_code == 403, (
-            f"{path} must stay debug-gated; got {resp.status_code}: {resp.text}"
+    cases = [
+        ("/api/control/action/consolidate", {}),
+        ("/api/control/action/reembed", {}),
+        ("/api/control/action/vacuum", {"confirm": "vacuum"}),
+        ("/api/control/restart/yadgar", {"confirm": "yadgar"}),
+    ]
+    for path, body in cases:
+        resp = client.post(path, json=body)  # no auth header
+        assert resp.status_code == 401, (
+            f"{path} must still require auth (401, not gate 403); "
+            f"got {resp.status_code}: {resp.text}"
         )
-        assert resp.json().get("error") == "debug APIs disabled"
 
 
-def test_is_debug_api_path_config_ungated_actions_gated():
-    """ADR-0011 unit guard on _is_debug_api_path:
+def test_is_debug_api_path_only_logs_gated():
+    """ADR-0013 unit guard on _is_debug_api_path:
 
-    /api/control/config is ungated for BOTH GET and POST; action/restart/logs
-    stay gated regardless of method.
+    /api/control/config stays ungated (ADR-0011); operational action/restart
+    paths are now ALSO ungated (ADR-0013). Only /api/logs/* stays gated.
     """
     from yadgar.auth_middleware import _is_debug_api_path
 
     # Config: ungated for every method (ADR-0011)
     assert _is_debug_api_path("/api/control/config", "GET") is False
     assert _is_debug_api_path("/api/control/config", "POST") is False
-    # Dangerous mutating paths stay gated
-    assert _is_debug_api_path("/api/control/action/consolidate", "POST") is True
-    assert _is_debug_api_path("/api/control/restart/yadgar", "POST") is True
-    # Logs streaming stays gated
+    # Operational paths now ungated (ADR-0013)
+    assert _is_debug_api_path("/api/control/action/consolidate", "POST") is False
+    assert _is_debug_api_path("/api/control/action/reembed", "POST") is False
+    assert _is_debug_api_path("/api/control/action/vacuum", "POST") is False
+    assert _is_debug_api_path("/api/control/restart/yadgar", "POST") is False
+    assert _is_debug_api_path("/api/control/restart/backend", "POST") is False
+    # Logs streaming stays gated (dev introspection, not a UI button)
     assert _is_debug_api_path("/api/logs/poll", "GET") is True
+    assert _is_debug_api_path("/api/logs/stream", "GET") is True
 
 
 def test_config_get_not_gated_by_debug_flag(monkeypatch, tmp_path):
@@ -327,9 +353,10 @@ def test_restart_valid_yadgar_writes_sentinel_not_exec(monkeypatch, tmp_path):
     """POST /api/control/restart/yadgar with correct confirm →
     202, sentinel file written, NO os.execv / subprocess / systemctl called.
     """
-    # Point XDG_STATE_HOME at tmp_path so sentinel lands in a predictable spot
+    # Point XDG_STATE_HOME at tmp_path so sentinel lands in a predictable spot.
+    # ADR-0013: debug gate OFF — restart is auth-gated, not debug-gated.
     monkeypatch.setenv(_YADGAR_STATE_DIR_ENV, str(tmp_path))
-    client = _make_app(monkeypatch, debug_apis_on=True)
+    client = _make_app(monkeypatch, debug_apis_on=False)
 
     with (
         patch("os.execv") as mock_execv,
@@ -366,8 +393,9 @@ def test_restart_valid_backend_writes_sentinel_not_exec(monkeypatch, tmp_path):
     """POST /api/control/restart/backend with confirm='yadgar-backend' →
     202, sentinel written as 'restart-yadgar-backend.request', no exec.
     """
+    # ADR-0013: debug gate OFF — restart is auth-gated, not debug-gated.
     monkeypatch.setenv(_YADGAR_STATE_DIR_ENV, str(tmp_path))
-    client = _make_app(monkeypatch, debug_apis_on=True)
+    client = _make_app(monkeypatch, debug_apis_on=False)
 
     with (
         patch("os.execv") as mock_execv,
@@ -453,6 +481,35 @@ def test_config_post_round_trip(monkeypatch, tmp_path):
     )
 
 
+def test_config_post_bool_value_is_lowercase(monkeypatch, tmp_path):
+    """ADR-0013 bool-display fix: POST a bool knob → response value is lowercase.
+
+    Root cause: the handler returned ``str(coerced)`` where ``coerced`` is a
+    Python bool, so ``str(True)`` rendered as capitalized ``"True"`` — diverging
+    from the GET path (lowercase env strings) and the YAML/JSON convention. The
+    POST response (and the env it writes) must use lowercase ``"true"``/``"false"``.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    knob = "YADGAR_VIZ_PRECOMPUTED_LAYOUT_ENABLED"
+    monkeypatch.delenv(knob, raising=False)
+    client = _make_app(monkeypatch, debug_apis_on=False)
+    resp = client.post(
+        "/api/control/config",
+        json={"name": knob, "value": "true"},
+        headers=_auth_headers(),
+    )
+    assert resp.status_code == 200, f"POST failed: {resp.status_code}: {resp.text}"
+    assert resp.json()["value"] == "true", (
+        f"bool POST value must be lowercase 'true', got {resp.json()['value']!r}"
+    )
+    # The mutated process env must also carry the lowercase form.
+    import os as _os
+
+    assert _os.environ[knob] == "true", (
+        f"env var must be lowercase 'true', got {_os.environ[knob]!r}"
+    )
+
+
 # ===========================================================================
 # 10 — Type mismatch → 400
 # ===========================================================================
@@ -513,8 +570,11 @@ def test_config_post_out_of_range_returns_400(monkeypatch, tmp_path):
 
 
 def test_action_consolidate_calls_consolidate_now(monkeypatch, tmp_path):
-    """POST /api/control/action/consolidate → consolidate_now called."""
-    client = _make_app(monkeypatch, debug_apis_on=True)
+    """POST /api/control/action/consolidate → consolidate_now called.
+
+    ADR-0013: debug gate OFF — consolidate is safe (mode=light) + auth-gated.
+    """
+    client = _make_app(monkeypatch, debug_apis_on=False)
     mock_result = {"consolidated": 5}
     with patch(
         "yadgar.server.routes.control.consolidate_now",
@@ -531,8 +591,12 @@ def test_action_consolidate_calls_consolidate_now(monkeypatch, tmp_path):
 
 
 def test_action_vacuum_calls_vacuum_now(monkeypatch, tmp_path):
-    """POST /api/control/action/vacuum → vacuum_now called."""
-    client = _make_app(monkeypatch, debug_apis_on=True)
+    """POST /api/control/action/vacuum with valid confirm → vacuum_now called.
+
+    ADR-0013: vacuum is ungated (auth-gated) but carries real daemon downtime
+    (2-5 min), so it requires a server-side confirm field matching "vacuum".
+    """
+    client = _make_app(monkeypatch, debug_apis_on=False)
     mock_result = {"vacuumed": 3}
     with patch(
         "yadgar.server.routes.control.vacuum_now",
@@ -540,7 +604,7 @@ def test_action_vacuum_calls_vacuum_now(monkeypatch, tmp_path):
     ) as mock_fn:
         resp = client.post(
             "/api/control/action/vacuum",
-            json={},
+            json={"confirm": "vacuum"},
             headers=_auth_headers(),
         )
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
@@ -548,9 +612,61 @@ def test_action_vacuum_calls_vacuum_now(monkeypatch, tmp_path):
     assert resp.json()["action"] == "vacuum"
 
 
+def test_action_vacuum_without_confirm_returns_400(monkeypatch, tmp_path):
+    """POST /api/control/action/vacuum WITHOUT confirm → 400; vacuum_now NOT called.
+
+    ADR-0013: vacuum's daemon-downtime cost demands a typed confirm. A missing
+    or mismatched confirm is rejected before vacuum_now runs.
+    """
+    client = _make_app(monkeypatch, debug_apis_on=False)
+    with patch("yadgar.server.routes.control.vacuum_now") as mock_fn:
+        resp = client.post(
+            "/api/control/action/vacuum",
+            json={},
+            headers=_auth_headers(),
+        )
+    assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
+    assert "error" in resp.json()
+    mock_fn.assert_not_called()
+
+
+def test_action_vacuum_mismatched_confirm_returns_400(monkeypatch, tmp_path):
+    """POST /api/control/action/vacuum with wrong confirm → 400; vacuum_now NOT called."""
+    client = _make_app(monkeypatch, debug_apis_on=False)
+    with patch("yadgar.server.routes.control.vacuum_now") as mock_fn:
+        resp = client.post(
+            "/api/control/action/vacuum",
+            json={"confirm": "yes"},
+            headers=_auth_headers(),
+        )
+    assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
+    mock_fn.assert_not_called()
+
+
+def test_action_consolidate_reembed_need_no_confirm(monkeypatch, tmp_path):
+    """ADR-0013: consolidate + reembed are safe — NO confirm field required."""
+    client = _make_app(monkeypatch, debug_apis_on=False)
+    with (
+        patch("yadgar.server.routes.control.consolidate_now", return_value={}),
+        patch("yadgar.server.routes.control.reembed_all", return_value={}),
+    ):
+        for action in ("consolidate", "reembed"):
+            resp = client.post(
+                f"/api/control/action/{action}",
+                json={},
+                headers=_auth_headers(),
+            )
+            assert resp.status_code == 200, (
+                f"{action} must succeed without confirm; got {resp.status_code}: {resp.text}"
+            )
+
+
 def test_action_reembed_calls_reembed_all(monkeypatch, tmp_path):
-    """POST /api/control/action/reembed → reembed_all called."""
-    client = _make_app(monkeypatch, debug_apis_on=True)
+    """POST /api/control/action/reembed → reembed_all called.
+
+    ADR-0013: debug gate OFF — reembed is idempotent/safe + auth-gated.
+    """
+    client = _make_app(monkeypatch, debug_apis_on=False)
     with patch(
         "yadgar.server.routes.control.reembed_all",
         return_value={"reembedded": 10},
@@ -563,6 +679,26 @@ def test_action_reembed_calls_reembed_all(monkeypatch, tmp_path):
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
     mock_fn.assert_called_once()
     assert resp.json()["action"] == "reembed"
+
+
+def test_action_emits_audit_log(monkeypatch, tmp_path, caplog):
+    """ADR-0013: each successful operational action logs one audit line."""
+    import logging
+
+    client = _make_app(monkeypatch, debug_apis_on=False)
+    with (
+        patch("yadgar.server.routes.control.consolidate_now", return_value={}),
+        caplog.at_level(logging.INFO, logger="yadgar.server.routes.control"),
+    ):
+        resp = client.post(
+            "/api/control/action/consolidate",
+            json={},
+            headers=_auth_headers(),
+        )
+    assert resp.status_code == 200
+    audit = [r for r in caplog.records if "triggered via control API" in r.getMessage()]
+    assert audit, "expected an audit log line for the consolidate action"
+    assert any("consolidate" in r.getMessage() for r in audit)
 
 
 # ===========================================================================

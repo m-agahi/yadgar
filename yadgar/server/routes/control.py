@@ -114,6 +114,19 @@ def _get_category(section: str) -> str:
     return SECTION_TO_CATEGORY.get(section, "config")
 
 
+def _serialize_knob_value(value: object) -> str:
+    """Serialise a coerced knob value to its canonical string form.
+
+    Booleans render lowercase (``"true"``/``"false"``) — the YAML/JSON
+    convention — instead of Python's capitalized ``str(True)``. This keeps the
+    POST response (and the env it writes) consistent with the GET read path,
+    which surfaces lowercase env/default strings (ADR-0013 bool-display fix).
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
 def _enrich_knob(knob: dict, field_meta_key: str) -> dict:
     """Add description/section/category/locked fields to a knob dict in-place.
 
@@ -393,26 +406,62 @@ async def control_config_post_handler(request: Request) -> JSONResponse:
         logger.warning("Failed to persist knob %s to YAML: %s", name, exc)
         return JSONResponse({"error": f"failed to persist: {exc}"}, status_code=500)
 
+    # Serialise the coerced value. Python ``str(True)`` is capitalized ``"True"``,
+    # which diverged from the GET path (lowercase env strings) and the YAML/JSON
+    # convention — the config editor then showed booleans inconsistently. Render
+    # bool knobs as lowercase ``"true"``/``"false"`` (ADR-0013 bool-display fix).
+    value_str = _serialize_knob_value(coerced)
+
     # Update process environment immediately (hot-reload knobs take effect without restart)
-    os.environ[entry.name] = str(coerced)
+    os.environ[entry.name] = value_str
 
     return JSONResponse(
         {
             "name": entry.name,
-            "value": str(coerced),
+            "value": value_str,
             "reload": _classify_knob(entry.name),
         }
     )
 
 
+async def _vacuum_confirmed(request: Request) -> bool:
+    """Return True iff the POST body carries ``confirm == "vacuum"``.
+
+    Vacuum is ungated (ADR-0013) but causes 2-5 min of daemon downtime, so it
+    requires a typed confirm — mirrors the restart handler's confirm gate.
+    consolidate (mode=light, ~30s) and reembed (idempotent) need no confirm.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return False
+    return isinstance(body, dict) and body.get("confirm") == "vacuum"
+
+
 async def control_action_handler(request: Request) -> JSONResponse:
-    """POST /api/control/action/{consolidate|vacuum|reembed} — trigger admin actions."""
+    """POST /api/control/action/{consolidate|vacuum|reembed} — trigger admin actions.
+
+    ADR-0013 (v5.88.2): ungated (auth-protected, not debug-gated). ``vacuum``
+    additionally requires a ``{"confirm": "vacuum"}`` body — it carries real
+    daemon downtime. Each successful trigger emits one audit log line.
+    """
     action = request.path_params.get("action", "")
     if action not in ("consolidate", "vacuum", "reembed"):
         return JSONResponse(
             {"error": f"unknown action: {action!r}. Supported: consolidate, vacuum, reembed"},
             status_code=400,
         )
+
+    if action == "vacuum" and not await _vacuum_confirmed(request):
+        return JSONResponse(
+            {
+                "error": 'vacuum requires confirmation: send {"confirm": "vacuum"}',
+                "hint": "vacuum causes 2-5 min of daemon downtime.",
+            },
+            status_code=400,
+        )
+
+    logger.info("Control action %s triggered via control API", action)
 
     try:
         if action == "consolidate":
@@ -470,6 +519,7 @@ async def control_restart_handler(request: Request) -> JSONResponse:
         )
 
     # Write sentinel file ONLY — no exec, no subprocess, no systemctl
+    logger.info("Control restart %s triggered via control API", service)
     sentinel_path = _write_restart_sentinel(service)
     logger.info(
         "Restart sentinel written for service %s at %s (no daemon restart performed — "

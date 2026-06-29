@@ -47,6 +47,7 @@ import {
   buildRestartConfirmMsg,
   isRestartEnabled,
   groupKnobsByCategory,
+  displayKnobValue,
   initControlTab,
 } from './control.js';
 
@@ -167,6 +168,36 @@ describe('parseEditValue', () => {
     const r = parseEditValue('anything goes <here>', 'string');
     expect(r.error).toBeNull();
     expect(r.value).toBe('anything goes <here>');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// displayKnobValue (ADR-0013 bool-display fix)
+// ---------------------------------------------------------------------------
+
+describe('displayKnobValue', () => {
+  it('bool: normalizes every truthy form to lowercase "true"', () => {
+    // Server GET sends lowercase strings; POST historically sent capitalized
+    // Python str(True); JS booleans render as "true". All must collapse to "true".
+    for (const v of ['true', 'True', '1', 'yes', 'on', true]) {
+      expect(displayKnobValue(v, 'bool')).toBe('true');
+    }
+  });
+
+  it('bool: normalizes every falsy form to lowercase "false"', () => {
+    for (const v of ['false', 'False', '0', 'no', 'off', false]) {
+      expect(displayKnobValue(v, 'bool')).toBe('false');
+    }
+  });
+
+  it('non-bool kinds pass through unchanged', () => {
+    expect(displayKnobValue('8.0', 'float')).toBe('8.0');
+    expect(displayKnobValue('all-MiniLM-L6-v2', 'string')).toBe('all-MiniLM-L6-v2');
+    expect(displayKnobValue('12', 'int')).toBe('12');
+  });
+
+  it('bool: unrecognized value passes through (no silent corruption)', () => {
+    expect(displayKnobValue('maybe', 'bool')).toBe('maybe');
   });
 });
 
@@ -347,6 +378,59 @@ describe('initControlTab DOM wiring', () => {
     expect(posts.length).toBeGreaterThan(0);
     expect(posts[0].name).toBe('YADGAR_VIZ_NODE_SIZE_3D');
     expect(posts[0].value).toBeCloseTo(12.5);
+  });
+
+  // ADR-0013: vacuum button requires explicit confirm before POSTing
+  it('vacuum button POSTs {confirm:"vacuum"} only after confirm', async () => {
+    const posts = [];
+    globalThis.fetch = vi.fn(async (url, opts) => {
+      if (typeof url === 'string' && url.includes('/api/control/config') && (!opts?.method || opts.method === 'GET')) {
+        return { ok: true, status: 200, json: async () => ({ knobs: [] }) };
+      }
+      if (typeof url === 'string' && url.includes('/api/control/action/vacuum')) {
+        posts.push(opts?.body);
+        return { ok: true, status: 200, json: async () => ({ action: 'vacuum', result: {} }) };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+    const origConfirm = window.confirm;
+    window.confirm = vi.fn(() => true);
+
+    await initControlTab(root);
+    const vacuumBtn = root.querySelector('.ctrl-btn[data-action="vacuum"]');
+    expect(vacuumBtn).not.toBeNull();
+    await vacuumBtn.click();
+    await new Promise(r => setTimeout(r, 50));
+
+    expect(window.confirm).toHaveBeenCalled();
+    expect(posts.length).toBe(1);
+    expect(JSON.parse(posts[0]).confirm).toBe('vacuum');
+    window.confirm = origConfirm;
+  });
+
+  it('vacuum button does NOT POST when confirm is cancelled', async () => {
+    const posts = [];
+    globalThis.fetch = vi.fn(async (url, opts) => {
+      if (typeof url === 'string' && url.includes('/api/control/config') && (!opts?.method || opts.method === 'GET')) {
+        return { ok: true, status: 200, json: async () => ({ knobs: [] }) };
+      }
+      if (typeof url === 'string' && url.includes('/api/control/action/vacuum')) {
+        posts.push(opts?.body);
+        return { ok: true, status: 200, json: async () => ({}) };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+    const origConfirm = window.confirm;
+    window.confirm = vi.fn(() => false);
+
+    await initControlTab(root);
+    const vacuumBtn = root.querySelector('.ctrl-btn[data-action="vacuum"]');
+    await vacuumBtn.click();
+    await new Promise(r => setTimeout(r, 50));
+
+    expect(window.confirm).toHaveBeenCalled();
+    expect(posts.length).toBe(0);
+    window.confirm = origConfirm;
   });
 
   // 20. Restart button disabled until correct name typed

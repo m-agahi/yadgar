@@ -11,8 +11,12 @@
  *     + validation hint on save
  *   - Restart buttons: typed-name confirmation required before firing
  *
- * Gate: all API calls require YADGAR_DEBUG_APIS_ENABLED=on (server returns 403 otherwise).
- *       The tab detects the 403 and shows a banner.
+ * Gate (ADR-0013, v5.88.2): control + operational endpoints are auth-gated, NOT
+ *       behind YADGAR_DEBUG_APIS_ENABLED. config read/write, action
+ *       consolidate/reembed/vacuum, and restart all work with a bearer token and
+ *       the debug flag off; only /api/logs/* stays debug-gated. A missing token
+ *       still yields 401; the banner surfaces that. vacuum and restart require an
+ *       explicit confirm before firing.
  *
  * Wire-in: imported from index.html <script type="module">; call initControlTab(container).
  *
@@ -20,6 +24,7 @@
  *   classifyReload         — "hot_reload" | "restart_required" → display label
  *   filterKnobs            — filter + group a knob list
  *   parseEditValue         — coerce input string to typed value for POST
+ *   displayKnobValue       — normalize a knob value for display (bool → lowercase)
  *   buildRestartConfirmMsg — return the expected confirm string for a service URL segment
  *   isRestartEnabled       — check confirm input matches expected service name
  *   getKnobCategory        — extract category from knob (with 'all' pass-through)
@@ -199,6 +204,33 @@ export function parseEditValue(raw, kind) {
 }
 
 /**
+ * Normalize a knob value to its canonical display string.
+ *
+ * Bool knobs are rendered lowercase ("true"/"false") regardless of the source
+ * form. Two paths previously produced inconsistent casing: the GET read sends
+ * lowercase env strings, while the POST-save response carried Python's
+ * capitalized str(True) ("True"/"False"), and JS booleans stringify as
+ * "true"/"false". This collapses all of them to the YAML/JSON convention so the
+ * config editor never shows a mix of "True" and "true" (ADR-0013).
+ *
+ * Non-bool kinds and unrecognized bool inputs pass through unchanged (no silent
+ * corruption of an unexpected value).
+ *
+ * @param {string|boolean} value - raw value from GET knob.current/default or POST response
+ * @param {string} kind          - knob kind ("bool" | "int" | "float" | "string")
+ * @returns {string}
+ */
+export function displayKnobValue(value, kind) {
+  if (kind !== 'bool') return String(value);
+  if (value === true) return 'true';
+  if (value === false) return 'false';
+  const lc = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(lc)) return 'true';
+  if (['false', '0', 'no', 'off'].includes(lc)) return 'false';
+  return String(value);
+}
+
+/**
  * Return the expected confirmation string for a restart service URL segment.
  * URL segment "yadgar" → "yadgar"; "backend" → "yadgar-backend".
  *
@@ -372,6 +404,42 @@ function _disableSection(el) {
 
 // ── Actions row ──────────────────────────────────────────────────────────────
 
+/**
+ * Fire a control action. vacuum carries 2-5 min of daemon downtime, so it
+ * requires an explicit confirm (browser confirm dialog) and sends a
+ * {"confirm":"vacuum"} body the server re-validates (ADR-0013). consolidate
+ * (mode=light, ~30s) and re-embed (idempotent) fire one-click with an empty body.
+ *
+ * @param {HTMLButtonElement} btn
+ * @param {string} label
+ * @param {string} action - "consolidate" | "vacuum" | "reembed"
+ */
+async function _fireAction(btn, label, action) {
+  let body = '{}';
+  if (action === 'vacuum') {
+    const ok = (typeof window !== 'undefined' && typeof window.confirm === 'function')
+      ? window.confirm('Vacuum causes 2-5 min of daemon downtime. Proceed?')
+      : false;
+    if (!ok) return;
+    body = JSON.stringify({ confirm: 'vacuum' });
+  }
+  btn.disabled = true;
+  btn.textContent = `${label} …`;
+  try {
+    const r = await _apiFetch(`${_BASE}/api/control/action/${action}`, { method: 'POST', body });
+    const respBody = await r.json().catch(() => ({}));
+    if (r.ok) {
+      _flash(btn, `${label} ✓`, 1500, label);
+    } else {
+      _flash(btn, `error: ${respBody.error || r.status}`, 2000, label);
+    }
+  } catch (err) {
+    _flash(btn, `net error`, 2000, label);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function _renderActions(container, root) {
   const btnWrap = container.querySelector('.ctrl-buttons');
   if (!btnWrap) return;
@@ -384,23 +452,7 @@ function _renderActions(container, root) {
 
   for (const { label, action } of actions) {
     const btn = _el('button', { class: 'ctrl-btn', 'data-action': action }, label);
-    btn.addEventListener('click', async () => {
-      btn.disabled = true;
-      btn.textContent = `${label} …`;
-      try {
-        const r = await _apiFetch(`${_BASE}/api/control/action/${action}`, { method: 'POST', body: '{}' });
-        const body = await r.json().catch(() => ({}));
-        if (r.ok) {
-          _flash(btn, `${label} ✓`, 1500, label);
-        } else {
-          _flash(btn, `error: ${body.error || r.status}`, 2000, label);
-        }
-      } catch (err) {
-        _flash(btn, `net error`, 2000, label);
-      } finally {
-        btn.disabled = false;
-      }
-    });
+    btn.addEventListener('click', () => _fireAction(btn, label, action));
     btnWrap.appendChild(btn);
   }
 
@@ -493,11 +545,12 @@ function _buildKnobRow(knob, allKnobs, refreshFn) {
   tdType.textContent = knob.kind;
 
   const tdCurrent = _el('td', { class: 'ctrl-knob-current' });
-  tdCurrent.dataset.original = knob.current;
-  tdCurrent.textContent = knob.current;
+  const currentDisplay = displayKnobValue(knob.current, knob.kind);
+  tdCurrent.dataset.original = currentDisplay;
+  tdCurrent.textContent = currentDisplay;
 
   const tdDefault = _el('td', { class: 'ctrl-knob-default' });
-  tdDefault.textContent = knob.default;
+  tdDefault.textContent = displayKnobValue(knob.default, knob.kind);
 
   // SOURCE badge: ENV (locked) / YAML / DEFAULT
   const tdSource = _el('td', { class: 'ctrl-knob-source' });
@@ -611,9 +664,12 @@ function _openInlineEdit(tr, knob, allKnobs, refreshFn) {
       });
       const body = await r.json().catch(() => ({}));
       if (r.ok) {
-        // Update the knob in allKnobs array so filter refresh shows new value
+        // Update the knob in allKnobs array so filter refresh shows new value.
+        // Normalize bool casing (server bool POST is already lowercase post-ADR-0013,
+        // but older daemons may echo capitalized — collapse defensively).
         const idx = allKnobs.findIndex(k => k.name === knob.name);
-        if (idx !== -1) allKnobs[idx] = Object.assign({}, allKnobs[idx], { current: body.value ?? String(value) });
+        const newCurrent = displayKnobValue(body.value ?? value, knob.kind);
+        if (idx !== -1) allKnobs[idx] = Object.assign({}, allKnobs[idx], { current: newCurrent });
         refreshFn();
       } else if (r.status === 409) {
         // Env-locked: the knob is set via env var — yaml write would be shadowed
