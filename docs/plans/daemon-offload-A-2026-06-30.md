@@ -668,3 +668,76 @@ under test:
 6. **Backend follow-up (O7)** audited in parallel — do not raise N to production
    without it.
 ```
+
+---
+
+## AUDIT (2026-06-30)
+
+Independent adversarial audit. Read-only against live source; every claim
+re-verified against the actual code, not the plan's prose. The lead question was
+*what breaks the foundation*, not *does the plan read well*.
+
+### Bottom line
+
+**BUILD WITH CHANGES.** The offload **mechanism is sound** — this is NOT a
+foundation crack, NOT a do-not-build. The linchpin, the async-detection, the GIL
+analysis, and the loop-affinity precondition all VERIFY. But **one finding is a
+hard gate: O2 (pool-saturation invisibility). Fix A as written, without a
+pool-saturation health signal, is a *net regression* against the already-deployed
+P0** — it converts a hang P0 *can* kill (HTTP-000) into a pool-dead-but-loop-alive
+state that is invisible to every existing signal, so P0 can *no longer* kill it.
+The plan parks that fix in open-decision O5 as "add **or accept**." **Accept is not
+an option; reject it.** O5 + its exhaustion test are promoted to gating must-fix.
+
+### Per-claim verdict (file:line verified)
+
+| # | Claim | Verdict | Evidence |
+|---|---|---|---|
+| **Mechanism** | sync `_instrumented` runs inline; making it `async`+`to_thread` takes FastMCP's `await fn` branch | **VERIFIED** | `_app.py:343` sync `def _instrumented`, inline call `:358`, registered `:383`. SDK dispatch `func_metadata.py:92-95` identical in nix-`mcp-1.26.0` **and** the core-container SDK: `if fn_is_async: await fn(...)` else `return fn(...)` (bare, no `to_thread`/`run_sync`). Linchpin holds. **Pin is `mcp>=1.23.0` (no upper bound)** — plan says "1.28.0"; nix ships 1.26.0. Dispatch stable across both, but the unpinned ceiling is the SDK-bump risk the plan flags. |
+| **AP1** | `functools.wraps` over an `async def` preserves `iscoroutinefunction` | **VERIFIED** | `tools/base.py:120-125` `_is_async_callable` = `inspect.iscoroutinefunction(fn)`. Empirically tested: `wraps(sync_orig)` over `async def wrapper` ⇒ `iscoroutinefunction == True` (wraps doesn't touch `CO_COROUTINE`). AP1's mandated test is good hygiene; the claim is true. |
+| **1 — foundation (all-remote)** | core never runs local CPU on the loop | **CRACKED — conditional, not invariant** | `lifecycle.py:264` `if YADGAR_EMBED_URL:` ⇒ Remote engines; **`:270` else ⇒ local `EmbeddingEngine` + `LocalMLClient`** (in-process torch/CE), eagerly `_ensure_model()` at `:448`. Same for `YADGAR_DB_URL` (`storage/__init__.py:208/273`, else embedded SurrealKV). **No startup assert** enforces remote-only. Tool bodies call via interface (`scoring.py:156`, `_reranking_cross_encoder.py:126`) — if local engine selected, torch CPU runs on whatever thread the body is on. The GIL verdict is true **in prod** (nix:506 sets the vars) but silently depends on env. **Must-fix: startup assert `offload-on ⇒ remote-engines-only, fail loud`.** |
+| **GIL (§3)** | core hot paths release GIL | **VERIFIED (given Claim-1 guardrail)** | Remote httpx (socket IO) + git subprocess both release the GIL. Correct — *conditional on remote engines being selected*. With the Claim-1 assert in place, solid. |
+| **2 / O2 — quiet stall** | offload creates a pool-exhaustion stall P0 can't catch | **CRACKED — and this is the gate** | `/health` (`http.py:267-348`) checks only: active-session count + async DB/embed probes. **Zero** pool/in-flight/saturation signal. P0 (`nix:506`: `--health-cmd curl -f /health`, `--health-on-failure kill`, `--health-retries 3`) keys **purely on HTTP 200**. ⇒ pool-exhausted-but-loop-alive = 200 = **no kill, fully invisible**. `yadgar_surrealdb_pool_active` exists at `/metrics` but is the DB pool, not the tool executor, and isn't in `/health`. **The planned tests (sleep-tool 1/2/3) do NOT exercise O2** — they prove the loud hang is fixed, nothing drives pool exhaustion. An O2 test is *impossible to write until the O5 signal exists* (nothing to assert on). **O5-signal + exhaustion-test are a bundle; both gating.** |
+| **3 / O6 / AP2 — loop-affinity** | no sync tool body touches a loop-affine asyncio primitive on a worker | **VERIFIED** | Grep of `yadgar/server/tools/`: the only `asyncio.*` hit is a *comment* (`project.py:1529`). `_action_batch_lock` (`_state.py:95`, `asyncio.Lock`) acquired **only** at `http.py:496` (`async with`, async route — loop thread); zero tool-body references. `embed_service.py:111` `_rerank_semaphores` not reachable from tool bodies. AP2 passes. |
+| **4 / O11 — hook-route git** | inline git on hook routes survives Fix A | **CONFIRMED live residual** | Set **{`http.py:838`, `:1203`, `:1234`} confirmed complete** (no others). All inline git in `@custom_route` async handlers (`hook_subagent_stop` L773, `_handle_plan_file` L1167) ⇒ `_detect_branch`→`subprocess.check_output(git, timeout=2/3)`. Fix A's `@_tool()` boundary does **not** cover them. The asymmetry is stark: `_memorize` at `:849`/`:1239` **is** `to_thread`-wrapped; the git calls directly above are **not**. This is the exact vector that **co-fired** at the incident. **Defer is indefensible — the fix is 3 trivial `to_thread` wraps matching the existing `:849` pattern. Fold in.** If deferred anyway, the plan MUST drop the "loop never blocks" claim. |
+| **5 / O7 — backend** | N-parallel offload moves the stall to the backend | **CRACKED — different mechanism than plan feared** | Backend (`embed_service.py`, single uvicorn loop) does **NOT** run inference inline — `/embed` (`:588`) and `/rerank` (`:740`) both use `asyncio.to_thread`. BUT `/rerank` gates on a per-mode `asyncio.Semaphore` with **`RERANK_MAX_CONCURRENCY=1`** (`config.py:704`) + 2s acquire timeout ⇒ **503** (`:692`). So N-parallel core offload doesn't loop-block the backend; it produces **rerank 503-storms**, AND **feeds O2**: workers block on serialized/slow rerank (sem=1, 46s cross-encoder), holding pool slots ⇒ *faster* pool exhaustion. **N cannot be raised to prod without raising `RERANK_MAX_CONCURRENCY` in lockstep.** This — not httpx limits — is the real backend dependency of the pool-size goal. |
+| **6 — thread-safety completeness** | T1–T11 is the complete enumeration | **CRACKED — plan both over- and under-scoped** | **Missed (written by sync tool bodies, unguarded):** `_stale_count_cache` (`project.py:2133`, RMW by `project_brief`/`wiki_refresh_stale` — classic check-then-write race); `_enrichment_pipeline` (`storage/__init__.py:87/91`, `None→obj` double-init race from concurrent `memorize`); `_reinject_skip_logged` (`_phase_post_write.py:24`, benign bool); `_project_roots` set (`_state.py:97`, `seed_project`). **Over-scoped (plan flags as tool-body-written, but actually written only by async `http.py` routes on the loop thread — NOT exposed by offload):** `_last_session_context`, `_last_prompt_recall`, `_team_inbox_positions`, `_plan_file_hashes`. `_event_queue`/`_event_seq` already guarded by `_event_lock` (threading). The §5 table needs correction before it can be trusted as the lock checklist. |
+| **T1/T4** | `_query_cache`/`_breakers` unguarded | **VERIFIED** | `remote_embeddings.py:30` plain OrderedDict, RMW `:74-83` no lock. `ml_client.py:646` plain dict `_breakers`, RMW `:690/:698` no lock. Both real races under offload. |
+| **O1 — httpx limits** | raising httpx `limits ≥ N` is a forgotten hard-dependency | **OVERSTATED (red herring at N=8)** | `remote_embeddings.py:34`, `ml_client.py:624`, storage client: all `httpx.Client(...)` with **no `limits=`** ⇒ httpx default `max_connections=100`. The feared "1-conn singleton" is **false**. At N=8, `limits ≥ N` is already satisfied. (`httpx.Client` is documented thread-safe for concurrent cross-thread requests ⇒ T2/T3/T5 collapse to perf-only, no lock needed.) The hard backend dependency is O7's `RERANK_MAX_CONCURRENCY`, not this. |
+| **7 — test adequacy** | mandated real-subprocess+HTTP e2e is required; in-process harness can't exercise the loop | **VERIFIED (with a gap)** | `tests/e2e/conftest.py:147-210` `e2e_engines` = `server.init_engines()` + direct Python calls ⇒ bypasses `_instrumented`/FastMCP/loop. Existing `test_async_handlers_no_block.py` is in-process `asyncio.run()` + **source-string greps** (`assert "asyncio.to_thread" in source`) — NOT real dispatch. Plan's mandate for a real daemon-over-HTTP test is justified and load-bearing. **Gap:** Tests 1/2/3 catch the *loud* hang only; **none catches O2** — see Claim 2. The test suite as specified would pass after Fix A while the O2 regression ships undetected. |
+
+### Must-fix-before-build (ranked)
+
+1. **[GATING] O5 pool-saturation health signal + its exhaustion test.** Without it,
+   Fix A is a net regression vs deployed P0 (loud-hang-P0-can-kill → silent-stall-
+   P0-cannot-kill). `/health` must go degraded (non-200) when the tool pool is
+   saturated for > T seconds, so P0's `curl -f` trips. Bundle the regression test
+   that drives pool exhaustion and asserts `/health` degrades + P0 would kill.
+   *Non-negotiable.*
+2. **[Claim 1] Startup assert: offload-on ⇒ remote-engines-only, fail loud.** Make
+   the "all-remote, GIL-safe" property a startup invariant, not a silent env
+   dependency. If `YADGAR_OFFLOAD_TOOLS` on and a local engine was selected, refuse
+   to start (or refuse to offload) with a loud error.
+3. **[O11] Fold the 3 hook-route git calls into `to_thread`** (`http.py:838/1203/1234`),
+   matching the existing `:849` pattern. It's the proven co-firing incident vector
+   and the fix is trivial. Deferring leaves the live loop-block; if deferred, strike
+   the "loop never blocks" framing.
+4. **[O7] Gate N on `RERANK_MAX_CONCURRENCY`, not httpx limits.** Do not raise the
+   pool to prod-N without raising the backend rerank semaphore (`config.py:704`) in
+   lockstep, or the offload converts a core hang into rerank 503-storms that also
+   accelerate O2 pool exhaustion. Define caller behaviour on backend 503.
+5. **[Claim 6] Correct the §5 lock checklist** before using it: add `_stale_count_cache`
+   and `_enrichment_pipeline` (real tool-body races; the latter is a double-init);
+   drop the four http.py-only items wrongly listed as tool-body-written. Keep T1/T4.
+6. **[O1 cleanup] Downgrade O1.** httpx limits default to 100, not 1; at N=8 nothing
+   to raise. Re-scope the "hard dependency" language to O7.
+
+### What VERIFIED (do not re-litigate)
+
+Mechanism (linchpin func_metadata:92-95, both SDKs), AP1 (wraps preserves async
+detection, empirically), GIL-release on remote+subprocess paths, AP2 (no loop-affine
+primitive reachable from a sync tool body), O8 deferred-but-low-risk (contextvars
+copy is standard). These are solid; the plan is buildable on them.
+
+**Verdict: BUILD WITH CHANGES. O2 (must-fix #1) is the gate — ship without the
+pool-saturation signal and you have made recovery strictly worse than today.**
