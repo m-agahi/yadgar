@@ -465,8 +465,13 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_CIRCUIT_BREAKER_PROBE_TIMEOUT_SEC", "2.0", "float"),
     ConfigEntry("YADGAR_CIRCUIT_BREAKER_MAX_OPEN_DURATION_SEC", "600.0", "float"),
     ConfigEntry("YADGAR_CIRCUIT_BREAKER_BACKOFF_FACTOR", "2.0", "float"),
-    ConfigEntry("YADGAR_RERANK_MAX_CONCURRENCY", "1", "int"),
+    ConfigEntry("YADGAR_RERANK_MAX_CONCURRENCY", "8", "int"),
     ConfigEntry("YADGAR_RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC", "2.0", "float"),
+    # ── Fix A (daemon-offload-A): tool-body offload off the asyncio loop ─────────
+    ConfigEntry("YADGAR_OFFLOAD_TOOLS", "false", "bool"),
+    ConfigEntry("YADGAR_TOOL_POOL_WORKERS", "8", "int"),
+    ConfigEntry("YADGAR_TOOL_TIMEOUT_SEC", "30.0", "float"),
+    ConfigEntry("YADGAR_TOOL_SATURATION_GRACE_SEC", "45.0", "float"),
     # write queue / DLQ
     ConfigEntry("YADGAR_QUEUE_DRAIN_INTERVAL", "30", "int"),
     ConfigEntry("YADGAR_QUEUE_MAX_PERMANENT_ATTEMPTS", "3", "int"),

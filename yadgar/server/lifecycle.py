@@ -268,6 +268,22 @@ def _init_embedding_client(embedding_model: str | None, _settings):
         embeddings = RemoteEmbeddingEngine(embedding_model or _settings.EMBEDDING_MODEL)
         ml_client = RemoteMLClient(os.environ["YADGAR_EMBED_URL"])
     else:
+        # Fix A Claim-1: tool-body offload is only GIL-safe when the hot paths are
+        # remote httpx (socket IO releases the GIL). The local torch
+        # EmbeddingEngine + LocalMLClient run CPU inference on whatever thread the
+        # tool body lands on — on a worker that still holds the GIL during
+        # pure-python glue, defeating the offload premise. Fail loud rather than
+        # silently ship a broken foundation.
+        from yadgar.server._offload import offload_enabled  # noqa: PLC0415
+
+        if offload_enabled():
+            raise RuntimeError(
+                "YADGAR_OFFLOAD_TOOLS is enabled but no YADGAR_EMBED_URL is set, so "
+                "local in-process torch engines would be selected. Tool-body offload "
+                "is only GIL-safe with REMOTE engines (YADGAR_EMBED_URL + "
+                "YADGAR_DB_URL). Set YADGAR_EMBED_URL or disable offload."
+            )
+
         from yadgar.backend.ml_client import LocalMLClient  # noqa: PLC0415
 
         embeddings = EmbeddingEngine(embedding_model or _settings.EMBEDDING_MODEL)
@@ -470,6 +486,16 @@ def shutdown():
         from yadgar import sd_notify as _sd_notify  # noqa: PLC0415
 
         _sd_notify.stopping()
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Fix A (daemon-offload-A): tear down the tool-offload pool (O10). Non-blocking
+    # on wedged in-flight workers (they can't be killed; cancel queued work) so a
+    # stuck git can't hang graceful stop past the systemd stop-timeout.
+    try:
+        from yadgar.server._offload import shutdown_pool  # noqa: PLC0415
+
+        shutdown_pool()
     except Exception:  # noqa: BLE001
         pass
 

@@ -540,7 +540,7 @@ config knobs.
 - **migrations:** —
 - **bc:** —
 - **refs:** `yadgar/backend/embed_service.py`, `yadgar/backend/ml_client.py`
-- **wiring:** `RERANK_MAX_CONCURRENCY` (default 1) and `RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC` (default 2.0) are read at `embed_service` module initialisation to configure the asyncio semaphore that gates concurrent CE/NLI scoring requests. `RERANK_BACKEND_TIMEOUT_SEC` (default 90) is used as the timeout for remote ML backend calls in `LocalMLClient`.
+- **wiring:** `RERANK_MAX_CONCURRENCY` (default 8 — raised from 1 in Fix A O7 in lockstep with `TOOL_POOL_WORKERS`; read by the BACKEND container, needs a backend rebump/env to take effect) and `RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC` (default 2.0) are read at `embed_service` module initialisation to configure the asyncio semaphore that gates concurrent CE/NLI scoring requests. `RERANK_BACKEND_TIMEOUT_SEC` (default 90) is used as the timeout for remote ML backend calls in `LocalMLClient`.
 - **explanation:** Guards the cross-encoder and NLI inference path against concurrent overload. A semaphore with `RERANK_MAX_CONCURRENCY` slots serialises concurrent scoring requests; if the semaphore cannot be acquired within `RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC` the request is dropped with a counter increment. `RERANK_BACKEND_TIMEOUT_SEC` gives the backend inference itself a hard ceiling before aborting.
 
 ---
@@ -2241,6 +2241,17 @@ config knobs.
 - **wiring:** `GET /health` (auth-exempt) builds a payload that probes the `YADGAR_DB_URL` and `YADGAR_EMBED_URL` dependencies CONCURRENTLY (`asyncio.gather`, ~2 s vs the old ~4 s serial) and is bounded by an outer `asyncio.wait_for(_HEALTH_TIMEOUT_SEC=3.0)`. If any probe fails (or the outer bound trips) `status="degraded"`. **The handler returns HTTP 200 only when `status=="ok"`, and HTTP 503 on any non-ok status** (v5.83 obs-train, C1). The handler is STATELESS — anti-flap is delegated to the container healthcheck retries (`docker-compose.yml` core service: `interval 10s`, `timeout 5s`, `retries 6`, so ~60 s of sustained degradation before the container is marked unhealthy), NOT an in-handler failure counter. Consumer side (`yadgar/daemon.py`): `status()` reads the `HTTPError` body on a 503 and shows the degraded detail (not "unreachable"); `_health_ok()` treats a responding-but-503 server as ALIVE — liveness (server responding) is distinct from full-health/readiness (db+embed ok), which the container `curl -f` healthcheck enforces.
 - **explanation:** Before v5.83 the endpoint always returned 200 even when degraded, so the container `curl -f` healthcheck read a db/embed outage as healthy (the outage-masking false-negative). 503-on-degraded makes the healthcheck actually detect outages. The 3 s handler cap sits inside the compose `timeout: 5s` with margin; the compose `urlopen(..., timeout=2)` inner probe and `retries: 6` already meet/exceed the nix healthcheck intent (interval 15 s / timeout 8 s / retries 3), so no compose change was needed — a 503 raises `HTTPError` → non-zero exit → correctly unhealthy. Tested by `yadgar/tests/test_transport.py` (`test_health_returns_503_when_db_probe_degraded`, `test_health_returns_200_when_probes_ok`, `test_health_outer_timeout_trips_503_on_hang`, concurrent-probe timing) and the daemon-side 503-tolerance in `yadgar/tests/test_daemon_module.py`.
 
+### CAP-OPS-039 — Tool-body offload off the asyncio loop (Fix A)
+- **status:** LIVE
+- **category:** ops
+- **settings:** `OFFLOAD_TOOLS`, `TOOL_POOL_WORKERS`, `TOOL_TIMEOUT_SEC`, `TOOL_SATURATION_GRACE_SEC`
+- **tools:** —
+- **migrations:** —
+- **bc:** —
+- **refs:** `yadgar/server/_offload.py`, `yadgar/server/_app.py::_tool`, `yadgar/server/lifecycle.py`, `yadgar/server/http.py::_apply_tool_pool_health`
+- **wiring:** `_app._instrumented` is `async def`; when `OFFLOAD_TOOLS` is on it dispatches the trace-wrapped sync tool body onto a bounded `ThreadPoolExecutor(max_workers=TOOL_POOL_WORKERS)` via `loop.run_in_executor`, wrapped in `asyncio.wait_for(TOOL_TIMEOUT_SEC)`, so the asyncio loop stays free to serve `/health`. The in-flight counter is decremented on the WORKER thread at true completion (not coroutine-side) so `pool_saturated()` reflects true occupancy even when a `wait_for` times out and the worker keeps its slot. `/health` (`_apply_tool_pool_health`) goes `status=degraded` → 503 when the pool is saturated for > `TOOL_SATURATION_GRACE_SEC` (completion-staleness), so the P0 `curl -f` health-kill can catch a pool-dead-but-loop-alive daemon (O2). Lifecycle asserts remote engines when offload is on (Claim-1) and tears the pool down on shutdown (O10).
+- **explanation:** Fix A (daemon-offload-A) removes the *cause* of the v5.88 core daemon hang: ~60 sync MCP tool bodies ran INLINE on the single asyncio loop (FastMCP `func_metadata.py:92` sync branch), so a blocking body (the proven inline `git` subprocess) froze the loop and starved `/health`. Default OFF for the first release (proven trigger stays inline, covered by the deployed P0 health-kill); flipped ON after live soak. `TOOL_SATURATION_GRACE_SEC` MUST exceed `TOOL_TIMEOUT_SEC` so legitimate ops keep resetting the staleness clock and only leaked workers trip the O2 503 signal. `TOOL_POOL_WORKERS` is kept in lockstep with the backend `RERANK_MAX_CONCURRENCY` (O7) to avoid rerank 503-storms feeding back into pool exhaustion.
+
 ### CAP-VIZ-001 — Wiki node category colors
 
 - **status:** LIVE
@@ -2893,3 +2904,15 @@ config knobs.
 - **refs:** `yadgar/server/tools/agent_prompts.py::seed_agent_prompts`, `yadgar/server/tools/agent_prompts.py::STARTER_PROMPTS`, `yadgar/server/http.py::hook_seed_agent_prompts`, `yadgar/cli/seed.py::_seed_agent_prompts`, `scripts/install/yadgar-setup.sh::_step_seed_agent_prompts`
 - **wiring:** `seed_agent_prompts` is `@_tool(power=True)` in `agent_prompts.py`. It iterates the 4 `STARTER_PROMPTS` constants (patterns: `code-review`, `debug-investigate`, `explore-codebase`, `implement-tdd`), checks each via `_read_agent_prompt(slug)` (create-if-absent), and calls `agent_prompt_save` for absent patterns. TOC and library anchor are managed by `agent_prompt_save`; this function does not duplicate that logic. REST hook `/hooks/seed-agent-prompts` in `http.py` wraps the function for daemon-side execution. CLI: `yadgar seed --agent-prompts` posts to `/hooks/seed-agent-prompts`; dry-run prints without HTTP calls. Install step `_step_seed_agent_prompts` in `yadgar-setup.sh` (step 11/11) waits for daemon, then calls `yadgar seed --agent-prompts`.
 - **explanation:** Bootstraps the agent-prompt library with 4 opinionated dispatch starters so a fresh installation has immediately usable patterns for the most common subagent tasks (code review, debug, codebase exploration, TDD implementation). Idempotent: any pattern already saved is skipped; the TOC and discovery anchor are guaranteed by `agent_prompt_save`'s existing S6 logic, so the seeder never creates duplicates regardless of how many times it runs.
+
+### CAP-INFRA-033 — Test-only offload-dispatch probe tools (daemon-offload-A)
+
+- **status:** LIVE
+- **category:** mcp-tool
+- **settings:** —
+- **tools:** `_test_sleep`, `_test_thread_id`
+- **migrations:** —
+- **bc:** —
+- **refs:** `yadgar/server/tools/_test_tools.py::register_test_tools`, `yadgar/server/tools/__init__.py::_register_test_tools`
+- **wiring:** `register_test_tools()` is called at import time from `yadgar/server/tools/__init__.py`. It is a no-op unless `YADGAR_TEST_TOOLS=1` (or `true`/`yes`/`on`) is set in the environment. When enabled, registers two `@_tool`-decorated functions: `_test_sleep(seconds)` blocks the calling thread via `time.sleep` (proves offload boundary — inline → loop starvation, offloaded → loop free); `_test_thread_id()` returns the executing thread's ident/name (proves worker dispatch). Both tools are never exposed in production; the env gate ensures zero surface area outside e2e test runs.
+- **explanation:** Fix A (daemon-offload-A) requires end-to-end verification that blocking tool bodies run on worker threads when `OFFLOAD_TOOLS=true`, not on the asyncio loop thread. A deterministic sleep body and a thread-identity probe are the smallest reproducible fixtures for this — they have no external dependencies (no git, no DB, no HTTP) and produce deterministic, flake-free results. Gated behind `YADGAR_TEST_TOOLS` so the production MCP surface is unchanged.

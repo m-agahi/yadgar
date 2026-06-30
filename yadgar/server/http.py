@@ -307,9 +307,36 @@ async def _build_health_payload() -> dict:
         payload["db"] = db_ok
     if embed_ok is not None:
         payload["embed"] = embed_ok
+
+    # Fix A O2 GATE (daemon-offload-A): degrade (→ 503) on tool-pool saturation.
+    _apply_tool_pool_health(payload)
+
     if db_ok is False or embed_ok is False:
         payload["status"] = "degraded"
     return payload
+
+
+def _apply_tool_pool_health(payload: dict) -> None:
+    """Fold tool-offload pool occupancy into the /health payload (Fix A O2).
+
+    Goes degraded (→ 503 in the handler) when the pool is SATURATED — exhausted
+    with nothing completing for > grace, i.e. wedged workers holding every slot.
+    Without this a pool-dead-but-loop-alive daemon answers /health 200 and P0's
+    `curl -f` health-kill can no longer catch it — a net regression vs the deployed
+    P0. Completion-staleness (not full-since) means a healthy draining peak is
+    never flagged. Never raises — health must not crash on the pool probe.
+    """
+    try:
+        from yadgar.server._offload import pool_saturated, pool_stats  # noqa: PLC0415
+
+        _pstats = pool_stats()
+        if _pstats.get("enabled"):
+            payload["tool_pool"] = _pstats
+        if pool_saturated():
+            payload["status"] = "degraded"
+            payload["tool_pool_saturated"] = True
+    except Exception:  # noqa: BLE001
+        pass
 
 
 @mcp_server.custom_route("/health", methods=["GET"])
@@ -835,7 +862,7 @@ async def hook_subagent_stop(request: Request) -> JSONResponse:
         try:
             import yadgar.server as _srv_mod  # noqa: PLC0415
 
-            _branch_hint = _srv_mod._detect_branch(cwd)
+            _branch_hint = await asyncio.to_thread(_srv_mod._detect_branch, cwd)
         except Exception:
             pass
 
@@ -1200,11 +1227,9 @@ async def _handle_plan_file(file_path: str, match, storage) -> JSONResponse:
         try:
             import subprocess as _sp
 
-            result = _sp.run(
-                ["git", "-C", str(p.parent.parent), "rev-parse", "--short", "HEAD"],
-                capture_output=True,
-                text=True,
-                timeout=3,
+            _git_args = ["git", "-C", str(p.parent.parent), "rev-parse", "--short", "HEAD"]
+            result = await _asyncio.to_thread(
+                lambda: _sp.run(_git_args, capture_output=True, text=True, timeout=3)
             )
             if result.returncode == 0:
                 git_ref = result.stdout.strip()
@@ -1231,7 +1256,7 @@ async def _handle_plan_file(file_path: str, match, storage) -> JSONResponse:
         try:
             import yadgar.server as _srv_mod2  # noqa: PLC0415
 
-            _plan_branch_hint = _srv_mod2._detect_branch(str(p.parent))
+            _plan_branch_hint = await _asyncio.to_thread(_srv_mod2._detect_branch, str(p.parent))
         except Exception:
             pass
 
