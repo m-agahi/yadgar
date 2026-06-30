@@ -87,6 +87,25 @@ class TestAtomicSettingsWrite:
         files = list(claude_dir.iterdir())
         assert all(f.name == "CLAUDE.md" for f in files), f"Extra files: {files}"
 
+    def test_sync_instructions_contains_agent_prompt_library_rule(self, tmp_path):
+        """#70: synced CLAUDE.md must contain the read-side agent-prompt-library rule."""
+        import yadgar.server as srv
+
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        md_path = claude_dir / "CLAUDE.md"
+        md_path.write_text("# My rules\n\nOld content.\n")
+
+        srv.sync_instructions(claude_md_path=str(md_path))
+        new_content = md_path.read_text()
+
+        assert "Agent-Prompt Library" in new_content, (
+            "Expected 'Agent-Prompt Library' section in synced CLAUDE.md"
+        )
+        assert "agent_dispatch_prelude" in new_content, (
+            "Expected 'agent_dispatch_prelude' call mentioned in synced CLAUDE.md"
+        )
+
     def test_install_hooks_settings_is_atomic(self, tmp_path, monkeypatch):
         """install_hooks writes settings.json atomically (tmp + os.replace)."""
         # Verify that os.replace is called with a .json destination

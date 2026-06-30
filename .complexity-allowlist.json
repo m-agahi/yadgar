@@ -235,9 +235,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 1430
+      "file_loc": 1923
     },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. v5.89 #67: +~490 LoC of FIELD_META schema data (desc/section for 67 backfilled knobs draining the I25 Tier-2 grandfathered backlog) — pure data, not logic; the module is a single-responsibility config loader by design.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -383,5 +383,16 @@
     "rationale": "PERMANENT. Same ADR-schema constraint as _build_adr_body: 10 mandatory content fields + directory = 11 total. FastMCP derives the JSON Schema from function parameters directly; a **kwargs variant loses schema enforcement. The 11-field ADR structure is a conscious design choice (matches Nygard ADR format) and must be preserved as a flat tool signature.",
     "added": "2026-06-25",
     "added_by": "feat/improvement-train"
+  },
+  {
+    "path": "yadgar/storage/wiki.py",
+    "function": "<file>",
+    "lineno": 1,
+    "metrics": {
+      "file_loc": 1012
+    },
+    "rationale": "v5.89 #69: upsert_dispatch_prelude_marker added ~37 lines to mirror upsert_active_work. The _WikiMixin class holds all memory/wiki upsert helpers; splitting the file creates import cycles. Scheduled for mixin decomposition in a dedicated refactor.",
+    "added": "2026-06-30",
+    "added_by": "feat/v5.89-settings-redesign"
   }
 ]

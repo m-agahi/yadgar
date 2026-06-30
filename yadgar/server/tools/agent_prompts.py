@@ -45,6 +45,30 @@ _LIBRARY_ANCHOR_CONTENT = (
 )
 
 
+_DOUBLE_WRAP_RE = re.compile(
+    r"^##\s+Purpose\b.*?\n##\s+Prompt\s*\n+(.*)",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _unwrap_purpose_prompt(content: str) -> str:
+    """Strip a leading ## Purpose / ## Prompt wrapper from content if present.
+
+    If content already looks like a fully-wrapped agent-prompt page
+    (starts with '## Purpose ...' followed by '## Prompt ...'), extract and
+    return just the body text that follows '## Prompt'.  This prevents
+    double-wrapping when a caller passes pre-wrapped content to agent_prompt_save.
+
+    Conservative: only strips when BOTH headers are present in the leading region.
+    Passes bare content through unchanged.
+    """
+    stripped = content.lstrip()
+    m = _DOUBLE_WRAP_RE.match(stripped)
+    if m:
+        return m.group(1).rstrip("\n")
+    return content
+
+
 def _toc_row(pattern: str, purpose: str) -> str:
     return f"- `{pattern}` → {purpose}"
 
@@ -187,6 +211,9 @@ def agent_prompt_save(
     title = f"Agent Prompt: {pattern}"
     tags = ["agent-prompt", f"task:{pattern}"]
     _purpose = purpose or f"Agent prompt for {pattern} tasks."
+    # Strip any pre-existing Purpose/Prompt wrapper before composing — prevents
+    # double-wrapping when the caller passes already-wrapped content (#68).
+    content = _unwrap_purpose_prompt(content)
     # Wrap content with required headings so wiki_lint passes for page_type="agent_prompt"
     full_content = f"## Purpose\n\n{_purpose}\n\n## Prompt\n\n{content}"
 
@@ -263,55 +290,37 @@ def agent_prompt_save(
 # ── S8 starter library ───────────────────────────────────────────────────────
 # Pinned patterns and content for the 4 built-in dispatch starters.
 # Slug for each: agent-prompt-<pattern>  (MUST match test assertions exactly).
-STARTER_PROMPTS: list[tuple[str, str, str]] = [
-    (
-        "code-review",
-        "Review a diff or PR for correctness and risk.",
-        (
-            "Review the given diff or PR. One finding per line, severity-tagged"
-            " (critical/high/medium/low).\n"
-            "Cite file:line for every finding.\n"
-            "Flag only what changes correctness, security, or observable behavior.\n"
-            "No praise, no scope creep, no unrelated cleanups.\n"
-            "If nothing is wrong, report 'no issues found'."
-        ),
-    ),
-    (
-        "debug-investigate",
-        "Root-cause a bug and ship a minimal fix with a regression test.",
-        (
-            "Reproduce the bug first — confirm failure before touching code.\n"
-            "Isolate via bisection, logging, or binary-search; identify the true"
-            " root cause, not the symptom.\n"
-            "Apply the minimal fix — surgical edit, no opportunistic cleanups.\n"
-            "Add a regression test that fails before the fix and passes after.\n"
-            "Run the full suite; loop until green."
-        ),
-    ),
-    (
-        "explore-codebase",
-        "Map where code lives / how a subsystem works (READ-ONLY).",
-        (
-            "READ-ONLY investigation — make zero edits.\n"
-            "Locate where X lives or how Y works; start broad (grep/glob) then narrow.\n"
-            "Return a file:line table with one row per relevant symbol or entry-point.\n"
-            "Quote function signatures exactly as they appear in source.\n"
-            "Do NOT propose or apply fixes; report the map, not opinions."
-        ),
-    ),
-    (
-        "implement-tdd",
-        "Implement a feature test-first (red → green → refactor).",
-        (
-            "Write a failing test that pins the desired behavior (red) before any"
-            " implementation code.\n"
-            "Implement the minimal code needed to pass (green).\n"
-            "Refactor with tests staying green — no behaviour change.\n"
-            "Run the full check surface (tests/lint/types) and loop until clean.\n"
-            "Done = tests pass and checks are green."
-        ),
-    ),
-]
+#
+# v5.88 seed consolidation: the editable content lives in the canonical seed
+# materials dir (yadgar/seed/materials/agent_prompts.yaml), not inline here.
+# This module only loads it — edit the yaml, not this file. STARTER_PROMPTS keeps
+# its public shape: list[tuple[pattern, purpose, content]].
+
+
+def _load_starter_prompts() -> list[tuple[str, str, str]]:
+    """Load the built-in starter prompts from materials/agent_prompts.yaml.
+
+    Read via importlib.resources so it works both from source and from an
+    installed wheel (the yaml ships as package data under yadgar/seed/materials/).
+    Returns a list of (pattern, purpose, content) 3-tuples in file order.
+    """
+    from importlib.resources import files  # noqa: PLC0415
+
+    text = files("yadgar.seed").joinpath("materials").joinpath("agent_prompts.yaml").read_text()
+    # ruamel.yaml is the hard dependency (see pyproject); PyYAML is optional. Mirror
+    # _load_anchors_yaml: prefer PyYAML when present, fall back to ruamel otherwise.
+    try:
+        import yaml  # noqa: PLC0415
+
+        data = yaml.safe_load(text)
+    except ImportError:
+        from ruamel.yaml import YAML  # noqa: PLC0415
+
+        data = YAML(typ="safe").load(text)
+    return [(e["pattern"], e["purpose"], e["content"]) for e in data["prompts"]]
+
+
+STARTER_PROMPTS: list[tuple[str, str, str]] = _load_starter_prompts()
 
 
 @_tool(power=True)

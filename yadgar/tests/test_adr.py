@@ -737,3 +737,144 @@ class TestAgentPromptSignal:
         assert "directory=" in suggested and "pattern=" in suggested and "content=" in suggested, (
             f"suggested_call must include pattern/content/directory, got: {suggested!r}"
         )
+
+
+class TestDispatchPreludeSignal:
+    """Tests for _apply_dispatch_prelude_signal (#69 read-side nudge).
+
+    Mirrors TestAgentPromptSignal: activity-gated, freshness-gated, but keyed on
+    the _dispatch_prelude marker memory rather than the TOC page, and fires
+    use_agent_prompt_library (read side) rather than capture_agent_prompt (write side).
+    """
+
+    def _make_mock_storage(
+        self,
+        prelude_ts: float | None = None,
+        active_work_ts: float | None = None,
+    ):
+        """Mock storage with configurable prelude-marker / active_work timestamps."""
+        mock = MagicMock()
+
+        def mock_q(query, params=None):
+            params = params or {}
+            if "_dispatch_prelude" in query:
+                if prelude_ts is None:
+                    return []
+                return [{"created_at": prelude_ts}]
+            if "_active_work" in query or "active_work" in query:
+                if active_work_ts is None:
+                    return []
+                return [{"created_at": active_work_ts}]
+            return []
+
+        mock._q.side_effect = mock_q
+        return mock
+
+    def test_fires_when_active_work_recent_but_prelude_stale(self):
+        """use_agent_prompt_library fires when active_work fresh but prelude marker stale."""
+        from yadgar.server.tools.project import _apply_dispatch_prelude_signal
+
+        now = time.time()
+        storage = self._make_mock_storage(
+            prelude_ts=now - 25 * 3600,
+            active_work_ts=now - 0.5 * 3600,
+        )
+        actions: list = []
+        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+            mock_settings.return_value.DISPATCH_PRELUDE_DUE_WARN_HOURS = 12.0
+            mock_settings.return_value.AGENT_PROMPT_LIBRARY_ENABLED = True
+            _apply_dispatch_prelude_signal("/tmp/testproject", storage, actions)
+        assert len(actions) == 1, f"Expected 1 action, got: {actions}"
+        assert actions[0]["action"] == "use_agent_prompt_library", (
+            f"Expected action='use_agent_prompt_library', got: {actions[0]}"
+        )
+
+    def test_fires_when_prelude_marker_absent_but_active_work_present(self):
+        """Fires when prelude marker absent (never used) but active_work present."""
+        from yadgar.server.tools.project import _apply_dispatch_prelude_signal
+
+        now = time.time()
+        storage = self._make_mock_storage(
+            prelude_ts=None,
+            active_work_ts=now - 0.5 * 3600,
+        )
+        actions: list = []
+        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+            mock_settings.return_value.DISPATCH_PRELUDE_DUE_WARN_HOURS = 12.0
+            mock_settings.return_value.AGENT_PROMPT_LIBRARY_ENABLED = True
+            _apply_dispatch_prelude_signal("/tmp/testproject", storage, actions)
+        fired = [a for a in actions if a.get("action") == "use_agent_prompt_library"]
+        assert len(fired) == 1, f"Expected 1 action when prelude absent, got: {actions}"
+
+    def test_silent_when_prelude_fresh(self):
+        """No use_agent_prompt_library when prelude marker was updated recently."""
+        from yadgar.server.tools.project import _apply_dispatch_prelude_signal
+
+        now = time.time()
+        storage = self._make_mock_storage(
+            prelude_ts=now - 1 * 3600,
+            active_work_ts=now - 0.5 * 3600,
+        )
+        actions: list = []
+        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+            mock_settings.return_value.DISPATCH_PRELUDE_DUE_WARN_HOURS = 12.0
+            mock_settings.return_value.AGENT_PROMPT_LIBRARY_ENABLED = True
+            _apply_dispatch_prelude_signal("/tmp/testproject", storage, actions)
+        fired = [a for a in actions if a.get("action") == "use_agent_prompt_library"]
+        assert len(fired) == 0, f"Expected no nudge when prelude fresh, got: {fired}"
+
+    def test_silent_when_no_active_work(self):
+        """No use_agent_prompt_library when active_work is absent."""
+        from yadgar.server.tools.project import _apply_dispatch_prelude_signal
+
+        now = time.time()
+        storage = self._make_mock_storage(
+            prelude_ts=now - 48 * 3600,
+            active_work_ts=None,
+        )
+        actions: list = []
+        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+            mock_settings.return_value.DISPATCH_PRELUDE_DUE_WARN_HOURS = 12.0
+            mock_settings.return_value.AGENT_PROMPT_LIBRARY_ENABLED = True
+            _apply_dispatch_prelude_signal("/tmp/testproject", storage, actions)
+        fired = [a for a in actions if a.get("action") == "use_agent_prompt_library"]
+        assert len(fired) == 0, f"Expected no nudge when active_work absent, got: {fired}"
+
+    def test_silent_when_library_disabled(self):
+        """KILL-GATE: AGENT_PROMPT_LIBRARY_ENABLED=False → fully silent."""
+        from yadgar.server.tools.project import _apply_dispatch_prelude_signal
+
+        now = time.time()
+        storage = self._make_mock_storage(
+            prelude_ts=now - 25 * 3600,
+            active_work_ts=now - 0.5 * 3600,
+        )
+        actions: list = []
+        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+            mock_settings.return_value.DISPATCH_PRELUDE_DUE_WARN_HOURS = 12.0
+            mock_settings.return_value.AGENT_PROMPT_LIBRARY_ENABLED = False
+            _apply_dispatch_prelude_signal("/tmp/testproject", storage, actions)
+        fired = [a for a in actions if a.get("action") == "use_agent_prompt_library"]
+        assert len(fired) == 0, (
+            f"KILL-GATE breached: nudge fired with library disabled, got: {fired}"
+        )
+
+    def test_suggested_call_names_agent_dispatch_prelude(self):
+        """When it fires, suggested_call references agent_dispatch_prelude."""
+        from yadgar.server.tools.project import _apply_dispatch_prelude_signal
+
+        now = time.time()
+        storage = self._make_mock_storage(
+            prelude_ts=now - 25 * 3600,
+            active_work_ts=now - 0.5 * 3600,
+        )
+        actions: list = []
+        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+            mock_settings.return_value.DISPATCH_PRELUDE_DUE_WARN_HOURS = 12.0
+            mock_settings.return_value.AGENT_PROMPT_LIBRARY_ENABLED = True
+            _apply_dispatch_prelude_signal("/tmp/testproject", storage, actions)
+        assert len(actions) == 1
+        suggested = actions[0].get("suggested_call", "")
+        assert "agent_dispatch_prelude" in suggested, (
+            f"suggested_call should contain 'agent_dispatch_prelude', got: {suggested!r}"
+        )
