@@ -470,8 +470,11 @@ _REGISTRY: list[ConfigEntry] = [
     # ── Fix A (daemon-offload-A): tool-body offload off the asyncio loop ─────────
     ConfigEntry("YADGAR_OFFLOAD_TOOLS", "false", "bool"),
     ConfigEntry("YADGAR_TOOL_POOL_WORKERS", "8", "int"),
-    ConfigEntry("YADGAR_TOOL_TIMEOUT_SEC", "30.0", "float"),
-    ConfigEntry("YADGAR_TOOL_SATURATION_GRACE_SEC", "45.0", "float"),
+    ConfigEntry("YADGAR_RECALL_HEAVY_CONCURRENCY", "3", "int"),
+    ConfigEntry("YADGAR_RERANK_GATE_ACQUIRE_TIMEOUT_SEC", "2.0", "float"),
+    ConfigEntry("YADGAR_TOOL_TIMEOUT_SEC", "95.0", "float"),
+    ConfigEntry("YADGAR_TOOL_SATURATION_GRACE_SEC", "120.0", "float"),
+    ConfigEntry("YADGAR_HEALTH_READINESS_FAIL_THRESHOLD", "3", "int"),
     # write queue / DLQ
     ConfigEntry("YADGAR_QUEUE_DRAIN_INTERVAL", "30", "int"),
     ConfigEntry("YADGAR_QUEUE_MAX_PERMANENT_ATTEMPTS", "3", "int"),

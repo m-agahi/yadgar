@@ -3,6 +3,7 @@
 import asyncio
 import subprocess
 import sys
+from unittest.mock import patch
 
 import pytest
 from starlette.testclient import TestClient
@@ -65,13 +66,54 @@ class TestHealthEndpoint:
         resp = client.get("/health")
         assert resp.json()["active_sessions"] == 0
 
+    def test_liveness_reachable_tokenless_through_real_asgi_stack(self, monkeypatch):
+        """#74 fix #1: /health/live is the endpoint the container P0 healthcheck
+        curls WITHOUT a token. Exercise the REAL middleware stack (BearerAuth) with
+        auth ON and no Authorization header → must be 200, not 401/404. If route
+        registration or the exempt-path match were wrong, P0 would kill on every
+        probe and the whole fix would be silently moot."""
+        monkeypatch.setenv("YADGAR_REQUIRE_AUTH", "1")
+        monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", "secret-token")
+        server._active_transport = "sse"
+        server._start_time = 1000000.0
+        client = self._get_client("sse")
+        # No Authorization header on purpose (mirrors the tokenless P0 curl).
+        resp = client.get("/health/live")
+        assert resp.status_code == 200, (
+            f"/health/live must be reachable tokenless (got {resp.status_code}); "
+            "a 401/404 means P0 SIGKILLs the core on every probe"
+        )
+        data = resp.json()
+        assert data["status"] == "ok"
+
+    def test_liveness_503_when_pool_saturated_through_real_asgi_stack(self, monkeypatch):
+        """A genuinely wedged pool still drives /health/live → 503 through the real
+        stack so the O2 P0-kill is preserved (a dead daemon is still killed)."""
+        monkeypatch.setenv("YADGAR_REQUIRE_AUTH", "1")
+        monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", "secret-token")
+        server._active_transport = "sse"
+        server._start_time = 1000000.0
+        client = self._get_client("sse")
+        with patch("yadgar.server._offload.pool_saturated", return_value=True):
+            resp = client.get("/health/live")
+        assert resp.status_code == 503
+        assert resp.json()["tool_pool_saturated"] is True
+
     def test_health_returns_503_when_db_probe_degraded(self, monkeypatch):
-        """C1: a down db probe -> status 'degraded' -> HTTP 503 so curl -f fails."""
+        """C1: a down db probe -> status 'degraded' -> HTTP 503 so curl -f fails.
+
+        #74 fix #1 added readiness anti-flap (HEALTH_READINESS_FAIL_THRESHOLD
+        consecutive misses before 503). Pin the threshold to 1 here so a single
+        probe miss still 503s — preserving this test's C1 intent under the new
+        knob. The N-consecutive anti-flap is covered by
+        test_health_liveness_readiness.py.
+        """
         import httpx
 
         server._active_transport = "sse"
         server._start_time = 1000000.0
         monkeypatch.setenv("YADGAR_DB_URL", "http://db.invalid:9999")
+        monkeypatch.setenv("YADGAR_HEALTH_READINESS_FAIL_THRESHOLD", "1")
 
         class _FakeResp:
             status_code = 500

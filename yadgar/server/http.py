@@ -250,6 +250,30 @@ def _hook_observe_response(hook: str, status_code: int) -> None:
 # handler returns within budget (degraded/503 on timeout, never a hang).
 _HEALTH_TIMEOUT_SEC = 3.0
 
+# #74 fix #1 — readiness anti-flap. A single transient dependency-probe miss
+# (busy backend timing out the 2s embed probe once) must NOT flip /health to 503
+# (which P0's curl-kill would act on). We require N CONSECUTIVE misses before the
+# readiness handler degrades; a single probe success resets the counter. This
+# REVERSES the prior "stateless on purpose — anti-flap delegated to docker
+# --health-retries" decision: P0 now watches /health/live (which never probes the
+# backend), and /health readiness owns its own anti-flap so transient backend
+# busyness can't cascade into a 503 storm.
+_readiness_consecutive_failures: int = 0
+
+
+def _readiness_fail_threshold() -> int:
+    try:
+        n = int(os.environ.get("YADGAR_HEALTH_READINESS_FAIL_THRESHOLD", "3"))
+    except ValueError:
+        n = 3
+    return max(1, n)
+
+
+def _reset_readiness_state() -> None:
+    """Reset the readiness anti-flap counter (test hook + startup)."""
+    global _readiness_consecutive_failures
+    _readiness_consecutive_failures = 0
+
 
 async def _probe_dependency(client, url: str) -> bool:
     """Probe a dependency's /health. True iff it returns HTTP 200; never raises."""
@@ -311,8 +335,21 @@ async def _build_health_payload() -> dict:
     # Fix A O2 GATE (daemon-offload-A): degrade (→ 503) on tool-pool saturation.
     _apply_tool_pool_health(payload)
 
-    if db_ok is False or embed_ok is False:
-        payload["status"] = "degraded"
+    # #74 fix #1 — readiness anti-flap. Only degrade on dependency outage after N
+    # CONSECUTIVE probe misses; a single success resets. A transiently-busy backend
+    # (one 2s embed-probe miss) stays 200, so it can never cascade into a 503 that
+    # P0 (now watching /health/live) would not act on anyway. The pool-saturation
+    # degrade above is NOT anti-flapped — a wedged pool is a real, local stall.
+    global _readiness_consecutive_failures
+    dependency_down = db_ok is False or embed_ok is False
+    if dependency_down:
+        _readiness_consecutive_failures += 1
+        threshold = _readiness_fail_threshold()
+        payload["readiness_consecutive_failures"] = _readiness_consecutive_failures
+        if _readiness_consecutive_failures >= threshold:
+            payload["status"] = "degraded"
+    else:
+        _readiness_consecutive_failures = 0
     return payload
 
 
@@ -360,11 +397,14 @@ async def health_check(request: Request) -> JSONResponse:
                 "error": "health probe timed out",
             }
 
-        # C1 (obs-train): 503 on any non-ok status so the container healthcheck
-        # (curl -f) actually detects db/embed outages instead of reading them healthy.
-        # Stateless on purpose — anti-flap is delegated to the podman/docker healthcheck
-        # retries (docker-compose.yml core service uses --health-retries 6), not an
-        # in-handler failure counter.
+        # C1 (obs-train): 503 on any non-ok status so monitoring detects db/embed
+        # outages instead of reading them healthy. #74 fix #1 REVERSES the prior
+        # "stateless on purpose" stance: readiness now anti-flaps in-handler (N
+        # consecutive misses, see _build_health_payload) so a transiently-busy
+        # backend can't 503-storm. The P0 container `--health-on-failure=kill`
+        # healthcheck now watches /health/live (liveness, no backend probe) — NOT
+        # this readiness endpoint — so a degraded readiness no longer SIGKILLs the
+        # core; it is a monitoring signal only.
         _resp = JSONResponse(payload, status_code=200 if payload["status"] == "ok" else 503)
         _hook_observe_response("health", _resp.status_code)
         return _resp
@@ -373,6 +413,43 @@ async def health_check(request: Request) -> JSONResponse:
         raise
     finally:
         _hook_observe("health", _t0, _caught_exc)
+
+
+@mcp_server.custom_route("/health/live", methods=["GET"])
+@trace_span("hook.health_live")
+async def liveness_check(request: Request) -> JSONResponse:
+    """LIVENESS probe (#74 fix #1) — answerable from the core's own loop ALONE.
+
+    The container P0 healthcheck (`curl -f --health-on-failure=kill`) watches THIS,
+    not /health (readiness). Liveness makes NO outbound dependency probe — so a
+    transiently-busy backend (saturated by concurrent reranks) can NEVER make the
+    core SIGKILL itself, which was the #74 root cause.
+
+    Returns 200 normally; 503 ONLY when the tool pool is genuinely WEDGED
+    (`pool_saturated()` — in-memory occupancy counters, no network). This preserves
+    the O2 P0-kill for a truly dead daemon: a wedged pool with nothing completing
+    past the grace still trips 503 → P0 kills. A busy-but-draining pool (completions
+    landing) is NOT saturated, so concurrent in-flight reranks keep liveness 200.
+
+    Exempt from bearer-token auth (the P0 curl carries no token).
+    """
+    saturated = False
+    try:
+        from yadgar.server._offload import pool_saturated  # noqa: PLC0415
+
+        saturated = pool_saturated()
+    except Exception:  # noqa: BLE001 — liveness must never crash on the pool probe
+        saturated = False
+
+    payload = {
+        "status": "degraded" if saturated else "ok",
+        "version": __version__,
+        "transport": _st._active_transport,
+        "uptime_seconds": _uptime_seconds(),
+    }
+    if saturated:
+        payload["tool_pool_saturated"] = True
+    return JSONResponse(payload, status_code=503 if saturated else 200)
 
 
 @mcp_server.custom_route("/metrics", methods=["GET"])

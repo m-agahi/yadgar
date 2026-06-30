@@ -5,6 +5,21 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 > Snapshots from v5.0.1 onward are captured from `yadgar stats` at release time.
 > Earlier versions have no per-release snapshot (the practice started 2026-05-16).
 
+## [5.91.0] - 2026-06-30
+
+### Offload salvage — liveness/readiness split + bounded rerank fan-out (#74/#75)
+
+Fixes the v5.90.0 offload crash-loop (RCA #74): with offload ON, freeing the loop let 8 concurrent recalls drive 8 concurrent backend reranks → the backend (fewer cores) saturated → the core's `/health` 2s backend-probe timed out → 503 → P0 health-kill SIGKILLed the core → restart loop. Root flaw: liveness conflated with a synchronous dependency probe + unbounded fan-out.
+
+#### Added
+- **`GET /health/live`** — a true **liveness** probe answered from the core event loop alone (no backend dependency). 200 normally; 503 only on genuine worker-pool saturation (preserves the O2 P0-kill). The container P0 healthcheck now watches this instead of `/health`, so a transiently-busy backend can no longer make the core kill itself. (`server/http.py`, exempt in `auth_middleware.py`)
+- **Rerank fan-out gate** `YADGAR_RECALL_HEAVY_CONCURRENCY` (default **3**, < the 8-worker pool) — a semaphore around the backend `/rerank` call so the core can't saturate the backend regardless of pool size. (`server/_offload.py`, `backend/ml_client.py`)
+
+#### Changed
+- **`/health` readiness now anti-flaps** — degrades to 503 only after `HEALTH_READINESS_FAIL_THRESHOLD` (3) consecutive backend misses (was: single transient miss). Readiness is monitoring-only; liveness is the kill signal.
+- **Timeout invariant** reconciled: `TOOL_SATURATION_GRACE_SEC` (120) > `TOOL_TIMEOUT_SEC` (95) ≥ `RERANK_BACKEND_TIMEOUT_SEC` (90) — so a wait_for can't cancel mid-rerank and leak an uncancellable worker.
+- The offload (`YADGAR_OFFLOAD_TOOLS`) remains **default-OFF**; this makes it safe to re-arm. (Arming also needs the backend `RERANK_MAX_CONCURRENCY` O7 step.)
+
 ## [5.90.0] - 2026-06-30
 
 ### Daemon concurrency: offload sync MCP tool bodies off the event loop (#73, RCA #72) — DEFAULT-OFF

@@ -204,6 +204,15 @@ def isolate_yadgar_paths(tmp_path, monkeypatch):
     monkeypatch.setenv("YADGAR_LOG_DIR", str(data_dir / "logs"))
     monkeypatch.setenv("YADGAR_CACHE_SNAPSHOT_DIR", str(tmp_path / "embed_cache_snap"))
     monkeypatch.delenv("YADGAR_DB_PATH", raising=False)
+    # #74 fix #1: the readiness anti-flap counter (server.http) is module-global;
+    # reset it per test so a prior test's failing /health probes can't leak a
+    # latent-503 into an unrelated test.
+    try:
+        import yadgar.server.http as _srv_http  # noqa: PLC0415
+
+        _srv_http._reset_readiness_state()
+    except Exception:  # noqa: BLE001 — never block a test on this defensive reset
+        pass
 
 
 def _find_free_port() -> int:

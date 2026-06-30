@@ -481,6 +481,14 @@ class Settings(BaseSettings):
     # Default 60000ms (1 minute). Set to 0 to disable phase duration alerting.
     PHASE_DURATION_WARN_MS: int = 60_000
 
+    # #74 fix #1 — readiness anti-flap. The /health READINESS probe (db+embed)
+    # must NOT flip to 503 on a single transient miss (a busy backend that times
+    # out the 2s probe once). It requires this many CONSECUTIVE misses before
+    # degrading. A single success resets the counter. LIVENESS (/health/live) is
+    # separate — it never probes the backend, so a busy dependency can't SIGKILL
+    # the core via P0 (which watches liveness). Default 3.
+    HEALTH_READINESS_FAIL_THRESHOLD: int = 3
+
     # v5.3.9 N1: backend HTTP timeouts
     # Short timeout for all non-import backend calls (health, /sql, /admin/dbsize).
     BACKEND_HTTP_TIMEOUT_SEC: int = 5
@@ -724,13 +732,27 @@ class Settings(BaseSettings):
     # lockstep with the backend RERANK_MAX_CONCURRENCY so N-parallel offload does
     # not cause rerank 503-storms (O7).
     TOOL_POOL_WORKERS: int = 8
-    # Per-tool offload timeout — frees the loop on a wedged op (worker keeps its
-    # slot until self-release; O2 + P0 cover the residual).
-    TOOL_TIMEOUT_SEC: float = 30.0
+    # #74 fix #2 — heavy-rerank fan-out gate. Process-wide cap on concurrent
+    # backend /rerank calls the core issues. The binding constraint is the
+    # BACKEND's serving capacity (fewer cores than TOOL_POOL_WORKERS), NOT the
+    # pool size. MUST be strictly < TOOL_POOL_WORKERS (else the gate is a no-op
+    # and N workers saturate the backend → slow /health → core 503 → P0 kill) and
+    # ≤ RERANK_MAX_CONCURRENCY. Conservative default 3.
+    RECALL_HEAVY_CONCURRENCY: int = 3
+    # Seconds a worker waits for a heavy-rerank slot before degrading (skip rerank
+    # → pre-rerank order). Bounded so a gated worker never holds its pool slot past
+    # the tool timeout (which would leak it). Mirrors the breaker probe timeout.
+    RERANK_GATE_ACQUIRE_TIMEOUT_SEC: float = 2.0
+    # #74 fix #3 — timeout cascade. Per-tool offload timeout. MUST cover a
+    # realistic worst-case recall INCLUDING the backend rerank, i.e.
+    # >= RERANK_BACKEND_TIMEOUT_SEC (90). A smaller value cancels the coroutine
+    # mid-rerank and leaks an uncancellable worker that completed legit work.
+    # Ordering invariant: SATURATION_GRACE > TOOL_TIMEOUT >= RERANK_BACKEND_TIMEOUT.
+    TOOL_TIMEOUT_SEC: float = 95.0
     # O2 saturation grace: idle seconds (no completion) while the pool is full
     # before /health degrades → 503. MUST be > TOOL_TIMEOUT_SEC so legit ops keep
     # resetting the clock and only leaked workers trip the signal.
-    TOOL_SATURATION_GRACE_SEC: float = 45.0
+    TOOL_SATURATION_GRACE_SEC: float = 120.0
 
     # backend v5.5.0 — model preload warm-up
     MODEL_PRELOAD: bool = (
