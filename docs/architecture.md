@@ -411,3 +411,18 @@ The fourth combination (`directory="global", branch=non-NULL`) is intentionally 
 - 018 (v5.42.6): repair for 016 — Python-side filter caught field-absent rows that `WHERE directory_context IS NONE` SurrealDB query missed. Backfilled the remaining 200 legacy rows.
 
 See `[[yadgar-directory-branch-contract-v5-42-3-5-architecture]]` wiki page for the full semantic model + decision history.
+
+## Knowledge-Graph Viz (v5.86 → v5.88)
+
+The viz server (`yadgar viz`, default `http://localhost:42069`) renders an interactive force-directed graph of memories, wiki pages, entities, and relationships using `force-graph` / `3d-force-graph` (2D + 3D). Node shapes encode type (memory = sphere, wiki = octahedron, anchor = cube); color encodes heat. Edges carry a `role` (`retrieval` solid/prominent vs `informational` dimmed) for visual hierarchy; real clusters from the `memory_cluster` table surface as tint rings.
+
+- **UI menu IA (v5.87):** four menus — **Graph** · **Bookmarks** · **System** {Config, Health, Stats} · **Help** {Guide, Config Reference, About, Debug}.
+- **Filtering (v5.86):** node-type toggles (memory / wiki / entity), dynamic edge-type toggles (hiding an edge type drops it from the d3 force so nodes separate), heat slider, search with exact/prefix-title precedence + hide/dim mode, focus mode, hover-neighborhood highlight.
+- **Layout (v5.87 → v5.88):** client-side force sim with localStorage warm-start by default; optional **precomputed server-side layout** (`VIZ_PRECOMPUTED_LAYOUT_ENABLED`, default off) — the nightly cycle runs `networkx.spring_layout` (3D, capped iterations), signature-caches x/y/z in a `graph_layout_cache` row, and `/api/graph` serves the precomputed coordinates. Node caps `VIZ_MAX_MEMORIES` (500) / `VIZ_MAX_WIKI` (200) / `VIZ_MAX_ENTITIES` (2000) trade load speed vs. completeness (`0`/`-1` = unlimited).
+- **CPU:** the render loop pauses on idle / tab-switch (`pauseAnimation` / `resumeAnimation`) rather than running 60 fps unconditionally.
+
+## Config Editor + Control Endpoints (v5.86 → v5.88)
+
+The **System → Config** page (`static/control.js`, backed by `server/routes/control.py`) is an in-browser editor over the full config surface: `GET /api/control/config` reads it (un-gated from the debug flag since v5.86); `POST /api/control/config` writes it (bearer-auth + env-locked 409 only since v5.88.1 — no debug toggle required). Knobs are grouped by capability category, alpha-sorted, with hover tooltips and `ⓘ` deep-links to the read-only **Help → Config Reference** page (`static/config-ref.js`). SOURCE badges distinguish env-var / config-file / default origins. This is distinct from the Config Reference doc page, which carries no write path.
+
+**Operational control endpoints (v5.88.2, ADR-0013):** `/api/control/action/{consolidate,reembed,vacuum}` and `/api/control/restart/*` are bearer-auth gated (401 without a token), moved off the `YADGAR_DEBUG_APIS_ENABLED` gate. `vacuum` (2–5 min daemon downtime) requires a `{"confirm":"vacuum"}` body server-side plus a UI confirm dialog; `restart` keeps a typed-name confirm. Only `/api/logs/*` stays debug-gated. Each successful action + restart emits one audit log line.
