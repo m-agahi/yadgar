@@ -1523,6 +1523,100 @@ def _get_agent_prompt_toc_updated_at(storage, resolved: str) -> float | None:
         return None
 
 
+def _get_dispatch_prelude_updated_at(storage, resolved: str) -> float | None:
+    """Return the most recent _dispatch_prelude marker created_at as a unix timestamp.
+
+    Returns None when no marker is found for this directory.
+    Mirrors _get_active_work_updated_at but queries tag '_dispatch_prelude'.
+    """
+    try:
+        rows = storage._q(
+            "SELECT created_at FROM memory WHERE directory_context = $dir "
+            "AND '_dispatch_prelude' INSIDE tags LIMIT 1",
+            {"dir": resolved},
+        )
+        if not rows:
+            return None
+        ts_raw = rows[0].get("created_at")
+        if ts_raw is None:
+            return None
+        if isinstance(ts_raw, (int, float)):
+            return float(ts_raw)
+        ts_str = str(ts_raw).rstrip("Z").replace("Z", "+00:00")
+        dt = datetime.fromisoformat(ts_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt.timestamp()
+    except Exception:
+        return None
+
+
+def _apply_dispatch_prelude_signal(resolved: str, storage, actions: list) -> None:
+    """Append use_agent_prompt_library action when the library hasn't been used recently.
+
+    READ-side mirror of _apply_agent_prompt_signal (capture/write-side, ADR-0007).
+    Instead of checking whether prompts were SAVED, checks whether
+    agent_dispatch_prelude was CALLED (the _dispatch_prelude marker).
+
+    Gates (same pattern as _apply_agent_prompt_signal):
+    - Kill-gate: silent when AGENT_PROMPT_LIBRARY_ENABLED is False.
+    - Activity gate: active_work present (session did real work).
+    - Freshness gate: active_work updated > DISPATCH_PRELUDE_DUE_WARN_HOURS more
+      recently than the prelude marker.  Absent marker + active_work → fire.
+    Never raises.
+    """
+    if storage is None:
+        return
+    try:
+        cfg = get_settings()
+        if not cfg.AGENT_PROMPT_LIBRARY_ENABLED:
+            return
+        warn_hours = cfg.DISPATCH_PRELUDE_DUE_WARN_HOURS
+
+        active_work_ts = _get_active_work_updated_at(storage, resolved)
+        if active_work_ts is None:
+            return
+
+        prelude_ts = _get_dispatch_prelude_updated_at(storage, resolved)
+        now = time.time()
+        suggested_call = (
+            "agent_dispatch_prelude(pattern='<kebab-task-shape>', task_topic='<short topic>')"
+        )
+
+        if prelude_ts is None:
+            active_work_age_h = (now - active_work_ts) / 3600.0
+            actions.append(
+                {
+                    "action": "use_agent_prompt_library",
+                    "reason": (
+                        f"active_work updated {active_work_age_h:.1f}h ago; "
+                        "agent_dispatch_prelude has never been called — "
+                        "check library before dispatching subagents"
+                    ),
+                    "suggested_call": suggested_call,
+                }
+            )
+            return
+
+        delta_hours = (active_work_ts - prelude_ts) / 3600.0
+        if delta_hours > warn_hours:
+            active_work_age_h = (now - active_work_ts) / 3600.0
+            prelude_age_h = (now - prelude_ts) / 3600.0
+            actions.append(
+                {
+                    "action": "use_agent_prompt_library",
+                    "reason": (
+                        f"active_work updated {active_work_age_h:.1f}h ago; "
+                        f"agent-prompt library last USED {prelude_age_h:.1f}h ago "
+                        f"(delta {delta_hours:.1f}h > threshold {warn_hours}h)"
+                    ),
+                    "suggested_call": suggested_call,
+                }
+            )
+    except Exception:
+        return
+
+
 def _apply_agent_prompt_signal(resolved: str, storage, actions: list) -> None:
     """Append capture_agent_prompt action when the prompt library looks stale.
 
@@ -1676,6 +1770,9 @@ def _project_brief_signals(
     # ADR-0007 capture loop: agent-prompt nudge — capture_agent_prompt action when the
     # prompt library is stale (gated on AGENT_PROMPT_LIBRARY_ENABLED; silent when off).
     _apply_agent_prompt_signal(resolved, storage, recommended_actions)
+
+    # v5.89 #69: read-side mirror — use_agent_prompt_library when prelude not called recently.
+    _apply_dispatch_prelude_signal(resolved, storage, recommended_actions)
 
     # v5.53.1: compute real stale wiki count (TTL-cached, cheap for hot path).
     stale_wiki_count = _compute_stale_wiki_count(resolved)

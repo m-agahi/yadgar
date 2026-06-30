@@ -1757,7 +1757,7 @@ config knobs.
 ### CAP-WIKI-015 — Agent prompt library (save + dispatch_prelude slug-read)
 - **status:** LIVE
 - **category:** wiki
-- **settings:** —
+- **settings:** `DISPATCH_PRELUDE_DUE_WARN_HOURS`
 - **tools:** `agent_prompt_save`, `agent_dispatch_prelude`
 - **migrations:** —
 - **bc:** `BC-AP1`, `BC-AP2`, `BC-AP3`

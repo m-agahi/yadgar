@@ -57,6 +57,20 @@ _TOTAL_BUDGET = 2_000
 _CONTEXT_BUDGET = 2_000
 
 
+def _record_prelude_marker(storage, directory: str | None) -> None:
+    """Best-effort record of agent_dispatch_prelude call (read-side nudge, #69).
+
+    Writes a _dispatch_prelude marker so _apply_dispatch_prelude_signal can
+    determine when agent_dispatch_prelude was last called.  Never raises.
+    """
+    if not directory:
+        return
+    try:
+        storage.upsert_dispatch_prelude_marker(directory)
+    except Exception as _e:  # noqa: BLE001
+        logger.debug("agent_dispatch_prelude: upsert_dispatch_prelude_marker failed: %s", _e)
+
+
 @_tool()
 def agent_dispatch_prelude(
     pattern: str,
@@ -106,6 +120,9 @@ def agent_dispatch_prelude(
         from yadgar.server.lifecycle import _get_storage  # noqa: PLC0415
 
         storage = _get_storage()
+
+    # Record that agent_dispatch_prelude was called (read-side nudge, #69).
+    _record_prelude_marker(storage, directory)
 
     sections: list[str] = [_YADGAR_CONTRACT]
 

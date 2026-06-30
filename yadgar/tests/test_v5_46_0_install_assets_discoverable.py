@@ -1,9 +1,11 @@
 """v5.46.0 — install_assets discoverable via importlib.resources.
 
 Verifies:
-- yadgar/install_assets/ (package-data) contains agents/ + CLAUDE.md.fragment + seeds/
+- yadgar/install_assets/ (package-data) contains agents/ + CLAUDE.md.fragment
+- yadgar/seed/materials/ (package-data, v5.88) holds the canonical seed CONTENT:
+  anchors.yaml + agent_prompts.yaml
 - top-level install_assets/ (shared-data, shipped via wheel.shared-data) has
-  CLAUDE.md.fragment + seeds/anchors.yaml + yadgar-backend.service.in + launchd/
+  CLAUDE.md.fragment; anchors.yaml ships at share/.../seeds/ via per-file mapping
 
 The package-data path uses importlib.resources.files("yadgar.install_assets").
 The shared-data path uses top-level install_assets/ directory (repo-relative).
@@ -49,14 +51,15 @@ def test_package_install_assets_has_claude_fragment():
 
 
 def test_package_install_assets_has_seeds():
-    """seeds/anchors.yaml exists in yadgar/install_assets/ OR top-level install_assets/.
+    """anchors.yaml seed content is discoverable as package data.
 
-    v5.45.0 ships seeds/ in the top-level install_assets/ (shared-data).
+    v5.88 seed consolidation: anchors.yaml moved from install_assets/seeds/ to the
+    canonical seed materials dir yadgar/seed/materials/ (so all seed CONTENT is
+    edited in one place). It ships as package data under the yadgar/ tree.
     """
-    seeds_top = REPO_ROOT / "install_assets" / "seeds"
-    seeds_pkg = Path(__file__).parent.parent / "install_assets" / "seeds"
-    assert seeds_top.is_dir() or seeds_pkg.is_dir(), (
-        f"seeds/ dir missing from both:\n  {seeds_top}\n  {seeds_pkg}"
+    anchors_materials = Path(__file__).parent.parent / "seed" / "materials" / "anchors.yaml"
+    assert anchors_materials.is_file(), (
+        f"anchors.yaml missing from canonical materials dir: {anchors_materials}"
     )
 
 
@@ -76,8 +79,13 @@ def test_top_level_install_assets_has_claude_fragment():
 
 
 def test_top_level_install_assets_has_anchors_yaml():
-    """install_assets/seeds/anchors.yaml must exist."""
-    anchors = REPO_ROOT / "install_assets" / "seeds" / "anchors.yaml"
+    """anchors.yaml must exist in the canonical seed materials dir (v5.88).
+
+    Moved from install_assets/seeds/ to yadgar/seed/materials/ so all seed CONTENT
+    is edited in one place; it still ships at the historical share/ wheel
+    destination via shared-data per-file mapping (see test_v5_46_10_wheel_bundle).
+    """
+    anchors = REPO_ROOT / "yadgar" / "seed" / "materials" / "anchors.yaml"
     assert anchors.exists(), f"Missing: {anchors}"
 
 

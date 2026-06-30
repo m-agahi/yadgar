@@ -38,7 +38,7 @@ from pathlib import Path
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from yadgar.config_registry import list_config
+from yadgar.config_registry import clear_config_caches, list_config
 from yadgar.server._app import mcp_server
 from yadgar.server.tools.admin_other import consolidate_now, reembed_all
 from yadgar.server.tools.admin_vacuum import vacuum_now
@@ -68,15 +68,20 @@ SECTION_TO_CATEGORY: dict[str, str] = {
     "backend_cache": "ops",
     "backend_hot_path_cache": "ops",
     "backend_model_preload": "ops",
+    "backend_timeouts": "ops",
     "stats_cache": "ops",
     "active_work_watchdog": "ops",
     "hooks": "ops",
     "cpu_burst_detection": "ops",
+    "security": "ops",
+    "vacuum": "ops",
     # memory lifecycle / write-path
     "memory_lifecycle": "write-path",
     "memory_archive_retention": "write-path",
     "cold_memory_retention": "write-path",
     "session_end_capture": "write-path",
+    "table_retention": "write-path",
+    "write_queue": "write-path",
     # thermodynamics / brain-dynamics
     "thermodynamics": "brain-dynamics",
     "neuromorphic": "brain-dynamics",
@@ -89,6 +94,7 @@ SECTION_TO_CATEGORY: dict[str, str] = {
     "graph_knowledge": "retrieval",
     "unified_recall": "retrieval",
     "recall_quality": "retrieval",
+    "circuit_breaker": "retrieval",
     # enrichment
     "enrichment": "enrichment",
     "profiles_beliefs": "enrichment",
@@ -406,14 +412,20 @@ async def control_config_post_handler(request: Request) -> JSONResponse:
         logger.warning("Failed to persist knob %s to YAML: %s", name, exc)
         return JSONResponse({"error": f"failed to persist: {exc}"}, status_code=500)
 
+    # Hot-reload via the settings cache, NOT os.environ (Bug A, v5.89). The old
+    # ``os.environ[entry.name] = value_str`` smuggled the value into the env layer
+    # to fake hot-reload — but env is the highest-precedence, machine/nix-owned
+    # layer, so that mutation self-locked the knob (source() flipped to "env",
+    # the next POST hit the 409 env-lock guard) and vanished on restart. Clearing
+    # the config caches makes the next get_settings() / ConfigEntry read re-load
+    # the just-written yaml — correct hot-reload, correct source attribution.
+    clear_config_caches()
+
     # Serialise the coerced value. Python ``str(True)`` is capitalized ``"True"``,
     # which diverged from the GET path (lowercase env strings) and the YAML/JSON
     # convention — the config editor then showed booleans inconsistently. Render
     # bool knobs as lowercase ``"true"``/``"false"`` (ADR-0013 bool-display fix).
     value_str = _serialize_knob_value(coerced)
-
-    # Update process environment immediately (hot-reload knobs take effect without restart)
-    os.environ[entry.name] = value_str
 
     return JSONResponse(
         {

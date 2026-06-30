@@ -30,6 +30,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 
 import yadgar.paths as _paths
 
@@ -38,6 +39,70 @@ logger = logging.getLogger(__name__)
 _REDACT_RE = re.compile(r"(secret|token|key|password|auth)", re.IGNORECASE)
 
 _REDACTED = "<redacted>"
+
+
+# ---------------------------------------------------------------------------
+# yaml-awareness (Bug A, v5.89)
+# ---------------------------------------------------------------------------
+# ConfigEntry needs 3-way source attribution (env > yaml > default), mirroring
+# pydantic's settings_customise_sources precedence. The missing piece is knowing
+# *which keys are present in config.yaml* — distinct from "the effective value
+# equals the default". We read the yaml ONCE (cached) through the same loader
+# Settings uses (config_yaml.load_yaml(get_config_path())), keyed to the
+# ConfigEntry.name form (YADGAR_<UPPER>) so source()/_raw_value() can answer
+# "is this knob in the yaml layer, and what is its yaml value?".
+#
+# The cache MUST be cleared alongside get_settings.cache_clear() on any yaml
+# write (POST /api/control/config) and in tests that swap config files — use
+# clear_config_caches() for both at once (O1 / advisor item 3).
+
+
+def _stringify_yaml_value(val: object) -> str:
+    """Render a ruamel-typed yaml value to the canonical lowercase-bool string.
+
+    bool → 'true'/'false' (ADR-0013, matches env/default + the POST response),
+    everything else → str(val). Keeps GET 'current' + source attribution
+    consistent with the env/default convention.
+    """
+    if isinstance(val, bool):
+        return "true" if val else "false"
+    return str(val)
+
+
+@lru_cache(maxsize=1)
+def _yaml_layer() -> dict[str, str]:
+    """Return {YADGAR_<UPPER>: stringified-yaml-value} for keys present in config.yaml.
+
+    Cached — cleared via clear_config_caches() on yaml writes / config-file swaps.
+    Keys are normalised to the ConfigEntry.name form (YADGAR_-prefixed, uppercase)
+    so SURREAL_* aliases (not Settings fields, never YADGAR_-prefixed in yaml)
+    simply never match — correct (they resolve env-or-default).
+    """
+    try:
+        from yadgar.config_yaml import get_config_path, load_yaml  # noqa: PLC0415
+
+        raw = load_yaml(get_config_path())
+    except Exception:  # noqa: BLE001 — a broken/missing yaml means "no yaml layer"
+        return {}
+    layer: dict[str, str] = {}
+    for key, val in raw.items():
+        if val is None:
+            continue
+        layer[f"YADGAR_{str(key).upper()}"] = _stringify_yaml_value(val)
+    return layer
+
+
+def clear_config_caches() -> None:
+    """Clear BOTH the yaml-present cache and the get_settings lru_cache.
+
+    Single hot-reload entry point (advisor item 3): a yaml write that clears only
+    get_settings would leave source() reporting 'default' until restart. POST
+    /api/control/config and tests that swap config files MUST call this.
+    """
+    _yaml_layer.cache_clear()
+    from yadgar.config import get_settings  # noqa: PLC0415 — avoid import cycle
+
+    get_settings.cache_clear()
 
 
 @dataclass
@@ -50,21 +115,34 @@ class ConfigEntry:
     redact: bool = False
 
     def source(self) -> str:
-        """Return 'env' if var is set in os.environ, else 'default'."""
-        return "env" if self.name in os.environ else "default"
+        """Return source layer: 'env' > 'yaml' > 'default' (pydantic precedence)."""
+        if self.name in os.environ:
+            return "env"
+        if self.name in _yaml_layer():
+            return "yaml"
+        return "default"
 
     def _raw_value(self) -> str:
-        """Return resolved raw string value (env or default), without redaction."""
-        return os.environ.get(self.name, self.default)
+        """Return resolved raw string value (env > yaml > default), without redaction."""
+        if self.name in os.environ:
+            return os.environ[self.name]
+        yaml_layer = _yaml_layer()
+        if self.name in yaml_layer:
+            return yaml_layer[self.name]
+        return self.default
 
     def _should_redact(self) -> bool:
         return self.redact or bool(_REDACT_RE.search(self.name))
 
     def value(self) -> str:
-        """Return value string, redacted if required."""
+        """Return value string, redacted if required.
+
+        Routes through _raw_value() so value()/as_dict() agree with source()
+        (env > yaml > default) — no self-contradicting dict (advisor item 1).
+        """
         if self._should_redact():
             return _REDACTED
-        return _raw_value_str(self.name, self.default)
+        return self._raw_value()
 
     def as_dict(self) -> dict:
         """Serialise to the /admin/config JSON schema."""
@@ -74,11 +152,6 @@ class ConfigEntry:
             "source": self.source(),
             "kind": self.kind,
         }
-
-
-def _raw_value_str(name: str, default: str) -> str:
-    """Return os.environ.get(name, default) as a string."""
-    return os.environ.get(name, default)
 
 
 # ---------------------------------------------------------------------------
@@ -233,9 +306,11 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_ACTIVE_WORK_WARN_HOURS", "12.0", "float"),
     ConfigEntry("YADGAR_CHECKPOINT_WARN_HOURS", "12.0", "float"),
     ConfigEntry("YADGAR_AUTO_REFRESH_ACTIVE_WORK", "false", "bool"),
-    ConfigEntry("YADGAR_SIGNALS_TOKEN_BUDGET_SOFT", "400", "int"),
+    ConfigEntry("YADGAR_SIGNALS_TOKEN_BUDGET_SOFT", "500", "int"),
     # ── v5.84.0 car #12: ADR nudge threshold ────────────────────────────────────
     ConfigEntry("YADGAR_ADR_DUE_WARN_HOURS", "12.0", "float"),
+    # ── v5.89 #69: dispatch-prelude read-side nudge threshold ────────────────────
+    ConfigEntry("YADGAR_DISPATCH_PRELUDE_DUE_WARN_HOURS", "12.0", "float"),
     # ── anchor hygiene TTL knobs (v5.8.0) ────────────────────────────────────
     ConfigEntry("YADGAR_ANCHOR_CONDITIONAL_TTL_DAYS", "90", "int"),
     ConfigEntry("YADGAR_ANCHOR_EPHEMERAL_TTL_DAYS", "14", "int"),
@@ -335,6 +410,88 @@ _REGISTRY: list[ConfigEntry] = [
     # ── v5.86 car #1 (OT-C4) incremental similarity-linking (default OFF) ──────
     ConfigEntry("YADGAR_SIMILARITY_LINKING_INCREMENTAL_ENABLED", "false", "bool"),
     ConfigEntry("YADGAR_SIMILARITY_LINKING_RECONCILE_INTERVAL_DAYS", "7", "int"),
+    # ── v5.89 #67: I25 Tier-2 grandfathered backlog drain ─────────────────────
+    # Registry entries for the FIELD_META backfill (config_yaml.py). Pairs each
+    # newly-documented knob with its env-source attribution so the three-way
+    # ratchet (test_config_three_way_sync) covers it. Defaults mirror config.py.
+    # security / bind / CORS
+    ConfigEntry("YADGAR_MAX_HASH_BYTES", "10485760", "int"),
+    # core / batch / db-size / invariants / wiki-prefix / shutdown
+    ConfigEntry("YADGAR_MAX_BATCH_STATEMENTS", "500", "int"),
+    ConfigEntry("YADGAR_MAX_BATCH_BYTES", "1000000", "int"),
+    ConfigEntry("YADGAR_MAX_CAUSED_BY_ROWS", "100000", "int"),
+    ConfigEntry("YADGAR_DB_SIZE_WARNING_BYTES", "1073741824", "int"),
+    ConfigEntry("YADGAR_CHECK_INVARIANTS_QUERY_TIMEOUT_SECONDS", "60", "int"),
+    ConfigEntry("YADGAR_WIKI_SLUG_PREFIX", "", "string"),
+    # daemon / consolidation similarity-linking
+    ConfigEntry("YADGAR_SIMILARITY_LINK_THRESHOLD", "0.78", "float"),
+    ConfigEntry("YADGAR_MAX_SIMILARITY_LINKS_PER_MEMORY", "15", "int"),
+    ConfigEntry("YADGAR_SIMILARITY_MATRIX_MAX_CANDIDATES", "4000", "int"),
+    ConfigEntry("YADGAR_CLS_PATTERN_MAX_CANDIDATES", "2000", "int"),
+    # memory_lifecycle
+    ConfigEntry("YADGAR_PREDICTIVE_CODING_ENTITY_TTL_SECONDS", "300", "int"),
+    ConfigEntry("YADGAR_REINJECT_ON_WRITE", "false", "bool"),
+    # thermodynamics / retrieval boosts
+    ConfigEntry("YADGAR_RECALL_BOOST", "0.05", "float"),
+    ConfigEntry("YADGAR_BRANCH_BOOST_WEIGHT", "0.2", "float"),
+    ConfigEntry("YADGAR_POSTMORTEM_BOOST_FACTOR", "0.3", "float"),
+    ConfigEntry(
+        "YADGAR_POSTMORTEM_BOOST_KEYWORDS",
+        "deploy,push,merge,restart,vacuum,rollback,upgrade,migrate,bump,release",
+        "string",
+    ),
+    ConfigEntry("YADGAR_RETRIEVAL_PROFILE", "balanced", "string"),
+    ConfigEntry("YADGAR_HEAVY_RERANK_ENABLED", "true", "bool"),
+    # neuromorphic
+    ConfigEntry("YADGAR_HOPFIELD_BETA", "8.0", "float"),
+    ConfigEntry("YADGAR_HOPFIELD_MAX_PATTERNS", "5000", "int"),
+    ConfigEntry("YADGAR_SR_DISCOUNT", "0.9", "float"),
+    ConfigEntry("YADGAR_SR_UPDATE_RATE", "0.1", "float"),
+    # embedding / profiles
+    ConfigEntry("YADGAR_IMPLICIT_EMBEDDING_MODEL", "", "string"),
+    ConfigEntry("YADGAR_PROFILE_SEARCH_WEIGHT", "1.0", "float"),
+    # project_brief
+    ConfigEntry("YADGAR_BRIEF_MODE_DEFAULT", "catalog", "string"),
+    ConfigEntry("YADGAR_PROJECT_INIT_CAP_CHARS", "2000", "int"),
+    # backend timeouts
+    ConfigEntry("YADGAR_BACKEND_HTTP_TIMEOUT_SEC", "5", "int"),
+    ConfigEntry("YADGAR_BACKEND_IMPORT_TIMEOUT_SEC", "300", "int"),
+    ConfigEntry("YADGAR_MIGRATION_HTTP_TIMEOUT_SEC", "30", "int"),
+    ConfigEntry("YADGAR_RERANK_BACKEND_TIMEOUT_SEC", "90", "int"),
+    # circuit breaker + rerank concurrency
+    ConfigEntry("YADGAR_CIRCUIT_BREAKER_ENABLED", "true", "bool"),
+    ConfigEntry("YADGAR_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "3", "int"),
+    ConfigEntry("YADGAR_CIRCUIT_BREAKER_OPEN_DURATION_SEC", "60", "int"),
+    ConfigEntry("YADGAR_CIRCUIT_BREAKER_PROBE_TIMEOUT_SEC", "2.0", "float"),
+    ConfigEntry("YADGAR_CIRCUIT_BREAKER_MAX_OPEN_DURATION_SEC", "600.0", "float"),
+    ConfigEntry("YADGAR_CIRCUIT_BREAKER_BACKOFF_FACTOR", "2.0", "float"),
+    ConfigEntry("YADGAR_RERANK_MAX_CONCURRENCY", "1", "int"),
+    ConfigEntry("YADGAR_RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC", "2.0", "float"),
+    # write queue / DLQ
+    ConfigEntry("YADGAR_QUEUE_DRAIN_INTERVAL", "30", "int"),
+    ConfigEntry("YADGAR_QUEUE_MAX_PERMANENT_ATTEMPTS", "3", "int"),
+    ConfigEntry("YADGAR_QUEUE_MAX_TRANSIENT_ATTEMPTS", "20", "int"),
+    ConfigEntry("YADGAR_QUEUE_BACKOFF_BASE_S", "30", "int"),
+    ConfigEntry("YADGAR_QUEUE_BACKOFF_MAX_S", "3600", "int"),
+    ConfigEntry("YADGAR_QUEUE_DLQ_RETENTION_DAYS", "90", "int"),
+    # table / memory retention windows
+    ConfigEntry("YADGAR_ACTION_LOG_RETENTION_DAYS", "7", "int"),
+    ConfigEntry("YADGAR_EPISODE_RETENTION_DAYS", "14", "int"),
+    ConfigEntry("YADGAR_ASTROCYTE_PROCESS_RETENTION_DAYS", "7", "int"),
+    ConfigEntry("YADGAR_MEMORY_CLUSTER_RETENTION_DAYS", "30", "int"),
+    ConfigEntry("YADGAR_DERIVED_BELIEF_RETENTION_DAYS", "30", "int"),
+    ConfigEntry("YADGAR_PROSPECTIVE_MEMORY_RETENTION_DAYS", "30", "int"),
+    ConfigEntry("YADGAR_NARRATIVE_ENTRY_RETENTION_DAYS", "90", "int"),
+    ConfigEntry("YADGAR_ACTION_STREAM_MAX_AGE_DAYS", "14", "int"),
+    ConfigEntry("YADGAR_AUTO_GENERATED_MEMORY_MAX_AGE_DAYS", "30", "int"),
+    ConfigEntry("YADGAR_AUTO_ABSTRACTED_MEMORY_MAX_AGE_DAYS", "30", "int"),
+    ConfigEntry("YADGAR_DREAM_INSIGHT_MAX_AGE_DAYS", "21", "int"),
+    # vacuum
+    ConfigEntry("YADGAR_VACUUM_SNAPSHOT_RETENTION", "3", "int"),
+    ConfigEntry("YADGAR_VACUUM_AUTO_ENABLED", "true", "bool"),
+    ConfigEntry("YADGAR_VACUUM_AUTO_THRESHOLD_BYTES", "2147483648", "int"),
+    ConfigEntry("YADGAR_VACUUM_AUTO_WINDOW_START", "19:00", "string"),
+    ConfigEntry("YADGAR_VACUUM_AUTO_WINDOW_END", "23:00", "string"),
 ]
 
 

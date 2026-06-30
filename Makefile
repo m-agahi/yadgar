@@ -12,7 +12,8 @@ SHELL := /usr/bin/env bash -euo pipefail
 REPO_ROOT    := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 SCRIPTS_DIR  := $(REPO_ROOT)scripts/install
 INSTALL_ASSETS_DIR := $(REPO_ROOT)install_assets
-ANCHORS_YAML := $(INSTALL_ASSETS_DIR)/seeds/anchors.yaml
+# v5.88: canonical seed materials live under the package tree (one dir to edit seeds).
+ANCHORS_YAML := $(REPO_ROOT)yadgar/seed/materials/anchors.yaml
 FRAGMENT     := $(INSTALL_ASSETS_DIR)/CLAUDE.md.fragment
 CLAUDE_MD    := $(HOME)/.claude/CLAUDE.md
 
@@ -115,7 +116,7 @@ install-rules:
 	  YADGAR_FRAGMENT_PATH="$(FRAGMENT)" \
 	  bash $(SCRIPTS_DIR)/append_claude_rules.sh
 
-## seed-anchors: Seed canonical anchor memories from install_assets/seeds/anchors.yaml
+## seed-anchors: Seed canonical anchor memories from yadgar/seed/materials/anchors.yaml
 seed-anchors:
 	python3 -m yadgar seed --anchors $(ANCHORS_YAML)
 

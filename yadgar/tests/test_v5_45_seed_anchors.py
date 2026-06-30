@@ -8,16 +8,17 @@ from pathlib import Path
 BASH = shutil.which("bash") or "/run/current-system/sw/bin/bash"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-ANCHORS_YAML = REPO_ROOT / "install_assets" / "seeds" / "anchors.yaml"
+# v5.88: anchors.yaml moved to the canonical seed materials dir (one place to edit seeds).
+ANCHORS_YAML = REPO_ROOT / "yadgar" / "seed" / "materials" / "anchors.yaml"
 
 
 class TestV5_45SeedAnchorsLoader:
-    """Tests for install_assets/seeds/anchors.yaml + yadgar seed --anchors flag."""
+    """Tests for yadgar/seed/materials/anchors.yaml + yadgar seed --anchors flag."""
 
     def test_v5_45_anchors_yaml_exists(self):
-        """install_assets/seeds/anchors.yaml must exist."""
+        """yadgar/seed/materials/anchors.yaml must exist."""
         assert ANCHORS_YAML.exists(), (
-            f"install_assets/seeds/anchors.yaml not found at {ANCHORS_YAML}"
+            f"yadgar/seed/materials/anchors.yaml not found at {ANCHORS_YAML}"
         )
 
     def test_v5_45_anchors_yaml_valid(self):

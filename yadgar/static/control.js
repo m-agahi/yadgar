@@ -31,6 +31,19 @@
  *   groupKnobsByCategory   — group sorted knobs by capability category (B1.2)
  */
 
+// Chrome-style settings redesign helpers (v5.89) — pure, vitest-covered in
+// control_helpers.test.js. The DOM layer below renders over them.
+import {
+  alphabeticalCategories,
+  groupKnobsAlphabetical,
+  searchKnobs,
+  highlightSegments,
+  knobCategory,
+  deriveBadgeState,
+  computePending,
+  controlKind,
+} from './control_helpers.js';
+
 // ---------------------------------------------------------------------------
 // Pure / exported helpers (fully testable without DOM)
 // ---------------------------------------------------------------------------
@@ -345,42 +358,29 @@ function _buildShell() {
 </div>
 <div class="ctrl-config-section ctrl-section">
   <div class="ctrl-section-title">CONFIG EDITOR <span class="ctrl-knob-count"></span></div>
-  <div class="ctrl-config-controls">
-    <input type="text" class="ctrl-filter" placeholder="search name or description…" />
-    <select class="ctrl-group">
-      <option value="all">all categories</option>
-      <option value="retrieval">retrieval</option>
-      <option value="storage">storage</option>
-      <option value="write-path">write-path</option>
-      <option value="consolidation">consolidation</option>
-      <option value="enrichment">enrichment</option>
-      <option value="gate">gate</option>
-      <option value="wiki">wiki</option>
-      <option value="curation">curation</option>
-      <option value="observability">observability</option>
-      <option value="security">security</option>
-      <option value="ops">ops</option>
-      <option value="brain-dynamics">brain-dynamics</option>
-      <option value="viz">viz</option>
-      <option value="config">config</option>
-    </select>
-  </div>
-  <div class="ctrl-config-table-wrap">
-    <table class="ctrl-config-table">
-      <thead>
-        <tr>
-          <th>KNOB</th>
-          <th>TYPE</th>
-          <th>CURRENT</th>
-          <th>DEFAULT</th>
-          <th>SOURCE</th>
-          <th>RELOAD</th>
-          <th>EDIT</th>
-          <th>REF</th>
-        </tr>
-      </thead>
-      <tbody class="ctrl-config-tbody"></tbody>
-    </table>
+  <div class="cfg-shell">
+    <nav class="cfg-rail">
+      <div class="cfg-rail-search-wrap">
+        <input class="cfg-search" type="search" placeholder="Search settings" autocomplete="off" spellcheck="false" aria-label="search all settings" />
+      </div>
+      <div class="cfg-rail-section-label">Categories</div>
+      <div class="cfg-rail-items"></div>
+    </nav>
+    <div class="cfg-content-wrap">
+      <div class="cfg-content">
+        <div class="cfg-search-header" style="display:none"></div>
+        <div class="cfg-search-pane" style="display:none"></div>
+        <div class="cfg-search-empty" style="display:none">No settings match the search.</div>
+        <div class="cfg-category-pane"></div>
+      </div>
+      <div class="cfg-pending-bar" style="display:none">
+        <span class="cfg-pending-label">0 unsaved changes</span>
+        <span class="cfg-pending-spacer"></span>
+        <button class="ctrl-btn cfg-btn-restart" style="display:none">↻ Restart daemon</button>
+        <button class="ctrl-btn cfg-btn-discard">Discard</button>
+        <button class="ctrl-btn ctrl-btn--save cfg-btn-apply">Apply</button>
+      </div>
+    </div>
   </div>
 </div>
 <div class="ctrl-restart-section ctrl-section">
@@ -488,205 +488,337 @@ function _renderActions(container, root) {
     });
 }
 
-// ── Config editor ────────────────────────────────────────────────────────────
+// ── Config editor (chrome://settings-style redesign, v5.89) ───────────────────
+//
+// Left rail of ALPHABETICAL categories (+ counts) + a content pane of grouped
+// rows with 3-way source badges, typed controls, a cross-category live search,
+// per-row reset-to-default, and a sticky pending-changes bar (Apply/Discard +
+// optional Restart). All decision logic lives in control_helpers.js (vitest);
+// this is the thin DOM layer over it.
 
 function _renderConfigEditor(container, knobs) {
-  const tbody     = container.querySelector('.ctrl-config-tbody');
-  const filterEl  = container.querySelector('.ctrl-filter');
-  const groupEl   = container.querySelector('.ctrl-group');
+  const railItems = container.querySelector('.cfg-rail-items');
+  const searchEl  = container.querySelector('.cfg-search');
+  const catPane   = container.querySelector('.cfg-category-pane');
+  const searchPane = container.querySelector('.cfg-search-pane');
+  const searchHdr = container.querySelector('.cfg-search-header');
+  const searchEmpty = container.querySelector('.cfg-search-empty');
   const countEl   = container.querySelector('.ctrl-knob-count');
-  if (!tbody || !filterEl || !groupEl) return;
+  const pendingBar = container.querySelector('.cfg-pending-bar');
+  const pendingLabel = container.querySelector('.cfg-pending-label');
+  const applyBtn  = container.querySelector('.cfg-btn-apply');
+  const discardBtn = container.querySelector('.cfg-btn-discard');
+  const restartBtn = container.querySelector('.cfg-btn-restart');
+  if (!railItems || !searchEl || !catPane) return;
 
-  function _refresh() {
-    const filtered = filterKnobs(knobs, filterEl.value, groupEl.value);
-    tbody.innerHTML = '';
-    if (countEl) countEl.textContent = `(${filtered.length} knobs)`;
+  // ── Edit state ────────────────────────────────────────────────────────────
+  // originalValues = server-resolved value; currentValues = live edits (display
+  // strings). source overrides flip default/yaml→yaml after a successful Apply.
+  const originalValues = {};
+  const currentValues = {};
+  const sourceOverride = {};
+  for (const k of knobs) {
+    const disp = displayKnobValue(k.current, k.kind);
+    originalValues[k.name] = disp;
+    currentValues[k.name] = disp;
+    sourceOverride[k.name] = k.source || 'default';
+  }
 
-    // B1.2: Group by capability category (deterministic order, alpha-sorted within group)
-    const groups = groupKnobsByCategory(filtered);
-    for (const group of groups) {
-      const sectionRow = document.createElement('tr');
-      sectionRow.className = 'ctrl-section-header-row';
-      const sectionTd = document.createElement('td');
-      sectionTd.colSpan = 8;
-      sectionTd.className = 'ctrl-section-header';
-      sectionTd.textContent = group.label;
-      sectionRow.appendChild(sectionTd);
-      tbody.appendChild(sectionRow);
-      for (const knob of group.knobs) {
-        tbody.appendChild(_buildKnobRow(knob, knobs, _refresh));
-      }
+  const cats = alphabeticalCategories(knobs);
+  let activeCategory = cats.length ? cats[0].category : null;
+
+  // ── Pending bar ─────────────────────────────────────────────────────────────
+  function refreshPending() {
+    const knobsView = knobs.map(k => ({ name: k.name, reload: k.reload }));
+    const p = computePending(knobsView, originalValues, currentValues);
+    if (p.count > 0) {
+      pendingBar.style.display = '';
+      pendingLabel.textContent = `${p.count} unsaved change${p.count === 1 ? '' : 's'}`;
+      restartBtn.style.display = p.restartRequired ? '' : 'none';
+    } else {
+      pendingBar.style.display = 'none';
+    }
+    return p;
+  }
+
+  function setCurrent(name, value) {
+    currentValues[name] = String(value);
+    refreshPending();
+    // toggle the row .cfg-changed marker (search + category panes both use
+    // data-name). Knob names are [A-Z0-9_] so the attribute selector is safe.
+    const dirty = String(currentValues[name]) !== String(originalValues[name]);
+    container.querySelectorAll(`.setting-row[data-name="${name}"]`)
+      .forEach(row => row.classList.toggle('cfg-changed', dirty));
+  }
+
+  // ── Rail ────────────────────────────────────────────────────────────────────
+  function renderRail() {
+    railItems.innerHTML = '';
+    if (countEl) countEl.textContent = `(${knobs.length} knobs)`;
+    for (const c of cats) {
+      const item = _el('div', { class: 'rail-item' + (c.category === activeCategory && !searchEl.value.trim() ? ' active' : ''), 'data-cat': c.category });
+      const name = _el('span', {}, c.label);
+      const count = _el('span', { class: 'rail-count' }, String(c.count));
+      item.append(name, count);
+      item.addEventListener('click', () => {
+        if (searchEl.value.trim()) return; // ignore rail clicks during search
+        activeCategory = c.category;
+        renderRail();
+        renderCategoryPane();
+      });
+      railItems.appendChild(item);
     }
   }
 
-  filterEl.addEventListener('input', _refresh);
-  groupEl.addEventListener('change', _refresh);
-  _refresh();
-}
+  // ── A single setting row (shared by category + search panes) ──────────────────
+  function buildRow(knob, query) {
+    const badge = deriveBadgeState({ source: sourceOverride[knob.name], locked: knob.locked });
+    const row = _el('div', { class: 'setting-row', 'data-name': knob.name });
+    if (badge.locked) row.classList.add('env-locked');
+    if (String(currentValues[knob.name]) !== String(originalValues[knob.name])) row.classList.add('cfg-changed');
 
-function _buildKnobRow(knob, allKnobs, refreshFn) {
-  const tr = document.createElement('tr');
-  tr.dataset.name = knob.name;
-  if (knob.locked) tr.classList.add('ctrl-row--locked');
+    // LEFT
+    const left = _el('div', { class: 'row-left' });
+    const labelLine = _el('div', { class: 'row-label' });
+    _appendHighlighted(labelLine, knob.description || knob.name.replace('YADGAR_', ''), query);
+    if (query) {
+      const chip = _el('span', { class: 'cat-chip' }, knobCategory(knob));
+      labelLine.appendChild(chip);
+    }
+    if (knob.reload === 'restart_required') {
+      labelLine.appendChild(_el('span', { class: 'restart-pill' }, '↻ restart required'));
+    }
+    const knobName = _el('div', { class: 'row-knob' });
+    _appendHighlighted(knobName, knob.name, query);
+    left.append(labelLine, knobName);
 
-  const reloadLabel = classifyReload(knob.reload);
-  const reloadClass = knob.reload === 'hot_reload' ? 'ctrl-pill--hot' : 'ctrl-pill--restart';
+    // RIGHT
+    const right = _el('div', { class: 'row-right' });
+    right.appendChild(_buildBadgeEl(badge));
 
-  // Build cells via DOM methods — knob data is server-provided; never inject raw as HTML.
-  // Short name: strip YADGAR_ prefix; full name in title for hover.
-  const shortName = knob.name.replace('YADGAR_', '');
-  const nameTitle = knob.description
-    ? `${knob.name}\n\n${knob.description}`
-    : knob.name;
-  const tdName = _el('td', { class: 'ctrl-knob-name', title: nameTitle });
-  tdName.textContent = shortName;
+    if (badge.resettable || (badge.editable && String(currentValues[knob.name]) !== String(originalValues[knob.name]))) {
+      const reset = _el('button', { class: 'cfg-reset-btn', title: 'Reset to built-in default', 'aria-label': `reset ${knob.name}` }, '⟲ Reset');
+      reset.addEventListener('click', () => handleReset(knob));
+      right.appendChild(reset);
+    }
 
-  const tdType = _el('td', { class: 'ctrl-knob-type' });
-  tdType.textContent = knob.kind;
-
-  const tdCurrent = _el('td', { class: 'ctrl-knob-current' });
-  const currentDisplay = displayKnobValue(knob.current, knob.kind);
-  tdCurrent.dataset.original = currentDisplay;
-  tdCurrent.textContent = currentDisplay;
-
-  const tdDefault = _el('td', { class: 'ctrl-knob-default' });
-  tdDefault.textContent = displayKnobValue(knob.default, knob.kind);
-
-  // SOURCE badge: ENV (locked) / YAML / DEFAULT
-  const tdSource = _el('td', { class: 'ctrl-knob-source' });
-  const sourceLabel = (knob.source || 'default').toUpperCase();
-  const sourceClass = knob.locked
-    ? 'ctrl-pill ctrl-pill--env'
-    : sourceLabel === 'YAML'
-      ? 'ctrl-pill ctrl-pill--yaml'
-      : 'ctrl-pill ctrl-pill--default';
-  const sourcePill = _el('span', { class: sourceClass });
-  sourcePill.textContent = knob.locked ? '🔒 ENV' : sourceLabel;
-  tdSource.appendChild(sourcePill);
-
-  const tdReload = _el('td');
-  const pill = _el('span', { class: `ctrl-pill ${reloadClass}` });
-  pill.textContent = reloadLabel;
-  tdReload.appendChild(pill);
-
-  const editCell = _el('td', { class: 'ctrl-knob-edit-cell' });
-
-  // B2a: Help icon — deep-links to Config Reference page anchor
-  const tdHelp = _el('td', { class: 'ctrl-knob-help-cell' });
-  const helpLink = _el('a', {
-    class: 'ctrl-knob-help',
-    href: `#cfgref-${knob.name}`,
-    title: `${knob.description || knob.name} — open full reference`,
-    'aria-label': `config reference for ${knob.name}`,
-  }, 'ⓘ');
-  helpLink.addEventListener('click', (e) => {
-    e.preventDefault();
-    // Switch to config-ref tab first, then scroll to anchor
-    window.YadgarTabs?.switchTab?.('config-ref');
-    const target = document.getElementById(`cfgref-${knob.name}`);
-    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
-  tdHelp.appendChild(helpLink);
-
-  tr.appendChild(tdName);
-  tr.appendChild(tdType);
-  tr.appendChild(tdCurrent);
-  tr.appendChild(tdDefault);
-  tr.appendChild(tdSource);
-  tr.appendChild(tdReload);
-  tr.appendChild(editCell);
-  tr.appendChild(tdHelp);
-
-  if (knob.locked) {
-    // Locked knobs are read-only — show a lock indicator instead of edit button
-    const lockSpan = _el('span', { class: 'ctrl-knob-locked-hint', title: 'Set via env var — unset env to allow yaml edit' });
-    lockSpan.textContent = 'env-only';
-    editCell.appendChild(lockSpan);
-  } else {
-    const editBtn = _el('button', { class: 'ctrl-btn ctrl-btn--sm', 'aria-label': `edit ${knob.name}` }, '✎');
-    editCell.appendChild(editBtn);
-    editBtn.addEventListener('click', () => {
-      _openInlineEdit(tr, knob, allKnobs, refreshFn);
-    });
+    right.appendChild(_buildControl(knob, badge.editable, setCurrent, () => currentValues[knob.name]));
+    row.append(left, right);
+    return row;
   }
 
-  return tr;
-}
+  // ── Category pane ─────────────────────────────────────────────────────────────
+  function renderCategoryPane() {
+    catPane.style.display = '';
+    searchPane.style.display = 'none';
+    searchHdr.style.display = 'none';
+    searchEmpty.style.display = 'none';
+    catPane.innerHTML = '';
+    if (!activeCategory) return;
+    const grouped = groupKnobsAlphabetical(knobs).find(g => g.category === activeCategory);
+    if (!grouped) return;
 
-function _openInlineEdit(tr, knob, allKnobs, refreshFn) {
-  const currentCell = tr.querySelector('.ctrl-knob-current');
-  const originalVal = currentCell.dataset.original;
+    catPane.appendChild(_el('h2', { class: 'cfg-cat-heading' }, grouped.label));
+    for (const sec of grouped.sections) {
+      const group = _el('div', { class: 'cfg-section-group' });
+      if (grouped.sections.length > 1) {
+        group.appendChild(_el('div', { class: 'cfg-section-label' }, sec.section));
+      }
+      for (const knob of sec.knobs) group.appendChild(buildRow(knob, ''));
+      catPane.appendChild(group);
+    }
+  }
 
-  // Replace current-value cell with an input
-  const input = _el('input', {
-    type: 'text',
-    class: 'ctrl-edit-input',
-    value: originalVal,
-    'aria-label': `value for ${knob.name}`,
-  });
-  const hint = _el('span', { class: 'ctrl-edit-hint' }, '');
-  const saveBtn   = _el('button', { class: 'ctrl-btn ctrl-btn--sm ctrl-btn--save' }, '✓');
-  const cancelBtn = _el('button', { class: 'ctrl-btn ctrl-btn--sm ctrl-btn--cancel' }, '✕');
+  // ── Search pane (cross-category) ──────────────────────────────────────────────
+  function renderSearch(query) {
+    catPane.style.display = 'none';
+    searchPane.style.display = '';
+    railItems.querySelectorAll('.rail-item').forEach(el => el.classList.remove('active'));
 
-  currentCell.innerHTML = '';
-  currentCell.appendChild(input);
-  currentCell.appendChild(hint);
-  currentCell.appendChild(saveBtn);
-  currentCell.appendChild(cancelBtn);
-  input.focus();
-  input.select();
-
-  // Live validation
-  input.addEventListener('input', () => {
-    const { error } = parseEditValue(input.value, knob.kind);
-    hint.textContent = error || '';
-    hint.className = `ctrl-edit-hint ${error ? 'ctrl-edit-hint--error' : ''}`;
-    saveBtn.disabled = !!error;
-  });
-
-  cancelBtn.addEventListener('click', () => {
-    currentCell.textContent = originalVal;
-    currentCell.dataset.original = originalVal;
-  });
-
-  saveBtn.addEventListener('click', async () => {
-    const { value, error } = parseEditValue(input.value, knob.kind);
-    if (error) {
-      hint.textContent = error;
-      hint.className = 'ctrl-edit-hint ctrl-edit-hint--error';
+    const matches = searchKnobs(knobs, query);
+    if (matches.length === 0) {
+      searchPane.innerHTML = '';
+      searchHdr.style.display = 'none';
+      searchEmpty.style.display = '';
       return;
     }
-    saveBtn.disabled = true;
+    searchEmpty.style.display = 'none';
+    searchHdr.style.display = '';
+    searchHdr.textContent = `${matches.length} result${matches.length === 1 ? '' : 's'} for "${query}"`;
+    searchPane.innerHTML = '';
+    for (const knob of matches) searchPane.appendChild(buildRow(knob, query));
+  }
+
+  // ── Reset / Apply / Discard / Restart ─────────────────────────────────────────
+  function handleReset(knob) {
+    const def = displayKnobValue(knob.default, knob.kind);
+    setCurrent(knob.name, def);
+    rerender();
+  }
+
+  function rerender() {
+    if (searchEl.value.trim()) renderSearch(searchEl.value.trim());
+    else renderCategoryPane();
+    renderRail();
+  }
+
+  async function applyOne(knob) {
+    const { value, error } = parseEditValue(String(currentValues[knob.name]), knob.kind);
+    if (error) return { name: knob.name, ok: false, error };
     try {
       const r = await _apiFetch(`${_BASE}/api/control/config`, {
-        method:  'POST',
-        body:    JSON.stringify({ name: knob.name, value }),
+        method: 'POST',
+        body: JSON.stringify({ name: knob.name, value }),
       });
       const body = await r.json().catch(() => ({}));
       if (r.ok) {
-        // Update the knob in allKnobs array so filter refresh shows new value.
-        // Normalize bool casing (server bool POST is already lowercase post-ADR-0013,
-        // but older daemons may echo capitalized — collapse defensively).
-        const idx = allKnobs.findIndex(k => k.name === knob.name);
         const newCurrent = displayKnobValue(body.value ?? value, knob.kind);
-        if (idx !== -1) allKnobs[idx] = Object.assign({}, allKnobs[idx], { current: newCurrent });
-        refreshFn();
-      } else if (r.status === 409) {
-        // Env-locked: the knob is set via env var — yaml write would be shadowed
-        hint.textContent = body.error || 'env-locked: unset the env var to allow yaml edit';
-        hint.className   = 'ctrl-edit-hint ctrl-edit-hint--error';
-        saveBtn.disabled = false;
-      } else {
-        hint.textContent = body.error || `error ${r.status}`;
-        hint.className   = 'ctrl-edit-hint ctrl-edit-hint--error';
-        saveBtn.disabled = false;
+        originalValues[knob.name] = newCurrent;
+        currentValues[knob.name] = newCurrent;
+        sourceOverride[knob.name] = 'yaml'; // a saved knob is now yaml-sourced
+        const idx = knobs.findIndex(k => k.name === knob.name);
+        if (idx !== -1) knobs[idx] = Object.assign({}, knobs[idx], { current: newCurrent, source: 'yaml' });
+        return { name: knob.name, ok: true };
       }
+      return { name: knob.name, ok: false, error: body.error || `error ${r.status}`, status: r.status };
     } catch (err) {
-      hint.textContent = `network error: ${err.message}`;
-      hint.className   = 'ctrl-edit-hint ctrl-edit-hint--error';
-      saveBtn.disabled = false;
+      return { name: knob.name, ok: false, error: `network error: ${err.message}` };
     }
+  }
+
+  async function handleApply() {
+    const p = computePending(knobs, originalValues, currentValues);
+    const dirtyKnobs = knobs.filter(k => p.dirty.has(k.name));
+    applyBtn.disabled = true;
+    const results = await Promise.all(dirtyKnobs.map(applyOne));
+    applyBtn.disabled = false;
+    const failed = results.filter(r => !r.ok);
+    rerender();
+    refreshPending();
+    if (failed.length) {
+      searchHdr.style.display = '';
+      searchHdr.textContent = `Apply failed for ${failed.length} knob(s): ${failed.map(f => `${f.name} (${f.error})`).join('; ')}`;
+    }
+  }
+
+  function handleDiscard() {
+    for (const name of Object.keys(currentValues)) currentValues[name] = originalValues[name];
+    rerender();
+    refreshPending();
+  }
+
+  function handleRestart() {
+    const ok = (typeof window !== 'undefined' && typeof window.confirm === 'function')
+      ? window.confirm('Restarting drops the live connection. Continue?')
+      : false;
+    if (!ok) return;
+    _apiFetch(`${_BASE}/api/control/restart/yadgar`, {
+      method: 'POST',
+      body: JSON.stringify({ confirm: 'yadgar' }),
+    }).catch(() => {});
+  }
+
+  applyBtn.addEventListener('click', handleApply);
+  discardBtn.addEventListener('click', handleDiscard);
+  restartBtn.addEventListener('click', handleRestart);
+
+  searchEl.addEventListener('input', () => {
+    const q = searchEl.value.trim();
+    if (q) renderSearch(q);
+    else { renderCategoryPane(); renderRail(); }
   });
+
+  renderRail();
+  renderCategoryPane();
+  refreshPending();
+}
+
+/**
+ * Append highlighted text segments (pure helper output) to a parent element.
+ * Each marked segment becomes a <mark>; the rest are text nodes. Never sets
+ * innerHTML from data — segments carry only text.
+ */
+function _appendHighlighted(parent, text, query) {
+  for (const seg of highlightSegments(text, query)) {
+    if (seg.mark) {
+      const m = document.createElement('mark');
+      m.textContent = seg.text;
+      parent.appendChild(m);
+    } else {
+      parent.appendChild(document.createTextNode(seg.text));
+    }
+  }
+}
+
+/** Build the 3-way source badge element from a derived badge state. */
+function _buildBadgeEl(badge) {
+  const el = _el('span', { class: `badge badge-${badge.state}` }, badge.label);
+  if (badge.state === 'env') {
+    el.setAttribute('data-tooltip', 'Set via environment / nix — edit there, not here.');
+    el.title = 'Set via environment / nix — edit there, not here.';
+  }
+  return el;
+}
+
+/**
+ * Build the typed control for a knob. editable=false (env-locked) → disabled.
+ * setFn(name, value) records the edit; getFn() reads the live value.
+ */
+function _buildControl(knob, editable, setFn, getFn) {
+  const kind = controlKind(knob);
+  const cur = getFn();
+
+  if (kind === 'toggle') {
+    const wrap = _el('div', { class: 'toggle-wrap' });
+    const inp = _el('input', { type: 'checkbox', 'aria-label': knob.name });
+    inp.checked = displayKnobValue(cur, 'bool') === 'true';
+    inp.disabled = !editable;
+    if (editable) inp.addEventListener('change', () => setFn(knob.name, inp.checked ? 'true' : 'false'));
+    const track = _el('div', { class: 'toggle-track' });
+    const thumb = _el('div', { class: 'toggle-thumb' });
+    wrap.append(inp, track, thumb);
+    return wrap;
+  }
+
+  if (kind === 'slider') {
+    const wrap = _el('div', { class: 'slider-wrap' });
+    const num = _el('input', { type: 'number', class: 'num-input', 'aria-label': knob.name });
+    num.value = cur;
+    num.disabled = !editable;
+    const range = _el('input', { type: 'range' });
+    range.disabled = !editable;
+    // bounds: best-effort from current/default magnitude when the API gives none
+    const base = parseFloat(cur) || parseFloat(displayKnobValue(knob.default, knob.kind)) || 1;
+    range.min = String(Math.min(0, base));
+    range.max = String(base === 0 ? 100 : Math.max(base * 4, base + 10));
+    range.step = knob.kind === 'float' ? 'any' : '1';
+    range.value = cur;
+    if (editable) {
+      range.addEventListener('input', () => { num.value = range.value; setFn(knob.name, range.value); });
+      num.addEventListener('input', () => { range.value = num.value; setFn(knob.name, num.value); });
+    }
+    wrap.append(range, num);
+    return wrap;
+  }
+
+  if (kind === 'select') {
+    const sel = _el('select', { class: 'sel-input', 'aria-label': knob.name });
+    sel.disabled = !editable;
+    for (const choice of knob.enum_choices) {
+      const opt = _el('option', { value: choice }, choice);
+      if (choice === String(cur)) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    if (editable) sel.addEventListener('change', () => setFn(knob.name, sel.value));
+    return sel;
+  }
+
+  // text
+  const inp = _el('input', { type: 'text', class: 'text-input', 'aria-label': knob.name });
+  inp.value = cur;
+  inp.disabled = !editable;
+  if (editable) inp.addEventListener('input', () => setFn(knob.name, inp.value));
+  return inp;
 }
 
 // ── Restart section ──────────────────────────────────────────────────────────

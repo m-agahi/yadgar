@@ -552,6 +552,11 @@ FIELD_META: dict[str, dict[str, object]] = {
         "desc": "Hours of ADR log inactivity (vs active_work) before capture_adr fires in signals mode (default 12)",
         "section": "project_brief",
     },
+    # v5.89 #69: dispatch-prelude read-side nudge threshold
+    "dispatch_prelude_due_warn_hours": {
+        "desc": "Hours without agent_dispatch_prelude call (vs active_work) before use_agent_prompt_library fires in signals mode (default 12)",
+        "section": "project_brief",
+    },
     # anchor_hygiene (v5.8.0)
     "anchor_conditional_ttl_days": {
         "desc": "Default valid_until offset (days) for tier=conditional anchors (default 90)",
@@ -1119,6 +1124,396 @@ FIELD_META: dict[str, dict[str, object]] = {
         ),
         "section": "unified_recall",
     },
+    # ── v5.89 #67: FIELD_META backfill — drain the I25 Tier-2 grandfathered ───
+    # backlog. Descriptions sourced from docs/configuration.md + config.py
+    # inline comments. Each entry also gets a _REGISTRY ConfigEntry so the I25
+    # three-way ratchet (test_config_three_way_sync) covers it.
+    # core / server
+    "host": {
+        "desc": (
+            "Bind address for the MCP HTTP server (default 127.0.0.1, loopback-only). "
+            "Set to 0.0.0.0 only with auth + TLS — LAN exposure is not recommended otherwise."
+        ),
+        "section": "security",
+    },
+    "require_auth": {
+        "desc": (
+            "Enforce bearer-token auth on /api/* and /hooks/* routes (default true). "
+            "When false the middleware is a no-op and logs a startup WARN. "
+            "Flip to true after minting YADGAR_MCP_AUTH_TOKEN."
+        ),
+        "section": "security",
+    },
+    "allowed_origins": {
+        "desc": (
+            "Comma-separated CORS allowed origins for the MCP HTTP transport "
+            "(default loopback only). Wildcard '*' is never allowed."
+        ),
+        "section": "security",
+    },
+    "max_hash_bytes": {
+        "desc": (
+            "Maximum file size in bytes for path-based memorize hashing (default 10485760 = 10 MiB). "
+            "Files larger than this are skipped entirely."
+        ),
+        "section": "security",
+    },
+    "auto_capture_rate_limit": {
+        "desc": (
+            "Max /hooks/auto-capture requests per directory key per minute (default 30). "
+            "Prevents log-flooding from a misbehaving hook."
+        ),
+        "section": "security",
+    },
+    "asgi_shutdown_timeout_sec": {
+        "desc": (
+            "Cap (seconds) on uvicorn's wait for in-flight requests to drain on SIGTERM "
+            "(default 5). 0 = unlimited (uvicorn default); >=1 abandons after that many seconds."
+        ),
+        "section": "core",
+    },
+    "max_batch_statements": {
+        "desc": (
+            "Per-transaction cap on SQL statements in batch_writes (default 500). "
+            "Bounds SurrealDB's recursive serialiser stack on large batches (e.g. full-table decay)."
+        ),
+        "section": "core",
+    },
+    "max_batch_bytes": {
+        "desc": (
+            "Per-transaction serialised-byte cap in batch_writes (default 1000000 = 1 MB). "
+            "Prevents HTTP 413 from SurrealDB. Whichever limit fires first (statements or bytes) "
+            "starts a new chunk."
+        ),
+        "section": "core",
+    },
+    "max_caused_by_rows": {
+        "desc": (
+            "Ceiling on caused_by relationship rows; oldest are pruned past this limit "
+            "(default 100000). Set to 0 to disable the ceiling check."
+        ),
+        "section": "core",
+    },
+    "db_size_warning_bytes": {
+        "desc": (
+            "Warn when total surreal_db/ size exceeds this threshold (default 1073741824 = 1 GiB). "
+            "The warning fires at most once per hour."
+        ),
+        "section": "core",
+    },
+    "check_invariants_query_timeout_seconds": {
+        "desc": (
+            "Per-table query timeout (seconds) for check_invariants (default 60). On timeout the "
+            "table is skipped at WARN and the remaining tables still run."
+        ),
+        "section": "core",
+    },
+    "wiki_slug_prefix": {
+        "desc": (
+            "Optional prefix for wiki .md archive filenames "
+            "(e.g. 'myproject' -> 'myproject-overview.md'). Empty = no prefix."
+        ),
+        "section": "core",
+    },
+    # daemon / consolidation similarity-linking
+    "similarity_link_threshold": {
+        "desc": "Minimum cosine similarity to create a memory_similarity_link (default 0.78).",
+        "section": "daemon",
+    },
+    "max_similarity_links_per_memory": {
+        "desc": (
+            "Degree cap per memory on memory_similarity_link rows (default 15) — "
+            "bounds the similarity-link table size."
+        ),
+        "section": "daemon",
+    },
+    "similarity_matrix_max_candidates": {
+        "desc": (
+            "Cap on memories (most-recently-accessed first) used to build the N×N similarity "
+            "matrix in _link_similar_memories / _merge_duplicates (default 4000). Prevents OOM at scale."
+        ),
+        "section": "daemon",
+    },
+    "cls_pattern_max_candidates": {
+        "desc": (
+            "Cap on the most-recently-accessed episodic memories scanned by "
+            "find_recurring_patterns (default 2000)."
+        ),
+        "section": "daemon",
+    },
+    # memory_lifecycle
+    "predictive_coding_entity_ttl_seconds": {
+        "desc": (
+            "TTL (seconds) for the entity-set cache in WriteGate novelty computation (default 300). "
+            "Avoids a get_all_entities() DB call on every write-gate evaluation; invalidated on "
+            "entity add/delete. Set to 0 to disable caching."
+        ),
+        "section": "memory_lifecycle",
+    },
+    "reinject_on_write": {
+        "desc": (
+            "Write-time reinjection gate (default false). When off, the retriever.recall() block in "
+            "memorize() is skipped, saving 30-50ms of sync vector search per write. Enable only if "
+            "write-time related-context surfacing is needed."
+        ),
+        "section": "memory_lifecycle",
+    },
+    # thermodynamics / retrieval boosts
+    "recall_boost": {
+        "desc": (
+            "Per-access heat boost added during each decay cycle: "
+            "new_heat = min(decay(mem) + access_count_since_decay * RECALL_BOOST, 1.0) (default 0.05). "
+            "Frequently-accessed memories decay slower (MemoryBank parity). 0.0 = pure exponential decay."
+        ),
+        "section": "thermodynamics",
+    },
+    "branch_boost_weight": {
+        "desc": (
+            "Convex-combination boost for current-branch memories: "
+            "boosted = score + (1 - score) * BRANCH_BOOST_WEIGHT (default 0.2). Keeps scores in [0, 1]."
+        ),
+        "section": "retrieval_fusion",
+    },
+    "postmortem_boost_factor": {
+        "desc": (
+            "Convex boost applied to _postmortem/_incident-tagged memories when the query contains an "
+            "action verb (default 0.3): boosted = score + (1 - score) * POSTMORTEM_BOOST_FACTOR. "
+            "Set to 0.0 to disable."
+        ),
+        "section": "retrieval_fusion",
+    },
+    "postmortem_boost_keywords": {
+        "desc": (
+            "Comma-separated action verbs that trigger the postmortem/incident boost "
+            "(default deploy,push,merge,restart,vacuum,rollback,upgrade,migrate,bump,release)."
+        ),
+        "section": "retrieval_fusion",
+    },
+    "retrieval_profile": {
+        "desc": "Default retrieval preset: fast, balanced, or full (default balanced).",
+        "section": "retrieval_fusion",
+        "choices": ["fast", "balanced", "full"],
+    },
+    "heavy_rerank_enabled": {
+        "desc": (
+            "Heavy-rerank kill switch for CPU-only hosts (default true). When false, all CE/NLI/MP "
+            "reranking is skipped and retrieval falls back to BM25+HNSW fusion only."
+        ),
+        "section": "reranking",
+    },
+    # neuromorphic
+    "hopfield_beta": {
+        "desc": "Hopfield associative-recall sharpness (default 8.0; low = blended, high = precise).",
+        "section": "neuromorphic",
+    },
+    "hopfield_max_patterns": {
+        "desc": "Maximum patterns retained in the Hopfield energy store (default 5000).",
+        "section": "neuromorphic",
+    },
+    "sr_discount": {
+        "desc": "Successor-representation discount factor γ (default 0.9).",
+        "section": "neuromorphic",
+    },
+    "sr_update_rate": {
+        "desc": "Incremental successor-representation update learning rate (default 0.1).",
+        "section": "neuromorphic",
+    },
+    # embedding / profiles
+    "implicit_embedding_model": {
+        "desc": (
+            "Model for the implicit/latent embedding channel (default empty = disabled). "
+            "Config-only — retained pending a future DualCSE implementation."
+        ),
+        "section": "embedding_enhancement",
+    },
+    "profile_search_weight": {
+        "desc": "Weight of structured-profile results in the retrieval blend (default 1.0).",
+        "section": "profiles_beliefs",
+    },
+    # observability
+    "metrics_enabled": {
+        "desc": (
+            "Expose the /metrics Prometheus endpoint (default true). When false, /metrics returns 404. "
+            "The endpoint is always unauthenticated — bind Yadgar to loopback so only local scrapers reach it."
+        ),
+        "section": "observability",
+    },
+    # project_brief
+    "brief_mode_default": {
+        "desc": "Default mode for project_brief: catalog or full (default catalog).",
+        "section": "project_brief",
+        "choices": ["catalog", "full"],
+    },
+    "project_init_cap_chars": {
+        "desc": (
+            "Hard character cap for _project_init memory content (default 2000). "
+            "bootstrap_project raises ValueError on overflow — no silent truncation."
+        ),
+        "section": "project_brief",
+    },
+    # backend timeouts
+    "backend_http_timeout_sec": {
+        "desc": (
+            "Short HTTP timeout (seconds) for non-import backend calls — health, /sql, /admin/dbsize "
+            "(default 5)."
+        ),
+        "section": "backend_timeouts",
+    },
+    "backend_import_timeout_sec": {
+        "desc": "Long HTTP timeout (seconds) for the vacuum /import POST and /export GET (default 300).",
+        "section": "backend_timeouts",
+    },
+    "migration_http_timeout_sec": {
+        "desc": (
+            "HTTP timeout (seconds) for schema-migration calls during StorageEngine.__init__ "
+            "(default 30). Migrations can be slower than operational reads."
+        ),
+        "section": "backend_timeouts",
+    },
+    "rerank_backend_timeout_sec": {
+        "desc": (
+            "Dedicated HTTP timeout (seconds) for /rerank backend calls (default 90). CE inference can "
+            "take 8-46s on CPU; the general backend timeout caused spurious circuit-breaker opens. "
+            "0 falls back to BACKEND_HTTP_TIMEOUT_SEC."
+        ),
+        "section": "backend_timeouts",
+    },
+    # circuit breaker + rerank concurrency
+    "circuit_breaker_enabled": {
+        "desc": (
+            "Backend ML circuit breaker (default true). Opens when /rerank repeatedly times out or "
+            "errors, to stop saturating the backend."
+        ),
+        "section": "circuit_breaker",
+    },
+    "circuit_breaker_failure_threshold": {
+        "desc": "Consecutive per-endpoint failures before the breaker trips OPEN (default 3).",
+        "section": "circuit_breaker",
+    },
+    "circuit_breaker_open_duration_sec": {
+        "desc": "Seconds the breaker stays OPEN before allowing a single probe attempt (default 60).",
+        "section": "circuit_breaker",
+    },
+    "circuit_breaker_probe_timeout_sec": {
+        "desc": "Short HTTP timeout (seconds) for HALF_OPEN probe calls — fast-fail when saturated (default 2.0).",
+        "section": "circuit_breaker",
+    },
+    "circuit_breaker_max_open_duration_sec": {
+        "desc": "Cooldown ceiling (seconds) for exponential backoff on repeated probe failures (default 600.0).",
+        "section": "circuit_breaker",
+    },
+    "circuit_breaker_backoff_factor": {
+        "desc": "Backoff multiplier — each failed probe multiplies the OPEN cooldown by this factor (default 2.0).",
+        "section": "circuit_breaker",
+    },
+    "rerank_max_concurrency": {
+        "desc": (
+            "Max concurrent inference threads per /rerank mode on the backend (default 1). N=1 makes "
+            "probes fast-fail via TimeoutError instead of queueing behind a live inference."
+        ),
+        "section": "circuit_breaker",
+    },
+    "rerank_semaphore_acquire_timeout_sec": {
+        "desc": (
+            "Seconds to wait for the /rerank concurrency semaphore before returning 503 (default 2.0). "
+            "Should be <= circuit_breaker_probe_timeout_sec so probes always fail fast."
+        ),
+        "section": "circuit_breaker",
+    },
+    # write queue / DLQ
+    "queue_drain_interval": {
+        "desc": "Drain interval (seconds) for the async write queue — how long entries stay visible before flush (default 30).",
+        "section": "write_queue",
+    },
+    "queue_max_permanent_attempts": {
+        "desc": "4xx (permanent) failures send a queue entry to the DLQ after this many tries (default 3).",
+        "section": "write_queue",
+    },
+    "queue_max_transient_attempts": {
+        "desc": "5xx / network (transient) failures send a queue entry to the DLQ after this many tries (default 20).",
+        "section": "write_queue",
+    },
+    "queue_backoff_base_s": {
+        "desc": "Initial retry delay (seconds) for queue retries (default 30).",
+        "section": "write_queue",
+    },
+    "queue_backoff_max_s": {
+        "desc": "Maximum retry delay cap (seconds) for queue retries (default 3600).",
+        "section": "write_queue",
+    },
+    "queue_dlq_retention_days": {
+        "desc": "Prune DLQ entries older than this many days (default 90).",
+        "section": "write_queue",
+    },
+    # table / memory retention windows
+    "action_log_retention_days": {
+        "desc": "Prune processed action_log rows older than this each consolidation cycle (default 7). 0 = disable.",
+        "section": "table_retention",
+    },
+    "episode_retention_days": {
+        "desc": "Prune episode rows older than this each consolidation cycle (default 14). 0 = disable.",
+        "section": "table_retention",
+    },
+    "astrocyte_process_retention_days": {
+        "desc": "Prune astrocyte_process rows older than this each consolidation cycle (default 7). 0 = disable.",
+        "section": "table_retention",
+    },
+    "memory_cluster_retention_days": {
+        "desc": "Prune memory_cluster rows older than this each consolidation cycle (default 30). 0 = disable.",
+        "section": "table_retention",
+    },
+    "derived_belief_retention_days": {
+        "desc": "Prune derived_belief rows older than this each consolidation cycle (default 30). 0 = disable.",
+        "section": "table_retention",
+    },
+    "prospective_memory_retention_days": {
+        "desc": "Prune prospective_memory rows older than this each consolidation cycle (default 30). 0 = disable.",
+        "section": "table_retention",
+    },
+    "narrative_entry_retention_days": {
+        "desc": "Prune narrative_entry rows older than this each consolidation cycle (default 90). 0 = disable.",
+        "section": "table_retention",
+    },
+    "action_stream_max_age_days": {
+        "desc": (
+            "Age cap (days) for _action_stream-tagged memories deleted by _memify_prune Pass 5 "
+            "(default 14). These start at heat=0.4, too warm for Pass 1. 0 = disable the age cap."
+        ),
+        "section": "table_retention",
+    },
+    "auto_generated_memory_max_age_days": {
+        "desc": "Age cap (days) for cold unaccessed 'auto-generated'-tagged memories deleted by _memify_prune (default 30). 0 = disable.",
+        "section": "table_retention",
+    },
+    "auto_abstracted_memory_max_age_days": {
+        "desc": "Age cap (days) for cold unaccessed 'auto-abstracted'-tagged memories deleted by _memify_prune (default 30). 0 = disable.",
+        "section": "table_retention",
+    },
+    "dream_insight_max_age_days": {
+        "desc": "Age cap (days) for unaccessed dream memories deleted by _memify_prune regardless of heat (default 21). 0 = disable.",
+        "section": "table_retention",
+    },
+    # vacuum
+    "vacuum_snapshot_retention": {
+        "desc": "Number of pre-vacuum DB snapshots to retain; older ones are pruned after a successful vacuum (default 3).",
+        "section": "vacuum",
+    },
+    "vacuum_auto_enabled": {
+        "desc": "Enable the threshold-driven emergency-backstop vacuum trigger (default true). Set false to disable the backstop entirely.",
+        "section": "vacuum",
+    },
+    "vacuum_auto_threshold_bytes": {
+        "desc": "Emergency-backstop threshold: fire the auto-vacuum when the DB exceeds this size (default 2147483648 = 2 GiB).",
+        "section": "vacuum",
+    },
+    "vacuum_auto_window_start": {
+        "desc": "Local-time window start (HH:MM, 24-hour) for the backstop auto-vacuum trigger (default 19:00).",
+        "section": "vacuum",
+    },
+    "vacuum_auto_window_end": {
+        "desc": "Local-time window end (HH:MM, 24-hour, exclusive) for the backstop auto-vacuum trigger (default 23:00).",
+        "section": "vacuum",
+    },
 }
 
 
@@ -1158,6 +1553,12 @@ SECTION_TITLES: dict[str, str] = {
     "recall_quality": "Recall Quality Floor (v5.62.0)",
     "unified_recall": "Unified Scoped Recall (v6 T6)",
     "agent_prompt_library": "Agent-Prompt Passive Library (v5.85)",
+    "security": "Security (Bind / Auth / CORS)",
+    "backend_timeouts": "Backend HTTP Timeouts",
+    "circuit_breaker": "Backend ML Circuit Breaker",
+    "write_queue": "Async Write Queue / DLQ",
+    "table_retention": "Table & Memory Retention Windows",
+    "vacuum": "Vacuum",
 }
 
 # Ordered list of sections for deterministic output

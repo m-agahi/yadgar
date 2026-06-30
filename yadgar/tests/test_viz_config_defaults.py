@@ -16,69 +16,92 @@ Run:
 
 from __future__ import annotations
 
-import os
-
 # ---------------------------------------------------------------------------
 # Settings (config.py) defaults
 # ---------------------------------------------------------------------------
 
 
+def _fresh_settings(monkeypatch, tmp_path):
+    """Return a Settings() instance isolated from host config and env overrides.
+
+    Belt-and-suspenders: the conftest autouse _isolate_yaml_config fixture already
+    sets YADGAR_CONFIG_FILE=/nonexistent, but per-test isolation via monkeypatch
+    ensures these tests pass even if the autouse fixture is bypassed (#133).
+    """
+    from yadgar.config import get_settings  # noqa: PLC0415
+
+    monkeypatch.setenv("YADGAR_CONFIG_FILE", str(tmp_path / "nonexistent-config.yaml"))
+    get_settings.cache_clear()
+    from yadgar.config import Settings  # noqa: PLC0415
+
+    return Settings()
+
+
 class TestSettingsDefaults:
     """config.py Settings class must have updated defaults for v5.50.0 Variant C."""
 
-    def test_edge_width_3d_multiplier_default_is_1_8(self) -> None:
+    def test_edge_width_3d_multiplier_default_is_1_8(self, monkeypatch, tmp_path) -> None:
         """Variant C: VIZ_EDGE_WIDTH_3D_MULTIPLIER must default to 1.8."""
-        # Unset env override so we get the class default
-        os.environ.pop("YADGAR_VIZ_EDGE_WIDTH_3D_MULTIPLIER", None)
-        from yadgar.config import Settings  # noqa: PLC0415
-
-        s = Settings()
+        # Belt-and-suspenders: also clear env override in case caller set it
+        monkeypatch.delenv("YADGAR_VIZ_EDGE_WIDTH_3D_MULTIPLIER", raising=False)
+        s = _fresh_settings(monkeypatch, tmp_path)
         assert s.VIZ_EDGE_WIDTH_3D_MULTIPLIER == 1.8, (
             f"Expected 1.8, got {s.VIZ_EDGE_WIDTH_3D_MULTIPLIER}"
         )
 
-    def test_physics_charge_strength_default_is_minus_18(self) -> None:
+    def test_physics_charge_strength_default_is_minus_18(self, monkeypatch, tmp_path) -> None:
         """v5.50.0: VIZ_PHYSICS_CHARGE_STRENGTH must default to -18.0."""
-        os.environ.pop("YADGAR_VIZ_PHYSICS_CHARGE_STRENGTH", None)
-        from yadgar.config import Settings  # noqa: PLC0415
-
-        s = Settings()
+        monkeypatch.delenv("YADGAR_VIZ_PHYSICS_CHARGE_STRENGTH", raising=False)
+        s = _fresh_settings(monkeypatch, tmp_path)
         assert s.VIZ_PHYSICS_CHARGE_STRENGTH == -18.0, (
             f"Expected -18.0, got {s.VIZ_PHYSICS_CHARGE_STRENGTH}"
         )
 
-    def test_viz_edge_opacity_exists_and_defaults_to_0_9(self) -> None:
+    def test_viz_edge_opacity_exists_and_defaults_to_0_9(self, monkeypatch, tmp_path) -> None:
         """v5.50.0 Variant C: VIZ_EDGE_OPACITY must exist and default to 0.9."""
-        os.environ.pop("YADGAR_VIZ_EDGE_OPACITY", None)
-        from yadgar.config import Settings  # noqa: PLC0415
-
-        s = Settings()
+        monkeypatch.delenv("YADGAR_VIZ_EDGE_OPACITY", raising=False)
+        s = _fresh_settings(monkeypatch, tmp_path)
         assert hasattr(s, "VIZ_EDGE_OPACITY"), (
             "Settings missing VIZ_EDGE_OPACITY — add it to yadgar/config.py"
         )
         assert s.VIZ_EDGE_OPACITY == 0.9, f"Expected 0.9, got {s.VIZ_EDGE_OPACITY}"
 
-    def test_viz_wiki_shape_exists_and_defaults_to_octahedron(self) -> None:
+    def test_viz_wiki_shape_exists_and_defaults_to_octahedron(self, monkeypatch, tmp_path) -> None:
         """v5.50.0: VIZ_WIKI_SHAPE must exist and default to 'octahedron'."""
-        os.environ.pop("YADGAR_VIZ_WIKI_SHAPE", None)
-        from yadgar.config import Settings  # noqa: PLC0415
-
-        s = Settings()
+        monkeypatch.delenv("YADGAR_VIZ_WIKI_SHAPE", raising=False)
+        s = _fresh_settings(monkeypatch, tmp_path)
         assert hasattr(s, "VIZ_WIKI_SHAPE"), (
             "Settings missing VIZ_WIKI_SHAPE — add it to yadgar/config.py"
         )
         assert s.VIZ_WIKI_SHAPE == "octahedron", f"Expected 'octahedron', got {s.VIZ_WIKI_SHAPE!r}"
 
-    def test_viz_edge_variant_exists_and_defaults_to_C(self) -> None:
+    def test_viz_edge_variant_exists_and_defaults_to_C(self, monkeypatch, tmp_path) -> None:
         """v5.50.0: VIZ_EDGE_VARIANT must exist and default to 'C'."""
-        os.environ.pop("YADGAR_VIZ_EDGE_VARIANT", None)
-        from yadgar.config import Settings  # noqa: PLC0415
-
-        s = Settings()
+        monkeypatch.delenv("YADGAR_VIZ_EDGE_VARIANT", raising=False)
+        s = _fresh_settings(monkeypatch, tmp_path)
         assert hasattr(s, "VIZ_EDGE_VARIANT"), (
             "Settings missing VIZ_EDGE_VARIANT — add it to yadgar/config.py"
         )
         assert s.VIZ_EDGE_VARIANT == "C", f"Expected 'C', got {s.VIZ_EDGE_VARIANT!r}"
+
+    def test_defaults_hold_independent_of_host_config(self, monkeypatch, tmp_path) -> None:
+        """#133: defaults hold even when host config file is populated with stale values.
+
+        Simulates the latent bug: a host ~/.config/yadgar/config.yaml with
+        charge=-12.0, width3d=1.5 would leak into Settings() if the config file
+        isolation were absent. This test EXPLICITLY sets YADGAR_CONFIG_FILE to a
+        nonexistent path and clears the lru_cache — proving isolation works
+        independent of the conftest autouse fixture.
+        """
+        monkeypatch.delenv("YADGAR_VIZ_PHYSICS_CHARGE_STRENGTH", raising=False)
+        monkeypatch.delenv("YADGAR_VIZ_EDGE_WIDTH_3D_MULTIPLIER", raising=False)
+        s = _fresh_settings(monkeypatch, tmp_path)
+        assert s.VIZ_PHYSICS_CHARGE_STRENGTH == -18.0, (
+            f"Charge default leaked from host config: got {s.VIZ_PHYSICS_CHARGE_STRENGTH} (expected -18.0)"
+        )
+        assert s.VIZ_EDGE_WIDTH_3D_MULTIPLIER == 1.8, (
+            f"Width3d default leaked from host config: got {s.VIZ_EDGE_WIDTH_3D_MULTIPLIER} (expected 1.8)"
+        )
 
 
 # ---------------------------------------------------------------------------

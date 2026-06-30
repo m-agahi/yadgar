@@ -856,6 +856,109 @@ body.dh-open #dh-toggle { right: 480px; }
 }
 .ctrl-knob-help:hover { color: #58a6ff; }
 
+/* ── v5.89 chrome://settings-style config editor ─────────────────────────────── */
+.cfg-shell { display: flex; min-height: 420px; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
+.cfg-rail {
+  width: 200px; flex-shrink: 0; border-right: 1px solid #30363d; background: #0d1117;
+  display: flex; flex-direction: column; overflow-y: auto;
+}
+.cfg-rail-search-wrap { padding: 10px; border-bottom: 1px solid #21262d; }
+.cfg-search {
+  width: 100%; background: #161b22; border: 1px solid #30363d; border-radius: 6px;
+  color: #c9d1d9; font: inherit; font-size: 12px; padding: 6px 10px; outline: none;
+}
+.cfg-search:focus { border-color: #58a6ff; }
+.cfg-rail-section-label {
+  padding: 12px 12px 4px; font-size: 10px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .06em; color: #8b949e;
+}
+.rail-item {
+  display: flex; align-items: center; gap: 8px; padding: 7px 12px; cursor: pointer;
+  color: #8b949e; font-size: 12px; border-left: 3px solid transparent; user-select: none;
+}
+.rail-item:hover { background: #161b22; color: #c9d1d9; }
+.rail-item.active { background: rgba(88,166,255,.10); color: #58a6ff; border-left-color: #58a6ff; font-weight: 500; }
+.rail-count {
+  margin-left: auto; font-size: 10px; background: #1c2128; border: 1px solid #21262d;
+  border-radius: 10px; padding: 1px 6px; color: #8b949e; font-family: monospace;
+}
+.rail-item.active .rail-count { background: rgba(88,166,255,.10); border-color: #58a6ff; color: #58a6ff; }
+
+.cfg-content-wrap { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.cfg-content { flex: 1; overflow-y: auto; padding: 0 20px 16px; max-height: 520px; }
+.cfg-search-header { padding: 14px 0 10px; font-size: 12px; color: #8b949e; border-bottom: 1px solid #21262d; }
+.cfg-search-empty { padding: 40px 0; text-align: center; color: #8b949e; }
+.cfg-cat-heading { padding: 16px 0 4px; font-size: 16px; font-weight: 600; color: #c9d1d9; }
+.cfg-section-group { margin-top: 12px; }
+.cfg-section-label {
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em;
+  color: #8b949e; padding-bottom: 8px; border-bottom: 1px solid #21262d;
+}
+
+.setting-row { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid #21262d; position: relative; }
+.setting-row:last-child { border-bottom: none; }
+.setting-row.env-locked .row-left { opacity: .55; }
+.setting-row.cfg-changed::before {
+  content: ''; position: absolute; left: -10px; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 22px; border-radius: 2px; background: #58a6ff;
+}
+.row-left { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.row-label { font-size: 12px; font-weight: 500; color: #c9d1d9; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.row-knob { font-family: monospace; font-size: 10px; color: #8b949e; opacity: .8; }
+.row-right { flex-shrink: 0; display: flex; align-items: center; gap: 10px; }
+
+.badge {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .05em; padding: 2px 6px; border-radius: 3px; border: 1px solid;
+}
+.badge-default { color: #8b949e; border-color: #30363d; background: #1c2128; }
+.badge-yaml { color: #3fb950; border-color: rgba(63,185,80,.35); background: rgba(63,185,80,.12); }
+.badge-env { color: #f85149; border-color: rgba(248,81,73,.35); background: rgba(248,81,73,.12); cursor: help; }
+.badge-env::before { content: '🔒'; font-size: 8px; }
+.restart-pill {
+  display: inline-flex; align-items: center; font-size: 9px; font-weight: 500; color: #d29922;
+  background: rgba(210,153,34,.12); border: 1px solid rgba(210,153,34,.35); border-radius: 3px; padding: 2px 6px; white-space: nowrap;
+}
+.cat-chip {
+  display: inline-flex; align-items: center; font-size: 9px; font-weight: 600; text-transform: uppercase;
+  color: #8b949e; background: #1c2128; border: 1px solid #30363d; border-radius: 3px; padding: 1px 5px;
+}
+.cfg-reset-btn { font-size: 11px; color: #8b949e; background: none; border: none; cursor: pointer; padding: 2px 4px; border-radius: 3px; white-space: nowrap; }
+.cfg-reset-btn:hover { color: #c9d1d9; background: #1c2128; }
+#tab-control mark { background: rgba(88,166,255,.22); color: #58a6ff; border-radius: 2px; padding: 0 1px; }
+
+/* Controls */
+.toggle-wrap { position: relative; width: 40px; height: 22px; flex-shrink: 0; }
+.toggle-wrap input[type="checkbox"] { position: absolute; opacity: 0; width: 100%; height: 100%; cursor: pointer; z-index: 1; margin: 0; }
+.toggle-wrap input[type="checkbox"]:disabled { cursor: not-allowed; }
+.toggle-track { position: absolute; inset: 0; border-radius: 11px; background: #30363d; transition: background .2s; pointer-events: none; }
+.toggle-wrap input:checked + .toggle-track { background: #58a6ff; }
+.toggle-thumb { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .2s; pointer-events: none; }
+.toggle-wrap input:checked ~ .toggle-thumb { transform: translateX(18px); }
+.slider-wrap { display: flex; align-items: center; gap: 8px; min-width: 200px; }
+#tab-control input[type="range"] { flex: 1; height: 4px; accent-color: #58a6ff; cursor: pointer; }
+#tab-control input[type="range"]:disabled { opacity: .4; cursor: not-allowed; }
+.num-input { width: 70px; background: #010409; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; font-family: monospace; font-size: 11px; padding: 3px 6px; text-align: right; outline: none; }
+.num-input:focus { border-color: #58a6ff; }
+.num-input:disabled { opacity: .4; cursor: not-allowed; }
+.sel-input { background: #161b22; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; font: inherit; font-size: 12px; padding: 5px 9px; outline: none; cursor: pointer; min-width: 120px; }
+.sel-input:focus { border-color: #58a6ff; }
+.sel-input:disabled { opacity: .4; cursor: not-allowed; }
+.text-input { background: #010409; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; font-family: monospace; font-size: 11px; padding: 5px 9px; outline: none; min-width: 200px; }
+.text-input:focus { border-color: #58a6ff; }
+.text-input:disabled { opacity: .4; cursor: not-allowed; }
+
+/* Pending bar */
+.cfg-pending-bar {
+  display: flex; align-items: center; gap: 10px; padding: 0 16px; height: 48px;
+  background: #161b22; border-top: 1px solid #30363d; flex-shrink: 0;
+}
+.cfg-pending-label { font-weight: 500; color: #c9d1d9; font-size: 12px; }
+.cfg-pending-spacer { flex: 1; }
+.cfg-btn-restart { color: #d29922; border-color: rgba(210,153,34,.4); }
+.cfg-btn-apply { color: #0d1117; background: #3fb950; border-color: #3fb950; }
+[data-tooltip] { position: relative; }
+
 /* ── v5.87 B2b Config Reference tab ──────────────────────────────────────────── */
 .cfgref-body { max-width: 760px; }
 .cfgref-banner { font-size: 12px; padding: 10px 12px; border-radius: 4px; margin: 0 0 12px; }
@@ -1155,11 +1258,8 @@ body.dh-open #dh-toggle { right: 480px; }
          panel defaults OFF and is recovered here. -->
     <span id="view-menu">
       <button type="button" class="btn" id="view-menu-btn" aria-haspopup="true" aria-expanded="false" title="Show / hide panels">▦ View</button>
-      <div id="view-menu-panel" role="menu">
-        <label role="menuitemcheckbox">
-          <input type="checkbox" id="view-toggle-clusters"> Memory Clusters panel
-        </label>
-      </div>
+      <!-- v5.89 Bug C: items built dynamically from every floating overlay -->
+      <div id="view-menu-panel" role="menu"></div>
     </span>
     <span id="status-dot"></span>
     <span id="status-text">Connecting…</span>
@@ -3930,23 +4030,44 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
   document.addEventListener('click', () => closeAll(null));
 })();
 
-// v5.87 car A: View control — show/hide floating panels. The memory-cluster
-// panel defaults OFF (.overlay-hidden in markup); the checkbox toggles it.
-// Does not touch renderMemoryClusters()/_flyToCluster — those operate on the
-// panel's inner content regardless of the container's visibility.
+// v5.87 car A → v5.89 Bug C: View control — show/hide EVERY floating panel.
+// Previously only the clusters overlay was wired (1 of 5). Now we iterate every
+// .floating-overlay[data-overlay-name] and render one checkbox per overlay,
+// toggling each panel's .overlay-hidden class (the show/hide class the overlays
+// already use). The checkbox initial state reflects current visibility.
+//
+// overlaysToMenuDescriptors() (control_helpers.js, vitest-covered) defines the
+// name/label/checked mapping; this is its inlined plain-script equivalent (the
+// module-scoped helper isn't importable from this non-module script).
 (function initViewMenu() {
   const wrap = document.getElementById('view-menu');
   const btn = document.getElementById('view-menu-btn');
-  const clusterToggle = document.getElementById('view-toggle-clusters');
-  const clusterOverlay = document.querySelector('.floating-overlay[data-overlay-name="clusters"]');
-  if (!wrap || !btn) return;
+  const panel = document.getElementById('view-menu-panel');
+  if (!wrap || !btn || !panel) return;
 
-  // Sync the checkbox to the overlay's current (default-hidden) state.
-  if (clusterToggle && clusterOverlay) {
-    clusterToggle.checked = !clusterOverlay.classList.contains('overlay-hidden');
-    clusterToggle.addEventListener('change', () => {
-      clusterOverlay.classList.toggle('overlay-hidden', !clusterToggle.checked);
+  const overlays = Array.from(document.querySelectorAll('.floating-overlay[data-overlay-name]'));
+  for (const overlay of overlays) {
+    const name = overlay.getAttribute('data-overlay-name') || '';
+    // Label from the overlay grip title (strip the ⋮ marker + trailing collapse
+    // glyph); fall back to the data-overlay-name.
+    const grip = overlay.querySelector('.overlay-grip');
+    let label = name;
+    if (grip && grip.textContent) {
+      const cleaned = grip.textContent.replace(/⋮/g, '').replace(/[−–-]\s*$/, '').trim();
+      if (cleaned) label = cleaned;
+    }
+    const item = document.createElement('label');
+    item.setAttribute('role', 'menuitemcheckbox');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !overlay.classList.contains('overlay-hidden');
+    cb.setAttribute('data-overlay-toggle', name);
+    cb.addEventListener('change', () => {
+      overlay.classList.toggle('overlay-hidden', !cb.checked);
     });
+    item.appendChild(cb);
+    item.appendChild(document.createTextNode(' ' + label));
+    panel.appendChild(item);
   }
 
   btn.addEventListener('click', (e) => {
@@ -3997,6 +4118,7 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
   import { initConfigRefTab } from './config-ref.js';
   import { nodeType as _nodeTypeModule, createDetailPanel, ingestSseNode, removeSseNode } from './graph-detail.js';
   import * as Help from './help.js';
+  import { shouldInitTab, overlaysToMenuDescriptors } from './control_helpers.js';
   window.YadgarTabs    = Tabs;
   window.YadgarInfo    = Info;
   window.YadgarOverlays = Overlays;
@@ -4140,6 +4262,20 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
     clusterObserver.observe(origClusterList, { childList: true, subtree: false });
     _syncClusterOverlay(); // run once in case already populated
   }
+
+  // ── Bug B (v5.89): init the active tab once THIS module has executed ──────────
+  // The boot IIFE calls _switchTab(_getActiveTab()) → window._lazyInitControlTab?.()
+  // BEFORE this deferred module defines _lazyInitControlTab, so on a
+  // refresh-while-on-#control the optional-call no-ops and the pane stays blank.
+  // Awaiting one fetch in the IIFE guarantees nothing about this 8-module graph.
+  // Fix: now that the lazy-inits are defined, render whichever tab is genuinely
+  // active. shouldInitTab() gates each probe so a fresh load on #home never fires
+  // the gated GET /api/control/config 403 (keeps test_no_uncaught_js_errors green).
+  try {
+    const _active = (typeof _getActiveTab === 'function') ? _getActiveTab() : null;
+    if (shouldInitTab(_active, 'control')) window._lazyInitControlTab?.();
+    if (shouldInitTab(_active, 'config-ref')) window._lazyInitConfigRefTab?.();
+  } catch (_e) { /* boot helpers not ready — tab switch will init on navigation */ }
 </script>
 </body>
 </html>

@@ -29,14 +29,14 @@
  *    23. unknown categories appended alpha-sorted after CATEGORY_ORDER
  *    24. empty knob array returns empty groups array
  *   DOM / wiring:
- *    25. config row edit fires POST with correct value
+ *    25. editing a control + Apply fires POST with correct value (v5.89 redesign)
  *    26. restart button disabled until correct name typed
  *    27. restart button fires POST /api/control/restart/<segment> with confirm
  *    28. update button greys out on 404 from /api/control/update
  *    29. update button live on 200 from /api/control/update
  *    30. 403 response shows warning banner and disables sections
- *    31. each knob row has a help icon linking to cfgref anchor
- *    32. clicking help icon calls switchTab('config-ref')
+ *    31. renders a 3-way source badge per row (default/yaml/env) (v5.89 redesign)
+ *    32. cross-category search filters across all categories + <mark> (v5.89)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -340,12 +340,14 @@ describe('initControlTab DOM wiring', () => {
   });
 
   // 19. Config row edit fires POST with correct value
-  it('config row edit fires POST /api/control/config with typed value', async () => {
+  it('editing a control + Apply fires POST /api/control/config with typed value', async () => {
+    // v5.89 redesign: edit the typed control (number input), the sticky pending
+    // bar appears, and Apply POSTs the changed knob with its coerced value.
     const posts = [];
     globalThis.fetch = vi.fn(async (url, opts) => {
       if (typeof url === 'string' && url.includes('/api/control/config') && (!opts?.method || opts.method !== 'POST')) {
         return { ok: true, status: 200, json: async () => ({ knobs: [
-          { name: 'YADGAR_VIZ_NODE_SIZE_3D', kind: 'float', current: '8.0', default: '8.0', source: 'default', reload: 'hot_reload' },
+          { name: 'YADGAR_VIZ_NODE_SIZE_3D', kind: 'float', current: '8.0', default: '8.0', source: 'default', reload: 'hot_reload', category: 'viz', section: 'viz_config', description: 'Node size', locked: false, enum_choices: [] },
         ] }) };
       }
       if (typeof url === 'string' && url.includes('/api/control/config') && opts?.method === 'POST') {
@@ -357,24 +359,24 @@ describe('initControlTab DOM wiring', () => {
 
     await initControlTab(root);
 
-    // Click the edit button on the first row
-    const editBtn = root.querySelector('.ctrl-btn--sm[aria-label*="YADGAR_VIZ_NODE_SIZE_3D"]');
-    expect(editBtn).not.toBeNull();
-    editBtn.click();
+    // The row + its number control are present in the category pane.
+    const row = root.querySelector('.setting-row[data-name="YADGAR_VIZ_NODE_SIZE_3D"]');
+    expect(row).not.toBeNull();
+    const numInput = row.querySelector('.num-input');
+    expect(numInput).not.toBeNull();
 
-    // Should have an input now
-    const input = root.querySelector('.ctrl-edit-input');
-    expect(input).not.toBeNull();
+    // Edit the value → pending bar becomes visible.
+    numInput.value = '12.5';
+    numInput.dispatchEvent(new Event('input'));
+    const pendingBar = root.querySelector('.cfg-pending-bar');
+    expect(pendingBar.style.display).not.toBe('none');
 
-    // Change value and click save
-    input.value = '12.5';
-    input.dispatchEvent(new Event('input'));
-    const saveBtn = root.querySelector('.ctrl-btn--save');
-    expect(saveBtn).not.toBeNull();
-    await saveBtn.click();
-
-    // Wait for async POST
+    // Apply → POST fires with the coerced value.
+    const applyBtn = root.querySelector('.cfg-btn-apply');
+    expect(applyBtn).not.toBeNull();
+    await applyBtn.click();
     await new Promise(r => setTimeout(r, 50));
+
     expect(posts.length).toBeGreaterThan(0);
     expect(posts[0].name).toBe('YADGAR_VIZ_NODE_SIZE_3D');
     expect(posts[0].value).toBeCloseTo(12.5);
@@ -558,13 +560,16 @@ describe('initControlTab DOM wiring', () => {
     expect(actionsRow.style.pointerEvents).toBe('none');
   });
 
-  // 25. Each knob row has a help icon (ctrl-knob-help) with href targeting cfgref anchor
-  it('each knob row has a help icon linking to cfgref-<name> anchor', async () => {
+  // 25. (v5.89 redesign) Each row renders the 3-way source badge; the active
+  //     category is shown and other categories are reachable via the rail.
+  it('renders a 3-way source badge per row (default / yaml / env)', async () => {
     const knobFixture = [
       { name: 'YADGAR_VIZ_NODE_SIZE', kind: 'float', current: '8.0', default: '8.0',
-        source: 'default', reload: 'hot_reload', category: 'viz', description: 'Node size' },
-      { name: 'YADGAR_PORT', kind: 'int', current: '8765', default: '8765',
-        source: 'default', reload: 'restart_required', category: 'ops', description: 'Port' },
+        source: 'default', reload: 'hot_reload', category: 'viz', section: 'viz_config', description: 'Node size', locked: false, enum_choices: [] },
+      { name: 'YADGAR_VIZ_MAX_WIKI', kind: 'int', current: '300', default: '200',
+        source: 'yaml', reload: 'hot_reload', category: 'viz', section: 'viz_config', description: 'Max wiki nodes', locked: false, enum_choices: [] },
+      { name: 'YADGAR_VIZ_PROXY', kind: 'bool', current: 'true', default: 'true',
+        source: 'env', reload: 'restart_required', category: 'viz', section: 'viz_config', description: 'Viz proxy', locked: true, enum_choices: [] },
     ];
     globalThis.fetch = vi.fn(async (url, opts) => {
       if (typeof url === 'string' && url.includes('/api/control/config') && !(opts?.method === 'POST')) {
@@ -575,26 +580,27 @@ describe('initControlTab DOM wiring', () => {
 
     await initControlTab(root);
 
-    for (const knob of knobFixture) {
-      const row = root.querySelector(`tr[data-name="${knob.name}"]`);
-      expect(row, `row for ${knob.name}`).not.toBeNull();
-      const helpEl = row.querySelector('.ctrl-knob-help');
-      expect(helpEl, `help icon for ${knob.name}`).not.toBeNull();
-      const expectedAnchor = `cfgref-${knob.name}`;
-      // href or dataset must reference the anchor
-      const href = helpEl.getAttribute('href') || helpEl.dataset.anchor || '';
-      expect(href).toContain(expectedAnchor);
-    }
+    // All three live in category 'viz' (first alphabetically here), so all render.
+    const defRow = root.querySelector('.setting-row[data-name="YADGAR_VIZ_NODE_SIZE"]');
+    const yamlRow = root.querySelector('.setting-row[data-name="YADGAR_VIZ_MAX_WIKI"]');
+    const envRow = root.querySelector('.setting-row[data-name="YADGAR_VIZ_PROXY"]');
+    expect(defRow.querySelector('.badge-default')).not.toBeNull();
+    expect(yamlRow.querySelector('.badge-yaml')).not.toBeNull();
+    expect(envRow.querySelector('.badge-env')).not.toBeNull();
+    // env-locked row is read-only: its control input is disabled, no reset btn.
+    expect(envRow.classList.contains('env-locked')).toBe(true);
+    expect(envRow.querySelector('input').disabled).toBe(true);
+    expect(envRow.querySelector('.cfg-reset-btn')).toBeNull();
   });
 
-  // 26. Clicking help icon calls window.YadgarTabs.switchTab('config-ref')
-  it('clicking help icon calls switchTab("config-ref") and scrolls to anchor', async () => {
-    const switchTabMock = vi.fn();
-    window.YadgarTabs = { switchTab: switchTabMock };
-
+  // 26. (v5.89 redesign) Cross-category search filters across ALL categories and
+  //     highlights the matched substring with <mark>.
+  it('cross-category search filters across all categories and <mark>-highlights', async () => {
     const knobFixture = [
       { name: 'YADGAR_VIZ_NODE_SIZE', kind: 'float', current: '8.0', default: '8.0',
-        source: 'default', reload: 'hot_reload', category: 'viz', description: 'Node size' },
+        source: 'default', reload: 'hot_reload', category: 'viz', section: 'viz_config', description: 'Node size', locked: false, enum_choices: [] },
+      { name: 'YADGAR_WIKI_SIM_MODE', kind: 'string', current: 'hard', default: 'hard',
+        source: 'default', reload: 'hot_reload', category: 'wiki', section: 'wiki_similarity_gate', description: 'Similarity gate mode', locked: false, enum_choices: ['hard', 'soft'] },
     ];
     globalThis.fetch = vi.fn(async (url, opts) => {
       if (typeof url === 'string' && url.includes('/api/control/config') && !(opts?.method === 'POST')) {
@@ -603,22 +609,26 @@ describe('initControlTab DOM wiring', () => {
       return { ok: true, status: 200, json: async () => ({}) };
     });
 
-    // Set up a target element that scrollIntoView can be called on
-    const anchorEl = document.createElement('div');
-    anchorEl.id = 'cfgref-YADGAR_VIZ_NODE_SIZE';
-    anchorEl.scrollIntoView = vi.fn();
-    document.body.appendChild(anchorEl);
-
     await initControlTab(root);
 
-    const helpEl = root.querySelector('.ctrl-knob-help');
-    expect(helpEl).not.toBeNull();
-    helpEl.click();
+    // Active category is 'viz' (alpha-first); WIKI knob is in another category.
+    const search = root.querySelector('.cfg-search');
+    expect(search).not.toBeNull();
+    search.value = 'wiki';
+    search.dispatchEvent(new Event('input'));
 
-    expect(switchTabMock).toHaveBeenCalledWith('config-ref');
+    const searchPane = root.querySelector('.cfg-search-pane');
+    expect(searchPane.style.display).not.toBe('none');
+    // The wiki knob — in a DIFFERENT category than the active one — is found.
+    const hit = searchPane.querySelector('.setting-row[data-name="YADGAR_WIKI_SIM_MODE"]');
+    expect(hit).not.toBeNull();
+    // The match is highlighted.
+    expect(searchPane.querySelector('mark')).not.toBeNull();
 
-    // Cleanup
-    document.body.removeChild(anchorEl);
-    delete window.YadgarTabs;
+    // Clearing the search restores the category view.
+    search.value = '';
+    search.dispatchEvent(new Event('input'));
+    expect(searchPane.style.display).toBe('none');
+    expect(root.querySelector('.cfg-category-pane').style.display).not.toBe('none');
   });
 });

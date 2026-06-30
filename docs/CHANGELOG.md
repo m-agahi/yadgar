@@ -5,6 +5,19 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 > Snapshots from v5.0.1 onward are captured from `yadgar stats` at release time.
 > Earlier versions have no per-release snapshot (the practice started 2026-05-16).
 
+## [5.89.0] - 2026-06-29
+
+### Chrome-style settings panel + config-source fix (#66)
+
+#### Fixed
+- **Config edits no longer poison the knob via `os.environ`** (Bug A): the POST handler wrote the value into the process env right after the yaml save — env-locking the knob (→409, un-editable) and making the UI mis-report it as `default` after restart. Removed the env-write; the POST now persists to `config.yaml` + calls `clear_config_caches()` for hot-reload. `ConfigEntry.source()`/value are now **yaml-aware** (3-way `env` > `yaml` > `default`) so yaml-saved knobs report `source=yaml` and stay editable. (`server/routes/control.py`, `config_registry.py`)
+- **Config tab blank on browser refresh** (Bug B): the boot path called the tab renderer before the deferred module defined it → no-op → blank pane until a tab-switch. The module now renders the active tab once loaded. (`static/index.html`)
+- **View menu showed 1 of 5 graph panels** (Bug C): now iterates all floating overlays (Heat Filter, Graph Stats, Node Types, Edge Types, Memory Clusters) — one toggle each. (`static/index.html`)
+
+#### Changed
+- **Settings panel redesigned (Chromium/Firefox style)**: replaces the flat 8-column table with a left category rail (**alphabetical**, with counts), a **cross-category live search** (highlights matches across all categories), grouped setting rows with typed controls (toggle / slider+number / select / text), 3-way source badges (Default / YAML / ENV-locked-readonly), reset-to-default, and a sticky pending-changes bar (Apply/Discard + confirm-gated Restart). Logic extracted to `static/control_helpers.js` (vitest-covered). (`static/control.js`, `static/control_helpers.js`)
+- **Seed materials consolidated** into `yadgar/seed/materials/` (`agent_prompts.yaml` + `anchors.yaml`), separated from loader logic and shipped as wheel package-data; loaders read via `importlib.resources` (signatures unchanged). The `implement-tdd` starter prompt gained a YAGNI least-code ladder. (`yadgar/seed/materials/`, `server/tools/agent_prompts.py`, `cli/seed.py`)
+
 ## [5.88.2] - 2026-06-29
 
 ### Operational control endpoints auth-gated (ADR-0013)

@@ -471,7 +471,8 @@ def test_config_post_round_trip(monkeypatch, tmp_path):
     assert post_body["name"] == "YADGAR_VIZ_NODE_SIZE_3D"
     assert post_body["value"] == "12.5"
 
-    # GET should reflect env update (env mutated in this process)
+    # GET should reflect the yaml write (Bug A: hot-reloaded via clear_config_caches,
+    # NOT via an os.environ mutation — source is now 'yaml', not 'env').
     resp_get = client.get("/api/control/config", headers=_auth_headers())
     assert resp_get.status_code == 200
     knobs = {k["name"]: k for k in resp_get.json()["knobs"]}
@@ -487,7 +488,11 @@ def test_config_post_bool_value_is_lowercase(monkeypatch, tmp_path):
     Root cause: the handler returned ``str(coerced)`` where ``coerced`` is a
     Python bool, so ``str(True)`` rendered as capitalized ``"True"`` — diverging
     from the GET path (lowercase env strings) and the YAML/JSON convention. The
-    POST response (and the env it writes) must use lowercase ``"true"``/``"false"``.
+    POST response must use lowercase ``"true"``/``"false"``.
+
+    Bug A (v5.89): the POST no longer mutates os.environ — it persists to yaml and
+    hot-reloads via clear_config_caches(). This test asserts the lowercase rendering
+    AND that os.environ is left untouched.
     """
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     knob = "YADGAR_VIZ_PRECOMPUTED_LAYOUT_ENABLED"
@@ -502,11 +507,11 @@ def test_config_post_bool_value_is_lowercase(monkeypatch, tmp_path):
     assert resp.json()["value"] == "true", (
         f"bool POST value must be lowercase 'true', got {resp.json()['value']!r}"
     )
-    # The mutated process env must also carry the lowercase form.
+    # Bug A: the POST must NOT write the env var (env-write trap removed).
     import os as _os
 
-    assert _os.environ[knob] == "true", (
-        f"env var must be lowercase 'true', got {_os.environ[knob]!r}"
+    assert knob not in _os.environ, (
+        f"{knob} was written to os.environ — the env-write trap is back (Bug A)."
     )
 
 
@@ -1028,4 +1033,109 @@ def test_no_patch_write_path_under_admin_config(monkeypatch):
     # Verify the only registered route is GET
     assert '"GET"' in source or "'GET'" in source, (
         "Expected GET route registration in admin_config.py"
+    )
+
+
+# ===========================================================================
+# Bug A (v5.89) — env-write trap removed; yaml-aware source + hot-reload
+# ===========================================================================
+
+
+def test_config_post_persists_to_yaml_source_yaml_no_env_mutation(monkeypatch, tmp_path):
+    """POST a knob → GET shows source=='yaml', value correct, NO os.environ mutation.
+
+    Bug A: the old handler did ``os.environ[name] = value`` after the yaml write,
+    which (1) self-locked the knob (source flipped to 'env' → 409 on re-POST) and
+    (2) vanished on restart (phantom default). The fixed handler persists to yaml
+    and hot-reloads via clear_config_caches() — never touching os.environ.
+    """
+    import os as _os
+
+    knob = "YADGAR_VIZ_NODE_SIZE_3D"
+    monkeypatch.delenv(knob, raising=False)
+    client = _make_app(monkeypatch, debug_apis_on=True)
+
+    resp = client.post(
+        "/api/control/config",
+        json={"name": knob, "value": 12.5},
+        headers=_auth_headers(),
+    )
+    assert resp.status_code == 200, f"POST failed: {resp.status_code}: {resp.text}"
+
+    # The POST must NOT have written the env var (the deleted line 416).
+    assert knob not in _os.environ, (
+        f"{knob} was written to os.environ — the env-write trap is back (Bug A)."
+    )
+
+    get = client.get("/api/control/config", headers=_auth_headers())
+    knobs = {k["name"]: k for k in get.json()["knobs"]}
+    assert knobs[knob]["source"] == "yaml", (
+        f"Expected source='yaml' after yaml save, got {knobs[knob]['source']!r}"
+    )
+    assert knobs[knob]["current"] == "12.5", (
+        f"Expected current='12.5', got {knobs[knob]['current']!r}"
+    )
+    assert knobs[knob]["locked"] is False, "yaml-saved knob must not be locked"
+
+
+def test_config_post_re_post_not_409_after_yaml_save(monkeypatch, tmp_path):
+    """A second POST to a yaml-saved (not env) knob must succeed — not self-lock 409.
+
+    This is the self-lock regression: under the env-write trap, the first POST set
+    source='env', so the second POST hit the env-lock 409 guard. With Bug A fixed,
+    source stays 'yaml' and re-POST returns 200.
+    """
+    knob = "YADGAR_VIZ_NODE_SIZE_3D"
+    monkeypatch.delenv(knob, raising=False)
+    client = _make_app(monkeypatch, debug_apis_on=True)
+
+    first = client.post(
+        "/api/control/config", json={"name": knob, "value": 12.5}, headers=_auth_headers()
+    )
+    assert first.status_code == 200, f"first POST: {first.status_code}: {first.text}"
+
+    second = client.post(
+        "/api/control/config", json={"name": knob, "value": 14.0}, headers=_auth_headers()
+    )
+    assert second.status_code == 200, (
+        f"Re-POST self-locked (Bug A regression): {second.status_code}: {second.text}"
+    )
+
+
+def test_config_post_calls_clear_config_caches(monkeypatch, tmp_path):
+    """The POST handler must call clear_config_caches() for hot-reload (Bug A part 2)."""
+    from unittest.mock import patch as _patch
+
+    knob = "YADGAR_VIZ_NODE_SIZE_3D"
+    monkeypatch.delenv(knob, raising=False)
+    client = _make_app(monkeypatch, debug_apis_on=True)
+
+    with _patch("yadgar.server.routes.control.clear_config_caches") as mock_clear:
+        resp = client.post(
+            "/api/control/config", json={"name": knob, "value": 9.0}, headers=_auth_headers()
+        )
+    assert resp.status_code == 200, f"POST failed: {resp.status_code}: {resp.text}"
+    mock_clear.assert_called_once()
+
+
+def test_config_post_env_knob_still_409_and_locked(monkeypatch, tmp_path):
+    """A GENUINELY env-set knob must still report source='env', locked=True, and 409.
+
+    The Bug A fix removes FALSE env-locks (from the env-write trap); it must NOT
+    weaken the real env-lock for nix/environment-set knobs.
+    """
+    knob = "YADGAR_VIZ_HEALTH_REFRESH_SEC"
+    monkeypatch.setenv(knob, "30")
+    client = _make_app(monkeypatch, debug_apis_on=True, extra_env={knob: "30"})
+
+    get = client.get("/api/control/config", headers=_auth_headers())
+    knobs = {k["name"]: k for k in get.json()["knobs"]}
+    assert knobs[knob]["source"] == "env"
+    assert knobs[knob]["locked"] is True
+
+    resp = client.post(
+        "/api/control/config", json={"name": knob, "value": 60}, headers=_auth_headers()
+    )
+    assert resp.status_code == 409, (
+        f"Genuine env knob must still 409, got {resp.status_code}: {resp.text}"
     )

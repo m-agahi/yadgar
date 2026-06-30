@@ -570,7 +570,12 @@ def sync_instructions(claude_md_path: str = "") -> dict:
 - SessionStart hook injects project context on EVERY new session
 - All hooks work in both stdio and HTTP transport modes
 - Action log is processed into real memories during consolidation cycles
-- Decisions are auto-protected from decay/compression when detected"""
+- Decisions are auto-protected from decay/compression when detected
+
+### Use the Agent-Prompt Library (read-side)
+- Before writing any subagent dispatch prompt, call `agent_dispatch_prelude(pattern, task_topic)` and build on the returned contract
+- The returned contract mandates: recall-first on entry, and a `## Yadgar findings` footer in the subagent's final message
+- Pattern lookup is best-effort; if no pattern fits, write a bespoke prompt and call `agent_prompt_save(...)` to register it as a new reusable pattern"""
 
     if md_path.exists():
         content = md_path.read_text()

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.88.2"
+version = "5.89.0"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "Apache-2.0"
@@ -87,6 +87,12 @@ packages = ["yadgar"]
 [tool.hatch.build.targets.wheel.shared-data]
 # Ship install assets inside the wheel so pipx-installed users can run setup
 "install_assets" = "share/yadgar/install_assets"
+# v5.88 seed consolidation: anchors.yaml moved to the canonical seed materials dir
+# (yadgar/seed/materials/) so all seed CONTENT is edited in one place. It still
+# ships at the historical share/ destination so the install script + wheel-bundle
+# test are unchanged. (agent_prompts.yaml needs no mapping — it ships as package
+# data under the yadgar/ tree automatically.)
+"yadgar/seed/materials/anchors.yaml" = "share/yadgar/install_assets/seeds/anchors.yaml"
 # v5.46.10 fix: ship ALL scripts/install/ helpers (not just yadgar-setup.sh).
 # Previously only yadgar-setup.sh was bundled; helpers it calls were absent,
 # breaking pipx installs on fresh hosts since v5.45.0.

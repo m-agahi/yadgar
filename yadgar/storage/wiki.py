@@ -972,3 +972,40 @@ class _WikiMixin:
             "created_at": now,
         }
         return {"previous_content": previous_content, "new_memory": new_memory}
+
+    def upsert_dispatch_prelude_marker(self, directory: str) -> dict:
+        """Atomic delete-then-insert for _dispatch_prelude marker memory.
+
+        Mirrors upsert_active_work but uses tag '_dispatch_prelude' and a fixed
+        content string.  Only the latest timestamp persists (no memory spam).
+        Returns dict with keys: id, created_at.
+        """
+        now = self._now_iso()
+        mid = self._next_id("memory")
+        self._q(
+            "BEGIN TRANSACTION;\n"
+            "DELETE FROM memory WHERE directory_context = $dir "
+            "AND '_dispatch_prelude' INSIDE tags;\n"
+            "CREATE type::record('memory', $id) SET "
+            "content = $content, embedding = NONE, tags = $tags, "
+            "source_episode_id = NONE, directory_context = $dir, "
+            "created_at = $now, last_accessed = $now, "
+            "heat = $heat, is_stale = false, file_hash = NONE, "
+            "embedding_model = NONE, plasticity = 1.0, stability = 0.0, "
+            "excitability = 1.0, store_type = $store_type, "
+            "compression_level = 0, sr_x = 0.0, sr_y = 0.0, "
+            "reconsolidation_count = 0, provenance_agent = $agent, "
+            "vector_clock = '{}', is_protected = true;\n"
+            "COMMIT TRANSACTION",
+            {
+                "id": mid,
+                "content": "dispatch_prelude marker",
+                "tags": ["_dispatch_prelude"],
+                "dir": directory,
+                "now": now,
+                "heat": 1.0,
+                "store_type": "episodic",
+                "agent": "default",
+            },
+        )
+        return {"id": mid, "created_at": now}

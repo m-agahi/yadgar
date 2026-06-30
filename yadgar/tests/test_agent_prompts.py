@@ -123,6 +123,67 @@ class TestReadAgentPrompt:
         assert "Prompt version 5" in result["content"]
 
 
+class TestAgentPromptDoubleWrap:
+    """#68: agent_prompt_save must not double-wrap when content already has Purpose/Prompt headers."""
+
+    def test_pre_wrapped_content_produces_single_wrap(self, storage):
+        """RED: saving already-wrapped content currently double-wraps (## Purpose appears twice)."""
+        from yadgar.server.tools.agent_prompts import agent_prompt_save
+
+        pre_wrapped = "## Purpose\n\nSome purpose\n\n## Prompt\n\nDO THE THING"
+        agent_prompt_save(
+            "double-wrap-test",
+            pre_wrapped,
+            directory="global",
+            purpose="Test purpose",
+            storage=storage,
+        )
+        page = storage.get_wiki_page_by_slug("agent-prompt-double-wrap-test")
+        assert page is not None
+        content = page["content"]
+        # Exactly one ## Purpose and one ## Prompt header
+        assert content.count("## Purpose") == 1, (
+            f"Expected exactly 1 '## Purpose', got {content.count('## Purpose')}:\n{content}"
+        )
+        assert content.count("## Prompt") == 1, (
+            f"Expected exactly 1 '## Prompt', got {content.count('## Prompt')}:\n{content}"
+        )
+        # Body text is intact
+        assert "DO THE THING" in content, f"Body text missing from:\n{content}"
+
+    def test_bare_content_wraps_normally(self, storage):
+        """Passthrough: bare content gets wrapped once (no change in behaviour)."""
+        from yadgar.server.tools.agent_prompts import agent_prompt_save
+
+        agent_prompt_save(
+            "bare-content-test",
+            "DO THE THING",
+            directory="global",
+            purpose="A test purpose",
+            storage=storage,
+        )
+        page = storage.get_wiki_page_by_slug("agent-prompt-bare-content-test")
+        assert page is not None
+        content = page["content"]
+        assert content.count("## Purpose") == 1
+        assert content.count("## Prompt") == 1
+        assert "DO THE THING" in content
+
+    def test_unwrap_helper_strips_wrapper(self):
+        """Unit-test _unwrap_purpose_prompt directly."""
+        from yadgar.server.tools.agent_prompts import _unwrap_purpose_prompt
+
+        wrapped = "## Purpose\n\nSome purpose\n\n## Prompt\n\nDO THE THING"
+        assert _unwrap_purpose_prompt(wrapped) == "DO THE THING"
+
+    def test_unwrap_helper_passthrough_bare(self):
+        """_unwrap_purpose_prompt returns bare content unchanged."""
+        from yadgar.server.tools.agent_prompts import _unwrap_purpose_prompt
+
+        bare = "DO THE THING"
+        assert _unwrap_purpose_prompt(bare) == bare
+
+
 class TestAgentPromptToolSurface:
     """v5.85 S4 (I32): bespoke get/search tools removed; save stays a tool."""
 
