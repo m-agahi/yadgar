@@ -5,6 +5,17 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 > Snapshots from v5.0.1 onward are captured from `yadgar stats` at release time.
 > Earlier versions have no per-release snapshot (the practice started 2026-05-16).
 
+## [5.90.0] - 2026-06-30
+
+### Daemon concurrency: offload sync MCP tool bodies off the event loop (#73, RCA #72) — DEFAULT-OFF
+
+#### Added
+- **Worker-pool offload for MCP tools** (`YADGAR_OFFLOAD_TOOLS`, default **OFF**): the daemon ran every sync MCP tool body inline on the single asyncio loop thread, so any blocking call (remote httpx to the backend, git subprocess) froze the whole loop under concurrent load → hangs (RCA #72). When enabled, tool bodies run in a bounded `ThreadPoolExecutor` (`run_in_executor` + `wait_for`), keeping the loop responsive. Ships **OFF** (prod behavior unchanged + the P0 health-kill backstop); flip ON after live soak. (`server/_offload.py`, `server/_app.py`)
+- **Pool-saturation health signal** (the audit's hard gate): `/health` returns **503** when the worker pool is saturated (in-flight counter decremented worker-side at true completion + completion-staleness) so the deployed P0 `--health-on-failure=kill` still trips on a wedged pool — preventing a silent-stall regression. (`server/http.py`)
+
+#### Changed
+- **Thread-safety hardening** for concurrent tool execution: `threading.Lock` on `_query_cache`, circuit breakers, `_stale_count_cache`, and the `_enrichment_pipeline` double-init. Hook-route inline git (`http.py`) wrapped in `to_thread`. Startup fails loud if offload is ON without a remote embed URL (local torch would block the worker). `RERANK_MAX_CONCURRENCY` default 1→8 (note: read by the **backend** container — needs a backend rebump/env to take effect before flipping offload ON).
+
 ## [5.89.0] - 2026-06-29
 
 ### Chrome-style settings panel + config-source fix (#66)

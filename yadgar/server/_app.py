@@ -314,7 +314,6 @@ def _tool(power: bool = False):
     Wraps each registered tool to record estimated token output in
     yadgar_tool_token_estimate_total{tool=<name>}.
     """
-    import functools
     import json
 
     def _estimate_tokens(result) -> int:
@@ -340,46 +339,111 @@ def _tool(power: bool = False):
 
         _traced_func = _trace_span(f"tool.{func.__name__}")(func)
 
-        @functools.wraps(func)
-        def _instrumented(*args, **kwargs):
-            import yadgar.server._state as _st_ref  # noqa: PLC0415 — late import, read live attr
+        # Fix A (daemon-offload-A): sync-only guard. Every @_tool() target today is
+        # a sync `def`; an async body would break run_in_executor(coroutine_fn).
+        import inspect as _inspect  # noqa: PLC0415
 
-            if _st_ref._maintenance_mode:
-                return {
-                    "error": "maintenance",
-                    "message": "yadgar nightly maintenance in progress; retry shortly",
-                }
+        if _inspect.iscoroutinefunction(func):  # pragma: no cover — none exist today
+            raise TypeError(
+                f"@_tool() expects a sync def body; {func.__name__} is async. "
+                "Async tool bodies are not supported by the offload wrapper."
+            )
 
-            import time as _time
-
-            _t0 = _time.monotonic()
-            _status = "ok"
-            try:
-                result = _traced_func(*args, **kwargs)
-            except Exception:
-                _status = "error"
-                raise
-            finally:
-                try:
-                    from yadgar.metrics import (  # noqa: PLC0415
-                        yadgar_mcp_request_count,
-                        yadgar_mcp_request_duration_ms,
-                    )
-
-                    _elapsed_ms = (_time.monotonic() - _t0) * 1000
-                    yadgar_mcp_request_duration_ms.labels(tool=func.__name__).observe(_elapsed_ms)
-                    yadgar_mcp_request_count.labels(tool=func.__name__, status=_status).inc()
-                except Exception:
-                    pass
-            try:
-                from yadgar.metrics import yadgar_tool_token_estimate_total  # noqa: PLC0415
-
-                est = _estimate_tokens(result)
-                yadgar_tool_token_estimate_total.labels(tool=func.__name__).inc(est)
-            except Exception:
-                pass
-            return result
-
-        return mcp_server.tool()(_instrumented)
+        sync_wrapper, async_wrapper = _build_tool_wrappers(func, _traced_func, _estimate_tokens)
+        # ASYNC wrapper → FastMCP (offload-friendly `await fn` branch).
+        mcp_server.tool()(async_wrapper)
+        # SYNC wrapper → the module-level name (direct-call contract: internal/test
+        # callers run inline exactly as pre-Fix-A).
+        return sync_wrapper
 
     return decorator
+
+
+def _build_tool_wrappers(func, traced_func, estimate_tokens):
+    """Build the (sync, async) instrumented wrappers for a tool (Fix A).
+
+    The sync wrapper preserves the pre-Fix-A direct-call contract (run inline,
+    return a result). The async wrapper is registered with FastMCP and dispatches
+    the body off the asyncio loop via run_offloaded (kill-switch
+    YADGAR_OFFLOAD_TOOLS, default OFF → inline). Both share _emit_metrics.
+    """
+    import functools  # noqa: PLC0415
+    import time as _time  # noqa: PLC0415
+
+    def _emit_metrics(_t0: float, _status: str, result) -> None:
+        try:
+            from yadgar.metrics import (  # noqa: PLC0415
+                yadgar_mcp_request_count,
+                yadgar_mcp_request_duration_ms,
+            )
+
+            _elapsed_ms = (_time.monotonic() - _t0) * 1000
+            yadgar_mcp_request_duration_ms.labels(tool=func.__name__).observe(_elapsed_ms)
+            yadgar_mcp_request_count.labels(tool=func.__name__, status=_status).inc()
+        except Exception:
+            pass
+        try:
+            from yadgar.metrics import yadgar_tool_token_estimate_total  # noqa: PLC0415
+
+            yadgar_tool_token_estimate_total.labels(tool=func.__name__).inc(estimate_tokens(result))
+        except Exception:
+            pass
+
+    def _maintenance():
+        import yadgar.server._state as _st_ref  # noqa: PLC0415 — read live attr
+
+        if _st_ref._maintenance_mode:
+            return {
+                "error": "maintenance",
+                "message": "yadgar nightly maintenance in progress; retry shortly",
+            }
+        return None
+
+    @functools.wraps(func)
+    def _instrumented(*args, **kwargs):
+        _maint = _maintenance()
+        if _maint is not None:
+            return _maint
+        _t0 = _time.monotonic()
+        _status = "ok"
+        result = None
+        try:
+            result = traced_func(*args, **kwargs)
+            return result
+        except Exception:
+            _status = "error"
+            raise
+        finally:
+            _emit_metrics(_t0, _status, result)
+
+    @functools.wraps(func)
+    async def _instrumented_async(*args, **kwargs):
+        _maint = _maintenance()
+        if _maint is not None:
+            return _maint
+        from yadgar.server._offload import run_offloaded  # noqa: PLC0415
+
+        _t0 = _time.monotonic()
+        _status = "ok"
+        result = None
+        try:
+            result = await run_offloaded(traced_func, *args, **kwargs)
+            return result
+        except TimeoutError:
+            # Wedged op past the per-tool timeout (asyncio.TimeoutError IS
+            # TimeoutError in py3.11+): free the loop, return a structured error
+            # (NOT a 500). The worker keeps its slot until it self-releases — O2
+            # saturation + P0 health-kill cover the residual.
+            _status = "timeout"
+            result = {
+                "error": "timeout",
+                "message": f"tool {func.__name__} exceeded the offload timeout",
+            }
+            return result
+        except Exception:
+            _status = "error"
+            raise
+        finally:
+            _emit_metrics(_t0, _status, result)
+
+    return _instrumented, _instrumented_async

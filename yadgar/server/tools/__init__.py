@@ -22,6 +22,11 @@ import yadgar.server.tools.blocks  # noqa: F401 — side-effects: tool registrat
 import yadgar.server.tools.repo_wiki  # noqa: F401 — side-effects: tool registration (T8)
 import yadgar.server.tools.adr  # noqa: F401 — side-effects: tool registration (car #12)
 
+# Fix A (daemon-offload-A): import triggers register_test_tools() at its module
+# bottom — registers _test_sleep/_test_thread_id only when YADGAR_TEST_TOOLS=1
+# (no-op in prod). Used by the real-daemon offload e2e.
+import yadgar.server.tools._test_tools  # noqa: F401 — side-effects: gated test-tool registration
+
 # Re-export everything that tests or external code import directly
 from yadgar.server.tools.memorize import memorize
 from yadgar.server.tools.recall import recall

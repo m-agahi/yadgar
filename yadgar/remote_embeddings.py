@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from collections import OrderedDict
 
 import httpx
@@ -28,6 +29,7 @@ class RemoteEmbeddingEngine:
         self._unavailable = False
         self._model = True  # sentinel: "available" for compatibility checks
         self._query_cache: OrderedDict[str, bytes] = OrderedDict()
+        self._cache_lock = threading.Lock()
         embed_url = os.environ.get("YADGAR_EMBED_URL", "http://127.0.0.1:8001")
         _token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
         _headers = {"Authorization": f"Bearer {_token}"} if _token else {}
@@ -71,16 +73,18 @@ class RemoteEmbeddingEngine:
             return [None] * len(texts)
 
     def encode(self, text: str) -> bytes | None:
-        if text in self._query_cache:
-            self._query_cache.move_to_end(text)
-            return self._query_cache[text]
+        with self._cache_lock:
+            if text in self._query_cache:
+                self._query_cache.move_to_end(text)
+                return self._query_cache[text]
         result = self._call([text], "raw")
         val = result[0] if result else None
         if val is not None:
-            self._query_cache[text] = val
-            self._query_cache.move_to_end(text)
-            if len(self._query_cache) > _CACHE_MAX:
-                self._query_cache.popitem(last=False)
+            with self._cache_lock:
+                self._query_cache[text] = val
+                self._query_cache.move_to_end(text)
+                if len(self._query_cache) > _CACHE_MAX:
+                    self._query_cache.popitem(last=False)
         return val
 
     def encode_query(self, text: str) -> bytes | None:

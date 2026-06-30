@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import shutil
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -85,14 +86,17 @@ _log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _enrichment_pipeline = None
+_enrichment_pipeline_lock = threading.Lock()
 
 
 def _get_enrichment_pipeline(settings, embeddings_engine=None):
     global _enrichment_pipeline
     if _enrichment_pipeline is None:
-        from yadgar.enrichment import EnrichmentPipeline
+        with _enrichment_pipeline_lock:
+            if _enrichment_pipeline is None:
+                from yadgar.enrichment import EnrichmentPipeline
 
-        _enrichment_pipeline = EnrichmentPipeline(settings, embeddings_engine)
+                _enrichment_pipeline = EnrichmentPipeline(settings, embeddings_engine)
     return _enrichment_pipeline
 
 

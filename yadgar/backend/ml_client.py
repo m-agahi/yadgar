@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from collections.abc import Callable
 from typing import Protocol, runtime_checkable
@@ -180,6 +181,7 @@ class _CircuitBreaker:
         self.consecutive_failures: int = 0
         self.consecutive_probe_failures: int = 0
         self._metrics = metrics_module  # None → lazy-import on first use
+        self._lock = threading.Lock()
         # Emit initial CLOSED state so viz sees the time-series from startup.
         self._set_gauge(0)
         # Emit initial reachable=1 — assume reachable until proven otherwise.
@@ -217,20 +219,21 @@ class _CircuitBreaker:
 
     def is_open(self, _now: float | None = None) -> bool:
         """Return True if in OPEN state (not yet past cooldown)."""
-        if self._state == _STATE_OPEN:
-            now = _now if _now is not None else self._time_fn()
-            if now - self._open_at >= self._open_duration_sec:
-                # Cooldown expired — move to half-open
-                self._state = _STATE_HALF_OPEN
-                self._set_gauge(1)
-                logger.info(
-                    "circuit breaker %s → HALF_OPEN (cooldown expired after %.0fs)",
-                    self._endpoint,
-                    self._open_duration_sec,
-                )
-                return False
-            return True
-        return False
+        with self._lock:
+            if self._state == _STATE_OPEN:
+                now = _now if _now is not None else self._time_fn()
+                if now - self._open_at >= self._open_duration_sec:
+                    # Cooldown expired — move to half-open
+                    self._state = _STATE_HALF_OPEN
+                    self._set_gauge(1)
+                    logger.info(
+                        "circuit breaker %s → HALF_OPEN (cooldown expired after %.0fs)",
+                        self._endpoint,
+                        self._open_duration_sec,
+                    )
+                    return False
+                return True
+            return False
 
     def is_half_open(self, _now: float | None = None) -> bool:
         """Return True if in HALF_OPEN state (probe allowed)."""
@@ -252,32 +255,37 @@ class _CircuitBreaker:
     # ------------------------------------------------------------------ #
 
     def record_success(self) -> None:
-        if self._state in (_STATE_HALF_OPEN, _STATE_OPEN):
-            logger.info(
-                "circuit breaker %s → CLOSED (probe succeeded)",
-                self._endpoint,
-            )
-        self._state = _STATE_CLOSED
-        self._set_gauge(0)
-        self._set_reachable(1)
-        self.consecutive_failures = 0
-        # Reset exponential backoff so next OPEN starts from base duration
-        self.consecutive_probe_failures = 0
-        self._open_duration_sec = self._base_open_duration_sec
+        with self._lock:
+            if self._state in (_STATE_HALF_OPEN, _STATE_OPEN):
+                logger.info(
+                    "circuit breaker %s → CLOSED (probe succeeded)",
+                    self._endpoint,
+                )
+            self._state = _STATE_CLOSED
+            self._set_gauge(0)
+            self._set_reachable(1)
+            self.consecutive_failures = 0
+            # Reset exponential backoff so next OPEN starts from base duration
+            self.consecutive_probe_failures = 0
+            self._open_duration_sec = self._base_open_duration_sec
 
     def record_failure(self, _now: float | None = None) -> None:
-        self.consecutive_failures += 1
-        if self._state == _STATE_HALF_OPEN:
-            # Probe failed — apply exponential backoff then reopen
-            self.consecutive_probe_failures += 1
-            new_duration = min(
-                self._open_duration_sec * self._backoff_factor,
-                self._max_open_duration_sec,
-            )
-            self._open_duration_sec = new_duration
-            self._open(reason="probe failed (backoff)", _now=_now)
-        elif self._state == _STATE_CLOSED and self.consecutive_failures >= self._failure_threshold:
-            self._open(reason=f"{self.consecutive_failures} consecutive failures", _now=_now)
+        with self._lock:
+            self.consecutive_failures += 1
+            if self._state == _STATE_HALF_OPEN:
+                # Probe failed — apply exponential backoff then reopen
+                self.consecutive_probe_failures += 1
+                new_duration = min(
+                    self._open_duration_sec * self._backoff_factor,
+                    self._max_open_duration_sec,
+                )
+                self._open_duration_sec = new_duration
+                self._open(reason="probe failed (backoff)", _now=_now)
+            elif (
+                self._state == _STATE_CLOSED
+                and self.consecutive_failures >= self._failure_threshold
+            ):
+                self._open(reason=f"{self.consecutive_failures} consecutive failures", _now=_now)
 
     def _open(self, reason: str, _now: float | None = None) -> None:
         now = _now if _now is not None else self._time_fn()

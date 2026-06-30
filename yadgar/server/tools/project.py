@@ -17,6 +17,7 @@ import math
 import os
 import re
 import subprocess
+import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -2228,6 +2229,19 @@ def update_active_work(directory: str, content: str, branch_hint: str | None = N
 
 # Module-level TTL cache: (resolved_dir -> (count, computed_at_epoch))
 _stale_count_cache: dict[str, tuple[int, float]] = {}
+_stale_count_cache_lock = threading.Lock()
+
+
+def _read_stale_count_cache(resolved: str, now: float, ttl: float) -> int | None:
+    """Return cached stale count if still fresh, else None. Thread-safe."""
+    if ttl <= 0:
+        return None
+    with _stale_count_cache_lock:
+        entry = _stale_count_cache.get(resolved)
+    if entry is None:
+        return None
+    cached_count, cached_at = entry
+    return cached_count if (now - cached_at) < ttl else None
 
 
 def _is_wiki_page_stale(md_path: Path, yaml_mod) -> bool:
@@ -2323,12 +2337,12 @@ def _compute_stale_wiki_count(resolved: str) -> int:
         cfg = get_settings()
         ttl = getattr(cfg, "STALE_COUNT_CACHE_TTL_S", 300)
         now = time.monotonic()
-        if ttl > 0 and resolved in _stale_count_cache:
-            cached_count, cached_at = _stale_count_cache[resolved]
-            if (now - cached_at) < ttl:
-                return cached_count
+        cached = _read_stale_count_cache(resolved, now, ttl)
+        if cached is not None:
+            return cached
         count = len(_scan_stale_wiki_slugs(resolved))
-        _stale_count_cache[resolved] = (count, now)
+        with _stale_count_cache_lock:
+            _stale_count_cache[resolved] = (count, now)
         return count
     except Exception:
         return 0
@@ -2589,7 +2603,8 @@ def _wiki_refresh_stale_impl(
         queue_file = queue_dir / f"{ts}.json"
         queue_file.write_text(_json.dumps({"stale": stale, "branch": branch, "requested_at": ts}))
         # Invalidate the TTL cache so next signals call reflects the freshly detected list.
-        _stale_count_cache.pop(directory, None)
+        with _stale_count_cache_lock:
+            _stale_count_cache.pop(directory, None)
 
     # v5.53.1: surface stale slugs prominently so the stop-hook can dispatch regen.
     suggested_calls = (

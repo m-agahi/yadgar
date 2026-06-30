@@ -704,11 +704,33 @@ class Settings(BaseSettings):
 
     # v5.4.2 F5-A — Concurrent-inference semaphore for /rerank endpoints (backend)
     # Max concurrent inference threads per rerank mode (ce/nli/pair).
-    # N=1 ensures probes fast-fail via TimeoutError instead of queueing behind a live inference.
-    RERANK_MAX_CONCURRENCY: int = 1
+    # Fix A O7: raised 1 → 8 in lockstep with TOOL_POOL_WORKERS. With core
+    # tool-body offload ON, N workers issue N parallel /rerank requests; at
+    # concurrency 1 the backend semaphore would 503-storm (2s acquire timeout) and
+    # those 503s feed back into O2 pool exhaustion. NOTE: this default is read by
+    # the BACKEND container — it needs a rebump/env to pick up the new value (the
+    # core default change alone does not propagate to the running backend).
+    RERANK_MAX_CONCURRENCY: int = 8
     # Seconds to wait for semaphore before returning 503.
     # Should be ≤ CIRCUIT_BREAKER_PROBE_TIMEOUT_SEC so probes always fail fast.
     RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC: float = 2.0
+
+    # Fix A (daemon-offload-A) — tool-body offload off the asyncio loop.
+    # OFFLOAD_TOOLS: master kill-switch. Default OFF for the first release; flip ON
+    #   after live soak (the proven loop-block trigger stays inline until then,
+    #   covered by the deployed P0 health-kill backstop).
+    OFFLOAD_TOOLS: bool = False
+    # Bounded worker-pool size — the cap IS the concurrency control. Keep in
+    # lockstep with the backend RERANK_MAX_CONCURRENCY so N-parallel offload does
+    # not cause rerank 503-storms (O7).
+    TOOL_POOL_WORKERS: int = 8
+    # Per-tool offload timeout — frees the loop on a wedged op (worker keeps its
+    # slot until self-release; O2 + P0 cover the residual).
+    TOOL_TIMEOUT_SEC: float = 30.0
+    # O2 saturation grace: idle seconds (no completion) while the pool is full
+    # before /health degrades → 503. MUST be > TOOL_TIMEOUT_SEC so legit ops keep
+    # resetting the clock and only leaked workers trip the signal.
+    TOOL_SATURATION_GRACE_SEC: float = 45.0
 
     # backend v5.5.0 — model preload warm-up
     MODEL_PRELOAD: bool = (

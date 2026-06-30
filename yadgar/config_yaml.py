@@ -1408,8 +1408,9 @@ FIELD_META: dict[str, dict[str, object]] = {
     },
     "rerank_max_concurrency": {
         "desc": (
-            "Max concurrent inference threads per /rerank mode on the backend (default 1). N=1 makes "
-            "probes fast-fail via TimeoutError instead of queueing behind a live inference."
+            "Max concurrent inference threads per /rerank mode on the backend (default 8). Raised from 1 "
+            "in lockstep with tool_pool_workers (Fix A O7) so N-parallel core offload does not cause "
+            "rerank 503-storms. Read by the BACKEND container — needs a backend rebump/env to take effect."
         ),
         "section": "circuit_breaker",
     },
@@ -1417,6 +1418,36 @@ FIELD_META: dict[str, dict[str, object]] = {
         "desc": (
             "Seconds to wait for the /rerank concurrency semaphore before returning 503 (default 2.0). "
             "Should be <= circuit_breaker_probe_timeout_sec so probes always fail fast."
+        ),
+        "section": "circuit_breaker",
+    },
+    # ── Fix A (daemon-offload-A): tool-body offload off the asyncio loop ─────────
+    "offload_tools": {
+        "desc": (
+            "Master kill-switch for running sync MCP tool bodies off the asyncio loop on a bounded "
+            "worker pool (default false). Enable after live soak; OFF keeps the proven inline behaviour "
+            "with the deployed P0 health-kill backstop. Requires remote engines (YADGAR_EMBED_URL)."
+        ),
+        "section": "circuit_breaker",
+    },
+    "tool_pool_workers": {
+        "desc": (
+            "Bounded tool-offload worker-pool size (default 8) — the cap IS the concurrency control. "
+            "Keep in lockstep with rerank_max_concurrency."
+        ),
+        "section": "circuit_breaker",
+    },
+    "tool_timeout_sec": {
+        "desc": (
+            "Per-tool offload timeout in seconds (default 30.0) — frees the loop on a wedged op. The "
+            "worker keeps its slot until self-release; O2 saturation + P0 cover the residual."
+        ),
+        "section": "circuit_breaker",
+    },
+    "tool_saturation_grace_sec": {
+        "desc": (
+            "O2: idle seconds (no pool completion) while the pool is full before /health degrades to 503 "
+            "(default 45.0). MUST be > tool_timeout_sec so only leaked workers trip the signal."
         ),
         "section": "circuit_breaker",
     },
