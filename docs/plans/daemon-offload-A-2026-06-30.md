@@ -29,10 +29,38 @@ thread and the loop stays free to serve `/health` and other requests. Because th
 **core daemon's** hot-path work is socket IO to the backend (httpx → SurrealDB,
 embed, rerank) **and** the proven inline `git` subprocess — both of which **release
 the GIL while blocked** — the offload genuinely frees the loop (GIL verdict below).
+**Scope honesty:** Fix A offloads the `@_tool()` MCP tool bodies. It does **NOT**
+cover the inline git on the `@custom_route` **hook handlers** (`http.py:838/1203/1234`)
+— a co-firing loop-block vector at the actual incident — see §0.1; closing the
+*whole* "loop never blocks" goal needs that too.
 The cap on the worker pool *is* the concurrency control; the shared httpx clients
 and unprotected caches the offload newly exposes get locks; a per-request
 `asyncio.wait_for` frees the loop on a wedged op (but cannot kill the worker
 thread — P0 health-kill remains the backstop for that residual).
+
+### 0.1 What Fix A does NOT cover (named, so the audit can weigh the gap)
+
+Fix A's offload boundary is `_instrumented` (`_app.py:343`), which wraps only the
+`@_tool()`-decorated MCP tool bodies (~60 of them). Two loop-block vectors fall
+**outside** that boundary and remain inline on the loop after Fix A:
+
+1. **Hook-route inline git (RCA runner-up #2 — co-fired at the actual hang).** The
+   `/hooks/*` handlers are `@custom_route` async functions, **not** `@_tool()`, so
+   `_instrumented`/the offload never touches them. They run blocking git inline on
+   the loop:
+   - `http.py:838` — `_detect_branch` inline in `async hook_subagent_stop`
+     (note: `_memorize` beside it at `:849` **is** already `to_thread`-wrapped; the
+     branch-detect is **not**).
+   - `http.py:1203` — `subprocess.run(["git","rev-parse"], timeout=3)` inline.
+   - `http.py:1234` — same pattern.
+   The incident timeline shows **two `POST /hooks/auto-capture`** immediately before
+   the freeze, so this vector was plausibly **co-firing** with the tool-body git at
+   the hang. **Fix A does not remove it.** Therefore the §0 thesis is scoped to tool
+   bodies, not "the loop can never block." **Decision for the user/auditor (O11):**
+   fold hook-route git offload into Fix A (wrap each in `to_thread`, matching the
+   already-correct `:849` pattern) or defer to a sibling fix. Deferring is
+   acceptable; leaving it unstated is not.
+2. **The backend container** (O7) — separate process, separate loop.
 
 ---
 
@@ -167,6 +195,15 @@ async def _instrumented(*args, **kwargs):        # NOW async
   FastMCP's `fn_is_async` detection sees `_instrumented` as async. **Audit
   precondition AP1: add a unit test asserting
   `inspect.iscoroutinefunction(registered_tool)` is True post-decoration.**
+- **Sync-only assumption — guard it.** `_run_offloaded` dispatches the body into a
+  worker thread, which is correct **only if the original `func` is sync `def`**. If
+  any `@_tool()` target were `async def`, `to_thread(_traced_func)` would run the
+  coroutine *function* in a thread and return an un-awaited coroutine object (a
+  silent bug). Risk is low (an async tool body would already be broken under
+  today's sync `_instrumented`, so none should exist), but make it explicit: at
+  decoration time, branch on `inspect.iscoroutinefunction(func)` — sync → offload;
+  async → `await` directly on the loop (or assert sync-only and fail loudly).
+  Pairs with AP1.
 
 ### 2.3 `_run_offloaded` — the offload primitive
 
@@ -296,10 +333,10 @@ fix.
 | # | State | File:line | Hazard | Fix |
 |---|---|---|---|---|
 | T1 | `RemoteEmbeddingEngine._query_cache` (OrderedDict) | `remote_embeddings.py:30`, RMW `:73-84` (`move_to_end`/`popitem`) | concurrent get/set → corruption, lost entries | wrap RMW in a `threading.Lock` (per-engine `self._cache_lock`) |
-| T2 | `RemoteEmbeddingEngine._client` (httpx.Client) | `remote_embeddings.py:34`, used `:58` | httpx.Client **is** thread-safe for concurrent requests, but the 1-conn / low `limits` serializes (perf, not corruption) | no lock needed; **raise `limits` to ≥ N** (§4) |
-| T3 | `RemoteMLClient._client` (httpx.Client) | `ml_client.py:624`, used `:664-688` | same as T2 (thread-safe, but limits) | raise `limits` to ≥ N |
+| T2 | `RemoteEmbeddingEngine._client` (httpx.Client) | `remote_embeddings.py:34`, used `:58` | **VERIFY (load-bearing):** httpx.Client is documented thread-safe for concurrent requests (httpcore's connection pool is lock-guarded) — confirm against the pinned httpx version before relying on it. If true → no lock, perf-only bottleneck. The current `limits=` are **unconfirmed** (the "1-conn singleton" claim came from the task brief, not measured); the audit must read the actual construction call to establish the baseline | if confirmed thread-safe: no lock; **raise `limits` to ≥ N** (§4). If the version is NOT concurrent-safe: add a lock |
+| T3 | `RemoteMLClient._client` (httpx.Client) | `ml_client.py:624`, used `:664-688` | same as T2 — VERIFY thread-safety + read actual baseline `limits=` | same as T2 |
 | T4 | `RemoteMLClient._breakers` (dict of CircuitBreaker) | `ml_client.py:646-656`, mutated `:689-698` (`record_success`/`record_failure`/`is_open`/`_state`/`_open_at`) | concurrent breaker state RMW → wrong open/close, lost failure counts | add a `threading.Lock` around breaker state transitions (per-breaker or per-client) |
-| T5 | `StorageEngine._http` (httpx.Client) | `storage/__init__.py:240-251`, used `client.py:515-527` | thread-safe object; **limits** cap concurrency | raise `limits` to ≥ N; confirm the engine is a process singleton shared across tool bodies |
+| T5 | `StorageEngine._http` (httpx.Client) | `storage/__init__.py:240-251`, used `client.py:515-527` | same VERIFY as T2/T3 (thread-safe? actual `limits=`?) | raise `limits` to ≥ N; confirm the engine is a process singleton shared across tool bodies |
 | T6 | **`_action_batch` guarded by `asyncio.Lock`** | `_state.py:93` (lock `:69-71` region) | **LOOP-AFFINE primitive.** An `asyncio.Lock` is **not thread-safe** and is bound to the loop. If any offloaded tool body `await`s/acquires it from a worker thread → breakage / undefined behaviour | **AUDIT PRECONDITION AP2** (below). Tool bodies are sync — they cannot `await` an asyncio.Lock anyway; the risk is a tool body calling a helper that touches the loop. Must grep + confirm no sync tool body reaches `_action_batch` or any asyncio primitive on the worker thread. If one does, that path stays on the loop or converts to `threading.Lock`. |
 | T7 | `_last_session_context`, `_last_prompt_recall`, `_last_recalled_ids`, `_team_inbox_positions`, `_plan_file_hashes`, `_event_queue`, `_event_seq`, `_system_metrics_cache` | `_state.py:105-139` | OrderedDict/dict/deque/int written by tool bodies, **unprotected** | for each that a tool body mutates: guard with the existing `threading.Lock`s (`_queue_lock`/`_event_lock`/`_metrics_lock`, `:69-71`) or add one. **Audit which of these tool bodies actually write vs. which are loop-only (hook routes).** |
 | T8 | `get_settings` / config `@lru_cache` | `config_registry.py:103-105`, `config.py` | `functools.lru_cache` **is** thread-safe for the cache dict itself (CPython locks internally), but `clear_config_caches()` racing a read is undefined | low risk (config rarely cleared at runtime); note + add lock only if runtime cache-clear is reachable from a tool body |
@@ -528,7 +565,10 @@ under test:
    storage/embed/rerank `httpx.Limits` to ≥ N is REQUIRED for the pool to deliver
    throughput, not just latency isolation. If shipped without it, offload helps
    `/health` responsiveness but tool throughput stays bottlenecked at the old
-   connection cap. **Audit must verify the limits change ships with the pool.**
+   connection cap. **Audit must verify the limits change ships with the pool —
+   and first establish the baseline `limits=` (currently unconfirmed; the
+   "1-conn singleton" figure came from the task brief, not measured) plus confirm
+   httpx.Client concurrent-request thread-safety for the pinned version (T2/T3/T5).**
 2. **O2 — pool exhaustion is a NEW failure mode** (§6). A wedged op past timeout
    leaks its thread/slot; ≥ N wedged → throughput stalls **with the loop still
    alive**, so P0 healthcheck-kill (which keys on HTTP-000) does **not** trip.
@@ -573,6 +613,15 @@ under test:
     a bound). In-flight offloaded ops during a graceful stop need a defined
     behaviour (the existing `STOPPING=1`/graceful-stop orchestrator path). Define
     pool teardown in the lifecycle.
+11. **O11 — hook-route inline git is NOT covered by Fix A** (§0.1). `http.py:838`
+    (`async hook_subagent_stop`), `:1203`, `:1234` run blocking git inline on the
+    loop and are `@custom_route`, not `@_tool()` — outside the offload boundary.
+    Two `POST /hooks/auto-capture` co-fired at the actual hang, so this is a *real*
+    residual loop-block vector after Fix A. **Decide: fold into Fix A** (wrap each
+    in `to_thread`, matching the already-correct `_memorize` at `http.py:849`) **or
+    defer to a sibling fix.** Either is acceptable; the §0 "loop never blocks" claim
+    is only true once this is also addressed. This is the second item (with O2 and
+    O7) the audit should scrutinize hardest.
 
 ---
 
@@ -592,6 +641,9 @@ under test:
 - `yadgar/server/_state.py` — `_action_batch` asyncio.Lock loop-affinity (T6,
   `:93`); the unprotected `_state` dicts (T7, `:105-139`); existing locks
   (`:69-71`).
+- `yadgar/server/http.py` — hook-route inline git (O11, `:838/1203/1234`); the
+  already-correct `to_thread` pattern to mirror (`_memorize` at `:849`); `/health`
+  route (`:267-340`) for the concurrency test.
 - `yadgar/tracing.py` — confirm `trace_span` contextvars-safe across threads (O8).
 - `yadgar/tests/e2e/` + `tests/conftest.py` (`:269-300` surreal fixture) +
   `Makefile` (`e2e` target) — new daemon-subprocess HTTP concurrency test.
