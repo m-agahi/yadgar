@@ -22,8 +22,10 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
 
-# Paths that bypass auth even when REQUIRE_AUTH=True
-_EXEMPT_PATHS: frozenset[str] = frozenset({"/health", "/metrics"})
+# Paths that bypass auth even when REQUIRE_AUTH=True.
+# /health/live (#74 fix #1) is the LIVENESS probe the container P0 healthcheck
+# curls without a token — it MUST be exempt or P0 gets 401 → kills the core anyway.
+_EXEMPT_PATHS: frozenset[str] = frozenset({"/health", "/health/live", "/metrics"})
 
 # Route prefixes that are protected when REQUIRE_AUTH=True
 _PROTECTED_PREFIXES: tuple[str, ...] = ("/admin/", "/api/", "/hooks/", "/mcp")

@@ -687,6 +687,23 @@ class RemoteMLClient:
                 )
                 return None
             _is_probe = breaker.is_half_open(_now=self._now())
+
+        # #74 fix #2: bound concurrent backend reranks behind the process-wide
+        # heavy-rerank gate so N offload workers can't drive N parallel /rerank
+        # requests and saturate the backend (→ slow /health → core 503 → P0 kill).
+        # HALF_OPEN probes BYPASS the gate (they must fast-fail, not queue). On a
+        # gate-acquire timeout we DEGRADE (skip rerank → pre-rerank order), reusing
+        # the breaker-open None path — never block the worker (it would leak its slot).
+        _gated = False
+        if not _is_probe:
+            from yadgar.server._offload import acquire_rerank_slot  # noqa: PLC0415
+
+            if not acquire_rerank_slot():
+                logger.warning(
+                    "/rerank/%s heavy-gate full — skipping rerank (pre-rerank order)", mode
+                )
+                return None
+            _gated = True
         try:
             _timeout = self._probe_timeout if _is_probe else self._rerank_timeout
             r = self._client.post(
@@ -717,6 +734,11 @@ class RemoteMLClient:
             else:
                 logger.warning("RemoteMLClient: /rerank %s failed: %s", mode, e)
             return None
+        finally:
+            if _gated:
+                from yadgar.server._offload import release_rerank_slot  # noqa: PLC0415
+
+                release_rerank_slot()
 
     def score_cross_encoder(self, query: str, texts: list[str]) -> list[float] | None:
         with _rpc_span(

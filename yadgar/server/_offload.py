@@ -68,6 +68,38 @@ def _tool_timeout_sec() -> float:
         return 30.0
 
 
+def _heavy_concurrency() -> int:
+    """Max concurrent backend /rerank calls the core will issue (#74 fix #2).
+
+    The fan-out gate. With offload ON the loop is free, so up to _pool_workers()
+    recalls run concurrently — each issuing a backend /rerank. The backend has
+    FEWER cores than the pool; an unbounded fan-out saturates it and the resulting
+    slow /health feeds back into a core readiness 503 → P0 kill (#74 root cause).
+
+    Default is CONSERVATIVE and strictly below the pool size — the binding
+    constraint is backend serving capacity, NOT TOOL_POOL_WORKERS. A default ==
+    pool would make the gate a no-op. Clamped to [1, pool_workers].
+    """
+    try:
+        n = int(os.environ.get("YADGAR_RECALL_HEAVY_CONCURRENCY", "3"))
+    except ValueError:
+        n = 3
+    return max(1, min(n, _pool_workers()))
+
+
+def _rerank_gate_acquire_timeout_sec() -> float:
+    """Seconds a worker waits for a heavy-rerank slot before degrading.
+
+    Bounded so a worker parked on the gate cannot hold its pool slot past the
+    tool timeout (which would leak it — fix #3). On timeout the caller degrades
+    (skips rerank → pre-rerank order), reusing the breaker-open path.
+    """
+    try:
+        return float(os.environ.get("YADGAR_RERANK_GATE_ACQUIRE_TIMEOUT_SEC", "2.0"))
+    except ValueError:
+        return 2.0
+
+
 def _saturation_grace_sec() -> float:
     """Idle seconds (no completion) while the pool is full before /health degrades.
 
@@ -157,6 +189,63 @@ def shutdown_pool(join_timeout: float = 5.0) -> None:
         _inflight = 0
         _last_completion_ts = 0.0
         _pool_full_since = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Heavy-rerank fan-out gate (#74 fix #2) — a process-wide semaphore bounding
+# how many concurrent backend /rerank calls the core issues. Sized to the
+# backend's REAL serving capacity (a conservative default below the pool size),
+# NOT TOOL_POOL_WORKERS. Module-level singleton so all RemoteMLClient instances
+# are bounded COLLECTIVELY. Lazy env-read so tests can override the size.
+# ---------------------------------------------------------------------------
+
+_RERANK_GATE: threading.Semaphore | None = None
+_RERANK_GATE_SIZE: int = 0
+_RERANK_GATE_LOCK = threading.Lock()
+
+
+def _rerank_gate() -> threading.Semaphore:
+    """Lazily create the process-singleton heavy-rerank semaphore."""
+    global _RERANK_GATE, _RERANK_GATE_SIZE
+    with _RERANK_GATE_LOCK:
+        if _RERANK_GATE is None:
+            _RERANK_GATE_SIZE = _heavy_concurrency()
+            _RERANK_GATE = threading.Semaphore(_RERANK_GATE_SIZE)
+        return _RERANK_GATE
+
+
+def acquire_rerank_slot(timeout: float | None = None) -> bool:
+    """Acquire one heavy-rerank slot. Returns True on success, False on timeout.
+
+    A False return is a DEGRADE signal — the caller should skip the rerank
+    (pre-rerank order) rather than block its worker thread waiting (which would
+    hold the pool slot past the tool timeout and leak it). Default timeout from
+    YADGAR_RERANK_GATE_ACQUIRE_TIMEOUT_SEC.
+    """
+    if timeout is None:
+        timeout = _rerank_gate_acquire_timeout_sec()
+    return _rerank_gate().acquire(timeout=timeout)
+
+
+def release_rerank_slot() -> None:
+    """Release a previously-acquired heavy-rerank slot. Never raises."""
+    gate = _RERANK_GATE
+    if gate is not None:
+        try:
+            gate.release()
+        except ValueError:  # pragma: no cover — release without acquire
+            pass
+
+
+def reset_rerank_gate() -> None:
+    """Drop the gate so the next acquire rebuilds it at the current env size.
+
+    Test hook (mirrors shutdown_pool for the pool). Idempotent.
+    """
+    global _RERANK_GATE, _RERANK_GATE_SIZE
+    with _RERANK_GATE_LOCK:
+        _RERANK_GATE = None
+        _RERANK_GATE_SIZE = 0
 
 
 def _ctx_wrap(call: Callable[[], Any]) -> Callable[[], Any]:

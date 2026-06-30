@@ -1437,17 +1437,46 @@ FIELD_META: dict[str, dict[str, object]] = {
         ),
         "section": "circuit_breaker",
     },
+    "recall_heavy_concurrency": {
+        "desc": (
+            "#74 fix: process-wide cap on concurrent backend /rerank calls the core issues "
+            "(default 3). Sized to the BACKEND's serving capacity (fewer cores than "
+            "tool_pool_workers), NOT the pool size. MUST be < tool_pool_workers (else the gate is "
+            "a no-op and N workers saturate the backend → slow /health → core 503 → P0 kill) and "
+            "<= rerank_max_concurrency."
+        ),
+        "section": "circuit_breaker",
+    },
+    "rerank_gate_acquire_timeout_sec": {
+        "desc": (
+            "Seconds a worker waits for a heavy-rerank slot before degrading (skip rerank → "
+            "pre-rerank order) (default 2.0). Bounded so a gated worker never holds its pool slot "
+            "past tool_timeout_sec (which would leak it)."
+        ),
+        "section": "circuit_breaker",
+    },
     "tool_timeout_sec": {
         "desc": (
-            "Per-tool offload timeout in seconds (default 30.0) — frees the loop on a wedged op. The "
-            "worker keeps its slot until self-release; O2 saturation + P0 cover the residual."
+            "Per-tool offload timeout in seconds (default 95.0) — frees the loop on a wedged op. "
+            "MUST cover a worst-case recall incl. rerank (>= rerank_backend_timeout_sec=90) so a "
+            "legit rerank is not cancelled mid-flight (leaking the worker). Ordering invariant: "
+            "tool_saturation_grace_sec > tool_timeout_sec >= rerank_backend_timeout_sec."
         ),
         "section": "circuit_breaker",
     },
     "tool_saturation_grace_sec": {
         "desc": (
             "O2: idle seconds (no pool completion) while the pool is full before /health degrades to 503 "
-            "(default 45.0). MUST be > tool_timeout_sec so only leaked workers trip the signal."
+            "(default 120.0). MUST be > tool_timeout_sec so only leaked workers trip the signal."
+        ),
+        "section": "circuit_breaker",
+    },
+    "health_readiness_fail_threshold": {
+        "desc": (
+            "#74 fix: consecutive /health READINESS probe misses (db+embed) before degrading to 503 "
+            "(default 3). Anti-flap — a single transient miss (busy backend) does not 503. LIVENESS "
+            "(/health/live) is separate and never probes the backend, so a busy dependency can't "
+            "SIGKILL the core via the P0 healthcheck."
         ),
         "section": "circuit_breaker",
     },
