@@ -70,7 +70,7 @@ wrong or zero value), **MISLEAD-DOC** (prose lies to a reader).
 | A8 | Declared metric ↔ writer | `metrics.py` declarations | `.set()/.inc()/.observe()` call sites | Metric (or **label**) declared, no writer (I23). Stale `consolidation_daemon` heartbeat label slips through — metric var has *other* writers | MISLEAD-UI (dead gauge) |
 | A9 | Capability registry coverage | `config.py` + `server/tools/*` + `migrations.py` + `BEHAVIOR_CONTRACT.md` | `docs/CAPABILITY_REGISTRY.md` (I32) | New tool/setting/migration/BC not catalogued → I32 RED. (Coverage only — see A10.) | DEAD (uncatalogued) |
 | A10 | Capability registry **accuracy** | actual runtime reachability | `CAPABILITY_REGISTRY.md` `status:` field | A `status: active` row whose capability is actually dead — I32 is coverage-not-correctness | MISLEAD-DOC |
-| A11 | MCP tool list ↔ README | `server/tools/*` @_tool count (77, of which 2 are `_test_*`) | `README.md:238` ("75 MCP tools") | Tools added, count not bumped | MISLEAD-DOC |
+| A11 | MCP tool list ↔ README | `server/tools/*` @_tool count (75 non-test; `_test_*` excluded) | `README.md:238` ("75 MCP tools") | Tools added, count not bumped — **currently IN SYNC (75 = 75), no drift today**; risk is future-only | MISLEAD-DOC (latent) |
 | A12 | Tool ↔ description/schema | tool impl signature | tool docstring / `server.json` description | Param added/removed, description stale | MISLEAD-DOC |
 | A13 | Prose docs ↔ runtime | runtime behavior | `docs/architecture.md`, `roadmap/*`, `README.md` | Behavior changed (idle→nightly v5.7.0), `architecture.md:107` still describes old | MISLEAD-DOC |
 | A14 | Behavior-contract ↔ e2e | `BEHAVIOR_CONTRACT.md` BC-* rows + ✅ floor | `tests/e2e/*` test refs | Contract row with no test, or assertions weakened | SILENT-WRONG (untested contract) |
@@ -106,7 +106,7 @@ NONE**; and the **specific check to add**.
 | A8 | metric/label↔writer | RATCHETABLE | **PARTIAL** | `check_metric_writers.py` (I23) | I23 extension: also require each declared **label value** referenced in a panel to have a writer — catches the stale `consolidation_daemon` heartbeat label |
 | A9 | registry coverage | RATCHETABLE | **RATCHETED** | `check_capability_coverage.py` (I32) | — (done) |
 | A10 | registry accuracy | **AUDIT-ONLY** | NONE | — (I32 is coverage-only by design) | Periodic LLM drift-audit: sample N rows, verify `status:` against reachability. NOT mechanically ratchetable |
-| A11 | tool count↔README | RATCHETABLE | **NONE** | — | Lint: assert `README.md` tool count == live `@_tool` count (minus `_test_*`). Or auto-generate the count line from I32 enumeration |
+| A11 | tool count↔README | RATCHETABLE | **NONE** (but in-sync today) | — | Lint: assert `README.md` tool count == live `@_tool` count (minus `_test_*`). Currently 75 = 75 — **no drift to fix**; a cheap guard against future drift, not a present bug |
 | A12 | tool↔description | **AUDIT-ONLY** (semantic) | NONE | — | Periodic drift-audit; param-presence portion is diffable (signature param ∈ description) but quality is not |
 | A13 | prose↔runtime | **AUDIT-ONLY** | NONE | — | Periodic `drift-audit` agent over `architecture.md` / roadmap; the *known-removed-token* portion (grep dead knob/fn names in prose) is a cheap diffable sub-check |
 | A14 | BC↔e2e | RATCHETABLE | **RATCHETED** | `check_contract_coverage.py` + `check_e2e_assertions.py` + `check_test_weakening.py` | — (done; tamper-protection #52) |
@@ -126,10 +126,18 @@ NONE**; and the **specific check to add**.
 
 ### Ratchetable-but-unratcheted — the quick wins
 
-Of the 10 NONE-coverage axes, these are **mechanically diffable → clean ratchet
-candidates** (not free-text): **A3, A6, A7, A11, A21**, plus partials **A8** and
-**A2**. That's **5 clean quick wins** (A4/A5 are ratchetable but need an
-I30-style allowlist for noise; A10/A12/A13 are genuinely audit-only).
+Of the 10 NONE-coverage axes, the **clean ratchet candidates** (mechanically
+diffable, not free-text, low scaffolding) are **A3, A6, A21**, plus partials **A8**
+and **A2**. That's **3 clean NONE-coverage quick wins** (A3, A6, A21) + 2 partial
+extensions (A8, A2).
+
+Caveats that keep this list honest:
+- **A11 is in-sync today** (75 = 75 verified) — a future-proofing guard, not a
+  present bug, so it is NOT counted as a quick win to *fix* (only to *guard*).
+- **A7** is **RATCHETABLE-but-harder** (full producer→API→UI round-trip wiring),
+  not a clean one-liner — it generalizes A6 and lands after A6 proves the pattern.
+- A4/A5 are ratchetable but need an I30-style allowlist for dynamic-dispatch noise;
+  A10/A12/A13 are genuinely audit-only.
 
 ### Genuinely un-ratchetable (need human/LLM audit, never a clean gate)
 
@@ -156,22 +164,25 @@ Ranked by **drift-risk × user-facing-impact × cheapness**:
 2. **A3 — example-yaml-vs-Settings lint**. Trivial: `Settings(**yaml, extra=forbid)`
    over each example/shipped yaml. Would have caught `idle_threshold` orphan
    instantly. Tiny code.
-3. **A11 — README tool-count lint** (or auto-gen the line). Trivial; kills a
-   recurring "stale number" nit; reuses the I32 enumeration.
-4. **A8 — I23 label-granularity extension**. Extend the existing metric-writer
+3. **A8 — I23 label-granularity extension**. Extend the existing metric-writer
    lint to label values; catches the stale `consolidation_daemon` heartbeat label.
-5. **A21 — `check_open_discoveries.py`** OR decide to retire I27's enforcement
+4. **A21 — `check_open_discoveries.py`** OR decide to retire I27's enforcement
    clause. An invariant with zero enforcement is itself meta-drift; resolve it.
-6. **A4/A5 — dead-function + dead-config lint** with an I30-style allowlist seeded
+5. **A4/A5 — dead-function + dead-config lint** with an I30-style allowlist seeded
    from the 10 + 15 known. Highest *count* of "discover by accident," but needs the
    allowlist scaffolding (noisy without it), so it lands after the clean wins.
-7. **A7 — full producer→API→UI round-trip test**. Generalizes A6 to other
+6. **A7 — full producer→API→UI round-trip test**. Generalizes A6 to other
    `/api/metrics/*` panels; more wiring, do after A6 proves the pattern.
+7. **A11 — README tool-count guard** (lowest priority). In-sync today (75 = 75);
+   a future-drift guard, not a present fix. Cheap to add whenever convenient.
 
 ### Top-3 to do first
 
-**A6 (stats-parity), A3 (example-yaml lint), A11 (README count)** — all mechanical,
-all cheap, two of three map directly to the exact bugs we already tripped on.
+**A6 (stats-parity), A3 (example-yaml lint), A8 (I23 label extension)** — all
+mechanical and cheap. A6 + A3 map directly to the two exact bugs we already tripped
+on (the 14-key drop and the `idle_threshold` orphan); A8 closes the stale-label
+gap I23 misses. (A11 is NOT in the top-3: verified 75 = 75 today, so it fixes no
+present bug — it's a guard, deferred.)
 
 ### The recurring mechanism (proactive, not by-accident)
 
@@ -217,8 +228,10 @@ Recommend a **scheduled (weekly) drift-audit agent run**, NOT a stop-hook nudge:
 
 ### Honest assessment
 
-- **Pure mechanical wins (do now):** A3, A6, A11 — and the I23/A8 extension. These
-  are diffs; a test fails on drift; zero judgement.
+- **Pure mechanical wins (do now):** A3, A6 — and the I23/A8 extension. These are
+  diffs; a test fails on drift; zero judgement. (A11 is also mechanical but fixes no
+  present bug — 75 = 75 verified — so it's a future-drift guard, deferred, not a
+  "do now.")
 - **Mechanical-but-needs-scaffolding:** A4/A5 (dead code) — ratchetable only with an
   I30-style allowlist+rationale to absorb dynamic-dispatch false positives. Highest
   count of past accidental discoveries, so worth the scaffolding, but not a one-liner.
@@ -262,5 +275,7 @@ Recommend a **scheduled (weekly) drift-audit agent run**, NOT a stop-hook nudge:
 - CI aggregation: `.forgejo/workflows/ci-pr.yaml:86` (`invariant-checks` job),
   `.forgejo/workflows/validate.yaml:32` (`pre-commit run --all-files`).
 - The fix (not this doc): `docs/plans/consolidation-stat-recording-and-idle-cleanup-2026-06-30.md`.
-- `idle_threshold` stale prose: `docs/architecture.md:107`. README stale count:
-  `README.md:238`.
+- `idle_threshold` stale prose: `docs/architecture.md:107`. README tool count
+  `README.md:238` ("75 MCP tools") — **verified in-sync**: 75 non-`_test_` @_tool
+  `def`s (the 2 `_test_*` tools excluded), matching the README. A11 is a latent
+  guard against *future* drift, not a present bug.
