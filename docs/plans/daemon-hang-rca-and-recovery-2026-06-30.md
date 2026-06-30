@@ -1,6 +1,20 @@
 # Core MCP Daemon Hang — RCA + Recovery Plan (2026-06-30)
 
-**Status:** IN REVIEW. Read-only RCA + fix design. No code edited.
+**Status:** IN REVIEW. Read-only RCA + fix design.
+
+> **CORRECTION (2026-06-30, post-research) — P0 approach changed.** The proposed
+> P0 Layer-B **sd_notify `WATCHDOG=1` watchdog is NON-VIABLE on podman 5.8.2**:
+> podman's notify proxy (`pkg/systemd/notifyproxy`) forwards only `READY=1`/`BARRIER=1`
+> to host systemd and **silently drops `WATCHDOG=1`** in *every* `--sdnotify` mode
+> (verified against the v5.8.2 source). A watchdog ping would go into a void. The
+> watchdog code that was prototyped (`server/watchdog.py`, branch
+> `fix/v5.88.3-daemon-watchdog`) was therefore **abandoned, not merged**.
+> **Shipped P0 (nix only, commit `e783510`):** use the healthcheck path, which DOES
+> reach systemd — `--health-on-failure=kill` + `--health-retries 3` on the core
+> `docker run` (a hung loop fails the existing `curl /health` probe) + `Restart=always`.
+> Hung loop → /health fails 3×15s → podman kills the container → systemd restarts it.
+> No daemon code, no version bump. Layer A (`Restart=always`) folded in. **P1**
+> (git off the event loop) is unchanged and still the real bug fix.
 
 Investigation date: 2026-06-30. Advisor-vetted (one BLOCKING constraint — FastMCP
 sync-dispatch — verified before this doc was written; see RCA Part 1 §"Linchpin").
