@@ -23,8 +23,9 @@ Related: `daemon-offload-A-2026-06-30.md` (Fix A — threadpool offload, the cra
   (the dep `surrealdb>=1.0.0` already allows it), but bumping the floor is cheap.
 - **SurrealDB server upgrade v3.0.5 → v3.1.5 is recommended and low-risk**: 3.1 is the
   "operational maturity" release; **on-disk/catalog layout is unchanged from 3.0.x → rolls
-  forward in place**; the only breaking change is in **GraphQL**, which yadgar does not use
-  (it speaks `/sql` HTTP). It is **independent** of the async refactor — decoupled axis.
+  forward in place**; the only *announced* breaking change is in **GraphQL**, which yadgar
+  does not use (it speaks `/sql` HTTP). It is **independent** of the async refactor —
+  decoupled axis. (Caveat: auth/header migration-guide breaks not yet confirmed — see §2.)
 - **The big call: async-I/O is the correct *foundation*; the threadpool-offload (Fix A) is
   a backstop, not the foundation.** BUT async does **not** make Fix A wholesale
   unnecessary — **they compose**, because `git` subprocess calls and the embedded-mode SDK
@@ -104,9 +105,18 @@ embedded path is converted, but this is not gating.
     migration cost — relevant because recall is vector-search-heavy.
   - "Concurrent builds and KNN queries are safe at release."
   Source: <https://surrealdb.com/3.1>, blog link above.
-- **Breaking changes:** confined to the **GraphQL** surface (more expressive, breaking for
-  GraphQL clients). yadgar uses the `/sql` HTTP endpoint, **not** GraphQL → not affected.
+- **Breaking changes:** per the **3.1 announcement**, breaking changes appear confined to
+  the **GraphQL** surface (more expressive, breaking for GraphQL clients). yadgar uses the
+  `/sql` HTTP endpoint, **not** GraphQL → not affected by *that* break.
   Source: <https://surrealdb.com/3.1>
+  - **NOT YET VERIFIED — confirm before the bump:** the announcement enumerates headline
+    breaks only; **auth / HTTP-header / protocol** deprecations historically live in the
+    **migration guide** (<https://surrealdb.com/docs/build/migrating/from-old-surrealdb-versions/overview>),
+    which was **not** fetched for this doc. yadgar authenticates with **Basic auth + the
+    `surreal-ns` / `surreal-db` headers** (`storage/__init__.py:244-262`) — before the actual
+    3.0.5→3.1.5 bump, read the full migration guide and confirm the auth/header surface and
+    `/sql` request/response shape are unchanged. Low expected risk (in-place roll-forward
+    implies wire stability) but unconfirmed.
 - **Migration: in-place.** "The catalog and on-disk layouts are unchanged from 3.0.x, so
   existing deployments roll forward in place."
   Source: blog link above.
@@ -120,7 +130,8 @@ embedded path is converted, but this is not gating.
 **Recommend upgrading the pinned server v3.0.5 → v3.1.5.** Gains: lock-free reader
 concurrency (in-memory backend) + rewritten warm-lookup ANN path, both of which directly
 benefit concurrent recall. Risk is **low**: in-place roll-forward (no migration), the only
-breaking change is GraphQL (unused). **It is INDEPENDENT of the async refactor** — the
+*announced* breaking change is GraphQL (unused) — pending the auth/header migration-guide
+confirmation flagged above. **It is INDEPENDENT of the async refactor** — the
 upgrade is a separate axis driven by perf + the new security-patch cadence, *not* required
 to make the client async (prod speaks HTTP `/sql`, which is stable across 3.0→3.1).
 Sequence them separately: server bump can ship first/standalone, soak, then async.
@@ -182,10 +193,14 @@ If storage (`_http.post`), embed, and rerank become `await`-able, the MCP tool b
 `async def` and **the single asyncio loop serves many concurrent recalls natively** — which
 is the entire point of asyncio. No threads, **no cross-thread shared-state hazard, no
 ThreadPoolExecutor, no `wait_for`-frees-coroutine-but-leaks-worker accounting** (the gnarly
-O2-gate logic in `_offload.py` exists *only* to paper over the threadpool model). FastMCP
-already dispatches `async def` tool bodies (the audit confirmed; the codebase already has
-async HTTP route handlers using `asyncio.to_thread` around sync storage, e.g.
-`http_wiki_versioning.py`, `http_bookmarks.py`). The core is **pure-I/O** from its own
+O2-gate logic in `_offload.py` exists *only* to paper over the threadpool model).
+**LOAD-BEARING ASSUMPTION (verify in Phase 1, not yet confirmed in this doc):** that
+FastMCP dispatches `async def` tool bodies. The task/audit asserted it, but it was **not**
+re-verified here — `_offload.py` states all ~60 *current* bodies are sync `def`, and the
+async handlers in the repo (`http_wiki_versioning.py`, `http_bookmarks.py`) are **Starlette
+route** handlers, NOT `@mcp.tool` bodies, so they do not prove the FastMCP claim. The whole
+async-tool-body recommendation hinges on this — prove it (a one-tool `async def` spike)
+before widening. The core is **pure-I/O** from its own
 vantage (all CPU — embeddings, rerank — lives on the backend), so async is a textbook fit:
 asyncio best practice is "async for I/O-bound, threads/processes for CPU-bound"; the core is
 the former.
