@@ -17,7 +17,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install torch --index-url https://download.pytorch.org/whl/cpu && \
     pip install "/app[ml]" uvicorn
 # SurrealDB v3
-COPY --from=surrealdb/surrealdb:v3.0.5 /surreal /usr/local/bin/surreal
+COPY --from=surrealdb/surrealdb:v3.1.5 /surreal /usr/local/bin/surreal
 COPY entrypoint-backend.sh /entrypoint-backend.sh
 RUN chmod +x /entrypoint-backend.sh
 EXPOSE 8001
