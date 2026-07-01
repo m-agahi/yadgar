@@ -394,5 +394,16 @@
     "rationale": "v5.89 #69: upsert_dispatch_prelude_marker added ~37 lines to mirror upsert_active_work. The _WikiMixin class holds all memory/wiki upsert helpers; splitting the file creates import cycles. Scheduled for mixin decomposition in a dedicated refactor.",
     "added": "2026-06-30",
     "added_by": "feat/v5.89-settings-redesign"
+  },
+  {
+    "path": "yadgar/metrics.py",
+    "function": "<file>",
+    "lineno": 1,
+    "metrics": {
+      "file_loc": 1059
+    },
+    "rationale": "#80 daemon-obs: +~125 LoC of cohesive Prometheus collectors for the loop-freeze RCA (yadgar_event_loop_lag_seconds histogram + _max gauge, yadgar_tool_pool_* gauges) plus their refreshers (loop-lag probe monitor, _collect_pool_stats). This module is a single-responsibility metric registry — every metric in the daemon is declared here against the shared _registry, so the gauges belong co-located with their siblings. Splitting the registry would fan the _registry import across modules without reducing essential complexity. Scheduled for the wave N module split.",
+    "added": "2026-07-01",
+    "added_by": "fix/daemon-obs-gauges"
   }
 ]

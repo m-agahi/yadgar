@@ -12,10 +12,12 @@ silently drops routes. No domain logic — all work delegated to _state + domain
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from starlette.requests import Request
@@ -34,6 +36,21 @@ from yadgar.tracing import trace_span
 logger = logging.getLogger(__name__)
 
 _CORS = {"Cache-Control": "no-cache"}
+
+# ---------------------------------------------------------------------------
+# #81 freeze fix: hook recalls run in a DEDICATED BOUNDED pool, NOT
+# asyncio.to_thread's unbounded default executor. A hook recall is ~1.5s but
+# capped by a 2s wait_for; asyncio.to_thread / run_in_executor work is
+# UNCANCELLABLE, so on timeout the coroutine returns but the recall thread keeps
+# running. On a 1-CPU core, a burst of agent-lifecycle hooks
+# (subagent-start / prompt-recall) would otherwise pile up unbounded GIL-holding
+# threads → event-loop starvation → /health/live freeze → P0 SIGKILL (status=137).
+# Capping the pool bounds the leak: at most _HOOK_RECALL_POOL_WORKERS recall
+# threads ever run concurrently, so the cascade is impossible.
+_HOOK_RECALL_POOL_WORKERS = 2
+_HOOK_RECALL_POOL = ThreadPoolExecutor(
+    max_workers=_HOOK_RECALL_POOL_WORKERS, thread_name_prefix="hook-recall"
+)
 
 # ---------------------------------------------------------------------------
 # v5.51.0: Hook recall latency budget helper
@@ -57,9 +74,16 @@ async def _recall_with_timeout(
     from yadgar.config import get_settings  # noqa: PLC0415
 
     timeout_s = get_settings().HOOK_RECALL_TIMEOUT_S
+    loop = asyncio.get_running_loop()
     try:
+        # #81: run in the BOUNDED hook-recall pool (not asyncio.to_thread's
+        # unbounded default executor) so a slow uncancellable recall that runs
+        # past its wait_for timeout cannot accumulate beyond the pool cap.
         return await asyncio.wait_for(
-            asyncio.to_thread(retriever.recall, *args, **kwargs),
+            loop.run_in_executor(
+                _HOOK_RECALL_POOL,
+                functools.partial(retriever.recall, *args, **kwargs),
+            ),
             timeout=timeout_s,
         )
     except TimeoutError:

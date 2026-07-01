@@ -491,11 +491,13 @@ def test_hook_prompt_recall_failure_counter_on_exception():
         side_effect=lambda k, d="": "test query" if k == "query" else "/tmp/test"
     )
 
+    # #81: recalls run in the bounded hook pool; the raise-seam is recall itself.
+    mock_retriever.recall = MagicMock(side_effect=RuntimeError("retriever exploded"))
+
     with patch.object(_st, "_retriever", mock_retriever):
         with patch.object(_st, "_last_session_context", {}):
             with patch.object(_st, "_last_prompt_recall", {}):
-                with patch("asyncio.to_thread", side_effect=RuntimeError("retriever exploded")):
-                    asyncio.run(_http.hook_prompt_recall(mock_request))
+                asyncio.run(_http.hook_prompt_recall(mock_request))
 
     after = _labeled_counter_value(
         yadgar_hook_failure_total, hook="prompt_recall", reason="RuntimeError"

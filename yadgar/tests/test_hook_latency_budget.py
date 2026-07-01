@@ -11,7 +11,18 @@ Tests verify:
 from __future__ import annotations
 
 import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
+
+
+def _slow_retriever(delay: float = 0.3) -> MagicMock:
+    """A retriever whose sync recall blocks `delay`s. #81: recalls run in the
+    bounded hook pool via run_in_executor, so the SLOW SEAM is now recall itself
+    (a real sleep exceeding the budget), not a patched asyncio.to_thread."""
+    r = MagicMock()
+    r.recall = lambda *a, **kw: time.sleep(delay)
+    return r
+
 
 # ---------------------------------------------------------------------------
 # Unit tests for _recall_with_timeout helper
@@ -25,20 +36,16 @@ class TestRecallWithTimeoutHelper:
         """When asyncio.wait_for raises TimeoutError, helper returns None."""
         import yadgar.server.http as _http
 
-        async def _slow_recall(*a, **kw):
-            await asyncio.sleep(10)  # will be cancelled by wait_for
-
-        mock_retriever = MagicMock()
+        mock_retriever = _slow_retriever()
 
         async def _run():
-            with patch("asyncio.to_thread", side_effect=_slow_recall):
-                with patch(
-                    "yadgar.config.get_settings",
-                    return_value=MagicMock(HOOK_RECALL_TIMEOUT_S=0.01),
-                ):
-                    result = await _http._recall_with_timeout(
-                        mock_retriever, "prompt-recall", "test query"
-                    )
+            with patch(
+                "yadgar.config.get_settings",
+                return_value=MagicMock(HOOK_RECALL_TIMEOUT_S=0.01),
+            ):
+                result = await _http._recall_with_timeout(
+                    mock_retriever, "prompt-recall", "test query"
+                )
             return result
 
         result = asyncio.run(_run())
@@ -89,18 +96,14 @@ class TestRecallWithTimeoutHelper:
         # Read counter before
         before = _metrics.yadgar_hook_recall_timeout_total.labels(handler=handler_name)._value.get()
 
-        async def _slow_recall(*a, **kw):
-            await asyncio.sleep(10)
-
-        mock_retriever = MagicMock()
+        mock_retriever = _slow_retriever()
 
         async def _run():
-            with patch("asyncio.to_thread", side_effect=_slow_recall):
-                with patch(
-                    "yadgar.config.get_settings",
-                    return_value=MagicMock(HOOK_RECALL_TIMEOUT_S=0.01),
-                ):
-                    await _http._recall_with_timeout(mock_retriever, handler_name, "query")
+            with patch(
+                "yadgar.config.get_settings",
+                return_value=MagicMock(HOOK_RECALL_TIMEOUT_S=0.01),
+            ):
+                await _http._recall_with_timeout(mock_retriever, handler_name, "query")
 
         asyncio.run(_run())
 
@@ -121,16 +124,17 @@ class TestRecallWithTimeoutHelper:
 
         mock_retriever = MagicMock()
 
-        async def _run():
-            async def _failing_to_thread(fn, *args, **kwargs):
-                raise _RecallError("DB connection lost")
+        def _failing_recall(*a, **kw):
+            raise _RecallError("DB connection lost")
 
-            with patch("asyncio.to_thread", side_effect=_failing_to_thread):
-                with patch(
-                    "yadgar.config.get_settings",
-                    return_value=MagicMock(HOOK_RECALL_TIMEOUT_S=5.0),
-                ):
-                    await _http._recall_with_timeout(mock_retriever, "prompt-recall", "query")
+        mock_retriever.recall = _failing_recall
+
+        async def _run():
+            with patch(
+                "yadgar.config.get_settings",
+                return_value=MagicMock(HOOK_RECALL_TIMEOUT_S=5.0),
+            ):
+                await _http._recall_with_timeout(mock_retriever, "prompt-recall", "query")
 
         try:
             asyncio.run(_run())
@@ -280,16 +284,12 @@ class TestTimeoutCounterAllHandlers:
             handler="prompt-recall"
         )._value.get()
 
-        async def _slow(*a, **kw):
-            await asyncio.sleep(10)
-
         async def _run():
-            with patch("asyncio.to_thread", side_effect=_slow):
-                with patch(
-                    "yadgar.config.get_settings",
-                    return_value=MagicMock(HOOK_RECALL_TIMEOUT_S=0.01),
-                ):
-                    await _http._recall_with_timeout(MagicMock(), "prompt-recall", "q")
+            with patch(
+                "yadgar.config.get_settings",
+                return_value=MagicMock(HOOK_RECALL_TIMEOUT_S=0.01),
+            ):
+                await _http._recall_with_timeout(_slow_retriever(), "prompt-recall", "q")
 
         asyncio.run(_run())
         after = _metrics.yadgar_hook_recall_timeout_total.labels(
@@ -306,16 +306,12 @@ class TestTimeoutCounterAllHandlers:
             handler="subagent-start"
         )._value.get()
 
-        async def _slow(*a, **kw):
-            await asyncio.sleep(10)
-
         async def _run():
-            with patch("asyncio.to_thread", side_effect=_slow):
-                with patch(
-                    "yadgar.config.get_settings",
-                    return_value=MagicMock(HOOK_RECALL_TIMEOUT_S=0.01),
-                ):
-                    await _http._recall_with_timeout(MagicMock(), "subagent-start", "q")
+            with patch(
+                "yadgar.config.get_settings",
+                return_value=MagicMock(HOOK_RECALL_TIMEOUT_S=0.01),
+            ):
+                await _http._recall_with_timeout(_slow_retriever(), "subagent-start", "q")
 
         asyncio.run(_run())
         after = _metrics.yadgar_hook_recall_timeout_total.labels(

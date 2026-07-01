@@ -5,6 +5,19 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 > Snapshots from v5.0.1 onward are captured from `yadgar stats` at release time.
 > Earlier versions have no per-release snapshot (the practice started 2026-05-16).
 
+## [5.94.0] - 2026-07-01
+
+### Daemon stability: hook-recall freeze fix (#81) + loop-freeze observability (#80)
+
+Fixes the recurring armed-core SIGKILL (status=137): agent-lifecycle hooks (`subagent-start`/`prompt-recall`) ran a ~1.5s recall via `asyncio.to_thread` + a 2s `wait_for`; the thread is **uncancellable**, so a slow recall runs past its timeout. On a 1-CPU core, a burst of subagent spawns piled up unbounded GIL-holding threads → event-loop starvation → `/health/live` freeze → P0 kill. (Diagnosed via the *persistent* `journalctl --user -u yadgar` — `podman logs` resets on the `--rm` restart.)
+
+#### Fixed
+- **Hook recalls now run in a dedicated BOUNDED `ThreadPoolExecutor`** (`_HOOK_RECALL_POOL`, 2 workers) instead of the unbounded default executor — at most 2 recall threads ever run, so a leaked uncancellable recall cannot cascade into loop starvation. (`server/http.py`) [ADR-0022]
+
+#### Added
+- **`yadgar_event_loop_lag_seconds`** (histogram) + **`_max_seconds`** (gauge) — a loop-lag probe on the live event loop; a freeze records lag ≈ block duration (histogram + monotonic max survive a post-freeze scrape).
+- **`yadgar_tool_pool_inflight` / `_saturated` / `_max`** — the offload pool's O2 saturation signal (P0's kill criterion), previously in-memory only, now scrapeable.
+
 ## [5.93.0] - 2026-07-01
 
 ### SurrealDB server upgrade v3.0.5 → v3.1.5
