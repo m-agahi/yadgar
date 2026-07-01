@@ -45,6 +45,7 @@ The YAML file is optional. If it doesn't exist, all defaults apply. Values you d
 | `port` | `YADGAR_PORT` | int | `8765` | HTTP server port (daemon mode). |
 | `db_path` | `YADGAR_DB_PATH` | str | `~/.local/share/yadgar/surreal_db` | SurrealDB storage path. |
 | `embedding_model` | `YADGAR_EMBEDDING_MODEL` | str | `all-MiniLM-L6-v2` | Sentence-transformer model (e.g. `all-MiniLM-L6-v2`, `all-mpnet-base-v2`). |
+| `model_idle_eviction_seconds` | `YADGAR_MODEL_IDLE_EVICTION_SECONDS` | int | `0` | Seconds a loaded model may sit idle in the backend before eviction (`0` = never evict). Read by the backend RemoteMLClient. v5.95: promoted from env-only to config.yaml-authoritative. |
 | `max_episode_tokens` | `YADGAR_MAX_EPISODE_TOKENS` | int | `50000` | Maximum tokens per episode chunk. |
 | `overlap_tokens` | `YADGAR_OVERLAP_TOKENS` | int | `2000` | Token overlap between episode chunks. |
 | `crdt_agent_id` | `YADGAR_CRDT_AGENT_ID` | str | `default` | Agent identifier for multi-agent CRDT sync. |
@@ -437,6 +438,34 @@ The YAML file is optional. If it doesn't exist, all defaults apply. Values you d
 | Key | Env var | Type | Default | Description |
 |---|---|---|---|---|
 | `hook_recall_timeout_s` | `YADGAR_HOOK_RECALL_TIMEOUT_S` | float | `2.0` | Maximum seconds `asyncio.wait_for` waits for `retriever.recall` in hook handlers (prompt-recall, instructions-loaded, subagent-start). On timeout: WARN log + `yadgar_hook_recall_timeout_total` incremented + empty result. Raise to 5.0 if the counter rate is too high. |
+| `hook_recall_pool_workers` | `YADGAR_HOOK_RECALL_POOL_WORKERS` | int | `1` | Threads in the dedicated hook-recall pool (bounded so a slow uncancellable recall can't starve the event loop). `1` minimizes CPU competition with the loop on the `--cpus 1` core (freeze-safest). Raise only if hook serialization is a bottleneck. Restart to apply. |
+
+---
+
+## Tool-Body Offload Pool (v5.95.0)
+
+| Key | Env var | Type | Default | Description |
+|---|---|---|---|---|
+| `tool_pool_workers` | `YADGAR_TOOL_POOL_WORKERS` | int | `2` | Bounded offload worker-pool size (the cap IS the concurrency control). `2` minimizes CPU competition on the `--cpus 1` core (v5.95: dropped from 8). Must be strictly greater than `recall_heavy_concurrency`. Restart to apply. |
+| `recall_heavy_concurrency` | `YADGAR_RECALL_HEAVY_CONCURRENCY` | int | `1` | Process-wide cap on concurrent backend `/rerank` calls (v5.95: dropped 3→1, in lockstep with `tool_pool_workers` dropping 8→2). Must be `< tool_pool_workers` or the rerank gate is a no-op. |
+| `offload_tools` | `YADGAR_OFFLOAD_TOOLS` | bool | `false` | Master switch for tool-body offload off the asyncio loop. **v5.95: now config.yaml-authoritative** — `offload_tools: true` arms the offload path (previously env-only, so a yaml value was silently ignored, #72). Default OFF: arming is **unvalidated live** — soak before relying on it; disarm via `offload_tools: false`. |
+| `tool_timeout_sec` | `YADGAR_TOOL_TIMEOUT_SEC` | float | `95.0` | Per-tool offload timeout. Must cover a worst-case recall including backend rerank. |
+| `rerank_gate_acquire_timeout_sec` | `YADGAR_RERANK_GATE_ACQUIRE_TIMEOUT_SEC` | float | `2.0` | Seconds a worker waits for a heavy-rerank slot before degrading (skip rerank). |
+| `tool_saturation_grace_sec` | `YADGAR_TOOL_SATURATION_GRACE_SEC` | float | `120.0` | O2: idle seconds while the pool is full before `/health` degrades to 503. Must be `> tool_timeout_sec`. |
+
+---
+
+## Hot-path tunables (v5.95.0 config-integrity Phase 4)
+
+Operational literals promoted from hardcoded values to config.yaml-authoritative knobs so they can be tuned without a rebuild.
+
+| Key | Env var | Type | Default | Description |
+|---|---|---|---|---|
+| `reranker_idle_unload_sec` | `YADGAR_RERANKER_IDLE_UNLOAD_SEC` | float | `600.0` | Idle seconds of no recall activity before rerank models are unloaded to free ~500 MB. |
+| `reranker_idle_check_interval_sec` | `YADGAR_RERANKER_IDLE_CHECK_INTERVAL_SEC` | int | `60` | Seconds between reranker idle-unload checks (background thread sleep interval). |
+| `health_handler_timeout_sec` | `YADGAR_HEALTH_HANDLER_TIMEOUT_SEC` | float | `3.0` | Outer hard bound (s) on the whole `/health` handler body. Keep below the container `--health-timeout 5s`. |
+| `health_probe_timeout_sec` | `YADGAR_HEALTH_PROBE_TIMEOUT_SEC` | float | `2.0` | Per-dependency (db/embed) probe HTTP client timeout inside `/health`. Keep `< health_handler_timeout_sec`. |
+| `vacuum_auto_cooldown_hours` | `YADGAR_VACUUM_AUTO_COOLDOWN_HOURS` | float | `6.0` | Auto-vacuum cooldown: hours since the last auto-fire before another may trigger. In-memory, resets on restart. |
 
 ---
 

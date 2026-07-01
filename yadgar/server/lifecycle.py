@@ -20,7 +20,7 @@ import yadgar.paths as _paths
 import yadgar.server._state as _st
 from yadgar.causal_discovery import CausalDiscovery
 from yadgar.cognitive_map import CognitiveMap
-from yadgar.config import get_settings
+from yadgar.config import get_settings, resolve_knob
 from yadgar.consolidation import ConsolidationScheduler
 from yadgar.curation import MemoryCurator
 from yadgar.embeddings import EmbeddingEngine
@@ -368,18 +368,25 @@ def _metrics_loop(pid: int, db_path: str, storage: object) -> None:
 
 
 def _reranker_idle_loop() -> None:
-    """Background thread: unload idle rerankers every 60 s (PR-I).
+    """Background thread: unload idle rerankers (PR-I).
 
-    Extracted from init_engines closure; frees ~500 MB after 10 min of
-    no recall activity. Emits heartbeat + error counter via PR-I helpers.
+    Extracted from init_engines closure; frees ~500 MB after the idle-unload
+    threshold of no recall activity. Emits heartbeat + error counter via PR-I
+    helpers. Check interval + unload threshold are config.yaml-authoritative
+    (RERANKER_IDLE_CHECK_INTERVAL_SEC / RERANKER_IDLE_UNLOAD_SEC) — v5.95.
     """
+    from yadgar.config import get_settings  # noqa: PLC0415 -- avoid import cycle
+
     while True:
         _lc_heartbeat("model_unload")  # PR-I: heartbeat at top of every iteration
-        time.sleep(60)
+        _cfg = get_settings()
+        time.sleep(_cfg.RERANKER_IDLE_CHECK_INTERVAL_SEC)
         try:
             with _lifecycle_span("lifecycle.reranker_idle_check"):
                 if _st._retriever is not None:
-                    _st._retriever.unload_rerankers_if_idle(idle_seconds=600.0)
+                    _st._retriever.unload_rerankers_if_idle(
+                        idle_seconds=_cfg.RERANKER_IDLE_UNLOAD_SEC
+                    )
         except Exception as _exc:
             _lc_record_exc("model_unload", _exc)  # PR-I: loop error counter
 
@@ -701,9 +708,12 @@ def _maybe_auto_check_for_update() -> None:
     Reads env directly (bypasses lru_cache) so tests can monkeypatch the env
     and observe the correct behavior without restarting the process.
     """
-    # Read env directly to bypass lru_cache (important for testability)
-    raw = os.environ.get("YADGAR_UPDATE_CHECK_ON_START", "false").lower()
-    check_on_start = raw in ("1", "true", "yes")
+    check_on_start = resolve_knob(
+        "YADGAR_UPDATE_CHECK_ON_START",
+        "UPDATE_CHECK_ON_START",
+        lambda s: s.strip().lower() in ("1", "true", "yes", "on"),
+        False,
+    )
     if not check_on_start:
         return
 

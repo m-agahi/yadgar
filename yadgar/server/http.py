@@ -27,6 +27,7 @@ import yadgar.paths as _paths
 import yadgar.server._state as _st
 import yadgar.viz_daemon_health as _vdh  # noqa: F401 — V1c: SSE daemon_health push
 from yadgar import __version__
+from yadgar.config import resolve_knob
 from yadgar.graph_api import GraphAPI
 from yadgar.sanitize import sanitize_log_field
 from yadgar.server._app import mcp_server
@@ -47,7 +48,22 @@ _CORS = {"Cache-Control": "no-cache"}
 # threads → event-loop starvation → /health/live freeze → P0 SIGKILL (status=137).
 # Capping the pool bounds the leak: at most _HOOK_RECALL_POOL_WORKERS recall
 # threads ever run concurrently, so the cascade is impossible.
-_HOOK_RECALL_POOL_WORKERS = 2
+#
+# v5.95 (#81 residual): dropped 2 -> 1. Live obs (yadgar_event_loop_lag_max)
+# caught a ~17s loop-lag on an agent-spawn under concurrent box load: the core is
+# --cpus 1, so a slow (box-saturated) recall thread competes with the event loop
+# for the single CPU. 1 worker halves that competition (loop vs 1 thread, not 2)
+# and is strictly freeze-safer. Hooks serialize under a burst, but each still has
+# its own 2s wait_for so none hangs. Root cause is box-saturation of the 1-CPU
+# core (mitigated here; eliminated by the track-A cache, which removes the
+# hot-path recall entirely). Now a tunable knob (default 1) —
+# Settings.HOOK_RECALL_POOL_WORKERS; read once at import, restart to apply.
+try:
+    from yadgar.config import get_settings as _get_settings
+
+    _HOOK_RECALL_POOL_WORKERS = int(_get_settings().HOOK_RECALL_POOL_WORKERS)
+except Exception:  # noqa: BLE001 — defensive: never block route import on config load
+    _HOOK_RECALL_POOL_WORKERS = 1
 _HOOK_RECALL_POOL = ThreadPoolExecutor(
     max_workers=_HOOK_RECALL_POOL_WORKERS, thread_name_prefix="hook-recall"
 )
@@ -272,7 +288,13 @@ def _hook_observe_response(hook: str, status_code: int) -> None:
 # hangs. The container healthcheck uses --health-timeout 5s; with db+embed probed
 # CONCURRENTLY (asyncio.gather, ~2s not the old serial ~4s) plus this hard cap, the
 # handler returns within budget (degraded/503 on timeout, never a hang).
-_HEALTH_TIMEOUT_SEC = 3.0
+# v5.95: config.yaml-authoritative (HEALTH_HANDLER_TIMEOUT_SEC) — read at use-site
+# via get_settings() so a yaml/UI change takes effect on restart.
+def _health_handler_timeout_sec() -> float:
+    from yadgar.config import get_settings  # noqa: PLC0415 -- avoid import cycle
+
+    return float(get_settings().HEALTH_HANDLER_TIMEOUT_SEC)
+
 
 # #74 fix #1 — readiness anti-flap. A single transient dependency-probe miss
 # (busy backend timing out the 2s embed probe once) must NOT flip /health to 503
@@ -286,11 +308,12 @@ _readiness_consecutive_failures: int = 0
 
 
 def _readiness_fail_threshold() -> int:
-    try:
-        n = int(os.environ.get("YADGAR_HEALTH_READINESS_FAIL_THRESHOLD", "3"))
-    except ValueError:
-        n = 3
-    return max(1, n)
+    return max(
+        1,
+        resolve_knob(
+            "YADGAR_HEALTH_READINESS_FAIL_THRESHOLD", "HEALTH_READINESS_FAIL_THRESHOLD", int, 3
+        ),
+    )
 
 
 def _reset_readiness_state() -> None:
@@ -330,7 +353,11 @@ async def _build_health_payload() -> dict:
     embed_ok = None
 
     # §9 Q5: async httpx client to avoid blocking the event loop.
-    async with httpx.AsyncClient(timeout=2.0) as _aclient:
+    # v5.95: probe timeout config.yaml-authoritative (HEALTH_PROBE_TIMEOUT_SEC).
+    from yadgar.config import get_settings  # noqa: PLC0415 -- avoid import cycle
+
+    _probe_timeout = float(get_settings().HEALTH_PROBE_TIMEOUT_SEC)
+    async with httpx.AsyncClient(timeout=_probe_timeout) as _aclient:
         tasks = []
         if db_url:
             tasks.append(("db", _probe_dependency(_aclient, db_url)))
@@ -410,7 +437,9 @@ async def health_check(request: Request) -> JSONResponse:
         try:
             # C2 P1: hard outer bound — a hung probe trips this and yields the
             # degraded/503 path below instead of stalling the handler.
-            payload = await asyncio.wait_for(_build_health_payload(), timeout=_HEALTH_TIMEOUT_SEC)
+            payload = await asyncio.wait_for(
+                _build_health_payload(), timeout=_health_handler_timeout_sec()
+            )
         except TimeoutError:
             payload = {
                 "status": "degraded",

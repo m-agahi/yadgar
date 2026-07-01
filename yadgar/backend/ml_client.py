@@ -16,6 +16,8 @@ import time
 from collections.abc import Callable
 from typing import Protocol, runtime_checkable
 
+from yadgar.config import resolve_knob
+
 
 def _rpc_span(name: str, attributes: dict | None = None):
     """Context manager: OTel span for RemoteMLClient RPC calls.
@@ -113,16 +115,7 @@ def _idle_eviction_seconds() -> int:
     Returns 0 when YADGAR_MODEL_IDLE_EVICTION_SECONDS is unset, empty, or
     unparseable — meaning 'never evict' (safe default).
     """
-    raw = os.environ.get("YADGAR_MODEL_IDLE_EVICTION_SECONDS", "0")
-    try:
-        return int(raw)
-    except (ValueError, TypeError):  # fmt: skip
-        logger.warning(
-            "YADGAR_MODEL_IDLE_EVICTION_SECONDS=%r is not a valid integer; "
-            "defaulting to 0 (never evict)",
-            raw,
-        )
-        return 0
+    return resolve_knob("YADGAR_MODEL_IDLE_EVICTION_SECONDS", "MODEL_IDLE_EVICTION_SECONDS", int, 0)
 
 
 # ---------------------------------------------------------------------------

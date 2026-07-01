@@ -5,6 +5,86 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 > Snapshots from v5.0.1 onward are captured from `yadgar stats` at release time.
 > Earlier versions have no per-release snapshot (the practice started 2026-05-16).
 
+## [5.95.0] - 2026-07-01
+
+### Daemon stability: bound offload pool via TOOL_POOL_WORKERS knob + config integrity
+
+Completes the `--cpus 1` loop-starvation fix: the hook-recall pool was capped in v5.94
+(ADR-0025, HOOK_RECALL_POOL_WORKERS default 1), but the offload tool pool still
+defaulted to 8 workers. Under MCP burst (recall/wiki_query/adr_add/checkpoint), 8
+threads compete for 1 CPU → event-loop starvation → P0 health-kill (status=137).
+
+**Config integrity — the phantom-knob fix (end-to-end).** The `config_registry`
+made `/admin/config` yaml-aware for *display*, but ~20 consumers still read
+`os.environ.get()` **env-ONLY** — so config.yaml/UI showed+wrote knobs the code
+never read. Proof: `offload_tools: true` was silently ignored → offload ran OFF →
+the `--cpus 1` core froze (#72). `get_settings()` *is* yaml-aware
+(`settings_customise_sources` → `YamlConfigSource`, precedence env > yaml >
+default), so the fix wires each consumer through it via a shared hybrid resolver.
+
+#### Fixed
+- **`TOOL_POOL_WORKERS` default 8→2**: bounded offload pool on the `--cpus 1` core.
+  `_pool_workers()` now reads live env → Settings → default(2), preserving test
+  override and config.yaml precedence. (`yadgar/server/_offload.py`)
+- **`RECALL_HEAVY_CONCURRENCY` default 3→1**: in lockstep with `TOOL_POOL_WORKERS`
+  dropping to 2 — must be strictly < pool or the rerank fan-out gate is a no-op
+  (#74 regression). (`yadgar/config.py`)
+- **Offload ARMED via config.yaml (#72 freeze fix).** `offload_enabled()` was
+  reverted to an env-ONLY read, so `offload_tools: true` in config.yaml was
+  ignored. It now resolves env > config.yaml > default(False), so
+  `offload_tools: true` actually arms the offload path. Default stays OFF — arming
+  is **UNVALIDATED live** (it was always OFF); soak needed. One-line disarm:
+  config.yaml `offload_tools: false`. (`yadgar/server/_offload.py`)
+
+#### Added — config-integrity wiring (env > config.yaml > default)
+- **Shared resolver `resolve_knob(env, FIELD, parse, default)`** (`yadgar/config.py`):
+  live env first (test/container override, no `get_settings()` lru_cache lag),
+  then `get_settings().<FIELD>` (yaml-authoritative), then a safe literal.
+  Swallows a malformed env value and a missing Settings field — never hard-fails a
+  consumer on a broken config surface.
+- **All 6 `_offload.py` accessors** wired to `resolve_knob`: `OFFLOAD_TOOLS`,
+  `TOOL_POOL_WORKERS`, `TOOL_TIMEOUT_SEC`, `RECALL_HEAVY_CONCURRENCY` (clamp to
+  `[1, pool]` kept outside the resolver), `RERANK_GATE_ACQUIRE_TIMEOUT_SEC`,
+  `TOOL_SATURATION_GRACE_SEC`.
+- **Backend cluster** (`embed_service.py`, `ml_client.py`): `CE_CACHE_ENABLED`,
+  `CE_CACHE_MAX_ENTRIES`, `EMBED_CACHE_ENABLED`, `EMBED_CACHE_MAX_ENTRIES`,
+  `CACHE_SNAPSHOT_DIR`, `CACHE_SNAPSHOT_INTERVAL_SEC`, `EMBEDDING_MODEL` (all
+  consumer sites), `BACKEND_LOG_LEVEL`, `LOG_FORMAT` (embed_service site),
+  `MODEL_IDLE_EVICTION_SECONDS`.
+- **Core cluster**: `LOG_FORMAT` (`log_config.py`, `_app.py`), `METRICS_ENABLED`
+  (`metrics.py`), `DEBUG_APIS_ENABLED` (`auth_middleware.py`, `routes/logs.py`),
+  `UPDATE_DEBUG_APIS_ENABLED` (`control_update.py`), `AUTO_CAPTURE_RATE_LIMIT`
+  (`_state.py`), `SENSITIVE_LOCK_TTL_SEC` (`sensitive_lock.py`),
+  `HEALTH_READINESS_FAIL_THRESHOLD` (`server/http.py`), `ALLOWED_ORIGINS`
+  (`_app.py`), `UPDATE_CHECK_ON_START` (`lifecycle.py`).
+- **`MODEL_IDLE_EVICTION_SECONDS` promoted to a full knob** (was registry-only,
+  env-only): added Settings field + `FIELD_META` + `docs/configuration.md` row +
+  `CAPABILITY_REGISTRY` reference (the registry `ConfigEntry` already existed).
+  Now config.yaml-authoritative.
+
+#### Added — anti-recurrence ratchet + tests
+- **`test_no_phantom_knobs.py`** (the #78-style ratchet for config): FAILS if any
+  user-tunable Settings field (one with a `FIELD_META` entry) is consumed only via
+  `os.environ`/`os.getenv` and never via `get_settings()`, excluding an explicit
+  INFRA/SECRET allowlist (PORT/HOST/DB_URL/EMBED_URL/DATA_DIR/DB_PATH/
+  MCP_AUTH_TOKEN/DB_USER/DB_PASS/RW_*/RO_*/REQUIRE_AUTH/ALLOW_ROOT). Once green,
+  permanently blocks new phantom knobs.
+- New tests: `test_config_resolve.py`, `test_offload_config_integrity.py`,
+  `test_backend_config_integrity.py`, `test_core_config_integrity.py` — each
+  asserts config.yaml is respected *and* env still overrides.
+- `TOOL_POOL_WORKERS` and `RECALL_HEAVY_CONCURRENCY` added to docs/configuration.md
+  (Tool-Body Offload Pool section).
+- New test: `yadgar/tests/test_tool_pool.py` (A: default==2, B: env override, C: peak inflight ≤ knob).
+
+#### Notes
+- **`MEMORY_BLOCK_HARD_CHAR_LIMIT` re-classified** from "delete-if-dead" to **KEEP**:
+  it is already correctly wired (`storage/blocks.py` reads it via `get_settings()`),
+  so it is not a phantom knob and needs no change.
+- **Offload arming is unvalidated live** (see Fixed) — soak before relying on it;
+  disarm via config.yaml `offload_tools: false`.
+
+---
+
 ## [5.94.0] - 2026-07-01
 
 ### Daemon stability: hook-recall freeze fix (#81) + loop-freeze observability (#80)

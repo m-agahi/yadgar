@@ -21,13 +21,13 @@ Registered as a side-effect import in yadgar/server/__init__.py.
 from __future__ import annotations
 
 import logging
-import os
 
 import httpx
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from yadgar import __version__
+from yadgar.config import resolve_knob
 from yadgar.server._app import mcp_server
 from yadgar.tracing import trace_span
 
@@ -36,7 +36,12 @@ logger = logging.getLogger(__name__)
 
 def _is_debug_apis_enabled() -> bool:
     """Return True when YADGAR_UPDATE_DEBUG_APIS_ENABLED=on (case-insensitive)."""
-    return os.environ.get("YADGAR_UPDATE_DEBUG_APIS_ENABLED", "off").lower() == "on"
+    return (
+        resolve_knob(
+            "YADGAR_UPDATE_DEBUG_APIS_ENABLED", "UPDATE_DEBUG_APIS_ENABLED", str, "off"
+        ).lower()
+        == "on"
+    )
 
 
 async def control_update_handler(request: Request) -> JSONResponse:

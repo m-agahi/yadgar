@@ -9,7 +9,6 @@ resolves them correctly.
 from __future__ import annotations
 
 import asyncio
-import os
 import threading
 from collections import OrderedDict, deque
 from typing import TYPE_CHECKING
@@ -18,6 +17,7 @@ from yadgar.astrocyte_pool import AstrocytePool
 from yadgar.causal_discovery import CausalDiscovery
 from yadgar.cls_store import DualStoreCLS
 from yadgar.cognitive_map import CognitiveMap
+from yadgar.config import resolve_knob
 from yadgar.consolidation import ConsolidationScheduler
 from yadgar.curation import MemoryCurator
 from yadgar.embeddings import EmbeddingEngine
@@ -97,9 +97,14 @@ _action_batch_lock = asyncio.Lock()
 _project_roots: set[str] = set()
 
 # §7 Auto-capture rate limiter (token-bucket, keyed on directory)
-_auto_capture_limiter = TokenBucketRateLimiter(
-    max_per_minute=int(os.environ.get("YADGAR_AUTO_CAPTURE_RATE_LIMIT", "30"))
-)
+
+
+def _get_auto_capture_rate_limit() -> int:
+    """Resolve AUTO_CAPTURE_RATE_LIMIT via resolve_knob (env > yaml > default 30)."""
+    return resolve_knob("YADGAR_AUTO_CAPTURE_RATE_LIMIT", "AUTO_CAPTURE_RATE_LIMIT", int, 30)
+
+
+_auto_capture_limiter = TokenBucketRateLimiter(max_per_minute=_get_auto_capture_rate_limit())
 
 # Throttle timestamps: directory → monotonic time (bounded to prevent unbounded growth)
 _last_session_context: OrderedDict[str, float] = OrderedDict()

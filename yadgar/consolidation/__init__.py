@@ -217,13 +217,14 @@ class ConsolidationScheduler(
     def _maybe_auto_vacuum(self) -> None:
         """v4.9: Fire yadgar-vacuum.service if DB is over threshold and in window.
 
-        Cooldown: 6 hours since last auto-fire (in-memory; resets on restart).
+        Cooldown: VACUUM_AUTO_COOLDOWN_HOURS since last auto-fire (in-memory;
+        resets on restart). config.yaml-authoritative (v5.95).
         """
         settings = self._settings
         threshold = settings.VACUUM_AUTO_THRESHOLD_BYTES
 
-        # Cooldown check (6-hour hard-coded per plan)
-        _COOLDOWN_HOURS = 6.0
+        # Cooldown check — config.yaml-authoritative (default 6.0h).
+        _COOLDOWN_HOURS = float(settings.VACUUM_AUTO_COOLDOWN_HOURS)
         if self._last_vacuum_at is not None:
             hours_since = (datetime.now(UTC) - self._last_vacuum_at).total_seconds() / 3600.0
             if hours_since < _COOLDOWN_HOURS:

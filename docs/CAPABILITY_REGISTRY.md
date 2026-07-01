@@ -535,12 +535,12 @@ config knobs.
 
 - **status:** LIVE
 - **category:** retrieval
-- **settings:** `RERANK_BACKEND_TIMEOUT_SEC`, `RERANK_MAX_CONCURRENCY`, `RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC`
+- **settings:** `RERANK_BACKEND_TIMEOUT_SEC`, `RERANK_MAX_CONCURRENCY`, `RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC`, `MODEL_IDLE_EVICTION_SECONDS`
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** —
 - **refs:** `yadgar/backend/embed_service.py`, `yadgar/backend/ml_client.py`
-- **wiring:** `RERANK_MAX_CONCURRENCY` (default 8 — raised from 1 in Fix A O7 in lockstep with `TOOL_POOL_WORKERS`; read by the BACKEND container, needs a backend rebump/env to take effect) and `RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC` (default 2.0) are read at `embed_service` module initialisation to configure the asyncio semaphore that gates concurrent CE/NLI scoring requests. `RERANK_BACKEND_TIMEOUT_SEC` (default 90) is used as the timeout for remote ML backend calls in `LocalMLClient`.
+- **wiring:** `RERANK_MAX_CONCURRENCY` (default 8 — raised from 1 in Fix A O7 in lockstep with `TOOL_POOL_WORKERS`; read by the BACKEND container, needs a backend rebump/env to take effect) and `RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC` (default 2.0) are read at `embed_service` module initialisation to configure the asyncio semaphore that gates concurrent CE/NLI scoring requests. `RERANK_BACKEND_TIMEOUT_SEC` (default 90) is used as the timeout for remote ML backend calls in `LocalMLClient`. `MODEL_IDLE_EVICTION_SECONDS` (default 0 = never evict; v5.95 config-integrity — promoted from env-only to config.yaml-authoritative via `resolve_knob`) is read by `ml_client.py` to evict a loaded model after that many idle seconds.
 - **explanation:** Guards the cross-encoder and NLI inference path against concurrent overload. A semaphore with `RERANK_MAX_CONCURRENCY` slots serialises concurrent scoring requests; if the semaphore cannot be acquired within `RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC` the request is dropped with a counter increment. `RERANK_BACKEND_TIMEOUT_SEC` gives the backend inference itself a hard ceiling before aborting.
 
 ---
@@ -1848,7 +1848,7 @@ config knobs.
 ### CAP-OPS-003 — Vacuum: threshold-driven auto-vacuum backstop
 - **status:** LIVE
 - **category:** ops
-- **settings:** `VACUUM_AUTO_ENABLED`, `VACUUM_AUTO_THRESHOLD_BYTES`, `VACUUM_AUTO_WINDOW_START`, `VACUUM_AUTO_WINDOW_END`, `VACUUM_SNAPSHOT_RETENTION`
+- **settings:** `VACUUM_AUTO_ENABLED`, `VACUUM_AUTO_THRESHOLD_BYTES`, `VACUUM_AUTO_WINDOW_START`, `VACUUM_AUTO_WINDOW_END`, `VACUUM_SNAPSHOT_RETENTION`, `VACUUM_AUTO_COOLDOWN_HOURS`
 - **tools:** `vacuum_now`
 - **migrations:** —
 - **bc:** —
@@ -2046,12 +2046,12 @@ config knobs.
 ### CAP-OPS-021 — Model preload warm-up
 - **status:** LIVE
 - **category:** ops
-- **settings:** `MODEL_PRELOAD`, `MODEL_PRELOAD_DELAY_SEC`
+- **settings:** `MODEL_PRELOAD`, `MODEL_PRELOAD_DELAY_SEC`, `RERANKER_IDLE_UNLOAD_SEC`, `RERANKER_IDLE_CHECK_INTERVAL_SEC`
 - **tools:** —
 - **migrations:** —
 - **bc:** —
 - **refs:** `yadgar/backend/`
-- **wiring:** After daemon startup, a background thread waits `MODEL_PRELOAD_DELAY_SEC` seconds then sends a warm-up request to the ML backend to load rerank models into memory. Controlled by `MODEL_PRELOAD=True` (default). LIVE because the default is True and the daemon starts this thread unconditionally unless `MODEL_PRELOAD=False`.
+- **wiring:** After daemon startup, a background thread waits `MODEL_PRELOAD_DELAY_SEC` seconds then sends a warm-up request to the ML backend to load rerank models into memory. Controlled by `MODEL_PRELOAD=True` (default). LIVE because the default is True and the daemon starts this thread unconditionally unless `MODEL_PRELOAD=False`. The mirror side — the `_reranker_idle_loop()` background thread (`yadgar/server/lifecycle.py`) — sleeps `RERANKER_IDLE_CHECK_INTERVAL_SEC` (default 60) between checks and unloads rerankers after `RERANKER_IDLE_UNLOAD_SEC` (default 600.0) of no recall activity, freeing ~500 MB. Both were hardcoded before v5.95; now config.yaml-authoritative.
 - **explanation:** Triggers eager loading of reranking model weights (cross-encoder/GTE) in the ML backend process immediately after the daemon is healthy, rather than waiting for the first real rerank request. This amortises the cold-start latency (model loading can take 5-30 s on CPU) so the first user `recall()` call does not experience the full model-load delay. `MODEL_PRELOAD_DELAY_SEC` allows the backend to finish its own startup before the warm-up probe arrives.
 
 ### CAP-OPS-022 — CE and embedding LRU cache with snapshot persistence
@@ -2153,16 +2153,16 @@ config knobs.
 - **wiring:** `/api/stats` response is cached in-process for `STATS_CACHE_TTL_S` seconds (default 5 s). The stale wiki count used in signals mode is cached per resolved directory for `STALE_COUNT_CACHE_TTL_S` seconds (default 300 s, module-level dict in `project.py`). Both caches are invalidated on demand or by TTL expiry.
 - **explanation:** Short TTL caches bound the cost of `/api/stats` calls (which enumerate DB metrics) and the stale-wiki-count scan (which walks the archive directory). Without caching, burst traffic from the Control-tab UI or repeated `project_brief()` signals calls would repeatedly recompute the same values. `STATS_CACHE_TTL_S=0` disables the stats cache; `STALE_COUNT_CACHE_TTL_S=0` disables the stale-count cache.
 
-### CAP-OPS-031 — Hook recall timeout budget
+### CAP-OPS-031 — Hook recall timeout budget + bounded pool
 - **status:** LIVE
 - **category:** ops
-- **settings:** `HOOK_RECALL_TIMEOUT_S`
+- **settings:** `HOOK_RECALL_TIMEOUT_S`, `HOOK_RECALL_POOL_WORKERS`
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/hooks/`
-- **wiring:** The `UserPromptSubmit` hook handler wraps `recall()` in `asyncio.wait_for(recall(...), timeout=HOOK_RECALL_TIMEOUT_S)`. On timeout: logs WARN, increments `yadgar_hook_recall_timeout_total{handler=<name>}` counter, and returns empty results to avoid blocking the user prompt. LIVE because hooks are always installed in production.
-- **explanation:** Bounds the latency budget for auto-recall inside hook handlers. Hook recall runs on every user prompt; if the recall path is slow (cold cache, high load), it must not block the user interaction indefinitely. `HOOK_RECALL_TIMEOUT_S` (default 2.0 s) is the hard deadline. Timeouts are observable via the `yadgar_hook_recall_timeout_total` metric, so operators can raise the budget if the timeout rate is too high or lower it to protect latency more aggressively.
+- **refs:** `yadgar/hooks/`, `yadgar/server/http.py`
+- **wiring:** Hook handlers (`prompt-recall`, `instructions-loaded`, `subagent-start`) wrap `recall()` in `asyncio.wait_for(loop.run_in_executor(_HOOK_RECALL_POOL, recall...), timeout=HOOK_RECALL_TIMEOUT_S)`. On timeout: logs WARN, increments `yadgar_hook_recall_timeout_total{handler=<name>}`, returns empty. The recall runs in a DEDICATED BOUNDED `ThreadPoolExecutor` of `HOOK_RECALL_POOL_WORKERS` threads (not `asyncio.to_thread`'s unbounded default executor) — since `run_in_executor` work is uncancellable, bounding the threads prevents a slow leaked recall from cascading into event-loop starvation → P0 SIGKILL (#81 / ADR-0022). LIVE because hooks are always installed in production.
+- **explanation:** Bounds both the LATENCY and the CONCURRENCY of auto-recall inside hook handlers. `HOOK_RECALL_TIMEOUT_S` (default 2.0 s) is the hard per-call deadline. `HOOK_RECALL_POOL_WORKERS` (default 1) caps how many recall threads ever run at once: on the `--cpus 1` core, fewer threads compete less with the event loop, so a box-saturated slow recall cannot starve the loop into a freeze. Read once at import (restart to apply). Both are observable/tunable so operators can trade latency vs. freeze-safety.
 
 ### CAP-OPS-032 — query-routing code and relational keyword lists
 - **status:** LIVE
@@ -2233,7 +2233,7 @@ config knobs.
 ### CAP-OPS-038 — /health endpoint: 200-ok / 503-degraded contract
 - **status:** LIVE
 - **category:** observability
-- **settings:** —
+- **settings:** `HEALTH_HANDLER_TIMEOUT_SEC`, `HEALTH_PROBE_TIMEOUT_SEC`
 - **tools:** —
 - **migrations:** —
 - **bc:** —
@@ -2250,7 +2250,7 @@ config knobs.
 - **bc:** —
 - **refs:** `yadgar/server/_offload.py`, `yadgar/server/_app.py::_tool`, `yadgar/server/lifecycle.py`, `yadgar/server/http.py::_apply_tool_pool_health`
 - **wiring:** `_app._instrumented` is `async def`; when `OFFLOAD_TOOLS` is on it dispatches the trace-wrapped sync tool body onto a bounded `ThreadPoolExecutor(max_workers=TOOL_POOL_WORKERS)` via `loop.run_in_executor`, wrapped in `asyncio.wait_for(TOOL_TIMEOUT_SEC)`, so the asyncio loop stays free to serve `/health`. The in-flight counter is decremented on the WORKER thread at true completion (not coroutine-side) so `pool_saturated()` reflects true occupancy even when a `wait_for` times out and the worker keeps its slot. `/health` (`_apply_tool_pool_health`) goes `status=degraded` → 503 when the pool is saturated for > `TOOL_SATURATION_GRACE_SEC` (completion-staleness), so the P0 `curl -f` health-kill can catch a pool-dead-but-loop-alive daemon (O2). Lifecycle asserts remote engines when offload is on (Claim-1) and tears the pool down on shutdown (O10).
-- **explanation:** Fix A (daemon-offload-A) removes the *cause* of the v5.88 core daemon hang: ~60 sync MCP tool bodies ran INLINE on the single asyncio loop (FastMCP `func_metadata.py:92` sync branch), so a blocking body (the proven inline `git` subprocess) froze the loop and starved `/health`. Default OFF for the first release (proven trigger stays inline, covered by the deployed P0 health-kill); flipped ON after live soak. `TOOL_SATURATION_GRACE_SEC` MUST exceed `TOOL_TIMEOUT_SEC` so legitimate ops keep resetting the staleness clock and only leaked workers trip the O2 503 signal. `TOOL_POOL_WORKERS` is kept in lockstep with the backend `RERANK_MAX_CONCURRENCY` (O7) to avoid rerank 503-storms feeding back into pool exhaustion.
+- **explanation:** Fix A (daemon-offload-A) removes the *cause* of the v5.88 core daemon hang: ~60 sync MCP tool bodies ran INLINE on the single asyncio loop (FastMCP `func_metadata.py:92` sync branch), so a blocking body (the proven inline `git` subprocess) froze the loop and starved `/health`. Default OFF for the first release (proven trigger stays inline, covered by the deployed P0 health-kill); flipped ON after live soak. `TOOL_SATURATION_GRACE_SEC` MUST exceed `TOOL_TIMEOUT_SEC` so legitimate ops keep resetting the staleness clock and only leaked workers trip the O2 503 signal. `TOOL_POOL_WORKERS` (v5.95: default 8→2) is bounded to minimize CPU competition on the `--cpus 1` core; kept strictly greater than `RECALL_HEAVY_CONCURRENCY` to preserve the rerank fan-out gate (CAP-OPS-040).
 
 ### CAP-OPS-040 — Offload salvage: liveness/readiness split + rerank fan-out gate (#74)
 - **status:** LIVE
@@ -2260,8 +2260,8 @@ config knobs.
 - **migrations:** —
 - **bc:** —
 - **refs:** `yadgar/server/_offload.py::acquire_rerank_slot`, `yadgar/backend/ml_client.py::RemoteMLClient._rerank_rpc`, `yadgar/server/http.py::liveness_check`, `yadgar/server/http.py::_build_health_payload`, `yadgar/auth_middleware.py::_EXEMPT_PATHS`
-- **wiring:** A process-singleton `threading.Semaphore(RECALL_HEAVY_CONCURRENCY)` in `_offload` gates every backend `/rerank` POST issued by `RemoteMLClient._rerank_rpc` (HALF_OPEN breaker probes bypass it; a gate-acquire timeout of `RERANK_GATE_ACQUIRE_TIMEOUT_SEC` degrades to `None` → pre-rerank order, reusing the breaker-open path — never blocking a worker on the gate past the tool timeout). `RECALL_HEAVY_CONCURRENCY` defaults to 3, strictly below `TOOL_POOL_WORKERS`, so N offload workers cannot drive N concurrent backend reranks. The new `GET /health/live` (`liveness_check`, auth-exempt) answers from the loop alone — 200 normally, 503 ONLY when `pool_saturated()` (in-memory counters, no backend probe) — and is what the container P0 `--health-on-failure=kill` healthcheck watches. `GET /health` (readiness) keeps the db+embed probe but anti-flaps: it degrades to 503 only after `HEALTH_READINESS_FAIL_THRESHOLD` CONSECUTIVE probe misses (a single success resets), so a transiently-busy backend can't 503-storm.
-- **explanation:** #74 — with `OFFLOAD_TOOLS` on, the freed loop let up to `TOOL_POOL_WORKERS`(8) concurrent recalls drive 8 concurrent backend `/rerank` calls. The backend (fewer cores than 8) saturated → its `/health` slowed → the core's readiness `/health` probed it with a 2s timeout → timed out → core returned 503 → the container `curl -f` healthcheck failed → P0 `--health-on-failure=kill` SIGKILLed the core → restart loop. Two coupled defects: liveness was coupled to a busy dependency, and the rerank fan-out was unbounded. The fix decouples liveness from the backend (P0 watches `/health/live`, which never probes the backend, so backend busyness can never SIGKILL the core) while preserving the O2 P0-kill (a genuinely wedged pool still trips `pool_saturated()` → liveness 503), anti-flaps readiness (monitoring signal, no longer the P0 trigger), bounds the fan-out to the backend's real serving capacity, and reconciles the timeout cascade (`TOOL_SATURATION_GRACE_SEC` > `TOOL_TIMEOUT_SEC` ≥ `RERANK_BACKEND_TIMEOUT_SEC`) so a `wait_for` cancellation can't leak an uncancellable worker mid-rerank.
+- **wiring:** A process-singleton `threading.Semaphore(RECALL_HEAVY_CONCURRENCY)` in `_offload` gates every backend `/rerank` POST issued by `RemoteMLClient._rerank_rpc` (HALF_OPEN breaker probes bypass it; a gate-acquire timeout of `RERANK_GATE_ACQUIRE_TIMEOUT_SEC` degrades to `None` → pre-rerank order, reusing the breaker-open path — never blocking a worker on the gate past the tool timeout). `RECALL_HEAVY_CONCURRENCY` defaults to 1 (v5.95: 3→1, in lockstep with `TOOL_POOL_WORKERS` 8→2), strictly below `TOOL_POOL_WORKERS` (2), so N offload workers cannot drive N concurrent backend reranks. The new `GET /health/live` (`liveness_check`, auth-exempt) answers from the loop alone — 200 normally, 503 ONLY when `pool_saturated()` (in-memory counters, no backend probe) — and is what the container P0 `--health-on-failure=kill` healthcheck watches. `GET /health` (readiness) keeps the db+embed probe but anti-flaps: it degrades to 503 only after `HEALTH_READINESS_FAIL_THRESHOLD` CONSECUTIVE probe misses (a single success resets), so a transiently-busy backend can't 503-storm.
+- **explanation:** #74 — with `OFFLOAD_TOOLS` on, the freed loop let up to `TOOL_POOL_WORKERS` (was 8, now 2 after v5.95) concurrent recalls drive concurrent backend `/rerank` calls. The backend (fewer cores than 8) saturated → its `/health` slowed → the core's readiness `/health` probed it with a 2s timeout → timed out → core returned 503 → the container `curl -f` healthcheck failed → P0 `--health-on-failure=kill` SIGKILLed the core → restart loop. Two coupled defects: liveness was coupled to a busy dependency, and the rerank fan-out was unbounded. The fix decouples liveness from the backend (P0 watches `/health/live`, which never probes the backend, so backend busyness can never SIGKILL the core) while preserving the O2 P0-kill (a genuinely wedged pool still trips `pool_saturated()` → liveness 503), anti-flaps readiness (monitoring signal, no longer the P0 trigger), bounds the fan-out to the backend's real serving capacity, and reconciles the timeout cascade (`TOOL_SATURATION_GRACE_SEC` > `TOOL_TIMEOUT_SEC` ≥ `RERANK_BACKEND_TIMEOUT_SEC`) so a `wait_for` cancellation can't leak an uncancellable worker mid-rerank.
 
 ### CAP-VIZ-001 — Wiki node category colors
 

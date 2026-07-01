@@ -61,6 +61,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 import yadgar.paths as _paths
+from yadgar.config import resolve_knob
 
 # I14 — max chars for traceback in structured JSON (constant for test import)
 TRACEBACK_MAX_CHARS: int = 2000
@@ -924,7 +925,7 @@ def configure_logging(
         uvicorn, uvicorn.access, uvicorn.error, mcp, fastmcp, httpx, starlette
     """
     if log_format is None:
-        log_format = os.environ.get("YADGAR_LOG_FORMAT", "json").lower()
+        log_format = resolve_knob("YADGAR_LOG_FORMAT", "LOG_FORMAT", str, "json").lower()
 
     numeric_level = getattr(logging, level.upper(), logging.WARNING)
     use_json = log_format == "json"
