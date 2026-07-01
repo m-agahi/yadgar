@@ -35,6 +35,7 @@ import time
 from pathlib import Path
 
 import yadgar.paths as _paths
+from yadgar.config import resolve_knob
 
 logger = logging.getLogger(__name__)
 
@@ -52,15 +53,7 @@ def lock_path() -> Path:
 
 def _ttl_seconds() -> float:
     """Read SENSITIVE_LOCK_TTL_SEC live (bypasses lru_cache for testability)."""
-    raw = os.environ.get("YADGAR_SENSITIVE_LOCK_TTL_SEC")
-    if raw is not None:
-        try:
-            return float(raw)
-        except ValueError:
-            pass
-    from yadgar.config import Settings  # noqa: PLC0415
-
-    return float(Settings().SENSITIVE_LOCK_TTL_SEC)
+    return float(resolve_knob("YADGAR_SENSITIVE_LOCK_TTL_SEC", "SENSITIVE_LOCK_TTL_SEC", int, 7200))
 
 
 def _pid_alive(pid: int) -> bool:

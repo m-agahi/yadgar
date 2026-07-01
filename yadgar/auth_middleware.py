@@ -20,6 +20,8 @@ import time
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from yadgar.config import resolve_knob
+
 logger = logging.getLogger(__name__)
 
 # Paths that bypass auth even when REQUIRE_AUTH=True.
@@ -219,9 +221,9 @@ def _is_debug_api_path(path: str, method: str = "GET") -> bool:
 
 def _is_debug_apis_enabled() -> bool:
     """Return True when YADGAR_DEBUG_APIS_ENABLED is truthy (on/true/1/yes, case-insensitive)."""
-    return os.environ.get("YADGAR_DEBUG_APIS_ENABLED", "false").lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
+    return resolve_knob(
+        "YADGAR_DEBUG_APIS_ENABLED",
+        "DEBUG_APIS_ENABLED",
+        lambda s: s.strip().lower() in ("1", "true", "yes", "on"),
+        False,
     )

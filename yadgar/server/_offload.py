@@ -27,45 +27,56 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import functools
-import os
 import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+from yadgar.config import resolve_knob
+
 # ---------------------------------------------------------------------------
-# Knob resolution (I25 three-way style; live os.environ read for test override)
+# Knob resolution (I25/I32 three-way: env > config.yaml > default).
+# All six accessors resolve through resolve_knob() so config.yaml is
+# authoritative (v5.95.0 config-integrity) while the live os.environ read stays
+# first for the test/container override escape-hatch.
 # ---------------------------------------------------------------------------
 
 _TRUTHY = ("1", "true", "yes", "on")
 
 
-def offload_enabled() -> bool:
-    """True if tool-body offload is enabled. Default OFF (first release).
+def _parse_bool(raw: str) -> bool:
+    return raw.strip().lower() in _TRUTHY
 
-    Env-only read (live, for test override) — the config.yaml layer is NOT
-    consulted here, matching the existing live-override convention (e.g.
-    YADGAR_AUTO_CAPTURE_RATE_LIMIT). Production flips this via container env, so
-    the real path is unaffected; a yaml-only OFFLOAD_TOOLS would show in
-    /admin/config but the daemon would run OFF.
+
+def offload_enabled() -> bool:
+    """True if tool-body offload is enabled.
+
+    Resolves env > config.yaml > default(False). config.yaml `offload_tools: true`
+    ARMS the offload path (the v5.95.0 fix for #72 — previously this was env-ONLY
+    so a yaml `offload_tools:true` was silently ignored and offload ran OFF while
+    the --cpus 1 core froze). Env override (YADGAR_OFFLOAD_TOOLS) still wins so a
+    container/test can force it either way. Default stays OFF: arming is
+    UNVALIDATED live — the one-line disarm is config.yaml `offload_tools: false`.
     """
-    return os.environ.get("YADGAR_OFFLOAD_TOOLS", "0").strip().lower() in _TRUTHY
+    return resolve_knob("YADGAR_OFFLOAD_TOOLS", "OFFLOAD_TOOLS", _parse_bool, False)
 
 
 def _pool_workers() -> int:
-    try:
-        n = int(os.environ.get("YADGAR_TOOL_POOL_WORKERS", "8"))
-    except ValueError:
-        n = 8
-    return max(1, n)
+    """Resolve TOOL_POOL_WORKERS: env > config.yaml > default(2).
+
+    Live env read is first so tests can override after module import without
+    waiting for get_settings() lru_cache to be cleared. The Settings fallback
+    makes config.yaml authoritative in production. Default 2 keeps pool
+    competition on the --cpus-1 core minimal (sibling of the hook-recall pool
+    fix, ADR-0025).
+    """
+    return max(1, resolve_knob("YADGAR_TOOL_POOL_WORKERS", "TOOL_POOL_WORKERS", int, 2))
 
 
 def _tool_timeout_sec() -> float:
-    try:
-        return float(os.environ.get("YADGAR_TOOL_TIMEOUT_SEC", "30"))
-    except ValueError:
-        return 30.0
+    """Per-tool offload timeout: env > config.yaml > default(95.0)."""
+    return resolve_knob("YADGAR_TOOL_TIMEOUT_SEC", "TOOL_TIMEOUT_SEC", float, 95.0)
 
 
 def _heavy_concurrency() -> int:
@@ -78,13 +89,12 @@ def _heavy_concurrency() -> int:
 
     Default is CONSERVATIVE and strictly below the pool size — the binding
     constraint is backend serving capacity, NOT TOOL_POOL_WORKERS. A default ==
-    pool would make the gate a no-op. Clamped to [1, pool_workers].
+    pool would make the gate a no-op. Resolves env > config.yaml > default(1),
+    then clamps to [1, pool_workers] (the clamp is consumer logic, applied OUTSIDE
+    resolve_knob).
     """
-    try:
-        n = int(os.environ.get("YADGAR_RECALL_HEAVY_CONCURRENCY", "3"))
-    except ValueError:
-        n = 3
-    return max(1, min(n, _pool_workers()))
+    raw = resolve_knob("YADGAR_RECALL_HEAVY_CONCURRENCY", "RECALL_HEAVY_CONCURRENCY", int, 1)
+    return max(1, min(int(raw), _pool_workers()))
 
 
 def _rerank_gate_acquire_timeout_sec() -> float:
@@ -93,11 +103,11 @@ def _rerank_gate_acquire_timeout_sec() -> float:
     Bounded so a worker parked on the gate cannot hold its pool slot past the
     tool timeout (which would leak it — fix #3). On timeout the caller degrades
     (skips rerank → pre-rerank order), reusing the breaker-open path.
+    Resolves env > config.yaml > default(2.0).
     """
-    try:
-        return float(os.environ.get("YADGAR_RERANK_GATE_ACQUIRE_TIMEOUT_SEC", "2.0"))
-    except ValueError:
-        return 2.0
+    return resolve_knob(
+        "YADGAR_RERANK_GATE_ACQUIRE_TIMEOUT_SEC", "RERANK_GATE_ACQUIRE_TIMEOUT_SEC", float, 2.0
+    )
 
 
 def _saturation_grace_sec() -> float:
@@ -106,11 +116,11 @@ def _saturation_grace_sec() -> float:
     MUST be > the wait_for timeout so a legit op that completes within the timeout
     keeps resetting last_completion_ts (no false degrade), while a leaked worker
     thread (op exceeds timeout, slot held) eventually trips the signal.
+    Resolves env > config.yaml > default(120.0).
     """
-    try:
-        return float(os.environ.get("YADGAR_TOOL_SATURATION_GRACE_SEC", "45"))
-    except ValueError:
-        return 45.0
+    return resolve_knob(
+        "YADGAR_TOOL_SATURATION_GRACE_SEC", "TOOL_SATURATION_GRACE_SEC", float, 120.0
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,6 @@
+import os
 import re
+from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -60,6 +62,10 @@ class Settings(BaseSettings):
     MAX_EPISODE_TOKENS: int = 50000
     OVERLAP_TOKENS: int = 2000
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
+    # v5.95: promoted from registry-only (env-only allowlist) to a real Settings
+    # field so config.yaml is authoritative. Seconds a loaded model may sit idle in
+    # the backend before eviction; 0 = never evict (backend RemoteMLClient reads it).
+    MODEL_IDLE_EVICTION_SECONDS: int = 0
     DAEMON_CHECK_INTERVAL: float = 30
     DB_PATH: str = str(_paths.DB_PATH)
 
@@ -359,6 +365,13 @@ class Settings(BaseSettings):
     # Same defensive class as v5.50.10 OTEL shutdown bound. Default 2.0s is conservative
     # (p99=10s; 2s cuts ~1% slowest calls). Raise to 5s if counter rate too high.
     HOOK_RECALL_TIMEOUT_S: float = 2.0
+
+    # v5.95 (#81 residual): size of the dedicated hook-recall thread pool. Hook
+    # recalls run bounded here so a slow uncancellable recall cannot cascade into
+    # event-loop starvation. 1 minimizes CPU competition with the loop on the
+    # --cpus-1 core (freeze-safest); raise only if hook serialization is a
+    # bottleneck. Read once at import (restart to apply).
+    HOOK_RECALL_POOL_WORKERS: int = 1
 
     # v5.51.0: /api/stats TTL cache (I25 three-way registered).
     # Seconds before a cached /api/stats result is invalidated and recomputed.
@@ -728,17 +741,19 @@ class Settings(BaseSettings):
     #   after live soak (the proven loop-block trigger stays inline until then,
     #   covered by the deployed P0 health-kill backstop).
     OFFLOAD_TOOLS: bool = False
-    # Bounded worker-pool size — the cap IS the concurrency control. Keep in
-    # lockstep with the backend RERANK_MAX_CONCURRENCY so N-parallel offload does
-    # not cause rerank 503-storms (O7).
-    TOOL_POOL_WORKERS: int = 8
+    # v5.95: dropped 8 → 2. On the --cpus-1 core, 8 offload threads competing
+    # for one CPU causes event-loop starvation under MCP burst → P0 health-kill.
+    # 2 keeps competition minimal; raise via config.yaml if tool serialization
+    # is a bottleneck. Keep in lockstep with RECALL_HEAVY_CONCURRENCY (must be >).
+    TOOL_POOL_WORKERS: int = 2
     # #74 fix #2 — heavy-rerank fan-out gate. Process-wide cap on concurrent
     # backend /rerank calls the core issues. The binding constraint is the
     # BACKEND's serving capacity (fewer cores than TOOL_POOL_WORKERS), NOT the
     # pool size. MUST be strictly < TOOL_POOL_WORKERS (else the gate is a no-op
     # and N workers saturate the backend → slow /health → core 503 → P0 kill) and
-    # ≤ RERANK_MAX_CONCURRENCY. Conservative default 3.
-    RECALL_HEAVY_CONCURRENCY: int = 3
+    # ≤ RERANK_MAX_CONCURRENCY. v5.95: dropped 3 → 1 (pool dropped 8→2; keeping
+    # heavy < pool preserves the gate; with pool=2 heavy=1 is the only valid non-no-op).
+    RECALL_HEAVY_CONCURRENCY: int = 1
     # Seconds a worker waits for a heavy-rerank slot before degrading (skip rerank
     # → pre-rerank order). Bounded so a gated worker never holds its pool slot past
     # the tool timeout (which would leak it). Mirrors the breaker probe timeout.
@@ -753,6 +768,22 @@ class Settings(BaseSettings):
     # before /health degrades → 503. MUST be > TOOL_TIMEOUT_SEC so legit ops keep
     # resetting the clock and only leaked workers trip the signal.
     TOOL_SATURATION_GRACE_SEC: float = 120.0
+
+    # v5.95 config-integrity Phase 4 — hot-path literals promoted to knobs so ops
+    # can tune them without a rebuild. Each is read via get_settings() at the
+    # consumer, so config.yaml is authoritative (and the phantom-knob ratchet
+    # covers them).
+    # Reranker idle-unload: free ~500 MB after this many idle seconds of no recall.
+    RERANKER_IDLE_UNLOAD_SEC: float = 600.0
+    # Interval between reranker idle-unload checks (background thread sleep).
+    RERANKER_IDLE_CHECK_INTERVAL_SEC: int = 60
+    # Outer hard bound on the whole /health handler body (never exceed even if a
+    # dependency probe hangs). Container healthcheck uses --health-timeout 5s.
+    HEALTH_HANDLER_TIMEOUT_SEC: float = 3.0
+    # Per-dependency (db/embed) probe HTTP client timeout inside /health.
+    HEALTH_PROBE_TIMEOUT_SEC: float = 2.0
+    # Auto-vacuum cooldown: hours since the last auto-fire before another may fire.
+    VACUUM_AUTO_COOLDOWN_HOURS: float = 6.0
 
     # backend v5.5.0 — model preload warm-up
     MODEL_PRELOAD: bool = (
@@ -917,3 +948,53 @@ class Settings(BaseSettings):
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()
+
+
+# Named tuple: `except _KNOB_PARSE_ERRORS:` survives py3.14 ruff-format (an inline
+# paren-tuple is rewritten to the PEP-758 bare form the older AST hooks reject).
+_KNOB_PARSE_ERRORS: tuple[type[Exception], ...] = (ValueError, TypeError)
+
+
+def resolve_knob[T](
+    env_name: str,
+    field_name: str,
+    parse: Callable[[str], T],
+    default: T,
+) -> T:
+    """Resolve a tunable knob: live env > get_settings().<FIELD> > literal default.
+
+    The DRY implementation of the v5.95.0 config-integrity read pattern. Consumers
+    that historically did `os.environ.get("YADGAR_X", ...)` (env-ONLY — the phantom
+    knob bug: config.yaml/UI showed+wrote values the code never read) call this
+    instead so config.yaml becomes authoritative WITHOUT losing the live-env
+    override.
+
+    Precedence + rationale:
+      1. Live `os.environ[env_name]` FIRST — read directly (not via get_settings)
+         so a test/container override applies immediately, bypassing the
+         get_settings() lru_cache lag. `parse` wraps ONLY this raw string; a
+         ValueError/TypeError from a malformed env value is swallowed (falls
+         through), never crashes the consumer.
+      2. `get_settings().<field_name>` — the yaml-aware Settings layer
+         (YamlConfigSource, precedence env>yaml>default). This is what makes a
+         config.yaml value actually take effect. Already typed — not re-parsed.
+         A missing field (AttributeError) or any Settings error falls through.
+      3. `default` — a safe literal so the consumer can never hard-fail on a
+         broken config surface.
+
+    Note: callers that additionally CLAMP a value (e.g. min(x, pool_workers))
+    must apply the clamp AFTER resolve_knob — the clamp is consumer logic, not
+    part of the three-way resolution.
+    """
+    raw = os.environ.get(env_name)
+    if raw is not None:
+        try:
+            return parse(raw)
+        # Malformed env value → fall through to Settings. Specific catch via the named
+        # constant (see _KNOB_PARSE_ERRORS); keeps the v5.46.16 specific-catch convention.
+        except _KNOB_PARSE_ERRORS:
+            pass
+    try:
+        return getattr(get_settings(), field_name)
+    except Exception:  # noqa: BLE001 -- never hard-fail a consumer on config surface
+        return default

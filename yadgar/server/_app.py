@@ -9,7 +9,7 @@ import os
 
 from mcp.server.fastmcp import FastMCP
 
-from yadgar.config import get_settings
+from yadgar.config import get_settings, resolve_knob
 from yadgar.tracing import setup_tracing
 
 settings = get_settings()
@@ -24,7 +24,7 @@ settings = get_settings()
 try:
     from yadgar.log_config import configure_logging as _configure_logging  # noqa: PLC0415
 
-    _log_format = os.environ.get("YADGAR_LOG_FORMAT", "json")
+    _log_format = resolve_knob("YADGAR_LOG_FORMAT", "LOG_FORMAT", str, "json")
     _log_level = os.environ.get(
         "YADGAR_CORE_LOG_LEVEL", os.environ.get("CORE_LOG_LEVEL", "WARNING")
     )
@@ -73,7 +73,7 @@ mcp_server = FastMCP(
 # ── CORS: default-deny; configurable via YADGAR_ALLOWED_ORIGINS ───────────────
 def _get_allowed_origins() -> list[str]:
     """Read allowed origins from config. Default: loopback only."""
-    raw = os.environ.get("YADGAR_ALLOWED_ORIGINS", "")
+    raw = resolve_knob("YADGAR_ALLOWED_ORIGINS", "ALLOWED_ORIGINS", str, "")
     if raw:
         return [o.strip() for o in raw.split(",") if o.strip()]
     return [

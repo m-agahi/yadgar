@@ -2,8 +2,8 @@
 
 The offload (YADGAR_OFFLOAD_TOOLS=on) frees the loop, so up to TOOL_POOL_WORKERS
 recalls run concurrently → that many concurrent backend /rerank requests. The
-backend has FEWER cores than TOOL_POOL_WORKERS; N=8 concurrent cross-encoder
-inferences saturate it → its /health goes slow → the core readiness probe times
+backend has FEWER cores than TOOL_POOL_WORKERS (default 2, v5.95); more concurrent
+cross-encoder inferences saturate it → its /health goes slow → the core readiness probe times
 out → 503 → P0 SIGKILLs the core. The cure is a process-wide semaphore bounding
 how many concurrent backend reranks the core will issue, sized to the backend's
 REAL serving capacity (a conservative default well BELOW the pool size), NOT a
@@ -44,8 +44,8 @@ def _reset_gate(monkeypatch):
 def test_heavy_default_is_below_pool_workers():
     """The gate default MUST be < the pool size, or it is a no-op and #74 is unfixed.
 
-    The binding constraint is backend cores (fewer than TOOL_POOL_WORKERS==8), so a
-    flat 8 would let 8 concurrent reranks saturate the backend exactly as before.
+    The binding constraint is backend cores (fewer than TOOL_POOL_WORKERS==2 after v5.95),
+    so a flat pool would let all workers drive concurrent reranks saturating the backend.
     """
     heavy = _offload._heavy_concurrency()
     pool = _offload._pool_workers()
@@ -57,6 +57,8 @@ def test_heavy_default_is_below_pool_workers():
 
 
 def test_heavy_concurrency_env_override(monkeypatch):
+    # Set pool > heavy so the clamp doesn't mask the override.
+    monkeypatch.setenv("YADGAR_TOOL_POOL_WORKERS", "6")
     monkeypatch.setenv("YADGAR_RECALL_HEAVY_CONCURRENCY", "5")
     assert _offload._heavy_concurrency() == 5
     # Re-create the gate so it picks up the new size; 5 acquires must succeed, 6th fails.
@@ -72,6 +74,8 @@ def test_heavy_concurrency_env_override(monkeypatch):
 
 def test_gate_bounds_concurrent_entries(monkeypatch):
     """At most RECALL_HEAVY_CONCURRENCY callers hold the gate at once."""
+    # Set pool > heavy so the pool clamp does not mask the gate test.
+    monkeypatch.setenv("YADGAR_TOOL_POOL_WORKERS", "4")
     monkeypatch.setenv("YADGAR_RECALL_HEAVY_CONCURRENCY", "3")
     _offload.reset_rerank_gate()
 

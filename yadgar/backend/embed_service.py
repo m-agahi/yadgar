@@ -84,6 +84,7 @@ from yadgar.backend.embed_service_metrics import (
 from yadgar.backend.embed_service_metrics import (
     rerank_semaphore_held as _rerank_semaphore_held,
 )
+from yadgar.config import resolve_knob
 
 if TYPE_CHECKING:
     from yadgar.backend.ml_client import LocalMLClient
@@ -147,36 +148,49 @@ def _shutdown_marker_path() -> str:
 
 
 def _ce_cache_enabled() -> bool:
-    v = os.environ.get("YADGAR_CE_CACHE_ENABLED", "1").lower()
-    return v not in ("0", "false", "no")
+    return resolve_knob(
+        "YADGAR_CE_CACHE_ENABLED",
+        "CE_CACHE_ENABLED",
+        lambda v: v.lower() not in ("0", "false", "no"),
+        True,
+    )
 
 
 def _embed_cache_enabled() -> bool:
-    v = os.environ.get("YADGAR_EMBED_CACHE_ENABLED", "1").lower()
-    return v not in ("0", "false", "no")
+    return resolve_knob(
+        "YADGAR_EMBED_CACHE_ENABLED",
+        "EMBED_CACHE_ENABLED",
+        lambda v: v.lower() not in ("0", "false", "no"),
+        True,
+    )
 
 
 def _ce_cache_max_entries() -> int:
-    return int(os.environ.get("YADGAR_CE_CACHE_MAX_ENTRIES", "100000"))
+    return resolve_knob("YADGAR_CE_CACHE_MAX_ENTRIES", "CE_CACHE_MAX_ENTRIES", int, 100000)
 
 
 def _embed_cache_max_entries() -> int:
-    return int(os.environ.get("YADGAR_EMBED_CACHE_MAX_ENTRIES", "100000"))
+    return resolve_knob("YADGAR_EMBED_CACHE_MAX_ENTRIES", "EMBED_CACHE_MAX_ENTRIES", int, 100000)
 
 
 def _cache_snapshot_dir() -> str:
-    return os.environ.get("YADGAR_CACHE_SNAPSHOT_DIR", "/data/cache")
+    return resolve_knob("YADGAR_CACHE_SNAPSHOT_DIR", "CACHE_SNAPSHOT_DIR", str, "/data/cache")
 
 
 def _cache_snapshot_interval_sec() -> int:
-    return int(os.environ.get("YADGAR_CACHE_SNAPSHOT_INTERVAL_SEC", "600"))
+    return resolve_knob(
+        "YADGAR_CACHE_SNAPSHOT_INTERVAL_SEC", "CACHE_SNAPSHOT_INTERVAL_SEC", int, 600
+    )
 
 
 def _get_ce_checkpoint_hash() -> str:
     """Return a short hash identifying the current CE model checkpoint."""
     import hashlib  # noqa: PLC0415
 
-    model = os.environ.get("YADGAR_CE_MODEL", os.environ.get("YADGAR_EMBEDDING_MODEL", "default"))
+    model = os.environ.get(
+        "YADGAR_CE_MODEL",
+        resolve_knob("YADGAR_EMBEDDING_MODEL", "EMBEDDING_MODEL", str, "default"),
+    )
     return hashlib.sha256(model.encode()).hexdigest()[:16]
 
 
@@ -184,7 +198,7 @@ def _get_embed_checkpoint_hash() -> str:
     """Return a short hash identifying the current embedding model."""
     import hashlib  # noqa: PLC0415
 
-    model = os.environ.get("YADGAR_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+    model = resolve_knob("YADGAR_EMBEDDING_MODEL", "EMBEDDING_MODEL", str, "all-MiniLM-L6-v2")
     return hashlib.sha256(model.encode()).hexdigest()[:16]
 
 
@@ -333,7 +347,9 @@ def _get_engine():
             if _engine is None:
                 from yadgar.embeddings import EmbeddingEngine
 
-                model = os.environ.get("YADGAR_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+                model = resolve_knob(
+                    "YADGAR_EMBEDDING_MODEL", "EMBEDDING_MODEL", str, "all-MiniLM-L6-v2"
+                )
                 _engine = EmbeddingEngine(model)
                 _engine._ensure_model()
     return _engine
@@ -399,11 +415,11 @@ class RerankResponse(BaseModel):
 async def lifespan(app: FastAPI):
     # I14: configure structured logging at backend boot.
     # Format reads from YADGAR_LOG_FORMAT (default 'json' for production).
-    _level = os.environ.get("YADGAR_BACKEND_LOG_LEVEL", "warn").upper()
+    _level = resolve_knob("YADGAR_BACKEND_LOG_LEVEL", "BACKEND_LOG_LEVEL", str, "warn").upper()
     from yadgar.log_config import configure_logging as _configure_logging  # noqa: PLC0415
 
     _configure_logging(
-        log_format=os.environ.get("YADGAR_LOG_FORMAT", "json"),
+        log_format=resolve_knob("YADGAR_LOG_FORMAT", "LOG_FORMAT", str, "json"),
         level=_level,
         process="backend",
     )
@@ -713,7 +729,9 @@ async def rerank(req: RerankRequest, _: None = Depends(_require_admin_token)) ->
         try:
             from opentelemetry import trace as _ot  # noqa: PLC0415
 
-            _model_name = os.environ.get("YADGAR_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+            _model_name = resolve_knob(
+                "YADGAR_EMBEDDING_MODEL", "EMBEDDING_MODEL", str, "all-MiniLM-L6-v2"
+            )
             _tracer = _ot.get_tracer("yadgar.backend.embed_service")
             _ctx = _tracer.start_as_current_span(f"backend.rerank.{req.mode}")
             return _ctx, _model_name

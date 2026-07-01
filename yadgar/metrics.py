@@ -24,7 +24,6 @@ Collectors:
 
 from __future__ import annotations
 
-import os
 import time
 from typing import TYPE_CHECKING
 
@@ -38,6 +37,8 @@ from prometheus_client import (
 )
 from starlette.requests import Request
 from starlette.responses import Response
+
+from yadgar.config import resolve_knob
 
 if TYPE_CHECKING:
     pass
@@ -840,8 +841,12 @@ def loop_record_exception(loop: str, exc: BaseException) -> None:
 
 def _is_metrics_enabled() -> bool:
     """Return True when YADGAR_METRICS_ENABLED is truthy (default: True)."""
-    val = os.environ.get("YADGAR_METRICS_ENABLED", "1")
-    return val.lower() in ("1", "true", "yes", "on")
+    return resolve_knob(
+        "YADGAR_METRICS_ENABLED",
+        "METRICS_ENABLED",
+        lambda s: s.strip().lower() in ("1", "true", "yes", "on"),
+        True,
+    )
 
 
 # ── #80 — Event-loop lag monitor ─────────────────────────────────────────────

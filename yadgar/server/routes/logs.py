@@ -130,13 +130,13 @@ install_ring_handler()
 
 
 def _is_debug_apis_enabled() -> bool:
-    import os  # noqa: PLC0415
+    from yadgar.config import resolve_knob  # noqa: PLC0415
 
-    return os.environ.get("YADGAR_DEBUG_APIS_ENABLED", "false").lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
+    return resolve_knob(
+        "YADGAR_DEBUG_APIS_ENABLED",
+        "DEBUG_APIS_ENABLED",
+        lambda s: s.strip().lower() in ("1", "true", "yes", "on"),
+        False,
     )
 
 

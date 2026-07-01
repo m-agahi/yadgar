@@ -24,6 +24,14 @@ FIELD_META: dict[str, dict[str, object]] = {
         "desc": "Sentence-transformer model (e.g. all-MiniLM-L6-v2, all-mpnet-base-v2)",
         "section": "core",
     },
+    "model_idle_eviction_seconds": {
+        "desc": (
+            "Seconds a loaded model may sit idle in the backend before eviction "
+            "(default 0 = never evict). Read by the backend RemoteMLClient. "
+            "v5.95: promoted from env-only to a config.yaml-authoritative knob."
+        ),
+        "section": "core",
+    },
     "max_episode_tokens": {"desc": "Maximum tokens per episode chunk", "section": "core"},
     "overlap_tokens": {"desc": "Token overlap between episode chunks", "section": "core"},
     # daemon
@@ -929,6 +937,16 @@ FIELD_META: dict[str, dict[str, object]] = {
         ),
         "section": "hooks",
     },
+    # v5.95 (#81 residual) — dedicated hook-recall pool size
+    "hook_recall_pool_workers": {
+        "desc": (
+            "Threads in the dedicated hook-recall pool. Hook recalls run bounded here so a "
+            "slow uncancellable recall cannot starve the event loop. 1 minimizes CPU "
+            "competition with the loop on the --cpus-1 core (freeze-safest); raise only if "
+            "hook serialization is a bottleneck. Restart to apply."
+        ),
+        "section": "hooks",
+    },
     # v5.51.0 — /api/stats TTL cache
     "stats_cache_ttl_s": {
         "desc": (
@@ -1432,18 +1450,20 @@ FIELD_META: dict[str, dict[str, object]] = {
     },
     "tool_pool_workers": {
         "desc": (
-            "Bounded tool-offload worker-pool size (default 8) — the cap IS the concurrency control. "
-            "Keep in lockstep with rerank_max_concurrency."
+            "Bounded tool-offload worker-pool size (default 2) — the cap IS the concurrency control. "
+            "v5.95: dropped 8→2 to bound CPU competition on the --cpus-1 core (offload threads compete "
+            "with the event loop; fewer threads = less loop-starvation risk). Raise only if tool "
+            "serialization becomes a bottleneck. Must be > recall_heavy_concurrency (else the rerank "
+            "gate is a no-op). Restart to apply."
         ),
         "section": "circuit_breaker",
     },
     "recall_heavy_concurrency": {
         "desc": (
             "#74 fix: process-wide cap on concurrent backend /rerank calls the core issues "
-            "(default 3). Sized to the BACKEND's serving capacity (fewer cores than "
-            "tool_pool_workers), NOT the pool size. MUST be < tool_pool_workers (else the gate is "
-            "a no-op and N workers saturate the backend → slow /health → core 503 → P0 kill) and "
-            "<= rerank_max_concurrency."
+            "(default 1). v5.95: dropped 3→1 in lockstep with tool_pool_workers dropping 8→2 "
+            "(must be strictly < tool_pool_workers or the gate is a no-op). Sized to the "
+            "BACKEND's real serving capacity. MUST be < tool_pool_workers and <= rerank_max_concurrency."
         ),
         "section": "circuit_breaker",
     },
@@ -1470,6 +1490,43 @@ FIELD_META: dict[str, dict[str, object]] = {
             "(default 120.0). MUST be > tool_timeout_sec so only leaked workers trip the signal."
         ),
         "section": "circuit_breaker",
+    },
+    # v5.95 config-integrity Phase 4 — hot-path literals promoted to knobs.
+    "reranker_idle_unload_sec": {
+        "desc": (
+            "Idle seconds of no recall activity before rerank models are unloaded to free "
+            "~500 MB (default 600.0). Read by the lifecycle reranker-idle background thread."
+        ),
+        "section": "circuit_breaker",
+    },
+    "reranker_idle_check_interval_sec": {
+        "desc": (
+            "Seconds between reranker idle-unload checks — the background thread's sleep interval "
+            "(default 60). Lower = more responsive unload, more wakeups."
+        ),
+        "section": "circuit_breaker",
+    },
+    "health_handler_timeout_sec": {
+        "desc": (
+            "Outer hard bound (seconds) on the whole /health handler body so it can never exceed "
+            "this even if a dependency probe hangs (default 3.0). Container healthcheck uses "
+            "--health-timeout 5s; keep this below that."
+        ),
+        "section": "circuit_breaker",
+    },
+    "health_probe_timeout_sec": {
+        "desc": (
+            "Per-dependency (db/embed) probe HTTP client timeout inside /health, seconds "
+            "(default 2.0). Probes run concurrently; keep < health_handler_timeout_sec."
+        ),
+        "section": "circuit_breaker",
+    },
+    "vacuum_auto_cooldown_hours": {
+        "desc": (
+            "Auto-vacuum cooldown: hours since the last auto-fire before another auto-vacuum "
+            "may trigger (default 6.0). In-memory, resets on restart."
+        ),
+        "section": "daemon",
     },
     "health_readiness_fail_threshold": {
         "desc": (

@@ -19,8 +19,9 @@ def test_hook_recall_pool_is_bounded():
     from yadgar.server.http import _HOOK_RECALL_POOL, _HOOK_RECALL_POOL_WORKERS
 
     assert isinstance(_HOOK_RECALL_POOL, ThreadPoolExecutor)
-    assert _HOOK_RECALL_POOL_WORKERS == 2
-    assert _HOOK_RECALL_POOL._max_workers == 2
+    # v5.95 (#81 residual): 2 -> 1 to halve loop-CPU competition on the --cpus-1 core.
+    assert _HOOK_RECALL_POOL_WORKERS == 1
+    assert _HOOK_RECALL_POOL._max_workers == 1
 
 
 def test_recall_runs_on_bounded_hook_pool_not_default_executor():

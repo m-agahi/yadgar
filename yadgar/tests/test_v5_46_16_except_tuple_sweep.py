@@ -79,11 +79,12 @@ SITES = [
         "PermissionError, OSError",
         "log_config.py fallback log-dir creation",
     ),
-    (
-        "yadgar/backend/ml_client.py",
-        "ValueError, TypeError",
-        "ml_client.py idle-eviction env parse",
-    ),
+    # v5.95.0: the ml_client idle-eviction env-parse (formerly a site here) was
+    # DRY'd into the shared resolve_knob() helper in config.py. resolve_knob catches
+    # via `except _KNOB_PARSE_ERRORS:` — the specific-catch convention preserved in a
+    # py3.14-ruff-safe named-constant form (an inline `except (ValueError, TypeError):`
+    # gets rewritten to the PEP-758 bare form the AST hooks reject). The literal-paren
+    # regex below can't match a Name, so this site is retired, not repointed.
     (
         "yadgar/server/http.py",
         "TypeError, ValueError",
