@@ -40,8 +40,8 @@ jobs:
   eval:
     runs-on: ubuntu-latest
     container:
-      # yadgar-ci:5.72.0 has SurrealDB + all-MiniLM-L6-v2 baked in — no downloads needed.
-      image: docker.io/openfantasy/yadgar-ci:5.72.0
+      # yadgar-ci:5.73.0 has SurrealDB + all-MiniLM-L6-v2 baked in — no downloads needed.
+      image: docker.io/openfantasy/yadgar-ci:5.73.0
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v6
 

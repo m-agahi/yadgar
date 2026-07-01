@@ -7032,3 +7032,117 @@ After the v5.57.0 PyPI package publishes and container images are available, bum
 - Backend image tag: `5.6.0` (unchanged — no backend build input changes in v5.57.0)
 
 Run `nix-update` or edit `flake.nix` manually. Claude does not do this.
+
+---
+
+## SurrealDB server upgrade v3.0.5 → v3.1.5 (branch `chore/surrealdb-3.1.5`)
+
+Plan: `docs/plans/surrealdb-3.1.5-upgrade-plan-2026-06-30.md`. The code/pin edits are committed
+on the branch. **Everything below is infra the USER must run — Claude does NOT execute any of it.**
+
+### What changed in code (already committed)
+
+- SurrealDB **server binary** `v3.0.5` → `v3.1.5`: `Dockerfile.backend:20`, `Dockerfile.ci:38`
+  (`SURREAL_VERSION`) + `:39` (`SURREAL_SHA256`), `scripts/install/restore.sh:153`, comments
+  `Dockerfile.ci:7,36`.
+- **Verified SHA256** of `surreal-v3.1.5.linux-amd64.tgz` (linux-amd64):
+  `f7d515203ba0010bde3fc6a5706ce7327d356aca293fbba8424d442f5dcb5002`
+  (downloaded twice from the official GitHub release `v3.1.5`, hashes identical, tarball
+  contains the `surreal` binary).
+- Image tags re-rolled (surreal is baked into both images):
+  - **backend** `yadgar-backend` 5.8.0 → **5.9.0**: `docker-compose.yml:39`,
+    `nix/modules/home/yadgar.nix:18` (committed separately in the `nix` repo, NOT pushed).
+  - **CI** `yadgar-ci` 5.72.0 → **5.73.0**: `Dockerfile.ci` LABEL + all functional refs in
+    `.forgejo/workflows/{ci-pr,eval,ci-release}.yaml` (`yadgar-ci-viz:5.46.9` left untouched —
+    different image, no surreal baked in).
+
+### Deploy sequence (ORDERED — run as the user)
+
+**Step 0 — BACK UP THE SURREAL DATADIR FIRST (mandatory; rollback depends on it).**
+3.1.5 → 3.0.5 in-place binary downgrade is **NOT supported** — 3.1 may persist metadata 3.0.5
+cannot read. The ONLY reliable rollback is restore-from-backup. Take BOTH a logical dump and a
+volume snapshot from the running `yadgar-backend`:
+
+```bash
+# logical export (run against the LIVE 3.0.5 backend before stopping it)
+docker exec yadgar-backend surreal export \
+  --endpoint http://127.0.0.1:8000 \
+  --username "$ROOT_USER" --password "$ROOT_PASS" \
+  --namespace yadgar --database main \
+  /tmp/surreal-pre-3.1.5.surql
+docker cp yadgar-backend:/tmp/surreal-pre-3.1.5.surql ./backups/
+
+# AND a raw volume snapshot of the datadir (/data/surreal_db)
+docker run --rm -v yadgar_surreal_data:/data:ro -v "$PWD/backups:/backup" \
+  alpine tar czf /backup/surreal_db-pre-3.1.5.tgz -C /data .
+```
+Store both off-box. Re-confirm freshness immediately before Step 3.
+
+**Step 1 — Build + push the new CI image** (`yadgar-ci:5.73.0`, surreal 3.1.5 baked in). The
+`SURREAL_SHA256` build arg is already set in `Dockerfile.ci`; the build runs `sha256sum -c`
+and fails closed on mismatch.
+
+> **PR-MERGE PREREQUISITE (not just a deploy step):** the branch's `.forgejo/workflows`
+> already point at `yadgar-ci:5.73.0`. That image does NOT exist in the registry until this
+> step runs. Opening/merging the PR before pushing `yadgar-ci:5.73.0` → CI fails with an
+> image-pull error on `ci-pr.yaml` jobs **before any test runs**. Build + push this image
+> FIRST, then open/re-run the PR.
+
+```bash
+docker build -f Dockerfile.ci -t docker.io/openfantasy/yadgar-ci:5.73.0 .
+docker push docker.io/openfantasy/yadgar-ci:5.73.0
+# smoke: confirm surreal 3.1.5 is on PATH inside the image
+docker run --rm docker.io/openfantasy/yadgar-ci:5.73.0 surreal version
+```
+
+**Step 2 — Build + push the new backend image** (`yadgar-backend:5.9.0`, surreal 3.1.5). Backend
+and CI builds are independent (different Dockerfiles) — can run in parallel.
+
+```bash
+docker build -f Dockerfile.backend -t docker.io/openfantasy/yadgar-backend:5.9.0 .
+docker push docker.io/openfantasy/yadgar-backend:5.9.0
+```
+
+**Step 3 — Point nix/compose at the new tags + rebuild.** The tag defaults are already bumped on
+the branch (`docker-compose.yml:39` → 5.9.0; `nix/modules/home/yadgar.nix:18` → 5.9.0). Apply the
+nix switch yourself (Claude does NOT run nix):
+
+```bash
+# nix repo change is committed (NOT pushed) on master of /home/max/git/nix
+cd /home/max/git/nix && git push   # if you want it upstream first
+home-manager switch   # or: sudo nixos-rebuild switch --flake .#<host>
+# compose deployments:
+BACKEND_VERSION=5.9.0 docker compose up -d backend
+```
+
+**Step 4 — Deploy ordering against the running datadir + verify on 3.1.5:**
+1. Re-confirm the Step-0 backup is fresh.
+2. Stop the old `yadgar-backend` (3.0.5) gracefully — it holds the `surrealkv` lock.
+3. Start `yadgar-backend:5.9.0` (surreal 3.1.5) against the **same** datadir volume — in-place
+   roll-forward, **no migration command** (on-disk format unchanged 3.0→3.1).
+4. `GET /health/live` (liveness) then a probe `POST /sql` with the real headers
+   (`Authorization: Basic …`, `Surreal-NS: yadgar`, `Surreal-DB: main`,
+   `Accept: application/json`, `Content-Type: text/plain`, body `SELECT * FROM wiki_page;`) —
+   confirms auth + read path on 3.1.5.
+5. Soak. The server bump is independent of the async refactor; ship it standalone first.
+
+**Step 5 — e2e on 3.1.5 (the real verification gate).** SQL-semantics compat for the `/sql`
+surface is INFERRED (patch release + GraphQL-only announced break), not line-by-line verified —
+the e2e suite IS the verification. The harness must run against surreal **3.1.5**, not 3.0.5:
+put `surreal v3.1.5` on PATH locally (or use `yadgar-ci:5.73.0`) and run `make e2e`. Re-check the
+known 3.0.5 SQL workarounds (`IS NONE` semantics, partial-unique-index drop, `IS NOT NONE`) did
+not silently change.
+
+**Rollback (if needed) = RESTORE THE BACKUP, NOT a binary downgrade:**
+1. Redeploy the 3.0.5 images (`yadgar-backend:5.8.0`, `yadgar-ci:5.72.0`) — revert the branch.
+2. Restore the Step-0 backup onto a **clean** datadir running 3.0.5 (logical `surreal import`
+   of the `.surql` dump, or restore the volume snapshot). Do **NOT** point 3.0.5 at a datadir
+   that 3.1.5 has already written to.
+
+### Residual UNVERIFIED item (carried from the plan)
+
+- **`/sql` SQL-semantics across 3.0→3.1: INFERRED, not line-by-line verified.** The full 3.1.x
+  changelog is not machine-retrievable; "no break" is inferred from the patch nature + the
+  GraphQL-only announced break. **The Step-5 e2e on 3.1.5 is the empirical gate.** (Note: the
+  auth/header surface, previously flagged unverified, is now VERIFIED unchanged against the
+  current 3.x HTTP docs — it is NOT an open risk.)

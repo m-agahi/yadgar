@@ -4,7 +4,7 @@
 #          so CI runners can pull from dockerhub (PD-42 carve-out).
 # Contains: system deps (make, git, curl, ca-certificates, build-essential)
 #           + pre-installed yadgar test + ml extras to speed CI start
-#           + SurrealDB v3.0.5 baked in (saves 15-30s CI per run, v5.46.9)
+#           + SurrealDB v3.1.5 baked in (saves 15-30s CI per run, v5.46.9)
 #           + HuggingFace all-MiniLM-L6-v2 baked in (saves 30-60s, v5.46.9)
 #           + bsdmainutils for `column` binary (fixes F5 make help failure, v5.46.9)
 # Version: updated each CI infrastructure release (v5.46.9+).
@@ -12,7 +12,7 @@ FROM python:3.14-slim
 
 LABEL org.opencontainers.image.source="https://codeberg.org/maxagahi/yadgar"
 LABEL org.opencontainers.image.description="yadgar CI runner image — Python 3.14 + make + git + test deps + SurrealDB + HF model"
-LABEL org.opencontainers.image.version="5.72.0"
+LABEL org.opencontainers.image.version="5.73.0"
 
 # System deps needed in CI:
 #   make             — Makefile integration tests (B6 fix)
@@ -33,10 +33,10 @@ RUN apt-get update -qq && \
         bsdmainutils && \
     rm -rf /var/lib/apt/lists/*
 
-# Bake SurrealDB v3.0.5 into image (saves 15-30s CI per run — no download step).
+# Bake SurrealDB v3.1.5 into image (saves 15-30s CI per run — no download step).
 # SHA256 verified at build time. Binary placed at /usr/local/bin/surreal (on PATH).
-ARG SURREAL_VERSION=v3.0.5
-ARG SURREAL_SHA256=48dbeba4896765f33e07acc25224073f0850c190872052b917ebda1f7b4375cb
+ARG SURREAL_VERSION=v3.1.5
+ARG SURREAL_SHA256=f7d515203ba0010bde3fc6a5706ce7327d356aca293fbba8424d442f5dcb5002
 RUN curl -fsSL \
         "https://github.com/surrealdb/surrealdb/releases/download/${SURREAL_VERSION}/surreal-${SURREAL_VERSION}.linux-amd64.tgz" \
         -o /tmp/surreal.tgz && \

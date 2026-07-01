@@ -5,6 +5,16 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 > Snapshots from v5.0.1 onward are captured from `yadgar stats` at release time.
 > Earlier versions have no per-release snapshot (the practice started 2026-05-16).
 
+## [5.93.0] - 2026-07-01
+
+### SurrealDB server upgrade v3.0.5 → v3.1.5
+
+Bumps the pinned SurrealDB **server** binary from `v3.0.5` to `v3.1.5` (released 2026-06-19 — the security-patch line on top of the 3.1 "operational maturity" release). Low-risk **in-place roll-forward**: on-disk/catalog layout is unchanged across the 3.0→3.1 minor (verified), the only announced breaking change is in GraphQL (yadgar speaks `/sql` HTTP, unaffected), and the Basic-auth + `surreal-ns`/`surreal-db` header surface is verified unchanged. Gains: lock-free reader concurrency (in-memory backend) + rewritten warm-lookup ANN path, both benefiting concurrent recall fan-out. Rollback is **restore-from-backup**, not binary downgrade (3.1→3.0 in-place downgrade is unsupported — see `MIGRATION_NOTES.md`). Plan: `docs/plans/surrealdb-3.1.5-upgrade-plan-2026-06-30.md`.
+
+#### Changed
+- **SurrealDB server binary `v3.0.5` → `v3.1.5`** in the backend + CI image builds (`Dockerfile.backend`, `Dockerfile.ci` — version + SHA256) and the restore script (`scripts/install/restore.sh`). The prod `/sql` HTTP/auth path and `surreal start` launch flags are unchanged. (No Python SDK change — prod runs server mode over httpx, not the `surrealdb` SDK.)
+- **Image tags re-rolled** because the surreal binary is baked in: backend `yadgar-backend` 5.8.0 → 5.9.0 (`docker-compose.yml`, `nix/modules/home/yadgar.nix`); CI `yadgar-ci` 5.72.0 → 5.73.0 (`.forgejo/workflows/{ci-pr,eval,ci-release}.yaml`). Deploy + backup-first sequence in `MIGRATION_NOTES.md`.
+
 ## [5.91.0] - 2026-06-30
 
 ### Offload salvage — liveness/readiness split + bounded rerank fan-out (#74/#75)

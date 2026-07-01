@@ -150,7 +150,7 @@ ok "Importing $(basename "${DB_FILE}")..."
 ${RUNTIME} run --rm \
     --network "${NETWORK}" \
     -v "${DB_FILE}:/restore.surql:ro" \
-    "surrealdb/surrealdb:v3.0.5" \
+    "surrealdb/surrealdb:v3.1.5" \
     import \
     --endpoint "http://${BACKEND_CONTAINER}:8000" \
     --username "${ROOT_USER}" \
