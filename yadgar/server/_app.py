@@ -238,6 +238,35 @@ _orig_sse_app = mcp_server.sse_app.__func__
 mcp_server.sse_app = _auth_wrapped_sse_app.__get__(mcp_server, type(mcp_server))
 
 
+def _start_loop_lag_monitor_on_live_loop():
+    """Start the #80 event-loop lag monitor on the running uvicorn loop.
+
+    Returns the asyncio.Task handle (or None if metrics unavailable). The monitor
+    schedules a probe every ~0.5s on THIS loop; a freeze that starves /health
+    (the #80 RCA) also blocks the probe, so the next probe records a large lag
+    into yadgar_event_loop_lag_seconds — making the freeze diagnosable. Never
+    raises: telemetry must not block daemon startup.
+    """
+    try:
+        import asyncio as _asyncio  # noqa: PLC0415
+
+        from yadgar.metrics import start_loop_lag_monitor  # noqa: PLC0415
+
+        return start_loop_lag_monitor(_asyncio.get_running_loop())
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def _stop_loop_lag_monitor_safe(task) -> None:
+    """Cancel the lag monitor task on shutdown. Never raises."""
+    try:
+        from yadgar.metrics import stop_loop_lag_monitor  # noqa: PLC0415
+
+        await stop_loop_lag_monitor(task)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _patch_uvicorn_shutdown_timeout() -> None:
     """Inject timeout_graceful_shutdown into both uvicorn-backed transports.
 
@@ -270,9 +299,11 @@ def _patch_uvicorn_shutdown_timeout() -> None:
             log_config=None,
         )
         server = _uvicorn.Server(config)
+        _lag_task = _start_loop_lag_monitor_on_live_loop()
         try:
             await server.serve()
         finally:
+            await _stop_loop_lag_monitor_safe(_lag_task)
             if server.should_exit:
                 _patch_logger.info(
                     "ASGI shutdown complete (timeout_graceful_shutdown=%ss)", _timeout
@@ -290,9 +321,11 @@ def _patch_uvicorn_shutdown_timeout() -> None:
             log_config=None,
         )
         server = _uvicorn.Server(config)
+        _lag_task = _start_loop_lag_monitor_on_live_loop()
         try:
             await server.serve()
         finally:
+            await _stop_loop_lag_monitor_safe(_lag_task)
             if server.should_exit:
                 _patch_logger.info(
                     "ASGI shutdown complete (timeout_graceful_shutdown=%ss)", _timeout

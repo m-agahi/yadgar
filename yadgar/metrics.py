@@ -494,6 +494,64 @@ yadgar_circuit_breaker_state = Gauge(
 # Mapping used by _CircuitBreaker to convert state strings to gauge values.
 _CB_STATE_VALUES: dict[str, int] = {"closed": 0, "half_open": 1, "open": 2}
 
+# ── #80 — Daemon loop-freeze observability ───────────────────────────────────
+# RCA: the armed offload core SIGKILLed under load via a ~64s event-loop FREEZE
+# that no metric captured (not even /health/live). These make the next freeze
+# diagnosable.
+#
+# Loop-lag: a callback scheduled every ~0.5s records actual_delay - interval. A
+# blocked loop can't run the callback, so the NEXT firing records a lag ≈ the
+# block duration. CRITICAL: the histogram is the diagnosable-after-recovery
+# signal — its buckets are cumulative, so a 64s observation lands permanently in
+# the high/+Inf bucket and survives a Prometheus scrape that happens AFTER the
+# freeze clears. A last-value gauge would reset to ~0 on the next idle probe and
+# the spike would vanish before the next scrape; the MAX gauge is a high-water
+# mark that, like the histogram, persists.
+
+yadgar_event_loop_lag_seconds = Histogram(
+    "yadgar_event_loop_lag_seconds",
+    "Event-loop scheduling lag: actual callback delay minus the expected probe "
+    "interval. A large observation means the loop was blocked/frozen for that long "
+    "(would have caught the #80 64s freeze). Histogram buckets are cumulative so a "
+    "freeze remains visible on scrapes after recovery.",
+    buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0),
+    registry=_registry,
+)
+
+yadgar_event_loop_lag_max_seconds = Gauge(
+    "yadgar_event_loop_lag_max_seconds",
+    "High-water mark of event-loop scheduling lag since process start (seconds). "
+    "Monotonic max — never reset by an idle probe, so a past freeze stays visible. "
+    "Complements the cumulative histogram for a single live dashboard number.",
+    registry=_registry,
+)
+
+# Tool-offload pool occupancy (the O2 saturation signal P0 keys on, previously
+# in-memory only — see server/_offload.py). Refreshed on every /metrics scrape
+# via _collect_pool_stats(), which reads the lock-guarded pool_stats() snapshot.
+
+yadgar_tool_pool_inflight = Gauge(
+    "yadgar_tool_pool_inflight",
+    "Callables currently reserved/executing on the tool-offload ThreadPoolExecutor "
+    "(true worker-thread occupancy, server/_offload.py::_inflight).",
+    registry=_registry,
+)
+
+yadgar_tool_pool_saturated = Gauge(
+    "yadgar_tool_pool_saturated",
+    "1 when the tool-offload pool is exhausted AND nothing has completed for "
+    "longer than the saturation grace (server/_offload.py::pool_saturated) — the "
+    "genuine-stall signal /health 503s on; 0 otherwise.",
+    registry=_registry,
+)
+
+yadgar_tool_pool_max = Gauge(
+    "yadgar_tool_pool_max",
+    "Configured max workers of the tool-offload pool (server/_offload.py::_POOL_MAX; "
+    "0 until the pool is lazily created on first offload).",
+    registry=_registry,
+)
+
 
 def _collect_process_metrics() -> None:
     """Sample process RSS, CPU, and FD count into gauges. Non-fatal."""
@@ -786,6 +844,73 @@ def _is_metrics_enabled() -> bool:
     return val.lower() in ("1", "true", "yes", "on")
 
 
+# ── #80 — Event-loop lag monitor ─────────────────────────────────────────────
+
+
+def _record_loop_lag(lag: float) -> None:
+    """Record one loop-lag observation into the histogram + max gauge. Never raises."""
+    try:
+        lag = max(0.0, lag)
+        yadgar_event_loop_lag_seconds.observe(lag)
+        if lag > yadgar_event_loop_lag_max_seconds._value.get():
+            yadgar_event_loop_lag_max_seconds.set(lag)
+    except Exception:  # noqa: BLE001 — telemetry must never compound a stall
+        pass
+
+
+async def _loop_lag_probe(interval: float) -> None:
+    """Schedule a wake-up every `interval` seconds and record the scheduling lag.
+
+    lag = (actual elapsed) - interval. On a free loop this is ~0; on a blocked
+    loop the sleep cannot resume until the loop is free again, so the measured
+    elapsed >> interval and the recorded lag ≈ the block duration.
+    """
+    import asyncio as _asyncio  # noqa: PLC0415
+
+    loop = _asyncio.get_running_loop()
+    while True:
+        start = loop.time()
+        await _asyncio.sleep(interval)
+        _record_loop_lag(loop.time() - start - interval)
+
+
+def start_loop_lag_monitor(loop, interval: float = 0.5):
+    """Start the loop-lag probe task on `loop`. Returns the asyncio.Task handle.
+
+    Wire onto the LIVE event loop (the daemon's uvicorn serve() loop) so a freeze
+    that starves /health is also captured here. Cancel via stop_loop_lag_monitor.
+    """
+    return loop.create_task(_loop_lag_probe(interval))
+
+
+async def stop_loop_lag_monitor(task) -> None:
+    """Cancel the loop-lag probe task and await its teardown. Never raises."""
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except BaseException:  # noqa: BLE001 — CancelledError + any teardown error
+        pass
+
+
+def _collect_pool_stats() -> None:
+    """Refresh the tool-offload pool gauges from the lock-guarded snapshot.
+
+    Reads server/_offload.py::pool_stats() (does NOT reach into _inflight /
+    _STAT_LOCK directly). Called on every /metrics scrape. Non-fatal.
+    """
+    try:
+        from yadgar.server._offload import pool_stats  # noqa: PLC0415
+
+        stats = pool_stats()
+        yadgar_tool_pool_inflight.set(stats.get("inflight", 0))
+        yadgar_tool_pool_max.set(stats.get("max", 0))
+        yadgar_tool_pool_saturated.set(1 if stats.get("saturated") else 0)
+    except Exception:  # noqa: BLE001
+        pass  # non-fatal
+
+
 def _collect_queue_depths() -> None:
     """Update queue depth and DLQ size gauges from filesystem."""
     try:
@@ -924,6 +1049,7 @@ async def metrics_handler(request: Request) -> Response:
     _collect_queue_depths()
     _collect_process_metrics()
     _collect_data_quality()
+    _collect_pool_stats()
 
     output = generate_latest(_registry)
     return Response(
