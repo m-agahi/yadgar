@@ -2,13 +2,14 @@
 #
 # SAME topology as recall-warm-cache-miss.yaml — only embed + CE timings differ
 # (the only caches today = EMBED_CACHE + CE_CACHE, both backend embed service).
-# TIMINGS: docs/plans/recall-warm-profile-2026-07-02.md. Single source of truth.
-# STATE: POST v5.97 (PR #143) — fusion N+1 batched (~1100 -> ~40ms), MMR in-dict.
-# With embed+CE cached AND fusion batched, a hit is now genuinely fast; the
-# residual floor is PPR (networkx core) + priors + the GTE CE when it misses.
+# TIMINGS: docs/plans/recall-warm-profile-2026-07-02.md + recall-perf-checklist.md v5.99 run-log.
+# STATE: POST v5.99 (PR #146) — PPR + spreading-BFS N+1 BATCHED per-depth;
+# warm floor ~1.6s unchanged (core-bound: knn + PPR + fusion; backend CE cached ~2ms).
+# Cold CE (GTE-ModernBERT) is new bottleneck (~9s first /rerank) — doesn't affect
+# this warm-HIT path (CE_CACHE HIT -> ~50ms).
 
-title: "Recall (warm) — cache HIT (post v5.97)"
-subtitle: "EMBED_CACHE + CE_CACHE hit + fusion batched -> now fast; residual = PPR + priors"
+title: "Recall (warm) — cache HIT (post v5.99)"
+subtitle: "EMBED_CACHE+CE_CACHE hit + spreading-BFS batched -> warm floor ~1.6s; cold CE bottleneck"
 rankdir: TB
 show_total: true
 
@@ -23,11 +24,11 @@ nodes:
   - {id: knn,       label: "vector KNN search\\nHNSW index",                 cluster: backend, type: io, time_ms: 25}
   - {id: fts,       label: "FTS BM25 search\\nbranch clause injected",       cluster: backend, type: io, time_ms: 22}
   - {id: priors,    label: "graph+cofire priors\\n[v5.96 BATCHED: 2 queries]", cluster: backend, type: io, time_ms: 150}
-  - {id: spread,    label: "spreading activation\\n[latent - entity-rich only]", cluster: backend, type: io, time_ms: 0}
-  - {id: ppr,       label: "personalized PageRank\\nnetworkx (core CPU, 0-620 query-dep)", cluster: core, type: compute, time_ms: 300}
+  - {id: spread,    label: "spreading-BFS activation\\n[v5.99 BATCHED: 1 q/BFS-depth; cold ~40-50s->~7-9s core w/PPR]", cluster: backend, type: io, time_ms: 0}
+  - {id: ppr,       label: "personalized PageRank\\n[v5.99 adj batched; warm 0-300ms; cold see spread]", cluster: core, type: compute, time_ms: 300}
   - {id: fusion,    label: "WRRF / convex fusion\\nmerge signals",           cluster: core, type: compute, time_ms: 2}
   - {id: fetch,     label: "fusion final-fetch\\n[v5.97 BATCHED: 1 query WHERE id IN]", cluster: backend, type: io, time_ms: 40}
-  - {id: cererank,  label: "CE rerank (GTE-ModernBERT)\\n[CE_CACHE HIT -> cached; MMR in-dict]", cluster: backend, type: model, time_ms: 50}
+  - {id: cererank,  label: "CE rerank (GTE-ModernBERT)\\n[CE_CACHE HIT -> cached; cold: ~9s first /rerank]", cluster: backend, type: model, time_ms: 50}
   - {id: dedup,     label: "dedup + MMR diversity",                          cluster: core, type: compute, time_ms: 3}
   - {id: heat,      label: "heat-boost\\n(async, off critical path)",        cluster: backend, type: store, time_ms: 0}
   - {id: results,   label: "ranked results",                                cluster: core, type: end}
