@@ -106,3 +106,17 @@ Fresh daemon (counters 0). Timed via `yadgar_recall_duration_ms` histogram delta
 - Concurrent **latency** still degrades (26s avg @ 6) — CPU-bound per ADR-0030; not fixable by knobs. The real lever remains more CPU or surreal-query optimisation.
 - **Shadow-HIT ≠ speedup today** (no output cache) — confirms #88's potential value on repeat-heavy workloads; its go/no-go is real read/write-interleaved hit-rate.
 - Scenarios 3-6, 8 (type=memory/wiki, landscape, large-N, global) not run this pass — run via this checklist when needed.
+
+## Run log — 2026-07-02 (core v5.97.0 — POST fusion-batch, PR #143)
+
+Same box/config (pool=3 heavy=2 rerank=3, --cpus 1 core / 2 backend). Timed via histogram deltas.
+
+| # | scenario | v5.96 | **v5.97** | change |
+|---|---|---|---|---|
+| 1 | cold (models warm; CE-cache miss) | — | ~2,090 | — |
+| 2 | WARM repeat (shadow HIT) | ~2,410 | **~1,432** | **−40%** |
+| 7 | 6 concurrent (avg) | ~26,400 | **~9,330** | **−65% (~2.8×)**, 6/6 ok, saturated=0 |
+
+**Verdict: the v5.97 fusion N+1 batch delivered.** Warm single −~1s (matches the profiled ~950ms fusion collapse). Under 6-concurrent the win **compounds** — each recall ~1s shorter → far less pool/rerank queuing → 26→9s avg. Still 6/6 success, no saturation.
+
+**Remaining warm cost** (~1.4s): CE = GTE-ModernBERT (~720ms, task #92) + PPR (networkx core, 0-620ms query-dep) + priors/fts/knn (~240ms). Next lever = #92 (GTE speedup) → target ~1.0s. Below that = hardware (CPU) or output cache (#88).
