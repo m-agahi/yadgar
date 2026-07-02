@@ -1,0 +1,64 @@
+# Recall (warm) — CACHE-MISS variant.
+#
+# Source of truth for the flow: docs/plans/cache-refactor-2026-07-01.md section 1
+# (the FLOW block, recall.py:395 → _fanout_recall / the 4-signal core), cross-
+# checked against the live pipeline (yadgar/retrieval/stages/*, recall.py).
+#
+# "Warm" = models already loaded (no ~13s cold-start). "Cache-miss" = the two
+# REAL caches that exist today — EMBED_CACHE and CE_CACHE, both in the BACKEND
+# embed service (cache-refactor plan section 2) — both MISS, so the embed model
+# and the cross-encoder inference actually run.
+#
+# TIMINGS: placeholders/estimates. Sourced where noted (ADR-0030 via the cache-
+# refactor plan); the rest are type-based estimates pending the real profiling
+# numbers from docs/plans/recall-warm-profile-2026-07-02.md. This YAML is the
+# single source of truth — swap a node's time_ms when real numbers land.
+
+title: "Recall (warm) — cache MISS"
+subtitle: "EMBED_CACHE + CE_CACHE both miss; models warm. Source: cache-refactor-2026-07-01.md section 1"
+rankdir: TB
+show_total: true
+
+clusters:
+  - {id: core,    label: "Core process (--cpus 1)",                         kind: core}
+  - {id: backend, label: "Backend (--cpus 2): SurrealDB + rerank server",   kind: backend}
+
+nodes:
+  - {id: entry,     label: "recall() entry\\nvalidate + detect branch/dir",  cluster: core, type: start, time_ms: 2}
+  - {id: qanalysis, label: "query analysis\\nentities + routing",            cluster: core, type: compute, time_ms: 3}
+
+  # query embedding — EMBED_CACHE MISS => model runs on the backend embed svc
+  - {id: embed,     label: "query embed\\n[EMBED_CACHE MISS -> model runs]", cluster: backend, type: model, time_ms: 40}
+
+  # surreal IO — identical hit or miss (none of it is cached today)
+  - {id: knn,       label: "vector KNN search\\nHNSW index",                 cluster: backend, type: io, time_ms: 40}
+  - {id: fts,       label: "FTS BM25 search\\nbranch clause injected",       cluster: backend, type: io, time_ms: 30}
+  - {id: gprior,    label: "graph_prior fetch\\nN+1 point reads",            cluster: backend, type: io, time_ms: 800}
+  - {id: cprior,    label: "cofire_prior fetch\\nN+1 point reads",           cluster: backend, type: io, time_ms: 730}
+  - {id: spread,    label: "spreading activation\\nper-query BFS (depth 2)", cluster: backend, type: io, time_ms: 400}
+
+  - {id: fusion,    label: "WRRF / convex fusion\\nmerge all signals",       cluster: core, type: compute, time_ms: 2}
+
+  # cross-encoder rerank — CE_CACHE MISS => inference on the backend rerank svc
+  - {id: cererank,  label: "CE rerank\\n[CE_CACHE MISS -> inference]",       cluster: backend, type: model, time_ms: 250}
+  - {id: diversity, label: "get_memory (CE diversity)\\nN+1 full-row reads", cluster: backend, type: io, time_ms: 50}
+  - {id: dedup,     label: "dedup by content",                              cluster: core, type: compute, time_ms: 2}
+
+  # inline heat-boost side effects (blocking, on the response path on a miss)
+  - {id: heat,      label: "heat-boost + last_accessed\\nN inline UPDATEs",  cluster: backend, type: store, time_ms: 20}
+  - {id: results,   label: "ranked results",                                cluster: core, type: end}
+
+edges:
+  - {src: entry,     dst: qanalysis, order: 1}
+  - {src: qanalysis, dst: embed,     order: 2}
+  - {src: embed,     dst: knn,       order: 3, label: "query vector"}
+  - {src: knn,       dst: fts,       order: 4}
+  - {src: fts,       dst: gprior,    order: 5}
+  - {src: gprior,    dst: cprior,    order: 6}
+  - {src: cprior,    dst: spread,    order: 7}
+  - {src: spread,    dst: fusion,    order: 8, label: "signals"}
+  - {src: fusion,    dst: cererank,  order: 9, label: "candidates"}
+  - {src: cererank,  dst: diversity, order: 10}
+  - {src: diversity, dst: dedup,     order: 11}
+  - {src: dedup,     dst: heat,      order: 12}
+  - {src: heat,      dst: results,   order: 13}

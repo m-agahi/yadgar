@@ -1,0 +1,56 @@
+digraph flow {
+  rankdir="TB";
+  newrank=true;
+  compound=true;
+  nodesep=0.35;
+  ranksep=0.55;
+  graph [fontname="Helvetica", fontsize=11, labelloc="t"];
+  node  [fontname="Helvetica", fontsize=10];
+  edge  [fontname="Helvetica", fontsize=9];
+  label="Recall (warm) — cache MISS
+EMBED_CACHE + CE_CACHE both miss; models warm. Source: cache-refactor-2026-07-01.md section 1
+total ≈ 2.369 s";
+  subgraph "cluster_core" {
+    label="Core process (--cpus 1)";
+    style=filled;
+    bgcolor="#eef4fb";
+    color="#4a72a8";
+    fontcolor="#26456b";
+    fontname="Helvetica-Bold";
+    "entry" [shape="circle", style="filled", fillcolor="#d6d6d6", label="recall() entry\nvalidate + detect branch/dir\n2 ms"];
+    "qanalysis" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="query analysis\nentities + routing\n3 ms"];
+    "fusion" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="WRRF / convex fusion\nmerge all signals\n2 ms"];
+    "dedup" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="dedup by content\n2 ms"];
+    "results" [shape="doublecircle", style="filled", fillcolor="#d6d6d6", label="ranked results"];
+  }
+  subgraph "cluster_backend" {
+    label="Backend (--cpus 2): SurrealDB + rerank server";
+    style=filled;
+    bgcolor="#fbf0ea";
+    color="#b5744a";
+    fontcolor="#7a4620";
+    fontname="Helvetica-Bold";
+    "embed" [shape="box", style="filled", fillcolor="#f5e1f5", label="query embed\n[EMBED_CACHE MISS -> model runs]\n40 ms"];
+    "knn" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="vector KNN search\nHNSW index\n40 ms"];
+    "fts" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="FTS BM25 search\nbranch clause injected\n30 ms"];
+    "gprior" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="graph_prior fetch\nN+1 point reads\n800 ms"];
+    "cprior" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="cofire_prior fetch\nN+1 point reads\n730 ms"];
+    "spread" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="spreading activation\nper-query BFS (depth 2)\n400 ms"];
+    "cererank" [shape="box", style="filled", fillcolor="#f5e1f5", label="CE rerank\n[CE_CACHE MISS -> inference]\n250 ms"];
+    "diversity" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="get_memory (CE diversity)\nN+1 full-row reads\n50 ms"];
+    "heat" [shape="cylinder", style="filled", fillcolor="#fce3d6", label="heat-boost + last_accessed\nN inline UPDATEs\n20 ms"];
+  }
+  "entry" -> "qanalysis" [color="#333333", style="solid", label="1"];
+  "qanalysis" -> "embed" [color="#333333", style="solid", label="2"];
+  "embed" -> "knn" [color="#333333", style="solid", label="query vector"];
+  "knn" -> "fts" [color="#333333", style="solid", label="4"];
+  "fts" -> "gprior" [color="#333333", style="solid", label="5"];
+  "gprior" -> "cprior" [color="#333333", style="solid", label="6"];
+  "cprior" -> "spread" [color="#333333", style="solid", label="7"];
+  "spread" -> "fusion" [color="#333333", style="solid", label="signals"];
+  "fusion" -> "cererank" [color="#333333", style="solid", label="candidates"];
+  "cererank" -> "diversity" [color="#333333", style="solid", label="10"];
+  "diversity" -> "dedup" [color="#333333", style="solid", label="11"];
+  "dedup" -> "heat" [color="#333333", style="solid", label="12"];
+  "heat" -> "results" [color="#333333", style="solid", label="13"];
+}
