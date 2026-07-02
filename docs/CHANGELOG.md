@@ -5,6 +5,44 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 > Snapshots from v5.0.1 onward are captured from `yadgar stats` at release time.
 > Earlier versions have no per-release snapshot (the practice started 2026-05-16).
 
+## [5.99.0] - 2026-07-02
+
+### Perf: kill the PPR + spreading graph-traversal N+1 fetch (exact-parity)
+
+The entity-graph traversal that feeds PPR (`_build_networkx_graph`) and spreading
+activation (`_spreading_bfs_step`) was dominated by an N+1 fetch, ~2/3 of it dead
+work — not compute (whole-graph pagerank is ~21 ms; the graph is tiny). Two layered
+causes, both in the adjacency read:
+
+- **Dead name enrichment.** `get_relationships_for_entity` issued *two* extra
+  per-row name lookups to fill `source_name` / `target_name` — but both hot-path
+  consumers (`graph_helpers._build_networkx_graph`, `retrieval/core._spreading_bfs_step`)
+  read only `entity_id` / `weight`. The names were fetched and thrown away on every
+  edge. Only display/viz callers use them.
+- **One query per frontier node.** Each BFS node issued its own adjacency query.
+
+Fix (stateless, zero cache, **exact score parity** — same edges → same graph → same
+PPR/spreading scores):
+
+- **`with_names: bool = True` param** on `get_relationships_for_entity` (+
+  `KnowledgeGraph._get_adjacent`). The graph-traversal hot path passes
+  `with_names=False`, skipping the two per-row name lookups; display/viz callers keep
+  the default. Sheds ~2/3 of the round-trips.
+- **Batched per-depth adjacency.** New `StorageEngine.get_relationships_for_frontier`
+  (`WHERE source IN $ids OR target IN $ids ORDER BY id`) + `_get_adjacent_batch`
+  fetch the whole frontier in ONE query per BFS depth instead of one per node. Rows
+  fan out to the *set* of their in-frontier endpoints (self-loop safe) in id order,
+  and both per-node and batched reads are now `ORDER BY id`, so node/edge insertion
+  order is **byte-identical** — PPR pagerank is bit-identical and spreading discovery
+  order is unchanged.
+
+Round-trip proof on a seeded 2-hop build: **28 → 2** `_q` calls. Expected PPR path
+167–620 ms → ~40 ms (the round-trip collapse is the proof, as in v5.96/97; no live
+re-profile required). Exact-parity gate in `test_v5_99_ppr_batch_parity.py`: identical
+node/edge/weight sets, bit-identical pagerank scores, identical spreading discovery
+order, and `with_names=False` omits enrichment while preserving edge data. The legacy
+per-node `_build_networkx_graph_pernode` is retained solely as the parity baseline.
+
 ## [5.98.0] - 2026-07-02
 
 ### Perf: GTE-ModernBERT rerank speedup — 3 levers, only Lever 1 active

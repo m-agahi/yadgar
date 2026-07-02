@@ -241,12 +241,22 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
         spread_factor: float,
         max_depth: int,
     ) -> list[tuple[int, int]]:
-        """One BFS expansion step for spreading_activation. Returns next frontier."""
+        """One BFS expansion step for spreading_activation. Returns next frontier.
+
+        v5.99.0: adjacency for the whole frontier is fetched in ONE batched query
+        (``_get_adjacent_batch``) with no name enrichment, instead of one query per
+        node. Iteration order over the frontier and over each node's neighbors is
+        preserved, so discovery order — and therefore the activated scores — are
+        identical to the per-node build (parity gate in
+        ``test_v5_99_ppr_batch_parity.py``).
+        """
         next_frontier: list[tuple[int, int]] = []
+        to_expand = [entity_id for entity_id, depth in frontier if depth < max_depth]
+        adjacency = self._graph._get_adjacent_batch(to_expand, None)
         for entity_id, depth in frontier:
             if depth >= max_depth:
                 continue
-            for neighbor in self._graph._get_adjacent(entity_id, None):
+            for neighbor in adjacency.get(entity_id, []):
                 nid = neighbor["entity_id"]
                 if nid in visited_entities:
                     continue
