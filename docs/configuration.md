@@ -438,16 +438,18 @@ The YAML file is optional. If it doesn't exist, all defaults apply. Values you d
 | Key | Env var | Type | Default | Description |
 |---|---|---|---|---|
 | `hook_recall_timeout_s` | `YADGAR_HOOK_RECALL_TIMEOUT_S` | float | `2.0` | Maximum seconds `asyncio.wait_for` waits for `retriever.recall` in hook handlers (prompt-recall, instructions-loaded, subagent-start). On timeout: WARN log + `yadgar_hook_recall_timeout_total` incremented + empty result. Raise to 5.0 if the counter rate is too high. |
-| `hook_recall_pool_workers` | `YADGAR_HOOK_RECALL_POOL_WORKERS` | int | `1` | Threads in the dedicated hook-recall pool (bounded so a slow uncancellable recall can't starve the event loop). `1` minimizes CPU competition with the loop on the `--cpus 1` core (freeze-safest). Raise only if hook serialization is a bottleneck. Restart to apply. |
+| `hook_recall_pool_workers` | `YADGAR_HOOK_RECALL_POOL_WORKERS` | int | `1` | **SEPARATE pool just for hook auto-recalls** (SessionStart/UserPrompt), isolated so hook bursts cannot starve MCP tool calls (ADR-0025). `1` minimizes CPU competition with the event loop on the `--cpus 1` core (freeze-safest). Changing this does NOT affect `tool_pool_workers` — the two pools are independent. Raise only if hook serialization is measurably a bottleneck (`yadgar_hook_recall_timeout_total` metric). Restart to apply. |
 
 ---
 
 ## Tool-Body Offload Pool (v5.95.0)
 
+Three knobs gate recall concurrency at three levels. **Effective recall concurrency = min(`tool_pool_workers`, `recall_heavy_concurrency`, `rerank_max_concurrency`).** Bumping only one gate does nothing if the others are lower. See also `rerank_max_concurrency` in the Circuit Breaker / Backend section below (backend-side cap).
+
 | Key | Env var | Type | Default | Description |
 |---|---|---|---|---|
-| `tool_pool_workers` | `YADGAR_TOOL_POOL_WORKERS` | int | `2` | Bounded offload worker-pool size (the cap IS the concurrency control). `2` minimizes CPU competition on the `--cpus 1` core (v5.95: dropped from 8). Must be strictly greater than `recall_heavy_concurrency`. Restart to apply. |
-| `recall_heavy_concurrency` | `YADGAR_RECALL_HEAVY_CONCURRENCY` | int | `1` | Process-wide cap on concurrent backend `/rerank` calls (v5.95: dropped 3→1, in lockstep with `tool_pool_workers` dropping 8→2). Must be `< tool_pool_workers` or the rerank gate is a no-op. |
+| `tool_pool_workers` | `YADGAR_TOOL_POOL_WORKERS` | int | `2` | **Size of the offload ThreadPoolExecutor** — max MCP tool bodies (recall/memorize/wiki/…) running off the `--cpus 1` event loop at once. Offload threads compete with the event loop for the single core; fewer = less loop-starvation risk. v5.95: dropped 8→2. Must be strictly `> recall_heavy_concurrency` (else the rerank sub-gate is a no-op). Restart to apply. |
+| `recall_heavy_concurrency` | `YADGAR_RECALL_HEAVY_CONCURRENCY` | int | `1` | **Sub-gate INSIDE the pool**: max concurrent HEAVY recalls (rerank fan-out) the core issues at once. Clamped at runtime to ≤ `tool_pool_workers`. Protects the backend from too many simultaneous rerank waves (#74). v5.95: dropped 3→1. Must be strictly `< tool_pool_workers` or this gate is a no-op. Must be ≤ `rerank_max_concurrency`. |
 | `offload_tools` | `YADGAR_OFFLOAD_TOOLS` | bool | `false` | Master switch for tool-body offload off the asyncio loop. **v5.95: now config.yaml-authoritative** — `offload_tools: true` arms the offload path (previously env-only, so a yaml value was silently ignored, #72). Default OFF: arming is **unvalidated live** — soak before relying on it; disarm via `offload_tools: false`. |
 | `tool_timeout_sec` | `YADGAR_TOOL_TIMEOUT_SEC` | float | `95.0` | Per-tool offload timeout. Must cover a worst-case recall including backend rerank. |
 | `rerank_gate_acquire_timeout_sec` | `YADGAR_RERANK_GATE_ACQUIRE_TIMEOUT_SEC` | float | `2.0` | Seconds a worker waits for a heavy-rerank slot before degrading (skip rerank). |
@@ -592,7 +594,7 @@ Rows older than these thresholds are pruned each consolidation cycle. Set to `0`
 | `circuit_breaker_probe_timeout_sec` | `YADGAR_CIRCUIT_BREAKER_PROBE_TIMEOUT_SEC` | float | `2.0` | Short HTTP timeout for HALF_OPEN probe calls. |
 | `circuit_breaker_max_open_duration_sec` | `YADGAR_CIRCUIT_BREAKER_MAX_OPEN_DURATION_SEC` | float | `600.0` | Maximum cooldown ceiling for exponential backoff on repeated probe failures. |
 | `circuit_breaker_backoff_factor` | `YADGAR_CIRCUIT_BREAKER_BACKOFF_FACTOR` | float | `2.0` | Backoff multiplier — each failed probe multiplies cooldown by this factor. |
-| `rerank_max_concurrency` | `YADGAR_RERANK_MAX_CONCURRENCY` | int | `1` | Max concurrent inference threads per rerank mode (ce/nli/pair). N=1 makes probes fast-fail. |
+| `rerank_max_concurrency` | `YADGAR_RERANK_MAX_CONCURRENCY` | int | `8` | **BACKEND cross-encoder cap**: max concurrent `/rerank` inference threads the backend serves at once (#74 backend-saturation guard). Independent of the core pool — read by the **backend** container; needs a backend restart/env change to take effect. Raised from 1 in lockstep with `tool_pool_workers` (Fix A O7) so N-parallel core offload does not cause rerank 503-storms. Part of the three-way gate: effective recall concurrency = min(`tool_pool_workers`, `recall_heavy_concurrency`, `rerank_max_concurrency`). |
 | `rerank_semaphore_acquire_timeout_sec` | `YADGAR_RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC` | float | `2.0` | Seconds to wait for the semaphore before returning 503. Should be ≤ `circuit_breaker_probe_timeout_sec`. |
 | `asgi_shutdown_timeout_sec` | `YADGAR_ASGI_SHUTDOWN_TIMEOUT_SEC` | int | `5` | Caps uvicorn's wait for in-flight requests to drain on SIGTERM. `0` = unlimited. |
 

@@ -554,21 +554,15 @@ class TestGetMemoryCofirePriors:
     """Storage method get_memory_cofire_priors correctness."""
 
     def test_returns_float_values(self):
-        """get_memory_cofire_priors returns {int: float} for present priors."""
+        """get_memory_cofire_priors returns {int: float} for present priors.
+
+        v5.96.0: batched query returns meta::id(id) AS id (a bare int) for all
+        matched rows in ONE call — not one point-read per id.
+        """
         from yadgar.storage.memory import _MemoryMixin
 
         mixin = object.__new__(_MemoryMixin)
-
-        def mock_q(sql, params=None):
-            mid = params["id"]
-            if mid == 1:
-                return [{"id": f"memory:{mid}", "cofire_prior": 0.65}]
-            return []
-
-        mixin._q = mock_q
-        mixin._extract_id = lambda rid: (
-            int(str(rid).split(":")[-1]) if ":" in str(rid) else int(rid)
-        )
+        mixin._q = MagicMock(return_value=[{"id": 1, "cofire_prior": 0.65}])
 
         result = _MemoryMixin.get_memory_cofire_priors(mixin, [1, 2])
         assert result == {1: 0.65}, f"Expected {{1: 0.65}}, got {result}"
@@ -579,9 +573,6 @@ class TestGetMemoryCofirePriors:
 
         mixin = object.__new__(_MemoryMixin)
         mixin._q = MagicMock(return_value=[])
-        mixin._extract_id = lambda rid: (
-            int(str(rid).split(":")[-1]) if ":" in str(rid) else int(rid)
-        )
 
         result = _MemoryMixin.get_memory_cofire_priors(mixin, [1, 2, 3])
         assert result == {}, f"Expected empty dict for all-NULL priors, got {result}"

@@ -37,8 +37,23 @@ def phase_post_write(ctx: MemorizeContext, settings) -> dict:
     _run_engram(ctx)
     _run_zero_gap(ctx, storage, buffer, settings)
     _run_tool_call_record()
+    _bump_shadow_epoch(ctx)
 
     return _build_response(ctx, storage, settings)
+
+
+def _bump_shadow_epoch(ctx: MemorizeContext) -> None:
+    """v5.96.0: a memorize is a structural write → bump the directory's shadow epoch
+    so the recall shadow-cache counter treats prior would-be keys as stale (miss).
+
+    Instrumentation only, fully guarded — must never break or block the write path.
+    """
+    try:
+        from yadgar.server.tools._recall_shadow import bump_epoch  # noqa: PLC0415
+
+        bump_epoch(ctx.context)
+    except Exception:  # pragma: no cover - instrumentation must never break writes
+        pass
 
 
 def _run_synaptic_boost(ctx: MemorizeContext) -> None:

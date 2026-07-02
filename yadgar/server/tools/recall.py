@@ -550,6 +550,36 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
         if not _current_branch and branch_hint:
             _current_branch = branch_hint
 
+        # v5.96.0: shadow recall result-cache hit-rate counter (instrumentation
+        # ONLY — caches nothing, changes no behaviour, fully guarded).  Measures
+        # the hit-rate a hypothetical query→output cache (cache-refactor lever a,
+        # deliberately NOT built) would achieve, to gate building it on evidence.
+        # Placed after branch detection (a proper key needs the branch bucket) and
+        # before dispatch, so it covers all three dominant paths (fan-out / pipeline
+        # / legacy).  Landscape mode returns early above and is intentionally NOT
+        # shadowed — it is experimental (#67), rare, and off this chokepoint.
+        try:
+            from yadgar.server.tools._recall_shadow import (  # noqa: PLC0415
+                RecallShadowParams,
+                observe_recall,
+            )
+
+            observe_recall(
+                RecallShadowParams(
+                    query=query,
+                    directory=_dir_stripped,
+                    branch=_current_branch,
+                    type_filter=type,
+                    mode=mode,
+                    profile=profile,
+                    max_results=max_results,
+                    min_heat=min_heat,
+                    tags=tags,
+                )
+            )
+        except Exception:  # instrumentation must never break recall
+            pass
+
         # v6 T6: UNIFIED_RECALL_ENABLED gate — early exit to fan-out path.
         # When True: fan out to MemoryProvider + WikiProvider, pool, dedup, return.
         # When False (default): fall through to the EXACT legacy body below.

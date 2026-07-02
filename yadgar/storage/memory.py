@@ -1035,21 +1035,32 @@ class _MemoryMixin:
         """
         if not memory_ids:
             return {}
-        # Fetch graph_prior for each candidate memory.
-        # Use individual point reads (one per ID) to stay compatible with both
-        # SurrealDB embedded (v2) and server (v3) modes.  The candidate set is
-        # bounded by the rerank_pool cap (≤50 by default) so N round trips are fine.
+        # v5.96.0: single batched read instead of one point-read per id (N+1 fix).
+        # graph_prior is a precomputed scalar on the row (consolidation writes it via
+        # update_memory_graph_prior) — so this is a pure fetch, and a single
+        # `WHERE id IN [...]` collapses the N round trips into one query.
+        #
+        # Record ids are inlined into the IN list (WHERE id IN [memory:N, ...]) rather
+        # than bound as a $param, mirroring get_memories_by_ids_minimal (~line 485):
+        # parameterised IN with string record-ids is not portable to the embedded
+        # SurrealKV SDK, whereas inline record-id literals work in both embedded and
+        # server modes (validated on 3.1.5).  int() sanitises the id (mirrors
+        # get_memory) so the inlined literal can never carry injection.
+        # meta::id(id) projects the id back to a bare int, so no _extract_id needed.
+        id_list = ", ".join(f"memory:{int(mid)}" for mid in memory_ids)
+        rows = self._q(
+            f"SELECT meta::id(id) AS id, graph_prior FROM memory "
+            f"WHERE id IN [{id_list}] AND graph_prior IS NOT NONE"
+        )
         result: dict[int, float] = {}
-        for mid in memory_ids:
-            rows = self._q(
-                "SELECT id, graph_prior FROM type::record('memory', $id) "
-                "WHERE graph_prior IS NOT NONE",
-                {"id": mid},
-            )
-            for row in rows:
-                gp = row.get("graph_prior")
-                if gp is not None:
-                    result[mid] = float(gp)
+        for row in rows:
+            gp = row.get("graph_prior")
+            if gp is None:
+                continue
+            mid = row.get("id")
+            if mid is None:
+                continue
+            result[int(mid)] = float(gp)
         return result
 
     def update_memory_graph_prior(self, memory_id: int, prior: float) -> None:
@@ -1075,17 +1086,24 @@ class _MemoryMixin:
         """
         if not memory_ids:
             return {}
+        # v5.96.0: single batched read instead of one point-read per id (N+1 fix).
+        # See get_memory_graph_priors for the full rationale — cofire_prior is the
+        # same precomputed-scalar fetch pattern (consolidation writes it via
+        # update_memory_cofire_prior), collapsed into one `WHERE id IN [...]` query.
+        id_list = ", ".join(f"memory:{int(mid)}" for mid in memory_ids)
+        rows = self._q(
+            f"SELECT meta::id(id) AS id, cofire_prior FROM memory "
+            f"WHERE id IN [{id_list}] AND cofire_prior IS NOT NONE"
+        )
         result: dict[int, float] = {}
-        for mid in memory_ids:
-            rows = self._q(
-                "SELECT id, cofire_prior FROM type::record('memory', $id) "
-                "WHERE cofire_prior IS NOT NONE",
-                {"id": mid},
-            )
-            for row in rows:
-                cp = row.get("cofire_prior")
-                if cp is not None:
-                    result[mid] = float(cp)
+        for row in rows:
+            cp = row.get("cofire_prior")
+            if cp is None:
+                continue
+            mid = row.get("id")
+            if mid is None:
+                continue
+            result[int(mid)] = float(cp)
         return result
 
     def update_memory_cofire_prior(self, memory_id: int, prior: float) -> None:
