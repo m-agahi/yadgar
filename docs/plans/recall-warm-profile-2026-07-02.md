@@ -1,5 +1,13 @@
 # Warm Recall Per-Stage Profile & Tuning Plan — 2026-07-02
 
+> **UPDATE 2026-07-02 (post PR #143, v5.97.0):** Fixes 1 (fusion N+1 batch) + 2
+> (MMR fold-in) SHIPPED → warm floor ~2.74s → **~1.6-1.8s**. **Fix 3 (onnx-int8 CE)
+> was WRONG for prod and NOT shipped:** the ~720ms CE hot-path is **GTE-ModernBERT**
+> (`GTE_RERANKER_ENABLED=true` default), not the ST CrossEncoder; `CROSS_ENCODER_BACKEND=onnx-int8`
+> only gates the 3rd-priority ST fallback that GTE preempts → flipping it is a no-op.
+> Speeding the real CE (GTE-ModernBERT) is tracked as **task #92**. The "Fix 3"
+> section below is retained for the record but its premise is superseded.
+
 Goal: attribute the warm steady-state recall latency ("~2.4s floor") to per-stage
 components on THIS box (core `--cpus 1`; backend `--cpus 2` running SurrealDB +
 rerank; constrained RAM), separate the **reducible** overhead from the

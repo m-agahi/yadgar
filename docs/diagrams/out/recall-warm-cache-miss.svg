@@ -9,9 +9,9 @@
 <g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(4 1679.53)">
 <title>flow</title>
 <polygon fill="white" stroke="none" points="-4,4 -4,-1679.53 561,-1679.53 561,4 -4,4"/>
-<text text-anchor="middle" x="278.5" y="-1661.08" font-family="Helvetica,sans-Serif" font-size="11.00">Recall (warm) — cache MISS</text>
-<text text-anchor="middle" x="278.5" y="-1647.58" font-family="Helvetica,sans-Serif" font-size="11.00">EMBED_CACHE + CE_CACHE both miss; models warm. Timings: recall&#45;warm&#45;profile&#45;2026&#45;07&#45;02</text>
-<text text-anchor="middle" x="278.5" y="-1634.08" font-family="Helvetica,sans-Serif" font-size="11.00">total ≈ 2.367 s</text>
+<text text-anchor="middle" x="278.5" y="-1661.08" font-family="Helvetica,sans-Serif" font-size="11.00">Recall (warm) — cache MISS (post v5.97)</text>
+<text text-anchor="middle" x="278.5" y="-1647.58" font-family="Helvetica,sans-Serif" font-size="11.00">fusion N+1 batched; embed+CE miss &#45;&gt; compute. Timings: recall&#45;warm&#45;profile&#45;2026&#45;07&#45;02</text>
+<text text-anchor="middle" x="278.5" y="-1634.08" font-family="Helvetica,sans-Serif" font-size="11.00">total ≈ 1.307 s</text>
 <g id="clust1" class="cluster">
 <title>cluster_core</title>
 <polygon fill="#4a72a8" stroke="#4a72a8" points="8,-8 8,-1619.03 240,-1619.03 240,-8 8,-8"/>
@@ -86,17 +86,17 @@
 <!-- fetch -->
 <g id="node12" class="node">
 <title>fetch</title>
-<path fill="#fce3d6" stroke="black" d="M515.5,-525.11C515.5,-525.11 268.5,-525.11 268.5,-525.11 262.5,-525.11 256.5,-519.11 256.5,-513.11 256.5,-513.11 256.5,-490.86 256.5,-490.86 256.5,-484.86 262.5,-478.86 268.5,-478.86 268.5,-478.86 515.5,-478.86 515.5,-478.86 521.5,-478.86 527.5,-484.86 527.5,-490.86 527.5,-490.86 527.5,-513.11 527.5,-513.11 527.5,-519.11 521.5,-525.11 515.5,-525.11"/>
-<text text-anchor="middle" x="392" y="-511.61" font-family="Helvetica,sans-Serif" font-size="10.00">fusion final&#45;fetch</text>
-<text text-anchor="middle" x="392" y="-498.86" font-family="Helvetica,sans-Serif" font-size="10.00">[N+1: 52x get_memory @18.7ms = BATCH TARGET]</text>
-<text text-anchor="middle" x="392" y="-486.11" font-family="Helvetica,sans-Serif" font-size="10.00">1.1 s</text>
+<path fill="#fce3d6" stroke="black" d="M450.25,-525.11C450.25,-525.11 267.75,-525.11 267.75,-525.11 261.75,-525.11 255.75,-519.11 255.75,-513.11 255.75,-513.11 255.75,-490.86 255.75,-490.86 255.75,-484.86 261.75,-478.86 267.75,-478.86 267.75,-478.86 450.25,-478.86 450.25,-478.86 456.25,-478.86 462.25,-484.86 462.25,-490.86 462.25,-490.86 462.25,-513.11 462.25,-513.11 462.25,-519.11 456.25,-525.11 450.25,-525.11"/>
+<text text-anchor="middle" x="359" y="-511.61" font-family="Helvetica,sans-Serif" font-size="10.00">fusion final&#45;fetch</text>
+<text text-anchor="middle" x="359" y="-498.86" font-family="Helvetica,sans-Serif" font-size="10.00">[v5.97 BATCHED: 1 query WHERE id IN]</text>
+<text text-anchor="middle" x="359" y="-486.11" font-family="Helvetica,sans-Serif" font-size="10.00">40 ms</text>
 </g>
 <!-- fusion&#45;&gt;fetch -->
 <g id="edge9" class="edge">
 <title>fusion&#45;&gt;fetch</title>
-<path fill="none" stroke="#333333" d="M214.69,-575.97C248.34,-562.12 291.65,-544.29 327.05,-529.72"/>
-<polygon fill="#333333" stroke="#333333" points="327.96,-533.13 335.88,-526.09 325.3,-526.66 327.96,-533.13"/>
-<text text-anchor="middle" x="316.71" y="-547.81" font-family="Helvetica,sans-Serif" font-size="9.00">top candidates</text>
+<path fill="none" stroke="#333333" d="M206.91,-575.97C235.28,-562.36 271.65,-544.9 301.72,-530.48"/>
+<polygon fill="#333333" stroke="#333333" points="303.2,-533.65 310.7,-526.17 300.17,-527.34 303.2,-533.65"/>
+<text text-anchor="middle" x="299.22" y="-547.81" font-family="Helvetica,sans-Serif" font-size="9.00">top candidates</text>
 </g>
 <!-- dedup -->
 <g id="node5" class="node">
@@ -198,24 +198,24 @@
 <!-- cererank -->
 <g id="node13" class="node">
 <title>cererank</title>
-<polygon fill="#f5e1f5" stroke="black" points="466.38,-427.61 275.62,-427.61 275.62,-381.36 466.38,-381.36 466.38,-427.61"/>
-<text text-anchor="middle" x="371" y="-414.11" font-family="Helvetica,sans-Serif" font-size="10.00">CE rerank + MMR</text>
-<text text-anchor="middle" x="371" y="-401.36" font-family="Helvetica,sans-Serif" font-size="10.00">[CE_CACHE MISS &#45;&gt; fp32 inference]</text>
-<text text-anchor="middle" x="371" y="-388.61" font-family="Helvetica,sans-Serif" font-size="10.00">720 ms</text>
+<polygon fill="#f5e1f5" stroke="black" points="454.38,-427.61 257.62,-427.61 257.62,-381.36 454.38,-381.36 454.38,-427.61"/>
+<text text-anchor="middle" x="356" y="-414.11" font-family="Helvetica,sans-Serif" font-size="10.00">CE rerank (GTE&#45;ModernBERT)</text>
+<text text-anchor="middle" x="356" y="-401.36" font-family="Helvetica,sans-Serif" font-size="10.00">[CE_CACHE MISS; MMR reads in&#45;dict]</text>
+<text text-anchor="middle" x="356" y="-388.61" font-family="Helvetica,sans-Serif" font-size="10.00">720 ms</text>
 </g>
 <!-- fetch&#45;&gt;cererank -->
 <g id="edge10" class="edge">
 <title>fetch&#45;&gt;cererank</title>
-<path fill="none" stroke="#333333" d="M387.13,-478.84C384.52,-466.99 381.26,-452.16 378.36,-438.93"/>
-<polygon fill="#333333" stroke="#333333" points="381.81,-438.34 376.24,-429.32 374.97,-439.84 381.81,-438.34"/>
-<text text-anchor="middle" x="414.75" y="-450.31" font-family="Helvetica,sans-Serif" font-size="9.00">hydrated rows</text>
+<path fill="none" stroke="#333333" d="M358.3,-478.84C357.94,-467.11 357.48,-452.45 357.06,-439.34"/>
+<polygon fill="#333333" stroke="#333333" points="360.56,-439.24 356.75,-429.36 353.57,-439.46 360.56,-439.24"/>
+<text text-anchor="middle" x="390.21" y="-450.31" font-family="Helvetica,sans-Serif" font-size="9.00">hydrated rows</text>
 </g>
 <!-- cererank&#45;&gt;dedup -->
 <g id="edge11" class="edge">
 <title>cererank&#45;&gt;dedup</title>
-<path fill="none" stroke="#333333" d="M320.05,-380.91C288.45,-366.92 248.05,-349.02 216.69,-335.12"/>
-<polygon fill="#333333" stroke="#333333" points="218.37,-332.04 207.81,-331.19 215.54,-338.44 218.37,-332.04"/>
-<text text-anchor="middle" x="281.12" y="-352.81" font-family="Helvetica,sans-Serif" font-size="9.00">11</text>
+<path fill="none" stroke="#333333" d="M308.79,-380.91C279.78,-367.04 242.74,-349.33 213.8,-335.49"/>
+<polygon fill="#333333" stroke="#333333" points="215.43,-332.39 204.9,-331.23 212.41,-338.7 215.43,-332.39"/>
+<text text-anchor="middle" x="273.17" y="-352.81" font-family="Helvetica,sans-Serif" font-size="9.00">11</text>
 </g>
 <!-- heat&#45;&gt;results -->
 <g id="edge13" class="edge">
