@@ -7,8 +7,8 @@ digraph flow {
   graph [fontname="Helvetica", fontsize=11, labelloc="t"];
   node  [fontname="Helvetica", fontsize=10];
   edge  [fontname="Helvetica", fontsize=9];
-  label="Recall (warm) — cache MISS (post v5.97)
-fusion N+1 batched; embed+CE miss -> compute. Timings: recall-warm-profile-2026-07-02
+  label="Recall (warm) — cache MISS (post v5.99)
+PPR+spreading-BFS N+1 batched per-depth; embed+CE miss -> compute; cold CE now bottleneck
 total ≈ 1.307 s";
   subgraph "cluster_core" {
     label="Core process (--cpus 1)";
@@ -19,7 +19,7 @@ total ≈ 1.307 s";
     fontname="Helvetica-Bold";
     "entry" [shape="circle", style="filled", fillcolor="#d6d6d6", label="recall() entry\nvalidate + detect branch/dir\n2 ms"];
     "qanalysis" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="query analysis\nentities + routing\n3 ms"];
-    "ppr" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="personalized PageRank\nnetworkx (core CPU, 0-620 query-dep)\n300 ms"];
+    "ppr" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="personalized PageRank\n[v5.99 adj batched; warm 0-300ms; cold see spread]\n300 ms"];
     "fusion" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="WRRF / convex fusion\nmerge signals\n2 ms"];
     "dedup" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="dedup + MMR diversity\n3 ms"];
     "results" [shape="doublecircle", style="filled", fillcolor="#d6d6d6", label="ranked results"];
@@ -35,9 +35,9 @@ total ≈ 1.307 s";
     "knn" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="vector KNN search\nHNSW index\n25 ms"];
     "fts" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="FTS BM25 search\nbranch clause injected\n22 ms"];
     "priors" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="graph+cofire priors\n[v5.96 BATCHED: 2 queries]\n150 ms"];
-    "spread" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="spreading activation\n[latent - entity-rich only]\n0 ms"];
+    "spread" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="spreading-BFS activation\n[v5.99 BATCHED: 1 q/BFS-depth; cold ~40-50s->~7-9s core w/PPR]\n0 ms"];
     "fetch" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="fusion final-fetch\n[v5.97 BATCHED: 1 query WHERE id IN]\n40 ms"];
-    "cererank" [shape="box", style="filled", fillcolor="#f5e1f5", label="CE rerank (GTE-ModernBERT)\n[CE_CACHE MISS; MMR reads in-dict]\n720 ms"];
+    "cererank" [shape="box", style="filled", fillcolor="#f5e1f5", label="CE rerank (GTE-ModernBERT)\n[CE_CACHE MISS; COLD BOTTLENECK: ~9s first /rerank]\n720 ms"];
     "heat" [shape="cylinder", style="filled", fillcolor="#fce3d6", label="heat-boost\n(async, off critical path)\n0 ms"];
   }
   "entry" -> "qanalysis" [color="#333333", style="solid", label="1"];
