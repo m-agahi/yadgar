@@ -120,3 +120,27 @@ Same box/config (pool=3 heavy=2 rerank=3, --cpus 1 core / 2 backend). Timed via 
 **Verdict: the v5.97 fusion N+1 batch delivered.** Warm single −~1s (matches the profiled ~950ms fusion collapse). Under 6-concurrent the win **compounds** — each recall ~1s shorter → far less pool/rerank queuing → 26→9s avg. Still 6/6 success, no saturation.
 
 **Remaining warm cost** (~1.4s): CE = GTE-ModernBERT (~720ms, task #92) + PPR (networkx core, 0-620ms query-dep) + priors/fts/knn (~240ms). Next lever = #92 (GTE speedup) → target ~1.0s. Below that = hardware (CPU) or output cache (#88).
+
+## Run log — 2026-07-02 (core v5.98.0 — GTE-rerank Lever-1, PR #144)
+
+Same box/config (pool=3 heavy=2 rerank=3, --cpus 1 core / 2 backend). Daemon warm (uptime >2200s at run; a fresh-restart run gave 24–76s = warmup artifact, discarded — see caveat). Every number cross-checked: `yadgar_recall_duration_ms` histogram delta == daemon `POST /mcp` handler `lat_ms` within ±5ms.
+
+### 3-way comparison (v5.96 → v5.97 → v5.98)
+
+| # | scenario | v5.96 | v5.97 | v5.98 | v5.97→v5.98 |
+|---|---|---|---|---|---|
+| 2 | WARM repeat (shadow HIT) | ~2,410 | **~1,432** | **~1,602** | +170ms (+12%) |
+| 1 | cold (CE-miss) | ~15,800 | ~2,090 | **2s–75s** | ✗ not comparable |
+| 7 | 6 concurrent (avg) | ~26,400 | ~9,330 | **✗ unmeasurable** | MCP serializes tool calls |
+
+Warm v5.98 = median of 4 shadow-HIT calls of `"offload freeze fix daemon"` (1575/1596/1608/1628ms). Backend embed+CE both cached to ~2ms → the ~1.6s is entirely core-side (surreal knn + networkx PPR + fusion).
+
+**Verdict: v5.98 is flat on the warm floor (+12% ≈ noise/corpus growth), NOT a regression.** Expected: Lever-1 is CE-*routing* (multi-passage → cached `mode=ce`); warm CE is already cached to ~2ms, so it cannot move the warm floor. The +170ms vs v5.97 is most likely corpus growth — the PPR entity graph is rebuilt per-recall from DB (more memories → larger subgraph). v5.98's value was CE-routing correctness + CI model-isolation (ADR-0032), not a warm-speed win.
+
+### ⚠️ Method caveats discovered this run (READ before trusting cold/concurrent)
+
+1. **Never measure on a low-uptime daemon.** A fresh redeploy gives 24–76s recalls (cold caches/models); it settles to ~1.6s after ~30min warm. Always check `/health` `uptime_seconds` is large first. (ADR-0033.)
+2. **Cold (CE-miss) is NOT comparable across runs — it varies 30× (2s–75s) by query.** Cost is dominated by **core-side PPR + spreading-activation BFS** on the novel embedding, NOT CE. An entity-rich cold query drives ~40–50s of core PPR/spreading (uncached per-neighbor BFS N+1, mem 531710) — 60–80× the profile-doc's 0–620ms PPR estimate. v5.97's "cold ~2,090ms" was a low-entity query; not a like-for-like baseline.
+3. **6-concurrent is currently unmeasurable via the MCP tool** — the streamable-http client serializes tool calls in BOTH main-thread and subagent contexts (verified: 6 "parallel" calls ran ~70s apart). A real concurrency number needs a parallel-dispatch harness (task #79) or direct parallel HTTP, not batched MCP tool calls.
+
+**Bottleneck has moved:** v5.96/97 killed the priors+fusion N+1s (warm floor → 1.4s). The dominant remaining cost is the **core PPR/spreading path on cold/entity-rich queries** (40–50s) → next levers = v5.99 (PPR N+1 fetch), #85 (PPR→backend stateless), #93 (spreading BFS N+1). Warm floor below ~1.4s needs the output cache (#88) or more CPU.
