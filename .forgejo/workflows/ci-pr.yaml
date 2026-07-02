@@ -8,6 +8,7 @@ on:
     # (yaml/actionlint) still runs on .forgejo edits as the safety net. Skips a run
     # only when EVERY changed path matches — mixed code+docs/ci PRs still run.
     paths-ignore:
+      - 'benchmarks/**'
       - 'docs/**'
       - '.forgejo/**'
 
