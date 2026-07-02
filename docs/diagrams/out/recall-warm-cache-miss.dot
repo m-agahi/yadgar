@@ -7,9 +7,9 @@ digraph flow {
   graph [fontname="Helvetica", fontsize=11, labelloc="t"];
   node  [fontname="Helvetica", fontsize=10];
   edge  [fontname="Helvetica", fontsize=9];
-  label="Recall (warm) — cache MISS
-EMBED_CACHE + CE_CACHE both miss; models warm. Timings: recall-warm-profile-2026-07-02
-total ≈ 2.367 s";
+  label="Recall (warm) — cache MISS (post v5.97)
+fusion N+1 batched; embed+CE miss -> compute. Timings: recall-warm-profile-2026-07-02
+total ≈ 1.307 s";
   subgraph "cluster_core" {
     label="Core process (--cpus 1)";
     style=filled;
@@ -36,8 +36,8 @@ total ≈ 2.367 s";
     "fts" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="FTS BM25 search\nbranch clause injected\n22 ms"];
     "priors" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="graph+cofire priors\n[v5.96 BATCHED: 2 queries]\n150 ms"];
     "spread" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="spreading activation\n[latent - entity-rich only]\n0 ms"];
-    "fetch" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="fusion final-fetch\n[N+1: 52x get_memory @18.7ms = BATCH TARGET]\n1.1 s"];
-    "cererank" [shape="box", style="filled", fillcolor="#f5e1f5", label="CE rerank + MMR\n[CE_CACHE MISS -> fp32 inference]\n720 ms"];
+    "fetch" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="fusion final-fetch\n[v5.97 BATCHED: 1 query WHERE id IN]\n40 ms"];
+    "cererank" [shape="box", style="filled", fillcolor="#f5e1f5", label="CE rerank (GTE-ModernBERT)\n[CE_CACHE MISS; MMR reads in-dict]\n720 ms"];
     "heat" [shape="cylinder", style="filled", fillcolor="#fce3d6", label="heat-boost\n(async, off critical path)\n0 ms"];
   }
   "entry" -> "qanalysis" [color="#333333", style="solid", label="1"];

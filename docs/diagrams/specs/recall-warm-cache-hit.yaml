@@ -1,14 +1,14 @@
 # Recall (warm) — CACHE-HIT variant.
 #
-# SAME pipeline topology as recall-warm-cache-miss.yaml — ONLY embed + CE-rerank
-# timings change, because the only caches today are EMBED_CACHE + CE_CACHE (both
-# backend embed service). Key honest point: a full cache HIT is barely faster —
-# the fusion N+1, PPR, and priors are NOT cached and dominate the wall time.
+# SAME topology as recall-warm-cache-miss.yaml — only embed + CE timings differ
+# (the only caches today = EMBED_CACHE + CE_CACHE, both backend embed service).
 # TIMINGS: docs/plans/recall-warm-profile-2026-07-02.md. Single source of truth.
-# NOTE: PRE-perf-PR state (fusion N+1 not yet batched).
+# STATE: POST v5.97 (PR #143) — fusion N+1 batched (~1100 -> ~40ms), MMR in-dict.
+# With embed+CE cached AND fusion batched, a hit is now genuinely fast; the
+# residual floor is PPR (networkx core) + priors + the GTE CE when it misses.
 
-title: "Recall (warm) — cache HIT"
-subtitle: "EMBED_CACHE + CE_CACHE hit; but fusion N+1 + PPR + priors still dominate -> barely faster"
+title: "Recall (warm) — cache HIT (post v5.97)"
+subtitle: "EMBED_CACHE + CE_CACHE hit + fusion batched -> now fast; residual = PPR + priors"
 rankdir: TB
 show_total: true
 
@@ -26,8 +26,8 @@ nodes:
   - {id: spread,    label: "spreading activation\\n[latent - entity-rich only]", cluster: backend, type: io, time_ms: 0}
   - {id: ppr,       label: "personalized PageRank\\nnetworkx (core CPU, 0-620 query-dep)", cluster: core, type: compute, time_ms: 300}
   - {id: fusion,    label: "WRRF / convex fusion\\nmerge signals",           cluster: core, type: compute, time_ms: 2}
-  - {id: fetch,     label: "fusion final-fetch\\n[N+1: 52x get_memory @18.7ms = BATCH TARGET]", cluster: backend, type: io, time_ms: 1100}
-  - {id: cererank,  label: "CE rerank + MMR\\n[CE_CACHE HIT -> cached scores]", cluster: backend, type: model, time_ms: 50}
+  - {id: fetch,     label: "fusion final-fetch\\n[v5.97 BATCHED: 1 query WHERE id IN]", cluster: backend, type: io, time_ms: 40}
+  - {id: cererank,  label: "CE rerank (GTE-ModernBERT)\\n[CE_CACHE HIT -> cached; MMR in-dict]", cluster: backend, type: model, time_ms: 50}
   - {id: dedup,     label: "dedup + MMR diversity",                          cluster: core, type: compute, time_ms: 3}
   - {id: heat,      label: "heat-boost\\n(async, off critical path)",        cluster: backend, type: store, time_ms: 0}
   - {id: results,   label: "ranked results",                                cluster: core, type: end}

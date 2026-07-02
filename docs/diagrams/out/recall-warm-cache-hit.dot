@@ -7,9 +7,9 @@ digraph flow {
   graph [fontname="Helvetica", fontsize=11, labelloc="t"];
   node  [fontname="Helvetica", fontsize=10];
   edge  [fontname="Helvetica", fontsize=9];
-  label="Recall (warm) — cache HIT
-EMBED_CACHE + CE_CACHE hit; but fusion N+1 + PPR + priors still dominate -> barely faster
-total ≈ 1.657 s";
+  label="Recall (warm) — cache HIT (post v5.97)
+EMBED_CACHE + CE_CACHE hit + fusion batched -> now fast; residual = PPR + priors
+total ≈ 597 ms";
   subgraph "cluster_core" {
     label="Core process (--cpus 1)";
     style=filled;
@@ -36,8 +36,8 @@ total ≈ 1.657 s";
     "fts" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="FTS BM25 search\nbranch clause injected\n22 ms"];
     "priors" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="graph+cofire priors\n[v5.96 BATCHED: 2 queries]\n150 ms"];
     "spread" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="spreading activation\n[latent - entity-rich only]\n0 ms"];
-    "fetch" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="fusion final-fetch\n[N+1: 52x get_memory @18.7ms = BATCH TARGET]\n1.1 s"];
-    "cererank" [shape="box", style="filled", fillcolor="#f5e1f5", label="CE rerank + MMR\n[CE_CACHE HIT -> cached scores]\n50 ms"];
+    "fetch" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="fusion final-fetch\n[v5.97 BATCHED: 1 query WHERE id IN]\n40 ms"];
+    "cererank" [shape="box", style="filled", fillcolor="#f5e1f5", label="CE rerank (GTE-ModernBERT)\n[CE_CACHE HIT -> cached; MMR in-dict]\n50 ms"];
     "heat" [shape="cylinder", style="filled", fillcolor="#fce3d6", label="heat-boost\n(async, off critical path)\n0 ms"];
   }
   "entry" -> "qanalysis" [color="#333333", style="solid", label="1"];

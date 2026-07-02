@@ -2,14 +2,13 @@
 #
 # Flow source: docs/plans/cache-refactor-2026-07-01.md §1 (FLOW), cross-checked
 # against yadgar/retrieval + recall.py.
-# TIMINGS: real per-stage numbers from docs/plans/recall-warm-profile-2026-07-02.md
-# (standalone profiler, HIT p50 unless noted; MISS adds embed+CE compute).
-# This YAML is the single source of truth — swap a node's time_ms when numbers change.
-# NOTE: reflects PRE-perf-PR state (fusion N+1 not yet batched). Re-render after
-# feat/recall-warm-floor-perf lands (fusion -> ~40ms, CE via onnx-int8).
+# TIMINGS: docs/plans/recall-warm-profile-2026-07-02.md. Single source of truth.
+# STATE: POST v5.97 (PR #143) — fusion final-fetch N+1 BATCHED (~1100 -> ~40ms),
+# MMR embed re-fetch folded in-dict. Remaining hot chunk: CE = GTE-ModernBERT
+# (~720ms, task #92; onnx-int8 was a no-op — GTE preempts the ST fallback).
 
-title: "Recall (warm) — cache MISS"
-subtitle: "EMBED_CACHE + CE_CACHE both miss; models warm. Timings: recall-warm-profile-2026-07-02"
+title: "Recall (warm) — cache MISS (post v5.97)"
+subtitle: "fusion N+1 batched; embed+CE miss -> compute. Timings: recall-warm-profile-2026-07-02"
 rankdir: TB
 show_total: true
 
@@ -27,8 +26,8 @@ nodes:
   - {id: spread,    label: "spreading activation\\n[latent - entity-rich only]", cluster: backend, type: io, time_ms: 0}
   - {id: ppr,       label: "personalized PageRank\\nnetworkx (core CPU, 0-620 query-dep)", cluster: core, type: compute, time_ms: 300}
   - {id: fusion,    label: "WRRF / convex fusion\\nmerge signals",           cluster: core, type: compute, time_ms: 2}
-  - {id: fetch,     label: "fusion final-fetch\\n[N+1: 52x get_memory @18.7ms = BATCH TARGET]", cluster: backend, type: io, time_ms: 1100}
-  - {id: cererank,  label: "CE rerank + MMR\\n[CE_CACHE MISS -> fp32 inference]", cluster: backend, type: model, time_ms: 720}
+  - {id: fetch,     label: "fusion final-fetch\\n[v5.97 BATCHED: 1 query WHERE id IN]", cluster: backend, type: io, time_ms: 40}
+  - {id: cererank,  label: "CE rerank (GTE-ModernBERT)\\n[CE_CACHE MISS; MMR reads in-dict]", cluster: backend, type: model, time_ms: 720}
   - {id: dedup,     label: "dedup + MMR diversity",                          cluster: core, type: compute, time_ms: 3}
   - {id: heat,      label: "heat-boost\\n(async, off critical path)",        cluster: backend, type: store, time_ms: 0}
   - {id: results,   label: "ranked results",                                cluster: core, type: end}
