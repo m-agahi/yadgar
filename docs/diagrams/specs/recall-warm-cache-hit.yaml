@@ -1,55 +1,35 @@
 # Recall (warm) — CACHE-HIT variant.
 #
-# SAME pipeline topology as recall-warm-cache-miss.yaml — only the embed and
-# CE-rerank node timings change, because the ONLY caches that exist today are
-# EMBED_CACHE and CE_CACHE, both in the BACKEND embed service
-# (docs/plans/cache-refactor-2026-07-01.md section 2). On a hit:
-#   - EMBED_CACHE hit -> query embedding served from cache, model NOT run (~1ms)
-#   - CE_CACHE hit    -> per-pair rerank scores served from cache, no inference (~5ms)
-#
-# Everything else (KNN, FTS, graph/cofire priors, spreading, get_memory,
-# heat-boost) is surreal IO that is NOT cached, so it runs identically to the
-# miss path. The honest lesson (ADR-0030): even a full cache-hit is still slow,
-# because the existing caches memoize the cheap COMPUTE, not the expensive IO
-# (priors N+1 ~1.5s + spreading BFS) that dominates recall latency.
-#
-# There is NO query->ranked-output cache today (that is lever-(a), a PROPOSAL in
-# the cache-refactor plan section 4 — not depicted here; would be a separate future spec).
-#
-# TIMINGS: placeholders/estimates; same provenance note as the cache-miss spec.
+# SAME pipeline topology as recall-warm-cache-miss.yaml — ONLY embed + CE-rerank
+# timings change, because the only caches today are EMBED_CACHE + CE_CACHE (both
+# backend embed service). Key honest point: a full cache HIT is barely faster —
+# the fusion N+1, PPR, and priors are NOT cached and dominate the wall time.
+# TIMINGS: docs/plans/recall-warm-profile-2026-07-02.md. Single source of truth.
+# NOTE: PRE-perf-PR state (fusion N+1 not yet batched).
 
 title: "Recall (warm) — cache HIT"
-subtitle: "EMBED_CACHE + CE_CACHE hit (embed & CE skipped); IO unchanged. Source: cache-refactor-2026-07-01.md section 1"
+subtitle: "EMBED_CACHE + CE_CACHE hit; but fusion N+1 + PPR + priors still dominate -> barely faster"
 rankdir: TB
 show_total: true
 
 clusters:
-  - {id: core,    label: "Core process (--cpus 1)",                         kind: core}
-  - {id: backend, label: "Backend (--cpus 2): SurrealDB + rerank server",   kind: backend}
+  - {id: core,    label: "Core process (--cpus 1)",                       kind: core}
+  - {id: backend, label: "Backend (--cpus 2): SurrealDB + rerank server", kind: backend}
 
 nodes:
   - {id: entry,     label: "recall() entry\\nvalidate + detect branch/dir",  cluster: core, type: start, time_ms: 2}
   - {id: qanalysis, label: "query analysis\\nentities + routing",            cluster: core, type: compute, time_ms: 3}
-
-  # query embedding — EMBED_CACHE HIT => served from cache, model NOT run
-  - {id: embed,     label: "query embed\\n[EMBED_CACHE HIT -> cached]",      cluster: backend, type: cache, time_ms: 1}
-
-  # surreal IO — identical to the miss path (none of it is cached today)
-  - {id: knn,       label: "vector KNN search\\nHNSW index",                 cluster: backend, type: io, time_ms: 40}
-  - {id: fts,       label: "FTS BM25 search\\nbranch clause injected",       cluster: backend, type: io, time_ms: 30}
-  - {id: gprior,    label: "graph_prior fetch\\nN+1 point reads",            cluster: backend, type: io, time_ms: 800}
-  - {id: cprior,    label: "cofire_prior fetch\\nN+1 point reads",           cluster: backend, type: io, time_ms: 730}
-  - {id: spread,    label: "spreading activation\\nper-query BFS (depth 2)", cluster: backend, type: io, time_ms: 400}
-
-  - {id: fusion,    label: "WRRF / convex fusion\\nmerge all signals",       cluster: core, type: compute, time_ms: 2}
-
-  # cross-encoder rerank — CE_CACHE HIT => scores from cache, no inference
-  - {id: cererank,  label: "CE rerank\\n[CE_CACHE HIT -> cached scores]",    cluster: backend, type: cache, time_ms: 5}
-  - {id: diversity, label: "get_memory (CE diversity)\\nN+1 full-row reads", cluster: backend, type: io, time_ms: 50}
-  - {id: dedup,     label: "dedup by content",                              cluster: core, type: compute, time_ms: 2}
-
-  # inline heat-boost side effects (blocking, on the response path)
-  - {id: heat,      label: "heat-boost + last_accessed\\nN inline UPDATEs",  cluster: backend, type: store, time_ms: 20}
+  - {id: embed,     label: "query embed\\n[EMBED_CACHE HIT -> ~0]",          cluster: backend, type: model, time_ms: 0}
+  - {id: knn,       label: "vector KNN search\\nHNSW index",                 cluster: backend, type: io, time_ms: 25}
+  - {id: fts,       label: "FTS BM25 search\\nbranch clause injected",       cluster: backend, type: io, time_ms: 22}
+  - {id: priors,    label: "graph+cofire priors\\n[v5.96 BATCHED: 2 queries]", cluster: backend, type: io, time_ms: 150}
+  - {id: spread,    label: "spreading activation\\n[latent - entity-rich only]", cluster: backend, type: io, time_ms: 0}
+  - {id: ppr,       label: "personalized PageRank\\nnetworkx (core CPU, 0-620 query-dep)", cluster: core, type: compute, time_ms: 300}
+  - {id: fusion,    label: "WRRF / convex fusion\\nmerge signals",           cluster: core, type: compute, time_ms: 2}
+  - {id: fetch,     label: "fusion final-fetch\\n[N+1: 52x get_memory @18.7ms = BATCH TARGET]", cluster: backend, type: io, time_ms: 1100}
+  - {id: cererank,  label: "CE rerank + MMR\\n[CE_CACHE HIT -> cached scores]", cluster: backend, type: model, time_ms: 50}
+  - {id: dedup,     label: "dedup + MMR diversity",                          cluster: core, type: compute, time_ms: 3}
+  - {id: heat,      label: "heat-boost\\n(async, off critical path)",        cluster: backend, type: store, time_ms: 0}
   - {id: results,   label: "ranked results",                                cluster: core, type: end}
 
 edges:
@@ -57,12 +37,12 @@ edges:
   - {src: qanalysis, dst: embed,     order: 2}
   - {src: embed,     dst: knn,       order: 3, label: "query vector"}
   - {src: knn,       dst: fts,       order: 4}
-  - {src: fts,       dst: gprior,    order: 5}
-  - {src: gprior,    dst: cprior,    order: 6}
-  - {src: cprior,    dst: spread,    order: 7}
-  - {src: spread,    dst: fusion,    order: 8, label: "signals"}
-  - {src: fusion,    dst: cererank,  order: 9, label: "candidates"}
-  - {src: cererank,  dst: diversity, order: 10}
-  - {src: diversity, dst: dedup,     order: 11}
+  - {src: fts,       dst: priors,    order: 5}
+  - {src: priors,    dst: spread,    order: 6}
+  - {src: spread,    dst: ppr,       order: 7}
+  - {src: ppr,       dst: fusion,    order: 8, label: "signals"}
+  - {src: fusion,    dst: fetch,     order: 9, label: "top candidates"}
+  - {src: fetch,     dst: cererank,  order: 10, label: "hydrated rows"}
+  - {src: cererank,  dst: dedup,     order: 11}
   - {src: dedup,     dst: heat,      order: 12}
   - {src: heat,      dst: results,   order: 13}
