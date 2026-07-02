@@ -179,32 +179,74 @@ class _EntityMixin:
         return self._row_to_dict(rows[0]) if rows else None
 
     def get_relationships_for_entity(
-        self, entity_id: int, rel_types: list[str] | None = None
+        self, entity_id: int, rel_types: list[str] | None = None, with_names: bool = True
     ) -> list[dict]:
-        """Return all relationships where entity_id is source or target, with entity names."""
+        """Return all relationships where entity_id is source or target.
+
+        When ``with_names`` is True (default) each row is enriched with
+        ``source_name`` / ``target_name`` via two extra per-row lookups — needed by
+        display/viz callers. The graph-traversal hot path (PPR build + spreading BFS)
+        passes ``with_names=False`` to skip those lookups (~2/3 of the round-trips);
+        those consumers read only ``entity_id`` / ``weight``, never the names.
+        """
         if rel_types:
             rows = self._q(
                 "SELECT * FROM relationship WHERE "
                 "(source_entity_id = $eid OR target_entity_id = $eid) "
-                "AND relationship_type IN $types",
+                "AND relationship_type IN $types ORDER BY id",
                 {"eid": entity_id, "types": rel_types},
             )
         else:
             rows = self._q(
                 "SELECT * FROM relationship WHERE "
-                "source_entity_id = $eid OR target_entity_id = $eid",
+                "source_entity_id = $eid OR target_entity_id = $eid ORDER BY id",
                 {"eid": entity_id},
             )
         results = self._rows_to_dicts(rows)
-        # Enrich with entity names via lookup
-        for d in results:
+        if with_names:
+            self._enrich_relationship_names(results)
+        return results
+
+    def _enrich_relationship_names(self, rows: list[dict]) -> None:
+        """Add source_name / target_name to each relationship row (in place)."""
+        for d in rows:
             src_id = int(d.get("source_entity_id", 0))
             tgt_id = int(d.get("target_entity_id", 0))
             src_rows = self._q(f"SELECT name FROM entity:{src_id}") if src_id else []
             tgt_rows = self._q(f"SELECT name FROM entity:{tgt_id}") if tgt_id else []
             d["source_name"] = src_rows[0]["name"] if src_rows else None
             d["target_name"] = tgt_rows[0]["name"] if tgt_rows else None
-        return results
+
+    def get_relationships_for_frontier(
+        self, entity_ids: list[int], rel_types: list[str] | None = None
+    ) -> list[dict]:
+        """Return all relationships where EITHER endpoint is in ``entity_ids``.
+
+        One query per BFS depth instead of one query per frontier node — the batched
+        counterpart of ``get_relationships_for_entity`` (OR semantics, so frontier→
+        outside edges are kept, unlike ``get_relationships_among_entities`` which
+        requires both endpoints inside the set).
+
+        Never enriches names — the only callers are the graph-traversal hot path.
+        Rows are ordered by ``id`` so that grouping by endpoint reproduces the same
+        per-entity ordering the per-node query returns (exact traversal parity).
+        """
+        if not entity_ids:
+            return []
+        if rel_types:
+            rows = self._q(
+                "SELECT * FROM relationship WHERE "
+                "(source_entity_id IN $ids OR target_entity_id IN $ids) "
+                "AND relationship_type IN $types ORDER BY id",
+                {"ids": entity_ids, "types": rel_types},
+            )
+        else:
+            rows = self._q(
+                "SELECT * FROM relationship WHERE "
+                "(source_entity_id IN $ids OR target_entity_id IN $ids) ORDER BY id",
+                {"ids": entity_ids},
+            )
+        return self._rows_to_dicts(rows)
 
     def get_relationships_by_type_and_weight(
         self, rel_type: str, min_weight: float = 0.0

@@ -406,8 +406,22 @@ class KnowledgeGraph:
     def _reinforce_typed_relationship(self, rel_id: int, now_iso: str) -> None:
         self._storage.reinforce_relationship(rel_id, weight_increase=1.0)
 
-    def _get_adjacent(self, entity_id: int, rel_types: list[str] | None) -> list[dict]:
-        rows = self._storage.get_relationships_for_entity(entity_id, rel_types)
+    def _get_adjacent(
+        self, entity_id: int, rel_types: list[str] | None, with_names: bool = True
+    ) -> list[dict]:
+        rows = self._storage.get_relationships_for_entity(
+            entity_id, rel_types, with_names=with_names
+        )
+        return self._rows_to_adjacency(entity_id, rows, with_names=with_names)
+
+    def _rows_to_adjacency(
+        self, entity_id: int, rows: list[dict], with_names: bool = True
+    ) -> list[dict]:
+        """Project relationship rows into the neighbor-dict shape for ``entity_id``.
+
+        Shared by ``_get_adjacent`` (per-node) and ``_get_adjacent_batch`` (batched)
+        so both produce byte-identical neighbor dicts in the same order.
+        """
         result = []
         for row_d in rows:
             other_id = (
@@ -415,20 +429,52 @@ class KnowledgeGraph:
                 if row_d["source_entity_id"] == entity_id
                 else row_d["source_entity_id"]
             )
-            other_name = (
-                row_d.get("target_name")
-                if row_d["source_entity_id"] == entity_id
-                else row_d.get("source_name")
-            )
-            result.append(
-                {
-                    "entity_id": other_id,
-                    "entity_name": other_name,
-                    "relationship_type": row_d["relationship_type"],
-                    "weight": row_d["weight"],
-                }
-            )
+            entry = {
+                "entity_id": other_id,
+                "relationship_type": row_d["relationship_type"],
+                "weight": row_d["weight"],
+            }
+            if with_names:
+                entry["entity_name"] = (
+                    row_d.get("target_name")
+                    if row_d["source_entity_id"] == entity_id
+                    else row_d.get("source_name")
+                )
+            result.append(entry)
         return result
+
+    def _get_adjacent_batch(
+        self, entity_ids: list[int], rel_types: list[str] | None
+    ) -> dict[int, list[dict]]:
+        """Batched adjacency for a whole BFS frontier — one query, no name enrichment.
+
+        Returns ``{eid: [neighbor_dict, ...]}`` for every eid in ``entity_ids``.
+        Fanning each relationship row out to the SET of its in-frontier endpoints
+        reproduces exactly what N per-node ``_get_adjacent(eid, ..., with_names=False)``
+        calls would return — including self-loops (an ``(E,E)`` row appears once in
+        E's list, not twice, because ``{src, tgt}`` collapses to ``{E}``).
+
+        The storage query orders by ``id``; grouping preserves that order, so the
+        resulting per-eid lists match the per-node query order exactly.
+        """
+        rows = self._storage.get_relationships_for_frontier(entity_ids, rel_types)
+        frontier_set = set(entity_ids)
+        adjacency: dict[int, list[dict]] = {eid: [] for eid in entity_ids}
+        for row_d in rows:
+            src = row_d["source_entity_id"]
+            tgt = row_d["target_entity_id"]
+            # A row contributes to each of its endpoints that is in the frontier;
+            # use a set so a self-loop (src == tgt) contributes exactly once.
+            for endpoint in {src, tgt} & frontier_set:
+                other_id = tgt if src == endpoint else src
+                adjacency[endpoint].append(
+                    {
+                        "entity_id": other_id,
+                        "relationship_type": row_d["relationship_type"],
+                        "weight": row_d["weight"],
+                    }
+                )
+        return adjacency
 
     def _check_temporal_order(self, entity_a: str, entity_b: str) -> str | None:
         # Only scan the most recent episodes — avoid a full-table scan that is
