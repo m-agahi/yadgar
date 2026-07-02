@@ -8,8 +8,8 @@ digraph flow {
   node  [fontname="Helvetica", fontsize=10];
   edge  [fontname="Helvetica", fontsize=9];
   label="Recall (warm) — cache HIT
-EMBED_CACHE + CE_CACHE hit (embed & CE skipped); IO unchanged. Source: cache-refactor-2026-07-01.md section 1
-total ≈ 2.085 s";
+EMBED_CACHE + CE_CACHE hit; but fusion N+1 + PPR + priors still dominate -> barely faster
+total ≈ 1.657 s";
   subgraph "cluster_core" {
     label="Core process (--cpus 1)";
     style=filled;
@@ -19,8 +19,9 @@ total ≈ 2.085 s";
     fontname="Helvetica-Bold";
     "entry" [shape="circle", style="filled", fillcolor="#d6d6d6", label="recall() entry\nvalidate + detect branch/dir\n2 ms"];
     "qanalysis" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="query analysis\nentities + routing\n3 ms"];
-    "fusion" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="WRRF / convex fusion\nmerge all signals\n2 ms"];
-    "dedup" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="dedup by content\n2 ms"];
+    "ppr" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="personalized PageRank\nnetworkx (core CPU, 0-620 query-dep)\n300 ms"];
+    "fusion" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="WRRF / convex fusion\nmerge signals\n2 ms"];
+    "dedup" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="dedup + MMR diversity\n3 ms"];
     "results" [shape="doublecircle", style="filled", fillcolor="#d6d6d6", label="ranked results"];
   }
   subgraph "cluster_backend" {
@@ -30,27 +31,26 @@ total ≈ 2.085 s";
     color="#b5744a";
     fontcolor="#7a4620";
     fontname="Helvetica-Bold";
-    "embed" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="query embed\n[EMBED_CACHE HIT -> cached]\n1 ms"];
-    "knn" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="vector KNN search\nHNSW index\n40 ms"];
-    "fts" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="FTS BM25 search\nbranch clause injected\n30 ms"];
-    "gprior" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="graph_prior fetch\nN+1 point reads\n800 ms"];
-    "cprior" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="cofire_prior fetch\nN+1 point reads\n730 ms"];
-    "spread" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="spreading activation\nper-query BFS (depth 2)\n400 ms"];
-    "cererank" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="CE rerank\n[CE_CACHE HIT -> cached scores]\n5 ms"];
-    "diversity" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="get_memory (CE diversity)\nN+1 full-row reads\n50 ms"];
-    "heat" [shape="cylinder", style="filled", fillcolor="#fce3d6", label="heat-boost + last_accessed\nN inline UPDATEs\n20 ms"];
+    "embed" [shape="box", style="filled", fillcolor="#f5e1f5", label="query embed\n[EMBED_CACHE HIT -> ~0]\n0 ms"];
+    "knn" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="vector KNN search\nHNSW index\n25 ms"];
+    "fts" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="FTS BM25 search\nbranch clause injected\n22 ms"];
+    "priors" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="graph+cofire priors\n[v5.96 BATCHED: 2 queries]\n150 ms"];
+    "spread" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="spreading activation\n[latent - entity-rich only]\n0 ms"];
+    "fetch" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="fusion final-fetch\n[N+1: 52x get_memory @18.7ms = BATCH TARGET]\n1.1 s"];
+    "cererank" [shape="box", style="filled", fillcolor="#f5e1f5", label="CE rerank + MMR\n[CE_CACHE HIT -> cached scores]\n50 ms"];
+    "heat" [shape="cylinder", style="filled", fillcolor="#fce3d6", label="heat-boost\n(async, off critical path)\n0 ms"];
   }
   "entry" -> "qanalysis" [color="#333333", style="solid", label="1"];
   "qanalysis" -> "embed" [color="#333333", style="solid", label="2"];
   "embed" -> "knn" [color="#333333", style="solid", label="query vector"];
   "knn" -> "fts" [color="#333333", style="solid", label="4"];
-  "fts" -> "gprior" [color="#333333", style="solid", label="5"];
-  "gprior" -> "cprior" [color="#333333", style="solid", label="6"];
-  "cprior" -> "spread" [color="#333333", style="solid", label="7"];
-  "spread" -> "fusion" [color="#333333", style="solid", label="signals"];
-  "fusion" -> "cererank" [color="#333333", style="solid", label="candidates"];
-  "cererank" -> "diversity" [color="#333333", style="solid", label="10"];
-  "diversity" -> "dedup" [color="#333333", style="solid", label="11"];
+  "fts" -> "priors" [color="#333333", style="solid", label="5"];
+  "priors" -> "spread" [color="#333333", style="solid", label="6"];
+  "spread" -> "ppr" [color="#333333", style="solid", label="7"];
+  "ppr" -> "fusion" [color="#333333", style="solid", label="signals"];
+  "fusion" -> "fetch" [color="#333333", style="solid", label="top candidates"];
+  "fetch" -> "cererank" [color="#333333", style="solid", label="hydrated rows"];
+  "cererank" -> "dedup" [color="#333333", style="solid", label="11"];
   "dedup" -> "heat" [color="#333333", style="solid", label="12"];
   "heat" -> "results" [color="#333333", style="solid", label="13"];
 }
