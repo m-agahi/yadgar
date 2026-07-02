@@ -294,11 +294,21 @@ class _FusionMixin:
         )
         result_memories: list[dict] = []
         seen_ids: set[int] = set()
+        # v5.97.0: batch-hydrate all fused candidates in ONE query instead of a
+        # per-id get_memory loop (the fusion N+1 — 52-55 serial round-trips, ~1100 ms
+        # warm; see docs/plans/recall-warm-profile-2026-07-02.md). We then replay the
+        # fused order + heat filter + rerank_pool break in Python, so the result is
+        # identical to the old loop. NOTE: the `embedding` bytes are intentionally
+        # kept on the row here (the pre-v5.97 `mem.pop("embedding")` is removed) so
+        # MMR (_reranking_mmr._collect_candidate_embeddings) can read it in-place
+        # instead of re-fetching per candidate (Fix 2). The MCP tool boundary strips
+        # `embedding` before returning to callers (server/tools/recall.py).
+        fused_by_id = {mid: total for mid, total in fused}
+        hydrated = {m["id"]: m for m in self._storage.get_memories_by_ids(list(fused_by_id))}
         for mid, total_score in fused:
-            mem = self._storage.get_memory(mid)
+            mem = hydrated.get(mid)
             if mem and mem.get("id") is not None and mem["heat"] >= min_heat:
                 mem["_retrieval_score"] = round(total_score, 4)
-                mem.pop("embedding", None)
                 result_memories.append(mem)
                 seen_ids.add(mid)
             if len(result_memories) >= rerank_pool:

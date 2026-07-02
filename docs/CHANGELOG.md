@@ -5,6 +5,48 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 > Snapshots from v5.0.1 onward are captured from `yadgar stats` at release time.
 > Earlier versions have no per-release snapshot (the practice started 2026-05-16).
 
+## [5.97.0] - 2026-07-02
+
+### Perf: batch the fusion final-result fetch (N+1 → single query) + fold MMR embed re-fetch
+
+Warm recall was ~2.74 s (HIT). The per-stage profile
+(`docs/plans/recall-warm-profile-2026-07-02.md`) attributed the single biggest
+reducible chunk (~1100 ms) to the fusion final-result hydration: `_build_initial_results`
+(`retrieval/fusion.py`) looped `get_memory(mid)` per fused candidate — 52-55 serial
+HTTP round-trips per recall. The v5.96 priors-batch removed the N+1 in the priors
+path; the bottleneck had simply relocated to the final fetch.
+
+- **Fix 1 — batched fusion fetch.** New `StorageEngine.get_memories_by_ids()`
+  hydrates all fused candidates in ONE `SELECT * FROM memory WHERE id IN [memory:N, ...]`
+  query (inline record-id IN list — the embedded-SurrealKV-portable idiom, mirroring
+  the v5.96 priors batch). `_build_initial_results` replays the fused order +
+  `heat >= min_heat` filter + rerank-pool break in Python, so the result is identical
+  to the old per-id loop. Expected: ~-950 ms of pure network round-trips collapsed to
+  one batched query.
+- **Fix 2 — MMR reads the in-dict embedding.** Fusion now keeps the `embedding` bytes
+  on the fused rows (the pre-v5.97 `mem.pop("embedding")` on the main loop is removed)
+  so MMR (`_reranking_mmr._collect_candidate_embeddings`) reads it in-place instead of
+  re-fetching per candidate; it still falls back to `storage.get_memory` for injected
+  candidates (CE-diversity / comparison) that never went through the batched
+  hydration. Removes the redundant per-candidate embed re-fetch (~183 ms marginal).
+  The MCP tool boundary already strips `embedding`; a single retriever-level strip in
+  `_apply_rerank_pipeline` (both return branches) preserves the embedding-free output
+  contract for direct pipeline consumers. CE/NLI/multi-passage stages consume only
+  `content` strings, so the embedding bytes are inert while they flow through.
+
+Parity + one-query + zero-extra-fetch tests in `test_v5_97_fusion_batch.py` and
+`test_reranking_mmr.py`; validated cross-mode (embedded + server) like v5.96.
+
+### Not shipped: onnx-int8 cross-encoder (Fix 3) — blocked on premise
+
+Assessed enabling `CROSS_ENCODER_BACKEND=onnx-int8` (config gate at `config.py:179`).
+Backend image (`5.9.0`) already ships `onnxruntime` and the quantized model artifact,
+so it is a near-clean config flip — BUT it governs only the third-priority ST-CrossEncoder
+fallback, which `GTE_RERANKER_ENABLED=true` (the prod default) preempts on the hot path.
+Flipping onnx-int8 alone has zero warm-recall effect; making it active would require
+disabling the stronger GTE reranker (a quality downgrade). Deferred — no backend change,
+so `backend_version` stays `5.9.0`.
+
 ## [5.96.0] - 2026-07-01
 
 ### Fix: install_hooks no longer bakes a transient worktree python into persistent settings

@@ -271,6 +271,43 @@ class TestMMRSelection:
         ids = [m["id"] for m in result]
         assert len(ids) == len(set(ids))  # no duplicates
 
+    def test_reads_in_dict_embedding_without_fetch(self):
+        """v5.97 Fix 2: when the fused result dict already carries `embedding`,
+        MMR reads it in-place and issues ZERO storage.get_memory calls.
+        """
+        emb1, emb2, emb3 = _rand_vec(1), _rand_vec(2), _rand_vec(3)
+        r = _StubReranker({})  # empty store — any fetch would return None
+        q_emb = _rand_vec(0)
+        mems = [
+            {"id": "m1", "_retrieval_score": 0.9, "embedding": emb1},
+            {"id": "m2", "_retrieval_score": 0.8, "embedding": emb2},
+            {"id": "m3", "_retrieval_score": 0.7, "embedding": emb3},
+        ]
+        result = r.mmr_rerank(mems, q_emb, top_k=3, lambda_param=1.0)
+        assert r._storage.get_memory.call_count == 0, (
+            f"in-dict embeddings must skip the fetch; got {r._storage.get_memory.call_count} fetches"
+        )
+        # pure-relevance order preserved with in-dict embeddings
+        assert [m["id"] for m in result] == ["m1", "m2", "m3"]
+
+    def test_falls_back_to_fetch_when_embedding_missing_in_dict(self):
+        """A candidate without an in-dict embedding (e.g. a CE-diversity or
+        comparison inject) still gets its embedding via storage.get_memory —
+        preserves MMR parity for injected candidates.
+        """
+        emb2 = _rand_vec(2)
+        store = {"m2": {"embedding": emb2}}  # only m2 fetchable
+        r = _StubReranker(store)
+        q_emb = _rand_vec(0)
+        mems = [
+            {"id": "m1", "_retrieval_score": 0.9, "embedding": _rand_vec(1)},  # in-dict
+            {"id": "m2", "_retrieval_score": 0.8},  # no in-dict emb → fetch fallback
+        ]
+        result = r.mmr_rerank(mems, q_emb, top_k=2)
+        # exactly one fetch — only for the candidate missing an in-dict embedding
+        assert r._storage.get_memory.call_count == 1
+        assert {m["id"] for m in result} == {"m1", "m2"}
+
     def test_golden_mmr_order_lambda_07(self):
         """Golden-order regression: lambda=0.7 produces a specific deterministic ranking.
 
