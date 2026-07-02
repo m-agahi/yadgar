@@ -1,0 +1,51 @@
+digraph flow {
+  rankdir="TB";
+  newrank=true;
+  compound=true;
+  nodesep=0.35;
+  ranksep=0.55;
+  graph [fontname="Helvetica", fontsize=11, labelloc="t"];
+  node  [fontname="Helvetica", fontsize=10];
+  edge  [fontname="Helvetica", fontsize=9];
+  label="Write (memorize)
+fast-path enqueue (<=5ms, I9) + async drain replay. Source: server/tools/memorize.py + _memorize_phases/*";
+  subgraph "cluster_core" {
+    label="Core process (--cpus 1)";
+    style=filled;
+    bgcolor="#eef4fb";
+    color="#4a72a8";
+    fontcolor="#26456b";
+    fontname="Helvetica-Bold";
+    "entry" [shape="circle", style="filled", fillcolor="#d6d6d6", label="memorize() entry\n0 ms"];
+    "validate" [shape="diamond", style="filled", fillcolor="#fdf3c8", label="phase_validate\nargs + secret gate + write policy\n1 ms"];
+    "resolve" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="phase_resolve_branch\ndetect git branch\n1 ms"];
+    "enqueue" [shape="cylinder", style="filled", fillcolor="#fce3d6", label="ENQUEUE to file queue\nserialize payload\n2 ms"];
+    "acked" [shape="doublecircle", style="filled", fillcolor="#d6d6d6", label="return queued=True\n(handler done, <=5ms p50)"];
+    "drainer" [shape="circle", style="filled", fillcolor="#d6d6d6", label="drainer replay\n(async, off response path)\n0 ms"];
+    "embed" [shape="box", style="filled", fillcolor="#f5e1f5", label="phase_embed\nwrite-gate (surprisal) + embed\n40 ms"];
+    "contra" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="phase_contradiction\nLLM conflict resolve (opt)\n5 ms"];
+    "post" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="phase_post_write\nprotection, engram, reinjection\n10 ms"];
+    "consol" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="consolidation record\n(nightly cycle trigger)\n1 ms"];
+    "done" [shape="doublecircle", style="filled", fillcolor="#d6d6d6", label="persisted + recallable"];
+  }
+  subgraph "cluster_backend" {
+    label="Backend (--cpus 2): SurrealDB + rerank server";
+    style=filled;
+    bgcolor="#fbf0ea";
+    color="#b5744a";
+    fontcolor="#7a4620";
+    fontname="Helvetica-Bold";
+    "store" [shape="cylinder", style="filled", fillcolor="#fce3d6", label="phase_store\ncurator/insert + CLS classify\n15 ms"];
+  }
+  "entry" -> "validate" [color="#333333", style="solid", label="1"];
+  "validate" -> "resolve" [color="#333333", style="solid", label="2"];
+  "resolve" -> "enqueue" [color="#333333", style="solid", label="3"];
+  "enqueue" -> "acked" [color="#333333", style="solid", label="sync ack"];
+  "enqueue" -> "drainer" [color="#6a8f3a", style="dashed", label="async"];
+  "drainer" -> "embed" [color="#333333", style="solid", label="6"];
+  "embed" -> "contra" [color="#333333", style="solid", label="7"];
+  "contra" -> "store" [color="#333333", style="solid", label="8"];
+  "store" -> "post" [color="#333333", style="solid", label="9"];
+  "post" -> "consol" [color="#333333", style="solid", label="10"];
+  "consol" -> "done" [color="#333333", style="solid", label="11"];
+}
