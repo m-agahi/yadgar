@@ -1,0 +1,59 @@
+# Write (memorize) path.
+#
+# Source: yadgar/server/tools/memorize.py:68 and the _memorize_phases/* modules
+# (phase_validate -> phase_resolve_branch [ENQUEUE fast-path] -> phase_embed
+# [write-gate + embed] -> phase_contradiction -> phase_store -> phase_post_write).
+#
+# TWO execution modes:
+#   * FAST-PATH: phase_resolve_branch serializes the payload and enqueues to the
+#     file queue, returns queued=True immediately (MCP handler budget <=5ms p50,
+#     the I9 invariant). The drainer replays the queued payload asynchronously.
+#   * SYNC / DRAIN REPLAY: during queue draining, all phases run inline (embed,
+#     store, post-write). Shown here as the async continuation after the queue.
+#
+# TIMINGS: placeholders/estimates. The <=5ms MCP-handler budget (I9) is sourced;
+# per-phase numbers past the queue are type-based estimates pending real
+# profiling. This YAML is the single source of truth — edit time_ms in place.
+
+title: "Write (memorize)"
+subtitle: "fast-path enqueue (<=5ms, I9) + async drain replay. Source: server/tools/memorize.py + _memorize_phases/*"
+rankdir: TB
+# No total-time annotation: the caller only experiences the sync handler leg
+# (~5ms, the I9 budget). The drainer-replay steps run asynchronously off the
+# response path, so a summed total would misrepresent caller-observed latency.
+show_total: false
+
+clusters:
+  - {id: core,    label: "Core process (--cpus 1)",                         kind: core}
+  - {id: backend, label: "Backend (--cpus 2): SurrealDB + rerank server",   kind: backend}
+
+nodes:
+  # ---- synchronous MCP-handler leg (must stay under the ~5ms I9 budget) ----
+  - {id: entry,    label: "memorize() entry",                                cluster: core, type: start, time_ms: 0}
+  - {id: validate, label: "phase_validate\\nargs + secret gate + write policy", cluster: core, type: gate, time_ms: 1}
+  - {id: resolve,  label: "phase_resolve_branch\\ndetect git branch",        cluster: core, type: compute, time_ms: 1}
+  - {id: enqueue,  label: "ENQUEUE to file queue\\nserialize payload",       cluster: core, type: store, time_ms: 2}
+  - {id: acked,    label: "return queued=True\\n(handler done, <=5ms p50)",   cluster: core, type: end}
+
+  # ---- asynchronous drainer replay (off the response path) ----
+  - {id: drainer,  label: "drainer replay\\n(async, off response path)",     cluster: core, type: start, time_ms: 0}
+  - {id: embed,    label: "phase_embed\\nwrite-gate (surprisal) + embed",    cluster: core, type: model, time_ms: 40}
+  - {id: contra,   label: "phase_contradiction\\nLLM conflict resolve (opt)", cluster: core, type: compute, time_ms: 5}
+  - {id: store,    label: "phase_store\\ncurator/insert + CLS classify",     cluster: backend, type: store, time_ms: 15}
+  - {id: post,     label: "phase_post_write\\nprotection, engram, reinjection", cluster: core, type: compute, time_ms: 10}
+  - {id: consol,   label: "consolidation record\\n(nightly cycle trigger)",  cluster: core, type: compute, time_ms: 1}
+  - {id: done,     label: "persisted + recallable",                          cluster: core, type: end}
+
+edges:
+  - {src: entry,    dst: validate, order: 1}
+  - {src: validate, dst: resolve,  order: 2}
+  - {src: resolve,  dst: enqueue,  order: 3}
+  - {src: enqueue,  dst: acked,    order: 4, label: "sync ack"}
+  # async continuation: the queued payload is later replayed by the drainer
+  - {src: enqueue,  dst: drainer,  order: 5, type: async, label: "async"}
+  - {src: drainer,  dst: embed,    order: 6}
+  - {src: embed,    dst: contra,   order: 7}
+  - {src: contra,   dst: store,    order: 8}
+  - {src: store,    dst: post,     order: 9}
+  - {src: post,     dst: consol,   order: 10}
+  - {src: consol,   dst: done,     order: 11}
