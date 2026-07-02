@@ -180,6 +180,8 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_OLLAMA_MODEL", "qwen3:8b", "string"),
     ConfigEntry("YADGAR_CONFLICT_K", "5", "int"),
     ConfigEntry("YADGAR_CROSS_ENCODER_BACKEND", "st", "string"),
+    ConfigEntry("YADGAR_GTE_RERANKER_BACKEND", "torch", "string"),
+    ConfigEntry("YADGAR_GTE_RERANKER_ONNX_FILE", "onnx/model_int8.onnx", "string"),
     # ── Logging ─────────────────────────────────────────────────────────────
     ConfigEntry("YADGAR_BACKEND_LOG_LEVEL", "warn", "string"),
     ConfigEntry("YADGAR_CORE_LOG_LEVEL", "WARNING", "string"),

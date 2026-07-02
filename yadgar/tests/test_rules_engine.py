@@ -16,7 +16,12 @@ from yadgar.storage import StorageEngine
 
 @pytest.fixture
 def settings(tmp_path):
-    return Settings(DB_PATH=str(tmp_path / "test.db"))
+    return Settings(
+        DB_PATH=str(tmp_path / "test.db"),
+        # Keep CI model-free: GTE reranker is not baked in yadgar-ci image.
+        GTE_RERANKER_ENABLED=False,
+        MULTI_PASSAGE_RERANKING_ENABLED=False,
+    )
 
 
 @pytest.fixture

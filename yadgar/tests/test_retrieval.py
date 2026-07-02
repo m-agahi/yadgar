@@ -27,7 +27,14 @@ def storage(tmp_path):
 
 @pytest.fixture
 def settings(tmp_path):
-    return Settings(DB_PATH=str(tmp_path / "test.db"), PPR_DAMPING=0.85, PPR_ITERATIONS=50)
+    return Settings(
+        DB_PATH=str(tmp_path / "test.db"),
+        PPR_DAMPING=0.85,
+        PPR_ITERATIONS=50,
+        # Keep CI model-free: GTE reranker is not baked in yadgar-ci image.
+        GTE_RERANKER_ENABLED=False,
+        MULTI_PASSAGE_RERANKING_ENABLED=False,
+    )
 
 
 @pytest.fixture
@@ -547,6 +554,8 @@ class TestCandidatePoolMultiplier:
             DB_PATH=str(tmp_path / "pool.db"),
             CANDIDATE_POOL_MULTIPLIER=7,
             QUERY_ROUTING_ENABLED=False,
+            GTE_RERANKER_ENABLED=False,
+            MULTI_PASSAGE_RERANKING_ENABLED=False,
         )
         retriever = Retriever(storage, embeddings, graph, custom_settings)
         _make_memory(storage, embeddings, "test memory about retrieval")
@@ -668,6 +677,8 @@ class TestPseudoHydeExpand:
             DB_PATH=str(tmp_path / "expand_on.db"),
             QUERY_EXPANSION_ENABLED=True,
             QUERY_ROUTING_ENABLED=False,
+            GTE_RERANKER_ENABLED=False,
+            MULTI_PASSAGE_RERANKING_ENABLED=False,
         )
         retriever = Retriever(storage, embeddings, graph, settings_on)
         _make_memory(storage, embeddings, "Alice's hobby is painting landscapes")
@@ -681,6 +692,8 @@ class TestPseudoHydeExpand:
             DB_PATH=str(tmp_path / "expand_off.db"),
             QUERY_EXPANSION_ENABLED=False,
             QUERY_ROUTING_ENABLED=False,
+            GTE_RERANKER_ENABLED=False,
+            MULTI_PASSAGE_RERANKING_ENABLED=False,
         )
         retriever = Retriever(storage, embeddings, graph, settings_off)
         _make_memory(storage, embeddings, "Alice's hobby is painting landscapes")

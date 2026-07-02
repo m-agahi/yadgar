@@ -283,7 +283,7 @@ config knobs.
 
 - **status:** DORMANT
 - **category:** retrieval
-- **settings:** `GTE_RERANKER_ENABLED`, `GTE_RERANKER_MODEL`, `GTE_RERANKER_MAX_LENGTH`, `GTE_RERANKER_FALLBACK_TO_FLASHRANK`
+- **settings:** `GTE_RERANKER_ENABLED`, `GTE_RERANKER_MODEL`, `GTE_RERANKER_MAX_LENGTH`, `GTE_RERANKER_FALLBACK_TO_FLASHRANK`, `GTE_RERANKER_BACKEND`, `GTE_RERANKER_ONNX_FILE`
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** —

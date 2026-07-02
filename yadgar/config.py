@@ -274,10 +274,10 @@ class Settings(BaseSettings):
     GTE_RERANKER_MODEL: str = "Alibaba-NLP/gte-reranker-modernbert-base"
     GTE_RERANKER_MAX_LENGTH: int = 512
     GTE_RERANKER_FALLBACK_TO_FLASHRANK: bool = True
+    GTE_RERANKER_BACKEND: str = "torch"  # v5.98 L3: "torch" | "onnx-int8" (quantized, ~1.8x CPU)
+    GTE_RERANKER_ONNX_FILE: str = "onnx/model_int8.onnx"  # artifact for onnx-int8 backend
 
-    # v23 NLI Entailment Scoring
-    # v5.6.6: default changed True → False — NLI averages 55s/call on CPU, marginal
-    # quality gain over CE alone. Set YADGAR_NLI_RERANKING_ENABLED=true to re-enable.
+    # v23 NLI. v5.6.6: default True→False (~55s/call CPU, marginal gain); YADGAR_NLI_RERANKING_ENABLED=true re-enables.
     NLI_RERANKING_ENABLED: bool = False
     NLI_MODEL: str = "cross-encoder/nli-deberta-v3-base"
     NLI_WEIGHT: float = 0.3

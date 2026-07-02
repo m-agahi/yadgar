@@ -8,7 +8,7 @@ from yadgar.tracing import trace_span
 class _MultiPassageMixin:
     """Provides multi_passage_rerank for evidence aggregation across related memories.
 
-    Requires _CrossEncoderMixin earlier in MRO (uses self.score_single_pair and
+    Requires _CrossEncoderMixin earlier in MRO (uses self.score_documents and
     self.cluster_memories).
     """
 
@@ -18,6 +18,11 @@ class _MultiPassageMixin:
 
         Groups related memories and re-scores clusters to detect when multiple
         weak pieces of evidence combine into strong evidence.
+
+        v5.98 Lever 1: all qualifying clusters' combined texts are scored in ONE
+        batched, LRU-cached CE call (self.score_documents → backend mode=ce)
+        instead of per-cluster mode=pair RPCs (uncached). Score-identical; the
+        only change is where/whether the identical scores are cached.
         """
         if not getattr(self._settings, "MULTI_PASSAGE_RERANKING_ENABLED", False):
             return memories[:top_k]
@@ -25,15 +30,20 @@ class _MultiPassageMixin:
         # Cluster top-20 candidates
         clusters = self.cluster_memories(memories[:20])
 
+        # Build the combined text for every qualifying cluster (≥2 members) up-front,
+        # preserving cluster order so scores map back by index.
+        qualifying: list[list[dict]] = []
+        combined_texts: list[str] = []
         for cluster_mems in clusters:
             if len(cluster_mems) < 2:
                 continue
-            # Concatenate cluster texts
-            combined = " | ".join(m.get("content", "")[:200] for m in cluster_mems[:3])
+            combined_texts.append(" | ".join(m.get("content", "")[:200] for m in cluster_mems[:3]))
+            qualifying.append(cluster_mems)
 
-            # Score combined text using CE
-            combined_score = self.score_single_pair(query, combined)
+        # Single batched CE call for all cluster combined-texts (cached on repeat).
+        combined_scores = self.score_documents(query, combined_texts)
 
+        for cluster_mems, combined_score in zip(qualifying, combined_scores, strict=True):
             # If combined evidence is stronger, boost individual members
             max_individual = max(
                 m.get("_cross_encoder_score", m.get("_retrieval_score", 0)) for m in cluster_mems
