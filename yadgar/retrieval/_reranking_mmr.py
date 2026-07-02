@@ -30,9 +30,19 @@ def _collect_candidate_embeddings(
     mem_embeddings: list = []
     valid_memories: list[dict] = []
     for mem in memories:
-        full_mem = storage.get_memory(mem["id"])
-        if full_mem and full_mem.get("embedding"):
-            emb = np.frombuffer(full_mem["embedding"], dtype=np.float32)
+        # v5.97.0 Fix 2: prefer the embedding already carried on the fused result
+        # dict (fusion._build_initial_results keeps it in-place after the batched
+        # fetch). Only fall back to storage.get_memory for candidates without an
+        # in-dict embedding — e.g. CE-diversity / comparison injects that never
+        # went through the batched fusion hydration. This removes the redundant
+        # per-candidate re-fetch (~183 ms marginal warm) while preserving exact
+        # parity for injected candidates.
+        raw_emb = mem.get("embedding")
+        if not raw_emb:
+            full_mem = storage.get_memory(mem["id"])
+            raw_emb = full_mem.get("embedding") if full_mem else None
+        if raw_emb:
+            emb = np.frombuffer(raw_emb, dtype=np.float32)
             if len(emb) == len(q_arr):
                 mem_embeddings.append(emb)
                 valid_memories.append(mem)

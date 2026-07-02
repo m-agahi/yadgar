@@ -297,6 +297,52 @@ class _MemoryMixin:
             result.setdefault("last_reconsolidated", None)
         return result
 
+    @trace_span("storage.memory.get_memories_by_ids")
+    def get_memories_by_ids(self, memory_ids: list[int]) -> list[dict]:
+        """Bulk-fetch full memory rows for a list of ids in ONE query (v5.97.0).
+
+        Collapses the fusion final-result N+1 — `_build_initial_results` previously
+        looped `get_memory(mid)` per fused candidate (52-55 serial round-trips,
+        ~1100 ms warm; see docs/plans/recall-warm-profile-2026-07-02.md). This is
+        the same batch shape v5.96 used for the priors, but SELECT * (not a scalar
+        projection) so the caller gets full hydrated rows.
+
+        Semantics match get_memory exactly, per id:
+          - `SELECT *` then `_row_to_dict` (id → int, embedding list → bytes, JSON
+            fields parsed, booleans coerced) — so the `embedding` bytes are
+            byte-identical to get_memory's, which MMR depends on
+            (np.frombuffer(embedding, dtype=float32)).
+          - the five nullable fields SurrealDB omits when NONE are setdefault-ed to
+            None (embedding_model, file_hash, last_excitability_update,
+            original_content, last_reconsolidated).
+        Missing ids are simply absent from the result (get_memory would return None
+        → the fusion loop skipped them). Order is NOT guaranteed — the caller
+        re-orders by fused score. Duplicate input ids collapse to one row.
+
+        Record ids are inlined into the IN list (WHERE id IN [memory:N, ...]) rather
+        than bound as a $param — parameterised IN with record-ids is not portable to
+        the embedded SurrealKV SDK; inline record-id literals work in both embedded
+        and server modes (mirrors get_memory_graph_priors / get_memories_by_ids_minimal).
+        int() sanitises each id (mirrors get_memory) so the inlined literal can never
+        carry injection.
+        """
+        if not memory_ids:
+            return []
+        # de-dup while preserving determinism; the caller re-orders anyway.
+        unique_ids = list(dict.fromkeys(int(mid) for mid in memory_ids))
+        id_list = ", ".join(f"memory:{mid}" for mid in unique_ids)
+        rows = self._q(f"SELECT * FROM memory WHERE id IN [{id_list}]")
+        results = self._rows_to_dicts(rows)
+        for result in results:
+            # SurrealDB omits fields set to NONE; add expected nullable defaults
+            # (identical to get_memory).
+            result.setdefault("embedding_model", None)
+            result.setdefault("file_hash", None)
+            result.setdefault("last_excitability_update", None)
+            result.setdefault("original_content", None)
+            result.setdefault("last_reconsolidated", None)
+        return results
+
     @trace_span("storage.memory.get_memories_by_heat")
     def get_memories_by_heat(self, min_heat: float, limit: int = 100) -> list[dict]:
         rows = self._q(

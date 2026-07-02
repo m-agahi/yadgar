@@ -271,7 +271,10 @@ class _RerankingMixin:
         # Useful for CPU-only hosts where every rerank call causes 8-46s saturation.
         if not getattr(self._settings, "HEAVY_RERANK_ENABLED", True):
             _observe_recall_stage("rerank_final", (_time.perf_counter() - _rerank_t0) * 1000)
-            return result_memories[: ctx.max_results]
+            # v5.97.0: fusion now keeps `embedding` on rows so MMR can read it in-place
+            # (avoids the per-candidate re-fetch). Strip it here so the retriever's
+            # contract — embedding-free rows — holds on this early-return branch too.
+            return self._strip_embeddings(result_memories[: ctx.max_results])
 
         result_memories = self._rerank_heuristic(result_memories, ctx)
         result_memories = self._rerank_comparison_merge(result_memories, seen_ids, ctx)
@@ -292,7 +295,22 @@ class _RerankingMixin:
         # P11: observe rerank_final covering the full post-fusion pipeline duration.
         _observe_recall_stage("rerank_final", (_time.perf_counter() - _rerank_t0) * 1000)
 
-        return result_memories
+        # v5.97.0: strip the `embedding` bytes fusion left on the rows for MMR — the
+        # retriever contract returns embedding-free rows (test_pipeline_strips_embeddings).
+        return self._strip_embeddings(result_memories)
+
+    @staticmethod
+    def _strip_embeddings(memories: list[dict]) -> list[dict]:
+        """Remove the raw `embedding` bytes from result rows in-place (v5.97.0).
+
+        Fusion keeps `embedding` on fused rows so MMR reads it without re-fetching
+        (Fix 2); this is the single retriever-level strip that restores the
+        embedding-free output contract. Idempotent — safe on rows that never
+        carried an embedding.
+        """
+        for mem in memories:
+            mem.pop("embedding", None)
+        return memories
 
     def _score_single_pair(self, query: str, document: str) -> float:
         """Delegate to Reranker.score_single_pair (kept for backward compatibility)."""
