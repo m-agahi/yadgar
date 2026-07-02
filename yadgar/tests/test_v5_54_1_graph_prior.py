@@ -555,21 +555,17 @@ class TestGetMemoryGraphPriors:
     """Storage method get_memory_graph_priors correctness."""
 
     def test_returns_float_values(self):
-        """get_memory_graph_priors returns {int: float} for present priors."""
+        """get_memory_graph_priors returns {int: float} for present priors.
+
+        v5.96.0: batched query returns meta::id(id) AS id (a bare int) for all
+        matched rows in ONE call — not one point-read per id.
+        """
         from yadgar.storage.memory import _MemoryMixin
 
         mixin = object.__new__(_MemoryMixin)
 
-        def mock_q(sql, params=None):
-            mid = params["id"]
-            if mid == 1:
-                return [{"id": f"memory:{mid}", "graph_prior": 0.75}]
-            return []
-
-        mixin._q = mock_q
-        mixin._extract_id = lambda rid: (
-            int(str(rid).split(":")[-1]) if ":" in str(rid) else int(rid)
-        )
+        # Single batched query: return only the row that has a prior.
+        mixin._q = MagicMock(return_value=[{"id": 1, "graph_prior": 0.75}])
 
         result = _MemoryMixin.get_memory_graph_priors(mixin, [1, 2])
         assert result == {1: 0.75}, f"Expected {{1: 0.75}}, got {result}"
@@ -579,11 +575,8 @@ class TestGetMemoryGraphPriors:
         from yadgar.storage.memory import _MemoryMixin
 
         mixin = object.__new__(_MemoryMixin)
-        # Always return empty (NULL → IS NOT NONE filter excludes)
+        # Batched query returns empty (NULL → IS NOT NONE filter excludes all).
         mixin._q = MagicMock(return_value=[])
-        mixin._extract_id = lambda rid: (
-            int(str(rid).split(":")[-1]) if ":" in str(rid) else int(rid)
-        )
 
         result = _MemoryMixin.get_memory_graph_priors(mixin, [1, 2, 3])
         assert result == {}, f"Expected empty dict for all-NULL priors, got {result}"

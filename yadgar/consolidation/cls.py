@@ -6,6 +6,25 @@ from itertools import combinations
 
 logger = logging.getLogger("yadgar.consolidation")
 
+
+def _bump_shadow_epoch_global(updated: int) -> None:
+    """v5.96.0: consolidation prior recompute changes prior scalars across all
+    directories → coarsely bump the shadow-cache epoch (global bucket) so the
+    recall shadow-cache counter treats prior would-be keys as stale.  No-op when
+    nothing was updated (nothing structurally changed).
+
+    Instrumentation only, fully guarded — must never break the consolidation cycle.
+    """
+    if not updated:
+        return
+    try:
+        from yadgar.server.tools._recall_shadow import bump_epoch  # noqa: PLC0415
+
+        bump_epoch(None)  # None → the shared "global" generation
+    except Exception:  # pragma: no cover - instrumentation must never break consolidation
+        pass
+
+
 # Regex patterns for entity extraction
 _FILE_PATH_RE = re.compile(r"(?:\.{0,2}/)?(?:[\w@.-]+/)+[\w@.-]+\.\w+")
 _PYTHON_DEF_RE = re.compile(r"\b(def|class)\s+(\w+)")
@@ -321,6 +340,7 @@ class _CLSMixin:
 
         stats["graph_prior_updated"] = updated
         logger.info("graph_prior: computed and stored for %d memories", updated)
+        _bump_shadow_epoch_global(updated)
 
     def _compute_cofire_priors(self, stats: dict) -> None:
         """Precompute per-memory cofire_prior scalar and store on memory rows (v5.54.2).
@@ -390,6 +410,7 @@ class _CLSMixin:
 
         stats["cofire_prior_updated"] = updated
         logger.info("cofire_prior: computed and stored for %d memories", updated)
+        _bump_shadow_epoch_global(updated)
 
     # ── _link_similar_memories helpers ────────────────────────────────────────
 

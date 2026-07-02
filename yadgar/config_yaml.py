@@ -940,10 +940,12 @@ FIELD_META: dict[str, dict[str, object]] = {
     # v5.95 (#81 residual) — dedicated hook-recall pool size
     "hook_recall_pool_workers": {
         "desc": (
-            "Threads in the dedicated hook-recall pool. Hook recalls run bounded here so a "
-            "slow uncancellable recall cannot starve the event loop. 1 minimizes CPU "
-            "competition with the loop on the --cpus-1 core (freeze-safest); raise only if "
-            "hook serialization is a bottleneck. Restart to apply."
+            "SEPARATE pool just for hook auto-recalls (SessionStart/UserPrompt), isolated so "
+            "hook bursts cannot starve MCP tool calls (ADR-0025). Default 1. 1 minimizes CPU "
+            "competition with the event loop on the --cpus-1 core (freeze-safest). Raise only "
+            "if hook serialization is measurably a bottleneck (check yadgar_hook_recall_timeout_total). "
+            "Changing this pool size does NOT affect the tool-offload pool (TOOL_POOL_WORKERS) — "
+            "they are independent. Restart to apply."
         ),
         "section": "hooks",
     },
@@ -1426,9 +1428,13 @@ FIELD_META: dict[str, dict[str, object]] = {
     },
     "rerank_max_concurrency": {
         "desc": (
-            "Max concurrent inference threads per /rerank mode on the backend (default 8). Raised from 1 "
-            "in lockstep with tool_pool_workers (Fix A O7) so N-parallel core offload does not cause "
-            "rerank 503-storms. Read by the BACKEND container — needs a backend rebump/env to take effect."
+            "BACKEND cross-encoder cap: max concurrent /rerank inference threads the backend serves at "
+            "once (default 8). Independent of the core tool pool — this lives in the backend container "
+            "and requires a backend restart/env change to take effect. The #74 backend-saturation guard: "
+            "raised from 1 in lockstep with tool_pool_workers (Fix A O7) so N-parallel core offload "
+            "does not cause rerank 503-storms. Effective recall concurrency = "
+            "min(TOOL_POOL_WORKERS, RECALL_HEAVY_CONCURRENCY, RERANK_MAX_CONCURRENCY) — bumping only "
+            "one gate does nothing if the others are lower."
         ),
         "section": "circuit_breaker",
     },
@@ -1450,20 +1456,27 @@ FIELD_META: dict[str, dict[str, object]] = {
     },
     "tool_pool_workers": {
         "desc": (
-            "Bounded tool-offload worker-pool size (default 2) — the cap IS the concurrency control. "
-            "v5.95: dropped 8→2 to bound CPU competition on the --cpus-1 core (offload threads compete "
-            "with the event loop; fewer threads = less loop-starvation risk). Raise only if tool "
-            "serialization becomes a bottleneck. Must be > recall_heavy_concurrency (else the rerank "
-            "gate is a no-op). Restart to apply."
+            "Size of the offload ThreadPoolExecutor — max MCP tool bodies (recall/memorize/wiki/…) "
+            "running OFF the --cpus-1 event loop at once (default 2). Offload threads compete with "
+            "the event loop for the single core; fewer threads = less loop-starvation risk. v5.95: "
+            "dropped 8→2 for this reason. Raise only if tool serialization is measurably a bottleneck. "
+            "Must be strictly > recall_heavy_concurrency (else the rerank sub-gate is a no-op). "
+            "Effective recall concurrency = min(TOOL_POOL_WORKERS, RECALL_HEAVY_CONCURRENCY, "
+            "RERANK_MAX_CONCURRENCY) — bumping this alone does nothing if recall_heavy_concurrency "
+            "or rerank_max_concurrency are lower. Restart to apply."
         ),
         "section": "circuit_breaker",
     },
     "recall_heavy_concurrency": {
         "desc": (
-            "#74 fix: process-wide cap on concurrent backend /rerank calls the core issues "
-            "(default 1). v5.95: dropped 3→1 in lockstep with tool_pool_workers dropping 8→2 "
-            "(must be strictly < tool_pool_workers or the gate is a no-op). Sized to the "
-            "BACKEND's real serving capacity. MUST be < tool_pool_workers and <= rerank_max_concurrency."
+            "Sub-gate INSIDE the tool pool: max concurrent HEAVY recalls (the rerank fan-out) "
+            "the core issues at once (default 1). Clamped at runtime to ≤ TOOL_POOL_WORKERS. "
+            "Protects the backend from too many simultaneous rerank waves (#74 fix). v5.95: "
+            "dropped 3→1 in lockstep with tool_pool_workers dropping 8→2. Must be strictly < "
+            "tool_pool_workers or this gate is a no-op (all pool workers can do heavy recalls "
+            "simultaneously). Sized to the BACKEND's real serving capacity. MUST be ≤ "
+            "rerank_max_concurrency. Effective recall concurrency = min(TOOL_POOL_WORKERS, "
+            "RECALL_HEAVY_CONCURRENCY, RERANK_MAX_CONCURRENCY)."
         ),
         "section": "circuit_breaker",
     },

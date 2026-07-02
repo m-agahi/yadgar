@@ -30,6 +30,30 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def _stable_python() -> str:
+    """Return a STABLE interpreter path safe to bake into persistent settings.
+
+    `sys.executable` inside a git worktree (an agent's
+    ``<repo>/.claude/worktrees/agent-<id>/.venv/bin/python3``) is EPHEMERAL: when
+    the worktree is removed, any hook command / shebang pinned to it breaks with
+    "No such file or directory" (observed corrupting the global Stop/SessionEnd
+    hooks on every worktree agent-spawn). Rewrite such a path back to the
+    canonical repo venv (``<repo>/.venv/bin/python3``); return ``sys.executable``
+    unchanged for normal (non-worktree) interpreters.
+    """
+    exe = sys.executable
+    marker = f"{os.sep}.claude{os.sep}worktrees{os.sep}"
+    if marker in exe:
+        repo_root = exe.split(marker, 1)[0]
+        canonical = os.path.join(repo_root, ".venv", "bin", "python3")
+        if os.path.exists(canonical):
+            return canonical
+        # Canonical venv missing → drop the worktree pin entirely; PATH
+        # resolution beats a guaranteed-dead absolute path.
+        return "python3"
+    return exe
+
+
 def _resolve_python_shebang() -> str:
     """Return the shebang line to pin yadgar-bundled hooks at install time.
 
@@ -47,7 +71,7 @@ def _resolve_python_shebang() -> str:
     Returns the literal shebang line including the leading `#!` and trailing
     newline.
     """
-    return f"#!{sys.executable}\n"
+    return f"#!{_stable_python()}\n"
 
 
 # ── Container detection ────────────────────────────────────────────────────
@@ -152,7 +176,7 @@ def _build_core_hooks(
     # PATH at hook-fire time (often a system python without yadgar
     # importable, e.g. on NixOS). The installer's python IS the one that
     # can resolve `import yadgar.paths`, so pin to it.
-    _python = shlex.quote(sys.executable)
+    _python = shlex.quote(_stable_python())
 
     def _runner_entry(hook_type: str, matcher: str = "") -> dict:
         cmd = f"{_python} {shlex.quote(runner)} {hook_type}"
@@ -191,7 +215,7 @@ def _install_append_hooks(
         ("subagent-start.py", "yadgar-subagent-start.py", "SubagentStart", ""),
         ("file-changed.py", "yadgar-file-changed.py", "FileChanged", ""),
     ]
-    _python = shlex.quote(sys.executable)
+    _python = shlex.quote(_stable_python())
     for src_name, dst_name, event, matcher in _append_specs:
         dst = hooks_dir / dst_name
         _copy_hook(package_hooks / src_name, dst, dry_run)
@@ -342,7 +366,7 @@ def install_hooks_impl(
 
     settings_data["hooks"] = hooks_config
 
-    _python = shlex.quote(sys.executable)
+    _python = shlex.quote(_stable_python())
     _stop_entry = [
         {
             "matcher": "",

@@ -5,6 +5,71 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 > Snapshots from v5.0.1 onward are captured from `yadgar stats` at release time.
 > Earlier versions have no per-release snapshot (the practice started 2026-05-16).
 
+## [5.96.0] - 2026-07-01
+
+### Fix: install_hooks no longer bakes a transient worktree python into persistent settings
+
+`install_hooks` pinned `sys.executable` into the global Stop/SessionEnd hook
+command strings (and the bundled-hook shebang). When it ran inside an agent's
+git worktree, that path was `<repo>/.claude/worktrees/agent-<id>/.venv/bin/python3`
+— ephemeral; once the worktree was cleaned the hooks broke with "No such file or
+directory". New `_stable_python()` helper (install_hooks_lib.py) rewrites a
+worktree-interior interpreter back to the canonical repo venv (`<repo>/.venv/bin/python3`)
+before pinning; normal interpreters pass through unchanged. Regression tests in
+`test_install_hooks_stable_python.py`. Re-run `install_hooks` once after upgrade
+to regenerate stable paths.
+
+### Docs: concurrency knob help text + configuration.md enrichment
+
+No app-logic change. Enriches the four concurrency knobs with full help text in
+`FIELD_META` (config_yaml.py) and expands their rows in docs/configuration.md:
+
+- **`TOOL_POOL_WORKERS`** — clarified role as offload ThreadPoolExecutor size;
+  added min() relationship note (effective recall concurrency = min(pool, heavy, rerank)).
+- **`RECALL_HEAVY_CONCURRENCY`** — clarified as sub-gate inside the pool for
+  heavy-recall rerank fan-out; clamped at runtime to ≤ TOOL_POOL_WORKERS.
+- **`RERANK_MAX_CONCURRENCY`** — corrected default in configuration.md (was `1`,
+  actual code default is `8`); clarified as backend cross-encoder cap, independent
+  of the core pool.
+- **`HOOK_RECALL_POOL_WORKERS`** — clarified as separate pool isolated from tool
+  calls (ADR-0025); hook bursts cannot starve MCP tools.
+
+Also adds wiki page `yadgar-concurrency-tuning` with empirical tuning results
+from 2026-07-01 (6 concurrent recalls on --cpus-1 core; ceiling ~4/6 at pool=2 —
+CPU-bound, not knob-bound).
+
+### Perf: batch the prior-fetch N+1 (cache-refactor lever c) — faster on EVERY recall
+
+Implements lever (c) of the cache-refactor plan (`docs/plans/cache-refactor-2026-07-01.md`);
+the query→output result cache (lever a) stays deferred.
+
+- **`get_memory_graph_priors` / `get_memory_cofire_priors`** (`storage/memory.py`)
+  issued one point-read per candidate id (N+1) to fetch precomputed scalar fields
+  (`graph_prior` / `cofire_prior`, materialized by consolidation, not on the request
+  path). Rewritten each to a single batched `SELECT meta::id(id) AS id, <field> FROM
+  memory WHERE id IN [memory:N, ...]` — collapsing N round trips into one. Same
+  `{id: prior}` return + same absent-is-0.0 semantics; missing/duplicate ids handled.
+- **Cross-mode (3.1.5):** the inline record-id `IN [...]` idiom (mirrors
+  `get_memories_by_ids_minimal`) is validated in **both embedded and server** modes;
+  ids are `int()`-sanitised so the inlined literal cannot carry injection.
+- Parity test (batched == old per-id, over present/absent/missing/duplicate ids)
+  runs against a live store; a call-count test asserts exactly one query for N ids.
+
+### Perf: shadow recall result-cache hit-rate counter (instrumentation only)
+
+A pure measurement to decide whether the deferred query→output cache (lever a) is
+worth building — it caches nothing and changes no recall behaviour.
+
+- New module `server/tools/_recall_shadow.py`: per-recall it computes the would-be
+  cache key (query + directory + branch + type + mode + profile + max_results +
+  min_heat + tags) and looks it up against a bounded in-memory dict keyed to a
+  per-directory structural epoch (bumped on `memorize` and on the consolidation
+  prior recompute). Same key at the same epoch → would-HIT; else would-MISS.
+- New Prometheus counters `yadgar_recall_shadow_cache_hits_total` /
+  `yadgar_recall_shadow_cache_misses_total`. Wired into the recall dispatch after
+  branch detection (covers fan-out / pipeline / legacy paths; landscape excluded by
+  design). Fully guarded — instrumentation can never break a recall or block a write.
+
 ## [5.95.0] - 2026-07-01
 
 ### Daemon stability: bound offload pool via TOOL_POOL_WORKERS knob + config integrity
