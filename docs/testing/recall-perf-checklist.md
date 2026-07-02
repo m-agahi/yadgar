@@ -144,3 +144,35 @@ Warm v5.98 = median of 4 shadow-HIT calls of `"offload freeze fix daemon"` (1575
 3. **6-concurrent is currently unmeasurable via the MCP tool** — the streamable-http client serializes tool calls in BOTH main-thread and subagent contexts (verified: 6 "parallel" calls ran ~70s apart). A real concurrency number needs a parallel-dispatch harness (task #79) or direct parallel HTTP, not batched MCP tool calls.
 
 **Bottleneck has moved:** v5.96/97 killed the priors+fusion N+1s (warm floor → 1.4s). The dominant remaining cost is the **core PPR/spreading path on cold/entity-rich queries** (40–50s) → next levers = v5.99 (PPR N+1 fetch), #85 (PPR→backend stateless), #93 (spreading BFS N+1). Warm floor below ~1.4s needs the output cache (#88) or more CPU.
+
+## Run log — 2026-07-03 (core v5.99.0 — POST PPR + spreading-BFS N+1 batch, PR #146)
+
+Warmed daemon (fired ~7 recalls to convergence FIRST — per caveat 1 — then measured; uptime 147→609s). Every number cross-checked: histogram delta == daemon `POST /mcp` handler `lat_ms` within ±8ms. Cold = 3 fresh, meaningful, entity-rich queries; **core ms = total − backend CE span time** (from `yadgar-backend` logs).
+
+### The v5.99 test — cold entity-rich core cost (the PPR/spreading path)
+
+| query | total ms | backend CE ms | **core ms (PPR/spreading)** |
+|---|---|---|---|
+| vacuum/bloat/compaction | 21,686 | ~14,505 | **~7,181** |
+| KG/PPR/spreading | 26,062 | ~16,667 | **~9,395** |
+| consolidation/engram | 21,051 | ~14,570 | **~6,481** |
+| **avg** | **~22,900** | **~15,250** | **~7,700** |
+
+**Verdict: v5.99 delivered.** Cold-query **core** (PPR + spreading-BFS, the 28→2 round-trip collapse) dropped **~40–50s (v5.98) → ~6.5–9.4s (v5.99) — a 5–7× win**; cold **total** ~54–64s → ~21–26s (~2.5×). The spreading-BFS N+1 was the 40s ceiling; batching it per-depth removed it, live-confirmed.
+
+### Warm floor unchanged (as expected)
+
+Convergence curve (repeated same query): 1915 → 1710 → 1603 → 1564 → 1674 → 1610ms (converged by call 3). Warm-floor median = **~1,613ms** — matches v5.98 (~1,602ms). v5.99 only touches the cold/PPR path; warm CE is cached to ~2ms so the fix cannot move the warm floor.
+
+### Bottleneck moved AGAIN → cold is now backend-CE-bound
+
+Post-v5.99, the dominant cold cost is **backend GTE-ModernBERT CE** — the first `/rerank` per cold query is ~9s, ×~1.6 calls = ~14–16s. Core is no longer the ceiling. **Next lever = #88 query→output cache** (the only thing that skips CE entirely on repeat; shadow hit-rate counter live since v5.96 to gate it), or CE candidate trim (v5.98 Lever-2 `CROSS_ENCODER_TOP_K`, dormant), or onnx-int8 (v5.98 Lever-3, unverified in a built image). Warm floor below ~1.4s still needs #88 or more CPU.
+
+### Full arc (measured)
+
+| version | change | warm floor | cold-query core (PPR/spreading) |
+|---|---|---|---|
+| v5.96 | priors N+1 batch | ~2,410ms | — |
+| v5.97 | fusion N+1 batch | **~1,432ms** (−40%) | — |
+| v5.98 | GTE CE-routing (Lever 1) | ~1,602ms (flat) | ~40–50s |
+| v5.99 | PPR + spreading-BFS N+1 batch | ~1,613ms (flat) | **~7–9s** (−5–7×) |
