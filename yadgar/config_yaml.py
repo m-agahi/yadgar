@@ -241,6 +241,14 @@ FIELD_META: dict[str, dict[str, object]] = {
         "desc": "Fall back to FlashRank if GTE reranker fails",
         "section": "reranking",
     },
+    "gte_reranker_backend": {
+        "desc": "GTE reranker backend: torch (fp32) or onnx-int8 (quantized, ~1.8x faster)",
+        "section": "reranking",
+    },
+    "gte_reranker_onnx_file": {
+        "desc": "ONNX artifact loaded when gte_reranker_backend=onnx-int8",
+        "section": "reranking",
+    },
     "nli_reranking_enabled": {
         "desc": "Enable NLI entailment scoring stage",
         "section": "reranking",

@@ -5,6 +5,57 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 > Snapshots from v5.0.1 onward are captured from `yadgar stats` at release time.
 > Earlier versions have no per-release snapshot (the practice started 2026-05-16).
 
+## [5.98.0] - 2026-07-02
+
+### Perf: GTE-ModernBERT rerank speedup — 3 levers, only Lever 1 active
+
+Post-v5.97 warm recall ~1.43 s -> target ~1.0 s. A measure-first profile
+(`docs/plans/gte-rerank-speedup-2026-07-02.md`) found the warm-HIT CE cost is the
+**uncached multi-passage `mode=pair` RPCs**, not the main `mode=ce` call (which
+cache-hits on warm repeat). Three levers built; only Lever 1 is active this release.
+
+- **Lever 1 (ACTIVE, zero quality risk) — route multi-passage cluster scoring through
+  the cached `ce` path.** `multi_passage_rerank` now scores all qualifying clusters'
+  combined texts in ONE batched, LRU-cached `score_documents` -> `score_cross_encoder`
+  (backend `mode=ce`) call instead of per-cluster `score_single_pair` (`mode=pair`,
+  uncached). Score-identical by construction: `LocalMLClient.score_pair(q,t)` literally
+  calls `score_cross_encoder(q,[t])[0]` (same forward pass). New `score_documents` on
+  `_CrossEncoderMixin` maps whole-list circuit-breaker `None` -> per-document `0.0`,
+  matching `score_single_pair`'s per-pair `None->0.0`. Exact-parity unit test in
+  `test_reranking_multi_passage_parity.py` (byte-identical `_retrieval_score` vs the
+  pre-v5.98 per-cluster loop). (`yadgar/retrieval/_reranking_multi_passage.py`,
+  `_reranking_cross_encoder.py`)
+
+- **Lever 2 (DORMANT, flag-gated OFF) — `CROSS_ENCODER_TOP_K` candidate reduction.**
+  Config knob unchanged at the default `10`; reducing it (e.g. -> 5) is a real
+  recall/precision tradeoff, gated on LongMemEval retrieval-only at flip time (not
+  merge time). Benchmark harness gained `--settings-override KEY=VALUE` to A/B any
+  Settings field without editing the runner. (`benchmarks/run_longmemeval.py`)
+
+- **Lever 3 (DORMANT, code-present but NOT yet functional in the deployed image) —
+  onnx-int8 GTE backend.** New `GTE_RERANKER_BACKEND` (default **`torch`**) +
+  `GTE_RERANKER_ONNX_FILE` (default `onnx/model_int8.onnx`, a HuggingFace-shipped
+  artifact for `Alibaba-NLP/gte-reranker-modernbert-base`, downloaded on demand like
+  the torch weights). onnxruntime is present via `sentence-transformers[onnx]`, **but
+  the onnx CrossEncoder load is UNVERIFIED in a built backend image** (image-level
+  `import onnxruntime` / libgomp availability not proven). **Do NOT flip
+  `GTE_RERANKER_BACKEND=onnx-int8`** until the artifact-build/runtime step lands and
+  the LongMemEval gate clears — see the plan-doc follow-up. **Guardrail:** if the flag
+  is flipped and the ONNX reranker fails to load, `LocalMLClient` raises a loud,
+  distinct `OnnxRerankerUnavailableError` instead of silently degrading to
+  FlashRank/zeros (a torch-backend load failure still falls back, as before).
+  (`yadgar/backend/ml_client.py`, `config.py`, `config_registry.py`, `config_yaml.py`)
+
+- **`backend_version` 5.9.0 -> 5.10.0.** `ml_client.py` is a backend-image file; the
+  Lever-3 code only reaches a deployed backend when the image rebuilds, which is gated
+  on the version bump (`server.json`, `yadgar/__init__.py`, `flake.nix`,
+  `docker-compose.yml`). Bumped even though the default path (torch) is unchanged, so
+  the guardrail + onnx code are actually present in `5.10.0`.
+
+Levers 2+3 ship OFF; their quality gate (LongMemEval retrieval-only, multi-session
+recall@5 binding) runs at flip time, not merge time. Lever 1 needs no LongMemEval run
+(unit-test-proven exact parity).
+
 ## [5.97.0] - 2026-07-02
 
 ### Perf: batch the fusion final-result fetch (N+1 → single query) + fold MMR embed re-fetch

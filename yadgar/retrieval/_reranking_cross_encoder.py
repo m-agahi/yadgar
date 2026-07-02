@@ -156,6 +156,33 @@ class _CrossEncoderMixin:
         except Exception:
             return 0.0
 
+    @trace_span("retrieval.score_documents")
+    def score_documents(self, query: str, documents: list[str]) -> list[float]:
+        """Score many query-document pairs in ONE batched, LRU-cached CE call (v5.98 Lever 1).
+
+        Routes through score_cross_encoder (backend mode=ce, cached) instead of N
+        per-document score_pair RPCs (mode=pair, uncached). Score-identical by
+        construction: score_pair(q,t) == score_cross_encoder(q,[t])[0] (same GTE
+        forward pass). Returns one score per document, in order; degrades to 0.0
+        per document when the ML client fails or the circuit breaker is open
+        (score_cross_encoder returns None for the whole list) — matching
+        score_single_pair's per-pair None→0.0 semantics.
+        """
+        if not documents:
+            return []
+        try:
+            scores = self._ml.score_cross_encoder(query, documents)
+        except Exception:
+            return [0.0] * len(documents)
+        # N4: circuit breaker open → whole-list None; back-fill 0.0 per document.
+        if scores is None:
+            return [0.0] * len(documents)
+        # Defensive: pad/truncate to len(documents) so callers can index safely.
+        return [
+            float(scores[i]) if i < len(scores) and scores[i] is not None else 0.0
+            for i in range(len(documents))
+        ]
+
     def cluster_memories(self, memories: list[dict]) -> list[list[dict]]:
         """Cluster memories by entity/topic overlap using Jaccard similarity."""
         threshold = getattr(self._settings, "MULTI_PASSAGE_CLUSTER_OVERLAP_THRESHOLD", 0.3)

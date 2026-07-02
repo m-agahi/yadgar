@@ -335,6 +335,35 @@ def load_dataset(path: Path) -> list[dict]:
 # ── Yadgar Engine Factory ──────────────────────────────────────────
 
 
+def _parse_settings_overrides(pairs: list[str]) -> dict:
+    """Parse repeated KEY=VALUE CLI pairs into a settings-override dict.
+
+    Values are coerced to bool/int/float when they parse cleanly, else kept as
+    str; pydantic performs the final field-typed coercion. Used by the v5.98
+    rerank-lever quality gate to A/B CROSS_ENCODER_TOP_K / CROSS_ENCODER_BACKEND
+    without editing the hardcoded benchmark defaults.
+    """
+    out: dict = {}
+    for raw in pairs or []:
+        if "=" not in raw:
+            raise ValueError(f"--settings-override expects KEY=VALUE, got: {raw!r}")
+        key, _, val = raw.partition("=")
+        key = key.strip()
+        val = val.strip()
+        low = val.lower()
+        if low in ("true", "false"):
+            out[key] = low == "true"
+        else:
+            try:
+                out[key] = int(val)
+            except ValueError:
+                try:
+                    out[key] = float(val)
+                except ValueError:
+                    out[key] = val
+    return out
+
+
 def make_benchmark_settings(**overrides) -> Settings:
     """Create Yadgar settings optimized for LongMemEval retrieval."""
     defaults = {
@@ -1329,6 +1358,16 @@ def main():
         "a RAW corpus (faster, but un-faithful to prod — use only for quick smokes). "
         "Enrichment adds per-memory model inference, so full-500 enriched runs are slow.",
     )
+    parser.add_argument(
+        "--settings-override",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Override a Settings field for this run (repeatable), e.g. "
+        "--settings-override CROSS_ENCODER_TOP_K=5 --settings-override "
+        "CROSS_ENCODER_BACKEND=onnx-int8. Threaded into make_benchmark_settings so it "
+        "wins over the benchmark defaults. Used to A/B rerank levers (v5.98 quality gate).",
+    )
 
     args = parser.parse_args()
 
@@ -1342,6 +1381,8 @@ def main():
     if args.types:
         question_types = [t.strip() for t in args.types.split(",")]
 
+    settings_overrides = _parse_settings_overrides(args.settings_override)
+
     run_benchmark(
         dataset_path=dataset_path,
         retrieval_only=args.retrieval_only,
@@ -1349,6 +1390,7 @@ def main():
         question_types=question_types,
         max_results=args.max_results,
         top_k_context=args.top_k_context,
+        settings_overrides=settings_overrides,
         output_path=args.output,
         stratify_per_type=args.stratify_per_type,
         resume=args.resume,
