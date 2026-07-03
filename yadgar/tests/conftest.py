@@ -348,7 +348,12 @@ def surreal_server(tmp_path_factory):
     pid_file = db / "surreal.pid"
     pid_file.write_text(str(proc.pid))
 
-    os.environ["YADGAR_DB_URL"] = f"http://127.0.0.1:{port}"
+    global _REAL_DB_URL
+    real_url = f"http://127.0.0.1:{port}"
+    os.environ["YADGAR_DB_URL"] = real_url
+    # PIECE C: capture the authoritative URL so the post-test wipe never follows a
+    # per-test monkeypatched YADGAR_DB_URL to an unreachable host and hangs.
+    _REAL_DB_URL = real_url
     # Mutable handle so the function-scoped _surreal_liveness gate can respawn a
     # dead server in place (same port) and update the proc reference here.
     handle = {"proc": proc, "port": port, "data_dir": str(db), "respawns": 0}
@@ -359,6 +364,7 @@ def surreal_server(tmp_path_factory):
         teardown_surreal_proc(handle["proc"], wait_timeout=5)
         pid_file.unlink(missing_ok=True)
         os.environ.pop("YADGAR_DB_URL", None)
+        _REAL_DB_URL = None
 
 
 @pytest.fixture(autouse=True)
@@ -695,6 +701,69 @@ _WIPE_TABLES = (
 # to catch CLI-subprocess writes that bypass the isolation patch.
 _USED_SURREAL_NAMESPACES: set[str] = set()
 
+# Authoritative test-surreal URL captured by the session-scoped `surreal_server`
+# fixture at spawn time (v5.104 PIECE C).  `_wipe_surrealdb_data` MUST use THIS,
+# not ``os.environ["YADGAR_DB_URL"]`` — a test may monkeypatch YADGAR_DB_URL to an
+# unreachable host (e.g. test_admin_config sets ``http://yadgar-backend:8000``, a
+# Docker-internal name unresolvable from the runner).  Reading the env there made
+# the HTTP-fallback wipe block on connect per namespace → the 114.8s teardown
+# outlier.  Using the captured URL keeps the wipe pointed at the live server.
+_REAL_DB_URL: str | None = None
+
+
+def _authoritative_db_url() -> str | None:
+    """The real session-surreal URL, resilient to per-test env monkeypatching.
+
+    Prefers the URL captured by `surreal_server` at spawn; falls back to the
+    environment only when no server was captured (embedded mode → None anyway).
+    """
+    return _REAL_DB_URL or os.environ.get("YADGAR_DB_URL")
+
+
+# ---------------------------------------------------------------------------
+# v5.104 PIECE B — module-scoped `storage` StorageEngine registry.
+#
+# A module-scoped `storage` fixture inits its schema ONCE per file (killing the
+# 46% per-test setup floor from the function-scoped fixture that ran
+# _init_schema() every test).  Per-test isolation then comes ONLY from the
+# data-wipe, but the module-scoped engine's namespace is snapshotted into
+# `pre_test_namespaces` at setup, so `_wipe_via_http_fallback`'s v5.56 guard
+# PRESERVES it (correct for seed-once corpora, wrong for these engines).
+#
+# So registered engines are wiped EXPLICITLY every test via a single batched
+# `_q` (PIECE A), sidestepping the snapshot guard entirely.  A file opts in by
+# using the shared `module_storage` fixture (below) or by registering its own
+# module-scoped engine.
+# ---------------------------------------------------------------------------
+_MODULE_SCOPED_STORAGE_ENGINES: list[object] = []
+
+
+def _register_module_storage(engine: object) -> None:
+    """Register a module-scoped StorageEngine for explicit per-test data-wipe."""
+    _MODULE_SCOPED_STORAGE_ENGINES.append(engine)
+
+
+def _deregister_module_storage(engine: object) -> None:
+    """Remove a module-scoped StorageEngine from the wipe registry (at teardown)."""
+    try:
+        _MODULE_SCOPED_STORAGE_ENGINES.remove(engine)
+    except ValueError:
+        pass
+
+
+def _wipe_registered_module_engines() -> None:
+    """Batched data-wipe of every registered module-scoped StorageEngine.
+
+    One `_q` per engine (PIECE A batching).  Errors are swallowed — an engine may
+    have been closed by its module teardown before this function-scoped fixture's
+    teardown runs on the last test of the module.
+    """
+    for engine in list(_MODULE_SCOPED_STORAGE_ENGINES):
+        try:
+            engine._q(_batched_delete_sql(_WIPE_TABLES))
+        except Exception:
+            pass
+
 
 def _wipe_namespace_via_http(db_url: str, db_name: str) -> None:
     """DELETE all rows in _WIPE_TABLES in the given SurrealDB namespace.
@@ -711,8 +780,24 @@ def _wipe_namespace_via_http(db_url: str, db_name: str) -> None:
     _wipe_tables_with_client(db_url, db_name, auth)
 
 
+def _batched_delete_sql(tables) -> str:
+    """Build one semicolon-joined ``DELETE`` statement covering every table.
+
+    SurrealDB's ``/sql`` endpoint runs each ``;``-separated statement
+    independently (NOT wrapped in a transaction), so a table that is missing in
+    one namespace can't roll back the deletes for the others.  This is exactly
+    the per-table loop's behaviour, collapsed into a single HTTP round-trip.
+    """
+    return " ".join(f"DELETE {table};" for table in tables)
+
+
 def _wipe_tables_with_client(db_url: str, db_name: str, auth: str) -> None:
-    """Issue DELETE for each wipe table using a short-lived httpx client."""
+    """Batch-DELETE every wipe table in ONE POST using a short-lived httpx client.
+
+    v5.104 PIECE A: was one HTTP round-trip per table (~29/namespace); now a
+    single semicolon-joined ``DELETE`` batch.  Behaviourally identical to the old
+    per-table loop while cutting teardown to one round-trip.
+    """
     import httpx
 
     try:
@@ -729,8 +814,7 @@ def _wipe_tables_with_client(db_url: str, db_name: str, auth: str) -> None:
     except Exception:
         return
     try:
-        for table in _WIPE_TABLES:
-            _delete_table_safe(client, table)
+        _delete_tables_safe(client, _WIPE_TABLES)
     finally:
         try:
             client.close()
@@ -738,10 +822,10 @@ def _wipe_tables_with_client(db_url: str, db_name: str, auth: str) -> None:
             pass
 
 
-def _delete_table_safe(client, table: str) -> None:
-    """POST DELETE for one table; ignore all errors (table may not exist)."""
+def _delete_tables_safe(client, tables) -> None:
+    """POST one batched DELETE covering all tables; ignore all errors."""
     try:
-        client.post("/sql", content=f"DELETE {table};")
+        client.post("/sql", content=_batched_delete_sql(tables))
     except Exception:
         pass
 
@@ -774,7 +858,9 @@ def _wipe_surrealdb_data():
     # registered their namespaces via _patched_init_schema at this point.
     pre_test_namespaces: frozenset[str] = frozenset(_USED_SURREAL_NAMESPACES)
     yield
-    db_url = os.environ.get("YADGAR_DB_URL")
+    # PIECE C: use the URL captured at surreal_server spawn, NOT os.environ — a test
+    # may have monkeypatched YADGAR_DB_URL to an unreachable host (hang on connect).
+    db_url = _authoritative_db_url()
     if not db_url:
         return
     _do_wipe_after_test(db_url, pre_test_namespaces)
@@ -794,14 +880,26 @@ def _do_wipe_after_test(db_url: str, pre_test_namespaces: frozenset[str]) -> Non
     else:
         _wipe_via_http_fallback(db_url, pre_test_namespaces)
 
+    # v5.104 PIECE B: explicitly wipe module-scoped `storage` engines whose
+    # namespaces the snapshot guard preserves.  Runs on BOTH paths so a
+    # module-scoped storage engine is cleaned even when server._storage is live
+    # (its namespace differs from server._storage's).
+    _wipe_registered_module_engines()
+
 
 def _wipe_via_live_storage(storage, db_url: str) -> None:
-    """Fast path: wipe via the live StorageEngine (namespace already set on client)."""
-    for table in _WIPE_TABLES:
-        try:
-            storage._q(f"DELETE {table};")
-        except Exception:
-            pass
+    """Fast path: wipe via the live StorageEngine (namespace already set on client).
+
+    v5.104 PIECE A: one batched ``_q`` (semicolon-joined DELETEs) instead of one
+    ``_q`` per table — cuts ~29 HTTP round-trips to one on the dominant teardown
+    path.  ``_q_server`` raises on the first ``ERR`` entry, so the whole batch is
+    wrapped in try/except; every ``_WIPE_TABLES`` table is schema-created in the
+    live namespace, so no missing-table ERR is expected here.
+    """
+    try:
+        storage._q(_batched_delete_sql(_WIPE_TABLES))
+    except Exception:
+        pass
     # Always wipe "main" — CLI subprocesses write there bypassing isolation patch.
     try:
         _wipe_namespace_via_http(db_url, "main")
@@ -842,6 +940,39 @@ def embeddings():
     from yadgar.embeddings import EmbeddingEngine
 
     return EmbeddingEngine("all-MiniLM-L6-v2")
+
+
+@pytest.fixture(scope="module")
+def module_storage(tmp_path_factory, request):
+    """Shared module-scoped StorageEngine — schema inits ONCE per file (v5.104 P1B).
+
+    Replaces per-file function-scoped `storage` fixtures that built a fresh
+    `StorageEngine()` every test (running `_init_schema()` + migrations each time
+    — the 46% CI setup floor).  Per-test data isolation is preserved by
+    registering the engine so the function-scoped `_wipe_surrealdb_data` teardown
+    wipes its data after every test.
+
+    A converting file writes exactly:
+
+        from yadgar.tests.conftest import module_storage as storage  # noqa: F401
+
+    or requests `module_storage` directly.  Uses `tmp_path_factory` (session
+    scope) — a module-scoped fixture cannot request the function-scoped
+    `tmp_path` (ScopeMismatch).  The temp dir is keyed on the requesting module
+    name so two converted files on the same xdist worker never collide on a
+    namespace.
+    """
+    from yadgar.storage import StorageEngine
+
+    safe = request.module.__name__.rsplit(".", 1)[-1]
+    db_path = str(tmp_path_factory.mktemp(f"modstorage_{safe}") / "storage.db")
+    engine = StorageEngine(db_path)
+    _register_module_storage(engine)
+    try:
+        yield engine
+    finally:
+        _deregister_module_storage(engine)
+        engine.close()
 
 
 @pytest.fixture

@@ -6,14 +6,14 @@ import pytest
 
 from yadgar.config import Settings
 from yadgar.prospective import ProspectiveMemoryEngine
-from yadgar.storage import StorageEngine
 
 
-@pytest.fixture
-def storage(tmp_path):
-    engine = StorageEngine(str(tmp_path / "test_prospective.db"))
-    yield engine
-    engine.close()
+@pytest.fixture(scope="module")
+def storage(module_storage):
+    """Module-scoped shared StorageEngine (v5.104 P1B): schema inits ONCE per
+    file (was a fresh per-test engine); per-test isolation via the registered
+    data-wipe in conftest._wipe_surrealdb_data."""
+    return module_storage
 
 
 @pytest.fixture

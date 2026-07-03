@@ -58,14 +58,12 @@ def _get_gauge_value(metric) -> float:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def storage(tmp_path):
-    """Embedded-mode StorageEngine on a temp path."""
-    from yadgar.storage import StorageEngine
-
-    engine = StorageEngine(str(tmp_path / "test_db_metrics.db"))
-    yield engine
-    engine.close()
+@pytest.fixture(scope="module")
+def storage(module_storage):
+    """Module-scoped shared StorageEngine (v5.104 P1B): schema inits ONCE per
+    file (was a fresh per-test engine); per-test isolation via the registered
+    data-wipe in conftest._wipe_surrealdb_data."""
+    return module_storage
 
 
 @pytest.fixture
