@@ -1,5 +1,7 @@
 # Warm Recall Per-Stage Profile & Tuning Plan — 2026-07-02
 
+> SHIPPED (v5.97, 2026-07-02): Fix-1 (fusion N+1 batch) + Fix-2 (MMR fold-in) landed (PR #143). Superseded by ADR-0035 — recall latency is now fully accounted via MCP-tool Tempo traces (CE ~90%, spreading-activation N+1 since batched in v5.104); the "~1.6s warm floor" quoted below is a pipeline-histogram undercount per that ADR. Retained for the per-stage profiling record.
+
 > **UPDATE 2026-07-02 (post PR #143, v5.97.0):** Fixes 1 (fusion N+1 batch) + 2
 > (MMR fold-in) SHIPPED → warm floor ~2.74s → **~1.6-1.8s**. **Fix 3 (onnx-int8 CE)
 > was WRONG for prod and NOT shipped:** the ~720ms CE hot-path is **GTE-ModernBERT**

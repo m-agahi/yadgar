@@ -1,5 +1,7 @@
 # Test-suite speedup — measured cost-breakdown & prioritized plan (2026-07-01)
 
+> SHIPPED v5.104 (2026-07-03). Test-speed leg of the CI-velocity train landed (~2x CI shards; PR #156). Superseded by `ci-velocity-train-2026-07-03.md` + ADR-0036 — the 2026-07-01 schema-init premise was corrected: real shard floor = per-test `storage` fixture (46% setup) + `_wipe_surrealdb_data` (44% teardown), NOT `init_engines()` schema-init. Retained for the measurement record.
+
 **Status:** plan only, NOT implemented. Measure-first.
 **Pain:** ~1.5h CI per PR + ~20min pre-push `make e2e`. Goal: cut wall-clock via a
 measured, prioritized lever list.

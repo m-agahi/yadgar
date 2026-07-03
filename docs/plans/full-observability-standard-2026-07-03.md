@@ -1,6 +1,6 @@
 # Full-Observability Standard — span + metric + log on every function, tiered + enforced
 
-**Status:** PLAN / DESIGN ONLY. No code changed. **Date:** 2026-07-03.
+**Status:** P0 SHIPPED v5.101 (`@observe` + I33 + histogram p95 fix + core→backend traceparent). Per-area rollout (flip I33 lint hard-fail per area) + backend fine-spans REMAIN. See ADR-0034. **Date:** 2026-07-03.
 **Author:** agent (bot). **Branch:** `docs/full-observability-plan`.
 **Directive (verbatim):** *"every function emits a trace span + a metric + a
 structured log — unless there is a documented, categorized reason not to."*

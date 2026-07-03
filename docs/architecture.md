@@ -96,6 +96,8 @@ consolidation/orchestrator.py (ConsolidationScheduler)
 8. **Multi-passage aggregation** — evidence clusters formed for open-domain queries
 9. **Adversarial filter** — score-gap and diversity checks before return
 
+**Latency accounting (v5.102, ADR-0035):** recall latency is now FULLY accounted via MCP-tool Tempo traces (real user POV). The cross-encoder dominates (~90%) — four GTE-ModernBERT CE passes (3 in rerank + 1 in cross-type memory+wiki fusion); the 2nd/fusion CE pass is **quality-load-bearing** (removing double-CE dropped MRR 0.84 → 0.74), so the optimization direction is faster CE inference (onnx-int8, Lever-3 / #13) and fewer passages, NOT cutting CE call-count. Spreading activation was a real N+1 (per-activated-entity round-trips) — **batched in v5.104** (#156, exact-parity: recall ~5 s → tens-ms), heat writes batched in v5.102. The earlier "~1.6 s warm floor" was a pipeline-histogram undercount, superseded by the MCP-tool measurement.
+
 `recall()` accepts a `profile` kwarg (`"fast"`, `"balanced"`, `"full"`, `"debug"`) + `stage_overrides` (v5.31.0), plus `directory` and `branch_hint` (v5.43.0) for caller-context-driven branch detection — same daemon-CWD-avoidance pattern as `wiki_read`. Profile routes through the `RetrievalPipeline` stage orchestrator (`retrieval/pipeline.py`) instead of the monolithic path. Each stage is a `RetrievalStage` instance composable via plugin registry.
 
 `wiki_read(slug)` uses §25 4-step directory-aware resolution (v5.42.5, `storage/wiki.py:314`): (1) `directory=caller_dir AND branch=current_branch`, (2) `directory=caller_dir AND branch IS NULL`, (3) `directory='global' AND branch IS NULL`, (4) not found → error dict. When no `directory` is supplied, falls back to legacy 3-step branch-only resolution. `branch_hint` parameter (v5.42.3/v5.42.6) supplies the caller's branch when daemon-side `_detect_branch` returns None (container scenario).
@@ -261,6 +263,14 @@ Configuration can be injected via environment variables (`YADGAR_*`) without reb
 - `wiki_cleanup_merged_branches(directory, dry_run)` removes wiki pages whose branch is gone (e.g., post-merge).
 - See `[[yadgar-directory-branch-contract-v5-42-3-5-architecture]]` wiki page for the full semantic model.
 
+## Test Infrastructure (v5.104, ADR-0036)
+
+The pytest suite (`yadgar/tests/`, conftest fixtures) is CI-sharded via `pytest-xdist`. v5.104 corrected the earlier schema-init diagnosis (ADR-0027): the real per-shard wall-clock floor was the **per-test `storage` fixture** (~46% of shard setup) and **`_wipe_surrealdb_data` teardown** (~44%), not `init_engines()` model/schema load. The v5.104 "perf train" (PR #156) fixed both:
+
+- **Module-scoped `storage` fixture** (`conftest.py` PIECE B) — a `StorageEngine` inits its schema ONCE per test file instead of once per test (~5.3× setup win, 29 files, 0 leaks). Tests share `module_storage`; per-test data isolation comes from an explicit wipe of the registered module engines, not a fresh schema.
+- **Batched SurrealDB wipe** (`_wipe_surrealdb_data`, PIECE C) — teardown wipes all registered namespaces in one batched pass (~18× teardown win) instead of per-table round-trips. A per-xdist-worker namespace registry (`_register_module_storage`) keeps parallel workers isolated; each worker gets a **session-scoped SurrealDB** derived from its worker id.
+- Net effect: CI shards ~2× faster (11–22 min → 4:27–9:47). A 114.8 s `test_admin_config` teardown hang was fixed to 0.03 s in the same train.
+
 ## Retrieval Pipeline Decomposition (v5.0)
 
 `retrieval/core.py::recall()` decomposed from a 517-line function into a thin orchestrator over eight named pipeline stages:
@@ -303,6 +313,19 @@ Consolidation phase markers use `phase_start: <name>` / `phase_end: <name> durat
 `/health` (auth-exempt) probes the db + embed dependencies concurrently (`asyncio.gather`) under a 3 s outer bound. **It returns HTTP 200 only when `status=="ok"`, and HTTP 503 on any non-ok ("degraded") status** (v5.83 obs-train) so the container `curl -f` healthcheck actually detects db/embed outages instead of reading a degraded server as healthy. The handler is stateless; anti-flap is delegated to the container healthcheck retries (compose core service: 10 s interval × 6 retries). Daemon-side consumers tolerate the 503: `daemon.status()` surfaces the degraded detail and `_health_ok()` still treats a responding-but-503 server as alive (liveness ≠ full-health).
 
 Distributed tracing (`yadgar/tracing.py`) wraps the optional OTLP exporter in a circuit breaker (`_CircuitBreakerSpanExporter`: opens after 5 consecutive export failures for 60 s, then half-open probes) so a down collector cannot drive a retry/log flood — OTLP stays enabled, the breaker just stops the flood. Per-span `span_end` log lines are emitted off the event-loop thread via a `QueueHandler`/`QueueListener` (drained in `shutdown_tracing`) so an export flood can never stall a request handler such as `/health`. `OTLP_INSECURE` is reserved/no-op for the HTTP exporter — the `OTLP_ENDPOINT` URL scheme (`http://` vs `https://`) decides transport security.
+
+### Tri-signal Observability Standard (v5.100 → v5.101, ADR-0034)
+
+The codebase-wide standard is that every in-scope function emits all three signals — a trace **span**, a **metric**, and a structured **log** — with only documented, categorized exemptions. Shipped incrementally:
+
+- **Fine-grained OTEL spans (v5.100)** across the core recall / write / consolidation / drainer / wiki / checkpoint / storage paths, exporting via OTLP → Tempo.
+- **`@observe` decorator (v5.101, `yadgar/observability/observe.py`)** composes the existing `@trace_span` + shared bounded Prometheus families (`yadgar_observe_{requests_total,request_duration_seconds,stage_duration_seconds,stage_errors_total}`) + the I14 structured logger, with a double-instrumentation guard (one span when `@trace_span` / `@_tool` / `_rpc_span` already present). Tiered: `boundary` = full span+metric+log, `stage` = span+metric (log on error), `hot` = span/attribute-only, `exempt` = declared in `.observe-allowlist.json`.
+- **I33 coverage lint (`scripts/check_observe_coverage.py`)** is the durable ratchet — a pre-commit + CI invariant that classifies every in-scope function and fails when a non-exempt one lacks instrumentation. Runs in warn-mode codebase-wide (per-area hard-fail is the pending rollout); allowlist-integrity is always hard. See `docs/ARCHITECTURE_INVARIANTS.md` §I33.
+- **Core → backend traceparent (v5.101):** `HTTPXClientInstrumentor` is hoisted into `setup_tracing()` so the core `RemoteMLClient` httpx client injects W3C `traceparent`; backend `FastAPIInstrumentor` extracts it → core and backend spans join one trace (previously disconnected).
+- **CI note (ADR-0037):** tests NEVER set `OTEL_SDK_DISABLED` (that no-ops span recording and regresses the span-emission suite required by the standard); export is disabled via `YADGAR_OTLP_ENDPOINT=''` only.
+- **Histogram p95 fix (v5.101):** recall/stage/MCP duration histograms extended to 300000 ms / 300 s buckets — cold recalls reach ~75 s and the old 10 s top bucket clamped p95.
+
+Instrumentation overhead was measured and EXONERATED as a recall-latency cause (+8 ms / +4.2%, off-thread A/B; ADR-0035).
 
 ## Secret Gate Allowlist (v5.13.0)
 
