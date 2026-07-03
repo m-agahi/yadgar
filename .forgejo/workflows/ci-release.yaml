@@ -17,6 +17,8 @@ on:
       - 'benchmarks/**'
       - 'docs/**'
       - '.forgejo/**'
+      - 'README.md'
+      - 'AGENTS.md'
   workflow_dispatch:
 
 # Don't cancel in-progress releases when a new push arrives — let the current

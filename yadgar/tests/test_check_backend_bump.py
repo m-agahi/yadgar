@@ -21,7 +21,7 @@ _SCRIPTS_DIR = str(Path(__file__).parent.parent.parent / "scripts")
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
-from check_backend_bump import _is_backend_build_input, check  # noqa: E402
+from check_backend_bump import _is_backend_build_input, check, collect_ci_inputs  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -207,3 +207,128 @@ class TestNonBackendChanges:
             server_json_staged=None,
         )
         assert ok is True
+
+
+# ---------------------------------------------------------------------------
+# collect_ci_inputs — CI mode (injected git runner, no real git required)
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_git(
+    merge_base: str,
+    changed_files: list[str],
+    base_server_json: str | None,
+    head_server_json: str | None,
+) -> object:
+    """Return a callable that stubs git responses for collect_ci_inputs tests."""
+
+    def run_git(args: list[str]) -> str:
+        cmd = args[0] if args else ""
+        if cmd == "merge-base":
+            return merge_base + "\n"
+        if cmd == "diff":
+            return "\n".join(changed_files) + ("\n" if changed_files else "")
+        if cmd == "show":
+            ref_and_path = args[1] if len(args) > 1 else ""
+            if ref_and_path.endswith(":server.json"):
+                if ref_and_path.startswith(merge_base):
+                    return base_server_json or ""
+                # HEAD:server.json
+                return head_server_json or ""
+        return ""
+
+    return run_git
+
+
+class TestCollectCiInputs:
+    """collect_ci_inputs uses merge-base, not the moving tip of base_ref."""
+
+    def test_returns_changed_files_and_versions(self) -> None:
+        """Happy path: changed file list and both server.json versions returned."""
+        fake_git = _make_fake_git(
+            merge_base="abc123",
+            changed_files=["yadgar/backend/embed_service.py"],
+            base_server_json=_SERVER_JSON_501,
+            head_server_json=_SERVER_JSON_502,
+        )
+        changed, base_srv, head_srv = collect_ci_inputs("origin/master", fake_git)
+        assert changed == ["yadgar/backend/embed_service.py"]
+        assert base_srv == _SERVER_JSON_501
+        assert head_srv == _SERVER_JSON_502
+
+    def test_no_backend_files_changed(self) -> None:
+        """Pure Python change — no backend files in diff."""
+        fake_git = _make_fake_git(
+            merge_base="abc123",
+            changed_files=["yadgar/vacuum/__init__.py"],
+            base_server_json=_SERVER_JSON_501,
+            head_server_json=_SERVER_JSON_501,
+        )
+        changed, base_srv, head_srv = collect_ci_inputs("origin/master", fake_git)
+        assert changed == ["yadgar/vacuum/__init__.py"]
+        # check() would return ok=True for these inputs
+        ok, _msg = check(changed, base_srv, head_srv)
+        assert ok is True
+
+    def test_missing_merge_base_falls_back_to_base_ref(self) -> None:
+        """If merge-base returns empty, base_ref itself is used as the base."""
+
+        calls: list[list[str]] = []
+
+        def run_git(args: list[str]) -> str:
+            calls.append(args)
+            if args[0] == "merge-base":
+                return ""  # simulate failure (shallow clone, no common ancestor)
+            if args[0] == "diff":
+                return "yadgar/backend/embed_service.py\n"
+            if args[0] == "show":
+                return _SERVER_JSON_501
+            return ""
+
+        changed, base_srv, _head_srv = collect_ci_inputs("origin/master", run_git)
+        # Fallback: diff is called with base_ref, not an empty string.
+        diff_call = next(c for c in calls if c[0] == "diff")
+        assert "origin/master" in diff_call
+        assert changed == ["yadgar/backend/embed_service.py"]
+
+    def test_server_json_absent_at_base(self) -> None:
+        """server.json absent at merge-base → base_server returned as None."""
+        fake_git = _make_fake_git(
+            merge_base="abc123",
+            changed_files=["yadgar/backend/embed_service.py"],
+            base_server_json=None,
+            head_server_json=_SERVER_JSON_502,
+        )
+        changed, base_srv, head_srv = collect_ci_inputs("origin/master", fake_git)
+        assert base_srv is None
+        assert head_srv == _SERVER_JSON_502
+        # check() treats None head as initial commit → passes with any staged version
+        ok, _msg = check(changed, base_srv, head_srv)
+        assert ok is True
+
+    def test_full_ci_flow_backend_changed_no_bump_fails(self) -> None:
+        """End-to-end CI gate: backend changed + version unchanged → fail."""
+        fake_git = _make_fake_git(
+            merge_base="abc123",
+            changed_files=["yadgar/backend/embed_service.py", "server.json"],
+            base_server_json=_SERVER_JSON_501,
+            head_server_json=_SERVER_JSON_501,  # same version!
+        )
+        changed, base_srv, head_srv = collect_ci_inputs("origin/master", fake_git)
+        ok, msg = check(changed, base_srv, head_srv)
+        assert ok is False
+        assert "backend_version" in msg
+        assert "unchanged" in msg
+
+    def test_full_ci_flow_backend_changed_with_bump_passes(self) -> None:
+        """End-to-end CI gate: backend changed + version bumped → pass."""
+        fake_git = _make_fake_git(
+            merge_base="abc123",
+            changed_files=["yadgar/backend/embed_service.py", "server.json"],
+            base_server_json=_SERVER_JSON_501,
+            head_server_json=_SERVER_JSON_502,
+        )
+        changed, base_srv, head_srv = collect_ci_inputs("origin/master", fake_git)
+        ok, msg = check(changed, base_srv, head_srv)
+        assert ok is True
+        assert "5.0.2" in msg
