@@ -894,6 +894,32 @@ class _MemoryMixin:
             {"ts": timestamp},
         )
 
+    @trace_span("storage.memory.boost_memories_access")
+    def boost_memories_access(self, memory_ids: list[int], timestamp: str) -> None:
+        """Bump heat (+0.1, clamped at 1.0) and last_accessed for a set of memories.
+
+        v5.102: single batched UPDATE replacing the per-memory
+        ``update_memory_heat`` + ``update_memory_last_accessed`` pair that
+        ``_apply_recall_side_effects`` used to fire in a loop — 2 sequential
+        SurrealDB round-trips × N results on the recall hot path (the ~407ms
+        tail of the recall trace). One ``WHERE id IN [...]`` query instead.
+
+        RESULT-PRESERVING: the new heat is computed in-DB as
+        ``math::min([heat + 0.1, 1.0])`` — byte-identical to the Python
+        ``min(m["heat"] + 0.1, 1.0)`` the caller applies to the returned dicts.
+        Speed only, no value/behaviour change.
+
+        Empty ``memory_ids`` is a no-op (guards against an empty ``IN []`` clause).
+        """
+        if not memory_ids:
+            return
+        id_list = ", ".join(f"memory:{int(mid)}" for mid in memory_ids)
+        self._q(
+            f"UPDATE memory SET heat = math::min([heat + 0.1, 1.0]), "
+            f"last_accessed = $ts WHERE id IN [{id_list}]",
+            {"ts": timestamp},
+        )
+
     def get_total_reconsolidation_count(self) -> int:
         rows = self._q("SELECT math::sum(reconsolidation_count) AS total FROM memory GROUP ALL")
         return int(rows[0]["total"]) if rows and rows[0].get("total") is not None else 0

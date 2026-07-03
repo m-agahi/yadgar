@@ -5,6 +5,59 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 > Snapshots from v5.0.1 onward are captured from `yadgar stats` at release time.
 > Earlier versions have no per-release snapshot (the practice started 2026-05-16).
 
+## [5.102.0] - 2026-07-03
+
+### Perf/Obs: close the recall trace "gap" — group the ~6.2s MCP-tool tail under named spans + batch heat writes
+
+**Finding (the headline): there was no coverage hole.** The ~6.2s that looked
+"unaccounted" on a warm CE-firing recall (`tool.recall` 23s − child
+`retrieval.recall` 16.8s = 6.18s) was a *subtraction artifact*, not un-instrumented
+code. Every millisecond was already under a span — the ~6.2s is the **sibling**
+children of `retrieval.recall` that run *after* it returns inside the fan-out tool
+body. Timeline pinpoint (Tempo warm trace `3a9165975e3487f9`, tail window
+16825–23004ms):
+
+| segment | span | dur | note |
+| --- | --- | --- | --- |
+| wiki blend | `wiki.query` | 326ms | constant |
+| cross-type fusion CE | `rpc.rerank.ce` | **5445ms** | the CE-correlated cost |
+| side-effects tail | ~12 `POST`/`get_memory` | 407ms | per-memory heat writes |
+
+326 + 5445 + 407 = 6179 ≈ the measured 6179.6ms. A naive `tool.recall −
+retrieval.recall` ignores those siblings, so the time only *looked* unaccounted.
+This explains the CE-correlation the task flagged: the fusion CE is **5.4s of the
+6.2s**, so on a CE-cache-hit recall the tail collapses to ~0.3s.
+
+**(a) Instrumentation — grouping, not hole-filling.** The loose post-memory
+siblings now nest under named grouping spans so the next trace attributes the tail
+to a labelled node instead of leaving a mystery window:
+
+- `recall.fanout.fuse` (`yadgar/server/tools/recall.py`) wraps the multi-provider
+  `fuse_candidates` call — the ~5.4s cross-type CE pass — with `memory_candidates`
+  / `wiki_candidates` counts as attributes.
+- `recall.side_effects` (`_apply_recall_side_effects`) wraps the post-retrieval
+  bookkeeping segment (heat boost + SR transition + action log), `results=N` attr.
+
+**(b) Real waste fixed — batched heat writes (result-preserving).** The side-effects
+loop fired **2 sequential SurrealDB round-trips per memory** (`update_memory_heat`
++ `update_memory_last_accessed`) = the ~407ms tail. Collapsed into ONE batched
+`StorageEngine.boost_memories_access(ids, ts)` — a single
+`UPDATE memory SET heat = math::min([heat + 0.1, 1.0]), last_accessed = $ts WHERE id IN [...]`.
+The in-DB `math::min` is byte-identical to the Python `min(heat + 0.1, 1.0)` the
+caller stamps on the returned dicts — **speed only, zero quality/behaviour change**.
+Empty-id list is a no-op (guards an empty `IN []`).
+
+**NOT touched (flagged for a gated follow-up):** the ~5.4s `rpc.rerank.ce` fusion
+pass is the real remaining cost, but it is a *second* CE pass that is load-bearing
+for cross-type ranking quality — the single-provider-bypass note in `_fanout_recall`
+records that double-CE dropped MRR 0.84→0.74 when measured. Per the standing "speed
+AND quality equal" directive, touching it risks a recall-quality regression, so it
+stays as a LongMemEval-gated follow-up (research better CE), not this PR.
+
+Tests: `yadgar/tests/test_recall_trace_gap.py` (span parentage under `tool.recall`
++ batched-write assertion + heat-value preservation) and two live-DB batch tests in
+`test_storage.py` (`math::min` clamp + empty-noop).
+
 ## [5.101.0] - 2026-07-03
 
 ### Feat: observability P0 — `@observe` tri-signal decorator + I33 invariant (hard-enforced, warn-mode) + histogram p95 fix
