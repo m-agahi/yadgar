@@ -5,6 +5,12 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 > Snapshots from v5.0.1 onward are captured from `yadgar stats` at release time.
 > Earlier versions have no per-release snapshot (the practice started 2026-05-16).
 
+## [5.103.0] - 2026-07-03
+
+### Perf(test): module-scope SurrealDB schema init — CI-velocity P1
+
+`init_engines()` schema re-init was the per-test floor (ADR-0027). Converted the function-scoped autouse `_engines` fixtures (dup'd across ~68 files) + `e2e_engines` to MODULE scope: schema inits once per file, per-test isolation kept via a data-wipe. Prototype: `test_bookmarks.py` 221s→37s (5.9x); e2e `test_phase1_db_layer` ~2x. Landmines handled: `tmp_path`→`tmp_path_factory`, `_WIPE_TABLES` expanded (excl `engram_slot`/`schema_version`), session-scoped path/config isolation. Excluded (kept function-scope, follow-up): files with documented module-scope flakes. KNOWN RISK: module-scope doesn't self-heal if surreal dies mid-file (defeats --reruns) — liveness-guard follow-up.
+
 ## [5.102.0] - 2026-07-03
 
 ### Perf/Obs: close the recall trace "gap" — group the ~6.2s MCP-tool tail under named spans + batch heat writes

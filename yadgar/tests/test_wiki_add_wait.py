@@ -34,9 +34,10 @@ _TEST_DIR = "/home/max/git/yadgar"
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
     """Embedded storage with isolated tmp database per test."""
+    tmp_path = tmp_path_factory.mktemp("wiki_add_wait")
     server.init_engines(
         db_path=str(tmp_path / "wait_flag_test.db"),
         embedding_model="all-MiniLM-L6-v2",

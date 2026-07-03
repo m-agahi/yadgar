@@ -41,9 +41,15 @@ from yadgar.storage.migrations import _migration_013_wiki_page_version
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
-    """Embedded storage with isolated temp database per test."""
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
+    """Storage initialized ONCE per module (v5.101 P1 module-scope).
+
+    Per-test DATA isolation is provided by conftest's function-scoped
+    `_wipe_surrealdb_data`; uses tmp_path_factory (a module-scoped fixture
+    cannot request the function-scoped tmp_path).
+    """
+    tmp_path = tmp_path_factory.mktemp("wiki_edit")
     server.init_engines(
         db_path=str(tmp_path / "wiki_edit_test.db"),
         embedding_model="all-MiniLM-L6-v2",

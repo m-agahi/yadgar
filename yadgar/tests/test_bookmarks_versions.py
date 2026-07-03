@@ -34,8 +34,9 @@ from yadgar.storage.migrations import _migration_013_wiki_page_version
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("bookmarks_versions")
     server.init_engines(
         db_path=str(tmp_path / "bm_versions_test.db"),
         embedding_model="all-MiniLM-L6-v2",

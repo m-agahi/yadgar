@@ -24,9 +24,10 @@ import pytest
 from yadgar import server  # noqa: E402
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
     """Real StorageEngine + WikiStore + replay wired via init_engines."""
+    tmp_path = tmp_path_factory.mktemp("agent_prompt_discovery_s")
     server.init_engines(
         db_path=str(tmp_path / "test_agent_prompt_discovery_s6.db"),
         embedding_model="all-MiniLM-L6-v2",

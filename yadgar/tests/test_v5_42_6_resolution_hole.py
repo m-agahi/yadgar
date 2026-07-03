@@ -37,8 +37,9 @@ from yadgar import server
 # ── fixture ────────────────────────────────────────────────────────────────────
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("v5_42_6_resolution_hole")
     server.init_engines(
         db_path=str(tmp_path / "test_resolution.db"),
         embedding_model="all-MiniLM-L6-v2",

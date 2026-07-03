@@ -11,9 +11,10 @@ from yadgar import server
 from yadgar.tests.conftest import memorize_sync
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
     """Initialize global engines with a temp database for each test."""
+    tmp_path = tmp_path_factory.mktemp("server")
     db_path = str(tmp_path / "test.db")
     storage, embeddings, buffer, consolidation, staleness = server.init_engines(
         db_path=db_path, embedding_model="all-MiniLM-L6-v2"

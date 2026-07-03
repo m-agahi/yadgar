@@ -28,8 +28,9 @@ from yadgar import server
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("archive_retention")
     server.init_engines(
         db_path=str(tmp_path / "test_archive_retention.db"),
         embedding_model="all-MiniLM-L6-v2",

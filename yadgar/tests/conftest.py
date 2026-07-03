@@ -180,6 +180,55 @@ def pytest_sessionfinish(session, exitstatus):
     kill_all_spawned_surreal()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _isolate_yadgar_paths_session(tmp_path_factory):
+    """Session-scoped hermetic env, active BEFORE any module-scoped fixture.
+
+    v5.101 (module-scope P1): the function-scoped ``isolate_yadgar_paths`` below
+    redirects config/XDG/data dirs to a per-test tmp dir, but a **module-scoped**
+    ``_engines`` fixture (which calls ``init_engines()`` once per file) runs at
+    module setup — BEFORE any function-scoped fixture.  Without a session-scoped
+    guard, that ``init_engines()`` reads the developer's real
+    ``~/.config/yadgar/config.yaml`` (e.g. ``offload_tools: true`` → the
+    lifecycle RuntimeError) and writes to the real ``~/.local/share/yadgar``.
+
+    This session fixture establishes the same hermetic redirection at session
+    start using ``pytest.MonkeyPatch()`` (the function-scoped ``monkeypatch``
+    cannot be requested from session scope — ScopeMismatch) so module-scoped
+    engine init sees an isolated, offload-disabled environment.  The
+    function-scoped ``isolate_yadgar_paths`` still re-applies per-test dirs on
+    top (function scope wins), so per-test hermeticity is unchanged.
+
+    Mirrors the session-scoping rationale of ``_isolate_surrealdb`` (which is
+    session-scoped precisely so its patch precedes module-scoped ``_engines``).
+    """
+    from _pytest.monkeypatch import MonkeyPatch
+
+    mp = MonkeyPatch()
+    root = tmp_path_factory.mktemp("session_yadgar_paths")
+    config_dir = root / "config" / "yadgar"
+    data_dir = root / "data" / "yadgar"
+    state_dir = root / "state" / "yadgar"
+    for d in (config_dir, data_dir, state_dir):
+        d.mkdir(parents=True, exist_ok=True)
+    mp.setenv("XDG_CONFIG_HOME", str(root / "config"))
+    mp.setenv("XDG_DATA_HOME", str(root / "data"))
+    mp.setenv("XDG_STATE_HOME", str(root / "state"))
+    mp.setenv("YADGAR_DATA_DIR", str(data_dir))
+    mp.setenv("YADGAR_CONFIG_FILE", str(config_dir / "config.yaml"))
+    mp.setenv("YADGAR_LOG_DIR", str(data_dir / "logs"))
+    mp.setenv("YADGAR_CACHE_SNAPSHOT_DIR", str(root / "embed_cache_snap"))
+    mp.delenv("YADGAR_DB_PATH", raising=False)
+    # Disable tool-body offload for module-scoped engine init: with no
+    # YADGAR_EMBED_URL the local-engine offload path raises in lifecycle.py.
+    # Offload-specific tests re-enable it per-function (function scope wins).
+    mp.setenv("YADGAR_OFFLOAD_TOOLS", "0")
+    try:
+        yield
+    finally:
+        mp.undo()
+
+
 @pytest.fixture(autouse=True)
 def isolate_yadgar_paths(tmp_path, monkeypatch):
     """Redirect all yadgar path env vars to tmp_path subdirs.
@@ -607,6 +656,34 @@ _WIPE_TABLES = (
     "prospective_memory",
     "narrative_entry",
     "consolidation_log",
+    # v5.101 (module-scope P1): under a per-file (module-scoped) namespace the
+    # DATA wipe — not a fresh namespace — is the ONLY per-test isolation, so it
+    # must cover EVERY data-bearing table any test writes.  The tables below are
+    # created by _init_schema but were absent from the wipe set; under function
+    # scope each test got a fresh namespace so their residue was harmless, but
+    # under module scope it leaks between tests in the same file.
+    #
+    # DELIBERATELY EXCLUDED — structural state SEEDED ONCE at engine init, NOT
+    # per-test data.  Wiping these breaks tests that assert their init population:
+    #   * engram_slot   — EngramAllocator.__init__ seeds HOPFIELD_MAX_PATTERNS
+    #                     (5000) rows once (yadgar/engram.py:29); wiping it left
+    #                     0 rows → e2e BC-C1 consolidation invariant violation
+    #                     ("engram_slot has 0 rows (expected 5000)").
+    #   * schema_version — schema-init marker; wiping it would drop the module's
+    #                     migration record.
+    "consolidation_meta",
+    "graph_layout_cache",
+    "file_hash",
+    "memory_cluster",
+    "astrocyte_process",
+    "memory_transition",
+    "causal_dag_edge",
+    "user_profile",
+    "derived_belief",
+    "counter",
+    "wiki_crossref",
+    "wiki_page_version",
+    "memory_embedding_backup",
 )
 
 # Worker-local set of all SurrealDB database namespaces used so far on this

@@ -32,8 +32,9 @@ from yadgar.server.tools.project import (
 # ── fixtures ─────────────────────────────────────────────────────────────────
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("project_brief_catalog_v5")
     db_path = str(tmp_path / "test.db")
     server.init_engines(db_path=db_path, embedding_model="all-MiniLM-L6-v2")
     with (

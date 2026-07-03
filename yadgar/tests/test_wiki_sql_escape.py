@@ -54,8 +54,9 @@ Em dash test: foo — bar
 """
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("wiki_sql_escape")
     server.init_engines(
         db_path=str(tmp_path / "escape_test.db"),
         embedding_model="all-MiniLM-L6-v2",

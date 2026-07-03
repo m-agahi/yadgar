@@ -31,8 +31,9 @@ def _make_client(token: str, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     return TestClient(BearerAuthMiddleware(asgi_app), raise_server_exceptions=False)
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("v579_smart_sessionstart")
     from yadgar import server
 
     db_path = str(tmp_path / "test.db")

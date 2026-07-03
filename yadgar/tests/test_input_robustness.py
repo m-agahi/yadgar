@@ -13,8 +13,9 @@ from yadgar import server
 _TEST_DIR = "/home/max/git/yadgar"
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("input_robustness")
     server.init_engines(
         db_path=str(tmp_path / "robustness.db"),
         embedding_model="all-MiniLM-L6-v2",

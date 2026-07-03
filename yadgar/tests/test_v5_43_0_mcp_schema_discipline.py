@@ -44,8 +44,9 @@ from yadgar import server
 # ── shared fixture ─────────────────────────────────────────────────────────────
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("v5_43_0_mcp_schema_disci")
     server.init_engines(
         db_path=str(tmp_path / "test_mcp_schema.db"),
         embedding_model="all-MiniLM-L6-v2",

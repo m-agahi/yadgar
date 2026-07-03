@@ -21,9 +21,10 @@ from yadgar.wiki import WikiAddOptions
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
     """Full server engine stack with isolated temp database per test."""
+    tmp_path = tmp_path_factory.mktemp("wiki")
     server.init_engines(
         db_path=str(tmp_path / "wiki_test.db"),
         embedding_model="all-MiniLM-L6-v2",

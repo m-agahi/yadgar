@@ -27,9 +27,10 @@ from yadgar.storage.migrations import _migration_013_wiki_page_version
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
     """Embedded storage with isolated temp database per test."""
+    tmp_path = tmp_path_factory.mktemp("wiki_versioning")
     server.init_engines(
         db_path=str(tmp_path / "wiki_versioning_test.db"),
         embedding_model="all-MiniLM-L6-v2",

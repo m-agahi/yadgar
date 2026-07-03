@@ -33,14 +33,15 @@ _EXPECTED_PATTERNS = [
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
     """Full engine stack (WikiStore + StorageEngine + replay) via init_engines.
 
     Mirrors test_agent_prompt_discovery_s6.py — necessary so _upsert_toc_row
     and _ensure_library_anchor actually write (they read from _state globals,
     not from the injected storage= kwarg).
     """
+    tmp_path = tmp_path_factory.mktemp("seed_agent_prompts")
     server.init_engines(
         db_path=str(tmp_path / "test_seed_agent_prompts.db"),
         embedding_model="all-MiniLM-L6-v2",

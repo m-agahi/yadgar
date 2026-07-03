@@ -51,8 +51,9 @@ from yadgar.server.tools.wiki import wiki_history as _wiki_history
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("v5_42_4_master_fallback_")
     server.init_engines(db_path=str(tmp_path / "test.db"), embedding_model="all-MiniLM-L6-v2")
     yield
     server.shutdown()

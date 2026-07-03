@@ -22,8 +22,9 @@ import pytest
 from yadgar import server
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("v5_46_9_branch_fallback_")
     server.init_engines(
         db_path=str(tmp_path / "test_f1.db"),
         embedding_model="all-MiniLM-L6-v2",

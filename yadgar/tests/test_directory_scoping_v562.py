@@ -260,8 +260,9 @@ YADGAR_DIR = "/home/max/git/yadgar"
 AWS_DIR = "/home/max/aws-work"
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("directory_scoping_v562")
     from yadgar import server
 
     db_path = str(tmp_path / "test.db")

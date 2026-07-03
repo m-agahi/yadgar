@@ -76,8 +76,9 @@ def test_attach_uncached_node_gets_no_position():
 _TEST_TOKEN = "layout-attach-test-token"
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("graph_api_layout_attach")
     from yadgar import server
 
     server.init_engines(db_path=str(tmp_path / "attach.db"), embedding_model="all-MiniLM-L6-v2")

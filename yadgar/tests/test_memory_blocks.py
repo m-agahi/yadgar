@@ -58,9 +58,10 @@ def storage(tmp_path):
     engine.close()
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
     """Full server engine stack with isolated DB per test (for MCP tool tests)."""
+    tmp_path = tmp_path_factory.mktemp("memory_blocks")
     server.init_engines(
         db_path=str(tmp_path / "blocks_server_test.db"),
         embedding_model="all-MiniLM-L6-v2",

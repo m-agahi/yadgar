@@ -143,8 +143,9 @@ def _transcript_with_tool_use(tmp_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("session_end_capture")
     from yadgar import server
 
     db_path = str(tmp_path / "test.db")

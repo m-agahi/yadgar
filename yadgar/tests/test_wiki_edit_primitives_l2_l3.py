@@ -41,9 +41,10 @@ from yadgar.storage.migrations import _migration_013_wiki_page_version
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
     """Isolated storage per test."""
+    tmp_path = tmp_path_factory.mktemp("wiki_edit_primitives_l2_")
     server.init_engines(
         db_path=str(tmp_path / "wiki_l2l3_test.db"),
         embedding_model="all-MiniLM-L6-v2",
