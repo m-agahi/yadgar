@@ -2865,6 +2865,19 @@ config knobs.
 - **explanation:** This is the self-referential invariant that keeps THIS registry honest. It guarantees catalogue completeness, not status correctness (see "Scope of the guarantee" at the top). It makes the registry the durable source of truth the e2e behavior contract, the v6 plan, and the #41 dead-config audit all draw "what exists" from — adding any surface item without cataloguing it here fails the build.
 
 
+### CAP-INFRA-033 — Tri-signal observe-coverage lint (I33)
+
+- **status:** LIVE
+- **category:** infra
+- **settings:** —
+- **tools:** —
+- **migrations:** —
+- **bc:** —
+- **refs:** `scripts/check_observe_coverage.py`, `yadgar/observability/observe.py`, `.observe-allowlist.json`, `yadgar/tests/test_check_observe_coverage.py`, `yadgar/tests/test_observe_decorator.py`, `docs/ARCHITECTURE_INVARIANTS.md`
+- **wiring:** Enforced by `scripts/check_observe_coverage.py` (pre-commit hook `check-observe-coverage` + CI `invariant-checks` step). AST-classifies every function under `yadgar/` (excluding tests) as SATISFIED (`@trace_span`/`@_tool`/`@observe`/`_rpc_span` span source), auto-exempt (dunder/property/trivial), allowlisted-exempt (`.observe-allowlist.json`), or MISSING. Ships **warn-mode** (`--warn`, exit 0, baseline 1555 MISSING); allowlist integrity (stale / rationale ≥40 chars / valid category) is always hard, mirroring I30. The `@observe(tier=...)` decorator (`yadgar/observability/observe.py`) emits span+metric+log via the shared bounded families `yadgar_observe_{requests_total,request_duration_seconds,stage_duration_seconds,stage_errors_total}`.
+- **explanation:** The ratchet that makes the full-observability standard durable rather than a decaying one-time sweep (I33). Per-area rollout waves flip `--area <name>` to hard-fail as each reaches 100%, ending in a global hard-fail. The tier is the "documented reason not to instrument" the directive demands; the anti-cardinality design (shared families, no per-function histogram) keeps the incremental series ceiling ≤ ~6,500 vs ~19,500 naive.
+
+
 ### CAP-EVAL-001 — v6 Phase 0 eval harness (native golden set + make eval)
 
 - **status:** LIVE

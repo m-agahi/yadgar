@@ -206,7 +206,28 @@ yadgar_wiki_embedding_compute_failed_total = Counter(
 yadgar_recall_duration_ms = Histogram(
     "yadgar_recall_duration_ms",
     "Total recall() duration in milliseconds",
-    buckets=(1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000),
+    # v5.101: extended tail — real cold recalls reach ~75s; top finite bucket was
+    # 10000ms → histogram_quantile clamped p95 at 10s. Extend to 300000ms.
+    buckets=(
+        1,
+        5,
+        10,
+        25,
+        50,
+        100,
+        250,
+        500,
+        1000,
+        2500,
+        5000,
+        10000,
+        15000,
+        20000,
+        30000,
+        60000,
+        120000,
+        300000,
+    ),
     registry=_registry,
 )
 
@@ -221,7 +242,27 @@ yadgar_recall_stage_ms = Histogram(
     "yadgar_recall_stage_ms",
     "Duration of a recall stage in milliseconds",
     ["stage"],
-    buckets=(1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000),
+    # v5.101: extended tail (see yadgar_recall_duration_ms) — cold stages exceed 10s.
+    buckets=(
+        1,
+        5,
+        10,
+        25,
+        50,
+        100,
+        250,
+        500,
+        1000,
+        2500,
+        5000,
+        10000,
+        15000,
+        20000,
+        30000,
+        60000,
+        120000,
+        300000,
+    ),
     registry=_registry,
 )
 
@@ -231,7 +272,27 @@ yadgar_recall_stage_duration_seconds = Histogram(
     "yadgar_recall_stage_duration_seconds",
     "Duration of a recall pipeline stage in seconds (v5.31.0 plugin arch)",
     ["stage", "profile"],
-    buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+    # v5.101: extended tail — cold pipeline stages exceed 10s; top finite bucket
+    # was 10.0s → p95 clamped at 10s. Append 15/30/60/120/300s.
+    buckets=(
+        0.001,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        15.0,
+        30.0,
+        60.0,
+        120.0,
+        300.0,
+    ),
     registry=_registry,
 )
 
@@ -381,7 +442,27 @@ yadgar_mcp_request_duration_ms = Histogram(
     "yadgar_mcp_request_duration_ms",
     "MCP tool request duration in milliseconds",
     ["tool"],
-    buckets=(1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000),
+    # v5.101: extended tail (see yadgar_recall_duration_ms) — cold tool calls exceed 10s.
+    buckets=(
+        1,
+        5,
+        10,
+        25,
+        50,
+        100,
+        250,
+        500,
+        1000,
+        2500,
+        5000,
+        10000,
+        15000,
+        20000,
+        30000,
+        60000,
+        120000,
+        300000,
+    ),
     registry=_registry,
 )
 

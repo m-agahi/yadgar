@@ -34,15 +34,10 @@ except Exception:
 
 # ── Distributed tracing — v5.6.3 ─────────────────────────────────────────────
 # Initialise OTel TracerProvider + LogSpanProcessor early (module import time).
-# HTTPXClientInstrumentor is also activated here so all httpx calls in core
-# auto-inject W3C traceparent headers.
+# v5.101 R2: HTTPXClientInstrumentor is now activated INSIDE setup_tracing() (the
+# single choke-point) so every entry mode — not just this HTTP-app path — auto-
+# injects W3C traceparent on outbound httpx calls (closes the stdio/daemon hole).
 setup_tracing("yadgar-core")
-try:
-    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor  # noqa: PLC0415
-
-    HTTPXClientInstrumentor().instrument()
-except Exception:
-    pass  # OTel not available — no-op
 
 # ── Tool profile (read at import time — decorators execute on module load) ────
 # YADGAR_PROFILE=minimal  →  10 core tools only

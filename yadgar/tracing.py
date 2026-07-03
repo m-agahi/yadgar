@@ -492,6 +492,26 @@ else:  # pragma: no cover
 # ---------------------------------------------------------------------------
 
 
+def _instrument_httpx() -> None:
+    """Activate HTTPXClientInstrumentor once (idempotent, guarded, no-op on absence).
+
+    v5.101 R2: the single choke-point for httpx traceparent injection. Called from
+    setup_tracing() so every entry mode (HTTP app, stdio, daemon CLI, backend) that
+    initialises tracing also instruments outbound httpx — closing the stdio/daemon
+    hole where backend HTTP rooted a disconnected trace.
+    """
+    try:
+        from opentelemetry.instrumentation.httpx import (  # noqa: PLC0415
+            HTTPXClientInstrumentor,
+        )
+
+        instr = HTTPXClientInstrumentor()
+        if not instr.is_instrumented_by_opentelemetry:
+            instr.instrument()
+    except Exception:
+        pass  # OTel/httpx instrumentation not available — no-op (I3)
+
+
 def setup_tracing(service_name: str) -> None:
     """Create TracerProvider with LogSpanProcessor. Idempotent per service_name.
 
@@ -520,6 +540,11 @@ def setup_tracing(service_name: str) -> None:
 
     _otel_trace.set_tracer_provider(provider)
     _SETUP_DONE.add(service_name)
+
+    # v5.101 R2: hoist httpx instrumentation into the single tracing choke-point
+    # so stdio/daemon-mode entry paths (which never import server/_app.py) still
+    # auto-inject W3C traceparent on outbound httpx calls — no disconnected traces.
+    _instrument_httpx()
 
     # C2 P2: route per-span logging off the calling (event-loop) thread.
     _install_span_log_queue()
@@ -644,6 +669,9 @@ def trace_span(name: str | None = None, attributes: dict[str, Any] | None = None
                         span.set_status(_otel_trace.Status(StatusCode.ERROR, str(exc)))
                         raise
 
+            # Sentinel: marks this fn as already span-sourced so @observe (I33)
+            # runs in metric+log-only mode and never opens a second span.
+            async_wrapper._yadgar_observe_has_span = True  # type: ignore[attr-defined]
             return async_wrapper
 
         else:
@@ -662,6 +690,7 @@ def trace_span(name: str | None = None, attributes: dict[str, Any] | None = None
                         span.set_status(_otel_trace.Status(StatusCode.ERROR, str(exc)))
                         raise
 
+            sync_wrapper._yadgar_observe_has_span = True  # type: ignore[attr-defined]
             return sync_wrapper
 
     # Support both @trace_span and @trace_span() and @trace_span("name")

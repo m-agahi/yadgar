@@ -425,23 +425,12 @@ async def lifespan(app: FastAPI):
     )
 
     # v5.6.3: distributed tracing for backend.
-    # setup_tracing initialises LogSpanProcessor + sets global TracerProvider.
-    # v5.6.4 Bug 3: HTTPXClientInstrumentor — backend calls SurrealDB via httpx;
-    # this ensures outbound httpx calls auto-inject W3C traceparent headers.
+    # setup_tracing initialises LogSpanProcessor + sets global TracerProvider, and
+    # (v5.101 R2) activates HTTPXClientInstrumentor itself — backend calls SurrealDB
+    # via httpx, so this ensures outbound httpx calls auto-inject W3C traceparent.
     from yadgar.tracing import setup_tracing as _setup_tracing  # noqa: PLC0415
 
     _setup_tracing("yadgar-backend")
-    try:
-        from opentelemetry.instrumentation.httpx import (
-            HTTPXClientInstrumentor as _HCI,  # noqa: PLC0415
-        )
-
-        _HCI().instrument()
-    except Exception as _otel_exc:
-        from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
-
-        record_exception("embed_service.otel_setup", _otel_exc)
-        pass  # OTel not available — no-op
 
     # v5.3.0: restart attribution — inspect previous shutdown state before model load.
     _marker = _shutdown_marker_path()
