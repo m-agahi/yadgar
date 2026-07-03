@@ -67,6 +67,14 @@ repos:
         pass_filenames: false
         files: ^yadgar/server/http\.py$
 
+      - id: check-observe-coverage
+        name: Check I33 tri-signal observe-coverage (warn-mode; allowlist integrity hard)
+        language: system
+        entry: python scripts/check_observe_coverage.py --warn
+        types: [python]
+        pass_filenames: false
+        files: ^(yadgar/.*\.py|\.observe-allowlist\.json)$
+
       - id: check-secret-gate
         name: Check I26 secret-gate invariant (all write tools call gate_or_reject)
         language: system

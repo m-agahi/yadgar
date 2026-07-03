@@ -1,0 +1,11 @@
+{
+  "_comment": "I33 observe-coverage allowlist (v5.101 P0). Governance mirrors .complexity-allowlist.json (I30): every entry needs a valid category and a rationale >= 40 chars; a stale entry (fn no longer in scope) hard-fails even in warn-mode. Categories: hot-loop, generated, trivial, property, dunder, framework-instrumented, test, pre-existing. This seed is intentionally SMALL: warn-mode reports the full MISSING baseline; the per-area rollout waves (P1..P5) will populate real exemptions. Do NOT bulk-add all ~1,600 in-scope functions here.",
+  "fusion:_FusionMixin._normalize_signal": {
+    "category": "hot-loop",
+    "rationale": "pre-existing; scheduled for obs-coverage wave P1 (retrieval). Per-signal score normalizer invoked inside the fusion inner loop; a span/metric/log per call is per-candidate cardinality + latency bloat on the hot recall path."
+  },
+  "scoring:_normalize_fts_hits": {
+    "category": "hot-loop",
+    "rationale": "pre-existing; scheduled for obs-coverage wave P1 (retrieval). Normalizes each FTS hit row in the scoring inner loop; instrumenting per-call would multiply signals per candidate with no dashboard value."
+  }
+}

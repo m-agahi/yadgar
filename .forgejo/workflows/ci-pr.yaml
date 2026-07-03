@@ -115,6 +115,9 @@ jobs:
       - name: Check I24 — public HTTP handlers must have @trace_span
         run: python scripts/check_trace_spans.py
 
+      - name: Check I33 — tri-signal observe-coverage (warn-mode; allowlist integrity hard)
+        run: python scripts/check_observe_coverage.py --warn
+
       - name: Check I25 — config three-way-sync (Settings + yaml + registry)
         run: python -m pytest yadgar/tests/test_config_three_way_sync.py -q --tb=short
 

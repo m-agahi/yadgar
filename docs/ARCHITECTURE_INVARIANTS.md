@@ -101,6 +101,8 @@ Hard caps NO override. If hit, decomposition design must prove I5 preservation.
 
 Every log entry = JSON with `ts, level, component, action, outcome, latency_ms?, error?`. NEVER log memory `content` (PII risk), tokens/passwords, user-supplied strings as metric labels. Log at boundaries (request in/out, drainer cycle, DB op), NOT inside hot loops. **trace_id propagation across MCP → core → drainer → backend is a SEPARATE v5.5 P-item, NOT in scope of I14.** Ratchet: new code conforms; old conforms when touched; full conformance by v5.6.
 
+**v5.101 extension (I33 coverage floor):** the per-function *log-coverage floor* is now enforced by the I33 lint (`check_observe_coverage.py`) via `@observe`: `boundary`-tier functions emit an I14 INFO/ERROR line; `stage`-tier emit ERROR-on-raise. The I14 schema (`component/action/outcome/latency_ms/error`) is preserved by the `@observe` emitter. I14 stays the *schema* authority; I33 adds the *coverage* ratchet on top.
+
 **Shipped v5.4.2 prep:**
 - `yadgar/log_config.py`: `JSONLogFormatter` (I14 schema: `ts/level/event/component/action/outcome`), `ContentRedactor` (logging.Filter; strips sensitive fields by substring denylist + one-level dict redaction), `TRACEBACK_MAX_CHARS=2000` constant. `configure_logging()` updated: default format changed `human→json`, idempotent handler install, redactor wired as handler filter.
 - `yadgar/config.py`: `LOG_FORMAT: str = "json"` setting with `field_validator` enforcing `{"json","text","human"}`. Env var: `YADGAR_LOG_FORMAT`.
@@ -228,6 +230,8 @@ original wiring requirement.
 History: introduced in v5.6.7 after the 2026-05-24 audit. See `yadgar-roadmap-future-improvements`
 wiki PR-L section.
 
+**v5.101 extension (I33):** in-scope functions instrumented via `@observe(tier="boundary"|"stage")` emit a metric through the SHARED observe families (`yadgar_observe_requests_total`, `yadgar_observe_request_duration_seconds`, `yadgar_observe_stage_duration_seconds`, `yadgar_observe_stage_errors_total`) — these have writers by construction (the decorator), so I23 stays green. The anti-cardinality rule (no per-function `Histogram`) is I33's job; I23 remains the "declared ⇒ has-writer" guard.
+
 ### I24 — Public HTTP-handler MUST have @trace_span (v5.7.5)
 
 Every public top-level `async def` function in `yadgar/server/http.py` that does not
@@ -256,6 +260,8 @@ invariant — they are covered by I19-extended proposals in the roadmap (v5.8+).
 
 History: introduced in v5.7.5. 13 existing un-spanned handlers were back-filled
 in the same PR. Live codebase passes at this commit: 22 handlers, all spanned.
+
+**v5.101 extension (I33):** span coverage now extends beyond `server/http.py` — the I33 lint treats `@_tool` (the 245 MCP tools in `yadgar/server/tools/*`), `_rpc_span`, and `@observe` as span sources alongside `@trace_span`, and classifies every in-scope function. I24 stays the narrow, always-hard guard for `server/http.py` public handlers; I33 is the codebase-wide ratchet (warm-mode → per-area hard).
 
 ### I25 — Config knob defaults to yaml-backed
 
@@ -446,6 +452,84 @@ eligible = {caller_dir, 'global', '', None}
 **History:** introduced v5.62 (`is_directory_eligible`, quality floor, dedup); extended v5.65 (wiki-blend scoping, drop `'system'`, prompt-recall supplement fix, `project_brief` scoping).
 
 **Last updated:** 2026-06-16 (v5.65, initial codification).
+
+### I33 — Tri-signal observability: every in-scope function is span+metric+log classified (v5.101)
+
+> **ID reconciliation (2026-07-03):** the invariant-audit proposed *I33*, the
+> full-observability plan proposed *I34*. The highest *claimed* I-number in this
+> file is **I32** (`check_capability_coverage.py`, catalogued but never given a
+> section header here; I28 = `check_allowlist_audit.py` is likewise script-only).
+> The next genuinely-free number is therefore **I33** — using I34 would leave a
+> gap. This invariant is **I33**. (I28 and I32 sections remain un-backfilled;
+> out of scope for this change.)
+
+Every function under `yadgar/` (excluding `tests/`) MUST be **classified** by the
+observability standard: it either carries a span source, is auto-exempt, is
+allowlisted-exempt, or is flagged MISSING. "Every function emits span+metric+log —
+unless a documented, categorized reason not to" is satisfied by the **tier being
+the documented reason**:
+
+- **`@observe(tier="boundary")`** — span + shared RED family
+  (`yadgar_observe_requests_total{name,outcome}` +
+  `yadgar_observe_request_duration_seconds{name}`) + INFO log on success / ERROR on raise.
+- **`@observe(tier="stage")`** — span + ONE shared
+  `yadgar_observe_stage_duration_seconds{stage}` family (+
+  `yadgar_observe_stage_errors_total{stage}`); ERROR log on raise only.
+- **`@observe(tier="hot")`** — span/attribute only; NO per-call metric/log.
+- **`@observe(exempt="<category>")`** or a `.observe-allowlist.json` entry — categorized no-op.
+
+A function is auto-exempt (no annotation needed) if it is a dunder, a
+`@property`/descriptor, or trivial (≤3 statements, no control-flow, no raise/await,
+no I/O-sink call). Existing span sources — `@trace_span` (I24), `@_tool`,
+`_rpc_span` — count as "span present" and MUST NOT be double-instrumented
+(`@observe` runs in metric+log-only mode when a span source already exists;
+exactly one span per call).
+
+**Anti-cardinality (load-bearing):** boundaries SHARE the RED family (bounded
+`name` label), stages SHARE one histogram family (bounded `stage` label). NO
+per-function histogram object — that is the ~19,500-series cardinality bomb the
+standard rejects (chosen surface ≤ ~6,500 series). New per-function `Histogram(...)`
+definitions are disallowed; stage functions reuse the shared family.
+
+**Mechanism:** `yadgar/observability/observe.py::observe` composes `@trace_span`
+(span) + the shared Prometheus families + the I14 JSON logger. Backward-compatible
+(I3): no-op when prometheus_client / opentelemetry absent.
+
+**Enforcement (HARD CI gate — per user):** `scripts/check_observe_coverage.py`
+AST-classifies in-scope functions, cross-refs `.observe-allowlist.json`, and FAILS
+a non-exempt function that lacks a span source. Governance mirrors I30: allowlist
+integrity (stale entry / rationale ≥ 40 chars / valid category) is **always hard,
+even in warn-mode**. Rollout ratchet: ships **warn-mode** in P0 (`--warn`, exit 0 +
+baseline report; day-one baseline **1555 MISSING**), then flips per area to
+`--area <name>` hard-fail as each rollout wave reaches 100%, ending in a global
+hard-fail (plan P5). Wired into `.pre-commit-config.yaml` (`check-observe-coverage`)
+and `.forgejo/workflows/ci-pr.yaml` (`invariant-checks`). Cataloged as
+CAP-INFRA-033 in `docs/CAPABILITY_REGISTRY.md` (I32).
+
+**Exemption categories:** `trivial`, `property`, `dunder` (auto-detected);
+`hot-loop`, `generated`, `test`, `framework-instrumented`, `pre-existing`
+(allowlist / path-excluded). Every non-obvious exemption carries a ≥40-char
+`rationale` in `.observe-allowlist.json`.
+
+**Banned regressions:**
+- Adding a new per-function `Histogram(...)` for stage/boundary observability
+  instead of the shared family.
+- Stacking `@observe(tier=boundary)` on a `@_tool`/`@trace_span`/`_rpc_span` fn
+  (double span).
+- Suppressing MISSING by adding an allowlist entry without a valid category +
+  ≥40-char rationale, or leaving a stale allowlist entry.
+- Flipping an area back from hard-fail to warn-mode (ratchet is monotonic).
+
+**No-slowness:** the decorator adds no blocking work — spans export async
+(BatchSpanProcessor), metric `.observe()`/`.inc()` are cheap, the I14 log is
+off-thread (C2 queue). The hot path is `stage`+`hot` tiers (zero per-item
+signals); warm-recall floor (~1.6s, ADR-0026/0030/0031) is preserved by design.
+
+**History:** introduced v5.101 (P0 foundation). Plan:
+`docs/plans/full-observability-standard-2026-07-03.md`. Per-area rollout = later
+phases P1–P5.
+
+**Last updated:** 2026-07-03 (v5.101, P0 — mechanism + lint(warn) + p95 fix + propagation-verify).
 
 ### Deferred (codify only when violations surface)
 
@@ -816,6 +900,7 @@ Post-v5.3.9 `BindsTo → Wants` decouple, core + backend run as independent daem
 - 2026-06-12: I29 added — leverage-completeness / no-dead-capability (stored ≡ used ≡ shown). Proposed by user after two same-session investigations exposed built-but-unleveraged capability: (1) KB corpus 646 wiki pages but bootstrap surfaced 3 slugs + read-first unusable (RCA `yadgar-knowledge-base-usability-rca-why-claude-doesn-t-read-firs`, remediation `PLAN_V5_53`); (2) graph edges stored/computed but retrieval ignored most + ran graph only off the fast/everyday path, viz showed decorative edges while hiding the retrieval entity graph (`PLAN_V5_54`). Rule: every stored/computed artifact needs a named consumer or removal; user-facing representation must match behavior-driving data; capability must reach the everyday path. Enforcement: per-plan "field/edge contract" declaring consumers; future `check_dead_capability.py` lint to flag zero-reader artifacts.
 - 2026-06-12 (v5.54.4): I29 enforcement lint shipped — `scripts/check_dead_capability.py`. Scoped to EDGE_CONTRACT domain (graph_api.py + viz_meta.py EDGE_TYPES registry vs docs/EDGE_CONTRACT.md). Three failure modes: ORPHAN (produced but uncontracted), DROP-STILL-PRODUCED (marked drop but still in code), STALE (contracted but no longer produced). Lint passes on current codebase (all 11 edge types contracted; no drop types; no stale rows). Pre-commit hook `check-dead-capability` + CI step after I25. Tests: `yadgar/tests/test_check_dead_capability.py` (8 tests). Post-train no-GC finding confirmed: every edge has a consumer, drop set = empty.
 - 2026-06-16 (v5.62–v5.65): I31 added — directory-scoping single-predicate. `is_directory_eligible` in `storage/directory.py` is now the single source of truth for the eligible-set rule `{caller_dir, 'global', '', None}`. `'system'` removed from eligible set (v5.65); hard-require `directory` on `recall()`/`wiki_query()` (`ValueError` on absent); wiki-blend branch of `recall()` and `project_brief()` now filter with the same predicate; prompt-recall supplement WHERE corrected from `directory_context != $dir` to `directory_context IN ('', 'global')`. Write-time stamping (v5.64): `curation/strengthen.py`, `cls_store/promotion.py`, `sleep_compute/dream.py` now derive directory via `dominant_directory()` instead of hardcoding `'system'`. Quality floor (`RECALL_QUALITY_FLOOR`) + dedup of repeated co-occurrence rows (v5.62).
+- 2026-07-03 (v5.101): **I33 added** — tri-signal observability (span+metric+log, tiered + hard-enforced). ID reconciliation: invariant-audit proposed I33, plan proposed I34; highest *claimed* number in this file is I32 (`check_capability_coverage.py`, section never backfilled; I28 = `check_allowlist_audit.py` likewise) → next genuinely-free number is **I33** (I34 would skip a slot). I28/I32 sections stay un-backfilled (out of scope). P0 ships: `@observe(tier=boundary|stage|hot|exempt)` decorator (`yadgar/observability/observe.py`) composing `@trace_span` + shared bounded Prometheus families (`yadgar_observe_{requests_total,request_duration_seconds,stage_duration_seconds,stage_errors_total}`) + I14 logger, with a double-instrumentation guard (one span when `@trace_span`/`@_tool`/`_rpc_span` already present); `scripts/check_observe_coverage.py` I33 lint in **warn-mode** (baseline 1555 MISSING; allowlist integrity always hard, mirroring I30) wired into pre-commit + CI `invariant-checks`; `.observe-allowlist.json` seeded (2 hot-loop entries). Folded in: histogram-bucket p95 fix (extended `yadgar_recall_duration_ms`/`_recall_stage_ms`/`_mcp_request_duration_ms` to 300000ms + `_recall_stage_duration_seconds` to 300s — cold recalls reach ~75s, top finite bucket was 10s → p95 clamp). Core→backend propagation (already wired): E2E traceparent test added; `HTTPXClientInstrumentor` hoisted into `setup_tracing()` (closes stdio/daemon R2 hole), redundant explicit `instrument()` calls removed from `server/_app.py` + `backend/embed_service.py`. Extended I14 (log coverage-floor), I23 (in-scope fns emit via shared family), I24 (span scope → `server/tools/*`). NOT in scope: per-area rollout (P1–P5). Core 5.100.0 → 5.101.0; backend unchanged 5.10.0.
 
 ---
 

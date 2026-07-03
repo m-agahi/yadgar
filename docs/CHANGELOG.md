@@ -5,6 +5,47 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 > Snapshots from v5.0.1 onward are captured from `yadgar stats` at release time.
 > Earlier versions have no per-release snapshot (the practice started 2026-05-16).
 
+## [5.101.0] - 2026-07-03
+
+### Feat: observability P0 — `@observe` tri-signal decorator + I33 invariant (hard-enforced, warn-mode) + histogram p95 fix
+
+Foundation for the full-observability standard (`docs/plans/full-observability-standard-2026-07-03.md`).
+P0 = the mechanism + the ratchet + the p95 fix + propagation-verify. NOT the
+per-area rollout (decorating ~1,626 functions — later phases P1–P5).
+
+- **`@observe(tier=...)` decorator** (`yadgar/observability/observe.py`): one decorator
+  composing span (delegated to `@trace_span`) + a bounded Prometheus metric + an
+  I14 structured log, emitting **by tier**:
+  - `boundary`: span + shared RED family (`yadgar_observe_requests_total{name,outcome}` +
+    `yadgar_observe_request_duration_seconds{name}`) + INFO log on success / ERROR on raise.
+  - `stage`: span + ONE shared `yadgar_observe_stage_duration_seconds{stage}` histogram
+    family (+ `yadgar_observe_stage_errors_total{stage}`); ERROR log on raise only.
+  - `hot`: span/attribute only — NO per-call metric, NO per-call log.
+  - `exempt`: categorized no-op passthrough.
+  - **Anti-cardinality:** boundaries share the RED family, stages share one
+    `stage`-labelled family — no per-function histogram objects (~6,500-series ceiling
+    vs ~19,500 naive). **Double-instrumentation guard:** a fn already carrying
+    `@trace_span`/`@_tool` runs `@observe` in metric+log-only mode (exactly one span).
+- **Histogram bucket p95 fix** (`yadgar/metrics.py`): real cold recalls reach ~75s but
+  the top finite ms-bucket was 10000 → `histogram_quantile` clamped p95 at 10s. Extended
+  `yadgar_recall_duration_ms`, `yadgar_recall_stage_ms`, `yadgar_mcp_request_duration_ms`
+  to 300000ms and `yadgar_recall_stage_duration_seconds` to 300s.
+- **Enforcement lint `scripts/check_observe_coverage.py` (I33, warn-mode)**: AST-scans
+  in-scope functions, cross-refs `.observe-allowlist.json`; a non-exempt function
+  missing its tier's span source FAILS. Ships in **warn-mode** (exit 0 + report;
+  baseline: 1555 MISSING). Allowlist integrity (stale / <40-char rationale / bad
+  category) is always hard, mirroring I30. Wired into `.pre-commit-config.yaml` +
+  `.forgejo/workflows/ci-pr.yaml` `invariant-checks`.
+- **Core→backend propagation** (already wired): added an E2E test asserting the backend
+  request span shares the core recall's `trace_id`; hoisted `HTTPXClientInstrumentor`
+  into `setup_tracing()` (single choke-point) so stdio/daemon-mode entry paths that
+  never import `server/_app.py` still inject traceparent (closes R2 hole). Removed the
+  now-redundant explicit `instrument()` calls in `server/_app.py` + `backend/embed_service.py`.
+- **Docs:** new invariant **I33** (tri-signal observability, hard CI gate) in
+  `docs/ARCHITECTURE_INVARIANTS.md`; extended I14 (coverage floor), I23 (in-scope fns
+  emit a metric), I24 (scope → `server/tools/*`). CAPABILITY_REGISTRY entry for the new
+  lint. Wiki `yadgar-architectural-invariants` synced.
+
 ## [5.100.0] - 2026-07-03
 
 ### Feat: source label (hook|tool) on shadow recall-cache counters (#88 gating)
