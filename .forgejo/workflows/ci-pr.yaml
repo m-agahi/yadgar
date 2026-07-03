@@ -11,6 +11,8 @@ on:
       - 'benchmarks/**'
       - 'docs/**'
       - '.forgejo/**'
+      - 'README.md'
+      - 'AGENTS.md'
 
 # Cancel superseded test runs on a fresh push to the same PR branch.
 concurrency:
@@ -235,3 +237,10 @@ jobs:
               exit 1
             fi
           fi
+
+      - name: Verify backend_version bump when backend changed (#83)
+        # Uses --ci --base origin/master to diff the PR branch vs the merge-base
+        # so backend build input changes (yadgar/backend/**, Dockerfile.backend,
+        # entrypoint-backend.sh) that lack a server.json backend_version bump
+        # fail the PR — closes the gap that let PR #144 slip through pre-commit.
+        run: python scripts/check_backend_bump.py --ci --base origin/master
