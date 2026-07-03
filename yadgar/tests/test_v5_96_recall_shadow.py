@@ -25,14 +25,15 @@ def _reset_shadow():
 
 
 def _counts():
+    # v5.100.0: counters are labelled; tests use source="tool" (the default tool path).
     from yadgar.metrics import (
         yadgar_recall_shadow_cache_hits_total,
         yadgar_recall_shadow_cache_misses_total,
     )
 
     return (
-        yadgar_recall_shadow_cache_hits_total._value.get(),
-        yadgar_recall_shadow_cache_misses_total._value.get(),
+        yadgar_recall_shadow_cache_hits_total.labels(source="tool")._value.get(),
+        yadgar_recall_shadow_cache_misses_total.labels(source="tool")._value.get(),
     )
 
 
@@ -49,6 +50,7 @@ def _observe(**overrides):
         "max_results": 5,
         "min_heat": 0.0,
         "tags": None,
+        "source": "tool",  # v5.100.0: required field; existing tests exercise tool path
     }
     kwargs.update(overrides)
     observe_recall(RecallShadowParams(**kwargs))
@@ -137,6 +139,7 @@ class TestShadowCounter:
                 max_results=5,
                 min_heat=0.0,
                 tags=None,
+                source="tool",  # v5.100.0: required field
             )
         )
 

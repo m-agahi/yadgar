@@ -8,6 +8,7 @@ from yadgar.retrieval.entities import _QUERY_STOP_WORDS
 from yadgar.retrieval.query_analysis import _build_boosted_fts_query, _pseudo_hyde_expand
 from yadgar.retrieval.temporal import parse_temporal_expression
 from yadgar.storage import BranchFilter
+from yadgar.tracing import trace_span
 
 
 def _observe_stage(stage: str, elapsed_ms: float) -> None:
@@ -16,6 +17,23 @@ def _observe_stage(stage: str, elapsed_ms: float) -> None:
         from yadgar.metrics import yadgar_recall_stage_ms  # noqa: PLC0415
 
         yadgar_recall_stage_ms.labels(stage=stage).observe(elapsed_ms)
+    except Exception:
+        pass
+
+
+def _set_stage_attrs(**attrs: int) -> None:
+    """Set small COUNT attributes on the current OTel stage span (v5.100).
+
+    HARD CONSTRAINT: counts only (ints), never per-item spans or large payloads.
+    No-op when no recording span is active or OTel is absent.
+    """
+    try:
+        from opentelemetry import trace as _ot  # noqa: PLC0415
+
+        span = _ot.get_current_span()
+        if span is not None and span.is_recording():
+            for k, v in attrs.items():
+                span.set_attribute(k, v)
     except Exception:
         pass
 
@@ -121,6 +139,7 @@ class _ScoringMixin:
         except Exception:
             pass
 
+    @trace_span("retrieval.fts")
     def _collect_fts_scores(self, scores: dict, params: FTSParams) -> None:
         """Collect FTS BM25 scores (including entity-FTS and COMET expansion) into scores."""
         if params.enabled_signals is not None and "fts" not in params.enabled_signals:
@@ -160,6 +179,7 @@ class _ScoringMixin:
             embed_query_observed = True
         return encoded, _enc_elapsed, embed_query_observed
 
+    @trace_span("retrieval.vector")
     def _collect_vector_scores(
         self,
         query: str,
@@ -212,8 +232,10 @@ class _ScoringMixin:
         if _hnsw_total_ms > 0:
             _observe_stage("hnsw", _hnsw_total_ms)
 
+        _set_stage_attrs(candidates=len(vector_memory_ids))
         return vector_memory_ids, query_embedding
 
+    @trace_span("retrieval.ppr")
     def _collect_ppr_scores(
         self,
         query: str,
@@ -231,8 +253,10 @@ class _ScoringMixin:
             for mid, ppr_score in ppr_results:
                 normalized = ppr_score / max_ppr if max_ppr > 0 else 0.0
                 scores[mid]["ppr"] = normalized
+        _set_stage_attrs(candidates=len(ppr_results) if ppr_results else 0)
         _observe_stage("ppr", (_time.perf_counter() - _ppr_t0) * 1000)
 
+    @trace_span("retrieval.spreading")
     def _collect_spreading_scores(
         self,
         scores: dict,
@@ -253,6 +277,7 @@ class _ScoringMixin:
                 for mid, spread_score in spread_results:
                     normalized = spread_score / max_spread if max_spread > 0 else 0.0
                     scores[mid]["spread"] = normalized
+            _set_stage_attrs(seeds=len(top_vector_seeds), activated=len(spread_results or []))
         _observe_stage("spreading_activation", (_time.perf_counter() - _spread_t0) * 1000)
 
     def _apply_temporal_content_scores(self, temporal_memories: list, scores: dict) -> None:
@@ -267,6 +292,7 @@ class _ScoringMixin:
             if scores[mid]["temporal"] == 0.0:
                 scores[mid]["temporal"] = 0.5
 
+    @trace_span("retrieval.temporal")
     def _collect_temporal_scores(
         self,
         query: str,

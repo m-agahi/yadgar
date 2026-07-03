@@ -4,6 +4,8 @@ import logging
 import re
 from itertools import combinations
 
+from yadgar.tracing import trace_span
+
 logger = logging.getLogger("yadgar.consolidation")
 
 
@@ -184,6 +186,7 @@ class _CLSMixin:
         for name, ctx in rel_contexts.items():
             self._apply_one_typed_relationship(name, ctx, entity_map)
 
+    @trace_span("consolidation.process_episodes")
     def _process_new_episodes(self, stats: dict) -> None:
         episodes = self._storage.get_episodes_since(self._last_consolidated_episode_id)
         for ep in episodes:
@@ -260,6 +263,7 @@ class _CLSMixin:
                 unique.append(pair)
         return unique
 
+    @trace_span("consolidation.graph_priors")
     def _compute_graph_priors(self, stats: dict) -> None:
         """Precompute per-memory graph_prior scalar and store on memory rows (v5.54.1).
 
@@ -342,6 +346,7 @@ class _CLSMixin:
         logger.info("graph_prior: computed and stored for %d memories", updated)
         _bump_shadow_epoch_global(updated)
 
+    @trace_span("consolidation.cofire_priors")
     def _compute_cofire_priors(self, stats: dict) -> None:
         """Precompute per-memory cofire_prior scalar and store on memory rows (v5.54.2).
 
@@ -549,6 +554,7 @@ class _CLSMixin:
             degree[tgt_id] = degree.get(tgt_id, 0) + 1
         return existing_links, degree
 
+    @trace_span("consolidation.link_similar")
     def _link_similar_memories(self, stats: dict) -> None:
         """Create memory_similarity_link records between semantically similar memories.
 
@@ -785,6 +791,7 @@ class _CLSMixin:
 
         return to_delete
 
+    @trace_span("consolidation.merge_duplicates")
     def _merge_duplicates(self, stats: dict) -> None:
         """Delete near-duplicate memories (cosine similarity > 0.95), keeping the hotter one.
 

@@ -12,6 +12,7 @@ from yadgar.embeddings import EmbeddingEngine
 from yadgar.metacognition import MetaCognition
 from yadgar.retrieval import Retriever
 from yadgar.storage import StorageEngine
+from yadgar.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,7 @@ class CheckpointRestore:
         """Reset after checkpoint."""
         self._tool_call_count = 0
 
+    @trace_span("checkpoint.create")
     def create_checkpoint(
         self,
         directory: str,
@@ -199,6 +201,7 @@ class CheckpointRestore:
 
         return False, ""
 
+    @trace_span("checkpoint.micro")
     def create_micro_checkpoint(self, directory: str, content: str, reason: str) -> dict | None:
         """Create a lightweight checkpoint triggered by a significant event.
 
@@ -210,6 +213,7 @@ class CheckpointRestore:
         ctx = CheckpointContext(current_task=f"[micro:{reason}] {summary}")
         return self.create_checkpoint(directory, ctx, session_id="micro-auto")
 
+    @trace_span("checkpoint.pre_compact_drain")
     def pre_compact_drain(self, directory: str) -> dict:
         """Emergency context capture before compaction.
 
@@ -330,6 +334,7 @@ class CheckpointRestore:
             logger.debug("Gap detection failed during restore")
             return []
 
+    @trace_span("restore.run")
     def restore(self, directory: str = "") -> dict:
         """Intelligent context reconstruction after compaction.
 

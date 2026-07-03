@@ -11,6 +11,7 @@ import logging
 from datetime import UTC, datetime
 
 from yadgar.storage.heat_writer import HeatWriter
+from yadgar.tracing import trace_span
 
 logger = logging.getLogger("yadgar.consolidation")
 
@@ -41,6 +42,7 @@ def _reconcile_heat_intents(
 class _HeatDecayMixin:
     """Applies thermodynamic decay to memory and entity heat values."""
 
+    @trace_span("consolidation.decay")
     def _apply_decay(self, stats: dict) -> None:
         """Collect memory + entity heat intents, reconcile, apply once (BC-CSW1)."""
         now = datetime.now(UTC)

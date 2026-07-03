@@ -618,6 +618,7 @@ class WikiStore:
 
     # ── Public API ────────────────────────────────────────────────────────
 
+    @trace_span("wiki.add")
     def add(
         self,
         title: str,

@@ -7,12 +7,14 @@ from datetime import UTC, datetime
 
 import yadgar.server._state as _st
 import yadgar.server.lifecycle as _lifecycle
+from yadgar.tracing import trace_span
 
 from .context import MemorizeContext
 
 logger = logging.getLogger(__name__)
 
 
+@trace_span("memorize.embed")
 def phase_embed(ctx: MemorizeContext, settings) -> dict | None:
     """Run write gate, generate embedding, compute thermo scores.
 

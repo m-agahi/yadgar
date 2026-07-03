@@ -190,6 +190,7 @@ class _OrchestratorMixin:
             record_exception("consolidation.phase_precompute_graph_layout", _exc)
             logger.exception("Precompute graph layout failed")
 
+    @trace_span("consolidation.episodic")
     def _run_episodic_phases(self, stats: dict) -> None:
         """Phase group 1: decay, episode processing, pruning, duplicate merge."""
         _t = time.monotonic()
@@ -216,6 +217,7 @@ class _OrchestratorMixin:
         logger.info("phase_end: merge_duplicates duration_ms=%d", _dur_ms)
         _warn_slow_phase("merge_duplicates", _dur_ms)
 
+    @trace_span("consolidation.graph")
     def _run_graph_phases(self, stats: dict) -> None:
         """Phase group 2: similarity linking, causality, graph priors, cofire priors."""
         # Semantic similarity linking — create relationships between similar memories
@@ -277,6 +279,7 @@ class _OrchestratorMixin:
             record_exception("consolidation.phase_compute_cofire_priors", _exc)
             logger.exception("Co-fire prior computation failed (non-fatal)")
 
+    @trace_span("consolidation.curation")
     def _run_curation_phases(self, stats: dict) -> None:
         """Phase group 3: memify, CLS consolidation, action log processing."""
         # Run memify self-improvement cycle

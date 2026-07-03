@@ -8,12 +8,14 @@ import yadgar.server._state as _st
 import yadgar.server.lifecycle as _lifecycle
 from yadgar.curation import CurateParams
 from yadgar.server._helpers import _file_hash
+from yadgar.tracing import trace_span
 
 from .context import MemorizeContext
 
 logger = logging.getLogger(__name__)
 
 
+@trace_span("memorize.store")
 def phase_store(ctx: MemorizeContext) -> None:
     """Write memory to storage via curator or direct insert.
 

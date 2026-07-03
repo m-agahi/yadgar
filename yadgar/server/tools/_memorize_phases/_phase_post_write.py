@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 import yadgar.server._state as _st
 import yadgar.server.lifecycle as _lifecycle
 from yadgar.server._helpers import _DECISION_STRONG_RE, _push_event
+from yadgar.tracing import trace_span
 
 from .context import MemorizeContext
 
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 _reinject_skip_logged: bool = False
 
 
+@trace_span("memorize.post_write")
 def phase_post_write(ctx: MemorizeContext, settings) -> dict:
     """Run post-write hooks and build the final response dict.
 

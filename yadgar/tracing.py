@@ -26,6 +26,7 @@ and opentelemetry-instrumentation-fastapi (inbound) in the service setup code.
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import inspect
 import logging
@@ -668,3 +669,51 @@ def trace_span(name: str | None = None, attributes: dict[str, Any] | None = None
     # If called as @trace_span(fn), fn is a callable (no parens case not supported
     # for simplicity — always use with parens)
     return decorator
+
+
+# ---------------------------------------------------------------------------
+# span() — inline sub-stage context manager (v5.100)
+# ---------------------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def span(name: str, **attributes: Any):
+    """Inline OTel child span for STAGE-level sub-spans (v5.100).
+
+    Use for fine-grained per-stage attribution *inside* an already-spanned
+    function (e.g. embed / knn / fusion inside ``retrieval.recall``), where a
+    whole-function ``@trace_span`` decorator does not fit. Nests under the
+    current span automatically (``start_as_current_span``), so Tempo shows the
+    stage as a child of the enclosing operation — *provided the caller runs on
+    the same thread/asyncio-task* (OTel context does not cross a raw executor
+    boundary).
+
+    HARD CONSTRAINT (no-slowness): span at STAGE granularity, NEVER per loop
+    item. Record loop sizes as attributes (``candidates=n``), not child spans.
+    Keep attribute values small (ints / short strings) — never embeddings or
+    large lists. Export is async (BatchSpanProcessor, off the event loop), so
+    this adds no blocking I/O.
+
+    On exception: records it + sets status=ERROR + re-raises (matches
+    ``@trace_span``). No-ops to ``nullcontext`` when OTel is unavailable.
+
+    Example::
+
+        with span("retrieval.embed_query", query_len=len(q)):
+            emb = embed(q)
+    """
+    if not _OTEL_AVAILABLE:  # pragma: no cover
+        yield None
+        return
+
+    tracer = _otel_trace.get_tracer("yadgar")
+    with tracer.start_as_current_span(name) as sp:
+        for k, v in attributes.items():
+            if v is not None:
+                sp.set_attribute(k, v)
+        try:
+            yield sp
+        except Exception as exc:
+            sp.record_exception(exc)
+            sp.set_status(_otel_trace.Status(StatusCode.ERROR, str(exc)))
+            raise

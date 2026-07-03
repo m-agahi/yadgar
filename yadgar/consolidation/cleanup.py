@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 import yadgar.paths as _paths
 from yadgar.consolidation.cold_retention import _cold_memory_retention_report
+from yadgar.tracing import trace_span
 
 logger = logging.getLogger("yadgar.consolidation")
 
@@ -116,6 +117,7 @@ def _build_group_content(actions: list) -> str | None:
 class _CleanupMixin:
     """Action log processing and retention-based table pruning."""
 
+    @trace_span("consolidation.action_log")
     def _process_action_log(self) -> dict:
         """Process unprocessed action_log entries into summarized memories.
 
@@ -210,6 +212,7 @@ class _CleanupMixin:
             _quarantine_action_group(group_ids, str(_slb), directory)
             return None
 
+    @trace_span("consolidation.prune_episodes")
     def _prune_old_episodes_safe(self) -> None:
         """Prune old episodes to keep the table bounded. Non-fatal."""
         try:

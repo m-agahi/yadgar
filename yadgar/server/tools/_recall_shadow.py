@@ -20,6 +20,21 @@ Model:
       - key present AND its stored epoch == the directory's current epoch → would-HIT
       - otherwise                                                         → would-MISS
         (and we record key→current-epoch so an immediate repeat would hit)
+
+v5.100.0 — source label ("hook" | "tool"):
+  The ``source`` field on RecallShadowParams distinguishes explicit MCP-tool recalls
+  ("tool") from the three hook auto-recall endpoints ("hook").  Hook auto-recalls
+  fire 50-200 times/hour per session on repeated prompt text and would inflate the
+  blended would-be hit-rate without this split.  The #88 output-cache gating
+  decision should be evaluated on "tool" traffic only.
+
+  ``source`` is kept as a **required** field with no default so every call site
+  must be explicit.  Silently defaulting to one value would contaminate exactly
+  the signal this label was added to preserve.
+
+  ``source`` is also included in the shadow cache key so that a hook call and a
+  tool call for the identical query occupy independent keyspaces (a hook hit for
+  query Q must not register as a tool hit for query Q).
 """
 
 from __future__ import annotations
@@ -35,6 +50,12 @@ class RecallShadowParams:
 
     Bundled into one object so observe_recall takes a single param (keeps the
     key-component list in one place and satisfies the arg-count lint gate).
+
+    v5.100.0: ``source`` is a **required** field ("hook" | "tool").  It is kept
+    required (no default) so callers must be explicit — silently defaulting to
+    one value would contaminate the signal the label was added to isolate.
+    ``source`` is also part of the cache key so hook and tool calls for the
+    same query occupy independent keyspaces.
     """
 
     query: str
@@ -46,6 +67,7 @@ class RecallShadowParams:
     max_results: int
     min_heat: float
     tags: list[str] | None
+    source: str  # "hook" | "tool" — required; no default (see docstring)
 
 
 # ── Bounded state (module-level, process-lifetime) ───────────────────────────
@@ -90,7 +112,11 @@ def _current_epoch(directory: str | None) -> int:
 
 
 def _make_key(p: RecallShadowParams) -> tuple:
-    """Build the exact would-be cache key (normalised, hashable)."""
+    """Build the exact would-be cache key (normalised, hashable).
+
+    v5.100.0: ``source`` is included so hook and tool calls occupy independent
+    keyspaces — a hook hit for query Q must not register as a tool hit for Q.
+    """
     norm_query = " ".join((p.query or "").split()).lower()
     norm_tags = tuple(sorted(p.tags)) if p.tags else ()
     return (
@@ -103,6 +129,7 @@ def _make_key(p: RecallShadowParams) -> tuple:
         int(p.max_results),
         round(float(p.min_heat), 2),
         norm_tags,
+        p.source,  # v5.100.0 — independent keyspace per traffic source
     )
 
 
@@ -130,9 +157,9 @@ def observe_recall(params: RecallShadowParams) -> None:
                 _SHADOW_KEYS.popitem(last=False)
 
         if hit:
-            yadgar_recall_shadow_cache_hits_total.inc()
+            yadgar_recall_shadow_cache_hits_total.labels(source=params.source).inc()
         else:
-            yadgar_recall_shadow_cache_misses_total.inc()
+            yadgar_recall_shadow_cache_misses_total.labels(source=params.source).inc()
     except Exception:  # pragma: no cover - instrumentation must never break recall
         pass
 

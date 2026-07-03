@@ -5,6 +5,92 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 > Snapshots from v5.0.1 onward are captured from `yadgar stats` at release time.
 > Earlier versions have no per-release snapshot (the practice started 2026-05-16).
 
+## [5.100.0] - 2026-07-03
+
+### Feat: source label (hook|tool) on shadow recall-cache counters (#88 gating)
+
+**Metric-shape change** — the pre-5.100 unlabelled `yadgar_recall_shadow_cache_hits_total`
+/ `_misses_total` series no longer exist.  Dashboards and recording rules must be
+updated to filter by `{source="tool"}` or `{source="hook"}`.
+
+**Problem:** The shadow counters (v5.96.0) measured the would-be hit-rate of a
+hypothetical query→output cache blended across all callers.  Hook auto-recalls
+(3 endpoints — `prompt-recall`, `instructions-loaded`, `subagent-start`) fire
+50–200 times/hour per session on repeated prompt text.  This high-repeat, low-entropy
+traffic inflates the blended hit-rate and makes it impossible to evaluate whether the
+cache would actually benefit explicit MCP-tool recalls (the only traffic the #88 cache
+would serve).
+
+**Fix:** Added a `source` label ("hook" | "tool") to both counters.  Hook endpoints
+now call `observe_recall(source="hook")` after their throttle gates and before
+dispatching to the retriever.  The MCP `recall` tool calls `observe_recall(source="tool")`.
+`source` is also included in the shadow cache key so hook and tool calls for the same
+query occupy independent keyspaces — a hook hit for query Q cannot register as a
+tool hit for Q.
+
+**Files changed:**
+- `yadgar/metrics.py` — added `["source"]` labelnames to both counters
+- `yadgar/server/tools/_recall_shadow.py` — `source: str` required field on
+  `RecallShadowParams`; updated `_make_key` and `observe_recall`
+- `yadgar/server/tools/recall.py` — passes `source="tool"`
+- `yadgar/server/http.py` — shadow observe added to `hook_prompt_recall`,
+  `hook_instructions_loaded`, and `hook_subagent_start` (all three hook paths)
+- `yadgar/tests/test_shadow_cache_source_label.py` — new TDD test file (unit + wiring)
+- `yadgar/tests/test_v5_96_recall_shadow.py` — updated for new label API
+
+### Feat: fine-grained OTEL spans across recall / write / consolidation / drainer (full trace visibility)
+
+**Problem:** Only the coarse spans existed (`retrieval.recall`, `retrieval.rerank`,
+`drainer.cycle`, `consolidation.cycle`, `wiki.query`). Per-stage slowness was invisible
+in Tempo — a slow recall could not be attributed to embed vs KNN vs PPR vs spreading vs
+fusion vs a specific rerank stage.
+
+**Fix:** Added stage-granularity child spans across the hot paths. Every new span is a
+`@trace_span`-decorated already-extracted stage method (or, for the drainer per-record
+replay, one inline `start_as_current_span`), so it nests under the enclosing operation
+in Tempo with zero added nesting to the (I13-capped) orchestrators.
+
+New spans:
+- Recall scoring: `retrieval.fts`, `retrieval.vector` (attr `candidates`), `retrieval.ppr`
+  (attr `candidates`), `retrieval.spreading` (attrs `seeds`, `activated`),
+  `retrieval.temporal`, `retrieval.fusion`, `retrieval.build_results`.
+- Rerank pipeline: `retrieval.rerank.{heuristic,comparison_merge,cross_encoder,nli,
+  multi_passage,profile_belief_merge,mmr,adversarial_detect,rules,engram_links,metacognition}`.
+- Write path: `write.surprisal`, `write.gate`, and per memorize phase
+  `memorize.{validate,resolve_branch,embed,contradiction,store,post_write}`.
+- Drainer: `drainer.apply` (attr `op`) per replayed record.
+- Consolidation phases: `consolidation.{episodic,graph,curation}` groups plus
+  `consolidation.{decay,process_episodes,merge_duplicates,link_similar,graph_priors,
+  cofire_priors,action_log,prune_episodes,causal}`.
+- Curation: `curation.curate_on_remember`, `curation.memify`.
+- Wiki write: `wiki.add`.
+- Checkpoint / restore: `checkpoint.{create,micro,pre_compact_drain}`, `restore.run`.
+- Storage (batched only — one span per batched surreal call, NOT per row):
+  `storage.graph_priors`, `storage.cofire_priors`, `storage.batch_writes`.
+
+**No-slowness design:** spans at STAGE granularity only — never per loop item; loop
+sizes recorded as small int attributes on the enclosing span (new `_set_stage_attrs`
+helper). Export stays async via `BatchSpanProcessor` (off the event loop, opt-in via
+`YADGAR_OTLP_ENDPOINT`), and OTel context propagates through the offload boundary
+(`contextvars.copy_context()` in `run_offloaded`) so spans nest correctly in both inline
+and `OFFLOAD_TOOLS=True` modes. Warm recall floor unaffected (~1.6s) — no blocking I/O
+added. New reusable inline `span()` context manager in `yadgar/tracing.py`.
+
+**Files changed:**
+- `yadgar/tracing.py` — new `span()` inline context manager
+- `yadgar/retrieval/scoring.py` — `_set_stage_attrs` helper + 5 scoring-stage decorators
+- `yadgar/retrieval/fusion.py` — `_fuse_scores`, `_build_initial_results` decorators
+- `yadgar/retrieval/reranking.py` — 11 rerank-stage decorators
+- `yadgar/predictive_coding.py` — `compute_surprisal`, `should_store` decorators
+- `yadgar/server/tools/_memorize_phases/*.py` — 6 phase decorators
+- `yadgar/file_queue/apply.py` — `drainer.apply` span per replayed record
+- `yadgar/consolidation/{orchestrator,heat_decay,cls,cleanup,causal}.py` — phase spans
+- `yadgar/curation/__init__.py` — curation decorators
+- `yadgar/wiki.py` — `WikiStore.add` decorator
+- `yadgar/restoration.py` — checkpoint/restore decorators
+- `yadgar/storage/{client,memory}.py` — batched-query decorators
+- `yadgar/tests/test_stage_spans.py` — new TDD test (asserts stage spans nest under parent)
+
 ## [5.99.0] - 2026-07-02
 
 ### Perf: kill the PPR + spreading graph-traversal N+1 fetch (exact-parity)

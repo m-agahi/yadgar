@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 
+from yadgar.tracing import trace_span
+
 logger = logging.getLogger(__name__)
 
 # Retrieval profiles: fast < balanced < full
@@ -186,6 +188,7 @@ class _FusionMixin:
                 fused_scores[mid] = fused_scores[mid] + weight * prior_val
         return sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
 
+    @trace_span("retrieval.fusion")
     def _fuse_scores(
         self,
         scores: dict,
@@ -273,6 +276,7 @@ class _FusionMixin:
                     result_memories.append(mem)
                     seen_ids.add(mid)
 
+    @trace_span("retrieval.build_results")
     def _build_initial_results(
         self,
         fused: list,

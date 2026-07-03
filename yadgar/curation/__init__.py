@@ -77,6 +77,7 @@ class MemoryCurator:
 
     # ── a. Active Curation on Ingestion ──────────────────────────────────
 
+    @trace_span("curation.curate_on_remember")
     def curate_on_remember(
         self,
         content: str,
@@ -260,6 +261,7 @@ class MemoryCurator:
 
     # ── c. Memify Self-Improvement Layer ─────────────────────────────────
 
+    @trace_span("curation.memify")
     def memify_cycle(self) -> dict:
         """Run the full memify self-improvement cycle.
 
