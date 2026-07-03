@@ -238,6 +238,31 @@ class TestMemoryHeatFiltering:
         updated = storage.get_memory(mem_id)
         assert updated["heat"] == 0.3
 
+    def test_boost_memories_access_batch(self, storage):
+        """v5.102: batched heat+last_accessed UPDATE clamps at 1.0 across ids.
+
+        Live-DB check that the SurrealQL `math::min([heat + 0.1, 1.0])` in the
+        `WHERE id IN [...]` batch produces the same values the per-row path did:
+        0.5 -> 0.6, 0.95 -> 1.0 (clamped), and last_accessed is stamped.
+        """
+        lo = storage.insert_memory(_make_memory(content="lo", heat=0.5))
+        hi = storage.insert_memory(_make_memory(content="hi", heat=0.95))
+        ts = "2026-07-03T00:00:00Z"
+
+        storage.boost_memories_access([lo, hi], ts)
+
+        assert storage.get_memory(lo)["heat"] == pytest.approx(0.6)
+        assert storage.get_memory(hi)["heat"] == pytest.approx(1.0)  # clamped
+        assert storage.get_memory(lo)["last_accessed"] == ts
+        assert storage.get_memory(hi)["last_accessed"] == ts
+
+    def test_boost_memories_access_empty_noop(self, storage):
+        """Empty id list must be a no-op (no empty `IN []` query)."""
+        mid = storage.insert_memory(_make_memory(heat=0.4))
+        storage.boost_memories_access([], "2026-07-03T00:00:00Z")
+        # Untouched.
+        assert storage.get_memory(mid)["heat"] == pytest.approx(0.4)
+
     def test_update_memory_staleness(self, storage):
         mem_id = storage.insert_memory(_make_memory())
         assert storage.get_memory(mem_id)["is_stale"] is False

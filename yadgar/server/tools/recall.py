@@ -118,6 +118,37 @@ def _candidates_to_dicts(candidates: list) -> list[dict]:
     return pooled
 
 
+def _fuse_with_span(memory_candidates, wiki_candidates, query, max_results):
+    """Cross-type CE fusion, grouped under a named ``recall.fanout.fuse`` span.
+
+    v5.102: the multi-provider fusion runs the cross-type cross-encoder pass —
+    the ~5.4s ``rpc.rerank.ce`` that dominates the post-``retrieval.recall`` tail
+    of a warm recall trace. Wrapping it in a span attributes that cost under
+    ``tool.recall`` in Tempo as a labelled node instead of leaving it as a loose
+    sibling of ``retrieval.recall`` (the "trace gap" this change closes).
+
+    Instrumentation only — the second CE pass itself is NOT touched: it is
+    load-bearing for cross-type ranking quality (the single-provider bypass in
+    ``_fanout_recall`` records double-CE dropping MRR 0.84→0.74). Extracted to a
+    helper so ``_fanout_recall`` stays under the I13/I30 complexity caps.
+    """
+    from yadgar.tracing import span  # noqa: PLC0415
+
+    with span(
+        "recall.fanout.fuse",
+        memory_candidates=len(memory_candidates),
+        wiki_candidates=len(wiki_candidates),
+    ):
+        return fuse_candidates(
+            memory_candidates=memory_candidates,
+            wiki_candidates=wiki_candidates,
+            query=query,
+            retriever=_st._retriever,
+            max_results=max_results,
+            settings=settings,
+        )
+
+
 # ---------------------------------------------------------------------------
 # v6 BC-AC3a landscape recall — consensus_retrieve exposed as opt-in mode
 # ---------------------------------------------------------------------------
@@ -303,14 +334,7 @@ def _fanout_recall(
         pooled = _candidates_to_dicts(candidates)
     else:
         # Multi-provider path (type="all"): cross-type CE fusion needed.
-        fused = fuse_candidates(
-            memory_candidates=memory_candidates,
-            wiki_candidates=wiki_candidates,
-            query=query,
-            retriever=_st._retriever,
-            max_results=max_results,
-            settings=settings,
-        )
+        fused = _fuse_with_span(memory_candidates, wiki_candidates, query, max_results)
         pooled = _candidates_to_dicts(fused)
 
     # Final dedup by content (handles any duplicates fusion didn't catch)
@@ -357,38 +381,57 @@ def _apply_recall_side_effects(merged: list[dict], query: str, storage) -> None:
     performs the SAME side effects as the legacy path. Without this, fan-out
     recalls would not reinforce heat on access — breaking the heat-ranking model
     (regression caught by test_server::test_recall_boosts_heat under the flip).
+
+    v5.102: the per-memory heat + last_accessed writes are collapsed into ONE
+    batched ``storage.boost_memories_access(ids, now)`` call (was 2 sequential
+    SurrealDB round-trips × N results — the ~407ms tail of the recall trace).
+    The whole segment is wrapped in a ``recall.side_effects`` span so this
+    tool-wrapper work is attributed under ``tool.recall`` in Tempo instead of
+    appearing as loose siblings of ``retrieval.recall``.  Heat math is unchanged
+    (``min(heat + 0.1, 1.0)`` in Python == ``math::min([heat + 0.1, 1.0])`` in
+    SurrealQL) — speed only, zero quality change.
     """
-    now = storage._now_iso()
-    thermo = _st._thermo
-    for m in merged:
-        mid = m.get("id")
-        if mid is None or m.get("_source") == "wiki":
-            continue
-        new_heat = min(m.get("heat", 0.0) + 0.1, 1.0)
-        storage.update_memory_heat(mid, new_heat)
-        storage.update_memory_last_accessed(mid, now)
-        m["heat"] = new_heat
-        m["last_accessed"] = now
-        if thermo is not None:
-            thermo.record_access(mid, was_useful=True)
+    from yadgar.tracing import span  # noqa: PLC0415
 
-    # SR transitions: link previous recall → current recall.
-    _record_recall_sr_transition(merged)
+    with span("recall.side_effects", results=len(merged)):
+        now = storage._now_iso()
+        thermo = _st._thermo
 
-    # Action stream: log this recall operation.
-    buffer = _st._buffer
-    if buffer is not None:
-        result_count = len(merged)
-        buffer.capture_action(
-            "recall",
-            "",
-            f"query='{query[:80]}' results={result_count}",
-            f"found_{result_count}",
-        )
+        # Compute new heat + stamp the returned dicts in Python (unchanged values);
+        # collect the memory ids for a single batched DB write.
+        boosted_ids: list[int] = []
+        for m in merged:
+            mid = m.get("id")
+            if mid is None or m.get("_source") == "wiki":
+                continue
+            new_heat = min(m.get("heat", 0.0) + 0.1, 1.0)
+            m["heat"] = new_heat
+            m["last_accessed"] = now
+            boosted_ids.append(mid)
+            if thermo is not None:
+                thermo.record_access(mid, was_useful=True)
 
-    # Track tool call for auto-checkpoint interval.
-    if _st._replay is not None:
-        _st._replay.record_tool_call()
+        # v5.102: ONE batched UPDATE instead of 2 writes per memory.
+        if boosted_ids:
+            storage.boost_memories_access(boosted_ids, now)
+
+        # SR transitions: link previous recall → current recall.
+        _record_recall_sr_transition(merged)
+
+        # Action stream: log this recall operation.
+        buffer = _st._buffer
+        if buffer is not None:
+            result_count = len(merged)
+            buffer.capture_action(
+                "recall",
+                "",
+                f"query='{query[:80]}' results={result_count}",
+                f"found_{result_count}",
+            )
+
+        # Track tool call for auto-checkpoint interval.
+        if _st._replay is not None:
+            _st._replay.record_tool_call()
 
 
 @_tool()
