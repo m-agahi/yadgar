@@ -40,6 +40,13 @@ jobs:
       # timeout cannot fire). MiniLM is baked in yadgar-ci:5.73.0 — offline is safe.
       HF_HUB_OFFLINE: '1'
       HF_HUB_DISABLE_XET: '1'
+      # OTEL_SDK_DISABLED: CI has no OTLP collector; leaving tracing on makes the
+      # BatchSpanProcessor try to export at pytest_sessionfinish, blocking teardown
+      # on an unreachable endpoint (host-contention amplified) → shard timeout →
+      # SIGTERM (exit 143) + 'OSError: cannot send' xdist noise. CI tests never
+      # need span export — disable the SDK entirely. (Same principle as HF offline.)
+      OTEL_SDK_DISABLED: 'true'
+      YADGAR_OTLP_ENDPOINT: ''
     # fail-fast: false — each chunk runs independently; one failure does NOT
     # abort the others.  Aggregation happens in the `test-gate` job below.
     strategy:
