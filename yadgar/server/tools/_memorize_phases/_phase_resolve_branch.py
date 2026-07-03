@@ -13,12 +13,14 @@ import os
 
 import yadgar.file_queue as _file_queue
 from yadgar.server.lifecycle import _get_file_queue
+from yadgar.tracing import trace_span
 
 from .context import MemorizeContext
 
 logger = logging.getLogger(__name__)
 
 
+@trace_span("memorize.resolve_branch")
 def phase_resolve_branch(ctx: MemorizeContext) -> dict | None:
     """Resolve branch context and enqueue on fast path.
 

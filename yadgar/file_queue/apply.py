@@ -2,9 +2,38 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _apply_span():
+    """Child span per drained record, nested under drainer.cycle (v5.100).
+
+    STAGE granularity: one span per queued write replayed (op set as an
+    attribute inside the body), NOT per inner item. Returns an UN-entered
+    context manager (mirrors _drainer_span) — the caller enters it via `with`.
+    No-ops to nullcontext when OTel is absent.
+    """
+    try:
+        from opentelemetry import trace as _ot  # noqa: PLC0415
+
+        return _ot.get_tracer("yadgar.file_queue").start_as_current_span("drainer.apply")
+    except Exception:
+        return contextlib.nullcontext()
+
+
+def _set_apply_op(op: str) -> None:
+    """Set the `op` attribute on the active drainer.apply span. No-op if absent."""
+    try:
+        from opentelemetry import trace as _ot  # noqa: PLC0415
+
+        sp = _ot.get_current_span()
+        if sp is not None and sp.is_recording():
+            sp.set_attribute("op", op)
+    except Exception:
+        pass
 
 
 class _ApplyMixin:
@@ -24,7 +53,9 @@ class _ApplyMixin:
 
         _drain_local.active = True
         try:
-            self._apply_inner(record)
+            with _apply_span():
+                _set_apply_op(str(record.get("op", "unknown")))
+                self._apply_inner(record)
         finally:
             _drain_local.active = False
 

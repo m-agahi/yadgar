@@ -1072,6 +1072,7 @@ class _MemoryMixin:
 
     # ------------------------------------------------------------------ Graph prior (v5.54.1)
 
+    @trace_span("storage.graph_priors")
     def get_memory_graph_priors(self, memory_ids: list[int]) -> dict[int, float]:
         """Bulk-fetch graph_prior scalars for a list of memory IDs (v5.54.1).
 
@@ -1123,6 +1124,7 @@ class _MemoryMixin:
 
     # ------------------------------------------------------------------ Co-recall prior (v5.54.2)
 
+    @trace_span("storage.cofire_priors")
     def get_memory_cofire_priors(self, memory_ids: list[int]) -> dict[int, float]:
         """Bulk-fetch cofire_prior scalars for a list of memory IDs (v5.54.2).
 

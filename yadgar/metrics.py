@@ -259,15 +259,24 @@ yadgar_recall_profile_invocations_total = Counter(
 # v5.96.0 — shadow (would-be) recall result-cache hit-rate instrumentation.
 # NO caching happens; these counters measure the hit-rate a query→output cache
 # WOULD achieve, to decide whether building it (cache-refactor lever a) is worth it.
+#
+# v5.100.0 — added ``source`` label ("hook" | "tool") so the #88 output-cache
+# gating decision can be evaluated on tool-path traffic only.  Hook auto-recalls
+# (3 endpoints, 50-200/hour per session) fire on repeated prompts and would
+# inflate the blended hit-rate without this split.  NOTE: this is a metric-shape
+# change — the unlabelled series (pre-5.100) no longer exist; ``source="hook"``
+# series begin here.
 yadgar_recall_shadow_cache_hits_total = Counter(
     "yadgar_recall_shadow_cache_hits_total",
     "Would-be hits for a hypothetical recall result cache (shadow only; no caching)",
+    ["source"],
     registry=_registry,
 )
 
 yadgar_recall_shadow_cache_misses_total = Counter(
     "yadgar_recall_shadow_cache_misses_total",
     "Would-be misses for a hypothetical recall result cache (shadow only; no caching)",
+    ["source"],
     registry=_registry,
 )
 

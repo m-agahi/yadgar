@@ -24,6 +24,8 @@ import re
 import struct
 import time
 
+from yadgar.tracing import trace_span
+
 _log = logging.getLogger(__name__)
 
 _CAMEL_CASE_RE = re.compile(r"([a-z])([A-Z])")
@@ -621,6 +623,7 @@ class _ClientMixin:
                     f"SurrealDB batch error: {entry.get('detail') or entry.get('result') or entry}"
                 )
 
+    @trace_span("storage.batch_writes")
     def batch_writes(self, statements: list[tuple[str, dict | None]]) -> None:
         """Execute multiple write statements against SurrealDB.
 

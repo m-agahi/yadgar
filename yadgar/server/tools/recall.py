@@ -558,6 +558,7 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
         # before dispatch, so it covers all three dominant paths (fan-out / pipeline
         # / legacy).  Landscape mode returns early above and is intentionally NOT
         # shadowed — it is experimental (#67), rare, and off this chokepoint.
+        # v5.100.0: source="tool" — explicit MCP-tool calls from the /mcp endpoint.
         try:
             from yadgar.server.tools._recall_shadow import (  # noqa: PLC0415
                 RecallShadowParams,
@@ -575,6 +576,7 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
                     max_results=max_results,
                     min_heat=min_heat,
                     tags=tags,
+                    source="tool",
                 )
             )
         except Exception:  # instrumentation must never break recall

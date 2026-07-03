@@ -10,12 +10,14 @@ from __future__ import annotations
 import logging
 
 from yadgar.server.lifecycle import _get_storage
+from yadgar.tracing import trace_span
 
 from .context import MemorizeContext
 
 logger = logging.getLogger(__name__)
 
 
+@trace_span("memorize.contradiction")
 def phase_contradiction(ctx: MemorizeContext) -> dict | None:
     """Run C4 LLM conflict resolver if enabled.
 

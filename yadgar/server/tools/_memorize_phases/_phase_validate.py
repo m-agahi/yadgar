@@ -7,6 +7,7 @@ import logging
 import yadgar.server._state as _st
 from yadgar.secrets import gate_or_reject
 from yadgar.server._helpers import _has_unpaired_surrogate
+from yadgar.tracing import trace_span
 
 from .context import MemorizeContext
 
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 _VALID_TIERS = frozenset({"semantic_immortal", "conditional", "ephemeral"})
 
 
+@trace_span("memorize.validate")
 def phase_validate(ctx: MemorizeContext, settings) -> dict | None:
     """Validate and normalise inputs. Returns rejection dict or None (continue).
 

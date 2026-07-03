@@ -25,6 +25,7 @@ from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.retrieval import Retriever
 from yadgar.storage import StorageEngine
+from yadgar.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +160,7 @@ class WriteGate:
 
     # ── Core: Surprisal Computation ──────────────────────────────────────
 
+    @trace_span("write.surprisal")
     def compute_surprisal(self, content: str, directory: str, tags: list[str]) -> float:
         """Compute how surprising content is relative to the directory's generative model.
 
@@ -365,6 +367,7 @@ class WriteGate:
 
     # ── Write Gate Decision ──────────────────────────────────────────────
 
+    @trace_span("write.gate")
     def should_store(
         self, content: str, directory: str, tags: list[str]
     ) -> tuple[bool, float, str]:

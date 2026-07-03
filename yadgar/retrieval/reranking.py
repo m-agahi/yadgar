@@ -89,6 +89,7 @@ class _RerankingMixin:
     # Pipeline stage helpers
     # ------------------------------------------------------------------
 
+    @trace_span("retrieval.rerank.heuristic")
     def _rerank_heuristic(self, result_memories: list[dict], ctx: RerankContext) -> list[dict]:
         """Apply heuristic reranker (skipped for 'fast' profile)."""
         if not (self._settings.RERANKER_ENABLED and ctx.profile_name != "fast"):
@@ -98,6 +99,7 @@ class _RerankingMixin:
             heuristic_k = None  # Uses RERANKER_TOP_K (50)
         return self._reranker.heuristic_rerank(result_memories, ctx.query, top_k=heuristic_k)
 
+    @trace_span("retrieval.rerank.comparison_merge")
     def _rerank_comparison_merge(
         self,
         result_memories: list[dict],
@@ -130,6 +132,7 @@ class _RerankingMixin:
                 seen_ids.add(rid)
         return result_memories
 
+    @trace_span("retrieval.rerank.cross_encoder")
     def _rerank_cross_encoder(self, result_memories: list[dict], ctx: RerankContext) -> list[dict]:
         """Apply cross-encoder reranker."""
         if not ctx.use_cross_encoder:
@@ -139,6 +142,7 @@ class _RerankingMixin:
         _observe_recall_stage("cross_encoder", (_time.perf_counter() - _ce_t0) * 1000)
         return result_memories
 
+    @trace_span("retrieval.rerank.nli")
     def _rerank_nli(self, result_memories: list[dict], ctx: RerankContext) -> list[dict]:
         """Apply NLI entailment scoring.
 
@@ -159,6 +163,7 @@ class _RerankingMixin:
         _observe_recall_stage("nli", (_time.perf_counter() - _nli_t0) * 1000)
         return result_memories
 
+    @trace_span("retrieval.rerank.multi_passage")
     def _rerank_multi_passage(self, result_memories: list[dict], ctx: RerankContext) -> list[dict]:
         """Apply multi-passage evidence aggregation.
 
@@ -169,6 +174,7 @@ class _RerankingMixin:
             return result_memories
         return self._reranker.multi_passage_rerank(ctx.query, result_memories, ctx.max_results)
 
+    @trace_span("retrieval.rerank.profile_belief_merge")
     def _rerank_profile_belief_merge(
         self, result_memories: list[dict], ctx: RerankContext
     ) -> list[dict]:
@@ -192,6 +198,7 @@ class _RerankingMixin:
             result_memories = result_memories[: ctx.max_results * 2]
         return result_memories
 
+    @trace_span("retrieval.rerank.mmr")
     def _rerank_mmr(self, result_memories: list[dict], ctx: RerankContext) -> list[dict]:
         """Apply MMR diversity reranking."""
         if not getattr(self._settings, "ADVERSARIAL_DIVERSITY_ENFORCEMENT", False):
@@ -203,6 +210,7 @@ class _RerankingMixin:
             lambda_param=0.7,
         )
 
+    @trace_span("retrieval.rerank.adversarial_detect")
     def _rerank_adversarial_detect(self, result_memories: list[dict]) -> list[dict]:
         """Annotate results with retrieval confidence via adversarial detection."""
         if not (self._settings.ADVERSARIAL_DETECTION_ENABLED and result_memories):
@@ -218,6 +226,7 @@ class _RerankingMixin:
             )
         return result_memories
 
+    @trace_span("retrieval.rerank.rules")
     def _rerank_rules(self, result_memories: list[dict], ctx: RerankContext) -> list[dict]:
         """Apply neuro-symbolic rules."""
         if self._rules_engine is None or not result_memories:
@@ -230,6 +239,7 @@ class _RerankingMixin:
         result_memories = self._rules_engine.apply_rules(result_memories, directory)
         return result_memories[: ctx.max_results]
 
+    @trace_span("retrieval.rerank.engram_links")
     def _rerank_engram_links(self, result_memories: list[dict]) -> list[dict]:
         """Enrich with temporal links from engram allocation."""
         if self._engram is None:
@@ -243,6 +253,7 @@ class _RerankingMixin:
                 pass
         return result_memories
 
+    @trace_span("retrieval.rerank.metacognition")
     def _rerank_metacognition(self, result_memories: list[dict]) -> list[dict]:
         """Apply cognitive load management via metacognition."""
         if self._metacognition is None or not result_memories:
