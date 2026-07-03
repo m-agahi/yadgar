@@ -1,10 +1,10 @@
 # CI / Velocity Train — unified, audited plan (2026-07-03)
 
-**Status:** PLAN ONLY. NOT implemented. **Author:** agent (bot).
+**Status:** test-speed leg (#84) SHIPPED v5.104 (~2x CI shards, PR #156, ADR-0036). Remaining: #83 backend-bump CI gate, #79 load-test contract. **Author:** agent (bot).
 **Scope:** ONE plan to greatly speed up dev cadence across three tracked items:
 #84 test-suite speedup (the velocity blocker), #83 version-gate + conditional
 image builds, #79 load-test contract. Integrates two existing feeder plans
-(`docs/plans/test-suite-speedup-2026-07-01.md`,
+(`docs/plans/archive/test-suite-speedup-2026-07-01.md`,
 `docs/plans/perf-loadtest-contract-2026-06-30.md`) — this doc **sequences +
 adds #83**, it does not re-litigate their decided contents.
 
@@ -409,7 +409,7 @@ references" — new `benchmarks/run_perf.py`, `make perf`,
 ---
 
 ## References
-- `docs/plans/test-suite-speedup-2026-07-01.md` (#84 feeder — P0–P4)
+- `docs/plans/archive/test-suite-speedup-2026-07-01.md` (#84 feeder — P0–P4; SHIPPED v5.104, archived)
 - `docs/plans/perf-loadtest-contract-2026-06-30.md` (#79 feeder — full design)
 - ADR-0027 (test-speed: `-n` + model-load debunked; schema-init floor)
 - ADR-0031 (recall-perf N+1 — context for why load-test guards concurrency)

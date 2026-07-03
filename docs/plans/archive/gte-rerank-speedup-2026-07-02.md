@@ -1,5 +1,7 @@
 # GTE-ModernBERT Rerank Speedup — Warm ~1.43s → ~1.0s (task #92) — 2026-07-02
 
+> Lever-1 SHIPPED v5.98 (2026-07-02, PR #144). Levers 2/3 (CE onnx-int8, TOP_K passage trim) remain DORMANT in the roadmap — ADR-0035 makes onnx-int8 (Lever-3, #13) the #1 go-forward recall lever, blocked on an onnxruntime backend image + backend_version bump + a LongMemEval quality gate.
+
 > Measure-first, quality-gated design. Target: post-v5.97 warm recall ~1.43s → ~1.0s
 > on THIS box (backend `--cpus 2`, RAM-constrained; core `--cpus 1`). All timings below
 > are from a standalone off-daemon micro-benchmark of the REAL model on 2 pinned cores

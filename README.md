@@ -87,7 +87,7 @@ Runs nightly while the daemon stays up in maintenance mode (no MCP reconnect). P
 - **Bearer-token MCP auth** on `/api/*`, `/hooks/*`, `/mcp` — default-deny CORS, timing-safe compare, loopback-only by default. `/health` and `/metrics` exempt on loopback.
 - **Always-on secret gate** blocks AWS / GCP / Stripe / Slack / OpenAI / Anthropic keys, JWTs, GitHub PATs, private keys, and DB URIs before they reach the store (cannot be disabled; context-aware allowlist for known-good fixtures).
 - **Auto-capture sanitization** strips ANSI escapes, control chars, and Unicode bidi-override before action-log insert.
-- **Prometheus `/metrics`** + OpenTelemetry distributed tracing across core + backend; structured JSON logs; per-phase consolidation duration markers.
+- **Prometheus `/metrics`** + OpenTelemetry distributed tracing across core + backend (core→backend traceparent joins one trace); structured JSON logs; per-phase consolidation duration markers. **Tri-signal standard** (v5.101, ADR-0034): every in-scope function emits span+metric+log via the `@observe` decorator, ratcheted by the I33 coverage lint.
 - **Async write queue** with retry/backoff, dead-letter for permanent failures, and DLQ inspection tools (`dlq_inspect`, `dlq_requeue`, `dlq_dismiss`).
 
 ---
@@ -365,12 +365,15 @@ Full methodology and per-type breakdown: [`docs/BENCHMARK_RESULTS.md`](docs/BENC
 
 ## Roadmap
 
-### Shipped highlights (v5.78 → v5.88)
+### Shipped highlights (v5.78 → v5.104)
 - **Unified recall** (v5.78–v5.81) — memory + wiki merged into one ranked, heat-weighted, branch-scoped result; now the default.
 - **ADR tooling** (`adr_add`, v5.85) + capture-first Stop-hook prompt.
 - **Agent-prompt library rework** (v5.85, ADR-0007) — wiki-backed, tagged-recall lookup.
 - **Wiki autolink + repo-wiki store-bridge** (v5.85).
 - **Viz overhaul + precomputed server-side layout + System → Config editor** (v5.86–v5.88).
+- **Recall perf + accounting** (v5.97–v5.104) — fusion/MMR N+1 batches, GTE-ModernBERT reranker (Lever-1, v5.98), spreading-activation N+1 batched (v5.104); latency now FULLY accounted via MCP-tool traces (CE ~90%, fusion pass quality-load-bearing — ADR-0035).
+- **Tri-signal observability standard** (v5.100–v5.101, ADR-0034) — span+metric+log per function via the `@observe` decorator, I33 coverage lint, core→backend traceparent, OTLP → Tempo.
+- **Test-speed train** (v5.104, ADR-0036) — module-scoped `storage` fixture + batched SurrealDB wipe → CI shards ~2× faster.
 - **Observability train** (v5.83) — `/health` 503-on-degraded, OTLP circuit breaker, off-loop span logs.
 
 ### Major upcoming
