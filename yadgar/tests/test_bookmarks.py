@@ -38,9 +38,17 @@ def storage(tmp_path):
     engine.close()
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
-    """Full server engine stack with isolated DB per test (for MCP tool tests)."""
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
+    """Full server engine stack, initialized ONCE per module (for MCP tool tests).
+
+    Module-scoped (v5.101 P1): init_engines() runs the SurrealDB schema init once
+    per file instead of per test.  Per-test isolation is provided by the
+    function-scoped autouse `_wipe_surrealdb_data` in conftest (DATA wipe on the
+    shared per-file namespace).  Uses tmp_path_factory (session-scoped) — a
+    module-scoped fixture cannot request the function-scoped tmp_path.
+    """
+    tmp_path = tmp_path_factory.mktemp("bookmarks")
     server.init_engines(
         db_path=str(tmp_path / "bm_server_test.db"),
         embedding_model="all-MiniLM-L6-v2",

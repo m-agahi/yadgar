@@ -16,8 +16,9 @@ import pytest
 from yadgar import server
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("wiki_add_branch_hint")
     db_path = str(tmp_path / "test.db")
     server.init_engines(db_path=db_path, embedding_model="all-MiniLM-L6-v2")
     yield

@@ -63,9 +63,10 @@ _ROADMAP_CONTENT_B = """# Yadgar Future Roadmap
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
     """Isolated temp DB with real embedding model per test."""
+    tmp_path = tmp_path_factory.mktemp("wiki_embedding_null_back")
     server.init_engines(
         db_path=str(tmp_path / "null_embed_backfill_test.db"),
         embedding_model="all-MiniLM-L6-v2",

@@ -50,8 +50,9 @@ def storage(tmp_path):
     engine.close()
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("blocks_hooks_phase4")
     server.init_engines(
         db_path=str(tmp_path / "ph4_server_test.db"),
         embedding_model="all-MiniLM-L6-v2",

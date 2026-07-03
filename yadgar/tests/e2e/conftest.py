@@ -143,13 +143,29 @@ def service_stub():
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture()
-def e2e_engines(tmp_path, monkeypatch):
+@pytest.fixture(scope="module")
+def e2e_engines(tmp_path_factory):
     """Isolated yadgar engine stack for e2e tests.
 
-    - Starts a fresh real-surreal instance per test (via the session-scoped
+    v5.101 (module-scope P1): initialized ONCE per e2e file — init_engines()
+    (the SurrealDB schema init floor) runs per module, not per test.  Per-test
+    DATA isolation comes from conftest's function-scoped `_wipe_surrealdb_data`
+    (rows cleared between tests; the module namespace/schema/engine persist).
+    Uses `tmp_path_factory` + `pytest.MonkeyPatch()` because a module-scoped
+    fixture cannot request the function-scoped `tmp_path`/`monkeypatch`.
+
+    The env override set here (YADGAR_DATA_DIR → the module tmp dir) is applied
+    at module setup, BEFORE the parent conftest's function-scoped
+    `isolate_yadgar_paths` runs.  That per-test fixture re-points YADGAR_DATA_DIR
+    at a per-test dir for the duration of each test, but the engine stack (and
+    its StorageEngine `db_path`) was already wired at module init against the
+    module dir; tests use the yielded handles, not fresh env reads, so this is
+    consistent for the engine.  Data safety is asserted once here at module
+    init against the real production data dir.
+
+    - Starts a fresh real-surreal instance per session (via the session-scoped
       surreal_server + _isolate_surrealdb fixtures inherited from parent conftest).
-    - Sets YADGAR_DATA_DIR → tmp_path (never touches ~/.local/share/yadgar).
+    - Sets YADGAR_DATA_DIR → module tmp dir (never touches ~/.local/share/yadgar).
     - Asserts the resolved data dir is NOT under the real production data dir.
     - Calls server.init_engines() to wire up StorageEngine + EmbeddingEngine.
     - Yields a dict with commonly needed handles:
@@ -171,6 +187,11 @@ def e2e_engines(tmp_path, monkeypatch):
         pytest.skip(
             "surreal binary not found and YADGAR_DB_URL not set — e2e requires real surreal"
         )
+
+    from _pytest.monkeypatch import MonkeyPatch
+
+    monkeypatch = MonkeyPatch()
+    tmp_path = tmp_path_factory.mktemp("e2e_engines")
 
     # Set isolated data dir — MUST happen before any import of yadgar.paths
     db_path = str(tmp_path / "e2e_test.db")
@@ -208,3 +229,4 @@ def e2e_engines(tmp_path, monkeypatch):
         }
     finally:
         server.shutdown()
+        monkeypatch.undo()

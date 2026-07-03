@@ -14,8 +14,9 @@ import pytest
 from yadgar import server
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("memory_get_wiki_get")
     server.init_engines(
         db_path=str(tmp_path / "test_get.db"),
         embedding_model="all-MiniLM-L6-v2",

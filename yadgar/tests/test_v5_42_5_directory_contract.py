@@ -29,8 +29,9 @@ from yadgar.file_queue import FileQueue, QueueDrainer
 # ── shared fixture ────────────────────────────────────────────────────────────
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("v5_42_5_directory_contra")
     server.init_engines(
         db_path=str(tmp_path / "test_dir_contract.db"),
         embedding_model="all-MiniLM-L6-v2",

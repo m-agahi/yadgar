@@ -36,9 +36,10 @@ def _recall_fn():
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
     """Real StorageEngine + WikiStore + embeddings wired into _st._wiki."""
+    tmp_path = tmp_path_factory.mktemp("tag_aware_recall_s3")
     server.init_engines(
         db_path=str(tmp_path / "test_tag_aware_recall_s3.db"),
         embedding_model="all-MiniLM-L6-v2",

@@ -23,9 +23,10 @@ from yadgar import server
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
     """Isolated server with real embedding model."""
+    tmp_path = tmp_path_factory.mktemp("wiki_embed_failure_surfa")
     server.init_engines(
         db_path=str(tmp_path / "embed_failure_test.db"),
         embedding_model="all-MiniLM-L6-v2",

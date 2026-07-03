@@ -30,9 +30,10 @@ _TEST_TOKEN = "contract-test-token"
 # ── Shared fixtures ───────────────────────────────────────────────────────────
 
 
-@pytest.fixture(autouse=True)
-def _engines(tmp_path):
+@pytest.fixture(autouse=True, scope="module")
+def _engines(tmp_path_factory):
     """Start in-process server engines against a fresh temp DB."""
+    tmp_path = tmp_path_factory.mktemp("graph_api_contract")
     from yadgar import server
 
     db_path = str(tmp_path / "contract_test.db")
