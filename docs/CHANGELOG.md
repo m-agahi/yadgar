@@ -5,6 +5,26 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 > Snapshots from v5.0.1 onward are captured from `yadgar stats` at release time.
 > Earlier versions have no per-release snapshot (the practice started 2026-05-16).
 
+## [5.104.0] - 2026-07-03
+
+CI-velocity P1b + recall perf — attacks the two real shard floors #154 left (profiled durations=0: setup 46% + teardown 44%, call 7%), kills a 114.8s teardown outlier, and batches a recall N+1. All test changes are exact-parity (isolation proven under `-n auto --dist loadgroup`); the recall change is pure perf (behavior-oracle characterization + a byte-identical parity gate).
+
+### Perf(test): cheaper per-test surreal wipe (PIECE A — batched)
+
+The autouse `_wipe_surrealdb_data` teardown issued one HTTP `DELETE` per table (~29 round-trips/namespace) — the 44% teardown floor. Batched into a single semicolon-joined `DELETE` on both the live-storage fast path and the httpx fallback. SurrealDB `/sql` runs each `;`-separated statement independently (no `BEGIN/COMMIT`, so a missing table can't roll back the rest) — behaviourally identical, one round-trip. **Measured: `test_bookmarks` teardown 21.13s → 1.16s (~18x).** TDD pins the round-trip count to 1 + write→wipe→clean + cross-namespace no-leak.
+
+### Perf(test): module-scope the per-test `storage` StorageEngine (PIECE B)
+
+The function-scoped `storage` fixture (~64 files) built a FRESH `StorageEngine()` per test — running `_init_schema()`+migrations each time — the 46% setup floor that #154's `_engines` conversion did NOT touch (it module-scoped the separate server singleton). Adds a shared module-scoped `module_storage` fixture (schema inits once/file); a file opts in with a one-line delegating fixture. Per-test isolation kept by registering the engine in a conftest registry that the (batched) wipe clears every test — sidestepping the v5.56 snapshot guard that preserves module-scoped namespaces for seed-once corpora. **Rolled out to 29 files** (2 prototype + 27). **Measured: `test_consolidation` setup 95.95s → ~18s (~5.3x) for its 39 tests.** Isolation: 696 pass under `-n auto --dist loadgroup`, 0 leaks. Kept function-scoped (isolation breaks): `test_engram` (seed-once `engram_slot` state), `test_integration` (server lifecycle vs shared engine). Not converted (different fixture contract, follow-up): `embedding_dim=384` files + `storage(_engines)`/`storage(self)`/`storage()`/`storage(...,settings)` variants + seed-in-fixture files.
+
+### Fix(test): kill the 114.8s `test_admin_config` teardown hang (PIECE C)
+
+`test_config_gauge_skips_string_entries` monkeypatched `YADGAR_DB_URL=http://yadgar-backend:8000` (a Docker-internal host unreachable from the runner); the wipe read that env var and blocked on connect per namespace → 114.8s teardown. Fix: capture the real session-surreal URL at `surreal_server` spawn (`_REAL_DB_URL`) and wipe via `_authoritative_db_url()`, which ignores per-test env monkeypatching. **Measured: that teardown 114.8s → 0.03s; whole file 2.54s.**
+
+### Perf(recall): batch spreading-activation per-entity N+1 (PIECE D — exact-parity)
+
+`_spreading_bfs_step` fetched each newly-activated entity one-at-a-time (`get_entity_by_id` + `_find_memories_for_entity`, ~136 entities × 2 serial round-trips ≈ 5s; cProfile 5.38s in `socket.recv`). BFS is level-synchronous — every entity in a step shares `activation = spread_factor**depth` — so per-depth batching is exact-parity. Now: one `get_entities_by_ids` + one multi-statement `find_memory_ids_by_entities` (new `_q_multi` read-side of `batch_writes`) per depth; a two-pass records discovery order then applies activation in that order → byte-identical `activated` dict. New storage methods are injection-safe (`int()` record-ids, per-statement param prefix) and degrade to the exact per-name/per-id path on any batch failure. Parity gate runs BOTH the batched step and a retained `_spreading_bfs_step_pernode` baseline; 18 recall parity+characterization tests pass — no ranking change.
+
 ## [5.103.0] - 2026-07-03
 
 ### Perf(test): module-scope SurrealDB schema init — CI-velocity P1

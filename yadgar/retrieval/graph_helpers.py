@@ -97,6 +97,15 @@ class _GraphHelpersMixin:
         """Find memory IDs whose content contains the entity name."""
         return self._storage.find_memory_ids_by_entity_name(entity_name)
 
+    def _find_memories_for_entities(self, entity_names: list[int]) -> dict[str, list[int]]:
+        """Batched ``_find_memories_for_entity`` — one round-trip for N names (v5.102.0).
+
+        Thin wrapper over ``storage.find_memory_ids_by_entities``; used by the
+        spreading-activation per-depth batch. Returns ``{name: [memory_id, ...]}``,
+        exact-parity with calling ``_find_memories_for_entity`` per name.
+        """
+        return self._storage.find_memory_ids_by_entities(entity_names)
+
     def _find_entities_in_content(self, content: str) -> set[int]:
         """Find entity IDs that appear in the given content."""
         entity_ids: set[int] = set()

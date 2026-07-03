@@ -17,12 +17,12 @@ def settings(tmp_path):
     )
 
 
-@pytest.fixture
-def storage(tmp_path):
-    db_path = str(tmp_path / "test_cls.db")
-    engine = StorageEngine(db_path)
-    yield engine
-    engine.close()
+@pytest.fixture(scope="module")
+def storage(module_storage):
+    """Module-scoped shared StorageEngine (v5.104 P1B): schema inits ONCE per
+    file (was a fresh per-test engine); per-test isolation via the registered
+    data-wipe in conftest._wipe_surrealdb_data."""
+    return module_storage
 
 
 @pytest.fixture

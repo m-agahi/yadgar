@@ -99,6 +99,32 @@ class _EntityMixin:
         rows = self._q(f"SELECT * FROM entity:{eid}")
         return self._row_to_dict(rows[0]) if rows else None
 
+    def get_entities_by_ids(self, entity_ids: list[int]) -> dict[int, dict]:
+        """Bulk-fetch entity rows for a list of ids in ONE query (v5.102.0).
+
+        Batched counterpart of ``get_entity_by_id`` — collapses the spreading-
+        activation per-entity N+1 (one ``SELECT * FROM entity:{id}`` per activated
+        entity) into a single ``WHERE id IN [...]`` round-trip. Returns a
+        ``{entity_id: row}`` map so callers keep exact per-entity attribution.
+
+        Record ids are inlined into the IN list (``WHERE id IN [entity:N, ...]``)
+        rather than bound as a ``$param`` — parameterised IN with record-ids is not
+        portable to the embedded SurrealKV SDK (mirrors ``get_memories_by_ids``).
+        ``int()`` sanitises each id so the inlined literal can never carry injection.
+        Missing ids are simply absent from the map (``get_entity_by_id`` would return
+        None). Duplicate input ids collapse to one entry.
+        """
+        if not entity_ids:
+            return {}
+        unique_ids = list(dict.fromkeys(int(e) for e in entity_ids))
+        id_list = ", ".join(f"entity:{eid}" for eid in unique_ids)
+        rows = self._q(f"SELECT * FROM entity WHERE id IN [{id_list}]")
+        out: dict[int, dict] = {}
+        for r in rows:
+            d = self._row_to_dict(r)
+            out[int(d["id"])] = d
+        return out
+
     # ------------------------------------------------------------------ Relationships
 
     @trace_span("storage.entity.insert_relationship")

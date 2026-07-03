@@ -8,13 +8,12 @@ from __future__ import annotations
 import pytest
 
 
-@pytest.fixture
-def storage(tmp_path):
-    from yadgar.storage import StorageEngine
-
-    engine = StorageEngine(str(tmp_path / "test_migration_025.db"))
-    yield engine
-    engine.close()
+@pytest.fixture(scope="module")
+def storage(module_storage):
+    """Module-scoped shared StorageEngine (v5.104 P1B): schema inits ONCE per
+    file (was a fresh per-test engine); per-test isolation via the registered
+    data-wipe in conftest._wipe_surrealdb_data."""
+    return module_storage
 
 
 class TestMigration025AgentPromptSlugCollapse:

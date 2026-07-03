@@ -5,14 +5,14 @@ from unittest.mock import MagicMock
 import pytest
 
 from yadgar.graph_api import GraphAPI
-from yadgar.storage import StorageEngine
 
 
-@pytest.fixture
-def storage(tmp_path):
-    engine = StorageEngine(str(tmp_path / "test_graph_api.db"))
-    yield engine
-    engine.close()
+@pytest.fixture(scope="module")
+def storage(module_storage):
+    """Module-scoped shared StorageEngine (v5.104 P1B): schema inits ONCE per
+    file (was a fresh per-test engine); per-test isolation via the registered
+    data-wipe in conftest._wipe_surrealdb_data."""
+    return module_storage
 
 
 def _mem(content):

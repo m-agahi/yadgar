@@ -367,11 +367,11 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 1027
+      "file_loc": 1241
     },
-    "rationale": "C1 optimization-train car adds 88 LOC (3 projected helpers + deferred-caller table comment). Methods cannot be extracted to a new mixin without breaking the class_methods count \u2014 storage split is a larger refactor tracked separately.",
+    "rationale": "Storage _MemoryMixin; file drifted to 1204 across v5.9x perf cars (recorded baseline 1027 was stale). v5.104 PIECE D adds find_memory_ids_by_entities (+37 LOC) \u2014 the batched read-side of the spreading-activation N+1 fix, exact-parity with the per-name loop it degrades to. A new mixin extraction would break the class_methods count; the storage split is a larger refactor tracked separately.",
     "added": "2026-06-25",
-    "added_by": "feat/opt-embedding-scans"
+    "added_by": "feat/v5.104-perf-train"
   },
   {
     "path": "yadgar/server/tools/adr.py",

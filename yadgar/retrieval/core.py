@@ -244,11 +244,78 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
         """One BFS expansion step for spreading_activation. Returns next frontier.
 
         v5.99.0: adjacency for the whole frontier is fetched in ONE batched query
-        (``_get_adjacent_batch``) with no name enrichment, instead of one query per
-        node. Iteration order over the frontier and over each node's neighbors is
-        preserved, so discovery order — and therefore the activated scores — are
-        identical to the per-node build (parity gate in
-        ``test_v5_99_ppr_batch_parity.py``).
+        (``_get_adjacent_batch``).
+
+        v5.102.0: the per-activated-entity fetches (``get_entity_by_id`` +
+        ``_find_memories_for_entity`` — the recall #2 N+1, ~136 entities × 2 serial
+        round-trips ≈ 5 s) are now batched PER BFS DEPTH into ONE entity query
+        (``get_entities_by_ids``) + ONE multi-statement memory query
+        (``_find_memories_for_entities``). Two-pass over the frontier:
+          - pass 1 runs the visited-guard, records each discovered entity's
+            ``(nid, current_depth)`` in EXACT discovery order, and builds next_frontier;
+          - the two batched fetches happen once for the whole step;
+          - pass 2 applies activation in that recorded order.
+        BFS is level-synchronous, so every entity discovered in a step shares
+        ``activation = spread_factor ** current_depth`` — that uniformity is why
+        per-depth batching is exact-parity. Insertion order into ``activated`` is
+        byte-identical to the per-entity path (parity gate in
+        ``test_spreading_batch_parity.py``); only WHEN the fetches happen changes.
+        """
+        next_frontier: list[tuple[int, int]] = []
+        # Pass 1: expand adjacency, run the visited-guard, record discovery order.
+        to_expand = [entity_id for entity_id, depth in frontier if depth < max_depth]
+        adjacency = self._graph._get_adjacent_batch(to_expand, None)
+        discovered: list[tuple[int, int]] = []  # (nid, current_depth) in discovery order
+        for entity_id, depth in frontier:
+            if depth >= max_depth:
+                continue
+            for neighbor in adjacency.get(entity_id, []):
+                nid = neighbor["entity_id"]
+                if nid in visited_entities:
+                    continue
+                visited_entities.add(nid)
+                current_depth = depth + 1
+                discovered.append((nid, current_depth))
+                next_frontier.append((nid, current_depth))
+
+        if not discovered:
+            return next_frontier
+
+        # Batched fetch #1: all discovered entity rows in one query.
+        entity_rows = self._storage.get_entities_by_ids([nid for nid, _ in discovered])
+        # Batched fetch #2: memories for every discovered entity NAME in one round-trip.
+        names_in_order = [entity_rows[nid]["name"] for nid, _ in discovered if nid in entity_rows]
+        memories_by_name = self._find_memories_for_entities(names_in_order)
+
+        # Pass 2: apply activation in the exact discovery order (byte-identical to the
+        # per-entity path — same entities, same memories, same `max` accumulation).
+        for nid, current_depth in discovered:
+            entity_row = entity_rows.get(nid)
+            if not entity_row:
+                continue
+            activation = spread_factor**current_depth
+            for mid in memories_by_name.get(entity_row["name"], []):
+                if mid not in seed_memory_set:
+                    activated[mid] = max(activated.get(mid, 0.0), activation)
+
+        return next_frontier
+
+    def _spreading_bfs_step_pernode(
+        self,
+        frontier: list[tuple[int, int]],
+        visited_entities: set[int],
+        activated: dict[int, float],
+        seed_memory_set: set[int],
+        spread_factor: float,
+        max_depth: int,
+    ) -> list[tuple[int, int]]:
+        """Legacy per-entity BFS step — retained only as the parity baseline (v5.102.0).
+
+        Exact copy of the pre-v5.102 step: adjacency batched (v5.99) but each
+        activated entity fetched one-at-a-time via ``_spreading_apply_activation``
+        (``get_entity_by_id`` + ``_find_memories_for_entity``). The v5.102 batched
+        step MUST produce a byte-identical ``activated`` dict; the parity test
+        asserts it. Not used in production.
         """
         next_frontier: list[tuple[int, int]] = []
         to_expand = [entity_id for entity_id, depth in frontier if depth < max_depth]
@@ -274,7 +341,11 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
         activated: dict[int, float],
         seed_memory_set: set[int],
     ) -> None:
-        """Update activated scores for memories linked to entity_id."""
+        """Update activated scores for memories linked to entity_id (per-entity path).
+
+        Retained as the building block of the ``_spreading_bfs_step_pernode`` parity
+        baseline. The production step (``_spreading_bfs_step``) batches these fetches.
+        """
         entity_row = self._storage.get_entity_by_id(entity_id)
         if not entity_row:
             return

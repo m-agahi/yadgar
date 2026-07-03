@@ -8,7 +8,6 @@ from yadgar.astrocyte_pool import AstrocytePool
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.storage import StorageEngine
 from yadgar.thermodynamics import MemoryThermodynamics
 
 
@@ -16,11 +15,12 @@ def _hours_ago(hours: float) -> str:
     return (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
 
 
-@pytest.fixture
-def storage(tmp_path):
-    engine = StorageEngine(str(tmp_path / "test_pool.db"))
-    yield engine
-    engine.close()
+@pytest.fixture(scope="module")
+def storage(module_storage):
+    """Module-scoped shared StorageEngine (v5.104 P1B): schema inits ONCE per
+    file (was a fresh per-test engine); per-test isolation via the registered
+    data-wipe in conftest._wipe_surrealdb_data."""
+    return module_storage
 
 
 @pytest.fixture

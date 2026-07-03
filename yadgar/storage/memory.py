@@ -957,6 +957,43 @@ class _MemoryMixin:
             )
             return [self._extract_id(r.get("id")) for r in rows]
 
+    def find_memory_ids_by_entities(self, entity_names: list[str]) -> dict[str, list[int]]:
+        """Batched ``find_memory_ids_by_entity_name`` — one round-trip for N names (v5.102.0).
+
+        Runs one ``SELECT id FROM memory WHERE content @@ $q AND heat > 0`` per name
+        as a MULTI-STATEMENT read (``_q_multi``), so per-name attribution is preserved
+        (a naive ``content @@ $a OR content @@ $b`` would return the union and lose
+        which memory matched which name). Returns a ``{name: [memory_id, ...]}`` map;
+        per-name result order is byte-identical to the per-name query (same statement,
+        same ordering), so callers relying on FTS order see no change.
+
+        EXACT-PARITY with the per-name loop:
+          - Duplicate names are de-duplicated for the query but every input name is
+            present in the returned map (dupes share the same list).
+          - On ANY batch failure the whole call degrades to the per-name loop, which
+            replays ``find_memory_ids_by_entity_name`` verbatim — including its own
+            FTS→``string::contains`` fallback. So a missing FTS index (embedded test
+            mode) or a transport hiccup yields IDENTICAL results to N serial calls.
+        """
+        if not entity_names:
+            return {}
+        unique_names = list(dict.fromkeys(entity_names))
+        try:
+            statements = [
+                ("SELECT id FROM memory WHERE content @@ $q AND heat > 0", {"q": name})
+                for name in unique_names
+            ]
+            per_stmt = self._q_multi(statements)
+            result = {
+                name: [self._extract_id(r.get("id")) for r in rows]
+                for name, rows in zip(unique_names, per_stmt, strict=True)
+            }
+        except Exception:
+            # Degrade to the exact per-name path (preserves the FTS→contains fallback).
+            result = {name: self.find_memory_ids_by_entity_name(name) for name in unique_names}
+        # Ensure every original name (including duplicates) maps to its list.
+        return {name: result[name] for name in entity_names}
+
     # ------------------------------------------------------------------ Memory protection and anchoring
 
     def protect_memory(

@@ -25,17 +25,16 @@ import pytest
 from yadgar import server
 from yadgar.storage import StorageEngine
 
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def storage(tmp_path):
-    """Isolated StorageEngine per test."""
-    engine = StorageEngine(str(tmp_path / "bm_test.db"))
-    yield engine
-    engine.close()
+@pytest.fixture(scope="module")
+def storage(module_storage):
+    """Module-scoped shared StorageEngine (v5.104 P1B): schema inits ONCE per
+    file (was a fresh per-test engine); per-test isolation via the registered
+    data-wipe in conftest._wipe_surrealdb_data."""
+    return module_storage
 
 
 @pytest.fixture(autouse=True, scope="module")

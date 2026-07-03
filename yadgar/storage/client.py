@@ -563,6 +563,117 @@ class _ClientMixin:
         _observe_query_metrics(surql, time.perf_counter() - _t0)
         return _normalize_rows(raw)
 
+    def _q_multi(self, statements: list[tuple[str, dict | None]]) -> list[list]:
+        """Run N read statements in ONE round-trip; return one row-list per statement.
+
+        Unlike ``_q`` (which flattens the whole response to a single list via
+        ``_normalize_rows`` and, in server mode, returns only the LAST statement's
+        result), ``_q_multi`` preserves PER-STATEMENT attribution: the return is a
+        list positionally aligned with ``statements``, where element *i* is the
+        normalised rows of statement *i*.
+
+        This is the read-side counterpart of ``batch_writes``: the SurrealDB
+        multi-statement HTTP response contains one entry per statement (proven by
+        ``_send_chunk`` iterating ``results`` one-per-statement), and the embedded
+        SDK's ``query`` returns one result set per statement. Both are unwrapped
+        positionally here.
+
+        READ-ONLY: intended for SELECT statements only (no BEGIN/COMMIT framing, so
+        it is not atomic — callers must not mix writes). Per-statement params are
+        prefixed (``$p{i}_{k}``) so identically-named params in different statements
+        never collide (same tokeniser-safe rewrite ``batch_writes`` uses).
+
+        Empty input → ``[]``. Raises RuntimeError on any SurrealDB-level error
+        (mirrors ``_q_server``); callers that need graceful degradation catch it and
+        replay per-statement via ``_q``.
+        """
+        if not statements:
+            return []
+        _t0 = time.perf_counter()
+        if self._db_url:
+            result = self._q_multi_server(statements)
+        else:
+            result = self._q_multi_embedded(statements)
+        _observe_query_metrics("_q_multi", time.perf_counter() - _t0)
+        return result
+
+    def _q_multi_server(self, statements: list[tuple[str, dict | None]]) -> list[list]:
+        """Server-mode multi-statement read — one HTTP POST, per-statement results."""
+        import json as _json
+
+        body_parts: list[str] = []
+        # A statement with N params emits N LET entries BEFORE its SELECT entry.
+        # Track, per statement, how many response entries precede its own result so
+        # we can pick out the right one positionally.
+        let_counts: list[int] = []
+        for i, (sql, params) in enumerate(statements):
+            n_lets = 0
+            if params:
+                for k, v in params.items():
+                    body_parts.append(f"LET $p{i}_{k} = {_json.dumps(v, ensure_ascii=False)};")
+                    n_lets += 1
+                sql = _prefix_param_tokens(sql, params, i)
+            body_parts.append(sql.rstrip(";") + ";")
+            let_counts.append(n_lets)
+
+        body = "\n".join(body_parts)
+        resp = self._http.post(
+            "/sql", content=body.encode(), headers={"Content-Type": "text/plain"}
+        )
+        resp.raise_for_status()
+        entries = resp.json()
+        for entry in entries:
+            if entry.get("status") == "ERR":
+                raise RuntimeError(
+                    f"SurrealDB error: {entry.get('detail') or entry.get('result') or entry}"
+                )
+        # Walk the flat entry list, consuming n_lets LET-entries then one SELECT-entry
+        # per statement, in order.
+        out: list[list] = []
+        idx = 0
+        for n_lets in let_counts:
+            idx += n_lets
+            raw = entries[idx].get("result") if idx < len(entries) else None
+            out.append(_normalize_rows(raw))
+            idx += 1
+        return out
+
+    def _q_multi_embedded(self, statements: list[tuple[str, dict | None]]) -> list[list]:
+        """Embedded-mode multi-statement read — one SDK query, per-statement results."""
+        import json as _json
+
+        body_parts: list[str] = []
+        for i, (sql, params) in enumerate(statements):
+            if params:
+                for k, v in params.items():
+                    body_parts.append(f"LET $p{i}_{k} = {_json.dumps(v, ensure_ascii=False)};")
+                sql = _prefix_param_tokens(sql, params, i)
+            body_parts.append(sql.rstrip(";") + ";")
+        combined = "\n".join(body_parts)
+        raw = self._embedded_db.query(combined, {})
+        # The embedded SDK returns a list with one element PER statement (LET returns
+        # None, SELECT returns its rows). Filter to the SELECT results positionally by
+        # replaying the same LET/SELECT structure.
+        return self._split_embedded_multi(statements, raw)
+
+    @staticmethod
+    def _split_embedded_multi(statements: list[tuple[str, dict | None]], raw: object) -> list[list]:
+        """Map an embedded multi-statement raw response to per-SELECT row-lists.
+
+        The embedded SDK yields one result element per executed statement in order
+        (LET statements included). We know how many LETs precede each SELECT, so we
+        walk the flat list the same way ``_q_multi_server`` does.
+        """
+        entries = raw if isinstance(raw, list) else [raw]
+        out: list[list] = []
+        idx = 0
+        for _sql, params in statements:
+            idx += len(params) if params else 0
+            elem = entries[idx] if idx < len(entries) else None
+            out.append(_normalize_rows(elem))
+            idx += 1
+        return out
+
     @staticmethod
     def _build_chunk_body(chunk: list[tuple[str, dict | None]], json_mod: object) -> bytes:
         """Build the actual HTTP body for a single BEGIN…COMMIT transaction chunk.
