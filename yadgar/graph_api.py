@@ -30,6 +30,7 @@ from yadgar.metrics import (
     yadgar_process_rss_bytes,
     yadgar_python_gc_duration_ms,
 )
+from yadgar.observability.observe import observe
 from yadgar.tracing import trace_span
 from yadgar.viz_meta import EDGE_TYPES, LAZY_EDGE_TYPES
 
@@ -168,6 +169,7 @@ class GraphAPI:
             "clusters": clusters,  # BC-VZ-R3: real memory_cluster rows (informational)
         }
 
+    @observe(tier="stage")
     def _assemble_memory_nodes(
         self, nodes: list[dict], max_memories: int
     ) -> tuple[set[int], dict[int, list[tuple[int, str]]], dict[int, list[str]]]:
@@ -219,6 +221,7 @@ class GraphAPI:
                 slot_map.setdefault(int(slot), []).append((raw_id, str(m.get("created_at") or "")))
         return mem_ids, slot_map, wiki_refs_map
 
+    @observe(tier="stage")
     def _build_temporal_edges(self, slot_map: dict[int, list[tuple[int, str]]]) -> list[dict]:
         """Build temporal edges from slot_map (memories sharing an engram slot)."""
         role = EDGE_TYPES.get("temporal", {}).get("role", "informational")
@@ -238,6 +241,7 @@ class GraphAPI:
                     )
         return result
 
+    @observe(tier="stage")
     def _build_transition_edges(self, mem_ids: set[int]) -> tuple[list[dict], int]:
         """Build transition (co-recall) edges from memory_transition table.
 
@@ -276,6 +280,7 @@ class GraphAPI:
             )
         return result, weak_hidden
 
+    @observe(tier="stage")
     def _assemble_wiki_nodes(
         self, nodes: list[dict], max_wiki: int = 200
     ) -> tuple[list[dict], dict[str, str]]:
@@ -313,6 +318,7 @@ class GraphAPI:
             )
         return wiki_pages or [], wiki_slug_to_id
 
+    @observe(tier="stage")
     def _build_wiki_crossref_edges(self, wiki_slug_to_id: dict[str, str]) -> list[dict]:
         """Build wiki cross-reference edges from wiki_crossref table."""
         role = EDGE_TYPES.get("wiki_crossref", {}).get("role", "informational")
@@ -328,6 +334,7 @@ class GraphAPI:
                 result.append({"source": src, "target": tgt, "type": "wiki_crossref", "role": role})
         return result
 
+    @observe(tier="stage")
     def _build_memory_wiki_edges(
         self, wiki_refs_map: dict[int, list[str]], wiki_slug_to_id: dict[str, str]
     ) -> list[dict]:
@@ -357,6 +364,7 @@ class GraphAPI:
                 )
         return result
 
+    @observe(tier="stage")
     def _build_causal_edges(
         self, include_invalidated: bool = False, as_of: str | None = None
     ) -> list[dict]:
@@ -392,6 +400,7 @@ class GraphAPI:
             result.append(edge)
         return result
 
+    @observe(tier="stage")
     def _build_entity_rel_edges(self) -> list[dict]:
         """Build entity typed-relation edges (v5.54.3 — the big hidden capability).
 
@@ -427,6 +436,7 @@ class GraphAPI:
             )
         return result
 
+    @observe(tier="stage")
     def _build_similarity_link_edges(self, mem_ids: set[int]) -> list[dict]:
         """Build memory_similarity_link edges from CLS-phase near-duplicate links.
 
@@ -458,6 +468,7 @@ class GraphAPI:
             )
         return result
 
+    @observe(tier="stage")
     def _build_clusters_payload(self, mem_ids: set[int]) -> list[dict]:
         """Assemble clusters[] from real memory_cluster rows.
 
@@ -583,6 +594,7 @@ class GraphAPI:
 
     # ── Private helpers ───────────────────────────────────────────────────────
 
+    @observe(tier="stage")
     def _assemble_entity_nodes(self, nodes: list[dict], max_entities: int = 2000) -> None:
         """Fetch all entities and append entity:* node dicts to *nodes*.
 
@@ -615,6 +627,7 @@ class GraphAPI:
                 }
             )
 
+    @observe(tier="stage")
     def _expand_memory(self, raw_id: int, nodes: list, seen: set) -> None:
         try:
             m = self._s.get_memory(raw_id)
@@ -685,6 +698,7 @@ def _observe_dbsize_ms(elapsed_ms: float) -> None:
         pass
 
 
+@observe(tier="stage")
 def _sample_cpu_pct(pid: int, clk_tck: int) -> float:
     """Read /proc/<pid>/stat and return CPU% via two-sample delta against module globals."""
     global _prev_cpu_ticks, _prev_cpu_time
@@ -703,6 +717,7 @@ def _sample_cpu_pct(pid: int, clk_tck: int) -> float:
     return cpu_pct
 
 
+@observe(tier="stage")
 def _sample_rss_threads(pid: int) -> tuple[int, int]:
     """Read /proc/<pid>/status; return (rss_kb, threads)."""
     rss_kb = 0
@@ -716,11 +731,13 @@ def _sample_rss_threads(pid: int) -> tuple[int, int]:
     return rss_kb, threads
 
 
+@observe(tier="stage")
 def _sample_open_fds() -> int:
     """Count open file descriptors via /proc/self/fd."""
     return len(os.listdir("/proc/self/fd"))
 
 
+@observe(tier="stage")
 def _sample_meminfo() -> tuple[int, int]:
     """Read /proc/meminfo; return (total_ram_kb, avail_ram_kb)."""
     total_ram_kb = avail_ram_kb = 0
@@ -733,6 +750,7 @@ def _sample_meminfo() -> tuple[int, int]:
     return total_ram_kb, avail_ram_kb
 
 
+@observe(tier="stage")
 def _sample_loadavg() -> tuple[float, float, float]:
     """Read /proc/loadavg; return (load_1m, load_5m, load_15m)."""
     with open("/proc/loadavg") as fh:
@@ -740,6 +758,7 @@ def _sample_loadavg() -> tuple[float, float, float]:
     return float(la[0]), float(la[1]), float(la[2])
 
 
+@observe(tier="stage")
 def _sample_db_size(storage: object, db_path: str) -> float:
     """Return db_size_mb — via storage proxy in server mode, or path walk otherwise."""
     if storage is not None:
@@ -761,6 +780,7 @@ def _sample_db_size(storage: object, db_path: str) -> float:
     return 0.0
 
 
+@observe(tier="stage")
 def sample_system_metrics(pid: int, db_path: str, storage: object = None) -> dict:
     """Sample system metrics from /proc and update the in-process cache.
 

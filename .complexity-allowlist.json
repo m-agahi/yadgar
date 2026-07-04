@@ -438,16 +438,5 @@
     "rationale": "P5 obs-wave: +6 LoC of @observe decorators on _load, get_field_value, _validate_hhmm, _validate_log_format, resolve_knob pushed file from 1000 to 1006. Single-responsibility pydantic Settings module; all fields and validators belong co-located. Scheduled for wave N settings-split.",
     "added": "2026-07-03",
     "added_by": "feat/obs-p1-recall-readpath"
-  },
-  {
-    "path": "yadgar/log_config.py",
-    "function": "<file>",
-    "lineno": 1,
-    "metrics": {
-      "file_loc": 1027
-    },
-    "rationale": "P5 obs-wave: +27 LoC of @observe decorators on formatters, filters, handlers, configure_logging pushed file from 1000 to 1027. Single-responsibility logging-configuration module; all formatter classes and handler setup co-located by design. Scheduled for wave N module split.",
-    "added": "2026-07-03",
-    "added_by": "feat/obs-p1-recall-readpath"
   }
 ]

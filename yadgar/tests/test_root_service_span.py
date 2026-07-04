@@ -138,20 +138,30 @@ def test_config_sync_cmd_sentinel():
 
 
 # ---------------------------------------------------------------------------
-# log_config.py
+# log_config.py — the ENTIRE logging subsystem is un-instrumentable by @observe.
+# It is the sink @observe's own span+metric+log writes flow into: a span here
+# → LogSpanProcessor 'span_end' log → re-enters the observed log path → per-log
+# span amplification flood that crash-looped core+backend under real OTLP
+# (v5.105 → v5.106). These fns MUST NOT carry the @observe span sentinel; they
+# are path-glob-exempted in .observe-allowlist.json. Asserting the NEGATIVE here
+# guards against re-introducing the flood. See test_log_span_amplification.py.
 # ---------------------------------------------------------------------------
 
 
-def test_log_config_configure_logging_sentinel():
+def test_log_config_configure_logging_not_observed():
     from yadgar.log_config import configure_logging
 
-    assert _has_span(configure_logging)
+    assert not _has_span(configure_logging), (
+        "configure_logging must not be @observe'd — log-emission path span→log→span flood (v5.106)"
+    )
 
 
-def test_log_config_is_sensitive_sentinel():
+def test_log_config_is_sensitive_not_observed():
     from yadgar.log_config import _is_sensitive
 
-    assert _has_span(_is_sensitive)
+    assert not _has_span(_is_sensitive), (
+        "_is_sensitive must not be @observe'd — log-emission path span→log→span flood (v5.106)"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -86,14 +86,69 @@ def get_ring_snapshot(since_seq: int = 0) -> tuple[list[dict], int]:
 
 
 # ---------------------------------------------------------------------------
+# Telemetry filter — keep span_end out of the APP-log ring
+# ---------------------------------------------------------------------------
+
+
+class _SpanEndFilter(logging.Filter):
+    """Drop OTel ``span_end`` telemetry records from the app-log ring (v5.106).
+
+    ``LogSpanProcessor._emit_span_log`` (yadgar/tracing.py) emits one
+    ``event=="span_end"`` INFO record on the ``yadgar.tracing`` logger for EVERY
+    finished span. That logger propagates to root, and root's handlers include
+    ``LogRingHandler`` — so under a RECORDING OTLP provider (prod: always on) the
+    ring served by ``/api/logs/poll`` fills with span_end telemetry instead of
+    application logs.
+
+    This is the 3rd occurrence of the span→log→ring class (ADR-0041). The earlier
+    fixes exempted individual @observe'd functions from opening spans, which is
+    whack-a-mole: span_end reaches the ring from MANY span sources, so exempting
+    one more function is always one gap short. Filtering the RING handler itself
+    makes it structurally immune regardless of how many spans exist or which
+    provider (recording vs non-recording) is active — no future @observe or new
+    span source can re-contaminate it.
+
+    Scope is deliberately narrow: only the ``span_end`` telemetry event is
+    dropped. Operational tracing warnings on the same logger
+    (``otlp_circuit_open``, ``tracing_init``, ``otlp_exporter_init_failed``, …)
+    still reach the ring — those are genuine ops signal, span_end is not.
+
+    span_end is NOT silently discarded: it still flows to the file/stdout/OTLP
+    sinks via root's other handlers (see test_span_end_reaches_file_handler). This
+    filter removes it from the ring ONLY.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # The span_end record carries event="span_end" + component="tracing" in
+        # its extra fields (see LogSpanProcessor._emit_span_log_inner). Match on
+        # the telemetry marker, not the logger name, so we drop exactly the record
+        # that scales with span count and nothing else.
+        if getattr(record, "event", None) == "span_end":
+            return False
+        return True
+
+
+# ---------------------------------------------------------------------------
 # Logging handler that feeds the ring
 # ---------------------------------------------------------------------------
 
 
 class LogRingHandler(logging.Handler):
-    """Push LogRecord dicts into the in-memory ring buffer."""
+    """Push LogRecord dicts into the in-memory ring buffer.
 
-    @observe(tier="stage")
+    Carries a ``_SpanEndFilter`` so OTel span_end telemetry never enters the
+    app-log ring (v5.106, ADR-0041 class). The filter is attached in ``__init__``,
+    so every handler instance — however constructed — is immune.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.addFilter(_SpanEndFilter())
+
+    # NOT @observe'd: this is the log-emission sink. @observe would open a span
+    # per record → span_end log (LogSpanProcessor) → that record re-enters emit()
+    # → more spans → per-log amplification flood (v5.106). Allowlisted as
+    # framework-instrumented in .observe-allowlist.json (logs:LogRingHandler.emit).
     def emit(self, record: logging.LogRecord) -> None:
         try:
             entry = {

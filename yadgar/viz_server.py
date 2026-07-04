@@ -20,6 +20,8 @@ from typing import Any
 
 import httpx
 
+from yadgar.observability.observe import observe
+
 STATIC_DIR = Path(__file__).parent / "static"
 INDEX_HTML = STATIC_DIR / "index.html"
 
@@ -44,6 +46,7 @@ def _proxy_enabled() -> bool:
     return os.environ.get("YADGAR_VIZ_PROXY", "1") != "0"
 
 
+@observe(tier="stage")
 def _proxy_request(
     method: str,
     upstream_url: str,
@@ -97,6 +100,7 @@ class _Handler(BaseHTTPRequestHandler):
     # Injected by run_viz_server so each request can resolve daemon_url + token.
     _daemon_url: str = "http://127.0.0.1:8765"
 
+    @observe(tier="stage")
     def _handle_proxy(self) -> None:
         """Proxy /api/* to the daemon backend with bearer token injected."""
         from yadgar.config import get_settings  # read at request time — supports late env setup
@@ -139,6 +143,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    @observe(tier="boundary")
     def do_GET(self) -> None:
         # Strip query string for path prefix check.
         raw_path = self.path.split("?", 1)[0]
@@ -184,6 +189,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    @observe(tier="boundary")
     def do_POST(self) -> None:
         raw_path = self.path.split("?", 1)[0]
         if _proxy_enabled() and raw_path.startswith("/api/"):
@@ -191,6 +197,7 @@ class _Handler(BaseHTTPRequestHandler):
         else:
             self.send_error(405, "Method Not Allowed")
 
+    @observe(tier="boundary")
     def do_DELETE(self) -> None:
         """Proxy DELETE /api/* to the daemon (e.g. DELETE /api/bookmarks/{slug})."""
         raw_path = self.path.split("?", 1)[0]
@@ -199,6 +206,7 @@ class _Handler(BaseHTTPRequestHandler):
         else:
             self.send_error(405, "Method Not Allowed")
 
+    @observe(tier="boundary")
     def do_PUT(self) -> None:
         """Proxy PUT /api/* to the daemon (e.g. PUT /api/bookmarks/{slug}/position)."""
         raw_path = self.path.split("?", 1)[0]
