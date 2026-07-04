@@ -352,6 +352,13 @@ class Settings(BaseSettings):
     # Steps 3–5 (DirectoryFilter, fusion, type= param) now LIVE as the default path.
     UNIFIED_RECALL_ENABLED: bool = True
 
+    # Train 1: recall-backend — dual-path flag (three-way registered).
+    # When False (default): recall() executes the fan-out pipeline in-core (current behavior).
+    # When True: recall() forwards the fan-out path to the backend /recall endpoint;
+    # core becomes a thin forwarder. Only applies when UNIFIED_RECALL_ENABLED=True and
+    # profile=None; landscape mode and profile-based recall always run in-core.
+    RECALL_BACKEND_ENABLED: bool = False
+
     # v6 T6 Step 4: cross-type fusion settings (I25 three-way registered).
     # Per-type quotas: max candidates from each source before CE rerank.
     # Prevents one source from starving the other in the pool.

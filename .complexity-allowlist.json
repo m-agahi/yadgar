@@ -11,6 +11,17 @@
     "added_by": "obs-i33-rollout"
   },
   {
+    "path": "yadgar/backend/embed_service.py",
+    "function": "<file>",
+    "lineno": 1,
+    "metrics": {
+      "file_loc": 1001
+    },
+    "rationale": "Train 1: added /recall route + RecallRequest/RecallResponse models + _ensure_recall_engines bootstrap (~126 LOC). Backend was 875 lines; new route pushed past 1000 HARD cap. Route is cohesive with the other three HTTP endpoints in this file (embed, rerank, recall). Splitting would create a thin 1-route sub-module for no readability gain.",
+    "added": "2026-07-04",
+    "added_by": "recall-backend-train1"
+  },
+  {
     "path": "yadgar/causal_discovery/pc.py",
     "function": "pc_algorithm",
     "lineno": 105,
@@ -162,14 +173,14 @@
   {
     "path": "yadgar/server/tools/recall.py",
     "function": "recall",
-    "lineno": 372,
+    "lineno": 177,
     "metrics": {
       "cyclomatic": 55,
-      "fn_loc": 358,
+      "fn_loc": 436,
       "nesting": 6,
       "params": 9
     },
-    "rationale": "PERMANENT. 7-phase retrieval dispatcher (validation, branch detection, retriever dispatch, FTS+vector fallback, filtering, 4 boost passes, wiki blend). Behavior-rich phases 6a-6d (branch convex-combo boost, postmortem boost, heat update, SR transition) have only mirror/mock test coverage + source-string-match tests \u2014 NO real-call behavioral guard. A structural extract risks silent behavior change and would spuriously break the inspect.getsource string-match tests. Allowlisted permanently; revisit only after real-call boost/blend tests exist. fn_loc updated 293\u2192358 (v6 T6 Steps 3-5 added _fanout_recall gate, type= param validation, _source stamping); params updated 8\u21929 (v6 BC-AC3a: mode= param added for landscape recall dispatch \u2014 same permanent rationale applies: bundling MCP tool params breaks the API schema).",
+    "rationale": "PERMANENT. 7-phase retrieval dispatcher (validation, branch detection, retriever dispatch, FTS+vector fallback, filtering, 4 boost passes, wiki blend). Behavior-rich phases 6a-6d (branch convex-combo boost, postmortem boost, heat update, SR transition) have only mirror/mock test coverage + source-string-match tests — NO real-call behavioral guard. A structural extract risks silent behavior change and would spuriously break the inspect.getsource string-match tests. Allowlisted permanently; revisit only after real-call boost/blend tests exist. fn_loc updated 358→436 (v6 T6 Steps 3-5 added _fanout_recall gate, type= param validation, _source stamping); params updated 8→9 (v6 BC-AC3a: mode= param added for landscape recall dispatch — same permanent rationale applies: bundling MCP tool params breaks the API schema). fn_loc updated 358→436 (Train 1: added RECALL_BACKEND_ENABLED dual-path branch + _forward_to_backend call inside UNIFIED gate; extracted pipeline fns reduce inner body but handler gained 78 LOC for the forwarder path, fallback, and _landscape_recall).",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -248,7 +259,7 @@
     "metrics": {
       "file_loc": 1923
     },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. v5.89 #67: +~490 LoC of FIELD_META schema data (desc/section for 67 backfilled knobs draining the I25 Tier-2 grandfathered backlog) \u2014 pure data, not logic; the module is a single-responsibility config loader by design.",
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. v5.89 #67: +~490 LoC of FIELD_META schema data (desc/section for 67 backfilled knobs draining the I25 Tier-2 grandfathered backlog) — pure data, not logic; the module is a single-responsibility config loader by design.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -259,7 +270,7 @@
     "metrics": {
       "cyclomatic": 17
     },
-    "rationale": "v5.100.0: shadow-observe try/except block added for source-label instrumentation incremented cyclomatic from pre-existing 16 to 17. Function handles request/body parsing, throttle, agent_type dispatch, subagent count metric, shadow observe, retriever timeout, context assembly, and anchor injection \u2014 8 distinct responsibilities; structural extract deferred to wave N refactor.",
+    "rationale": "v5.100.0: shadow-observe try/except block added for source-label instrumentation incremented cyclomatic from pre-existing 16 to 17. Function handles request/body parsing, throttle, agent_type dispatch, subagent count metric, shadow observe, retriever timeout, context assembly, and anchor injection — 8 distinct responsibilities; structural extract deferred to wave N refactor.",
     "added": "2026-07-03",
     "added_by": "feat/shadow-counter-source-label"
   },
@@ -281,7 +292,7 @@
     "metrics": {
       "file_loc": 2660
     },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. Grew with the ADR-0007 agent-prompt capture nudge (_apply_agent_prompt_signal + _get_agent_prompt_toc_updated_at), which mirrors the existing ADR signal helpers in the same module \u2014 keeping them co-located is the established pattern; refactor remains deferred to the wave N split.",
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. Grew with the ADR-0007 agent-prompt capture nudge (_apply_agent_prompt_signal + _get_agent_prompt_toc_updated_at), which mirrors the existing ADR signal helpers in the same module — keeping them co-located is the established pattern; refactor remains deferred to the wave N split.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -369,7 +380,7 @@
     "metrics": {
       "cyclomatic": 20
     },
-    "rationale": "PERMANENT. v5.55 extract from insert_memory: 5-term enable guard + 6-field result mapping + set_parts loop/conditional re-encode; further splitting degrades locality without reducing branch count \u2014 cohesive enrichment pipeline, single responsibility.",
+    "rationale": "PERMANENT. v5.55 extract from insert_memory: 5-term enable guard + 6-field result mapping + set_parts loop/conditional re-encode; further splitting degrades locality without reducing branch count — cohesive enrichment pipeline, single responsibility.",
     "added": "2026-06-14",
     "added_by": "insert-memory-refactor"
   },
@@ -380,7 +391,7 @@
     "metrics": {
       "file_loc": 1241
     },
-    "rationale": "Storage _MemoryMixin; file drifted to 1204 across v5.9x perf cars (recorded baseline 1027 was stale). v5.104 PIECE D adds find_memory_ids_by_entities (+37 LOC) \u2014 the batched read-side of the spreading-activation N+1 fix, exact-parity with the per-name loop it degrades to. A new mixin extraction would break the class_methods count; the storage split is a larger refactor tracked separately.",
+    "rationale": "Storage _MemoryMixin; file drifted to 1204 across v5.9x perf cars (recorded baseline 1027 was stale). v5.104 PIECE D adds find_memory_ids_by_entities (+37 LOC) — the batched read-side of the spreading-activation N+1 fix, exact-parity with the per-name loop it degrades to. A new mixin extraction would break the class_methods count; the storage split is a larger refactor tracked separately.",
     "added": "2026-06-25",
     "added_by": "feat/v5.104-perf-train"
   },
@@ -424,7 +435,7 @@
     "metrics": {
       "file_loc": 1059
     },
-    "rationale": "#80 daemon-obs: +~125 LoC of cohesive Prometheus collectors for the loop-freeze RCA (yadgar_event_loop_lag_seconds histogram + _max gauge, yadgar_tool_pool_* gauges) plus their refreshers (loop-lag probe monitor, _collect_pool_stats). This module is a single-responsibility metric registry \u2014 every metric in the daemon is declared here against the shared _registry, so the gauges belong co-located with their siblings. Splitting the registry would fan the _registry import across modules without reducing essential complexity. Scheduled for the wave N module split.",
+    "rationale": "#80 daemon-obs: +~125 LoC of cohesive Prometheus collectors for the loop-freeze RCA (yadgar_event_loop_lag_seconds histogram + _max gauge, yadgar_tool_pool_* gauges) plus their refreshers (loop-lag probe monitor, _collect_pool_stats). This module is a single-responsibility metric registry — every metric in the daemon is declared here against the shared _registry, so the gauges belong co-located with their siblings. Splitting the registry would fan the _registry import across modules without reducing essential complexity. Scheduled for the wave N module split.",
     "added": "2026-07-01",
     "added_by": "fix/daemon-obs-gauges"
   },
