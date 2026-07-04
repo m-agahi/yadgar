@@ -11,6 +11,7 @@ A small, **YAML-driven** flow-diagram generator. Each diagram is a data file in
 | [`specs/recall-warm-cache-miss.yaml`](specs/recall-warm-cache-miss.yaml) | Warm recall, both backend caches (EMBED_CACHE + CE_CACHE) **miss** |
 | [`specs/recall-warm-cache-hit.yaml`](specs/recall-warm-cache-hit.yaml) | Same pipeline, both caches **hit** (embed + CE served from cache) |
 | [`specs/write.yaml`](specs/write.yaml) | `memorize` — fast-path enqueue + async drainer replay |
+| [`specs/recall-cold-trace-2026-07-04.yaml`](specs/recall-cold-trace-2026-07-04.yaml) | **Real** cold recall — every pipeline stage with its `@rel_start` timestamp + duration, from OTel trace `242cc546` (total 26.1 s; cross-encoder runs 3× ≈ 20 s = the wall) |
 
 Outputs: `out/<spec-name>.svg`, `.png`, and the intermediate `.dot`.
 

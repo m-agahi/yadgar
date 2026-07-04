@@ -1,0 +1,88 @@
+# Recall — COLD trace, REAL profile (not estimates).
+#
+# Source: real OTel span table of one cold recall — trace
+# 242cc54615cf4f41b2626e67aeb39d8f, total 26135.485 ms.
+# Captured 2026-07-04 (v5.106). Columns parsed: rel_start_ms | dur_ms | depth | name.
+#
+# Every node label carries its @rel_start_ms (timestamp into the trace) on its
+# own line; the duration line is appended automatically by generate.py from
+# time_ms. Node types are all rectangle-drawing (compute/io/model) on purpose —
+# start/end/store types draw circle/doublecircle/cylinder, which the request
+# forbids; entry + ranked-results are therefore `compute` boxes, heat is `io`.
+#
+# ARCH NOTE (honest): the pipeline runs in CORE and calls the backend
+# (SurrealDB + rerank server) over RPC per stage. The #85 plan to relocate the
+# pipeline INTO the backend is NOT done yet — so retrieval.* stages whose cost
+# is dominated by storage._q_server / POST /rerank / rpc.embed are drawn in the
+# backend cluster (that is where their wall time is spent), while pure in-core
+# orchestration (query analysis, PPR compute, convex fusion, dedup/MMR,
+# side-effects) sits in core.
+#
+# THE WALL: cross-encoder reranking runs THREE times and dominates ~20 s of the
+# 26.1 s. Pass 1 retrieval.rerank.cross_encoder @3146ms = 11.253 s (cold model
+# load + first /rerank). Pass 2 multi_passage @14398ms = 2.392 s. Pass 3 the
+# wiki-fusion crossfuse score_candidates_ce @19505ms = 6.394 s.
+
+title: "Recall — COLD trace (v5.106, real 2026-07-04)"
+subtitle: "trace 242cc546 · total 26.1 s · cross-encoder runs 3x (@3146 11.3s + @14398 2.4s + @19505 6.4s ≈ 20 s = the wall)"
+rankdir: TB
+show_total: true
+total_ms: 26135        # real trace total; do NOT let node-sum drift the annotation
+
+clusters:
+  - {id: core,    label: "Core process — pipeline orchestration (recall runs here today)", kind: core}
+  - {id: backend, label: "Backend — SurrealDB (_q_server) + rerank server (POST /rerank) + embed (rpc.embed)", kind: backend}
+
+nodes:
+  # --- entry ---
+  - {id: entry,     label: "recall() entry\\ntool.recall + branch/dir detect\\n@6ms",           cluster: core,    type: compute, time_ms: 1}
+  - {id: qanalysis, label: "query analysis\\nretrieval.analyze_query (entities/routing)\\n@7.7ms", cluster: core,   type: compute, time_ms: 0.4}
+  # --- memory candidate signals ---
+  - {id: fts,       label: "FTS BM25\\nretrieval.fts (branch clause injected)\\n@8.2ms",         cluster: backend, type: io,      time_ms: 22.6}
+  - {id: embed,     label: "query embed\\nrpc.embed -> backend.embed (cold model)\\n@30.9ms",     cluster: backend, type: model,   time_ms: 21}
+  - {id: knn,       label: "vector KNN search\\nretrieval.vector (HNSW, minus encode)\\n@31.9ms", cluster: backend, type: io,      time_ms: 55}
+  - {id: ppr,       label: "personalized PageRank\\nretrieval.ppr (entity seeds + graph walk)\\n@107ms", cluster: core, type: compute, time_ms: 241}
+  - {id: spread,    label: "spreading activation BFS\\nretrieval.spreading (per-depth graph IO)\\n@348ms", cluster: backend, type: io, time_ms: 1538}
+  # --- fusion ---
+  - {id: fusion,    label: "convex fusion\\nretrieval.fusion.convex_fuse (merge signals)\\n@1886ms", cluster: core, type: compute, time_ms: 2}
+  - {id: gpriors,   label: "graph priors\\nstorage.graph_priors _q_server\\n@1888ms",             cluster: backend, type: io,      time_ms: 157}
+  - {id: cpriors,   label: "cofire priors\\nstorage.cofire_priors _q_server\\n@2046ms",           cluster: backend, type: io,      time_ms: 151}
+  # --- hydrate ---
+  - {id: build,     label: "build_results final-fetch\\nstorage.get_memories_by_ids _q_server\\n@2198ms", cluster: backend, type: io, time_ms: 943}
+  # --- CE rerank pipeline (the wall) ---
+  - {id: ce1,       label: "CE rerank PASS 1 (cross_encoder)\\nPOST /rerank GTE-reranker (cold load)\\n@3146ms", cluster: backend, type: model, time_ms: 11253}
+  - {id: mp,        label: "CE rerank PASS 2 (multi_passage)\\nPOST /rerank per-passage rescore\\n@14398ms", cluster: backend, type: model, time_ms: 2392}
+  - {id: pbelief,   label: "profile_belief_merge\\nretrieval.rerank.profile_belief_merge\\n@16791ms", cluster: core, type: compute, time_ms: 116}
+  - {id: rules,     label: "rules rerank\\nretrieval.rerank.rules\\n@16907ms",                    cluster: core,    type: compute, time_ms: 155}
+  - {id: mmr,       label: "MMR diversity\\nretrieval.rerank.mmr\\n@16907ms",                     cluster: core,    type: compute, time_ms: 0.5}
+  - {id: engram,    label: "engram_links\\nretrieval.rerank.engram_links (graph IO)\\n@17063ms",  cluster: backend, type: io,      time_ms: 939}
+  # --- wiki fanout arm ---
+  - {id: wiki,      label: "wiki_candidates fanout\\nwiki.query + get_wiki_page (N per hit)\\n@18006ms", cluster: backend, type: io, time_ms: 1499}
+  - {id: cefuse,    label: "CE rerank PASS 3 (wiki crossfuse)\\nscore_candidates_ce POST /rerank\\n@19505ms", cluster: backend, type: model, time_ms: 6394}
+  - {id: interleave,label: "interleave + cross-type dedup\\ncrossfuse.interleave_wiki\\n@25899ms", cluster: core,    type: compute, time_ms: 0.05}
+  # --- tail: side-effects / heat ---
+  - {id: sideeff,   label: "side-effects: heat-boost + SR transition\\nrecord_access + boost_memories_access\\n@25900ms", cluster: backend, type: io, time_ms: 233}
+  - {id: results,   label: "ranked results returned\\n@26135ms",                                  cluster: core,    type: compute, time_ms: 0.5}
+
+edges:
+  - {src: entry,      dst: qanalysis, order: 1}
+  - {src: qanalysis,  dst: fts,       order: 2}
+  - {src: fts,        dst: embed,     order: 3}
+  - {src: embed,      dst: knn,       order: 4, label: "query vector"}
+  - {src: knn,        dst: ppr,       order: 5}
+  - {src: ppr,        dst: spread,    order: 6}
+  - {src: spread,     dst: fusion,    order: 7, label: "signals"}
+  - {src: fusion,     dst: gpriors,   order: 8}
+  - {src: gpriors,    dst: cpriors,   order: 9}
+  - {src: cpriors,    dst: build,     order: 10, label: "top ids"}
+  - {src: build,      dst: ce1,       order: 11, label: "hydrated rows"}
+  - {src: ce1,        dst: mp,        order: 12}
+  - {src: mp,         dst: pbelief,   order: 13}
+  - {src: pbelief,    dst: rules,     order: 14}
+  - {src: rules,      dst: mmr,       order: 15}
+  - {src: mmr,        dst: engram,    order: 16}
+  - {src: engram,     dst: wiki,      order: 17, label: "memory arm done"}
+  - {src: wiki,       dst: cefuse,    order: 18}
+  - {src: cefuse,     dst: interleave,order: 19}
+  - {src: interleave, dst: sideeff,   order: 20}
+  - {src: sideeff,    dst: results,   order: 21}
