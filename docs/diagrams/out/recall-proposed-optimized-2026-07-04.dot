@@ -7,9 +7,20 @@ digraph flow {
   graph [fontname="Helvetica", fontsize=11, labelloc="t"];
   node  [fontname="Helvetica", fontsize=10];
   edge  [fontname="Helvetica", fontsize=9];
-  label="Recall — PROPOSED optimized (all-backend · parallel-gather · single merged CE · async side-effects)
-DESIGN TARGET (not measured) · today 26.1 s → PROPOSED ~14 s critical path · CE still dominates (~10 s) → #32 faster-model next · side-effects async off-path
-total ≈ 14 s";
+  label="Recall — PROPOSED (design-for-scaling): bounded parallelism · ML-concurrent / Python-serial-by-default · CE passes SEPARATE-concurrent (not merged) · async side-effects · Ettin-target
+NOT BUILT — build gated on post-Ettin measurement. `--cpus 2` = accessibility FLOOR, not ceiling: parallel STRUCTURE + BOUNDED thread budget (≈ncpu split across tasks) → 2 cores ~sequential (no thrash), more cores fan out. All time_ms PENDING MEASUREMENT.
+total ≈ 11.6 s";
+  subgraph "cluster_legend" {
+    label="DESIGN LEGEND — read first (PROPOSED, not built)";
+    style=filled;
+    bgcolor="#f0f0f0";
+    color="#888888";
+    fontcolor="#555555";
+    fontname="Helvetica-Bold";
+    "lg_rule" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="BOUNDED-THREAD-BUDGET RULE\nparallel STRUCTURE + total threads ≈ ncpu, split across concurrent tasks\n2 cores → ~1 thread/task → ~sequential (graceful, NO thrash) · more cores → fan out, speed up\n`--cpus 2` = FLOOR, not ceiling"];
+    "lg_gil" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="GIL-AWARE KEY\nparallel-safe (native, GIL-release): embed · KNN · CE passes → parallelize freely, degrade gracefully to serial\nserial-by-default (GIL-bound): convex fusion · PPR · spreading BFS compute → parallelize ONLY if MEASURED (multiprocessing = floor-case LOSS on 2 cores)\nmixed: spreading = per-depth DB IO overlaps, BFS compute does not"];
+    "lg_ce" [shape="box", style="filled", fillcolor="#f5e1f5", label="CE PASSES = SEPARATE + CONCURRENT (NOT merged)\nmerging saves ≈0 compute (pairs sum) + adds quality risk\nconcurrent CE needs REPLICATED model instances or a batching inference server — not just threads\nEttin-32M/68M target (Train 2) → ~2-6× cheaper/pass · keep-warm kills ~7 s cold-load · warm CE ≈3.9 s/pass (micro-bench, not 11.3 s cold)"];
+  }
   subgraph "cluster_core" {
     label="Core process — thin shim only (forward in / return out)";
     style=filled;
@@ -21,31 +32,33 @@ total ≈ 14 s";
     "n21" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="21 · ranked results → return to core\nCRITICAL PATH END\nest\n0.5 ms"];
   }
   subgraph "cluster_backend" {
-    label="Backend — ENTIRE pipeline relocated here (#85): SurrealDB + rerank + embed, parallel gather";
+    label="Backend — ENTIRE pipeline relocated here (#85): SurrealDB + rerank + embed, bounded-parallel gather";
     style=filled;
     bgcolor="#fbf0ea";
     color="#b5744a";
     fontcolor="#7a4620";
     fontname="Helvetica-Bold";
     "n1" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="1 · query analysis\nentities / routing\nest\n0.4 ms"];
-    "n2" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="2 · FTS BM25\nbranch clause injected\nest\n23 ms"];
-    "n3" [shape="box", style="filled", fillcolor="#f5e1f5", label="3 · query embed\nbackend.embed\nest\n21 ms"];
-    "n4" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="4 · vector KNN\nHNSW search\nest\n55 ms"];
-    "n5" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="5 · personalized PageRank\nentity seeds + graph walk\nest\n241 ms"];
-    "n6" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="6 · spreading activation BFS\nper-depth graph IO (gather long-pole)\nest\n1.538 s"];
-    "n8" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="8 · graph priors\nstorage.graph_priors\nest\n157 ms"];
-    "n9" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="9 · cofire priors\nstorage.cofire_priors\nest\n151 ms"];
+    "n2" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="2 · FTS BM25\nbranch clause injected · io (arm ∥-safe)\nest\n23 ms"];
+    "n3" [shape="box", style="filled", fillcolor="#f5e1f5", label="3 · query embed\nbackend.embed · parallel-safe (native, GIL-release)\nest\n21 ms"];
+    "n4" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="4 · vector KNN\nHNSW search · io (arm ∥-safe)\nest\n55 ms"];
+    "n5" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="5 · personalized PageRank\nnetworkx graph walk · serial-by-default (GIL-bound)\nest\n241 ms"];
+    "n6" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="6 · spreading activation BFS\nper-depth DB IO overlaps · BFS compute serial · MIXED (gather long-pole)\nest\n1.538 s"];
+    "n8" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="8 · graph priors\nstorage.graph_priors · io\nest\n157 ms"];
+    "n9" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="9 · cofire priors\nstorage.cofire_priors · io\nest\n151 ms"];
     "n17" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="17 · wiki candidates gather\nwiki.query + get_wiki_page (∥ memory arm)\nest\n1.499 s"];
-    "n7" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="7 · convex fusion\nmerge memory signals (now over merged pool)\nest\n2 ms"];
-    "n10" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="10 · build_results hydrate\nget_memories_by_ids — MERGED memory+wiki pool\nest\n943 ms"];
-    "ce" [shape="box", style="filled", fillcolor="#f5e1f5", label="CE — SINGLE merged pass (memory+wiki union)\n#28-trimmed · replaces 11+12+18 · multi_passage DROPPED\nPROPOSED — still the wall → #32 faster-model next\n10 s"];
-    "post" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="13–16 · post-rerank\nprofile_belief + rules + MMR + engram_links\nest\n1.2 s"];
-    "n19" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="19 · finalize + cross-type dedup\ntrivial once pool merged\nest\n0.1 ms"];
-    "n20" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="20 · side-effects: heat-boost + SR transition\nASYNC, non-blocking, ∥ return\nest\n233 ms"];
+    "n7" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="7 · convex fusion\nmerge memory signals · serial-by-default (GIL-bound, pure-Python)\nest\n2 ms"];
+    "n10" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="10 · build_results hydrate\nget_memories_by_ids — MEMORY pool only\nest\n943 ms"];
+    "ce_mem" [shape="box", style="filled", fillcolor="#f5e1f5", label="CE-1 · memory cross_encoder\nparallel-safe (native, GIL-release) · scales with cores\nwarm ≈3.9 s/pass · Ettin-target ~2-6× cheaper · PROPOSED\n3.9 s"];
+    "ce_mp" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="CE-2 · memory multi_passage\nOPTIONAL quality knob — MULTI_PASSAGE_RERANK_ENABLED (off by default)\n~quality vs latency · gate on LongMemEval · parallel-safe when on\nPROPOSED\n3.9 s"];
+    "ce_wiki" [shape="box", style="filled", fillcolor="#f5e1f5", label="CE-3 · wiki crossfuse-CE\nseparate concurrent pass over wiki pool · parallel-safe\nwarm ≈3.9 s · Ettin-target · PROPOSED\n3.9 s"];
+    "post" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="13–16 · post-rerank (memory)\nprofile_belief + rules + MMR + engram_links\nest\n1.2 s"];
+    "n19" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="19 · finalize + cross-type dedup\nLATE UNION: memory pool ∪ wiki pool joins HERE (not at build)\nest\n0.5 ms"];
+    "n20" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="20 · side-effects: heat-boost + SR transition\nASYNC, non-blocking, ∥ return · cheap + safe\nest\n233 ms"];
   }
   "forward" -> "n1" [color="#333333", style="solid", label="forward to backend"];
-  "n1" -> "n2" [color="#333333", style="solid", label="gather ∥"];
-  "n1" -> "n3" [color="#333333", style="solid", label="gather ∥"];
+  "n1" -> "n2" [color="#333333", style="solid", label="gather ∥ (bounded)"];
+  "n1" -> "n3" [color="#333333", style="solid", label="gather ∥ (bounded)"];
   "n1" -> "n17" [color="#333333", style="solid", label="wiki arm ∥"];
   "n3" -> "n4" [color="#333333", style="solid", label="query vector"];
   "n2" -> "n5" [color="#333333", style="solid"];
@@ -63,10 +76,13 @@ total ≈ 14 s";
   "n8" -> "n7" [color="#333333", style="solid"];
   "n9" -> "n7" [color="#333333", style="solid"];
   "n7" -> "n10" [color="#333333", style="solid", label="memory pool"];
-  "n17" -> "n10" [color="#333333", style="solid", label="wiki pool → merge"];
-  "n10" -> "ce" [color="#333333", style="solid", label="merged candidates"];
-  "ce" -> "post" [color="#333333", style="solid"];
-  "post" -> "n19" [color="#333333", style="solid"];
+  "n10" -> "ce_mem" [color="#333333", style="solid", label="memory candidates"];
+  "n10" -> "ce_mp" [color="#999999", style="dashed", label="if MULTI_PASSAGE on"];
+  "n17" -> "ce_wiki" [color="#333333", style="solid", label="wiki candidates"];
+  "ce_mem" -> "post" [color="#333333", style="solid"];
+  "ce_mp" -> "post" [color="#999999", style="dashed", label="optional"];
+  "post" -> "n19" [color="#333333", style="solid", label="memory ranked"];
+  "ce_wiki" -> "n19" [color="#333333", style="solid", label="wiki ranked → UNION"];
   "n19" -> "n21" [color="#333333", style="solid", label="critical path"];
   "n19" -> "n20" [color="#6a8f3a", style="dashed", label="async · non-blocking"];
 }
