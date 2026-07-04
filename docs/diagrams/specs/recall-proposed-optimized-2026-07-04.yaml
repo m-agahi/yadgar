@@ -1,88 +1,141 @@
-# Recall — PROPOSED optimized pipeline (DESIGN TARGET, not measured).
+# Recall — PROPOSED optimized pipeline (DESIGN-FOR-SCALING mock, NOT built, NOT measured).
 #
-# This is a MOCK/PROPOSED architecture, NOT a captured trace. Every time_ms is
-# a design estimate ("PROPOSED"/"est"), derived from the real cold-trace
-# (recall-cold-trace-2026-07-04.yaml, trace 242cc546, 26.1 s) by applying three
-# structural changes. Do NOT read these as measured numbers.
+# This is a MOCK/PROPOSED architecture, NOT a captured trace. Every time_ms is a
+# design estimate ("PROPOSED"/"est"), NOT a measured number. The design is gated
+# on POST-ETTIN MEASUREMENT — nothing here is built. Do NOT read these as facts.
 #
-# THE THREE CHANGES vs today's 26.1 s serial pipeline:
-#   (a) ALL-BACKEND — the whole pipeline (steps 1-21) relocates INTO the backend
-#       (the #85 plan). Core keeps only a thin forward-in / return-out shim, so
-#       there are exactly two `core` nodes: the entry forward and the final
-#       return. No per-stage core<->backend RPC hop anymore.
-#   (b) PARALLEL GATHER — the independent gather signals run concurrently instead
-#       of serially. Step 1 forks into three arms: FTS(2), query-embed(3)->KNN(4),
-#       and the whole wiki arm(17). From the seeds {2,4} a second fan-out drives
-#       PPR(5), spreading(6), graph-priors(8), cofire-priors(9) in parallel. The
-#       memory signals join at convex fusion(7); wiki(17) joins at build(10).
-#   (c) ONE MERGED CE PASS — today's THREE cross-encoder passes (11 cross_encoder
-#       + 12 multi_passage + 18 wiki crossfuse, ~20 s) collapse into a SINGLE CE
-#       pass over the memory+wiki candidate UNION. multi_passage is DROPPED.
-#       This is still the wall (~10 s PROPOSED); #32 faster-model is the next
-#       frontier after this.
-#   (d) ASYNC SIDE-EFFECTS — step 20 (heat-boost + SR transition) forks OFF the
-#       critical path. Step 19 fans out to BOTH 21 (return, critical) and 20
-#       (async, non-blocking). 21 does NOT wait on 20.
+# ============================================================================
+# CORE DESIGN PRINCIPLE — parallelism is for the SCALING CURVE, not the snapshot
+# ============================================================================
+# `--cpus 2` is the accessibility FLOOR, not a ceiling. The design rule:
+#   parallel STRUCTURE + BOUNDED THREAD BUDGET (total threads ≈ ncpu, divided
+#   across concurrent tasks).
+# On 2 cores each concurrent task gets ~1 thread and runs ~SEQUENTIALLY —
+# graceful, NO thrash. On more cores the same structure FANS OUT and speeds up.
+# The diagram shows the STRUCTURE; the 2-core numbers are the floor case.
 #
-# CRITICAL PATH (a DAG, so total is NOT the node-sum): the longest chain is
-# forward -> 1 -> (embed 21 + KNN 55 + spreading 1538, the gather long-pole) ->
-# fusion 2 -> build 943 -> CE 10000 -> post-rerank 1200 -> finalize 0.1 ->
-# return 0.5 ≈ 13.8 s. Side-effects(20, 233 ms) are async, EXCLUDED. total_ms is
-# pinned to the critical-path figure below so show_total does NOT sum the DAG.
+# ============================================================================
+# GIL-AWARE PARALLELISM — the honest split (this is the key annotation)
+# ============================================================================
+#   parallel-safe (native, GIL-release): query embed, KNN(io), the CE passes.
+#     These are ML / native stages that RELEASE the GIL, so threads parallelize
+#     FREELY and degrade GRACEFULLY to serial on few cores. Fan out with cores.
+#   serial-by-default (GIL-bound): convex fusion, PPR, spreading BFS compute —
+#     pure-Python / networkx. The GIL serializes them; the only real parallelism
+#     is multiprocessing, which is a FLOOR-CASE LOSS on 2 cores (IPC + pickle
+#     overhead, does NOT degrade to sequential). So DON'T parallelize these
+#     unless MEASURED to win. The memory-arm graph gather is therefore drawn
+#     serial-by-default, NOT free-parallel.
+#   mixed (io overlaps, compute does not): spreading BFS is per-depth DB batches
+#     (v5.99/v5.104) — the DB round-trips CAN overlap across cores, the BFS
+#     compute between them cannot. Annotated honestly as mixed; we do NOT
+#     overclaim a big parallel-gather win.
 #
-# Node types are compute/io/model only — all render shape=box (rectangles). No
-# store/start/end types (those draw cylinders/circles), per the request.
+# ============================================================================
+# STRUCTURAL CHANGES vs today's ~26 s serial pipeline
+# ============================================================================
+#   (a) ALL-BACKEND (#85) — whole pipeline relocates INTO the backend. Core keeps
+#       only a thin forward-in / return-out shim: exactly two `core` nodes. No
+#       per-stage core<->backend RPC hop.
+#   (b) PARALLEL-STRUCTURE GATHER (bounded budget) — step 1 forks three arms:
+#       FTS(2), embed(3)->KNN(4), and the wiki arm(17). Seeds {2,4} drive
+#       PPR(5)/spreading(6)/priors(8,9). ML/io arms are parallel-safe; the
+#       GIL-bound graph stages (PPR, fusion) are serial-by-default. On 2 cores
+#       this runs ~serially; on more cores the io/ML arms overlap.
+#   (c) THREE CE PASSES STAY SEPARATE + CONCURRENT (NOT merged) — memory
+#       cross_encoder ∥ memory multi_passage(OPTIONAL) ∥ wiki crossfuse-CE. We do
+#       NOT merge them: merging saves ≈0 compute (pairs sum regardless) and adds
+#       quality risk. As separate concurrent tasks they SCALE with cores.
+#       NOTE: concurrent CE needs REPLICATED model instances or a batching
+#       inference server — not just threads. multi_passage is an OPTIONAL,
+#       off-by-default quality knob (MULTI_PASSAGE_RERANK_ENABLED), gated on
+#       LongMemEval — kept, not dropped.
+#   (d) LATE UNION — because the CE passes are separate, the memory pool and wiki
+#       pool stay SEPARATE through their own CE passes and only UNION at
+#       finalize + cross-type dedup(19). (They no longer merge at build(10).)
+#   (e) ASYNC SIDE-EFFECTS — step 20 (heat-boost + SR transition) forks OFF the
+#       critical path: 19 fans to BOTH 21 (return, critical) and 20 (async).
+#
+# ============================================================================
+# ETTIN TARGET (Train 2) + keep-warm
+# ============================================================================
+#   The CE model is targeted for swap to Ettin-32M / 68M, making each CE pass
+#   ~2-6× cheaper. Keep-model-warm (kill idle-unload) removes the ~7 s cold-load.
+#   Real WARM CE ≈ 3.9 s/pass (micro-bench), NOT the 11.3 s cold-trace figure.
+#
+# ============================================================================
+# TOTAL — DAG, not a node-sum. Headline = the 2-CORE FLOOR (safe, no overclaim).
+# ============================================================================
+# Default (multi_passage OFF) = 2 memory CE passes. On the 2-core floor they run
+# ~SEQUENTIALLY ≈ 2×3.9 s ≈ 7.8 s; on many cores they overlap ≈ 3.9 s. Headline
+# total_ms is pinned to the FLOOR critical path (NOT the many-core case) so the
+# number stays consistent with "2 cores = sequential". Floor critical path ≈
+# forward -> 1 -> gather(spreading long-pole ~1.5 s) -> fusion -> build ~0.9 s ->
+# 2 CE passes ~7.8 s (floor) -> post-rerank ~1.2 s -> finalize -> return ≈ 11.6 s.
+# Post-Ettin + concurrent-on-more-cores this collapses further. ALL numbers are
+# PENDING MEASUREMENT — build gated on post-Ettin benchmarks.
+#
+# Node types are compute/io/model/cache only — all render shape=box (rectangles).
+# `cache` type = the dashed box, used for the OPTIONAL multi_passage node.
 
-title: "Recall — PROPOSED optimized (all-backend · parallel-gather · single merged CE · async side-effects)"
-subtitle: "DESIGN TARGET (not measured) · today 26.1 s → PROPOSED ~14 s critical path · CE still dominates (~10 s) → #32 faster-model next · side-effects async off-path"
+title: "Recall — PROPOSED (design-for-scaling): bounded parallelism · ML-concurrent / Python-serial-by-default · CE passes SEPARATE-concurrent (not merged) · async side-effects · Ettin-target"
+subtitle: "NOT BUILT — build gated on post-Ettin measurement. `--cpus 2` = accessibility FLOOR, not ceiling: parallel STRUCTURE + BOUNDED thread budget (≈ncpu split across tasks) → 2 cores ~sequential (no thrash), more cores fan out. All time_ms PENDING MEASUREMENT."
 rankdir: TB
 show_total: true
-total_ms: 14000        # PROPOSED critical-path (DAG), NOT node-sum. ~13.8 s longest chain, rounded.
+total_ms: 11600        # PROPOSED 2-CORE FLOOR critical path (DAG, NOT node-sum). Pending measurement.
 
 clusters:
+  - {id: legend,  label: "DESIGN LEGEND — read first (PROPOSED, not built)", kind: external}
   - {id: core,    label: "Core process — thin shim only (forward in / return out)", kind: core}
-  - {id: backend, label: "Backend — ENTIRE pipeline relocated here (#85): SurrealDB + rerank + embed, parallel gather", kind: backend}
+  - {id: backend, label: "Backend — ENTIRE pipeline relocated here (#85): SurrealDB + rerank + embed, bounded-parallel gather", kind: backend}
 
 nodes:
+  # --- DESIGN LEGEND (disconnected boxes — the prominent design notes) ---
+  - {id: lg_rule,  label: "BOUNDED-THREAD-BUDGET RULE\\nparallel STRUCTURE + total threads ≈ ncpu, split across concurrent tasks\\n2 cores → ~1 thread/task → ~sequential (graceful, NO thrash) · more cores → fan out, speed up\\n`--cpus 2` = FLOOR, not ceiling", cluster: legend, type: compute}
+  - {id: lg_gil,   label: "GIL-AWARE KEY\\nparallel-safe (native, GIL-release): embed · KNN · CE passes → parallelize freely, degrade gracefully to serial\\nserial-by-default (GIL-bound): convex fusion · PPR · spreading BFS compute → parallelize ONLY if MEASURED (multiprocessing = floor-case LOSS on 2 cores)\\nmixed: spreading = per-depth DB IO overlaps, BFS compute does not", cluster: legend, type: io}
+  - {id: lg_ce,    label: "CE PASSES = SEPARATE + CONCURRENT (NOT merged)\\nmerging saves ≈0 compute (pairs sum) + adds quality risk\\nconcurrent CE needs REPLICATED model instances or a batching inference server — not just threads\\nEttin-32M/68M target (Train 2) → ~2-6× cheaper/pass · keep-warm kills ~7 s cold-load · warm CE ≈3.9 s/pass (micro-bench, not 11.3 s cold)", cluster: legend, type: model}
+
   # --- thin core shim: forward in ---
   - {id: forward,   label: "recall() → forward to backend /recall\\nthin core shim (branch/dir detect)\\nPROPOSED",  cluster: core,    type: compute, time_ms: 1}
   # --- step 1: query analysis, fans out the gather arms ---
   - {id: n1,        label: "1 · query analysis\\nentities / routing\\nest",                                          cluster: backend, type: compute, time_ms: 0.4}
-  # --- memory candidate signals (parallel gather) ---
-  - {id: n2,        label: "2 · FTS BM25\\nbranch clause injected\\nest",                                            cluster: backend, type: io,      time_ms: 23}
-  - {id: n3,        label: "3 · query embed\\nbackend.embed\\nest",                                                  cluster: backend, type: model,   time_ms: 21}
-  - {id: n4,        label: "4 · vector KNN\\nHNSW search\\nest",                                                     cluster: backend, type: io,      time_ms: 55}
-  - {id: n5,        label: "5 · personalized PageRank\\nentity seeds + graph walk\\nest",                            cluster: backend, type: compute, time_ms: 241}
-  - {id: n6,        label: "6 · spreading activation BFS\\nper-depth graph IO (gather long-pole)\\nest",             cluster: backend, type: io,      time_ms: 1538}
-  - {id: n8,        label: "8 · graph priors\\nstorage.graph_priors\\nest",                                          cluster: backend, type: io,      time_ms: 157}
-  - {id: n9,        label: "9 · cofire priors\\nstorage.cofire_priors\\nest",                                        cluster: backend, type: io,      time_ms: 151}
-  # --- wiki arm (parallel to the whole memory arm) ---
+  # --- memory candidate signals (bounded-parallel gather) ---
+  - {id: n2,        label: "2 · FTS BM25\\nbranch clause injected · io (arm ∥-safe)\\nest",                          cluster: backend, type: io,      time_ms: 23}
+  - {id: n3,        label: "3 · query embed\\nbackend.embed · parallel-safe (native, GIL-release)\\nest",            cluster: backend, type: model,   time_ms: 21}
+  - {id: n4,        label: "4 · vector KNN\\nHNSW search · io (arm ∥-safe)\\nest",                                    cluster: backend, type: io,      time_ms: 55}
+  - {id: n5,        label: "5 · personalized PageRank\\nnetworkx graph walk · serial-by-default (GIL-bound)\\nest",  cluster: backend, type: compute, time_ms: 241}
+  - {id: n6,        label: "6 · spreading activation BFS\\nper-depth DB IO overlaps · BFS compute serial · MIXED (gather long-pole)\\nest", cluster: backend, type: io, time_ms: 1538}
+  - {id: n8,        label: "8 · graph priors\\nstorage.graph_priors · io\\nest",                                     cluster: backend, type: io,      time_ms: 157}
+  - {id: n9,        label: "9 · cofire priors\\nstorage.cofire_priors · io\\nest",                                   cluster: backend, type: io,      time_ms: 151}
+  # --- wiki arm (parallel to the whole memory arm; keeps its OWN CE) ---
   - {id: n17,       label: "17 · wiki candidates gather\\nwiki.query + get_wiki_page (∥ memory arm)\\nest",          cluster: backend, type: io,      time_ms: 1499}
-  # --- fusion over the memory signals ---
-  - {id: n7,        label: "7 · convex fusion\\nmerge memory signals (now over merged pool)\\nest",                  cluster: backend, type: compute, time_ms: 2}
-  # --- hydrate the merged memory+wiki pool ---
-  - {id: n10,       label: "10 · build_results hydrate\\nget_memories_by_ids — MERGED memory+wiki pool\\nest",       cluster: backend, type: io,      time_ms: 943}
-  # --- THE WALL: single merged CE pass ---
-  - {id: ce,        label: "CE — SINGLE merged pass (memory+wiki union)\\n#28-trimmed · replaces 11+12+18 · multi_passage DROPPED\\nPROPOSED — still the wall → #32 faster-model next", cluster: backend, type: model, time_ms: 10000}
-  # --- post-rerank (combined for readability) ---
-  - {id: post,      label: "13–16 · post-rerank\\nprofile_belief + rules + MMR + engram_links\\nest",               cluster: backend, type: compute, time_ms: 1200}
-  # --- finalize (trivial once pool is pre-merged) ---
-  - {id: n19,       label: "19 · finalize + cross-type dedup\\ntrivial once pool merged\\nest",                      cluster: backend, type: compute, time_ms: 0.1}
+  # --- fusion over the memory signals (GIL-bound, serial-by-default) ---
+  - {id: n7,        label: "7 · convex fusion\\nmerge memory signals · serial-by-default (GIL-bound, pure-Python)\\nest", cluster: backend, type: compute, time_ms: 2}
+  # --- hydrate the MEMORY pool only (wiki stays separate now) ---
+  - {id: n10,       label: "10 · build_results hydrate\\nget_memories_by_ids — MEMORY pool only\\nest",              cluster: backend, type: io,      time_ms: 943}
+  # --- THE WALL: THREE SEPARATE, CONCURRENT CE passes (NOT merged) ---
+  - {id: ce_mem,    label: "CE-1 · memory cross_encoder\\nparallel-safe (native, GIL-release) · scales with cores\\nwarm ≈3.9 s/pass · Ettin-target ~2-6× cheaper · PROPOSED", cluster: backend, type: model, time_ms: 3900}
+  - {id: ce_mp,     label: "CE-2 · memory multi_passage\\nOPTIONAL quality knob — MULTI_PASSAGE_RERANK_ENABLED (off by default)\\n~quality vs latency · gate on LongMemEval · parallel-safe when on\\nPROPOSED", cluster: backend, type: cache, time_ms: 3900}
+  - {id: ce_wiki,   label: "CE-3 · wiki crossfuse-CE\\nseparate concurrent pass over wiki pool · parallel-safe\\nwarm ≈3.9 s · Ettin-target · PROPOSED", cluster: backend, type: model, time_ms: 3900}
+  # --- post-rerank (memory arm) ---
+  - {id: post,      label: "13–16 · post-rerank (memory)\\nprofile_belief + rules + MMR + engram_links\\nest",       cluster: backend, type: compute, time_ms: 1200}
+  # --- LATE UNION: memory + wiki join here (moved from build) ---
+  - {id: n19,       label: "19 · finalize + cross-type dedup\\nLATE UNION: memory pool ∪ wiki pool joins HERE (not at build)\\nest", cluster: backend, type: compute, time_ms: 0.5}
   # --- async side-effect fork (OFF critical path) ---
-  - {id: n20,       label: "20 · side-effects: heat-boost + SR transition\\nASYNC, non-blocking, ∥ return\\nest",    cluster: backend, type: io,      time_ms: 233}
+  - {id: n20,       label: "20 · side-effects: heat-boost + SR transition\\nASYNC, non-blocking, ∥ return · cheap + safe\\nest", cluster: backend, type: io, time_ms: 233}
   # --- thin core shim: return out (CRITICAL PATH END) ---
   - {id: n21,       label: "21 · ranked results → return to core\\nCRITICAL PATH END\\nest",                         cluster: core,    type: compute, time_ms: 0.5}
 
 edges:
   # thin core forward → step 1 (crosses into backend cluster)
   - {src: forward, dst: n1,  label: "forward to backend"}
-  # step 1 forks the three parallel gather arms
-  - {src: n1, dst: n2,  label: "gather ∥"}
-  - {src: n1, dst: n3,  label: "gather ∥"}
+  # step 1 forks the gather arms (bounded budget)
+  - {src: n1, dst: n2,  label: "gather ∥ (bounded)"}
+  - {src: n1, dst: n3,  label: "gather ∥ (bounded)"}
   - {src: n1, dst: n17, label: "wiki arm ∥"}
   # embed → KNN
   - {src: n3, dst: n4,  label: "query vector"}
-  # seeds {2,4} fan out to graph signals + priors (all parallel)
+  # seeds {2,4} fan out to graph signals + priors (GIL-bound → serial-by-default)
   - {src: n2, dst: n5}
   - {src: n2, dst: n6}
   - {src: n2, dst: n8}
@@ -91,20 +144,26 @@ edges:
   - {src: n4, dst: n6}
   - {src: n4, dst: n8}
   - {src: n4, dst: n9}
-  # memory signals {2,4,5,6,8,9} join into convex fusion
+  # memory signals {2,4,5,6,8,9} join into convex fusion (serial-by-default)
   - {src: n2, dst: n7}
   - {src: n4, dst: n7}
   - {src: n5, dst: n7}
   - {src: n6, dst: n7}
   - {src: n8, dst: n7}
   - {src: n9, dst: n7}
-  # {fusion, wiki} join at build — memory pool + wiki pool MERGE here
+  # fusion → build MEMORY pool (wiki NO LONGER merges here)
   - {src: n7,  dst: n10, label: "memory pool"}
-  - {src: n17, dst: n10, label: "wiki pool → merge"}
-  # merged pool → single CE → post-rerank → finalize
-  - {src: n10, dst: ce,   label: "merged candidates"}
-  - {src: ce,  dst: post}
-  - {src: post, dst: n19}
+  # memory pool → its TWO concurrent CE passes (cross_encoder + optional multi_passage)
+  - {src: n10, dst: ce_mem, label: "memory candidates"}
+  - {src: n10, dst: ce_mp,  label: "if MULTI_PASSAGE on", type: skip}
+  # wiki pool → its OWN concurrent CE (separate from memory CE)
+  - {src: n17, dst: ce_wiki, label: "wiki candidates"}
+  # memory CE passes → memory post-rerank
+  - {src: ce_mem, dst: post}
+  - {src: ce_mp,  dst: post, label: "optional", type: skip}
+  # LATE UNION at finalize: memory post-rerank + wiki CE join here
+  - {src: post,   dst: n19, label: "memory ranked"}
+  - {src: ce_wiki, dst: n19, label: "wiki ranked → UNION"}
   # step 19 forks: 21 (critical return) AND 20 (async, non-blocking)
   - {src: n19, dst: n21, label: "critical path"}
   - {src: n19, dst: n20, label: "async · non-blocking", type: async}
